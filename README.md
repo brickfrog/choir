@@ -115,6 +115,11 @@ and CI/release infrastructure. It defines a read-only audit mode, component
 qualification gates, promotion boundaries, and the required report format for
 human or agent-driven maintenance.
 
+Use the [Goal troubleshooting runbook](docs/runbooks/troubleshooting.md) when a
+Goal stops making progress: it maps the on-disk operational surface, the typed
+block, pause, and assurance-block reasons, and the read-only and steering
+commands that recover from each.
+
 ## Verify
 
 ```bash
