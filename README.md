@@ -96,6 +96,11 @@ deleting durable state. It does not delete user branches, remote branches, PRs,
 or source Beads. If external cleanup fails, Choir keeps the database and exits
 nonzero so the purge can be retried safely.
 
+## Documentation
+
+Read the documentation overview in [English](docs/overview.md) or
+[简体中文](docs/overview.zh.md)（语言/中文）。
+
 ## Architecture
 
 The accepted design records are retained under
