@@ -53,7 +53,8 @@ trusted host-side programs from the target repository.
 
 `choir init` creates the local project state, starts `choird`, and opens the
 selected Conductor in the current terminal (Claude by default). Later sessions
-can use `choir start`.
+can use `choir start`. See [Run your first Choir Goal](docs/first-goal.md) for
+the installed workflow from initialization through shutdown.
 
 From the Conductor, discuss the intended feature, create or refine Beads when
 needed, then invoke the provider's built-in `/goal`. The Conductor proposes the selected Parts and
