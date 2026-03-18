@@ -6,6 +6,7 @@ import {
   "choir/src/io",
   "moonbitlang/async",
   "moonbitlang/async/socket",
+  "moonbitlang/core/encoding/utf8",
 }
 
 options(

@@ -19,7 +19,7 @@ extern "C" fn c_exit(code : Int) = "choir_exit"
 
 ///|
 fn string_to_null_terminated_bytes(s : String) -> Bytes {
-  let b = s.to_bytes()
+  let b = @utf8.encode(s)
   let len = b.length()
   let result = FixedArray::make(len + 1, (0 : Byte))
   for i = 0; i < len; i = i + 1 {
@@ -43,7 +43,7 @@ pub fn read_file(path : String) -> String {
 
 ///|
 pub fn write_stdout(s : String) -> Unit {
-  let b = s.to_bytes()
+  let b = @utf8.encode(s)
   c_stdout_write(b, b.length())
 }
 

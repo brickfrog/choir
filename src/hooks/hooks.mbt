@@ -87,7 +87,9 @@ fn get_string_value(json : String, key : String) -> String? {
     if end >= json.length() {
       None
     } else {
-      Some(json.substring(start~, end~))
+      Some(json[start:end].to_string()) catch {
+        _ => None
+      }
     }
   }
 }

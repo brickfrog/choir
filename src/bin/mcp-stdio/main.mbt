@@ -123,7 +123,7 @@ fn main_prog() -> Unit raise {
       agent_id +
       "\"}}\n"
     try {
-      conn.write(reg_msg.to_bytes())
+      conn.write(@utf8.encode(reg_msg))
       // Read and discard the registration response
       let _ = reader.read_line()
     } catch {
@@ -171,7 +171,7 @@ fn main_prog() -> Unit raise {
                 let wire_req = "{\"method\":\"\{req_method}\",\"role\":\"\{role_str2}\",\"name\":\"\{name}\",\"args\":\{args_buf.to_string()}}\n"
 
                 try {
-                  conn.write(wire_req.to_bytes())
+                  conn.write(@utf8.encode(wire_req))
                   let resp_line = reader.read_line()
                   if resp_line == "" {
                     let err_resp = @mcp.error_response(

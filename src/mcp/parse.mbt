@@ -55,7 +55,9 @@ fn get_string_value(json : String, key : String) -> String? {
     if end >= json.length() {
       None
     } else {
-      Some(json.substring(start~, end~))
+      Some(json[start:end].to_string()) catch {
+        _ => None
+      }
     }
   }
 }
@@ -75,7 +77,9 @@ fn get_int_value(json : String, key : String) -> Int? {
     if end == start {
       None
     } else {
-      parse_int(json.substring(start~, end~))
+      parse_int(json[start:end].to_string()) catch {
+        _ => None
+      }
     }
   }
 }
@@ -99,7 +103,9 @@ fn get_params_map(json : String) -> Map[String, String]? {
       end = end + 1
     }
     if depth == 0 {
-      let params_str = json.substring(start~, end=end - 1)
+      let params_str = json[start:end - 1].to_string() catch {
+        _ => return None
+      }
       let map = {}
       match get_string_value(params_str, "name") {
         Some(n) => map.set("name", n)
@@ -122,7 +128,9 @@ fn get_params_map(json : String) -> Map[String, String]? {
             if arg_end < params_str.length() {
               map.set(
                 "arguments",
-                params_str.substring(start=arg_start + 1, end=arg_end),
+                params_str[arg_start + 1:arg_end].to_string() catch {
+                  _ => ""
+                },
               )
             }
           } else if params_str[arg_start] == '{' {
@@ -139,7 +147,9 @@ fn get_params_map(json : String) -> Map[String, String]? {
             if arg_depth == 0 {
               map.set(
                 "arguments",
-                params_str.substring(start=arg_start, end=arg_end),
+                params_str[arg_start:arg_end].to_string() catch {
+                  _ => ""
+                },
               )
             }
           }

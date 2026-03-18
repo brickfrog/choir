@@ -8,7 +8,7 @@ pub fn read_line_from_bytes(buf : Bytes, offset : Int) -> (String, Int)? {
       for j = 0; j < line_len; j = j + 1 {
         let b = buf[offset + j]
         if b != (0 : Byte) {
-          sb.write_char(Char::from_int(b.to_int()))
+          sb.write_char(Int::unsafe_to_char(b.to_int()))
         }
       }
       let mut next_offset = i + 1
@@ -24,5 +24,5 @@ pub fn read_line_from_bytes(buf : Bytes, offset : Int) -> (String, Int)? {
 ///|
 pub fn response_to_bytes(resp : JsonRpcResponse) -> Bytes {
   let s = resp.to_json_string() + "\n"
-  s.to_bytes()
+  @utf8.encode(s)
 }

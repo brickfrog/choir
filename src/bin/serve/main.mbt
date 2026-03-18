@@ -21,11 +21,11 @@ async fn handle_connection(
           Ok(req) => {
             let resp = state.handle(req)
             let resp_str = @transport.format_response(resp) + "\n"
-            conn.write(resp_str.to_bytes())
+            conn.write(@utf8.encode(resp_str))
           }
           Err(err) => {
             let resp = @types.Response::Err("parse error: " + err)
-            conn.write((@transport.format_response(resp) + "\n").to_bytes())
+            conn.write(@utf8.encode(@transport.format_response(resp) + "\n"))
           }
         }
         let remaining = read_pos - (i + 1)

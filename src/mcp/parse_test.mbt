@@ -39,7 +39,7 @@ test "parse request with missing method returns error" {
 ///|
 test "read_line_from_bytes with complete line" {
   let s = "line1\nline2"
-  let buf = s.to_bytes()
+  let buf = @utf8.encode(s)
   match read_line_from_bytes(buf, 0) {
     Some((line, offset)) => {
       assert_eq(line, "line1")
@@ -56,7 +56,7 @@ test "read_line_from_bytes with complete line" {
 ///|
 test "read_line_from_bytes with incomplete line returns None" {
   let s = "incomplete"
-  let buf = s.to_bytes()
+  let buf = @utf8.encode(s)
   match read_line_from_bytes(buf, 0) {
     Some(_) => fail("should be None")
     None => ()
@@ -66,7 +66,7 @@ test "read_line_from_bytes with incomplete line returns None" {
 ///|
 test "read_line_from_bytes with multiple lines returns first" {
   let s = "line1\nline2\n"
-  let buf = s.to_bytes()
+  let buf = @utf8.encode(s)
   match read_line_from_bytes(buf, 0) {
     Some((line, offset)) => {
       assert_eq(line, "line1")

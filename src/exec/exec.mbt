@@ -27,10 +27,10 @@ pub fn command_to_shell_string(cmd : @workspace.Command) -> String {
 
 ///|
 pub async fn run(cmd : @workspace.Command) -> Int {
-  let prog = cmd.program.to_bytes()
-  let args = cmd.args.map(fn(a) { a.to_bytes() })
+  let prog = @utf8.encode(cmd.program)
+  let args = cmd.args.map(fn(a) { @utf8.encode(a) })
   match cmd.workdir {
-    Some(dir) => @process.run(prog, args, cwd=dir.to_bytes())
+    Some(dir) => @process.run(prog, args, cwd=@utf8.encode(dir))
     None => @process.run(prog, args)
   }
 }
