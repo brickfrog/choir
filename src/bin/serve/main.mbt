@@ -53,7 +53,7 @@ async fn handle_connection(
     let bytes = buf.unsafe_reinterpret_as_bytes()
     let mut i = 0
     while i < read_pos {
-      if bytes[i] == (10 : Byte) { // '\n'
+      if bytes[i] == (10 : Byte) {
         let line = bytes.to_unchecked_string(offset=0, length=i)
         let req_res = @transport.parse_request(line)
         match req_res {
@@ -67,7 +67,6 @@ async fn handle_connection(
             conn.send((@transport.format_response(resp) + "\n").to_bytes())
           }
         }
-        // Shift remaining
         let remaining = read_pos - (i + 1)
         if remaining > 0 {
           for j = 0; j < remaining; j = j + 1 {
@@ -75,13 +74,12 @@ async fn handle_connection(
           }
         }
         read_pos = remaining
-        i = 0 // Restart search
+        i = 0
       } else {
         i = i + 1
       }
     }
     if read_pos == buf.length() {
-      // Too long line, for now just clear
       read_pos = 0
     }
   }
@@ -89,53 +87,37 @@ async fn handle_connection(
 
 ///|
 fn main_prog() -> Unit raise {
-  let config_path = ".exo/config.toml"
-  let config_content = read_file_to_string(config_path)
+  let config_content = read_file_to_string(".exo/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
-    Err(err) => {
-      println("Error parsing config: \{err}")
-      @types.Config::default()
-    }
+    Err(_) => @types.Config::default()
   }
-
   let state = @server.ServerState::new(config)
-
-  @async.with_event_loop(async (root) => {
+  @async.with_event_loop(fn(root) {
     match config.listen_tcp {
       Some(addr_str) => {
         let listen_sock = @socket.TCP::new()
         try {
-          let addr = @socket.Addr::parse(addr_str)
-          listen_sock.bind(addr)
-          listen_sock.listen()
+          listen_sock..bind(@socket.Addr::parse(addr_str))..listen()
           println("TCP server listening on \{addr_str}")
           for {
             let (conn, addr) = listen_sock.accept()
-            println("Received new connection from \{addr}")
-            root.spawn_bg(async () => {
+            println("connection from \{addr}")
+            root.spawn_bg(fn() {
               handle_connection(conn, state) catch {
-                err => println("Error handling connection from \{addr}: \{err}")
+                _ => ()
               }
               conn.close()
             })
           }
         } catch {
-          @socket.InvalidAddr(_) => {
-            let _ = @pipe.stderr.write("Invalid listen_tcp address: \{addr_str}\n".to_bytes())
-            listen_sock.close()
-            c_exit(1)
-          }
           err => {
-            let _ = @pipe.stderr.write("Server error: \{err}\n".to_bytes())
             listen_sock.close()
-            c_exit(1)
+            raise err
           }
         }
       }
-      None => {
-        println("TCP server not enabled in config")
-      }
+      None => println("no listen_tcp configured")
     }
   })
 }
@@ -143,6 +125,6 @@ fn main_prog() -> Unit raise {
 ///|
 fn main {
   main_prog() catch {
-    err => println("Fatal error: \{err}")
+    err => println("fatal: \{err}")
   }
 }
