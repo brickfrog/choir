@@ -22,6 +22,40 @@ test "HookResponse::fail_open equals allow" {
 }
 
 ///|
+test "HookInput::from_json_string parses valid SessionStart" {
+  let json = "{\"event\":\"SessionStart\",\"agent_id\":\"agent-123\",\"role\":\"dev\"}"
+  match HookInput::from_json_string(json) {
+    Some(input) => {
+      assert_eq(input.event, HookEvent::SessionStart)
+      assert_eq(input.agent_id, Some("agent-123"))
+      assert_eq(input.role, Some(@types.Role::Dev))
+    }
+    None => panic()
+  }
+}
+
+///|
+test "HookInput::from_json_string parses valid PreToolUse" {
+  let json = "{\"event\":\"PreToolUse\",\"tool_name\":\"read_file\"}"
+  match HookInput::from_json_string(json) {
+    Some(input) => {
+      assert_eq(input.event, HookEvent::PreToolUse)
+      assert_eq(input.tool_name, Some("read_file"))
+    }
+    None => panic()
+  }
+}
+
+///|
+test "HookInput::from_json_string fails on invalid event" {
+  let json = "{\"event\":\"InvalidEvent\"}"
+  match HookInput::from_json_string(json) {
+    Some(_) => panic()
+    None => ()
+  }
+}
+
+///|
 test "HookInput construction with all fields" {
   let input = HookInput::{
     event: HookEvent::PreToolUse,

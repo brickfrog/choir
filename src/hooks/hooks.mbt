@@ -45,3 +45,76 @@ pub fn HookResponse::to_json_string(self : HookResponse) -> String {
     }
   }
 }
+
+///|
+fn find_substring(s : String, sub : String, start : Int) -> Int {
+  if sub.length() == 0 {
+    return start
+  }
+  if start >= s.length() {
+    return -1
+  }
+  for i = start; i <= s.length() - sub.length(); i = i + 1 {
+    let mut is_match = true
+    for j = 0; j < sub.length(); j = j + 1 {
+      if s[i + j] != sub[j] {
+        is_match = false
+        break
+      }
+    }
+    if is_match {
+      return i
+    }
+  }
+  -1
+}
+
+///|
+fn get_string_value(json : String, key : String) -> String? {
+  let key_pattern = "\"" + key + "\":\""
+  let i = find_substring(json, key_pattern, 0)
+  if i == -1 {
+    None
+  } else {
+    let start = i + key_pattern.length()
+    let mut end = start
+    while end < json.length() {
+      if json[end] == '"' && (end == 0 || json[end - 1] != '\\') {
+        break
+      }
+      end = end + 1
+    }
+    if end >= json.length() {
+      None
+    } else {
+      Some(json.substring(start~, end~))
+    }
+  }
+}
+
+///|
+pub fn HookInput::from_json_string(line : String) -> HookInput? {
+  let event_str = match get_string_value(line, "event") {
+    Some(v) => v
+    None => return None
+  }
+  let event = match event_str {
+    "SessionStart" => HookEvent::SessionStart
+    "PreToolUse" => HookEvent::PreToolUse
+    _ => return None
+  }
+  let agent_id = get_string_value(line, "agent_id")
+  let role_str = get_string_value(line, "role")
+  let role = match role_str {
+    Some("root") => Some(@types.Role::Root)
+    Some("tl") => Some(@types.Role::TL)
+    Some("dev") => Some(@types.Role::Dev)
+    Some("worker") => Some(@types.Role::Worker)
+    _ => None
+  }
+  let tool_name = get_string_value(line, "tool_name")
+
+  // Minimal support for args, as it's not strictly used for logic yet
+  let tool_args = None
+  Some({ event, agent_id, role, tool_name, tool_args })
+}
