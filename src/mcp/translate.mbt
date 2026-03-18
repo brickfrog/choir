@@ -6,7 +6,12 @@ pub fn to_internal_request(
 ) -> Result[@types.Request, JsonRpcError] {
   if rpc.req_method == method_tools_list {
     // Return a sentinel request that the server will recognize
-    return Ok({ req_method: method_tools_list, role, name: "tools_list", args: {} })
+    return Ok({
+      req_method: method_tools_list,
+      role,
+      name: "tools_list",
+      args: {},
+    })
   }
   if rpc.req_method != method_tools_call {
     return Err({
@@ -32,8 +37,7 @@ pub fn to_internal_request(
 ///|
 /// Create a JSON-RPC response with the list of available tools.
 pub fn tools_list_response(id : Int) -> JsonRpcResponse {
-  let tools_json =
-    "[" +
+  let tools_json = "[" +
     "{\"name\":\"fork_wave\",\"description\":\"Fork a new wave of worker agents\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"file_pr\",\"description\":\"File a pull request for the current branch\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"merge_pr\",\"description\":\"Merge a pull request by number\",\"inputSchema\":{\"type\":\"object\"}}," +
@@ -42,12 +46,7 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
     "{\"name\":\"spawn_gemini\",\"description\":\"Spawn a Gemini leaf agent in a new worktree\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"shutdown\",\"description\":\"Shutdown the server\",\"inputSchema\":{\"type\":\"object\"}}" +
     "]"
-  {
-    jsonrpc: "2.0",
-    id,
-    result: Some({ "tools": tools_json }),
-    error: None,
-  }
+  { jsonrpc: "2.0", id, result: Some({ "tools": tools_json }), error: None }
 }
 
 ///|
