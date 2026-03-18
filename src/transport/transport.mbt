@@ -82,9 +82,9 @@ fn get_field(data : String, field : String) -> String? {
 }
 
 ///|
-fn parse_args(data : String) -> Map[String, String] {
+fn parse_map(data : String, key : String) -> Map[String, String] {
   let args_map = Map::new()
-  let args_key = "\"args\""
+  let args_key = "\"" + key + "\""
   let start_idx = index_of(data, args_key)
   if start_idx == -1 {
     return args_map
@@ -187,6 +187,39 @@ fn parse_args(data : String) -> Map[String, String] {
   }
 
   args_map
+}
+
+///|
+fn parse_args(data : String) -> Map[String, String] {
+  parse_map(data, "args")
+}
+
+///|
+/// Parse the internal wire format JSON response.
+/// Format: { "ok": true, "result": { "k": "v", ... } }
+/// or: { "ok": false, "error": "..." }
+pub fn parse_response(data : String) -> Result[@types.Response, String] {
+  // Use a simple literal check for "ok": true or "ok": false since it's not a quoted string
+  let ok_true_idx = index_of(data, "\"ok\": true")
+  let ok_true_idx_no_space = if ok_true_idx == -1 { index_of(data, "\"ok\":true") } else { ok_true_idx }
+  
+  if ok_true_idx_no_space != -1 {
+    let result = parse_map(data, "result")
+    return Ok(@types.Response::Ok(result))
+  }
+
+  let ok_false_idx = index_of(data, "\"ok\": false")
+  let ok_false_idx_no_space = if ok_false_idx == -1 { index_of(data, "\"ok\":false") } else { ok_false_idx }
+  
+  if ok_false_idx_no_space != -1 {
+    let err_msg = match get_field(data, "error") {
+      Some(e) => e
+      None => return Err("missing field: error")
+    }
+    return Ok(@types.Response::Err(err_msg))
+  }
+
+  Err("could not determine response status (ok: true/false)")
 }
 
 ///|
