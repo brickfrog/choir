@@ -48,18 +48,35 @@ fn index_of(str : String, sub : String, start? : Int = 0) -> Int {
 }
 
 ///|
+fn index_of_quote_end(str : String, start : Int) -> Int {
+  for i = start; i < str.length(); i = i + 1 {
+    if str[i] == '"' && (i == 0 || str[i - 1] != '\\') {
+      return i
+    }
+  }
+  -1
+}
+
+///|
 fn get_field(data : String, field : String) -> String? {
-  let field_key = "\"" + field + "\": \""
-  let start_idx = index_of(data, field_key)
+  let field_name = "\"" + field + "\""
+  let start_idx = index_of(data, field_name)
   if start_idx == -1 {
     return None
   }
-  let value_start = start_idx + field_key.length()
-  let end_idx = index_of(data, "\"", start=value_start)
-  if end_idx == -1 {
+  let colon_idx = index_of(data, ":", start=start_idx + field_name.length())
+  if colon_idx == -1 {
     return None
   }
-  Some(data[value_start:end_idx].to_string()) catch {
+  let value_quote_start = index_of(data, "\"", start=colon_idx + 1)
+  if value_quote_start == -1 {
+    return None
+  }
+  let value_quote_end = index_of_quote_end(data, value_quote_start + 1)
+  if value_quote_end == -1 {
+    return None
+  }
+  Some(data[value_quote_start + 1:value_quote_end].to_string()) catch {
     _ => None
   }
 }
@@ -67,79 +84,155 @@ fn get_field(data : String, field : String) -> String? {
 ///|
 fn parse_args(data : String) -> Map[String, String] {
   let args_map = Map::new()
-  let args_key = "\"args\": {"
+  let args_key = "\"args\""
   let start_idx = index_of(data, args_key)
   if start_idx == -1 {
     return args_map
   }
-  let args_content_start = start_idx + args_key.length()
-  let end_idx = index_of(data, "}", start=args_content_start)
-  if end_idx == -1 {
+  let colon_idx = index_of(data, ":", start=start_idx + args_key.length())
+  if colon_idx == -1 {
     return args_map
   }
-  let args_content = data[args_content_start:end_idx].to_string() catch {
-    _ => ""
-  }
-  if args_content == "" {
+  let brace_start = index_of(data, "{", start=colon_idx + 1)
+  if brace_start == -1 {
     return args_map
   }
 
-  // Simple split by comma
-  let parts = args_content.split(",")
-  for part in parts {
-    let kv = part.split(":")
-    let k_v_array = kv.to_array()
-    if k_v_array.length() == 2 {
-      let key = k_v_array[0].trim().to_string()
-      let val = k_v_array[1].trim().to_string()
-
-      let key = if key.has_prefix("\"") &&
-        key.has_suffix("\"") &&
-        key.length() >= 2 {
-        key[1:key.length() - 1].to_string() catch {
-          _ => key
-        }
-      } else {
-        key
-      }
-
-      let val = if val.has_prefix("\"") &&
-        val.has_suffix("\"") &&
-        val.length() >= 2 {
-        val[1:val.length() - 1].to_string() catch {
-          _ => val
-        }
-      } else {
-        val
-      }
-
-      if key != "" {
-        args_map.set(key, val)
-      }
+  // Find the closing brace of the args object
+  let mut brace_end = -1
+  let mut in_quote = false
+  for i = brace_start + 1; i < data.length(); i = i + 1 {
+    let c = data[i]
+    if c == '"' && (i == 0 || data[i - 1] != '\\') {
+      in_quote = not(in_quote)
+    }
+    if c == '}' && not(in_quote) {
+      brace_end = i
+      break
     }
   }
+
+  if brace_end == -1 {
+    return args_map
+  }
+
+  let content = data[brace_start + 1:brace_end].to_string() catch { _ => "" }
+  if content == "" {
+    return args_map
+  }
+
+  // Parse key-value pairs in content
+  let mut i = 0
+  while i < content.length() {
+    // skip whitespace and delimiters
+    while i < content.length() {
+      let c = content[i]
+      if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' {
+        i = i + 1
+      } else {
+        break
+      }
+    }
+    if i >= content.length() {
+      break
+    }
+
+    // find key start
+    if content[i] != '"' {
+      break
+    }
+    let key_start = i + 1
+    let key_end_idx = index_of_quote_end(content, key_start)
+    if key_end_idx == -1 {
+      break
+    }
+    let key = content[key_start:key_end_idx].to_string() catch { _ => "" }
+    i = key_end_idx + 1
+
+    // skip to colon
+    let colon_idx = index_of(content, ":", start=i)
+    if colon_idx == -1 {
+      break
+    }
+    i = colon_idx + 1
+
+    // skip whitespace
+    while i < content.length() {
+      let c = content[i]
+      if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+        i = i + 1
+      } else {
+        break
+      }
+    }
+    if i >= content.length() {
+      break
+    }
+
+    // find value
+    if content[i] != '"' {
+      break
+    }
+    let val_start = i + 1
+    let val_end_idx = index_of_quote_end(content, val_start)
+    if val_end_idx == -1 {
+      break
+    }
+    let val = content[val_start:val_end_idx].to_string() catch { _ => "" }
+    i = val_end_idx + 1
+
+    if key != "" {
+      args_map.set(key, val)
+    }
+  }
+
   args_map
 }
 
 ///|
+fn escape_json_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
 /// Serialize the internal wire format response.
-/// Format: { "ok": true, \"result\": { "k": "v", ... } }
-/// or: { "ok": false, \"error\": "..." }
+/// Format: { "ok": true, "result": { "k": "v", ... } }
+/// or: { "ok": false, "error": "..." }
 pub fn format_response(resp : @types.Response) -> String {
+  let buf = StringBuilder::new()
   match resp {
-    Ok(result) => {
-      let mut s = "{\"ok\": true, \"result\": {"
+    @types.Response::Ok(result) => {
+      buf.write_string("{\"ok\": true, \"result\": {")
       let mut first = true
       result.each(fn(k, v) {
         if not(first) {
-          s = s + ", "
+          buf.write_string(", ")
         }
-        s = s + "\"\{k}\": \"\{v}\""
+        buf.write_char('"')
+        buf.write_string(escape_json_string(k))
+        buf.write_string("\": \"")
+        buf.write_string(escape_json_string(v))
+        buf.write_char('"')
         first = false
       })
-      s = s + "}}"
-      s
+      buf.write_string("}}")
     }
-    Err(err) => "{\"ok\": false, \"error\": \"\{err}\"}"
+    @types.Response::Err(err) => {
+      buf.write_string("{\"ok\": false, \"error\": \"")
+      buf.write_string(escape_json_string(err))
+      buf.write_string("\"}")
+    }
   }
+  buf.to_string()
 }
