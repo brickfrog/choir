@@ -15,3 +15,117 @@ test "nested branch name" {
   let branch = @workspace.branch_name("main.subtl", "leaf-task")
   assert_eq(branch, "main.subtl.leaf-task")
 }
+
+///|
+test "git_worktree_add args" {
+  let cmd = @workspace.git_worktree_add("/path/to/worktree", "main.test-slug")
+  assert_eq(cmd.program, "git")
+  assert_eq(cmd.args, [
+    "worktree", "add", "/path/to/worktree", "-b", "main.test-slug",
+  ])
+}
+
+///|
+test "tmux_new_window args" {
+  let cmd = @workspace.tmux_new_window(
+    "my-session", "test-slug", "/path/to/worktree",
+  )
+  assert_eq(cmd.program, "tmux")
+  assert_eq(cmd.args, [
+    "new-window", "-t", "my-session", "-n", "test-slug", "-c", "/path/to/worktree",
+  ])
+}
+
+///|
+test "tmux_send_keys args" {
+  let cmd = @workspace.tmux_send_keys("my-session:test-slug", "echo hello")
+  assert_eq(cmd.program, "tmux")
+  assert_eq(cmd.args, [
+    "send-keys", "-t", "my-session:test-slug", "echo hello", "C-m",
+  ])
+}
+
+///|
+test "agent_launch_command for each AgentType" {
+  let spec_claude = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "fix bugs",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+  }
+  let spec_gemini = { ..spec_claude, agent_type: @types.AgentType::Gemini }
+  let spec_moon = { ..spec_claude, agent_type: @types.AgentType::MoonPilot }
+
+  let cmd_claude = @workspace.agent_launch_command(spec_claude, "/path")
+  let cmd_gemini = @workspace.agent_launch_command(spec_gemini, "/path")
+  let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
+
+  assert_eq(cmd_claude.program, "claude")
+  assert_eq(cmd_claude.args, ["-p", "fix bugs"])
+  assert_eq(cmd_claude.workdir, Some("/path"))
+
+  assert_eq(cmd_gemini.program, "gemini")
+  assert_eq(cmd_gemini.args, ["-p", "fix bugs"])
+  assert_eq(cmd_gemini.workdir, Some("/path"))
+
+  assert_eq(cmd_moon.program, "moon")
+  assert_eq(cmd_moon.args, ["pilot", "fix bugs"])
+  assert_eq(cmd_moon.workdir, Some("/path"))
+}
+
+///|
+test "spawn_commands for worktree mode returns 3 commands" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "fix bugs",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(spec, "/project", "session")
+  assert_eq(cmds.length(), 3)
+  assert_eq(cmds[0].program, "git")
+  assert_eq(cmds[1].program, "tmux")
+  assert_eq(cmds[2].program, "tmux")
+  assert_eq(cmds[1].args[0], "new-window")
+}
+
+///|
+test "spawn_commands for inline mode skips git worktree" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "fix bugs",
+    isolation: @types.IsolationMode::Inline,
+    parent_id: "main",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(spec, "/project", "session")
+  assert_eq(cmds.length(), 2)
+  assert_eq(cmds[0].program, "tmux")
+  assert_eq(cmds[0].args[0], "split-window")
+  assert_eq(cmds[1].program, "tmux")
+}
+
+///|
+test "Command::to_string output" {
+  let cmd1 = @workspace.Command::{
+    program: "git",
+    args: ["status"],
+    workdir: None,
+  }
+  assert_eq(cmd1.to_string(), "git status")
+
+  let cmd2 = @workspace.Command::{
+    program: "claude",
+    args: ["-p", "hello"],
+    workdir: Some("/path"),
+  }
+  assert_eq(cmd2.to_string(), "cd /path && claude -p hello")
+}
