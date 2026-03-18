@@ -43,7 +43,7 @@ test "handle_request with valid tool returns Ok" {
     name: "fork_wave",
     args: { "count": "3" },
   }
-  let res = handle_request(reg, req)
+  let res = handle_request(reg, req, runner=mock_runner)
   assert_true(res is Ok(_))
 }
 
@@ -76,7 +76,7 @@ test "handle_request with unknown tool returns Err" {
 ///|
 test "dispatch returns correct stub for each tool name" {
   let cases = [
-    ("fork_wave", "spawned", Map::new()),
+    ("fork_wave", "spawned", { "count": "1" }),
     ("file_pr", "pr_created", { "branch": "test" }),
     ("merge_pr", "merged", { "pr_number": "1" }),
     ("notify_parent", "notified", Map::new()),
@@ -90,7 +90,7 @@ test "dispatch returns correct stub for each tool name" {
   for c in cases {
     let (name, expected_status, args) = c
     let call = ToolCall::{ role: @types.Role::Dev, name, args }
-    let res = @tools.dispatch(call)
+    let res = @tools.dispatch(call, runner=mock_runner)
     match res {
       Ok(map) => assert_eq(map.get("status"), Some(expected_status))
       Err(msg) => {
