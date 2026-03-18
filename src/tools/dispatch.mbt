@@ -6,6 +6,17 @@ pub(all) struct ToolCall {
 } derive(Show)
 
 ///|
+fn parse_int(s : String) -> Int {
+  let mut res = 0
+  for c in s {
+    if c >= '0' && c <= '9' {
+      res = res * 10 + (c.to_int() - '0'.to_int())
+    }
+  }
+  res
+}
+
+///|
 pub fn dispatch(call : ToolCall) -> @types.Response {
   match call.name {
     "fork_wave" => {
@@ -15,9 +26,34 @@ pub fn dispatch(call : ToolCall) -> @types.Response {
       }
       @types.Response::Ok({ "status": "spawned", "count": count })
     }
-    "file_pr" =>
-      @types.Response::Ok({ "status": "pr_created", "url": "pending" })
-    "merge_pr" => @types.Response::Ok({ "status": "merged" })
+    "file_pr" => {
+      let branch = match call.args.get("branch") {
+        Some(v) => v
+        None => ""
+      }
+      let parent_branch = match call.args.get("parent_branch") {
+        Some(v) => v
+        None => "main"
+      }
+      let cmds = file_pr_commands(branch, parent_branch)
+      @types.Response::Ok({
+        "status": "pr_created",
+        "url": "pending",
+        "cmd_count": cmds.length().to_string(),
+      })
+    }
+    "merge_pr" => {
+      let pr_str = match call.args.get("pr_number") {
+        Some(v) => v
+        None => "0"
+      }
+      let pr_number = parse_int(pr_str)
+      let cmds = merge_pr_commands(pr_number)
+      @types.Response::Ok({
+        "status": "merged",
+        "cmd_count": cmds.length().to_string(),
+      })
+    }
     "notify_parent" => @types.Response::Ok({ "status": "notified" })
     "send_message" => @types.Response::Ok({ "status": "sent" })
     "shutdown" => @types.Response::Ok({ "status": "shutdown" })
