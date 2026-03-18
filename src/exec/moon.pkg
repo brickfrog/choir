@@ -1,0 +1,8 @@
+import {
+  "choir/src/workspace",
+}
+
+options(
+  "is-main": false,
+  "native-stub": [ "stub.c" ],
+)
