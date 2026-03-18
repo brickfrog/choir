@@ -3,6 +3,9 @@ pub fn ServerState::handle(
   self : ServerState,
   req : @types.Request,
 ) -> @types.Response {
+  if req.req_method == "tools/list" {
+    return @types.Response::Ok({ "tools_list": "true" }) // sentinel for mcp-stdio
+  }
   @tools.handle_request(self.tool_registry, req)
 }
 

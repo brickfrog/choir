@@ -160,9 +160,14 @@ fn main_prog() -> Unit raise {
       let line = stdin_buf.to_unchecked_string(offset=0, length=len)
       match @mcp.parse_jsonrpc_request(line) {
         Ok(rpc) => {
-          let id = rpc.id
-          match @mcp.to_internal_request(rpc, role) {
-            Ok(internal_req) => {
+          if rpc.req_method == @mcp.method_tools_list {
+            let resp = @mcp.tools_list_response(rpc.id)
+            let bytes = @mcp.response_to_bytes(resp)
+            c_stdout_write(bytes, bytes.length())
+          } else {
+            let id = rpc.id
+            match @mcp.to_internal_request(rpc, role) {
+              Ok(internal_req) => {
               // Convert to internal wire format JSON + \n
               // Internal wire format for Request: {"method":"<req_method>","role":"<role>","name":"<name>","args":{...}}
               let req_method = internal_req.req_method
@@ -222,6 +227,7 @@ fn main_prog() -> Unit raise {
             }
           }
         }
+      }
         Err(e) => {
           // If we can't parse ID, we use 0 or something. 
           // MCP spec says if id is missing/invalid, return null for id if possible.
