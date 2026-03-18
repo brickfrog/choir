@@ -61,6 +61,11 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     None => default_cfg.otlp_endpoint
   }
 
+  let agent_id = match map.get("agent_id") {
+    Some(v) => Some(v)
+    None => default_cfg.agent_id
+  }
+
   Ok({
     default_role,
     project_dir,
@@ -68,6 +73,7 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     listen_uds,
     listen_tcp,
     otlp_endpoint,
+    agent_id,
   })
 }
 
