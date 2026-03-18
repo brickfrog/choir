@@ -53,6 +53,36 @@ ignore(sock..connect(addr))  // ignore on cascade is redundant; just: sock..conn
 
 **Blocking C FFI in async** blocks the whole event loop. Acceptable only for single-connection processes with no concurrent tasks.
 
+## Package Manifest Format — CRITICAL
+
+Two formats exist. Do NOT confuse them:
+
+| Package type | File | Format |
+|---|---|---|
+| Library (`is-main: false`) | `moon.pkg` | MoonBit format (no `.json`) |
+| Binary (`is-main: true`) | `moon.pkg.json` | JSON |
+
+**Do NOT convert `moon.pkg.json` to `moon.pkg`** for binary packages. They are intentionally different.
+
+Library `moon.pkg` example:
+```
+import {
+  "choir/src/types",
+}
+options(
+  "is-main": false,
+)
+```
+
+Binary `moon.pkg.json` example:
+```json
+{
+  "is-main": true,
+  "import": ["choir/src/types"],
+  "options": { "native-stub": ["stub.c"] }
+}
+```
+
 ## Anti-Patterns (DO NOT)
 
 - Do NOT add dependencies unless your spec explicitly says to
@@ -63,6 +93,7 @@ ignore(sock..connect(addr))  // ignore on cascade is redundant; just: sock..conn
 - Do NOT write stream-of-consciousness comments explaining your thought process
 - Do NOT skip running `moon test` before committing
 - Do NOT invent escape hatches (`Unknown`, `Other(String)`, `Raw(Bytes)` variants)
+- Do NOT touch files outside your spec — if you didn't create or modify it per the spec, leave it alone
 
 ## Build and Verify
 
