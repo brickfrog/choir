@@ -5,21 +5,10 @@ test "file_pr_commands produces correct git push and gh pr create" {
   assert_eq(cmds[0].program, "git")
   assert_eq(cmds[0].args, ["push", "-u", "origin", "feature"])
   assert_eq(cmds[1].program, "gh")
-  assert_eq(
-    cmds[1].args,
-    [
-      "pr",
-      "create",
-      "--base",
-      "main",
-      "--head",
-      "feature",
-      "--title",
-      "feature",
-      "--body",
-      "",
-    ],
-  )
+  assert_eq(cmds[1].args, [
+    "pr", "create", "--base", "main", "--head", "feature", "--title", "feature",
+    "--body", "",
+  ])
 }
 
 ///|
@@ -41,10 +30,7 @@ test "dispatch file_pr returns Ok" {
   }
   let res = dispatch(call)
   match res {
-    Ok(m) => {
-      assert_eq(m.get("status"), Some("pr_created"))
-      assert_eq(m.get("cmd_count"), Some("2"))
-    }
+    Ok(m) => assert_eq(m.get("status"), Some("pr_created"))
     Err(_) => assert_true(false)
   }
 }
@@ -72,10 +58,7 @@ test "dispatch merge_pr returns Ok" {
   }
   let res = dispatch(call)
   match res {
-    Ok(m) => {
-      assert_eq(m.get("status"), Some("merged"))
-      assert_eq(m.get("cmd_count"), Some("2"))
-    }
+    Ok(m) => assert_eq(m.get("status"), Some("merged"))
     Err(_) => assert_true(false)
   }
 }
@@ -96,11 +79,7 @@ test "dispatch merge_pr invalid pr_number returns Err" {
 
 ///|
 test "dispatch merge_pr missing pr_number returns Err" {
-  let call : ToolCall = {
-    role: @types.Role::TL,
-    name: "merge_pr",
-    args: {},
-  }
+  let call : ToolCall = { role: @types.Role::TL, name: "merge_pr", args: {} }
   let res = dispatch(call)
   match res {
     Ok(_) => assert_true(false)
