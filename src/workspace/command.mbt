@@ -27,40 +27,28 @@ pub fn Command::to_string(self : Command) -> String {
 }
 
 ///|
-/// Write .exo/config.local.toml into worktree with role override
-pub fn write_local_config(worktree_path : String, role : String) -> Command {
-  let content = "role = \"" + role + "\"\n"
+/// Write .exo/config.local.toml into worktree with role override.
+/// Uses positional shell args to safely handle paths with spaces.
+pub fn write_local_config(worktree_path : String, content : String) -> Command {
   {
     program: "sh",
     args: [
-      "-c",
-      "mkdir -p " +
-      worktree_path +
-      "/.exo && printf '%s' '" +
-      content +
-      "' > " +
-      worktree_path +
-      "/.exo/config.local.toml",
+      "-c", "mkdir -p \"$1/.exo\" && printf '%s' \"$2\" > \"$1/.exo/config.local.toml\"",
+      "sh", worktree_path, content,
     ],
     workdir: None,
   }
 }
 
 ///|
-/// Write .mcp.json into worktree pointing to the server
-pub fn write_mcp_json(
-  worktree_path : String,
-  _role : String,
-  _name : String,
-  _listen_tcp : String,
-) -> Command {
-  // .mcp.json format:
-  // {"mcpServers":{"exomonad":{"type":"stdio","command":"exomonad","args":["mcp-stdio"]}}}
-  // We also need to pass the server address somehow — use env var or args
-  let json = "{\"mcpServers\":{\"exomonad\":{\"type\":\"stdio\",\"command\":\"exomonad\",\"args\":[\"mcp-stdio\"]}}}"
+/// Write .mcp.json into worktree pointing to the server.
+/// Uses positional shell args to safely handle paths with spaces.
+pub fn write_mcp_json(worktree_path : String, json : String) -> Command {
   {
     program: "sh",
-    args: ["-c", "printf '%s' '" + json + "' > " + worktree_path + "/.mcp.json"],
+    args: [
+      "-c", "printf '%s' \"$2\" > \"$1/.mcp.json\"", "sh", worktree_path, json,
+    ],
     workdir: None,
   }
 }

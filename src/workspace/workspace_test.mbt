@@ -99,7 +99,7 @@ test "spawn_commands for worktree mode returns 5 commands" {
 }
 
 ///|
-test "spawn_commands worktree includes config writes" {
+test "spawn_commands worktree config write content" {
   let spec = @types.SpawnSpec::{
     slug: "feature-a",
     role: @types.Role::Dev,
@@ -109,9 +109,38 @@ test "spawn_commands worktree includes config writes" {
     parent_id: "root",
     parent_branch: "main",
   }
-  let cmds = @workspace.spawn_commands(spec, ".", "exo")
-  // Should have: git worktree add, write config.local.toml, write .mcp.json, tmux new-window, tmux send-keys
+  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
   assert_eq(cmds.length(), 5)
+  // config.local.toml write: positional args — $1=worktree_path, $2=content
+  assert_eq(cmds[1].program, "sh")
+  assert_true(cmds[1].args[3].contains("feature-a")) // worktree path
+  assert_true(cmds[1].args[4].contains("dev")) // role content
+  // .mcp.json write: positional args — $1=worktree_path, $2=json
+  assert_eq(cmds[2].program, "sh")
+  assert_true(cmds[2].args[3].contains("feature-a")) // worktree path
+  assert_true(cmds[2].args[4].contains("--role")) // mcp json has role arg
+  assert_true(cmds[2].args[4].contains("feature-a")) // mcp json has name arg
+}
+
+///|
+test "spawn_commands standalone includes config writes" {
+  let spec = @types.SpawnSpec::{
+    slug: "standalone-task",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "do something",
+    isolation: @types.IsolationMode::Standalone,
+    parent_id: "root",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
+  // git init, write config.local.toml, write .mcp.json, tmux new-window, tmux send-keys
+  assert_eq(cmds.length(), 5)
+  assert_eq(cmds[0].program, "git")
+  assert_eq(cmds[1].program, "sh")
+  assert_true(cmds[1].args[4].contains("dev"))
+  assert_eq(cmds[2].program, "sh")
+  assert_true(cmds[2].args[4].contains("--role"))
 }
 
 ///|
