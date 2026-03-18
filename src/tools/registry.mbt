@@ -16,6 +16,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
   ]
   let defs : Array[@types.ToolDef] = [
     {
+      name: "register",
+      description: "Register an agent in the registry",
+      allowed_roles: all_roles,
+    },
+    {
       name: "fork_wave",
       description: "Spawn N parallel Claude agents in worktrees",
       allowed_roles: [@types.Role::Root, @types.Role::TL],

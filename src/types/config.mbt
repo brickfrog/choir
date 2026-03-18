@@ -7,6 +7,7 @@ pub(all) struct Config {
   listen_uds : String
   listen_tcp : String?
   otlp_endpoint : String?
+  agent_id : String?
 } derive(Show)
 
 ///|
@@ -19,5 +20,6 @@ pub fn Config::default() -> Config {
     listen_uds: ".exo/server.sock",
     listen_tcp: None,
     otlp_endpoint: None,
+    agent_id: None,
   }
 }

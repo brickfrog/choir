@@ -115,6 +115,36 @@ pub fn dispatch(
   registry? : @registry.AgentRegistry? = None,
 ) -> @types.Response {
   match call.name {
+    "register" =>
+      match registry {
+        Some(reg) => {
+          let agent_id = match call.args.get("agent_id") {
+            Some(v) => v
+            None => call.name // name field carries agent_id in register requests
+          }
+          let role = call.role
+          let agent = @types.Agent::{
+            agent_id,
+            role,
+            agent_type: @types.AgentType::Claude,
+            state: @types.AgentState::Active,
+            parent: None,
+            tmux_target: None,
+            host: @types.Host::Local,
+            workspace: "",
+            branch: "",
+          }
+          match reg.insert(agent) {
+            Ok(_) =>
+              @types.Response::Ok({
+                "status": "registered",
+                "agent_id": agent_id,
+              })
+            Err(e) => @types.Response::Err(e.message())
+          }
+        }
+        None => @types.Response::Ok({ "status": "registered" })
+      }
     "fork_wave" => {
       let count_str = match call.args.get("count") {
         Some(v) => v
@@ -269,7 +299,36 @@ pub fn dispatch(
         None => @types.Response::Ok({ "status": "sent" })
       }
     }
-    "shutdown" => @types.Response::Ok({ "status": "shutdown" })
+    "shutdown" => {
+      let caller_id = match call.args.get("caller_id") {
+        Some(v) => v
+        None => return @types.Response::Ok({ "status": "shutdown" }) // best-effort
+      }
+      // 1. Notify parent if registry available
+      match registry {
+        Some(reg) =>
+          match reg.get_parent(caller_id) {
+            Ok(parent) => {
+              let delivery = @message.plan_delivery(
+                parent, caller_id, "agent shutdown", "success",
+              )
+              let _ = execute_delivery(delivery, runner) // best-effort, ignore failure
+              ()
+            }
+            Err(_) => ()
+          }
+        None => ()
+      }
+      // 2. Remove from registry
+      match registry {
+        Some(reg) => {
+          let _ = reg.remove(caller_id)
+          ()
+        }
+        None => ()
+      }
+      @types.Response::Ok({ "status": "shutdown" })
+    }
     "task_list" | "task_get" | "task_update" =>
       @types.Response::Ok({ "status": "ok" })
     "spawn_gemini" => {
