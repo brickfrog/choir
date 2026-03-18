@@ -3,7 +3,7 @@ test "translate tools/call to internal request" {
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
     id: 1,
-    req_method: "tools/call",
+    req_method: method_tools_call,
     params: Some({ "name": "fork_wave", "task": "build feature" }),
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::TL)
@@ -17,11 +17,30 @@ test "translate tools/call to internal request" {
 }
 
 ///|
-test "translate unsupported method returns error" {
+test "translate tools/list to internal request" {
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
     id: 2,
-    req_method: "tools/list",
+    req_method: method_tools_list,
+    params: None,
+  }
+  let result = @mcp.to_internal_request(rpc, @types.Role::TL)
+  match result {
+    Ok(req) => {
+      assert_eq(req.req_method, "tools/list")
+      assert_eq(req.name, "tools_list")
+      assert_eq(req.role, @types.Role::TL)
+    }
+    Err(_) => fail("expected Ok")
+  }
+}
+
+///|
+test "translate unknown method returns error" {
+  let rpc : @mcp.JsonRpcRequest = {
+    jsonrpc: "2.0",
+    id: 4,
+    req_method: "unknown/method",
     params: None,
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::TL)
@@ -29,11 +48,36 @@ test "translate unsupported method returns error" {
 }
 
 ///|
+test "tools_list_response" {
+  let rpc = @mcp.tools_list_response(20)
+  assert_eq(rpc.id, 20)
+  match rpc.result {
+    Some(res) => {
+      let tools = res.get("tools")
+      assert_true(tools is Some(_))
+      match tools {
+        Some(t) => {
+          assert_true(t.contains("fork_wave"))
+          assert_true(t.contains("file_pr"))
+          assert_true(t.contains("merge_pr"))
+          assert_true(t.contains("notify_parent"))
+          assert_true(t.contains("send_message"))
+          assert_true(t.contains("spawn_gemini"))
+          assert_true(t.contains("shutdown"))
+        }
+        None => fail("expected tools")
+      }
+    }
+    None => fail("expected result")
+  }
+}
+
+///|
 test "translate missing name returns error" {
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
     id: 3,
-    req_method: "tools/call",
+    req_method: method_tools_call,
     params: Some({ "task": "something" }),
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::Dev)
