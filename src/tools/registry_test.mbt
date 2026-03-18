@@ -76,24 +76,27 @@ test "handle_request with unknown tool returns Err" {
 ///|
 test "dispatch returns correct stub for each tool name" {
   let cases = [
-    ("fork_wave", "spawned"),
-    ("file_pr", "pr_created"),
-    ("merge_pr", "merged"),
-    ("notify_parent", "notified"),
-    ("send_message", "sent"),
-    ("shutdown", "shutdown"),
-    ("task_list", "ok"),
-    ("task_get", "ok"),
-    ("task_update", "ok"),
-    ("spawn_gemini", "spawned"),
+    ("fork_wave", "spawned", Map::new()),
+    ("file_pr", "pr_created", { "branch": "test" }),
+    ("merge_pr", "merged", { "pr_number": "1" }),
+    ("notify_parent", "notified", Map::new()),
+    ("send_message", "sent", Map::new()),
+    ("shutdown", "shutdown", Map::new()),
+    ("task_list", "ok", Map::new()),
+    ("task_get", "ok", Map::new()),
+    ("task_update", "ok", Map::new()),
+    ("spawn_gemini", "spawned", Map::new()),
   ]
   for c in cases {
-    let (name, expected_status) = c
-    let call = ToolCall::{ role: @types.Role::Dev, name, args: {} }
+    let (name, expected_status, args) = c
+    let call = ToolCall::{ role: @types.Role::Dev, name, args }
     let res = @tools.dispatch(call)
     match res {
       Ok(map) => assert_eq(map.get("status"), Some(expected_status))
-      Err(_) => assert_true(false) // should not be Err
+      Err(msg) => {
+        println(name + ": " + msg)
+        assert_true(false) // should not be Err
+      }
     }
   }
 }
