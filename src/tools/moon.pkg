@@ -1,5 +1,6 @@
 import {
   "choir/src/types",
+  "choir/src/exec",
   "choir/src/workspace",
 }
 

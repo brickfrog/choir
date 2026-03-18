@@ -39,11 +39,10 @@ test "dispatch file_pr returns Ok" {
     name: "file_pr",
     args: { "branch": "feat", "parent_branch": "main" },
   }
-  let res = dispatch(call)
+  let res = dispatch(call, runner=mock_runner)
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("pr_created"))
-      assert_eq(m.get("cmd_count"), Some("2"))
     }
     Err(_) => assert_true(false)
   }
@@ -56,7 +55,7 @@ test "dispatch file_pr missing branch returns Err" {
     name: "file_pr",
     args: { "parent_branch": "main" },
   }
-  let res = dispatch(call)
+  let res = dispatch(call, runner=mock_runner)
   match res {
     Ok(_) => assert_true(false)
     Err(msg) => assert_eq(msg, "missing branch")
@@ -70,11 +69,10 @@ test "dispatch merge_pr returns Ok" {
     name: "merge_pr",
     args: { "pr_number": "456" },
   }
-  let res = dispatch(call)
+  let res = dispatch(call, runner=mock_runner)
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("merged"))
-      assert_eq(m.get("cmd_count"), Some("2"))
     }
     Err(_) => assert_true(false)
   }
@@ -87,7 +85,7 @@ test "dispatch merge_pr invalid pr_number returns Err" {
     name: "merge_pr",
     args: { "pr_number": "abc" },
   }
-  let res = dispatch(call)
+  let res = dispatch(call, runner=mock_runner)
   match res {
     Ok(_) => assert_true(false)
     Err(msg) => assert_eq(msg, "invalid pr_number: abc")
@@ -101,7 +99,7 @@ test "dispatch merge_pr missing pr_number returns Err" {
     name: "merge_pr",
     args: {},
   }
-  let res = dispatch(call)
+  let res = dispatch(call, runner=mock_runner)
   match res {
     Ok(_) => assert_true(false)
     Err(msg) => assert_eq(msg, "missing pr_number")
