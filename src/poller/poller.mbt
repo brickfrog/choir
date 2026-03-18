@@ -1,0 +1,28 @@
+///|
+/// Review state for a tracked PR.
+pub(all) enum ReviewState {
+  None_
+  Approved
+  ChangesRequested
+} derive(Show, Eq)
+
+///|
+/// Tracked state for a single PR in the poller.
+pub(all) struct TrackedPR {
+  pr_number : Int
+  agent_id : String
+  first_seen : Int64
+  mut last_review_state : ReviewState
+  mut last_sha : String
+  mut notified_parent : Bool
+} derive(Show)
+
+///|
+/// Events emitted by the poller on each tick.
+pub(all) enum PollEvent {
+  ReviewReceived(Int, String)
+  PRReady(Int)
+  FixesPushed(Int)
+  ReviewTimeout(Int)
+  CIFailed(Int)
+} derive(Show)

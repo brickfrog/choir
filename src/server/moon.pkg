@@ -1,0 +1,9 @@
+import {
+  "choir/src/types",
+  "choir/src/registry",
+  "choir/src/tools",
+}
+
+options(
+  "is-main": false,
+)
