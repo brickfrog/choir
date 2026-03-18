@@ -6,7 +6,11 @@ pub fn ServerState::handle(
   if req.req_method == "tools/list" {
     return @types.Response::Ok({ "tools_list": "true" }) // sentinel for mcp-stdio
   }
-  @tools.handle_request(self.tool_registry, req)
+  @tools.handle_request(
+    self.tool_registry,
+    req,
+    agent_registry=Some(self.registry),
+  )
 }
 
 ///|

@@ -2,6 +2,8 @@ import {
   "choir/src/types",
   "choir/src/exec",
   "choir/src/workspace",
+  "choir/src/registry",
+  "choir/src/message",
 }
 
 options(

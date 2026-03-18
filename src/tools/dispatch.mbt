@@ -79,11 +79,42 @@ fn run_strict(
 }
 
 ///|
+fn execute_delivery(
+  delivery : @message.DeliveryMethod,
+  runner : (Array[@workspace.Command]) -> Result[Array[Int], String],
+) -> Result[Unit, String] {
+  match delivery {
+    @message.DeliveryMethod::TeamsInbox(path, json) => {
+      // Write json to path via a shell command: `printf '%s\n' '<json>' >> <path>`
+      let cmd = @workspace.Command::{
+        program: "sh",
+        args: ["-c", "printf '%s\\n' '" + json + "' >> " + path],
+        workdir: Some("."),
+      }
+      match runner([cmd]) {
+        Ok(_) => Ok(())
+        Err(e) => Err(e)
+      }
+    }
+    @message.DeliveryMethod::TmuxStdin(target, text) => {
+      // Use tmux send-keys
+      let cmd = @workspace.tmux_send_keys(target, text)
+      match runner([cmd]) {
+        Ok(_) => Ok(())
+        Err(e) => Err(e)
+      }
+    }
+    @message.DeliveryMethod::TcpPush(_, _) => Ok(()) // Phase 2: TCP push not yet implemented
+  }
+}
+
+///|
 pub fn dispatch(
   call : ToolCall,
   project_dir? : String = ".",
   session? : String = "exomonad",
-  runner? : (Array[@workspace.Command]) -> Result[Array[Int], String] = @exec.run_sequence
+  runner? : (Array[@workspace.Command]) -> Result[Array[Int], String] = @exec.run_sequence,
+  registry? : @registry.AgentRegistry? = None
 ) -> @types.Response {
   match call.name {
     "fork_wave" => {
@@ -189,12 +220,59 @@ pub fn dispatch(
       }
     }
     "notify_parent" => {
-      // TODO: Needs registry access to find parent
-      @types.Response::Ok({ "status": "notified" })
+      let caller_id = match call.args.get("caller_id") {
+        Some(v) => v
+        None => return @types.Response::Err("missing caller_id")
+      }
+      let message = call.args.get("message").unwrap_or("")
+      let status = call.args.get("status").unwrap_or("info")
+      match registry {
+        Some(reg) =>
+          match reg.get_parent(caller_id) {
+            Ok(parent) => {
+              let delivery = @message.plan_delivery(
+                parent,
+                caller_id,
+                message,
+                status,
+              )
+              match execute_delivery(delivery, runner) {
+                Ok(_) => @types.Response::Ok({ "status": "notified" })
+                Err(e) => @types.Response::Err(e)
+              }
+            }
+            Err(e) => @types.Response::Err(e.message())
+          }
+        None => @types.Response::Ok({ "status": "notified" }) // no-op if no registry
+      }
     }
     "send_message" => {
-      // TODO: Needs registry access for routing
-      @types.Response::Ok({ "status": "sent" })
+      let target_id = match call.args.get("target_id") {
+        Some(v) => v
+        None => return @types.Response::Err("missing target_id")
+      }
+      let message = call.args.get("message").unwrap_or("")
+      let status = call.args.get("status").unwrap_or("info")
+      let sender_id = call.args.get("sender_id").unwrap_or("unknown")
+      match registry {
+        Some(reg) =>
+          match reg.get(target_id) {
+            Ok(agent) => {
+              let delivery = @message.plan_delivery(
+                agent,
+                sender_id,
+                message,
+                status,
+              )
+              match execute_delivery(delivery, runner) {
+                Ok(_) => @types.Response::Ok({ "status": "sent" })
+                Err(e) => @types.Response::Err(e)
+              }
+            }
+            Err(e) => @types.Response::Err(e.message())
+          }
+        None => @types.Response::Ok({ "status": "sent" }) // no-op if no registry
+      }
     }
     "shutdown" => @types.Response::Ok({ "status": "shutdown" })
     "task_list" | "task_get" | "task_update" =>
@@ -245,7 +323,8 @@ pub fn handle_request(
   req : @types.Request,
   project_dir? : String = ".",
   session? : String = "exomonad",
-  runner? : (Array[@workspace.Command]) -> Result[Array[Int], String] = @exec.run_sequence
+  runner? : (Array[@workspace.Command]) -> Result[Array[Int], String] = @exec.run_sequence,
+  agent_registry? : @registry.AgentRegistry? = None
 ) -> @types.Response {
   match registry.lookup(req.role, req.name) {
     Err(e) => @types.Response::Err(e.message())
@@ -255,6 +334,7 @@ pub fn handle_request(
         project_dir=project_dir,
         session=session,
         runner=runner,
+        registry=agent_registry,
       )
   }
 }
