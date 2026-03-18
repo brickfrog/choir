@@ -15,7 +15,7 @@ pub(all) struct TrackedPR {
   mut last_review_state : ReviewState
   mut last_sha : String
   mut notified_parent : Bool
-} derive(Show)
+} derive(Show, Eq)
 
 ///|
 /// Events emitted by the poller on each tick.
@@ -25,4 +25,4 @@ pub(all) enum PollEvent {
   FixesPushed(Int)
   ReviewTimeout(Int)
   CIFailed(Int)
-} derive(Show)
+} derive(Show, Eq)
