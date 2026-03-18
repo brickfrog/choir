@@ -77,7 +77,7 @@ test "agent_launch_command for each AgentType" {
 }
 
 ///|
-test "spawn_commands for worktree mode returns 3 commands" {
+test "spawn_commands for worktree mode returns 5 commands" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
     role: @types.Role::Dev,
@@ -88,11 +88,30 @@ test "spawn_commands for worktree mode returns 3 commands" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 3)
+  // git worktree add, write config.local.toml, write .mcp.json, tmux new-window, tmux send-keys
+  assert_eq(cmds.length(), 5)
   assert_eq(cmds[0].program, "git")
-  assert_eq(cmds[1].program, "tmux")
-  assert_eq(cmds[2].program, "tmux")
-  assert_eq(cmds[1].args[0], "new-window")
+  assert_eq(cmds[1].program, "sh")
+  assert_eq(cmds[2].program, "sh")
+  assert_eq(cmds[3].program, "tmux")
+  assert_eq(cmds[4].program, "tmux")
+  assert_eq(cmds[3].args[0], "new-window")
+}
+
+///|
+test "spawn_commands worktree includes config writes" {
+  let spec = @types.SpawnSpec::{
+    slug: "feature-a",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "do something",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(spec, ".", "exo")
+  // Should have: git worktree add, write config.local.toml, write .mcp.json, tmux new-window, tmux send-keys
+  assert_eq(cmds.length(), 5)
 }
 
 ///|

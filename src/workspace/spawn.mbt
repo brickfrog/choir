@@ -21,6 +21,8 @@ pub fn spawn_commands(
     Worktree =>
       [
         git_worktree_add(workspace, branch),
+        write_local_config(workspace, role_to_string(spec.role)),
+        write_mcp_json(workspace, role_to_string(spec.role), spec.slug, ""),
         tmux_new_window(session, spec.slug, workspace),
         tmux_send_keys(target, launch_str),
       ]
@@ -29,8 +31,20 @@ pub fn spawn_commands(
     Standalone =>
       [
         { program: "git", args: ["init", workspace], workdir: None },
+        write_local_config(workspace, role_to_string(spec.role)),
+        write_mcp_json(workspace, role_to_string(spec.role), spec.slug, ""),
         tmux_new_window(session, spec.slug, workspace),
         tmux_send_keys(target, launch_str),
       ]
+  }
+}
+
+///|
+fn role_to_string(role : @types.Role) -> String {
+  match role {
+    Root => "root"
+    TL => "tl"
+    Dev => "dev"
+    Worker => "worker"
   }
 }
