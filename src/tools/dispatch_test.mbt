@@ -1,7 +1,5 @@
 ///|
-fn mock_runner(
-  cmds : Array[@workspace.Command]
-) -> Result[Array[Int], String] {
+fn mock_runner(cmds : Array[@workspace.Command]) -> Result[Array[Int], String] {
   let res = []
   for _ in cmds {
     res.push(0)
@@ -11,7 +9,7 @@ fn mock_runner(
 
 ///|
 fn mock_fail_runner(
-  cmds : Array[@workspace.Command]
+  cmds : Array[@workspace.Command],
 ) -> Result[Array[Int], String] {
   let res = []
   for _ in cmds {
@@ -101,4 +99,63 @@ test "dispatch spawn_gemini validates slug" {
     Ok(_) => assert_true(false)
     Err(e) => assert_eq(e, "invalid slug: invalid character in slug: /")
   }
+}
+
+///|
+test "dispatch register inserts agent into registry" {
+  let reg = @registry.AgentRegistry::new()
+  let call : @tools.ToolCall = {
+    role: @types.Role::Dev,
+    name: "register",
+    args: { "agent_id": "leaf-0" },
+  }
+  let res = @tools.dispatch(call, runner=mock_runner, registry=Some(reg))
+  match res {
+    Ok(m) => {
+      assert_eq(m.get("status"), Some("registered"))
+      assert_eq(m.get("agent_id"), Some("leaf-0"))
+      assert_true(reg.get("leaf-0") is Ok(_))
+    }
+    Err(e) => {
+      println(e)
+      assert_true(false)
+    }
+  }
+}
+
+///|
+test "dispatch register requires agent_id arg" {
+  let reg = @registry.AgentRegistry::new()
+  let call : @tools.ToolCall = {
+    role: @types.Role::Dev,
+    name: "register",
+    args: {},
+  }
+  let res = @tools.dispatch(call, runner=mock_runner, registry=Some(reg))
+  assert_true(res is Err(_))
+}
+
+///|
+test "dispatch shutdown removes agent from registry" {
+  let reg = @registry.AgentRegistry::new()
+  let agent = @types.Agent::{
+    agent_id: "leaf-1",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    state: @types.AgentState::Active,
+    parent: None,
+    tmux_target: None,
+    host: @types.Host::Local,
+    workspace: "",
+    branch: "",
+  }
+  let _ = reg.insert(agent)
+  let call : @tools.ToolCall = {
+    role: @types.Role::Dev,
+    name: "shutdown",
+    args: { "caller_id": "leaf-1" },
+  }
+  let res = @tools.dispatch(call, runner=mock_runner, registry=Some(reg))
+  assert_true(res is Ok(_))
+  assert_true(reg.get("leaf-1") is Err(_))
 }

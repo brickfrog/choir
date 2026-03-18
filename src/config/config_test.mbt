@@ -32,11 +32,25 @@ test "parse_config - empty string defaults" {
     #|shell_command = ""
     #|listen_tcp = ""
     #|otlp_endpoint = ""
+    #|agent_id = ""
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.shell_command, None)
   assert_eq(cfg.listen_tcp, None)
   assert_eq(cfg.otlp_endpoint, None)
+  assert_eq(cfg.agent_id, None)
+}
+
+///|
+test "parse_config - agent_id set" {
+  let cfg = parse_config("agent_id = \"my-agent\"").unwrap()
+  assert_eq(cfg.agent_id, Some("my-agent"))
+}
+
+///|
+test "parse_config - agent_id defaults to None" {
+  let cfg = parse_config("").unwrap()
+  assert_eq(cfg.agent_id, None)
 }
 
 ///|

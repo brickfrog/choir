@@ -120,7 +120,7 @@ pub fn dispatch(
         Some(reg) => {
           let agent_id = match call.args.get("agent_id") {
             Some(v) => v
-            None => "anonymous"
+            None => return @types.Response::Err("missing agent_id")
           }
           let role = call.role
           let agent = @types.Agent::{
@@ -319,9 +319,19 @@ pub fn dispatch(
           }
         None => ()
       }
-      // 2. Remove from registry
+      // 2. Kill tmux pane and remove from registry
       match registry {
         Some(reg) => {
+          let tmux_target = match reg.get(caller_id) {
+            Ok(agent) =>
+              match agent.tmux_target {
+                Some(t) => t
+                None => caller_id
+              }
+            Err(_) => caller_id
+          }
+          let kill_cmd = @workspace.tmux_kill_pane(tmux_target)
+          let _ = runner([kill_cmd])
           let _ = reg.remove(caller_id)
           ()
         }

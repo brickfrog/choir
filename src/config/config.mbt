@@ -62,7 +62,7 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
   }
 
   let agent_id = match map.get("agent_id") {
-    Some(v) => Some(v)
+    Some(v) => if v == "" { None } else { Some(v) }
     None => default_cfg.agent_id
   }
 
