@@ -1,0 +1,5 @@
+target/
+.exo/
+.mcp.json
+.claude/settings.local.json
+.moonagent/
