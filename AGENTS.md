@@ -20,6 +20,39 @@ You implement a single, focused spec given to you at spawn time. You do not make
 - Generic params in square brackets: `fn[T] foo(x : T) -> T`
 - `derive(Show, Eq, Compare)` where appropriate.
 
+## MoonBit Async (moonbitlang/async)
+
+`with_event_loop` signature: `async (TaskGroup[Unit]) -> Unit raise`
+
+**Correct patterns:**
+```moonbit
+// Preferred — compiler infers async from body:
+@async.with_event_loop(fn(root) {
+  root.spawn_bg(fn() { some_async_call() })
+})
+
+// Explicit async — also valid:
+@async.with_event_loop(async fn(_root) {
+  some_async_call()
+})
+```
+
+**WRONG — arrow syntax doesn't exist in MoonBit:**
+```moonbit
+@async.with_event_loop(async (root) => { ... })      // ❌ JS syntax, INVALID
+root.spawn_bg(async () => { ... })                   // ❌ use fn() { ... }
+```
+
+**`..` cascade operator** returns the *receiver*, not the method result:
+```moonbit
+sock..bind(addr)..listen()   // chains calls, returns sock — this is correct
+ignore(sock..connect(addr))  // ignore on cascade is redundant; just: sock..connect(addr)
+```
+
+**No UDS, no process spawning** — moonbitlang/async is TCP/UDP/pipes only. Use C FFI `system()` for subprocesses.
+
+**Blocking C FFI in async** blocks the whole event loop. Acceptable only for single-connection processes with no concurrent tasks.
+
 ## Anti-Patterns (DO NOT)
 
 - Do NOT add dependencies unless your spec explicitly says to
