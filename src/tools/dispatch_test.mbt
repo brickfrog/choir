@@ -1,7 +1,5 @@
 ///|
-fn mock_runner(
-  cmds : Array[@workspace.Command]
-) -> Result[Array[Int], String] {
+fn mock_runner(cmds : Array[@workspace.Command]) -> Result[Array[Int], String] {
   let res = []
   for _ in cmds {
     res.push(0)
@@ -11,7 +9,7 @@ fn mock_runner(
 
 ///|
 fn mock_fail_runner(
-  cmds : Array[@workspace.Command]
+  cmds : Array[@workspace.Command],
 ) -> Result[Array[Int], String] {
   let res = []
   for _ in cmds {

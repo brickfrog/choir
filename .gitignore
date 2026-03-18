@@ -9,3 +9,5 @@ target/
 !.exo/roles/
 !.exo/lib/
 !.exo/rules/
+test_syntax.mbt
+_build/

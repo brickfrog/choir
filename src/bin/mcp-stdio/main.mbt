@@ -4,11 +4,7 @@ extern "C" fn c_get_file_size(path : Bytes) -> Int = "choir_get_file_size"
 
 ///|
 #borrow(path, buf)
-extern "C" fn c_read_file_to_buf(
-  path : Bytes,
-  buf : Bytes,
-  size : Int
-) = "choir_read_file_to_buf"
+extern "C" fn c_read_file_to_buf(path : Bytes, buf : Bytes, size : Int) = "choir_read_file_to_buf"
 
 ///|
 extern "C" fn c_exit(code : Int) = "choir_exit"
@@ -59,7 +55,7 @@ fn TCPLineReader::new(conn : @socket.TCP) -> TCPLineReader {
 }
 
 ///|
-async fn TCPLineReader::read_line(self : TCPLineReader) -> String raise {
+async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
   for {
     // Check if we already have a line in buffer
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
@@ -139,9 +135,7 @@ fn main_prog() -> Unit raise {
     }
 
     let conn = @socket.TCP::new()
-    try {
-      ignore(conn..connect(@socket.Addr::parse(addr_str)))
-    } catch {
+    ignore(conn..connect(@socket.Addr::parse(addr_str))) catch {
       err => {
         println("error: failed to connect to \{addr_str}: \{err}")
         c_exit(1)
@@ -159,7 +153,7 @@ fn main_prog() -> Unit raise {
 
       let line = stdin_buf.to_unchecked_string(offset=0, length=len)
       match @mcp.parse_jsonrpc_request(line) {
-        Ok(rpc) => {
+        Ok(rpc) =>
           if rpc.req_method == @mcp.method_tools_list {
             let resp = @mcp.tools_list_response(rpc.id)
             let bytes = @mcp.response_to_bytes(resp)
@@ -168,66 +162,86 @@ fn main_prog() -> Unit raise {
             let id = rpc.id
             match @mcp.to_internal_request(rpc, role) {
               Ok(internal_req) => {
-              // Convert to internal wire format JSON + \n
-              // Internal wire format for Request: {"method":"<req_method>","role":"<role>","name":"<name>","args":{...}}
-              let req_method = internal_req.req_method
-              let role_str = match internal_req.role {
-                @types.Role::Root => "root"
-                @types.Role::TL => "tl"
-                @types.Role::Dev => "dev"
-                @types.Role::Worker => "worker"
-              }
-              let name = internal_req.name
-              
-              // Map args to JSON string
-              let args_buf = StringBuilder::new()
-              args_buf.write_char('{')
-              let mut first = true
-              internal_req.args.each(fn(k, v) {
-                if not(first) {
-                  args_buf.write_char(',')
+                // Convert to internal wire format JSON + \n
+                // Internal wire format for Request: {"method":"<req_method>","role":"<role>","name":"<name>","args":{...}}
+                let req_method = internal_req.req_method
+                let role_str = match internal_req.role {
+                  @types.Role::Root => "root"
+                  @types.Role::TL => "tl"
+                  @types.Role::Dev => "dev"
+                  @types.Role::Worker => "worker"
                 }
-                args_buf.write_string("\"" + k + "\":\"" + v + "\"") // Simplified escaping for now, mcp/serialize has better
-                first = false
-              })
-              args_buf.write_char('}')
+                let name = internal_req.name
 
-              let wire_req = "{\"method\":\"\{req_method}\",\"role\":\"\{role_str}\",\"name\":\"\{name}\",\"args\":\{args_buf.to_string()}}\n"
-              
-              try {
-                conn.send(wire_req.to_bytes())
-                let resp_line = reader.read_line()
-                if resp_line == "" {
-                  let err_resp = @mcp.error_response(id, @mcp.err_internal, "server connection closed")
-                  c_stdout_write(@mcp.response_to_bytes(err_resp), @mcp.response_to_bytes(err_resp).length())
-                } else {
-                  match @transport.parse_response(resp_line) {
-                    Ok(internal_resp) => {
-                      let rpc_resp = @mcp.from_internal_response(id, internal_resp)
-                      let bytes = @mcp.response_to_bytes(rpc_resp)
-                      c_stdout_write(bytes, bytes.length())
-                    }
-                    Err(e) => {
-                      let err_resp = @mcp.error_response(id, @mcp.err_internal, "failed to parse server response: " + e)
-                      c_stdout_write(@mcp.response_to_bytes(err_resp), @mcp.response_to_bytes(err_resp).length())
+                // Map args to JSON string
+                let args_buf = StringBuilder::new()
+                args_buf.write_char('{')
+                let mut first = true
+                internal_req.args.each(fn(k, v) {
+                  if not(first) {
+                    args_buf.write_char(',')
+                  }
+                  args_buf.write_string("\"" + k + "\":\"" + v + "\"") // Simplified escaping for now, mcp/serialize has better
+                  first = false
+                })
+                args_buf.write_char('}')
+
+                let wire_req = "{\"method\":\"\{req_method}\",\"role\":\"\{role_str}\",\"name\":\"\{name}\",\"args\":\{args_buf.to_string()}}\n"
+
+                try {
+                  conn.send(wire_req.to_bytes())
+                  let resp_line = reader.read_line()
+                  if resp_line == "" {
+                    let err_resp = @mcp.error_response(
+                      id, @mcp.err_internal, "server connection closed",
+                    )
+                    c_stdout_write(
+                      @mcp.response_to_bytes(err_resp),
+                      @mcp.response_to_bytes(err_resp).length(),
+                    )
+                  } else {
+                    match @transport.parse_response(resp_line) {
+                      Ok(internal_resp) => {
+                        let rpc_resp = @mcp.from_internal_response(
+                          id, internal_resp,
+                        )
+                        let bytes = @mcp.response_to_bytes(rpc_resp)
+                        c_stdout_write(bytes, bytes.length())
+                      }
+                      Err(e) => {
+                        let err_resp = @mcp.error_response(
+                          id,
+                          @mcp.err_internal,
+                          "failed to parse server response: " + e,
+                        )
+                        c_stdout_write(
+                          @mcp.response_to_bytes(err_resp),
+                          @mcp.response_to_bytes(err_resp).length(),
+                        )
+                      }
                     }
                   }
-                }
-              } catch {
-                err => {
-                  let err_resp = @mcp.error_response(id, @mcp.err_internal, "TCP error: \{err}")
-                  c_stdout_write(@mcp.response_to_bytes(err_resp), @mcp.response_to_bytes(err_resp).length())
+                } catch {
+                  err => {
+                    let err_resp = @mcp.error_response(
+                      id,
+                      @mcp.err_internal,
+                      "TCP error: \{err}",
+                    )
+                    c_stdout_write(
+                      @mcp.response_to_bytes(err_resp),
+                      @mcp.response_to_bytes(err_resp).length(),
+                    )
+                  }
                 }
               }
-            }
-            Err(e) => {
-              let err_resp = @mcp.error_response(id, e.code, e.message)
-              let bytes = @mcp.response_to_bytes(err_resp)
-              c_stdout_write(bytes, bytes.length())
+              Err(e) => {
+                let err_resp = @mcp.error_response(id, e.code, e.message)
+                let bytes = @mcp.response_to_bytes(err_resp)
+                c_stdout_write(bytes, bytes.length())
+              }
             }
           }
-        }
-      }
         Err(e) => {
           // If we can't parse ID, we use 0 or something. 
           // MCP spec says if id is missing/invalid, return null for id if possible.
