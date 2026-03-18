@@ -1,0 +1,12 @@
+{
+  "is-main": true,
+  "import": [
+    "choir/src/types",
+    "choir/src/config",
+    "choir/src/server",
+    "choir/src/transport",
+    "moonbitlang/async",
+    "moonbitlang/async/socket",
+    "moonbitlang/async/pipe"
+  ]
+}

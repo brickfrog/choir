@@ -201,24 +201,16 @@ fn parse_args(data : String) -> Map[String, String] {
 pub fn parse_response(data : String) -> Result[@types.Response, String] {
   // Use a simple literal check for "ok": true or "ok": false since it's not a quoted string
   let ok_true_idx = index_of(data, "\"ok\": true")
-  let ok_true_idx_no_space = if ok_true_idx == -1 {
-    index_of(data, "\"ok\":true")
-  } else {
-    ok_true_idx
-  }
-
+  let ok_true_idx_no_space = if ok_true_idx == -1 { index_of(data, "\"ok\":true") } else { ok_true_idx }
+  
   if ok_true_idx_no_space != -1 {
     let result = parse_map(data, "result")
     return Ok(@types.Response::Ok(result))
   }
 
   let ok_false_idx = index_of(data, "\"ok\": false")
-  let ok_false_idx_no_space = if ok_false_idx == -1 {
-    index_of(data, "\"ok\":false")
-  } else {
-    ok_false_idx
-  }
-
+  let ok_false_idx_no_space = if ok_false_idx == -1 { index_of(data, "\"ok\":false") } else { ok_false_idx }
+  
   if ok_false_idx_no_space != -1 {
     let err_msg = match get_field(data, "error") {
       Some(e) => e

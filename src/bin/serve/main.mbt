@@ -4,7 +4,11 @@ extern "C" fn c_get_file_size(path : Bytes) -> Int = "choir_get_file_size"
 
 ///|
 #borrow(path, buf)
-extern "C" fn c_read_file_to_buf(path : Bytes, buf : Bytes, size : Int) = "choir_read_file_to_buf"
+extern "C" fn c_read_file_to_buf(
+  path : Bytes,
+  buf : Bytes,
+  size : Int
+) = "choir_read_file_to_buf"
 
 ///|
 extern "C" fn c_exit(code : Int) = "choir_exit"
@@ -36,8 +40,8 @@ fn read_file_to_string(path : String) -> String {
 ///|
 async fn handle_connection(
   conn : @socket.TCP,
-  state : @server.ServerState,
-) -> Unit {
+  state : @server.ServerState
+) -> Unit raise {
   let buf = FixedArray::make(4096, (0 : Byte))
   let mut read_pos = 0
   for {

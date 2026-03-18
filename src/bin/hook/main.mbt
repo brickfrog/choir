@@ -4,7 +4,11 @@ extern "C" fn c_get_file_size(path : Bytes) -> Int = "choir_get_file_size"
 
 ///|
 #borrow(path, buf)
-extern "C" fn c_read_file_to_buf(path : Bytes, buf : Bytes, size : Int) = "choir_read_file_to_buf"
+extern "C" fn c_read_file_to_buf(
+  path : Bytes,
+  buf : Bytes,
+  size : Int
+) = "choir_read_file_to_buf"
 
 ///|
 #borrow(buf)
@@ -71,7 +75,9 @@ fn main {
   }
 
   match config_map.get(hook_key) {
-    None => write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
+    None => {
+      write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
+    }
     Some(cmd_path) => {
       let cmd = @workspace.Command::{
         program: cmd_path,
@@ -79,12 +85,8 @@ fn main {
         workdir: None,
       }
       match @exec.run(cmd) {
-        Ok(0) =>
-          write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
-        _ =>
-          write_stdout(
-            @hooks.HookResponse::block("blocked").to_json_string() + "\n",
-          )
+        Ok(0) => write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
+        _ => write_stdout(@hooks.HookResponse::block("blocked").to_json_string() + "\n")
       }
     }
   }
