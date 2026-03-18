@@ -27,3 +27,57 @@ pub fn format_fixes_pushed(agent_id : String) -> String {
 pub fn format_review_timeout(agent_id : String) -> String {
   "[REVIEW TIMEOUT: " + agent_id + "]"
 }
+
+///|
+pub(all) enum DeliveryMethod {
+  TeamsInbox(String, String)
+  TmuxStdin(String, String)
+  TcpPush(String, String)
+} derive(Show, Eq)
+
+///|
+pub fn teams_inbox_json(
+  sender : String,
+  content : String,
+  status : String,
+) -> String {
+  "{\"from\":\"" +
+  sender +
+  "\",\"content\":\"" +
+  content +
+  "\",\"status\":\"" +
+  status +
+  "\"}"
+}
+
+///|
+pub fn teams_inbox_path(agent_name : String) -> String {
+  "~/.claude/teams/" + agent_name + "/inboxes/default.json"
+}
+
+///|
+pub fn plan_delivery(
+  agent : @types.Agent,
+  sender_id : String,
+  content : String,
+  status : String,
+) -> DeliveryMethod {
+  match agent.host {
+    Remote(_) => TcpPush(agent.agent_id, format_message(sender_id, content))
+    Local =>
+      match agent.agent_type {
+        Claude =>
+          TeamsInbox(
+            teams_inbox_path(agent.agent_id),
+            teams_inbox_json(sender_id, content, status),
+          )
+        Gemini | MoonPilot => {
+          let target = match agent.tmux_target {
+            Some(t) => t
+            None => agent.agent_id
+          }
+          TmuxStdin(target, format_message(sender_id, content))
+        }
+      }
+  }
+}
