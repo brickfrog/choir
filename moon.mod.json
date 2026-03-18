@@ -1,9 +1,9 @@
 {
   "name": "choir",
   "version": "0.1.0",
-  "readme": "README.md",
-  "license": "MIT",
   "deps": {
-    "moonbitlang/async": "0.1.0"
-  }
+    "moonbitlang/async": "0.4.0"
+  },
+  "readme": "README.md",
+  "license": "MIT"
 }

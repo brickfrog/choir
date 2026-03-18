@@ -1,5 +1,4 @@
 {
   "is-main": true,
-  "import": ["choir/src/hooks", "choir/src/config", "choir/src/exec", "choir/src/workspace"],
-  "options": { "native-stub": ["stub.c"] }
+  "import": ["choir/src/hooks", "choir/src/config", "choir/src/exec", "choir/src/workspace", "choir/src/io"]
 }

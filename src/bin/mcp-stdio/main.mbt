@@ -1,47 +1,4 @@
 ///|
-#borrow(path)
-extern "C" fn c_get_file_size(path : Bytes) -> Int = "choir_get_file_size"
-
-///|
-#borrow(path, buf)
-extern "C" fn c_read_file_to_buf(path : Bytes, buf : Bytes, size : Int) = "choir_read_file_to_buf"
-
-///|
-extern "C" fn c_exit(code : Int) = "choir_exit"
-
-///|
-#borrow(buf)
-extern "C" fn c_stdin_read_line(buf : Bytes, max_size : Int) -> Int = "choir_stdin_read_line"
-
-///|
-#borrow(buf)
-extern "C" fn c_stdout_write(buf : Bytes, size : Int) = "choir_stdout_write"
-
-///|
-fn string_to_null_terminated_bytes(s : String) -> Bytes {
-  let b = s.to_bytes()
-  let len = b.length()
-  let result = FixedArray::make(len + 1, (0 : Byte))
-  for i = 0; i < len; i = i + 1 {
-    result[i] = b[i]
-  }
-  result[len] = (0 : Byte)
-  result.unsafe_reinterpret_as_bytes()
-}
-
-///|
-fn read_file_to_string(path : String) -> String {
-  let path_bytes = string_to_null_terminated_bytes(path)
-  let size = c_get_file_size(path_bytes)
-  if size < 0 {
-    return ""
-  }
-  let buf = Bytes::new(size)
-  c_read_file_to_buf(path_bytes, buf, size)
-  buf.to_unchecked_string(offset=0, length=size)
-}
-
-///|
 struct TCPLineReader {
   conn : @socket.TCP
   buf : FixedArray[Byte]
@@ -88,7 +45,11 @@ async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
     }
 
     // Read more from TCP
-    let n = self.conn.recv(self.buf, offset=self.write_pos)
+    let n = self.conn.read(
+      self.buf,
+      offset=self.write_pos,
+      max_len=self.buf.length() - self.write_pos,
+    )
     if n == 0 {
       // Connection closed. If there's something left in buffer without newline, return it.
       if self.write_pos > self.read_pos {
@@ -107,17 +68,17 @@ async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
 
 ///|
 fn main_prog() -> Unit raise {
-  let config_content = read_file_to_string(".exo/config.toml")
+  let config_content = @io.read_file(".exo/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => {
       println("error: failed to parse .exo/config.toml")
-      c_exit(1)
+      @io.exit(1)
       @types.Config::default() // unreachable
     }
   }
 
-  let local_content = read_file_to_string(".exo/config.local.toml")
+  let local_content = @io.read_file(".exo/config.local.toml")
   let local_role = match @config.parse_config_local(local_content) {
     Ok(r) => Some(r)
     Err(_) => None
@@ -129,22 +90,22 @@ fn main_prog() -> Unit raise {
       Some(addr) => addr
       None => {
         println("error: listen_tcp not configured in .exo/config.toml")
-        c_exit(1)
+        @io.exit(1)
         ""
       }
     }
 
-    let conn = @socket.TCP::new()
-    ignore(conn..connect(@socket.Addr::parse(addr_str))) catch {
+    let conn = @socket.TCP::connect(@socket.Addr::parse(addr_str)) catch {
       err => {
         println("error: failed to connect to \{addr_str}: \{err}")
-        c_exit(1)
+        @io.exit(1)
+        raise err
       }
     }
 
     let reader = TCPLineReader::new(conn)
 
-    // Send registration to server: {"method":"register","role":"<role>","name":"<agent_id>","args":{}}
+    // Send registration to server
     let role_str = match role {
       @types.Role::Root => "root"
       @types.Role::TL => "tl"
@@ -153,7 +114,7 @@ fn main_prog() -> Unit raise {
     }
     let agent_id = match config.agent_id {
       Some(id) => id
-      None => "agent-" + role_str // fallback
+      None => "agent-" + role_str
     }
     // name = "register" so dispatch matches on call.name; agent_id in args
     let reg_msg = "{\"method\":\"register\",\"role\":\"" +
@@ -162,20 +123,18 @@ fn main_prog() -> Unit raise {
       agent_id +
       "\"}}\n"
     try {
-      conn.send(reg_msg.to_bytes())
+      conn.write(reg_msg.to_bytes())
       // Read and discard the registration response
       let _ = reader.read_line()
     } catch {
       err => {
         println("error: registration failed: \{err}")
-        c_exit(1)
+        @io.exit(1)
       }
     }
 
-    let stdin_buf = Bytes::new(8192)
-
     for {
-      let len = c_stdin_read_line(stdin_buf, 8192)
+      let (stdin_buf, len) = @io.read_stdin_line(8192)
       if len == 0 {
         break
       }
@@ -185,24 +144,19 @@ fn main_prog() -> Unit raise {
         Ok(rpc) =>
           if rpc.req_method == @mcp.method_tools_list {
             let resp = @mcp.tools_list_response(rpc.id)
-            let bytes = @mcp.response_to_bytes(resp)
-            c_stdout_write(bytes, bytes.length())
+            @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
           } else {
             let id = rpc.id
             match @mcp.to_internal_request(rpc, role) {
               Ok(internal_req) => {
-                // Convert to internal wire format JSON + \n
-                // Internal wire format for Request: {"method":"<req_method>","role":"<role>","name":"<name>","args":{...}}
                 let req_method = internal_req.req_method
-                let role_str = match internal_req.role {
+                let role_str2 = match internal_req.role {
                   @types.Role::Root => "root"
                   @types.Role::TL => "tl"
                   @types.Role::Dev => "dev"
                   @types.Role::Worker => "worker"
                 }
                 let name = internal_req.name
-
-                // Map args to JSON string
                 let args_buf = StringBuilder::new()
                 args_buf.write_char('{')
                 let mut first = true
@@ -210,32 +164,27 @@ fn main_prog() -> Unit raise {
                   if not(first) {
                     args_buf.write_char(',')
                   }
-                  args_buf.write_string("\"" + k + "\":\"" + v + "\"") // Simplified escaping for now, mcp/serialize has better
+                  args_buf.write_string("\"" + k + "\":\"" + v + "\"")
                   first = false
                 })
                 args_buf.write_char('}')
-
-                let wire_req = "{\"method\":\"\{req_method}\",\"role\":\"\{role_str}\",\"name\":\"\{name}\",\"args\":\{args_buf.to_string()}}\n"
+                let wire_req = "{\"method\":\"\{req_method}\",\"role\":\"\{role_str2}\",\"name\":\"\{name}\",\"args\":\{args_buf.to_string()}}\n"
 
                 try {
-                  conn.send(wire_req.to_bytes())
+                  conn.write(wire_req.to_bytes())
                   let resp_line = reader.read_line()
                   if resp_line == "" {
                     let err_resp = @mcp.error_response(
                       id, @mcp.err_internal, "server connection closed",
                     )
-                    c_stdout_write(
-                      @mcp.response_to_bytes(err_resp),
-                      @mcp.response_to_bytes(err_resp).length(),
-                    )
+                    @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
                   } else {
                     match @transport.parse_response(resp_line) {
                       Ok(internal_resp) => {
                         let rpc_resp = @mcp.from_internal_response(
                           id, internal_resp,
                         )
-                        let bytes = @mcp.response_to_bytes(rpc_resp)
-                        c_stdout_write(bytes, bytes.length())
+                        @io.write_stdout_bytes(@mcp.response_to_bytes(rpc_resp))
                       }
                       Err(e) => {
                         let err_resp = @mcp.error_response(
@@ -243,10 +192,7 @@ fn main_prog() -> Unit raise {
                           @mcp.err_internal,
                           "failed to parse server response: " + e,
                         )
-                        c_stdout_write(
-                          @mcp.response_to_bytes(err_resp),
-                          @mcp.response_to_bytes(err_resp).length(),
-                        )
+                        @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
                       }
                     }
                   }
@@ -257,27 +203,19 @@ fn main_prog() -> Unit raise {
                       @mcp.err_internal,
                       "TCP error: \{err}",
                     )
-                    c_stdout_write(
-                      @mcp.response_to_bytes(err_resp),
-                      @mcp.response_to_bytes(err_resp).length(),
-                    )
+                    @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
                   }
                 }
               }
               Err(e) => {
                 let err_resp = @mcp.error_response(id, e.code, e.message)
-                let bytes = @mcp.response_to_bytes(err_resp)
-                c_stdout_write(bytes, bytes.length())
+                @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
               }
             }
           }
         Err(e) => {
-          // If we can't parse ID, we use 0 or something. 
-          // MCP spec says if id is missing/invalid, return null for id if possible.
-          // But our JsonRpcResponse.id is Int.
           let err_resp = @mcp.error_response(0, e.code, e.message)
-          let bytes = @mcp.response_to_bytes(err_resp)
-          c_stdout_write(bytes, bytes.length())
+          @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
         }
       }
     }

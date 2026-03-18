@@ -1,51 +1,12 @@
 ///|
-#borrow(path)
-extern "C" fn c_get_file_size(path : Bytes) -> Int = "choir_get_file_size"
-
-///|
-#borrow(path, buf)
-extern "C" fn c_read_file_to_buf(
-  path : Bytes,
-  buf : Bytes,
-  size : Int
-) = "choir_read_file_to_buf"
-
-///|
-extern "C" fn c_exit(code : Int) = "choir_exit"
-
-///|
-fn string_to_null_terminated_bytes(s : String) -> Bytes {
-  let b = s.to_bytes()
-  let len = b.length()
-  let result = FixedArray::make(len + 1, (0 : Byte))
-  for i = 0; i < len; i = i + 1 {
-    result[i] = b[i]
-  }
-  result[len] = (0 : Byte)
-  result.unsafe_reinterpret_as_bytes()
-}
-
-///|
-fn read_file_to_string(path : String) -> String {
-  let path_bytes = string_to_null_terminated_bytes(path)
-  let size = c_get_file_size(path_bytes)
-  if size < 0 {
-    return ""
-  }
-  let buf = Bytes::new(size)
-  c_read_file_to_buf(path_bytes, buf, size)
-  buf.to_unchecked_string(offset=0, length=size)
-}
-
-///|
 async fn handle_connection(
   conn : @socket.TCP,
-  state : @server.ServerState
-) -> Unit raise {
+  state : @server.ServerState,
+) -> Unit {
   let buf = FixedArray::make(4096, (0 : Byte))
   let mut read_pos = 0
   for {
-    let n = conn.recv(buf, offset=read_pos)
+    let n = conn.read(buf, offset=read_pos, max_len=buf.length() - read_pos)
     if n == 0 {
       break
     }
@@ -60,11 +21,11 @@ async fn handle_connection(
           Ok(req) => {
             let resp = state.handle(req)
             let resp_str = @transport.format_response(resp) + "\n"
-            conn.send(resp_str.to_bytes())
+            conn.write(resp_str.to_bytes())
           }
           Err(err) => {
             let resp = @types.Response::Err("parse error: " + err)
-            conn.send((@transport.format_response(resp) + "\n").to_bytes())
+            conn.write((@transport.format_response(resp) + "\n").to_bytes())
           }
         }
         let remaining = read_pos - (i + 1)
@@ -87,7 +48,7 @@ async fn handle_connection(
 
 ///|
 fn main_prog() -> Unit raise {
-  let config_content = read_file_to_string(".exo/config.toml")
+  let config_content = @io.read_file(".exo/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
@@ -96,12 +57,11 @@ fn main_prog() -> Unit raise {
   @async.with_event_loop(fn(root) {
     match config.listen_tcp {
       Some(addr_str) => {
-        let listen_sock = @socket.TCP::new()
+        let server = @socket.TCPServer::new(@socket.Addr::parse(addr_str))
         try {
-          listen_sock..bind(@socket.Addr::parse(addr_str))..listen()
           println("TCP server listening on \{addr_str}")
           for {
-            let (conn, addr) = listen_sock.accept()
+            let (conn, addr) = server.accept()
             println("connection from \{addr}")
             root.spawn_bg(fn() {
               handle_connection(conn, state) catch {
@@ -112,7 +72,7 @@ fn main_prog() -> Unit raise {
           }
         } catch {
           err => {
-            listen_sock.close()
+            server.close()
             raise err
           }
         }

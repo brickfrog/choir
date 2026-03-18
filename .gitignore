@@ -1,4 +1,5 @@
 target/
+.mooncakes/
 .exo/
 .mcp.json
 .claude/settings.local.json
@@ -11,3 +12,4 @@ target/
 !.exo/rules/
 test_syntax.mbt
 _build/
+.serena/
