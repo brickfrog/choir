@@ -26,44 +26,24 @@ pub fn command_to_shell_string(cmd : @workspace.Command) -> String {
 }
 
 ///|
-pub fn run(cmd : @workspace.Command) -> Result[Int, String] {
-  let shell_str = command_to_shell_string(cmd)
-  let bytes = string_to_null_terminated_bytes(shell_str)
-  let status = c_system(bytes)
-  if status == -1 {
-    Err("system() failed")
-  } else {
-    Ok(status)
+pub async fn run(cmd : @workspace.Command) -> Int {
+  let prog = cmd.program.to_bytes()
+  let args = cmd.args.map(fn(a) { a.to_bytes() })
+  match cmd.workdir {
+    Some(dir) => @process.run(prog, args, cwd=dir.to_bytes())
+    None => @process.run(prog, args)
   }
 }
 
 ///|
-pub fn run_sequence(
-  cmds : Array[@workspace.Command],
-) -> Result[Array[Int], String] {
+pub async fn run_sequence(cmds : Array[@workspace.Command]) -> Array[Int] {
   let results = []
   for cmd in cmds {
-    match run(cmd) {
-      Ok(status) => {
-        results.push(status)
-        if status != 0 {
-          return Ok(results)
-        }
-      }
-      Err(err) => return Err(err)
+    let status = run(cmd)
+    results.push(status)
+    if status != 0 {
+      return results
     }
   }
-  Ok(results)
-}
-
-///|
-fn string_to_null_terminated_bytes(s : String) -> Bytes {
-  let b = s.to_bytes()
-  let len = b.length()
-  let result = FixedArray::make(len + 1, (0 : Byte))
-  for i = 0; i < len; i = i + 1 {
-    result[i] = b[i]
-  }
-  result[len] = (0 : Byte)
-  result.unsafe_reinterpret_as_bytes()
+  results
 }

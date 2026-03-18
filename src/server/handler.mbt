@@ -1,5 +1,5 @@
 ///|
-pub fn ServerState::handle(
+pub async fn ServerState::handle(
   self : ServerState,
   req : @types.Request,
 ) -> @types.Response {

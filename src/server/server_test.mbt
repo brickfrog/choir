@@ -15,28 +15,32 @@ fn build_agent(id : String, parent : String?) -> @types.Agent {
 
 ///|
 test "ServerState::handle valid request returns Ok" {
-  let state = ServerState::new(@types.Config::default())
-  let req = @types.Request::{
-    req_method: "tools/call",
-    role: @types.Role::Dev,
-    name: "task_list",
-    args: {},
-  }
-  let res = state.handle(req)
-  assert_true(res is Ok(_))
+  @async.with_event_loop(fn(_) {
+    let state = ServerState::new(@types.Config::default())
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::Dev,
+      name: "task_list",
+      args: {},
+    }
+    let res = state.handle(req)
+    assert_true(res is Ok(_))
+  })
 }
 
 ///|
 test "ServerState::handle invalid role returns Err" {
-  let state = ServerState::new(@types.Config::default())
-  let req = @types.Request::{
-    req_method: "tools/call",
-    role: @types.Role::Dev,
-    name: "fork_wave",
-    args: {},
-  }
-  let res = state.handle(req)
-  assert_true(res is Err(_))
+  @async.with_event_loop(fn(_) {
+    let state = ServerState::new(@types.Config::default())
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::Dev,
+      name: "fork_wave",
+      args: {},
+    }
+    let res = state.handle(req)
+    assert_true(res is Err(_))
+  })
 }
 
 ///|

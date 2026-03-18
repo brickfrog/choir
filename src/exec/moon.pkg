@@ -1,8 +1,8 @@
 import {
   "choir/src/workspace",
+  "moonbitlang/async/process",
 }
 
 options(
   "is-main": false,
-  "native-stub": [ "stub.c" ],
 )

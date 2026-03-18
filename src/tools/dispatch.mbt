@@ -60,28 +60,24 @@ fn validate_branch(s : String) -> Result[Unit, String] {
 }
 
 ///|
-fn run_strict(
-  runner : (Array[@workspace.Command]) -> Result[Array[Int], String],
+async fn run_strict(
+  runner : async (Array[@workspace.Command]) -> Array[Int],
   cmds : Array[@workspace.Command],
 ) -> Result[Unit, String] {
-  match runner(cmds) {
-    Ok(statuses) => {
-      if statuses.length() > 0 {
-        let last = statuses[statuses.length() - 1]
-        if last != 0 {
-          return Err("command failed with status " + last.to_string())
-        }
-      }
-      Ok(())
+  let statuses = runner(cmds) catch { e => return Err(e.to_string()) }
+  if statuses.length() > 0 {
+    let last = statuses[statuses.length() - 1]
+    if last != 0 {
+      return Err("command failed with status " + last.to_string())
     }
-    Err(e) => Err(e)
   }
+  Ok(())
 }
 
 ///|
-fn execute_delivery(
+async fn execute_delivery(
   delivery : @message.DeliveryMethod,
-  runner : (Array[@workspace.Command]) -> Result[Array[Int], String],
+  runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Result[Unit, String] {
   match delivery {
     @message.DeliveryMethod::TeamsInbox(path, json) => {
@@ -90,28 +86,24 @@ fn execute_delivery(
         args: ["-c", "printf '%s\\n' '" + json + "' >> " + path],
         workdir: Some("."),
       }
-      match runner([cmd]) {
-        Ok(_) => Ok(())
-        Err(e) => Err(e)
-      }
+      ignore(runner([cmd]) catch { e => return Err(e.to_string()) })
+      Ok(())
     }
     @message.DeliveryMethod::TmuxStdin(target, text) => {
       let cmd = @workspace.tmux_send_keys(target, text)
-      match runner([cmd]) {
-        Ok(_) => Ok(())
-        Err(e) => Err(e)
-      }
+      ignore(runner([cmd]) catch { e => return Err(e.to_string()) })
+      Ok(())
     }
     @message.DeliveryMethod::TcpPush(_, _) => Ok(()) // Phase 2
   }
 }
 
 ///|
-pub fn dispatch(
+pub async fn dispatch(
   call : ToolCall,
   project_dir? : String = ".",
   session? : String = "exomonad",
-  runner? : (Array[@workspace.Command]) -> Result[Array[Int], String] = @exec.run_sequence,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   registry? : @registry.AgentRegistry? = None,
 ) -> @types.Response {
   match call.name {
@@ -382,12 +374,12 @@ pub fn dispatch(
 }
 
 ///|
-pub fn handle_request(
+pub async fn handle_request(
   registry : ToolRegistry,
   req : @types.Request,
   project_dir? : String = ".",
   session? : String = "exomonad",
-  runner? : (Array[@workspace.Command]) -> Result[Array[Int], String] = @exec.run_sequence,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   agent_registry? : @registry.AgentRegistry? = None,
 ) -> @types.Response {
   match registry.lookup(req.role, req.name) {
