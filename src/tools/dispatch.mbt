@@ -120,7 +120,7 @@ pub fn dispatch(
         Some(reg) => {
           let agent_id = match call.args.get("agent_id") {
             Some(v) => v
-            None => call.name // name field carries agent_id in register requests
+            None => "anonymous"
           }
           let role = call.role
           let agent = @types.Agent::{

@@ -155,11 +155,12 @@ fn main_prog() -> Unit raise {
       Some(id) => id
       None => "agent-" + role_str // fallback
     }
+    // name = "register" so dispatch matches on call.name; agent_id in args
     let reg_msg = "{\"method\":\"register\",\"role\":\"" +
       role_str +
-      "\",\"name\":\"" +
+      "\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
       agent_id +
-      "\",\"args\":{}}\n"
+      "\"}}\n"
     try {
       conn.send(reg_msg.to_bytes())
       // Read and discard the registration response
