@@ -3,3 +3,9 @@ target/
 .mcp.json
 .claude/settings.local.json
 .moonagent/
+# ExoMonad - track config and source, ignore runtime artifacts
+.exo/*
+!.exo/config.toml
+!.exo/roles/
+!.exo/lib/
+!.exo/rules/

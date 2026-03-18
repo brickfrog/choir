@@ -1,0 +1,3 @@
+# Choir — exomonad config
+default_role = "tl"
+yolo = true
