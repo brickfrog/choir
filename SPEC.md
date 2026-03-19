@@ -533,9 +533,17 @@ Merging follows a recursive fold up the tree: leaf → sub-TL → TL → main.
 
 ### 11.3 `merge_pr`
 
-1. `gh pr merge {number} --merge`
-2. `git fetch` to update local refs
-3. Auto-rebase if needed
+1. Auto-acquire mutex `branch:{parent_branch}` with a short TTL (default 120s)
+2. `gh pr merge {number} --merge`
+3. `git fetch` to update local refs
+4. Release mutex `branch:{parent_branch}`
+
+The auto-acquire serializes concurrent merges to the same parent branch without requiring
+the TL to manage locks explicitly. The TL may also acquire the mutex manually beforehand
+(e.g., to hold the lock across merge + rebase + merge sequences). If the auto-acquire finds
+the TL already holds the lock, it is treated as idempotent and proceeds.
+
+The mutex is released even on failure — a failed merge does not block subsequent agents.
 
 ### 11.4 Convergence Protocol
 
@@ -902,7 +910,7 @@ fn handle_request(state: State, req: Request) -> Response:
 - [ ] KV store (`kv_get`, `kv_set`, `kv_delete`) persisted to `.exo/kv/`
 - [ ] Standalone isolation mode
 - [ ] Context inheritance (`fork_session`)
-- [ ] Mutex registry with FIFO queues and TTL
+- [ ] Mutex registry with FIFO queues and TTL (primary use case: `branch:{name}` locks for merge serialization)
 
 ### 19.3 Future Extensions
 
