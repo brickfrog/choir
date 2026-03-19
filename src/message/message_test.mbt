@@ -65,6 +65,26 @@ test "plan delivery for Gemini agent -> TmuxStdin" {
 }
 
 ///|
+test "plan delivery for MoonPilot agent -> UdsHttp" {
+  let agent : @types.Agent = {
+    agent_id: "agent-moonpilot",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::MoonPilot,
+    parent: None,
+    workspace: "ws1",
+    branch: "main",
+    tmux_target: Some("unused-target"),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+  }
+  let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
+  let expected = @message.DeliveryMethod::UdsHttp(
+    ".choir/agents/agent-moonpilot/notify.sock", "{\"from\":\"sender-1\",\"content\":\"hi\",\"status\":\"Success\"}",
+  )
+  assert_eq(res, expected)
+}
+
+///|
 test "plan delivery for Remote agent -> TcpPush" {
   let agent : @types.Agent = {
     agent_id: "agent-remote",

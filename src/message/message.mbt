@@ -33,6 +33,7 @@ pub(all) enum DeliveryMethod {
   TeamsInbox(String, String)
   TmuxStdin(String, String)
   TcpPush(String, String)
+  UdsHttp(String, String)
 } derive(Show, Eq)
 
 ///|
@@ -71,12 +72,16 @@ pub fn plan_delivery(
             teams_inbox_path(agent.agent_id),
             teams_inbox_json(sender_id, content, status),
           )
-        Gemini | MoonPilot => {
+        Gemini => {
           let target = match agent.tmux_target {
             Some(t) => t
             None => agent.agent_id
           }
           TmuxStdin(target, format_message(sender_id, content))
+        }
+        MoonPilot => {
+          let sock_path = ".choir/agents/" + agent.agent_id + "/notify.sock"
+          UdsHttp(sock_path, teams_inbox_json(sender_id, content, status))
         }
       }
   }

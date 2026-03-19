@@ -1,6 +1,8 @@
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -81,4 +83,45 @@ int choir_uds_write(int fd, const void *buf, int offset, int len) {
 
 void choir_uds_close(int fd) {
     close(fd);
+}
+
+/* Fire-and-forget HTTP POST to a Unix domain socket.
+   Returns 0 on success, -1 on failure.
+   5-second send/recv timeout so a dead agent never blocks the server. */
+int choir_uds_http_post(const char *sock_path, int path_len,
+                        const char *body, int body_len) {
+    struct sockaddr_un addr;
+    if (choir_copy_uds_path(&addr, sock_path, path_len) != 0) return -1;
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    struct timeval tv = {5, 0};
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        return -1;
+    }
+
+    char header[256];
+    int header_len = snprintf(header, sizeof(header),
+        "POST / HTTP/1.0\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %d\r\n"
+        "\r\n",
+        body_len);
+
+    write(fd, header, (size_t)header_len);
+    if (body_len > 0) {
+        write(fd, body, (size_t)body_len);
+    }
+
+    /* Drain response to avoid connection reset on the agent side */
+    char resp[256];
+    read(fd, resp, sizeof(resp));
+
+    close(fd);
+    return 0;
 }

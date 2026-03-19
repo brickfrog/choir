@@ -31,6 +31,15 @@ extern "C" fn uds_write_ffi(
 extern "C" fn uds_close_ffi(fd : Int) = "choir_uds_close"
 
 ///|
+#borrow(path, body)
+extern "C" fn uds_http_post_ffi(
+  path : Bytes,
+  path_len : Int,
+  body : Bytes,
+  body_len : Int,
+) -> Int = "choir_uds_http_post"
+
+///|
 fn string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
   let encoded = @utf8.encode(s)
   let len = encoded.length()
@@ -77,4 +86,11 @@ pub fn write_bytes(fd : Int, buf : Bytes, offset : Int, len : Int) -> Int {
 ///|
 pub fn close(fd : Int) -> Unit {
   uds_close_ffi(fd)
+}
+
+///|
+pub fn http_post(sock_path : String, body : String) -> Int {
+  let (path_bytes, path_len) = string_to_null_terminated_bytes(sock_path)
+  let body_encoded = @utf8.encode(body)
+  uds_http_post_ffi(path_bytes, path_len, body_encoded, body_encoded.length())
 }

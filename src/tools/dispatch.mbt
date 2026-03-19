@@ -131,6 +131,14 @@ pub async fn execute_delivery(
       Ok(())
     }
     @message.DeliveryMethod::TcpPush(_, _) => Ok(()) // Phase 2
+    @message.DeliveryMethod::UdsHttp(sock_path, body) => {
+      let result = @uds.http_post(sock_path, body)
+      if result == 0 {
+        Ok(())
+      } else {
+        Ok(())
+      }
+    }
   }
 }
 
