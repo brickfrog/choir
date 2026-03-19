@@ -8,6 +8,15 @@ This spec describes the orchestration service that manages heterogeneous coding 
 It does not describe the agents themselves — they are external processes (Claude CLI, Gemini CLI,
 Moon Pilot) driven by specs and communicating via MCP, tmux, or file-based protocols.
 
+### Conceptual Model: Hylomorphism Over Context Windows
+
+The system is a hylomorphism over agent context windows:
+
+- **Unfold** (anamorphism): scaffold the task tree — spawn agents, create worktrees, decompose work into branches
+- **Fold** (catamorphism): integrate results — merge PRs, notify parents, collapse the tree back toward main
+
+The orchestrator provides the structural recursion primitives. The TL agent decides how deep to unfold and when to fold. Each context window is a node in the tree; the orchestrator manages the edges.
+
 ---
 
 ## 1. Problem Statement
@@ -280,8 +289,9 @@ for arguments, and a handler function.
 
 | Tool | Roles | Description |
 |------|-------|-------------|
-| `fork_wave` | root, tl | Spawn N parallel Claude agents in worktrees |
-| `spawn_gemini` | root, tl | Spawn Gemini agent (worktree, inline, or standalone) |
+| `fork_wave` | root, tl | Spawn N parallel Claude agents in worktrees with own branches + PRs |
+| `spawn_gemini` | root, tl | Spawn Gemini agent in a worktree with own branch + PR (structured spec fields) |
+| `spawn_worker` | root, tl | Spawn ephemeral pane worker (any agent type, no branch, no PR, research/in-place) |
 | `file_pr` | tl, dev | Create or update PR for current branch |
 | `merge_pr` | root, tl | Merge a child's PR |
 | `notify_parent` | tl, dev, worker | Send message to parent agent |
@@ -290,6 +300,9 @@ for arguments, and a handler function.
 | `task_list` | dev, worker | List tasks from shared task list |
 | `task_get` | dev, worker | Get task by ID |
 | `task_update` | dev, worker | Update task status/owner |
+| `kv_get` | all | Read a key from the persistent KV store |
+| `kv_set` | all | Write a key-value pair to the persistent KV store |
+| `kv_delete` | all | Delete a key from the persistent KV store |
 
 ### 6.2 Tool Call Flow
 
@@ -349,11 +362,19 @@ listen_tcp = ""                  # opt-in, e.g. "0.0.0.0:9100"
 
 # Observability
 otlp_endpoint = ""               # e.g. "http://localhost:4317"
+
+# Extra MCP servers — propagated to .mcp.json for all agents
+# Each section becomes an entry in mcpServers{}
+# [extra_mcp_servers.notebooklm]
+# type = "stdio"
+# command = "node"
+# args = ["/path/to/notebooklm-mcp/index.js"]
 ```
 
 ### 7.4 MCP Client Registration
 
-The orchestrator writes `.mcp.json` during init to register itself as an MCP server:
+The orchestrator writes `.mcp.json` during init (and on each `spawn_agent`) to register itself
+plus any extra MCP servers from config:
 
 ```json
 {
@@ -362,10 +383,19 @@ The orchestrator writes `.mcp.json` during init to register itself as an MCP ser
       "type": "stdio",
       "command": "exomonad",
       "args": ["mcp-stdio", "--role", "tl", "--name", "root"]
+    },
+    "notebooklm": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/path/to/notebooklm-mcp/index.js"]
     }
   }
 }
 ```
+
+`extra_mcp_servers` entries from `config.toml` are merged into every `.mcp.json` the server
+generates. This allows opt-in tooling (NotebookLM, custom MCPs) to be available to all agents
+without per-agent configuration.
 
 ---
 
@@ -556,7 +586,43 @@ Configurable, default 30 seconds. Uses `gh api` to batch-query PR status for all
 
 ---
 
-## 13. Observability
+## 13. KV Store
+
+### 13.1 Purpose
+
+Persistent key-value storage scoped to a swarm run. Agents can persist data across tool calls
+and across context window boundaries. Useful for: task state, intermediate results, shared
+coordination signals (e.g., "component X is claimed by agent Y").
+
+### 13.2 Semantics
+
+- **Scope**: per run_id. All agents in a swarm share one KV namespace.
+- **Key format**: UTF-8 string, max 256 chars. Suggested convention: `{agent_id}/{key}` for
+  private keys, `shared/{key}` for cross-agent coordination.
+- **Value format**: JSON. No schema enforcement — agents define their own.
+- **Persistence**: written to `.exo/kv/{run_id}.json` on each mutation. Survives server restart.
+- **No TTL**: keys live until the run ends or are explicitly deleted.
+- **No transactions**: last-writer-wins. Agents must coordinate externally if atomicity matters.
+
+### 13.3 Storage
+
+```
+.exo/
+└── kv/
+    └── {run_id}.json        # flat JSON object: { "key": value, ... }
+```
+
+### 13.4 API
+
+| Tool | Args | Returns |
+|------|------|---------|
+| `kv_get` | `key: String` | `{ value: JSON \| null }` |
+| `kv_set` | `key: String, value: JSON` | `{ ok: true }` |
+| `kv_delete` | `key: String` | `{ ok: true }` |
+
+---
+
+## 14. Observability
 
 ### 13.1 Logging
 
@@ -585,7 +651,7 @@ curl 'http://localhost:3200/api/search?q={span.agent_id="worker-1" && span:statu
 
 ---
 
-## 14. Failure Model
+## 15. Failure Model
 
 ### 14.1 Failure Classes
 
@@ -617,7 +683,7 @@ process stays alive (it's the MCP client's child), retries server connection, an
 
 ---
 
-## 15. Security
+## 16. Security
 
 ### 15.1 Trust Boundary
 
@@ -647,7 +713,7 @@ authentication, no authorization beyond role-based tool gating.
 
 ---
 
-## 16. Reference Algorithms
+## 17. Reference Algorithms
 
 ### 16.1 Server Startup
 
@@ -728,7 +794,7 @@ fn handle_request(state: State, req: Request) -> Response:
 
 ---
 
-## 17. Test and Validation Matrix
+## 18. Test and Validation Matrix
 
 ### 17.1 Transport
 
@@ -773,26 +839,33 @@ fn handle_request(state: State, req: Request) -> Response:
 - Agent failure notifies parent with `[FAILED]` status
 - Critical phase protection blocks premature shutdown
 
-### 17.7 GitHub Poller
+### 17.7 KV Store
+
+- `kv_set` persists to `.exo/kv/{run_id}.json`
+- `kv_get` on missing key returns `{ value: null }`
+- `kv_delete` on missing key is idempotent, returns `{ ok: true }`
+- KV state survives server restart
+
+### 17.8 GitHub Poller
 
 - Detects new review comments and injects into agent pane
 - Detects approval and notifies parent
 - Detects push after `ChangesRequested` and fires `FixesPushed`
 - Fires timeout after configured interval with no review
 
-### 17.8 Configuration
+### 17.9 Configuration
 
 - `config.local.toml` role overrides `config.toml` default_role
 - Missing config files use sane defaults
 - Invalid config surfaces clear error message
 
-### 17.9 Server Recovery
+### 17.10 Server Recovery
 
 - Server restart reconstructs agent registry from filesystem
 - Server restart resumes GitHub poller for open PRs
 - `mcp-stdio` reconnects after server restart
 
-### 17.10 Integration
+### 17.11 Integration
 
 - Full loop: spawn agent → agent works → files PR → Copilot reviews → notify parent → merge
 - Multi-agent: spawn 3 parallel agents, all complete and merge without conflict
@@ -800,41 +873,45 @@ fn handle_request(state: State, req: Request) -> Response:
 
 ---
 
-## 18. Implementation Checklist
+## 19. Implementation Checklist
 
-### 18.1 Required for MVP
+### 19.1 Required for MVP
 
 - [ ] Server with UDS transport (`exomonad serve`)
 - [ ] MCP stdio translator (`exomonad mcp-stdio`)
 - [ ] Tool registry with role-based gating
 - [ ] `fork_wave` (Claude agent spawning)
-- [ ] `spawn_gemini` (Gemini agent spawning, worktree + inline modes)
+- [ ] `spawn_gemini` (Gemini agent spawning, worktree mode)
+- [ ] `spawn_worker` (ephemeral pane worker, any agent type, no branch)
 - [ ] `file_pr` and `merge_pr`
 - [ ] `notify_parent` with Teams inbox delivery + tmux fallback
 - [ ] `send_message`
 - [ ] In-memory agent registry
 - [ ] Workspace manager (git worktree + tmux)
-- [ ] Config file parsing (TOML)
+- [ ] Config file parsing (TOML, including `extra_mcp_servers`)
 - [ ] Hook protocol (session-start, pre-tool-use)
 - [ ] Structured logging
 
-### 18.2 Required for Production
+### 19.2 Required for Production
 
 - [ ] GitHub poller (background task in server)
 - [ ] Server restart recovery (reconstruct state from filesystem)
 - [ ] OTel span export
 - [ ] `shutdown` with critical phase protection
-- [ ] Task list tools (task_list, task_get, task_update)
+- [ ] Task list tools (`task_list`, `task_get`, `task_update`)
+- [ ] KV store (`kv_get`, `kv_set`, `kv_delete`) persisted to `.exo/kv/`
 - [ ] Standalone isolation mode
 - [ ] Context inheritance (`fork_session`)
 - [ ] Mutex registry with FIFO queues and TTL
 
-### 18.3 Future Extensions
+### 19.3 Future Extensions
 
 - [ ] TCP transport (for remote/SSH agents)
 - [ ] Moon Pilot agent type
 - [ ] ASP adapter for Moon Pilot messaging
 - [ ] Remote workspace management (SSH, see Appendix A)
+- [ ] GitHub REST client library (replace `gh` CLI subprocess calls with typed HTTP client)
+- [ ] NotebookLM MCP integration (opt-in browser-automation MCP, configure via `extra_mcp_servers`)
 
 ---
 
