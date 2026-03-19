@@ -54,28 +54,140 @@ pub fn initialize_response(id : Int) -> JsonRpcResponse {
 }
 
 ///|
+fn schema(props : String, required : String) -> String {
+  "{\"type\":\"object\",\"properties\":{" +
+  props +
+  "},\"required\":[" +
+  required +
+  "]}"
+}
+
+///|
+fn prop(name : String, desc : String) -> String {
+  "\"" + name + "\":{\"type\":\"string\",\"description\":\"" + desc + "\"}"
+}
+
+///|
 /// Create a JSON-RPC response with the list of available tools.
 pub fn tools_list_response(id : Int) -> JsonRpcResponse {
+  let s = schema
+  let p = prop
   let tools_json = "[" +
-    "{\"name\":\"fork_wave\",\"description\":\"Fork a new wave of worker agents\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"file_pr\",\"description\":\"File a pull request for the current branch\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"merge_pr\",\"description\":\"Merge a pull request by number\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"track_pr\",\"description\":\"Track a pull request in the background poller\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"notify_parent\",\"description\":\"Notify the parent agent with a status update\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"send_message\",\"description\":\"Send a message to another agent\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"spawn_gemini\",\"description\":\"Spawn a Gemini leaf agent in a new worktree\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"spawn_moon_pilot\",\"description\":\"Spawn a Moon Pilot leaf agent in a new worktree\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"spawn_worker\",\"description\":\"Spawn an inline worker agent\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"kv_get\",\"description\":\"Read one value from shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"kv_set\",\"description\":\"Write one value to shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"kv_delete\",\"description\":\"Delete one value from shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"mutex_acquire\",\"description\":\"Acquire an in-memory coordination mutex\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"mutex_release\",\"description\":\"Release an in-memory coordination mutex\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"mutex_status\",\"description\":\"Inspect an in-memory coordination mutex\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"task_list\",\"description\":\"List tasks from shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"task_get\",\"description\":\"Get one task from shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"task_update\",\"description\":\"Update one task in shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
-    "{\"name\":\"shutdown\",\"description\":\"Shutdown the server\",\"inputSchema\":{\"type\":\"object\"}}" +
+    "{\"name\":\"fork_wave\",\"description\":\"Fork a new wave of worker agents in a new git worktree\",\"inputSchema\":" +
+    s(
+      p("task", "Task description for the wave") +
+      "," +
+      p("branch", "Branch name for the worktree") +
+      "," +
+      p("count", "Number of workers to spawn (default 1)"),
+      "\"task\",\"branch\"",
+    ) +
+    "}," +
+    "{\"name\":\"file_pr\",\"description\":\"File a pull request for the current branch\",\"inputSchema\":" +
+    s(p("agent_id", "ID of the agent filing the PR"), "\"agent_id\"") +
+    "}," +
+    "{\"name\":\"merge_pr\",\"description\":\"Merge a pull request by number\",\"inputSchema\":" +
+    s(
+      p("pr_number", "Pull request number to merge") +
+      "," +
+      p("parent_branch", "Branch to merge into"),
+      "\"pr_number\",\"parent_branch\"",
+    ) +
+    "}," +
+    "{\"name\":\"track_pr\",\"description\":\"Track a pull request in the background poller\",\"inputSchema\":" +
+    s(
+      p("pr_number", "Pull request number to track") +
+      "," +
+      p("agent_id", "Agent ID to notify on events"),
+      "\"pr_number\",\"agent_id\"",
+    ) +
+    "}," +
+    "{\"name\":\"notify_parent\",\"description\":\"Notify the parent agent with a status update\",\"inputSchema\":" +
+    s(
+      p("caller_id", "ID of the calling agent") +
+      "," +
+      p("message", "Message to send to parent"),
+      "\"caller_id\",\"message\"",
+    ) +
+    "}," +
+    "{\"name\":\"send_message\",\"description\":\"Send a message to another agent\",\"inputSchema\":" +
+    s(
+      p("target_id", "ID of the target agent") +
+      "," +
+      p("message", "Message content to send"),
+      "\"target_id\",\"message\"",
+    ) +
+    "}," +
+    "{\"name\":\"spawn_gemini\",\"description\":\"Spawn a Gemini leaf agent in a new worktree\",\"inputSchema\":" +
+    s(
+      p("task", "Task for the Gemini agent") +
+      "," +
+      p("branch", "Branch name for the worktree"),
+      "\"task\",\"branch\"",
+    ) +
+    "}," +
+    "{\"name\":\"spawn_moon_pilot\",\"description\":\"Spawn a Moon Pilot leaf agent in a new worktree\",\"inputSchema\":" +
+    s(
+      p("task", "Task for the Moon Pilot agent") +
+      "," +
+      p("branch", "Branch name for the worktree"),
+      "\"task\",\"branch\"",
+    ) +
+    "}," +
+    "{\"name\":\"spawn_worker\",\"description\":\"Spawn an inline worker agent in a tmux window\",\"inputSchema\":" +
+    s(
+      p("task", "Task for the worker agent") +
+      "," +
+      p("agent_id", "ID to assign the worker"),
+      "\"task\",\"agent_id\"",
+    ) +
+    "}," +
+    "{\"name\":\"kv_get\",\"description\":\"Read one value from shared KV storage\",\"inputSchema\":" +
+    s(p("key", "Storage key to read"), "\"key\"") +
+    "}," +
+    "{\"name\":\"kv_set\",\"description\":\"Write one value to shared KV storage\",\"inputSchema\":" +
+    s(
+      p("key", "Storage key to write") + "," + p("value", "Value to store"),
+      "\"key\",\"value\"",
+    ) +
+    "}," +
+    "{\"name\":\"kv_delete\",\"description\":\"Delete one value from shared KV storage\",\"inputSchema\":" +
+    s(p("key", "Storage key to delete"), "\"key\"") +
+    "}," +
+    "{\"name\":\"mutex_acquire\",\"description\":\"Acquire an in-memory coordination mutex\",\"inputSchema\":" +
+    s(
+      p("name", "Mutex name") +
+      "," +
+      p("agent_id", "ID of the acquiring agent") +
+      "," +
+      p("ttl_sec", "Optional TTL in seconds"),
+      "\"name\",\"agent_id\"",
+    ) +
+    "}," +
+    "{\"name\":\"mutex_release\",\"description\":\"Release an in-memory coordination mutex\",\"inputSchema\":" +
+    s(
+      p("name", "Mutex name") + "," + p("agent_id", "ID of the releasing agent"),
+      "\"name\",\"agent_id\"",
+    ) +
+    "}," +
+    "{\"name\":\"mutex_status\",\"description\":\"Inspect an in-memory coordination mutex\",\"inputSchema\":" +
+    s(p("name", "Mutex name to inspect"), "\"name\"") +
+    "}," +
+    "{\"name\":\"task_list\",\"description\":\"List tasks from shared task storage\",\"inputSchema\":" +
+    s(p("slug", "Optional slug filter"), "") +
+    "}," +
+    "{\"name\":\"task_get\",\"description\":\"Get one task from shared task storage\",\"inputSchema\":" +
+    s(p("slug", "Task slug"), "\"slug\"") +
+    "}," +
+    "{\"name\":\"task_update\",\"description\":\"Update one task in shared task storage\",\"inputSchema\":" +
+    s(
+      p("slug", "Task slug") + "," + p("task", "Updated task JSON"),
+      "\"slug\",\"task\"",
+    ) +
+    "}," +
+    "{\"name\":\"shutdown\",\"description\":\"Shutdown the server\",\"inputSchema\":" +
+    s("", "") +
+    "}" +
     "]"
   { jsonrpc: "2.0", id, result: Some({ "tools": tools_json }), error: None }
 }
@@ -87,8 +199,18 @@ pub fn from_internal_response(
   resp : @types.Response,
 ) -> JsonRpcResponse {
   match resp {
-    @types.Response::Ok(data) =>
-      { jsonrpc: "2.0", id, result: Some(data), error: None }
+    @types.Response::Ok(data) => {
+      let text = map_to_json(data)
+      let content = "[{\"type\":\"text\",\"text\":\"" +
+        escape_json_string(text) +
+        "\"}]"
+      {
+        jsonrpc: "2.0",
+        id,
+        result: Some({ "content": content, "isError": "false" }),
+        error: None,
+      }
+    }
     @types.Response::Err(msg) =>
       {
         jsonrpc: "2.0",
