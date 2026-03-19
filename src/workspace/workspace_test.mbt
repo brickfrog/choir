@@ -77,6 +77,43 @@ test "agent_launch_command for each AgentType" {
 }
 
 ///|
+test "agent_launch_command wraps with shell_command" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "fix bugs",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+  }
+  let cmd = @workspace.agent_launch_command(
+    spec,
+    "/path",
+    shell_command=Some("nix develop"),
+  )
+  assert_eq(cmd.program, "nix")
+  assert_eq(cmd.args, ["develop", "--command", "claude", "-p", "fix bugs"])
+  assert_eq(cmd.workdir, Some("/path"))
+}
+
+///|
+test "agent_launch_command no wrap when shell_command is None" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "fix bugs",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+  }
+  let cmd = @workspace.agent_launch_command(spec, "/path", shell_command=None)
+  assert_eq(cmd.program, "claude")
+  assert_eq(cmd.args, ["-p", "fix bugs"])
+}
+
+///|
 test "spawn_commands for worktree mode returns 5 commands" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",

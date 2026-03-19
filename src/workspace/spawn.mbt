@@ -38,6 +38,7 @@ pub fn spawn_commands(
   project_dir : String,
   session : String,
   extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
 ) -> Array[Command] {
   let branch = branch_name(spec.parent_branch, spec.slug)
   let workspace = match spec.isolation {
@@ -50,7 +51,7 @@ pub fn spawn_commands(
     Inline => session
     Standalone => session + ":" + spec.slug
   }
-  let launch_cmd = agent_launch_command(spec, workspace)
+  let launch_cmd = agent_launch_command(spec, workspace, shell_command~)
   let launch_str = launch_cmd.to_string()
   match spec.isolation {
     Worktree =>

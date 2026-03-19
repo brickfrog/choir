@@ -482,6 +482,7 @@ pub async fn dispatch(
   session? : String = "exomonad",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
@@ -570,6 +571,7 @@ pub async fn dispatch(
             project_dir,
             session,
             extra_mcp_servers_json~,
+            shell_command~,
           ) {
           cmds.push(cmd)
         }
@@ -1118,6 +1120,7 @@ pub async fn dispatch(
         project_dir,
         session,
         extra_mcp_servers_json~,
+        shell_command~,
       )
       match run_strict(runner, cmds) {
         Ok(_) => @types.Response::Ok({ "status": "spawned" })
@@ -1159,6 +1162,7 @@ pub async fn dispatch(
         project_dir,
         session,
         extra_mcp_servers_json~,
+        shell_command~,
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
@@ -1265,6 +1269,7 @@ pub async fn dispatch(
         project_dir,
         session,
         extra_mcp_servers_json~,
+        shell_command~,
       )
       match run_strict(runner, cmds) {
         Ok(_) => @types.Response::Ok({ "status": "spawned" })
@@ -1283,6 +1288,7 @@ pub async fn handle_request(
   session? : String = "exomonad",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
   agent_registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
@@ -1296,6 +1302,7 @@ pub async fn handle_request(
         session~,
         runner~,
         extra_mcp_servers_json~,
+        shell_command~,
         registry=agent_registry,
         mutex_registry~,
         poller_state~,

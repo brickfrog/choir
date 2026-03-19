@@ -74,6 +74,7 @@ pub async fn ServerState::handle(
       req,
       project_dir=self.config.project_dir,
       extra_mcp_servers_json=self.config.extra_mcp_servers_json,
+      shell_command=self.config.shell_command,
       agent_registry=Some(self.registry),
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),

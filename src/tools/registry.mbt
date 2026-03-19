@@ -78,7 +78,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     {
       name: "shutdown",
       description: "Notify parent, close own pane",
-      allowed_roles: [@types.Role::Dev, @types.Role::Worker],
+      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {
       name: "kv_get",

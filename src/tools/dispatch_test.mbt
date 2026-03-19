@@ -477,6 +477,25 @@ test "dispatch shutdown removes agent from registry" {
 }
 
 ///|
+test "dispatch shutdown allowed for TL role" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "shutdown",
+      args: { "caller_id": "main.tl-1" },
+    }
+    let res = @tools.dispatch(call, runner=mock_runner)
+    match res {
+      Ok(m) => assert_eq(m.get("status"), Some("shutdown"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
 test "dispatch shutdown blocks during critical review phase" {
   @async.with_event_loop(_ => {
     let poller = @poller.PollerState::new()
