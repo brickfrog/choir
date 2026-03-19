@@ -22,7 +22,7 @@ test "merge_pr_commands produces correct gh pr merge and git fetch" {
 
 ///|
 test "dispatch file_pr returns Ok" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : ToolCall = {
       role: @types.Role::Dev,
       name: "file_pr",
@@ -38,7 +38,7 @@ test "dispatch file_pr returns Ok" {
 
 ///|
 test "dispatch file_pr missing branch returns Err" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : ToolCall = {
       role: @types.Role::Dev,
       name: "file_pr",
@@ -54,7 +54,7 @@ test "dispatch file_pr missing branch returns Err" {
 
 ///|
 test "dispatch merge_pr returns Ok" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let poller = @poller.PollerState::new()
     poller.track(456, "agent-1", 100)
     let call : ToolCall = {
@@ -73,7 +73,7 @@ test "dispatch merge_pr returns Ok" {
 
 ///|
 test "dispatch merge_pr invalid pr_number returns Err" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : ToolCall = {
       role: @types.Role::TL,
       name: "merge_pr",
@@ -89,7 +89,7 @@ test "dispatch merge_pr invalid pr_number returns Err" {
 
 ///|
 test "dispatch merge_pr missing pr_number returns Err" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : ToolCall = { role: @types.Role::TL, name: "merge_pr", args: {} }
     let res = dispatch(call, runner=mock_runner)
     match res {
@@ -101,7 +101,7 @@ test "dispatch merge_pr missing pr_number returns Err" {
 
 ///|
 test "dispatch track_pr stores tracked PR" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let poller = @poller.PollerState::new()
     let call : ToolCall = {
       role: @types.Role::Dev,

@@ -1,6 +1,6 @@
 ///|
 fn main_prog() -> Unit raise {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let (stdin_buf, len) = @io.read_stdin_line(8192)
     if len == 0 {
       @io.write_stdout(@hooks.HookResponse::fail_open().to_json_string() + "\n")

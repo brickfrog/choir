@@ -152,7 +152,7 @@ test "parse_gh_pr_view_output falls back on missing fields" {
 
 ///|
 test "PollerState::tick_with updates tracked state and emits events" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let state = PollerState::new()
     state.track(7, "agent7", 100)
     let events = []

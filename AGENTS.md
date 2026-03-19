@@ -98,6 +98,7 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 | `kv_get` | `key` | Read `.exo/kv/{key}`, returns `{value: "..."}` or `{value: "null"}` |
 | `kv_set` | `key`, `value` | Write `.exo/kv/{key}` |
 | `kv_delete` | `key` | Delete `.exo/kv/{key}` |
+| `kv_list` | — | List all keys in KV storage |
 | `mutex_acquire` | `name`, `agent_id`, `ttl_sec` | Acquire named lock. Returns `{acquired: "true"}` or `{acquired: "false", queue_position: N}` |
 | `mutex_release` | `name`, `agent_id` | Release lock, returns `{next_waiter: "..."}` if queue had waiters |
 | `mutex_status` | `name` | Returns `{holder: "...", queue_length: N}` |
@@ -109,6 +110,7 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 | `shutdown` | `caller_id` | Notify parent, kill own tmux pane, remove from registry. Blocked if PR has `ChangesRequested`. |
 | `task_list` | — | List tasks from `.exo/tasks/*.json` |
 | `task_get` | `id` | Get task by ID |
+| `task_create` | `id`, `title`, `status?`, `assignee?`, `notes?` | Create a new task |
 | `task_update` | `id`, `status?`, `assignee?`, `notes?` | Update task fields |
 | `file_pr` | `branch`, `parent_branch` | Push branch, create PR targeting parent_branch |
 
@@ -124,6 +126,7 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 ### KV key conventions
 - `shared/{key}` — cross-agent coordination
 - `{agent_id}/{key}` — agent-private state
+- Use `kv_list` to enumerate stored keys when coordination needs discovery.
 
 ---
 

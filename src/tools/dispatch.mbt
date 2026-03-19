@@ -584,6 +584,41 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
+    "fork_session" => {
+      let name = match call.args.get("name") {
+        Some(v) => v
+        None => return @types.Response::Err("missing name")
+      }
+      match validate_slug(name) {
+        Err(e) => return @types.Response::Err("invalid name: " + e)
+        Ok(_) => ()
+      }
+      let session_dir = project_dir + "/.exo/sessions/" + name
+      let context_path = session_dir + "/context.json"
+      let created_sec = @poller.now_sec()
+      let context_json = "{\"name\":\"" +
+        escape_json_string(name) +
+        "\",\"created_sec\":\"" +
+        created_sec.to_string() +
+        "\"}"
+      let cmd = @workspace.Command::{
+        program: "sh",
+        args: [
+          "-c", "mkdir -p \"$1\" && printf '%s' \"$3\" > \"$2\"", "sh", session_dir,
+          context_path, context_json,
+        ],
+        workdir: None,
+      }
+      match run_strict(runner, [cmd]) {
+        Ok(_) =>
+          @types.Response::Ok({
+            "status": "ok",
+            "session_dir": session_dir,
+            "name": name,
+          })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
     "file_pr" => {
       let branch = match call.args.get("branch") {
         Some(v) =>

@@ -38,7 +38,7 @@ fn build_agent(id : String, parent : String?) -> @types.Agent {
 
 ///|
 test "ServerState::handle valid request returns Ok" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let state = ServerState::new(@types.Config::default())
     let req = @types.Request::{
       req_method: "tools/call",
@@ -53,7 +53,7 @@ test "ServerState::handle valid request returns Ok" {
 
 ///|
 test "ServerState::handle invalid role returns Err" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let state = ServerState::new(@types.Config::default())
     let req = @types.Request::{
       req_method: "tools/call",

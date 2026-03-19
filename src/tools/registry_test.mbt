@@ -44,7 +44,8 @@ test "kv tools allowed for all roles" {
     @types.Role::Worker,
   ]
   let names = [
-    "kv_get", "kv_set", "kv_delete", "mutex_acquire", "mutex_release", "mutex_status",
+    "kv_get", "kv_set", "kv_delete", "kv_list", "mutex_acquire", "mutex_release",
+    "mutex_status",
   ]
   for role in roles {
     for name in names {
@@ -56,7 +57,7 @@ test "kv tools allowed for all roles" {
 
 ///|
 test "handle_request with valid tool returns Ok" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let reg = @tools.ToolRegistry::new()
     let req = @types.Request::{
       req_method: "tools/call",
@@ -71,7 +72,7 @@ test "handle_request with valid tool returns Ok" {
 
 ///|
 test "handle_request with wrong role returns Err" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let reg = @tools.ToolRegistry::new()
     let req = @types.Request::{
       req_method: "tools/call",
@@ -86,7 +87,7 @@ test "handle_request with wrong role returns Err" {
 
 ///|
 test "handle_request with unknown tool returns Err" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let reg = @tools.ToolRegistry::new()
     let req = @types.Request::{
       req_method: "tools/call",
@@ -101,9 +102,10 @@ test "handle_request with unknown tool returns Err" {
 
 ///|
 test "dispatch returns correct stub for each tool name" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let cases = [
       ("fork_wave", "spawned", { "count": "1" }),
+      ("fork_session", "ok", { "name": "nested-team" }),
       ("file_pr", "pr_created", { "branch": "test" }),
       ("merge_pr", "merged", { "pr_number": "1" }),
       ("track_pr", "tracked", { "pr_number": "1", "agent_id": "agent-1" }),
@@ -148,5 +150,12 @@ test "dispatch returns correct stub for each tool name" {
 test "tool registry lookup spawn_worker allowed for TL" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "spawn_worker")
+  assert_true(result is Ok(_))
+}
+
+///|
+test "tool registry lookup fork_session allowed for TL" {
+  let reg = @tools.ToolRegistry::new()
+  let result = reg.lookup(@types.Role::TL, "fork_session")
   assert_true(result is Ok(_))
 }

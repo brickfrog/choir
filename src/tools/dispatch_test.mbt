@@ -1,5 +1,6 @@
 ///|
 async fn mock_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
+  @async.sleep(0)
   let res = []
   for _ in cmds {
     res.push(0)
@@ -9,6 +10,7 @@ async fn mock_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
 
 ///|
 async fn mock_fail_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
+  @async.sleep(0)
   let res = []
   for _ in cmds {
     res.push(1)
@@ -28,7 +30,7 @@ async fn run_shell(script : String) -> Unit {
 
 ///|
 test "dispatch fork_wave returns agent_ids with mock" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
       name: "fork_wave",
@@ -56,7 +58,7 @@ test "dispatch fork_wave returns agent_ids with mock" {
 
 ///|
 test "dispatch task_list reads task files" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-list"
     run_shell(
       "rm -rf /tmp/choir-dispatch-task-list && mkdir -p /tmp/choir-dispatch-task-list/.exo/tasks && " +
@@ -90,7 +92,7 @@ test "dispatch task_list reads task files" {
 
 ///|
 test "dispatch task_get reads one task" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-get"
     run_shell(
       "rm -rf /tmp/choir-dispatch-task-get && mkdir -p /tmp/choir-dispatch-task-get/.exo/tasks && " +
@@ -123,7 +125,7 @@ test "dispatch task_get reads one task" {
 
 ///|
 test "dispatch task_update merges and writes task file" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-update"
     run_shell(
       "rm -rf /tmp/choir-dispatch-task-update && mkdir -p /tmp/choir-dispatch-task-update/.exo/tasks && " +
@@ -165,7 +167,7 @@ test "dispatch task_update merges and writes task file" {
 
 ///|
 test "dispatch task_update validates status" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-status"
     run_shell(
       "rm -rf /tmp/choir-dispatch-task-status && mkdir -p /tmp/choir-dispatch-task-status/.exo/tasks && " +
@@ -187,7 +189,7 @@ test "dispatch task_update validates status" {
 
 ///|
 test "dispatch fork_wave handles failure" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
       name: "fork_wave",
@@ -203,7 +205,7 @@ test "dispatch fork_wave handles failure" {
 
 ///|
 test "dispatch fork_wave validates count" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
       name: "fork_wave",
@@ -219,7 +221,7 @@ test "dispatch fork_wave validates count" {
 
 ///|
 test "dispatch fork_wave validates slug_prefix" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
       name: "fork_wave",
@@ -236,7 +238,7 @@ test "dispatch fork_wave validates slug_prefix" {
 
 ///|
 test "dispatch spawn_gemini validates slug" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
       name: "spawn_gemini",
@@ -252,7 +254,7 @@ test "dispatch spawn_gemini validates slug" {
 
 ///|
 test "dispatch spawn_worker validates agent type" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
       name: "spawn_worker",
@@ -268,7 +270,7 @@ test "dispatch spawn_worker validates agent type" {
 
 ///|
 test "dispatch spawn_worker succeeds with inline worker" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
       name: "spawn_worker",
@@ -287,7 +289,7 @@ test "dispatch spawn_worker succeeds with inline worker" {
 
 ///|
 test "dispatch register inserts agent into registry" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let reg = @registry.AgentRegistry::new()
     let call : @tools.ToolCall = {
       role: @types.Role::Dev,
@@ -311,7 +313,7 @@ test "dispatch register inserts agent into registry" {
 
 ///|
 test "dispatch register requires agent_id arg" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let reg = @registry.AgentRegistry::new()
     let call : @tools.ToolCall = {
       role: @types.Role::Dev,
@@ -325,7 +327,7 @@ test "dispatch register requires agent_id arg" {
 
 ///|
 test "dispatch shutdown removes agent from registry" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let reg = @registry.AgentRegistry::new()
     let agent = @types.Agent::{
       agent_id: "leaf-1",
@@ -352,7 +354,7 @@ test "dispatch shutdown removes agent from registry" {
 
 ///|
 test "dispatch shutdown blocks during critical review phase" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let poller = @poller.PollerState::new()
     poller.track(42, "leaf-2", 100L)
     poller.tick_with(
@@ -383,7 +385,7 @@ test "dispatch shutdown blocks during critical review phase" {
 
 ///|
 test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-kv"
     run_shell(
       "rm -rf /tmp/choir-dispatch-kv && mkdir -p /tmp/choir-dispatch-kv",
@@ -462,7 +464,7 @@ test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
 
 ///|
 test "dispatch kv_list returns keys" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-kv-list"
     run_shell(
       "rm -rf /tmp/choir-dispatch-kv-list && mkdir -p /tmp/choir-dispatch-kv-list/.exo/kv/shared && " +
@@ -493,7 +495,7 @@ test "dispatch kv_list returns keys" {
 
 ///|
 test "dispatch kv_list empty dir returns empty array" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
       name: "kv_list",
@@ -516,7 +518,7 @@ test "dispatch kv_list empty dir returns empty array" {
 
 ///|
 test "dispatch task_create creates task" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-create"
     run_shell("rm -rf /tmp/choir-dispatch-task-create")
     let call : @tools.ToolCall = {
@@ -550,7 +552,7 @@ test "dispatch task_create creates task" {
 
 ///|
 test "dispatch task_create fails if already exists" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-create-dup"
     run_shell(
       "rm -rf /tmp/choir-dispatch-task-create-dup && mkdir -p /tmp/choir-dispatch-task-create-dup/.exo/tasks && " +
@@ -572,7 +574,7 @@ test "dispatch task_create fails if already exists" {
 
 ///|
 test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registry" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let mutex_registry = @registry.MutexRegistry::new()
 
     let acquire_first : @tools.ToolCall = {
@@ -663,7 +665,7 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
 
 ///|
 test "dispatch mutex_release returns false when agent does not hold or wait" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let mutex_registry = @registry.MutexRegistry::new()
     ignore(mutex_registry.acquire("README", "agent-a", 30L, 10L))
 
@@ -692,7 +694,7 @@ test "dispatch mutex_release returns false when agent does not hold or wait" {
 
 ///|
 test "dispatch merge_pr blocks concurrent merges on the same parent_branch" {
-  @async.with_event_loop(fn(_) {
+  @async.with_event_loop(_ => {
     let mutex_registry = @registry.MutexRegistry::new()
     let nested_results : Array[@types.Response] = []
     let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
@@ -750,5 +752,74 @@ test "dispatch merge_pr blocks concurrent merges on the same parent_branch" {
     let (holder, queue) = mutex_registry.status("branch:release")
     assert_eq(holder, None)
     assert_eq(queue.length(), 0)
+  })
+}
+
+///|
+test "dispatch fork_session creates session dir" {
+  @async.with_event_loop(_ => {
+    let project_dir = "/tmp/choir-dispatch-fork-session"
+    run_shell("rm -rf /tmp/choir-dispatch-fork-session")
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "fork_session",
+      args: { "name": "sub-team-1" },
+    }
+    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("ok"))
+        assert_eq(m.get("name"), Some("sub-team-1"))
+        let session_dir = m.get("session_dir").unwrap_or("")
+        assert_true(session_dir.contains("sub-team-1"))
+        run_shell(
+          "test -d /tmp/choir-dispatch-fork-session/.exo/sessions/sub-team-1",
+        )
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+    let context_json = @io.read_file(
+      project_dir + "/.exo/sessions/sub-team-1/context.json",
+    )
+    assert_true(context_json.contains("\"name\":\"sub-team-1\""))
+    assert_true(context_json.contains("\"created_sec\":\""))
+    run_shell("rm -rf /tmp/choir-dispatch-fork-session")
+  })
+}
+
+///|
+test "dispatch fork_session rejects invalid name" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "fork_session",
+      args: { "name": "../evil" },
+    }
+    let res = @tools.dispatch(call, runner=mock_runner)
+    match res {
+      Err(e) => assert_true(e.contains("invalid name"))
+      Ok(_) => assert_true(false)
+    }
+  })
+}
+
+///|
+test "handle_request fork_session denied for Dev role" {
+  @async.with_event_loop(_ => {
+    let reg = @tools.ToolRegistry::new()
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::Dev,
+      name: "fork_session",
+      args: { "name": "sub-team-1" },
+    }
+    let res = handle_request(reg, req, runner=mock_runner)
+    match res {
+      Err(e) => assert_true(e.contains("cannot call"))
+      Ok(_) => assert_true(false)
+    }
   })
 }

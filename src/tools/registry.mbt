@@ -26,6 +26,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "fork_session",
+      description: "Create a named session subdirectory for a nested team",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "spawn_gemini",
       description: "Spawn Gemini agent",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
