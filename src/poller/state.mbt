@@ -37,6 +37,29 @@ pub fn PollerState::get(self : PollerState, pr_number : Int) -> TrackedPR? {
 }
 
 ///|
+pub fn PollerState::in_critical_phase(
+  self : PollerState,
+  agent_id : String,
+) -> Bool {
+  self.critical_phase_pr_number(agent_id) is Some(_)
+}
+
+///|
+pub fn PollerState::critical_phase_pr_number(
+  self : PollerState,
+  agent_id : String,
+) -> Int? {
+  for tracked in self.tracked.values() {
+    if tracked.agent_id == agent_id &&
+      tracked.last_review_state == ChangesRequested &&
+      not(tracked.notified_parent) {
+      return Some(tracked.pr_number)
+    }
+  }
+  None
+}
+
+///|
 pub async fn PollerState::tick_with(
   self : PollerState,
   now : Int64,

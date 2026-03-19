@@ -4,7 +4,12 @@ import {
   "choir/src/tools",
   "choir/src/message",
   "choir/src/poller",
+  "choir/src/config",
+  "choir/src/io",
   "moonbitlang/async",
+  "moonbitlang/async/pipe",
+  "moonbitlang/async/process",
+  "moonbitlang/core/encoding/utf8",
 }
 
 options(

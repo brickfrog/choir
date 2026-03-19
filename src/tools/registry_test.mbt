@@ -35,6 +35,24 @@ test "send_message allowed for all roles" {
 }
 
 ///|
+test "kv tools allowed for all roles" {
+  let reg = @tools.ToolRegistry::new()
+  let roles : Array[@types.Role] = [
+    @types.Role::Root,
+    @types.Role::TL,
+    @types.Role::Dev,
+    @types.Role::Worker,
+  ]
+  let names = ["kv_get", "kv_set", "kv_delete"]
+  for role in roles {
+    for name in names {
+      let result = reg.lookup(role, name)
+      assert_true(result is Ok(_))
+    }
+  }
+}
+
+///|
 test "handle_request with valid tool returns Ok" {
   @async.with_event_loop(fn(_) {
     let reg = @tools.ToolRegistry::new()
@@ -89,6 +107,7 @@ test "dispatch returns correct stub for each tool name" {
       ("track_pr", "tracked", { "pr_number": "1", "agent_id": "agent-1" }),
       ("notify_parent", "notified", { "caller_id": "test-agent" }),
       ("send_message", "sent", { "target_id": "test-agent" }),
+      ("kv_get", "", { "key": "missing" }),
       ("shutdown", "shutdown", Map::new()),
       ("task_list", "ok", Map::new()),
       ("spawn_gemini", "spawned", Map::new()),
@@ -103,7 +122,12 @@ test "dispatch returns correct stub for each tool name" {
         poller_state=Some(@poller.PollerState::new()),
       )
       match res {
-        Ok(map) => assert_eq(map.get("status"), Some(expected_status))
+        Ok(map) =>
+          if name == "kv_get" {
+            assert_eq(map.get("value"), Some("null"))
+          } else {
+            assert_eq(map.get("status"), Some(expected_status))
+          }
         Err(msg) => {
           println(name + ": " + msg)
           assert_true(false)

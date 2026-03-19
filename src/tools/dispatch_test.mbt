@@ -349,3 +349,113 @@ test "dispatch shutdown removes agent from registry" {
     assert_true(reg.get("leaf-1") is Err(_))
   })
 }
+
+///|
+test "dispatch shutdown blocks during critical review phase" {
+  @async.with_event_loop(fn(_) {
+    let poller = @poller.PollerState::new()
+    poller.track(42, "leaf-2", 100L)
+    poller.tick_with(
+      200L,
+      900L,
+      fn(_) { (@poller.ReviewState::ChangesRequested, "sha1") },
+      fn(_, _) { () },
+    )
+    let call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "shutdown",
+      args: { "caller_id": "leaf-2" },
+    }
+    let res = @tools.dispatch(
+      call,
+      runner=mock_runner,
+      poller_state=Some(poller),
+    )
+    match res {
+      Ok(_) => assert_true(false)
+      Err(e) =>
+        assert_eq(
+          e, "cannot shutdown: PR #42 has changes requested — push fixes first",
+        )
+    }
+  })
+}
+
+///|
+test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
+  @async.with_event_loop(fn(_) {
+    let project_dir = "/tmp/choir-dispatch-kv"
+    run_shell(
+      "rm -rf /tmp/choir-dispatch-kv && mkdir -p /tmp/choir-dispatch-kv",
+    )
+
+    let set_call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "kv_set",
+      args: { "key": "build/status", "value": "green" },
+    }
+    let set_res = @tools.dispatch(
+      set_call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
+    match set_res {
+      Ok(m) => assert_eq(m.get("status"), Some("ok"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+
+    let get_call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "kv_get",
+      args: { "key": "build/status" },
+    }
+    let get_res = @tools.dispatch(
+      get_call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
+    match get_res {
+      Ok(m) => assert_eq(m.get("value"), Some("green"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+
+    let delete_call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "kv_delete",
+      args: { "key": "build/status" },
+    }
+    let delete_res = @tools.dispatch(
+      delete_call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
+    match delete_res {
+      Ok(m) => assert_eq(m.get("status"), Some("ok"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+
+    let after_delete = @tools.dispatch(
+      get_call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
+    match after_delete {
+      Ok(m) => assert_eq(m.get("value"), Some("null"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+
+    run_shell("rm -rf /tmp/choir-dispatch-kv")
+  })
+}

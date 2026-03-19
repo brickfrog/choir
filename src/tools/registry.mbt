@@ -66,6 +66,21 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Dev, @types.Role::Worker],
     },
     {
+      name: "kv_get",
+      description: "Read one value from shared KV storage",
+      allowed_roles: all_roles,
+    },
+    {
+      name: "kv_set",
+      description: "Write one value to shared KV storage",
+      allowed_roles: all_roles,
+    },
+    {
+      name: "kv_delete",
+      description: "Delete one value from shared KV storage",
+      allowed_roles: all_roles,
+    },
+    {
       name: "task_list",
       description: "List tasks from shared task list",
       allowed_roles: [@types.Role::Dev, @types.Role::Worker],

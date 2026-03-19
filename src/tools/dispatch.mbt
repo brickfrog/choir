@@ -69,6 +69,33 @@ fn validate_branch(s : String) -> Result[Unit, String] {
 }
 
 ///|
+fn validate_kv_key(s : String) -> Result[Unit, String] {
+  if s == "" {
+    return Err("key cannot be empty")
+  }
+  if s.contains("..") {
+    return Err("key cannot contain '..'")
+  }
+  if s[0] == '/' {
+    return Err("key cannot start with '/'")
+  }
+  for c in s {
+    if not(
+        (c >= 'a' && c <= 'z') ||
+        (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') ||
+        c == '-' ||
+        c == '_' ||
+        c == '/' ||
+        c == '.',
+      ) {
+      return Err("invalid character in key: " + c.to_string())
+    }
+  }
+  Ok(())
+}
+
+///|
 async fn run_strict(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   cmds : Array[@workspace.Command],
@@ -258,6 +285,11 @@ fn task_file_to_json(task : TaskFile) -> String {
 ///|
 fn task_file_path(project_dir : String, id : String) -> String {
   project_dir + "/.exo/tasks/" + id + ".json"
+}
+
+///|
+fn kv_file_path(project_dir : String, key : String) -> String {
+  project_dir + "/.exo/kv/" + key
 }
 
 ///|
@@ -615,6 +647,19 @@ pub async fn dispatch(
         Some(v) => v
         None => return @types.Response::Ok({ "status": "shutdown" }) // best-effort
       }
+      match poller_state {
+        Some(ps) =>
+          match ps.critical_phase_pr_number(caller_id) {
+            Some(pr_number) =>
+              return @types.Response::Err(
+                "cannot shutdown: PR #" +
+                pr_number.to_string() +
+                " has changes requested — push fixes first",
+              )
+            None => ()
+          }
+        None => ()
+      }
       // 1. Notify parent if registry available
       match registry {
         Some(reg) =>
@@ -649,6 +694,69 @@ pub async fn dispatch(
         None => ()
       }
       @types.Response::Ok({ "status": "shutdown" })
+    }
+    "kv_get" => {
+      let key = match call.args.get("key") {
+        Some(v) => v
+        None => return @types.Response::Err("missing key")
+      }
+      match validate_kv_key(key) {
+        Ok(_) => ()
+        Err(e) => return @types.Response::Err(e)
+      }
+      let value = @io.read_file(kv_file_path(project_dir, key))
+      if value == "" {
+        @types.Response::Ok({ "value": "null" })
+      } else {
+        @types.Response::Ok({ "value": value })
+      }
+    }
+    "kv_set" => {
+      let key = match call.args.get("key") {
+        Some(v) => v
+        None => return @types.Response::Err("missing key")
+      }
+      let value = match call.args.get("value") {
+        Some(v) => v
+        None => return @types.Response::Err("missing value")
+      }
+      match validate_kv_key(key) {
+        Ok(_) => ()
+        Err(e) => return @types.Response::Err(e)
+      }
+      let path = kv_file_path(project_dir, key)
+      let cmd = @workspace.Command::{
+        program: "sh",
+        args: [
+          "-c", "mkdir -p \"$(dirname \"$2\")\" && printf '%s' \"$3\" > \"$2\"",
+          "sh", project_dir, path, value,
+        ],
+        workdir: None,
+      }
+      match run_strict(runner, [cmd]) {
+        Ok(_) => @types.Response::Ok({ "status": "ok" })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
+    "kv_delete" => {
+      let key = match call.args.get("key") {
+        Some(v) => v
+        None => return @types.Response::Err("missing key")
+      }
+      match validate_kv_key(key) {
+        Ok(_) => ()
+        Err(e) => return @types.Response::Err(e)
+      }
+      let path = kv_file_path(project_dir, key)
+      let cmd = @workspace.Command::{
+        program: "sh",
+        args: ["-c", "rm -f \"$2\"", "sh", project_dir, path],
+        workdir: None,
+      }
+      match run_strict(runner, [cmd]) {
+        Ok(_) => @types.Response::Ok({ "status": "ok" })
+        Err(e) => @types.Response::Err(e)
+      }
     }
     "task_list" => handle_task_list(project_dir, runner)
     "task_get" => {

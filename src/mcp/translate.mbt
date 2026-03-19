@@ -46,6 +46,9 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
     "{\"name\":\"send_message\",\"description\":\"Send a message to another agent\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"spawn_gemini\",\"description\":\"Spawn a Gemini leaf agent in a new worktree\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"spawn_worker\",\"description\":\"Spawn an inline worker agent\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"kv_get\",\"description\":\"Read one value from shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"kv_set\",\"description\":\"Write one value to shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"kv_delete\",\"description\":\"Delete one value from shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"task_list\",\"description\":\"List tasks from shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"task_get\",\"description\":\"Get one task from shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"task_update\",\"description\":\"Update one task in shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +

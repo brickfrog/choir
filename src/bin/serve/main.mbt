@@ -129,6 +129,7 @@ fn main_prog() -> Unit raise {
   }
   let state = @server.ServerState::new(config)
   @async.with_event_loop(async fn(root) {
+    @server.recover_state(state, "exomonad")
     root.spawn_bg(async fn() {
       let timeout_sec = 900L
       let interval_ms = 30000

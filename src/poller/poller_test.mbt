@@ -24,6 +24,35 @@ test "PollerState::untrack" {
 }
 
 ///|
+test "PollerState::in_critical_phase detects pending changes requested" {
+  let state = PollerState::new()
+  state.tracked.set(9, {
+    pr_number: 9,
+    agent_id: "agent9",
+    first_seen: 100L,
+    last_review_state: ReviewState::ChangesRequested,
+    last_sha: "sha1",
+    notified_parent: false,
+  })
+  assert_true(state.in_critical_phase("agent9"))
+  assert_false(state.in_critical_phase("other-agent"))
+}
+
+///|
+test "PollerState::in_critical_phase ignores pushed fixes" {
+  let state = PollerState::new()
+  state.tracked.set(10, {
+    pr_number: 10,
+    agent_id: "agent10",
+    first_seen: 100L,
+    last_review_state: ReviewState::ChangesRequested,
+    last_sha: "sha2",
+    notified_parent: true,
+  })
+  assert_false(state.in_critical_phase("agent10"))
+}
+
+///|
 test "detect_events::approval" {
   let tracked : TrackedPR = {
     pr_number: 1,
