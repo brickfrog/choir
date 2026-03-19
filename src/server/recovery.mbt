@@ -178,9 +178,9 @@ async fn capture_stdout(
 ///|
 fn recover_role(project_dir : String, slug : String) -> @types.Role {
   let config_path = project_dir +
-    "/.exo/worktrees/" +
+    "/.choir/worktrees/" +
     slug +
-    "/.exo/config.local.toml"
+    "/.choir/config.local.toml"
   let content = @io.read_file(config_path)
   match @config.parse_config_local(content) {
     Ok(role) => role
@@ -193,7 +193,7 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
   let project_dir = state.config.project_dir
   let worktree_output = capture_stdout(
     "sh",
-    ["-c", "ls .exo/worktrees/ 2>/dev/null"],
+    ["-c", "ls .choir/worktrees/ 2>/dev/null"],
     cwd=Some(project_dir),
   )
   let tmux_output = capture_stdout(
@@ -223,7 +223,7 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
         None
       },
       host: @types.Host::Local,
-      workspace: ".exo/worktrees/" + slug,
+      workspace: ".choir/worktrees/" + slug,
       branch: slug,
     }
     match state.registry.insert(agent) {

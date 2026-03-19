@@ -61,9 +61,9 @@ test "dispatch task_list reads task files" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-list"
     run_shell(
-      "rm -rf /tmp/choir-dispatch-task-list && mkdir -p /tmp/choir-dispatch-task-list/.exo/tasks && " +
-      "printf '%s' '{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-list/.exo/tasks/1.json && " +
-      "printf '%s' '{\"id\":\"2\",\"title\":\"Second\",\"status\":\"in_progress\",\"assignee\":\"bob\",\"notes\":\"two\"}' > /tmp/choir-dispatch-task-list/.exo/tasks/2.json",
+      "rm -rf /tmp/choir-dispatch-task-list && mkdir -p /tmp/choir-dispatch-task-list/.choir/tasks && " +
+      "printf '%s' '{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-list/.choir/tasks/1.json && " +
+      "printf '%s' '{\"id\":\"2\",\"title\":\"Second\",\"status\":\"in_progress\",\"assignee\":\"bob\",\"notes\":\"two\"}' > /tmp/choir-dispatch-task-list/.choir/tasks/2.json",
     )
     let call : @tools.ToolCall = {
       role: @types.Role::Dev,
@@ -95,8 +95,8 @@ test "dispatch task_get reads one task" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-get"
     run_shell(
-      "rm -rf /tmp/choir-dispatch-task-get && mkdir -p /tmp/choir-dispatch-task-get/.exo/tasks && " +
-      "printf '%s' '{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-get/.exo/tasks/1.json",
+      "rm -rf /tmp/choir-dispatch-task-get && mkdir -p /tmp/choir-dispatch-task-get/.choir/tasks && " +
+      "printf '%s' '{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-get/.choir/tasks/1.json",
     )
     let call : @tools.ToolCall = {
       role: @types.Role::Dev,
@@ -128,8 +128,8 @@ test "dispatch task_update merges and writes task file" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-update"
     run_shell(
-      "rm -rf /tmp/choir-dispatch-task-update && mkdir -p /tmp/choir-dispatch-task-update/.exo/tasks && " +
-      "printf '%s' '{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-update/.exo/tasks/1.json",
+      "rm -rf /tmp/choir-dispatch-task-update && mkdir -p /tmp/choir-dispatch-task-update/.choir/tasks && " +
+      "printf '%s' '{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-update/.choir/tasks/1.json",
     )
     let call : @tools.ToolCall = {
       role: @types.Role::Dev,
@@ -157,7 +157,7 @@ test "dispatch task_update merges and writes task file" {
         assert_true(false)
       }
     }
-    let written = @io.read_file(project_dir + "/.exo/tasks/1.json")
+    let written = @io.read_file(project_dir + "/.choir/tasks/1.json")
     assert_eq(
       written, "{\"id\":\"1\",\"title\":\"First\",\"status\":\"done\",\"assignee\":\"carol\",\"notes\":\"finished\"}",
     )
@@ -170,8 +170,8 @@ test "dispatch task_update validates status" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-status"
     run_shell(
-      "rm -rf /tmp/choir-dispatch-task-status && mkdir -p /tmp/choir-dispatch-task-status/.exo/tasks && " +
-      "printf '%s' '{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-status/.exo/tasks/1.json",
+      "rm -rf /tmp/choir-dispatch-task-status && mkdir -p /tmp/choir-dispatch-task-status/.choir/tasks && " +
+      "printf '%s' '{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-status/.choir/tasks/1.json",
     )
     let call : @tools.ToolCall = {
       role: @types.Role::Dev,
@@ -610,9 +610,9 @@ test "dispatch kv_list returns keys" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-kv-list"
     run_shell(
-      "rm -rf /tmp/choir-dispatch-kv-list && mkdir -p /tmp/choir-dispatch-kv-list/.exo/kv/shared && " +
-      "printf '%s' 'hello' > /tmp/choir-dispatch-kv-list/.exo/kv/shared/foo && " +
-      "printf '%s' 'world' > /tmp/choir-dispatch-kv-list/.exo/kv/shared/bar",
+      "rm -rf /tmp/choir-dispatch-kv-list && mkdir -p /tmp/choir-dispatch-kv-list/.choir/kv/shared && " +
+      "printf '%s' 'hello' > /tmp/choir-dispatch-kv-list/.choir/kv/shared/foo && " +
+      "printf '%s' 'world' > /tmp/choir-dispatch-kv-list/.choir/kv/shared/bar",
     )
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
@@ -698,8 +698,8 @@ test "dispatch task_create fails if already exists" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-create-dup"
     run_shell(
-      "rm -rf /tmp/choir-dispatch-task-create-dup && mkdir -p /tmp/choir-dispatch-task-create-dup/.exo/tasks && " +
-      "printf '%s' '{\"id\":\"dup\",\"title\":\"Dup\",\"status\":\"todo\",\"assignee\":\"\",\"notes\":\"\"}' > /tmp/choir-dispatch-task-create-dup/.exo/tasks/dup.json",
+      "rm -rf /tmp/choir-dispatch-task-create-dup && mkdir -p /tmp/choir-dispatch-task-create-dup/.choir/tasks && " +
+      "printf '%s' '{\"id\":\"dup\",\"title\":\"Dup\",\"status\":\"todo\",\"assignee\":\"\",\"notes\":\"\"}' > /tmp/choir-dispatch-task-create-dup/.choir/tasks/dup.json",
     )
     let call : @tools.ToolCall = {
       role: @types.Role::TL,
@@ -916,7 +916,7 @@ test "dispatch fork_session creates session dir" {
         let session_dir = m.get("session_dir").unwrap_or("")
         assert_true(session_dir.contains("sub-team-1"))
         run_shell(
-          "test -d /tmp/choir-dispatch-fork-session/.exo/sessions/sub-team-1",
+          "test -d /tmp/choir-dispatch-fork-session/.choir/sessions/sub-team-1",
         )
       }
       Err(e) => {
@@ -925,7 +925,7 @@ test "dispatch fork_session creates session dir" {
       }
     }
     let context_json = @io.read_file(
-      project_dir + "/.exo/sessions/sub-team-1/context.json",
+      project_dir + "/.choir/sessions/sub-team-1/context.json",
     )
     assert_true(context_json.contains("\"name\":\"sub-team-1\""))
     assert_true(context_json.contains("\"created_sec\":\""))

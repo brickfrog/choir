@@ -44,7 +44,7 @@ pub fn spawn_commands(
   let workspace = match spec.isolation {
     Worktree => worktree_path(project_dir, spec.slug)
     Inline => project_dir
-    Standalone => project_dir + "/.exo/agents/" + spec.slug
+    Standalone => project_dir + "/.choir/agents/" + spec.slug
   }
   let target = match spec.isolation {
     Worktree => session + ":" + spec.slug
@@ -121,11 +121,11 @@ pub fn remote_spawn_commands(
       ssh_target,
       "mkdir -p " +
       workspace +
-      "/.exo && printf '%s' " +
+      "/.choir && printf '%s' " +
       quote(config_toml) +
       " > " +
       workspace +
-      "/.exo/config.toml",
+      "/.choir/config.toml",
     ),
     ssh_cmd(
       ssh_target,

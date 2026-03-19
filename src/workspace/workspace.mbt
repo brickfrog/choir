@@ -1,7 +1,7 @@
 ///|
 /// Construct the worktree path for an agent slug.
 pub fn worktree_path(project_dir : String, slug : String) -> String {
-  project_dir + "/.exo/worktrees/" + slug
+  project_dir + "/.choir/worktrees/" + slug
 }
 
 ///|

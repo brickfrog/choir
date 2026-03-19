@@ -43,7 +43,7 @@ fn shell_quote(s : String) -> String {
 
 ///|
 fn persist_run_id(project_dir : String, run_id : String) -> Unit {
-  let exo_dir = project_dir + "/.exo"
+  let exo_dir = project_dir + "/.choir"
   let path = exo_dir + "/run_id"
   let script = "mkdir -p " +
     shell_quote(exo_dir) +
@@ -68,7 +68,7 @@ fn normalize_run_id(content : String) -> String? {
 
 ///|
 fn init_run_id(project_dir : String) -> String {
-  let run_id_path = project_dir + "/.exo/run_id"
+  let run_id_path = project_dir + "/.choir/run_id"
   match normalize_run_id(@io.read_file(run_id_path)) {
     Some(existing) => existing
     None => {

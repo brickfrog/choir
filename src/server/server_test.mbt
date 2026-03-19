@@ -120,7 +120,7 @@ test "ServerState::new initializes run_id and mutex registry" {
   let config = { ..@types.Config::default(), project_dir, }
   let state = ServerState::new(config)
   assert_true(state.run_id != "")
-  let persisted = @io.read_file(project_dir + "/.exo/run_id")
+  let persisted = @io.read_file(project_dir + "/.choir/run_id")
   assert_eq(persisted, state.run_id)
   let (holder, queue) = state.mutex_registry.status("missing")
   assert_eq(holder, None)

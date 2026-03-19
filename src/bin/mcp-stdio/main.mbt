@@ -271,17 +271,17 @@ fn run_uds_loop(
 
 ///|
 fn main_prog() -> Unit raise {
-  let config_content = @io.read_file(".exo/config.toml")
+  let config_content = @io.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => {
-      println("error: failed to parse .exo/config.toml")
+      println("error: failed to parse .choir/config.toml")
       @io.exit(1)
       @types.Config::default() // unreachable
     }
   }
 
-  let local_content = @io.read_file(".exo/config.local.toml")
+  let local_content = @io.read_file(".choir/config.local.toml")
   let local_role = match @config.parse_config_local(local_content) {
     Ok(r) => Some(r)
     Err(_) => None
@@ -298,7 +298,7 @@ fn main_prog() -> Unit raise {
     let addr_str = match config.listen_tcp {
       Some(addr) => addr
       None => {
-        println("error: listen_tcp not configured in .exo/config.toml")
+        println("error: listen_tcp not configured in .choir/config.toml")
         @io.exit(1)
         ""
       }

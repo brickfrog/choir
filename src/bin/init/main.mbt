@@ -2,7 +2,7 @@
 fn config_toml_content() -> String {
   "default_role = \"tl\"\n" +
   "project_dir = \".\"\n" +
-  "listen_uds = \".exo/server.sock\"\n"
+  "listen_uds = \".choir/server.sock\"\n"
 }
 
 ///|
@@ -34,13 +34,17 @@ fn main_prog() -> Unit raise {
       return
     }
 
-    run_or_exit({ program: "sh", args: ["-c", "mkdir -p .exo"], workdir: None })
+    run_or_exit({
+      program: "sh",
+      args: ["-c", "mkdir -p .choir"],
+      workdir: None,
+    })
 
     run_or_exit({
       program: "sh",
       args: [
         "-c",
-        "test -f .exo/config.toml || printf '%s' \"$1\" > .exo/config.toml",
+        "test -f .choir/config.toml || printf '%s' \"$1\" > .choir/config.toml",
         "sh",
         config_toml_content(),
       ],
@@ -53,6 +57,6 @@ fn main_prog() -> Unit raise {
       workdir: None,
     })
 
-    @io.write_stdout("Initialized .exo/ and .mcp.json\n")
+    @io.write_stdout("Initialized .choir/ and .mcp.json\n")
   })
 }

@@ -18,7 +18,7 @@ fn main_prog() -> Unit raise {
       }
     }
 
-    let config_content = @io.read_file(".exo/config.toml")
+    let config_content = @io.read_file(".choir/config.toml")
     let config_map = @config.parse_toml(config_content)
 
     let hook_key = match input.event {

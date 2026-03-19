@@ -170,7 +170,7 @@ fn format_poll_event(event : @poller.PollEvent) -> String {
 
 ///|
 fn main_prog() -> Unit raise {
-  let config_content = @io.read_file(".exo/config.toml")
+  let config_content = @io.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()

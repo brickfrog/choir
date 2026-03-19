@@ -170,7 +170,7 @@ fn serve_format_poll_event(event : @poller.PollEvent) -> String {
 
 ///|
 fn serve_run() -> Unit raise {
-  let config_content = @io.read_file(".exo/config.toml")
+  let config_content = @io.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
@@ -520,17 +520,17 @@ fn mcp_run_uds_loop(
 
 ///|
 fn mcp_run() -> Unit raise {
-  let config_content = @io.read_file(".exo/config.toml")
+  let config_content = @io.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => {
-      println("error: failed to parse .exo/config.toml")
+      println("error: failed to parse .choir/config.toml")
       @io.exit(1)
       @types.Config::default()
     }
   }
 
-  let local_content = @io.read_file(".exo/config.local.toml")
+  let local_content = @io.read_file(".choir/config.local.toml")
   let local_role = match @config.parse_config_local(local_content) {
     Ok(r) => Some(r)
     Err(_) => None
@@ -547,7 +547,7 @@ fn mcp_run() -> Unit raise {
     let addr_str = match config.listen_tcp {
       Some(addr) => addr
       None => {
-        println("error: listen_tcp not configured in .exo/config.toml")
+        println("error: listen_tcp not configured in .choir/config.toml")
         @io.exit(1)
         ""
       }
@@ -647,7 +647,7 @@ fn hook_run() -> Unit raise {
       }
     }
 
-    let config_content = @io.read_file(".exo/config.toml")
+    let config_content = @io.read_file(".choir/config.toml")
     let config_map = @config.parse_toml(config_content)
 
     let hook_key = match input.event {
@@ -681,7 +681,7 @@ fn hook_run() -> Unit raise {
 fn init_config_toml_content() -> String {
   "default_role = \"tl\"\n" +
   "project_dir = \".\"\n" +
-  "listen_uds = \".exo/server.sock\"\n"
+  "listen_uds = \".choir/server.sock\"\n"
 }
 
 ///|
@@ -715,7 +715,7 @@ fn init_run() -> Unit raise {
 
     init_run_or_exit({
       program: "sh",
-      args: ["-c", "mkdir -p .exo"],
+      args: ["-c", "mkdir -p .choir"],
       workdir: None,
     })
 
@@ -723,7 +723,7 @@ fn init_run() -> Unit raise {
       program: "sh",
       args: [
         "-c",
-        "test -f .exo/config.toml || printf '%s' \"$1\" > .exo/config.toml",
+        "test -f .choir/config.toml || printf '%s' \"$1\" > .choir/config.toml",
         "sh",
         init_config_toml_content(),
       ],
@@ -741,7 +741,7 @@ fn init_run() -> Unit raise {
       workdir: None,
     })
 
-    @io.write_stdout("Initialized .exo/ and .mcp.json\n")
+    @io.write_stdout("Initialized .choir/ and .mcp.json\n")
   })
 }
 

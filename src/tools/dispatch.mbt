@@ -284,22 +284,22 @@ fn task_file_to_json(task : TaskFile) -> String {
 
 ///|
 fn task_file_path(project_dir : String, id : String) -> String {
-  project_dir + "/.exo/tasks/" + id + ".json"
+  project_dir + "/.choir/tasks/" + id + ".json"
 }
 
 ///|
 fn kv_file_path(project_dir : String, key : String) -> String {
-  project_dir + "/.exo/kv/" + key
+  project_dir + "/.choir/kv/" + key
 }
 
 ///|
 fn task_list_manifest_path(project_dir : String) -> String {
-  project_dir + "/.exo/.task-list.paths"
+  project_dir + "/.choir/.task-list.paths"
 }
 
 ///|
 fn kv_list_manifest_path(project_dir : String) -> String {
-  project_dir + "/.exo/.kv-list.paths"
+  project_dir + "/.choir/.kv-list.paths"
 }
 
 ///|
@@ -338,7 +338,7 @@ async fn list_task_files(
   let list_cmd = @workspace.Command::{
     program: "sh",
     args: [
-      "-c", "[ -d \"$1/.exo/tasks\" ] || exit 3; find \"$1/.exo/tasks\" -maxdepth 1 -type f -name '*.json' | sort > \"$2\"",
+      "-c", "[ -d \"$1/.choir/tasks\" ] || exit 3; find \"$1/.choir/tasks\" -maxdepth 1 -type f -name '*.json' | sort > \"$2\"",
       "sh", project_dir, manifest_path,
     ],
     workdir: None,
@@ -414,7 +414,7 @@ async fn handle_kv_list(
   let list_cmd = @workspace.Command::{
     program: "sh",
     args: [
-      "-c", "[ -d \"$1/.exo/kv\" ] || exit 3; find \"$1/.exo/kv\" -type f | sort > \"$2\"",
+      "-c", "[ -d \"$1/.choir/kv\" ] || exit 3; find \"$1/.choir/kv\" -type f | sort > \"$2\"",
       "sh", project_dir, manifest_path,
     ],
     workdir: None,
@@ -440,7 +440,7 @@ async fn handle_kv_list(
     workdir: None,
   }
   ignore(runner([cleanup_cmd]) catch { _ => [] })
-  let prefix = project_dir + "/.exo/kv/"
+  let prefix = project_dir + "/.choir/kv/"
   let buf = StringBuilder::new()
   buf.write_char('[')
   let mut first = true
@@ -595,7 +595,7 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err("invalid name: " + e)
         Ok(_) => ()
       }
-      let session_dir = project_dir + "/.exo/sessions/" + name
+      let session_dir = project_dir + "/.choir/sessions/" + name
       let context_path = session_dir + "/context.json"
       let created_sec = @poller.now_sec()
       let context_json = "{\"name\":\"" +
@@ -822,7 +822,7 @@ pub async fn dispatch(
         Some(reg) => {
           match reg.get(caller_id) {
             Ok(agent) => {
-              if agent.workspace.contains(".exo/worktrees/") {
+              if agent.workspace.contains(".choir/worktrees/") {
                 let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
                 ()
               }
@@ -1037,7 +1037,7 @@ pub async fn dispatch(
       let cmd = @workspace.Command::{
         program: "sh",
         args: [
-          "-c", "mkdir -p \"$1/.exo/tasks\" && printf '%s' \"$3\" > \"$2\"", "sh",
+          "-c", "mkdir -p \"$1/.choir/tasks\" && printf '%s' \"$3\" > \"$2\"", "sh",
           project_dir, path, content,
         ],
         workdir: None,
@@ -1075,7 +1075,7 @@ pub async fn dispatch(
       let cmd = @workspace.Command::{
         program: "sh",
         args: [
-          "-c", "mkdir -p \"$1/.exo/tasks\" && printf '%s' \"$3\" > \"$2\"", "sh",
+          "-c", "mkdir -p \"$1/.choir/tasks\" && printf '%s' \"$3\" > \"$2\"", "sh",
           project_dir, path, content,
         ],
         workdir: None,

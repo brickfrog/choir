@@ -1,7 +1,7 @@
 ///|
 test "worktree path construction" {
   let path = @workspace.worktree_path("/home/user/project", "feature-a")
-  assert_eq(path, "/home/user/project/.exo/worktrees/feature-a")
+  assert_eq(path, "/home/user/project/.choir/worktrees/feature-a")
 }
 
 ///|

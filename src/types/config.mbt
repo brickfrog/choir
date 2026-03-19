@@ -19,7 +19,7 @@ pub fn Config::default() -> Config {
     default_role: TL,
     project_dir: ".",
     shell_command: None,
-    listen_uds: ".exo/server.sock",
+    listen_uds: ".choir/server.sock",
     listen_tcp: None,
     tcp_auth_token: None,
     otlp_endpoint: None,
