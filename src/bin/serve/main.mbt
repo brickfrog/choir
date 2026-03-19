@@ -156,7 +156,12 @@ async fn handle_uds_connection(
 fn format_poll_event(event : @poller.PollEvent) -> String {
   match event {
     PRReady(n) => "[PR READY] PR #\{n} approved"
-    ReviewReceived(n, _) => "[REVIEW] PR #\{n} has review comments"
+    ReviewReceived(n, comments) =>
+      if comments == "" {
+        "[REVIEW] PR #\{n} has review comments"
+      } else {
+        "[REVIEW] PR #\{n} has review comments:\n\{comments}"
+      }
     FixesPushed(n) => "[FIXES PUSHED] PR #\{n} new commits after review"
     ReviewTimeout(n) => "[REVIEW TIMEOUT] PR #\{n} no review after 15min"
     CIFailed(n) => "[CI FAILED] PR #\{n} CI checks failing"

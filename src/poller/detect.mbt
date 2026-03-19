@@ -4,6 +4,7 @@ pub fn detect_events(
   current_review : ReviewState,
   current_sha : String,
   ci_failed : Bool,
+  review_bodies : String,
   now : Int64,
   timeout : Int64,
 ) -> Array[PollEvent] {
@@ -14,7 +15,7 @@ pub fn detect_events(
     match current_review {
       Approved => events.push(PollEvent::PRReady(tracked.pr_number))
       ChangesRequested =>
-        events.push(PollEvent::ReviewReceived(tracked.pr_number, ""))
+        events.push(PollEvent::ReviewReceived(tracked.pr_number, review_bodies))
       None_ => ()
     }
   }

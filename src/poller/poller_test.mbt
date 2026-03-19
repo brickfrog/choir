@@ -70,6 +70,7 @@ test "detect_events::approval" {
     ReviewState::Approved,
     "sha1",
     false,
+    "",
     110,
     1000,
   )
@@ -92,6 +93,7 @@ test "detect_events::changes_requested" {
     ReviewState::ChangesRequested,
     "sha1",
     false,
+    "",
     110,
     1000,
   )
@@ -114,6 +116,7 @@ test "detect_events::fixes_pushed" {
     ReviewState::ChangesRequested,
     "sha2",
     false,
+    "",
     110,
     1000,
   )
@@ -136,6 +139,7 @@ test "detect_events::timeout" {
     ReviewState::None_,
     "sha1",
     false,
+    "",
     1200,
     1000,
   )
@@ -158,6 +162,7 @@ test "detect_events::no_change" {
     ReviewState::Approved,
     "sha1",
     false,
+    "",
     110,
     1000,
   )
@@ -166,7 +171,7 @@ test "detect_events::no_change" {
 
 ///|
 test "parse_gh_pr_view_output returns last actionable review and head sha" {
-  let (review, sha, _) = parse_gh_pr_view_output(
+  let (review, sha, _, _) = parse_gh_pr_view_output(
     "{\"reviews\":[{\"state\":\"COMMENTED\"},{\"state\":\"CHANGES_REQUESTED\"},{\"state\":\"APPROVED\"}],\"headRefOid\":\"abc123\"}",
   )
   assert_eq(review, ReviewState::Approved)
@@ -175,7 +180,7 @@ test "parse_gh_pr_view_output returns last actionable review and head sha" {
 
 ///|
 test "parse_gh_pr_view_output falls back on missing fields" {
-  let (review, sha, _) = parse_gh_pr_view_output("{\"reviews\":[]}")
+  let (review, sha, _, _) = parse_gh_pr_view_output("{\"reviews\":[]}")
   assert_eq(review, ReviewState::None_)
   assert_eq(sha, "")
 }
@@ -190,7 +195,7 @@ test "PollerState::tick_with updates tracked state and emits events" {
     state.tick_with(
       200,
       900L,
-      fn(_pr_number) { (ReviewState::Approved, "sha2", false) },
+      fn(_pr_number) { (ReviewState::Approved, "sha2", false, "") },
       fn(event, agent_id) {
         events.push(event)
         agent_ids.push(agent_id)
@@ -225,6 +230,7 @@ test "detect_events::ci_failed fires once" {
     ReviewState::None_,
     "sha1",
     true,
+    "",
     110,
     1000,
   )
@@ -247,6 +253,7 @@ test "detect_events::ci_failed does not re-fire if already failed" {
     ReviewState::None_,
     "sha1",
     true,
+    "",
     110,
     1000,
   )
@@ -255,7 +262,7 @@ test "detect_events::ci_failed does not re-fire if already failed" {
 
 ///|
 test "parse_gh_pr_view_output detects CI failure" {
-  let (review, sha, ci_failed) = parse_gh_pr_view_output(
+  let (review, sha, ci_failed, _) = parse_gh_pr_view_output(
     "{\"reviews\":[],\"headRefOid\":\"abc\",\"statusCheckRollup\":[{\"state\":\"FAILURE\"}]}",
   )
   assert_eq(review, ReviewState::None_)
@@ -265,7 +272,7 @@ test "parse_gh_pr_view_output detects CI failure" {
 
 ///|
 test "parse_gh_pr_view_output CI passing is not failed" {
-  let (review, sha, ci_failed) = parse_gh_pr_view_output(
+  let (review, sha, ci_failed, _) = parse_gh_pr_view_output(
     "{\"reviews\":[],\"headRefOid\":\"abc\",\"statusCheckRollup\":[{\"state\":\"SUCCESS\"}]}",
   )
   assert_eq(review, ReviewState::None_)
@@ -275,8 +282,50 @@ test "parse_gh_pr_view_output CI passing is not failed" {
 
 ///|
 test "parse_gh_pr_view_output ERROR state is ci_failed" {
-  let (_, _, ci_failed) = parse_gh_pr_view_output(
+  let (_, _, ci_failed, _) = parse_gh_pr_view_output(
     "{\"reviews\":[],\"headRefOid\":\"\",\"statusCheckRollup\":[{\"state\":\"ERROR\"}]}",
   )
   assert_true(ci_failed)
+}
+
+///|
+test "parse_review_bodies extracts non-empty review bodies" {
+  let (_, _, _, bodies) = parse_gh_pr_view_output(
+    "{\"reviews\":[{\"state\":\"CHANGES_REQUESTED\",\"body\":\"Please fix the indentation\"},{\"state\":\"COMMENTED\",\"body\":\"Also update the docs\"}],\"headRefOid\":\"abc\",\"statusCheckRollup\":[]}",
+  )
+  assert_true(bodies.contains("Please fix the indentation"))
+  assert_true(bodies.contains("Also update the docs"))
+}
+
+///|
+test "parse_review_bodies ignores empty bodies" {
+  let (_, _, _, bodies) = parse_gh_pr_view_output(
+    "{\"reviews\":[{\"state\":\"APPROVED\",\"body\":\"\"}],\"headRefOid\":\"abc\",\"statusCheckRollup\":[]}",
+  )
+  assert_eq(bodies, "")
+}
+
+///|
+test "detect_events::changes_requested carries review bodies" {
+  let tracked : TrackedPR = {
+    pr_number: 1,
+    agent_id: "agent1",
+    first_seen: 100,
+    last_review_state: ReviewState::None_,
+    last_sha: "sha1",
+    notified_parent: false,
+    last_ci_failed: false,
+  }
+  let events = detect_events(
+    tracked,
+    ReviewState::ChangesRequested,
+    "sha1",
+    false,
+    "Fix the type error on line 42",
+    110,
+    1000,
+  )
+  assert_eq(events, [
+    PollEvent::ReviewReceived(1, "Fix the type error on line 42"),
+  ])
 }

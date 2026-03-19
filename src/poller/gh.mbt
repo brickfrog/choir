@@ -102,19 +102,44 @@ fn parse_head_ref_oid(data : String) -> String {
 }
 
 ///|
+fn parse_review_bodies(data : String) -> String {
+  let bodies : Array[String] = []
+  let mut start = 0
+  for {
+    match find_json_string_field(data, "body", start~) {
+      Some((value, next_start)) => {
+        if value != "" {
+          bodies.push(value)
+        }
+        start = next_start
+      }
+      None => break
+    }
+  }
+  bodies.join("\n---\n")
+}
+
+///|
 fn parse_ci_failed(data : String) -> Bool {
   index_of(data, "\"FAILURE\"") != -1 || index_of(data, "\"ERROR\"") != -1
 }
 
 ///|
-pub fn parse_gh_pr_view_output(data : String) -> (ReviewState, String, Bool) {
-  (parse_review_state(data), parse_head_ref_oid(data), parse_ci_failed(data))
+pub fn parse_gh_pr_view_output(
+  data : String,
+) -> (ReviewState, String, Bool, String) {
+  (
+    parse_review_state(data),
+    parse_head_ref_oid(data),
+    parse_ci_failed(data),
+    parse_review_bodies(data),
+  )
 }
 
 ///|
-async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool) {
+async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
   let (read_end, write_end) = @pipe.pipe() catch {
-    _ => return (None_, "", false)
+    _ => return (None_, "", false, "")
   }
   let exit_code = @process.run(
     @utf8.encode("gh"),
@@ -145,7 +170,7 @@ async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool) {
   }
   read_end.close()
   if exit_code != 0 {
-    return (None_, "", false)
+    return (None_, "", false, "")
   }
   let output = buf
     .unsafe_reinterpret_as_bytes()

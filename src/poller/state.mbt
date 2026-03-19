@@ -65,7 +65,7 @@ pub async fn PollerState::tick_with(
   self : PollerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (ReviewState, String, Bool),
+  poll : async (Int) -> (ReviewState, String, Bool, String),
   on_event : (PollEvent, String) -> Unit,
 ) -> Unit {
   let pr_numbers = []
@@ -77,8 +77,10 @@ pub async fn PollerState::tick_with(
       Some(value) => value
       None => continue
     }
-    let (review, sha, ci_failed) = poll(pr_number)
-    let events = detect_events(tracked, review, sha, ci_failed, now, timeout)
+    let (review, sha, ci_failed, review_bodies) = poll(pr_number)
+    let events = detect_events(
+      tracked, review, sha, ci_failed, review_bodies, now, timeout,
+    )
     for event in events {
       on_event(event, tracked.agent_id)
     }
