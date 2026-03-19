@@ -579,3 +579,66 @@ test "dispatch mutex_release returns false when agent does not hold or wait" {
     }
   })
 }
+
+///|
+test "dispatch merge_pr blocks concurrent merges on the same parent_branch" {
+  @async.with_event_loop(fn(_) {
+    let mutex_registry = @registry.MutexRegistry::new()
+    let nested_results : Array[@types.Response] = []
+    let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      let nested_call : @tools.ToolCall = {
+        role: @types.Role::TL,
+        name: "merge_pr",
+        args: {
+          "pr_number": "102",
+          "parent_branch": "release",
+          "caller_id": "agent-b",
+        },
+      }
+      nested_results.push(
+        @tools.dispatch(
+          nested_call,
+          runner=mock_runner,
+          mutex_registry=Some(mutex_registry),
+        ),
+      )
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    }
+    let first_call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "merge_pr",
+      args: {
+        "pr_number": "101",
+        "parent_branch": "release",
+        "caller_id": "agent-a",
+      },
+    }
+    let first_res = @tools.dispatch(
+      first_call,
+      runner~,
+      mutex_registry=Some(mutex_registry),
+    )
+    match first_res {
+      Ok(m) => assert_eq(m.get("status"), Some("merged"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+    assert_eq(nested_results.length(), 1)
+    match nested_results[0] {
+      Ok(_) => assert_true(false)
+      Err(e) =>
+        assert_eq(
+          e, "merge serialization lock held by another agent, retry shortly",
+        )
+    }
+    let (holder, queue) = mutex_registry.status("branch:release")
+    assert_eq(holder, None)
+    assert_eq(queue.length(), 0)
+  })
+}

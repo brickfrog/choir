@@ -551,18 +551,56 @@ pub async fn dispatch(
         Some(v) => v
         None => return @types.Response::Err("missing pr_number")
       }
+      let parent_branch = match call.args.get("parent_branch") {
+        Some(v) => if v == "" { "main" } else { v }
+        None => "main"
+      }
+      let caller_id = match call.args.get("caller_id") {
+        Some(v) => if v == "" { "server" } else { v }
+        None => "server"
+      }
+      match validate_branch(parent_branch) {
+        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
+        Ok(_) => ()
+      }
       match parse_int(pr_str) {
         Some(pr_number) => {
           let cmds = merge_pr_commands(pr_number)
-          match run_strict(runner, cmds) {
-            Ok(_) => {
-              match poller_state {
-                Some(ps) => ps.untrack(pr_number)
-                None => ()
+          let mutex_name = "branch:" + parent_branch
+          match mutex_registry {
+            Some(reg) => {
+              let now = @poller.now_sec()
+              let (acquired, _) = reg.acquire(mutex_name, caller_id, 120L, now)
+              if not(acquired) {
+                ignore(reg.release(mutex_name, caller_id))
+                return @types.Response::Err(
+                  "merge serialization lock held by another agent, retry shortly",
+                )
               }
-              @types.Response::Ok({ "status": "merged" })
+              let merge_result = run_strict(runner, cmds)
+              ignore(reg.release(mutex_name, caller_id))
+              match merge_result {
+                Ok(_) => {
+                  match poller_state {
+                    Some(ps) => ps.untrack(pr_number)
+                    None => ()
+                  }
+                  @types.Response::Ok({ "status": "merged" })
+                }
+                Err(e) => @types.Response::Err(e)
+              }
             }
-            Err(e) => @types.Response::Err(e)
+            None =>
+              match run_strict(runner, cmds) {
+                Ok(_) => {
+                  match poller_state {
+                    Some(ps) => ps.untrack(pr_number)
+                    None => ()
+                  }
+                  @types.Response::Ok({ "status": "merged" })
+                }
+                Err(e) => @types.Response::Err(e)
+              }
           }
         }
         None => @types.Response::Err("invalid pr_number: " + pr_str)
