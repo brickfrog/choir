@@ -172,8 +172,6 @@ async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
   if exit_code != 0 {
     return (None_, "", false, "")
   }
-  let output = buf
-    .unsafe_reinterpret_as_bytes()
-    .to_unchecked_string(offset=0, length=total)
+  let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
   parse_gh_pr_view_output(output)
 }

@@ -285,10 +285,7 @@ async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
     for i = self.read_pos; i < self.write_pos; i = i + 1 {
       if bytes[i] == (10 : Byte) {
-        let line = bytes.to_unchecked_string(
-          offset=self.read_pos,
-          length=i - self.read_pos,
-        )
+        let line = @utf8.decode_lossy(bytes[self.read_pos:i])
         self.read_pos = i + 1
         return line
       }
@@ -316,10 +313,7 @@ async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
     )
     if n == 0 {
       if self.write_pos > self.read_pos {
-        let line = bytes.to_unchecked_string(
-          offset=self.read_pos,
-          length=self.write_pos - self.read_pos,
-        )
+        let line = @utf8.decode_lossy(bytes[self.read_pos:self.write_pos])
         self.read_pos = self.write_pos
         return line
       }
@@ -335,10 +329,7 @@ fn UDSLineReader::read_line(self : UDSLineReader) -> String {
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
     for i = self.read_pos; i < self.write_pos; i = i + 1 {
       if bytes[i] == (10 : Byte) {
-        let line = bytes.to_unchecked_string(
-          offset=self.read_pos,
-          length=i - self.read_pos,
-        )
+        let line = @utf8.decode_lossy(bytes[self.read_pos:i])
         self.read_pos = i + 1
         return line
       }
@@ -367,10 +358,7 @@ fn UDSLineReader::read_line(self : UDSLineReader) -> String {
     )
     if n <= 0 {
       if self.write_pos > self.read_pos {
-        let line = bytes.to_unchecked_string(
-          offset=self.read_pos,
-          length=self.write_pos - self.read_pos,
-        )
+        let line = @utf8.decode_lossy(bytes[self.read_pos:self.write_pos])
         self.read_pos = self.write_pos
         return line
       }
@@ -482,7 +470,7 @@ fn mcp_run_uds_loop(
       break
     }
 
-    let line = stdin_buf.to_unchecked_string(offset=0, length=len)
+    let line = @utf8.decode_lossy(stdin_buf[:len])
     match @mcp.parse_jsonrpc_request(line) {
       Ok(rpc) =>
         if rpc.req_method == @mcp.method_tools_list {
@@ -585,7 +573,7 @@ fn mcp_run() -> Unit raise {
         break
       }
 
-      let line = stdin_buf.to_unchecked_string(offset=0, length=len)
+      let line = @utf8.decode_lossy(stdin_buf[:len])
       match @mcp.parse_jsonrpc_request(line) {
         Ok(rpc) =>
           if rpc.req_method == @mcp.method_tools_list {
@@ -637,7 +625,7 @@ fn hook_run() -> Unit raise {
       return
     }
 
-    let line = stdin_buf.to_unchecked_string(offset=0, length=len)
+    let line = @utf8.decode_lossy(stdin_buf[:len])
     let input = match @hooks.HookInput::from_json_string(line) {
       Some(i) => i
       None => {

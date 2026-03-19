@@ -172,7 +172,7 @@ async fn capture_stdout(
     total = total + n
   }
   read_end.close()
-  buf.unsafe_reinterpret_as_bytes().to_unchecked_string(offset=0, length=total)
+  @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
 }
 
 ///|
