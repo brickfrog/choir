@@ -35,6 +35,21 @@ test "send_message allowed for all roles" {
 }
 
 ///|
+test "reply allowed for all roles" {
+  let reg = @tools.ToolRegistry::new()
+  let roles : Array[@types.Role] = [
+    @types.Role::Root,
+    @types.Role::TL,
+    @types.Role::Dev,
+    @types.Role::Worker,
+  ]
+  for role in roles {
+    let result = reg.lookup(role, "reply")
+    assert_true(result is Ok(_))
+  }
+}
+
+///|
 test "kv tools allowed for all roles" {
   let reg = @tools.ToolRegistry::new()
   let roles : Array[@types.Role] = [
@@ -111,6 +126,7 @@ test "dispatch returns correct stub for each tool name" {
       ("track_pr", "tracked", { "pr_number": "1", "agent_id": "agent-1" }),
       ("notify_parent", "notified", { "caller_id": "test-agent" }),
       ("send_message", "sent", { "target_id": "test-agent" }),
+      ("reply", "ok", { "id": "req-1" }),
       ("kv_get", "", { "key": "missing" }),
       ("mutex_status", "", { "name": "readme" }),
       ("shutdown", "shutdown", Map::new()),

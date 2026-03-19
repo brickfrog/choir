@@ -76,6 +76,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: all_roles,
     },
     {
+      name: "reply",
+      description: "Store a reply to a pending interaction request",
+      allowed_roles: all_roles,
+    },
+    {
       name: "shutdown",
       description: "Notify parent, close own pane",
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],

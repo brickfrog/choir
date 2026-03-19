@@ -28,4 +28,5 @@ test "default config" {
   assert_eq(config.listen_uds, ".choir/server.sock")
   assert_eq(config.listen_tcp, None)
   assert_eq(config.extra_mcp_servers_json, None)
+  assert_eq(config.companions_json, None)
 }

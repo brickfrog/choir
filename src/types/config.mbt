@@ -10,6 +10,7 @@ pub(all) struct Config {
   otlp_endpoint : String?
   agent_id : String?
   extra_mcp_servers_json : String?
+  companions_json : String?
   tmux_session : String
 } derive(Show)
 
@@ -26,6 +27,7 @@ pub fn Config::default() -> Config {
     otlp_endpoint: None,
     agent_id: None,
     extra_mcp_servers_json: None,
+    companions_json: None,
     tmux_session: "choir",
   }
 }

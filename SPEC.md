@@ -278,6 +278,18 @@ Agents discover the server via:
 `choir init` writes `.mcp.json` pointing `mcp-stdio` at the project root, which handles
 discovery implicitly.
 
+### 5.7 CLI Entry Points
+
+- `choir serve` — starts the persistent server process and listens on configured transport(s)
+- `choir mcp-stdio` — translates MCP JSON-RPC on stdin/stdout to Choir transport requests
+- `choir hook <event>` — runs a hook callback and returns the hook response on stdout
+- `choir init [--recreate]` — creates the tmux session, Server window, TL window, any companion
+  agents from `companions_json`, waits for the server socket, then attaches. `--recreate`
+  kills the existing server (via `.choir/server.pid`) and existing tmux session first.
+- `choir reply --id <id> [--payload <json>] [--cancel]` — stores a reply to a pending
+  interaction request in the KV store under `reply/{id}`. This is the human-in-the-loop /
+  agent-to-agent return path for deferred responses.
+
 ---
 
 ## 6. Tool Specification
@@ -298,6 +310,7 @@ for arguments, and a handler function.
 | `track_pr` | root, tl | Register PR with the GitHub poller for review tracking |
 | `notify_parent` | tl, dev, worker | Send message to parent agent |
 | `send_message` | all | Send message to any agent by ID |
+| `reply` | all | Store reply to a pending interaction request |
 | `shutdown` | dev, worker | Notify parent, close own pane (blocked if `ChangesRequested`) |
 | `task_list` | tl, dev, worker | List tasks from `.exo/tasks/` |
 | `task_get` | tl, dev, worker | Get task by ID |
@@ -377,6 +390,9 @@ otlp_endpoint = ""               # e.g. "http://localhost:4317"
 # type = "stdio"
 # command = "node"
 # args = ["/path/to/notebooklm-mcp/index.js"]
+
+# Companion agents spawned alongside TL (JSON array of objects)
+# companions_json = '[{"name":"monitor","role":"worker","command":"claude --dangerously-skip-permissions -c","task":"Monitor the build"}]'
 ```
 
 ### 7.4 MCP Client Registration

@@ -188,6 +188,61 @@ test "dispatch task_update validates status" {
 }
 
 ///|
+test "dispatch reply stores payload in reply kv path" {
+  @async.with_event_loop(_ => {
+    let project_dir = "/tmp/choir-dispatch-reply"
+    run_shell(
+      "rm -rf /tmp/choir-dispatch-reply && mkdir -p /tmp/choir-dispatch-reply/.choir",
+    )
+    let call : @tools.ToolCall = {
+      role: @types.Role::Root,
+      name: "reply",
+      args: { "id": "req-1", "payload": "{\"ok\":true}" },
+    }
+    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("ok"))
+        assert_eq(m.get("id"), Some("req-1"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+    let written = @io.read_file(project_dir + "/.choir/kv/reply/req-1")
+    assert_eq(written, "{\"ok\":true}")
+    run_shell("rm -rf /tmp/choir-dispatch-reply")
+  })
+}
+
+///|
+test "dispatch reply cancel stores cancel marker" {
+  @async.with_event_loop(_ => {
+    let project_dir = "/tmp/choir-dispatch-reply-cancel"
+    run_shell(
+      "rm -rf /tmp/choir-dispatch-reply-cancel && mkdir -p /tmp/choir-dispatch-reply-cancel/.choir",
+    )
+    let call : @tools.ToolCall = {
+      role: @types.Role::Root,
+      name: "reply",
+      args: { "id": "req-2", "payload": "ignored", "cancel": "true" },
+    }
+    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    match res {
+      Ok(m) => assert_eq(m.get("status"), Some("ok"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+    let written = @io.read_file(project_dir + "/.choir/kv/reply/req-2")
+    assert_eq(written, "cancel")
+    run_shell("rm -rf /tmp/choir-dispatch-reply-cancel")
+  })
+}
+
+///|
 test "dispatch fork_wave handles failure" {
   @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {

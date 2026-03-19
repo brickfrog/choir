@@ -1276,6 +1276,36 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
+    "reply" => {
+      let id = match call.args.get("id") {
+        Some(v) => v
+        None => return @types.Response::Err("missing id")
+      }
+      if id == "" {
+        return @types.Response::Err("id cannot be empty")
+      }
+      let cancel = call.args.get("cancel").unwrap_or("false") == "true"
+      let payload = call.args.get("payload").unwrap_or("")
+      let value = if cancel { "cancel" } else { payload }
+      let key = "reply/" + id
+      match validate_kv_key(key) {
+        Err(e) => return @types.Response::Err(e)
+        Ok(_) => ()
+      }
+      let path = kv_file_path(project_dir, key)
+      let cmd = @workspace.Command::{
+        program: "sh",
+        args: [
+          "-c", "mkdir -p \"$(dirname \"$2\")\" && printf '%s' \"$3\" > \"$2\"",
+          "sh", project_dir, path, value,
+        ],
+        workdir: None,
+      }
+      match run_strict(runner, [cmd]) {
+        Ok(_) => @types.Response::Ok({ "status": "ok", "id": id })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
     _ => @types.Response::Err("unknown tool")
   }
 }

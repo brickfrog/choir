@@ -699,6 +699,163 @@ fn init_mcp_json_content() -> String {
 }
 
 ///|
+struct CompanionDef {
+  name : String
+  role : String
+  command : String
+  task : String
+}
+
+///|
+fn init_skip_ws(s : String, start : Int) -> Int {
+  let mut i = start
+  while i < s.length() &&
+        (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t') {
+    i = i + 1
+  }
+  i
+}
+
+///|
+fn init_parse_string(s : String, start : Int) -> (String, Int)? {
+  if start >= s.length() || s[start] != '"' {
+    return None
+  }
+  let buf = StringBuilder::new()
+  let mut i = start + 1
+  while i < s.length() {
+    let c = Int::unsafe_to_char(s[i].to_int())
+    if c == '"' {
+      return Some((buf.to_string(), i + 1))
+    }
+    if c == '\\' {
+      i = i + 1
+      if i >= s.length() {
+        return None
+      }
+      match Int::unsafe_to_char(s[i].to_int()) {
+        '"' => buf.write_char('"')
+        '\\' => buf.write_char('\\')
+        'n' => buf.write_char('\n')
+        'r' => buf.write_char('\r')
+        't' => buf.write_char('\t')
+        other => buf.write_char(other)
+      }
+    } else {
+      buf.write_char(c)
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+fn init_parse_obj(s : String, start : Int) -> (Map[String, String], Int)? {
+  let mut i = init_skip_ws(s, start)
+  if i >= s.length() || s[i] != '{' {
+    return None
+  }
+  i = i + 1
+  let map : Map[String, String] = {}
+  for {
+    i = init_skip_ws(s, i)
+    if i >= s.length() {
+      return None
+    }
+    if s[i] == '}' {
+      return Some((map, i + 1))
+    }
+    let (key, ki) = match init_parse_string(s, i) {
+      Some(p) => p
+      None => return None
+    }
+    i = init_skip_ws(s, ki)
+    if i >= s.length() || s[i] != ':' {
+      return None
+    }
+    i = init_skip_ws(s, i + 1)
+    let (val, vi) = match init_parse_string(s, i) {
+      Some(p) => p
+      None => return None
+    }
+    map.set(key, val)
+    i = init_skip_ws(s, vi)
+    if i >= s.length() {
+      return None
+    }
+    if s[i] == '}' {
+      return Some((map, i + 1))
+    }
+    if s[i] != ',' {
+      return None
+    }
+    i = i + 1
+  }
+}
+
+///|
+fn parse_companions_json(s : String) -> Array[CompanionDef] {
+  let result = []
+  let mut i = init_skip_ws(s, 0)
+  if i >= s.length() || s[i] != '[' {
+    return result
+  }
+  i = i + 1
+  for {
+    i = init_skip_ws(s, i)
+    if i >= s.length() || s[i] == ']' {
+      break
+    }
+    match init_parse_obj(s, i) {
+      Some((map, next_i)) => {
+        let name = map.get("name").unwrap_or("")
+        let role = map.get("role").unwrap_or("worker")
+        let command = map.get("command").unwrap_or("")
+        let task = map.get("task").unwrap_or("")
+        if name != "" && command != "" {
+          result.push({ name, role, command, task })
+        }
+        i = init_skip_ws(s, next_i)
+        if i < s.length() && s[i] == ',' {
+          i = i + 1
+        }
+      }
+      None => break
+    }
+  }
+  result
+}
+
+///|
+fn init_escape_shell_single_quoted(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    if c == '\'' {
+      buf.write_string("'\\''")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn choir_escape_json_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
 async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
   let exit_code = @exec.run(cmd) catch { _ => 1 }
   if exit_code != 0 {
@@ -855,6 +1012,75 @@ fn init_run() -> Unit raise {
       workdir: None,
     })
 
+    match config.companions_json {
+      Some(json) => {
+        let companions = parse_companions_json(json)
+        for c in companions {
+          let agent_dir = ".choir/agents/" + c.name
+          ignore(
+            @exec.run({
+              program: "sh",
+              args: [
+                "-c",
+                "mkdir -p \"$1\" && printf '%s' \"$2\" > \"$1/.mcp.json\"",
+                "sh",
+                agent_dir,
+                init_mcp_json_content(),
+              ],
+              workdir: None,
+            }) catch {
+              _ => 0
+            },
+          )
+          ignore(
+            @exec.run({
+              program: "sh",
+              args: [
+                "-c",
+                "printf '%s' \"$2\" > \"$1/.birth_branch\"",
+                "sh",
+                agent_dir,
+                c.name,
+              ],
+              workdir: None,
+            }) catch {
+              _ => 0
+            },
+          )
+          let window_cmd = c.command +
+            " '" +
+            init_escape_shell_single_quoted(c.task) +
+            "'"
+          ignore(
+            @exec.run({
+              program: "tmux",
+              args: ["new-window", "-t", session, "-n", c.name],
+              workdir: None,
+            }) catch {
+              _ => 0
+            },
+          )
+          ignore(
+            @exec.run({
+              program: "tmux",
+              args: [
+                "send-keys",
+                "-t",
+                session + ":" + c.name,
+                window_cmd,
+                "Enter",
+              ],
+              workdir: None,
+            }) catch {
+              _ => 0
+            },
+          )
+          @io.write_stdout("Spawned companion: \{c.name}\n")
+        }
+      }
+      None => ()
+    }
+
     @io.write_stdout("Waiting for server socket...\n")
     let mut found = false
     for i = 0; i < 60; i = i + 1 {
@@ -891,6 +1117,115 @@ fn init_run() -> Unit raise {
 }
 
 ///|
+fn reply_run() -> Unit {
+  let args = @io.get_args()
+
+  let mut id = ""
+  let mut payload = ""
+  let mut cancel = false
+  let mut i = 2
+  while i < args.length() {
+    match args[i] {
+      "--id" =>
+        if i + 1 < args.length() {
+          id = args[i + 1]
+          i = i + 2
+        } else {
+          i = i + 1
+        }
+      "--payload" =>
+        if i + 1 < args.length() {
+          payload = args[i + 1]
+          i = i + 2
+        } else {
+          i = i + 1
+        }
+      "--cancel" => {
+        cancel = true
+        i = i + 1
+      }
+      _ => i = i + 1
+    }
+  }
+
+  if id == "" {
+    @io.write_stdout(
+      "usage: choir reply --id <id> [--payload <json>] [--cancel]\n",
+    )
+    @io.exit(1)
+    return
+  }
+
+  let config_content = @io.read_file(".choir/config.toml")
+  let config = match @config.parse_config(config_content) {
+    Ok(cfg) => cfg
+    Err(_) => @types.Config::default()
+  }
+
+  let uds_fd = @uds.client_connect(config.listen_uds)
+  if uds_fd < 0 {
+    @io.write_stdout(
+      "error: cannot connect to server at \{config.listen_uds}\n",
+    )
+    @io.exit(1)
+    return
+  }
+
+  let reg_msg = "{\"method\":\"register\",\"role\":\"root\",\"name\":\"register\",\"args\":{\"agent_id\":\"system-reply\"}}\n"
+  let reg_bytes = @utf8.encode(reg_msg)
+  let mut written = 0
+  while written < reg_bytes.length() {
+    let n = @uds.write_bytes(
+      uds_fd,
+      reg_bytes,
+      written,
+      reg_bytes.length() - written,
+    )
+    if n <= 0 {
+      break
+    }
+    written = written + n
+  }
+
+  let rbuf = FixedArray::make(1024, (0 : Byte))
+  let _ = @uds.read_bytes(uds_fd, rbuf, 0, rbuf.length())
+
+  let cancel_str = if cancel { "true" } else { "false" }
+  let req_msg = "{\"method\":\"reply\",\"role\":\"root\",\"name\":\"reply\",\"args\":{\"id\":\"" +
+    choir_escape_json_string(id) +
+    "\",\"payload\":\"" +
+    choir_escape_json_string(payload) +
+    "\",\"cancel\":\"" +
+    cancel_str +
+    "\"}}\n"
+  let req_bytes = @utf8.encode(req_msg)
+  written = 0
+  while written < req_bytes.length() {
+    let n = @uds.write_bytes(
+      uds_fd,
+      req_bytes,
+      written,
+      req_bytes.length() - written,
+    )
+    if n <= 0 {
+      break
+    }
+    written = written + n
+  }
+
+  let resp_buf = FixedArray::make(4096, (0 : Byte))
+  let n = @uds.read_bytes(uds_fd, resp_buf, 0, resp_buf.length())
+  if n > 0 {
+    let resp = resp_buf
+      .unsafe_reinterpret_as_bytes()
+      .to_unchecked_string(offset=0, length=n)
+    @io.write_stdout(resp + "\n")
+  }
+
+  @uds.close(uds_fd)
+}
+
+///|
 fn main {
   let args = @io.get_args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
@@ -905,9 +1240,10 @@ fn main {
           )
       }
     "init" => init_run() catch { _ => @io.exit(1) }
+    "reply" => reply_run()
     _ => {
       @io.write_stdout(
-        "usage: choir <serve|mcp-stdio|hook|init [--recreate]>\n",
+        "usage: choir <serve|mcp-stdio|hook|init [--recreate]|reply --id <id> [--payload <json>] [--cancel]>\n",
       )
       @io.exit(1)
     }

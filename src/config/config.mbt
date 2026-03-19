@@ -76,6 +76,11 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     None => default_cfg.extra_mcp_servers_json
   }
 
+  let companions_json = match map.get("companions_json") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => default_cfg.companions_json
+  }
+
   let tmux_session = match map.get("tmux_session") {
     Some(s) => if s == "" { default_cfg.tmux_session } else { s }
     None => default_cfg.tmux_session
@@ -91,6 +96,7 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     otlp_endpoint,
     agent_id,
     extra_mcp_servers_json,
+    companions_json,
     tmux_session,
   })
 }
