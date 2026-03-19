@@ -472,8 +472,14 @@ fn mcp_run_uds_loop(
 
     let line = @utf8.decode_lossy(stdin_buf[:len])
     match @mcp.parse_jsonrpc_request(line) {
-      Ok(rpc) =>
-        if rpc.req_method == @mcp.method_tools_list {
+      Ok(rpc) => {
+        if rpc.id < 0 {
+          continue
+        }
+        if rpc.req_method == @mcp.method_initialize {
+          let resp = @mcp.initialize_response(rpc.id)
+          @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
+        } else if rpc.req_method == @mcp.method_tools_list {
           let resp = @mcp.tools_list_response(rpc.id)
           @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
         } else {
@@ -497,6 +503,7 @@ fn mcp_run_uds_loop(
             }
           }
         }
+      }
       Err(e) => {
         let err_resp = @mcp.error_response(0, e.code, e.message)
         @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
@@ -575,8 +582,14 @@ fn mcp_run() -> Unit raise {
 
       let line = @utf8.decode_lossy(stdin_buf[:len])
       match @mcp.parse_jsonrpc_request(line) {
-        Ok(rpc) =>
-          if rpc.req_method == @mcp.method_tools_list {
+        Ok(rpc) => {
+          if rpc.id < 0 {
+            continue
+          }
+          if rpc.req_method == @mcp.method_initialize {
+            let resp = @mcp.initialize_response(rpc.id)
+            @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
+          } else if rpc.req_method == @mcp.method_tools_list {
             let resp = @mcp.tools_list_response(rpc.id)
             @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
           } else {
@@ -606,6 +619,7 @@ fn mcp_run() -> Unit raise {
               }
             }
           }
+        }
         Err(e) => {
           let err_resp = @mcp.error_response(0, e.code, e.message)
           @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))

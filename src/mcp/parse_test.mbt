@@ -19,11 +19,11 @@ test "parse valid jsonrpc request with tools/call" {
 }
 
 ///|
-test "parse request with missing id returns error" {
-  let line = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\"}"
+test "parse request with missing id returns notification (id=-1)" {
+  let line = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
   match parse_jsonrpc_request(line) {
-    Ok(_) => fail("should have failed")
-    Err(e) => assert_eq(e.code, err_invalid_params)
+    Ok(rpc) => assert_eq(rpc.id, -1)
+    Err(e) => fail("should have succeeded, got: \{e.message}")
   }
 }
 

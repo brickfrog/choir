@@ -172,7 +172,7 @@ pub fn parse_jsonrpc_request(
   }
   let id = match get_int_value(line, "id") {
     Some(v) => v
-    None => return Err({ code: err_invalid_params, message: "missing id" })
+    None => -1 // notifications have no id; callers must not send a response when id < 0
   }
   let method_val = match get_string_value(line, "method") {
     Some(v) => v

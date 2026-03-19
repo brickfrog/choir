@@ -15,6 +15,31 @@ fn escape_json_string(s : String) -> String {
 }
 
 ///|
+fn is_raw_json(v : String) -> Bool {
+  if v.length() == 0 {
+    return false
+  }
+  let c = v[0]
+  if c == '{' || c == '[' {
+    return true
+  }
+  if v == "true" || v == "false" || v == "null" {
+    return true
+  }
+  // Only treat as raw number if every character is a digit (or leading minus)
+  let start = if c == '-' { 1 } else { 0 }
+  if start == v.length() {
+    return false
+  }
+  for i = start; i < v.length(); i = i + 1 {
+    if v[i] < '0' || v[i] > '9' {
+      return false
+    }
+  }
+  true
+}
+
+///|
 fn map_to_json(m : Map[String, String]) -> String {
   let buf = StringBuilder::new()
   buf.write_char('{')
@@ -27,9 +52,14 @@ fn map_to_json(m : Map[String, String]) -> String {
     }
     buf.write_char('"')
     buf.write_string(escape_json_string(k))
-    buf.write_string("\":\"")
-    buf.write_string(escape_json_string(v))
-    buf.write_char('"')
+    buf.write_string("\":")
+    if is_raw_json(v) {
+      buf.write_string(v)
+    } else {
+      buf.write_char('"')
+      buf.write_string(escape_json_string(v))
+      buf.write_char('"')
+    }
   })
   buf.write_char('}')
   buf.to_string()

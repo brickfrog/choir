@@ -1,5 +1,8 @@
 ///|
 /// MCP JSON-RPC method constants.
+pub let method_initialize : String = "initialize"
+
+///|
 pub let method_tools_list : String = "tools/list"
 
 ///|

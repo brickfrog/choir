@@ -35,6 +35,21 @@ pub fn to_internal_request(
 }
 
 ///|
+/// Create a JSON-RPC response for the MCP initialize handshake.
+pub fn initialize_response(id : Int) -> JsonRpcResponse {
+  {
+    jsonrpc: "2.0",
+    id,
+    result: Some({
+      "protocolVersion": "2024-11-05",
+      "capabilities": "{\"tools\":{}}",
+      "serverInfo": "{\"name\":\"choir\",\"version\":\"1.0.0\"}",
+    }),
+    error: None,
+  }
+}
+
+///|
 /// Create a JSON-RPC response with the list of available tools.
 pub fn tools_list_response(id : Int) -> JsonRpcResponse {
   let tools_json = "[" +
