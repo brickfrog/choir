@@ -82,6 +82,12 @@ int choir_getpid(void) {
     return (int)getpid();
 }
 
+/* Writes current working directory into buf (null-terminated). Returns length or 0. */
+int choir_getcwd(char* buf, int buf_size) {
+    if (getcwd(buf, (size_t)buf_size) == NULL) return 0;
+    return (int)strlen(buf);
+}
+
 void choir_write_pid_file(const char* path) {
     FILE* f = fopen(path, "w");
     if (!f) return;

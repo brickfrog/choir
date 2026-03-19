@@ -28,6 +28,10 @@ extern "C" fn c_argv_get(n : Int, out : Bytes, out_size : Int) -> Int = "choir_a
 extern "C" fn c_getpid() -> Int = "choir_getpid"
 
 ///|
+#borrow(buf)
+extern "C" fn c_getcwd(buf : Bytes, buf_size : Int) -> Int = "choir_getcwd"
+
+///|
 #borrow(path)
 extern "C" fn c_write_pid_file(path : Bytes) -> Unit = "choir_write_pid_file"
 
@@ -101,4 +105,14 @@ pub fn get_pid() -> Int {
 pub fn write_pid_file(path : String) -> Unit {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_write_pid_file(path_bytes)
+}
+
+///|
+pub fn getcwd() -> String {
+  let buf = Bytes::new(4096)
+  let len = c_getcwd(buf, 4096)
+  if len <= 0 {
+    return "."
+  }
+  @utf8.decode_lossy(buf[:len])
 }

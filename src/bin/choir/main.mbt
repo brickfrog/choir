@@ -686,13 +686,16 @@ fn init_config_toml_content() -> String {
 }
 
 ///|
-fn init_mcp_json_content() -> String {
+fn init_mcp_json_content(project_dir : String) -> String {
   "{\n" +
   "  \"mcpServers\": {\n" +
   "    \"choir\": {\n" +
   "      \"type\": \"stdio\",\n" +
   "      \"command\": \"choir\",\n" +
-  "      \"args\": [\"mcp-stdio\"]\n" +
+  "      \"args\": [\"mcp-stdio\"],\n" +
+  "      \"cwd\": \"" +
+  project_dir +
+  "\"\n" +
   "    }\n" +
   "  }\n" +
   "}\n"
@@ -868,6 +871,7 @@ fn init_run() -> Unit raise {
   @async.with_event_loop(async fn(_root) {
     let args = @io.get_args()
     let recreate = args.contains("--recreate")
+    let project_dir = @io.getcwd()
 
     init_run_or_exit({
       program: "sh",
@@ -890,7 +894,7 @@ fn init_run() -> Unit raise {
         "-c",
         "printf '%s' \"$1\" > .mcp.json",
         "sh",
-        init_mcp_json_content(),
+        init_mcp_json_content(project_dir),
       ],
       workdir: None,
     })
@@ -1025,7 +1029,7 @@ fn init_run() -> Unit raise {
                 "mkdir -p \"$1\" && printf '%s' \"$2\" > \"$1/.mcp.json\"",
                 "sh",
                 agent_dir,
-                init_mcp_json_content(),
+                init_mcp_json_content(project_dir),
               ],
               workdir: None,
             }) catch {
