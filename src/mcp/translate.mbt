@@ -185,6 +185,42 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
       "\"slug\",\"task\"",
     ) +
     "}," +
+    "{\"name\":\"kv_list\",\"description\":\"List keys in shared KV storage\",\"inputSchema\":" +
+    s(p("prefix", "Optional key prefix filter"), "") +
+    "}," +
+    "{\"name\":\"task_create\",\"description\":\"Create a new task in shared task storage\",\"inputSchema\":" +
+    s(
+      p("id", "Task slug/ID") +
+      "," +
+      p("title", "Task title") +
+      "," +
+      p("status", "Initial status (default todo)") +
+      "," +
+      p("assignee", "Assignee agent ID") +
+      "," +
+      p("notes", "Task notes"),
+      "\"id\",\"title\"",
+    ) +
+    "}," +
+    "{\"name\":\"fork_session\",\"description\":\"Create a new named session directory\",\"inputSchema\":" +
+    s(p("name", "Session name (slug)"), "\"name\"") +
+    "}," +
+    "{\"name\":\"spawn_remote\",\"description\":\"Spawn a remote agent via SSH\",\"inputSchema\":" +
+    s(
+      p("ssh_target", "SSH host to connect to") +
+      "," +
+      p("repo_url", "Git repo URL to clone") +
+      "," +
+      p("tcp_addr", "TCP address for reverse connection") +
+      "," +
+      p("task", "Task for the remote agent") +
+      "," +
+      p("slug", "Agent slug (default remote-leaf)") +
+      "," +
+      p("parent_branch", "Parent branch (default main)"),
+      "\"ssh_target\",\"repo_url\",\"tcp_addr\"",
+    ) +
+    "}," +
     "{\"name\":\"shutdown\",\"description\":\"Shutdown the server\",\"inputSchema\":" +
     s("", "") +
     "}" +
