@@ -84,7 +84,7 @@ async fn run_strict(
 }
 
 ///|
-async fn execute_delivery(
+pub async fn execute_delivery(
   delivery : @message.DeliveryMethod,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Result[Unit, String] {
@@ -385,6 +385,7 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   extra_mcp_servers_json? : String? = None,
   registry? : @registry.AgentRegistry? = None,
+  poller_state? : @poller.PollerState? = None,
 ) -> @types.Response {
   match call.name {
     "register" =>
@@ -521,11 +522,43 @@ pub async fn dispatch(
         Some(pr_number) => {
           let cmds = merge_pr_commands(pr_number)
           match run_strict(runner, cmds) {
-            Ok(_) => @types.Response::Ok({ "status": "merged" })
+            Ok(_) => {
+              match poller_state {
+                Some(ps) => ps.untrack(pr_number)
+                None => ()
+              }
+              @types.Response::Ok({ "status": "merged" })
+            }
             Err(e) => @types.Response::Err(e)
           }
         }
         None => @types.Response::Err("invalid pr_number: " + pr_str)
+      }
+    }
+    "track_pr" => {
+      let pr_str = match call.args.get("pr_number") {
+        Some(v) => v
+        None => return @types.Response::Err("missing pr_number")
+      }
+      let agent_id = match call.args.get("agent_id") {
+        Some(v) =>
+          if v == "" {
+            return @types.Response::Err("missing agent_id")
+          } else {
+            v
+          }
+        None => return @types.Response::Err("missing agent_id")
+      }
+      let pr_number = match parse_int(pr_str) {
+        Some(value) => value
+        None => return @types.Response::Err("invalid pr_number: " + pr_str)
+      }
+      match poller_state {
+        Some(ps) => {
+          ps.track(pr_number, agent_id, @poller.now_sec())
+          @types.Response::Ok({ "status": "tracked" })
+        }
+        None => @types.Response::Err("poller unavailable")
       }
     }
     "notify_parent" => {
@@ -765,6 +798,7 @@ pub async fn handle_request(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   extra_mcp_servers_json? : String? = None,
   agent_registry? : @registry.AgentRegistry? = None,
+  poller_state? : @poller.PollerState? = None,
 ) -> @types.Response {
   match registry.lookup(req.role, req.name) {
     Err(e) => @types.Response::Err(e.message())
@@ -776,6 +810,7 @@ pub async fn handle_request(
         runner~,
         extra_mcp_servers_json~,
         registry=agent_registry,
+        poller_state~,
       )
   }
 }

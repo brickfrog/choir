@@ -86,6 +86,7 @@ test "dispatch returns correct stub for each tool name" {
       ("fork_wave", "spawned", { "count": "1" }),
       ("file_pr", "pr_created", { "branch": "test" }),
       ("merge_pr", "merged", { "pr_number": "1" }),
+      ("track_pr", "tracked", { "pr_number": "1", "agent_id": "agent-1" }),
       ("notify_parent", "notified", { "caller_id": "test-agent" }),
       ("send_message", "sent", { "target_id": "test-agent" }),
       ("shutdown", "shutdown", Map::new()),
@@ -96,7 +97,11 @@ test "dispatch returns correct stub for each tool name" {
     for c in cases {
       let (name, expected_status, args) = c
       let call = ToolCall::{ role: @types.Role::Dev, name, args }
-      let res = @tools.dispatch(call, runner=mock_runner)
+      let res = @tools.dispatch(
+        call,
+        runner=mock_runner,
+        poller_state=Some(@poller.PollerState::new()),
+      )
       match res {
         Ok(map) => assert_eq(map.get("status"), Some(expected_status))
         Err(msg) => {

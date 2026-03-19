@@ -55,16 +55,19 @@ test "dispatch file_pr missing branch returns Err" {
 ///|
 test "dispatch merge_pr returns Ok" {
   @async.with_event_loop(fn(_) {
+    let poller = @poller.PollerState::new()
+    poller.track(456, "agent-1", 100)
     let call : ToolCall = {
       role: @types.Role::TL,
       name: "merge_pr",
       args: { "pr_number": "456" },
     }
-    let res = dispatch(call, runner=mock_runner)
+    let res = dispatch(call, runner=mock_runner, poller_state=Some(poller))
     match res {
       Ok(m) => assert_eq(m.get("status"), Some("merged"))
       Err(_) => assert_true(false)
     }
+    assert_eq(poller.get(456), None)
   })
 }
 
@@ -92,6 +95,30 @@ test "dispatch merge_pr missing pr_number returns Err" {
     match res {
       Ok(_) => assert_true(false)
       Err(msg) => assert_eq(msg, "missing pr_number")
+    }
+  })
+}
+
+///|
+test "dispatch track_pr stores tracked PR" {
+  @async.with_event_loop(fn(_) {
+    let poller = @poller.PollerState::new()
+    let call : ToolCall = {
+      role: @types.Role::Dev,
+      name: "track_pr",
+      args: { "pr_number": "22", "agent_id": "agent-22" },
+    }
+    let res = dispatch(call, runner=mock_runner, poller_state=Some(poller))
+    match res {
+      Ok(m) => assert_eq(m.get("status"), Some("tracked"))
+      Err(_) => assert_true(false)
+    }
+    match poller.get(22) {
+      Some(tracked) => {
+        assert_eq(tracked.agent_id, "agent-22")
+        assert_true(tracked.first_seen > 0L)
+      }
+      None => fail("expected tracked PR")
     }
   })
 }

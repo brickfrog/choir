@@ -41,6 +41,7 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
     "{\"name\":\"fork_wave\",\"description\":\"Fork a new wave of worker agents\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"file_pr\",\"description\":\"File a pull request for the current branch\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"merge_pr\",\"description\":\"Merge a pull request by number\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"track_pr\",\"description\":\"Track a pull request in the background poller\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"notify_parent\",\"description\":\"Notify the parent agent with a status update\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"send_message\",\"description\":\"Send a message to another agent\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"spawn_gemini\",\"description\":\"Spawn a Gemini leaf agent in a new worktree\",\"inputSchema\":{\"type\":\"object\"}}," +

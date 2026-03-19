@@ -12,6 +12,7 @@ pub async fn ServerState::handle(
     project_dir=self.config.project_dir,
     extra_mcp_servers_json=self.config.extra_mcp_servers_json,
     agent_registry=Some(self.registry),
+    poller_state=Some(self.poller),
   )
 }
 

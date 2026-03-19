@@ -104,3 +104,47 @@ test "detect_events::no_change" {
   let events = detect_events(tracked, ReviewState::Approved, "sha1", 110, 1000)
   assert_eq(events, [])
 }
+
+///|
+test "parse_gh_pr_view_output returns last actionable review and head sha" {
+  let (review, sha) = parse_gh_pr_view_output(
+    "{\"reviews\":[{\"state\":\"COMMENTED\"},{\"state\":\"CHANGES_REQUESTED\"},{\"state\":\"APPROVED\"}],\"headRefOid\":\"abc123\"}",
+  )
+  assert_eq(review, ReviewState::Approved)
+  assert_eq(sha, "abc123")
+}
+
+///|
+test "parse_gh_pr_view_output falls back on missing fields" {
+  let (review, sha) = parse_gh_pr_view_output("{\"reviews\":[]}")
+  assert_eq(review, ReviewState::None_)
+  assert_eq(sha, "")
+}
+
+///|
+test "PollerState::tick_with updates tracked state and emits events" {
+  @async.with_event_loop(fn(_) {
+    let state = PollerState::new()
+    state.track(7, "agent7", 100)
+    let events = []
+    let agent_ids = []
+    state.tick_with(
+      200,
+      900L,
+      fn(_pr_number) { (ReviewState::Approved, "sha2") },
+      fn(event, agent_id) {
+        events.push(event)
+        agent_ids.push(agent_id)
+      },
+    )
+    assert_eq(events, [PollEvent::PRReady(7)])
+    assert_eq(agent_ids, ["agent7"])
+    match state.get(7) {
+      Some(tracked) => {
+        assert_eq(tracked.last_review_state, ReviewState::Approved)
+        assert_eq(tracked.last_sha, "sha2")
+      }
+      None => fail("tracked PR not found")
+    }
+  })
+}

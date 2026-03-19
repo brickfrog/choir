@@ -5,6 +5,7 @@ import {
   "choir/src/registry",
   "choir/src/message",
   "choir/src/io",
+  "choir/src/poller",
   "moonbitlang/async",
 }
 

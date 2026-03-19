@@ -46,6 +46,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "track_pr",
+      description: "Track a PR in the background poller",
+      allowed_roles: [@types.Role::TL, @types.Role::Dev],
+    },
+    {
       name: "notify_parent",
       description: "Send message to parent agent",
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],

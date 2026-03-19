@@ -110,6 +110,17 @@ async fn handle_uds_connection(
 }
 
 ///|
+fn format_poll_event(event : @poller.PollEvent) -> String {
+  match event {
+    PRReady(n) => "[PR READY] PR #\{n} approved"
+    ReviewReceived(n, _) => "[REVIEW] PR #\{n} has review comments"
+    FixesPushed(n) => "[FIXES PUSHED] PR #\{n} new commits after review"
+    ReviewTimeout(n) => "[REVIEW TIMEOUT] PR #\{n} no review after 15min"
+    CIFailed(n) => "[CI FAILED] PR #\{n} CI checks failing"
+  }
+}
+
+///|
 fn main_prog() -> Unit raise {
   let config_content = @io.read_file(".exo/config.toml")
   let config = match @config.parse_config(config_content) {
@@ -118,6 +129,34 @@ fn main_prog() -> Unit raise {
   }
   let state = @server.ServerState::new(config)
   @async.with_event_loop(async fn(root) {
+    root.spawn_bg(async fn() {
+      let timeout_sec = 900L
+      let interval_ms = 30000
+      for {
+        @async.sleep(interval_ms)
+        let pending_events = []
+        let pending_agent_ids = []
+        let now = @poller.now_sec()
+        state.poller.tick(now, timeout_sec, fn(event, agent_id) {
+          pending_events.push(event)
+          pending_agent_ids.push(agent_id)
+        })
+        for i = 0; i < pending_events.length(); i = i + 1 {
+          let event = pending_events[i]
+          let agent_id = pending_agent_ids[i]
+          match state.registry.get(agent_id) {
+            Ok(agent) => {
+              let msg = format_poll_event(event)
+              let delivery = @message.plan_delivery(
+                agent, "poller", msg, "info",
+              )
+              ignore(@tools.execute_delivery(delivery, @exec.run_sequence))
+            }
+            Err(_) => ()
+          }
+        }
+      }
+    })
     root.spawn_bg(async fn() {
       let server_fd = @uds.server_create(config.listen_uds)
       if server_fd < 0 {

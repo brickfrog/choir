@@ -4,6 +4,7 @@ pub struct ServerState {
   config : @types.Config
   registry : @registry.AgentRegistry
   tool_registry : @tools.ToolRegistry
+  poller : @poller.PollerState
 }
 
 ///|
@@ -13,5 +14,6 @@ pub fn ServerState::new(config : @types.Config) -> ServerState {
     config,
     registry: @registry.AgentRegistry::new(),
     tool_registry: @tools.ToolRegistry::new(),
+    poller: @poller.PollerState::new(),
   }
 }

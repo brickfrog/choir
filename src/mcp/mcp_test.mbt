@@ -60,6 +60,7 @@ test "tools_list_response" {
           assert_true(t.contains("fork_wave"))
           assert_true(t.contains("file_pr"))
           assert_true(t.contains("merge_pr"))
+          assert_true(t.contains("track_pr"))
           assert_true(t.contains("notify_parent"))
           assert_true(t.contains("send_message"))
           assert_true(t.contains("spawn_gemini"))
