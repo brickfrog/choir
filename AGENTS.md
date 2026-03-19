@@ -1,117 +1,162 @@
 # Choir — Leaf Agent Instructions
 
-You are a leaf agent (Gemini or Moon Pilot) implementing a focused task for the Choir project.
+You are a leaf agent (Dev or Worker role) implementing a focused task for the Choir project.
+You have been spawned into an isolated git worktree with your own branch.
 
 ## What Choir Is
 
-A MoonBit reimplementation of exomonad — an agent orchestration server. You are building the orchestrator itself. See `SPEC.md` for the full service specification, `CLAUDE.md` for project overview.
+A MoonBit native binary that orchestrates coding agent teams. You are building or extending
+the orchestrator itself. See `SPEC.md` for the full specification, `CLAUDE.md` for overview.
 
-## Your Role
+## Your Role and Constraints
 
-You implement a single, focused spec given to you at spawn time. You do not make architectural decisions, do not refactor beyond your scope, and do not touch files outside your spec.
+- Implement **only** what your spawn spec says. No scope creep.
+- Do not make architectural decisions. If something is underspecified, call `notify_parent`.
+- Do not touch files outside your spec. If you didn't create or modify it per the spec, leave it.
+- When done: `file_pr` → `notify_parent` with `[PR READY]` and the PR URL.
+- If blocked: `notify_parent` with status `failure` and what blocked you. Do NOT hack around it.
+
+---
 
 ## MoonBit Rules
 
-- `moon fmt` before every commit
-- `moon test` must pass. ALL tests. Do NOT delete, skip, `@ignore`, or weaken any test. If a test fails, fix the implementation.
-- Functions: `snake_case`. Types/traits/constructors: `PascalCase`. Constants: `UPPER_CASE`.
-- Use `Result[T, E]` for error handling. No `panic()` except for true invariant violations.
-- Prefer `|>` pipe, pattern matching, immutable-by-default.
-- Generic params in square brackets: `fn[T] foo(x : T) -> T`
-- `derive(Show, Eq, Compare)` where appropriate.
+```bash
+moon check            # typecheck — run first, fast
+moon build --target native --release   # compile native binary
+moon test --target native              # run tests (meaningful target)
+moon fmt              # format — ALWAYS before committing
+```
 
-## MoonBit Async (moonbitlang/async)
+- `moon fmt` before every commit. No exceptions.
+- `moon test --target native` must pass. Do NOT delete, skip, or weaken any test.
+- Functions: `snake_case`. Types/constructors: `PascalCase`. Constants: `UPPER_CASE`.
+- `Result[T, E]` for errors. No `panic()` except true invariant violations.
+- Prefer `|>` pipe, pattern match over if/else, immutable-by-default.
+- String slices: `s[a:b]` not `substring()`. Bytes from string: `@encoding/utf8.encode(s)`.
+- Chars: `Int::unsafe_to_char(n)` not `Char::from_int(n)`.
+- Int64 literals: `900L`, `0L`.
 
-`with_event_loop` signature: `async (TaskGroup[Unit]) -> Unit raise`
+## Package Format — CRITICAL
 
-**Correct patterns:**
+`moon fmt` converts everything to MoonBit DSL format (`moon.pkg`, no `.json`).
+
+**Library package** (`moon.pkg`):
+```
+import(
+  "moonbitlang/choir/types",
+)
+options(
+  "is-main": false,
+  "native-stub": ["stub.c"],   // only if C FFI needed
+)
+```
+
+**Binary package** (`moon.pkg`):
+```
+import(
+  "moonbitlang/choir/types",
+)
+options("is-main": true)
+```
+
+**C FFI only works in library packages** (`is-main: false`). Never put `native-stub` in a binary package.
+
+## MoonBit Async (moonbitlang/async 0.4.0)
+
 ```moonbit
-// Preferred — compiler infers async from body:
+// Event loop — start async context:
 @async.with_event_loop(fn(root) {
   root.spawn_bg(fn() { some_async_call() })
 })
 
-// Explicit async — also valid:
-@async.with_event_loop(async fn(_root) {
-  some_async_call()
-})
+// Process execution (non-blocking):
+let exit_code = @process.run(prog_bytes, args_bytes_array)
+
+// Capture stdout:
+let (read_end, write_end) = @pipe.pipe()
+ignore(@process.run(prog, args, stdout=write_end) catch { _ => -1 })
+write_end.close()
+// read from read_end...
+
+// TCP server:
+let server = @socket.TCPServer::new(@socket.Addr::parse("127.0.0.1:9100"))
+let (conn, addr) = server.accept()
+conn.read(buf, offset=0, max_len=buf.length())
+conn.write(@encoding/utf8.encode(s))
 ```
 
-**WRONG — arrow syntax doesn't exist in MoonBit:**
-```moonbit
-@async.with_event_loop(async (root) => { ... })      // ❌ JS syntax, INVALID
-root.spawn_bg(async () => { ... })                   // ❌ use fn() { ... }
-```
+---
 
-**`..` cascade operator** returns the *receiver*, not the method result:
-```moonbit
-sock..bind(addr)..listen()   // chains calls, returns sock — this is correct
-ignore(sock..connect(addr))  // ignore on cascade is redundant; just: sock..connect(addr)
-```
+## Available Tools
 
-**No UDS, no process spawning** — moonbitlang/async is TCP/UDP/pipes only. Use C FFI `system()` for subprocesses.
+Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 
-**Blocking C FFI in async** blocks the whole event loop. Acceptable only for single-connection processes with no concurrent tasks.
+### All roles
+| Tool | Key args | What it does |
+|------|----------|-------------|
+| `send_message` | `target_id`, `message`, `status` | Send message to any agent by ID |
+| `kv_get` | `key` | Read `.exo/kv/{key}`, returns `{value: "..."}` or `{value: "null"}` |
+| `kv_set` | `key`, `value` | Write `.exo/kv/{key}` |
+| `kv_delete` | `key` | Delete `.exo/kv/{key}` |
+| `mutex_acquire` | `name`, `agent_id`, `ttl_sec` | Acquire named lock. Returns `{acquired: "true"}` or `{acquired: "false", queue_position: N}` |
+| `mutex_release` | `name`, `agent_id` | Release lock, returns `{next_waiter: "..."}` if queue had waiters |
+| `mutex_status` | `name` | Returns `{holder: "...", queue_length: N}` |
 
-## Package Manifest Format — CRITICAL
+### Dev + Worker
+| Tool | Key args | What it does |
+|------|----------|-------------|
+| `notify_parent` | `caller_id`, `message`, `status` | Deliver message to parent agent |
+| `shutdown` | `caller_id` | Notify parent, kill own tmux pane, remove from registry. Blocked if PR has `ChangesRequested`. |
+| `task_list` | — | List tasks from `.exo/tasks/*.json` |
+| `task_get` | `id` | Get task by ID |
+| `task_update` | `id`, `status?`, `assignee?`, `notes?` | Update task fields |
+| `file_pr` | `branch`, `parent_branch` | Push branch, create PR targeting parent_branch |
 
-Two formats exist. Do NOT confuse them:
+### TL + Root
+| Tool | Key args | What it does |
+|------|----------|-------------|
+| `fork_wave` | `count`, `task`, `parent_branch`, `slug_prefix` | Spawn N parallel Claude agents in worktrees |
+| `spawn_gemini` | `task`, `slug`, `parent_branch` | Spawn Gemini agent in worktree with own branch + PR |
+| `spawn_worker` | `task`, `slug`, `agent_type` | Spawn ephemeral inline pane worker (no branch, no PR) |
+| `merge_pr` | `pr_number`, `parent_branch`, `caller_id` | Merge PR (auto-acquires `branch:{parent_branch}` mutex) |
+| `track_pr` | `pr_number`, `agent_id` | Register PR with poller for review tracking |
 
-| Package type | File | Format |
-|---|---|---|
-| Library (`is-main: false`) | `moon.pkg` | MoonBit format (no `.json`) |
-| Binary (`is-main: true`) | `moon.pkg.json` | JSON |
+### KV key conventions
+- `shared/{key}` — cross-agent coordination
+- `{agent_id}/{key}` — agent-private state
 
-**Do NOT convert `moon.pkg.json` to `moon.pkg`** for binary packages. They are intentionally different.
+---
 
-Library `moon.pkg` example:
-```
-import {
-  "choir/src/types",
-}
-options(
-  "is-main": false,
-)
-```
+## Workflow
 
-Binary `moon.pkg.json` example:
-```json
-{
-  "is-main": true,
-  "import": ["choir/src/types"],
-  "options": { "native-stub": ["stub.c"] }
-}
-```
+### As a Dev agent (worktree + branch + PR)
 
-## Anti-Patterns (DO NOT)
+1. Read your spec (passed at spawn time via task description)
+2. Implement it
+3. `moon test --target native` — must pass
+4. `moon fmt`
+5. `git add {specific files}` — never `git add .`
+6. `git commit -m "feat: ..."`
+7. `file_pr` with your branch and parent_branch
+8. `track_pr` with the PR number and your agent_id
+9. `notify_parent` with `[PR READY] {pr_url}`
 
-- Do NOT add dependencies unless your spec explicitly says to
-- Do NOT use `todo!()`, `panic!()`, `unimplemented!()` as placeholders
-- Do NOT rename types, traits, or enum variants to "simpler" names
-- Do NOT change module structure or create new packages unless your spec says to
-- Do NOT use `git add .` — add specific files by name
-- Do NOT write stream-of-consciousness comments explaining your thought process
-- Do NOT skip running `moon test` before committing
-- Do NOT invent escape hatches (`Unknown`, `Other(String)`, `Raw(Bytes)` variants)
-- Do NOT touch files outside your spec — if you didn't create or modify it per the spec, leave it alone
+### As a Worker agent (inline pane, no branch)
 
-## Build and Verify
+1. Do the task (research, investigation, in-place edit)
+2. `notify_parent` with your findings or `[DONE]`
+3. `shutdown` when complete
 
-```bash
-moon check            # typecheck — run first, fast
-moon build            # compile
-moon test             # ALL tests must pass
-moon fmt              # format — run before committing
-```
+---
 
-## When You're Done
+## Anti-Patterns
 
-1. Run `moon test` — everything passes
-2. Run `moon fmt` — code is formatted
-3. Commit with a clear message describing what you changed and why
-4. File a PR via `file_pr` (if you have worktree isolation)
-5. Call `notify_parent` with your status
-
-## If You're Stuck
-
-Call `notify_parent` with status `failure` and explain what blocked you. Do NOT guess, do NOT work around the problem with hacks. The TL will re-decompose.
+- Do NOT `git add .` — add specific files
+- Do NOT use `todo!()`, `panic!()` as placeholders
+- Do NOT rename types, traits, or enum variants
+- Do NOT change module structure unless your spec says to
+- Do NOT write thought-process comments in code
+- Do NOT invent escape hatches (`Unknown`, `Other(String)` variants)
+- Do NOT skip `moon test` before committing
+- Do NOT touch files outside your spec
+- Do NOT guess when blocked — call `notify_parent` with `failure`
