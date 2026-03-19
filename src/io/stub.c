@@ -121,3 +121,39 @@ void choir_write_pid_file(const char* path) {
     fprintf(f, "%d", (int)getpid());
     fclose(f);
 }
+
+/* Recursively create directories (like mkdir -p). Returns 0 on success. */
+static int mkdir_p(const char* path) {
+    char tmp[4096];
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    int len = (int)strlen(tmp);
+    if (len > 0 && tmp[len-1] == '/') tmp[len-1] = '\0';
+    for (int i = 1; i < len; i++) {
+        if (tmp[i] == '/') {
+            tmp[i] = '\0';
+            mkdir(tmp, 0755);
+            tmp[i] = '/';
+        }
+    }
+    mkdir(tmp, 0755);
+    return 0;
+}
+
+/* Write content to a file, creating parent dirs. Returns 0 on success, -1 on error. */
+int choir_write_file_sync(const char* path, const char* content, int content_len) {
+    /* create parent dir */
+    char dir[4096];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char* slash = strrchr(dir, '/');
+    if (slash) { *slash = '\0'; mkdir_p(dir); }
+    FILE* f = fopen(path, "wb");
+    if (!f) return -1;
+    if (content_len > 0) fwrite(content, 1, (size_t)content_len, f);
+    fclose(f);
+    return 0;
+}
+
+/* Delete a file. Returns 0 on success. */
+int choir_delete_file_sync(const char* path) {
+    return remove(path);
+}

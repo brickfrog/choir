@@ -140,6 +140,31 @@ pub fn wait_for_socket(path : String, max_tries : Int) -> Bool {
 }
 
 ///|
+#borrow(path, content)
+extern "C" fn c_write_file_sync(
+  path : Bytes,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "choir_write_file_sync"
+
+///|
+#borrow(path)
+extern "C" fn c_delete_file_sync(path : Bytes) -> Int = "choir_delete_file_sync"
+
+///|
+pub fn write_file_sync(path : String, content : String) -> Bool {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let content_bytes = @utf8.encode(content)
+  c_write_file_sync(path_bytes, content_bytes, content_bytes.length()) == 0
+}
+
+///|
+pub fn delete_file_sync(path : String) -> Bool {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  c_delete_file_sync(path_bytes) == 0
+}
+
+///|
 pub fn getcwd() -> String {
   let buf = Bytes::new(4096)
   let len = c_getcwd(buf, 4096)

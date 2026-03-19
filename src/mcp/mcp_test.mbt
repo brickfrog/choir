@@ -143,7 +143,9 @@ test "serialize successful response" {
   assert_true(json.contains("\"jsonrpc\":\"2.0\""))
   assert_true(json.contains("\"id\":10"))
   assert_true(json.contains("\"result\":{"))
-  assert_true(json.contains("\"status\":\"ok\""))
+  assert_true(json.contains("\"content\""))
+  assert_true(json.contains("status"))
+  assert_true(json.contains("isError"))
 }
 
 ///|

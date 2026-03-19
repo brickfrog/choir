@@ -704,22 +704,14 @@ pub async fn dispatch(
         "\",\"created_sec\":\"" +
         created_sec.to_string() +
         "\"}"
-      let cmd = @workspace.Command::{
-        program: "sh",
-        args: [
-          "-c", "mkdir -p \"$1\" && printf '%s' \"$3\" > \"$2\"", "sh", session_dir,
-          context_path, context_json,
-        ],
-        workdir: None,
-      }
-      match run_strict(runner, [cmd]) {
-        Ok(_) =>
-          @types.Response::Ok({
-            "status": "ok",
-            "session_dir": session_dir,
-            "name": name,
-          })
-        Err(e) => @types.Response::Err(e)
+      if @io.write_file_sync(context_path, context_json) {
+        @types.Response::Ok({
+          "status": "ok",
+          "session_dir": session_dir,
+          "name": name,
+        })
+      } else {
+        @types.Response::Err("failed to create session: " + name)
       }
     }
     "file_pr" => {
@@ -975,17 +967,10 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err(e)
       }
       let path = kv_file_path(project_dir, key)
-      let cmd = @workspace.Command::{
-        program: "sh",
-        args: [
-          "-c", "mkdir -p \"$(dirname \"$2\")\" && printf '%s' \"$3\" > \"$2\"",
-          "sh", project_dir, path, value,
-        ],
-        workdir: None,
-      }
-      match run_strict(runner, [cmd]) {
-        Ok(_) => @types.Response::Ok({ "status": "ok" })
-        Err(e) => @types.Response::Err(e)
+      if @io.write_file_sync(path, value) {
+        @types.Response::Ok({ "status": "ok" })
+      } else {
+        @types.Response::Err("failed to write kv file: " + path)
       }
     }
     "kv_delete" => {
@@ -998,15 +983,8 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err(e)
       }
       let path = kv_file_path(project_dir, key)
-      let cmd = @workspace.Command::{
-        program: "sh",
-        args: ["-c", "rm -f \"$2\"", "sh", project_dir, path],
-        workdir: None,
-      }
-      match run_strict(runner, [cmd]) {
-        Ok(_) => @types.Response::Ok({ "status": "ok" })
-        Err(e) => @types.Response::Err(e)
-      }
+      ignore(@io.delete_file_sync(path))
+      @types.Response::Ok({ "status": "ok" })
     }
     "kv_list" => handle_kv_list(project_dir, runner)
     "mutex_acquire" => {
@@ -1135,17 +1113,10 @@ pub async fn dispatch(
       }
       let content = task_file_to_json(task)
       let path = task_file_path(project_dir, id)
-      let cmd = @workspace.Command::{
-        program: "sh",
-        args: [
-          "-c", "mkdir -p \"$1/.choir/tasks\" && printf '%s' \"$3\" > \"$2\"", "sh",
-          project_dir, path, content,
-        ],
-        workdir: None,
-      }
-      match run_strict(runner, [cmd]) {
-        Ok(_) => @types.Response::Ok({ "status": "ok", "task": content })
-        Err(e) => @types.Response::Err(e)
+      if @io.write_file_sync(path, content) {
+        @types.Response::Ok({ "status": "ok", "task": content })
+      } else {
+        @types.Response::Err("failed to write task file: " + path)
       }
     }
     "task_update" => {
@@ -1173,17 +1144,10 @@ pub async fn dispatch(
       }
       let content = task_file_to_json(updated)
       let path = task_file_path(project_dir, id)
-      let cmd = @workspace.Command::{
-        program: "sh",
-        args: [
-          "-c", "mkdir -p \"$1/.choir/tasks\" && printf '%s' \"$3\" > \"$2\"", "sh",
-          project_dir, path, content,
-        ],
-        workdir: None,
-      }
-      match run_strict(runner, [cmd]) {
-        Ok(_) => @types.Response::Ok({ "status": "ok", "task": content })
-        Err(e) => @types.Response::Err(e)
+      if @io.write_file_sync(path, content) {
+        @types.Response::Ok({ "status": "ok", "task": content })
+      } else {
+        @types.Response::Err("failed to write task file: " + path)
       }
     }
     "spawn_gemini" => {
@@ -1394,17 +1358,10 @@ pub async fn dispatch(
         Ok(_) => ()
       }
       let path = kv_file_path(project_dir, key)
-      let cmd = @workspace.Command::{
-        program: "sh",
-        args: [
-          "-c", "mkdir -p \"$(dirname \"$2\")\" && printf '%s' \"$3\" > \"$2\"",
-          "sh", project_dir, path, value,
-        ],
-        workdir: None,
-      }
-      match run_strict(runner, [cmd]) {
-        Ok(_) => @types.Response::Ok({ "status": "ok", "id": id })
-        Err(e) => @types.Response::Err(e)
+      if @io.write_file_sync(path, value) {
+        @types.Response::Ok({ "status": "ok", "id": id })
+      } else {
+        @types.Response::Err("failed to write reply: " + id)
       }
     }
     _ => @types.Response::Err("unknown tool")
