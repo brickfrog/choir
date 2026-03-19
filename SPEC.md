@@ -290,19 +290,27 @@ for arguments, and a handler function.
 | Tool | Roles | Description |
 |------|-------|-------------|
 | `fork_wave` | root, tl | Spawn N parallel Claude agents in worktrees with own branches + PRs |
-| `spawn_gemini` | root, tl | Spawn Gemini agent in a worktree with own branch + PR (structured spec fields) |
+| `spawn_gemini` | root, tl | Spawn Gemini agent in a worktree with own branch + PR |
+| `spawn_moon_pilot` | root, tl | Spawn Moon Pilot agent in a worktree with own branch + PR |
 | `spawn_worker` | root, tl | Spawn ephemeral pane worker (any agent type, no branch, no PR, research/in-place) |
 | `file_pr` | tl, dev | Create or update PR for current branch |
-| `merge_pr` | root, tl | Merge a child's PR |
+| `merge_pr` | root, tl | Merge a child's PR (auto-acquires `branch:{parent}` mutex) |
+| `track_pr` | root, tl | Register PR with the GitHub poller for review tracking |
 | `notify_parent` | tl, dev, worker | Send message to parent agent |
 | `send_message` | all | Send message to any agent by ID |
-| `shutdown` | dev, worker | Notify parent, close own pane |
-| `task_list` | dev, worker | List tasks from shared task list |
-| `task_get` | dev, worker | Get task by ID |
-| `task_update` | dev, worker | Update task status/owner |
+| `shutdown` | dev, worker | Notify parent, close own pane (blocked if `ChangesRequested`) |
+| `task_list` | tl, dev, worker | List tasks from `.exo/tasks/` |
+| `task_get` | tl, dev, worker | Get task by ID |
+| `task_create` | tl, dev, worker | Create a new task |
+| `task_update` | tl, dev, worker | Update task status/owner/notes |
 | `kv_get` | all | Read a key from the persistent KV store |
 | `kv_set` | all | Write a key-value pair to the persistent KV store |
 | `kv_delete` | all | Delete a key from the persistent KV store |
+| `kv_list` | all | List all keys in the KV store |
+| `mutex_acquire` | all | Acquire a named coordination lock (FIFO queue, TTL) |
+| `mutex_release` | all | Release a held coordination lock |
+| `mutex_status` | all | Query lock holder and queue length |
+| `fork_session` | root, tl | Create a named session subdirectory for a nested team |
 
 ### 6.2 Tool Call Flow
 
@@ -608,7 +616,7 @@ coordination signals (e.g., "component X is claimed by agent Y").
 - **Key format**: UTF-8 string, max 256 chars. Suggested convention: `{agent_id}/{key}` for
   private keys, `shared/{key}` for cross-agent coordination.
 - **Value format**: JSON. No schema enforcement — agents define their own.
-- **Persistence**: written to `.exo/kv/{run_id}.json` on each mutation. Survives server restart.
+- **Persistence**: each key is stored as a separate file at `.exo/kv/{key}`. Survives server restart.
 - **No TTL**: keys live until the run ends or are explicitly deleted.
 - **No transactions**: last-writer-wins. Agents must coordinate externally if atomicity matters.
 
@@ -617,7 +625,8 @@ coordination signals (e.g., "component X is claimed by agent Y").
 ```
 .exo/
 └── kv/
-    └── {run_id}.json        # flat JSON object: { "key": value, ... }
+    ├── shared/foo           # key "shared/foo"
+    └── dev-1/state          # key "dev-1/state"
 ```
 
 ### 13.4 API
@@ -627,6 +636,7 @@ coordination signals (e.g., "component X is claimed by agent Y").
 | `kv_get` | `key: String` | `{ value: JSON \| null }` |
 | `kv_set` | `key: String, value: JSON` | `{ ok: true }` |
 | `kv_delete` | `key: String` | `{ ok: true }` |
+| `kv_list` | — | `{ keys: String[] }` — all keys in `.exo/kv/` |
 
 ---
 
@@ -885,32 +895,32 @@ fn handle_request(state: State, req: Request) -> Response:
 
 ### 19.1 Required for MVP
 
-- [ ] Server with UDS transport (`exomonad serve`)
-- [ ] MCP stdio translator (`exomonad mcp-stdio`)
-- [ ] Tool registry with role-based gating
-- [ ] `fork_wave` (Claude agent spawning)
-- [ ] `spawn_gemini` (Gemini agent spawning, worktree mode)
-- [ ] `spawn_worker` (ephemeral pane worker, any agent type, no branch)
-- [ ] `file_pr` and `merge_pr`
-- [ ] `notify_parent` with Teams inbox delivery + tmux fallback
-- [ ] `send_message`
-- [ ] In-memory agent registry
-- [ ] Workspace manager (git worktree + tmux)
-- [ ] Config file parsing (TOML, including `extra_mcp_servers`)
-- [ ] Hook protocol (session-start, pre-tool-use)
-- [ ] Structured logging
+- [x] Server with UDS transport (`exomonad serve`)
+- [x] MCP stdio translator (`exomonad mcp-stdio`)
+- [x] Tool registry with role-based gating
+- [x] `fork_wave` (Claude agent spawning)
+- [x] `spawn_gemini` (Gemini agent spawning, worktree mode)
+- [x] `spawn_worker` (ephemeral pane worker, any agent type, no branch)
+- [x] `file_pr` and `merge_pr`
+- [x] `notify_parent` with Teams inbox delivery + tmux fallback
+- [x] `send_message`
+- [x] In-memory agent registry
+- [x] Workspace manager (git worktree + tmux)
+- [x] Config file parsing (TOML, including `extra_mcp_servers`)
+- [x] Hook protocol (session-start, pre-tool-use)
+- [x] Structured logging
 
 ### 19.2 Required for Production
 
-- [ ] GitHub poller (background task in server)
-- [ ] Server restart recovery (reconstruct state from filesystem)
-- [ ] OTel span export
-- [ ] `shutdown` with critical phase protection
-- [ ] Task list tools (`task_list`, `task_get`, `task_update`)
-- [ ] KV store (`kv_get`, `kv_set`, `kv_delete`) persisted to `.exo/kv/`
-- [ ] Standalone isolation mode
-- [ ] Context inheritance (`fork_session`)
-- [ ] Mutex registry with FIFO queues and TTL (primary use case: `branch:{name}` locks for merge serialization)
+- [x] GitHub poller (background task in server)
+- [x] Server restart recovery (reconstruct state from filesystem)
+- [x] OTel span export (stderr JSON + OTLP HTTP to configurable endpoint)
+- [x] `shutdown` with critical phase protection
+- [x] Task list tools (`task_list`, `task_get`, `task_update`, `task_create`)
+- [x] KV store (`kv_get`, `kv_set`, `kv_delete`, `kv_list`) persisted to `.exo/kv/`
+- [x] Standalone isolation mode
+- [x] Context inheritance (`fork_session`)
+- [x] Mutex registry with FIFO queues and TTL (primary use case: `branch:{name}` locks for merge serialization)
 
 ### 19.3 Future Extensions
 
