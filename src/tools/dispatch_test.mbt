@@ -280,6 +280,85 @@ test "dispatch spawn_moon_pilot returns agent_id with mock" {
 }
 
 ///|
+test "dispatch spawn_remote returns agent_id with mock" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "spawn_remote",
+      args: {
+        "task": "implement feature Z",
+        "slug": "remote-1",
+        "parent_branch": "main",
+        "ssh_target": "user@10.0.0.2",
+        "repo_url": "git@github.com:org/repo.git",
+        "tcp_addr": "10.0.0.1:9100",
+      },
+    }
+    let res = @tools.dispatch(call, runner=mock_runner)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("spawned"))
+        assert_eq(m.get("agent_id"), Some("main.remote-1"))
+        assert_eq(m.get("host"), Some("user@10.0.0.2"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
+test "dispatch spawn_remote requires ssh_target" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "spawn_remote",
+      args: {
+        "slug": "r1",
+        "repo_url": "git@github.com:org/repo.git",
+        "tcp_addr": "10.0.0.1:9100",
+      },
+    }
+    let res = @tools.dispatch(call, runner=mock_runner)
+    match res {
+      Err(e) => assert_true(e.contains("ssh_target"))
+      Ok(_) => assert_true(false)
+    }
+  })
+}
+
+///|
+test "dispatch spawn_remote denied for Dev role" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "spawn_remote",
+      args: {
+        "ssh_target": "user@host",
+        "repo_url": "git@github.com:org/repo.git",
+        "tcp_addr": "10.0.0.1:9100",
+      },
+    }
+    let res = @tools.handle_request(
+      @tools.ToolRegistry::new(),
+      @types.Request::{
+        req_method: "tools/call",
+        role: call.role,
+        name: call.name,
+        args: call.args,
+      },
+      runner=mock_runner,
+    )
+    match res {
+      Err(e) => assert_true(e.contains("cannot call"))
+      Ok(_) => assert_true(false)
+    }
+  })
+}
+
+///|
 test "handle_request spawn_moon_pilot denied for Dev role" {
   @async.with_event_loop(_ => {
     let reg = @tools.ToolRegistry::new()

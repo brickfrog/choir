@@ -314,9 +314,12 @@ fn main_prog() -> Unit raise {
 
     let reader = TCPLineReader::new(conn)
 
-    // Send registration to server
     let reg_msg = build_registration_message(role, config)
     try {
+      match config.tcp_auth_token {
+        Some(token) => conn.write(@utf8.encode(token + "\n"))
+        None => ()
+      }
       conn.write(@utf8.encode(reg_msg))
       // Read and discard the registration response
       let _ = reader.read_line()

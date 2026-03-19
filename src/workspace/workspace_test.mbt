@@ -191,3 +191,33 @@ test "mcp_json_content merges extra servers" {
   assert_true(json.contains("\"notebook\""))
   assert_true(json.contains("\"agent-a\""))
 }
+
+///|
+test "remote_spawn_commands produces 4 ssh commands" {
+  let spec = @types.SpawnSpec::{
+    slug: "remote-worker",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "implement feature Y",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.remote_spawn_commands(
+    spec, "user@remote-host", "git@github.com:org/repo.git", "10.0.0.1:9100",
+  )
+  assert_eq(cmds.length(), 4)
+  for cmd in cmds {
+    assert_eq(cmd.program, "ssh")
+    assert_true(cmd.args.length() >= 3)
+    assert_eq(cmd.args[0], "-o")
+    assert_eq(cmd.args[1], "StrictHostKeyChecking=no")
+    assert_eq(cmd.args[2], "user@remote-host")
+  }
+  assert_true(cmds[0].args[3].contains("git clone"))
+  assert_true(cmds[0].args[3].contains("main.remote-worker"))
+  assert_true(cmds[1].args[3].contains("config.toml"))
+  assert_true(cmds[1].args[3].contains("10.0.0.1:9100"))
+  assert_true(cmds[2].args[3].contains(".mcp.json"))
+  assert_true(cmds[3].args[3].contains("claude"))
+}

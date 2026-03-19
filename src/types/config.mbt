@@ -6,6 +6,7 @@ pub(all) struct Config {
   shell_command : String?
   listen_uds : String
   listen_tcp : String?
+  tcp_auth_token : String?
   otlp_endpoint : String?
   agent_id : String?
   extra_mcp_servers_json : String?
@@ -20,6 +21,7 @@ pub fn Config::default() -> Config {
     shell_command: None,
     listen_uds: ".exo/server.sock",
     listen_tcp: None,
+    tcp_auth_token: None,
     otlp_endpoint: None,
     agent_id: None,
     extra_mcp_servers_json: None,

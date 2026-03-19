@@ -56,6 +56,11 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     None => default_cfg.listen_tcp
   }
 
+  let tcp_auth_token = match map.get("tcp_auth_token") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => default_cfg.tcp_auth_token
+  }
+
   let otlp_endpoint = match map.get("otlp_endpoint") {
     Some(e) => if e == "" { None } else { Some(e) }
     None => default_cfg.otlp_endpoint
@@ -77,6 +82,7 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     shell_command,
     listen_uds,
     listen_tcp,
+    tcp_auth_token,
     otlp_endpoint,
     agent_id,
     extra_mcp_servers_json,

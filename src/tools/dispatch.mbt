@@ -1165,6 +1165,66 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
+    "spawn_remote" => {
+      let task = match call.args.get("task") {
+        Some(v) => v
+        None => ""
+      }
+      let slug = match call.args.get("slug") {
+        Some(v) => if v == "" { "remote-leaf" } else { v }
+        None => "remote-leaf"
+      }
+      let parent_branch = match call.args.get("parent_branch") {
+        Some(v) => if v == "" { "main" } else { v }
+        None => "main"
+      }
+      let ssh_target = match call.args.get("ssh_target") {
+        Some(v) => v
+        None => return @types.Response::Err("missing ssh_target")
+      }
+      let repo_url = match call.args.get("repo_url") {
+        Some(v) => v
+        None => return @types.Response::Err("missing repo_url")
+      }
+      let tcp_addr = match call.args.get("tcp_addr") {
+        Some(v) => v
+        None => return @types.Response::Err("missing tcp_addr")
+      }
+      match validate_slug(slug) {
+        Err(e) => return @types.Response::Err("invalid slug: " + e)
+        Ok(_) => ()
+      }
+      match validate_branch(parent_branch) {
+        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
+        Ok(_) => ()
+      }
+      let spec = @types.SpawnSpec::{
+        slug,
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Claude,
+        task,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: call.args.get("caller_id").unwrap_or(""),
+        parent_branch,
+      }
+      let cmds = @workspace.remote_spawn_commands(
+        spec,
+        ssh_target,
+        repo_url,
+        tcp_addr,
+        extra_mcp_servers_json~,
+      )
+      match run_strict(runner, cmds) {
+        Ok(_) =>
+          @types.Response::Ok({
+            "status": "spawned",
+            "agent_id": @workspace.branch_name(parent_branch, slug),
+            "slug": slug,
+            "host": ssh_target,
+          })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
     "spawn_worker" => {
       let task = match call.args.get("task") {
         Some(v) => v

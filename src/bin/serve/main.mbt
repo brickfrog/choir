@@ -18,6 +18,10 @@ async fn handle_connection(
 ) -> Unit {
   let buf = FixedArray::make(4096, (0 : Byte))
   let mut read_pos = 0
+  let mut authenticated = match state.config.tcp_auth_token {
+    None => true
+    Some(_) => false
+  }
   for {
     let n = conn.read(buf, offset=read_pos, max_len=buf.length() - read_pos)
     if n == 0 {
@@ -28,6 +32,26 @@ async fn handle_connection(
     while i < read_pos {
       if buf[i] == (10 : Byte) {
         let line = fixed_array_slice_to_string(buf, 0, i)
+        let remaining = read_pos - (i + 1)
+        if remaining > 0 {
+          for j = 0; j < remaining; j = j + 1 {
+            buf[j] = buf[i + 1 + j]
+          }
+        }
+        read_pos = remaining
+        i = 0
+        if not(authenticated) {
+          match state.config.tcp_auth_token {
+            Some(token) =>
+              if line == token {
+                authenticated = true
+              } else {
+                return
+              }
+            None => authenticated = true
+          }
+          continue
+        }
         let req_res = @transport.parse_request(line)
         match req_res {
           Ok(req) => {
@@ -40,14 +64,6 @@ async fn handle_connection(
             conn.write(@utf8.encode(@transport.format_response(resp) + "\n"))
           }
         }
-        let remaining = read_pos - (i + 1)
-        if remaining > 0 {
-          for j = 0; j < remaining; j = j + 1 {
-            buf[j] = buf[i + 1 + j]
-          }
-        }
-        read_pos = remaining
-        i = 0
       } else {
         i = i + 1
       }
