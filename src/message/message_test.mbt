@@ -65,7 +65,7 @@ test "plan delivery for Gemini agent -> TmuxStdin" {
 }
 
 ///|
-test "plan delivery for MoonPilot agent -> UdsHttp" {
+test "plan delivery for MoonPilot agent -> TmuxStdin" {
   let agent : @types.Agent = {
     agent_id: "agent-moonpilot",
     role: @types.Role::Worker,
@@ -73,13 +73,13 @@ test "plan delivery for MoonPilot agent -> UdsHttp" {
     parent: None,
     workspace: "ws1",
     branch: "main",
-    tmux_target: Some("unused-target"),
+    tmux_target: Some("choir:moonpilot"),
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
-  let expected = @message.DeliveryMethod::UdsHttp(
-    ".choir/agents/agent-moonpilot/notify.sock", "{\"from\":\"sender-1\",\"content\":\"hi\",\"status\":\"Success\"}",
+  let expected = @message.DeliveryMethod::TmuxStdin(
+    "choir:moonpilot", "[from: sender-1] hi",
   )
   assert_eq(res, expected)
 }

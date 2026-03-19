@@ -80,8 +80,11 @@ pub fn plan_delivery(
           TmuxStdin(target, format_message(sender_id, content))
         }
         MoonPilot => {
-          let sock_path = ".choir/agents/" + agent.agent_id + "/notify.sock"
-          UdsHttp(sock_path, teams_inbox_json(sender_id, content, status))
+          let target = match agent.tmux_target {
+            Some(t) => t
+            None => agent.agent_id
+          }
+          TmuxStdin(target, format_message(sender_id, content))
         }
       }
   }
