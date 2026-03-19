@@ -1033,6 +1033,17 @@ fn init_run() -> Unit raise {
       workdir: None,
     })
 
+    init_run_or_exit({
+      program: "tmux",
+      args: ["new-window", "-t", session, "-n", "Watch"],
+      workdir: None,
+    })
+    init_run_or_exit({
+      program: "tmux",
+      args: ["send-keys", "-t", session + ":Watch", "choir watch", "Enter"],
+      workdir: None,
+    })
+
     match config.companions_json {
       Some(json) => {
         let companions = parse_companions_json(json)
