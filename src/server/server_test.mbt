@@ -1,4 +1,27 @@
 ///|
+#borrow(cmd)
+extern "C" fn c_system_test(cmd : Bytes) -> Int = "system"
+
+///|
+fn string_to_null_terminated_bytes(s : String) -> Bytes {
+  let b = @utf8.encode(s)
+  let len = b.length()
+  let result = FixedArray::make(len + 1, (0 : Byte))
+  for i = 0; i < len; i = i + 1 {
+    result[i] = b[i]
+  }
+  result[len] = (0 : Byte)
+  result.unsafe_reinterpret_as_bytes()
+}
+
+///|
+fn run_shell(script : String) -> Unit {
+  ignore(
+    c_system_test(string_to_null_terminated_bytes("sh -c '" + script + "'")),
+  )
+}
+
+///|
 fn build_agent(id : String, parent : String?) -> @types.Agent {
   {
     agent_id: id,
@@ -86,4 +109,21 @@ test "notify_parent with no parent returns Err" {
   let _ = state.register_agent(root)
   let res = state.notify_parent("root-1", "hello", "success")
   assert_true(res is Err(_))
+}
+
+///|
+test "ServerState::new initializes run_id and mutex registry" {
+  let project_dir = "/tmp/choir-server-state"
+  run_shell(
+    "rm -rf /tmp/choir-server-state && mkdir -p /tmp/choir-server-state",
+  )
+  let config = { ..@types.Config::default(), project_dir, }
+  let state = ServerState::new(config)
+  assert_true(state.run_id != "")
+  let persisted = @io.read_file(project_dir + "/.exo/run_id")
+  assert_eq(persisted, state.run_id)
+  let (holder, queue) = state.mutex_registry.status("missing")
+  assert_eq(holder, None)
+  assert_eq(queue.length(), 0)
+  run_shell("rm -rf /tmp/choir-server-state")
 }

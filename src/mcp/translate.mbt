@@ -49,6 +49,9 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
     "{\"name\":\"kv_get\",\"description\":\"Read one value from shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"kv_set\",\"description\":\"Write one value to shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"kv_delete\",\"description\":\"Delete one value from shared KV storage\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"mutex_acquire\",\"description\":\"Acquire an in-memory coordination mutex\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"mutex_release\",\"description\":\"Release an in-memory coordination mutex\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"mutex_status\",\"description\":\"Inspect an in-memory coordination mutex\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"task_list\",\"description\":\"List tasks from shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"task_get\",\"description\":\"Get one task from shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"task_update\",\"description\":\"Update one task in shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +

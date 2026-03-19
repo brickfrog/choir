@@ -417,6 +417,7 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   extra_mcp_servers_json? : String? = None,
   registry? : @registry.AgentRegistry? = None,
+  mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
 ) -> @types.Response {
   match call.name {
@@ -758,6 +759,83 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
+    "mutex_acquire" => {
+      let name = match call.args.get("name") {
+        Some(v) => v
+        None => return @types.Response::Err("missing name")
+      }
+      let agent_id = match call.args.get("agent_id") {
+        Some(v) => v
+        None => return @types.Response::Err("missing agent_id")
+      }
+      let ttl_str = call.args.get("ttl_sec").unwrap_or("300")
+      let ttl_sec = match parse_int(ttl_str) {
+        Some(value) => value.to_int64()
+        None => return @types.Response::Err("invalid ttl_sec: " + ttl_str)
+      }
+      match mutex_registry {
+        Some(reg) => {
+          let (acquired, queue_position) = reg.acquire(
+            name,
+            agent_id,
+            ttl_sec,
+            @poller.now_sec(),
+          )
+          @types.Response::Ok({
+            "acquired": if acquired {
+              "true"
+            } else {
+              "false"
+            },
+            "queue_position": queue_position.to_string(),
+          })
+        }
+        None => @types.Response::Err("mutex registry unavailable")
+      }
+    }
+    "mutex_release" => {
+      let name = match call.args.get("name") {
+        Some(v) => v
+        None => return @types.Response::Err("missing name")
+      }
+      let agent_id = match call.args.get("agent_id") {
+        Some(v) => v
+        None => return @types.Response::Err("missing agent_id")
+      }
+      match mutex_registry {
+        Some(reg) => {
+          let (holder, _) = reg.status(name)
+          let was_waiting = reg.is_waiting(name, agent_id)
+          let next_waiter = reg.release(name, agent_id)
+          let released = holder == Some(agent_id) || was_waiting
+          @types.Response::Ok({
+            "released": if released {
+              "true"
+            } else {
+              "false"
+            },
+            "next_waiter": next_waiter.unwrap_or(""),
+          })
+        }
+        None => @types.Response::Err("mutex registry unavailable")
+      }
+    }
+    "mutex_status" => {
+      let name = match call.args.get("name") {
+        Some(v) => v
+        None => return @types.Response::Err("missing name")
+      }
+      match mutex_registry {
+        Some(reg) => {
+          let (holder, queue) = reg.status(name)
+          @types.Response::Ok({
+            "holder": holder.unwrap_or(""),
+            "queue_length": queue.length().to_string(),
+          })
+        }
+        None => @types.Response::Err("mutex registry unavailable")
+      }
+    }
     "task_list" => handle_task_list(project_dir, runner)
     "task_get" => {
       let id = match call.args.get("id") {
@@ -906,6 +984,7 @@ pub async fn handle_request(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   extra_mcp_servers_json? : String? = None,
   agent_registry? : @registry.AgentRegistry? = None,
+  mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
 ) -> @types.Response {
   match registry.lookup(req.role, req.name) {
@@ -918,6 +997,7 @@ pub async fn handle_request(
         runner~,
         extra_mcp_servers_json~,
         registry=agent_registry,
+        mutex_registry~,
         poller_state~,
       )
   }

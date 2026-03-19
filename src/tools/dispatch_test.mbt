@@ -459,3 +459,123 @@ test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
     run_shell("rm -rf /tmp/choir-dispatch-kv")
   })
 }
+
+///|
+test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registry" {
+  @async.with_event_loop(fn(_) {
+    let mutex_registry = @registry.MutexRegistry::new()
+
+    let acquire_first : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "mutex_acquire",
+      args: { "name": "README", "agent_id": "agent-a", "ttl_sec": "30" },
+    }
+    let acquire_first_res = @tools.dispatch(
+      acquire_first,
+      runner=mock_runner,
+      mutex_registry=Some(mutex_registry),
+    )
+    match acquire_first_res {
+      Ok(m) => {
+        assert_eq(m.get("acquired"), Some("true"))
+        assert_eq(m.get("queue_position"), Some("0"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+
+    let acquire_second : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "mutex_acquire",
+      args: { "name": "README", "agent_id": "agent-b", "ttl_sec": "30" },
+    }
+    let acquire_second_res = @tools.dispatch(
+      acquire_second,
+      runner=mock_runner,
+      mutex_registry=Some(mutex_registry),
+    )
+    match acquire_second_res {
+      Ok(m) => {
+        assert_eq(m.get("acquired"), Some("false"))
+        assert_eq(m.get("queue_position"), Some("1"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+
+    let status_call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "mutex_status",
+      args: { "name": "README" },
+    }
+    let status_res = @tools.dispatch(
+      status_call,
+      runner=mock_runner,
+      mutex_registry=Some(mutex_registry),
+    )
+    match status_res {
+      Ok(m) => {
+        assert_eq(m.get("holder"), Some("agent-a"))
+        assert_eq(m.get("queue_length"), Some("1"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+
+    let release_call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "mutex_release",
+      args: { "name": "README", "agent_id": "agent-a" },
+    }
+    let release_res = @tools.dispatch(
+      release_call,
+      runner=mock_runner,
+      mutex_registry=Some(mutex_registry),
+    )
+    match release_res {
+      Ok(m) => {
+        assert_eq(m.get("released"), Some("true"))
+        assert_eq(m.get("next_waiter"), Some("agent-b"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
+test "dispatch mutex_release returns false when agent does not hold or wait" {
+  @async.with_event_loop(fn(_) {
+    let mutex_registry = @registry.MutexRegistry::new()
+    ignore(mutex_registry.acquire("README", "agent-a", 30L, 10L))
+
+    let release_call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "mutex_release",
+      args: { "name": "README", "agent_id": "agent-z" },
+    }
+    let release_res = @tools.dispatch(
+      release_call,
+      runner=mock_runner,
+      mutex_registry=Some(mutex_registry),
+    )
+    match release_res {
+      Ok(m) => {
+        assert_eq(m.get("released"), Some("false"))
+        assert_eq(m.get("next_waiter"), Some(""))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}

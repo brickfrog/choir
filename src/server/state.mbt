@@ -3,17 +3,93 @@
 pub struct ServerState {
   config : @types.Config
   registry : @registry.AgentRegistry
+  mutex_registry : @registry.MutexRegistry
   tool_registry : @tools.ToolRegistry
   poller : @poller.PollerState
+  run_id : String
+  mut span_counter : Int
+}
+
+///|
+#borrow(cmd)
+extern "C" fn c_system(cmd : Bytes) -> Int = "system"
+
+///|
+fn string_to_null_terminated_bytes(s : String) -> Bytes {
+  let b = @utf8.encode(s)
+  let len = b.length()
+  let result = FixedArray::make(len + 1, (0 : Byte))
+  for i = 0; i < len; i = i + 1 {
+    result[i] = b[i]
+  }
+  result[len] = (0 : Byte)
+  result.unsafe_reinterpret_as_bytes()
+}
+
+///|
+fn shell_quote(s : String) -> String {
+  let buf = StringBuilder::new()
+  buf.write_char('\'')
+  for c in s {
+    if c == '\'' {
+      buf.write_string("'\"'\"'")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.write_char('\'')
+  buf.to_string()
+}
+
+///|
+fn persist_run_id(project_dir : String, run_id : String) -> Unit {
+  let exo_dir = project_dir + "/.exo"
+  let path = exo_dir + "/run_id"
+  let script = "mkdir -p " +
+    shell_quote(exo_dir) +
+    " && printf '%s' " +
+    shell_quote(run_id) +
+    " > " +
+    shell_quote(path)
+  ignore(
+    c_system(string_to_null_terminated_bytes("sh -c " + shell_quote(script))),
+  )
+}
+
+///|
+fn normalize_run_id(content : String) -> String? {
+  let run_id = content.trim().to_string()
+  if run_id == "" {
+    None
+  } else {
+    Some(run_id)
+  }
+}
+
+///|
+fn init_run_id(project_dir : String) -> String {
+  let run_id_path = project_dir + "/.exo/run_id"
+  match normalize_run_id(@io.read_file(run_id_path)) {
+    Some(existing) => existing
+    None => {
+      let generated = @poller.now_sec().to_string()
+      persist_run_id(project_dir, generated)
+      generated
+    }
+  }
 }
 
 ///|
 /// Create initial server state from config.
 pub fn ServerState::new(config : @types.Config) -> ServerState {
+  let run_id = init_run_id(config.project_dir)
   {
     config,
     registry: @registry.AgentRegistry::new(),
+    mutex_registry: @registry.MutexRegistry::new(),
     tool_registry: @tools.ToolRegistry::new(),
     poller: @poller.PollerState::new(),
+    run_id,
+    span_counter: 0,
   }
 }

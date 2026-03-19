@@ -266,3 +266,85 @@ test "registry by role" {
   let dev_agents = reg.by_role(@types.Role::Dev)
   assert_eq(dev_agents.length(), 2)
 }
+
+///|
+test "mutex registry acquire and status" {
+  let reg = @registry.MutexRegistry::new()
+  let (acquired, queue_position) = reg.acquire("README", "agent-a", 300L, 10L)
+  assert_true(acquired)
+  assert_eq(queue_position, 0)
+  let (holder, queue) = reg.status("README")
+  assert_eq(holder, Some("agent-a"))
+  assert_eq(queue.length(), 0)
+}
+
+///|
+test "mutex registry acquire is fifo and idempotent" {
+  let reg = @registry.MutexRegistry::new()
+  let first = reg.acquire("README", "agent-a", 300L, 10L)
+  let second = reg.acquire("README", "agent-b", 300L, 11L)
+  let third = reg.acquire("README", "agent-c", 300L, 12L)
+  let repeat = reg.acquire("README", "agent-b", 300L, 13L)
+  assert_eq(first, (true, 0))
+  assert_eq(second, (false, 1))
+  assert_eq(third, (false, 2))
+  assert_eq(repeat, (false, 1))
+  let (holder, queue) = reg.status("README")
+  assert_eq(holder, Some("agent-a"))
+  assert_eq(queue.length(), 2)
+  assert_eq(queue[0], "agent-b")
+  assert_eq(queue[1], "agent-c")
+}
+
+///|
+test "mutex registry release hands off to next waiter" {
+  let reg = @registry.MutexRegistry::new()
+  ignore(reg.acquire("README", "agent-a", 300L, 10L))
+  ignore(reg.acquire("README", "agent-b", 300L, 11L))
+  ignore(reg.acquire("README", "agent-c", 300L, 12L))
+  let next = reg.release("README", "agent-a")
+  assert_eq(next, Some("agent-b"))
+  let (holder, queue) = reg.status("README")
+  assert_eq(holder, Some("agent-b"))
+  assert_eq(queue.length(), 1)
+  assert_eq(queue[0], "agent-c")
+  let reacquire = reg.acquire("README", "agent-b", 300L, 20L)
+  assert_eq(reacquire, (true, 0))
+}
+
+///|
+test "mutex registry release removes non-holder from queue" {
+  let reg = @registry.MutexRegistry::new()
+  ignore(reg.acquire("README", "agent-a", 300L, 10L))
+  ignore(reg.acquire("README", "agent-b", 300L, 11L))
+  ignore(reg.acquire("README", "agent-c", 300L, 12L))
+  let next = reg.release("README", "agent-b")
+  assert_eq(next, None)
+  let (holder, queue) = reg.status("README")
+  assert_eq(holder, Some("agent-a"))
+  assert_eq(queue.length(), 1)
+  assert_eq(queue[0], "agent-c")
+}
+
+///|
+test "mutex registry expire clears stale waiters on reacquire" {
+  let reg = @registry.MutexRegistry::new()
+  ignore(reg.acquire("README", "agent-a", 5L, 10L))
+  ignore(reg.acquire("README", "agent-b", 5L, 11L))
+  let result = reg.acquire("README", "agent-c", 5L, 17L)
+  assert_eq(result, (true, 0))
+  let (holder, queue) = reg.status("README")
+  assert_eq(holder, Some("agent-c"))
+  assert_eq(queue.length(), 0)
+}
+
+///|
+test "mutex registry expire hands off to queued waiter" {
+  let reg = @registry.MutexRegistry::new()
+  ignore(reg.acquire("README", "agent-a", 5L, 10L))
+  ignore(reg.acquire("README", "agent-b", 5L, 11L))
+  reg.expire(16L)
+  let (holder, queue) = reg.status("README")
+  assert_eq(holder, Some("agent-b"))
+  assert_eq(queue.length(), 0)
+}

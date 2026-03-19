@@ -43,7 +43,9 @@ test "kv tools allowed for all roles" {
     @types.Role::Dev,
     @types.Role::Worker,
   ]
-  let names = ["kv_get", "kv_set", "kv_delete"]
+  let names = [
+    "kv_get", "kv_set", "kv_delete", "mutex_acquire", "mutex_release", "mutex_status",
+  ]
   for role in roles {
     for name in names {
       let result = reg.lookup(role, name)
@@ -108,6 +110,7 @@ test "dispatch returns correct stub for each tool name" {
       ("notify_parent", "notified", { "caller_id": "test-agent" }),
       ("send_message", "sent", { "target_id": "test-agent" }),
       ("kv_get", "", { "key": "missing" }),
+      ("mutex_status", "", { "name": "readme" }),
       ("shutdown", "shutdown", Map::new()),
       ("task_list", "ok", Map::new()),
       ("spawn_gemini", "spawned", Map::new()),
@@ -119,12 +122,16 @@ test "dispatch returns correct stub for each tool name" {
       let res = @tools.dispatch(
         call,
         runner=mock_runner,
+        mutex_registry=Some(@registry.MutexRegistry::new()),
         poller_state=Some(@poller.PollerState::new()),
       )
       match res {
         Ok(map) =>
           if name == "kv_get" {
             assert_eq(map.get("value"), Some("null"))
+          } else if name == "mutex_status" {
+            assert_eq(map.get("holder"), Some(""))
+            assert_eq(map.get("queue_length"), Some("0"))
           } else {
             assert_eq(map.get("status"), Some(expected_status))
           }

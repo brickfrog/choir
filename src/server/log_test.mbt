@@ -48,3 +48,29 @@ test "log_with_agent" {
   assert_eq(entry.agent_id, Some("a4"))
   assert_eq(entry.message, "m4")
 }
+
+///|
+test "span format emits structured json" {
+  let span = Span::{
+    trace_id: "trace-1",
+    span_id: "span-1",
+    name: "tools/call mutex_acquire",
+    agent_id: Some("agent-1"),
+    role: Some("Dev"),
+    start_sec: 10L,
+    end_sec: 11L,
+    status: "ok",
+    error_msg: None,
+  }
+  let line = span.format()
+  assert_true(line.contains("\"type\":\"span\""))
+  assert_true(line.contains("\"name\":\"tools/call mutex_acquire\""))
+  assert_true(line.contains("\"trace_id\":\"trace-1\""))
+  assert_true(line.contains("\"span_id\":\"span-1\""))
+  assert_true(line.contains("\"agent_id\":\"agent-1\""))
+  assert_true(line.contains("\"role\":\"Dev\""))
+  assert_true(line.contains("\"start_sec\":10"))
+  assert_true(line.contains("\"end_sec\":11"))
+  assert_true(line.contains("\"status\":\"ok\""))
+  assert_true(line.contains("\"error\":\"\""))
+}

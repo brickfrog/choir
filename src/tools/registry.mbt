@@ -81,6 +81,21 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: all_roles,
     },
     {
+      name: "mutex_acquire",
+      description: "Acquire an in-memory coordination mutex",
+      allowed_roles: all_roles,
+    },
+    {
+      name: "mutex_release",
+      description: "Release an in-memory coordination mutex",
+      allowed_roles: all_roles,
+    },
+    {
+      name: "mutex_status",
+      description: "Inspect an in-memory coordination mutex",
+      allowed_roles: all_roles,
+    },
+    {
       name: "task_list",
       description: "List tasks from shared task list",
       allowed_roles: [@types.Role::Dev, @types.Role::Worker],
