@@ -31,7 +31,7 @@ fn next_span_id(state : ServerState) -> String {
 }
 
 ///|
-fn emit_span(
+async fn emit_span(
   state : ServerState,
   req : @types.Request,
   start_sec : Int64,
@@ -42,7 +42,7 @@ fn emit_span(
     @types.Response::Ok(_) => ("ok", None)
     @types.Response::Err(msg) => ("error", Some(msg))
   }
-  Span::{
+  let span = Span::{
     trace_id: state.run_id,
     span_id: next_span_id(state),
     name: request_span_name(req),
@@ -52,7 +52,12 @@ fn emit_span(
     end_sec,
     status,
     error_msg,
-  }.emit()
+  }
+  span.emit()
+  match state.config.otlp_endpoint {
+    Some(ep) => span.export_otlp(ep) catch { _ => () }
+    None => ()
+  }
 }
 
 ///|

@@ -44,6 +44,69 @@ fn escape_json_string(s : String) -> String {
 }
 
 ///|
+fn normalize_hex_id(value : String, width : Int) -> String {
+  if value.length() >= width {
+    value[value.length() - width:].to_string() catch {
+      _ => value
+    }
+  } else {
+    "0".repeat(width - value.length()) + value
+  }
+}
+
+///|
+fn parse_port_int(s : String) -> Int? {
+  if s == "" {
+    return None
+  }
+  let mut res = 0
+  for c in s {
+    if c >= '0' && c <= '9' {
+      res = res * 10 + (c.to_int() - '0'.to_int())
+    } else {
+      return None
+    }
+  }
+  Some(res)
+}
+
+///|
+fn endpoint_host_port(endpoint : String) -> (String, Int)? {
+  let stripped = if endpoint.has_prefix("http://") {
+    endpoint[7:].to_string() catch {
+      _ => ""
+    }
+  } else if endpoint.has_prefix("https://") {
+    endpoint[8:].to_string() catch {
+      _ => ""
+    }
+  } else {
+    endpoint
+  }
+  let authority = match stripped.rev_find("/") {
+    Some(idx) => stripped[:idx].to_string() catch { _ => "" }
+    None => stripped
+  }
+  if authority == "" {
+    return None
+  }
+  match authority.rev_find(":") {
+    Some(idx) => {
+      let host = authority[:idx].to_string() catch { _ => "" }
+      let port_str = authority[idx + 1:].to_string() catch { _ => "" }
+      if host == "" || port_str == "" {
+        return None
+      }
+      match parse_port_int(port_str) {
+        Some(port) => Some((host, port))
+        None => None
+      }
+    }
+    None => Some((authority, 4318))
+  }
+}
+
+///|
 pub fn LogEntry::format(self : LogEntry) -> String {
   let level_str = match self.level {
     Debug => "DEBUG"
@@ -95,6 +158,91 @@ pub fn Span::format(self : Span) -> String {
 ///|
 pub fn Span::emit(self : Span) -> Unit {
   println(self.format())
+}
+
+///|
+pub fn Span::to_otlp_json(self : Span) -> String {
+  let trace_id = normalize_hex_id(self.trace_id, 32)
+  let span_id = normalize_hex_id(self.span_id, 16)
+  let start_unix_nano = (self.start_sec * 1000000000L).to_string()
+  let end_unix_nano = (self.end_sec * 1000000000L).to_string()
+  let status_code = if self.status == "ok" { "1" } else { "2" }
+  let attrs = []
+  match self.agent_id {
+    Some(agent_id) =>
+      attrs.push(
+        "{\"key\":\"agent_id\",\"value\":{\"stringValue\":\"" +
+        escape_json_string(agent_id) +
+        "\"}}",
+      )
+    None => ()
+  }
+  match self.role {
+    Some(role) =>
+      attrs.push(
+        "{\"key\":\"role\",\"value\":{\"stringValue\":\"" +
+        escape_json_string(role) +
+        "\"}}",
+      )
+    None => ()
+  }
+  let attrs_json = if attrs.is_empty() {
+    "[]"
+  } else {
+    "[" + attrs.join(",") + "]"
+  }
+  "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"choir\"}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"choir/server\"},\"spans\":[{\"traceId\":\"" +
+  escape_json_string(trace_id) +
+  "\",\"spanId\":\"" +
+  escape_json_string(span_id) +
+  "\",\"name\":\"" +
+  escape_json_string(self.name) +
+  "\",\"startTimeUnixNano\":\"" +
+  escape_json_string(start_unix_nano) +
+  "\",\"endTimeUnixNano\":\"" +
+  escape_json_string(end_unix_nano) +
+  "\",\"status\":{\"code\":" +
+  status_code +
+  "},\"attributes\":" +
+  attrs_json +
+  "}]}]}]}"
+}
+
+///|
+pub async fn Span::export_otlp(self : Span, endpoint : String) -> Unit {
+  let (host, port) = match endpoint_host_port(endpoint) {
+    Some(parsed) => parsed
+    None => return
+  }
+  let addr = @socket.Addr::resolve(@utf8.encode(host), port~) catch {
+    _ => return
+  }
+  let tcp = @socket.TCP::connect(addr) catch { _ => return }
+  let body_bytes = @utf8.encode(self.to_otlp_json())
+  let req = @http.Request::{
+    meth: Post,
+    path: @utf8.encode("/v1/traces"),
+    headers: [
+      @http.Header(
+        @utf8.encode("Host"),
+        @utf8.encode(host + ":" + port.to_string()),
+      ),
+      @http.Header(
+        @utf8.encode("Content-Type"),
+        @utf8.encode("application/json"),
+      ),
+      @http.Header(
+        @utf8.encode("Content-Length"),
+        @utf8.encode(body_bytes.length().to_string()),
+      ),
+    ],
+  }
+  ignore(
+    @http.send_request(tcp, req, @http.Body::Fixed(body_bytes)) catch {
+      _ => ()
+    },
+  )
+  tcp.close()
 }
 
 ///|

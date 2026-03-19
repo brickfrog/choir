@@ -7,8 +7,10 @@ import {
   "choir/src/config",
   "choir/src/io",
   "moonbitlang/async",
+  "moonbitlang/async/http",
   "moonbitlang/async/pipe",
   "moonbitlang/async/process",
+  "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
 }
 
