@@ -4,6 +4,7 @@ import {
   "choir/src/config",
   "choir/src/transport",
   "choir/src/io",
+  "choir/src/uds",
   "moonbitlang/async",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",

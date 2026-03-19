@@ -47,6 +47,69 @@ async fn handle_connection(
 }
 
 ///|
+fn write_all_uds(fd : Int, data : Bytes) -> Unit {
+  let mut written = 0
+  while written < data.length() {
+    let n = @uds.write_bytes(fd, data, written, data.length() - written)
+    if n <= 0 {
+      break
+    }
+    written = written + n
+  }
+}
+
+///|
+async fn handle_uds_connection(
+  client_fd : Int,
+  state : @server.ServerState,
+) -> Unit {
+  let buf = FixedArray::make(4096, (0 : Byte))
+  let mut read_pos = 0
+  for {
+    let n = @uds.read_bytes(client_fd, buf, read_pos, buf.length() - read_pos)
+    if n <= 0 {
+      break
+    }
+    read_pos = read_pos + n
+    let bytes = buf.unsafe_reinterpret_as_bytes()
+    let mut i = 0
+    while i < read_pos {
+      if bytes[i] == (10 : Byte) {
+        let line = bytes.to_unchecked_string(offset=0, length=i)
+        let req_res = @transport.parse_request(line)
+        match req_res {
+          Ok(req) => {
+            let resp = state.handle(req)
+            let resp_str = @transport.format_response(resp) + "\n"
+            write_all_uds(client_fd, @utf8.encode(resp_str))
+          }
+          Err(err) => {
+            let resp = @types.Response::Err("parse error: " + err)
+            write_all_uds(
+              client_fd,
+              @utf8.encode(@transport.format_response(resp) + "\n"),
+            )
+          }
+        }
+        let remaining = read_pos - (i + 1)
+        if remaining > 0 {
+          for j = 0; j < remaining; j = j + 1 {
+            buf[j] = buf[i + 1 + j]
+          }
+        }
+        read_pos = remaining
+        i = 0
+      } else {
+        i = i + 1
+      }
+    }
+    if read_pos == buf.length() {
+      read_pos = 0
+    }
+  }
+}
+
+///|
 fn main_prog() -> Unit raise {
   let config_content = @io.read_file(".exo/config.toml")
   let config = match @config.parse_config(config_content) {
@@ -54,7 +117,26 @@ fn main_prog() -> Unit raise {
     Err(_) => @types.Config::default()
   }
   let state = @server.ServerState::new(config)
-  @async.with_event_loop(fn(root) {
+  @async.with_event_loop(async fn(root) {
+    root.spawn_bg(async fn() {
+      let server_fd = @uds.server_create(config.listen_uds)
+      if server_fd < 0 {
+        println("failed to bind UDS server on \{config.listen_uds}")
+        return
+      }
+      println("UDS server listening on \{config.listen_uds}")
+      for {
+        let client_fd = @uds.accept(server_fd)
+        if client_fd < 0 {
+          break
+        }
+        handle_uds_connection(client_fd, state) catch {
+          _ => ()
+        }
+        @uds.close(client_fd)
+      }
+      @uds.close(server_fd)
+    })
     match config.listen_tcp {
       Some(addr_str) => {
         let server = @socket.TCPServer::new(@socket.Addr::parse(addr_str))
@@ -63,7 +145,7 @@ fn main_prog() -> Unit raise {
           for {
             let (conn, addr) = server.accept()
             println("connection from \{addr}")
-            root.spawn_bg(fn() {
+            root.spawn_bg(async fn() {
               handle_connection(conn, state) catch {
                 _ => ()
               }
