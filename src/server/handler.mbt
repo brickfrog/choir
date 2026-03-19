@@ -117,3 +117,39 @@ pub fn ServerState::get_agent(
 ) -> Result[@types.Agent, @types.ExoError] {
   self.registry.get(agent_id)
 }
+
+///|
+/// Called when a connection closes. Detects unexpected agent death and notifies parent.
+pub async fn ServerState::handle_disconnect(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  match self.registry.get(agent_id) {
+    Err(_) => ()
+    Ok(agent) =>
+      match agent.state {
+        Done | Failed => ()
+        Completing =>
+          ignore(self.registry.set_state(agent_id, @types.AgentState::Done))
+        _ => {
+          ignore(self.registry.set_state(agent_id, @types.AgentState::Failed))
+          match self.registry.get_parent(agent_id) {
+            Err(_) => ()
+            Ok(parent) => {
+              let msg = "[FAILED: " +
+                agent_id +
+                "] disconnected unexpectedly - agent may have crashed or run out of context"
+              let delivery = @message.plan_delivery(
+                parent, agent_id, msg, "failure",
+              )
+              ignore(
+                @tools.execute_delivery(delivery, @exec.run_sequence) catch {
+                  _ => Ok(())
+                },
+              )
+            }
+          }
+        }
+      }
+  }
+}

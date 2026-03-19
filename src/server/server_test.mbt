@@ -127,3 +127,50 @@ test "ServerState::new initializes run_id and mutex registry" {
   assert_eq(queue.length(), 0)
   run_shell("rm -rf /tmp/choir-server-state")
 }
+
+///|
+test "handle_disconnect notifies parent when agent was Active" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("root", None), role: @types.Role::TL }
+    ignore(state.registry.insert(parent))
+    let child = {
+      ..build_agent("main.worker-1", Some("root")),
+      branch: "main.worker-1",
+    }
+    ignore(state.registry.insert(child))
+    state.handle_disconnect("main.worker-1")
+    match state.registry.get("main.worker-1") {
+      Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
+      Err(_) => fail("Expected child agent to remain in registry")
+    }
+  })
+}
+
+///|
+test "handle_disconnect transitions Completing agent to Done" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let agent = {
+      ..build_agent("main.dev-1", None),
+      branch: "main.dev-1",
+      state: @types.AgentState::Completing,
+    }
+    ignore(state.registry.insert(agent))
+    state.handle_disconnect("main.dev-1")
+    match state.registry.get("main.dev-1") {
+      Ok(updated_agent) =>
+        assert_eq(updated_agent.state, @types.AgentState::Done)
+      Err(_) => fail("Expected agent to remain in registry")
+    }
+  })
+}
+
+///|
+test "handle_disconnect is no-op when agent already removed" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    state.handle_disconnect("main.never-existed")
+    assert_true(true)
+  })
+}

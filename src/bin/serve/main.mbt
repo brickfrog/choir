@@ -22,6 +22,7 @@ async fn handle_connection(
     None => true
     Some(_) => false
   }
+  let mut connected_agent_id : String? = None
   for {
     let n = conn.read(buf, offset=read_pos, max_len=buf.length() - read_pos)
     if n == 0 {
@@ -55,6 +56,9 @@ async fn handle_connection(
         let req_res = @transport.parse_request(line)
         match req_res {
           Ok(req) => {
+            if req.req_method == "register" {
+              connected_agent_id = req.args.get("agent_id")
+            }
             let resp = state.handle(req)
             let resp_str = @transport.format_response(resp) + "\n"
             conn.write(@utf8.encode(resp_str))
@@ -71,6 +75,10 @@ async fn handle_connection(
     if read_pos == buf.length() {
       read_pos = 0
     }
+  }
+  match connected_agent_id {
+    Some(agent_id) => state.handle_disconnect(agent_id)
+    None => ()
   }
 }
 
@@ -93,6 +101,7 @@ async fn handle_uds_connection(
 ) -> Unit {
   let buf = FixedArray::make(4096, (0 : Byte))
   let mut read_pos = 0
+  let mut connected_agent_id : String? = None
   for {
     let n = @uds.read_bytes(client_fd, buf, read_pos, buf.length() - read_pos)
     if n <= 0 {
@@ -106,6 +115,9 @@ async fn handle_uds_connection(
         let req_res = @transport.parse_request(line)
         match req_res {
           Ok(req) => {
+            if req.req_method == "register" {
+              connected_agent_id = req.args.get("agent_id")
+            }
             let resp = state.handle(req)
             let resp_str = @transport.format_response(resp) + "\n"
             write_all_uds(client_fd, @utf8.encode(resp_str))
@@ -133,6 +145,10 @@ async fn handle_uds_connection(
     if read_pos == buf.length() {
       read_pos = 0
     }
+  }
+  match connected_agent_id {
+    Some(agent_id) => state.handle_disconnect(agent_id)
+    None => ()
   }
 }
 
