@@ -1262,7 +1262,7 @@ fn watch_run() -> Unit {
   // Rebuild + kill server on any .mbt source change.
   // Try watchexec first, then entr, then inotifywait polling loop.
   let cmd = "command -v watchexec > /dev/null 2>&1 && " +
-    "exec watchexec -e mbt,toml -r -- sh -c 'moon build --target native --release && pkill -f \"choir serve\" 2>/dev/null; true'; " +
+    "exec watchexec -e mbt,toml -r --shell=none -- sh -c 'moon build --target native --release && pkill -f \"choir serve\" 2>/dev/null; true'; " +
     "command -v entr > /dev/null 2>&1 && " +
     "exec sh -c 'find src -name \"*.mbt\" | entr -r sh -c \"moon build --target native --release && pkill -f \\\"choir serve\\\" 2>/dev/null; true\"'; " +
     "echo 'choir watch: watchexec and entr not found, install one: https://watchexec.github.io or https://eradman.com/entrproject/'; exit 1"
