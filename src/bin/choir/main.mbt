@@ -883,6 +883,13 @@ fn init_run() -> Unit raise {
     let recreate = args.contains("--recreate")
     let project_dir = @io.getcwd()
 
+    // Rebuild binary before doing anything else so the new server uses fresh code
+    init_run_or_exit({
+      program: "moon",
+      args: ["build", "--target", "native", "--release"],
+      workdir: None,
+    })
+
     init_run_or_exit({
       program: "sh",
       args: ["-c", "mkdir -p .choir"],

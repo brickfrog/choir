@@ -1,4 +1,19 @@
 ///|
+test "parse_flat_json_object extracts string key-value pairs" {
+  let m = parse_flat_json_object(
+    "{\"key\":\"test\",\"value\":\"hello from claude\"}",
+  )
+  assert_eq(m.get("key"), Some("test"))
+  assert_eq(m.get("value"), Some("hello from claude"))
+}
+
+///|
+test "parse_flat_json_object empty object" {
+  let m = parse_flat_json_object("{}")
+  assert_eq(m.length(), 0)
+}
+
+///|
 test "parse valid jsonrpc request with tools/call" {
   let line = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"text\":\"hello\"}}}"
   match parse_jsonrpc_request(line) {

@@ -163,6 +163,55 @@ fn get_params_map(json : String) -> Map[String, String]? {
 }
 
 ///|
+/// Parse a flat JSON object string into a Map[String, String].
+/// Only extracts string-valued keys; non-string values (numbers, booleans, objects) are skipped.
+pub fn parse_flat_json_object(s : String) -> Map[String, String] {
+  let map : Map[String, String] = {}
+  let mut i = 0
+  while i < s.length() {
+    if s[i] == '"' {
+      let key_start = i + 1
+      let mut key_end = key_start
+      while key_end < s.length() && s[key_end] != '"' {
+        key_end = key_end + 1
+      }
+      if key_end >= s.length() {
+        break
+      }
+      let key = s[key_start:key_end].to_string() catch { _ => "" }
+      let mut j = key_end + 1
+      while j < s.length() && (s[j] == ':' || s[j] == ' ') {
+        j = j + 1
+      }
+      if j < s.length() && s[j] == '"' {
+        let val_start = j + 1
+        let mut val_end = val_start
+        while val_end < s.length() {
+          if s[val_end] == '"' && (val_end == 0 || s[val_end - 1] != '\\') {
+            break
+          }
+          val_end = val_end + 1
+        }
+        if val_end < s.length() {
+          let val = s[val_start:val_end].to_string() catch { _ => "" }
+          if key != "" {
+            map.set(key, val)
+          }
+          i = val_end + 1
+        } else {
+          i = j + 1
+        }
+      } else {
+        i = j + 1
+      }
+    } else {
+      i = i + 1
+    }
+  }
+  map
+}
+
+///|
 pub fn parse_jsonrpc_request(
   line : String,
 ) -> Result[JsonRpcRequest, JsonRpcError] {

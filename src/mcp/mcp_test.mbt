@@ -4,13 +4,17 @@ test "translate tools/call to internal request" {
     jsonrpc: "2.0",
     id: 1,
     req_method: method_tools_call,
-    params: Some({ "name": "fork_wave", "task": "build feature" }),
+    params: Some({
+      "name": "fork_wave",
+      "arguments": "{\"task\":\"build feature\"}",
+    }),
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::TL)
   match result {
     Ok(req) => {
       assert_eq(req.name, "fork_wave")
       assert_eq(req.role, @types.Role::TL)
+      assert_eq(req.args.get("task"), Some("build feature"))
     }
     Err(_) => fail("expected Ok")
   }

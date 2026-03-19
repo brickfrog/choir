@@ -19,17 +19,21 @@ pub fn to_internal_request(
       message: "unsupported method: " + rpc.req_method,
     })
   }
-  let args = match rpc.params {
+  let params = match rpc.params {
     Some(p) => p
     None => {}
   }
-  let name = match args.get("name") {
+  let name = match params.get("name") {
     Some(n) => n
     None =>
       return Err({
         code: err_invalid_params,
         message: "missing 'name' in params",
       })
+  }
+  let args = match params.get("arguments") {
+    Some(json_str) => parse_flat_json_object(json_str)
+    None => {}
   }
   Ok({ req_method: rpc.req_method, role, name, args })
 }
