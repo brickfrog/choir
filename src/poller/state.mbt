@@ -22,6 +22,7 @@ pub fn PollerState::track(
     last_review_state: None_,
     last_sha: "",
     notified_parent: false,
+    last_ci_failed: false,
   }
   self.tracked.set(pr_number, pr)
 }
@@ -64,7 +65,7 @@ pub async fn PollerState::tick_with(
   self : PollerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (ReviewState, String),
+  poll : async (Int) -> (ReviewState, String, Bool),
   on_event : (PollEvent, String) -> Unit,
 ) -> Unit {
   let pr_numbers = []
@@ -76,15 +77,20 @@ pub async fn PollerState::tick_with(
       Some(value) => value
       None => continue
     }
-    let (review, sha) = poll(pr_number)
-    let events = detect_events(tracked, review, sha, now, timeout)
+    let (review, sha, ci_failed) = poll(pr_number)
+    let events = detect_events(tracked, review, sha, ci_failed, now, timeout)
     for event in events {
       on_event(event, tracked.agent_id)
     }
     let updated = if sha == "" {
-      { ..tracked, last_review_state: review }
+      { ..tracked, last_review_state: review, last_ci_failed: ci_failed }
     } else {
-      { ..tracked, last_review_state: review, last_sha: sha }
+      {
+        ..tracked,
+        last_review_state: review,
+        last_sha: sha,
+        last_ci_failed: ci_failed,
+      }
     }
     self.tracked.set(pr_number, updated)
   }

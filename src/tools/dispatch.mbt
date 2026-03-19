@@ -819,7 +819,11 @@ pub async fn dispatch(
       match registry {
         Some(reg) => {
           match reg.get(caller_id) {
-            Ok(agent) =>
+            Ok(agent) => {
+              if agent.workspace.contains(".exo/worktrees/") {
+                let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
+                ()
+              }
               match agent.tmux_target {
                 Some(tmux_target) => {
                   let kill_cmd = @workspace.tmux_kill_pane(tmux_target)
@@ -828,6 +832,7 @@ pub async fn dispatch(
                 }
                 None => ()
               }
+            }
             Err(_) => ()
           }
           let _ = reg.remove(caller_id)

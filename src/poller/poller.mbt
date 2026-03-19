@@ -15,6 +15,7 @@ pub(all) struct TrackedPR {
   mut last_review_state : ReviewState
   mut last_sha : String
   mut notified_parent : Bool
+  mut last_ci_failed : Bool
 } derive(Show, Eq)
 
 ///|

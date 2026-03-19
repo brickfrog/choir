@@ -3,6 +3,7 @@ pub fn detect_events(
   tracked : TrackedPR,
   current_review : ReviewState,
   current_sha : String,
+  ci_failed : Bool,
   now : Int64,
   timeout : Int64,
 ) -> Array[PollEvent] {
@@ -27,6 +28,11 @@ pub fn detect_events(
   // Timeout
   if now - tracked.first_seen > timeout && tracked.last_review_state == None_ {
     events.push(PollEvent::ReviewTimeout(tracked.pr_number))
+  }
+
+  // CI failure — only fire once per failure episode
+  if ci_failed && not(tracked.last_ci_failed) {
+    events.push(PollEvent::CIFailed(tracked.pr_number))
   }
   events
 }
