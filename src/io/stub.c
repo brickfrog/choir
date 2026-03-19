@@ -38,3 +38,41 @@ int choir_stdin_read_line(char *buf, int max_size) {
     }
     return len;
 }
+
+int choir_argc(void) {
+    FILE* f = fopen("/proc/self/cmdline", "rb");
+    if (!f) return 0;
+    char buf[65536];
+    int total = (int)fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    if (total <= 0) return 0;
+    int count = 0;
+    for (int i = 0; i < total; i++) {
+        if (buf[i] == '\0') count++;
+    }
+    return count;
+}
+
+/* Writes the nth argument (0-indexed) into out (null-terminated). Returns length or 0. */
+int choir_argv_get(int n, char* out, int out_size) {
+    FILE* f = fopen("/proc/self/cmdline", "rb");
+    if (!f) return 0;
+    char buf[65536];
+    int total = (int)fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    int idx = 0, start = 0;
+    for (int i = 0; i <= total; i++) {
+        if (i == total || buf[i] == '\0') {
+            if (idx == n) {
+                int len = i - start;
+                if (len >= out_size) len = out_size - 1;
+                memcpy(out, buf + start, len);
+                out[len] = '\0';
+                return len;
+            }
+            idx++;
+            start = i + 1;
+        }
+    }
+    return 0;
+}

@@ -378,10 +378,3 @@ fn main_prog() -> Unit raise {
     conn.close()
   })
 }
-
-///|
-fn main {
-  main_prog() catch {
-    err => println("fatal: \{err}")
-  }
-}

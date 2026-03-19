@@ -15,5 +15,5 @@ import {
 }
 
 options(
-  "is-main": true,
+  "is-main": false,
 )

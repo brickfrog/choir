@@ -251,10 +251,3 @@ fn main_prog() -> Unit raise {
     }
   })
 }
-
-///|
-fn main {
-  main_prog() catch {
-    err => println("fatal: \{err}")
-  }
-}

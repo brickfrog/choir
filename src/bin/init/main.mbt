@@ -56,10 +56,3 @@ fn main_prog() -> Unit raise {
     @io.write_stdout("Initialized .exo/ and .mcp.json\n")
   })
 }
-
-///|
-fn main {
-  main_prog() catch {
-    _ => @io.exit(1)
-  }
-}

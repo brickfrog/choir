@@ -18,6 +18,13 @@ extern "C" fn c_stdout_write(buf : Bytes, size : Int) = "choir_stdout_write"
 extern "C" fn c_exit(code : Int) = "choir_exit"
 
 ///|
+extern "C" fn c_argc() -> Int = "choir_argc"
+
+///|
+#borrow(out)
+extern "C" fn c_argv_get(n : Int, out : Bytes, out_size : Int) -> Int = "choir_argv_get"
+
+///|
 fn string_to_null_terminated_bytes(s : String) -> Bytes {
   let b = @utf8.encode(s)
   let len = b.length()
@@ -62,4 +69,18 @@ pub fn read_stdin_line(max_size : Int) -> (Bytes, Int) {
 ///|
 pub fn exit(code : Int) -> Unit {
   c_exit(code)
+}
+
+///|
+pub fn get_args() -> Array[String] {
+  let count = c_argc()
+  let args : Array[String] = []
+  for i = 0; i < count; i = i + 1 {
+    let buf = Bytes::new(4096)
+    let len = c_argv_get(i, buf, 4096)
+    if len > 0 {
+      args.push(@utf8.decode_lossy(buf[:len]))
+    }
+  }
+  args
 }

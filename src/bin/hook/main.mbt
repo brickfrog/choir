@@ -47,11 +47,3 @@ fn main_prog() -> Unit raise {
     }
   })
 }
-
-///|
-fn main {
-  main_prog() catch {
-    _ =>
-      @io.write_stdout(@hooks.HookResponse::fail_open().to_json_string() + "\n")
-  }
-}
