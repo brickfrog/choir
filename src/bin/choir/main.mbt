@@ -452,16 +452,12 @@ fn mcp_run_uds_loop(
   let reader = UDSLineReader::new(uds_fd)
   let reg_msg = mcp_build_registration_message(role, config)
   if not(mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg))) {
-    println("error: registration failed: UDS write failed")
-    @uds.close(uds_fd)
-    @io.exit(1)
+    return
   }
 
   let reg_resp = reader.read_line()
   if reg_resp == "" {
-    println("error: registration failed: server connection closed")
-    @uds.close(uds_fd)
-    @io.exit(1)
+    return
   }
 
   for {
@@ -489,13 +485,20 @@ fn mcp_run_uds_loop(
               let wire_req = mcp_build_wire_request(internal_req)
               if not(mcp_write_all_uds(uds_fd, @utf8.encode(wire_req))) {
                 let err_resp = @mcp.error_response(
-                  id, @mcp.err_internal, "UDS error: write failed",
+                  id, @mcp.err_internal, "server restarting, retry",
                 )
                 @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-              } else {
-                let resp_line = reader.read_line()
-                mcp_write_server_response(id, resp_line)
+                return
               }
+              let resp_line = reader.read_line()
+              if resp_line == "" {
+                let err_resp = @mcp.error_response(
+                  id, @mcp.err_internal, "server restarting, retry",
+                )
+                @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                return
+              }
+              mcp_write_server_response(id, resp_line)
             }
             Err(e) => {
               let err_resp = @mcp.error_response(id, e.code, e.message)
@@ -510,8 +513,6 @@ fn mcp_run_uds_loop(
       }
     }
   }
-
-  @uds.close(uds_fd)
 }
 
 ///|
@@ -533,17 +534,28 @@ fn mcp_run() -> Unit raise {
   }
   let role = @config.resolve_role(local_role, config)
 
+  let self_exe = @io.get_args().get(0).or("choir")
   let mut uds_fd = @uds.client_connect(config.listen_uds)
   if uds_fd < 0 {
     // Server not running — spawn it and wait for the socket
-    let self_exe = @io.get_args().get(0).or("choir")
     ignore(@io.spawn_serve(self_exe))
     if @io.wait_for_socket(config.listen_uds, 60) {
       uds_fd = @uds.client_connect(config.listen_uds)
     }
   }
   if uds_fd >= 0 {
-    mcp_run_uds_loop(uds_fd, role, config)
+    // Run loop; on server restart, wait and reconnect automatically
+    for {
+      mcp_run_uds_loop(uds_fd, role, config)
+      @uds.close(uds_fd)
+      if not(@io.wait_for_socket(config.listen_uds, 60)) {
+        break
+      }
+      uds_fd = @uds.client_connect(config.listen_uds)
+      if uds_fd < 0 {
+        break
+      }
+    }
     return
   }
 
@@ -1254,9 +1266,7 @@ fn reply_run() -> Unit {
   let resp_buf = FixedArray::make(4096, (0 : Byte))
   let n = @uds.read_bytes(uds_fd, resp_buf, 0, resp_buf.length())
   if n > 0 {
-    let resp = resp_buf
-      .unsafe_reinterpret_as_bytes()
-      .to_unchecked_string(offset=0, length=n)
+    let resp = @utf8.decode_lossy(resp_buf.unsafe_reinterpret_as_bytes()[:n])
     @io.write_stdout(resp + "\n")
   }
 
