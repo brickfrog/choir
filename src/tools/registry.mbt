@@ -81,6 +81,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: all_roles,
     },
     {
+      name: "kv_list",
+      description: "List all keys in shared KV storage",
+      allowed_roles: all_roles,
+    },
+    {
       name: "mutex_acquire",
       description: "Acquire an in-memory coordination mutex",
       allowed_roles: all_roles,
@@ -108,6 +113,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     {
       name: "task_update",
       description: "Update task status/owner",
+      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
+    },
+    {
+      name: "task_create",
+      description: "Create a new task",
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
   ]

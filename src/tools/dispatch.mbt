@@ -298,6 +298,11 @@ fn task_list_manifest_path(project_dir : String) -> String {
 }
 
 ///|
+fn kv_list_manifest_path(project_dir : String) -> String {
+  project_dir + "/.exo/.kv-list.paths"
+}
+
+///|
 fn validate_task_status(status : String) -> Result[Unit, String] {
   match status {
     "todo" | "in_progress" | "done" => Ok(())
@@ -398,6 +403,67 @@ async fn handle_task_list(
   }
   buf.write_char(']')
   @types.Response::Ok({ "status": "ok", "tasks": buf.to_string() })
+}
+
+///|
+async fn handle_kv_list(
+  project_dir : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> @types.Response {
+  let manifest_path = kv_list_manifest_path(project_dir)
+  let list_cmd = @workspace.Command::{
+    program: "sh",
+    args: [
+      "-c", "[ -d \"$1/.exo/kv\" ] || exit 3; find \"$1/.exo/kv\" -type f | sort > \"$2\"",
+      "sh", project_dir, manifest_path,
+    ],
+    workdir: None,
+  }
+  let statuses = runner([list_cmd]) catch {
+    e => return @types.Response::Err(e.to_string())
+  }
+  if statuses.length() > 0 {
+    let status = statuses[statuses.length() - 1]
+    if status == 3 {
+      return @types.Response::Ok({ "status": "ok", "keys": "[]" })
+    }
+    if status != 0 {
+      return @types.Response::Err(
+        "command failed with status " + status.to_string(),
+      )
+    }
+  }
+  let content = @io.read_file(manifest_path)
+  let cleanup_cmd = @workspace.Command::{
+    program: "sh",
+    args: ["-c", "rm -f \"$1\"", "sh", manifest_path],
+    workdir: None,
+  }
+  ignore(runner([cleanup_cmd]) catch { _ => [] })
+  let prefix = project_dir + "/.exo/kv/"
+  let buf = StringBuilder::new()
+  buf.write_char('[')
+  let mut first = true
+  for line in content.split("\n") {
+    let path = line.to_string().trim().to_string()
+    if path == "" {
+      continue
+    }
+    let actual_prefix = path[:prefix.length()].to_string() catch { _ => "" }
+    if actual_prefix != prefix {
+      return @types.Response::Err("invalid kv file path: " + path)
+    }
+    let key = path[prefix.length():].to_string() catch { _ => "" }
+    if not(first) {
+      buf.write_char(',')
+    }
+    buf.write_char('"')
+    buf.write_string(escape_json_string(key))
+    buf.write_char('"')
+    first = false
+  }
+  buf.write_char(']')
+  @types.Response::Ok({ "status": "ok", "keys": buf.to_string() })
 }
 
 ///|
@@ -799,6 +865,7 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
+    "kv_list" => handle_kv_list(project_dir, runner)
     "mutex_acquire" => {
       let name = match call.args.get("name") {
         Some(v) => v
@@ -888,6 +955,53 @@ pub async fn dispatch(
             "status": "ok",
             "task": task_file_to_json(task),
           })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
+    "task_create" => {
+      let id = match call.args.get("id") {
+        Some(v) => v
+        None => return @types.Response::Err("missing id")
+      }
+      let title = match call.args.get("title") {
+        Some(v) => v
+        None => return @types.Response::Err("missing title")
+      }
+      match validate_slug(id) {
+        Err(e) => return @types.Response::Err("invalid id: " + e)
+        Ok(_) => ()
+      }
+      let existing = @io.read_file(task_file_path(project_dir, id))
+      if existing != "" {
+        return @types.Response::Err("task already exists: " + id)
+      }
+      let status = match call.args.get("status") {
+        Some(v) =>
+          match validate_task_status(v) {
+            Ok(_) => v
+            Err(e) => return @types.Response::Err(e)
+          }
+        None => "todo"
+      }
+      let task = TaskFile::{
+        id,
+        title,
+        status,
+        assignee: call.args.get("assignee").unwrap_or(""),
+        notes: call.args.get("notes").unwrap_or(""),
+      }
+      let content = task_file_to_json(task)
+      let path = task_file_path(project_dir, id)
+      let cmd = @workspace.Command::{
+        program: "sh",
+        args: [
+          "-c", "mkdir -p \"$1/.exo/tasks\" && printf '%s' \"$3\" > \"$2\"", "sh",
+          project_dir, path, content,
+        ],
+        workdir: None,
+      }
+      match run_strict(runner, [cmd]) {
+        Ok(_) => @types.Response::Ok({ "status": "ok", "task": content })
         Err(e) => @types.Response::Err(e)
       }
     }

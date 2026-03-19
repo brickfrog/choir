@@ -461,6 +461,116 @@ test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
 }
 
 ///|
+test "dispatch kv_list returns keys" {
+  @async.with_event_loop(fn(_) {
+    let project_dir = "/tmp/choir-dispatch-kv-list"
+    run_shell(
+      "rm -rf /tmp/choir-dispatch-kv-list && mkdir -p /tmp/choir-dispatch-kv-list/.exo/kv/shared && " +
+      "printf '%s' 'hello' > /tmp/choir-dispatch-kv-list/.exo/kv/shared/foo && " +
+      "printf '%s' 'world' > /tmp/choir-dispatch-kv-list/.exo/kv/shared/bar",
+    )
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "kv_list",
+      args: {},
+    }
+    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("ok"))
+        let keys = m.get("keys").unwrap_or("")
+        assert_true(keys.contains("shared/bar"))
+        assert_true(keys.contains("shared/foo"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+    run_shell("rm -rf /tmp/choir-dispatch-kv-list")
+  })
+}
+
+///|
+test "dispatch kv_list empty dir returns empty array" {
+  @async.with_event_loop(fn(_) {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "kv_list",
+      args: {},
+    }
+    let res = @tools.dispatch(
+      call,
+      project_dir="/tmp/choir-kv-list-nonexistent-dir-xyz",
+      runner=@exec.run_sequence,
+    )
+    match res {
+      Ok(m) => assert_eq(m.get("keys"), Some("[]"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
+test "dispatch task_create creates task" {
+  @async.with_event_loop(fn(_) {
+    let project_dir = "/tmp/choir-dispatch-task-create"
+    run_shell("rm -rf /tmp/choir-dispatch-task-create")
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "task_create",
+      args: {
+        "id": "task-1",
+        "title": "Build the thing",
+        "status": "todo",
+        "assignee": "dev-1",
+        "notes": "initial",
+      },
+    }
+    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("ok"))
+        let task_json = m.get("task").unwrap_or("")
+        assert_true(task_json.contains("\"id\":\"task-1\""))
+        assert_true(task_json.contains("\"title\":\"Build the thing\""))
+        assert_true(task_json.contains("\"status\":\"todo\""))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+    run_shell("rm -rf /tmp/choir-dispatch-task-create")
+  })
+}
+
+///|
+test "dispatch task_create fails if already exists" {
+  @async.with_event_loop(fn(_) {
+    let project_dir = "/tmp/choir-dispatch-task-create-dup"
+    run_shell(
+      "rm -rf /tmp/choir-dispatch-task-create-dup && mkdir -p /tmp/choir-dispatch-task-create-dup/.exo/tasks && " +
+      "printf '%s' '{\"id\":\"dup\",\"title\":\"Dup\",\"status\":\"todo\",\"assignee\":\"\",\"notes\":\"\"}' > /tmp/choir-dispatch-task-create-dup/.exo/tasks/dup.json",
+    )
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "task_create",
+      args: { "id": "dup", "title": "Duplicate" },
+    }
+    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    match res {
+      Err(e) => assert_true(e.contains("already exists"))
+      Ok(_) => assert_true(false)
+    }
+    run_shell("rm -rf /tmp/choir-dispatch-task-create-dup")
+  })
+}
+
+///|
 test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registry" {
   @async.with_event_loop(fn(_) {
     let mutex_registry = @registry.MutexRegistry::new()
