@@ -36,6 +36,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "spawn_moon_pilot",
+      description: "Spawn a Moon Pilot agent in a worktree with its own branch and PR",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "spawn_worker",
       description: "Spawn inline worker agent",
       allowed_roles: [@types.Role::Root, @types.Role::TL],

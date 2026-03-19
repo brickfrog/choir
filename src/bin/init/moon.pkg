@@ -1,0 +1,10 @@
+import {
+  "choir/src/io",
+  "choir/src/exec",
+  "choir/src/workspace",
+  "moonbitlang/async",
+}
+
+options(
+  "is-main": true,
+)

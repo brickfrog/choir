@@ -64,6 +64,7 @@ test "tools_list_response" {
           assert_true(t.contains("notify_parent"))
           assert_true(t.contains("send_message"))
           assert_true(t.contains("spawn_gemini"))
+          assert_true(t.contains("spawn_moon_pilot"))
           assert_true(t.contains("spawn_worker"))
           assert_true(t.contains("kv_get"))
           assert_true(t.contains("kv_set"))

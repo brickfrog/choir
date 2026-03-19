@@ -253,6 +253,51 @@ test "dispatch spawn_gemini validates slug" {
 }
 
 ///|
+test "dispatch spawn_moon_pilot returns agent_id with mock" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "spawn_moon_pilot",
+      args: {
+        "task": "implement feature X",
+        "slug": "mp-feat",
+        "parent_branch": "main",
+      },
+    }
+    let res = @tools.dispatch(call, runner=mock_runner)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("spawned"))
+        assert_eq(m.get("agent_id"), Some("main.mp-feat"))
+        assert_eq(m.get("slug"), Some("mp-feat"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
+test "handle_request spawn_moon_pilot denied for Dev role" {
+  @async.with_event_loop(_ => {
+    let reg = @tools.ToolRegistry::new()
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::Dev,
+      name: "spawn_moon_pilot",
+      args: { "slug": "mp-1", "task": "do stuff" },
+    }
+    let res = handle_request(reg, req, runner=mock_runner)
+    match res {
+      Err(e) => assert_true(e.contains("cannot call"))
+      Ok(_) => assert_true(false)
+    }
+  })
+}
+
+///|
 test "dispatch spawn_worker validates agent type" {
   @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {

@@ -116,6 +116,7 @@ test "dispatch returns correct stub for each tool name" {
       ("shutdown", "shutdown", Map::new()),
       ("task_list", "ok", Map::new()),
       ("spawn_gemini", "spawned", Map::new()),
+      ("spawn_moon_pilot", "spawned", Map::new()),
       ("spawn_worker", "spawned", Map::new()),
     ]
     for c in cases {
@@ -157,5 +158,12 @@ test "tool registry lookup spawn_worker allowed for TL" {
 test "tool registry lookup fork_session allowed for TL" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "fork_session")
+  assert_true(result is Ok(_))
+}
+
+///|
+test "tool registry lookup spawn_moon_pilot allowed for TL" {
+  let reg = @tools.ToolRegistry::new()
+  let result = reg.lookup(@types.Role::TL, "spawn_moon_pilot")
   assert_true(result is Ok(_))
 }

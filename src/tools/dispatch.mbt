@@ -1119,6 +1119,52 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
+    "spawn_moon_pilot" => {
+      let task = match call.args.get("task") {
+        Some(v) => v
+        None => ""
+      }
+      let slug = match call.args.get("slug") {
+        Some(v) => if v == "" { "moon-pilot-leaf" } else { v }
+        None => "moon-pilot-leaf"
+      }
+      let parent_branch = match call.args.get("parent_branch") {
+        Some(v) => if v == "" { "main" } else { v }
+        None => "main"
+      }
+      match validate_slug(slug) {
+        Err(e) => return @types.Response::Err("invalid slug: " + e)
+        Ok(_) => ()
+      }
+      match validate_branch(parent_branch) {
+        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
+        Ok(_) => ()
+      }
+      let spec = @types.SpawnSpec::{
+        slug,
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::MoonPilot,
+        task,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: call.args.get("caller_id").unwrap_or(""),
+        parent_branch,
+      }
+      let cmds = @workspace.spawn_commands(
+        spec,
+        project_dir,
+        session,
+        extra_mcp_servers_json~,
+      )
+      match run_strict(runner, cmds) {
+        Ok(_) =>
+          @types.Response::Ok({
+            "status": "spawned",
+            "agent_id": @workspace.branch_name(parent_branch, slug),
+            "slug": slug,
+          })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
     "spawn_worker" => {
       let task = match call.args.get("task") {
         Some(v) => v
