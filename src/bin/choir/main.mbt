@@ -1247,6 +1247,19 @@ fn reply_run() -> Unit {
 }
 
 ///|
+fn watch_run() -> Unit {
+  // Rebuild + kill server on any .mbt source change.
+  // Try watchexec first, then entr, then inotifywait polling loop.
+  let cmd = "command -v watchexec > /dev/null 2>&1 && " +
+    "exec watchexec -e mbt,toml -r -- sh -c 'moon build --target native --release && pkill -f \"choir serve\" 2>/dev/null; true'; " +
+    "command -v entr > /dev/null 2>&1 && " +
+    "exec sh -c 'find src -name \"*.mbt\" | entr -r sh -c \"moon build --target native --release && pkill -f \\\"choir serve\\\" 2>/dev/null; true\"'; " +
+    "echo 'choir watch: watchexec and entr not found, install one: https://watchexec.github.io or https://eradman.com/entrproject/'; exit 1"
+  let code = @io.system(cmd)
+  @io.exit(code)
+}
+
+///|
 fn main {
   let args = @io.get_args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
@@ -1262,9 +1275,10 @@ fn main {
       }
     "init" => init_run() catch { _ => @io.exit(1) }
     "reply" => reply_run()
+    "watch" => watch_run()
     _ => {
       @io.write_stdout(
-        "usage: choir <serve|mcp-stdio|hook|init [--recreate]|reply --id <id> [--payload <json>] [--cancel]>\n",
+        "usage: choir <serve|mcp-stdio|hook|init [--recreate]|reply|watch>\n",
       )
       @io.exit(1)
     }

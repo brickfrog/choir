@@ -40,6 +40,10 @@ extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_se
 extern "C" fn c_wait_for_socket(path : Bytes, max_tries : Int) -> Int = "choir_wait_for_socket"
 
 ///|
+#borrow(cmd)
+extern "C" fn c_system(cmd : Bytes) -> Int = "choir_system"
+
+///|
 #borrow(path)
 extern "C" fn c_write_pid_file(path : Bytes) -> Unit = "choir_write_pid_file"
 
@@ -113,6 +117,12 @@ pub fn get_pid() -> Int {
 pub fn write_pid_file(path : String) -> Unit {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_write_pid_file(path_bytes)
+}
+
+///|
+pub fn system(cmd : String) -> Int {
+  let bytes = string_to_null_terminated_bytes(cmd)
+  c_system(bytes)
 }
 
 ///|

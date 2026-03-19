@@ -111,6 +111,10 @@ int choir_wait_for_socket(const char* path, int max_tries) {
     return -1;
 }
 
+int choir_system(const char* cmd) {
+    return system(cmd);
+}
+
 void choir_write_pid_file(const char* path) {
     FILE* f = fopen(path, "w");
     if (!f) return;
