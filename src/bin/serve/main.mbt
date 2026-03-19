@@ -1,4 +1,17 @@
 ///|
+fn fixed_array_slice_to_string(
+  buf : FixedArray[Byte],
+  start : Int,
+  len : Int,
+) -> String {
+  let line_buf = Array::make(len, (0 : Byte))
+  for i = 0; i < len; i = i + 1 {
+    line_buf[i] = buf[start + i]
+  }
+  @utf8.decode_lossy(Bytes::from_array(line_buf[:]))
+}
+
+///|
 async fn handle_connection(
   conn : @socket.TCP,
   state : @server.ServerState,
@@ -11,11 +24,10 @@ async fn handle_connection(
       break
     }
     read_pos = read_pos + n
-    let bytes = buf.unsafe_reinterpret_as_bytes()
     let mut i = 0
     while i < read_pos {
-      if bytes[i] == (10 : Byte) {
-        let line = bytes.to_unchecked_string(offset=0, length=i)
+      if buf[i] == (10 : Byte) {
+        let line = fixed_array_slice_to_string(buf, 0, i)
         let req_res = @transport.parse_request(line)
         match req_res {
           Ok(req) => {
@@ -71,11 +83,10 @@ async fn handle_uds_connection(
       break
     }
     read_pos = read_pos + n
-    let bytes = buf.unsafe_reinterpret_as_bytes()
     let mut i = 0
     while i < read_pos {
-      if bytes[i] == (10 : Byte) {
-        let line = bytes.to_unchecked_string(offset=0, length=i)
+      if buf[i] == (10 : Byte) {
+        let line = fixed_array_slice_to_string(buf, 0, i)
         let req_res = @transport.parse_request(line)
         match req_res {
           Ok(req) => {

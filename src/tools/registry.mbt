@@ -98,17 +98,17 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     {
       name: "task_list",
       description: "List tasks from shared task list",
-      allowed_roles: [@types.Role::Dev, @types.Role::Worker],
+      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {
       name: "task_get",
       description: "Get task by ID",
-      allowed_roles: [@types.Role::Dev, @types.Role::Worker],
+      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {
       name: "task_update",
       description: "Update task status/owner",
-      allowed_roles: [@types.Role::Dev, @types.Role::Worker],
+      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
   ]
   for def in defs {

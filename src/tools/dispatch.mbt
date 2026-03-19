@@ -717,16 +717,18 @@ pub async fn dispatch(
       // 2. Kill tmux pane and remove from registry
       match registry {
         Some(reg) => {
-          let tmux_target = match reg.get(caller_id) {
+          match reg.get(caller_id) {
             Ok(agent) =>
               match agent.tmux_target {
-                Some(t) => t
-                None => caller_id
+                Some(tmux_target) => {
+                  let kill_cmd = @workspace.tmux_kill_pane(tmux_target)
+                  let _ = runner([kill_cmd])
+                  ()
+                }
+                None => ()
               }
-            Err(_) => caller_id
+            Err(_) => ()
           }
-          let kill_cmd = @workspace.tmux_kill_pane(tmux_target)
-          let _ = runner([kill_cmd])
           let _ = reg.remove(caller_id)
           ()
         }

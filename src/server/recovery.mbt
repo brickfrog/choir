@@ -127,7 +127,7 @@ fn parse_open_prs(output : String) -> Array[OpenPR] {
       _ => ""
     }
     let branch = match
-      find_json_string_field(output, "headRefBranch", start=number_end) {
+      find_json_string_field(output, "headRefName", start=number_end) {
       Some((value, next_start)) => {
         start = next_start
         value
@@ -197,8 +197,11 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
     cwd=Some(project_dir),
   )
   let tmux_output = capture_stdout(
-    "tmux",
-    ["list-windows", "-t", session, "-F", "#{window_name}"],
+    "sh",
+    [
+      "-c",
+      "tmux list-windows -t " + session + " -F \"#{window_name}\" 2>/dev/null",
+    ],
     cwd=Some(project_dir),
   )
   let tmux_windows = split_lines(tmux_output)
@@ -236,8 +239,8 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
   }
 
   let open_pr_output = capture_stdout(
-    "gh",
-    ["pr", "list", "--json", "number,headRefBranch", "--state", "open"],
+    "sh",
+    ["-c", "gh pr list --json number,headRefName --state open 2>/dev/null"],
     cwd=Some(project_dir),
   )
   let now = @poller.now_sec()
