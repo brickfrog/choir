@@ -74,14 +74,14 @@ dispatch decisions. ExoMonad executes them.
 Persistent server process managing shared state, with a thin stdio translator for MCP clients.
 
 ```
-exomonad serve                     # persistent server, listens on transport(s)
+choir serve                     # persistent server, listens on transport(s)
   ├── Agent Registry               # in-memory, all agent state
   ├── Message Router               # push delivery to agents
   ├── GitHub Poller                # background task, PR/CI events
   ├── Mutex Registry               # coordination locks
   └── Tool Dispatch                # role-gated tool handlers
 
-exomonad mcp-stdio                 # thin translator, one per MCP client
+choir mcp-stdio                 # thin translator, one per MCP client
   Claude/Gemini ↔ stdin/stdout (JSON-RPC) ↔ mcp-stdio ↔ transport ↔ serve
 ```
 
@@ -237,7 +237,7 @@ opt-in via config (`listen_tcp = "0.0.0.0:9100"`).
 
 ### 5.3 MCP Stdio Translator
 
-`exomonad mcp-stdio` is a thin bridge process. It:
+`choir mcp-stdio` is a thin bridge process. It:
 1. Reads JSON-RPC from stdin (MCP client)
 2. Translates to a server request
 3. Sends to server over configured transport (UDS by default)
@@ -250,7 +250,7 @@ If the server is unreachable, `mcp-stdio` returns an MCP error response.
 ### 5.4 Transport for Hooks
 
 Hooks (`session-start`, `pre-tool-use`) are invoked by the MCP client as a subprocess
-(`exomonad hook <event>`). The hook binary connects to the server over the same transport,
+(`choir hook <event>`). The hook binary connects to the server over the same transport,
 sends the event, returns the response to stdout, and exits.
 
 Fail-open: if the server is unreachable, hooks print `{"continue":true}` and exit 0.
@@ -275,7 +275,7 @@ Agents discover the server via:
 1. **UDS**: look for `.exo/server.sock` in the project root (walk up from cwd)
 2. **TCP**: read `listen_tcp` from `.exo/config.toml`
 
-`exomonad init` writes `.mcp.json` pointing `mcp-stdio` at the project root, which handles
+`choir init` writes `.mcp.json` pointing `mcp-stdio` at the project root, which handles
 discovery implicitly.
 
 ---
@@ -387,9 +387,9 @@ plus any extra MCP servers from config:
 ```json
 {
   "mcpServers": {
-    "exomonad": {
+    "choir": {
       "type": "stdio",
-      "command": "exomonad",
+      "command": "choir",
       "args": ["mcp-stdio", "--role", "tl", "--name", "root"]
     },
     "notebooklm": {
@@ -895,8 +895,8 @@ fn handle_request(state: State, req: Request) -> Response:
 
 ### 19.1 Required for MVP
 
-- [x] Server with UDS transport (`exomonad serve`)
-- [x] MCP stdio translator (`exomonad mcp-stdio`)
+- [x] Server with UDS transport (`choir serve`)
+- [x] MCP stdio translator (`choir mcp-stdio`)
 - [x] Tool registry with role-based gating
 - [x] `fork_wave` (Claude agent spawning)
 - [x] `spawn_gemini` (Gemini agent spawning, worktree mode)

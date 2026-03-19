@@ -224,7 +224,7 @@ test "mcp_json_content merges extra servers" {
       "{\"notebook\":{\"type\":\"stdio\",\"command\":\"node\"}}",
     ),
   )
-  assert_true(json.contains("\"exomonad\""))
+  assert_true(json.contains("\"choir\""))
   assert_true(json.contains("\"notebook\""))
   assert_true(json.contains("\"agent-a\""))
 }

@@ -479,7 +479,7 @@ fn parse_agent_type(s : String) -> Result[@types.AgentType, String] {
 pub async fn dispatch(
   call : ToolCall,
   project_dir? : String = ".",
-  session? : String = "exomonad",
+  session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
@@ -1285,7 +1285,7 @@ pub async fn handle_request(
   registry : ToolRegistry,
   req : @types.Request,
   project_dir? : String = ".",
-  session? : String = "exomonad",
+  session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,

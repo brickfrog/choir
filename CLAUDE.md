@@ -13,13 +13,13 @@ See `SPEC.md` for the full service specification.
 Option B from the exomonad design: persistent server, pure MoonBit native binary.
 
 ```
-exomonad serve                     # persistent server on UDS (.exo/server.sock)
+choir serve                        # persistent server on UDS (.exo/server.sock)
   ├── Agent Registry               # in-memory
   ├── Message Router               # Teams inbox → tmux STDIN fallback
   ├── GitHub Poller                # background task
   └── Tool Dispatch                # role-gated MCP tool handlers
 
-exomonad mcp-stdio                 # stateless JSON-RPC ↔ server bridge (one per agent)
+choir mcp-stdio                    # stateless JSON-RPC ↔ server bridge (one per agent)
 ```
 
 Transport: UDS (default, local), TCP (opt-in, for future SSH/remote agents).

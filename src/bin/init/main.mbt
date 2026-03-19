@@ -9,9 +9,9 @@ fn config_toml_content() -> String {
 fn mcp_json_content() -> String {
   "{\n" +
   "  \"mcpServers\": {\n" +
-  "    \"exomonad\": {\n" +
+  "    \"choir\": {\n" +
   "      \"type\": \"stdio\",\n" +
-  "      \"command\": \"exomonad\",\n" +
+  "      \"command\": \"choir\",\n" +
   "      \"args\": [\"mcp-stdio\"]\n" +
   "    }\n" +
   "  }\n" +

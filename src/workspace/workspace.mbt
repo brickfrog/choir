@@ -47,7 +47,7 @@ pub fn mcp_json_content(
     @types.Role::Dev => "dev"
     @types.Role::Worker => "worker"
   }
-  let base = "{\"mcpServers\":{\"exomonad\":{\"type\":\"stdio\",\"command\":\"exomonad\",\"args\":[\"mcp-stdio\",\"--role\",\"" +
+  let base = "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--role\",\"" +
     role_str +
     "\",\"--name\",\"" +
     agent_name +
