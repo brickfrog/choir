@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 int choir_get_file_size(const char* path) {
     FILE* f = fopen(path, "rb");
@@ -75,4 +76,15 @@ int choir_argv_get(int n, char* out, int out_size) {
         }
     }
     return 0;
+}
+
+int choir_getpid(void) {
+    return (int)getpid();
+}
+
+void choir_write_pid_file(const char* path) {
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "%d", (int)getpid());
+    fclose(f);
 }

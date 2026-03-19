@@ -175,6 +175,7 @@ fn serve_run() -> Unit raise {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
   }
+  @io.write_pid_file(".choir/server.pid")
   let state = @server.ServerState::new(config)
   @async.with_event_loop(async fn(root) {
     @server.recover_state(state, "choir")
@@ -707,18 +708,15 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
 
 ///|
 fn init_run() -> Unit raise {
-  @async.with_event_loop(_ => {
-    if @io.read_file(".mcp.json") != "" {
-      @io.write_stdout("Already initialized.\n")
-      return
-    }
+  @async.with_event_loop(async fn(_root) {
+    let args = @io.get_args()
+    let recreate = args.contains("--recreate")
 
     init_run_or_exit({
       program: "sh",
       args: ["-c", "mkdir -p .choir"],
       workdir: None,
     })
-
     init_run_or_exit({
       program: "sh",
       args: [
@@ -729,7 +727,6 @@ fn init_run() -> Unit raise {
       ],
       workdir: None,
     })
-
     init_run_or_exit({
       program: "sh",
       args: [
@@ -741,7 +738,155 @@ fn init_run() -> Unit raise {
       workdir: None,
     })
 
-    @io.write_stdout("Initialized .choir/ and .mcp.json\n")
+    let config_content = @io.read_file(".choir/config.toml")
+    let config = match @config.parse_config(config_content) {
+      Ok(cfg) => cfg
+      Err(_) => @types.Config::default()
+    }
+    let session = config.tmux_session
+
+    if recreate {
+      let pid_str = @io.read_file(".choir/server.pid")
+      if pid_str != "" {
+        @io.write_stdout("Stopping server (PID \{pid_str})...\n")
+        ignore(
+          @exec.run({
+            program: "sh",
+            args: [
+              "-c", "kill -TERM \"$1\" 2>/dev/null; sleep 0.3; kill -KILL \"$1\" 2>/dev/null; true",
+              "sh", pid_str,
+            ],
+            workdir: None,
+          }) catch {
+            _ => 0
+          },
+        )
+        ignore(
+          @exec.run({
+            program: "sh",
+            args: ["-c", "rm -f .choir/server.pid .choir/server.sock"],
+            workdir: None,
+          }) catch {
+            _ => 0
+          },
+        )
+      }
+      let has_session = @exec.run({
+        program: "sh",
+        args: ["-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session],
+        workdir: None,
+      }) catch {
+        _ => 1
+      }
+      if has_session == 0 {
+        @io.write_stdout("Killing session \{session}...\n")
+        ignore(
+          @exec.run({
+            program: "tmux",
+            args: ["kill-session", "-t", session],
+            workdir: None,
+          }) catch {
+            _ => 0
+          },
+        )
+      }
+    }
+
+    let session_alive = @exec.run({
+      program: "sh",
+      args: ["-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session],
+      workdir: None,
+    }) catch {
+      _ => 1
+    }
+    if session_alive == 0 {
+      @io.write_stdout("Attaching to existing session \{session}...\n")
+      ignore(
+        @exec.run({
+          program: "tmux",
+          args: ["attach-session", "-t", session],
+          workdir: None,
+        }) catch {
+          _ => 0
+        },
+      )
+      return
+    }
+
+    ignore(
+      @exec.run({
+        program: "sh",
+        args: [
+          "-c", "mkdir -p .choir/agents/root && git branch --show-current > .choir/agents/root/.birth_branch 2>/dev/null || true",
+        ],
+        workdir: None,
+      }) catch {
+        _ => 0
+      },
+    )
+
+    @io.write_stdout("Creating session \{session}...\n")
+    init_run_or_exit({
+      program: "tmux",
+      args: ["new-session", "-d", "-s", session, "-n", "Server"],
+      workdir: None,
+    })
+
+    init_run_or_exit({
+      program: "tmux",
+      args: ["send-keys", "-t", session + ":Server", "choir serve", "Enter"],
+      workdir: None,
+    })
+
+    init_run_or_exit({
+      program: "tmux",
+      args: ["new-window", "-t", session, "-n", "TL"],
+      workdir: None,
+    })
+    init_run_or_exit({
+      program: "tmux",
+      args: [
+        "send-keys",
+        "-t",
+        session + ":TL",
+        "claude --dangerously-skip-permissions -c || claude --dangerously-skip-permissions; echo; echo '[Claude exited]'; exec bash -l",
+        "Enter",
+      ],
+      workdir: None,
+    })
+
+    @io.write_stdout("Waiting for server socket...\n")
+    let mut found = false
+    for i = 0; i < 60; i = i + 1 {
+      @async.sleep(500)
+      let sock_ok = @exec.run({
+        program: "sh",
+        args: ["-c", "test -S \"$1\"", "sh", config.listen_uds],
+        workdir: None,
+      }) catch {
+        _ => 1
+      }
+      if sock_ok == 0 {
+        found = true
+        break
+      }
+    }
+    if not(found) {
+      @io.write_stdout("Warning: server socket not ready after 30s\n")
+    } else {
+      @io.write_stdout("Server ready.\n")
+    }
+
+    @io.write_stdout("Attaching to session \{session}...\n")
+    ignore(
+      @exec.run({
+        program: "tmux",
+        args: ["attach-session", "-t", session],
+        workdir: None,
+      }) catch {
+        _ => 0
+      },
+    )
   })
 }
 
@@ -761,7 +906,9 @@ fn main {
       }
     "init" => init_run() catch { _ => @io.exit(1) }
     _ => {
-      @io.write_stdout("usage: choir <serve|mcp-stdio|hook|init>\n")
+      @io.write_stdout(
+        "usage: choir <serve|mcp-stdio|hook|init [--recreate]>\n",
+      )
       @io.exit(1)
     }
   }

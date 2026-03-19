@@ -25,6 +25,13 @@ extern "C" fn c_argc() -> Int = "choir_argc"
 extern "C" fn c_argv_get(n : Int, out : Bytes, out_size : Int) -> Int = "choir_argv_get"
 
 ///|
+extern "C" fn c_getpid() -> Int = "choir_getpid"
+
+///|
+#borrow(path)
+extern "C" fn c_write_pid_file(path : Bytes) -> Unit = "choir_write_pid_file"
+
+///|
 fn string_to_null_terminated_bytes(s : String) -> Bytes {
   let b = @utf8.encode(s)
   let len = b.length()
@@ -83,4 +90,15 @@ pub fn get_args() -> Array[String] {
     }
   }
   args
+}
+
+///|
+pub fn get_pid() -> Int {
+  c_getpid()
+}
+
+///|
+pub fn write_pid_file(path : String) -> Unit {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  c_write_pid_file(path_bytes)
 }
