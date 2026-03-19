@@ -32,6 +32,14 @@ extern "C" fn c_getpid() -> Int = "choir_getpid"
 extern "C" fn c_getcwd(buf : Bytes, buf_size : Int) -> Int = "choir_getcwd"
 
 ///|
+#borrow(exe)
+extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
+
+///|
+#borrow(path)
+extern "C" fn c_wait_for_socket(path : Bytes, max_tries : Int) -> Int = "choir_wait_for_socket"
+
+///|
 #borrow(path)
 extern "C" fn c_write_pid_file(path : Bytes) -> Unit = "choir_write_pid_file"
 
@@ -105,6 +113,20 @@ pub fn get_pid() -> Int {
 pub fn write_pid_file(path : String) -> Unit {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_write_pid_file(path_bytes)
+}
+
+///|
+/// Spawn `<self_exe> serve` as a detached background daemon.
+pub fn spawn_serve(self_exe : String) -> Bool {
+  let exe_bytes = string_to_null_terminated_bytes(self_exe)
+  c_spawn_serve(exe_bytes, exe_bytes.length() - 1) == 0
+}
+
+///|
+/// Poll for a socket file to appear (200ms intervals). Returns true if found.
+pub fn wait_for_socket(path : String, max_tries : Int) -> Bool {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  c_wait_for_socket(path_bytes, max_tries) == 0
 }
 
 ///|

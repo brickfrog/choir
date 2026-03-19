@@ -533,7 +533,15 @@ fn mcp_run() -> Unit raise {
   }
   let role = @config.resolve_role(local_role, config)
 
-  let uds_fd = @uds.client_connect(config.listen_uds)
+  let mut uds_fd = @uds.client_connect(config.listen_uds)
+  if uds_fd < 0 {
+    // Server not running — spawn it and wait for the socket
+    let self_exe = @io.get_args().get(0).or("choir")
+    ignore(@io.spawn_serve(self_exe))
+    if @io.wait_for_socket(config.listen_uds, 60) {
+      uds_fd = @uds.client_connect(config.listen_uds)
+    }
+  }
   if uds_fd >= 0 {
     mcp_run_uds_loop(uds_fd, role, config)
     return

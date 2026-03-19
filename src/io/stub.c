@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 int choir_get_file_size(const char* path) {
@@ -86,6 +88,27 @@ int choir_getpid(void) {
 int choir_getcwd(char* buf, int buf_size) {
     if (getcwd(buf, (size_t)buf_size) == NULL) return 0;
     return (int)strlen(buf);
+}
+
+/* Spawn "<exe> serve" as a background process, logging to .choir/serve.log.
+   Returns 0 on success. */
+int choir_spawn_serve(const char* exe, int exe_len) {
+    char cmd[4096];
+    (void)exe_len;
+    snprintf(cmd, sizeof(cmd),
+        "%s serve >> .choir/serve.log 2>&1 &", exe);
+    return system(cmd);
+}
+
+/* Poll for existence of a socket file, sleeping 200ms between checks.
+   Returns 0 if found within max_tries attempts, -1 on timeout. */
+int choir_wait_for_socket(const char* path, int max_tries) {
+    struct stat st;
+    for (int i = 0; i < max_tries; i++) {
+        if (stat(path, &st) == 0) return 0;
+        usleep(200000); /* 200ms */
+    }
+    return -1;
 }
 
 void choir_write_pid_file(const char* path) {
