@@ -11,6 +11,7 @@ pub(all) struct Config {
   agent_id : String?
   extra_mcp_servers_json : String?
   companions_json : String?
+  plugins_json : String?
   tmux_session : String
 } derive(Show)
 
@@ -28,6 +29,7 @@ pub fn Config::default() -> Config {
     agent_id: None,
     extra_mcp_servers_json: None,
     companions_json: None,
+    plugins_json: None,
     tmux_session: "choir",
   }
 }

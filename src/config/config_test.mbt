@@ -10,6 +10,7 @@ test "parse_config - full" {
     #|otlp_endpoint = "http://localhost:4318"
     #|extra_mcp_servers_json = '{"notebook":{"type":"stdio","command":"node"}}'
     #|companions_json = '[{"name":"monitor","role":"worker","command":"claude","task":"Monitor the build"}]'
+    #|plugins_json = '[{"name":"plugin","command":"./plugin","tools":"search"}]'
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
@@ -27,6 +28,12 @@ test "parse_config - full" {
     cfg.companions_json,
     Some(
       "[{\"name\":\"monitor\",\"role\":\"worker\",\"command\":\"claude\",\"task\":\"Monitor the build\"}]",
+    ),
+  )
+  assert_eq(
+    cfg.plugins_json,
+    Some(
+      "[{\"name\":\"plugin\",\"command\":\"./plugin\",\"tools\":\"search\"}]",
     ),
   )
 }
@@ -49,6 +56,7 @@ test "parse_config - empty string defaults" {
     #|otlp_endpoint = ""
     #|agent_id = ""
     #|companions_json = ""
+    #|plugins_json = ""
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.shell_command, None)
@@ -58,6 +66,7 @@ test "parse_config - empty string defaults" {
   assert_eq(cfg.agent_id, None)
   assert_eq(cfg.extra_mcp_servers_json, None)
   assert_eq(cfg.companions_json, None)
+  assert_eq(cfg.plugins_json, None)
 }
 
 ///|
@@ -72,6 +81,7 @@ test "parse_config - agent_id defaults to None" {
   assert_eq(cfg.agent_id, None)
   assert_eq(cfg.extra_mcp_servers_json, None)
   assert_eq(cfg.companions_json, None)
+  assert_eq(cfg.plugins_json, None)
 }
 
 ///|

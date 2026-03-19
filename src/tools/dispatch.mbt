@@ -111,6 +111,99 @@ async fn run_strict(
 }
 
 ///|
+fn sanitize_plugin_path_component(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    if is_alphanumeric_or_dash(c) || c == '.' {
+      buf.write_char(c)
+    } else {
+      buf.write_char('_')
+    }
+  }
+  let result = buf.to_string()
+  if result == "" {
+    "unknown"
+  } else {
+    result
+  }
+}
+
+///|
+fn plugin_request_agent_id(req : @types.Request) -> String {
+  match req.args.get("agent_id") {
+    Some(agent_id) => agent_id
+    None =>
+      match req.args.get("caller_id") {
+        Some(agent_id) => agent_id
+        None =>
+          match req.args.get("sender_id") {
+            Some(agent_id) => agent_id
+            None => "unknown"
+          }
+      }
+  }
+}
+
+///|
+async fn dispatch_to_plugin(
+  req : @types.Request,
+  plugins_json : String?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> @types.Response {
+  let json = match plugins_json {
+    Some(value) => value
+    None => return @types.Response::Err("tool not found: " + req.name)
+  }
+  let plugins = @plugin.parse_plugins_json(json)
+  let mut found : @plugin.PluginDef? = None
+  for plugin in plugins {
+    if plugin.handles(req.name) {
+      found = Some(plugin)
+      break
+    }
+  }
+  match found {
+    None => @types.Response::Err("tool not found: " + req.name)
+    Some(plugin) => {
+      let agent_id = plugin_request_agent_id(req)
+      let request_json = @plugin.build_request(
+        req.name,
+        req.args,
+        agent_id,
+        req.role.to_string(),
+      )
+      let resp_path = "/tmp/choir-plugin-" +
+        sanitize_plugin_path_component(req.name) +
+        "-" +
+        sanitize_plugin_path_component(agent_id) +
+        ".json"
+      let cmd = @workspace.Command::{
+        program: "sh",
+        args: [
+          "-c",
+          "rm -f \"$3\" && printf '%s\\n' \"$2\" | timeout 10 sh -c \"$1\" > \"$3\" 2>/dev/null || true",
+          "sh",
+          plugin.command,
+          request_json,
+          resp_path,
+        ],
+        workdir: None,
+      }
+      ignore(
+        runner([cmd]) catch {
+          e => return @types.Response::Err(e.to_string())
+        },
+      )
+      let resp_str = @io.read_file(resp_path)
+      match @plugin.parse_response(resp_str) {
+        Ok(result) => @types.Response::Ok(result)
+        Err(e) => @types.Response::Err("plugin error: " + e)
+      }
+    }
+  }
+}
+
+///|
 pub async fn execute_delivery(
   delivery : @message.DeliveryMethod,
   runner : async (Array[@workspace.Command]) -> Array[Int],
@@ -1330,9 +1423,15 @@ pub async fn handle_request(
   agent_registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  plugins_json? : String? = None,
 ) -> @types.Response {
   match registry.lookup(req.role, req.name) {
-    Err(e) => @types.Response::Err(e.message())
+    Err(e) =>
+      match e {
+        @types.ExoError::ToolNotFound(_) =>
+          dispatch_to_plugin(req, plugins_json, runner)
+        _ => @types.Response::Err(e.message())
+      }
     Ok(_) =>
       dispatch(
         { role: req.role, name: req.name, args: req.args },

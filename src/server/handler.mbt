@@ -78,6 +78,7 @@ pub async fn ServerState::handle(
       agent_registry=Some(self.registry),
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
+      plugins_json=self.config.plugins_json,
     )
   }
   let end_sec = @poller.now_sec()
