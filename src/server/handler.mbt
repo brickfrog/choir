@@ -9,6 +9,8 @@ pub async fn ServerState::handle(
   @tools.handle_request(
     self.tool_registry,
     req,
+    project_dir=self.config.project_dir,
+    extra_mcp_servers_json=self.config.extra_mcp_servers_json,
     agent_registry=Some(self.registry),
   )
 }

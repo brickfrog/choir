@@ -3,6 +3,7 @@ pub fn spawn_commands(
   spec : @types.SpawnSpec,
   project_dir : String,
   session : String,
+  extra_mcp_servers_json? : String? = None,
 ) -> Array[Command] {
   let branch = branch_name(spec.parent_branch, spec.slug)
   let workspace = match spec.isolation {
@@ -22,7 +23,10 @@ pub fn spawn_commands(
       [
         git_worktree_add(workspace, branch),
         write_local_config(workspace, config_local_content(spec.role)),
-        write_mcp_json(workspace, mcp_json_content(spec.role, spec.slug)),
+        write_mcp_json(
+          workspace,
+          mcp_json_content(spec.role, spec.slug, extra_mcp_servers_json~),
+        ),
         tmux_new_window(session, spec.slug, workspace),
         tmux_send_keys(target, launch_str),
       ]
@@ -32,7 +36,10 @@ pub fn spawn_commands(
       [
         { program: "git", args: ["init", workspace], workdir: None },
         write_local_config(workspace, config_local_content(spec.role)),
-        write_mcp_json(workspace, mcp_json_content(spec.role, spec.slug)),
+        write_mcp_json(
+          workspace,
+          mcp_json_content(spec.role, spec.slug, extra_mcp_servers_json~),
+        ),
         tmux_new_window(session, spec.slug, workspace),
         tmux_send_keys(target, launch_str),
       ]

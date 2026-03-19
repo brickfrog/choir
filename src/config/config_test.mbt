@@ -7,6 +7,7 @@ test "parse_config - full" {
     #|listen_uds = "/tmp/sock"
     #|listen_tcp = "127.0.0.1:9000"
     #|otlp_endpoint = "http://localhost:4318"
+    #|extra_mcp_servers_json = '{"notebook":{"type":"stdio","command":"node"}}'
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
@@ -15,6 +16,10 @@ test "parse_config - full" {
   assert_eq(cfg.listen_uds, "/tmp/sock")
   assert_eq(cfg.listen_tcp, Some("127.0.0.1:9000"))
   assert_eq(cfg.otlp_endpoint, Some("http://localhost:4318"))
+  assert_eq(
+    cfg.extra_mcp_servers_json,
+    Some("{\"notebook\":{\"type\":\"stdio\",\"command\":\"node\"}}"),
+  )
 }
 
 ///|
@@ -39,6 +44,7 @@ test "parse_config - empty string defaults" {
   assert_eq(cfg.listen_tcp, None)
   assert_eq(cfg.otlp_endpoint, None)
   assert_eq(cfg.agent_id, None)
+  assert_eq(cfg.extra_mcp_servers_json, None)
 }
 
 ///|
@@ -51,6 +57,7 @@ test "parse_config - agent_id set" {
 test "parse_config - agent_id defaults to None" {
   let cfg = parse_config("").unwrap()
   assert_eq(cfg.agent_id, None)
+  assert_eq(cfg.extra_mcp_servers_json, None)
 }
 
 ///|

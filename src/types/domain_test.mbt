@@ -27,4 +27,5 @@ test "default config" {
   assert_eq(config.default_role, @types.Role::TL)
   assert_eq(config.listen_uds, ".exo/server.sock")
   assert_eq(config.listen_tcp, None)
+  assert_eq(config.extra_mcp_servers_json, None)
 }

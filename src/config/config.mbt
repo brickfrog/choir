@@ -66,6 +66,11 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     None => default_cfg.agent_id
   }
 
+  let extra_mcp_servers_json = match map.get("extra_mcp_servers_json") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => default_cfg.extra_mcp_servers_json
+  }
+
   Ok({
     default_role,
     project_dir,
@@ -74,6 +79,7 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     listen_tcp,
     otlp_endpoint,
     agent_id,
+    extra_mcp_servers_json,
   })
 }
 

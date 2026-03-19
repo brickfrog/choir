@@ -8,6 +8,7 @@ pub(all) struct Config {
   listen_tcp : String?
   otlp_endpoint : String?
   agent_id : String?
+  extra_mcp_servers_json : String?
 } derive(Show)
 
 ///|
@@ -21,5 +22,6 @@ pub fn Config::default() -> Config {
     listen_tcp: None,
     otlp_endpoint: None,
     agent_id: None,
+    extra_mcp_servers_json: None,
   }
 }

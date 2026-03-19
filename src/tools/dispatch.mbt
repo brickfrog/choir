@@ -6,6 +6,15 @@ pub(all) struct ToolCall {
 } derive(Show)
 
 ///|
+struct TaskFile {
+  id : String
+  title : String
+  status : String
+  assignee : String
+  notes : String
+} derive(Show, Eq)
+
+///|
 fn parse_int(s : String) -> Int? {
   if s == "" {
     return None
@@ -99,11 +108,282 @@ async fn execute_delivery(
 }
 
 ///|
+fn escape_json_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn skip_json_ws(s : String, start : Int) -> Int {
+  let mut i = start
+  while i < s.length() &&
+        (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t') {
+    i = i + 1
+  }
+  i
+}
+
+///|
+fn parse_json_string_literal(s : String, start : Int) -> (String, Int)? {
+  if start >= s.length() || s[start] != '"' {
+    return None
+  }
+  let buf = StringBuilder::new()
+  let mut i = start + 1
+  while i < s.length() {
+    let c = Int::unsafe_to_char(s[i].to_int())
+    if c == '"' {
+      return Some((buf.to_string(), i + 1))
+    }
+    if c == '\\' {
+      i = i + 1
+      if i >= s.length() {
+        return None
+      }
+      let escaped = Int::unsafe_to_char(s[i].to_int())
+      match escaped {
+        '"' => buf.write_char('"')
+        '\\' => buf.write_char('\\')
+        'n' => buf.write_char('\n')
+        'r' => buf.write_char('\r')
+        't' => buf.write_char('\t')
+        other => buf.write_char(other)
+      }
+    } else {
+      buf.write_char(c)
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+fn parse_string_map_json(content : String) -> Map[String, String]? {
+  let map : Map[String, String] = {}
+  let mut i = skip_json_ws(content, 0)
+  if i >= content.length() || content[i] != '{' {
+    return None
+  }
+  i = i + 1
+  for {
+    i = skip_json_ws(content, i)
+    if i >= content.length() {
+      return None
+    }
+    if content[i] == '}' {
+      return Some(map)
+    }
+    let (key, next_i) = match parse_json_string_literal(content, i) {
+      Some(pair) => pair
+      None => return None
+    }
+    i = skip_json_ws(content, next_i)
+    if i >= content.length() || content[i] != ':' {
+      return None
+    }
+    i = skip_json_ws(content, i + 1)
+    let (value, value_end) = match parse_json_string_literal(content, i) {
+      Some(pair) => pair
+      None => return None
+    }
+    map.set(key, value)
+    i = skip_json_ws(content, value_end)
+    if i >= content.length() {
+      return None
+    }
+    if content[i] == '}' {
+      return Some(map)
+    }
+    if content[i] != ',' {
+      return None
+    }
+    i = i + 1
+  }
+}
+
+///|
+fn parse_task_file(content : String) -> Result[TaskFile, String] {
+  let fields = match parse_string_map_json(content) {
+    Some(map) => map
+    None => return Err("invalid task json")
+  }
+  let id = match fields.get("id") {
+    Some(v) => v
+    None => return Err("missing id")
+  }
+  let title = match fields.get("title") {
+    Some(v) => v
+    None => return Err("missing title")
+  }
+  let status = match fields.get("status") {
+    Some(v) => v
+    None => return Err("missing status")
+  }
+  let assignee = match fields.get("assignee") {
+    Some(v) => v
+    None => return Err("missing assignee")
+  }
+  let notes = match fields.get("notes") {
+    Some(v) => v
+    None => return Err("missing notes")
+  }
+  Ok({ id, title, status, assignee, notes })
+}
+
+///|
+fn task_file_to_json(task : TaskFile) -> String {
+  "{\"id\":\"" +
+  escape_json_string(task.id) +
+  "\",\"title\":\"" +
+  escape_json_string(task.title) +
+  "\",\"status\":\"" +
+  escape_json_string(task.status) +
+  "\",\"assignee\":\"" +
+  escape_json_string(task.assignee) +
+  "\",\"notes\":\"" +
+  escape_json_string(task.notes) +
+  "\"}"
+}
+
+///|
+fn task_file_path(project_dir : String, id : String) -> String {
+  project_dir + "/.exo/tasks/" + id + ".json"
+}
+
+///|
+fn task_list_manifest_path(project_dir : String) -> String {
+  project_dir + "/.exo/.task-list.paths"
+}
+
+///|
+fn validate_task_status(status : String) -> Result[Unit, String] {
+  match status {
+    "todo" | "in_progress" | "done" => Ok(())
+    _ => Err("invalid status: " + status)
+  }
+}
+
+///|
+fn read_task_file(
+  project_dir : String,
+  id : String,
+) -> Result[TaskFile, String] {
+  match validate_slug(id) {
+    Err(e) => return Err("invalid id: " + e)
+    Ok(_) => ()
+  }
+  let content = @io.read_file(task_file_path(project_dir, id))
+  if content == "" {
+    return Err("task not found: " + id)
+  }
+  match parse_task_file(content) {
+    Ok(task) => Ok(task)
+    Err(e) => Err("invalid task file for " + id + ": " + e)
+  }
+}
+
+///|
+async fn list_task_files(
+  project_dir : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Result[Array[String], String] {
+  let manifest_path = task_list_manifest_path(project_dir)
+  let list_cmd = @workspace.Command::{
+    program: "sh",
+    args: [
+      "-c", "[ -d \"$1/.exo/tasks\" ] || exit 3; find \"$1/.exo/tasks\" -maxdepth 1 -type f -name '*.json' | sort > \"$2\"",
+      "sh", project_dir, manifest_path,
+    ],
+    workdir: None,
+  }
+  let statuses = runner([list_cmd]) catch { e => return Err(e.to_string()) }
+  if statuses.length() > 0 {
+    let status = statuses[statuses.length() - 1]
+    if status == 3 {
+      return Ok([])
+    }
+    if status != 0 {
+      return Err("command failed with status " + status.to_string())
+    }
+  }
+  let content = @io.read_file(manifest_path)
+  let cleanup_cmd = @workspace.Command::{
+    program: "sh",
+    args: ["-c", "rm -f \"$1\"", "sh", manifest_path],
+    workdir: None,
+  }
+  ignore(runner([cleanup_cmd]) catch { _ => [] })
+  let paths = []
+  if content == "" {
+    return Ok(paths)
+  }
+  for line in content.split("\n") {
+    let path = line.to_string().trim().to_string()
+    if path != "" {
+      paths.push(path)
+    }
+  }
+  Ok(paths)
+}
+
+///|
+async fn handle_task_list(
+  project_dir : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> @types.Response {
+  let task_paths = match list_task_files(project_dir, runner) {
+    Ok(paths) => paths
+    Err(e) => return @types.Response::Err(e)
+  }
+  let buf = StringBuilder::new()
+  buf.write_char('[')
+  let mut first = true
+  for path in task_paths {
+    let content = @io.read_file(path)
+    if content == "" {
+      return @types.Response::Err("failed to read task file: " + path)
+    }
+    let task = match parse_task_file(content) {
+      Ok(value) => value
+      Err(e) =>
+        return @types.Response::Err("invalid task file at " + path + ": " + e)
+    }
+    if not(first) {
+      buf.write_char(',')
+    }
+    buf.write_string(task_file_to_json(task))
+    first = false
+  }
+  buf.write_char(']')
+  @types.Response::Ok({ "status": "ok", "tasks": buf.to_string() })
+}
+
+///|
+fn parse_agent_type(s : String) -> Result[@types.AgentType, String] {
+  match s {
+    "claude" => Ok(@types.AgentType::Claude)
+    "gemini" => Ok(@types.AgentType::Gemini)
+    _ => Err("invalid agent_type: " + s)
+  }
+}
+
+///|
 pub async fn dispatch(
   call : ToolCall,
   project_dir? : String = ".",
   session? : String = "exomonad",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  extra_mcp_servers_json? : String? = None,
   registry? : @registry.AgentRegistry? = None,
 ) -> @types.Response {
   match call.name {
@@ -184,7 +464,13 @@ pub async fn dispatch(
           parent_id: "main", // Stub
           parent_branch,
         }
-        for cmd in @workspace.spawn_commands(spec, project_dir, session) {
+        for
+          cmd in @workspace.spawn_commands(
+            spec,
+            project_dir,
+            session,
+            extra_mcp_servers_json~,
+          ) {
           cmds.push(cmd)
         }
       }
@@ -331,8 +617,59 @@ pub async fn dispatch(
       }
       @types.Response::Ok({ "status": "shutdown" })
     }
-    "task_list" | "task_get" | "task_update" =>
-      @types.Response::Ok({ "status": "ok" })
+    "task_list" => handle_task_list(project_dir, runner)
+    "task_get" => {
+      let id = match call.args.get("id") {
+        Some(v) => v
+        None => return @types.Response::Err("missing id")
+      }
+      match read_task_file(project_dir, id) {
+        Ok(task) =>
+          @types.Response::Ok({
+            "status": "ok",
+            "task": task_file_to_json(task),
+          })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
+    "task_update" => {
+      let id = match call.args.get("id") {
+        Some(v) => v
+        None => return @types.Response::Err("missing id")
+      }
+      let task = match read_task_file(project_dir, id) {
+        Ok(value) => value
+        Err(e) => return @types.Response::Err(e)
+      }
+      let status = match call.args.get("status") {
+        Some(v) =>
+          match validate_task_status(v) {
+            Ok(_) => v
+            Err(e) => return @types.Response::Err(e)
+          }
+        None => task.status
+      }
+      let updated = {
+        ..task,
+        status,
+        assignee: call.args.get("assignee").unwrap_or(task.assignee),
+        notes: call.args.get("notes").unwrap_or(task.notes),
+      }
+      let content = task_file_to_json(updated)
+      let path = task_file_path(project_dir, id)
+      let cmd = @workspace.Command::{
+        program: "sh",
+        args: [
+          "-c", "mkdir -p \"$1/.exo/tasks\" && printf '%s' \"$3\" > \"$2\"", "sh",
+          project_dir, path, content,
+        ],
+        workdir: None,
+      }
+      match run_strict(runner, [cmd]) {
+        Ok(_) => @types.Response::Ok({ "status": "ok", "task": content })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
     "spawn_gemini" => {
       let task = match call.args.get("task") {
         Some(v) => v
@@ -363,7 +700,53 @@ pub async fn dispatch(
         parent_id: "main", // Stub
         parent_branch,
       }
-      let cmds = @workspace.spawn_commands(spec, project_dir, session)
+      let cmds = @workspace.spawn_commands(
+        spec,
+        project_dir,
+        session,
+        extra_mcp_servers_json~,
+      )
+      match run_strict(runner, cmds) {
+        Ok(_) => @types.Response::Ok({ "status": "spawned" })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
+    "spawn_worker" => {
+      let task = match call.args.get("task") {
+        Some(v) => v
+        None => ""
+      }
+      let slug = match call.args.get("slug") {
+        Some(v) => if v == "" { "inline-worker" } else { v }
+        None => "inline-worker"
+      }
+      let agent_type_str = match call.args.get("agent_type") {
+        Some(v) => if v == "" { "gemini" } else { v }
+        None => "gemini"
+      }
+      match validate_slug(slug) {
+        Err(e) => return @types.Response::Err("invalid slug: " + e)
+        Ok(_) => ()
+      }
+      let agent_type = match parse_agent_type(agent_type_str) {
+        Ok(value) => value
+        Err(e) => return @types.Response::Err(e)
+      }
+      let spec = @types.SpawnSpec::{
+        slug,
+        role: @types.Role::Worker,
+        agent_type,
+        task,
+        isolation: @types.IsolationMode::Inline,
+        parent_id: "main",
+        parent_branch: "main",
+      }
+      let cmds = @workspace.spawn_commands(
+        spec,
+        project_dir,
+        session,
+        extra_mcp_servers_json~,
+      )
       match run_strict(runner, cmds) {
         Ok(_) => @types.Response::Ok({ "status": "spawned" })
         Err(e) => @types.Response::Err(e)
@@ -380,6 +763,7 @@ pub async fn handle_request(
   project_dir? : String = ".",
   session? : String = "exomonad",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  extra_mcp_servers_json? : String? = None,
   agent_registry? : @registry.AgentRegistry? = None,
 ) -> @types.Response {
   match registry.lookup(req.role, req.name) {
@@ -390,6 +774,7 @@ pub async fn handle_request(
         project_dir~,
         session~,
         runner~,
+        extra_mcp_servers_json~,
         registry=agent_registry,
       )
   }

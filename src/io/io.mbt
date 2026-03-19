@@ -38,7 +38,7 @@ pub fn read_file(path : String) -> String {
   }
   let buf = Bytes::new(size)
   c_read_file_to_buf(path_bytes, buf, size)
-  buf.to_unchecked_string(offset=0, length=size)
+  @utf8.decode_lossy(buf)
 }
 
 ///|

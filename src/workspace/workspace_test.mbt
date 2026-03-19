@@ -177,3 +177,17 @@ test "Command::to_string output" {
   }
   assert_eq(cmd2.to_string(), "cd /path && claude -p hello")
 }
+
+///|
+test "mcp_json_content merges extra servers" {
+  let json = @workspace.mcp_json_content(
+    @types.Role::Dev,
+    "agent-a",
+    extra_mcp_servers_json=Some(
+      "{\"notebook\":{\"type\":\"stdio\",\"command\":\"node\"}}",
+    ),
+  )
+  assert_true(json.contains("\"exomonad\""))
+  assert_true(json.contains("\"notebook\""))
+  assert_true(json.contains("\"agent-a\""))
+}

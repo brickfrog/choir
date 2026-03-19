@@ -23,6 +23,8 @@ pub fn parse_toml(content : String) -> Map[String, String] {
         }
       if val.has_prefix("\"") && val.has_suffix("\"") && val.length() >= 2 {
         val = val[1:val.length() - 1].to_string() catch { _ => val }
+      } else if val.has_prefix("'") && val.has_suffix("'") && val.length() >= 2 {
+        val = val[1:val.length() - 1].to_string() catch { _ => val }
       }
       map.set(key, val)
     }

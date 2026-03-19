@@ -90,9 +90,8 @@ test "dispatch returns correct stub for each tool name" {
       ("send_message", "sent", { "target_id": "test-agent" }),
       ("shutdown", "shutdown", Map::new()),
       ("task_list", "ok", Map::new()),
-      ("task_get", "ok", Map::new()),
-      ("task_update", "ok", Map::new()),
       ("spawn_gemini", "spawned", Map::new()),
+      ("spawn_worker", "spawned", Map::new()),
     ]
     for c in cases {
       let (name, expected_status, args) = c
@@ -107,4 +106,11 @@ test "dispatch returns correct stub for each tool name" {
       }
     }
   })
+}
+
+///|
+test "tool registry lookup spawn_worker allowed for TL" {
+  let reg = @tools.ToolRegistry::new()
+  let result = reg.lookup(@types.Role::TL, "spawn_worker")
+  assert_true(result is Ok(_))
 }

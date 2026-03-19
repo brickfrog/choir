@@ -44,6 +44,10 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
     "{\"name\":\"notify_parent\",\"description\":\"Notify the parent agent with a status update\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"send_message\",\"description\":\"Send a message to another agent\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"spawn_gemini\",\"description\":\"Spawn a Gemini leaf agent in a new worktree\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"spawn_worker\",\"description\":\"Spawn an inline worker agent\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"task_list\",\"description\":\"List tasks from shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"task_get\",\"description\":\"Get one task from shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
+    "{\"name\":\"task_update\",\"description\":\"Update one task in shared task storage\",\"inputSchema\":{\"type\":\"object\"}}," +
     "{\"name\":\"shutdown\",\"description\":\"Shutdown the server\",\"inputSchema\":{\"type\":\"object\"}}" +
     "]"
   { jsonrpc: "2.0", id, result: Some({ "tools": tools_json }), error: None }

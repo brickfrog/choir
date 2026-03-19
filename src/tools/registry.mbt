@@ -31,6 +31,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "spawn_worker",
+      description: "Spawn inline worker agent",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "file_pr",
       description: "Create or update PR for current branch",
       allowed_roles: [@types.Role::TL, @types.Role::Dev],
