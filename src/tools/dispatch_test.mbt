@@ -590,6 +590,119 @@ test "handle_request spawn_moon_pilot denied for Dev role" {
 }
 
 ///|
+test "handle_request falls back to plugin and preserves raw response values" {
+  @async.with_event_loop(_ => {
+    let reg = @tools.ToolRegistry::new()
+    let captured_requests : Array[String] = []
+    let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      let statuses = []
+      for cmd in cmds {
+        captured_requests.push(cmd.args[4])
+        ignore(
+          @io.write_file_sync(
+            cmd.args[5],
+            "{\"ok\":true,\"status\":\"done\",\"count\":3}",
+          ),
+        )
+        statuses.push(0)
+      }
+      statuses
+    }
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::Dev,
+      name: "search_docs",
+      args: @types.RequestArgs::from_values({
+        "agent_id": @types.WireValue::String("leaf-1"),
+        "count": @types.WireValue::Raw("2"),
+      }),
+    }
+    let res = handle_request(
+      reg,
+      req,
+      runner~,
+      plugins_json=Some(
+        "[{\"name\":\"search\",\"command\":\"cat\",\"tools\":\"search_docs\"}]",
+      ),
+    )
+    assert_eq(captured_requests.length(), 1)
+    assert_true(captured_requests[0].contains("\"tool\":\"search_docs\""))
+    assert_true(captured_requests[0].contains("\"count\":2"))
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("done"))
+        assert_eq(m.get("count"), Some("3"))
+        assert_eq(m.get_value("count"), Some(@types.WireValue::Raw("3")))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
+test "handle_request returns plugin error message" {
+  @async.with_event_loop(_ => {
+    let reg = @tools.ToolRegistry::new()
+    let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        ignore(
+          @io.write_file_sync(cmd.args[5], "{\"ok\":false,\"error\":\"boom\"}"),
+        )
+      }
+      [0]
+    }
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::Dev,
+      name: "search_docs",
+      args: @types.RequestArgs::new({}),
+    }
+    let res = handle_request(
+      reg,
+      req,
+      runner~,
+      plugins_json=Some(
+        "[{\"name\":\"search\",\"command\":\"cat\",\"tools\":\"search_docs\"}]",
+      ),
+    )
+    match res {
+      Ok(_) => assert_true(false)
+      Err(e) => assert_eq(e, "plugin error: boom")
+    }
+  })
+}
+
+///|
+test "handle_request returns tool not found when plugin does not match" {
+  @async.with_event_loop(_ => {
+    let reg = @tools.ToolRegistry::new()
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::Dev,
+      name: "search_docs",
+      args: @types.RequestArgs::new({}),
+    }
+    let res = handle_request(
+      reg,
+      req,
+      runner=mock_runner,
+      plugins_json=Some(
+        "[{\"name\":\"deploy\",\"command\":\"cat\",\"tools\":\"deploy\"}]",
+      ),
+    )
+    match res {
+      Ok(_) => assert_true(false)
+      Err(e) => assert_eq(e, "tool not found: search_docs")
+    }
+  })
+}
+
+///|
 test "dispatch spawn_worker validates agent type" {
   @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
