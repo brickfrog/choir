@@ -6,6 +6,56 @@ pub(all) struct ToolCall {
 } derive(Show)
 
 ///|
+struct ToolArgs {
+  values : Map[String, @types.WireValue]
+} derive(Show)
+
+///|
+fn tool_args_from_map(args : Map[String, String]) -> ToolArgs {
+  let values : Map[String, @types.WireValue] = {}
+  args.each(fn(k, v) { values.set(k, @types.WireValue::String(v)) })
+  { values, }
+}
+
+///|
+fn tool_args_from_request_args(args : @types.RequestArgs) -> ToolArgs {
+  { values: args.to_value_map() }
+}
+
+///|
+fn tool_args_get(args : ToolArgs, key : String) -> String? {
+  match tool_args_get_value(args, key) {
+    Some(value) => Some(value.to_compat_string())
+    None => None
+  }
+}
+
+///|
+fn tool_args_get_value(args : ToolArgs, key : String) -> @types.WireValue? {
+  args.values.get(key)
+}
+
+///|
+fn tool_args_to_map(args : ToolArgs) -> Map[String, String] {
+  let converted : Map[String, String] = {}
+  args.values.each(fn(k, v) { converted.set(k, v.to_compat_string()) })
+  converted
+}
+
+///|
+fn tool_args_get_int(args : ToolArgs, key : String) -> Int? {
+  match tool_args_get(args, key) {
+    Some(value) => parse_int(value)
+    None => None
+  }
+}
+
+///|
+fn tool_args_get_bool(args : ToolArgs, key : String) -> Bool {
+  parse_truthy_spawn_flag(tool_args_get(args, key).unwrap_or("false"))
+}
+
+///|
 struct TaskFile {
   id : String
   title : String
@@ -32,15 +82,15 @@ fn parse_int(s : String) -> Int? {
 
 ///|
 fn get_arg_or_alias(
-  args : Map[String, String],
+  args : ToolArgs,
   key : String,
   fallback_key : String,
   default : String,
 ) -> String {
-  match args.get(key) {
+  match tool_args_get(args, key) {
     Some(v) => if v == "" { default } else { v }
     None =>
-      match args.get(fallback_key) {
+      match tool_args_get(args, fallback_key) {
         Some(v) => if v == "" { default } else { v }
         None => default
       }
@@ -202,18 +252,15 @@ fn parse_truthy_spawn_flag(s : String) -> Bool {
 }
 
 ///|
-fn lookup_parent_session_id(
-  project_dir : String,
-  args : Map[String, String],
-) -> String? {
-  match args.get("parent_session_id") {
+fn lookup_parent_session_id(project_dir : String, args : ToolArgs) -> String? {
+  match tool_args_get(args, "parent_session_id") {
     Some(v) => if v.trim() != "" { return Some(v.trim().to_string()) }
     None => ()
   }
-  if not(parse_truthy_spawn_flag(args.get("fork_session").unwrap_or("false"))) {
+  if not(tool_args_get_bool(args, "fork_session")) {
     return None
   }
-  let caller_id = args.get("caller_id").unwrap_or("")
+  let caller_id = tool_args_get(args, "caller_id").unwrap_or("")
   if caller_id == "" {
     return None
   }
@@ -295,12 +342,12 @@ fn validate_kv_key(s : String) -> Result[Unit, String] {
 }
 
 ///|
-fn parse_file_pr_args(args : Map[String, String]) -> Result[FilePrArgs, String] {
+fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, String] {
   let branch = get_arg_or_alias(args, "branch", "agent_id", "")
   if branch == "" {
     return Err("missing branch")
   }
-  let parent_branch = args.get("parent_branch").unwrap_or("main")
+  let parent_branch = tool_args_get(args, "parent_branch").unwrap_or("main")
   let normalized_parent_branch = if parent_branch == "" {
     "main"
   } else {
@@ -322,18 +369,16 @@ fn parse_file_pr_args(args : Map[String, String]) -> Result[FilePrArgs, String] 
 }
 
 ///|
-fn parse_track_pr_args(
-  args : Map[String, String],
-) -> Result[TrackPrArgs, String] {
-  let pr_str = args.get("pr_number").unwrap_or("")
+fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, String] {
+  let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
   if pr_str == "" {
     return Err("missing pr_number")
   }
-  let agent_id = args.get("agent_id").unwrap_or("")
+  let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
   if agent_id == "" {
     return Err("missing agent_id")
   }
-  let pr_number = match parse_int(pr_str) {
+  let pr_number = match tool_args_get_int(args, "pr_number") {
     Some(value) => value
     None => return Err("invalid pr_number: " + pr_str)
   }
@@ -357,20 +402,20 @@ fn parse_track_pr_args(
     agent_id,
     branch,
     parent_branch,
-    pr_url: args.get("pr_url").unwrap_or(""),
+    pr_url: tool_args_get(args, "pr_url").unwrap_or(""),
   })
 }
 
 ///|
 fn parse_fork_wave_args(
   project_dir : String,
-  args : Map[String, String],
+  args : ToolArgs,
 ) -> Result[ForkWaveArgs, String] {
-  let count_str = args.get("count").unwrap_or("")
+  let count_str = tool_args_get(args, "count").unwrap_or("")
   if count_str == "" {
     return Err("missing count")
   }
-  let count = match parse_int(count_str) {
+  let count = match tool_args_get_int(args, "count") {
     Some(c) => c
     None => return Err("invalid count: " + count_str)
   }
@@ -379,7 +424,7 @@ fn parse_fork_wave_args(
     Ok(_) => ()
     Err(e) => return Err("invalid parent_branch: " + e)
   }
-  let slug_prefix = args.get("slug_prefix").unwrap_or("wave")
+  let slug_prefix = tool_args_get(args, "slug_prefix").unwrap_or("wave")
   let normalized_slug_prefix = if slug_prefix == "" {
     "wave"
   } else {
@@ -391,9 +436,9 @@ fn parse_fork_wave_args(
   }
   Ok({
     count,
-    task: render_leaf_spawn_prompt(args),
+    task: render_leaf_spawn_prompt(tool_args_to_map(args)),
     parent_branch,
-    caller_id: args.get("caller_id").unwrap_or("main"),
+    caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug_prefix: normalized_slug_prefix,
     parent_session_id: lookup_parent_session_id(project_dir, args),
   })
@@ -401,7 +446,7 @@ fn parse_fork_wave_args(
 
 ///|
 fn parse_leaf_spawn_args(
-  args : Map[String, String],
+  args : ToolArgs,
   default_slug : String,
 ) -> Result[LeafSpawnArgs, String] {
   let slug = get_arg_or_alias(args, "slug", "branch", default_slug)
@@ -417,23 +462,21 @@ fn parse_leaf_spawn_args(
     Err(e) => return Err("invalid parent_branch: " + e)
   }
   Ok({
-    task: render_leaf_spawn_prompt(args),
-    caller_id: args.get("caller_id").unwrap_or("main"),
+    task: render_leaf_spawn_prompt(tool_args_to_map(args)),
+    caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     parent_branch,
   })
 }
 
 ///|
-fn parse_worker_spawn_args(
-  args : Map[String, String],
-) -> Result[WorkerSpawnArgs, String] {
+fn parse_worker_spawn_args(args : ToolArgs) -> Result[WorkerSpawnArgs, String] {
   let slug = get_arg_or_alias(args, "slug", "agent_id", "inline-worker")
   match validate_slug(slug) {
     Ok(_) => ()
     Err(e) => return Err("invalid slug: " + e)
   }
-  let agent_type_str = args.get("agent_type").unwrap_or("gemini")
+  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("gemini")
   let normalized_agent_type_str = if agent_type_str == "" {
     "gemini"
   } else {
@@ -444,8 +487,8 @@ fn parse_worker_spawn_args(
     Err(e) => return Err(e)
   }
   Ok({
-    task: render_worker_spawn_prompt(args),
-    caller_id: args.get("caller_id").unwrap_or("main"),
+    task: render_worker_spawn_prompt(tool_args_to_map(args)),
+    caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     agent_type,
   })
@@ -454,21 +497,21 @@ fn parse_worker_spawn_args(
 ///|
 fn parse_remote_spawn_args(
   project_dir : String,
-  args : Map[String, String],
+  args : ToolArgs,
 ) -> Result[RemoteSpawnArgs, String] {
   let leaf_args = match parse_leaf_spawn_args(args, "remote-leaf") {
     Ok(value) => value
     Err(e) => return Err(e)
   }
-  let ssh_target = args.get("ssh_target").unwrap_or("")
+  let ssh_target = tool_args_get(args, "ssh_target").unwrap_or("")
   if ssh_target == "" {
     return Err("missing ssh_target")
   }
-  let repo_url = args.get("repo_url").unwrap_or("")
+  let repo_url = tool_args_get(args, "repo_url").unwrap_or("")
   if repo_url == "" {
     return Err("missing repo_url")
   }
-  let tcp_addr = args.get("tcp_addr").unwrap_or("")
+  let tcp_addr = tool_args_get(args, "tcp_addr").unwrap_or("")
   if tcp_addr == "" {
     return Err("missing tcp_addr")
   }
@@ -605,20 +648,25 @@ fn parse_kv_set_args(args : Map[String, String]) -> Result[KvSetArgs, String] {
 
 ///|
 fn parse_mutex_acquire_args(
-  args : Map[String, String],
+  args : ToolArgs,
 ) -> Result[MutexAcquireArgs, String] {
-  let name = args.get("name").unwrap_or("")
+  let name = tool_args_get(args, "name").unwrap_or("")
   if name == "" {
     return Err("missing name")
   }
-  let agent_id = args.get("agent_id").unwrap_or("")
+  let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
   if agent_id == "" {
     return Err("missing agent_id")
   }
-  let ttl_str = args.get("ttl_sec").unwrap_or("300")
-  let ttl_sec = match parse_int(ttl_str) {
-    Some(value) => value.to_int64()
-    None => return Err("invalid ttl_sec: " + ttl_str)
+  let ttl_str = tool_args_get(args, "ttl_sec").unwrap_or("300")
+  let ttl_sec = if ttl_str == "" ||
+    (ttl_str == "300" && not(args.values.contains("ttl_sec"))) {
+    300L
+  } else {
+    match tool_args_get_int(args, "ttl_sec") {
+      Some(value) => value.to_int64()
+      None => return Err("invalid ttl_sec: " + ttl_str)
+    }
   }
   Ok({ name, agent_id, ttl_sec })
 }
@@ -650,18 +698,16 @@ fn parse_mutex_release_args(
 }
 
 ///|
-fn parse_merge_pr_args(
-  args : Map[String, String],
-) -> Result[MergePrArgs, String] {
-  let pr_str = args.get("pr_number").unwrap_or("")
+fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, String] {
+  let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
   if pr_str == "" {
     return Err("missing pr_number")
   }
-  let pr_number = match parse_int(pr_str) {
+  let pr_number = match tool_args_get_int(args, "pr_number") {
     Some(value) => value
     None => return Err("invalid pr_number: " + pr_str)
   }
-  let parent_branch = args.get("parent_branch").unwrap_or("main")
+  let parent_branch = tool_args_get(args, "parent_branch").unwrap_or("main")
   let normalized_parent_branch = if parent_branch == "" {
     "main"
   } else {
@@ -674,7 +720,7 @@ fn parse_merge_pr_args(
   Ok({
     pr_number,
     parent_branch: normalized_parent_branch,
-    caller_id: match args.get("caller_id") {
+    caller_id: match tool_args_get(args, "caller_id") {
       Some(v) => if v == "" { "server" } else { v }
       None => "server"
     },
@@ -1235,12 +1281,18 @@ pub async fn dispatch(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  raw_args? : @types.RequestArgs? = None,
 ) -> @types.Response {
+  let tool_args = match raw_args {
+    Some(args) => tool_args_from_request_args(args)
+    None => tool_args_from_map(call.args)
+  }
   match call.name {
     "register" =>
       match registry {
         Some(reg) => {
-          let register_args = match parse_register_args(call.role, call.args) {
+          let register_args = match
+            parse_register_args(call.role, tool_args_to_map(tool_args)) {
             Ok(parsed) => parsed
             Err(e) => return @types.Response::Err(e)
           }
@@ -1267,7 +1319,7 @@ pub async fn dispatch(
         None => @types.Response::ok({ "status": "registered" })
       }
     "fork_wave" => {
-      let fork_wave_args = match parse_fork_wave_args(project_dir, call.args) {
+      let fork_wave_args = match parse_fork_wave_args(project_dir, tool_args) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1312,7 +1364,8 @@ pub async fn dispatch(
       }
     }
     "fork_session" => {
-      let session_args = match parse_session_name_args(call.args) {
+      let session_args = match
+        parse_session_name_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1335,7 +1388,7 @@ pub async fn dispatch(
       }
     }
     "file_pr" => {
-      let file_pr_args = match parse_file_pr_args(call.args) {
+      let file_pr_args = match parse_file_pr_args(tool_args) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1378,7 +1431,7 @@ pub async fn dispatch(
       }
     }
     "merge_pr" => {
-      let merge_args = match parse_merge_pr_args(call.args) {
+      let merge_args = match parse_merge_pr_args(tool_args) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1426,7 +1479,7 @@ pub async fn dispatch(
       }
     }
     "track_pr" => {
-      let track_pr_args = match parse_track_pr_args(call.args) {
+      let track_pr_args = match parse_track_pr_args(tool_args) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1451,7 +1504,8 @@ pub async fn dispatch(
       }
     }
     "notify_parent" => {
-      let notify_args = match parse_caller_message_args(call.args) {
+      let notify_args = match
+        parse_caller_message_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1476,7 +1530,8 @@ pub async fn dispatch(
       }
     }
     "send_message" => {
-      let send_args = match parse_send_message_args(call.args) {
+      let send_args = match
+        parse_send_message_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1501,7 +1556,7 @@ pub async fn dispatch(
       }
     }
     "shutdown" => {
-      let shutdown_args = parse_shutdown_args(call.args)
+      let shutdown_args = parse_shutdown_args(tool_args_to_map(tool_args))
       let caller_id = match shutdown_args.caller_id {
         Some(v) => v
         None => return @types.Response::ok({ "status": "shutdown" }) // best-effort
@@ -1562,7 +1617,7 @@ pub async fn dispatch(
       @types.Response::ok({ "status": "shutdown" })
     }
     "kv_get" => {
-      let key_args = match parse_kv_key_args(call.args) {
+      let key_args = match parse_kv_key_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1574,7 +1629,7 @@ pub async fn dispatch(
       }
     }
     "kv_set" => {
-      let kv_args = match parse_kv_set_args(call.args) {
+      let kv_args = match parse_kv_set_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1586,7 +1641,7 @@ pub async fn dispatch(
       }
     }
     "kv_delete" => {
-      let key_args = match parse_kv_key_args(call.args) {
+      let key_args = match parse_kv_key_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1596,7 +1651,7 @@ pub async fn dispatch(
     }
     "kv_list" => handle_kv_list(project_dir, runner)
     "mutex_acquire" => {
-      let mutex_args = match parse_mutex_acquire_args(call.args) {
+      let mutex_args = match parse_mutex_acquire_args(tool_args) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1621,7 +1676,8 @@ pub async fn dispatch(
       }
     }
     "mutex_release" => {
-      let mutex_args = match parse_mutex_release_args(call.args) {
+      let mutex_args = match
+        parse_mutex_release_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1644,7 +1700,7 @@ pub async fn dispatch(
       }
     }
     "mutex_status" => {
-      let name_args = match parse_mutex_name_args(call.args) {
+      let name_args = match parse_mutex_name_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1661,7 +1717,7 @@ pub async fn dispatch(
     }
     "task_list" => handle_task_list(project_dir, runner)
     "task_get" => {
-      let id_args = match parse_id_args(call.args) {
+      let id_args = match parse_id_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1675,7 +1731,8 @@ pub async fn dispatch(
       }
     }
     "task_create" => {
-      let task_args = match parse_task_create_args(call.args) {
+      let task_args = match
+        parse_task_create_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1699,7 +1756,8 @@ pub async fn dispatch(
       }
     }
     "task_update" => {
-      let update_args = match parse_task_update_args(call.args) {
+      let update_args = match
+        parse_task_update_args(tool_args_to_map(tool_args)) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1722,7 +1780,7 @@ pub async fn dispatch(
       }
     }
     "spawn_gemini" => {
-      let spawn_args = match parse_leaf_spawn_args(call.args, "gemini-leaf") {
+      let spawn_args = match parse_leaf_spawn_args(tool_args, "gemini-leaf") {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1758,7 +1816,7 @@ pub async fn dispatch(
     }
     "spawn_moon_pilot" => {
       let spawn_args = match
-        parse_leaf_spawn_args(call.args, "moon-pilot-leaf") {
+        parse_leaf_spawn_args(tool_args, "moon-pilot-leaf") {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1793,7 +1851,7 @@ pub async fn dispatch(
       }
     }
     "spawn_remote" => {
-      let spawn_args = match parse_remote_spawn_args(project_dir, call.args) {
+      let spawn_args = match parse_remote_spawn_args(project_dir, tool_args) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1829,7 +1887,7 @@ pub async fn dispatch(
       }
     }
     "spawn_worker" => {
-      let worker_args = match parse_worker_spawn_args(call.args) {
+      let worker_args = match parse_worker_spawn_args(tool_args) {
         Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
@@ -1856,15 +1914,15 @@ pub async fn dispatch(
       }
     }
     "reply" => {
-      let id = match call.args.get("id") {
+      let id = match tool_args_get(tool_args, "id") {
         Some(v) => v
         None => return @types.Response::Err("missing id")
       }
       if id == "" {
         return @types.Response::Err("id cannot be empty")
       }
-      let cancel = call.args.get("cancel").unwrap_or("false") == "true"
-      let payload = call.args.get("payload").unwrap_or("")
+      let cancel = tool_args_get_bool(tool_args, "cancel")
+      let payload = tool_args_get(tool_args, "payload").unwrap_or("")
       let value = if cancel { "cancel" } else { payload }
       let key = "reply/" + id
       match validate_kv_key(key) {
@@ -1916,17 +1974,20 @@ pub async fn handle_request(
         registry=agent_registry,
         mutex_registry~,
         poller_state~,
+        raw_args=Some(req.args),
       )
   }
 }
 
 ///|
 test "parse_file_pr_args accepts agent_id alias" {
-  let parsed = parse_file_pr_args({
-    "agent_id": "main.leaf-1",
-    "parent_branch": "main",
-    "caller_id": "ignored-parent",
-  }).unwrap()
+  let parsed = parse_file_pr_args(
+    tool_args_from_map({
+      "agent_id": "main.leaf-1",
+      "parent_branch": "main",
+      "caller_id": "ignored-parent",
+    }),
+  ).unwrap()
   assert_eq(parsed, {
     branch: "main.leaf-1",
     parent_branch: "main",
@@ -1936,11 +1997,13 @@ test "parse_file_pr_args accepts agent_id alias" {
 
 ///|
 test "parse_track_pr_args derives parent_branch from nested branch" {
-  let parsed = parse_track_pr_args({
-    "pr_number": "17",
-    "agent_id": "main.wave-2",
-    "branch": "main.wave-2",
-  }).unwrap()
+  let parsed = parse_track_pr_args(
+    tool_args_from_map({
+      "pr_number": "17",
+      "agent_id": "main.wave-2",
+      "branch": "main.wave-2",
+    }),
+  ).unwrap()
   assert_eq(parsed, {
     pr_number: 17,
     agent_id: "main.wave-2",
@@ -1952,25 +2015,29 @@ test "parse_track_pr_args derives parent_branch from nested branch" {
 
 ///|
 test "parse_track_pr_args preserves pr_url" {
-  let parsed = parse_track_pr_args({
-    "pr_number": "23",
-    "agent_id": "main.leaf-proof",
-    "branch": "main.leaf-proof",
-    "parent_branch": "main",
-    "pr_url": "https://example.test/pr/23",
-  }).unwrap()
+  let parsed = parse_track_pr_args(
+    tool_args_from_map({
+      "pr_number": "23",
+      "agent_id": "main.leaf-proof",
+      "branch": "main.leaf-proof",
+      "parent_branch": "main",
+      "pr_url": "https://example.test/pr/23",
+    }),
+  ).unwrap()
   assert_eq(parsed.pr_url, "https://example.test/pr/23")
 }
 
 ///|
 test "parse_track_pr_args rejects invalid parent_branch" {
   match
-    parse_track_pr_args({
-      "pr_number": "4",
-      "agent_id": "main.leaf-proof",
-      "branch": "main.leaf-proof",
-      "parent_branch": "bad branch",
-    }) {
+    parse_track_pr_args(
+      tool_args_from_map({
+        "pr_number": "4",
+        "agent_id": "main.leaf-proof",
+        "branch": "main.leaf-proof",
+        "parent_branch": "bad branch",
+      }),
+    ) {
     Ok(_) => assert_true(false)
     Err(e) =>
       assert_eq(e, "invalid parent_branch: invalid character in branch:  ")
@@ -1980,11 +2047,11 @@ test "parse_track_pr_args rejects invalid parent_branch" {
 ///|
 test "parse_leaf_spawn_args accepts branch alias and base_branch alias" {
   let parsed = parse_leaf_spawn_args(
-    {
+    tool_args_from_map({
       "branch": "gem-alias",
       "base_branch": "feature.root",
       "caller_id": "main",
-    },
+    }),
     "gemini-leaf",
   ).unwrap()
   assert_eq(parsed.slug, "gem-alias")
@@ -1994,10 +2061,9 @@ test "parse_leaf_spawn_args accepts branch alias and base_branch alias" {
 
 ///|
 test "parse_worker_spawn_args defaults to gemini and agent_id alias" {
-  let parsed = parse_worker_spawn_args({
-    "agent_id": "worker-a",
-    "task": "Investigate",
-  }).unwrap()
+  let parsed = parse_worker_spawn_args(
+    tool_args_from_map({ "agent_id": "worker-a", "task": "Investigate" }),
+  ).unwrap()
   assert_eq(parsed.slug, "worker-a")
   assert_eq(parsed.agent_type, @types.AgentType::Gemini)
 }
@@ -2005,11 +2071,14 @@ test "parse_worker_spawn_args defaults to gemini and agent_id alias" {
 ///|
 test "parse_remote_spawn_args requires transport fields" {
   match
-    parse_remote_spawn_args(".", {
-      "slug": "remote-1",
-      "repo_url": "git@github.com:org/repo.git",
-      "tcp_addr": "10.0.0.1:9100",
-    }) {
+    parse_remote_spawn_args(
+      ".",
+      tool_args_from_map({
+        "slug": "remote-1",
+        "repo_url": "git@github.com:org/repo.git",
+        "tcp_addr": "10.0.0.1:9100",
+      }),
+    ) {
     Ok(_) => assert_true(false)
     Err(e) => assert_eq(e, "missing ssh_target")
   }
@@ -2017,10 +2086,10 @@ test "parse_remote_spawn_args requires transport fields" {
 
 ///|
 test "parse_fork_wave_args applies defaults" {
-  let parsed = parse_fork_wave_args(".", {
-    "count": "2",
-    "task": "Implement feature X",
-  }).unwrap()
+  let parsed = parse_fork_wave_args(
+    ".",
+    tool_args_from_map({ "count": "2", "task": "Implement feature X" }),
+  ).unwrap()
   assert_eq(parsed.count, 2)
   assert_eq(parsed.slug_prefix, "wave")
   assert_eq(parsed.parent_branch, "main")
@@ -2084,10 +2153,9 @@ test "parse_kv_key_args rejects invalid key" {
 
 ///|
 test "parse_mutex_acquire_args defaults ttl_sec" {
-  let parsed = parse_mutex_acquire_args({
-    "name": "README",
-    "agent_id": "agent-a",
-  }).unwrap()
+  let parsed = parse_mutex_acquire_args(
+    tool_args_from_map({ "name": "README", "agent_id": "agent-a" }),
+  ).unwrap()
   assert_eq(parsed.ttl_sec, 300L)
 }
 
@@ -2101,7 +2169,7 @@ test "parse_mutex_release_args requires agent id" {
 
 ///|
 test "parse_merge_pr_args defaults branch and caller" {
-  let parsed = parse_merge_pr_args({ "pr_number": "42" }).unwrap()
+  let parsed = parse_merge_pr_args(tool_args_from_map({ "pr_number": "42" })).unwrap()
   assert_eq(parsed.pr_number, 42)
   assert_eq(parsed.parent_branch, "main")
   assert_eq(parsed.caller_id, "server")

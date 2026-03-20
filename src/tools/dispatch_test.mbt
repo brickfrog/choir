@@ -57,6 +57,41 @@ test "dispatch fork_wave returns agent_ids with mock" {
 }
 
 ///|
+test "handle_request fork_wave accepts raw primitive request args" {
+  @async.with_event_loop(_ => {
+    let reg = @tools.ToolRegistry::new()
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::TL,
+      name: "fork_wave",
+      args: @types.RequestArgs::from_values({
+        "count": @types.WireValue::Raw("2"),
+        "fork_session": @types.WireValue::Raw("true"),
+        "caller_id": @types.WireValue::String("main"),
+        "task": @types.WireValue::String("test task"),
+        "parent_branch": @types.WireValue::String("main"),
+      }),
+    }
+    let res = @tools.handle_request(
+      reg,
+      req,
+      project_dir="/tmp",
+      runner=mock_runner,
+    )
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("spawned"))
+        assert_eq(m.get("count"), Some("2"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
 test "dispatch task_list reads task files" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-list"
