@@ -6,6 +6,8 @@ MoonBit reimplementation of [exomonad](https://github.com/tidepool-heavy-industr
 
 A persistent server that orchestrates heterogeneous coding agent teams. Agents (Claude, Gemini, Moon Pilot) run in isolated workspaces (git worktrees + tmux). The server manages spawning, messaging, PR workflow, and lifecycle — it makes no decisions, generates no code.
 
+The server acts as a dumb tool executor, handling all coordination while leaving all decision-making to agent controllers.
+
 See `SPEC.md` for the full service specification.
 
 ## Architecture
