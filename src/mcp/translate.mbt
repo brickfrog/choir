@@ -1,14 +1,14 @@
 ///|
-struct ToolProp {
+struct SchemaProp {
   name : String
   desc : String
 } derive(Show, Eq)
 
 ///|
-struct ToolDef {
+struct CatalogTool {
   name : String
   description : String
-  props : Array[ToolProp]
+  props : Array[SchemaProp]
   required : Array[String]
 } derive(Show, Eq)
 
@@ -18,50 +18,52 @@ fn json_string(s : String) -> String {
 }
 
 ///|
-fn prop_json(prop : ToolProp) -> String {
-  json_string(prop.name) +
-  ":{\"type\":\"string\",\"description\":" +
-  json_string(prop.desc) +
-  "}"
+fn schema_prop_json(prop : SchemaProp) -> JsonValue {
+  JsonValue::Object({
+    "type": JsonValue::String("string"),
+    "description": JsonValue::String(prop.desc),
+  })
 }
 
 ///|
-fn join_json_strings(items : Array[String]) -> String {
+fn json_string_array(items : Array[String]) -> String {
   let buf = StringBuilder::new()
+  buf.write_char('[')
   for i = 0; i < items.length(); i = i + 1 {
     if i > 0 {
       buf.write_char(',')
     }
     buf.write_string(json_string(items[i]))
   }
+  buf.write_char(']')
   buf.to_string()
 }
 
 ///|
-fn schema_json(props : Array[ToolProp], required : Array[String]) -> String {
-  let buf = StringBuilder::new()
-  buf.write_string("{\"type\":\"object\",\"properties\":{")
-  for i = 0; i < props.length(); i = i + 1 {
-    if i > 0 {
-      buf.write_char(',')
-    }
-    buf.write_string(prop_json(props[i]))
+fn schema_json(
+  props : Array[SchemaProp],
+  required : Array[String],
+) -> JsonValue {
+  let properties : Map[String, JsonValue] = {}
+  for prop in props {
+    properties.set(prop.name, schema_prop_json(prop))
   }
-  buf.write_string("},\"required\":[")
-  buf.write_string(join_json_strings(required))
-  buf.write_string("]}")
-  buf.to_string()
+  JsonValue::Object({
+    "type": JsonValue::String("object"),
+    "properties": JsonValue::Object(properties),
+    "required": JsonValue::Raw(json_string_array(required)),
+  })
 }
 
 ///|
-fn tool_json(tool : ToolDef) -> String {
-  "{\"name\":" +
-  json_string(tool.name) +
-  ",\"description\":" +
-  json_string(tool.description) +
-  ",\"inputSchema\":" +
-  schema_json(tool.props, tool.required) +
-  "}"
+fn tool_json(tool : CatalogTool) -> String {
+  json_value_to_json(
+    JsonValue::Object({
+      "name": JsonValue::String(tool.name),
+      "description": JsonValue::String(tool.description),
+      "inputSchema": schema_json(tool.props, tool.required),
+    }),
+  )
 }
 
 ///|
@@ -144,7 +146,7 @@ pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
 fn spawn_leaf_props(
   default_slug : String,
   agent_label : String,
-) -> Array[ToolProp] {
+) -> Array[SchemaProp] {
   [
     { name: "task", desc: "Primary task for the " + agent_label },
     { name: "prompt", desc: "Optional full prompt override" },
@@ -181,7 +183,7 @@ fn spawn_leaf_props(
 }
 
 ///|
-fn spawn_worker_props() -> Array[ToolProp] {
+fn spawn_worker_props() -> Array[SchemaProp] {
   [
     { name: "task", desc: "Primary task for the worker agent" },
     { name: "prompt", desc: "Optional full prompt override" },
@@ -211,7 +213,7 @@ fn spawn_worker_props() -> Array[ToolProp] {
 }
 
 ///|
-fn tool_defs() -> Array[ToolDef] {
+fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
