@@ -965,6 +965,150 @@ test "mcp request loop returns Reconnect on empty server response" {
 }
 
 ///|
+fn smoke_keep_temp(args : Array[String]) -> Bool {
+  args.contains("--keep-temp")
+}
+
+///|
+fn smoke_self_exe(args : Array[String]) -> String {
+  let argv0 = if args.length() > 0 { args[0] } else { "choir" }
+  if argv0.has_prefix("/") || not(argv0.contains("/")) {
+    argv0
+  } else {
+    @io.getcwd() + "/" + argv0
+  }
+}
+
+///|
+fn smoke_script() -> String {
+  (
+    #|set -eu
+    #|BIN="$1"
+    #|KEEP_TEMP="$2"
+    #|ROOT="$(mktemp -d "${TMPDIR:-/tmp}/choir-smoke-XXXXXX")"
+    #|cleanup() {
+    #|  status=$?
+    #|  if [ -f "$ROOT/hold.pid" ]; then
+    #|    kill "$(cat "$ROOT/hold.pid")" 2>/dev/null || true
+    #|    wait "$(cat "$ROOT/hold.pid")" 2>/dev/null || true
+    #|  fi
+    #|  if [ -f "$ROOT/server.pid" ]; then
+    #|    kill "$(cat "$ROOT/server.pid")" 2>/dev/null || true
+    #|    wait "$(cat "$ROOT/server.pid")" 2>/dev/null || true
+    #|  fi
+    #|  if [ "$KEEP_TEMP" = "1" ] || [ "$status" -ne 0 ]; then
+    #|    echo "smoke artifacts: $ROOT"
+    #|  else
+    #|    rm -rf "$ROOT"
+    #|  fi
+    #|}
+    #|trap cleanup EXIT INT TERM
+    #|if ! command -v timeout >/dev/null 2>&1; then
+    #|  echo "error: timeout not found"
+    #|  exit 1
+    #|fi
+    #|mkdir -p "$ROOT/repo/.choir/tasks" "$ROOT/repo/.choir/agents"
+    #|cat > "$ROOT/repo/.choir/config.toml" <<'EOF'
+    #|default_role = "tl"
+    #|project_dir = "."
+    #|listen_uds = ".choir/server.sock"
+    #|EOF
+    #|(cd "$ROOT/repo" && "$BIN" serve >"$ROOT/server.log" 2>&1 & echo $! >"$ROOT/server.pid")
+    #|i=0
+    #|while [ ! -S "$ROOT/repo/.choir/server.sock" ] && [ "$i" -lt 50 ]; do
+    #|  sleep 0.1
+    #|  i=$((i + 1))
+    #|done
+    #|test -S "$ROOT/repo/.choir/server.sock"
+    #|sleep 0.2
+    #|printf '%s\n' \
+    #|'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    #|'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"task_create","arguments":{"id":"runtime-proof-task-1","title":"Runtime Proof Task 1"}}}' \
+    #|> "$ROOT/first.reqs.jsonl"
+    #|(cd "$ROOT/repo" && cat "$ROOT/first.reqs.jsonl" | timeout 8 "$BIN" mcp-stdio --name smoke-proof >"$ROOT/first.out" 2>"$ROOT/first.err")
+    #|grep -F '"protocolVersion":"2024-11-05"' "$ROOT/first.out" >/dev/null
+    #|grep -F 'runtime-proof-task-1' "$ROOT/first.out" >/dev/null
+    #|test -f "$ROOT/repo/.choir/tasks/runtime-proof-task-1.json"
+    #|printf '%s\n' \
+    #|'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    #|> "$ROOT/hold.reqs.jsonl"
+    #|printf '%s\n' \
+    #|'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    #|'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"task_create","arguments":{"id":"runtime-proof-task-2","title":"Runtime Proof Task 2"}}}' \
+    #|> "$ROOT/second.reqs.jsonl"
+    #|(
+    #|  cd "$ROOT/repo" &&
+    #|  { cat "$ROOT/hold.reqs.jsonl"; sleep 2; } |
+    #|    "$BIN" mcp-stdio --name hold-open >"$ROOT/hold.out" 2>"$ROOT/hold.err"
+    #|) &
+    #|echo $! > "$ROOT/hold.pid"
+    #|i=0
+    #|while [ "$i" -lt 50 ]; do
+    #|  if grep -F '"protocolVersion":"2024-11-05"' "$ROOT/hold.out" >/dev/null 2>&1; then
+    #|    break
+    #|  fi
+    #|  sleep 0.1
+    #|  i=$((i + 1))
+    #|done
+    #|grep -F '"protocolVersion":"2024-11-05"' "$ROOT/hold.out" >/dev/null
+    #|(cd "$ROOT/repo" && cat "$ROOT/second.reqs.jsonl" | timeout 8 "$BIN" mcp-stdio --name second-client >"$ROOT/second.out" 2>"$ROOT/second.err")
+    #|wait "$(cat "$ROOT/hold.pid")"
+    #|grep -F 'runtime-proof-task-2' "$ROOT/second.out" >/dev/null
+    #|test -f "$ROOT/repo/.choir/tasks/runtime-proof-task-2.json"
+    #|! grep -F 'validation error:' "$ROOT/server.log" >/dev/null
+    #|echo "smoke ok: EOF and multi-client checks passed"
+  ) +
+  "\n"
+}
+
+///|
+fn smoke_run() -> Unit raise {
+  @async.with_event_loop(async fn(_root) {
+    let args = @io.get_args()
+    let keep_temp = if smoke_keep_temp(args) { "1" } else { "0" }
+    let self_exe = smoke_self_exe(args)
+    @io.write_stdout("Running isolated runtime smoke...\n")
+    let exit_code = @exec.run({
+      program: "sh",
+      args: ["-c", smoke_script(), "sh", self_exe, keep_temp],
+      workdir: None,
+    }) catch {
+      _ => 1
+    }
+    @io.exit(exit_code)
+  })
+}
+
+///|
+test "smoke keep temp flag parser" {
+  assert_false(smoke_keep_temp(["choir", "smoke"]))
+  assert_true(smoke_keep_temp(["choir", "smoke", "--keep-temp"]))
+}
+
+///|
+test "smoke self exe resolves relative binary path" {
+  let cwd = @io.getcwd()
+  assert_eq(smoke_self_exe(["choir"]), "choir")
+  assert_eq(smoke_self_exe(["/tmp/choir"]), "/tmp/choir")
+  assert_eq(
+    smoke_self_exe(["./_build/native/release/build/src/bin/choir/choir.exe"]),
+    cwd + "/./_build/native/release/build/src/bin/choir/choir.exe",
+  )
+}
+
+///|
+test "smoke script covers EOF and multi-client checks" {
+  let script = smoke_script()
+  assert_true(script.contains("mcp-stdio --name smoke-proof"))
+  assert_true(script.contains("mcp-stdio --name hold-open"))
+  assert_true(script.contains("mcp-stdio --name second-client"))
+  assert_true(script.contains("runtime-proof-task-1"))
+  assert_true(script.contains("runtime-proof-task-2"))
+  assert_true(script.contains("validation error:"))
+  assert_true(script.contains("smoke ok: EOF and multi-client checks passed"))
+}
+
+///|
 fn hook_agent_id(input : @hooks.HookInput) -> String? {
   match input.agent_id {
     Some(agent_id) => Some(agent_id)
@@ -1495,10 +1639,11 @@ fn main {
       }
     "init" => init_run() catch { _ => @io.exit(1) }
     "reply" => reply_run()
+    "smoke" => smoke_run() catch { _ => @io.exit(1) }
     "watch" => watch_run()
     _ => {
       @io.write_stdout(
-        "usage: choir <serve|dev|mcp-stdio|hook|init [--recreate]|reply|watch>\n",
+        "usage: choir <serve|dev|mcp-stdio|hook|init [--recreate]|reply|smoke [--keep-temp]|watch>\n",
       )
       @io.exit(1)
     }

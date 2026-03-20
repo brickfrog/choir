@@ -7,6 +7,31 @@ priv struct OpenPR {
 }
 
 ///|
+#borrow(cmd)
+extern "C" fn c_system_recovery(cmd : Bytes) -> Int = "system"
+
+///|
+fn string_to_null_terminated_bytes_recovery(s : String) -> Bytes {
+  let b = @utf8.encode(s)
+  let len = b.length()
+  let result = FixedArray::make(len + 1, (0 : Byte))
+  for i = 0; i < len; i = i + 1 {
+    result[i] = b[i]
+  }
+  result[len] = (0 : Byte)
+  result.unsafe_reinterpret_as_bytes()
+}
+
+///|
+fn run_shell_recovery(script : String) -> Unit {
+  ignore(
+    c_system_recovery(
+      string_to_null_terminated_bytes_recovery("sh -c '" + script + "'"),
+    ),
+  )
+}
+
+///|
 fn index_of(str : String, sub : String, start? : Int = 0) -> Int {
   let str_len = str.length()
   let sub_len = sub.length()
@@ -389,4 +414,97 @@ test "parse_open_prs ignores malformed entries" {
     "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\"},{\"number\":\"oops\",\"headRefName\":\"main.leaf-b\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/13\"}]",
   )
   assert_eq(prs.length(), 0)
+}
+
+///|
+test "recover_agent_from_local_config restores active agent metadata" {
+  let project_dir = "/tmp/choir-recovery-active"
+  let rel_workspace = ".choir/worktrees/leaf-a"
+  run_shell_recovery(
+    "rm -rf " +
+    project_dir +
+    " && mkdir -p " +
+    project_dir +
+    "/" +
+    rel_workspace +
+    "/.choir",
+  )
+  let local_path = project_dir +
+    "/" +
+    rel_workspace +
+    "/.choir/config.local.toml"
+  let content =
+    #|role = "dev"
+    #|agent_id = "main.leaf-a"
+    #|parent_id = "main"
+    #|branch = "main.leaf-a"
+    #|workspace = ".choir/worktrees/leaf-a"
+    #|tmux_target = "howdy:leaf-a"
+    #|agent_type = "gemini"
+  assert_true(@io.write_file_sync(local_path, content))
+  let recovered = recover_agent_from_local_config(
+    project_dir,
+    rel_workspace,
+    "leaf-a",
+    "howdy",
+    ["leaf-a"],
+  )
+  match recovered {
+    Some(agent) => {
+      assert_eq(agent.agent_id, "main.leaf-a")
+      assert_eq(agent.parent, Some("main"))
+      assert_eq(agent.branch, "main.leaf-a")
+      assert_eq(agent.workspace, ".choir/worktrees/leaf-a")
+      assert_eq(agent.role, @types.Role::Dev)
+      assert_eq(agent.agent_type, @types.AgentType::Gemini)
+      assert_eq(agent.state, @types.AgentState::Active)
+      assert_eq(agent.tmux_target, Some("howdy:leaf-a"))
+    }
+    None => fail("expected local config to recover active agent")
+  }
+  run_shell_recovery("rm -rf " + project_dir)
+}
+
+///|
+test "recover_agent_from_local_config falls back and clears dead tmux targets" {
+  let project_dir = "/tmp/choir-recovery-done"
+  let rel_workspace = ".choir/agents/helper"
+  run_shell_recovery(
+    "rm -rf " +
+    project_dir +
+    " && mkdir -p " +
+    project_dir +
+    "/" +
+    rel_workspace +
+    "/.choir",
+  )
+  let local_path = project_dir +
+    "/" +
+    rel_workspace +
+    "/.choir/config.local.toml"
+  let content =
+    #|role = "tl"
+    #|tmux_target = "howdy:helper"
+  assert_true(@io.write_file_sync(local_path, content))
+  let recovered = recover_agent_from_local_config(
+    project_dir,
+    rel_workspace,
+    "helper",
+    "howdy",
+    [],
+  )
+  match recovered {
+    Some(agent) => {
+      assert_eq(agent.agent_id, "helper")
+      assert_eq(agent.parent, None)
+      assert_eq(agent.branch, "helper")
+      assert_eq(agent.workspace, rel_workspace)
+      assert_eq(agent.role, @types.Role::TL)
+      assert_eq(agent.agent_type, @types.AgentType::Claude)
+      assert_eq(agent.state, @types.AgentState::Done)
+      assert_eq(agent.tmux_target, None)
+    }
+    None => fail("expected local config to recover done agent")
+  }
+  run_shell_recovery("rm -rf " + project_dir)
 }
