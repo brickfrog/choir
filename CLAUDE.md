@@ -71,7 +71,7 @@ This is the workflow Choir is supposed to make routine. Treat this as the produc
 5. Each child runs in its own isolated worktree/branch/pane with a structured spawn contract, not just a raw prompt.
 6. Each leaf implements, verifies, commits, and calls `file_pr`.
 7. `file_pr` pushes the branch, resolves or creates the PR, and starts PR tracking automatically.
-8. GitHub/Copilot reviews the PR.
+8. GitHub/Copilot reviews the PR..
 9. The server poller detects review state changes and routes them back into the owning child session.
 10. The child pushes fixes after `ChangesRequested`, and the parent is notified when fixes land.
 11. When a PR is approved, the parent Claude/TL is notified and decides whether to merge.
