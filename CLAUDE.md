@@ -120,6 +120,9 @@ Reliable PR lifecycle, review feedback routing, restart recovery, shutdown prote
 ### Phase 3: Extensions
 TCP transport, SSH remote agents, and the remaining ExoMonad parity work.
 
+---
+*This document is maintained as part of the Choir project.*
+
 ## References
 
 - `SPEC.md` — full service specification
