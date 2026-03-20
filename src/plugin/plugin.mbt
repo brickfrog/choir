@@ -6,6 +6,14 @@ pub(all) struct PluginDef {
 } derive(Show, Eq)
 
 ///|
+pub(all) struct PluginCall {
+  tool : String
+  args : @types.RequestArgs
+  agent_id : String
+  role : String
+} derive(Show)
+
+///|
 fn escape_json_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -63,18 +71,28 @@ pub fn PluginDef::handles(self : PluginDef, tool_name : String) -> Bool {
 }
 
 ///|
+pub fn find_handler(
+  plugins : Array[PluginDef],
+  tool_name : String,
+) -> PluginDef? {
+  let mut found : PluginDef? = None
+  for plugin in plugins {
+    if plugin.handles(tool_name) {
+      found = Some(plugin)
+      break
+    }
+  }
+  found
+}
+
+///|
 /// Build a JSON request line for the plugin protocol.
-pub fn build_request(
-  tool : String,
-  args : @types.RequestArgs,
-  agent_id : String,
-  role : String,
-) -> String {
-  let id = tool + "-" + agent_id
+pub fn build_request(call : PluginCall) -> String {
+  let id = call.tool + "-" + call.agent_id
   let args_buf = StringBuilder::new()
   args_buf.write_char('{')
   let mut first = true
-  args.each_value(fn(k, v) {
+  call.args.each_value(fn(k, v) {
     if not(first) {
       args_buf.write_char(',')
     }
@@ -93,13 +111,13 @@ pub fn build_request(
   buf.write_string("{\"id\":\"")
   buf.write_string(escape_json_string(id))
   buf.write_string("\",\"tool\":\"")
-  buf.write_string(escape_json_string(tool))
+  buf.write_string(escape_json_string(call.tool))
   buf.write_string("\",\"args\":")
   buf.write_string(args_buf.to_string())
   buf.write_string(",\"agent_id\":\"")
-  buf.write_string(escape_json_string(agent_id))
+  buf.write_string(escape_json_string(call.agent_id))
   buf.write_string("\",\"role\":\"")
-  buf.write_string(escape_json_string(role))
+  buf.write_string(escape_json_string(call.role))
   buf.write_string("\"}")
   buf.to_string()
 }

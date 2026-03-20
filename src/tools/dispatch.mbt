@@ -846,23 +846,16 @@ async fn dispatch_to_plugin(
     None => return @types.Response::Err("tool not found: " + req.name)
   }
   let plugins = @plugin.parse_plugins_json(json)
-  let mut found : @plugin.PluginDef? = None
-  for plugin in plugins {
-    if plugin.handles(req.name) {
-      found = Some(plugin)
-      break
-    }
-  }
-  match found {
+  match @plugin.find_handler(plugins, req.name) {
     None => @types.Response::Err("tool not found: " + req.name)
     Some(plugin) => {
       let agent_id = plugin_request_agent_id(req)
-      let request_json = @plugin.build_request(
-        req.name,
-        req.args,
+      let request_json = @plugin.build_request({
+        tool: req.name,
+        args: req.args,
         agent_id,
-        req.role.to_string(),
-      )
+        role: req.role.to_string(),
+      })
       let resp_path = "/tmp/choir-plugin-" +
         sanitize_plugin_path_component(req.name) +
         "-" +

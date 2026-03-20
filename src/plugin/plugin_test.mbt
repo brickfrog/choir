@@ -51,12 +51,28 @@ test "PluginDef::handles specific tools" {
 }
 
 ///|
+test "find_handler returns first matching plugin" {
+  let plugins : Array[@plugin.PluginDef] = [
+    { name: "catchall", command: "./catch", tools: "" },
+    { name: "searcher", command: "./search", tools: "search,deploy" },
+  ]
+  match @plugin.find_handler(plugins, "search") {
+    Some(found) => assert_eq(found.name, "catchall")
+    None => fail("expected plugin")
+  }
+}
+
+///|
 test "build_request format" {
-  let args = @types.RequestArgs::from_values({
-    "param": @types.WireValue::String("val"),
-    "count": @types.WireValue::Raw("3"),
+  let req = @plugin.build_request({
+    tool: "my_tool",
+    args: @types.RequestArgs::from_values({
+      "param": @types.WireValue::String("val"),
+      "count": @types.WireValue::Raw("3"),
+    }),
+    agent_id: "agent1",
+    role: "tl",
   })
-  let req = @plugin.build_request("my_tool", args, "agent1", "tl")
   assert_eq(req.contains("\"tool\":\"my_tool\""), true)
   assert_eq(req.contains("\"agent_id\":\"agent1\""), true)
   assert_eq(req.contains("\"role\":\"tl\""), true)
