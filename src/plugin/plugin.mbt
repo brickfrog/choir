@@ -6,16 +6,6 @@ pub(all) struct PluginDef {
 } derive(Show, Eq)
 
 ///|
-fn skip_ws(s : String, start : Int) -> Int {
-  let mut i = start
-  while i < s.length() &&
-        (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t') {
-    i = i + 1
-  }
-  i
-}
-
-///|
 fn escape_json_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -32,109 +22,26 @@ fn escape_json_string(s : String) -> String {
 }
 
 ///|
-fn parse_str(s : String, start : Int) -> (String, Int)? {
-  if start >= s.length() || s[start] != '"' {
-    return None
-  }
-  let buf = StringBuilder::new()
-  let mut i = start + 1
-  while i < s.length() {
-    let c = Int::unsafe_to_char(s[i].to_int())
-    if c == '"' {
-      return Some((buf.to_string(), i + 1))
-    }
-    if c == '\\' {
-      i = i + 1
-      if i >= s.length() {
-        return None
-      }
-      match Int::unsafe_to_char(s[i].to_int()) {
-        '"' => buf.write_char('"')
-        '\\' => buf.write_char('\\')
-        'n' => buf.write_char('\n')
-        'r' => buf.write_char('\r')
-        't' => buf.write_char('\t')
-        other => buf.write_char(other)
-      }
-    } else {
-      buf.write_char(c)
-    }
-    i = i + 1
-  }
-  None
-}
-
-///|
-fn parse_obj(s : String, start : Int) -> (Map[String, String], Int)? {
-  let mut i = skip_ws(s, start)
-  if i >= s.length() || s[i] != '{' {
-    return None
-  }
-  i = i + 1
-  let map : Map[String, String] = {}
-  for {
-    i = skip_ws(s, i)
-    if i >= s.length() {
-      return None
-    }
-    if s[i] == '}' {
-      return Some((map, i + 1))
-    }
-    let (key, ki) = match parse_str(s, i) {
-      Some(pair) => pair
-      None => return None
-    }
-    i = skip_ws(s, ki)
-    if i >= s.length() || s[i] != ':' {
-      return None
-    }
-    i = skip_ws(s, i + 1)
-    let (value, vi) = match parse_str(s, i) {
-      Some(pair) => pair
-      None => return None
-    }
-    map.set(key, value)
-    i = skip_ws(s, vi)
-    if i >= s.length() {
-      return None
-    }
-    if s[i] == '}' {
-      return Some((map, i + 1))
-    }
-    if s[i] != ',' {
-      return None
-    }
-    i = i + 1
-  }
-}
-
-///|
 pub fn parse_plugins_json(s : String) -> Array[PluginDef] {
   let result : Array[PluginDef] = []
-  let mut i = skip_ws(s, 0)
-  if i >= s.length() || s[i] != '[' {
-    return result
-  }
-  i = i + 1
-  for {
-    i = skip_ws(s, i)
-    if i >= s.length() || s[i] == ']' {
-      break
+  for value_map in @jsonutil.parse_json_object_array_text(s) {
+    let name = match value_map.get("name") {
+      Some(@jsonutil.JsonValueText::String(value)) => value
+      Some(@jsonutil.JsonValueText::Raw(value)) => value
+      None => ""
     }
-    match parse_obj(s, i) {
-      Some((map, next_i)) => {
-        let name = map.get("name").unwrap_or("")
-        let command = map.get("command").unwrap_or("")
-        let tools = map.get("tools").unwrap_or("")
-        if name != "" && command != "" {
-          result.push({ name, command, tools })
-        }
-        i = skip_ws(s, next_i)
-        if i < s.length() && s[i] == ',' {
-          i = i + 1
-        }
-      }
-      None => break
+    let command = match value_map.get("command") {
+      Some(@jsonutil.JsonValueText::String(value)) => value
+      Some(@jsonutil.JsonValueText::Raw(value)) => value
+      None => ""
+    }
+    let tools = match value_map.get("tools") {
+      Some(@jsonutil.JsonValueText::String(value)) => value
+      Some(@jsonutil.JsonValueText::Raw(value)) => value
+      None => ""
+    }
+    if name != "" && command != "" {
+      result.push({ name, command, tools })
     }
   }
   result

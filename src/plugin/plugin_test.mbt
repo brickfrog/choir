@@ -23,6 +23,15 @@ test "parse_plugins_json catch-all plugin (no tools)" {
 }
 
 ///|
+test "parse_plugins_json ignores non-object entries" {
+  let json = "[{\"name\":\"p\",\"command\":\"./p\"},true,3,{\"name\":\"q\",\"command\":\"./q\",\"tools\":\"deploy\"}]"
+  let plugins = @plugin.parse_plugins_json(json)
+  assert_eq(plugins.length(), 2)
+  assert_eq(plugins[0].name, "p")
+  assert_eq(plugins[1].tools, "deploy")
+}
+
+///|
 test "PluginDef::handles catch-all matches any tool" {
   let p : @plugin.PluginDef = { name: "p", command: "./p", tools: "" }
   assert_eq(p.handles("anything"), true)

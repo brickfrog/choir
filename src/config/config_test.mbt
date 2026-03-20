@@ -48,6 +48,21 @@ test "parse_config - minimal" {
 }
 
 ///|
+test "parse_toml_doc optional helpers" {
+  let doc = parse_toml_doc(
+    (
+      #|shell_command = "bash"
+      #|empty_value = ""
+    ),
+  )
+  assert_eq(doc.get("shell_command"), Some("bash"))
+  assert_eq(doc.get_or("missing", "fallback"), "fallback")
+  assert_eq(doc.get_optional_nonempty("shell_command"), Some("bash"))
+  assert_eq(doc.get_optional_nonempty("empty_value"), None)
+  assert_eq(doc.get_optional_nonempty("missing"), None)
+}
+
+///|
 test "parse_config - empty string defaults" {
   let content =
     #|shell_command = ""
@@ -131,15 +146,15 @@ test "parse_local_config - metadata" {
     #|workspace = "/tmp/worktree"
     #|tmux_target = "choir:child"
     #|agent_type = "gemini"
-  let local = parse_local_config(content).unwrap()
-  assert_eq(local.role, Some(@types.Role::Dev))
-  assert_eq(local.agent_id, Some("main.child"))
-  assert_eq(local.parent_id, Some("main"))
-  assert_eq(local.branch, Some("main.child"))
-  assert_eq(local.parent_branch, Some("main"))
-  assert_eq(local.workspace, Some("/tmp/worktree"))
-  assert_eq(local.tmux_target, Some("choir:child"))
-  assert_eq(local.agent_type, Some(@types.AgentType::Gemini))
+  let local_cfg = parse_local_config(content).unwrap()
+  assert_eq(local_cfg.role, Some(@types.Role::Dev))
+  assert_eq(local_cfg.agent_id, Some("main.child"))
+  assert_eq(local_cfg.parent_id, Some("main"))
+  assert_eq(local_cfg.branch, Some("main.child"))
+  assert_eq(local_cfg.parent_branch, Some("main"))
+  assert_eq(local_cfg.workspace, Some("/tmp/worktree"))
+  assert_eq(local_cfg.tmux_target, Some("choir:child"))
+  assert_eq(local_cfg.agent_type, Some(@types.AgentType::Gemini))
 }
 
 ///|

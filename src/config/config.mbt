@@ -44,12 +44,20 @@ pub fn agent_type_to_string(agent_type : @types.AgentType) -> String {
 }
 
 ///|
+fn prefer_optional_string(value : String?, fallback : String?) -> String? {
+  match value {
+    Some(v) => Some(v)
+    None => fallback
+  }
+}
+
+///|
 /// Parses project config.toml
 pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] {
-  let map = parse_toml(content)
+  let doc = parse_toml_doc(content)
   let default_cfg = @types.Config::default()
 
-  let default_role = match map.get("default_role") {
+  let default_role = match doc.get("default_role") {
     Some(r) =>
       match parse_role(r) {
         Ok(role) => role
@@ -58,58 +66,42 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     None => default_cfg.default_role
   }
 
-  let project_dir = match map.get("project_dir") {
-    Some(d) => d
-    None => default_cfg.project_dir
-  }
-
-  let shell_command = match map.get("shell_command") {
-    Some(s) => if s == "" { None } else { Some(s) }
-    None => default_cfg.shell_command
-  }
-
-  let listen_uds = match map.get("listen_uds") {
-    Some(u) => u
-    None => default_cfg.listen_uds
-  }
-
-  let listen_tcp = match map.get("listen_tcp") {
-    Some(t) => if t == "" { None } else { Some(t) }
-    None => default_cfg.listen_tcp
-  }
-
-  let tcp_auth_token = match map.get("tcp_auth_token") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => default_cfg.tcp_auth_token
-  }
-
-  let otlp_endpoint = match map.get("otlp_endpoint") {
-    Some(e) => if e == "" { None } else { Some(e) }
-    None => default_cfg.otlp_endpoint
-  }
-
-  let agent_id = match map.get("agent_id") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => default_cfg.agent_id
-  }
-
-  let extra_mcp_servers_json = match map.get("extra_mcp_servers_json") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => default_cfg.extra_mcp_servers_json
-  }
-
-  let companions_json = match map.get("companions_json") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => default_cfg.companions_json
-  }
-
-  let plugins_json = match map.get("plugins_json") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => default_cfg.plugins_json
-  }
-
-  let tmux_session = match map.get("tmux_session") {
-    Some(s) => if s == "" { default_cfg.tmux_session } else { s }
+  let project_dir = doc.get_or("project_dir", default_cfg.project_dir)
+  let shell_command = prefer_optional_string(
+    doc.get_optional_nonempty("shell_command"),
+    default_cfg.shell_command,
+  )
+  let listen_uds = doc.get_or("listen_uds", default_cfg.listen_uds)
+  let listen_tcp = prefer_optional_string(
+    doc.get_optional_nonempty("listen_tcp"),
+    default_cfg.listen_tcp,
+  )
+  let tcp_auth_token = prefer_optional_string(
+    doc.get_optional_nonempty("tcp_auth_token"),
+    default_cfg.tcp_auth_token,
+  )
+  let otlp_endpoint = prefer_optional_string(
+    doc.get_optional_nonempty("otlp_endpoint"),
+    default_cfg.otlp_endpoint,
+  )
+  let agent_id = prefer_optional_string(
+    doc.get_optional_nonempty("agent_id"),
+    default_cfg.agent_id,
+  )
+  let extra_mcp_servers_json = prefer_optional_string(
+    doc.get_optional_nonempty("extra_mcp_servers_json"),
+    default_cfg.extra_mcp_servers_json,
+  )
+  let companions_json = prefer_optional_string(
+    doc.get_optional_nonempty("companions_json"),
+    default_cfg.companions_json,
+  )
+  let plugins_json = prefer_optional_string(
+    doc.get_optional_nonempty("plugins_json"),
+    default_cfg.plugins_json,
+  )
+  let tmux_session = match doc.get_optional_nonempty("tmux_session") {
+    Some(value) => value
     None => default_cfg.tmux_session
   }
 
@@ -134,8 +126,8 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
 pub fn parse_local_config(
   content : String,
 ) -> Result[@types.LocalConfig, @types.ExoError] {
-  let map = parse_toml(content)
-  let role = match map.get("role") {
+  let doc = parse_toml_doc(content)
+  let role = match doc.get("role") {
     Some(r) =>
       match parse_role(r) {
         Ok(role) => Some(role)
@@ -143,31 +135,13 @@ pub fn parse_local_config(
       }
     None => None
   }
-  let agent_id = match map.get("agent_id") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => None
-  }
-  let parent_id = match map.get("parent_id") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => None
-  }
-  let branch = match map.get("branch") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => None
-  }
-  let parent_branch = match map.get("parent_branch") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => None
-  }
-  let workspace = match map.get("workspace") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => None
-  }
-  let tmux_target = match map.get("tmux_target") {
-    Some(v) => if v == "" { None } else { Some(v) }
-    None => None
-  }
-  let agent_type = match map.get("agent_type") {
+  let agent_id = doc.get_optional_nonempty("agent_id")
+  let parent_id = doc.get_optional_nonempty("parent_id")
+  let branch = doc.get_optional_nonempty("branch")
+  let parent_branch = doc.get_optional_nonempty("parent_branch")
+  let workspace = doc.get_optional_nonempty("workspace")
+  let tmux_target = doc.get_optional_nonempty("tmux_target")
+  let agent_type = match doc.get("agent_type") {
     Some(v) =>
       match parse_agent_type(v) {
         Ok(agent_type) => Some(agent_type)

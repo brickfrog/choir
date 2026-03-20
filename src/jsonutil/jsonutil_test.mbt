@@ -57,3 +57,19 @@ test "get_json_field_value distinguishes strings and raw values" {
     _ => fail("expected raw field")
   }
 }
+
+///|
+test "parse_json_object_array_text keeps only object entries" {
+  let parsed = parse_json_object_array_text(
+    "[{\"name\":\"p1\",\"command\":\"./one\"},true,{\"name\":\"p2\",\"command\":\"./two\",\"tools\":\"search\"}]",
+  )
+  assert_eq(parsed.length(), 2)
+  match parsed[0].get("name") {
+    Some(@jsonutil.JsonValueText::String(value)) => assert_eq(value, "p1")
+    _ => fail("expected first object name")
+  }
+  match parsed[1].get("tools") {
+    Some(@jsonutil.JsonValueText::String(value)) => assert_eq(value, "search")
+    _ => fail("expected tools field")
+  }
+}

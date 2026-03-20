@@ -1,5 +1,37 @@
 ///|
-pub fn parse_toml(content : String) -> Map[String, String] {
+pub(all) struct TomlDoc {
+  values : Map[String, String]
+} derive(Show)
+
+///|
+pub fn TomlDoc::get(self : TomlDoc, key : String) -> String? {
+  self.values.get(key)
+}
+
+///|
+pub fn TomlDoc::get_or(
+  self : TomlDoc,
+  key : String,
+  fallback : String,
+) -> String {
+  self.get(key).unwrap_or(fallback)
+}
+
+///|
+pub fn TomlDoc::get_optional_nonempty(self : TomlDoc, key : String) -> String? {
+  match self.get(key) {
+    Some(value) => if value == "" { None } else { Some(value) }
+    None => None
+  }
+}
+
+///|
+pub fn TomlDoc::to_map(self : TomlDoc) -> Map[String, String] {
+  self.values
+}
+
+///|
+pub fn parse_toml_doc(content : String) -> TomlDoc {
   let map : Map[String, String] = Map::new()
   let lines = content.split("\n")
   for line in lines {
@@ -29,5 +61,10 @@ pub fn parse_toml(content : String) -> Map[String, String] {
       map.set(key, val)
     }
   }
-  map
+  { values: map }
+}
+
+///|
+pub fn parse_toml(content : String) -> Map[String, String] {
+  parse_toml_doc(content).to_map()
 }

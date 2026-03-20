@@ -264,6 +264,40 @@ pub fn parse_flat_json_value_object(s : String) -> Map[String, JsonValueText] {
 }
 
 ///|
+pub fn parse_json_object_array_text(
+  s : String,
+) -> Array[Map[String, JsonValueText]] {
+  let result : Array[Map[String, JsonValueText]] = []
+  let mut i = skip_json_whitespace(s, 0)
+  if i >= s.length() || s[i] != '[' {
+    return result
+  }
+  i = i + 1
+  while i < s.length() {
+    i = skip_json_whitespace(s, i)
+    if i >= s.length() || s[i] == ']' {
+      break
+    }
+    if s[i] == ',' {
+      i = i + 1
+      continue
+    }
+    match read_json_value_text(s, i) {
+      Some((JsonValueText::Raw(raw), next)) => {
+        let value_start = skip_json_whitespace(raw, 0)
+        if value_start < raw.length() && raw[value_start] == '{' {
+          result.push(parse_flat_json_value_object(raw))
+        }
+        i = next
+      }
+      Some((_, next)) => i = next
+      None => break
+    }
+  }
+  result
+}
+
+///|
 pub fn get_json_field_value(s : String, key : String) -> JsonValueText? {
   let map_key = "\"" + key + "\""
   let mut search_from = 0
