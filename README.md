@@ -47,6 +47,29 @@ This brings up:
 - one TL client session
 - local state under `.choir/`
 
+## Flow
+
+```mermaid
+flowchart TD
+  U[User] --> I["choir init"]
+  I --> S[choir serve]
+  I --> T[TL session]
+  T --> B["choir mcp-stdio"]
+  B --> S
+  T --> P["spawn leaf / worker"]
+  P --> L[Leaf session]
+  L --> F[file_pr]
+  F --> G[GitHub PR]
+  G --> R[Review / CI]
+  R --> O[Poller]
+  O --> L
+  O --> T
+  T --> M[merge_pr]
+  M --> G
+  S --> X[restart recovery]
+  X --> O
+```
+
 ## Files
 
 ```text

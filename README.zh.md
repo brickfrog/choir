@@ -46,6 +46,29 @@ choir init
 - 一个 TL 客户端会话
 - 位于 `.choir/` 的本地状态目录
 
+## 流程
+
+```mermaid
+flowchart TD
+  U[用户] --> I["choir init"]
+  I --> S[choir serve]
+  I --> T[TL 会话]
+  T --> B["choir mcp-stdio"]
+  B --> S
+  T --> P["spawn leaf / worker"]
+  P --> L[叶子会话]
+  L --> F[file_pr]
+  F --> G[GitHub PR]
+  G --> R[Review / CI]
+  R --> O[Poller]
+  O --> L
+  O --> T
+  T --> M[merge_pr]
+  M --> G
+  S --> X[重启恢复]
+  X --> O
+```
+
 ## 文件
 
 ```text
