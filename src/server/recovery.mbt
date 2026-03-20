@@ -510,7 +510,7 @@ fn recover_agent_from_local_config(
   let branch = local_cfg.branch.unwrap_or(agent_id)
   let workspace = local_cfg.workspace.unwrap_or(rel_workspace)
   let alive = is_local_target_alive(
-    local_cfg.tmux_target,
+    local_cfg.terminal_target,
     session,
     tmux_windows,
     zellij_live,
@@ -525,8 +525,8 @@ fn recover_agent_from_local_config(
       @types.AgentState::Done
     },
     parent: local_cfg.parent_id,
-    tmux_target: if alive {
-      local_cfg.tmux_target
+    terminal_target: if alive {
+      local_cfg.terminal_target
     } else {
       None
     },
@@ -561,7 +561,7 @@ async fn recover_local_agents(
           Ok(_) =>
             if not(
                 is_local_target_alive(
-                  agent.tmux_target,
+                  agent.terminal_target,
                   session,
                   tmux_windows,
                   zellij_live,
@@ -766,7 +766,7 @@ test "recover_agent_from_local_config restores active agent metadata" {
     #|parent_id = "main"
     #|branch = "main.leaf-a"
     #|workspace = ".choir/worktrees/leaf-a"
-    #|tmux_target = "howdy:leaf-a"
+    #|terminal_target = "howdy:leaf-a"
     #|agent_type = "gemini"
   assert_true(@io.write_file_sync(local_path, content))
   let recovered = recover_agent_from_local_config(
@@ -786,7 +786,7 @@ test "recover_agent_from_local_config restores active agent metadata" {
       assert_eq(agent.role, @types.Role::Dev)
       assert_eq(agent.agent_type, @types.AgentType::Gemini)
       assert_eq(agent.state, @types.AgentState::Active)
-      assert_eq(agent.tmux_target, Some("howdy:leaf-a"))
+      assert_eq(agent.terminal_target, Some("howdy:leaf-a"))
     }
     None => fail("expected local config to recover active agent")
   }
@@ -812,7 +812,7 @@ test "recover_agent_from_local_config falls back and clears dead tmux targets" {
     "/.choir/config.local.toml"
   let content =
     #|role = "tl"
-    #|tmux_target = "howdy:helper"
+    #|terminal_target = "howdy:helper"
   assert_true(@io.write_file_sync(local_path, content))
   let recovered = recover_agent_from_local_config(
     project_dir,
@@ -831,7 +831,7 @@ test "recover_agent_from_local_config falls back and clears dead tmux targets" {
       assert_eq(agent.role, @types.Role::TL)
       assert_eq(agent.agent_type, @types.AgentType::Claude)
       assert_eq(agent.state, @types.AgentState::Done)
-      assert_eq(agent.tmux_target, None)
+      assert_eq(agent.terminal_target, None)
     }
     None => fail("expected local config to recover done agent")
   }
@@ -861,7 +861,7 @@ test "recover_agent_from_local_config keeps live zellij tab targets" {
     #|parent_id = "main"
     #|branch = "main.leaf-z"
     #|workspace = ".choir/worktrees/leaf-z"
-    #|tmux_target = "zellij-tab:howdy:leaf-z"
+    #|terminal_target = "zellij-tab:howdy:leaf-z"
     #|agent_type = "gemini"
   assert_true(@io.write_file_sync(local_path, content))
   let recovered = recover_agent_from_local_config(
@@ -875,7 +875,7 @@ test "recover_agent_from_local_config keeps live zellij tab targets" {
   match recovered {
     Some(agent) => {
       assert_eq(agent.state, @types.AgentState::Active)
-      assert_eq(agent.tmux_target, Some("zellij-tab:howdy:leaf-z"))
+      assert_eq(agent.terminal_target, Some("zellij-tab:howdy:leaf-z"))
       assert_eq(agent.agent_type, @types.AgentType::Gemini)
     }
     None => fail("expected local config to recover zellij agent")
@@ -894,7 +894,7 @@ test "recover_open_pr_tracking_with seeds current review snapshot" {
         agent_type: @types.AgentType::Gemini,
         state: @types.AgentState::Active,
         parent: Some("main"),
-        tmux_target: Some("howdy:leaf-a"),
+        terminal_target: Some("howdy:leaf-a"),
         host: @types.Host::Local,
         workspace: ".choir/worktrees/leaf-a",
         branch: "main.leaf-a",
@@ -977,7 +977,7 @@ test "recover_open_pr_tracking_with prefers persisted poller state" {
         agent_type: @types.AgentType::Gemini,
         state: @types.AgentState::Active,
         parent: Some("main"),
-        tmux_target: Some("howdy:leaf-a"),
+        terminal_target: Some("howdy:leaf-a"),
         host: @types.Host::Local,
         workspace: ".choir/worktrees/leaf-a",
         branch: "main.leaf-a",

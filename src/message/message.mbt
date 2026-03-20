@@ -89,14 +89,14 @@ pub fn plan_delivery(
             teams_inbox_json(sender_id, content, status),
           )
         Gemini => {
-          let target = match agent.tmux_target {
+          let target = match agent.terminal_target {
             Some(t) => t
             None => agent.agent_id
           }
           LocalTerminalInput(target, format_message(sender_id, content))
         }
         MoonPilot => {
-          let target = match agent.tmux_target {
+          let target = match agent.terminal_target {
             Some(t) => t
             None => agent.agent_id
           }

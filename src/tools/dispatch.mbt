@@ -179,7 +179,7 @@ struct RegisterArgs {
   role : @types.Role
   agent_type : @types.AgentType
   parent : String?
-  tmux_target : String?
+  terminal_target : String?
   workspace : String
   branch : String
 } derive(Show, Eq)
@@ -618,9 +618,13 @@ fn parse_register_args(
       Some(v) => if v == "" { None } else { Some(v) }
       None => None
     },
-    tmux_target: match tool_args_get(args, "tmux_target") {
+    terminal_target: match tool_args_get(args, "terminal_target") {
       Some(v) => if v == "" { None } else { Some(v) }
-      None => None
+      None =>
+        match tool_args_get(args, "tmux_target") {
+          Some(v) => if v == "" { None } else { Some(v) }
+          None => None
+        }
     },
     workspace: tool_args_get(args, "workspace").unwrap_or(""),
     branch: tool_args_get(args, "branch").unwrap_or(""),
@@ -1256,7 +1260,7 @@ pub async fn dispatch(
             agent_type: register_args.agent_type,
             state: @types.AgentState::Active,
             parent: register_args.parent,
-            tmux_target: register_args.tmux_target,
+            terminal_target: register_args.terminal_target,
             host: @types.Host::Local,
             workspace: register_args.workspace,
             branch: register_args.branch,
@@ -1575,9 +1579,9 @@ pub async fn dispatch(
                 let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
                 ()
               }
-              match agent.tmux_target {
-                Some(tmux_target) => {
-                  let kill_cmd = @workspace.local_close_target(tmux_target)
+              match agent.terminal_target {
+                Some(terminal_target) => {
+                  let kill_cmd = @workspace.local_close_target(terminal_target)
                   let _ = runner([kill_cmd])
                   ()
                 }

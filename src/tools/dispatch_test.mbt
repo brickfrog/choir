@@ -803,7 +803,7 @@ test "dispatch register inserts agent into registry" {
         "parent_id": "root",
         "branch": "main.leaf-0",
         "workspace": "/tmp/leaf-0",
-        "tmux_target": "choir:leaf-0",
+        "terminal_target": "choir:leaf-0",
         "agent_type": "gemini",
       },
     }
@@ -825,7 +825,7 @@ test "dispatch register inserts agent into registry" {
             assert_eq(agent.parent, Some("root"))
             assert_eq(agent.branch, "main.leaf-0")
             assert_eq(agent.workspace, "/tmp/leaf-0")
-            assert_eq(agent.tmux_target, Some("choir:leaf-0"))
+            assert_eq(agent.terminal_target, Some("choir:leaf-0"))
             assert_eq(agent.agent_type, @types.AgentType::Gemini)
           }
           Err(_) => assert_true(false)
@@ -863,7 +863,7 @@ test "dispatch shutdown removes agent from registry" {
       agent_type: @types.AgentType::Claude,
       state: @types.AgentState::Active,
       parent: None,
-      tmux_target: None,
+      terminal_target: None,
       host: @types.Host::Local,
       workspace: "",
       branch: "",

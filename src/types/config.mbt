@@ -21,7 +21,7 @@ pub(all) struct Config {
   companions_json : String?
   plugins_json : String?
   terminal_backend : TerminalBackend
-  tmux_session : String
+  terminal_session : String
 } derive(Show)
 
 ///|
@@ -32,7 +32,7 @@ pub(all) struct LocalConfig {
   branch : String?
   parent_branch : String?
   workspace : String?
-  tmux_target : String?
+  terminal_target : String?
   agent_type : AgentType?
 } derive(Show)
 
@@ -52,7 +52,7 @@ pub fn Config::default() -> Config {
     companions_json: None,
     plugins_json: None,
     terminal_backend: Tmux,
-    tmux_session: "choir",
+    terminal_session: "choir",
   }
 }
 
@@ -65,7 +65,7 @@ pub fn LocalConfig::default() -> LocalConfig {
     branch: None,
     parent_branch: None,
     workspace: None,
-    tmux_target: None,
+    terminal_target: None,
     agent_type: None,
   }
 }

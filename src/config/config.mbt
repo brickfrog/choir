@@ -173,9 +173,13 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
       }
     None => default_cfg.terminal_backend
   }
-  let tmux_session = match doc.get_optional_nonempty("tmux_session") {
+  let terminal_session = match doc.get_optional_nonempty("terminal_session") {
     Some(value) => value
-    None => default_cfg.tmux_session
+    None =>
+      match doc.get_optional_nonempty("tmux_session") {
+        Some(value) => value
+        None => default_cfg.terminal_session
+      }
   }
 
   Ok({
@@ -191,7 +195,7 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     companions_json,
     plugins_json,
     terminal_backend,
-    tmux_session,
+    terminal_session,
   })
 }
 
@@ -214,7 +218,10 @@ pub fn parse_local_config(
   let branch = doc.get_optional_nonempty("branch")
   let parent_branch = doc.get_optional_nonempty("parent_branch")
   let workspace = doc.get_optional_nonempty("workspace")
-  let tmux_target = doc.get_optional_nonempty("tmux_target")
+  let terminal_target = match doc.get_optional_nonempty("terminal_target") {
+    Some(value) => Some(value)
+    None => doc.get_optional_nonempty("tmux_target")
+  }
   let agent_type = match doc.get("agent_type") {
     Some(v) =>
       match parse_agent_type(v) {
@@ -230,7 +237,7 @@ pub fn parse_local_config(
     branch,
     parent_branch,
     workspace,
-    tmux_target,
+    terminal_target,
     agent_type,
   })
 }

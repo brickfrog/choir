@@ -140,7 +140,7 @@ agent_type   : AgentType      -- Claude | Gemini | MoonPilot
 parent       : Option[String] -- parent agent_id (None for root)
 workspace    : WorkspacePath   -- filesystem path to worktree
 branch       : BranchName     -- git branch
-tmux_target  : Option[TmuxTarget] -- window or pane (None for remote agents)
+terminal_target : Option[TerminalTarget] -- local terminal destination (None for remote agents)
 host         : Host           -- Local | Remote(ssh_target)
 alive        : Bool
 ```
@@ -782,8 +782,8 @@ fn spawn_agent(state: State, spec: SpawnSpec) -> Result[AgentId]:
   workspace = create_worktree(branch)
   write_config_local(workspace, spec.role)
   write_mcp_json(workspace, spec.role)
-  tmux_target = create_tmux_target(spec.agent_type, workspace)
-  launch_agent_process(tmux_target, spec.agent_type, spec.task)
+  terminal_target = create_terminal_target(spec.agent_type, workspace)
+  launch_agent_process(terminal_target, spec.agent_type, spec.task)
   agent = Agent { id: branch, role: spec.role, ... }
   state.registry.insert(agent)
   return agent.id
@@ -797,7 +797,7 @@ fn notify_parent(state: State, caller: AgentId, message: String, status: Status)
   try:
     write_teams_inbox(parent, caller, message, status)
   catch:
-    inject_tmux_stdin(parent.tmux_target, format_message(caller, message))
+    inject_terminal_input(parent.terminal_target, format_message(caller, message))
 ```
 
 ### 16.4 GitHub Poll Tick

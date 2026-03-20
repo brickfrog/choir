@@ -30,7 +30,7 @@ fn build_agent(id : String, parent : String?) -> @types.Agent {
     parent,
     workspace: "/tmp",
     branch: "main",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -81,7 +81,9 @@ async fn mock_spawn_runner_server_zellij(
   assert_eq(cmds.length(), 7)
   assert_true(cmds[1].args[4].contains("terminal_backend = \"zellij\""))
   assert_true(
-    cmds[2].args[4].contains("tmux_target = \"zellij-tab:server-proof:leaf-a\""),
+    cmds[2].args[4].contains(
+      "terminal_target = \"zellij-tab:server-proof:leaf-a\"",
+    ),
   )
   assert_eq(cmds[5].program, "choir")
   assert_eq(cmds[5].args, [
@@ -95,7 +97,7 @@ async fn mock_spawn_runner_server_zellij(
   assert_eq(cmds[6].args[5], "leaf-a")
   assert_true(
     cmds[6].args[11].contains(
-      "CHOIR_TMUX_TARGET='zellij-tab:server-proof:leaf-a'",
+      "CHOIR_TERMINAL_TARGET='zellij-tab:server-proof:leaf-a'",
     ),
   )
   [0, 0, 0, 0, 0, 0, 0]
@@ -171,7 +173,7 @@ test "ServerState::handle_with_runner passes configured tmux session to spawns" 
     let config = {
       ..@types.Config::default(),
       project_dir: "/tmp/server-proof",
-      tmux_session: "server-proof",
+      terminal_session: "server-proof",
     }
     let state = ServerState::new(config)
     let req = @types.Request::{
@@ -198,7 +200,7 @@ test "ServerState::handle_with_runner passes zellij backend to spawns" {
     let config = {
       ..@types.Config::default(),
       project_dir: "/tmp/server-proof",
-      tmux_session: "server-proof",
+      terminal_session: "server-proof",
       terminal_backend: @types.TerminalBackend::Zellij,
     }
     let state = ServerState::new(config)
@@ -242,13 +244,13 @@ test "register_agent duplicate refreshes existing agent" {
   let res = state.register_agent({
     ..agent,
     workspace: ".choir/worktrees/child-1",
-    tmux_target: Some("choir:child-1"),
+    terminal_target: Some("choir:child-1"),
   })
   assert_true(res is Ok(_))
   match state.registry.get("child-1") {
     Ok(found) => {
       assert_eq(found.workspace, ".choir/worktrees/child-1")
-      assert_eq(found.tmux_target, Some("choir:child-1"))
+      assert_eq(found.terminal_target, Some("choir:child-1"))
     }
     Err(_) => fail("expected refreshed agent")
   }

@@ -43,7 +43,7 @@ test "plan delivery for Claude agent -> TeamsInbox" {
     parent: None,
     workspace: "ws1",
     branch: "main",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -63,7 +63,7 @@ test "plan delivery for Gemini agent -> LocalTerminalInput" {
     parent: None,
     workspace: "ws1",
     branch: "main",
-    tmux_target: Some("target-pane"),
+    terminal_target: Some("target-pane"),
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -83,7 +83,7 @@ test "plan delivery for MoonPilot agent -> LocalTerminalInput" {
     parent: None,
     workspace: "ws1",
     branch: "main",
-    tmux_target: Some("choir:moonpilot"),
+    terminal_target: Some("choir:moonpilot"),
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -103,7 +103,7 @@ test "plan delivery for Remote agent -> TcpPush" {
     parent: None,
     workspace: "ws1",
     branch: "main",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Remote("192.168.1.1"),
     state: @types.AgentState::Active,
   }

@@ -13,7 +13,7 @@ test "agent construction" {
     parent: Some("root"),
     workspace: ".choir/worktrees/feature-a",
     branch: "main.feature-a",
-    tmux_target: Some("choir:feature-a"),
+    terminal_target: Some("choir:feature-a"),
     host: @types.Host::Local,
     state: @types.AgentState::Spawning,
   }

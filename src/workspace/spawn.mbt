@@ -70,8 +70,6 @@ fn launch_env_prefix(
     env_assignment("CHOIR_WORKSPACE", workspace),
     env_assignment("CHOIR_ROLE", role),
     env_assignment("CHOIR_AGENT_TYPE", agent_type),
-    env_assignment("CHOIR_TMUX_TARGET", terminal_target),
-    env_assignment("CHOIR_TMUX_SESSION", session),
     env_assignment("CHOIR_TERMINAL_BACKEND", terminal_backend_str),
     env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
     env_assignment("CHOIR_TERMINAL_SESSION", session),

@@ -59,7 +59,7 @@ fn resolve_child_path(project_dir : String, path : String) -> String {
 pub fn child_config_content(
   role : @types.Role,
   terminal_backend : @types.TerminalBackend,
-  session : String,
+  terminal_session : String,
   project_dir : String,
   listen_uds : String,
   listen_tcp? : String? = None,
@@ -78,8 +78,8 @@ pub fn child_config_content(
   buf.write_string(
     escape_toml_string(resolve_child_path(project_dir, listen_uds)),
   )
-  buf.write_string("\"\ntmux_session = \"")
-  buf.write_string(escape_toml_string(session))
+  buf.write_string("\"\nterminal_session = \"")
+  buf.write_string(escape_toml_string(terminal_session))
   buf.write_string("\"\nterminal_backend = \"")
   buf.write_string(escape_toml_string(terminal_backend_str))
   buf.write_string("\"\n")
@@ -107,7 +107,7 @@ pub fn child_config_content(
 pub fn config_local_content(
   spec : @types.SpawnSpec,
   workspace : String,
-  tmux_target : String,
+  terminal_target : String,
 ) -> String {
   let role_str = @config.role_to_string(spec.role)
   let agent_type_str = @config.agent_type_to_string(spec.agent_type)
@@ -126,8 +126,8 @@ pub fn config_local_content(
   workspace +
   "\"\nagent_type = \"" +
   agent_type_str +
-  "\"\ntmux_target = \"" +
-  tmux_target +
+  "\"\nterminal_target = \"" +
+  terminal_target +
   "\"\n"
 }
 

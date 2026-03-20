@@ -41,7 +41,7 @@ pub(all) struct Agent {
   parent : String?
   workspace : String
   branch : String
-  tmux_target : String?
+  terminal_target : String?
   host : Host
   state : AgentState
 } derive(Show)

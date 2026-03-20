@@ -116,8 +116,8 @@ pub fn format_registration_request(
     Some(v) => args.set("workspace", v)
     None => ()
   }
-  match local_cfg.tmux_target {
-    Some(v) => args.set("tmux_target", v)
+  match local_cfg.terminal_target {
+    Some(v) => args.set("terminal_target", v)
     None => ()
   }
   match local_cfg.agent_type {

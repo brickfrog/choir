@@ -210,7 +210,7 @@ test "child_config_content resolves socket path into spawned worktree config" {
   assert_true(content.contains("default_role = \"dev\""))
   assert_true(content.contains("project_dir = \"/project\""))
   assert_true(content.contains("listen_uds = \"/project/.choir/server.sock\""))
-  assert_true(content.contains("tmux_session = \"choir-test\""))
+  assert_true(content.contains("terminal_session = \"choir-test\""))
   assert_true(content.contains("terminal_backend = \"zellij\""))
   assert_true(content.contains("tcp_auth_token = \"abc123\""))
 }
@@ -262,7 +262,7 @@ test "spawn_commands worktree config write content" {
   assert_true(
     cmds[1].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
   )
-  assert_true(cmds[1].args[4].contains("tmux_session = \"exo\""))
+  assert_true(cmds[1].args[4].contains("terminal_session = \"exo\""))
   assert_true(cmds[1].args[4].contains("terminal_backend = \"tmux\""))
   // config.local.toml write: positional args — $1=worktree_path, $2=content
   assert_eq(cmds[2].program, "sh")
@@ -270,7 +270,7 @@ test "spawn_commands worktree config write content" {
   assert_true(cmds[2].args[4].contains("dev")) // role content
   assert_true(cmds[2].args[4].contains("agent_id = \"main.feature-a\""))
   assert_true(cmds[2].args[4].contains("parent_id = \"root\""))
-  assert_true(cmds[2].args[4].contains("tmux_target = \"exo:feature-a\""))
+  assert_true(cmds[2].args[4].contains("terminal_target = \"exo:feature-a\""))
   // .mcp.json write: positional args — $1=worktree_path, $2=json
   assert_eq(cmds[3].program, "sh")
   assert_true(cmds[3].args[3].contains("feature-a")) // worktree path
@@ -304,10 +304,12 @@ test "spawn_commands for zellij worktree uses new tab target" {
   assert_eq(cmds[6].args[2], "action")
   assert_eq(cmds[6].args[3], "new-tab")
   assert_true(
-    cmds[2].args[4].contains("tmux_target = \"zellij-tab:howdy:feature-z\""),
+    cmds[2].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
   )
   assert_true(
-    cmds[6].args[11].contains("CHOIR_TMUX_TARGET='zellij-tab:howdy:feature-z'"),
+    cmds[6].args[11].contains(
+      "CHOIR_TERMINAL_TARGET='zellij-tab:howdy:feature-z'",
+    ),
   )
 }
 
@@ -401,7 +403,9 @@ test "spawn_commands for zellij inline uses named pane" {
   assert_eq(cmds[0].args[2], "run")
   assert_eq(cmds[0].args[4], "worker-a")
   assert_true(
-    cmds[0].args[10].contains("CHOIR_TMUX_TARGET='zellij-pane:howdy:worker-a'"),
+    cmds[0].args[10].contains(
+      "CHOIR_TERMINAL_TARGET='zellij-pane:howdy:worker-a'",
+    ),
   )
 }
 
@@ -422,7 +426,7 @@ test "spawn_commands launch text does not duplicate workdir cd" {
   assert_eq(cmds[7].args[1], "-t")
   assert_eq(cmds[7].args[2], "exo:feature-a")
   assert_true(cmds[7].args[3].contains("CHOIR_AGENT_ID='main.feature-a'"))
-  assert_true(cmds[7].args[3].contains("CHOIR_TMUX_TARGET='exo:feature-a'"))
+  assert_true(cmds[7].args[3].contains("CHOIR_TERMINAL_TARGET='exo:feature-a'"))
   assert_true(cmds[7].args[3].contains("EXOMONAD_PARENT_AGENT='root'"))
   assert_true(
     cmds[7].args[3].contains("gemini '--prompt-interactive' 'do something'"),

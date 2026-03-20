@@ -51,6 +51,12 @@ test "parse_config - minimal" {
 }
 
 ///|
+test "parse_config accepts legacy tmux_session key" {
+  let cfg = parse_config("tmux_session = \"legacy-session\"").unwrap()
+  assert_eq(cfg.terminal_session, "legacy-session")
+}
+
+///|
 test "parse_toml_doc optional helpers" {
   let doc = parse_toml_doc(
     (
@@ -147,7 +153,7 @@ test "parse_local_config - metadata" {
     #|branch = "main.child"
     #|parent_branch = "main"
     #|workspace = "/tmp/worktree"
-    #|tmux_target = "choir:child"
+    #|terminal_target = "choir:child"
     #|agent_type = "gemini"
   let local_cfg = parse_local_config(content).unwrap()
   assert_eq(local_cfg.role, Some(@types.Role::Dev))
@@ -156,8 +162,14 @@ test "parse_local_config - metadata" {
   assert_eq(local_cfg.branch, Some("main.child"))
   assert_eq(local_cfg.parent_branch, Some("main"))
   assert_eq(local_cfg.workspace, Some("/tmp/worktree"))
-  assert_eq(local_cfg.tmux_target, Some("choir:child"))
+  assert_eq(local_cfg.terminal_target, Some("choir:child"))
   assert_eq(local_cfg.agent_type, Some(@types.AgentType::Gemini))
+}
+
+///|
+test "parse_local_config accepts legacy tmux_target key" {
+  let local_cfg = parse_local_config("tmux_target = \"choir:legacy\"").unwrap()
+  assert_eq(local_cfg.terminal_target, Some("choir:legacy"))
 }
 
 ///|

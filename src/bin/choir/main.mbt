@@ -221,7 +221,7 @@ fn serve_run() -> Unit raise {
   @io.write_pid_file(".choir/server.pid")
   let state = @server.ServerState::new(config)
   @async.with_event_loop(async fn(root) {
-    @server.recover_state(state, config.tmux_session)
+    @server.recover_state(state, config.terminal_session)
     root.spawn_bg(async fn() {
       let timeout_sec = 900L
       let interval_ms = 30000
@@ -1844,7 +1844,7 @@ fn smoke_leaf_script() -> String {
     #|default_role = "tl"
     #|project_dir = "."
     #|listen_uds = ".choir/server.sock"
-    #|tmux_session = "$SESSION"
+    #|terminal_session = "$SESSION"
     #|EOF
     #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
     #|spawn_leaf() {
@@ -1960,7 +1960,7 @@ fn smoke_review_script() -> String {
     #|default_role = "tl"
     #|project_dir = "."
     #|listen_uds = ".choir/server.sock"
-    #|tmux_session = "$SESSION"
+    #|terminal_session = "$SESSION"
     #|EOF
     #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
     #|cat > "$ROOT/moon.req.jsonl" <<EOF
@@ -2085,7 +2085,7 @@ fn smoke_e2e_script() -> String {
     #|default_role = "tl"
     #|project_dir = "."
     #|listen_uds = ".choir/server.sock"
-    #|tmux_session = "$SESSION"
+    #|terminal_session = "$SESSION"
     #|EOF
     #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
     #|cat > "$ROOT/moon.req.jsonl" <<EOF
@@ -2514,7 +2514,7 @@ fn init_run() -> Unit raise {
       Ok(cfg) => cfg
       Err(_) => @types.Config::default()
     }
-    let session = config.tmux_session
+    let session = config.terminal_session
     let terminal_backend = config.terminal_backend
 
     if recreate {

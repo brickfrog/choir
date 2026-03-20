@@ -8,7 +8,7 @@ test "registry insert and get" {
     parent: Some("root"),
     workspace: ".choir/worktrees/feat",
     branch: "main.feat",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -27,7 +27,7 @@ test "registry duplicate insert fails" {
     parent: None,
     workspace: ".choir/worktrees/dup",
     branch: "main.dup",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -46,7 +46,7 @@ test "registry upsert refreshes existing agent metadata" {
     parent: Some("root"),
     workspace: ".choir/worktrees/refresh-a",
     branch: "main.refresh",
-    tmux_target: Some("choir:refresh-a"),
+    terminal_target: Some("choir:refresh-a"),
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -55,13 +55,13 @@ test "registry upsert refreshes existing agent metadata" {
   let refreshed_second = reg.upsert({
     ..agent,
     workspace: ".choir/worktrees/refresh-b",
-    tmux_target: Some("choir:refresh-b"),
+    terminal_target: Some("choir:refresh-b"),
   })
   assert_true(refreshed_second)
   match reg.get("main.refresh") {
     Ok(found) => {
       assert_eq(found.workspace, ".choir/worktrees/refresh-b")
-      assert_eq(found.tmux_target, Some("choir:refresh-b"))
+      assert_eq(found.terminal_target, Some("choir:refresh-b"))
     }
     Err(_) => fail("expected refreshed agent")
   }
@@ -77,7 +77,7 @@ test "registry get parent" {
     parent: None,
     workspace: ".",
     branch: "main",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -88,7 +88,7 @@ test "registry get parent" {
     parent: Some("root"),
     workspace: ".choir/worktrees/child",
     branch: "main.child",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -111,7 +111,7 @@ test "registry children" {
     parent: None,
     workspace: ".",
     branch: "main",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -122,7 +122,7 @@ test "registry children" {
     parent: Some("root"),
     workspace: ".choir/worktrees/a",
     branch: "main.a",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -133,7 +133,7 @@ test "registry children" {
     parent: Some("root"),
     workspace: ".choir/worktrees/b",
     branch: "main.b",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -154,7 +154,7 @@ test "registry set state valid transitions" {
     parent: None,
     workspace: ".",
     branch: "main.test",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Spawning,
   }
@@ -201,7 +201,7 @@ test "registry set state invalid transition" {
     parent: None,
     workspace: ".",
     branch: "main.test",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Spawning,
   }
@@ -222,7 +222,7 @@ test "registry set alive" {
     parent: None,
     workspace: ".",
     branch: "main.test",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -245,7 +245,7 @@ test "registry active agents" {
     parent: None,
     workspace: ".",
     branch: "a1",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Spawning,
   }
@@ -279,7 +279,7 @@ test "registry by role" {
     parent: None,
     workspace: ".",
     branch: "a1",
-    tmux_target: None,
+    terminal_target: None,
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
