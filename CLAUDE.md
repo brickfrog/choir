@@ -60,7 +60,9 @@ moon.pkg.json
 4. **Agent-type agnostic** — drives Claude, Gemini, Moon Pilot, or anything that speaks MCP or can be poked via tmux.
 5. **No intelligence** — the server is a tool executor. All decisions come from the TL agent (Claude).
 
-## North Star Workflow
+## ## North Star Workflow
+
+This is the workflow Choir is supposed to make routine. Treat this as the product target, not the current maturity claim.
 
 This is the workflow Choir is supposed to make routine. Treat this as the product target, not the current maturity claim.
 
