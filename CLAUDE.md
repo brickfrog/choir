@@ -84,6 +84,7 @@ If Choir cannot do that loop cleanly, it is not done.
 
 - `moon fmt` before committing. No exceptions.
 - `moon test` must pass. Do not skip, ignore, or weaken tests.
+- Keep documentation synchronized with implementation.
 - Immutable by default. Explicit `mut` only where needed.
 - Pattern matching over conditionals.
 - Pipe operator (`|>`) for chaining.
