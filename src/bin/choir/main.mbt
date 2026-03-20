@@ -469,6 +469,25 @@ fn mcp_resolved_agent_id(
 }
 
 ///|
+fn mcp_config_with_cli_overrides(
+  base_config : @types.Config,
+  local_cfg : @types.LocalConfig,
+  args : Array[String],
+) -> @types.Config {
+  {
+    ..base_config,
+    agent_id: match local_cfg.agent_id {
+      Some(agent_id) => Some(agent_id)
+      None =>
+        match mcp_cli_override_agent_id(args) {
+          Some(agent_id) => Some(agent_id)
+          None => base_config.agent_id
+        }
+    },
+  }
+}
+
+///|
 fn mcp_build_registration_message(
   role : @types.Role,
   config : @types.Config,
@@ -521,29 +540,35 @@ fn mcp_cli_override_agent_id(args : Array[String]) -> String? {
 }
 
 ///|
-fn mcp_write_server_response(id : @mcp.JsonRpcId, resp_line : String) -> Unit {
+fn mcp_response_line(resp : @mcp.JsonRpcResponse) -> String {
+  resp.to_json_string() + "\n"
+}
+
+///|
+fn mcp_server_response_line(id : @mcp.JsonRpcId, resp_line : String) -> String {
   if resp_line == "" {
-    let err_resp = @mcp.error_response(
-      id, @mcp.err_internal, "server connection closed",
+    return mcp_response_line(
+      @mcp.error_response(id, @mcp.err_internal, "server connection closed"),
     )
-    @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-    return
   }
 
   match @transport.parse_response(resp_line) {
-    Ok(internal_resp) => {
-      let rpc_resp = @mcp.from_internal_response(id, internal_resp)
-      @io.write_stdout_bytes(@mcp.response_to_bytes(rpc_resp))
-    }
-    Err(e) => {
-      let err_resp = @mcp.error_response(
-        id,
-        @mcp.err_internal,
-        "failed to parse server response: " + e,
+    Ok(internal_resp) =>
+      mcp_response_line(@mcp.from_internal_response(id, internal_resp))
+    Err(e) =>
+      mcp_response_line(
+        @mcp.error_response(
+          id,
+          @mcp.err_internal,
+          "failed to parse server response: " + e,
+        ),
       )
-      @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-    }
   }
+}
+
+///|
+fn mcp_write_server_response(id : @mcp.JsonRpcId, resp_line : String) -> Unit {
+  @io.write_stdout(mcp_server_response_line(id, resp_line))
 }
 
 ///|
@@ -558,6 +583,76 @@ fn mcp_should_reconnect_after_uds_loop(exit : McpUdsLoopExit) -> Bool {
     InputClosed => false
     Reconnect => true
   }
+}
+
+///|
+fn mcp_run_request_loop(
+  read_input : () -> String?,
+  send_wire_request : (String) -> Bool,
+  read_server_line : () -> String,
+  write_output : (String) -> Unit,
+  role : @types.Role,
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> McpUdsLoopExit {
+  for {
+    let line = match read_input() {
+      Some(line) => line
+      None => break
+    }
+    match @mcp.parse_jsonrpc_request(line) {
+      Ok(rpc) => {
+        let id = match rpc.id {
+          Some(id) => id
+          None => continue
+        }
+        if rpc.req_method == @mcp.method_initialize {
+          write_output(mcp_response_line(@mcp.initialize_response(id)))
+        } else if rpc.req_method == @mcp.method_tools_list {
+          write_output(mcp_response_line(@mcp.tools_list_response(id)))
+        } else {
+          match @mcp.to_internal_request(rpc, role) {
+            Ok(internal_req) => {
+              let wire_req = mcp_build_wire_request(
+                internal_req, role, config, local_cfg,
+              )
+              if not(send_wire_request(wire_req)) {
+                write_output(
+                  mcp_response_line(
+                    @mcp.error_response(
+                      id, @mcp.err_internal, "server restarting, retry",
+                    ),
+                  ),
+                )
+                return Reconnect
+              }
+              let resp_line = read_server_line()
+              if resp_line == "" {
+                write_output(
+                  mcp_response_line(
+                    @mcp.error_response(
+                      id, @mcp.err_internal, "server restarting, retry",
+                    ),
+                  ),
+                )
+                return Reconnect
+              }
+              write_output(mcp_server_response_line(id, resp_line))
+            }
+            Err(e) =>
+              write_output(
+                mcp_response_line(@mcp.error_response(id, e.code, e.message)),
+              )
+          }
+        }
+      }
+      Err(e) =>
+        write_output(
+          mcp_response_line(@mcp.error_response(Number(0), e.code, e.message)),
+        )
+    }
+  }
+  InputClosed
 }
 
 ///|
@@ -578,60 +673,15 @@ fn mcp_run_uds_loop(
     return Reconnect
   }
 
-  for {
-    let line = match @io.read_stdin_line(8192) {
-      Some(line) => line
-      None => break
-    }
-    match @mcp.parse_jsonrpc_request(line) {
-      Ok(rpc) => {
-        let id = match rpc.id {
-          Some(id) => id
-          None => continue
-        }
-        if rpc.req_method == @mcp.method_initialize {
-          let resp = @mcp.initialize_response(id)
-          @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
-        } else if rpc.req_method == @mcp.method_tools_list {
-          let resp = @mcp.tools_list_response(id)
-          @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
-        } else {
-          match @mcp.to_internal_request(rpc, role) {
-            Ok(internal_req) => {
-              let wire_req = mcp_build_wire_request(
-                internal_req, role, config, local_cfg,
-              )
-              if not(mcp_write_all_uds(uds_fd, @utf8.encode(wire_req))) {
-                let err_resp = @mcp.error_response(
-                  id, @mcp.err_internal, "server restarting, retry",
-                )
-                @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-                return Reconnect
-              }
-              let resp_line = reader.read_line()
-              if resp_line == "" {
-                let err_resp = @mcp.error_response(
-                  id, @mcp.err_internal, "server restarting, retry",
-                )
-                @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-                return Reconnect
-              }
-              mcp_write_server_response(id, resp_line)
-            }
-            Err(e) => {
-              let err_resp = @mcp.error_response(id, e.code, e.message)
-              @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-            }
-          }
-        }
-      }
-      Err(e) => {
-        let err_resp = @mcp.error_response(Number(0), e.code, e.message)
-        @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-      }
-    }
-  }
-  InputClosed
+  mcp_run_request_loop(
+    fn() { @io.read_stdin_line(8192) },
+    fn(wire_req) { mcp_write_all_uds(uds_fd, @utf8.encode(wire_req)) },
+    fn() { reader.read_line() },
+    fn(output) { @io.write_stdout(output) },
+    role,
+    config,
+    local_cfg,
+  )
 }
 
 ///|
@@ -652,17 +702,7 @@ fn mcp_run() -> Unit raise {
     Ok(cfg) => cfg
     Err(_) => @types.LocalConfig::default()
   }
-  let config = {
-    ..base_config,
-    agent_id: match local_cfg.agent_id {
-      Some(agent_id) => Some(agent_id)
-      None =>
-        match mcp_cli_override_agent_id(args) {
-          Some(agent_id) => Some(agent_id)
-          None => base_config.agent_id
-        }
-    },
-  }
+  let config = mcp_config_with_cli_overrides(base_config, local_cfg, args)
   let role = match mcp_cli_override_role(args) {
     Some(role) => role
     None => @config.resolve_role(local_cfg.role, config)
@@ -783,6 +823,145 @@ fn mcp_run() -> Unit raise {
 test "mcp UDS reconnect policy stops after stdin EOF" {
   assert_false(mcp_should_reconnect_after_uds_loop(InputClosed))
   assert_true(mcp_should_reconnect_after_uds_loop(Reconnect))
+}
+
+///|
+test "mcp config applies CLI agent id when local config is unset" {
+  let cfg = mcp_config_with_cli_overrides(
+    @types.Config::default(),
+    @types.LocalConfig::default(),
+    ["choir", "mcp-stdio", "--name", "smoke-test"],
+  )
+  assert_eq(cfg.agent_id, Some("smoke-test"))
+  assert_eq(
+    mcp_resolved_agent_id(@types.Role::TL, cfg, @types.LocalConfig::default()),
+    "smoke-test",
+  )
+}
+
+///|
+test "mcp config keeps local agent id over CLI agent id" {
+  let local_cfg = {
+    ..@types.LocalConfig::default(),
+    agent_id: Some("local-agent"),
+  }
+  let cfg = mcp_config_with_cli_overrides(@types.Config::default(), local_cfg, [
+    "choir", "mcp-stdio", "--name", "cli-agent",
+  ])
+  assert_eq(cfg.agent_id, Some("local-agent"))
+  assert_eq(
+    mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg),
+    "local-agent",
+  )
+}
+
+///|
+test "mcp request loop returns InputClosed after successful task call" {
+  let requests = [
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}", "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"task_create\",\"arguments\":{\"id\":\"loop-task\",\"title\":\"Loop Task\"}}}",
+  ]
+  let outputs = []
+  let wire_requests = []
+  let mut input_index = 0
+  let mut server_reads = 0
+  let exit = mcp_run_request_loop(
+    fn() {
+      if input_index < requests.length() {
+        let next = requests[input_index]
+        input_index = input_index + 1
+        Some(next)
+      } else {
+        None
+      }
+    },
+    fn(wire_req) {
+      wire_requests.push(wire_req)
+      true
+    },
+    fn() {
+      server_reads = server_reads + 1
+      @transport.format_response(
+        @types.Response::ok_values({
+          "status": @types.wire_string("ok"),
+          "task": @types.wire_raw(
+            "{\"id\":\"loop-task\",\"title\":\"Loop Task\",\"status\":\"todo\",\"assignee\":\"\",\"notes\":\"\"}",
+          ),
+        }),
+      )
+    },
+    fn(output) { outputs.push(output) },
+    @types.Role::TL,
+    { ..@types.Config::default(), agent_id: Some("smoke-loop") },
+    @types.LocalConfig::default(),
+  )
+  match exit {
+    InputClosed => ()
+    Reconnect => fail("expected InputClosed")
+  }
+  assert_eq(wire_requests.length(), 1)
+  assert_true(wire_requests[0].contains("\"caller_id\":\"smoke-loop\""))
+  assert_eq(server_reads, 1)
+  assert_eq(outputs.length(), 2)
+  assert_true(outputs[0].contains("\"protocolVersion\":\"2024-11-05\""))
+  assert_true(outputs[1].contains("loop-task"))
+}
+
+///|
+test "mcp request loop returns Reconnect on wire write failure" {
+  let outputs = []
+  let mut server_reads = 0
+  let exit = mcp_run_request_loop(
+    fn() {
+      Some(
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"task_create\",\"arguments\":{\"id\":\"retry-task\",\"title\":\"Retry Task\"}}}",
+      )
+    },
+    fn(_) { false },
+    fn() {
+      server_reads = server_reads + 1
+      ""
+    },
+    fn(output) { outputs.push(output) },
+    @types.Role::TL,
+    @types.Config::default(),
+    @types.LocalConfig::default(),
+  )
+  match exit {
+    Reconnect => ()
+    InputClosed => fail("expected Reconnect")
+  }
+  assert_eq(server_reads, 0)
+  assert_eq(outputs.length(), 1)
+  assert_true(outputs[0].contains("server restarting, retry"))
+}
+
+///|
+test "mcp request loop returns Reconnect on empty server response" {
+  let outputs = []
+  let mut server_reads = 0
+  let exit = mcp_run_request_loop(
+    fn() {
+      Some(
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"task_create\",\"arguments\":{\"id\":\"retry-task-2\",\"title\":\"Retry Task 2\"}}}",
+      )
+    },
+    fn(_) { true },
+    fn() {
+      server_reads = server_reads + 1
+      ""
+    },
+    fn(output) { outputs.push(output) },
+    @types.Role::TL,
+    @types.Config::default(),
+    @types.LocalConfig::default(),
+  )
+  match exit {
+    Reconnect => ()
+    InputClosed => fail("expected Reconnect")
+  }
+  assert_eq(server_reads, 1)
+  assert_eq(outputs.length(), 1)
+  assert_true(outputs[0].contains("server restarting, retry"))
 }
 
 ///|
