@@ -1189,7 +1189,10 @@ async fn handle_task_list(
     first = false
   }
   buf.write_char(']')
-  @types.Response::ok({ "status": "ok", "tasks": buf.to_string() })
+  @types.Response::ok_values({
+    "status": @types.wire_string("ok"),
+    "tasks": @types.wire_raw(buf.to_string()),
+  })
 }
 
 ///|
@@ -1212,7 +1215,10 @@ async fn handle_kv_list(
   if statuses.length() > 0 {
     let status = statuses[statuses.length() - 1]
     if status == 3 {
-      return @types.Response::ok({ "status": "ok", "keys": "[]" })
+      return @types.Response::ok_values({
+        "status": @types.wire_string("ok"),
+        "keys": @types.wire_raw("[]"),
+      })
     }
     if status != 0 {
       return @types.Response::Err(
@@ -1250,7 +1256,10 @@ async fn handle_kv_list(
     first = false
   }
   buf.write_char(']')
-  @types.Response::ok({ "status": "ok", "keys": buf.to_string() })
+  @types.Response::ok_values({
+    "status": @types.wire_string("ok"),
+    "keys": @types.wire_raw(buf.to_string()),
+  })
 }
 
 ///|
@@ -1701,9 +1710,9 @@ pub async fn dispatch(
       }
       match read_task_file(project_dir, id_args.id) {
         Ok(task) =>
-          @types.Response::ok({
-            "status": "ok",
-            "task": task_file_to_json(task),
+          @types.Response::ok_values({
+            "status": @types.wire_string("ok"),
+            "task": @types.wire_raw(task_file_to_json(task)),
           })
         Err(e) => @types.Response::Err(e)
       }
@@ -1727,7 +1736,10 @@ pub async fn dispatch(
       let content = task_file_to_json(task)
       let path = task_file_path(project_dir, task_args.id)
       if @io.write_file_sync(path, content) {
-        @types.Response::ok({ "status": "ok", "task": content })
+        @types.Response::ok_values({
+          "status": @types.wire_string("ok"),
+          "task": @types.wire_raw(content),
+        })
       } else {
         @types.Response::Err("failed to write task file: " + path)
       }
@@ -1750,7 +1762,10 @@ pub async fn dispatch(
       let content = task_file_to_json(updated)
       let path = task_file_path(project_dir, update_args.id)
       if @io.write_file_sync(path, content) {
-        @types.Response::ok({ "status": "ok", "task": content })
+        @types.Response::ok_values({
+          "status": @types.wire_string("ok"),
+          "task": @types.wire_raw(content),
+        })
       } else {
         @types.Response::Err("failed to write task file: " + path)
       }

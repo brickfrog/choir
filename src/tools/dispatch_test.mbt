@@ -117,6 +117,14 @@ test "dispatch task_list reads task files" {
             "[{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"},{\"id\":\"2\",\"title\":\"Second\",\"status\":\"in_progress\",\"assignee\":\"bob\",\"notes\":\"two\"}]",
           ),
         )
+        assert_eq(
+          m.get_value("tasks"),
+          Some(
+            @types.WireValue::Raw(
+              "[{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"},{\"id\":\"2\",\"title\":\"Second\",\"status\":\"in_progress\",\"assignee\":\"bob\",\"notes\":\"two\"}]",
+            ),
+          ),
+        )
       }
       Err(e) => {
         println(e)
@@ -148,6 +156,14 @@ test "dispatch task_get reads one task" {
           m.get("task"),
           Some(
             "{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}",
+          ),
+        )
+        assert_eq(
+          m.get_value("task"),
+          Some(
+            @types.WireValue::Raw(
+              "{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}",
+            ),
           ),
         )
       }
@@ -186,6 +202,14 @@ test "dispatch task_update merges and writes task file" {
           m.get("task"),
           Some(
             "{\"id\":\"1\",\"title\":\"First\",\"status\":\"done\",\"assignee\":\"carol\",\"notes\":\"finished\"}",
+          ),
+        )
+        assert_eq(
+          m.get_value("task"),
+          Some(
+            @types.WireValue::Raw(
+              "{\"id\":\"1\",\"title\":\"First\",\"status\":\"done\",\"assignee\":\"carol\",\"notes\":\"finished\"}",
+            ),
           ),
         )
       }
@@ -805,6 +829,13 @@ test "dispatch kv_list returns keys" {
         let keys = m.get("keys").unwrap_or("")
         assert_true(keys.contains("shared/bar"))
         assert_true(keys.contains("shared/foo"))
+        match m.get_value("keys") {
+          Some(@types.WireValue::Raw(raw)) => {
+            assert_true(raw.contains("shared/bar"))
+            assert_true(raw.contains("shared/foo"))
+          }
+          _ => assert_true(false)
+        }
       }
       Err(e) => {
         println(e)
@@ -829,7 +860,10 @@ test "dispatch kv_list empty dir returns empty array" {
       runner=@exec.run_sequence,
     )
     match res {
-      Ok(m) => assert_eq(m.get("keys"), Some("[]"))
+      Ok(m) => {
+        assert_eq(m.get("keys"), Some("[]"))
+        assert_eq(m.get_value("keys"), Some(@types.WireValue::Raw("[]")))
+      }
       Err(e) => {
         println(e)
         assert_true(false)
@@ -862,6 +896,14 @@ test "dispatch task_create creates task" {
         assert_true(task_json.contains("\"id\":\"task-1\""))
         assert_true(task_json.contains("\"title\":\"Build the thing\""))
         assert_true(task_json.contains("\"status\":\"todo\""))
+        match m.get_value("task") {
+          Some(@types.WireValue::Raw(raw)) => {
+            assert_true(raw.contains("\"id\":\"task-1\""))
+            assert_true(raw.contains("\"title\":\"Build the thing\""))
+            assert_true(raw.contains("\"status\":\"todo\""))
+          }
+          _ => assert_true(false)
+        }
       }
       Err(e) => {
         println(e)
