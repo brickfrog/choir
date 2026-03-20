@@ -28,8 +28,8 @@ Transport: UDS (default, local), TCP (opt-in, for future SSH/remote agents).
 
 ```bash
 moon check            # typecheck
-moon build            # compile
-moon test             # run all tests
+moon build --target native            # compile
+moon test --target native             # run all tests
 moon fmt              # format
 ```
 
