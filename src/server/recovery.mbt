@@ -471,30 +471,62 @@ async fn recover_local_agents(
 }
 
 ///|
+fn find_persisted_tracked_pr(
+  persisted : Array[@poller.TrackedPR],
+  pr_number : Int,
+  branch : String,
+) -> @poller.TrackedPR? {
+  for tracked in persisted {
+    if tracked.pr_number == pr_number && tracked.branch == branch {
+      return Some(tracked)
+    }
+  }
+  None
+}
+
+///|
 async fn recover_open_pr_tracking_with(
   state : ServerState,
   open_prs : Array[OpenPR],
+  persisted : Array[@poller.TrackedPR],
   recovered_at : Int64,
   snapshot : async (Int) -> (@poller.ReviewState, String, Bool, String),
 ) -> Unit {
   for pr in open_prs {
     match state.registry.get(pr.branch) {
       Ok(agent) => {
-        let (review, sha, ci_failed, _) = snapshot(pr.pr_number)
-        state.poller.track_recovered(
+        let restored = find_persisted_tracked_pr(
+          persisted,
           pr.pr_number,
-          agent.agent_id,
           pr.branch,
-          pr.base,
-          pr.url,
-          match pr.created_sec {
-            Some(created_sec) => created_sec
-            None => recovered_at
-          },
-          review,
-          sha,
-          ci_failed,
         )
+        match restored {
+          Some(existing) =>
+            state.poller.restore({
+              ..existing,
+              agent_id: agent.agent_id,
+              branch: pr.branch,
+              parent_branch: pr.base,
+              pr_url: pr.url,
+            })
+          None => {
+            let (review, sha, ci_failed, _) = snapshot(pr.pr_number)
+            state.poller.track_recovered(
+              pr.pr_number,
+              agent.agent_id,
+              pr.branch,
+              pr.base,
+              pr.url,
+              match pr.created_sec {
+                Some(created_sec) => created_sec
+                None => recovered_at
+              },
+              review,
+              sha,
+              ci_failed,
+            )
+          }
+        }
       }
       Err(_) => ()
     }
@@ -527,9 +559,11 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
   recover_open_pr_tracking_with(
     state,
     parse_open_prs(open_pr_output),
+    @poller.read_state_file(project_dir),
     now,
     @poller.gh_poll_pr,
   )
+  ignore(state.poller.write_state_file(project_dir))
 }
 
 ///|
@@ -693,6 +727,7 @@ test "recover_open_pr_tracking_with seeds current review snapshot" {
           created_sec: Some(77L),
         },
       ],
+      [],
       123L,
       fn(_pr_number) {
         (
@@ -738,9 +773,77 @@ test "recover_open_pr_tracking_with ignores unowned PR branches" {
           created_sec: Some(11L),
         },
       ],
+      [],
       123L,
       fn(_pr_number) { (@poller.ReviewState::Approved, "sha", false, "") },
     )
     assert_eq(state.poller.get(77), None)
+  })
+}
+
+///|
+test "recover_open_pr_tracking_with prefers persisted poller state" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    ignore(
+      state.registry.insert({
+        agent_id: "main.leaf-a",
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Gemini,
+        state: @types.AgentState::Active,
+        parent: Some("main"),
+        tmux_target: Some("howdy:leaf-a"),
+        host: @types.Host::Local,
+        workspace: ".choir/worktrees/leaf-a",
+        branch: "main.leaf-a",
+      }),
+    )
+    recover_open_pr_tracking_with(
+      state,
+      [
+        {
+          pr_number: 12,
+          branch: "main.leaf-a",
+          base: "main",
+          url: "https://example.test/pr/12",
+          created_sec: Some(77L),
+        },
+      ],
+      [
+        {
+          pr_number: 12,
+          agent_id: "stale-agent-id",
+          branch: "main.leaf-a",
+          parent_branch: "stale-base",
+          pr_url: "https://example.test/pr/stale",
+          first_seen: 55L,
+          last_review_state: @poller.ReviewState::ChangesRequested,
+          last_sha: "sha-persisted",
+          notified_parent: true,
+          last_ci_failed: true,
+        },
+      ],
+      123L,
+      fn(_pr_number) {
+        (@poller.ReviewState::Approved, "sha-live", false, "Should be ignored")
+      },
+    )
+    match state.poller.get(12) {
+      Some(tracked) => {
+        assert_eq(tracked.agent_id, "main.leaf-a")
+        assert_eq(tracked.branch, "main.leaf-a")
+        assert_eq(tracked.parent_branch, "main")
+        assert_eq(tracked.pr_url, "https://example.test/pr/12")
+        assert_eq(tracked.first_seen, 55L)
+        assert_eq(
+          tracked.last_review_state,
+          @poller.ReviewState::ChangesRequested,
+        )
+        assert_eq(tracked.last_sha, "sha-persisted")
+        assert_true(tracked.notified_parent)
+        assert_true(tracked.last_ci_failed)
+      }
+      None => fail("expected restored tracked PR")
+    }
   })
 }

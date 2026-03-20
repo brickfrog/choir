@@ -1,4 +1,29 @@
 ///|
+#borrow(cmd)
+extern "C" fn c_system_poller_test(cmd : Bytes) -> Int = "system"
+
+///|
+fn string_to_null_terminated_bytes_poller(s : String) -> Bytes {
+  let b = @utf8.encode(s)
+  let len = b.length()
+  let result = FixedArray::make(len + 1, (0 : Byte))
+  for i = 0; i < len; i = i + 1 {
+    result[i] = b[i]
+  }
+  result[len] = (0 : Byte)
+  result.unsafe_reinterpret_as_bytes()
+}
+
+///|
+fn run_shell_poller(script : String) -> Unit {
+  ignore(
+    c_system_poller_test(
+      string_to_null_terminated_bytes_poller("sh -c '" + script + "'"),
+    ),
+  )
+}
+
+///|
 fn tracked_pr(
   pr_number : Int,
   agent_id : String,
@@ -89,6 +114,62 @@ test "PollerState::in_critical_phase ignores pushed fixes" {
     ),
   )
   assert_false(state.in_critical_phase("agent10"))
+}
+
+///|
+test "PollerState JSON roundtrip preserves tracked metadata" {
+  let state = PollerState::new()
+  state.restore(
+    tracked_pr(
+      11,
+      "agent11",
+      321L,
+      ReviewState::ChangesRequested,
+      "sha-roundtrip",
+      true,
+      true,
+    ),
+  )
+  let parsed = parse_tracked_prs_json(state.to_json())
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].pr_number, 11)
+  assert_eq(parsed[0].agent_id, "agent11")
+  assert_eq(parsed[0].branch, "main.agent11")
+  assert_eq(parsed[0].parent_branch, "main")
+  assert_eq(parsed[0].pr_url, "https://example.test/pr/agent11")
+  assert_eq(parsed[0].first_seen, 321L)
+  assert_eq(parsed[0].last_review_state, ReviewState::ChangesRequested)
+  assert_eq(parsed[0].last_sha, "sha-roundtrip")
+  assert_true(parsed[0].notified_parent)
+  assert_true(parsed[0].last_ci_failed)
+}
+
+///|
+test "PollerState write_state_file and read_state_file roundtrip" {
+  let project_dir = "/tmp/choir-poller-state"
+  run_shell_poller(
+    "rm -rf /tmp/choir-poller-state && mkdir -p /tmp/choir-poller-state/.choir",
+  )
+  let state = PollerState::new()
+  state.restore(
+    tracked_pr(
+      12,
+      "agent12",
+      654L,
+      ReviewState::Approved,
+      "sha-file",
+      true,
+      false,
+    ),
+  )
+  assert_true(state.write_state_file(project_dir))
+  let parsed = read_state_file(project_dir)
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].pr_number, 12)
+  assert_eq(parsed[0].last_review_state, ReviewState::Approved)
+  assert_eq(parsed[0].last_sha, "sha-file")
+  assert_true(parsed[0].notified_parent)
+  run_shell_poller("rm -rf /tmp/choir-poller-state")
 }
 
 ///|

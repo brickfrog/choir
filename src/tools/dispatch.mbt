@@ -1364,6 +1364,7 @@ pub async fn dispatch(
                     pr.url,
                     @poller.now_sec(),
                   )
+                  ignore(ps.write_state_file(project_dir))
                   tracked = true
                 }
                 None => ()
@@ -1405,7 +1406,10 @@ pub async fn dispatch(
           match merge_result {
             Ok(_) => {
               match poller_state {
-                Some(ps) => ps.untrack(merge_args.pr_number)
+                Some(ps) => {
+                  ps.untrack(merge_args.pr_number)
+                  ignore(ps.write_state_file(project_dir))
+                }
                 None => ()
               }
               @types.Response::ok_values({
@@ -1419,7 +1423,10 @@ pub async fn dispatch(
           match run_strict(runner, cmds) {
             Ok(_) => {
               match poller_state {
-                Some(ps) => ps.untrack(merge_args.pr_number)
+                Some(ps) => {
+                  ps.untrack(merge_args.pr_number)
+                  ignore(ps.write_state_file(project_dir))
+                }
                 None => ()
               }
               @types.Response::ok_values({
@@ -1445,6 +1452,7 @@ pub async fn dispatch(
             track_pr_args.pr_url,
             @poller.now_sec(),
           )
+          ignore(ps.write_state_file(project_dir))
           @types.Response::ok_values({
             "status": @types.wire_string("tracked"),
             "branch": @types.wire_string(track_pr_args.branch),
