@@ -1312,14 +1312,17 @@ pub async fn dispatch(
           }
           match reg.insert(agent) {
             Ok(_) =>
-              @types.Response::ok({
-                "status": "registered",
-                "agent_id": register_args.agent_id,
+              @types.Response::ok_values({
+                "status": @types.wire_string("registered"),
+                "agent_id": @types.wire_string(register_args.agent_id),
               })
             Err(e) => @types.Response::Err(e.message())
           }
         }
-        None => @types.Response::ok({ "status": "registered" })
+        None =>
+          @types.Response::ok_values({
+            "status": @types.wire_string("registered"),
+          })
       }
     "fork_wave" => {
       let fork_wave_args = match parse_fork_wave_args(project_dir, tool_args) {
@@ -1380,10 +1383,10 @@ pub async fn dispatch(
         created_sec.to_string() +
         "\"}"
       if @io.write_file_sync(context_path, context_json) {
-        @types.Response::ok({
-          "status": "ok",
-          "session_dir": session_dir,
-          "name": session_args.name,
+        @types.Response::ok_values({
+          "status": @types.wire_string("ok"),
+          "session_dir": @types.wire_string(session_dir),
+          "name": @types.wire_string(session_args.name),
         })
       } else {
         @types.Response::Err("failed to create session: " + session_args.name)
@@ -1458,7 +1461,9 @@ pub async fn dispatch(
                 Some(ps) => ps.untrack(merge_args.pr_number)
                 None => ()
               }
-              @types.Response::ok({ "status": "merged" })
+              @types.Response::ok_values({
+                "status": @types.wire_string("merged"),
+              })
             }
             Err(e) => @types.Response::Err(e)
           }
@@ -1470,7 +1475,9 @@ pub async fn dispatch(
                 Some(ps) => ps.untrack(merge_args.pr_number)
                 None => ()
               }
-              @types.Response::ok({ "status": "merged" })
+              @types.Response::ok_values({
+                "status": @types.wire_string("merged"),
+              })
             }
             Err(e) => @types.Response::Err(e)
           }
@@ -1517,13 +1524,19 @@ pub async fn dispatch(
                 notify_args.status,
               )
               match execute_delivery(delivery, runner) {
-                Ok(_) => @types.Response::ok({ "status": "notified" })
+                Ok(_) =>
+                  @types.Response::ok_values({
+                    "status": @types.wire_string("notified"),
+                  })
                 Err(e) => @types.Response::Err(e)
               }
             }
             Err(e) => @types.Response::Err(e.message())
           }
-        None => @types.Response::ok({ "status": "notified" })
+        None =>
+          @types.Response::ok_values({
+            "status": @types.wire_string("notified"),
+          })
       }
     }
     "send_message" => {
@@ -1542,20 +1555,27 @@ pub async fn dispatch(
                 send_args.status,
               )
               match execute_delivery(delivery, runner) {
-                Ok(_) => @types.Response::ok({ "status": "sent" })
+                Ok(_) =>
+                  @types.Response::ok_values({
+                    "status": @types.wire_string("sent"),
+                  })
                 Err(e) => @types.Response::Err(e)
               }
             }
             Err(e) => @types.Response::Err(e.message())
           }
-        None => @types.Response::ok({ "status": "sent" })
+        None =>
+          @types.Response::ok_values({ "status": @types.wire_string("sent") })
       }
     }
     "shutdown" => {
       let shutdown_args = parse_shutdown_args(tool_args)
       let caller_id = match shutdown_args.caller_id {
         Some(v) => v
-        None => return @types.Response::ok({ "status": "shutdown" }) // best-effort
+        None =>
+          return @types.Response::ok_values({
+            "status": @types.wire_string("shutdown"),
+          }) // best-effort
       }
       match poller_state {
         Some(ps) =>
@@ -1610,7 +1630,7 @@ pub async fn dispatch(
         }
         None => ()
       }
-      @types.Response::ok({ "status": "shutdown" })
+      @types.Response::ok_values({ "status": @types.wire_string("shutdown") })
     }
     "kv_get" => {
       let key_args = match parse_kv_key_args(tool_args) {
@@ -1794,13 +1814,12 @@ pub async fn dispatch(
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::ok({
-            "status": "spawned",
-            "agent_id": @workspace.branch_name(
-              spawn_args.parent_branch,
-              spawn_args.slug,
+          @types.Response::ok_values({
+            "status": @types.wire_string("spawned"),
+            "agent_id": @types.wire_string(
+              @workspace.branch_name(spawn_args.parent_branch, spawn_args.slug),
             ),
-            "slug": spawn_args.slug,
+            "slug": @types.wire_string(spawn_args.slug),
           })
         Err(e) => @types.Response::Err(e)
       }
@@ -1830,13 +1849,12 @@ pub async fn dispatch(
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::ok({
-            "status": "spawned",
-            "agent_id": @workspace.branch_name(
-              spawn_args.parent_branch,
-              spawn_args.slug,
+          @types.Response::ok_values({
+            "status": @types.wire_string("spawned"),
+            "agent_id": @types.wire_string(
+              @workspace.branch_name(spawn_args.parent_branch, spawn_args.slug),
             ),
-            "slug": spawn_args.slug,
+            "slug": @types.wire_string(spawn_args.slug),
           })
         Err(e) => @types.Response::Err(e)
       }
@@ -1865,14 +1883,13 @@ pub async fn dispatch(
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::ok({
-            "status": "spawned",
-            "agent_id": @workspace.branch_name(
-              spawn_args.parent_branch,
-              spawn_args.slug,
+          @types.Response::ok_values({
+            "status": @types.wire_string("spawned"),
+            "agent_id": @types.wire_string(
+              @workspace.branch_name(spawn_args.parent_branch, spawn_args.slug),
             ),
-            "slug": spawn_args.slug,
-            "host": spawn_args.ssh_target,
+            "slug": @types.wire_string(spawn_args.slug),
+            "host": @types.wire_string(spawn_args.ssh_target),
           })
         Err(e) => @types.Response::Err(e)
       }
@@ -1900,7 +1917,8 @@ pub async fn dispatch(
         shell_command~,
       )
       match run_strict(runner, cmds) {
-        Ok(_) => @types.Response::ok({ "status": "spawned" })
+        Ok(_) =>
+          @types.Response::ok_values({ "status": @types.wire_string("spawned") })
         Err(e) => @types.Response::Err(e)
       }
     }
@@ -1922,7 +1940,10 @@ pub async fn dispatch(
       }
       let path = kv_file_path(project_dir, key)
       if @io.write_file_sync(path, value) {
-        @types.Response::ok({ "status": "ok", "id": id })
+        @types.Response::ok_values({
+          "status": @types.wire_string("ok"),
+          "id": @types.wire_string(id),
+        })
       } else {
         @types.Response::Err("failed to write reply: " + id)
       }

@@ -265,6 +265,8 @@ test "dispatch reply stores payload in reply kv path" {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
         assert_eq(m.get("id"), Some("req-1"))
+        assert_eq(m.get_value("status"), Some(@types.WireValue::String("ok")))
+        assert_eq(m.get_value("id"), Some(@types.WireValue::String("req-1")))
       }
       Err(e) => {
         println(e)
@@ -291,7 +293,10 @@ test "dispatch reply cancel stores cancel marker" {
     }
     let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
     match res {
-      Ok(m) => assert_eq(m.get("status"), Some("ok"))
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("ok"))
+        assert_eq(m.get_value("status"), Some(@types.WireValue::String("ok")))
+      }
       Err(e) => {
         println(e)
         assert_true(false)
@@ -387,6 +392,14 @@ test "dispatch spawn_gemini returns agent_id and renders leaf protocol" {
         assert_eq(m.get("status"), Some("spawned"))
         assert_eq(m.get("agent_id"), Some("main.gem-feat"))
         assert_eq(m.get("slug"), Some("gem-feat"))
+        assert_eq(
+          m.get_value("agent_id"),
+          Some(@types.WireValue::String("main.gem-feat")),
+        )
+        assert_eq(
+          m.get_value("slug"),
+          Some(@types.WireValue::String("gem-feat")),
+        )
       }
       Err(e) => {
         println(e)
@@ -409,6 +422,10 @@ test "dispatch spawn_gemini accepts branch alias for slug" {
       Ok(m) => {
         assert_eq(m.get("agent_id"), Some("main.gem-alias"))
         assert_eq(m.get("slug"), Some("gem-alias"))
+        assert_eq(
+          m.get_value("agent_id"),
+          Some(@types.WireValue::String("main.gem-alias")),
+        )
       }
       Err(e) => {
         println(e)
@@ -436,6 +453,10 @@ test "dispatch spawn_moon_pilot returns agent_id with mock" {
         assert_eq(m.get("status"), Some("spawned"))
         assert_eq(m.get("agent_id"), Some("main.mp-feat"))
         assert_eq(m.get("slug"), Some("mp-feat"))
+        assert_eq(
+          m.get_value("agent_id"),
+          Some(@types.WireValue::String("main.mp-feat")),
+        )
       }
       Err(e) => {
         println(e)
@@ -466,6 +487,10 @@ test "dispatch spawn_remote returns agent_id with mock" {
         assert_eq(m.get("status"), Some("spawned"))
         assert_eq(m.get("agent_id"), Some("main.remote-1"))
         assert_eq(m.get("host"), Some("user@10.0.0.2"))
+        assert_eq(
+          m.get_value("host"),
+          Some(@types.WireValue::String("user@10.0.0.2")),
+        )
       }
       Err(e) => {
         println(e)
@@ -568,7 +593,13 @@ test "dispatch spawn_worker succeeds with inline worker" {
     }
     let res = @tools.dispatch(call, runner=mock_runner)
     match res {
-      Ok(m) => assert_eq(m.get("status"), Some("spawned"))
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("spawned"))
+        assert_eq(
+          m.get_value("status"),
+          Some(@types.WireValue::String("spawned")),
+        )
+      }
       Err(e) => {
         println(e)
         assert_true(false)
@@ -587,7 +618,13 @@ test "dispatch spawn_worker accepts agent_id alias" {
     }
     let res = @tools.dispatch(call, runner=mock_runner)
     match res {
-      Ok(m) => assert_eq(m.get("status"), Some("spawned"))
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("spawned"))
+        assert_eq(
+          m.get_value("status"),
+          Some(@types.WireValue::String("spawned")),
+        )
+      }
       Err(e) => {
         println(e)
         assert_true(false)
@@ -617,6 +654,14 @@ test "dispatch register inserts agent into registry" {
       Ok(m) => {
         assert_eq(m.get("status"), Some("registered"))
         assert_eq(m.get("agent_id"), Some("leaf-0"))
+        assert_eq(
+          m.get_value("status"),
+          Some(@types.WireValue::String("registered")),
+        )
+        assert_eq(
+          m.get_value("agent_id"),
+          Some(@types.WireValue::String("leaf-0")),
+        )
         match reg.get("leaf-0") {
           Ok(agent) => {
             assert_eq(agent.parent, Some("root"))
@@ -687,7 +732,13 @@ test "dispatch shutdown allowed for TL role" {
     }
     let res = @tools.dispatch(call, runner=mock_runner)
     match res {
-      Ok(m) => assert_eq(m.get("status"), Some("shutdown"))
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("shutdown"))
+        assert_eq(
+          m.get_value("status"),
+          Some(@types.WireValue::String("shutdown")),
+        )
+      }
       Err(e) => {
         println(e)
         assert_true(false)
@@ -1147,8 +1198,17 @@ test "dispatch fork_session creates session dir" {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
         assert_eq(m.get("name"), Some("sub-team-1"))
+        assert_eq(
+          m.get_value("name"),
+          Some(@types.WireValue::String("sub-team-1")),
+        )
         let session_dir = m.get("session_dir").unwrap_or("")
         assert_true(session_dir.contains("sub-team-1"))
+        match m.get_value("session_dir") {
+          Some(@types.WireValue::String(raw_dir)) =>
+            assert_true(raw_dir.contains("sub-team-1"))
+          _ => assert_true(false)
+        }
         run_shell(
           "test -d /tmp/choir-dispatch-fork-session/.choir/sessions/sub-team-1",
         )
