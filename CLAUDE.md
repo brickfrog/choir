@@ -33,6 +33,8 @@ moon test             # run all tests
 moon fmt              # format
 ```
 
+*Run `moon check` first for fast feedback, then `moon test` before committing.*
+
 ## Project Layout
 
 ```
