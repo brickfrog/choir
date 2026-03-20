@@ -67,7 +67,7 @@ test "ServerState::handle valid request returns Ok" {
       args: {},
     }
     let res = state.handle(req)
-    assert_true(res is Ok(_))
+    assert_true(res.is_ok())
   })
 }
 
@@ -82,7 +82,7 @@ test "ServerState::handle invalid role returns Err" {
       args: {},
     }
     let res = state.handle(req)
-    assert_true(res is Err(_))
+    assert_false(res.is_ok())
   })
 }
 
@@ -108,16 +108,8 @@ test "ServerState::handle_with_runner passes configured tmux session to spawns" 
       },
     }
     let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
-    match res {
-      Ok(result) => {
-        assert_eq(result.get("status"), Some("spawned"))
-        assert_eq(result.get("agent_id"), Some("main.leaf-a"))
-      }
-      Err(e) => {
-        println(e)
-        assert_true(false)
-      }
-    }
+    assert_eq(res.ok_field("status"), Some("spawned"))
+    assert_eq(res.ok_field("agent_id"), Some("main.leaf-a"))
   })
 }
 

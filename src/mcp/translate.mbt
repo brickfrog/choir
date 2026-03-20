@@ -466,8 +466,8 @@ pub fn from_internal_response(
   id : JsonRpcId,
   resp : @types.Response,
 ) -> JsonRpcResponse {
-  match resp {
-    @types.Response::Ok(data) => {
+  match resp.ok_fields() {
+    Some(data) => {
       let payload : Map[String, JsonValue] = {}
       data.each(fn(k, v) { payload.set(k, JsonValue::String(v)) })
       let text = json_value_to_json(JsonValue::Object(payload))
@@ -484,7 +484,11 @@ pub fn from_internal_response(
         error: None,
       }
     }
-    @types.Response::Err(msg) => {
+    None => {
+      let msg = match resp.error_message() {
+        Some(v) => v
+        None => ""
+      }
       let content = text_content_json(msg)
       {
         jsonrpc: "2.0",

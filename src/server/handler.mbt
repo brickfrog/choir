@@ -38,10 +38,6 @@ async fn emit_span(
   end_sec : Int64,
   resp : @types.Response,
 ) -> Unit {
-  let (status, error_msg) = match resp {
-    @types.Response::Ok(_) => ("ok", None)
-    @types.Response::Err(msg) => ("error", Some(msg))
-  }
   let span = Span::{
     trace_id: state.run_id,
     span_id: next_span_id(state),
@@ -50,8 +46,8 @@ async fn emit_span(
     role: Some(req.role.to_string()),
     start_sec,
     end_sec,
-    status,
-    error_msg,
+    status: resp.status_tag(),
+    error_msg: resp.error_message(),
   }
   span.emit()
   match state.config.otlp_endpoint {

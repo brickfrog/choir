@@ -219,8 +219,8 @@ pub fn parse_response(data : String) -> Result[@types.Response, String] {
 /// or: { "ok": false, "error": "..." }
 pub fn format_response(resp : @types.Response) -> String {
   let buf = StringBuilder::new()
-  match resp {
-    @types.Response::Ok(result) => {
+  match resp.ok_fields() {
+    Some(result) => {
       buf.write_string("{\"ok\": true, \"result\": {")
       let mut first = true
       result.each(fn(k, v) {
@@ -236,7 +236,11 @@ pub fn format_response(resp : @types.Response) -> String {
       })
       buf.write_string("}}")
     }
-    @types.Response::Err(err) => {
+    None => {
+      let err = match resp.error_message() {
+        Some(msg) => msg
+        None => ""
+      }
       buf.write_string("{\"ok\": false, \"error\": \"")
       buf.write_string(escape_json_string(err))
       buf.write_string("\"}")

@@ -75,6 +75,9 @@ test "format_response ok" {
   let result = Map::new()
   result.set("agent_id", "main.feat-a")
   let resp = @types.Response::Ok(result)
+  assert_true(resp.is_ok())
+  assert_eq(resp.status_tag(), "ok")
+  assert_eq(resp.ok_field("agent_id"), Some("main.feat-a"))
   let output = format_response(resp)
   assert_eq(
     output, "{\"ok\": true, \"result\": {\"agent_id\": \"main.feat-a\"}}",
@@ -149,6 +152,9 @@ test "format_response escaping" {
 ///|
 test "format_response err" {
   let resp = @types.Response::Err("agent not found")
+  assert_false(resp.is_ok())
+  assert_eq(resp.status_tag(), "error")
+  assert_eq(resp.error_message(), Some("agent not found"))
   let output = format_response(resp)
   assert_eq(output, "{\"ok\": false, \"error\": \"agent not found\"}")
 }
