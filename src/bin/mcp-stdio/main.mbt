@@ -1,5 +1,5 @@
 ///|
-struct TCPLineReader {
+priv struct TCPLineReader {
   conn : @socket.TCP
   mut buf : FixedArray[Byte]
   mut read_pos : Int
@@ -12,7 +12,7 @@ fn TCPLineReader::new(conn : @socket.TCP) -> TCPLineReader {
 }
 
 ///|
-struct UDSLineReader {
+priv struct UDSLineReader {
   fd : Int
   mut buf : FixedArray[Byte]
   mut read_pos : Int

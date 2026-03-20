@@ -6,7 +6,6 @@ import {
   "choir/src/io",
   "choir/src/uds",
   "choir/src/exec",
-  "choir/src/message",
   "choir/src/poller",
   "choir/src/tools",
   "choir/src/mcp",

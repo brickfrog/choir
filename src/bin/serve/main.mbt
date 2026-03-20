@@ -21,7 +21,7 @@ fn grow_connection_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 }
 
 ///|
-struct UDSClient {
+priv struct UDSClient {
   fd : Int
   mut buf : FixedArray[Byte]
   mut read_pos : Int
