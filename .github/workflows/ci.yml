@@ -24,6 +24,12 @@ jobs:
         run: |
           bash scripts/install-moonbit.sh latest "$MOON_HOME"
           echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+
+      - name: Verify MoonBit install
+        run: |
+          moon version
+          test -f "$MOON_HOME/lib/core/_build/native/release/bundle/prelude/prelude.mi"
 
       - name: Cache mooncakes
         uses: actions/cache@v4
