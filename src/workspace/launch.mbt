@@ -64,7 +64,7 @@ pub fn agent_launch_command(
     MoonPilot =>
       {
         program: "moon",
-        args: ["pilot", "-p", spec.task],
+        args: ["pilot", spec.task],
         workdir: Some(workspace_path),
       }
   }

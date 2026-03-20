@@ -510,7 +510,7 @@ async fn recover_open_pr_tracking_with(
               pr_url: pr.url,
             })
           None => {
-            let (review, sha, ci_failed, _) = snapshot(pr.pr_number)
+            let (review, sha, ci_failed, review_bodies) = snapshot(pr.pr_number)
             state.poller.track_recovered(
               pr.pr_number,
               agent.agent_id,
@@ -522,6 +522,7 @@ async fn recover_open_pr_tracking_with(
                 None => recovered_at
               },
               review,
+              review_bodies,
               sha,
               ci_failed,
             )
@@ -749,6 +750,7 @@ test "recover_open_pr_tracking_with seeds current review snapshot" {
           tracked.last_review_state,
           @poller.ReviewState::ChangesRequested,
         )
+        assert_eq(tracked.last_review_bodies, "Please add tests")
         assert_eq(tracked.last_sha, "sha-review-1")
         assert_false(tracked.notified_parent)
         assert_true(tracked.last_ci_failed)
@@ -818,6 +820,7 @@ test "recover_open_pr_tracking_with prefers persisted poller state" {
           pr_url: "https://example.test/pr/stale",
           first_seen: 55L,
           last_review_state: @poller.ReviewState::ChangesRequested,
+          last_review_bodies: "Persisted review comment",
           last_sha: "sha-persisted",
           notified_parent: true,
           last_ci_failed: true,
@@ -839,6 +842,7 @@ test "recover_open_pr_tracking_with prefers persisted poller state" {
           tracked.last_review_state,
           @poller.ReviewState::ChangesRequested,
         )
+        assert_eq(tracked.last_review_bodies, "Persisted review comment")
         assert_eq(tracked.last_sha, "sha-persisted")
         assert_true(tracked.notified_parent)
         assert_true(tracked.last_ci_failed)

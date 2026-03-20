@@ -1260,14 +1260,12 @@ pub async fn dispatch(
             workspace: register_args.workspace,
             branch: register_args.branch,
           }
-          match reg.insert(agent) {
-            Ok(_) =>
-              @types.Response::ok_values({
-                "status": @types.wire_string("registered"),
-                "agent_id": @types.wire_string(register_args.agent_id),
-              })
-            Err(e) => @types.Response::Err(e.message())
-          }
+          let refreshed = reg.upsert(agent)
+          @types.Response::ok_values({
+            "status": @types.wire_string("registered"),
+            "agent_id": @types.wire_string(register_args.agent_id),
+            "refreshed": @types.wire_bool(refreshed),
+          })
         }
         None =>
           @types.Response::ok_values({

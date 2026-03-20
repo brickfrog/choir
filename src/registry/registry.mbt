@@ -31,6 +31,18 @@ pub fn AgentRegistry::insert(
 }
 
 ///|
+/// Register or refresh an agent in place, marking it alive.
+pub fn AgentRegistry::upsert(
+  self : AgentRegistry,
+  agent : @types.Agent,
+) -> Bool {
+  let existed = self.agents.contains(agent.agent_id)
+  self.agents.set(agent.agent_id, agent)
+  self.alive.set(agent.agent_id, true)
+  existed
+}
+
+///|
 /// Look up an agent by ID.
 pub fn AgentRegistry::get(
   self : AgentRegistry,

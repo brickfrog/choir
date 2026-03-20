@@ -81,6 +81,8 @@ fn tracked_pr_json(tracked : TrackedPR) -> String {
   tracked.first_seen.to_string() +
   ",\"last_review_state\":\"" +
   review_state_name(tracked.last_review_state) +
+  "\",\"last_review_bodies\":\"" +
+  escape_json_string(tracked.last_review_bodies) +
   "\",\"last_sha\":\"" +
   escape_json_string(tracked.last_sha) +
   "\",\"notified_parent\":" +
@@ -146,6 +148,10 @@ fn parse_tracked_pr(
       }
     None => return None
   }
+  let last_review_bodies = match json_text_value(fields, "last_review_bodies") {
+    Some(value) => value
+    None => return None
+  }
   let last_sha = match json_text_value(fields, "last_sha") {
     Some(value) => value
     None => return None
@@ -174,6 +180,7 @@ fn parse_tracked_pr(
     pr_url,
     first_seen,
     last_review_state,
+    last_review_bodies,
     last_sha,
     notified_parent,
     last_ci_failed,
@@ -203,6 +210,7 @@ pub fn PollerState::track(
     pr_url,
     first_seen: now,
     last_review_state: None_,
+    last_review_bodies: "",
     last_sha: "",
     notified_parent: false,
     last_ci_failed: false,
@@ -229,6 +237,7 @@ pub fn PollerState::track_recovered(
   pr_url : String,
   first_seen : Int64,
   review : ReviewState,
+  review_bodies : String,
   sha : String,
   ci_failed : Bool,
 ) -> Unit {
@@ -240,6 +249,7 @@ pub fn PollerState::track_recovered(
     pr_url,
     first_seen,
     last_review_state: review,
+    last_review_bodies: review_bodies,
     last_sha: sha,
     notified_parent: recovered_notified_parent(review),
     last_ci_failed: ci_failed,
@@ -309,6 +319,7 @@ pub fn PollerState::get(self : PollerState, pr_number : Int) -> TrackedPR? {
 fn next_notified_parent(
   tracked : TrackedPR,
   review : ReviewState,
+  review_bodies : String,
   sha : String,
 ) -> Bool {
   let mut notified_parent = tracked.notified_parent
@@ -318,6 +329,11 @@ fn next_notified_parent(
       Approved => notified_parent = true
       None_ => notified_parent = false
     }
+  }
+  if review != Approved &&
+    review_bodies != "" &&
+    review_bodies != tracked.last_review_bodies {
+    notified_parent = false
   }
   if tracked.last_review_state == ChangesRequested &&
     sha != "" &&
@@ -374,11 +390,14 @@ pub async fn PollerState::tick_with(
     for event in events {
       on_event(event, tracked.agent_id)
     }
-    let notified_parent = next_notified_parent(tracked, review, sha)
+    let notified_parent = next_notified_parent(
+      tracked, review, review_bodies, sha,
+    )
     let updated = if sha == "" {
       {
         ..tracked,
         last_review_state: review,
+        last_review_bodies: review_bodies,
         notified_parent,
         last_ci_failed: ci_failed,
       }
@@ -386,6 +405,7 @@ pub async fn PollerState::tick_with(
       {
         ..tracked,
         last_review_state: review,
+        last_review_bodies: review_bodies,
         last_sha: sha,
         notified_parent,
         last_ci_failed: ci_failed,

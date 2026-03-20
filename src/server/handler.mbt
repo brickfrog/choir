@@ -101,7 +101,8 @@ pub fn ServerState::register_agent(
   self : ServerState,
   agent : @types.Agent,
 ) -> Result[Unit, @types.ExoError] {
-  self.registry.insert(agent)
+  ignore(self.registry.upsert(agent))
+  Ok(())
 }
 
 ///|

@@ -899,8 +899,12 @@ fn leaf_tool_request_args(
       if not(flags.contains("branch")) && positionals.length() > 0 {
         flags.set("branch", positionals[0])
       }
-      if not(flags.contains("parent_branch")) && positionals.length() > 1 {
-        flags.set("parent_branch", positionals[1])
+      if not(flags.contains("parent_branch")) {
+        if positionals.length() > 2 {
+          flags.set("parent_branch", positionals[2])
+        } else if positionals.length() > 1 {
+          flags.set("parent_branch", positionals[1])
+        }
       }
       Ok(flags)
     }
@@ -989,6 +993,24 @@ fn leaf_tool_request_args(
 }
 
 ///|
+fn leaf_tool_usage(tool : String) -> String {
+  match tool {
+    "file_pr" =>
+      "usage: file_pr [--branch <branch>] [--parent-branch <parent_branch>]"
+    "notify_parent" =>
+      "usage: notify_parent [--status <success|failure|info>] <message>"
+    "shutdown" => "usage: shutdown [--caller-id <caller_id>]"
+    "task_list" => "usage: task_list"
+    "task_get" => "usage: task_get <id>"
+    "task_create" =>
+      "usage: task_create <id> <title...> [--status <status>] [--assignee <assignee>] [--notes <notes>]"
+    "task_update" =>
+      "usage: task_update <id> [--status <status>] [--assignee <assignee>] [--notes <notes>]"
+    _ => "usage: choir leaf-tool <tool> [args...]"
+  }
+}
+
+///|
 fn leaf_tool_response_json(resp : @types.Response) -> String {
   @transport.format_response(resp) + "\n"
 }
@@ -1065,8 +1087,16 @@ fn leaf_tool_run() -> Unit {
     return
   }
   let tool = args[2]
-  let req_args = match
-    leaf_tool_request_args(tool, parse_leaf_cli_args(args_tail(args, 3))) {
+  let cli_args = parse_leaf_cli_args(args_tail(args, 3))
+  if cli_args.flags.contains("help") {
+    leaf_tool_emit(
+      @types.Response::ok_values({
+        "usage": @types.wire_string(leaf_tool_usage(tool)),
+      }),
+    )
+    return
+  }
+  let req_args = match leaf_tool_request_args(tool, cli_args) {
     Ok(parsed) => parsed
     Err(err) => {
       leaf_tool_emit(@types.Response::Err(err))
@@ -1338,6 +1368,24 @@ test "leaf tool parser supports notify_parent positional message and status" {
 }
 
 ///|
+test "leaf tool parser accepts legacy file_pr positional triplet" {
+  let parsed = leaf_tool_request_args(
+    "file_pr",
+    parse_leaf_cli_args(["main.gemini-leaf", "main.gemini-leaf", "main"]),
+  ).unwrap()
+  assert_eq(parsed.get("branch"), Some("main.gemini-leaf"))
+  assert_eq(parsed.get("parent_branch"), Some("main"))
+}
+
+///|
+test "leaf tool usage includes file_pr args" {
+  assert_eq(
+    leaf_tool_usage("file_pr"),
+    "usage: file_pr [--branch <branch>] [--parent-branch <parent_branch>]",
+  )
+}
+
+///|
 test "leaf tool parser supports task_create positionals" {
   let parsed = leaf_tool_request_args(
     "task_create",
@@ -1360,6 +1408,21 @@ test "trusted_folders_json preserves existing paths and adds workspace" {
 ///|
 fn smoke_keep_temp(args : Array[String]) -> Bool {
   args.contains("--keep-temp")
+}
+
+///|
+fn init_no_attach(args : Array[String]) -> Bool {
+  args.contains("--no-attach")
+}
+
+///|
+fn smoke_review_enabled(args : Array[String]) -> Bool {
+  args.contains("--review")
+}
+
+///|
+fn smoke_leafs_enabled(args : Array[String]) -> Bool {
+  args.contains("--leafs")
 }
 
 ///|
@@ -1455,15 +1518,270 @@ fn smoke_script() -> String {
 }
 
 ///|
+fn smoke_leaf_script() -> String {
+  (
+    #|set -eu
+    #|BIN="$1"
+    #|KEEP_TEMP="$2"
+    #|REPO="$3"
+    #|ROOT="$(mktemp -d "${TMPDIR:-/tmp}/choir-leaf-smoke-XXXXXX")"
+    #|SESSION="choir-leaf-smoke-$$"
+    #|ROOT_BRANCH="live-smoke/leaf-root-$$"
+    #|MOON_SLUG="moon-leaf-smoke-$$"
+    #|GEMINI_SLUG="gemini-leaf-smoke-$$"
+    #|MOON_BRANCH="main.$MOON_SLUG"
+    #|GEMINI_BRANCH="main.$GEMINI_SLUG"
+    #|MOON_PR=""
+    #|GEMINI_PR=""
+    #|cleanup() {
+    #|  status=$?
+    #|  if [ -n "$MOON_PR" ]; then
+    #|    gh pr close "$MOON_PR" --delete-branch >/dev/null 2>&1 || true
+    #|  fi
+    #|  if [ -n "$GEMINI_PR" ]; then
+    #|    gh pr close "$GEMINI_PR" --delete-branch >/dev/null 2>&1 || true
+    #|  fi
+    #|  tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" worktree remove --force "$ROOT/repo/.choir/worktrees/$MOON_SLUG" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" worktree remove --force "$ROOT/repo/.choir/worktrees/$GEMINI_SLUG" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" worktree remove --force "$ROOT/repo" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" branch -D "$MOON_BRANCH" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" branch -D "$GEMINI_BRANCH" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" branch -D "$ROOT_BRANCH" >/dev/null 2>&1 || true
+    #|  if [ "$KEEP_TEMP" = "1" ] || [ "$status" -ne 0 ]; then
+    #|    echo "leaf smoke artifacts: $ROOT"
+    #|  else
+    #|    rm -rf "$ROOT"
+    #|  fi
+    #|}
+    #|trap cleanup EXIT INT TERM
+    #|for cmd in timeout gh tmux gemini moon; do
+    #|  command -v "$cmd" >/dev/null 2>&1 || {
+    #|    echo "error: required command not found: $cmd"
+    #|    exit 1
+    #|  }
+    #|done
+    #|git -C "$REPO" rev-parse --verify main >/dev/null 2>&1
+    #|git -C "$REPO" worktree add -b "$ROOT_BRANCH" "$ROOT/repo" main >/dev/null
+    #|mkdir -p "$ROOT/repo/.choir"
+    #|cat > "$ROOT/repo/.choir/config.toml" <<EOF
+    #|default_role = "tl"
+    #|project_dir = "."
+    #|listen_uds = ".choir/server.sock"
+    #|tmux_session = "$SESSION"
+    #|EOF
+    #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
+    #|spawn_leaf() {
+    #|  tool="$1"
+    #|  slug="$2"
+    #|  req="$ROOT/$slug.req.jsonl"
+    #|  cat > "$req" <<EOF
+    #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"$tool","arguments":{"caller_id":"root-smoke","slug":"$slug","parent_branch":"main","task":"Make a tiny doc-only change to CLAUDE.md, run moon fmt and moon test --target native, commit it, then use file_pr and notify_parent with the returned PR URL. Do not use raw gh commands.","read_first":"AGENTS.md\nCLAUDE.md","done_criteria":"A PR is filed through file_pr and the parent has been notified."}}}
+    #|EOF
+    #|  (cd "$ROOT/repo" && cat "$req" | timeout 120 "$BIN" mcp-stdio --name root-smoke >"$ROOT/$slug.out" 2>"$ROOT/$slug.err")
+    #|}
+    #|wait_for_pr() {
+    #|  branch="$1"
+    #|  out="$2"
+    #|  i=0
+    #|  while [ "$i" -lt 60 ]; do
+    #|    result="$(cd "$ROOT/repo" && gh pr list --head "$branch" --state open --json number,url,state --template '{{range .}}{{.number}} {{.url}} {{.state}}{{"\n"}}{{end}}')"
+    #|    if [ -n "$result" ]; then
+    #|      printf '%s\n' "$result" > "$out"
+    #|      return 0
+    #|    fi
+    #|    sleep 5
+    #|    i=$((i + 1))
+    #|  done
+    #|  echo "error: timed out waiting for PR on branch $branch"
+    #|  return 1
+    #|}
+    #|wait_for_notify() {
+    #|  agent="$1"
+    #|  i=0
+    #|  while [ "$i" -lt 60 ]; do
+    #|    pane="$(tmux capture-pane -p -S -1000 -t "$SESSION:Server")"
+    #|    if printf '%s' "$pane" | grep -F "notify_parent" >/dev/null 2>&1 && \
+    #|       printf '%s' "$pane" | grep -F "\"caller_id\":\"$agent\"" >/dev/null 2>&1; then
+    #|      return 0
+    #|    fi
+    #|    sleep 5
+    #|    i=$((i + 1))
+    #|  done
+    #|  echo "error: timed out waiting for notify_parent from $agent"
+    #|  return 1
+    #|}
+    #|wait_for_poller_tracking() {
+    #|  agent="$1"
+    #|  i=0
+    #|  while [ "$i" -lt 60 ]; do
+    #|    if grep -F "\"agent_id\":\"$agent\"" "$ROOT/repo/.choir/poller_state.json" >/dev/null 2>&1; then
+    #|      return 0
+    #|    fi
+    #|    sleep 5
+    #|    i=$((i + 1))
+    #|  done
+    #|  echo "error: timed out waiting for poller tracking for $agent"
+    #|  return 1
+    #|}
+    #|spawn_leaf "spawn_moon_pilot" "$MOON_SLUG"
+    #|wait_for_pr "$MOON_BRANCH" "$ROOT/moon.pr"
+    #|wait_for_notify "$MOON_BRANCH"
+    #|wait_for_poller_tracking "$MOON_BRANCH"
+    #|MOON_PR="$(cut -d' ' -f1 "$ROOT/moon.pr")"
+    #|spawn_leaf "spawn_gemini" "$GEMINI_SLUG"
+    #|wait_for_pr "$GEMINI_BRANCH" "$ROOT/gemini.pr"
+    #|wait_for_notify "$GEMINI_BRANCH"
+    #|wait_for_poller_tracking "$GEMINI_BRANCH"
+    #|GEMINI_PR="$(cut -d' ' -f1 "$ROOT/gemini.pr")"
+    #|echo "leaf smoke ok: moon pilot and gemini created PRs and notified parent"
+  ) +
+  "\n"
+}
+
+///|
+fn smoke_review_script() -> String {
+  (
+    #|set -eu
+    #|BIN="$1"
+    #|KEEP_TEMP="$2"
+    #|REPO="$3"
+    #|ROOT="$(mktemp -d "${TMPDIR:-/tmp}/choir-review-smoke-XXXXXX")"
+    #|SESSION="choir-review-smoke-$$"
+    #|ROOT_BRANCH="live-smoke/review-root-$$"
+    #|MOON_SLUG="moon-review-smoke-$$"
+    #|MOON_BRANCH="main.$MOON_SLUG"
+    #|MOON_PR=""
+    #|REVIEW_BODY="Smoke review comment: please tighten the doc wording."
+    #|cleanup() {
+    #|  status=$?
+    #|  if [ -n "$MOON_PR" ]; then
+    #|    gh pr close "$MOON_PR" --delete-branch >/dev/null 2>&1 || true
+    #|  fi
+    #|  tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" worktree remove --force "$ROOT/repo/.choir/worktrees/$MOON_SLUG" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" worktree remove --force "$ROOT/repo" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" branch -D "$MOON_BRANCH" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" branch -D "$ROOT_BRANCH" >/dev/null 2>&1 || true
+    #|  if [ "$KEEP_TEMP" = "1" ] || [ "$status" -ne 0 ]; then
+    #|    echo "review smoke artifacts: $ROOT"
+    #|  else
+    #|    rm -rf "$ROOT"
+    #|  fi
+    #|}
+    #|trap cleanup EXIT INT TERM
+    #|for cmd in timeout gh tmux moon; do
+    #|  command -v "$cmd" >/dev/null 2>&1 || {
+    #|    echo "error: required command not found: $cmd"
+    #|    exit 1
+    #|  }
+    #|done
+    #|git -C "$REPO" rev-parse --verify main >/dev/null 2>&1
+    #|git -C "$REPO" worktree add -b "$ROOT_BRANCH" "$ROOT/repo" main >/dev/null
+    #|mkdir -p "$ROOT/repo/.choir"
+    #|cat > "$ROOT/repo/.choir/config.toml" <<EOF
+    #|default_role = "tl"
+    #|project_dir = "."
+    #|listen_uds = ".choir/server.sock"
+    #|tmux_session = "$SESSION"
+    #|EOF
+    #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
+    #|cat > "$ROOT/moon.req.jsonl" <<EOF
+    #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"spawn_moon_pilot","arguments":{"caller_id":"root-smoke","slug":"$MOON_SLUG","parent_branch":"main","task":"Make a tiny doc-only change to CLAUDE.md, run moon fmt and moon test --target native, commit it, file a PR through file_pr, notify_parent with the returned PR URL, and remain available in the session for follow-up review feedback. Do not use raw gh commands.","read_first":"AGENTS.md\nCLAUDE.md","done_criteria":"A PR is filed through file_pr, the parent has been notified, and you remain available for review feedback."}}}
+    #|EOF
+    #|(cd "$ROOT/repo" && cat "$ROOT/moon.req.jsonl" | timeout 120 "$BIN" mcp-stdio --name root-smoke >"$ROOT/moon.out" 2>"$ROOT/moon.err")
+    #|wait_for_pr() {
+    #|  branch="$1"
+    #|  out="$2"
+    #|  i=0
+    #|  while [ "$i" -lt 60 ]; do
+    #|    result="$(cd "$ROOT/repo" && gh pr list --head "$branch" --state open --json number,url,state --template '{{range .}}{{.number}} {{.url}} {{.state}}{{"\n"}}{{end}}')"
+    #|    if [ -n "$result" ]; then
+    #|      printf '%s\n' "$result" > "$out"
+    #|      return 0
+    #|    fi
+    #|    sleep 5
+    #|    i=$((i + 1))
+    #|  done
+    #|  echo "error: timed out waiting for PR on branch $branch"
+    #|  return 1
+    #|}
+    #|wait_for_notify() {
+    #|  agent="$1"
+    #|  i=0
+    #|  while [ "$i" -lt 60 ]; do
+    #|    pane="$(tmux capture-pane -p -S -1000 -t "$SESSION:Server")"
+    #|    if printf '%s' "$pane" | grep -F "notify_parent" >/dev/null 2>&1 && \
+    #|       printf '%s' "$pane" | grep -F "\"caller_id\":\"$agent\"" >/dev/null 2>&1; then
+    #|      return 0
+    #|    fi
+    #|    sleep 5
+    #|    i=$((i + 1))
+    #|  done
+    #|  echo "error: timed out waiting for notify_parent from $agent"
+    #|  return 1
+    #|}
+    #|wait_for_poller_tracking() {
+    #|  agent="$1"
+    #|  i=0
+    #|  while [ "$i" -lt 60 ]; do
+    #|    if grep -F "\"agent_id\":\"$agent\"" "$ROOT/repo/.choir/poller_state.json" >/dev/null 2>&1; then
+    #|      return 0
+    #|    fi
+    #|    sleep 5
+    #|    i=$((i + 1))
+    #|  done
+    #|  echo "error: timed out waiting for poller tracking for $agent"
+    #|  return 1
+    #|}
+    #|wait_for_leaf_review() {
+    #|  pane_target="$1"
+    #|  review_body="$2"
+    #|  i=0
+    #|  while [ "$i" -lt 60 ]; do
+    #|    pane="$(tmux capture-pane -p -S -1000 -t "$pane_target")"
+    #|    if printf '%s' "$pane" | grep -F "$review_body" >/dev/null 2>&1; then
+    #|      return 0
+    #|    fi
+    #|    sleep 5
+    #|    i=$((i + 1))
+    #|  done
+    #|  echo "error: timed out waiting for review delivery in $pane_target"
+    #|  return 1
+    #|}
+    #|wait_for_pr "$MOON_BRANCH" "$ROOT/moon.pr"
+    #|wait_for_notify "$MOON_BRANCH"
+    #|wait_for_poller_tracking "$MOON_BRANCH"
+    #|MOON_PR="$(cut -d' ' -f1 "$ROOT/moon.pr")"
+    #|(cd "$ROOT/repo" && gh pr review "$MOON_PR" --comment -b "$REVIEW_BODY")
+    #|wait_for_leaf_review "$SESSION:$MOON_SLUG" "$REVIEW_BODY"
+    #|echo "review smoke ok: moon pilot received live review feedback"
+  ) +
+  "\n"
+}
+
+///|
 fn smoke_run() -> Unit raise {
   @async.with_event_loop(async fn(_root) {
     let args = @io.get_args()
     let keep_temp = if smoke_keep_temp(args) { "1" } else { "0" }
     let self_exe = smoke_self_exe(args)
-    @io.write_stdout("Running isolated runtime smoke...\n")
+    let repo_dir = @io.getcwd()
+    let script = if smoke_review_enabled(args) {
+      @io.write_stdout("Running isolated review smoke...\n")
+      smoke_review_script()
+    } else if smoke_leafs_enabled(args) {
+      @io.write_stdout("Running isolated leaf smoke...\n")
+      smoke_leaf_script()
+    } else {
+      @io.write_stdout("Running isolated runtime smoke...\n")
+      smoke_script()
+    }
     let exit_code = @exec.run({
       program: "sh",
-      args: ["-c", smoke_script(), "sh", self_exe, keep_temp],
+      args: ["-c", script, "sh", self_exe, keep_temp, repo_dir],
       workdir: None,
     }) catch {
       _ => 1
@@ -1476,6 +1794,24 @@ fn smoke_run() -> Unit raise {
 test "smoke keep temp flag parser" {
   assert_false(smoke_keep_temp(["choir", "smoke"]))
   assert_true(smoke_keep_temp(["choir", "smoke", "--keep-temp"]))
+}
+
+///|
+test "init no attach flag parser" {
+  assert_false(init_no_attach(["choir", "init"]))
+  assert_true(init_no_attach(["choir", "init", "--no-attach"]))
+}
+
+///|
+test "smoke review flag parser" {
+  assert_false(smoke_review_enabled(["choir", "smoke"]))
+  assert_true(smoke_review_enabled(["choir", "smoke", "--review"]))
+}
+
+///|
+test "smoke leaf flag parser" {
+  assert_false(smoke_leafs_enabled(["choir", "smoke"]))
+  assert_true(smoke_leafs_enabled(["choir", "smoke", "--leafs"]))
 }
 
 ///|
@@ -1499,6 +1835,32 @@ test "smoke script covers EOF and multi-client checks" {
   assert_true(script.contains("runtime-proof-task-2"))
   assert_true(script.contains("validation error:"))
   assert_true(script.contains("smoke ok: EOF and multi-client checks passed"))
+}
+
+///|
+test "smoke leaf script covers Moon Pilot and Gemini proof" {
+  let script = smoke_leaf_script()
+  assert_true(script.contains("spawn_moon_pilot"))
+  assert_true(script.contains("spawn_gemini"))
+  assert_true(script.contains("wait_for_pr"))
+  assert_true(script.contains("wait_for_notify"))
+  assert_true(script.contains("wait_for_poller_tracking"))
+  assert_true(
+    script.contains(
+      "leaf smoke ok: moon pilot and gemini created PRs and notified parent",
+    ),
+  )
+}
+
+///|
+test "smoke review script covers live review delivery proof" {
+  let script = smoke_review_script()
+  assert_true(script.contains("spawn_moon_pilot"))
+  assert_true(script.contains("gh pr review"))
+  assert_true(script.contains("wait_for_leaf_review"))
+  assert_true(
+    script.contains("review smoke ok: moon pilot received live review feedback"),
+  )
 }
 
 ///|
@@ -1650,6 +2012,7 @@ fn init_run() -> Unit raise {
   @async.with_event_loop(async fn(_root) {
     let args = @io.get_args()
     let recreate = args.contains("--recreate")
+    let no_attach = init_no_attach(args)
     let project_dir = @io.getcwd()
 
     // Rebuild binary before doing anything else so the new server uses fresh code
@@ -1747,16 +2110,20 @@ fn init_run() -> Unit raise {
       _ => 1
     }
     if session_alive == 0 {
-      @io.write_stdout("Attaching to existing session \{session}...\n")
-      ignore(
-        @exec.run({
-          program: "tmux",
-          args: ["attach-session", "-t", session],
-          workdir: None,
-        }) catch {
-          _ => 0
-        },
-      )
+      if no_attach {
+        @io.write_stdout("Session \{session} already exists.\n")
+      } else {
+        @io.write_stdout("Attaching to existing session \{session}...\n")
+        ignore(
+          @exec.run({
+            program: "tmux",
+            args: ["attach-session", "-t", session],
+            workdir: None,
+          }) catch {
+            _ => 0
+          },
+        )
+      }
       return
     }
 
@@ -1878,16 +2245,20 @@ fn init_run() -> Unit raise {
       @io.write_stdout("Server ready.\n")
     }
 
-    @io.write_stdout("Attaching to session \{session}...\n")
-    ignore(
-      @exec.run({
-        program: "tmux",
-        args: ["attach-session", "-t", session],
-        workdir: None,
-      }) catch {
-        _ => 0
-      },
-    )
+    if no_attach {
+      @io.write_stdout("Session \{session} ready.\n")
+    } else {
+      @io.write_stdout("Attaching to session \{session}...\n")
+      ignore(
+        @exec.run({
+          program: "tmux",
+          args: ["attach-session", "-t", session],
+          workdir: None,
+        }) catch {
+          _ => 0
+        },
+      )
+    }
   })
 }
 

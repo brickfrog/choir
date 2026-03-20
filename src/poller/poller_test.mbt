@@ -41,6 +41,7 @@ fn tracked_pr(
     pr_url: "https://example.test/pr/" + agent_id,
     first_seen,
     last_review_state: review_state,
+    last_review_bodies: "",
     last_sha: sha,
     notified_parent,
     last_ci_failed,
@@ -139,6 +140,7 @@ test "PollerState JSON roundtrip preserves tracked metadata" {
   assert_eq(parsed[0].pr_url, "https://example.test/pr/agent11")
   assert_eq(parsed[0].first_seen, 321L)
   assert_eq(parsed[0].last_review_state, ReviewState::ChangesRequested)
+  assert_eq(parsed[0].last_review_bodies, "")
   assert_eq(parsed[0].last_sha, "sha-roundtrip")
   assert_true(parsed[0].notified_parent)
   assert_true(parsed[0].last_ci_failed)
@@ -216,6 +218,33 @@ test "detect_events::changes_requested" {
     1000,
   )
   assert_eq(events, [PollEvent::ReviewReceived(1, "")])
+}
+
+///|
+test "detect_events::comment_only_review" {
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::None_,
+    "sha1",
+    false,
+    false,
+  )
+  let events = detect_events(
+    tracked,
+    ReviewState::None_,
+    "sha1",
+    false,
+    "Looks good overall, but clarify the docs wording.",
+    110,
+    1000,
+  )
+  assert_eq(events, [
+    PollEvent::ReviewReceived(
+      1, "Looks good overall, but clarify the docs wording.",
+    ),
+  ])
 }
 
 ///|
@@ -386,6 +415,43 @@ test "PollerState::tick_with resets parent notification on new review request" {
     assert_eq(events, [PollEvent::ReviewReceived(9, "Please fix")])
     match state.get(9) {
       Some(tracked) => assert_false(tracked.notified_parent)
+      None => fail("tracked PR not found")
+    }
+  })
+}
+
+///|
+test "PollerState::tick_with tracks latest comment-only review bodies" {
+  @async.with_event_loop(_ => {
+    let state = PollerState::new()
+    state.track(
+      10, "agent10", "main.agent10", "main", "https://example.test/pr/10", 100,
+    )
+    let events = []
+    state.tick_with(
+      200,
+      900L,
+      fn(_pr_number) {
+        (
+          ReviewState::None_,
+          "sha10",
+          false,
+          "Please tighten the wording in CLAUDE.md",
+        )
+      },
+      fn(event, _agent_id) { events.push(event) },
+    )
+    assert_eq(events, [
+      PollEvent::ReviewReceived(10, "Please tighten the wording in CLAUDE.md"),
+    ])
+    match state.get(10) {
+      Some(tracked) => {
+        assert_eq(
+          tracked.last_review_bodies,
+          "Please tighten the wording in CLAUDE.md",
+        )
+        assert_false(tracked.notified_parent)
+      }
       None => fail("tracked PR not found")
     }
   })

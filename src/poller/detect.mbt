@@ -9,6 +9,8 @@ pub fn detect_events(
   timeout : Int64,
 ) -> Array[PollEvent] {
   let events = []
+  let has_new_review_bodies = review_bodies != "" &&
+    review_bodies != tracked.last_review_bodies
 
   // Review state changes
   if current_review != tracked.last_review_state {
@@ -16,8 +18,15 @@ pub fn detect_events(
       Approved => events.push(PollEvent::PRReady(tracked.pr_number))
       ChangesRequested =>
         events.push(PollEvent::ReviewReceived(tracked.pr_number, review_bodies))
-      None_ => ()
+      None_ =>
+        if has_new_review_bodies {
+          events.push(
+            PollEvent::ReviewReceived(tracked.pr_number, review_bodies),
+          )
+        }
     }
+  } else if current_review != Approved && has_new_review_bodies {
+    events.push(PollEvent::ReviewReceived(tracked.pr_number, review_bodies))
   }
 
   // Fixes pushed

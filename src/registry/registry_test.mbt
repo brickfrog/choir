@@ -37,6 +37,37 @@ test "registry duplicate insert fails" {
 }
 
 ///|
+test "registry upsert refreshes existing agent metadata" {
+  let reg = @registry.AgentRegistry::new()
+  let agent : @types.Agent = {
+    agent_id: "main.refresh",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("root"),
+    workspace: ".choir/worktrees/refresh-a",
+    branch: "main.refresh",
+    tmux_target: Some("choir:refresh-a"),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+  }
+  let refreshed_first = reg.upsert(agent)
+  assert_false(refreshed_first)
+  let refreshed_second = reg.upsert({
+    ..agent,
+    workspace: ".choir/worktrees/refresh-b",
+    tmux_target: Some("choir:refresh-b"),
+  })
+  assert_true(refreshed_second)
+  match reg.get("main.refresh") {
+    Ok(found) => {
+      assert_eq(found.workspace, ".choir/worktrees/refresh-b")
+      assert_eq(found.tmux_target, Some("choir:refresh-b"))
+    }
+    Err(_) => fail("expected refreshed agent")
+  }
+}
+
+///|
 test "registry get parent" {
   let reg = @registry.AgentRegistry::new()
   let parent : @types.Agent = {

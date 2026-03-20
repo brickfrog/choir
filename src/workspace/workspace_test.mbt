@@ -99,7 +99,7 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_gemini.workdir, Some("/path"))
 
   assert_eq(cmd_moon.program, "moon")
-  assert_eq(cmd_moon.args, ["pilot", "-p", "fix bugs"])
+  assert_eq(cmd_moon.args, ["pilot", "fix bugs"])
   assert_eq(cmd_moon.workdir, Some("/path"))
 }
 

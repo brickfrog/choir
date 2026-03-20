@@ -176,12 +176,23 @@ test "register_agent and list_agents" {
 }
 
 ///|
-test "register_agent duplicate returns Err" {
+test "register_agent duplicate refreshes existing agent" {
   let state = ServerState::new(@types.Config::default())
   let agent = build_agent("child-1", None)
   let _ = state.register_agent(agent)
-  let res = state.register_agent(agent)
-  assert_true(res is Err(_))
+  let res = state.register_agent({
+    ..agent,
+    workspace: ".choir/worktrees/child-1",
+    tmux_target: Some("choir:child-1"),
+  })
+  assert_true(res is Ok(_))
+  match state.registry.get("child-1") {
+    Ok(found) => {
+      assert_eq(found.workspace, ".choir/worktrees/child-1")
+      assert_eq(found.tmux_target, Some("choir:child-1"))
+    }
+    Err(_) => fail("expected refreshed agent")
+  }
 }
 
 ///|
@@ -305,6 +316,50 @@ test "plan_poll_event_delivery routes review comments to owning agent" {
     }
     _ => fail("expected owning agent Teams inbox delivery")
   }
+}
+
+///|
+test "process_poller_tick_with routes comment-only reviews to owning agent" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+    let child = {
+      ..build_agent("main.leaf-1", Some("parent-1")),
+      role: @types.Role::Dev,
+      branch: "main.leaf-1",
+    }
+    ignore(state.registry.insert(parent))
+    ignore(state.registry.insert(child))
+    state.poller.track(
+      61, "main.leaf-1", "main.leaf-1", "main", "https://example.test/pr/61", 100L,
+    )
+
+    let review_cmds : Array[@workspace.Command] = []
+    state.process_poller_tick_with(
+      200L,
+      900L,
+      fn(_pr_number) {
+        (
+          @poller.ReviewState::None_,
+          "sha-comment-1",
+          false,
+          "Please tighten the wording in CLAUDE.md",
+        )
+      },
+      runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
+    )
+    assert_eq(review_cmds.length(), 1)
+    assert_true(
+      review_cmds[0].args[4].contains(
+        "/.claude/teams/main.leaf-1/inboxes/default.json",
+      ),
+    )
+    assert_true(
+      review_cmds[0].args[3].contains(
+        "[REVIEW] PR #61 has review comments:\\nPlease tighten the wording in CLAUDE.md",
+      ),
+    )
+  })
 }
 
 ///|
@@ -476,6 +531,7 @@ test "process_poller_tick_with suppresses duplicate recovered review events" {
       "https://example.test/pr/52",
       100L,
       @poller.ReviewState::ChangesRequested,
+      "Please add tests",
       "sha-review-1",
       false,
     )
@@ -544,6 +600,7 @@ test "process_poller_tick_with suppresses duplicate recovered approval events" {
       "https://example.test/pr/53",
       100L,
       @poller.ReviewState::Approved,
+      "",
       "sha-review-2",
       false,
     )
@@ -581,6 +638,7 @@ test "process_poller_tick_with preserves timeout age after recovery" {
       "https://example.test/pr/54",
       100L,
       @poller.ReviewState::None_,
+      "",
       "",
       false,
     )

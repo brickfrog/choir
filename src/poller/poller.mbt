@@ -16,6 +16,7 @@ pub(all) struct TrackedPR {
   pr_url : String
   first_seen : Int64
   mut last_review_state : ReviewState
+  mut last_review_bodies : String
   mut last_sha : String
   mut notified_parent : Bool
   mut last_ci_failed : Bool
