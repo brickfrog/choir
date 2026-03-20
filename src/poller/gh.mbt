@@ -137,7 +137,7 @@ pub fn parse_gh_pr_view_output(
 }
 
 ///|
-async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
+pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
   let (read_end, write_end) = @pipe.pipe() catch {
     _ => return (None_, "", false, "")
   }

@@ -440,6 +440,111 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
 }
 
 ///|
+test "process_poller_tick_with suppresses duplicate recovered review events" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+    let child = {
+      ..build_agent("main.leaf-1", Some("parent-1")),
+      role: @types.Role::Dev,
+      branch: "main.leaf-1",
+    }
+    ignore(state.registry.insert(parent))
+    ignore(state.registry.insert(child))
+    state.poller.track_recovered(
+      52,
+      "main.leaf-1",
+      "main.leaf-1",
+      "main",
+      "https://example.test/pr/52",
+      100L,
+      @poller.ReviewState::ChangesRequested,
+      "sha-review-1",
+      false,
+    )
+
+    let duplicate_cmds : Array[@workspace.Command] = []
+    state.process_poller_tick_with(
+      200L,
+      900L,
+      fn(_pr_number) {
+        (
+          @poller.ReviewState::ChangesRequested,
+          "sha-review-1",
+          false,
+          "Please add tests",
+        )
+      },
+      runner=async fn(cmds) { record_runner_server(duplicate_cmds, cmds) },
+    )
+    assert_eq(duplicate_cmds.length(), 0)
+
+    let fixes_cmds : Array[@workspace.Command] = []
+    state.process_poller_tick_with(
+      201L,
+      900L,
+      fn(_pr_number) {
+        (
+          @poller.ReviewState::ChangesRequested,
+          "sha-review-2",
+          false,
+          "Please add tests",
+        )
+      },
+      runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
+    )
+    assert_eq(fixes_cmds.length(), 1)
+    assert_true(
+      fixes_cmds[0].args[4].contains(
+        "/.claude/teams/parent-1/inboxes/default.json",
+      ),
+    )
+    assert_true(
+      fixes_cmds[0].args[3].contains(
+        "[FIXES PUSHED] main.leaf-1 PR #52 has new commits after review",
+      ),
+    )
+  })
+}
+
+///|
+test "process_poller_tick_with suppresses duplicate recovered approval events" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+    let child = {
+      ..build_agent("main.leaf-1", Some("parent-1")),
+      role: @types.Role::Dev,
+      branch: "main.leaf-1",
+    }
+    ignore(state.registry.insert(parent))
+    ignore(state.registry.insert(child))
+    state.poller.track_recovered(
+      53,
+      "main.leaf-1",
+      "main.leaf-1",
+      "main",
+      "https://example.test/pr/53",
+      100L,
+      @poller.ReviewState::Approved,
+      "sha-review-2",
+      false,
+    )
+
+    let duplicate_cmds : Array[@workspace.Command] = []
+    state.process_poller_tick_with(
+      200L,
+      900L,
+      fn(_pr_number) {
+        (@poller.ReviewState::Approved, "sha-review-2", false, "")
+      },
+      runner=async fn(cmds) { record_runner_server(duplicate_cmds, cmds) },
+    )
+    assert_eq(duplicate_cmds.length(), 0)
+  })
+}
+
+///|
 test "ServerState::new initializes run_id and mutex registry" {
   let project_dir = "/tmp/choir-server-state"
   run_shell(

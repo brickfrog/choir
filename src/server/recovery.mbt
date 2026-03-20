@@ -354,6 +354,34 @@ async fn recover_local_agents(
 }
 
 ///|
+async fn recover_open_pr_tracking_with(
+  state : ServerState,
+  open_prs : Array[OpenPR],
+  now : Int64,
+  snapshot : async (Int) -> (@poller.ReviewState, String, Bool, String),
+) -> Unit {
+  for pr in open_prs {
+    match state.registry.get(pr.branch) {
+      Ok(agent) => {
+        let (review, sha, ci_failed, _) = snapshot(pr.pr_number)
+        state.poller.track_recovered(
+          pr.pr_number,
+          agent.agent_id,
+          pr.branch,
+          pr.base,
+          pr.url,
+          now,
+          review,
+          sha,
+          ci_failed,
+        )
+      }
+      Err(_) => ()
+    }
+  }
+}
+
+///|
 pub async fn recover_state(state : ServerState, session : String) -> Unit {
   let project_dir = state.config.project_dir
   let tmux_output = capture_stdout(
@@ -376,20 +404,12 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
     cwd=Some(project_dir),
   )
   let now = @poller.now_sec()
-  for pr in parse_open_prs(open_pr_output) {
-    match state.registry.get(pr.branch) {
-      Ok(agent) =>
-        state.poller.track(
-          pr.pr_number,
-          agent.agent_id,
-          pr.branch,
-          pr.base,
-          pr.url,
-          now,
-        )
-      Err(_) => ()
-    }
-  }
+  recover_open_pr_tracking_with(
+    state,
+    parse_open_prs(open_pr_output),
+    now,
+    @poller.gh_poll_pr,
+  )
 }
 
 ///|
@@ -507,4 +527,82 @@ test "recover_agent_from_local_config falls back and clears dead tmux targets" {
     None => fail("expected local config to recover done agent")
   }
   run_shell_recovery("rm -rf " + project_dir)
+}
+
+///|
+test "recover_open_pr_tracking_with seeds current review snapshot" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    ignore(
+      state.registry.insert({
+        agent_id: "main.leaf-a",
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Gemini,
+        state: @types.AgentState::Active,
+        parent: Some("main"),
+        tmux_target: Some("howdy:leaf-a"),
+        host: @types.Host::Local,
+        workspace: ".choir/worktrees/leaf-a",
+        branch: "main.leaf-a",
+      }),
+    )
+    recover_open_pr_tracking_with(
+      state,
+      [
+        {
+          pr_number: 12,
+          branch: "main.leaf-a",
+          base: "main",
+          url: "https://example.test/pr/12",
+        },
+      ],
+      123L,
+      fn(_pr_number) {
+        (
+          @poller.ReviewState::ChangesRequested,
+          "sha-review-1",
+          true,
+          "Please add tests",
+        )
+      },
+    )
+    match state.poller.get(12) {
+      Some(tracked) => {
+        assert_eq(tracked.agent_id, "main.leaf-a")
+        assert_eq(tracked.branch, "main.leaf-a")
+        assert_eq(tracked.parent_branch, "main")
+        assert_eq(tracked.pr_url, "https://example.test/pr/12")
+        assert_eq(tracked.first_seen, 123L)
+        assert_eq(
+          tracked.last_review_state,
+          @poller.ReviewState::ChangesRequested,
+        )
+        assert_eq(tracked.last_sha, "sha-review-1")
+        assert_false(tracked.notified_parent)
+        assert_true(tracked.last_ci_failed)
+      }
+      None => fail("expected recovered tracked PR")
+    }
+  })
+}
+
+///|
+test "recover_open_pr_tracking_with ignores unowned PR branches" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    recover_open_pr_tracking_with(
+      state,
+      [
+        {
+          pr_number: 77,
+          branch: "main.unknown",
+          base: "main",
+          url: "https://example.test/pr/77",
+        },
+      ],
+      123L,
+      fn(_pr_number) { (@poller.ReviewState::Approved, "sha", false, "") },
+    )
+    assert_eq(state.poller.get(77), None)
+  })
 }

@@ -34,6 +34,43 @@ pub fn PollerState::track(
 }
 
 ///|
+fn recovered_notified_parent(review : ReviewState) -> Bool {
+  match review {
+    Approved => true
+    ChangesRequested => false
+    None_ => false
+  }
+}
+
+///|
+pub fn PollerState::track_recovered(
+  self : PollerState,
+  pr_number : Int,
+  agent_id : String,
+  branch : String,
+  parent_branch : String,
+  pr_url : String,
+  first_seen : Int64,
+  review : ReviewState,
+  sha : String,
+  ci_failed : Bool,
+) -> Unit {
+  let pr = {
+    pr_number,
+    agent_id,
+    branch,
+    parent_branch,
+    pr_url,
+    first_seen,
+    last_review_state: review,
+    last_sha: sha,
+    notified_parent: recovered_notified_parent(review),
+    last_ci_failed: ci_failed,
+  }
+  self.tracked.set(pr_number, pr)
+}
+
+///|
 pub fn PollerState::untrack(self : PollerState, pr_number : Int) -> Unit {
   self.tracked.remove(pr_number)
 }
