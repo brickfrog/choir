@@ -943,117 +943,38 @@ fn escape_json_string(s : String) -> String {
 }
 
 ///|
-fn skip_json_ws(s : String, start : Int) -> Int {
-  let mut i = start
-  while i < s.length() &&
-        (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t') {
-    i = i + 1
-  }
-  i
-}
-
-///|
-fn parse_json_string_literal(s : String, start : Int) -> (String, Int)? {
-  if start >= s.length() || s[start] != '"' {
-    return None
-  }
-  let buf = StringBuilder::new()
-  let mut i = start + 1
-  while i < s.length() {
-    let c = Int::unsafe_to_char(s[i].to_int())
-    if c == '"' {
-      return Some((buf.to_string(), i + 1))
-    }
-    if c == '\\' {
-      i = i + 1
-      if i >= s.length() {
-        return None
-      }
-      let escaped = Int::unsafe_to_char(s[i].to_int())
-      match escaped {
-        '"' => buf.write_char('"')
-        '\\' => buf.write_char('\\')
-        'n' => buf.write_char('\n')
-        'r' => buf.write_char('\r')
-        't' => buf.write_char('\t')
-        other => buf.write_char(other)
-      }
-    } else {
-      buf.write_char(c)
-    }
-    i = i + 1
-  }
-  None
-}
-
-///|
-fn parse_string_map_json(content : String) -> Map[String, String]? {
-  let map : Map[String, String] = {}
-  let mut i = skip_json_ws(content, 0)
-  if i >= content.length() || content[i] != '{' {
-    return None
-  }
-  i = i + 1
-  for {
-    i = skip_json_ws(content, i)
-    if i >= content.length() {
-      return None
-    }
-    if content[i] == '}' {
-      return Some(map)
-    }
-    let (key, next_i) = match parse_json_string_literal(content, i) {
-      Some(pair) => pair
-      None => return None
-    }
-    i = skip_json_ws(content, next_i)
-    if i >= content.length() || content[i] != ':' {
-      return None
-    }
-    i = skip_json_ws(content, i + 1)
-    let (value, value_end) = match parse_json_string_literal(content, i) {
-      Some(pair) => pair
-      None => return None
-    }
-    map.set(key, value)
-    i = skip_json_ws(content, value_end)
-    if i >= content.length() {
-      return None
-    }
-    if content[i] == '}' {
-      return Some(map)
-    }
-    if content[i] != ',' {
-      return None
-    }
-    i = i + 1
-  }
-}
-
-///|
 fn parse_task_file(content : String) -> Result[TaskFile, String] {
-  let fields = match parse_string_map_json(content) {
-    Some(map) => map
-    None => return Err("invalid task json")
+  let fields = @jsonutil.parse_flat_json_value_object(content)
+  if fields.length() == 0 {
+    return Err("invalid task json")
   }
   let id = match fields.get("id") {
-    Some(v) => v
+    Some(@jsonutil.JsonValueText::String(v)) => v
+    Some(@jsonutil.JsonValueText::Raw(_)) => return Err("id must be a string")
     None => return Err("missing id")
   }
   let title = match fields.get("title") {
-    Some(v) => v
+    Some(@jsonutil.JsonValueText::String(v)) => v
+    Some(@jsonutil.JsonValueText::Raw(_)) =>
+      return Err("title must be a string")
     None => return Err("missing title")
   }
   let status = match fields.get("status") {
-    Some(v) => v
+    Some(@jsonutil.JsonValueText::String(v)) => v
+    Some(@jsonutil.JsonValueText::Raw(_)) =>
+      return Err("status must be a string")
     None => return Err("missing status")
   }
   let assignee = match fields.get("assignee") {
-    Some(v) => v
+    Some(@jsonutil.JsonValueText::String(v)) => v
+    Some(@jsonutil.JsonValueText::Raw(_)) =>
+      return Err("assignee must be a string")
     None => return Err("missing assignee")
   }
   let notes = match fields.get("notes") {
-    Some(v) => v
+    Some(@jsonutil.JsonValueText::String(v)) => v
+    Some(@jsonutil.JsonValueText::Raw(_)) =>
+      return Err("notes must be a string")
     None => return Err("missing notes")
   }
   Ok({ id, title, status, assignee, notes })

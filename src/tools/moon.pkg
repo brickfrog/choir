@@ -1,5 +1,6 @@
 import {
   "choir/src/types",
+  "choir/src/jsonutil",
   "choir/src/exec",
   "choir/src/workspace",
   "choir/src/registry",

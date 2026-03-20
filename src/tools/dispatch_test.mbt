@@ -249,6 +249,28 @@ test "dispatch task_update validates status" {
 }
 
 ///|
+test "dispatch task_get rejects invalid task json" {
+  @async.with_event_loop(_ => {
+    let project_dir = "/tmp/choir-dispatch-task-invalid"
+    run_shell(
+      "rm -rf /tmp/choir-dispatch-task-invalid && mkdir -p /tmp/choir-dispatch-task-invalid/.choir/tasks && " +
+      "printf '%s' '{\"id\":\"1\",\"title\":\"Broken\",\"status\":true,\"assignee\":\"alice\",\"notes\":\"one\"}' > /tmp/choir-dispatch-task-invalid/.choir/tasks/1.json",
+    )
+    let call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "task_get",
+      args: { "id": "1" },
+    }
+    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    match res {
+      Ok(_) => assert_true(false)
+      Err(e) => assert_true(e.contains("invalid task file"))
+    }
+    run_shell("rm -rf /tmp/choir-dispatch-task-invalid")
+  })
+}
+
+///|
 test "dispatch reply stores payload in reply kv path" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-reply"
