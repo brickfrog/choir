@@ -90,20 +90,22 @@ If Choir cannot do that loop cleanly, it is not done.
 
 ## Current Reality
 
-Choir has substantial pieces of the workflow, but it is not production-ready yet.
+Choir's local UDS workflow is now in the "usable and releaseable" state.
 
-Working or mostly working:
+Working and proven:
 - `choir init`, persistent server, MCP bridge, task/KV/mutex tools
 - typed internal domain/wire/request boundaries with parser-driven tool validation
-- worktree/tmux spawning for Claude, Gemini, Moon Pilot, and inline workers
+- worktree spawning for Claude, Gemini, Moon Pilot, and inline workers
 - canonical child identity and per-child config propagation
 - `file_pr`, `track_pr`, `merge_pr`, GitHub poller, and restart recovery
 - review event routing back into agent sessions
-- live `choir smoke --leafs`, `choir smoke --review`, and `choir smoke --e2e-live` coverage for leaf PR filing, review delivery, and merge
+- live `choir smoke`, `choir smoke --leafs`, `choir smoke --review`, and `choir smoke --e2e-live`
+- restart-mid-review continuity coverage
+- local terminal backends: `tmux` and `zellij`
+- GitHub release workflow and Nix development shell
 
-Still needs hard proof or more hardening:
+Still less proven or still rough:
 - live TCP/remote smoke coverage
-- live restart-mid-review continuity smoke
 - stronger guarantees around child completion/reporting discipline
 - continued hardening of multi-client bridge/server behavior under real concurrent use
 - richer parity with ExoMonad session/routing semantics
