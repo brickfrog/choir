@@ -47,6 +47,7 @@ test "dispatch fork_wave returns agent_ids with mock" {
         assert_eq(m.get("status"), Some("spawned"))
         assert_eq(m.get("count"), Some("2"))
         assert_eq(m.get("agent_ids"), Some("main.wave-0,main.wave-1"))
+        assert_eq(m.get_value("count"), Some(@types.WireValue::Raw("2")))
       }
       Err(e) => {
         println(e)
@@ -82,6 +83,7 @@ test "handle_request fork_wave accepts raw primitive request args" {
       Ok(m) => {
         assert_eq(m.get("status"), Some("spawned"))
         assert_eq(m.get("count"), Some("2"))
+        assert_eq(m.get_value("count"), Some(@types.WireValue::Raw("2")))
       }
       Err(e) => {
         println(e)

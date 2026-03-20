@@ -162,11 +162,19 @@ test "dispatch returns correct stub for each tool name" {
           } else if name == "mutex_status" {
             assert_eq(map.get("holder"), Some(""))
             assert_eq(map.get("queue_length"), Some("0"))
+            assert_eq(
+              map.get_value("queue_length"),
+              Some(@types.WireValue::Raw("0")),
+            )
           } else if name == "track_pr" {
             assert_eq(map.get("status"), Some("tracked"))
             assert_eq(map.get("branch"), Some("agent-1"))
             assert_eq(map.get("parent_branch"), Some("main"))
             assert_eq(map.get("pr_url"), Some(""))
+            assert_eq(
+              map.get_value("status"),
+              Some(@types.WireValue::String("tracked")),
+            )
           } else {
             assert_eq(map.get("status"), Some(expected_status))
           }

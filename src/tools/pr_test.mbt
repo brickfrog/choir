@@ -228,6 +228,10 @@ test "dispatch track_pr stores tracked PR" {
         assert_eq(m.get("branch"), Some("agent-22"))
         assert_eq(m.get("parent_branch"), Some("main"))
         assert_eq(m.get("pr_url"), Some(""))
+        assert_eq(
+          m.get_value("status"),
+          Some(@types.WireValue::String("tracked")),
+        )
       }
       Err(_) => assert_true(false)
     }

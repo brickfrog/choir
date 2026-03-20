@@ -1349,10 +1349,10 @@ pub async fn dispatch(
       }
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::ok({
-            "status": "spawned",
-            "count": fork_wave_args.count.to_string(),
-            "agent_ids": agent_ids.to_string(),
+          @types.Response::ok_values({
+            "status": @types.wire_string("spawned"),
+            "count": @types.wire_int(fork_wave_args.count),
+            "agent_ids": @types.wire_string(agent_ids.to_string()),
           })
         Err(e) => @types.Response::Err(e)
       }
@@ -1482,11 +1482,11 @@ pub async fn dispatch(
             track_pr_args.pr_url,
             @poller.now_sec(),
           )
-          @types.Response::ok({
-            "status": "tracked",
-            "branch": track_pr_args.branch,
-            "parent_branch": track_pr_args.parent_branch,
-            "pr_url": track_pr_args.pr_url,
+          @types.Response::ok_values({
+            "status": @types.wire_string("tracked"),
+            "branch": @types.wire_string(track_pr_args.branch),
+            "parent_branch": @types.wire_string(track_pr_args.parent_branch),
+            "pr_url": @types.wire_string(track_pr_args.pr_url),
           })
         }
         None => @types.Response::Err("poller unavailable")
