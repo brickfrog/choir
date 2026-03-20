@@ -104,6 +104,10 @@ Working or mostly working:
 
 Still needs hard proof or more hardening:
 - repeated end-to-end runs of the full child PR review loop with real GitHub/Copilot feedback
+- a merged doc-only smoke PR is acceptable as evidence when validating the live end-to-end spawn → PR workflow
+- stronger guarantees around child completion/reporting discipline
+- continued hardening of multi-client bridge/server behavior under real concurrent use
+- richer parity with ExoMonad session/routing semantics
 - stronger guarantees around child completion/reporting discipline
 - continued hardening of multi-client bridge/server behavior under real concurrent use
 - richer parity with ExoMonad session/routing semantics
