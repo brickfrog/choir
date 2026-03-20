@@ -102,7 +102,7 @@ Working or mostly working:
 - `file_pr`, `track_pr`, `merge_pr`, GitHub poller, and restart recovery
 - review event routing back into agent sessions
 
-Still needs hard proof or more hardening:
+Still needs validation and hardening:
 - repeated end-to-end runs of the full child PR review loop with real GitHub/Copilot feedback
 - stronger guarantees around child completion/reporting discipline
 - continued hardening of multi-client bridge/server behavior under real concurrent use
