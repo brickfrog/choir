@@ -90,6 +90,7 @@ If Choir cannot do that loop cleanly, it is not done.
 - Error handling via `Result[T, E]` — no panics except for genuine invariant violations.
 - Log before and after subprocess calls (`git`, `gh`, `tmux`). Log exit codes. Log stderr on failure.
 - Do not call the system production-ready unless the full north-star loop above has been proven end to end against real tools.
+- All changes should be testable and demonstrate value toward the north-star workflow.
 
 ## Current Reality
 
