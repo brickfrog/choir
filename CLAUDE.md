@@ -108,6 +108,7 @@ Still needs hard proof or more hardening:
 - continued hardening of multi-client bridge/server behavior under real concurrent use
 - richer parity with ExoMonad session/routing semantics
 - a merged doc-only smoke PR is acceptable as evidence when validating the live end-to-end spawn → PR workflow
+- documentation is continuously updated to reflect the project's progress.
 
 ## Implementation Phasing
 
