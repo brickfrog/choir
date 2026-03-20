@@ -23,6 +23,16 @@ test "parse_flat_json_object empty object" {
 }
 
 ///|
+test "parse_flat_json_object preserves primitive literals as strings" {
+  let m = parse_flat_json_object(
+    "{\"count\":3,\"enabled\":true,\"empty\":null}",
+  )
+  assert_eq(m.get("count"), Some("3"))
+  assert_eq(m.get("enabled"), Some("true"))
+  assert_eq(m.get("empty"), Some("null"))
+}
+
+///|
 test "parse valid jsonrpc request with tools/call" {
   let line = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"text\":\"hello\"}}}"
   match parse_jsonrpc_request(line) {
@@ -31,11 +41,19 @@ test "parse valid jsonrpc request with tools/call" {
       assert_eq(req.id, Some(Number(1)))
       assert_eq(req.req_method, "tools/call")
       match req.params {
-        Some(params) => {
-          assert_eq(params.get("name"), Some("echo"))
-          assert_eq(params.get("arguments"), Some("{\"text\":\"hello\"}"))
-        }
+        Some(@mcp.JsonValue::Object(params)) =>
+          match (params.get("name"), params.get("arguments")) {
+            (
+              Some(@mcp.JsonValue::String(name)),
+              Some(@mcp.JsonValue::Raw(arguments)),
+            ) => {
+              assert_eq(name, "echo")
+              assert_eq(arguments, "{\"text\":\"hello\"}")
+            }
+            _ => fail("missing params")
+          }
         None => fail("missing params")
+        Some(_) => fail("expected object params")
       }
     }
     Err(e) => fail("parse failed: " + e.message)
@@ -57,6 +75,32 @@ test "parse request with string id" {
   match parse_jsonrpc_request(line) {
     Ok(rpc) => assert_eq(rpc.id, Some(String("abc123")))
     Err(e) => fail("should have succeeded, got: \{e.message}")
+  }
+}
+
+///|
+test "translate numeric and boolean MCP arguments into internal string args" {
+  let rpc : @mcp.JsonRpcRequest = {
+    jsonrpc: "2.0",
+    id: Some(Number(12)),
+    req_method: method_tools_call,
+    params: Some(
+      @mcp.JsonValue::Object({
+        "name": @mcp.JsonValue::String("fork_wave"),
+        "arguments": @mcp.JsonValue::Raw(
+          "{\"task\":\"build feature\",\"count\":3,\"fork_session\":true}",
+        ),
+      }),
+    ),
+  }
+  let result = @mcp.to_internal_request(rpc, @types.Role::TL)
+  match result {
+    Ok(req) => {
+      assert_eq(req.args.get("task"), Some("build feature"))
+      assert_eq(req.args.get("count"), Some("3"))
+      assert_eq(req.args.get("fork_session"), Some("true"))
+    }
+    Err(e) => fail("expected Ok, got: " + e.message)
   }
 }
 
@@ -117,7 +161,9 @@ test "response_to_bytes produces valid result" {
   let resp : JsonRpcResponse = {
     jsonrpc: "2.0",
     id: Number(1),
-    result: Some({ "status": "ok" }),
+    result: Some(
+      @mcp.JsonValue::Object({ "status": @mcp.JsonValue::String("ok") }),
+    ),
     error: None,
   }
   let bytes = response_to_bytes(resp)

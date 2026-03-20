@@ -11,6 +11,9 @@ pub(all) enum ReviewState {
 pub(all) struct TrackedPR {
   pr_number : Int
   agent_id : String
+  branch : String
+  parent_branch : String
+  pr_url : String
   first_seen : Int64
   mut last_review_state : ReviewState
   mut last_sha : String

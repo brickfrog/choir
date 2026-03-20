@@ -307,7 +307,7 @@ for arguments, and a handler function.
 | `spawn_worker` | root, tl | Spawn ephemeral pane worker (any agent type, no branch, no PR, research/in-place) |
 | `file_pr` | tl, dev | Create or update PR for current branch |
 | `merge_pr` | root, tl | Merge a child's PR (auto-acquires `branch:{parent}` mutex) |
-| `track_pr` | root, tl | Register PR with the GitHub poller for review tracking |
+| `track_pr` | root, tl | Register PR with the GitHub poller for review tracking, including owning branch/base metadata when known |
 | `notify_parent` | tl, dev, worker | Send message to parent agent |
 | `send_message` | all | Send message to any agent by ID |
 | `reply` | all | Store reply to a pending interaction request |

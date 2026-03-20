@@ -17,6 +17,19 @@ test "nested branch name" {
 }
 
 ///|
+test "parent branch extracts from nested branch" {
+  assert_eq(
+    @workspace.parent_branch("main.subtl.leaf-task"),
+    Some("main.subtl"),
+  )
+}
+
+///|
+test "parent branch returns none for root branch" {
+  assert_eq(@workspace.parent_branch("main"), None)
+}
+
+///|
 test "canonical agent id uses parent branch and slug" {
   let spec = @types.SpawnSpec::{
     slug: "leaf-task",

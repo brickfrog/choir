@@ -62,7 +62,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "track_pr",
-      description: "Track a PR in the background poller",
+      description: "Track a PR in the background poller with owning branch/base metadata",
       allowed_roles: [@types.Role::TL, @types.Role::Dev],
     },
     {

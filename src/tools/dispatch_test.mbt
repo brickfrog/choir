@@ -639,7 +639,9 @@ test "dispatch shutdown allowed for TL role" {
 test "dispatch shutdown blocks during critical review phase" {
   @async.with_event_loop(_ => {
     let poller = @poller.PollerState::new()
-    poller.track(42, "leaf-2", 100L)
+    poller.track(
+      42, "leaf-2", "main.leaf-2", "main", "https://example.test/pr/42", 100L,
+    )
     poller.tick_with(
       200L,
       900L,

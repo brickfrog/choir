@@ -1,4 +1,5 @@
 import {
+  "choir/src/jsonutil",
   "choir/src/types",
 }
 

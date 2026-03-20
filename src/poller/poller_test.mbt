@@ -1,11 +1,40 @@
 ///|
+fn tracked_pr(
+  pr_number : Int,
+  agent_id : String,
+  first_seen : Int64,
+  review_state : ReviewState,
+  sha : String,
+  notified_parent : Bool,
+  last_ci_failed : Bool,
+) -> TrackedPR {
+  {
+    pr_number,
+    agent_id,
+    branch: "main." + agent_id,
+    parent_branch: "main",
+    pr_url: "https://example.test/pr/" + agent_id,
+    first_seen,
+    last_review_state: review_state,
+    last_sha: sha,
+    notified_parent,
+    last_ci_failed,
+  }
+}
+
+///|
 test "PollerState::track and get" {
   let state = PollerState::new()
-  state.track(1, "agent1", 100)
+  state.track(
+    1, "agent1", "main.agent1", "main", "https://example.test/pr/1", 100,
+  )
   match state.get(1) {
     Some(pr) => {
       assert_eq(pr.pr_number, 1)
       assert_eq(pr.agent_id, "agent1")
+      assert_eq(pr.branch, "main.agent1")
+      assert_eq(pr.parent_branch, "main")
+      assert_eq(pr.pr_url, "https://example.test/pr/1")
       assert_eq(pr.first_seen, 100)
     }
     None => fail("PR not found")
@@ -15,7 +44,9 @@ test "PollerState::track and get" {
 ///|
 test "PollerState::untrack" {
   let state = PollerState::new()
-  state.track(1, "agent1", 100)
+  state.track(
+    1, "agent1", "main.agent1", "main", "https://example.test/pr/1", 100,
+  )
   state.untrack(1)
   match state.get(1) {
     Some(_) => fail("PR still exists")
@@ -26,15 +57,18 @@ test "PollerState::untrack" {
 ///|
 test "PollerState::in_critical_phase detects pending changes requested" {
   let state = PollerState::new()
-  state.tracked.set(9, {
-    pr_number: 9,
-    agent_id: "agent9",
-    first_seen: 100L,
-    last_review_state: ReviewState::ChangesRequested,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: false,
-  })
+  state.tracked.set(
+    9,
+    tracked_pr(
+      9,
+      "agent9",
+      100L,
+      ReviewState::ChangesRequested,
+      "sha1",
+      false,
+      false,
+    ),
+  )
   assert_true(state.in_critical_phase("agent9"))
   assert_false(state.in_critical_phase("other-agent"))
 }
@@ -42,29 +76,32 @@ test "PollerState::in_critical_phase detects pending changes requested" {
 ///|
 test "PollerState::in_critical_phase ignores pushed fixes" {
   let state = PollerState::new()
-  state.tracked.set(10, {
-    pr_number: 10,
-    agent_id: "agent10",
-    first_seen: 100L,
-    last_review_state: ReviewState::ChangesRequested,
-    last_sha: "sha2",
-    notified_parent: true,
-    last_ci_failed: false,
-  })
+  state.tracked.set(
+    10,
+    tracked_pr(
+      10,
+      "agent10",
+      100L,
+      ReviewState::ChangesRequested,
+      "sha2",
+      true,
+      false,
+    ),
+  )
   assert_false(state.in_critical_phase("agent10"))
 }
 
 ///|
 test "detect_events::approval" {
-  let tracked : TrackedPR = {
-    pr_number: 1,
-    agent_id: "agent1",
-    first_seen: 100,
-    last_review_state: ReviewState::None_,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: false,
-  }
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::None_,
+    "sha1",
+    false,
+    false,
+  )
   let events = detect_events(
     tracked,
     ReviewState::Approved,
@@ -79,15 +116,15 @@ test "detect_events::approval" {
 
 ///|
 test "detect_events::changes_requested" {
-  let tracked : TrackedPR = {
-    pr_number: 1,
-    agent_id: "agent1",
-    first_seen: 100,
-    last_review_state: ReviewState::None_,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: false,
-  }
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::None_,
+    "sha1",
+    false,
+    false,
+  )
   let events = detect_events(
     tracked,
     ReviewState::ChangesRequested,
@@ -102,15 +139,15 @@ test "detect_events::changes_requested" {
 
 ///|
 test "detect_events::fixes_pushed" {
-  let tracked : TrackedPR = {
-    pr_number: 1,
-    agent_id: "agent1",
-    first_seen: 100,
-    last_review_state: ReviewState::ChangesRequested,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: false,
-  }
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::ChangesRequested,
+    "sha1",
+    false,
+    false,
+  )
   let events = detect_events(
     tracked,
     ReviewState::ChangesRequested,
@@ -125,15 +162,15 @@ test "detect_events::fixes_pushed" {
 
 ///|
 test "detect_events::timeout" {
-  let tracked : TrackedPR = {
-    pr_number: 1,
-    agent_id: "agent1",
-    first_seen: 100,
-    last_review_state: ReviewState::None_,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: false,
-  }
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::None_,
+    "sha1",
+    false,
+    false,
+  )
   let events = detect_events(
     tracked,
     ReviewState::None_,
@@ -148,15 +185,15 @@ test "detect_events::timeout" {
 
 ///|
 test "detect_events::no_change" {
-  let tracked : TrackedPR = {
-    pr_number: 1,
-    agent_id: "agent1",
-    first_seen: 100,
-    last_review_state: ReviewState::Approved,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: false,
-  }
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::Approved,
+    "sha1",
+    false,
+    false,
+  )
   let events = detect_events(
     tracked,
     ReviewState::Approved,
@@ -189,7 +226,9 @@ test "parse_gh_pr_view_output falls back on missing fields" {
 test "PollerState::tick_with updates tracked state and emits events" {
   @async.with_event_loop(_ => {
     let state = PollerState::new()
-    state.track(7, "agent7", 100)
+    state.track(
+      7, "agent7", "main.agent7", "main", "https://example.test/pr/7", 100,
+    )
     let events = []
     let agent_ids = []
     state.tick_with(
@@ -207,6 +246,7 @@ test "PollerState::tick_with updates tracked state and emits events" {
       Some(tracked) => {
         assert_eq(tracked.last_review_state, ReviewState::Approved)
         assert_eq(tracked.last_sha, "sha2")
+        assert_true(tracked.notified_parent)
         assert_false(tracked.last_ci_failed)
       }
       None => fail("tracked PR not found")
@@ -215,16 +255,72 @@ test "PollerState::tick_with updates tracked state and emits events" {
 }
 
 ///|
+test "PollerState::tick_with marks fixes pushed as parent-notified" {
+  @async.with_event_loop(_ => {
+    let state = PollerState::new()
+    state.tracked.set(
+      8,
+      tracked_pr(
+        8,
+        "agent8",
+        100L,
+        ReviewState::ChangesRequested,
+        "sha1",
+        false,
+        false,
+      ),
+    )
+    let events = []
+    state.tick_with(
+      200,
+      900L,
+      fn(_pr_number) { (ReviewState::ChangesRequested, "sha2", false, "") },
+      fn(event, _agent_id) { events.push(event) },
+    )
+    assert_eq(events, [PollEvent::FixesPushed(8)])
+    match state.get(8) {
+      Some(tracked) => assert_true(tracked.notified_parent)
+      None => fail("tracked PR not found")
+    }
+  })
+}
+
+///|
+test "PollerState::tick_with resets parent notification on new review request" {
+  @async.with_event_loop(_ => {
+    let state = PollerState::new()
+    state.tracked.set(
+      9,
+      tracked_pr(9, "agent9", 100L, ReviewState::Approved, "sha2", true, false),
+    )
+    let events = []
+    state.tick_with(
+      200,
+      900L,
+      fn(_pr_number) {
+        (ReviewState::ChangesRequested, "sha2", false, "Please fix")
+      },
+      fn(event, _agent_id) { events.push(event) },
+    )
+    assert_eq(events, [PollEvent::ReviewReceived(9, "Please fix")])
+    match state.get(9) {
+      Some(tracked) => assert_false(tracked.notified_parent)
+      None => fail("tracked PR not found")
+    }
+  })
+}
+
+///|
 test "detect_events::ci_failed fires once" {
-  let tracked : TrackedPR = {
-    pr_number: 1,
-    agent_id: "agent1",
-    first_seen: 100,
-    last_review_state: ReviewState::None_,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: false,
-  }
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::None_,
+    "sha1",
+    false,
+    false,
+  )
   let events = detect_events(
     tracked,
     ReviewState::None_,
@@ -239,15 +335,15 @@ test "detect_events::ci_failed fires once" {
 
 ///|
 test "detect_events::ci_failed does not re-fire if already failed" {
-  let tracked : TrackedPR = {
-    pr_number: 1,
-    agent_id: "agent1",
-    first_seen: 100,
-    last_review_state: ReviewState::None_,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: true,
-  }
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::None_,
+    "sha1",
+    false,
+    true,
+  )
   let events = detect_events(
     tracked,
     ReviewState::None_,
@@ -307,15 +403,15 @@ test "parse_review_bodies ignores empty bodies" {
 
 ///|
 test "detect_events::changes_requested carries review bodies" {
-  let tracked : TrackedPR = {
-    pr_number: 1,
-    agent_id: "agent1",
-    first_seen: 100,
-    last_review_state: ReviewState::None_,
-    last_sha: "sha1",
-    notified_parent: false,
-    last_ci_failed: false,
-  }
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::None_,
+    "sha1",
+    false,
+    false,
+  )
   let events = detect_events(
     tracked,
     ReviewState::ChangesRequested,

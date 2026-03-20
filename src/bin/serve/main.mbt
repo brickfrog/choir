@@ -194,22 +194,6 @@ async fn close_uds_client(
 }
 
 ///|
-fn format_poll_event(event : @poller.PollEvent) -> String {
-  match event {
-    PRReady(n) => "[PR READY] PR #\{n} approved"
-    ReviewReceived(n, comments) =>
-      if comments == "" {
-        "[REVIEW] PR #\{n} has review comments"
-      } else {
-        "[REVIEW] PR #\{n} has review comments:\n\{comments}"
-      }
-    FixesPushed(n) => "[FIXES PUSHED] PR #\{n} new commits after review"
-    ReviewTimeout(n) => "[REVIEW TIMEOUT] PR #\{n} no review after 15min"
-    CIFailed(n) => "[CI FAILED] PR #\{n} CI checks failing"
-  }
-}
-
-///|
 fn main_prog() -> Unit raise {
   let config_content = @io.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
@@ -234,15 +218,10 @@ fn main_prog() -> Unit raise {
         for i = 0; i < pending_events.length(); i = i + 1 {
           let event = pending_events[i]
           let agent_id = pending_agent_ids[i]
-          match state.registry.get(agent_id) {
-            Ok(agent) => {
-              let msg = format_poll_event(event)
-              let delivery = @message.plan_delivery(
-                agent, "poller", msg, "info",
-              )
+          match state.plan_poll_event_delivery(event, agent_id) {
+            Some(delivery) =>
               ignore(@tools.execute_delivery(delivery, @exec.run_sequence))
-            }
-            Err(_) => ()
+            None => ()
           }
         }
       }

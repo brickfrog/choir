@@ -121,7 +121,7 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 | `spawn_gemini` | `task`, `slug`, `parent_branch` | Spawn Gemini agent in worktree with own branch + PR |
 | `spawn_worker` | `task`, `slug`, `agent_type` | Spawn ephemeral inline pane worker (no branch, no PR) |
 | `merge_pr` | `pr_number`, `parent_branch`, `caller_id` | Merge PR (auto-acquires `branch:{parent_branch}` mutex) |
-| `track_pr` | `pr_number`, `agent_id` | Register PR with poller for review tracking |
+| `track_pr` | `pr_number`, `agent_id`, `branch?`, `parent_branch?`, `pr_url?` | Register PR with poller for review tracking |
 
 ### KV key conventions
 - `shared/{key}` — cross-agent coordination

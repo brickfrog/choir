@@ -13,11 +13,17 @@ pub fn PollerState::track(
   self : PollerState,
   pr_number : Int,
   agent_id : String,
+  branch : String,
+  parent_branch : String,
+  pr_url : String,
   now : Int64,
 ) -> Unit {
   let pr = {
     pr_number,
     agent_id,
+    branch,
+    parent_branch,
+    pr_url,
     first_seen: now,
     last_review_state: None_,
     last_sha: "",
@@ -35,6 +41,28 @@ pub fn PollerState::untrack(self : PollerState, pr_number : Int) -> Unit {
 ///|
 pub fn PollerState::get(self : PollerState, pr_number : Int) -> TrackedPR? {
   self.tracked.get(pr_number)
+}
+
+///|
+fn next_notified_parent(
+  tracked : TrackedPR,
+  review : ReviewState,
+  sha : String,
+) -> Bool {
+  let mut notified_parent = tracked.notified_parent
+  if review != tracked.last_review_state {
+    match review {
+      ChangesRequested => notified_parent = false
+      Approved => notified_parent = true
+      None_ => notified_parent = false
+    }
+  }
+  if tracked.last_review_state == ChangesRequested &&
+    sha != "" &&
+    sha != tracked.last_sha {
+    notified_parent = true
+  }
+  notified_parent
 }
 
 ///|
@@ -84,13 +112,20 @@ pub async fn PollerState::tick_with(
     for event in events {
       on_event(event, tracked.agent_id)
     }
+    let notified_parent = next_notified_parent(tracked, review, sha)
     let updated = if sha == "" {
-      { ..tracked, last_review_state: review, last_ci_failed: ci_failed }
+      {
+        ..tracked,
+        last_review_state: review,
+        notified_parent,
+        last_ci_failed: ci_failed,
+      }
     } else {
       {
         ..tracked,
         last_review_state: review,
         last_sha: sha,
+        notified_parent,
         last_ci_failed: ci_failed,
       }
     }

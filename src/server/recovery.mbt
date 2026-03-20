@@ -2,6 +2,8 @@
 priv struct OpenPR {
   pr_number : Int
   branch : String
+  base : String
+  url : String
 }
 
 ///|
@@ -111,33 +113,67 @@ fn find_json_string_field(
 fn parse_open_prs(output : String) -> Array[OpenPR] {
   let prs = []
   let mut start = 0
-  for {
-    let number_idx = index_of(output, "\"number\":", start~)
-    if number_idx == -1 {
+  while start < output.length() {
+    let object_start = index_of(output, "{", start~)
+    if object_start == -1 {
       break
     }
-    let number_start = skip_json_ws(output, number_idx + 9)
-    let mut number_end = number_start
-    while number_end < output.length() &&
-          output[number_end] >= '0' &&
-          output[number_end] <= '9' {
-      number_end = number_end + 1
-    }
-    let number_str = output[number_start:number_end].to_string() catch {
-      _ => ""
-    }
-    let branch = match
-      find_json_string_field(output, "headRefName", start=number_end) {
-      Some((value, next_start)) => {
-        start = next_start
-        value
+    let mut object_end = -1
+    let mut depth = 0
+    let mut in_quote = false
+    for i = object_start; i < output.length(); i = i + 1 {
+      let c = output[i]
+      if c == '"' && (i == 0 || output[i - 1] != '\\') {
+        in_quote = not(in_quote)
       }
-      None => break
+      if in_quote {
+        continue
+      }
+      if c == '{' {
+        depth = depth + 1
+      } else if c == '}' {
+        depth = depth - 1
+        if depth == 0 {
+          object_end = i
+          break
+        }
+      }
     }
-    match parse_int(number_str) {
-      Some(number) => prs.push({ pr_number: number, branch })
-      None => ()
+    if object_end == -1 {
+      break
     }
+    let obj = output[object_start:object_end + 1].to_string() catch { _ => "" }
+    let number_idx = index_of(obj, "\"number\":")
+    if number_idx != -1 {
+      let number_start = skip_json_ws(obj, number_idx + 9)
+      let mut number_end = number_start
+      while number_end < obj.length() &&
+            obj[number_end] >= '0' &&
+            obj[number_end] <= '9' {
+        number_end = number_end + 1
+      }
+      let number_str = obj[number_start:number_end].to_string() catch {
+        _ => ""
+      }
+      let branch = match find_json_string_field(obj, "headRefName") {
+        Some((value, _)) => Some(value)
+        None => None
+      }
+      let base = match find_json_string_field(obj, "baseRefName") {
+        Some((value, _)) => Some(value)
+        None => None
+      }
+      let url = match find_json_string_field(obj, "url") {
+        Some((value, _)) => Some(value)
+        None => None
+      }
+      match (parse_int(number_str), branch, base, url) {
+        (Some(number), Some(branch), Some(base), Some(url)) =>
+          prs.push({ pr_number: number, branch, base, url })
+        _ => ()
+      }
+    }
+    start = object_end + 1
   }
   prs
 }
@@ -309,14 +345,48 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
 
   let open_pr_output = capture_stdout(
     "sh",
-    ["-c", "gh pr list --json number,headRefName --state open 2>/dev/null"],
+    [
+      "-c", "gh pr list --json number,headRefName,baseRefName,url --state open 2>/dev/null",
+    ],
     cwd=Some(project_dir),
   )
   let now = @poller.now_sec()
   for pr in parse_open_prs(open_pr_output) {
     match state.registry.get(pr.branch) {
-      Ok(_) => state.poller.track(pr.pr_number, pr.branch, now)
+      Ok(agent) =>
+        state.poller.track(
+          pr.pr_number,
+          agent.agent_id,
+          pr.branch,
+          pr.base,
+          pr.url,
+          now,
+        )
       Err(_) => ()
     }
   }
+}
+
+///|
+test "parse_open_prs extracts branch base and url" {
+  let prs = parse_open_prs(
+    "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/12\"},{\"number\":13,\"headRefName\":\"main.subtl.leaf-b\",\"baseRefName\":\"main.subtl\",\"url\":\"https://example.test/pr/13\"}]",
+  )
+  assert_eq(prs.length(), 2)
+  assert_eq(prs[0].pr_number, 12)
+  assert_eq(prs[0].branch, "main.leaf-a")
+  assert_eq(prs[0].base, "main")
+  assert_eq(prs[0].url, "https://example.test/pr/12")
+  assert_eq(prs[1].pr_number, 13)
+  assert_eq(prs[1].branch, "main.subtl.leaf-b")
+  assert_eq(prs[1].base, "main.subtl")
+  assert_eq(prs[1].url, "https://example.test/pr/13")
+}
+
+///|
+test "parse_open_prs ignores malformed entries" {
+  let prs = parse_open_prs(
+    "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\"},{\"number\":\"oops\",\"headRefName\":\"main.leaf-b\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/13\"}]",
+  )
+  assert_eq(prs.length(), 0)
 }

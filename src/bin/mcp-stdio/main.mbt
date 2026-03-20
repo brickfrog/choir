@@ -141,22 +141,6 @@ fn write_all_uds(fd : Int, data : Bytes) -> Bool {
 }
 
 ///|
-fn json_escape(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
 fn resolved_agent_id(
   role : @types.Role,
   config : @types.Config,
@@ -182,46 +166,8 @@ fn build_registration_message(
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> String {
-  let role_str = @config.role_to_string(role)
   let agent_id = resolved_agent_id(role, config, local_cfg)
-  let args_buf = StringBuilder::new()
-  args_buf.write_string("\"agent_id\":\"" + json_escape(agent_id) + "\"")
-  match local_cfg.parent_id {
-    Some(v) =>
-      args_buf.write_string(",\"parent_id\":\"" + json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.branch {
-    Some(v) => args_buf.write_string(",\"branch\":\"" + json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.parent_branch {
-    Some(v) =>
-      args_buf.write_string(",\"parent_branch\":\"" + json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.workspace {
-    Some(v) =>
-      args_buf.write_string(",\"workspace\":\"" + json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.tmux_target {
-    Some(v) =>
-      args_buf.write_string(",\"tmux_target\":\"" + json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.agent_type {
-    Some(v) =>
-      args_buf.write_string(
-        ",\"agent_type\":\"" + @config.agent_type_to_string(v) + "\"",
-      )
-    None => ()
-  }
-  "{\"method\":\"register\",\"role\":\"" +
-  role_str +
-  "\",\"name\":\"register\",\"args\":{" +
-  args_buf.to_string() +
-  "}}\n"
+  @transport.format_registration_request(role, agent_id, local_cfg) + "\n"
 }
 
 ///|
@@ -231,44 +177,8 @@ fn build_wire_request(
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> String {
-  let req_method = internal_req.req_method
-  let role_str = @config.role_to_string(internal_req.role)
-  let name = internal_req.name
   let agent_id = resolved_agent_id(role, config, local_cfg)
-  let args : Map[String, String] = {}
-  internal_req.args.each(fn(k, v) { args.set(k, v) })
-  if not(args.contains("caller_id")) {
-    args.set("caller_id", agent_id)
-  }
-  if name == "send_message" && not(args.contains("sender_id")) {
-    args.set("sender_id", agent_id)
-  }
-  if name == "file_pr" {
-    if not(args.contains("branch")) {
-      match local_cfg.branch {
-        Some(v) => args.set("branch", v)
-        None => ()
-      }
-    }
-    if not(args.contains("parent_branch")) {
-      match local_cfg.parent_branch {
-        Some(v) => args.set("parent_branch", v)
-        None => ()
-      }
-    }
-  }
-  let args_buf = StringBuilder::new()
-  args_buf.write_char('{')
-  let mut first = true
-  args.each(fn(k, v) {
-    if not(first) {
-      args_buf.write_char(',')
-    }
-    args_buf.write_string("\"" + k + "\":\"" + json_escape(v) + "\"")
-    first = false
-  })
-  args_buf.write_char('}')
-  "{\"method\":\"\{req_method}\",\"role\":\"\{role_str}\",\"name\":\"\{name}\",\"args\":\{args_buf.to_string()}}\n"
+  @transport.format_augmented_request(internal_req, agent_id, local_cfg) + "\n"
 }
 
 ///|

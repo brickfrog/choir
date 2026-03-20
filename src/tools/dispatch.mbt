@@ -48,6 +48,154 @@ fn get_arg_or_alias(
 }
 
 ///|
+struct FilePrArgs {
+  branch : String
+  parent_branch : String
+  tracked_agent_id : String
+} derive(Show, Eq)
+
+///|
+struct TrackPrArgs {
+  pr_number : Int
+  agent_id : String
+  branch : String
+  parent_branch : String
+  pr_url : String
+} derive(Show, Eq)
+
+///|
+struct ForkWaveArgs {
+  count : Int
+  task : String
+  parent_branch : String
+  caller_id : String
+  slug_prefix : String
+  parent_session_id : String?
+} derive(Show, Eq)
+
+///|
+struct LeafSpawnArgs {
+  task : String
+  caller_id : String
+  slug : String
+  parent_branch : String
+} derive(Show, Eq)
+
+///|
+struct WorkerSpawnArgs {
+  task : String
+  caller_id : String
+  slug : String
+  agent_type : @types.AgentType
+} derive(Show, Eq)
+
+///|
+struct RemoteSpawnArgs {
+  task : String
+  caller_id : String
+  slug : String
+  parent_branch : String
+  ssh_target : String
+  repo_url : String
+  tcp_addr : String
+  parent_session_id : String?
+} derive(Show, Eq)
+
+///|
+struct TaskCreateArgs {
+  id : String
+  title : String
+  status : String
+  assignee : String
+  notes : String
+} derive(Show, Eq)
+
+///|
+struct TaskUpdateArgs {
+  id : String
+  status : String?
+  assignee : String?
+  notes : String?
+} derive(Show, Eq)
+
+///|
+struct RegisterArgs {
+  agent_id : String
+  role : @types.Role
+  agent_type : @types.AgentType
+  parent : String?
+  tmux_target : String?
+  workspace : String
+  branch : String
+} derive(Show, Eq)
+
+///|
+struct KvKeyArgs {
+  key : String
+} derive(Show, Eq)
+
+///|
+struct KvSetArgs {
+  key : String
+  value : String
+} derive(Show, Eq)
+
+///|
+struct MutexAcquireArgs {
+  name : String
+  agent_id : String
+  ttl_sec : Int64
+} derive(Show, Eq)
+
+///|
+struct MutexNameArgs {
+  name : String
+} derive(Show, Eq)
+
+///|
+struct MutexReleaseArgs {
+  name : String
+  agent_id : String
+} derive(Show, Eq)
+
+///|
+struct MergePrArgs {
+  pr_number : Int
+  parent_branch : String
+  caller_id : String
+} derive(Show, Eq)
+
+///|
+struct CallerMessageArgs {
+  caller_id : String
+  message : String
+  status : String
+} derive(Show, Eq)
+
+///|
+struct SendMessageArgs {
+  target_id : String
+  sender_id : String
+  message : String
+  status : String
+} derive(Show, Eq)
+
+///|
+struct ShutdownArgs {
+  caller_id : String?
+} derive(Show, Eq)
+
+///|
+struct IdArgs {
+  id : String
+} derive(Show, Eq)
+
+///|
+struct SessionNameArgs {
+  name : String
+} derive(Show, Eq)
+
+///|
 fn parse_truthy_spawn_flag(s : String) -> Bool {
   let lowered = s.trim().to_lower()
   lowered == "true" || lowered == "1" || lowered == "yes"
@@ -144,6 +292,452 @@ fn validate_kv_key(s : String) -> Result[Unit, String] {
     }
   }
   Ok(())
+}
+
+///|
+fn parse_file_pr_args(args : Map[String, String]) -> Result[FilePrArgs, String] {
+  let branch = get_arg_or_alias(args, "branch", "agent_id", "")
+  if branch == "" {
+    return Err("missing branch")
+  }
+  let parent_branch = args.get("parent_branch").unwrap_or("main")
+  let normalized_parent_branch = if parent_branch == "" {
+    "main"
+  } else {
+    parent_branch
+  }
+  match validate_branch(branch) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid branch: " + e)
+  }
+  match validate_branch(normalized_parent_branch) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid parent_branch: " + e)
+  }
+  Ok({
+    branch,
+    parent_branch: normalized_parent_branch,
+    tracked_agent_id: get_arg_or_alias(args, "agent_id", "caller_id", branch),
+  })
+}
+
+///|
+fn parse_track_pr_args(
+  args : Map[String, String],
+) -> Result[TrackPrArgs, String] {
+  let pr_str = args.get("pr_number").unwrap_or("")
+  if pr_str == "" {
+    return Err("missing pr_number")
+  }
+  let agent_id = args.get("agent_id").unwrap_or("")
+  if agent_id == "" {
+    return Err("missing agent_id")
+  }
+  let pr_number = match parse_int(pr_str) {
+    Some(value) => value
+    None => return Err("invalid pr_number: " + pr_str)
+  }
+  let branch = get_arg_or_alias(args, "branch", "agent_id", agent_id)
+  let parent_branch = get_arg_or_alias(
+    args,
+    "parent_branch",
+    "base",
+    @workspace.parent_branch(branch).unwrap_or("main"),
+  )
+  match validate_branch(branch) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid branch: " + e)
+  }
+  match validate_branch(parent_branch) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid parent_branch: " + e)
+  }
+  Ok({
+    pr_number,
+    agent_id,
+    branch,
+    parent_branch,
+    pr_url: args.get("pr_url").unwrap_or(""),
+  })
+}
+
+///|
+fn parse_fork_wave_args(
+  project_dir : String,
+  args : Map[String, String],
+) -> Result[ForkWaveArgs, String] {
+  let count_str = args.get("count").unwrap_or("")
+  if count_str == "" {
+    return Err("missing count")
+  }
+  let count = match parse_int(count_str) {
+    Some(c) => c
+    None => return Err("invalid count: " + count_str)
+  }
+  let parent_branch = get_arg_or_alias(args, "parent_branch", "branch", "main")
+  match validate_branch(parent_branch) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid parent_branch: " + e)
+  }
+  let slug_prefix = args.get("slug_prefix").unwrap_or("wave")
+  let normalized_slug_prefix = if slug_prefix == "" {
+    "wave"
+  } else {
+    slug_prefix
+  }
+  match validate_slug(normalized_slug_prefix) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid slug_prefix: " + e)
+  }
+  Ok({
+    count,
+    task: render_leaf_spawn_prompt(args),
+    parent_branch,
+    caller_id: args.get("caller_id").unwrap_or("main"),
+    slug_prefix: normalized_slug_prefix,
+    parent_session_id: lookup_parent_session_id(project_dir, args),
+  })
+}
+
+///|
+fn parse_leaf_spawn_args(
+  args : Map[String, String],
+  default_slug : String,
+) -> Result[LeafSpawnArgs, String] {
+  let slug = get_arg_or_alias(args, "slug", "branch", default_slug)
+  let parent_branch = get_arg_or_alias(
+    args, "parent_branch", "base_branch", "main",
+  )
+  match validate_slug(slug) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid slug: " + e)
+  }
+  match validate_branch(parent_branch) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid parent_branch: " + e)
+  }
+  Ok({
+    task: render_leaf_spawn_prompt(args),
+    caller_id: args.get("caller_id").unwrap_or("main"),
+    slug,
+    parent_branch,
+  })
+}
+
+///|
+fn parse_worker_spawn_args(
+  args : Map[String, String],
+) -> Result[WorkerSpawnArgs, String] {
+  let slug = get_arg_or_alias(args, "slug", "agent_id", "inline-worker")
+  match validate_slug(slug) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid slug: " + e)
+  }
+  let agent_type_str = args.get("agent_type").unwrap_or("gemini")
+  let normalized_agent_type_str = if agent_type_str == "" {
+    "gemini"
+  } else {
+    agent_type_str
+  }
+  let agent_type = match parse_agent_type(normalized_agent_type_str) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  Ok({
+    task: render_worker_spawn_prompt(args),
+    caller_id: args.get("caller_id").unwrap_or("main"),
+    slug,
+    agent_type,
+  })
+}
+
+///|
+fn parse_remote_spawn_args(
+  project_dir : String,
+  args : Map[String, String],
+) -> Result[RemoteSpawnArgs, String] {
+  let leaf_args = match parse_leaf_spawn_args(args, "remote-leaf") {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let ssh_target = args.get("ssh_target").unwrap_or("")
+  if ssh_target == "" {
+    return Err("missing ssh_target")
+  }
+  let repo_url = args.get("repo_url").unwrap_or("")
+  if repo_url == "" {
+    return Err("missing repo_url")
+  }
+  let tcp_addr = args.get("tcp_addr").unwrap_or("")
+  if tcp_addr == "" {
+    return Err("missing tcp_addr")
+  }
+  Ok({
+    task: leaf_args.task,
+    caller_id: leaf_args.caller_id,
+    slug: leaf_args.slug,
+    parent_branch: leaf_args.parent_branch,
+    ssh_target,
+    repo_url,
+    tcp_addr,
+    parent_session_id: lookup_parent_session_id(project_dir, args),
+  })
+}
+
+///|
+fn parse_task_create_args(
+  args : Map[String, String],
+) -> Result[TaskCreateArgs, String] {
+  let id = args.get("id").unwrap_or("")
+  if id == "" {
+    return Err("missing id")
+  }
+  let title = args.get("title").unwrap_or("")
+  if title == "" {
+    return Err("missing title")
+  }
+  match validate_slug(id) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid id: " + e)
+  }
+  let status = args.get("status").unwrap_or("todo")
+  let normalized_status = if status == "" { "todo" } else { status }
+  match validate_task_status(normalized_status) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  Ok({
+    id,
+    title,
+    status: normalized_status,
+    assignee: args.get("assignee").unwrap_or(""),
+    notes: args.get("notes").unwrap_or(""),
+  })
+}
+
+///|
+fn parse_task_update_args(
+  args : Map[String, String],
+) -> Result[TaskUpdateArgs, String] {
+  let id = args.get("id").unwrap_or("")
+  if id == "" {
+    return Err("missing id")
+  }
+  let status = match args.get("status") {
+    Some(v) =>
+      if v == "" {
+        None
+      } else {
+        match validate_task_status(v) {
+          Ok(_) => Some(v)
+          Err(e) => return Err(e)
+        }
+      }
+    None => None
+  }
+  Ok({ id, status, assignee: args.get("assignee"), notes: args.get("notes") })
+}
+
+///|
+fn parse_register_args(
+  role : @types.Role,
+  args : Map[String, String],
+) -> Result[RegisterArgs, String] {
+  let agent_id = args.get("agent_id").unwrap_or("")
+  if agent_id == "" {
+    return Err("missing agent_id")
+  }
+  let agent_type = match args.get("agent_type") {
+    Some(v) =>
+      match parse_agent_type(v) {
+        Ok(agent_type) => agent_type
+        Err(e) => return Err(e)
+      }
+    None =>
+      match role {
+        @types.Role::Root => @types.AgentType::Claude
+        @types.Role::TL => @types.AgentType::Claude
+        @types.Role::Dev => @types.AgentType::Gemini
+        @types.Role::Worker => @types.AgentType::Gemini
+      }
+  }
+  Ok({
+    agent_id,
+    role,
+    agent_type,
+    parent: match args.get("parent_id") {
+      Some(v) => if v == "" { None } else { Some(v) }
+      None => None
+    },
+    tmux_target: match args.get("tmux_target") {
+      Some(v) => if v == "" { None } else { Some(v) }
+      None => None
+    },
+    workspace: args.get("workspace").unwrap_or(""),
+    branch: args.get("branch").unwrap_or(""),
+  })
+}
+
+///|
+fn parse_kv_key_args(args : Map[String, String]) -> Result[KvKeyArgs, String] {
+  let key = args.get("key").unwrap_or("")
+  if key == "" {
+    return Err("missing key")
+  }
+  match validate_kv_key(key) {
+    Ok(_) => Ok({ key, })
+    Err(e) => Err(e)
+  }
+}
+
+///|
+fn parse_kv_set_args(args : Map[String, String]) -> Result[KvSetArgs, String] {
+  let key_args = match parse_kv_key_args(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let value = match args.get("value") {
+    Some(v) => v
+    None => return Err("missing value")
+  }
+  Ok({ key: key_args.key, value })
+}
+
+///|
+fn parse_mutex_acquire_args(
+  args : Map[String, String],
+) -> Result[MutexAcquireArgs, String] {
+  let name = args.get("name").unwrap_or("")
+  if name == "" {
+    return Err("missing name")
+  }
+  let agent_id = args.get("agent_id").unwrap_or("")
+  if agent_id == "" {
+    return Err("missing agent_id")
+  }
+  let ttl_str = args.get("ttl_sec").unwrap_or("300")
+  let ttl_sec = match parse_int(ttl_str) {
+    Some(value) => value.to_int64()
+    None => return Err("invalid ttl_sec: " + ttl_str)
+  }
+  Ok({ name, agent_id, ttl_sec })
+}
+
+///|
+fn parse_mutex_name_args(
+  args : Map[String, String],
+) -> Result[MutexNameArgs, String] {
+  let name = args.get("name").unwrap_or("")
+  if name == "" {
+    return Err("missing name")
+  }
+  Ok({ name, })
+}
+
+///|
+fn parse_mutex_release_args(
+  args : Map[String, String],
+) -> Result[MutexReleaseArgs, String] {
+  let name_args = match parse_mutex_name_args(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let agent_id = args.get("agent_id").unwrap_or("")
+  if agent_id == "" {
+    return Err("missing agent_id")
+  }
+  Ok({ name: name_args.name, agent_id })
+}
+
+///|
+fn parse_merge_pr_args(
+  args : Map[String, String],
+) -> Result[MergePrArgs, String] {
+  let pr_str = args.get("pr_number").unwrap_or("")
+  if pr_str == "" {
+    return Err("missing pr_number")
+  }
+  let pr_number = match parse_int(pr_str) {
+    Some(value) => value
+    None => return Err("invalid pr_number: " + pr_str)
+  }
+  let parent_branch = args.get("parent_branch").unwrap_or("main")
+  let normalized_parent_branch = if parent_branch == "" {
+    "main"
+  } else {
+    parent_branch
+  }
+  match validate_branch(normalized_parent_branch) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid parent_branch: " + e)
+  }
+  Ok({
+    pr_number,
+    parent_branch: normalized_parent_branch,
+    caller_id: match args.get("caller_id") {
+      Some(v) => if v == "" { "server" } else { v }
+      None => "server"
+    },
+  })
+}
+
+///|
+fn parse_caller_message_args(
+  args : Map[String, String],
+) -> Result[CallerMessageArgs, String] {
+  let caller_id = args.get("caller_id").unwrap_or("")
+  if caller_id == "" {
+    return Err("missing caller_id")
+  }
+  Ok({
+    caller_id,
+    message: args.get("message").unwrap_or(""),
+    status: args.get("status").unwrap_or("info"),
+  })
+}
+
+///|
+fn parse_send_message_args(
+  args : Map[String, String],
+) -> Result[SendMessageArgs, String] {
+  let target_id = args.get("target_id").unwrap_or("")
+  if target_id == "" {
+    return Err("missing target_id")
+  }
+  Ok({
+    target_id,
+    sender_id: args.get("sender_id").unwrap_or("unknown"),
+    message: args.get("message").unwrap_or(""),
+    status: args.get("status").unwrap_or("info"),
+  })
+}
+
+///|
+fn parse_shutdown_args(args : Map[String, String]) -> ShutdownArgs {
+  { caller_id: args.get("caller_id") }
+}
+
+///|
+fn parse_id_args(args : Map[String, String]) -> Result[IdArgs, String] {
+  let id = args.get("id").unwrap_or("")
+  if id == "" {
+    return Err("missing id")
+  }
+  Ok({ id, })
+}
+
+///|
+fn parse_session_name_args(
+  args : Map[String, String],
+) -> Result[SessionNameArgs, String] {
+  let name = args.get("name").unwrap_or("")
+  if name == "" {
+    return Err("missing name")
+  }
+  match validate_slug(name) {
+    Ok(_) => Ok({ name, })
+    Err(e) => Err("invalid name: " + e)
+  }
 }
 
 ///|
@@ -646,47 +1240,26 @@ pub async fn dispatch(
     "register" =>
       match registry {
         Some(reg) => {
-          let agent_id = match call.args.get("agent_id") {
-            Some(v) => v
-            None => return @types.Response::Err("missing agent_id")
-          }
-          let role = call.role
-          let agent_type = match call.args.get("agent_type") {
-            Some(v) =>
-              match parse_agent_type(v) {
-                Ok(agent_type) => agent_type
-                Err(e) => return @types.Response::Err(e)
-              }
-            None =>
-              match role {
-                @types.Role::Root => @types.AgentType::Claude
-                @types.Role::TL => @types.AgentType::Claude
-                @types.Role::Dev => @types.AgentType::Gemini
-                @types.Role::Worker => @types.AgentType::Gemini
-              }
+          let register_args = match parse_register_args(call.role, call.args) {
+            Ok(parsed) => parsed
+            Err(e) => return @types.Response::Err(e)
           }
           let agent = @types.Agent::{
-            agent_id,
-            role,
-            agent_type,
+            agent_id: register_args.agent_id,
+            role: register_args.role,
+            agent_type: register_args.agent_type,
             state: @types.AgentState::Active,
-            parent: match call.args.get("parent_id") {
-              Some(v) => if v == "" { None } else { Some(v) }
-              None => None
-            },
-            tmux_target: match call.args.get("tmux_target") {
-              Some(v) => if v == "" { None } else { Some(v) }
-              None => None
-            },
+            parent: register_args.parent,
+            tmux_target: register_args.tmux_target,
             host: @types.Host::Local,
-            workspace: call.args.get("workspace").unwrap_or(""),
-            branch: call.args.get("branch").unwrap_or(""),
+            workspace: register_args.workspace,
+            branch: register_args.branch,
           }
           match reg.insert(agent) {
             Ok(_) =>
               @types.Response::Ok({
                 "status": "registered",
-                "agent_id": agent_id,
+                "agent_id": register_args.agent_id,
               })
             Err(e) => @types.Response::Err(e.message())
           }
@@ -694,40 +1267,15 @@ pub async fn dispatch(
         None => @types.Response::Ok({ "status": "registered" })
       }
     "fork_wave" => {
-      let count_str = match call.args.get("count") {
-        Some(v) => v
-        None => return @types.Response::Err("missing count")
+      let fork_wave_args = match parse_fork_wave_args(project_dir, call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      let task = render_leaf_spawn_prompt(call.args)
-      let parent_branch = get_arg_or_alias(
-        call.args,
-        "parent_branch",
-        "branch",
-        "main",
-      )
-      let parent_session_id = lookup_parent_session_id(project_dir, call.args)
-      let slug_prefix = match call.args.get("slug_prefix") {
-        Some(v) => if v == "" { "wave" } else { v }
-        None => "wave"
-      }
-      match validate_branch(parent_branch) {
-        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
-        Ok(_) => ()
-      }
-      match validate_slug(slug_prefix) {
-        Err(e) => return @types.Response::Err("invalid slug_prefix: " + e)
-        Ok(_) => ()
-      }
-      let count = match parse_int(count_str) {
-        Some(c) => c
-        None => return @types.Response::Err("invalid count: " + count_str)
-      }
-      let caller_id = call.args.get("caller_id").unwrap_or("main")
       let agent_ids = StringBuilder::new()
       let cmds : Array[@workspace.Command] = []
-      for i = 0; i < count; i = i + 1 {
-        let slug = slug_prefix + "-" + i.to_string()
-        let agent_id = parent_branch + "." + slug
+      for i = 0; i < fork_wave_args.count; i = i + 1 {
+        let slug = fork_wave_args.slug_prefix + "-" + i.to_string()
+        let agent_id = fork_wave_args.parent_branch + "." + slug
         if i > 0 {
           agent_ids.write_string(",")
         }
@@ -736,17 +1284,17 @@ pub async fn dispatch(
           slug,
           role: @types.Role::Dev,
           agent_type: @types.AgentType::Claude,
-          task,
+          task: fork_wave_args.task,
           isolation: @types.IsolationMode::Worktree,
-          parent_id: caller_id,
-          parent_branch,
+          parent_id: fork_wave_args.caller_id,
+          parent_branch: fork_wave_args.parent_branch,
         }
         for
           cmd in @workspace.spawn_commands(
             spec,
             project_dir,
             session,
-            parent_session_id~,
+            parent_session_id=fork_wave_args.parent_session_id,
             extra_mcp_servers_json~,
             shell_command~,
           ) {
@@ -757,26 +1305,22 @@ pub async fn dispatch(
         Ok(_) =>
           @types.Response::Ok({
             "status": "spawned",
-            "count": count.to_string(),
+            "count": fork_wave_args.count.to_string(),
             "agent_ids": agent_ids.to_string(),
           })
         Err(e) => @types.Response::Err(e)
       }
     }
     "fork_session" => {
-      let name = match call.args.get("name") {
-        Some(v) => v
-        None => return @types.Response::Err("missing name")
+      let session_args = match parse_session_name_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      match validate_slug(name) {
-        Err(e) => return @types.Response::Err("invalid name: " + e)
-        Ok(_) => ()
-      }
-      let session_dir = project_dir + "/.choir/sessions/" + name
+      let session_dir = project_dir + "/.choir/sessions/" + session_args.name
       let context_path = session_dir + "/context.json"
       let created_sec = @poller.now_sec()
       let context_json = "{\"name\":\"" +
-        escape_json_string(name) +
+        escape_json_string(session_args.name) +
         "\",\"created_sec\":\"" +
         created_sec.to_string() +
         "\"}"
@@ -784,35 +1328,20 @@ pub async fn dispatch(
         @types.Response::Ok({
           "status": "ok",
           "session_dir": session_dir,
-          "name": name,
+          "name": session_args.name,
         })
       } else {
-        @types.Response::Err("failed to create session: " + name)
+        @types.Response::Err("failed to create session: " + session_args.name)
       }
     }
     "file_pr" => {
-      let branch = get_arg_or_alias(call.args, "branch", "agent_id", "")
-      if branch == "" {
-        return @types.Response::Err("missing branch")
+      let file_pr_args = match parse_file_pr_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      let parent_branch = match call.args.get("parent_branch") {
-        Some(v) => if v == "" { "main" } else { v }
-        None => "main"
-      }
-      match validate_branch(branch) {
-        Err(e) => return @types.Response::Err("invalid branch: " + e)
-        Ok(_) => ()
-      }
-      match validate_branch(parent_branch) {
-        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
-        Ok(_) => ()
-      }
-      let tracked_agent_id = get_arg_or_alias(
-        call.args,
-        "agent_id",
-        "caller_id",
-        branch,
-      )
+      let branch = file_pr_args.branch
+      let parent_branch = file_pr_args.parent_branch
+      let tracked_agent_id = file_pr_args.tracked_agent_id
       match run_strict(runner, [@workspace.git_push(branch)]) {
         Err(e) => @types.Response::Err(e)
         Ok(_) =>
@@ -822,7 +1351,14 @@ pub async fn dispatch(
               let mut tracked = false
               match poller_state {
                 Some(ps) => {
-                  ps.track(pr.number, tracked_agent_id, @poller.now_sec())
+                  ps.track(
+                    pr.number,
+                    tracked_agent_id,
+                    branch,
+                    parent_branch,
+                    pr.url,
+                    @poller.now_sec(),
+                  )
                   tracked = true
                 }
                 None => ()
@@ -842,104 +1378,92 @@ pub async fn dispatch(
       }
     }
     "merge_pr" => {
-      let pr_str = match call.args.get("pr_number") {
-        Some(v) => v
-        None => return @types.Response::Err("missing pr_number")
+      let merge_args = match parse_merge_pr_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      let parent_branch = match call.args.get("parent_branch") {
-        Some(v) => if v == "" { "main" } else { v }
-        None => "main"
-      }
-      let caller_id = match call.args.get("caller_id") {
-        Some(v) => if v == "" { "server" } else { v }
-        None => "server"
-      }
-      match validate_branch(parent_branch) {
-        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
-        Ok(_) => ()
-      }
-      match parse_int(pr_str) {
-        Some(pr_number) => {
-          let cmds = merge_pr_commands(pr_number)
-          let mutex_name = "branch:" + parent_branch
-          match mutex_registry {
-            Some(reg) => {
-              let now = @poller.now_sec()
-              let (acquired, _) = reg.acquire(mutex_name, caller_id, 120L, now)
-              if not(acquired) {
-                ignore(reg.release(mutex_name, caller_id))
-                return @types.Response::Err(
-                  "merge serialization lock held by another agent, retry shortly",
-                )
+      let cmds = merge_pr_commands(merge_args.pr_number)
+      let mutex_name = "branch:" + merge_args.parent_branch
+      match mutex_registry {
+        Some(reg) => {
+          let now = @poller.now_sec()
+          let (acquired, _) = reg.acquire(
+            mutex_name,
+            merge_args.caller_id,
+            120L,
+            now,
+          )
+          if not(acquired) {
+            ignore(reg.release(mutex_name, merge_args.caller_id))
+            return @types.Response::Err(
+              "merge serialization lock held by another agent, retry shortly",
+            )
+          }
+          let merge_result = run_strict(runner, cmds)
+          ignore(reg.release(mutex_name, merge_args.caller_id))
+          match merge_result {
+            Ok(_) => {
+              match poller_state {
+                Some(ps) => ps.untrack(merge_args.pr_number)
+                None => ()
               }
-              let merge_result = run_strict(runner, cmds)
-              ignore(reg.release(mutex_name, caller_id))
-              match merge_result {
-                Ok(_) => {
-                  match poller_state {
-                    Some(ps) => ps.untrack(pr_number)
-                    None => ()
-                  }
-                  @types.Response::Ok({ "status": "merged" })
-                }
-                Err(e) => @types.Response::Err(e)
-              }
+              @types.Response::Ok({ "status": "merged" })
             }
-            None =>
-              match run_strict(runner, cmds) {
-                Ok(_) => {
-                  match poller_state {
-                    Some(ps) => ps.untrack(pr_number)
-                    None => ()
-                  }
-                  @types.Response::Ok({ "status": "merged" })
-                }
-                Err(e) => @types.Response::Err(e)
-              }
+            Err(e) => @types.Response::Err(e)
           }
         }
-        None => @types.Response::Err("invalid pr_number: " + pr_str)
+        None =>
+          match run_strict(runner, cmds) {
+            Ok(_) => {
+              match poller_state {
+                Some(ps) => ps.untrack(merge_args.pr_number)
+                None => ()
+              }
+              @types.Response::Ok({ "status": "merged" })
+            }
+            Err(e) => @types.Response::Err(e)
+          }
       }
     }
     "track_pr" => {
-      let pr_str = match call.args.get("pr_number") {
-        Some(v) => v
-        None => return @types.Response::Err("missing pr_number")
-      }
-      let agent_id = match call.args.get("agent_id") {
-        Some(v) =>
-          if v == "" {
-            return @types.Response::Err("missing agent_id")
-          } else {
-            v
-          }
-        None => return @types.Response::Err("missing agent_id")
-      }
-      let pr_number = match parse_int(pr_str) {
-        Some(value) => value
-        None => return @types.Response::Err("invalid pr_number: " + pr_str)
+      let track_pr_args = match parse_track_pr_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
       match poller_state {
         Some(ps) => {
-          ps.track(pr_number, agent_id, @poller.now_sec())
-          @types.Response::Ok({ "status": "tracked" })
+          ps.track(
+            track_pr_args.pr_number,
+            track_pr_args.agent_id,
+            track_pr_args.branch,
+            track_pr_args.parent_branch,
+            track_pr_args.pr_url,
+            @poller.now_sec(),
+          )
+          @types.Response::Ok({
+            "status": "tracked",
+            "branch": track_pr_args.branch,
+            "parent_branch": track_pr_args.parent_branch,
+            "pr_url": track_pr_args.pr_url,
+          })
         }
         None => @types.Response::Err("poller unavailable")
       }
     }
     "notify_parent" => {
-      let caller_id = match call.args.get("caller_id") {
-        Some(v) => v
-        None => return @types.Response::Err("missing caller_id")
+      let notify_args = match parse_caller_message_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      let message = call.args.get("message").unwrap_or("")
-      let status = call.args.get("status").unwrap_or("info")
       match registry {
         Some(reg) =>
-          match reg.get_parent(caller_id) {
+          match reg.get_parent(notify_args.caller_id) {
             Ok(parent) => {
               let delivery = @message.plan_delivery(
-                parent, caller_id, message, status,
+                parent,
+                notify_args.caller_id,
+                notify_args.message,
+                notify_args.status,
               )
               match execute_delivery(delivery, runner) {
                 Ok(_) => @types.Response::Ok({ "status": "notified" })
@@ -952,19 +1476,19 @@ pub async fn dispatch(
       }
     }
     "send_message" => {
-      let target_id = match call.args.get("target_id") {
-        Some(v) => v
-        None => return @types.Response::Err("missing target_id")
+      let send_args = match parse_send_message_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      let message = call.args.get("message").unwrap_or("")
-      let status = call.args.get("status").unwrap_or("info")
-      let sender_id = call.args.get("sender_id").unwrap_or("unknown")
       match registry {
         Some(reg) =>
-          match reg.get(target_id) {
+          match reg.get(send_args.target_id) {
             Ok(agent) => {
               let delivery = @message.plan_delivery(
-                agent, sender_id, message, status,
+                agent,
+                send_args.sender_id,
+                send_args.message,
+                send_args.status,
               )
               match execute_delivery(delivery, runner) {
                 Ok(_) => @types.Response::Ok({ "status": "sent" })
@@ -977,7 +1501,8 @@ pub async fn dispatch(
       }
     }
     "shutdown" => {
-      let caller_id = match call.args.get("caller_id") {
+      let shutdown_args = parse_shutdown_args(call.args)
+      let caller_id = match shutdown_args.caller_id {
         Some(v) => v
         None => return @types.Response::Ok({ "status": "shutdown" }) // best-effort
       }
@@ -1037,15 +1562,11 @@ pub async fn dispatch(
       @types.Response::Ok({ "status": "shutdown" })
     }
     "kv_get" => {
-      let key = match call.args.get("key") {
-        Some(v) => v
-        None => return @types.Response::Err("missing key")
-      }
-      match validate_kv_key(key) {
-        Ok(_) => ()
+      let key_args = match parse_kv_key_args(call.args) {
+        Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
-      let value = @io.read_file(kv_file_path(project_dir, key))
+      let value = @io.read_file(kv_file_path(project_dir, key_args.key))
       if value == "" {
         @types.Response::Ok({ "value": "null" })
       } else {
@@ -1053,59 +1574,38 @@ pub async fn dispatch(
       }
     }
     "kv_set" => {
-      let key = match call.args.get("key") {
-        Some(v) => v
-        None => return @types.Response::Err("missing key")
-      }
-      let value = match call.args.get("value") {
-        Some(v) => v
-        None => return @types.Response::Err("missing value")
-      }
-      match validate_kv_key(key) {
-        Ok(_) => ()
+      let kv_args = match parse_kv_set_args(call.args) {
+        Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
-      let path = kv_file_path(project_dir, key)
-      if @io.write_file_sync(path, value) {
+      let path = kv_file_path(project_dir, kv_args.key)
+      if @io.write_file_sync(path, kv_args.value) {
         @types.Response::Ok({ "status": "ok" })
       } else {
         @types.Response::Err("failed to write kv file: " + path)
       }
     }
     "kv_delete" => {
-      let key = match call.args.get("key") {
-        Some(v) => v
-        None => return @types.Response::Err("missing key")
-      }
-      match validate_kv_key(key) {
-        Ok(_) => ()
+      let key_args = match parse_kv_key_args(call.args) {
+        Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
-      let path = kv_file_path(project_dir, key)
+      let path = kv_file_path(project_dir, key_args.key)
       ignore(@io.delete_file_sync(path))
       @types.Response::Ok({ "status": "ok" })
     }
     "kv_list" => handle_kv_list(project_dir, runner)
     "mutex_acquire" => {
-      let name = match call.args.get("name") {
-        Some(v) => v
-        None => return @types.Response::Err("missing name")
-      }
-      let agent_id = match call.args.get("agent_id") {
-        Some(v) => v
-        None => return @types.Response::Err("missing agent_id")
-      }
-      let ttl_str = call.args.get("ttl_sec").unwrap_or("300")
-      let ttl_sec = match parse_int(ttl_str) {
-        Some(value) => value.to_int64()
-        None => return @types.Response::Err("invalid ttl_sec: " + ttl_str)
+      let mutex_args = match parse_mutex_acquire_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
       match mutex_registry {
         Some(reg) => {
           let (acquired, queue_position) = reg.acquire(
-            name,
-            agent_id,
-            ttl_sec,
+            mutex_args.name,
+            mutex_args.agent_id,
+            mutex_args.ttl_sec,
             @poller.now_sec(),
           )
           @types.Response::Ok({
@@ -1121,20 +1621,16 @@ pub async fn dispatch(
       }
     }
     "mutex_release" => {
-      let name = match call.args.get("name") {
-        Some(v) => v
-        None => return @types.Response::Err("missing name")
-      }
-      let agent_id = match call.args.get("agent_id") {
-        Some(v) => v
-        None => return @types.Response::Err("missing agent_id")
+      let mutex_args = match parse_mutex_release_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
       match mutex_registry {
         Some(reg) => {
-          let (holder, _) = reg.status(name)
-          let was_waiting = reg.is_waiting(name, agent_id)
-          let next_waiter = reg.release(name, agent_id)
-          let released = holder == Some(agent_id) || was_waiting
+          let (holder, _) = reg.status(mutex_args.name)
+          let was_waiting = reg.is_waiting(mutex_args.name, mutex_args.agent_id)
+          let next_waiter = reg.release(mutex_args.name, mutex_args.agent_id)
+          let released = holder == Some(mutex_args.agent_id) || was_waiting
           @types.Response::Ok({
             "released": if released {
               "true"
@@ -1148,13 +1644,13 @@ pub async fn dispatch(
       }
     }
     "mutex_status" => {
-      let name = match call.args.get("name") {
-        Some(v) => v
-        None => return @types.Response::Err("missing name")
+      let name_args = match parse_mutex_name_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
       match mutex_registry {
         Some(reg) => {
-          let (holder, queue) = reg.status(name)
+          let (holder, queue) = reg.status(name_args.name)
           @types.Response::Ok({
             "holder": holder.unwrap_or(""),
             "queue_length": queue.length().to_string(),
@@ -1165,11 +1661,11 @@ pub async fn dispatch(
     }
     "task_list" => handle_task_list(project_dir, runner)
     "task_get" => {
-      let id = match call.args.get("id") {
-        Some(v) => v
-        None => return @types.Response::Err("missing id")
+      let id_args = match parse_id_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      match read_task_file(project_dir, id) {
+      match read_task_file(project_dir, id_args.id) {
         Ok(task) =>
           @types.Response::Ok({
             "status": "ok",
@@ -1179,39 +1675,23 @@ pub async fn dispatch(
       }
     }
     "task_create" => {
-      let id = match call.args.get("id") {
-        Some(v) => v
-        None => return @types.Response::Err("missing id")
+      let task_args = match parse_task_create_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      let title = match call.args.get("title") {
-        Some(v) => v
-        None => return @types.Response::Err("missing title")
-      }
-      match validate_slug(id) {
-        Err(e) => return @types.Response::Err("invalid id: " + e)
-        Ok(_) => ()
-      }
-      let existing = @io.read_file(task_file_path(project_dir, id))
+      let existing = @io.read_file(task_file_path(project_dir, task_args.id))
       if existing != "" {
-        return @types.Response::Err("task already exists: " + id)
-      }
-      let status = match call.args.get("status") {
-        Some(v) =>
-          match validate_task_status(v) {
-            Ok(_) => v
-            Err(e) => return @types.Response::Err(e)
-          }
-        None => "todo"
+        return @types.Response::Err("task already exists: " + task_args.id)
       }
       let task = TaskFile::{
-        id,
-        title,
-        status,
-        assignee: call.args.get("assignee").unwrap_or(""),
-        notes: call.args.get("notes").unwrap_or(""),
+        id: task_args.id,
+        title: task_args.title,
+        status: task_args.status,
+        assignee: task_args.assignee,
+        notes: task_args.notes,
       }
       let content = task_file_to_json(task)
-      let path = task_file_path(project_dir, id)
+      let path = task_file_path(project_dir, task_args.id)
       if @io.write_file_sync(path, content) {
         @types.Response::Ok({ "status": "ok", "task": content })
       } else {
@@ -1219,30 +1699,22 @@ pub async fn dispatch(
       }
     }
     "task_update" => {
-      let id = match call.args.get("id") {
-        Some(v) => v
-        None => return @types.Response::Err("missing id")
+      let update_args = match parse_task_update_args(call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
-      let task = match read_task_file(project_dir, id) {
+      let task = match read_task_file(project_dir, update_args.id) {
         Ok(value) => value
         Err(e) => return @types.Response::Err(e)
       }
-      let status = match call.args.get("status") {
-        Some(v) =>
-          match validate_task_status(v) {
-            Ok(_) => v
-            Err(e) => return @types.Response::Err(e)
-          }
-        None => task.status
-      }
       let updated = {
         ..task,
-        status,
-        assignee: call.args.get("assignee").unwrap_or(task.assignee),
-        notes: call.args.get("notes").unwrap_or(task.notes),
+        status: update_args.status.unwrap_or(task.status),
+        assignee: update_args.assignee.unwrap_or(task.assignee),
+        notes: update_args.notes.unwrap_or(task.notes),
       }
       let content = task_file_to_json(updated)
-      let path = task_file_path(project_dir, id)
+      let path = task_file_path(project_dir, update_args.id)
       if @io.write_file_sync(path, content) {
         @types.Response::Ok({ "status": "ok", "task": content })
       } else {
@@ -1250,31 +1722,18 @@ pub async fn dispatch(
       }
     }
     "spawn_gemini" => {
-      let task = render_leaf_spawn_prompt(call.args)
-      let caller_id = call.args.get("caller_id").unwrap_or("main")
-      let slug = get_arg_or_alias(call.args, "slug", "branch", "gemini-leaf")
-      let parent_branch = get_arg_or_alias(
-        call.args,
-        "parent_branch",
-        "base_branch",
-        "main",
-      )
-      match validate_slug(slug) {
-        Err(e) => return @types.Response::Err("invalid slug: " + e)
-        Ok(_) => ()
-      }
-      match validate_branch(parent_branch) {
-        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
-        Ok(_) => ()
+      let spawn_args = match parse_leaf_spawn_args(call.args, "gemini-leaf") {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
       let spec = @types.SpawnSpec::{
-        slug,
+        slug: spawn_args.slug,
         role: @types.Role::Dev,
         agent_type: @types.AgentType::Gemini,
-        task,
+        task: spawn_args.task,
         isolation: @types.IsolationMode::Worktree,
-        parent_id: caller_id,
-        parent_branch,
+        parent_id: spawn_args.caller_id,
+        parent_branch: spawn_args.parent_branch,
       }
       let cmds = @workspace.spawn_commands(
         spec,
@@ -1288,42 +1747,29 @@ pub async fn dispatch(
         Ok(_) =>
           @types.Response::Ok({
             "status": "spawned",
-            "agent_id": @workspace.branch_name(parent_branch, slug),
-            "slug": slug,
+            "agent_id": @workspace.branch_name(
+              spawn_args.parent_branch,
+              spawn_args.slug,
+            ),
+            "slug": spawn_args.slug,
           })
         Err(e) => @types.Response::Err(e)
       }
     }
     "spawn_moon_pilot" => {
-      let task = render_leaf_spawn_prompt(call.args)
-      let slug = get_arg_or_alias(
-        call.args,
-        "slug",
-        "branch",
-        "moon-pilot-leaf",
-      )
-      let parent_branch = get_arg_or_alias(
-        call.args,
-        "parent_branch",
-        "base_branch",
-        "main",
-      )
-      match validate_slug(slug) {
-        Err(e) => return @types.Response::Err("invalid slug: " + e)
-        Ok(_) => ()
-      }
-      match validate_branch(parent_branch) {
-        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
-        Ok(_) => ()
+      let spawn_args = match
+        parse_leaf_spawn_args(call.args, "moon-pilot-leaf") {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
       let spec = @types.SpawnSpec::{
-        slug,
+        slug: spawn_args.slug,
         role: @types.Role::Dev,
         agent_type: @types.AgentType::MoonPilot,
-        task,
+        task: spawn_args.task,
         isolation: @types.IsolationMode::Worktree,
-        parent_id: call.args.get("caller_id").unwrap_or(""),
-        parent_branch,
+        parent_id: spawn_args.caller_id,
+        parent_branch: spawn_args.parent_branch,
       }
       let cmds = @workspace.spawn_commands(
         spec,
@@ -1337,97 +1783,63 @@ pub async fn dispatch(
         Ok(_) =>
           @types.Response::Ok({
             "status": "spawned",
-            "agent_id": @workspace.branch_name(parent_branch, slug),
-            "slug": slug,
+            "agent_id": @workspace.branch_name(
+              spawn_args.parent_branch,
+              spawn_args.slug,
+            ),
+            "slug": spawn_args.slug,
           })
         Err(e) => @types.Response::Err(e)
       }
     }
     "spawn_remote" => {
-      let task = render_leaf_spawn_prompt(call.args)
-      let slug = get_arg_or_alias(call.args, "slug", "branch", "remote-leaf")
-      let parent_branch = get_arg_or_alias(
-        call.args,
-        "parent_branch",
-        "base_branch",
-        "main",
-      )
-      let ssh_target = match call.args.get("ssh_target") {
-        Some(v) => v
-        None => return @types.Response::Err("missing ssh_target")
-      }
-      let repo_url = match call.args.get("repo_url") {
-        Some(v) => v
-        None => return @types.Response::Err("missing repo_url")
-      }
-      let tcp_addr = match call.args.get("tcp_addr") {
-        Some(v) => v
-        None => return @types.Response::Err("missing tcp_addr")
-      }
-      match validate_slug(slug) {
-        Err(e) => return @types.Response::Err("invalid slug: " + e)
-        Ok(_) => ()
-      }
-      match validate_branch(parent_branch) {
-        Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
-        Ok(_) => ()
+      let spawn_args = match parse_remote_spawn_args(project_dir, call.args) {
+        Ok(parsed) => parsed
+        Err(e) => return @types.Response::Err(e)
       }
       let spec = @types.SpawnSpec::{
-        slug,
+        slug: spawn_args.slug,
         role: @types.Role::Dev,
         agent_type: @types.AgentType::Claude,
-        task,
+        task: spawn_args.task,
         isolation: @types.IsolationMode::Worktree,
-        parent_id: call.args.get("caller_id").unwrap_or(""),
-        parent_branch,
+        parent_id: spawn_args.caller_id,
+        parent_branch: spawn_args.parent_branch,
       }
       let cmds = @workspace.remote_spawn_commands(
         spec,
-        ssh_target,
-        repo_url,
-        tcp_addr,
-        parent_session_id=lookup_parent_session_id(project_dir, call.args),
+        spawn_args.ssh_target,
+        spawn_args.repo_url,
+        spawn_args.tcp_addr,
+        parent_session_id=spawn_args.parent_session_id,
         extra_mcp_servers_json~,
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
           @types.Response::Ok({
             "status": "spawned",
-            "agent_id": @workspace.branch_name(parent_branch, slug),
-            "slug": slug,
-            "host": ssh_target,
+            "agent_id": @workspace.branch_name(
+              spawn_args.parent_branch,
+              spawn_args.slug,
+            ),
+            "slug": spawn_args.slug,
+            "host": spawn_args.ssh_target,
           })
         Err(e) => @types.Response::Err(e)
       }
     }
     "spawn_worker" => {
-      let task = render_worker_spawn_prompt(call.args)
-      let caller_id = call.args.get("caller_id").unwrap_or("main")
-      let slug = get_arg_or_alias(
-        call.args,
-        "slug",
-        "agent_id",
-        "inline-worker",
-      )
-      let agent_type_str = match call.args.get("agent_type") {
-        Some(v) => if v == "" { "gemini" } else { v }
-        None => "gemini"
-      }
-      match validate_slug(slug) {
-        Err(e) => return @types.Response::Err("invalid slug: " + e)
-        Ok(_) => ()
-      }
-      let agent_type = match parse_agent_type(agent_type_str) {
-        Ok(value) => value
+      let worker_args = match parse_worker_spawn_args(call.args) {
+        Ok(parsed) => parsed
         Err(e) => return @types.Response::Err(e)
       }
       let spec = @types.SpawnSpec::{
-        slug,
+        slug: worker_args.slug,
         role: @types.Role::Worker,
-        agent_type,
-        task,
+        agent_type: worker_args.agent_type,
+        task: worker_args.task,
         isolation: @types.IsolationMode::Inline,
-        parent_id: caller_id,
+        parent_id: worker_args.caller_id,
         parent_branch: "main",
       }
       let cmds = @workspace.spawn_commands(
@@ -1506,4 +1918,221 @@ pub async fn handle_request(
         poller_state~,
       )
   }
+}
+
+///|
+test "parse_file_pr_args accepts agent_id alias" {
+  let parsed = parse_file_pr_args({
+    "agent_id": "main.leaf-1",
+    "parent_branch": "main",
+    "caller_id": "ignored-parent",
+  }).unwrap()
+  assert_eq(parsed, {
+    branch: "main.leaf-1",
+    parent_branch: "main",
+    tracked_agent_id: "main.leaf-1",
+  })
+}
+
+///|
+test "parse_track_pr_args derives parent_branch from nested branch" {
+  let parsed = parse_track_pr_args({
+    "pr_number": "17",
+    "agent_id": "main.wave-2",
+    "branch": "main.wave-2",
+  }).unwrap()
+  assert_eq(parsed, {
+    pr_number: 17,
+    agent_id: "main.wave-2",
+    branch: "main.wave-2",
+    parent_branch: "main",
+    pr_url: "",
+  })
+}
+
+///|
+test "parse_track_pr_args preserves pr_url" {
+  let parsed = parse_track_pr_args({
+    "pr_number": "23",
+    "agent_id": "main.leaf-proof",
+    "branch": "main.leaf-proof",
+    "parent_branch": "main",
+    "pr_url": "https://example.test/pr/23",
+  }).unwrap()
+  assert_eq(parsed.pr_url, "https://example.test/pr/23")
+}
+
+///|
+test "parse_track_pr_args rejects invalid parent_branch" {
+  match
+    parse_track_pr_args({
+      "pr_number": "4",
+      "agent_id": "main.leaf-proof",
+      "branch": "main.leaf-proof",
+      "parent_branch": "bad branch",
+    }) {
+    Ok(_) => assert_true(false)
+    Err(e) =>
+      assert_eq(e, "invalid parent_branch: invalid character in branch:  ")
+  }
+}
+
+///|
+test "parse_leaf_spawn_args accepts branch alias and base_branch alias" {
+  let parsed = parse_leaf_spawn_args(
+    {
+      "branch": "gem-alias",
+      "base_branch": "feature.root",
+      "caller_id": "main",
+    },
+    "gemini-leaf",
+  ).unwrap()
+  assert_eq(parsed.slug, "gem-alias")
+  assert_eq(parsed.parent_branch, "feature.root")
+  assert_eq(parsed.caller_id, "main")
+}
+
+///|
+test "parse_worker_spawn_args defaults to gemini and agent_id alias" {
+  let parsed = parse_worker_spawn_args({
+    "agent_id": "worker-a",
+    "task": "Investigate",
+  }).unwrap()
+  assert_eq(parsed.slug, "worker-a")
+  assert_eq(parsed.agent_type, @types.AgentType::Gemini)
+}
+
+///|
+test "parse_remote_spawn_args requires transport fields" {
+  match
+    parse_remote_spawn_args(".", {
+      "slug": "remote-1",
+      "repo_url": "git@github.com:org/repo.git",
+      "tcp_addr": "10.0.0.1:9100",
+    }) {
+    Ok(_) => assert_true(false)
+    Err(e) => assert_eq(e, "missing ssh_target")
+  }
+}
+
+///|
+test "parse_fork_wave_args applies defaults" {
+  let parsed = parse_fork_wave_args(".", {
+    "count": "2",
+    "task": "Implement feature X",
+  }).unwrap()
+  assert_eq(parsed.count, 2)
+  assert_eq(parsed.slug_prefix, "wave")
+  assert_eq(parsed.parent_branch, "main")
+  assert_eq(parsed.caller_id, "main")
+}
+
+///|
+test "parse_task_create_args defaults status to todo" {
+  let parsed = parse_task_create_args({
+    "id": "task-1",
+    "title": "Build the thing",
+  }).unwrap()
+  assert_eq(parsed.status, "todo")
+  assert_eq(parsed.assignee, "")
+  assert_eq(parsed.notes, "")
+}
+
+///|
+test "parse_task_update_args treats empty status as absent" {
+  let parsed = parse_task_update_args({
+    "id": "task-1",
+    "status": "",
+    "notes": "updated",
+  }).unwrap()
+  assert_eq(parsed.id, "task-1")
+  assert_eq(parsed.status, None)
+  assert_eq(parsed.notes, Some("updated"))
+}
+
+///|
+test "parse_task_create_args rejects invalid status" {
+  match
+    parse_task_create_args({
+      "id": "task-1",
+      "title": "Build the thing",
+      "status": "blocked",
+    }) {
+    Ok(_) => assert_true(false)
+    Err(e) => assert_eq(e, "invalid status: blocked")
+  }
+}
+
+///|
+test "parse_register_args defaults agent type from role" {
+  let parsed = parse_register_args(@types.Role::Dev, {
+    "agent_id": "leaf-0",
+    "workspace": "/tmp/leaf-0",
+  }).unwrap()
+  assert_eq(parsed.agent_id, "leaf-0")
+  assert_eq(parsed.agent_type, @types.AgentType::Gemini)
+  assert_eq(parsed.workspace, "/tmp/leaf-0")
+}
+
+///|
+test "parse_kv_key_args rejects invalid key" {
+  match parse_kv_key_args({ "key": "../bad" }) {
+    Ok(_) => assert_true(false)
+    Err(e) => assert_eq(e, "key cannot contain '..'")
+  }
+}
+
+///|
+test "parse_mutex_acquire_args defaults ttl_sec" {
+  let parsed = parse_mutex_acquire_args({
+    "name": "README",
+    "agent_id": "agent-a",
+  }).unwrap()
+  assert_eq(parsed.ttl_sec, 300L)
+}
+
+///|
+test "parse_mutex_release_args requires agent id" {
+  match parse_mutex_release_args({ "name": "README" }) {
+    Ok(_) => assert_true(false)
+    Err(e) => assert_eq(e, "missing agent_id")
+  }
+}
+
+///|
+test "parse_merge_pr_args defaults branch and caller" {
+  let parsed = parse_merge_pr_args({ "pr_number": "42" }).unwrap()
+  assert_eq(parsed.pr_number, 42)
+  assert_eq(parsed.parent_branch, "main")
+  assert_eq(parsed.caller_id, "server")
+}
+
+///|
+test "parse_caller_message_args requires caller_id" {
+  match parse_caller_message_args({ "message": "hello" }) {
+    Ok(_) => assert_true(false)
+    Err(e) => assert_eq(e, "missing caller_id")
+  }
+}
+
+///|
+test "parse_send_message_args defaults sender and status" {
+  let parsed = parse_send_message_args({ "target_id": "leaf-1" }).unwrap()
+  assert_eq(parsed.target_id, "leaf-1")
+  assert_eq(parsed.sender_id, "unknown")
+  assert_eq(parsed.status, "info")
+}
+
+///|
+test "parse_session_name_args validates slug" {
+  match parse_session_name_args({ "name": "../evil" }) {
+    Ok(_) => assert_true(false)
+    Err(e) => assert_eq(e, "invalid name: invalid character in slug: .")
+  }
+}
+
+///|
+test "parse_shutdown_args allows best effort empty caller" {
+  let parsed = parse_shutdown_args({})
+  assert_eq(parsed.caller_id, None)
 }

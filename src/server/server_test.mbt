@@ -167,6 +167,102 @@ test "notify_parent with no parent returns Err" {
 }
 
 ///|
+test "plan_poll_event_delivery routes PR ready to parent" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = build_agent("parent-1", None)
+  let child = {
+    ..build_agent("child-1", Some("parent-1")),
+    branch: "main.child-1",
+  }
+  let _ = state.register_agent(parent)
+  let _ = state.register_agent(child)
+  state.poller.track(
+    42, "child-1", "main.child-1", "main", "https://example.test/pr/42", 100L,
+  )
+  let delivery = state.plan_poll_event_delivery(
+    @poller.PollEvent::PRReady(42),
+    "child-1",
+  )
+  match delivery {
+    Some(@message.DeliveryMethod::TeamsInbox(path, payload)) => {
+      assert_true(path.contains("parent-1"))
+      assert_true(payload.contains("[PR READY] child-1 PR #42 approved"))
+      assert_true(payload.contains("branch: main.child-1"))
+      assert_true(payload.contains("parent_branch: main"))
+      assert_true(payload.contains("pr_url: https://example.test/pr/42"))
+      assert_true(
+        payload.contains("merge_pr(pr_number: \"42\", parent_branch: \"main\")"),
+      )
+      assert_true(payload.contains("\"from\":\"child-1\""))
+    }
+    _ => fail("expected parent Teams inbox delivery")
+  }
+}
+
+///|
+test "plan_poll_event_delivery routes fixes pushed to parent with next action" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = build_agent("parent-1", None)
+  let child = {
+    ..build_agent("child-1", Some("parent-1")),
+    branch: "main.subtl.child-1",
+  }
+  let _ = state.register_agent(parent)
+  let _ = state.register_agent(child)
+  state.poller.track(
+    43, "child-1", "main.subtl.child-1", "main.subtl", "https://example.test/pr/43",
+    100L,
+  )
+  let delivery = state.plan_poll_event_delivery(
+    @poller.PollEvent::FixesPushed(43),
+    "child-1",
+  )
+  match delivery {
+    Some(@message.DeliveryMethod::TeamsInbox(path, payload)) => {
+      assert_true(path.contains("parent-1"))
+      assert_true(
+        payload.contains(
+          "[FIXES PUSHED] child-1 PR #43 has new commits after review",
+        ),
+      )
+      assert_true(payload.contains("branch: main.subtl.child-1"))
+      assert_true(payload.contains("parent_branch: main.subtl"))
+      assert_true(payload.contains("pr_url: https://example.test/pr/43"))
+      assert_true(
+        payload.contains("Next action: re-check the PR and merge when ready."),
+      )
+      assert_true(payload.contains("\"from\":\"child-1\""))
+    }
+    _ => fail("expected parent Teams inbox delivery")
+  }
+}
+
+///|
+test "plan_poll_event_delivery routes review comments to owning agent" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = build_agent("parent-1", None)
+  let child = build_agent("child-1", Some("parent-1"))
+  let _ = state.register_agent(parent)
+  let _ = state.register_agent(child)
+  let delivery = state.plan_poll_event_delivery(
+    @poller.PollEvent::ReviewReceived(42, "Please add tests"),
+    "child-1",
+  )
+  match delivery {
+    Some(@message.DeliveryMethod::TeamsInbox(path, payload)) => {
+      assert_true(path.contains("child-1"))
+      assert_true(
+        payload.contains(
+          "[REVIEW] PR #42 has review comments:\nPlease add tests",
+        ),
+      )
+      assert_true(payload.contains("\"from\":\"poller\""))
+    }
+    _ => fail("expected owning agent Teams inbox delivery")
+  }
+}
+
+///|
 test "ServerState::new initializes run_id and mutex registry" {
   let project_dir = "/tmp/choir-server-state"
   run_shell(

@@ -212,22 +212,6 @@ async fn serve_close_uds_client(
 }
 
 ///|
-fn serve_format_poll_event(event : @poller.PollEvent) -> String {
-  match event {
-    PRReady(n) => "[PR READY] PR #\{n} approved"
-    ReviewReceived(n, comments) =>
-      if comments == "" {
-        "[REVIEW] PR #\{n} has review comments"
-      } else {
-        "[REVIEW] PR #\{n} has review comments:\n\{comments}"
-      }
-    FixesPushed(n) => "[FIXES PUSHED] PR #\{n} new commits after review"
-    ReviewTimeout(n) => "[REVIEW TIMEOUT] PR #\{n} no review after 15min"
-    CIFailed(n) => "[CI FAILED] PR #\{n} CI checks failing"
-  }
-}
-
-///|
 fn serve_run() -> Unit raise {
   let config_content = @io.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
@@ -253,15 +237,10 @@ fn serve_run() -> Unit raise {
         for i = 0; i < pending_events.length(); i = i + 1 {
           let event = pending_events[i]
           let agent_id = pending_agent_ids[i]
-          match state.registry.get(agent_id) {
-            Ok(agent) => {
-              let msg = serve_format_poll_event(event)
-              let delivery = @message.plan_delivery(
-                agent, "poller", msg, "info",
-              )
+          match state.plan_poll_event_delivery(event, agent_id) {
+            Some(delivery) =>
               ignore(@tools.execute_delivery(delivery, @exec.run_sequence))
-            }
-            Err(_) => ()
+            None => ()
           }
         }
       }
@@ -470,22 +449,6 @@ fn mcp_write_all_uds(fd : Int, data : Bytes) -> Bool {
 }
 
 ///|
-fn mcp_json_escape(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
 fn mcp_resolved_agent_id(
   role : @types.Role,
   config : @types.Config,
@@ -511,47 +474,8 @@ fn mcp_build_registration_message(
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> String {
-  let role_str = @config.role_to_string(role)
   let agent_id = mcp_resolved_agent_id(role, config, local_cfg)
-  let args_buf = StringBuilder::new()
-  args_buf.write_string("\"agent_id\":\"" + mcp_json_escape(agent_id) + "\"")
-  match local_cfg.parent_id {
-    Some(v) =>
-      args_buf.write_string(",\"parent_id\":\"" + mcp_json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.branch {
-    Some(v) =>
-      args_buf.write_string(",\"branch\":\"" + mcp_json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.parent_branch {
-    Some(v) =>
-      args_buf.write_string(",\"parent_branch\":\"" + mcp_json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.workspace {
-    Some(v) =>
-      args_buf.write_string(",\"workspace\":\"" + mcp_json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.tmux_target {
-    Some(v) =>
-      args_buf.write_string(",\"tmux_target\":\"" + mcp_json_escape(v) + "\"")
-    None => ()
-  }
-  match local_cfg.agent_type {
-    Some(v) =>
-      args_buf.write_string(
-        ",\"agent_type\":\"" + @config.agent_type_to_string(v) + "\"",
-      )
-    None => ()
-  }
-  "{\"method\":\"register\",\"role\":\"" +
-  role_str +
-  "\",\"name\":\"register\",\"args\":{" +
-  args_buf.to_string() +
-  "}}\n"
+  @transport.format_registration_request(role, agent_id, local_cfg) + "\n"
 }
 
 ///|
@@ -561,44 +485,8 @@ fn mcp_build_wire_request(
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> String {
-  let req_method = internal_req.req_method
-  let role_str = @config.role_to_string(internal_req.role)
-  let name = internal_req.name
   let agent_id = mcp_resolved_agent_id(role, config, local_cfg)
-  let args : Map[String, String] = {}
-  internal_req.args.each(fn(k, v) { args.set(k, v) })
-  if not(args.contains("caller_id")) {
-    args.set("caller_id", agent_id)
-  }
-  if name == "send_message" && not(args.contains("sender_id")) {
-    args.set("sender_id", agent_id)
-  }
-  if name == "file_pr" {
-    if not(args.contains("branch")) {
-      match local_cfg.branch {
-        Some(v) => args.set("branch", v)
-        None => ()
-      }
-    }
-    if not(args.contains("parent_branch")) {
-      match local_cfg.parent_branch {
-        Some(v) => args.set("parent_branch", v)
-        None => ()
-      }
-    }
-  }
-  let args_buf = StringBuilder::new()
-  args_buf.write_char('{')
-  let mut first = true
-  args.each(fn(k, v) {
-    if not(first) {
-      args_buf.write_char(',')
-    }
-    args_buf.write_string("\"" + k + "\":\"" + mcp_json_escape(v) + "\"")
-    first = false
-  })
-  args_buf.write_char('}')
-  "{\"method\":\"\{req_method}\",\"role\":\"\{role_str}\",\"name\":\"\{name}\",\"args\":\{args_buf.to_string()}}\n"
+  @transport.format_augmented_request(internal_req, agent_id, local_cfg) + "\n"
 }
 
 ///|

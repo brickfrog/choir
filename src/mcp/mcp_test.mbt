@@ -4,10 +4,12 @@ test "translate tools/call to internal request" {
     jsonrpc: "2.0",
     id: Some(Number(1)),
     req_method: method_tools_call,
-    params: Some({
-      "name": "fork_wave",
-      "arguments": "{\"task\":\"build feature\"}",
-    }),
+    params: Some(
+      @mcp.JsonValue::Object({
+        "name": @mcp.JsonValue::String("fork_wave"),
+        "arguments": @mcp.JsonValue::Raw("{\"task\":\"build feature\"}"),
+      }),
+    ),
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::TL)
   match result {
@@ -56,11 +58,9 @@ test "tools_list_response" {
   let rpc = @mcp.tools_list_response(Number(20))
   assert_eq(rpc.id, Number(20))
   match rpc.result {
-    Some(res) => {
-      let tools = res.get("tools")
-      assert_true(tools is Some(_))
-      match tools {
-        Some(t) => {
+    Some(@mcp.JsonValue::Object(res)) =>
+      match res.get("tools") {
+        Some(@mcp.JsonValue::Raw(t)) => {
           assert_true(t.contains("fork_wave"))
           assert_true(t.contains("file_pr"))
           assert_true(t.contains("merge_pr"))
@@ -74,6 +74,8 @@ test "tools_list_response" {
           assert_true(t.contains("done_criteria"))
           assert_true(t.contains("key_decisions"))
           assert_true(t.contains("agent_id"))
+          assert_true(t.contains("pr_url"))
+          assert_true(t.contains("parent_branch"))
           assert_true(t.contains("kv_get"))
           assert_true(t.contains("kv_set"))
           assert_true(t.contains("kv_delete"))
@@ -83,12 +85,15 @@ test "tools_list_response" {
           assert_true(t.contains("task_list"))
           assert_true(t.contains("task_get"))
           assert_true(t.contains("task_update"))
+          assert_true(t.contains("\"id\",\"title\""))
+          assert_true(t.contains("\"id\""))
+          assert_true(t.contains("caller_id"))
           assert_true(t.contains("shutdown"))
         }
-        None => fail("expected tools")
+        _ => fail("expected raw tools json")
       }
-    }
     None => fail("expected result")
+    Some(_) => fail("expected object result")
   }
 }
 
@@ -98,7 +103,9 @@ test "translate missing name returns error" {
     jsonrpc: "2.0",
     id: Some(Number(3)),
     req_method: method_tools_call,
-    params: Some({ "task": "something" }),
+    params: Some(
+      @mcp.JsonValue::Object({ "task": @mcp.JsonValue::String("something") }),
+    ),
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::Dev)
   assert_true(result is Err(_))
@@ -121,14 +128,19 @@ test "from_internal_response Err" {
   assert_eq(rpc.id, Number(6))
   assert_true(rpc.error is None)
   match rpc.result {
-    Some(result) => {
-      assert_eq(result.get("isError"), Some("true"))
+    Some(@mcp.JsonValue::Object(result)) => {
+      match result.get("isError") {
+        Some(@mcp.JsonValue::Raw(value)) => assert_eq(value, "true")
+        _ => fail("expected isError raw bool")
+      }
       match result.get("content") {
-        Some(content) => assert_true(content.contains("tool not found"))
-        None => fail("expected content")
+        Some(@mcp.JsonValue::Raw(content)) =>
+          assert_true(content.contains("tool not found"))
+        _ => fail("expected content")
       }
     }
     None => fail("expected result")
+    Some(_) => fail("expected object result")
   }
 }
 

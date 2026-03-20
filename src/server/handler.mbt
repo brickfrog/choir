@@ -119,6 +119,171 @@ pub fn ServerState::notify_parent(
 }
 
 ///|
+fn render_parent_next_action(
+  pr_number : Int,
+  parent_branch : String?,
+) -> String {
+  match parent_branch {
+    Some(branch) =>
+      "Next action: `merge_pr(pr_number: \"" +
+      pr_number.to_string() +
+      "\", parent_branch: \"" +
+      branch +
+      "\")`"
+    None =>
+      "Next action: merge PR #" +
+      pr_number.to_string() +
+      " once the parent branch is confirmed."
+  }
+}
+
+///|
+fn parent_poll_event_message(
+  tracked : @poller.TrackedPR,
+  event : @poller.PollEvent,
+) -> (String, String)? {
+  let agent_id = tracked.agent_id
+  let branch = tracked.branch
+  let parent_branch = if tracked.parent_branch == "" {
+    None
+  } else {
+    Some(tracked.parent_branch)
+  }
+  let pr_url = if tracked.pr_url == "" {
+    ""
+  } else {
+    "\npr_url: " + tracked.pr_url
+  }
+  match event {
+    PRReady(n) => {
+      let message = "[PR READY] " +
+        agent_id +
+        " PR #" +
+        n.to_string() +
+        " approved\n" +
+        "branch: " +
+        branch +
+        "\n" +
+        "parent_branch: " +
+        parent_branch.unwrap_or("<unknown>") +
+        pr_url +
+        "\n" +
+        render_parent_next_action(n, parent_branch)
+      Some((message, "success"))
+    }
+    FixesPushed(n) => {
+      let message = "[FIXES PUSHED] " +
+        agent_id +
+        " PR #" +
+        n.to_string() +
+        " has new commits after review\n" +
+        "branch: " +
+        branch +
+        "\n" +
+        "parent_branch: " +
+        parent_branch.unwrap_or("<unknown>") +
+        pr_url +
+        "\n" +
+        "Next action: re-check the PR and merge when ready."
+      Some((message, "info"))
+    }
+    ReviewTimeout(n) => {
+      let message = "[REVIEW TIMEOUT] " +
+        agent_id +
+        " PR #" +
+        n.to_string() +
+        " has no review after 15min\n" +
+        "branch: " +
+        branch +
+        "\n" +
+        "parent_branch: " +
+        parent_branch.unwrap_or("<unknown>") +
+        pr_url +
+        "\n" +
+        "Next action: inspect the PR or retrigger review."
+      Some((message, "failure"))
+    }
+    ReviewReceived(_, _) => None
+    CIFailed(_) => None
+  }
+}
+
+///|
+fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
+  match event {
+    PRReady(n) => n
+    ReviewReceived(n, _) => n
+    FixesPushed(n) => n
+    ReviewTimeout(n) => n
+    CIFailed(n) => n
+  }
+}
+
+///|
+fn owner_poll_event_message(event : @poller.PollEvent) -> (String, String)? {
+  match event {
+    ReviewReceived(n, comments) =>
+      if comments == "" {
+        Some(("[REVIEW] PR #" + n.to_string() + " has review comments", "info"))
+      } else {
+        Some(
+          (
+            "[REVIEW] PR #" +
+            n.to_string() +
+            " has review comments:\n" +
+            comments,
+            "info",
+          ),
+        )
+      }
+    CIFailed(n) =>
+      Some(
+        ("[CI FAILED] PR #" + n.to_string() + " CI checks failing", "failure"),
+      )
+    PRReady(_) => None
+    FixesPushed(_) => None
+    ReviewTimeout(_) => None
+  }
+}
+
+///|
+pub fn ServerState::plan_poll_event_delivery(
+  self : ServerState,
+  event : @poller.PollEvent,
+  agent_id : String,
+) -> @message.DeliveryMethod? {
+  let owner = match self.registry.get(agent_id) {
+    Ok(agent) => Some(agent)
+    Err(_) => None
+  }
+  let tracked = self.poller.get(poll_event_pr_number(event))
+  match owner {
+    Some(agent) => {
+      let parent_message = match tracked {
+        Some(pr) => parent_poll_event_message(pr, event)
+        None => None
+      }
+      match parent_message {
+        Some((message, status)) =>
+          match self.registry.get_parent(agent_id) {
+            Ok(parent) =>
+              Some(@message.plan_delivery(parent, agent_id, message, status))
+            Err(_) =>
+              Some(@message.plan_delivery(agent, "poller", message, status))
+          }
+        None =>
+          match owner_poll_event_message(event) {
+            Some((message, status)) =>
+              Some(@message.plan_delivery(agent, "poller", message, status))
+            None => None
+          }
+      }
+    }
+    None => None
+  }
+}
+
+///|
 pub fn ServerState::list_agents(self : ServerState) -> Array[@types.Agent] {
   self.registry.list()
 }

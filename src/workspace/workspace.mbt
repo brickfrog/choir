@@ -11,6 +11,21 @@ pub fn branch_name(parent_branch : String, slug : String) -> String {
 }
 
 ///|
+pub fn parent_branch(branch : String) -> String? {
+  let mut last_dot = -1
+  for i = 0; i < branch.length(); i = i + 1 {
+    if branch[i] == '.' {
+      last_dot = i
+    }
+  }
+  if last_dot <= 0 {
+    None
+  } else {
+    Some(branch[:last_dot].to_string() catch { _ => "" })
+  }
+}
+
+///|
 pub fn canonical_agent_id(spec : @types.SpawnSpec) -> String {
   branch_name(spec.parent_branch, spec.slug)
 }

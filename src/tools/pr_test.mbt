@@ -96,7 +96,12 @@ test "dispatch file_pr auto_tracks returned pr number" {
       Err(_) => assert_true(false)
     }
     match poller.get(22) {
-      Some(tracked) => assert_eq(tracked.agent_id, "feat")
+      Some(tracked) => {
+        assert_eq(tracked.agent_id, "feat")
+        assert_eq(tracked.branch, "feat")
+        assert_eq(tracked.parent_branch, "main")
+        assert_eq(tracked.pr_url, "https://example.test/pr/feat")
+      }
       None => fail("expected tracked PR")
     }
   })
@@ -157,7 +162,9 @@ test "dispatch file_pr surfaces ensure_pr failures" {
 test "dispatch merge_pr returns Ok" {
   @async.with_event_loop(_ => {
     let poller = @poller.PollerState::new()
-    poller.track(456, "agent-1", 100)
+    poller.track(
+      456, "agent-1", "main.agent-1", "main", "https://example.test/pr/456", 100,
+    )
     let call : ToolCall = {
       role: @types.Role::TL,
       name: "merge_pr",
@@ -211,12 +218,20 @@ test "dispatch track_pr stores tracked PR" {
     }
     let res = dispatch(call, runner=mock_runner, poller_state=Some(poller))
     match res {
-      Ok(m) => assert_eq(m.get("status"), Some("tracked"))
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("tracked"))
+        assert_eq(m.get("branch"), Some("agent-22"))
+        assert_eq(m.get("parent_branch"), Some("main"))
+        assert_eq(m.get("pr_url"), Some(""))
+      }
       Err(_) => assert_true(false)
     }
     match poller.get(22) {
       Some(tracked) => {
         assert_eq(tracked.agent_id, "agent-22")
+        assert_eq(tracked.branch, "agent-22")
+        assert_eq(tracked.parent_branch, "main")
+        assert_eq(tracked.pr_url, "")
         assert_true(tracked.first_seen > 0L)
       }
       None => fail("expected tracked PR")

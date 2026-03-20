@@ -1,6 +1,4 @@
 import {
-  "choir/src/jsonutil",
-  "choir/src/types",
   "moonbitlang/core/encoding/utf8",
 }
 

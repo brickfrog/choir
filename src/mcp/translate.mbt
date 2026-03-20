@@ -1,4 +1,75 @@
 ///|
+struct ToolProp {
+  name : String
+  desc : String
+} derive(Show, Eq)
+
+///|
+struct ToolDef {
+  name : String
+  description : String
+  props : Array[ToolProp]
+  required : Array[String]
+} derive(Show, Eq)
+
+///|
+fn json_string(s : String) -> String {
+  "\"" + escape_json_string(s) + "\""
+}
+
+///|
+fn prop_json(prop : ToolProp) -> String {
+  json_string(prop.name) +
+  ":{\"type\":\"string\",\"description\":" +
+  json_string(prop.desc) +
+  "}"
+}
+
+///|
+fn join_json_strings(items : Array[String]) -> String {
+  let buf = StringBuilder::new()
+  for i = 0; i < items.length(); i = i + 1 {
+    if i > 0 {
+      buf.write_char(',')
+    }
+    buf.write_string(json_string(items[i]))
+  }
+  buf.to_string()
+}
+
+///|
+fn schema_json(props : Array[ToolProp], required : Array[String]) -> String {
+  let buf = StringBuilder::new()
+  buf.write_string("{\"type\":\"object\",\"properties\":{")
+  for i = 0; i < props.length(); i = i + 1 {
+    if i > 0 {
+      buf.write_char(',')
+    }
+    buf.write_string(prop_json(props[i]))
+  }
+  buf.write_string("},\"required\":[")
+  buf.write_string(join_json_strings(required))
+  buf.write_string("]}")
+  buf.to_string()
+}
+
+///|
+fn tool_json(tool : ToolDef) -> String {
+  "{\"name\":" +
+  json_string(tool.name) +
+  ",\"description\":" +
+  json_string(tool.description) +
+  ",\"inputSchema\":" +
+  schema_json(tool.props, tool.required) +
+  "}"
+}
+
+///|
+fn text_content_json(text : String) -> String {
+  "[{\"type\":\"text\",\"text\":" + json_string(text) + "}]"
+}
+
+///|
 /// Translate an MCP JSON-RPC tools/call request to an internal Request.
 pub fn to_internal_request(
   rpc : JsonRpcRequest,
@@ -20,20 +91,27 @@ pub fn to_internal_request(
     })
   }
   let params = match rpc.params {
-    Some(p) => p
-    None => {}
+    Some(JsonValue::Object(p)) => p
+    _ => ({} : Map[String, JsonValue])
   }
   let name = match params.get("name") {
-    Some(n) => n
+    Some(JsonValue::String(n)) => n
     None =>
       return Err({
         code: err_invalid_params,
         message: "missing 'name' in params",
       })
+    Some(_) =>
+      return Err({
+        code: err_invalid_params,
+        message: "invalid 'name' in params",
+      })
   }
   let args = match params.get("arguments") {
-    Some(json_str) => parse_flat_json_object(json_str)
+    Some(JsonValue::String(json_str)) => parse_flat_json_object(json_str)
+    Some(JsonValue::Raw(json_str)) => parse_flat_json_object(json_str)
     None => {}
+    Some(_) => {}
   }
   Ok({ req_method: rpc.req_method, role, name, args })
 }
@@ -44,276 +122,342 @@ pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
   {
     jsonrpc: "2.0",
     id,
-    result: Some({
-      "protocolVersion": "2024-11-05",
-      "capabilities": "{\"tools\":{}}",
-      "serverInfo": "{\"name\":\"choir\",\"version\":\"1.0.0\"}",
-    }),
+    result: Some(
+      JsonValue::Object({
+        "protocolVersion": JsonValue::String("2024-11-05"),
+        "capabilities": JsonValue::Raw("{\"tools\":{}}"),
+        "serverInfo": JsonValue::Raw(
+          "{\"name\":\"choir\",\"version\":\"1.0.0\"}",
+        ),
+      }),
+    ),
     error: None,
   }
 }
 
 ///|
-fn schema(props : String, required : String) -> String {
-  "{\"type\":\"object\",\"properties\":{" +
-  props +
-  "},\"required\":[" +
-  required +
-  "]}"
+fn spawn_leaf_props(
+  default_slug : String,
+  agent_label : String,
+) -> Array[ToolProp] {
+  [
+    { name: "task", desc: "Primary task for the " + agent_label },
+    { name: "prompt", desc: "Optional full prompt override" },
+    {
+      name: "slug",
+      desc: "Agent slug / branch suffix (default " + default_slug + ")",
+    },
+    { name: "branch", desc: "Compatibility alias for slug" },
+    { name: "parent_branch", desc: "Parent branch (default main)" },
+    {
+      name: "fork_session",
+      desc: "For Claude children, inherit parent session context when true",
+    },
+    {
+      name: "parent_session_id",
+      desc: "Explicit Claude parent session id override for --resume",
+    },
+    { name: "read_first", desc: "Newline-separated paths to read first" },
+    { name: "steps", desc: "Newline-separated implementation steps" },
+    { name: "verify", desc: "Newline-separated verification commands" },
+    { name: "done_criteria", desc: "Newline-separated acceptance criteria" },
+    { name: "boundary", desc: "Newline-separated things the agent must not do" },
+    { name: "constraints", desc: "Newline-separated extra constraints" },
+    {
+      name: "context",
+      desc: "Context or reasoning summary for the child agent",
+    },
+    {
+      name: "key_decisions",
+      desc: "Newline-separated decisions that are already fixed",
+    },
+    { name: "non_goals", desc: "Newline-separated non-goals" },
+  ]
 }
 
 ///|
-fn prop(name : String, desc : String) -> String {
-  "\"" + name + "\":{\"type\":\"string\",\"description\":\"" + desc + "\"}"
+fn spawn_worker_props() -> Array[ToolProp] {
+  [
+    { name: "task", desc: "Primary task for the worker agent" },
+    { name: "prompt", desc: "Optional full prompt override" },
+    { name: "slug", desc: "Worker slug (default inline-worker)" },
+    { name: "agent_id", desc: "Compatibility alias for slug" },
+    {
+      name: "agent_type",
+      desc: "Worker agent type: gemini, claude, or moon_pilot",
+    },
+    { name: "type", desc: "Worker profile: implementation or research" },
+    { name: "read_first", desc: "Newline-separated paths to read first" },
+    { name: "steps", desc: "Newline-separated implementation steps" },
+    { name: "verify", desc: "Newline-separated verification commands" },
+    { name: "done_criteria", desc: "Newline-separated acceptance criteria" },
+    {
+      name: "boundary",
+      desc: "Newline-separated things the worker must not do",
+    },
+    { name: "constraints", desc: "Newline-separated extra constraints" },
+    { name: "context", desc: "Context or reasoning summary for the worker" },
+    {
+      name: "key_decisions",
+      desc: "Newline-separated decisions that are already fixed",
+    },
+    { name: "non_goals", desc: "Newline-separated non-goals" },
+  ]
 }
 
 ///|
-fn spawn_leaf_props(default_slug : String, agent_label : String) -> String {
-  prop("task", "Primary task for the " + agent_label) +
-  "," +
-  prop("prompt", "Optional full prompt override") +
-  "," +
-  prop("slug", "Agent slug / branch suffix (default " + default_slug + ")") +
-  "," +
-  prop("branch", "Compatibility alias for slug") +
-  "," +
-  prop("parent_branch", "Parent branch (default main)") +
-  "," +
-  prop(
-    "fork_session", "For Claude children, inherit parent session context when true",
-  ) +
-  "," +
-  prop(
-    "parent_session_id", "Explicit Claude parent session id override for --resume",
-  ) +
-  "," +
-  prop("read_first", "Newline-separated paths to read first") +
-  "," +
-  prop("steps", "Newline-separated implementation steps") +
-  "," +
-  prop("verify", "Newline-separated verification commands") +
-  "," +
-  prop("done_criteria", "Newline-separated acceptance criteria") +
-  "," +
-  prop("boundary", "Newline-separated things the agent must not do") +
-  "," +
-  prop("constraints", "Newline-separated extra constraints") +
-  "," +
-  prop("context", "Context or reasoning summary for the child agent") +
-  "," +
-  prop("key_decisions", "Newline-separated decisions that are already fixed") +
-  "," +
-  prop("non_goals", "Newline-separated non-goals")
-}
-
-///|
-fn spawn_worker_props() -> String {
-  prop("task", "Primary task for the worker agent") +
-  "," +
-  prop("prompt", "Optional full prompt override") +
-  "," +
-  prop("slug", "Worker slug (default inline-worker)") +
-  "," +
-  prop("agent_id", "Compatibility alias for slug") +
-  "," +
-  prop("agent_type", "Worker agent type: gemini, claude, or moon_pilot") +
-  "," +
-  prop("type", "Worker profile: implementation or research") +
-  "," +
-  prop("read_first", "Newline-separated paths to read first") +
-  "," +
-  prop("steps", "Newline-separated implementation steps") +
-  "," +
-  prop("verify", "Newline-separated verification commands") +
-  "," +
-  prop("done_criteria", "Newline-separated acceptance criteria") +
-  "," +
-  prop("boundary", "Newline-separated things the worker must not do") +
-  "," +
-  prop("constraints", "Newline-separated extra constraints") +
-  "," +
-  prop("context", "Context or reasoning summary for the worker") +
-  "," +
-  prop("key_decisions", "Newline-separated decisions that are already fixed") +
-  "," +
-  prop("non_goals", "Newline-separated non-goals")
+fn tool_defs() -> Array[ToolDef] {
+  [
+    {
+      name: "fork_wave",
+      description: "Fork a new wave of worker agents in a new git worktree",
+      props: [
+        { name: "task", desc: "Task description for the wave" },
+        {
+          name: "parent_branch",
+          desc: "Parent branch for spawned children (default main)",
+        },
+        { name: "branch", desc: "Compatibility alias for parent_branch" },
+        { name: "count", desc: "Number of workers to spawn (default 1)" },
+        { name: "slug_prefix", desc: "Slug prefix for spawned children" },
+        { name: "read_first", desc: "Newline-separated paths to read first" },
+        { name: "steps", desc: "Newline-separated implementation steps" },
+        { name: "verify", desc: "Newline-separated verification commands" },
+        { name: "done_criteria", desc: "Newline-separated acceptance criteria" },
+        {
+          name: "boundary",
+          desc: "Newline-separated things children must not do",
+        },
+        { name: "constraints", desc: "Newline-separated extra constraints" },
+        { name: "context", desc: "Context or reasoning summary for the wave" },
+        {
+          name: "key_decisions",
+          desc: "Newline-separated decisions that are already fixed",
+        },
+        { name: "non_goals", desc: "Newline-separated non-goals" },
+      ],
+      required: ["task", "count"],
+    },
+    {
+      name: "file_pr",
+      description: "Push the branch, create or resolve its PR, and auto-track it for review events",
+      props: [
+        { name: "branch", desc: "Branch to file a PR for" },
+        {
+          name: "agent_id",
+          desc: "Compatibility alias for branch and tracked agent id",
+        },
+        {
+          name: "parent_branch",
+          desc: "Parent branch to target (default main)",
+        },
+        { name: "caller_id", desc: "Optional tracked agent id override" },
+      ],
+      required: [],
+    },
+    {
+      name: "merge_pr",
+      description: "Merge a pull request by number",
+      props: [
+        { name: "pr_number", desc: "Pull request number to merge" },
+        { name: "parent_branch", desc: "Branch to merge into" },
+      ],
+      required: ["pr_number", "parent_branch"],
+    },
+    {
+      name: "track_pr",
+      description: "Track a pull request in the background poller",
+      props: [
+        { name: "pr_number", desc: "Pull request number to track" },
+        { name: "agent_id", desc: "Agent ID that owns the PR" },
+        {
+          name: "branch",
+          desc: "Owning branch for the PR (defaults to agent_id)",
+        },
+        {
+          name: "parent_branch",
+          desc: "Parent branch / PR base (derived when omitted)",
+        },
+        { name: "pr_url", desc: "Pull request URL when known" },
+      ],
+      required: ["pr_number", "agent_id"],
+    },
+    {
+      name: "notify_parent",
+      description: "Notify the parent agent with a status update",
+      props: [
+        { name: "caller_id", desc: "ID of the calling agent" },
+        { name: "message", desc: "Message to send to parent" },
+      ],
+      required: ["caller_id", "message"],
+    },
+    {
+      name: "send_message",
+      description: "Send a message to another agent",
+      props: [
+        { name: "target_id", desc: "ID of the target agent" },
+        { name: "message", desc: "Message content to send" },
+      ],
+      required: ["target_id", "message"],
+    },
+    {
+      name: "spawn_gemini",
+      description: "Spawn a Gemini leaf agent in a new worktree",
+      props: spawn_leaf_props("gemini-leaf", "Gemini leaf agent"),
+      required: ["task"],
+    },
+    {
+      name: "spawn_moon_pilot",
+      description: "Spawn a Moon Pilot leaf agent in a new worktree",
+      props: spawn_leaf_props("moon-pilot-leaf", "Moon Pilot leaf agent"),
+      required: ["task"],
+    },
+    {
+      name: "spawn_worker",
+      description: "Spawn an inline worker agent in a tmux window",
+      props: spawn_worker_props(),
+      required: ["task"],
+    },
+    {
+      name: "kv_get",
+      description: "Read one value from shared KV storage",
+      props: [{ name: "key", desc: "Storage key to read" }],
+      required: ["key"],
+    },
+    {
+      name: "kv_set",
+      description: "Write one value to shared KV storage",
+      props: [
+        { name: "key", desc: "Storage key to write" },
+        { name: "value", desc: "Value to store" },
+      ],
+      required: ["key", "value"],
+    },
+    {
+      name: "kv_delete",
+      description: "Delete one value from shared KV storage",
+      props: [{ name: "key", desc: "Storage key to delete" }],
+      required: ["key"],
+    },
+    {
+      name: "mutex_acquire",
+      description: "Acquire an in-memory coordination mutex",
+      props: [
+        { name: "name", desc: "Mutex name" },
+        { name: "agent_id", desc: "ID of the acquiring agent" },
+        { name: "ttl_sec", desc: "Optional TTL in seconds" },
+      ],
+      required: ["name", "agent_id"],
+    },
+    {
+      name: "mutex_release",
+      description: "Release an in-memory coordination mutex",
+      props: [
+        { name: "name", desc: "Mutex name" },
+        { name: "agent_id", desc: "ID of the releasing agent" },
+      ],
+      required: ["name", "agent_id"],
+    },
+    {
+      name: "mutex_status",
+      description: "Inspect an in-memory coordination mutex",
+      props: [{ name: "name", desc: "Mutex name to inspect" }],
+      required: ["name"],
+    },
+    {
+      name: "task_list",
+      description: "List tasks from shared task storage",
+      props: [{ name: "slug", desc: "Optional slug filter" }],
+      required: [],
+    },
+    {
+      name: "task_get",
+      description: "Get one task from shared task storage",
+      props: [{ name: "id", desc: "Task slug / ID" }],
+      required: ["id"],
+    },
+    {
+      name: "task_update",
+      description: "Update one task in shared task storage",
+      props: [
+        { name: "id", desc: "Task slug / ID" },
+        { name: "status", desc: "Updated status" },
+        { name: "assignee", desc: "Updated assignee" },
+        { name: "notes", desc: "Updated task notes" },
+      ],
+      required: ["id"],
+    },
+    {
+      name: "kv_list",
+      description: "List keys in shared KV storage",
+      props: [{ name: "prefix", desc: "Optional key prefix filter" }],
+      required: [],
+    },
+    {
+      name: "task_create",
+      description: "Create a new task in shared task storage",
+      props: [
+        { name: "id", desc: "Task slug/ID" },
+        { name: "title", desc: "Task title" },
+        { name: "status", desc: "Initial status (default todo)" },
+        { name: "assignee", desc: "Assignee agent ID" },
+        { name: "notes", desc: "Task notes" },
+      ],
+      required: ["id", "title"],
+    },
+    {
+      name: "fork_session",
+      description: "Create a new named session directory",
+      props: [{ name: "name", desc: "Session name (slug)" }],
+      required: ["name"],
+    },
+    {
+      name: "spawn_remote",
+      description: "Spawn a remote agent via SSH",
+      props: [
+        { name: "ssh_target", desc: "SSH host to connect to" },
+        { name: "repo_url", desc: "Git repo URL to clone" },
+        { name: "tcp_addr", desc: "TCP address for reverse connection" },
+        { name: "task", desc: "Task for the remote agent" },
+        { name: "slug", desc: "Agent slug (default remote-leaf)" },
+        { name: "parent_branch", desc: "Parent branch (default main)" },
+      ],
+      required: ["ssh_target", "repo_url", "tcp_addr"],
+    },
+    {
+      name: "shutdown",
+      description: "Shutdown the server",
+      props: [
+        {
+          name: "caller_id",
+          desc: "Optional calling agent id for best-effort shutdown",
+        },
+      ],
+      required: [],
+    },
+  ]
 }
 
 ///|
 /// Create a JSON-RPC response with the list of available tools.
 pub fn tools_list_response(id : JsonRpcId) -> JsonRpcResponse {
-  let s = schema
-  let p = prop
-  let tools_json = "[" +
-    "{\"name\":\"fork_wave\",\"description\":\"Fork a new wave of worker agents in a new git worktree\",\"inputSchema\":" +
-    s(
-      p("task", "Task description for the wave") +
-      "," +
-      p("parent_branch", "Parent branch for spawned children (default main)") +
-      "," +
-      p("branch", "Compatibility alias for parent_branch") +
-      "," +
-      p("count", "Number of workers to spawn (default 1)") +
-      "," +
-      p("slug_prefix", "Slug prefix for spawned children") +
-      "," +
-      p("read_first", "Newline-separated paths to read first") +
-      "," +
-      p("steps", "Newline-separated implementation steps") +
-      "," +
-      p("verify", "Newline-separated verification commands") +
-      "," +
-      p("done_criteria", "Newline-separated acceptance criteria") +
-      "," +
-      p("boundary", "Newline-separated things children must not do") +
-      "," +
-      p("constraints", "Newline-separated extra constraints") +
-      "," +
-      p("context", "Context or reasoning summary for the wave") +
-      "," +
-      p("key_decisions", "Newline-separated decisions that are already fixed") +
-      "," +
-      p("non_goals", "Newline-separated non-goals"),
-      "\"task\",\"count\"",
-    ) +
-    "}," +
-    "{\"name\":\"file_pr\",\"description\":\"Push the branch, create or resolve its PR, and auto-track it for review events\",\"inputSchema\":" +
-    s(
-      p("branch", "Branch to file a PR for") +
-      "," +
-      p("agent_id", "Compatibility alias for branch and tracked agent id") +
-      "," +
-      p("parent_branch", "Parent branch to target (default main)") +
-      "," +
-      p("caller_id", "Optional tracked agent id override"),
-      "",
-    ) +
-    "}," +
-    "{\"name\":\"merge_pr\",\"description\":\"Merge a pull request by number\",\"inputSchema\":" +
-    s(
-      p("pr_number", "Pull request number to merge") +
-      "," +
-      p("parent_branch", "Branch to merge into"),
-      "\"pr_number\",\"parent_branch\"",
-    ) +
-    "}," +
-    "{\"name\":\"track_pr\",\"description\":\"Track a pull request in the background poller\",\"inputSchema\":" +
-    s(
-      p("pr_number", "Pull request number to track") +
-      "," +
-      p("agent_id", "Agent ID to notify on events"),
-      "\"pr_number\",\"agent_id\"",
-    ) +
-    "}," +
-    "{\"name\":\"notify_parent\",\"description\":\"Notify the parent agent with a status update\",\"inputSchema\":" +
-    s(
-      p("caller_id", "ID of the calling agent") +
-      "," +
-      p("message", "Message to send to parent"),
-      "\"caller_id\",\"message\"",
-    ) +
-    "}," +
-    "{\"name\":\"send_message\",\"description\":\"Send a message to another agent\",\"inputSchema\":" +
-    s(
-      p("target_id", "ID of the target agent") +
-      "," +
-      p("message", "Message content to send"),
-      "\"target_id\",\"message\"",
-    ) +
-    "}," +
-    "{\"name\":\"spawn_gemini\",\"description\":\"Spawn a Gemini leaf agent in a new worktree\",\"inputSchema\":" +
-    s(spawn_leaf_props("gemini-leaf", "Gemini leaf agent"), "\"task\"") +
-    "}," +
-    "{\"name\":\"spawn_moon_pilot\",\"description\":\"Spawn a Moon Pilot leaf agent in a new worktree\",\"inputSchema\":" +
-    s(spawn_leaf_props("moon-pilot-leaf", "Moon Pilot leaf agent"), "\"task\"") +
-    "}," +
-    "{\"name\":\"spawn_worker\",\"description\":\"Spawn an inline worker agent in a tmux window\",\"inputSchema\":" +
-    s(spawn_worker_props(), "\"task\"") +
-    "}," +
-    "{\"name\":\"kv_get\",\"description\":\"Read one value from shared KV storage\",\"inputSchema\":" +
-    s(p("key", "Storage key to read"), "\"key\"") +
-    "}," +
-    "{\"name\":\"kv_set\",\"description\":\"Write one value to shared KV storage\",\"inputSchema\":" +
-    s(
-      p("key", "Storage key to write") + "," + p("value", "Value to store"),
-      "\"key\",\"value\"",
-    ) +
-    "}," +
-    "{\"name\":\"kv_delete\",\"description\":\"Delete one value from shared KV storage\",\"inputSchema\":" +
-    s(p("key", "Storage key to delete"), "\"key\"") +
-    "}," +
-    "{\"name\":\"mutex_acquire\",\"description\":\"Acquire an in-memory coordination mutex\",\"inputSchema\":" +
-    s(
-      p("name", "Mutex name") +
-      "," +
-      p("agent_id", "ID of the acquiring agent") +
-      "," +
-      p("ttl_sec", "Optional TTL in seconds"),
-      "\"name\",\"agent_id\"",
-    ) +
-    "}," +
-    "{\"name\":\"mutex_release\",\"description\":\"Release an in-memory coordination mutex\",\"inputSchema\":" +
-    s(
-      p("name", "Mutex name") + "," + p("agent_id", "ID of the releasing agent"),
-      "\"name\",\"agent_id\"",
-    ) +
-    "}," +
-    "{\"name\":\"mutex_status\",\"description\":\"Inspect an in-memory coordination mutex\",\"inputSchema\":" +
-    s(p("name", "Mutex name to inspect"), "\"name\"") +
-    "}," +
-    "{\"name\":\"task_list\",\"description\":\"List tasks from shared task storage\",\"inputSchema\":" +
-    s(p("slug", "Optional slug filter"), "") +
-    "}," +
-    "{\"name\":\"task_get\",\"description\":\"Get one task from shared task storage\",\"inputSchema\":" +
-    s(p("slug", "Task slug"), "\"slug\"") +
-    "}," +
-    "{\"name\":\"task_update\",\"description\":\"Update one task in shared task storage\",\"inputSchema\":" +
-    s(
-      p("slug", "Task slug") + "," + p("task", "Updated task JSON"),
-      "\"slug\",\"task\"",
-    ) +
-    "}," +
-    "{\"name\":\"kv_list\",\"description\":\"List keys in shared KV storage\",\"inputSchema\":" +
-    s(p("prefix", "Optional key prefix filter"), "") +
-    "}," +
-    "{\"name\":\"task_create\",\"description\":\"Create a new task in shared task storage\",\"inputSchema\":" +
-    s(
-      p("id", "Task slug/ID") +
-      "," +
-      p("title", "Task title") +
-      "," +
-      p("status", "Initial status (default todo)") +
-      "," +
-      p("assignee", "Assignee agent ID") +
-      "," +
-      p("notes", "Task notes"),
-      "\"id\",\"title\"",
-    ) +
-    "}," +
-    "{\"name\":\"fork_session\",\"description\":\"Create a new named session directory\",\"inputSchema\":" +
-    s(p("name", "Session name (slug)"), "\"name\"") +
-    "}," +
-    "{\"name\":\"spawn_remote\",\"description\":\"Spawn a remote agent via SSH\",\"inputSchema\":" +
-    s(
-      p("ssh_target", "SSH host to connect to") +
-      "," +
-      p("repo_url", "Git repo URL to clone") +
-      "," +
-      p("tcp_addr", "TCP address for reverse connection") +
-      "," +
-      p("task", "Task for the remote agent") +
-      "," +
-      p("slug", "Agent slug (default remote-leaf)") +
-      "," +
-      p("parent_branch", "Parent branch (default main)"),
-      "\"ssh_target\",\"repo_url\",\"tcp_addr\"",
-    ) +
-    "}," +
-    "{\"name\":\"shutdown\",\"description\":\"Shutdown the server\",\"inputSchema\":" +
-    s("", "") +
-    "}" +
-    "]"
-  { jsonrpc: "2.0", id, result: Some({ "tools": tools_json }), error: None }
+  let defs = tool_defs()
+  let buf = StringBuilder::new()
+  buf.write_char('[')
+  for i = 0; i < defs.length(); i = i + 1 {
+    if i > 0 {
+      buf.write_char(',')
+    }
+    buf.write_string(tool_json(defs[i]))
+  }
+  buf.write_char(']')
+  let tools_json = buf.to_string()
+  {
+    jsonrpc: "2.0",
+    id,
+    result: Some(JsonValue::Object({ "tools": JsonValue::Raw(tools_json) })),
+    error: None,
+  }
 }
 
 ///|
@@ -324,25 +468,33 @@ pub fn from_internal_response(
 ) -> JsonRpcResponse {
   match resp {
     @types.Response::Ok(data) => {
-      let text = map_to_json(data)
-      let content = "[{\"type\":\"text\",\"text\":\"" +
-        escape_json_string(text) +
-        "\"}]"
+      let payload : Map[String, JsonValue] = {}
+      data.each(fn(k, v) { payload.set(k, JsonValue::String(v)) })
+      let text = json_value_to_json(JsonValue::Object(payload))
+      let content = text_content_json(text)
       {
         jsonrpc: "2.0",
         id,
-        result: Some({ "content": content, "isError": "false" }),
+        result: Some(
+          JsonValue::Object({
+            "content": JsonValue::Raw(content),
+            "isError": JsonValue::Raw("false"),
+          }),
+        ),
         error: None,
       }
     }
     @types.Response::Err(msg) => {
-      let content = "[{\"type\":\"text\",\"text\":\"" +
-        escape_json_string(msg) +
-        "\"}]"
+      let content = text_content_json(msg)
       {
         jsonrpc: "2.0",
         id,
-        result: Some({ "content": content, "isError": "true" }),
+        result: Some(
+          JsonValue::Object({
+            "content": JsonValue::Raw(content),
+            "isError": JsonValue::Raw("true"),
+          }),
+        ),
         error: None,
       }
     }
