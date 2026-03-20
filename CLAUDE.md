@@ -6,8 +6,6 @@ MoonBit reimplementation of [exomonad](https://github.com/tidepool-heavy-industr
 
 A persistent server that orchestrates heterogeneous coding agent teams. Agents (Claude, Gemini, Moon Pilot) run in isolated workspaces (git worktrees + tmux). The server manages spawning, messaging, PR workflow, and lifecycle — it makes no decisions, generates no code.
 
-See `SPEC.md` for the full service specification.
-
 ## Architecture
 
 Option B from the exomonad design: persistent server, pure MoonBit native binary.
@@ -36,8 +34,7 @@ moon fmt              # format
 ## Project Layout
 
 ```
-SPEC.md                # service specification (source of truth)
-CLAUDE.md              # you are here
+CLAUDE.md              # overview, workflow target, dev notes
 AGENTS.md              # instructions for Gemini/Moon Pilot leaf agents
 src/
   server/              # persistent server, transport listeners
@@ -125,7 +122,6 @@ TCP transport, SSH remote agents, and the remaining ExoMonad parity work.
 
 ## References
 
-- `SPEC.md` — full service specification
 - `AGENTS.md` — instructions for leaf agents (Gemini, Moon Pilot)
 - [exomonad](https://github.com/tidepool-heavy-industries/exomonad) — the Haskell+Rust original
 - [MoonBit docs](https://docs.moonbitlang.com)

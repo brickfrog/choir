@@ -55,7 +55,6 @@ This brings up:
 .choir/tasks/             task files
 .choir/kv/                key-value store
 .choir/worktrees/         spawned worktrees
-SPEC.md                   full specification
 CLAUDE.md                 operator/developer notes
 AGENTS.md                 leaf-agent instructions
 ```
@@ -71,6 +70,5 @@ AGENTS.md                 leaf-agent instructions
 
 ## See Also
 
-- [SPEC.md](SPEC.md)
 - [CLAUDE.md](CLAUDE.md)
 - [AGENTS.md](AGENTS.md)

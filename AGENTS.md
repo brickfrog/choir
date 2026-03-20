@@ -6,7 +6,8 @@ You have been spawned into an isolated git worktree with your own branch.
 ## What Choir Is
 
 A MoonBit native binary that orchestrates coding agent teams. You are building or extending
-the orchestrator itself. See `SPEC.md` for the full specification, `CLAUDE.md` for overview.
+the orchestrator itself. See `CLAUDE.md` for overview and `src/tools/registry.mbt` for the
+tracked tool surface.
 
 ## Your Role and Constraints
 
@@ -89,7 +90,8 @@ conn.write(@encoding/utf8.encode(s))
 
 ## Available Tools
 
-Your role determines which tools you can call. See SPEC.md §6 for full schemas.
+Your role determines which tools you can call. See `src/tools/registry.mbt` and
+`src/mcp/translate.mbt` for the current tracked surface and MCP schemas.
 
 ### All roles
 | Tool | Key args | What it does |

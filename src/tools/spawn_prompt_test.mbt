@@ -3,7 +3,7 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
   let prompt = render_leaf_spawn_prompt(
     PromptSpec::from_map({
       "task": "Implement agent routing",
-      "read_first": "SPEC.md\nsrc/tools/dispatch.mbt",
+      "read_first": "CLAUDE.md\nsrc/tools/dispatch.mbt",
       "steps": "Add routing metadata\nUpdate tests",
       "verify": "moon test --target native\nmoon build --target native --release",
       "done_criteria": "Routing metadata is persisted",

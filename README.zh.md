@@ -54,7 +54,6 @@ choir init
 .choir/tasks/             任务文件
 .choir/kv/                键值存储
 .choir/worktrees/         派生工作树
-SPEC.md                   完整规格
 CLAUDE.md                 操作/开发说明
 AGENTS.md                 叶子代理说明
 ```
@@ -70,6 +69,5 @@ AGENTS.md                 叶子代理说明
 
 ## 另见
 
-- [SPEC.md](SPEC.md)
 - [CLAUDE.md](CLAUDE.md)
 - [AGENTS.md](AGENTS.md)
