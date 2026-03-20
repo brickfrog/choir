@@ -9,7 +9,23 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate tag matches moon.mod.json
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          file_version="$(python3 -c 'import json; print(json.load(open("moon.mod.json", "r", encoding="utf-8"))["version"])')"
+          if [ "$tag_version" != "$file_version" ]; then
+            echo "tag version ($tag_version) does not match moon.mod.json ($file_version)" >&2
+            exit 1
+          fi
+
   build:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:

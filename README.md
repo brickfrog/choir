@@ -56,6 +56,14 @@ Native binaries are intended to ship through GitHub Releases.
 - `choir-macos-arm64`
 - `SHA256SUMS`
 
+Release source of truth: `moon.mod.json`.
+
+Release cut:
+
+```bash
+./scripts/release.sh patch
+```
+
 ## Nix
 
 ```bash
