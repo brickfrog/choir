@@ -4,6 +4,7 @@ priv struct OpenPR {
   branch : String
   base : String
   url : String
+  created_sec : Int64?
 }
 
 ///|
@@ -87,6 +88,118 @@ fn parse_int(s : String) -> Int? {
     }
   }
   Some(res)
+}
+
+///|
+fn parse_fixed_width_int(s : String, start : Int, len : Int) -> Int? {
+  if start < 0 || len <= 0 || start + len > s.length() {
+    return None
+  }
+  parse_int(s[start:start + len].to_string() catch { _ => "" })
+}
+
+///|
+fn is_leap_year(year : Int) -> Bool {
+  (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+///|
+fn days_in_month(year : Int, month : Int) -> Int {
+  match month {
+    1 => 31
+    2 => if is_leap_year(year) { 29 } else { 28 }
+    3 => 31
+    4 => 30
+    5 => 31
+    6 => 30
+    7 => 31
+    8 => 31
+    9 => 30
+    10 => 31
+    11 => 30
+    12 => 31
+    _ => 0
+  }
+}
+
+///|
+fn days_from_civil(year : Int, month : Int, day : Int) -> Int64 {
+  let adjusted_year = if month <= 2 { year - 1 } else { year }
+  let era = if adjusted_year >= 0 {
+    adjusted_year / 400
+  } else {
+    (adjusted_year - 399) / 400
+  }
+  let year_of_era = adjusted_year - era * 400
+  let month_prime = if month > 2 { month - 3 } else { month + 9 }
+  let day_of_year = (153 * month_prime + 2) / 5 + day - 1
+  let day_of_era = year_of_era * 365 +
+    year_of_era / 4 -
+    year_of_era / 100 +
+    day_of_year
+  (era * 146097 + day_of_era - 719468).to_int64()
+}
+
+///|
+fn parse_github_time_utc_sec(s : String) -> Int64? {
+  if s.length() < 20 {
+    return None
+  }
+  if s[4] != '-' || s[7] != '-' || s[10] != 'T' || s[13] != ':' || s[16] != ':' {
+    return None
+  }
+  let year = match parse_fixed_width_int(s, 0, 4) {
+    Some(value) => value
+    None => return None
+  }
+  let month = match parse_fixed_width_int(s, 5, 2) {
+    Some(value) => value
+    None => return None
+  }
+  let day = match parse_fixed_width_int(s, 8, 2) {
+    Some(value) => value
+    None => return None
+  }
+  let hour = match parse_fixed_width_int(s, 11, 2) {
+    Some(value) => value
+    None => return None
+  }
+  let minute = match parse_fixed_width_int(s, 14, 2) {
+    Some(value) => value
+    None => return None
+  }
+  let second = match parse_fixed_width_int(s, 17, 2) {
+    Some(value) => value
+    None => return None
+  }
+  if month < 1 || month > 12 {
+    return None
+  }
+  if day < 1 || day > days_in_month(year, month) {
+    return None
+  }
+  if hour > 23 || minute > 59 || second > 59 {
+    return None
+  }
+  let tz_start = 19
+  if tz_start >= s.length() {
+    return None
+  }
+  let tz_char = s[tz_start]
+  if tz_char == '.' {
+    let z_idx = index_of(s, "Z", start=tz_start)
+    if z_idx == -1 || z_idx != s.length() - 1 {
+      return None
+    }
+  } else if tz_char != 'Z' || tz_start != s.length() - 1 {
+    return None
+  }
+  Some(
+    days_from_civil(year, month, day) * 86400L +
+    hour.to_int64() * 3600L +
+    minute.to_int64() * 60L +
+    second.to_int64(),
+  )
 }
 
 ///|
@@ -192,9 +305,13 @@ fn parse_open_prs(output : String) -> Array[OpenPR] {
         Some((value, _)) => Some(value)
         None => None
       }
+      let created_sec = match find_json_string_field(obj, "createdAt") {
+        Some((value, _)) => parse_github_time_utc_sec(value)
+        None => None
+      }
       match (parse_int(number_str), branch, base, url) {
         (Some(number), Some(branch), Some(base), Some(url)) =>
-          prs.push({ pr_number: number, branch, base, url })
+          prs.push({ pr_number: number, branch, base, url, created_sec })
         _ => ()
       }
     }
@@ -357,7 +474,7 @@ async fn recover_local_agents(
 async fn recover_open_pr_tracking_with(
   state : ServerState,
   open_prs : Array[OpenPR],
-  now : Int64,
+  recovered_at : Int64,
   snapshot : async (Int) -> (@poller.ReviewState, String, Bool, String),
 ) -> Unit {
   for pr in open_prs {
@@ -370,7 +487,10 @@ async fn recover_open_pr_tracking_with(
           pr.branch,
           pr.base,
           pr.url,
-          now,
+          match pr.created_sec {
+            Some(created_sec) => created_sec
+            None => recovered_at
+          },
           review,
           sha,
           ci_failed,
@@ -399,7 +519,7 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
   let open_pr_output = capture_stdout(
     "sh",
     [
-      "-c", "gh pr list --json number,headRefName,baseRefName,url --state open 2>/dev/null",
+      "-c", "gh pr list --json number,headRefName,baseRefName,url,createdAt --state open 2>/dev/null",
     ],
     cwd=Some(project_dir),
   )
@@ -415,17 +535,19 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
 ///|
 test "parse_open_prs extracts branch base and url" {
   let prs = parse_open_prs(
-    "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/12\"},{\"number\":13,\"headRefName\":\"main.subtl.leaf-b\",\"baseRefName\":\"main.subtl\",\"url\":\"https://example.test/pr/13\"}]",
+    "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/12\",\"createdAt\":\"2026-03-20T01:02:03Z\"},{\"number\":13,\"headRefName\":\"main.subtl.leaf-b\",\"baseRefName\":\"main.subtl\",\"url\":\"https://example.test/pr/13\",\"createdAt\":\"2026-03-21T00:00:00Z\"}]",
   )
   assert_eq(prs.length(), 2)
   assert_eq(prs[0].pr_number, 12)
   assert_eq(prs[0].branch, "main.leaf-a")
   assert_eq(prs[0].base, "main")
   assert_eq(prs[0].url, "https://example.test/pr/12")
+  assert_eq(prs[0].created_sec, Some(1773968523L))
   assert_eq(prs[1].pr_number, 13)
   assert_eq(prs[1].branch, "main.subtl.leaf-b")
   assert_eq(prs[1].base, "main.subtl")
   assert_eq(prs[1].url, "https://example.test/pr/13")
+  assert_eq(prs[1].created_sec, Some(1774051200L))
 }
 
 ///|
@@ -434,6 +556,20 @@ test "parse_open_prs ignores malformed entries" {
     "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\"},{\"number\":\"oops\",\"headRefName\":\"main.leaf-b\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/13\"}]",
   )
   assert_eq(prs.length(), 0)
+}
+
+///|
+test "parse_github_time_utc_sec handles valid and invalid timestamps" {
+  assert_eq(
+    parse_github_time_utc_sec("2026-03-20T01:02:03Z"),
+    Some(1773968523L),
+  )
+  assert_eq(
+    parse_github_time_utc_sec("2026-03-20T01:02:03.456Z"),
+    Some(1773968523L),
+  )
+  assert_eq(parse_github_time_utc_sec("2026-02-30T01:02:03Z"), None)
+  assert_eq(parse_github_time_utc_sec("2026-03-20 01:02:03Z"), None)
 }
 
 ///|
@@ -554,6 +690,7 @@ test "recover_open_pr_tracking_with seeds current review snapshot" {
           branch: "main.leaf-a",
           base: "main",
           url: "https://example.test/pr/12",
+          created_sec: Some(77L),
         },
       ],
       123L,
@@ -572,7 +709,7 @@ test "recover_open_pr_tracking_with seeds current review snapshot" {
         assert_eq(tracked.branch, "main.leaf-a")
         assert_eq(tracked.parent_branch, "main")
         assert_eq(tracked.pr_url, "https://example.test/pr/12")
-        assert_eq(tracked.first_seen, 123L)
+        assert_eq(tracked.first_seen, 77L)
         assert_eq(
           tracked.last_review_state,
           @poller.ReviewState::ChangesRequested,
@@ -598,6 +735,7 @@ test "recover_open_pr_tracking_with ignores unowned PR branches" {
           branch: "main.unknown",
           base: "main",
           url: "https://example.test/pr/77",
+          created_sec: Some(11L),
         },
       ],
       123L,

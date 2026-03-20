@@ -545,6 +545,51 @@ test "process_poller_tick_with suppresses duplicate recovered approval events" {
 }
 
 ///|
+test "process_poller_tick_with preserves timeout age after recovery" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+    let child = {
+      ..build_agent("main.leaf-1", Some("parent-1")),
+      role: @types.Role::Dev,
+      branch: "main.leaf-1",
+    }
+    ignore(state.registry.insert(parent))
+    ignore(state.registry.insert(child))
+    state.poller.track_recovered(
+      54,
+      "main.leaf-1",
+      "main.leaf-1",
+      "main",
+      "https://example.test/pr/54",
+      100L,
+      @poller.ReviewState::None_,
+      "",
+      false,
+    )
+
+    let timeout_cmds : Array[@workspace.Command] = []
+    state.process_poller_tick_with(
+      1101L,
+      900L,
+      fn(_pr_number) { (@poller.ReviewState::None_, "", false, "") },
+      runner=async fn(cmds) { record_runner_server(timeout_cmds, cmds) },
+    )
+    assert_eq(timeout_cmds.length(), 1)
+    assert_true(
+      timeout_cmds[0].args[4].contains(
+        "/.claude/teams/parent-1/inboxes/default.json",
+      ),
+    )
+    assert_true(
+      timeout_cmds[0].args[3].contains(
+        "[REVIEW TIMEOUT] main.leaf-1 PR #54 has no review after 15min",
+      ),
+    )
+  })
+}
+
+///|
 test "ServerState::new initializes run_id and mutex registry" {
   let project_dir = "/tmp/choir-server-state"
   run_shell(
