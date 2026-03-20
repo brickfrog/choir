@@ -911,6 +911,11 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
       Ok(m) => {
         assert_eq(m.get("acquired"), Some("true"))
         assert_eq(m.get("queue_position"), Some("0"))
+        assert_eq(m.get_value("acquired"), Some(@types.WireValue::Raw("true")))
+        assert_eq(
+          m.get_value("queue_position"),
+          Some(@types.WireValue::Raw("0")),
+        )
       }
       Err(e) => {
         println(e)
@@ -932,6 +937,11 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
       Ok(m) => {
         assert_eq(m.get("acquired"), Some("false"))
         assert_eq(m.get("queue_position"), Some("1"))
+        assert_eq(m.get_value("acquired"), Some(@types.WireValue::Raw("false")))
+        assert_eq(
+          m.get_value("queue_position"),
+          Some(@types.WireValue::Raw("1")),
+        )
       }
       Err(e) => {
         println(e)
@@ -953,6 +963,7 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
       Ok(m) => {
         assert_eq(m.get("holder"), Some("agent-a"))
         assert_eq(m.get("queue_length"), Some("1"))
+        assert_eq(m.get_value("queue_length"), Some(@types.WireValue::Raw("1")))
       }
       Err(e) => {
         println(e)
@@ -974,6 +985,7 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
       Ok(m) => {
         assert_eq(m.get("released"), Some("true"))
         assert_eq(m.get("next_waiter"), Some("agent-b"))
+        assert_eq(m.get_value("released"), Some(@types.WireValue::Raw("true")))
       }
       Err(e) => {
         println(e)
@@ -1003,6 +1015,7 @@ test "dispatch mutex_release returns false when agent does not hold or wait" {
       Ok(m) => {
         assert_eq(m.get("released"), Some("false"))
         assert_eq(m.get("next_waiter"), Some(""))
+        assert_eq(m.get_value("released"), Some(@types.WireValue::Raw("false")))
       }
       Err(e) => {
         println(e)

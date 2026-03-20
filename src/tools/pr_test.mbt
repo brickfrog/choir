@@ -70,6 +70,8 @@ test "dispatch file_pr returns Ok" {
         assert_eq(m.get("pr_number"), Some("22"))
         assert_eq(m.get("pr_url"), Some("https://example.test/pr/feat"))
         assert_eq(m.get("tracked"), Some("false"))
+        assert_eq(m.get_value("pr_number"), Some(@types.WireValue::Raw("22")))
+        assert_eq(m.get_value("tracked"), Some(@types.WireValue::Raw("false")))
       }
       Err(_) => assert_true(false)
     }
@@ -92,7 +94,10 @@ test "dispatch file_pr auto_tracks returned pr number" {
       poller_state=Some(poller),
     )
     match res {
-      Ok(m) => assert_eq(m.get("tracked"), Some("true"))
+      Ok(m) => {
+        assert_eq(m.get("tracked"), Some("true"))
+        assert_eq(m.get_value("tracked"), Some(@types.WireValue::Raw("true")))
+      }
       Err(_) => assert_true(false)
     }
     match poller.get(22) {

@@ -1409,15 +1409,11 @@ pub async fn dispatch(
                 }
                 None => ()
               }
-              @types.Response::ok({
-                "status": "pr_created",
-                "pr_number": pr.number.to_string(),
-                "pr_url": pr.url,
-                "tracked": if tracked {
-                  "true"
-                } else {
-                  "false"
-                },
+              @types.Response::ok_values({
+                "status": @types.wire_string("pr_created"),
+                "pr_number": @types.wire_int(pr.number),
+                "pr_url": @types.wire_string(pr.url),
+                "tracked": @types.wire_bool(tracked),
               })
             }
           }
@@ -1654,13 +1650,9 @@ pub async fn dispatch(
             mutex_args.ttl_sec,
             @poller.now_sec(),
           )
-          @types.Response::ok({
-            "acquired": if acquired {
-              "true"
-            } else {
-              "false"
-            },
-            "queue_position": queue_position.to_string(),
+          @types.Response::ok_values({
+            "acquired": @types.wire_bool(acquired),
+            "queue_position": @types.wire_int(queue_position),
           })
         }
         None => @types.Response::Err("mutex registry unavailable")
@@ -1677,13 +1669,9 @@ pub async fn dispatch(
           let was_waiting = reg.is_waiting(mutex_args.name, mutex_args.agent_id)
           let next_waiter = reg.release(mutex_args.name, mutex_args.agent_id)
           let released = holder == Some(mutex_args.agent_id) || was_waiting
-          @types.Response::ok({
-            "released": if released {
-              "true"
-            } else {
-              "false"
-            },
-            "next_waiter": next_waiter.unwrap_or(""),
+          @types.Response::ok_values({
+            "released": @types.wire_bool(released),
+            "next_waiter": @types.wire_string(next_waiter.unwrap_or("")),
           })
         }
         None => @types.Response::Err("mutex registry unavailable")
@@ -1697,9 +1685,9 @@ pub async fn dispatch(
       match mutex_registry {
         Some(reg) => {
           let (holder, queue) = reg.status(name_args.name)
-          @types.Response::ok({
-            "holder": holder.unwrap_or(""),
-            "queue_length": queue.length().to_string(),
+          @types.Response::ok_values({
+            "holder": @types.wire_string(holder.unwrap_or("")),
+            "queue_length": @types.wire_int(queue.length()),
           })
         }
         None => @types.Response::Err("mutex registry unavailable")

@@ -167,6 +167,26 @@ pub fn Response::ok_values(self : Map[String, WireValue]) -> Response {
 }
 
 ///|
+pub fn wire_string(value : String) -> WireValue {
+  WireValue::String(value)
+}
+
+///|
+pub fn wire_raw(value : String) -> WireValue {
+  WireValue::Raw(value)
+}
+
+///|
+pub fn wire_bool(value : Bool) -> WireValue {
+  WireValue::Raw(if value { "true" } else { "false" })
+}
+
+///|
+pub fn wire_int(value : Int) -> WireValue {
+  WireValue::Raw(value.to_string())
+}
+
+///|
 pub fn Response::ok_payload(self : Response) -> ResponseFields? {
   match self {
     Ok(fields) => Some(fields)
