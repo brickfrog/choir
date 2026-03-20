@@ -471,10 +471,16 @@ pub fn from_internal_response(
   id : JsonRpcId,
   resp : @types.Response,
 ) -> JsonRpcResponse {
-  match resp.ok_fields() {
+  match resp.ok_payload() {
     Some(data) => {
       let payload : Map[String, JsonValue] = {}
-      data.each(fn(k, v) { payload.set(k, JsonValue::String(v)) })
+      data.each_value(fn(k, v) {
+        match v {
+          @types.WireValue::String(text) =>
+            payload.set(k, JsonValue::String(text))
+          @types.WireValue::Raw(text) => payload.set(k, JsonValue::Raw(text))
+        }
+      })
       let text = json_value_to_json(JsonValue::Object(payload))
       let content = text_content_json(text)
       {

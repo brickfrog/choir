@@ -22,7 +22,7 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
     None => return Err("missing field: name")
   }
   let args = parse_args(data)
-  Ok({ req_method: method_val, role, name, args: @types.RequestArgs::new(args) })
+  Ok({ req_method: method_val, role, name, args })
 }
 
 ///|
@@ -61,6 +61,14 @@ fn agent_type_to_wire_string(agent_type : @types.AgentType) -> String {
 }
 
 ///|
+fn wire_value_to_json(value : @types.WireValue) -> String {
+  match value {
+    @types.WireValue::String(v) => "\"" + escape_json_string(v) + "\""
+    @types.WireValue::Raw(v) => v
+  }
+}
+
+///|
 pub fn format_request(req : @types.Request) -> String {
   let buf = StringBuilder::new()
   buf.write_string("{\"method\":\"")
@@ -71,15 +79,14 @@ pub fn format_request(req : @types.Request) -> String {
   buf.write_string(escape_json_string(req.name))
   buf.write_string("\",\"args\":{")
   let mut first = true
-  req.args.each(fn(k, v) {
+  req.args.each_value(fn(k, v) {
     if not(first) {
       buf.write_char(',')
     }
     buf.write_char('"')
     buf.write_string(escape_json_string(k))
-    buf.write_string("\":\"")
-    buf.write_string(escape_json_string(v))
-    buf.write_char('"')
+    buf.write_string("\":")
+    buf.write_string(wire_value_to_json(v))
     first = false
   })
   buf.write_string("}}")
@@ -170,17 +177,30 @@ fn get_field(data : String, field : String) -> String? {
 }
 
 ///|
-fn parse_map(data : String, key : String) -> Map[String, String] {
+fn parse_value_map(
+  data : String,
+  key : String,
+) -> Map[String, @types.WireValue] {
   match @jsonutil.get_json_field_value(data, key) {
-    Some(@jsonutil.JsonValueText::Raw(value)) =>
-      @jsonutil.parse_flat_json_object(value)
-    _ => Map::new()
+    Some(@jsonutil.JsonValueText::Raw(value)) => {
+      let parsed : Map[String, @types.WireValue] = {}
+      @jsonutil.parse_flat_json_value_object(value).each(fn(k, v) {
+        match v {
+          @jsonutil.JsonValueText::String(text) =>
+            parsed.set(k, @types.WireValue::String(text))
+          @jsonutil.JsonValueText::Raw(text) =>
+            parsed.set(k, @types.WireValue::Raw(text))
+        }
+      })
+      parsed
+    }
+    _ => {}
   }
 }
 
 ///|
-fn parse_args(data : String) -> Map[String, String] {
-  parse_map(data, "args")
+fn parse_args(data : String) -> @types.RequestArgs {
+  @types.RequestArgs::from_values(parse_value_map(data, "args"))
 }
 
 ///|
@@ -196,8 +216,8 @@ pub fn parse_response(data : String) -> Result[@types.Response, String] {
   }
 
   if ok_true_idx_no_space != -1 {
-    let result = parse_map(data, "result")
-    return Ok(@types.Response::ok(result))
+    let result = parse_value_map(data, "result")
+    return Ok(@types.Response::ok_values(result))
   }
 
   let ok_false_idx = @jsonutil.find_substring(data, "\"ok\": false")
@@ -224,19 +244,18 @@ pub fn parse_response(data : String) -> Result[@types.Response, String] {
 /// or: { "ok": false, "error": "..." }
 pub fn format_response(resp : @types.Response) -> String {
   let buf = StringBuilder::new()
-  match resp.ok_fields() {
+  match resp.ok_payload() {
     Some(result) => {
       buf.write_string("{\"ok\": true, \"result\": {")
       let mut first = true
-      result.each(fn(k, v) {
+      result.each_value(fn(k, v) {
         if not(first) {
           buf.write_string(", ")
         }
         buf.write_char('"')
         buf.write_string(escape_json_string(k))
-        buf.write_string("\": \"")
-        buf.write_string(escape_json_string(v))
-        buf.write_char('"')
+        buf.write_string("\": ")
+        buf.write_string(wire_value_to_json(v))
         first = false
       })
       buf.write_string("}}")

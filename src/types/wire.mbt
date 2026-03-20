@@ -1,16 +1,45 @@
 ///|
+pub(all) enum WireValue {
+  String(String)
+  Raw(String)
+} derive(Show, Eq)
+
+///|
+pub fn WireValue::to_compat_string(self : WireValue) -> String {
+  match self {
+    String(value) => value
+    Raw(value) => value
+  }
+}
+
+///|
 /// Internal wire format request (UDS/TCP, not MCP JSON-RPC).
 pub(all) struct RequestArgs {
-  values : Map[String, String]
+  values : Map[String, WireValue]
 } derive(Show)
 
 ///|
 pub fn RequestArgs::new(values : Map[String, String]) -> RequestArgs {
+  let converted : Map[String, WireValue] = {}
+  values.each(fn(k, v) { converted.set(k, WireValue::String(v)) })
+  { values: converted }
+}
+
+///|
+pub fn RequestArgs::from_values(values : Map[String, WireValue]) -> RequestArgs {
   { values, }
 }
 
 ///|
 pub fn RequestArgs::get(self : RequestArgs, key : String) -> String? {
+  match self.values.get(key) {
+    Some(value) => Some(value.to_compat_string())
+    None => None
+  }
+}
+
+///|
+pub fn RequestArgs::get_value(self : RequestArgs, key : String) -> WireValue? {
   self.values.get(key)
 }
 
@@ -24,11 +53,26 @@ pub fn RequestArgs::each(
   self : RequestArgs,
   f : (String, String) -> Unit,
 ) -> Unit {
+  self.values.each(fn(k, v) { f(k, v.to_compat_string()) })
+}
+
+///|
+pub fn RequestArgs::each_value(
+  self : RequestArgs,
+  f : (String, WireValue) -> Unit,
+) -> Unit {
   self.values.each(f)
 }
 
 ///|
 pub fn RequestArgs::to_map(self : RequestArgs) -> Map[String, String] {
+  let converted : Map[String, String] = {}
+  self.values.each(fn(k, v) { converted.set(k, v.to_compat_string()) })
+  converted
+}
+
+///|
+pub fn RequestArgs::to_value_map(self : RequestArgs) -> Map[String, WireValue] {
   self.values
 }
 
@@ -42,16 +86,36 @@ pub(all) struct Request {
 
 ///|
 pub(all) struct ResponseFields {
-  values : Map[String, String]
+  values : Map[String, WireValue]
 } derive(Show)
 
 ///|
 pub fn ResponseFields::new(values : Map[String, String]) -> ResponseFields {
+  let converted : Map[String, WireValue] = {}
+  values.each(fn(k, v) { converted.set(k, WireValue::String(v)) })
+  { values: converted }
+}
+
+///|
+pub fn ResponseFields::from_values(
+  values : Map[String, WireValue],
+) -> ResponseFields {
   { values, }
 }
 
 ///|
 pub fn ResponseFields::get(self : ResponseFields, key : String) -> String? {
+  match self.values.get(key) {
+    Some(value) => Some(value.to_compat_string())
+    None => None
+  }
+}
+
+///|
+pub fn ResponseFields::get_value(
+  self : ResponseFields,
+  key : String,
+) -> WireValue? {
   self.values.get(key)
 }
 
@@ -60,11 +124,28 @@ pub fn ResponseFields::each(
   self : ResponseFields,
   f : (String, String) -> Unit,
 ) -> Unit {
+  self.values.each(fn(k, v) { f(k, v.to_compat_string()) })
+}
+
+///|
+pub fn ResponseFields::each_value(
+  self : ResponseFields,
+  f : (String, WireValue) -> Unit,
+) -> Unit {
   self.values.each(f)
 }
 
 ///|
 pub fn ResponseFields::to_map(self : ResponseFields) -> Map[String, String] {
+  let converted : Map[String, String] = {}
+  self.values.each(fn(k, v) { converted.set(k, v.to_compat_string()) })
+  converted
+}
+
+///|
+pub fn ResponseFields::to_value_map(
+  self : ResponseFields,
+) -> Map[String, WireValue] {
   self.values
 }
 
@@ -78,6 +159,11 @@ pub(all) enum Response {
 ///|
 pub fn Response::ok(self : Map[String, String]) -> Response {
   Ok(ResponseFields::new(self))
+}
+
+///|
+pub fn Response::ok_values(self : Map[String, WireValue]) -> Response {
+  Ok(ResponseFields::from_values(self))
 }
 
 ///|

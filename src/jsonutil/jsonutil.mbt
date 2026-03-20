@@ -228,6 +228,42 @@ pub fn parse_flat_json_object(s : String) -> Map[String, String] {
 }
 
 ///|
+pub fn parse_flat_json_value_object(s : String) -> Map[String, JsonValueText] {
+  let map : Map[String, JsonValueText] = {}
+  let mut i = skip_json_whitespace(s, 0)
+  if i < s.length() && s[i] == '{' {
+    i = i + 1
+  }
+  while i < s.length() {
+    i = skip_json_whitespace(s, i)
+    if i >= s.length() || s[i] == '}' {
+      break
+    }
+    if s[i] == ',' {
+      i = i + 1
+      continue
+    }
+    let (key, after_key) = match read_json_string_literal(s, i) {
+      Some(value) => value
+      None => break
+    }
+    let colon_idx = skip_json_whitespace(s, after_key)
+    if colon_idx >= s.length() || s[colon_idx] != ':' {
+      break
+    }
+    let (value, after_value) = match read_json_value_text(s, colon_idx + 1) {
+      Some(parsed) => parsed
+      None => break
+    }
+    if key != "" {
+      map.set(key, value)
+    }
+    i = after_value
+  }
+  map
+}
+
+///|
 pub fn get_json_field_value(s : String, key : String) -> JsonValueText? {
   let map_key = "\"" + key + "\""
   let mut search_from = 0

@@ -47,6 +47,11 @@ test "parse_request preserves primitive arg literals as strings" {
       assert_eq(req.args.get("count"), Some("3"))
       assert_eq(req.args.get("fork_session"), Some("true"))
       assert_eq(req.args.get("empty"), Some("null"))
+      assert_eq(req.args.get_value("count"), Some(@types.WireValue::Raw("3")))
+      assert_eq(
+        req.args.get_value("fork_session"),
+        Some(@types.WireValue::Raw("true")),
+      )
     }
     Err(e) => fail("Parse failed: \{e}")
   }
@@ -90,14 +95,19 @@ test "format_request serializes internal wire request" {
     req_method: "tools/call",
     role: @types.Role::TL,
     name: "fork_wave",
-    args: @types.RequestArgs::new({ "slug": "feat-a", "count": "3" }),
+    args: @types.RequestArgs::from_values({
+      "slug": @types.WireValue::String("feat-a"),
+      "count": @types.WireValue::Raw("3"),
+      "fork_session": @types.WireValue::Raw("true"),
+    }),
   }
   let output = format_request(req)
   assert_true(output.contains("\"method\":\"tools/call\""))
   assert_true(output.contains("\"role\":\"tl\""))
   assert_true(output.contains("\"name\":\"fork_wave\""))
   assert_true(output.contains("\"slug\":\"feat-a\""))
-  assert_true(output.contains("\"count\":\"3\""))
+  assert_true(output.contains("\"count\":3"))
+  assert_true(output.contains("\"fork_session\":true"))
 }
 
 ///|
@@ -157,4 +167,28 @@ test "format_response err" {
   assert_eq(resp.error_message(), Some("agent not found"))
   let output = format_response(resp)
   assert_eq(output, "{\"ok\": false, \"error\": \"agent not found\"}")
+}
+
+///|
+test "parse_response preserves primitive result values" {
+  let input = "{\"ok\": true, \"result\": {\"status\":\"ok\",\"tracked\":true,\"pr_number\":22}}"
+  match parse_response(input) {
+    Ok(resp) => {
+      assert_eq(resp.ok_field("status"), Some("ok"))
+      match resp.ok_payload() {
+        Some(fields) => {
+          assert_eq(
+            fields.get_value("tracked"),
+            Some(@types.WireValue::Raw("true")),
+          )
+          assert_eq(
+            fields.get_value("pr_number"),
+            Some(@types.WireValue::Raw("22")),
+          )
+        }
+        None => fail("expected payload")
+      }
+    }
+    Err(e) => fail("Parse failed: \{e}")
+  }
 }

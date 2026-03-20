@@ -123,6 +123,26 @@ test "from_internal_response Ok" {
 }
 
 ///|
+test "from_internal_response preserves raw primitives" {
+  let resp = @types.Response::ok_values({
+    "tracked": @types.WireValue::Raw("true"),
+    "pr_number": @types.WireValue::Raw("22"),
+  })
+  let rpc = @mcp.from_internal_response(Number(55), resp)
+  match rpc.result {
+    Some(@mcp.JsonValue::Object(result)) =>
+      match result.get("content") {
+        Some(@mcp.JsonValue::Raw(content)) => {
+          assert_true(content.contains("\\\"tracked\\\":true"))
+          assert_true(content.contains("\\\"pr_number\\\":22"))
+        }
+        _ => fail("expected raw content")
+      }
+    _ => fail("expected object result")
+  }
+}
+
+///|
 test "from_internal_response Err" {
   let resp = @types.Response::Err("tool not found")
   assert_eq(resp.error_message(), Some("tool not found"))
