@@ -53,7 +53,7 @@ dispatch decisions. ExoMonad executes them.
 - Expose orchestration primitives as MCP tools (spawn, notify, PR, merge, message)
 - Manage agent identity, workspace isolation, and lifecycle
 - Route messages between agents via push-based delivery (no polling)
-- Support heterogeneous agent types (Claude, Gemini, future: Moon Pilot)
+- Support heterogeneous agent types (Claude, Gemini, Moon Pilot)
 - Compile in <2 seconds, produce a single native binary
 - Zero external dependencies at runtime (no Docker, no Nix, no language-specific toolchains)
 - Transport-agnostic server design (UDS for local, TCP for remote/SSH agents)
@@ -107,7 +107,7 @@ to server requests over the configured transport. One `mcp-stdio` per agent sess
 
 | Layer | What lives here |
 |-------|----------------|
-| **Tool Logic** | Tool schemas, argument parsing, dispatch. Per-role tool sets. |
+| **Tool Logic** | Tool definitions, MCP schema catalog, argument parsing, dispatch. Per-role tool sets. |
 | **Coordination** | Agent tree, message routing, mutex, lifecycle tracking. |
 | **Execution** | Git worktree ops, tmux session management, process spawning. |
 | **Transport** | UDS, TCP, stdio translation. See section 5. |
@@ -123,7 +123,7 @@ to server requests over the configured transport. One `mcp-stdio` per agent sess
 | `tmux` | Agent isolation and multiplexing | Yes (local agents) |
 | `claude` | Claude Code CLI (TL agent) | Yes (for Claude agents) |
 | `gemini` | Gemini CLI (leaf agent) | Yes (for Gemini agents) |
-| `moon pilot` | Moon Pilot CLI (future leaf agent) | No |
+| `moon pilot` | Moon Pilot CLI (leaf agent) | No (only for Moon Pilot agents) |
 | `ssh` | Remote agent execution | No (see Appendix A) |
 
 ---
@@ -160,7 +160,7 @@ enum Role {
 enum AgentType {
   Claude      -- Claude Code CLI, MCP-native
   Gemini      -- Gemini CLI, MCP-native
-  MoonPilot   -- Moon Pilot CLI, tmux-driven (future)
+  MoonPilot   -- Moon Pilot CLI, tmux-driven
 }
 ```
 
@@ -168,7 +168,7 @@ enum AgentType {
 ```
 enum Host {
   Local                          -- same machine as server
-  Remote { ssh_target: String }  -- reachable via ssh (future, see Appendix A)
+  Remote { ssh_target: String }  -- reachable via ssh (see Appendix A)
 }
 ```
 
@@ -210,8 +210,8 @@ ttl       : Duration
 - **Agent ID**: birth-branch name. `root` for the TL session. `main.feature-a` for a child.
   Immutable after creation. Deterministic from branch naming convention.
 - **Branch naming**: `{parent_branch}.{slug}` (dot separator). PRs target parent branch.
-- **Workspace path**: `.exo/worktrees/{agent_id}/` for worktree agents.
-  `.exo/agents/{agent_id}/` for standalone agents.
+- **Workspace path**: `.choir/worktrees/{agent_id}/` for worktree agents.
+  `.choir/agents/{agent_id}/` for standalone agents.
 - **Run ID**: UUID generated at session start, propagated to all children via env var.
   Used for OTel trace correlation.
 
@@ -229,7 +229,7 @@ server doesn't know or care whether requests arrive via UDS, TCP, or something e
 
 | Transport | Listener | Use case |
 |-----------|----------|----------|
-| **UDS** (default) | `.exo/server.sock` | Local agents. No port conflicts, filesystem-scoped discovery. |
+| **UDS** (default) | `.choir/server.sock` | Local agents. No port conflicts, filesystem-scoped discovery. |
 | **TCP** (optional) | `0.0.0.0:{port}` | Remote agents via SSH tunnel or direct connect. |
 
 The server binds one or both transports based on config. UDS is always available. TCP is
@@ -272,8 +272,8 @@ the MCP client and `mcp-stdio`. The internal wire format is simpler:
 ### 5.6 Discovery
 
 Agents discover the server via:
-1. **UDS**: look for `.exo/server.sock` in the project root (walk up from cwd)
-2. **TCP**: read `listen_tcp` from `.exo/config.toml`
+1. **UDS**: look for `.choir/server.sock` in the project root (walk up from cwd)
+2. **TCP**: read `listen_tcp` from `.choir/config.toml`
 
 `choir init` writes `.mcp.json` pointing `mcp-stdio` at the project root, which handles
 discovery implicitly.
@@ -296,23 +296,25 @@ discovery implicitly.
 
 ### 6.1 Tool Registry
 
-Each role exposes a subset of tools. Tool definitions include: name, description, JSON Schema
-for arguments, and a handler function.
+Each role exposes a subset of tools. Tool definitions include: name, description, allowed roles,
+and a handler function. MCP-facing JSON Schema metadata is generated separately for the
+`tools/list` surface; internal validation is parser-driven inside the tool layer.
 
 | Tool | Roles | Description |
 |------|-------|-------------|
 | `fork_wave` | root, tl | Spawn N parallel Claude agents in worktrees with own branches + PRs |
 | `spawn_gemini` | root, tl | Spawn Gemini agent in a worktree with own branch + PR |
 | `spawn_moon_pilot` | root, tl | Spawn Moon Pilot agent in a worktree with own branch + PR |
+| `spawn_remote` | root, tl | Spawn an agent on a remote machine via SSH, connecting back over TCP |
 | `spawn_worker` | root, tl | Spawn ephemeral pane worker (any agent type, no branch, no PR, research/in-place) |
 | `file_pr` | tl, dev | Create or update PR for current branch |
 | `merge_pr` | root, tl | Merge a child's PR (auto-acquires `branch:{parent}` mutex) |
-| `track_pr` | root, tl | Register PR with the GitHub poller for review tracking, including owning branch/base metadata when known |
+| `track_pr` | tl, dev | Register PR with the GitHub poller for review tracking, including owning branch/base metadata when known |
 | `notify_parent` | tl, dev, worker | Send message to parent agent |
 | `send_message` | all | Send message to any agent by ID |
 | `reply` | all | Store reply to a pending interaction request |
-| `shutdown` | dev, worker | Notify parent, close own pane (blocked if `ChangesRequested`) |
-| `task_list` | tl, dev, worker | List tasks from `.exo/tasks/` |
+| `shutdown` | tl, dev, worker | Notify parent, close own pane (blocked if `ChangesRequested`) |
+| `task_list` | tl, dev, worker | List tasks from `.choir/tasks/` |
 | `task_get` | tl, dev, worker | Get task by ID |
 | `task_create` | tl, dev, worker | Create a new task |
 | `task_update` | tl, dev, worker | Update task status/owner/notes |
@@ -330,15 +332,16 @@ for arguments, and a handler function.
 ```
 Claude → stdin (JSON-RPC) → mcp-stdio → UDS/TCP → server
   → tool registry lookup (role + name)
-  → JSON Schema validation
+  → parser-based argument validation
   → handler execution
   → response back through the chain
 ```
 
 ### 6.3 Tool Argument Validation
 
-All tool arguments are validated against JSON Schema before dispatch. Invalid arguments return
-a structured error, not a crash. Schema is defined per-tool in code, not in external files.
+Tool arguments are validated by per-tool parsers after transport parsing. Invalid arguments return
+a structured error, not a crash. MCP JSON Schema is the external contract for clients, but it is
+not the sole runtime validation mechanism inside the server.
 
 ### 6.4 Hook Protocol
 
@@ -361,8 +364,8 @@ Fail-open: if the server is unreachable, hooks return `{ "continue": true }` and
 
 | File | Scope | Purpose |
 |------|-------|---------|
-| `.exo/config.toml` | Project | Default role, shell command, transport, extra MCP servers |
-| `.exo/config.local.toml` | Worktree | Role override for this specific worktree |
+| `.choir/config.toml` | Project | Default role, shell command, transport, extra MCP servers |
+| `.choir/config.local.toml` | Worktree | Role override for this specific worktree |
 
 ### 7.2 Resolution Order
 
@@ -378,7 +381,7 @@ project_dir = "."
 shell_command = "nix develop"    # environment wrapper
 
 # Transport
-listen_uds = ".exo/server.sock" # always on
+listen_uds = ".choir/server.sock" # always on
 listen_tcp = ""                  # opt-in, e.g. "0.0.0.0:9100"
 
 # Observability
@@ -462,7 +465,7 @@ and rejects if exit would lose work.
 
 ```
 project-root/
-├── .exo/
+├── .choir/
 │   ├── config.toml
 │   ├── config.local.toml        # worktree-specific
 │   ├── server.sock              # UDS endpoint
@@ -477,9 +480,9 @@ project-root/
 
 ### 9.2 Worktree Creation
 
-1. `git worktree add .exo/worktrees/{slug} -b {parent_branch}.{slug}`
+1. `git worktree add .choir/worktrees/{slug} -b {parent_branch}.{slug}`
 2. Create tmux window (Claude) or pane (Gemini) targeting the worktree path
-3. Write `.exo/config.local.toml` with role override
+3. Write `.choir/config.local.toml` with role override
 4. Write `.mcp.json` with MCP server registration pointing to parent's server
 5. Launch agent process in the tmux target
 
@@ -487,7 +490,7 @@ project-root/
 
 On agent completion or failure:
 1. Close tmux pane/window
-2. `git worktree remove .exo/worktrees/{slug}` (after PR merge or on failure)
+2. `git worktree remove .choir/worktrees/{slug}` (after PR merge or on failure)
 3. Remove agent from registry
 
 ### 9.4 Isolation Modes
@@ -607,8 +610,8 @@ notified_parent   : Bool
 
 | Event | Trigger | Action |
 |-------|---------|--------|
-| `ReviewReceived` | Copilot posts review comments | Inject comments into agent pane |
-| `Approved` | Copilot approves PR | Notify parent `[PR READY]` |
+| `ReviewReceived` | A reviewer posts review comments | Inject comments into agent pane |
+| `Approved` | A reviewer approves the PR | Notify parent `[PR READY]` |
 | `FixesPushed` | New SHA after `ChangesRequested` | Notify parent `[FIXES PUSHED]` |
 | `ReviewTimeout` | No review after 15min (5min after changes) | Notify parent `[REVIEW TIMEOUT]` |
 | `CIFailed` | CI checks fail | Inject failure into agent pane |
@@ -633,14 +636,14 @@ coordination signals (e.g., "component X is claimed by agent Y").
 - **Key format**: UTF-8 string, max 256 chars. Suggested convention: `{agent_id}/{key}` for
   private keys, `shared/{key}` for cross-agent coordination.
 - **Value format**: JSON. No schema enforcement — agents define their own.
-- **Persistence**: each key is stored as a separate file at `.exo/kv/{key}`. Survives server restart.
+- **Persistence**: each key is stored as a separate file at `.choir/kv/{key}`. Survives server restart.
 - **No TTL**: keys live until the run ends or are explicitly deleted.
 - **No transactions**: last-writer-wins. Agents must coordinate externally if atomicity matters.
 
 ### 13.3 Storage
 
 ```
-.exo/
+.choir/
 └── kv/
     ├── shared/foo           # key "shared/foo"
     └── dev-1/state          # key "dev-1/state"
@@ -653,7 +656,7 @@ coordination signals (e.g., "component X is claimed by agent Y").
 | `kv_get` | `key: String` | `{ value: JSON \| null }` |
 | `kv_set` | `key: String, value: JSON` | `{ ok: true }` |
 | `kv_delete` | `key: String` | `{ ok: true }` |
-| `kv_list` | — | `{ keys: String[] }` — all keys in `.exo/kv/` |
+| `kv_list` | — | `{ keys: String[] }` — all keys in `.choir/kv/` |
 
 ---
 
@@ -670,7 +673,7 @@ Structured logging to stderr. Every log line includes:
 ### 13.2 OTel Integration
 
 - Every tool call is a span with `agent_id`, `agent.role`, `agent.parent`, `swarm.run_id`
-- `swarm.run_id` persisted to `.exo/run_id`, set as OTel resource attribute
+- `swarm.run_id` persisted to `.choir/run_id`, set as OTel resource attribute
 - Propagated to children via `EXOMONAD_RUN_ID` env var
 - Export to Grafana Tempo (optional, via OTLP)
 
@@ -708,7 +711,7 @@ curl 'http://localhost:3200/api/search?q={span.agent_id="worker-1" && span:statu
 ### 14.3 Server Restart Recovery
 
 On restart, the server reconstructs in-memory state:
-1. Scan `.exo/worktrees/` for active worktrees → rebuild agent registry
+1. Scan `.choir/worktrees/` for active worktrees → rebuild agent registry
 2. Scan tmux sessions for running agent panes → update alive status
 3. Query `gh pr list` for open PRs → rebuild poller tracked state
 4. Resume GitHub poller
@@ -754,7 +757,7 @@ authentication, no authorization beyond role-based tool gating.
 
 ```
 fn main():
-  config = load_config(".exo/config.toml")
+  config = load_config(".choir/config.toml")
   state = recover_state()  // reconstruct from filesystem if restarting
 
   // Bind transports
@@ -822,7 +825,7 @@ fn poll_tick(state: State) -> List[Event]:
 ```
 fn handle_request(state: State, req: Request) -> Response:
   tool = state.tool_registry.get(req.role, req.name)?
-  validated_args = validate_schema(tool.schema, req.args)?
+  validated_args = parse_tool_args(req.name, req.args)?
   result = tool.handler(state, validated_args)
   return Response { ok: true, result }
 ```
@@ -876,7 +879,7 @@ fn handle_request(state: State, req: Request) -> Response:
 
 ### 17.7 KV Store
 
-- `kv_set` persists to `.exo/kv/{run_id}.json`
+- `kv_set` persists to `.choir/kv/{key}`
 - `kv_get` on missing key returns `{ value: null }`
 - `kv_delete` on missing key is idempotent, returns `{ ok: true }`
 - KV state survives server restart
@@ -934,17 +937,17 @@ fn handle_request(state: State, req: Request) -> Response:
 - [x] OTel span export (stderr JSON + OTLP HTTP to configurable endpoint)
 - [x] `shutdown` with critical phase protection
 - [x] Task list tools (`task_list`, `task_get`, `task_update`, `task_create`)
-- [x] KV store (`kv_get`, `kv_set`, `kv_delete`, `kv_list`) persisted to `.exo/kv/`
+- [x] KV store (`kv_get`, `kv_set`, `kv_delete`, `kv_list`) persisted to `.choir/kv/`
 - [x] Standalone isolation mode
 - [x] Context inheritance (`fork_session`)
 - [x] Mutex registry with FIFO queues and TTL (primary use case: `branch:{name}` locks for merge serialization)
 
-### 19.3 Future Extensions
+### 19.3 Extensions and Further Hardening
 
-- [ ] TCP transport (for remote/SSH agents)
-- [ ] Moon Pilot agent type
+- [x] TCP transport (implemented; still needs more live remote smoke coverage)
+- [x] Moon Pilot agent type
 - [ ] ASP adapter for Moon Pilot messaging
-- [ ] Remote workspace management (SSH, see Appendix A)
+- [x] Remote workspace management (SSH spawn path implemented; still needs live smoke coverage)
 - [ ] GitHub REST client library (replace `gh` CLI subprocess calls with typed HTTP client)
 - [ ] NotebookLM MCP integration (opt-in browser-automation MCP, configure via `extra_mcp_servers`)
 

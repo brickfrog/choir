@@ -4,7 +4,7 @@ MoonBit reimplementation of [exomonad](https://github.com/tidepool-heavy-industr
 
 ## What This Is
 
-A persistent server that orchestrates heterogeneous coding agent teams. Agents (Claude, Gemini, future: Moon Pilot) run in isolated workspaces (git worktrees + tmux). The server manages spawning, messaging, PR workflow, and lifecycle — it makes no decisions, generates no code.
+A persistent server that orchestrates heterogeneous coding agent teams. Agents (Claude, Gemini, Moon Pilot) run in isolated workspaces (git worktrees + tmux). The server manages spawning, messaging, PR workflow, and lifecycle — it makes no decisions, generates no code.
 
 See `SPEC.md` for the full service specification.
 
@@ -13,7 +13,7 @@ See `SPEC.md` for the full service specification.
 Option B from the exomonad design: persistent server, pure MoonBit native binary.
 
 ```
-choir serve                        # persistent server on UDS (.exo/server.sock)
+choir serve                        # persistent server on UDS (.choir/server.sock)
   ├── Agent Registry               # in-memory
   ├── Message Router               # Teams inbox → tmux STDIN fallback
   ├── GitHub Poller                # background task
@@ -22,7 +22,7 @@ choir serve                        # persistent server on UDS (.exo/server.sock)
 choir mcp-stdio                    # stateless JSON-RPC ↔ server bridge (one per agent)
 ```
 
-Transport: UDS (default, local), TCP (opt-in, for future SSH/remote agents).
+Transport: UDS (default, local), TCP (implemented; remote/SSH path is still less proven than UDS).
 
 ## Building
 
@@ -97,17 +97,21 @@ Choir has substantial pieces of the workflow, but it is not production-ready yet
 
 Working or mostly working:
 - `choir init`, persistent server, MCP bridge, task/KV/mutex tools
+- typed internal domain/wire/request boundaries with parser-driven tool validation
 - worktree/tmux spawning for Claude, Gemini, Moon Pilot, and inline workers
 - canonical child identity and per-child config propagation
 - `file_pr`, `track_pr`, `merge_pr`, GitHub poller, and restart recovery
 - review event routing back into agent sessions
+- live `choir smoke --leafs` and `choir smoke --review` coverage for leaf PR filing and review delivery
 
 Still needs hard proof or more hardening:
-- repeated end-to-end runs of the full child PR review loop with real GitHub/Copilot feedback
+- one reproducible combined `spawn -> review -> merge` smoke, not just split leaf/review smokes
+- live TCP/remote smoke coverage
+- live restart-mid-review continuity smoke
 - stronger guarantees around child completion/reporting discipline
 - continued hardening of multi-client bridge/server behavior under real concurrent use
 - richer parity with ExoMonad session/routing semantics
-- a merged doc-only smoke PR is acceptable as evidence when validating the live end-to-end spawn → PR workflow
+- Claude still uses the Teams inbox delivery path because `--channels` is not usable for manual MCP servers yet
 
 ## Implementation Phasing
 

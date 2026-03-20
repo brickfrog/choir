@@ -94,10 +94,11 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 ### All roles
 | Tool | Key args | What it does |
 |------|----------|-------------|
+| `reply` | `id`, `payload?`, `cancel?` | Store a reply to a pending interaction request |
 | `send_message` | `target_id`, `message`, `status` | Send message to any agent by ID |
-| `kv_get` | `key` | Read `.exo/kv/{key}`, returns `{value: "..."}` or `{value: "null"}` |
-| `kv_set` | `key`, `value` | Write `.exo/kv/{key}` |
-| `kv_delete` | `key` | Delete `.exo/kv/{key}` |
+| `kv_get` | `key` | Read `.choir/kv/{key}`, returns `{value: "..."}` or `{value: "null"}` |
+| `kv_set` | `key`, `value` | Write `.choir/kv/{key}` |
+| `kv_delete` | `key` | Delete `.choir/kv/{key}` |
 | `kv_list` | — | List all keys in KV storage |
 | `mutex_acquire` | `name`, `agent_id`, `ttl_sec` | Acquire named lock. Returns `{acquired: "true"}` or `{acquired: "false", queue_position: N}` |
 | `mutex_release` | `name`, `agent_id` | Release lock, returns `{next_waiter: "..."}` if queue had waiters |
@@ -108,7 +109,7 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 |------|----------|-------------|
 | `notify_parent` | `caller_id`, `message`, `status` | Deliver message to parent agent |
 | `shutdown` | `caller_id` | Notify parent, kill own tmux pane, remove from registry. Blocked if PR has `ChangesRequested`. |
-| `task_list` | — | List tasks from `.exo/tasks/*.json` |
+| `task_list` | — | List tasks from `.choir/tasks/*.json` |
 | `task_get` | `id` | Get task by ID |
 | `task_create` | `id`, `title`, `status?`, `assignee?`, `notes?` | Create a new task |
 | `task_update` | `id`, `status?`, `assignee?`, `notes?` | Update task fields |
@@ -118,7 +119,10 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 | Tool | Key args | What it does |
 |------|----------|-------------|
 | `fork_wave` | `count`, `task`, `parent_branch`, `slug_prefix` | Spawn N parallel Claude agents in worktrees |
+| `fork_session` | `name` | Create a named session subdirectory for a nested team |
 | `spawn_gemini` | `task`, `slug`, `parent_branch` | Spawn Gemini agent in worktree with own branch + PR |
+| `spawn_moon_pilot` | `task`, `slug`, `parent_branch` | Spawn Moon Pilot agent in worktree with own branch + PR |
+| `spawn_remote` | `task`, `slug`, `parent_branch`, `ssh_target`, `repo_url`, `tcp_addr` | Spawn a remote SSH agent that connects back over TCP |
 | `spawn_worker` | `task`, `slug`, `agent_type` | Spawn ephemeral inline pane worker (no branch, no PR) |
 | `merge_pr` | `pr_number`, `parent_branch`, `caller_id` | Merge PR (auto-acquires `branch:{parent_branch}` mutex) |
 | `track_pr` | `pr_number`, `agent_id`, `branch?`, `parent_branch?`, `pr_url?` | Register PR with poller for review tracking |
