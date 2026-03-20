@@ -344,9 +344,10 @@ pub fn ServerState::get_agent(
 
 ///|
 /// Called when a connection closes. Detects unexpected agent death and notifies parent.
-pub async fn ServerState::handle_disconnect(
+pub async fn ServerState::handle_disconnect_with_runner(
   self : ServerState,
   agent_id : String,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
   match self.registry.get(agent_id) {
     Err(_) => ()
@@ -367,7 +368,7 @@ pub async fn ServerState::handle_disconnect(
                 parent, agent_id, msg, "failure",
               )
               ignore(
-                @tools.execute_delivery(delivery, @exec.run_sequence) catch {
+                @tools.execute_delivery(delivery, runner) catch {
                   _ => Ok(())
                 },
               )
@@ -376,4 +377,12 @@ pub async fn ServerState::handle_disconnect(
         }
       }
   }
+}
+
+///|
+pub async fn ServerState::handle_disconnect(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.handle_disconnect_with_runner(agent_id, runner=@exec.run_sequence)
 }

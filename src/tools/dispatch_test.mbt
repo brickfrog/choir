@@ -94,6 +94,29 @@ test "handle_request fork_wave accepts raw primitive request args" {
 }
 
 ///|
+test "execute_delivery creates Teams inbox directories" {
+  @async.with_event_loop(_ => {
+    let inbox_path = "/tmp/choir-dispatch-delivery/inboxes/default.json"
+    run_shell("rm -rf /tmp/choir-dispatch-delivery")
+    let res = @tools.execute_delivery(
+      @message.DeliveryMethod::TeamsInbox(
+        inbox_path, "{\"from\":\"sender\",\"content\":\"hello\",\"status\":\"info\"}",
+      ),
+      @exec.run_sequence,
+    )
+    match res {
+      Ok(_) =>
+        assert_eq(
+          @io.read_file(inbox_path).trim().to_string(),
+          "{\"from\":\"sender\",\"content\":\"hello\",\"status\":\"info\"}",
+        )
+      Err(e) => fail(e)
+    }
+    run_shell("rm -rf /tmp/choir-dispatch-delivery")
+  })
+}
+
+///|
 test "dispatch task_list reads task files" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-list"

@@ -352,16 +352,16 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
     assert_eq(review_cmds.length(), 1)
     assert_eq(review_cmds[0].program, "sh")
     assert_true(
-      review_cmds[0].args[1].contains(
-        "~/.claude/teams/main.leaf-1/inboxes/default.json",
+      review_cmds[0].args[4].contains(
+        "/.claude/teams/main.leaf-1/inboxes/default.json",
       ),
     )
     assert_true(
-      review_cmds[0].args[1].contains(
+      review_cmds[0].args[3].contains(
         "[REVIEW] PR #52 has review comments:\\nPlease add tests",
       ),
     )
-    assert_true(review_cmds[0].args[1].contains("\"from\":\"poller\""))
+    assert_true(review_cmds[0].args[3].contains("\"from\":\"poller\""))
 
     let fixes_cmds : Array[@workspace.Command] = []
     state.process_poller_tick_with(
@@ -379,16 +379,16 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
     )
     assert_eq(fixes_cmds.length(), 1)
     assert_true(
-      fixes_cmds[0].args[1].contains(
-        "~/.claude/teams/parent-1/inboxes/default.json",
+      fixes_cmds[0].args[4].contains(
+        "/.claude/teams/parent-1/inboxes/default.json",
       ),
     )
     assert_true(
-      fixes_cmds[0].args[1].contains(
+      fixes_cmds[0].args[3].contains(
         "[FIXES PUSHED] main.leaf-1 PR #52 has new commits after review",
       ),
     )
-    assert_true(fixes_cmds[0].args[1].contains("\"from\":\"main.leaf-1\""))
+    assert_true(fixes_cmds[0].args[3].contains("\"from\":\"main.leaf-1\""))
 
     let ready_cmds : Array[@workspace.Command] = []
     state.process_poller_tick_with(
@@ -401,19 +401,19 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
     )
     assert_eq(ready_cmds.length(), 1)
     assert_true(
-      ready_cmds[0].args[1].contains(
-        "~/.claude/teams/parent-1/inboxes/default.json",
+      ready_cmds[0].args[4].contains(
+        "/.claude/teams/parent-1/inboxes/default.json",
       ),
     )
     assert_true(
-      ready_cmds[0].args[1].contains("[PR READY] main.leaf-1 PR #52 approved"),
+      ready_cmds[0].args[3].contains("[PR READY] main.leaf-1 PR #52 approved"),
     )
     assert_true(
-      ready_cmds[0].args[1].contains(
+      ready_cmds[0].args[3].contains(
         "merge_pr(pr_number: \\\"52\\\", parent_branch: \\\"main\\\")",
       ),
     )
-    assert_true(ready_cmds[0].args[1].contains("\"from\":\"main.leaf-1\""))
+    assert_true(ready_cmds[0].args[3].contains("\"from\":\"main.leaf-1\""))
 
     let merge_req = @types.Request::{
       req_method: "tools/call",
@@ -467,11 +467,26 @@ test "handle_disconnect notifies parent when agent was Active" {
       branch: "main.worker-1",
     }
     ignore(state.registry.insert(child))
-    state.handle_disconnect("main.worker-1")
+    let delivered_cmds : Array[@workspace.Command] = []
+    state.handle_disconnect_with_runner("main.worker-1", runner=async fn(cmds) {
+      record_runner_server(delivered_cmds, cmds)
+    })
     match state.registry.get("main.worker-1") {
       Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
       Err(_) => fail("Expected child agent to remain in registry")
     }
+    assert_eq(delivered_cmds.length(), 1)
+    assert_eq(delivered_cmds[0].program, "sh")
+    assert_true(
+      delivered_cmds[0].args[4].contains(
+        "/.claude/teams/root/inboxes/default.json",
+      ),
+    )
+    assert_true(
+      delivered_cmds[0].args[3].contains(
+        "[FAILED: main.worker-1] disconnected unexpectedly - agent may have crashed or run out of context",
+      ),
+    )
   })
 }
 

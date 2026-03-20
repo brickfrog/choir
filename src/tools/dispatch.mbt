@@ -892,20 +892,48 @@ pub async fn execute_delivery(
   delivery : @message.DeliveryMethod,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Result[Unit, String] {
+  fn ensure_success(statuses : Array[Int]) -> Result[Unit, String] {
+    if statuses.length() == 0 || statuses[0] == 0 {
+      Ok(())
+    } else {
+      Err("delivery command failed with exit code " + statuses[0].to_string())
+    }
+  }
+  fn resolve_home_path(path : String) -> String {
+    if path.length() >= 2 && path[0] == '~' && path[1] == '/' {
+      match @io.getenv("HOME") {
+        Some(home) =>
+          home + "/" + (path[2:path.length()].to_string() catch { _ => path })
+        None => path
+      }
+    } else {
+      path
+    }
+  }
+  fn teams_inbox_command(path : String, json : String) -> @workspace.Command {
+    {
+      program: "sh",
+      args: [
+        "-c",
+        "mkdir -p \"$(dirname \"$2\")\" && printf '%s\\n' \"$1\" >> \"$2\"",
+        "sh",
+        json,
+        resolve_home_path(path),
+      ],
+      workdir: Some("."),
+    }
+  }
   match delivery {
     @message.DeliveryMethod::TeamsInbox(path, json) => {
-      let cmd = @workspace.Command::{
-        program: "sh",
-        args: ["-c", "printf '%s\\n' '" + json + "' >> " + path],
-        workdir: Some("."),
+      let statuses = runner([teams_inbox_command(path, json)]) catch {
+        e => return Err(e.to_string())
       }
-      ignore(runner([cmd]) catch { e => return Err(e.to_string()) })
-      Ok(())
+      ensure_success(statuses)
     }
     @message.DeliveryMethod::TmuxStdin(target, text) => {
       let cmd = @workspace.tmux_send_keys(target, text)
-      ignore(runner([cmd]) catch { e => return Err(e.to_string()) })
-      Ok(())
+      let statuses = runner([cmd]) catch { e => return Err(e.to_string()) }
+      ensure_success(statuses)
     }
     @message.DeliveryMethod::TcpPush(_, _) => Ok(()) // Phase 2
     @message.DeliveryMethod::UdsHttp(sock_path, body) => {
