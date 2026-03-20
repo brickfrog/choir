@@ -208,22 +208,8 @@ fn main_prog() -> Unit raise {
       let interval_ms = 30000
       for {
         @async.sleep(interval_ms)
-        let pending_events = []
-        let pending_agent_ids = []
         let now = @poller.now_sec()
-        state.poller.tick(now, timeout_sec, fn(event, agent_id) {
-          pending_events.push(event)
-          pending_agent_ids.push(agent_id)
-        })
-        for i = 0; i < pending_events.length(); i = i + 1 {
-          let event = pending_events[i]
-          let agent_id = pending_agent_ids[i]
-          match state.plan_poll_event_delivery(event, agent_id) {
-            Some(delivery) =>
-              ignore(@tools.execute_delivery(delivery, @exec.run_sequence))
-            None => ()
-          }
-        }
+        state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
       }
     })
     root.spawn_bg(async fn() {

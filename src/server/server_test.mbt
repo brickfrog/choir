@@ -57,6 +57,40 @@ async fn mock_spawn_runner_server(
 }
 
 ///|
+async fn mock_runner_server(cmds : Array[@workspace.Command]) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for _ in cmds {
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+async fn record_runner_server(
+  sink : Array[@workspace.Command],
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for cmd in cmds {
+    sink.push(cmd)
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+async fn mock_ensure_pr_server(
+  branch : String,
+  _parent_branch : String,
+  _project_dir : String,
+) -> Result[@tools.PullRequestInfo, String] {
+  @async.sleep(0)
+  Ok({ number: 52, url: "https://example.test/pr/" + branch })
+}
+
+///|
 test "ServerState::handle valid request returns Ok" {
   @async.with_event_loop(_ => {
     let state = ServerState::new(@types.Config::default())
@@ -183,7 +217,9 @@ test "plan_poll_event_delivery routes PR ready to parent" {
       assert_true(payload.contains("parent_branch: main"))
       assert_true(payload.contains("pr_url: https://example.test/pr/42"))
       assert_true(
-        payload.contains("merge_pr(pr_number: \"42\", parent_branch: \"main\")"),
+        payload.contains(
+          "merge_pr(pr_number: \\\"42\\\", parent_branch: \\\"main\\\")",
+        ),
       )
       assert_true(payload.contains("\"from\":\"child-1\""))
     }
@@ -245,13 +281,162 @@ test "plan_poll_event_delivery routes review comments to owning agent" {
       assert_true(path.contains("child-1"))
       assert_true(
         payload.contains(
-          "[REVIEW] PR #42 has review comments:\nPlease add tests",
+          "[REVIEW] PR #42 has review comments:\\nPlease add tests",
         ),
       )
       assert_true(payload.contains("\"from\":\"poller\""))
     }
     _ => fail("expected owning agent Teams inbox delivery")
   }
+}
+
+///|
+test "process_poller_tick_with drives PR review workflow and merge cleanup" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+    let child = {
+      ..build_agent("main.leaf-1", Some("parent-1")),
+      role: @types.Role::Dev,
+      branch: "main.leaf-1",
+    }
+    ignore(state.registry.insert(parent))
+    ignore(state.registry.insert(child))
+
+    let file_req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::Dev,
+      name: "file_pr",
+      args: @types.RequestArgs::from_values({
+        "branch": @types.wire_string("main.leaf-1"),
+        "parent_branch": @types.wire_string("main"),
+        "caller_id": @types.wire_string("main.leaf-1"),
+      }),
+    }
+    let file_res = @tools.handle_request(
+      state.tool_registry,
+      file_req,
+      project_dir="/tmp",
+      runner=mock_runner_server,
+      ensure_pr=mock_ensure_pr_server,
+      agent_registry=Some(state.registry),
+      mutex_registry=Some(state.mutex_registry),
+      poller_state=Some(state.poller),
+    )
+    assert_eq(file_res.ok_field("status"), Some("pr_created"))
+    assert_eq(file_res.ok_field("tracked"), Some("true"))
+    match state.poller.get(52) {
+      Some(tracked) => {
+        assert_eq(tracked.agent_id, "main.leaf-1")
+        assert_eq(tracked.branch, "main.leaf-1")
+        assert_eq(tracked.parent_branch, "main")
+        assert_eq(tracked.pr_url, "https://example.test/pr/main.leaf-1")
+      }
+      None => fail("expected tracked PR after file_pr")
+    }
+
+    let review_cmds : Array[@workspace.Command] = []
+    state.process_poller_tick_with(
+      200L,
+      900L,
+      fn(_pr_number) {
+        (
+          @poller.ReviewState::ChangesRequested,
+          "sha-review-1",
+          false,
+          "Please add tests",
+        )
+      },
+      runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
+    )
+    assert_eq(review_cmds.length(), 1)
+    assert_eq(review_cmds[0].program, "sh")
+    assert_true(
+      review_cmds[0].args[1].contains(
+        "~/.claude/teams/main.leaf-1/inboxes/default.json",
+      ),
+    )
+    assert_true(
+      review_cmds[0].args[1].contains(
+        "[REVIEW] PR #52 has review comments:\\nPlease add tests",
+      ),
+    )
+    assert_true(review_cmds[0].args[1].contains("\"from\":\"poller\""))
+
+    let fixes_cmds : Array[@workspace.Command] = []
+    state.process_poller_tick_with(
+      201L,
+      900L,
+      fn(_pr_number) {
+        (
+          @poller.ReviewState::ChangesRequested,
+          "sha-review-2",
+          false,
+          "Please add tests",
+        )
+      },
+      runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
+    )
+    assert_eq(fixes_cmds.length(), 1)
+    assert_true(
+      fixes_cmds[0].args[1].contains(
+        "~/.claude/teams/parent-1/inboxes/default.json",
+      ),
+    )
+    assert_true(
+      fixes_cmds[0].args[1].contains(
+        "[FIXES PUSHED] main.leaf-1 PR #52 has new commits after review",
+      ),
+    )
+    assert_true(fixes_cmds[0].args[1].contains("\"from\":\"main.leaf-1\""))
+
+    let ready_cmds : Array[@workspace.Command] = []
+    state.process_poller_tick_with(
+      202L,
+      900L,
+      fn(_pr_number) {
+        (@poller.ReviewState::Approved, "sha-review-2", false, "")
+      },
+      runner=async fn(cmds) { record_runner_server(ready_cmds, cmds) },
+    )
+    assert_eq(ready_cmds.length(), 1)
+    assert_true(
+      ready_cmds[0].args[1].contains(
+        "~/.claude/teams/parent-1/inboxes/default.json",
+      ),
+    )
+    assert_true(
+      ready_cmds[0].args[1].contains("[PR READY] main.leaf-1 PR #52 approved"),
+    )
+    assert_true(
+      ready_cmds[0].args[1].contains(
+        "merge_pr(pr_number: \\\"52\\\", parent_branch: \\\"main\\\")",
+      ),
+    )
+    assert_true(ready_cmds[0].args[1].contains("\"from\":\"main.leaf-1\""))
+
+    let merge_req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::TL,
+      name: "merge_pr",
+      args: @types.RequestArgs::from_values({
+        "pr_number": @types.wire_int(52),
+        "parent_branch": @types.wire_string("main"),
+        "caller_id": @types.wire_string("parent-1"),
+      }),
+    }
+    let merge_res = @tools.handle_request(
+      state.tool_registry,
+      merge_req,
+      project_dir="/tmp",
+      runner=mock_runner_server,
+      agent_registry=Some(state.registry),
+      mutex_registry=Some(state.mutex_registry),
+      poller_state=Some(state.poller),
+    )
+    assert_eq(merge_res.ok_field("status"), Some("merged"))
+    assert_eq(state.poller.get(52), None)
+  })
 }
 
 ///|

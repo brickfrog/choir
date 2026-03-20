@@ -7,7 +7,6 @@ import {
   "choir/src/uds",
   "choir/src/exec",
   "choir/src/poller",
-  "choir/src/tools",
   "choir/src/mcp",
   "choir/src/hooks",
   "choir/src/workspace",

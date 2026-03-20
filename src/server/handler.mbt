@@ -280,6 +280,56 @@ pub fn ServerState::plan_poll_event_delivery(
 }
 
 ///|
+async fn deliver_pending_poll_events(
+  state : ServerState,
+  pending_events : Array[@poller.PollEvent],
+  pending_agent_ids : Array[String],
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  for i = 0; i < pending_events.length(); i = i + 1 {
+    let event = pending_events[i]
+    let agent_id = pending_agent_ids[i]
+    match state.plan_poll_event_delivery(event, agent_id) {
+      Some(delivery) => ignore(@tools.execute_delivery(delivery, runner))
+      None => ()
+    }
+  }
+}
+
+///|
+pub async fn ServerState::process_poller_tick_with(
+  self : ServerState,
+  now : Int64,
+  timeout : Int64,
+  poll : async (Int) -> (@poller.ReviewState, String, Bool, String),
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+) -> Unit {
+  let pending_events = []
+  let pending_agent_ids = []
+  self.poller.tick_with(now, timeout, poll, fn(event, agent_id) {
+    pending_events.push(event)
+    pending_agent_ids.push(agent_id)
+  })
+  deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+}
+
+///|
+pub async fn ServerState::process_poller_tick(
+  self : ServerState,
+  now : Int64,
+  timeout : Int64,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+) -> Unit {
+  let pending_events = []
+  let pending_agent_ids = []
+  self.poller.tick(now, timeout, fn(event, agent_id) {
+    pending_events.push(event)
+    pending_agent_ids.push(agent_id)
+  })
+  deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+}
+
+///|
 pub fn ServerState::list_agents(self : ServerState) -> Array[@types.Agent] {
   self.registry.list()
 }

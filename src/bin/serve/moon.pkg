@@ -7,7 +7,6 @@ import {
   "choir/src/uds",
   "choir/src/exec",
   "choir/src/poller",
-  "choir/src/tools",
   "moonbitlang/async",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",

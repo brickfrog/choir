@@ -19,6 +19,16 @@ test "teams inbox json output" {
 }
 
 ///|
+test "teams inbox json escapes content" {
+  let json = @message.teams_inbox_json(
+    "sender\"1", "line 1\nline \"2\"", "Info",
+  )
+  assert_eq(
+    json, "{\"from\":\"sender\\\"1\",\"content\":\"line 1\\nline \\\"2\\\"\",\"status\":\"Info\"}",
+  )
+}
+
+///|
 test "teams inbox path format" {
   let path = @message.teams_inbox_path("claude-1")
   assert_eq(path, "~/.claude/teams/claude-1/inboxes/default.json")
