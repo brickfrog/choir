@@ -620,11 +620,7 @@ fn parse_register_args(
     },
     terminal_target: match tool_args_get(args, "terminal_target") {
       Some(v) => if v == "" { None } else { Some(v) }
-      None =>
-        match tool_args_get(args, "tmux_target") {
-          Some(v) => if v == "" { None } else { Some(v) }
-          None => None
-        }
+      None => None
     },
     workspace: tool_args_get(args, "workspace").unwrap_or(""),
     branch: tool_args_get(args, "branch").unwrap_or(""),

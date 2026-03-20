@@ -364,7 +364,7 @@ fn default_agent_type(role : @types.Role) -> @types.AgentType {
 }
 
 ///|
-fn tmux_target_window_name(target : String) -> String? {
+fn window_target_name(target : String) -> String? {
   let idx = index_of(target, ":")
   if idx == -1 || idx + 1 >= target.length() {
     None
@@ -374,14 +374,14 @@ fn tmux_target_window_name(target : String) -> String? {
 }
 
 ///|
-fn is_tmux_target_alive(
+fn is_window_target_alive(
   target : String?,
   session : String,
   tmux_windows : Array[String],
 ) -> Bool {
   match target {
     Some(value) =>
-      match tmux_target_window_name(value) {
+      match window_target_name(value) {
         Some(window_name) =>
           value.has_prefix(session + ":") && tmux_windows.contains(window_name)
         None => false
@@ -478,7 +478,7 @@ fn is_local_target_alive(
         Some({ kind: @workspace.LocalTargetKind::ZellijTab, .. })
         | Some({ kind: @workspace.LocalTargetKind::ZellijPane, .. }) =>
           is_zellij_target_alive(target, session, zellij_live)
-        _ => is_tmux_target_alive(target, session, tmux_windows)
+        _ => is_window_target_alive(target, session, tmux_windows)
       }
     None => false
   }
