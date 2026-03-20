@@ -52,6 +52,50 @@ fn prefer_optional_string(value : String?, fallback : String?) -> String? {
 }
 
 ///|
+pub(all) struct CompanionDef {
+  name : String
+  role : String
+  command : String
+  task : String
+} derive(Show, Eq)
+
+///|
+pub fn parse_companions_json(s : String) -> Array[CompanionDef] {
+  let result : Array[CompanionDef] = []
+  for value_map in @jsonutil.parse_json_object_array_text(s) {
+    let name = match value_map.get("name") {
+      Some(@jsonutil.JsonValueText::String(value)) => value
+      Some(@jsonutil.JsonValueText::Raw(value)) => value
+      None => ""
+    }
+    let role = match value_map.get("role") {
+      Some(@jsonutil.JsonValueText::String(value)) => value
+      Some(@jsonutil.JsonValueText::Raw(value)) => value
+      None => "worker"
+    }
+    let command = match value_map.get("command") {
+      Some(@jsonutil.JsonValueText::String(value)) => value
+      Some(@jsonutil.JsonValueText::Raw(value)) => value
+      None => ""
+    }
+    let task = match value_map.get("task") {
+      Some(@jsonutil.JsonValueText::String(value)) => value
+      Some(@jsonutil.JsonValueText::Raw(value)) => value
+      None => ""
+    }
+    if name != "" && command != "" {
+      result.push({ name, role, command, task })
+    }
+  }
+  result
+}
+
+///|
+pub fn hook_command_path(content : String, hook_key : String) -> String? {
+  parse_toml_doc(content).get_optional_nonempty(hook_key)
+}
+
+///|
 /// Parses project config.toml
 pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] {
   let doc = parse_toml_doc(content)

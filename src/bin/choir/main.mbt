@@ -815,14 +815,13 @@ fn hook_run() -> Unit raise {
     persist_hook_session(input)
 
     let config_content = @io.read_file(".choir/config.toml")
-    let config_map = @config.parse_toml(config_content)
 
     let hook_key = match input.event {
       @hooks.HookEvent::SessionStart => "hook.session_start"
       @hooks.HookEvent::PreToolUse => "hook.pre_tool_use"
     }
 
-    match config_map.get(hook_key) {
+    match @config.hook_command_path(config_content, hook_key) {
       None =>
         @io.write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
       Some(cmd_path) => {
@@ -868,132 +867,6 @@ fn init_mcp_json_content(project_dir : String) -> String {
 }
 
 ///|
-struct CompanionDef {
-  name : String
-  role : String
-  command : String
-  task : String
-}
-
-///|
-fn init_skip_ws(s : String, start : Int) -> Int {
-  let mut i = start
-  while i < s.length() &&
-        (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t') {
-    i = i + 1
-  }
-  i
-}
-
-///|
-fn init_parse_string(s : String, start : Int) -> (String, Int)? {
-  if start >= s.length() || s[start] != '"' {
-    return None
-  }
-  let buf = StringBuilder::new()
-  let mut i = start + 1
-  while i < s.length() {
-    let c = Int::unsafe_to_char(s[i].to_int())
-    if c == '"' {
-      return Some((buf.to_string(), i + 1))
-    }
-    if c == '\\' {
-      i = i + 1
-      if i >= s.length() {
-        return None
-      }
-      match Int::unsafe_to_char(s[i].to_int()) {
-        '"' => buf.write_char('"')
-        '\\' => buf.write_char('\\')
-        'n' => buf.write_char('\n')
-        'r' => buf.write_char('\r')
-        't' => buf.write_char('\t')
-        other => buf.write_char(other)
-      }
-    } else {
-      buf.write_char(c)
-    }
-    i = i + 1
-  }
-  None
-}
-
-///|
-fn init_parse_obj(s : String, start : Int) -> (Map[String, String], Int)? {
-  let mut i = init_skip_ws(s, start)
-  if i >= s.length() || s[i] != '{' {
-    return None
-  }
-  i = i + 1
-  let map : Map[String, String] = {}
-  for {
-    i = init_skip_ws(s, i)
-    if i >= s.length() {
-      return None
-    }
-    if s[i] == '}' {
-      return Some((map, i + 1))
-    }
-    let (key, ki) = match init_parse_string(s, i) {
-      Some(p) => p
-      None => return None
-    }
-    i = init_skip_ws(s, ki)
-    if i >= s.length() || s[i] != ':' {
-      return None
-    }
-    i = init_skip_ws(s, i + 1)
-    let (val, vi) = match init_parse_string(s, i) {
-      Some(p) => p
-      None => return None
-    }
-    map.set(key, val)
-    i = init_skip_ws(s, vi)
-    if i >= s.length() {
-      return None
-    }
-    if s[i] == '}' {
-      return Some((map, i + 1))
-    }
-    if s[i] != ',' {
-      return None
-    }
-    i = i + 1
-  }
-}
-
-///|
-fn parse_companions_json(s : String) -> Array[CompanionDef] {
-  let result = []
-  let mut i = init_skip_ws(s, 0)
-  if i >= s.length() || s[i] != '[' {
-    return result
-  }
-  i = i + 1
-  for {
-    i = init_skip_ws(s, i)
-    if i >= s.length() || s[i] == ']' {
-      break
-    }
-    match init_parse_obj(s, i) {
-      Some((map, next_i)) => {
-        let name = map.get("name").unwrap_or("")
-        let role = map.get("role").unwrap_or("worker")
-        let command = map.get("command").unwrap_or("")
-        let task = map.get("task").unwrap_or("")
-        if name != "" && command != "" {
-          result.push({ name, role, command, task })
-        }
-        i = init_skip_ws(s, next_i)
-        if i < s.length() && s[i] == ',' {
-          i = i + 1
-        }
-      }
-      None => break
-    }
-  }
-  result
-}
 
 ///|
 fn init_escape_shell_single_quoted(s : String) -> String {
@@ -1191,7 +1064,7 @@ fn init_run() -> Unit raise {
 
     match config.companions_json {
       Some(json) => {
-        let companions = parse_companions_json(json)
+        let companions = @config.parse_companions_json(json)
         for c in companions {
           let agent_dir = ".choir/agents/" + c.name
           ignore(

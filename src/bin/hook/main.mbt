@@ -52,14 +52,13 @@ fn main_prog() -> Unit raise {
     persist_hook_session(input)
 
     let config_content = @io.read_file(".choir/config.toml")
-    let config_map = @config.parse_toml(config_content)
 
     let hook_key = match input.event {
       @hooks.HookEvent::SessionStart => "hook.session_start"
       @hooks.HookEvent::PreToolUse => "hook.pre_tool_use"
     }
 
-    match config_map.get(hook_key) {
+    match @config.hook_command_path(config_content, hook_key) {
       None =>
         @io.write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
       Some(cmd_path) => {

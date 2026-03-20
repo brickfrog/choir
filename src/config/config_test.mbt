@@ -158,6 +158,35 @@ test "parse_local_config - metadata" {
 }
 
 ///|
+test "parse_companions_json shared helper" {
+  let parsed = parse_companions_json(
+    "[{\"name\":\"monitor\",\"role\":\"worker\",\"command\":\"claude\",\"task\":\"watch build\"},true,{\"name\":\"reviewer\",\"command\":\"gemini\"}]",
+  )
+  assert_eq(parsed.length(), 2)
+  assert_eq(parsed[0].name, "monitor")
+  assert_eq(parsed[0].role, "worker")
+  assert_eq(parsed[0].command, "claude")
+  assert_eq(parsed[0].task, "watch build")
+  assert_eq(parsed[1].name, "reviewer")
+  assert_eq(parsed[1].role, "worker")
+  assert_eq(parsed[1].command, "gemini")
+  assert_eq(parsed[1].task, "")
+}
+
+///|
+test "hook_command_path ignores empty values" {
+  let content =
+    #|hook.session_start = "/tmp/hook-start"
+    #|hook.pre_tool_use = ""
+  assert_eq(
+    hook_command_path(content, "hook.session_start"),
+    Some("/tmp/hook-start"),
+  )
+  assert_eq(hook_command_path(content, "hook.pre_tool_use"), None)
+  assert_eq(hook_command_path(content, "hook.unknown"), None)
+}
+
+///|
 test "resolve_role" {
   let cfg = @types.Config::default()
   let local_role : @types.Role? = Some(@types.Role::Dev)
