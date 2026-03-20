@@ -102,10 +102,9 @@ Working or mostly working:
 - canonical child identity and per-child config propagation
 - `file_pr`, `track_pr`, `merge_pr`, GitHub poller, and restart recovery
 - review event routing back into agent sessions
-- live `choir smoke --leafs` and `choir smoke --review` coverage for leaf PR filing and review delivery
+- live `choir smoke --leafs`, `choir smoke --review`, and `choir smoke --e2e-live` coverage for leaf PR filing, review delivery, and merge
 
 Still needs hard proof or more hardening:
-- one reproducible combined `spawn -> review -> merge` smoke, not just split leaf/review smokes
 - live TCP/remote smoke coverage
 - live restart-mid-review continuity smoke
 - stronger guarantees around child completion/reporting discipline
