@@ -113,7 +113,7 @@ test "translate missing name returns error" {
 
 ///|
 test "from_internal_response Ok" {
-  let resp = @types.Response::Ok({ "url": "https://github.com/pr/1" })
+  let resp = @types.Response::ok({ "url": "https://github.com/pr/1" })
   assert_eq(resp.ok_field("url"), Some("https://github.com/pr/1"))
   let rpc = @mcp.from_internal_response(Number(5), resp)
   assert_eq(rpc.jsonrpc, "2.0")
@@ -165,7 +165,7 @@ test "error_response" {
 
 ///|
 test "serialize successful response" {
-  let resp = @types.Response::Ok({ "status": "ok" })
+  let resp = @types.Response::ok({ "status": "ok" })
   let rpc = @mcp.from_internal_response(Number(10), resp)
   let json = rpc.to_json_string()
   assert_true(json.contains("\"jsonrpc\":\"2.0\""))

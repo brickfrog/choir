@@ -72,7 +72,7 @@ pub async fn ServerState::handle_with_runner(
 ) -> @types.Response {
   let start_sec = @poller.now_sec()
   let resp = if req.req_method == "tools/list" {
-    @types.Response::Ok({ "tools_list": "true" })
+    @types.Response::ok({ "tools_list": "true" })
   } else {
     @tools.handle_request(
       self.tool_registry,

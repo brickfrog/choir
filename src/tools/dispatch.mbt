@@ -841,7 +841,7 @@ async fn dispatch_to_plugin(
       )
       let resp_str = @io.read_file(resp_path)
       match @plugin.parse_response(resp_str) {
-        Ok(result) => @types.Response::Ok(result)
+        Ok(result) => @types.Response::ok(result)
         Err(e) => @types.Response::Err("plugin error: " + e)
       }
     }
@@ -1148,7 +1148,7 @@ async fn handle_task_list(
     first = false
   }
   buf.write_char(']')
-  @types.Response::Ok({ "status": "ok", "tasks": buf.to_string() })
+  @types.Response::ok({ "status": "ok", "tasks": buf.to_string() })
 }
 
 ///|
@@ -1171,7 +1171,7 @@ async fn handle_kv_list(
   if statuses.length() > 0 {
     let status = statuses[statuses.length() - 1]
     if status == 3 {
-      return @types.Response::Ok({ "status": "ok", "keys": "[]" })
+      return @types.Response::ok({ "status": "ok", "keys": "[]" })
     }
     if status != 0 {
       return @types.Response::Err(
@@ -1209,7 +1209,7 @@ async fn handle_kv_list(
     first = false
   }
   buf.write_char(']')
-  @types.Response::Ok({ "status": "ok", "keys": buf.to_string() })
+  @types.Response::ok({ "status": "ok", "keys": buf.to_string() })
 }
 
 ///|
@@ -1257,14 +1257,14 @@ pub async fn dispatch(
           }
           match reg.insert(agent) {
             Ok(_) =>
-              @types.Response::Ok({
+              @types.Response::ok({
                 "status": "registered",
                 "agent_id": register_args.agent_id,
               })
             Err(e) => @types.Response::Err(e.message())
           }
         }
-        None => @types.Response::Ok({ "status": "registered" })
+        None => @types.Response::ok({ "status": "registered" })
       }
     "fork_wave" => {
       let fork_wave_args = match parse_fork_wave_args(project_dir, call.args) {
@@ -1303,7 +1303,7 @@ pub async fn dispatch(
       }
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::Ok({
+          @types.Response::ok({
             "status": "spawned",
             "count": fork_wave_args.count.to_string(),
             "agent_ids": agent_ids.to_string(),
@@ -1325,7 +1325,7 @@ pub async fn dispatch(
         created_sec.to_string() +
         "\"}"
       if @io.write_file_sync(context_path, context_json) {
-        @types.Response::Ok({
+        @types.Response::ok({
           "status": "ok",
           "session_dir": session_dir,
           "name": session_args.name,
@@ -1363,7 +1363,7 @@ pub async fn dispatch(
                 }
                 None => ()
               }
-              @types.Response::Ok({
+              @types.Response::ok({
                 "status": "pr_created",
                 "pr_number": pr.number.to_string(),
                 "pr_url": pr.url,
@@ -1407,7 +1407,7 @@ pub async fn dispatch(
                 Some(ps) => ps.untrack(merge_args.pr_number)
                 None => ()
               }
-              @types.Response::Ok({ "status": "merged" })
+              @types.Response::ok({ "status": "merged" })
             }
             Err(e) => @types.Response::Err(e)
           }
@@ -1419,7 +1419,7 @@ pub async fn dispatch(
                 Some(ps) => ps.untrack(merge_args.pr_number)
                 None => ()
               }
-              @types.Response::Ok({ "status": "merged" })
+              @types.Response::ok({ "status": "merged" })
             }
             Err(e) => @types.Response::Err(e)
           }
@@ -1440,7 +1440,7 @@ pub async fn dispatch(
             track_pr_args.pr_url,
             @poller.now_sec(),
           )
-          @types.Response::Ok({
+          @types.Response::ok({
             "status": "tracked",
             "branch": track_pr_args.branch,
             "parent_branch": track_pr_args.parent_branch,
@@ -1466,13 +1466,13 @@ pub async fn dispatch(
                 notify_args.status,
               )
               match execute_delivery(delivery, runner) {
-                Ok(_) => @types.Response::Ok({ "status": "notified" })
+                Ok(_) => @types.Response::ok({ "status": "notified" })
                 Err(e) => @types.Response::Err(e)
               }
             }
             Err(e) => @types.Response::Err(e.message())
           }
-        None => @types.Response::Ok({ "status": "notified" })
+        None => @types.Response::ok({ "status": "notified" })
       }
     }
     "send_message" => {
@@ -1491,20 +1491,20 @@ pub async fn dispatch(
                 send_args.status,
               )
               match execute_delivery(delivery, runner) {
-                Ok(_) => @types.Response::Ok({ "status": "sent" })
+                Ok(_) => @types.Response::ok({ "status": "sent" })
                 Err(e) => @types.Response::Err(e)
               }
             }
             Err(e) => @types.Response::Err(e.message())
           }
-        None => @types.Response::Ok({ "status": "sent" })
+        None => @types.Response::ok({ "status": "sent" })
       }
     }
     "shutdown" => {
       let shutdown_args = parse_shutdown_args(call.args)
       let caller_id = match shutdown_args.caller_id {
         Some(v) => v
-        None => return @types.Response::Ok({ "status": "shutdown" }) // best-effort
+        None => return @types.Response::ok({ "status": "shutdown" }) // best-effort
       }
       match poller_state {
         Some(ps) =>
@@ -1559,7 +1559,7 @@ pub async fn dispatch(
         }
         None => ()
       }
-      @types.Response::Ok({ "status": "shutdown" })
+      @types.Response::ok({ "status": "shutdown" })
     }
     "kv_get" => {
       let key_args = match parse_kv_key_args(call.args) {
@@ -1568,9 +1568,9 @@ pub async fn dispatch(
       }
       let value = @io.read_file(kv_file_path(project_dir, key_args.key))
       if value == "" {
-        @types.Response::Ok({ "value": "null" })
+        @types.Response::ok({ "value": "null" })
       } else {
-        @types.Response::Ok({ "value": value })
+        @types.Response::ok({ "value": value })
       }
     }
     "kv_set" => {
@@ -1580,7 +1580,7 @@ pub async fn dispatch(
       }
       let path = kv_file_path(project_dir, kv_args.key)
       if @io.write_file_sync(path, kv_args.value) {
-        @types.Response::Ok({ "status": "ok" })
+        @types.Response::ok({ "status": "ok" })
       } else {
         @types.Response::Err("failed to write kv file: " + path)
       }
@@ -1592,7 +1592,7 @@ pub async fn dispatch(
       }
       let path = kv_file_path(project_dir, key_args.key)
       ignore(@io.delete_file_sync(path))
-      @types.Response::Ok({ "status": "ok" })
+      @types.Response::ok({ "status": "ok" })
     }
     "kv_list" => handle_kv_list(project_dir, runner)
     "mutex_acquire" => {
@@ -1608,7 +1608,7 @@ pub async fn dispatch(
             mutex_args.ttl_sec,
             @poller.now_sec(),
           )
-          @types.Response::Ok({
+          @types.Response::ok({
             "acquired": if acquired {
               "true"
             } else {
@@ -1631,7 +1631,7 @@ pub async fn dispatch(
           let was_waiting = reg.is_waiting(mutex_args.name, mutex_args.agent_id)
           let next_waiter = reg.release(mutex_args.name, mutex_args.agent_id)
           let released = holder == Some(mutex_args.agent_id) || was_waiting
-          @types.Response::Ok({
+          @types.Response::ok({
             "released": if released {
               "true"
             } else {
@@ -1651,7 +1651,7 @@ pub async fn dispatch(
       match mutex_registry {
         Some(reg) => {
           let (holder, queue) = reg.status(name_args.name)
-          @types.Response::Ok({
+          @types.Response::ok({
             "holder": holder.unwrap_or(""),
             "queue_length": queue.length().to_string(),
           })
@@ -1667,7 +1667,7 @@ pub async fn dispatch(
       }
       match read_task_file(project_dir, id_args.id) {
         Ok(task) =>
-          @types.Response::Ok({
+          @types.Response::ok({
             "status": "ok",
             "task": task_file_to_json(task),
           })
@@ -1693,7 +1693,7 @@ pub async fn dispatch(
       let content = task_file_to_json(task)
       let path = task_file_path(project_dir, task_args.id)
       if @io.write_file_sync(path, content) {
-        @types.Response::Ok({ "status": "ok", "task": content })
+        @types.Response::ok({ "status": "ok", "task": content })
       } else {
         @types.Response::Err("failed to write task file: " + path)
       }
@@ -1716,7 +1716,7 @@ pub async fn dispatch(
       let content = task_file_to_json(updated)
       let path = task_file_path(project_dir, update_args.id)
       if @io.write_file_sync(path, content) {
-        @types.Response::Ok({ "status": "ok", "task": content })
+        @types.Response::ok({ "status": "ok", "task": content })
       } else {
         @types.Response::Err("failed to write task file: " + path)
       }
@@ -1745,7 +1745,7 @@ pub async fn dispatch(
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::Ok({
+          @types.Response::ok({
             "status": "spawned",
             "agent_id": @workspace.branch_name(
               spawn_args.parent_branch,
@@ -1781,7 +1781,7 @@ pub async fn dispatch(
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::Ok({
+          @types.Response::ok({
             "status": "spawned",
             "agent_id": @workspace.branch_name(
               spawn_args.parent_branch,
@@ -1816,7 +1816,7 @@ pub async fn dispatch(
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::Ok({
+          @types.Response::ok({
             "status": "spawned",
             "agent_id": @workspace.branch_name(
               spawn_args.parent_branch,
@@ -1851,7 +1851,7 @@ pub async fn dispatch(
         shell_command~,
       )
       match run_strict(runner, cmds) {
-        Ok(_) => @types.Response::Ok({ "status": "spawned" })
+        Ok(_) => @types.Response::ok({ "status": "spawned" })
         Err(e) => @types.Response::Err(e)
       }
     }
@@ -1873,7 +1873,7 @@ pub async fn dispatch(
       }
       let path = kv_file_path(project_dir, key)
       if @io.write_file_sync(path, value) {
-        @types.Response::Ok({ "status": "ok", "id": id })
+        @types.Response::ok({ "status": "ok", "id": id })
       } else {
         @types.Response::Err("failed to write reply: " + id)
       }

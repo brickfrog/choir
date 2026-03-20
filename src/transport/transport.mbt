@@ -192,7 +192,7 @@ pub fn parse_response(data : String) -> Result[@types.Response, String] {
 
   if ok_true_idx_no_space != -1 {
     let result = parse_map(data, "result")
-    return Ok(@types.Response::Ok(result))
+    return Ok(@types.Response::ok(result))
   }
 
   let ok_false_idx = @jsonutil.find_substring(data, "\"ok\": false")
