@@ -8,6 +8,7 @@ test "parse_config - full" {
     #|listen_tcp = "127.0.0.1:9000"
     #|tcp_auth_token = "secret-token-abc"
     #|otlp_endpoint = "http://localhost:4318"
+    #|terminal_backend = "zellij"
     #|extra_mcp_servers_json = '{"notebook":{"type":"stdio","command":"node"}}'
     #|companions_json = '[{"name":"monitor","role":"worker","command":"claude","task":"Monitor the build"}]'
     #|plugins_json = '[{"name":"plugin","command":"./plugin","tools":"search"}]'
@@ -20,6 +21,7 @@ test "parse_config - full" {
   assert_eq(cfg.listen_tcp, Some("127.0.0.1:9000"))
   assert_eq(cfg.tcp_auth_token, Some("secret-token-abc"))
   assert_eq(cfg.otlp_endpoint, Some("http://localhost:4318"))
+  assert_eq(cfg.terminal_backend, @types.TerminalBackend::Zellij)
   assert_eq(
     cfg.extra_mcp_servers_json,
     Some("{\"notebook\":{\"type\":\"stdio\",\"command\":\"node\"}}"),
@@ -45,6 +47,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.default_role, @types.Role::Worker)
   assert_eq(cfg.project_dir, ".")
   assert_eq(cfg.shell_command, None)
+  assert_eq(cfg.terminal_backend, @types.TerminalBackend::Tmux)
 }
 
 ///|
@@ -201,6 +204,13 @@ test "resolve_role" {
 ///|
 test "invalid role error" {
   let content = "default_role = \"invalid\""
+  let result = parse_config(content)
+  assert_eq(result is Ok(_), false)
+}
+
+///|
+test "invalid terminal backend error" {
+  let content = "terminal_backend = \"screen\""
   let result = parse_config(content)
   assert_eq(result is Ok(_), false)
 }

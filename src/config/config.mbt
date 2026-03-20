@@ -24,6 +24,17 @@ pub fn parse_agent_type(
 }
 
 ///|
+pub fn parse_terminal_backend(
+  s : String,
+) -> Result[@types.TerminalBackend, @types.ExoError] {
+  match s {
+    "tmux" => Ok(@types.TerminalBackend::Tmux)
+    "zellij" => Ok(@types.TerminalBackend::Zellij)
+    _ => Err(@types.ExoError::ConfigError("unknown terminal_backend: " + s))
+  }
+}
+
+///|
 /// Role to its config string representation.
 pub fn role_to_string(role : @types.Role) -> String {
   match role {
@@ -31,6 +42,16 @@ pub fn role_to_string(role : @types.Role) -> String {
     @types.Role::TL => "tl"
     @types.Role::Dev => "dev"
     @types.Role::Worker => "worker"
+  }
+}
+
+///|
+pub fn terminal_backend_to_string(
+  terminal_backend : @types.TerminalBackend,
+) -> String {
+  match terminal_backend {
+    @types.TerminalBackend::Tmux => "tmux"
+    @types.TerminalBackend::Zellij => "zellij"
   }
 }
 
@@ -144,6 +165,14 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     doc.get_optional_nonempty("plugins_json"),
     default_cfg.plugins_json,
   )
+  let terminal_backend = match doc.get_optional_nonempty("terminal_backend") {
+    Some(value) =>
+      match parse_terminal_backend(value) {
+        Ok(parsed) => parsed
+        Err(e) => return Err(e)
+      }
+    None => default_cfg.terminal_backend
+  }
   let tmux_session = match doc.get_optional_nonempty("tmux_session") {
     Some(value) => value
     None => default_cfg.tmux_session
@@ -161,6 +190,7 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
     extra_mcp_servers_json,
     companions_json,
     plugins_json,
+    terminal_backend,
     tmux_session,
   })
 }

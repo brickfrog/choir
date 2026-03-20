@@ -55,7 +55,7 @@ test "plan delivery for Claude agent -> TeamsInbox" {
 }
 
 ///|
-test "plan delivery for Gemini agent -> TmuxStdin" {
+test "plan delivery for Gemini agent -> LocalTerminalInput" {
   let agent : @types.Agent = {
     agent_id: "agent-gemini",
     role: @types.Role::Worker,
@@ -68,14 +68,14 @@ test "plan delivery for Gemini agent -> TmuxStdin" {
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
-  let expected = @message.DeliveryMethod::TmuxStdin(
+  let expected = @message.DeliveryMethod::LocalTerminalInput(
     "target-pane", "[from: sender-1] hi",
   )
   assert_eq(res, expected)
 }
 
 ///|
-test "plan delivery for MoonPilot agent -> TmuxStdin" {
+test "plan delivery for MoonPilot agent -> LocalTerminalInput" {
   let agent : @types.Agent = {
     agent_id: "agent-moonpilot",
     role: @types.Role::Worker,
@@ -88,7 +88,7 @@ test "plan delivery for MoonPilot agent -> TmuxStdin" {
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
-  let expected = @message.DeliveryMethod::TmuxStdin(
+  let expected = @message.DeliveryMethod::LocalTerminalInput(
     "choir:moonpilot", "[from: sender-1] hi",
   )
   assert_eq(res, expected)

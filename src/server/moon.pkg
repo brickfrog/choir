@@ -8,6 +8,7 @@ import {
   "choir/src/config",
   "choir/src/io",
   "choir/src/workspace",
+  "choir/src/jsonutil",
   "moonbitlang/async",
   "moonbitlang/async/http",
   "moonbitlang/async/pipe",

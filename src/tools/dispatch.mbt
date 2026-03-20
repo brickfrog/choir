@@ -930,8 +930,8 @@ pub async fn execute_delivery(
       }
       ensure_success(statuses)
     }
-    @message.DeliveryMethod::TmuxStdin(target, text) => {
-      let cmd = @workspace.tmux_send_keys(target, text)
+    @message.DeliveryMethod::LocalTerminalInput(target, text) => {
+      let cmd = @workspace.local_send_text(target, text)
       let statuses = runner([cmd]) catch { e => return Err(e.to_string()) }
       ensure_success(statuses)
     }
@@ -1225,6 +1225,7 @@ pub async fn dispatch(
   call : ToolCall,
   project_dir? : String = ".",
   session? : String = "choir",
+  terminal_backend? : @types.TerminalBackend = @types.TerminalBackend::Tmux,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
@@ -1300,6 +1301,7 @@ pub async fn dispatch(
             spec,
             project_dir,
             session,
+            terminal_backend~,
             parent_session_id=fork_wave_args.parent_session_id,
             extra_mcp_servers_json~,
             shell_command~,
@@ -1575,7 +1577,7 @@ pub async fn dispatch(
               }
               match agent.tmux_target {
                 Some(tmux_target) => {
-                  let kill_cmd = @workspace.tmux_kill_pane(tmux_target)
+                  let kill_cmd = @workspace.local_close_target(tmux_target)
                   let _ = runner([kill_cmd])
                   ()
                 }
@@ -1767,6 +1769,7 @@ pub async fn dispatch(
         spec,
         project_dir,
         session,
+        terminal_backend~,
         parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
@@ -1805,6 +1808,7 @@ pub async fn dispatch(
         spec,
         project_dir,
         session,
+        terminal_backend~,
         parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
@@ -1877,6 +1881,7 @@ pub async fn dispatch(
         spec,
         project_dir,
         session,
+        terminal_backend~,
         parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
@@ -1926,6 +1931,7 @@ pub async fn handle_request(
   req : @types.Request,
   project_dir? : String = ".",
   session? : String = "choir",
+  terminal_backend? : @types.TerminalBackend = @types.TerminalBackend::Tmux,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
@@ -1950,6 +1956,7 @@ pub async fn handle_request(
         { role: req.role, name: req.name, args: req.args.to_map() },
         project_dir~,
         session~,
+        terminal_backend~,
         runner~,
         ensure_pr~,
         extra_mcp_servers_json~,

@@ -73,6 +73,38 @@ test "tmux_send_keys args" {
 }
 
 ///|
+test "parse_local_target supports zellij targets" {
+  match @workspace.parse_local_target("zellij-tab:howdy:leaf-a") {
+    Some(target) => {
+      assert_eq(target.kind, @workspace.LocalTargetKind::ZellijTab)
+      assert_eq(target.session, "howdy")
+      assert_eq(target.name, "leaf-a")
+    }
+    None => fail("expected zellij tab target")
+  }
+  match @workspace.parse_local_target("zellij-pane:howdy:worker-a") {
+    Some(target) => {
+      assert_eq(target.kind, @workspace.LocalTargetKind::ZellijPane)
+      assert_eq(target.session, "howdy")
+      assert_eq(target.name, "worker-a")
+    }
+    None => fail("expected zellij pane target")
+  }
+}
+
+///|
+test "zellij_new_tab args" {
+  let cmd = @workspace.zellij_new_tab(
+    "howdy", "leaf-a", "/path/to/worktree", "echo READY",
+  )
+  assert_eq(cmd.program, "zellij")
+  assert_eq(cmd.args, [
+    "--session", "howdy", "action", "new-tab", "--name", "leaf-a", "--cwd", "/path/to/worktree",
+    "--", "sh", "-lc", "echo READY",
+  ])
+}
+
+///|
 test "agent_launch_command for each AgentType" {
   let spec_claude = @types.SpawnSpec::{
     slug: "test-slug",
@@ -169,6 +201,7 @@ test "agent_launch_command supports Claude fork_session" {
 test "child_config_content resolves socket path into spawned worktree config" {
   let content = @workspace.child_config_content(
     @types.Role::Dev,
+    @types.TerminalBackend::Zellij,
     "choir-test",
     "/project",
     ".choir/server.sock",
@@ -178,6 +211,7 @@ test "child_config_content resolves socket path into spawned worktree config" {
   assert_true(content.contains("project_dir = \"/project\""))
   assert_true(content.contains("listen_uds = \"/project/.choir/server.sock\""))
   assert_true(content.contains("tmux_session = \"choir-test\""))
+  assert_true(content.contains("terminal_backend = \"zellij\""))
   assert_true(content.contains("tcp_auth_token = \"abc123\""))
 }
 
@@ -229,6 +263,7 @@ test "spawn_commands worktree config write content" {
     cmds[1].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
   )
   assert_true(cmds[1].args[4].contains("tmux_session = \"exo\""))
+  assert_true(cmds[1].args[4].contains("terminal_backend = \"tmux\""))
   // config.local.toml write: positional args — $1=worktree_path, $2=content
   assert_eq(cmds[2].program, "sh")
   assert_true(cmds[2].args[3].contains("feature-a")) // worktree path
@@ -242,6 +277,38 @@ test "spawn_commands worktree config write content" {
   assert_true(cmds[3].args[4].contains("--role")) // mcp json has role arg
   assert_true(cmds[3].args[4].contains("main.feature-a")) // canonical agent id
   assert_true(cmds[6].args[3].contains("PATH="))
+}
+
+///|
+test "spawn_commands for zellij worktree uses new tab target" {
+  let spec = @types.SpawnSpec::{
+    slug: "feature-z",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    task: "do something",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/proj",
+    "howdy",
+    terminal_backend=@types.TerminalBackend::Zellij,
+  )
+  assert_eq(cmds.length(), 7)
+  assert_eq(cmds[5].program, "choir")
+  assert_eq(cmds[6].program, "zellij")
+  assert_eq(cmds[6].args[0], "--session")
+  assert_eq(cmds[6].args[1], "howdy")
+  assert_eq(cmds[6].args[2], "action")
+  assert_eq(cmds[6].args[3], "new-tab")
+  assert_true(
+    cmds[2].args[4].contains("tmux_target = \"zellij-tab:howdy:feature-z\""),
+  )
+  assert_true(
+    cmds[6].args[11].contains("CHOIR_TMUX_TARGET='zellij-tab:howdy:feature-z'"),
+  )
 }
 
 ///|
@@ -308,6 +375,34 @@ test "spawn_commands for inline mode skips git worktree" {
   assert_eq(cmds[0].program, "tmux")
   assert_eq(cmds[0].args[0], "split-window")
   assert_eq(cmds[1].program, "tmux")
+}
+
+///|
+test "spawn_commands for zellij inline uses named pane" {
+  let spec = @types.SpawnSpec::{
+    slug: "worker-a",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::MoonPilot,
+    task: "reply READY",
+    isolation: @types.IsolationMode::Inline,
+    parent_id: "root",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/project",
+    "howdy",
+    terminal_backend=@types.TerminalBackend::Zellij,
+  )
+  assert_eq(cmds.length(), 1)
+  assert_eq(cmds[0].program, "zellij")
+  assert_eq(cmds[0].args[0], "--session")
+  assert_eq(cmds[0].args[1], "howdy")
+  assert_eq(cmds[0].args[2], "run")
+  assert_eq(cmds[0].args[4], "worker-a")
+  assert_true(
+    cmds[0].args[10].contains("CHOIR_TMUX_TARGET='zellij-pane:howdy:worker-a'"),
+  )
 }
 
 ///|

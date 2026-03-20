@@ -391,12 +391,107 @@ fn is_tmux_target_alive(
 }
 
 ///|
+priv struct ZellijLiveTargets {
+  tabs : Array[String]
+  panes : Array[String]
+}
+
+///|
+fn json_value_bool(value : @jsonutil.JsonValueText?) -> Bool {
+  match value {
+    Some(@jsonutil.JsonValueText::Raw("true")) => true
+    Some(@jsonutil.JsonValueText::String("true")) => true
+    _ => false
+  }
+}
+
+///|
+fn json_value_string(value : @jsonutil.JsonValueText?) -> String {
+  match value {
+    Some(@jsonutil.JsonValueText::String(v)) => v
+    Some(@jsonutil.JsonValueText::Raw(v)) => v
+    None => ""
+  }
+}
+
+///|
+fn push_unique(values : Array[String], value : String) -> Unit {
+  if value != "" && not(values.contains(value)) {
+    values.push(value)
+  }
+}
+
+///|
+fn parse_zellij_live_targets(output : String) -> ZellijLiveTargets {
+  let tabs = []
+  let panes = []
+  for pane in @jsonutil.parse_json_object_array_text(output) {
+    if json_value_bool(pane.get("is_plugin")) ||
+      json_value_bool(pane.get("exited")) {
+      continue
+    }
+    push_unique(tabs, json_value_string(pane.get("tab_name")))
+    push_unique(panes, json_value_string(pane.get("title")))
+  }
+  { tabs, panes }
+}
+
+///|
+fn is_zellij_target_alive(
+  target : String?,
+  session : String,
+  live : ZellijLiveTargets,
+) -> Bool {
+  match target {
+    Some(value) =>
+      match @workspace.parse_local_target(value) {
+        Some(
+          {
+            kind: @workspace.LocalTargetKind::ZellijTab,
+            session: target_session,
+            name,
+          }
+        ) => target_session == session && live.tabs.contains(name)
+        Some(
+          {
+            kind: @workspace.LocalTargetKind::ZellijPane,
+            session: target_session,
+            name,
+          }
+        ) => target_session == session && live.panes.contains(name)
+        _ => false
+      }
+    None => false
+  }
+}
+
+///|
+fn is_local_target_alive(
+  target : String?,
+  session : String,
+  tmux_windows : Array[String],
+  zellij_live : ZellijLiveTargets,
+) -> Bool {
+  match target {
+    Some(value) =>
+      match @workspace.parse_local_target(value) {
+        Some({ kind: @workspace.LocalTargetKind::ZellijTab, .. })
+        | Some({ kind: @workspace.LocalTargetKind::ZellijPane, .. }) =>
+          is_zellij_target_alive(target, session, zellij_live)
+        _ => is_tmux_target_alive(target, session, tmux_windows)
+      }
+    None => false
+  }
+}
+
+///|
 fn recover_agent_from_local_config(
   project_dir : String,
   rel_workspace : String,
   fallback_slug : String,
   session : String,
   tmux_windows : Array[String],
+  zellij_live : ZellijLiveTargets,
 ) -> @types.Agent? {
   let config_path = project_dir +
     "/" +
@@ -414,7 +509,12 @@ fn recover_agent_from_local_config(
   let agent_id = local_cfg.agent_id.unwrap_or(fallback_slug)
   let branch = local_cfg.branch.unwrap_or(agent_id)
   let workspace = local_cfg.workspace.unwrap_or(rel_workspace)
-  let alive = is_tmux_target_alive(local_cfg.tmux_target, session, tmux_windows)
+  let alive = is_local_target_alive(
+    local_cfg.tmux_target,
+    session,
+    tmux_windows,
+    zellij_live,
+  )
   Some({
     agent_id,
     role,
@@ -441,6 +541,7 @@ async fn recover_local_agents(
   state : ServerState,
   session : String,
   tmux_windows : Array[String],
+  zellij_live : ZellijLiveTargets,
   dir_name : String,
 ) -> Unit {
   let project_dir = state.config.project_dir
@@ -453,13 +554,18 @@ async fn recover_local_agents(
     let rel_workspace = ".choir/" + dir_name + "/" + slug
     match
       recover_agent_from_local_config(
-        project_dir, rel_workspace, slug, session, tmux_windows,
+        project_dir, rel_workspace, slug, session, tmux_windows, zellij_live,
       ) {
       Some(agent) =>
         match state.registry.insert(agent) {
           Ok(_) =>
             if not(
-                is_tmux_target_alive(agent.tmux_target, session, tmux_windows),
+                is_local_target_alive(
+                  agent.tmux_target,
+                  session,
+                  tmux_windows,
+                  zellij_live,
+                ),
               ) {
               ignore(state.registry.set_alive(agent.agent_id, false))
             }
@@ -537,17 +643,32 @@ async fn recover_open_pr_tracking_with(
 ///|
 pub async fn recover_state(state : ServerState, session : String) -> Unit {
   let project_dir = state.config.project_dir
-  let tmux_output = capture_stdout(
-    "sh",
-    [
-      "-c",
-      "tmux list-windows -t " + session + " -F \"#{window_name}\" 2>/dev/null",
-    ],
-    cwd=Some(project_dir),
-  )
-  let tmux_windows = split_lines(tmux_output)
-  recover_local_agents(state, session, tmux_windows, "worktrees")
-  recover_local_agents(state, session, tmux_windows, "agents")
+  let tmux_windows = match state.config.terminal_backend {
+    @types.TerminalBackend::Tmux =>
+      split_lines(
+        capture_stdout(
+          "tmux",
+          ["list-windows", "-t", session, "-F", "#{window_name}"],
+          cwd=Some(project_dir),
+        ),
+      )
+    @types.TerminalBackend::Zellij => []
+  }
+  let zellij_live = match state.config.terminal_backend {
+    @types.TerminalBackend::Tmux => { tabs: [], panes: [] }
+    @types.TerminalBackend::Zellij =>
+      parse_zellij_live_targets(
+        capture_stdout(
+          "zellij",
+          [
+            "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
+          ],
+          cwd=Some(project_dir),
+        ),
+      )
+  }
+  recover_local_agents(state, session, tmux_windows, zellij_live, "worktrees")
+  recover_local_agents(state, session, tmux_windows, zellij_live, "agents")
 
   let open_pr_output = capture_stdout(
     "sh",
@@ -583,6 +704,21 @@ test "parse_open_prs extracts branch base and url" {
   assert_eq(prs[1].base, "main.subtl")
   assert_eq(prs[1].url, "https://example.test/pr/13")
   assert_eq(prs[1].created_sec, Some(1774051200L))
+}
+
+///|
+test "parse_zellij_live_targets collects live tab and pane names" {
+  let live = parse_zellij_live_targets(
+    (
+      #|[
+      #|  {"id":7,"tab_id":1,"tab_name":"leaf-a","title":"zellij:tab-bar","is_plugin":true,"exited":false},
+      #|  {"id":8,"tab_id":1,"tab_name":"leaf-a","title":"gemini --prompt-interactive","is_plugin":false,"exited":false},
+      #|  {"id":9,"tab_id":2,"tab_name":"worker-a","title":"worker-a","is_plugin":false,"exited":true}
+      #|]
+    ),
+  )
+  assert_eq(live.tabs, ["leaf-a"])
+  assert_eq(live.panes, ["gemini --prompt-interactive"])
 }
 
 ///|
@@ -639,6 +775,7 @@ test "recover_agent_from_local_config restores active agent metadata" {
     "leaf-a",
     "howdy",
     ["leaf-a"],
+    { tabs: [], panes: [] },
   )
   match recovered {
     Some(agent) => {
@@ -683,6 +820,7 @@ test "recover_agent_from_local_config falls back and clears dead tmux targets" {
     "helper",
     "howdy",
     [],
+    { tabs: [], panes: [] },
   )
   match recovered {
     Some(agent) => {
@@ -696,6 +834,51 @@ test "recover_agent_from_local_config falls back and clears dead tmux targets" {
       assert_eq(agent.tmux_target, None)
     }
     None => fail("expected local config to recover done agent")
+  }
+  run_shell_recovery("rm -rf " + project_dir)
+}
+
+///|
+test "recover_agent_from_local_config keeps live zellij tab targets" {
+  let project_dir = "/tmp/choir-recovery-zellij-live"
+  let rel_workspace = ".choir/worktrees/leaf-z"
+  run_shell_recovery(
+    "rm -rf " +
+    project_dir +
+    " && mkdir -p " +
+    project_dir +
+    "/" +
+    rel_workspace +
+    "/.choir",
+  )
+  let local_path = project_dir +
+    "/" +
+    rel_workspace +
+    "/.choir/config.local.toml"
+  let content =
+    #|role = "dev"
+    #|agent_id = "main.leaf-z"
+    #|parent_id = "main"
+    #|branch = "main.leaf-z"
+    #|workspace = ".choir/worktrees/leaf-z"
+    #|tmux_target = "zellij-tab:howdy:leaf-z"
+    #|agent_type = "gemini"
+  assert_true(@io.write_file_sync(local_path, content))
+  let recovered = recover_agent_from_local_config(
+    project_dir,
+    rel_workspace,
+    "leaf-z",
+    "howdy",
+    [],
+    { tabs: ["leaf-z"], panes: [] },
+  )
+  match recovered {
+    Some(agent) => {
+      assert_eq(agent.state, @types.AgentState::Active)
+      assert_eq(agent.tmux_target, Some("zellij-tab:howdy:leaf-z"))
+      assert_eq(agent.agent_type, @types.AgentType::Gemini)
+    }
+    None => fail("expected local config to recover zellij agent")
   }
   run_shell_recovery("rm -rf " + project_dir)
 }

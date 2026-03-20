@@ -12,6 +12,8 @@ import {
   "choir/src/workspace",
   "choir/src/jsonutil",
   "moonbitlang/async",
+  "moonbitlang/async/pipe",
+  "moonbitlang/async/process",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
 }

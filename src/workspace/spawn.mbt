@@ -24,7 +24,7 @@ fn role_to_string(role : @types.Role) -> String {
 }
 
 ///|
-fn command_text_for_tmux(cmd : Command) -> String {
+fn command_text_for_launch(cmd : Command) -> String {
   { ..cmd, workdir: None }.to_string()
 }
 
@@ -50,13 +50,17 @@ fn resolved_project_dir(project_dir : String) -> String {
 ///|
 fn launch_env_prefix(
   spec : @types.SpawnSpec,
+  terminal_backend : @types.TerminalBackend,
   session : String,
   workspace : String,
-  tmux_target : String,
+  terminal_target : String,
 ) -> String {
   let role = role_to_string(spec.role)
   let agent_id = canonical_agent_id(spec)
   let agent_type = @config.agent_type_to_string(spec.agent_type)
+  let terminal_backend_str = @config.terminal_backend_to_string(
+    terminal_backend,
+  )
   let assignments : Array[String] = [
     path_assignment(workspace + "/.choir/bin"),
     env_assignment("CHOIR_AGENT_ID", agent_id),
@@ -66,8 +70,11 @@ fn launch_env_prefix(
     env_assignment("CHOIR_WORKSPACE", workspace),
     env_assignment("CHOIR_ROLE", role),
     env_assignment("CHOIR_AGENT_TYPE", agent_type),
-    env_assignment("CHOIR_TMUX_TARGET", tmux_target),
+    env_assignment("CHOIR_TMUX_TARGET", terminal_target),
     env_assignment("CHOIR_TMUX_SESSION", session),
+    env_assignment("CHOIR_TERMINAL_BACKEND", terminal_backend_str),
+    env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
+    env_assignment("CHOIR_TERMINAL_SESSION", session),
     env_assignment("EXOMONAD_AGENT_ID", agent_id),
     env_assignment("EXOMONAD_SESSION_ID", agent_id),
     env_assignment("EXOMONAD_ROLE", role),
@@ -108,6 +115,7 @@ pub fn spawn_commands(
   spec : @types.SpawnSpec,
   project_dir : String,
   session : String,
+  terminal_backend? : @types.TerminalBackend = @types.TerminalBackend::Tmux,
   parent_session_id? : String? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
@@ -122,24 +130,22 @@ pub fn spawn_commands(
     Inline => root_project
     Standalone => root_project + "/.choir/agents/" + spec.slug
   }
-  let target = match spec.isolation {
-    Worktree => session + ":" + spec.slug
-    Inline => session
-    Standalone => session + ":" + spec.slug
-  }
   let launch_cmd = agent_launch_command(
     spec,
     workspace,
     parent_session_id~,
     shell_command~,
   )
-  let tmux_target = match spec.isolation {
-    Worktree => session + ":" + spec.slug
-    Inline => session
-    Standalone => session + ":" + spec.slug
-  }
-  let launch_str = launch_env_prefix(spec, session, workspace, tmux_target) +
-    command_text_for_tmux(launch_cmd)
+  let terminal_target = local_target_for(
+    terminal_backend,
+    session,
+    spec.slug,
+    spec.isolation,
+  )
+  let launch_str = launch_env_prefix(
+      spec, terminal_backend, session, workspace, terminal_target,
+    ) +
+    command_text_for_launch(launch_cmd)
   match spec.isolation {
     Worktree => {
       let cmds : Array[Command] = [git_worktree_add(workspace, branch)]
@@ -148,6 +154,7 @@ pub fn spawn_commands(
           workspace,
           child_config_content(
             spec.role,
+            terminal_backend,
             session,
             root_project,
             listen_uds,
@@ -159,7 +166,7 @@ pub fn spawn_commands(
       cmds.push(
         write_local_config(
           workspace,
-          config_local_content(spec, workspace, tmux_target),
+          config_local_content(spec, workspace, terminal_target),
         ),
       )
       cmds.push(
@@ -172,12 +179,28 @@ pub fn spawn_commands(
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
       }
-      cmds.push(tmux_new_window(session, spec.slug, workspace))
-      cmds.push(tmux_send_keys(target, launch_str))
+      for
+        cmd in launch_commands(
+          terminal_backend,
+          session,
+          spec.slug,
+          workspace,
+          launch_str,
+          spec.isolation,
+        ) {
+        cmds.push(cmd)
+      }
       cmds
     }
     Inline =>
-      [tmux_split_pane(session, workspace), tmux_send_keys(target, launch_str)]
+      launch_commands(
+        terminal_backend,
+        session,
+        spec.slug,
+        workspace,
+        launch_str,
+        spec.isolation,
+      )
     Standalone => {
       let cmds : Array[Command] = [
         { program: "git", args: ["init", workspace], workdir: None },
@@ -187,6 +210,7 @@ pub fn spawn_commands(
           workspace,
           child_config_content(
             spec.role,
+            terminal_backend,
             session,
             root_project,
             listen_uds,
@@ -198,7 +222,7 @@ pub fn spawn_commands(
       cmds.push(
         write_local_config(
           workspace,
-          config_local_content(spec, workspace, tmux_target),
+          config_local_content(spec, workspace, terminal_target),
         ),
       )
       cmds.push(
@@ -211,8 +235,17 @@ pub fn spawn_commands(
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
       }
-      cmds.push(tmux_new_window(session, spec.slug, workspace))
-      cmds.push(tmux_send_keys(target, launch_str))
+      for
+        cmd in launch_commands(
+          terminal_backend,
+          session,
+          spec.slug,
+          workspace,
+          launch_str,
+          spec.isolation,
+        ) {
+        cmds.push(cmd)
+      }
       cmds
     }
   }
@@ -250,11 +283,12 @@ pub fn remote_spawn_commands(
   let launch_cmd = agent_launch_command(spec, workspace, parent_session_id~)
   let agent_cmd = launch_env_prefix(
       spec,
+      @types.TerminalBackend::Tmux,
       "remote",
       workspace,
       "remote:" + spec.slug,
     ) +
-    command_text_for_tmux(launch_cmd)
+    command_text_for_launch(launch_cmd)
   [
     ssh_cmd(
       ssh_target,

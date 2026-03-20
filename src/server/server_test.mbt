@@ -74,6 +74,34 @@ async fn mock_spawn_runner_server(
 }
 
 ///|
+async fn mock_spawn_runner_server_zellij(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  assert_eq(cmds.length(), 7)
+  assert_true(cmds[1].args[4].contains("terminal_backend = \"zellij\""))
+  assert_true(
+    cmds[2].args[4].contains("tmux_target = \"zellij-tab:server-proof:leaf-a\""),
+  )
+  assert_eq(cmds[5].program, "choir")
+  assert_eq(cmds[5].args, [
+    "trust-gemini-folder", "/tmp/server-proof/.choir/worktrees/leaf-a",
+  ])
+  assert_eq(cmds[6].program, "zellij")
+  assert_eq(cmds[6].args[0], "--session")
+  assert_eq(cmds[6].args[1], "server-proof")
+  assert_eq(cmds[6].args[2], "action")
+  assert_eq(cmds[6].args[3], "new-tab")
+  assert_eq(cmds[6].args[5], "leaf-a")
+  assert_true(
+    cmds[6].args[11].contains(
+      "CHOIR_TMUX_TARGET='zellij-tab:server-proof:leaf-a'",
+    ),
+  )
+  [0, 0, 0, 0, 0, 0, 0]
+}
+
+///|
 async fn mock_runner_server(cmds : Array[@workspace.Command]) -> Array[Int] {
   @async.sleep(0)
   let statuses = []
@@ -159,6 +187,37 @@ test "ServerState::handle_with_runner passes configured tmux session to spawns" 
       }),
     }
     let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
+    assert_eq(res.ok_field("status"), Some("spawned"))
+    assert_eq(res.ok_field("agent_id"), Some("main.leaf-a"))
+  })
+}
+
+///|
+test "ServerState::handle_with_runner passes zellij backend to spawns" {
+  @async.with_event_loop(_ => {
+    let config = {
+      ..@types.Config::default(),
+      project_dir: "/tmp/server-proof",
+      tmux_session: "server-proof",
+      terminal_backend: @types.TerminalBackend::Zellij,
+    }
+    let state = ServerState::new(config)
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::TL,
+      name: "spawn_gemini",
+      args: @types.RequestArgs::new({
+        "caller_id": "root",
+        "slug": "leaf-a",
+        "parent_branch": "main",
+        "task": "reply READY",
+        "read_first": "AGENTS.md",
+      }),
+    }
+    let res = state.handle_with_runner(
+      req,
+      runner=mock_spawn_runner_server_zellij,
+    )
     assert_eq(res.ok_field("status"), Some("spawned"))
     assert_eq(res.ok_field("agent_id"), Some("main.leaf-a"))
   })

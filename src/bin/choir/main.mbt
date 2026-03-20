@@ -1213,6 +1213,277 @@ fn trust_gemini_folder_run() -> Unit {
 }
 
 ///|
+priv struct ZellijPaneRef {
+  id : String
+  tab_id : String
+  title : String
+  tab_name : String
+  is_plugin : Bool
+  exited : Bool
+}
+
+///|
+async fn capture_stdout_main(program : String, args : Array[String]) -> String {
+  let (read_end, write_end) = @pipe.pipe()
+  let args_bytes = args.map(fn(arg) { @utf8.encode(arg) })
+  ignore(
+    @process.run(@utf8.encode(program), args_bytes, stdout=write_end) catch {
+      _ => -1
+    },
+  )
+  write_end.close()
+  let buf = FixedArray::make(65536, (0 : Byte))
+  let mut total = 0
+  for {
+    if total >= buf.length() {
+      break
+    }
+    let n = read_end.read(buf, offset=total, max_len=buf.length() - total)
+    if n == 0 {
+      break
+    }
+    total = total + n
+  }
+  read_end.close()
+  @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
+}
+
+///|
+fn zellij_json_bool(value : @jsonutil.JsonValueText?) -> Bool {
+  match value {
+    Some(@jsonutil.JsonValueText::Raw("true")) => true
+    Some(@jsonutil.JsonValueText::String("true")) => true
+    _ => false
+  }
+}
+
+///|
+fn zellij_json_string(value : @jsonutil.JsonValueText?) -> String {
+  match value {
+    Some(@jsonutil.JsonValueText::String(v)) => v
+    Some(@jsonutil.JsonValueText::Raw(v)) => v
+    None => ""
+  }
+}
+
+///|
+async fn zellij_list_panes(session : String) -> Array[ZellijPaneRef] {
+  let output = capture_stdout_main("zellij", [
+    "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
+  ])
+  let panes = []
+  for pane in @jsonutil.parse_json_object_array_text(output) {
+    panes.push({
+      id: zellij_json_string(pane.get("id")),
+      tab_id: zellij_json_string(pane.get("tab_id")),
+      title: zellij_json_string(pane.get("title")),
+      tab_name: zellij_json_string(pane.get("tab_name")),
+      is_plugin: zellij_json_bool(pane.get("is_plugin")),
+      exited: zellij_json_bool(pane.get("exited")),
+    })
+  }
+  panes
+}
+
+///|
+fn zellij_target_pane_id(
+  target : @workspace.LocalTarget,
+  panes : Array[ZellijPaneRef],
+  allow_exited? : Bool = false,
+) -> String? {
+  let want_exited = allow_exited
+  for pane in panes {
+    if pane.is_plugin {
+      continue
+    }
+    if not(want_exited) && pane.exited {
+      continue
+    }
+    match target.kind {
+      @workspace.LocalTargetKind::ZellijPane =>
+        if pane.title == target.name {
+          return Some(pane.id)
+        }
+      @workspace.LocalTargetKind::ZellijTab =>
+        if pane.tab_name == target.name {
+          return Some(pane.id)
+        }
+      _ => ()
+    }
+  }
+  None
+}
+
+///|
+fn zellij_target_tab_id(
+  target : @workspace.LocalTarget,
+  panes : Array[ZellijPaneRef],
+) -> String? {
+  for pane in panes {
+    if pane.is_plugin {
+      continue
+    }
+    if pane.tab_name == target.name {
+      return Some(pane.tab_id)
+    }
+  }
+  None
+}
+
+///|
+fn zellij_action_usage() -> String {
+  "usage: choir zellij-action <send|close> <target> [text]"
+}
+
+///|
+fn zellij_action_run() -> Unit raise {
+  @async.with_event_loop(async fn(_root) {
+    let args = @io.get_args()
+    if args.length() < 4 {
+      @io.write_stdout(zellij_action_usage() + "\n")
+      @io.exit(1)
+      return
+    }
+    let action = args[2]
+    let target_text = args[3]
+    let target = match @workspace.parse_local_target(target_text) {
+      Some(parsed) =>
+        match parsed.kind {
+          @workspace.LocalTargetKind::ZellijTab
+          | @workspace.LocalTargetKind::ZellijPane => parsed
+          _ => {
+            @io.write_stdout(
+              "error: not a zellij target: " + target_text + "\n",
+            )
+            @io.exit(1)
+            return
+          }
+        }
+      None => {
+        @io.write_stdout("error: invalid zellij target: " + target_text + "\n")
+        @io.exit(1)
+        return
+      }
+    }
+    let panes = zellij_list_panes(target.session)
+    match action {
+      "send" => {
+        if args.length() < 5 {
+          @io.write_stdout(zellij_action_usage() + "\n")
+          @io.exit(1)
+          return
+        }
+        let text = args[4]
+        let pane_id = match zellij_target_pane_id(target, panes) {
+          Some(id) => id
+          None => {
+            @io.write_stdout(
+              "error: zellij target not found: " + target_text + "\n",
+            )
+            @io.exit(1)
+            return
+          }
+        }
+        let write_code = @exec.run({
+          program: "zellij",
+          args: [
+            "--session",
+            target.session,
+            "action",
+            "write-chars",
+            "-p",
+            pane_id,
+            text,
+          ],
+          workdir: None,
+        })
+        if write_code != 0 {
+          @io.exit(write_code)
+          return
+        }
+        let key_code = @exec.run({
+          program: "zellij",
+          args: [
+            "--session",
+            target.session,
+            "action",
+            "send-keys",
+            "-p",
+            pane_id,
+            "Enter",
+          ],
+          workdir: None,
+        })
+        @io.exit(key_code)
+      }
+      "close" =>
+        match target.kind {
+          @workspace.LocalTargetKind::ZellijPane => {
+            let pane_id = match
+              zellij_target_pane_id(target, panes, allow_exited=true) {
+              Some(id) => id
+              None => {
+                @io.write_stdout(
+                  "error: zellij target not found: " + target_text + "\n",
+                )
+                @io.exit(1)
+                return
+              }
+            }
+            let code = @exec.run({
+              program: "zellij",
+              args: [
+                "--session",
+                target.session,
+                "action",
+                "close-pane",
+                "-p",
+                pane_id,
+              ],
+              workdir: None,
+            })
+            @io.exit(code)
+          }
+          @workspace.LocalTargetKind::ZellijTab => {
+            let tab_id = match zellij_target_tab_id(target, panes) {
+              Some(id) => id
+              None => {
+                @io.write_stdout(
+                  "error: zellij target not found: " + target_text + "\n",
+                )
+                @io.exit(1)
+                return
+              }
+            }
+            let code = @exec.run({
+              program: "zellij",
+              args: [
+                "--session",
+                target.session,
+                "action",
+                "close-tab-by-id",
+                tab_id,
+              ],
+              workdir: None,
+            })
+            @io.exit(code)
+          }
+          _ => {
+            @io.write_stdout(
+              "error: not a zellij target: " + target_text + "\n",
+            )
+            @io.exit(1)
+          }
+        }
+      _ => {
+        @io.write_stdout(zellij_action_usage() + "\n")
+        @io.exit(1)
+      }
+    }
+  })
+}
+
+///|
 test "mcp UDS reconnect policy stops after stdin EOF" {
   assert_false(mcp_should_reconnect_after_uds_loop(InputClosed))
   assert_true(mcp_should_reconnect_after_uds_loop(Reconnect))
@@ -2138,7 +2409,8 @@ fn hook_run() -> Unit raise {
 fn init_config_toml_content() -> String {
   "default_role = \"tl\"\n" +
   "project_dir = \".\"\n" +
-  "listen_uds = \".choir/server.sock\"\n"
+  "listen_uds = \".choir/server.sock\"\n" +
+  "terminal_backend = \"tmux\"\n"
 }
 
 ///|
@@ -2243,6 +2515,7 @@ fn init_run() -> Unit raise {
       Err(_) => @types.Config::default()
     }
     let session = config.tmux_session
+    let terminal_backend = config.terminal_backend
 
     if recreate {
       let pid_str = @io.read_file(".choir/server.pid")
@@ -2270,32 +2543,57 @@ fn init_run() -> Unit raise {
           },
         )
       }
-      let has_session = @exec.run({
-        program: "sh",
-        args: ["-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session],
-        workdir: None,
-      }) catch {
+      let has_session = @exec.run(
+        match terminal_backend {
+          @types.TerminalBackend::Tmux =>
+            {
+              program: "sh",
+              args: [
+                "-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session,
+              ],
+              workdir: None,
+            }
+          @types.TerminalBackend::Zellij =>
+            @workspace.zellij_session_exists(session)
+        },
+      ) catch {
         _ => 1
       }
       if has_session == 0 {
         @io.write_stdout("Killing session \{session}...\n")
         ignore(
-          @exec.run({
-            program: "tmux",
-            args: ["kill-session", "-t", session],
-            workdir: None,
-          }) catch {
+          @exec.run(
+            match terminal_backend {
+              @types.TerminalBackend::Tmux =>
+                {
+                  program: "tmux",
+                  args: ["kill-session", "-t", session],
+                  workdir: None,
+                }
+              @types.TerminalBackend::Zellij =>
+                @workspace.zellij_kill_session(session)
+            },
+          ) catch {
             _ => 0
           },
         )
       }
     }
 
-    let session_alive = @exec.run({
-      program: "sh",
-      args: ["-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session],
-      workdir: None,
-    }) catch {
+    let session_alive = @exec.run(
+      match terminal_backend {
+        @types.TerminalBackend::Tmux =>
+          {
+            program: "sh",
+            args: [
+              "-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session,
+            ],
+            workdir: None,
+          }
+        @types.TerminalBackend::Zellij =>
+          @workspace.zellij_session_exists(session)
+      },
+    ) catch {
       _ => 1
     }
     if session_alive == 0 {
@@ -2304,11 +2602,18 @@ fn init_run() -> Unit raise {
       } else {
         @io.write_stdout("Attaching to existing session \{session}...\n")
         ignore(
-          @exec.run({
-            program: "tmux",
-            args: ["attach-session", "-t", session],
-            workdir: None,
-          }) catch {
+          @exec.run(
+            match terminal_backend {
+              @types.TerminalBackend::Tmux =>
+                {
+                  program: "tmux",
+                  args: ["attach-session", "-t", session],
+                  workdir: None,
+                }
+              @types.TerminalBackend::Zellij =>
+                @workspace.zellij_attach_session(session)
+            },
+          ) catch {
             _ => 0
           },
         )
@@ -2329,34 +2634,67 @@ fn init_run() -> Unit raise {
     )
 
     @io.write_stdout("Creating session \{session}...\n")
-    init_run_or_exit({
-      program: "tmux",
-      args: ["new-session", "-d", "-s", session, "-n", "Server"],
-      workdir: None,
-    })
+    match terminal_backend {
+      @types.TerminalBackend::Tmux => {
+        init_run_or_exit({
+          program: "tmux",
+          args: ["new-session", "-d", "-s", session, "-n", "Server"],
+          workdir: None,
+        })
 
-    init_run_or_exit({
-      program: "tmux",
-      args: ["send-keys", "-t", session + ":Server", "choir dev", "Enter"],
-      workdir: None,
-    })
+        init_run_or_exit({
+          program: "tmux",
+          args: ["send-keys", "-t", session + ":Server", "choir dev", "Enter"],
+          workdir: None,
+        })
 
-    init_run_or_exit({
-      program: "tmux",
-      args: ["new-window", "-t", session, "-n", "TL"],
-      workdir: None,
-    })
-    init_run_or_exit({
-      program: "tmux",
-      args: [
-        "send-keys",
-        "-t",
-        session + ":TL",
-        "claude --dangerously-skip-permissions; echo; echo '[Claude exited]'; exec bash -l",
-        "Enter",
-      ],
-      workdir: None,
-    })
+        init_run_or_exit({
+          program: "tmux",
+          args: ["new-window", "-t", session, "-n", "TL"],
+          workdir: None,
+        })
+        init_run_or_exit({
+          program: "tmux",
+          args: [
+            "send-keys",
+            "-t",
+            session + ":TL",
+            "claude --dangerously-skip-permissions; echo; echo '[Claude exited]'; exec bash -l",
+            "Enter",
+          ],
+          workdir: None,
+        })
+      }
+      @types.TerminalBackend::Zellij => {
+        init_run_or_exit(@workspace.zellij_create_background_session(session))
+        init_run_or_exit(
+          @workspace.zellij_new_tab(session, "Server", project_dir, "choir dev"),
+        )
+        init_run_or_exit(
+          @workspace.zellij_new_tab(
+            session, "TL", project_dir, "claude --dangerously-skip-permissions; echo; echo '[Claude exited]'; exec bash -l",
+          ),
+        )
+        ignore(
+          @exec.run({
+            program: "zellij",
+            args: ["--session", session, "action", "close-tab-by-id", "0"],
+            workdir: None,
+          }) catch {
+            _ => 0
+          },
+        )
+        ignore(
+          @exec.run({
+            program: "zellij",
+            args: ["--session", session, "action", "go-to-tab-name", "TL"],
+            workdir: None,
+          }) catch {
+            _ => 0
+          },
+        )
+      }
+    }
 
     match config.companions_json {
       Some(json) => {
@@ -2398,29 +2736,43 @@ fn init_run() -> Unit raise {
             init_escape_shell_single_quoted(c.task) +
             "'"
           ignore(
-            @exec.run({
-              program: "tmux",
-              args: ["new-window", "-t", session, "-n", c.name],
-              workdir: None,
-            }) catch {
+            @exec.run(
+              match terminal_backend {
+                @types.TerminalBackend::Tmux =>
+                  {
+                    program: "tmux",
+                    args: ["new-window", "-t", session, "-n", c.name],
+                    workdir: None,
+                  }
+                @types.TerminalBackend::Zellij =>
+                  @workspace.zellij_new_tab(
+                    session,
+                    c.name,
+                    project_dir,
+                    window_cmd,
+                  )
+              },
+            ) catch {
               _ => 0
             },
           )
-          ignore(
-            @exec.run({
-              program: "tmux",
-              args: [
-                "send-keys",
-                "-t",
-                session + ":" + c.name,
-                window_cmd,
-                "Enter",
-              ],
-              workdir: None,
-            }) catch {
-              _ => 0
-            },
-          )
+          if terminal_backend == @types.TerminalBackend::Tmux {
+            ignore(
+              @exec.run({
+                program: "tmux",
+                args: [
+                  "send-keys",
+                  "-t",
+                  session + ":" + c.name,
+                  window_cmd,
+                  "Enter",
+                ],
+                workdir: None,
+              }) catch {
+                _ => 0
+              },
+            )
+          }
           @io.write_stdout("Spawned companion: \{c.name}\n")
         }
       }
@@ -2439,11 +2791,18 @@ fn init_run() -> Unit raise {
     } else {
       @io.write_stdout("Attaching to session \{session}...\n")
       ignore(
-        @exec.run({
-          program: "tmux",
-          args: ["attach-session", "-t", session],
-          workdir: None,
-        }) catch {
+        @exec.run(
+          match terminal_backend {
+            @types.TerminalBackend::Tmux =>
+              {
+                program: "tmux",
+                args: ["attach-session", "-t", session],
+                workdir: None,
+              }
+            @types.TerminalBackend::Zellij =>
+              @workspace.zellij_attach_session(session)
+          },
+        ) catch {
           _ => 0
         },
       )
@@ -2585,6 +2944,7 @@ fn main {
     "leaf-tool" => leaf_tool_run()
     "mcp-stdio" => mcp_run() catch { err => println("fatal: \{err}") }
     "trust-gemini-folder" => trust_gemini_folder_run()
+    "zellij-action" => zellij_action_run() catch { _ => @io.exit(1) }
     "hook" =>
       hook_run() catch {
         _ =>
@@ -2598,7 +2958,7 @@ fn main {
     "watch" => watch_run()
     _ => {
       @io.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|hook|init [--recreate]|reply|smoke [--keep-temp|--leafs|--review|--e2e-live]|watch>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate]|reply|smoke [--keep-temp|--leafs|--review|--e2e-live]|watch>\n",
       )
       @io.exit(1)
     }

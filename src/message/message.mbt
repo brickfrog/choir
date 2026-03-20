@@ -31,7 +31,7 @@ pub fn format_review_timeout(agent_id : String) -> String {
 ///|
 pub(all) enum DeliveryMethod {
   TeamsInbox(String, String)
-  TmuxStdin(String, String)
+  LocalTerminalInput(String, String)
   TcpPush(String, String)
   UdsHttp(String, String)
 } derive(Show, Eq)
@@ -93,14 +93,14 @@ pub fn plan_delivery(
             Some(t) => t
             None => agent.agent_id
           }
-          TmuxStdin(target, format_message(sender_id, content))
+          LocalTerminalInput(target, format_message(sender_id, content))
         }
         MoonPilot => {
           let target = match agent.tmux_target {
             Some(t) => t
             None => agent.agent_id
           }
-          TmuxStdin(target, format_message(sender_id, content))
+          LocalTerminalInput(target, format_message(sender_id, content))
         }
       }
   }
