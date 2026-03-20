@@ -43,6 +43,11 @@ fn tool_args_to_map(args : ToolArgs) -> Map[String, String] {
 }
 
 ///|
+fn prompt_spec_from_tool_args(args : ToolArgs) -> PromptSpec {
+  PromptSpec::from_map(tool_args_to_map(args))
+}
+
+///|
 fn tool_args_get_int(args : ToolArgs, key : String) -> Int? {
   match tool_args_get(args, key) {
     Some(value) => parse_int(value)
@@ -436,7 +441,7 @@ fn parse_fork_wave_args(
   }
   Ok({
     count,
-    task: render_leaf_spawn_prompt(tool_args_to_map(args)),
+    task: render_leaf_spawn_prompt(prompt_spec_from_tool_args(args)),
     parent_branch,
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug_prefix: normalized_slug_prefix,
@@ -462,7 +467,7 @@ fn parse_leaf_spawn_args(
     Err(e) => return Err("invalid parent_branch: " + e)
   }
   Ok({
-    task: render_leaf_spawn_prompt(tool_args_to_map(args)),
+    task: render_leaf_spawn_prompt(prompt_spec_from_tool_args(args)),
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     parent_branch,
@@ -487,7 +492,7 @@ fn parse_worker_spawn_args(args : ToolArgs) -> Result[WorkerSpawnArgs, String] {
     Err(e) => return Err(e)
   }
   Ok({
-    task: render_worker_spawn_prompt(tool_args_to_map(args)),
+    task: render_worker_spawn_prompt(prompt_spec_from_tool_args(args)),
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     agent_type,

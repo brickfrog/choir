@@ -1,4 +1,21 @@
 ///|
+pub(all) struct PromptSpec {
+  prompt : String
+  task : String
+  boundary : Array[String]
+  read_first : Array[String]
+  steps : Array[String]
+  verify : Array[String]
+  done_criteria : Array[String]
+  constraints : Array[String]
+  context : String
+  key_decisions : Array[String]
+  non_goals : Array[String]
+  worker_type : String
+  no_commit : Bool
+} derive(Show, Eq)
+
+///|
 fn split_nonempty_lines(s : String) -> Array[String] {
   let items : Array[String] = []
   let mut start = 0
@@ -73,25 +90,41 @@ fn parse_truthy_flag(s : String) -> Bool {
 }
 
 ///|
-fn render_context_block(args : Map[String, String]) -> String {
+pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
+  {
+    prompt: args.get("prompt").unwrap_or("").trim().to_string(),
+    task: args.get("task").unwrap_or(""),
+    boundary: split_nonempty_lines(args.get("boundary").unwrap_or("")),
+    read_first: split_nonempty_lines(args.get("read_first").unwrap_or("")),
+    steps: split_nonempty_lines(args.get("steps").unwrap_or("")),
+    verify: split_nonempty_lines(args.get("verify").unwrap_or("")),
+    done_criteria: split_nonempty_lines(args.get("done_criteria").unwrap_or("")),
+    constraints: split_nonempty_lines(args.get("constraints").unwrap_or("")),
+    context: args.get("context").unwrap_or("").trim().to_string(),
+    key_decisions: split_nonempty_lines(args.get("key_decisions").unwrap_or("")),
+    non_goals: split_nonempty_lines(args.get("non_goals").unwrap_or("")),
+    worker_type: args
+    .get("type")
+    .unwrap_or("implementation")
+    .trim()
+    .to_lower()
+    .to_string(),
+    no_commit: parse_truthy_flag(args.get("no_commit").unwrap_or("false")),
+  }
+}
+
+///|
+fn render_context_block(spec : PromptSpec) -> String {
   let sections : Array[String] = []
-  let context = args.get("context").unwrap_or("").trim().to_string()
-  if context != "" {
-    sections.push(context)
+  if spec.context != "" {
+    sections.push(spec.context)
   }
-
-  let key_decisions = split_nonempty_lines(
-    args.get("key_decisions").unwrap_or(""),
-  )
-  if key_decisions.length() > 0 {
-    sections.push("Key decisions:\n" + render_bullets(key_decisions))
+  if spec.key_decisions.length() > 0 {
+    sections.push("Key decisions:\n" + render_bullets(spec.key_decisions))
   }
-
-  let non_goals = split_nonempty_lines(args.get("non_goals").unwrap_or(""))
-  if non_goals.length() > 0 {
-    sections.push("Non-goals:\n" + render_bullets(non_goals))
+  if spec.non_goals.length() > 0 {
+    sections.push("Non-goals:\n" + render_bullets(spec.non_goals))
   }
-
   join_sections(sections)
 }
 
@@ -133,57 +166,6 @@ fn worker_profile_text(worker_type : String) -> String {
 }
 
 ///|
-fn render_common_prompt(
-  args : Map[String, String],
-  profile : String,
-  include_agents_md : Bool,
-) -> String {
-  let prompt_override = args.get("prompt").unwrap_or("").trim().to_string()
-  if prompt_override != "" {
-    return prompt_override + "\n\n" + profile
-  }
-
-  let sections : Array[String] = []
-  add_section(sections, "TASK", args.get("task").unwrap_or(""))
-
-  let boundary = split_nonempty_lines(args.get("boundary").unwrap_or(""))
-  add_section(sections, "BOUNDARY", render_bullets(boundary))
-
-  let read_first = split_nonempty_lines(args.get("read_first").unwrap_or(""))
-  if include_agents_md {
-    push_unique(read_first, "AGENTS.md")
-  }
-  add_section(sections, "READ FIRST", render_bullets(read_first))
-
-  let steps = split_nonempty_lines(args.get("steps").unwrap_or(""))
-  add_section(sections, "STEPS", render_numbered(steps))
-
-  let context = render_context_block(args)
-  add_section(sections, "CONTEXT", context)
-
-  let verify = split_nonempty_lines(args.get("verify").unwrap_or(""))
-  let verify_lines : Array[String] = []
-  for cmd in verify {
-    verify_lines.push("- `" + cmd + "`")
-  }
-  add_section(sections, "VERIFY", render_lines(verify_lines))
-
-  let done_criteria = split_nonempty_lines(
-    args.get("done_criteria").unwrap_or(""),
-  )
-  add_section(sections, "DONE CRITERIA", render_bullets(done_criteria))
-
-  let constraints = split_nonempty_lines(args.get("constraints").unwrap_or(""))
-  if parse_truthy_flag(args.get("no_commit").unwrap_or("false")) {
-    constraints.push("Do not commit. Report back when done or blocked.")
-  }
-  add_section(sections, "CONSTRAINTS", render_bullets(constraints))
-
-  sections.push(profile)
-  join_sections(sections)
-}
-
-///|
 fn render_lines(lines : Array[String]) -> String {
   let buf = StringBuilder::new()
   for i = 0; i < lines.length(); i = i + 1 {
@@ -196,17 +178,49 @@ fn render_lines(lines : Array[String]) -> String {
 }
 
 ///|
-pub fn render_leaf_spawn_prompt(args : Map[String, String]) -> String {
-  render_common_prompt(args, leaf_profile_text(), true)
+fn render_common_prompt(
+  spec : PromptSpec,
+  profile : String,
+  include_agents_md : Bool,
+) -> String {
+  if spec.prompt != "" {
+    return spec.prompt + "\n\n" + profile
+  }
+
+  let sections : Array[String] = []
+  add_section(sections, "TASK", spec.task)
+  add_section(sections, "BOUNDARY", render_bullets(spec.boundary))
+
+  let read_first = spec.read_first
+  if include_agents_md {
+    push_unique(read_first, "AGENTS.md")
+  }
+  add_section(sections, "READ FIRST", render_bullets(read_first))
+  add_section(sections, "STEPS", render_numbered(spec.steps))
+  add_section(sections, "CONTEXT", render_context_block(spec))
+
+  let verify_lines : Array[String] = []
+  for cmd in spec.verify {
+    verify_lines.push("- `" + cmd + "`")
+  }
+  add_section(sections, "VERIFY", render_lines(verify_lines))
+  add_section(sections, "DONE CRITERIA", render_bullets(spec.done_criteria))
+
+  let constraints = spec.constraints
+  if spec.no_commit {
+    constraints.push("Do not commit. Report back when done or blocked.")
+  }
+  add_section(sections, "CONSTRAINTS", render_bullets(constraints))
+  sections.push(profile)
+  join_sections(sections)
 }
 
 ///|
-pub fn render_worker_spawn_prompt(args : Map[String, String]) -> String {
-  let worker_type = args
-    .get("type")
-    .unwrap_or("implementation")
-    .trim()
-    .to_lower()
-    .to_string()
-  render_common_prompt(args, worker_profile_text(worker_type), true)
+pub fn render_leaf_spawn_prompt(spec : PromptSpec) -> String {
+  render_common_prompt(spec, leaf_profile_text(), true)
+}
+
+///|
+pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
+  render_common_prompt(spec, worker_profile_text(spec.worker_type), true)
 }
