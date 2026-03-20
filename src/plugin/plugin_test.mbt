@@ -43,23 +43,30 @@ test "PluginDef::handles specific tools" {
 
 ///|
 test "build_request format" {
-  let args : Map[String, String] = {}
-  args.set("param", "val")
+  let args = @types.RequestArgs::from_values({
+    "param": @types.WireValue::String("val"),
+    "count": @types.WireValue::Raw("3"),
+  })
   let req = @plugin.build_request("my_tool", args, "agent1", "tl")
   assert_eq(req.contains("\"tool\":\"my_tool\""), true)
   assert_eq(req.contains("\"agent_id\":\"agent1\""), true)
   assert_eq(req.contains("\"role\":\"tl\""), true)
   assert_eq(req.contains("\"param\":\"val\""), true)
+  assert_eq(req.contains("\"count\":3"), true)
 }
 
 ///|
 test "parse_response ok" {
-  let resp = "{\"ok\":\"true\",\"status\":\"done\",\"branch\":\"feat-x\"}"
+  let resp = "{\"ok\":true,\"status\":\"done\",\"branch\":\"feat-x\",\"count\":3}"
   match @plugin.parse_response(resp) {
-    Ok(m) => {
-      assert_eq(m.get("status"), Some("done"))
-      assert_eq(m.get("branch"), Some("feat-x"))
-      assert_eq(m.get("ok"), None)
+    Ok(parsed) => {
+      assert_eq(parsed.ok_field("status"), Some("done"))
+      assert_eq(parsed.ok_field("branch"), Some("feat-x"))
+      match parsed.ok_payload() {
+        Some(fields) =>
+          assert_eq(fields.get_value("count"), Some(@types.WireValue::Raw("3")))
+        None => fail("expected payload")
+      }
     }
     Err(_) => fail("expected Ok")
   }
@@ -67,7 +74,7 @@ test "parse_response ok" {
 
 ///|
 test "parse_response error" {
-  let resp = "{\"ok\":\"false\",\"error\":\"plugin crashed\"}"
+  let resp = "{\"ok\":false,\"error\":\"plugin crashed\"}"
   match @plugin.parse_response(resp) {
     Ok(_) => fail("expected Err")
     Err(e) => assert_eq(e, "plugin crashed")

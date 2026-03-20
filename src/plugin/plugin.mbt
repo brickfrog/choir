@@ -159,7 +159,7 @@ pub fn PluginDef::handles(self : PluginDef, tool_name : String) -> Bool {
 /// Build a JSON request line for the plugin protocol.
 pub fn build_request(
   tool : String,
-  args : Map[String, String],
+  args : @types.RequestArgs,
   agent_id : String,
   role : String,
 ) -> String {
@@ -167,15 +167,20 @@ pub fn build_request(
   let args_buf = StringBuilder::new()
   args_buf.write_char('{')
   let mut first = true
-  for k, v in args {
+  args.each_value(fn(k, v) {
     if not(first) {
       args_buf.write_char(',')
     }
-    args_buf.write_string(
-      "\"" + escape_json_string(k) + "\":\"" + escape_json_string(v) + "\"",
-    )
+    args_buf.write_char('"')
+    args_buf.write_string(escape_json_string(k))
+    args_buf.write_string("\":")
+    match v {
+      @types.WireValue::String(text) =>
+        args_buf.write_string("\"" + escape_json_string(text) + "\"")
+      @types.WireValue::Raw(text) => args_buf.write_string(text)
+    }
     first = false
-  }
+  })
   args_buf.write_char('}')
   let buf = StringBuilder::new()
   buf.write_string("{\"id\":\"")
@@ -194,27 +199,36 @@ pub fn build_request(
 
 ///|
 /// Parse a flat JSON response line from a plugin.
-/// Returns Ok(result_map) or Err(error_message).
-pub fn parse_response(s : String) -> Result[Map[String, String], String] {
+/// Returns Ok(result_payload) or Err(error_message).
+pub fn parse_response(s : String) -> Result[@types.Response, String] {
   if s == "" {
     return Err("empty response from plugin")
   }
-  match parse_obj(s, skip_ws(s, 0)) {
-    None => Err("invalid JSON response from plugin")
-    Some((map, _)) => {
-      let ok = map.get("ok").unwrap_or("false")
-      if ok == "true" {
-        let result : Map[String, String] = {}
-        for k, v in map {
-          if k != "ok" {
-            result.set(k, v)
-          }
+  let values = @jsonutil.parse_flat_json_value_object(s)
+  let ok = match values.get("ok") {
+    Some(@jsonutil.JsonValueText::String(value)) => value == "true"
+    Some(@jsonutil.JsonValueText::Raw(value)) => value == "true"
+    None => false
+  }
+  if ok {
+    let result : Map[String, @types.WireValue] = {}
+    values.each(fn(k, v) {
+      if k != "ok" {
+        match v {
+          @jsonutil.JsonValueText::String(text) =>
+            result.set(k, @types.WireValue::String(text))
+          @jsonutil.JsonValueText::Raw(text) =>
+            result.set(k, @types.WireValue::Raw(text))
         }
-        Ok(result)
-      } else {
-        let err = map.get("error").unwrap_or("plugin returned error")
-        Err(err)
       }
+    })
+    Ok(@types.Response::ok_values(result))
+  } else {
+    let err = match values.get("error") {
+      Some(@jsonutil.JsonValueText::String(value)) => value
+      Some(@jsonutil.JsonValueText::Raw(value)) => value
+      None => "plugin returned error"
     }
+    Err(err)
   }
 }

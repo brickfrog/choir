@@ -854,7 +854,7 @@ async fn dispatch_to_plugin(
       let agent_id = plugin_request_agent_id(req)
       let request_json = @plugin.build_request(
         req.name,
-        req.args.to_map(),
+        req.args,
         agent_id,
         req.role.to_string(),
       )
@@ -882,7 +882,7 @@ async fn dispatch_to_plugin(
       )
       let resp_str = @io.read_file(resp_path)
       match @plugin.parse_response(resp_str) {
-        Ok(result) => @types.Response::ok(result)
+        Ok(result) => result
         Err(e) => @types.Response::Err("plugin error: " + e)
       }
     }
