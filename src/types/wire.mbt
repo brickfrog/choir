@@ -1,10 +1,43 @@
 ///|
 /// Internal wire format request (UDS/TCP, not MCP JSON-RPC).
+pub(all) struct RequestArgs {
+  values : Map[String, String]
+} derive(Show)
+
+///|
+pub fn RequestArgs::new(values : Map[String, String]) -> RequestArgs {
+  { values, }
+}
+
+///|
+pub fn RequestArgs::get(self : RequestArgs, key : String) -> String? {
+  self.values.get(key)
+}
+
+///|
+pub fn RequestArgs::contains(self : RequestArgs, key : String) -> Bool {
+  self.values.contains(key)
+}
+
+///|
+pub fn RequestArgs::each(
+  self : RequestArgs,
+  f : (String, String) -> Unit,
+) -> Unit {
+  self.values.each(f)
+}
+
+///|
+pub fn RequestArgs::to_map(self : RequestArgs) -> Map[String, String] {
+  self.values
+}
+
+///|
 pub(all) struct Request {
   req_method : String
   role : Role
   name : String
-  args : Map[String, String]
+  args : RequestArgs
 } derive(Show)
 
 ///|

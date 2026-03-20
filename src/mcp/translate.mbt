@@ -81,7 +81,7 @@ pub fn to_internal_request(
       req_method: method_tools_list,
       role,
       name: "tools_list",
-      args: {},
+      args: @types.RequestArgs::new({}),
     })
   }
   if rpc.req_method != method_tools_call {
@@ -113,7 +113,12 @@ pub fn to_internal_request(
     None => {}
     Some(_) => {}
   }
-  Ok({ req_method: rpc.req_method, role, name, args })
+  Ok({
+    req_method: rpc.req_method,
+    role,
+    name,
+    args: @types.RequestArgs::new(args),
+  })
 }
 
 ///|

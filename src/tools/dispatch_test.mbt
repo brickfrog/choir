@@ -452,7 +452,7 @@ test "dispatch spawn_remote denied for Dev role" {
         req_method: "tools/call",
         role: call.role,
         name: call.name,
-        args: call.args,
+        args: @types.RequestArgs::new(call.args),
       },
       runner=mock_runner,
     )
@@ -471,7 +471,7 @@ test "handle_request spawn_moon_pilot denied for Dev role" {
       req_method: "tools/call",
       role: @types.Role::Dev,
       name: "spawn_moon_pilot",
-      args: { "slug": "mp-1", "task": "do stuff" },
+      args: @types.RequestArgs::new({ "slug": "mp-1", "task": "do stuff" }),
     }
     let res = handle_request(reg, req, runner=mock_runner)
     match res {
@@ -1099,7 +1099,7 @@ test "handle_request fork_session denied for Dev role" {
       req_method: "tools/call",
       role: @types.Role::Dev,
       name: "fork_session",
-      args: { "name": "sub-team-1" },
+      args: @types.RequestArgs::new({ "name": "sub-team-1" }),
     }
     let res = handle_request(reg, req, runner=mock_runner)
     match res {

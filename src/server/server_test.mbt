@@ -64,7 +64,7 @@ test "ServerState::handle valid request returns Ok" {
       req_method: "tools/call",
       role: @types.Role::Dev,
       name: "task_list",
-      args: {},
+      args: @types.RequestArgs::new({}),
     }
     let res = state.handle(req)
     assert_true(res.is_ok())
@@ -79,7 +79,7 @@ test "ServerState::handle invalid role returns Err" {
       req_method: "tools/call",
       role: @types.Role::Dev,
       name: "fork_wave",
-      args: {},
+      args: @types.RequestArgs::new({}),
     }
     let res = state.handle(req)
     assert_false(res.is_ok())
@@ -99,13 +99,13 @@ test "ServerState::handle_with_runner passes configured tmux session to spawns" 
       req_method: "tools/call",
       role: @types.Role::TL,
       name: "spawn_gemini",
-      args: {
+      args: @types.RequestArgs::new({
         "caller_id": "root",
         "slug": "leaf-a",
         "parent_branch": "main",
         "task": "reply READY",
         "read_first": "AGENTS.md",
-      },
+      }),
     }
     let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
     assert_eq(res.ok_field("status"), Some("spawned"))

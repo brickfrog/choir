@@ -90,7 +90,7 @@ test "format_request serializes internal wire request" {
     req_method: "tools/call",
     role: @types.Role::TL,
     name: "fork_wave",
-    args: { "slug": "feat-a", "count": "3" },
+    args: @types.RequestArgs::new({ "slug": "feat-a", "count": "3" }),
   }
   let output = format_request(req)
   assert_true(output.contains("\"method\":\"tools/call\""))
@@ -130,7 +130,7 @@ test "format_augmented_request adds caller and sender defaults" {
     req_method: "tools/call",
     role: @types.Role::Dev,
     name: "send_message",
-    args: { "target_id": "leaf-2", "message": "hello" },
+    args: @types.RequestArgs::new({ "target_id": "leaf-2", "message": "hello" }),
   }
   let local_cfg = @types.LocalConfig::default()
   let output = format_augmented_request(req, "leaf-1", local_cfg)

@@ -22,7 +22,7 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
     None => return Err("missing field: name")
   }
   let args = parse_args(data)
-  Ok({ req_method: method_val, role, name, args })
+  Ok({ req_method: method_val, role, name, args: @types.RequestArgs::new(args) })
 }
 
 ///|
@@ -117,7 +117,12 @@ pub fn format_registration_request(
     Some(v) => args.set("agent_type", agent_type_to_wire_string(v))
     None => ()
   }
-  format_request({ req_method: "register", role, name: "register", args })
+  format_request({
+    req_method: "register",
+    role,
+    name: "register",
+    args: @types.RequestArgs::new(args),
+  })
 }
 
 ///|
@@ -152,7 +157,7 @@ pub fn format_augmented_request(
     req_method: req.req_method,
     role: req.role,
     name: req.name,
-    args,
+    args: @types.RequestArgs::new(args),
   })
 }
 

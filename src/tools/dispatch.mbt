@@ -813,7 +813,7 @@ async fn dispatch_to_plugin(
       let agent_id = plugin_request_agent_id(req)
       let request_json = @plugin.build_request(
         req.name,
-        req.args,
+        req.args.to_map(),
         agent_id,
         req.role.to_string(),
       )
@@ -1906,7 +1906,7 @@ pub async fn handle_request(
       }
     Ok(_) =>
       dispatch(
-        { role: req.role, name: req.name, args: req.args },
+        { role: req.role, name: req.name, args: req.args.to_map() },
         project_dir~,
         session~,
         runner~,

@@ -88,7 +88,7 @@ test "handle_request with valid tool returns Ok" {
       req_method: "tools/call",
       role: @types.Role::TL,
       name: "fork_wave",
-      args: { "count": "3" },
+      args: @types.RequestArgs::new({ "count": "3" }),
     }
     let res = handle_request(reg, req, runner=mock_runner)
     assert_true(res is Ok(_))
@@ -103,7 +103,7 @@ test "handle_request with wrong role returns Err" {
       req_method: "tools/call",
       role: @types.Role::Worker,
       name: "fork_wave",
-      args: {},
+      args: @types.RequestArgs::new({}),
     }
     let res = handle_request(reg, req)
     assert_true(res is Err(_))
@@ -118,7 +118,7 @@ test "handle_request with unknown tool returns Err" {
       req_method: "tools/call",
       role: @types.Role::TL,
       name: "nonexistent",
-      args: {},
+      args: @types.RequestArgs::new({}),
     }
     let res = handle_request(reg, req)
     assert_true(res is Err(_))
