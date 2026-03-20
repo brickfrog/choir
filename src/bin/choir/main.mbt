@@ -547,21 +547,35 @@ fn mcp_write_server_response(id : @mcp.JsonRpcId, resp_line : String) -> Unit {
 }
 
 ///|
+priv enum McpUdsLoopExit {
+  InputClosed
+  Reconnect
+}
+
+///|
+fn mcp_should_reconnect_after_uds_loop(exit : McpUdsLoopExit) -> Bool {
+  match exit {
+    InputClosed => false
+    Reconnect => true
+  }
+}
+
+///|
 fn mcp_run_uds_loop(
   uds_fd : Int,
   role : @types.Role,
   config : @types.Config,
   local_cfg : @types.LocalConfig,
-) -> Unit {
+) -> McpUdsLoopExit {
   let reader = UDSLineReader::new(uds_fd)
   let reg_msg = mcp_build_registration_message(role, config, local_cfg)
   if not(mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg))) {
-    return
+    return Reconnect
   }
 
   let reg_resp = reader.read_line()
   if reg_resp == "" {
-    return
+    return Reconnect
   }
 
   for {
@@ -592,7 +606,7 @@ fn mcp_run_uds_loop(
                   id, @mcp.err_internal, "server restarting, retry",
                 )
                 @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-                return
+                return Reconnect
               }
               let resp_line = reader.read_line()
               if resp_line == "" {
@@ -600,7 +614,7 @@ fn mcp_run_uds_loop(
                   id, @mcp.err_internal, "server restarting, retry",
                 )
                 @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-                return
+                return Reconnect
               }
               mcp_write_server_response(id, resp_line)
             }
@@ -617,6 +631,7 @@ fn mcp_run_uds_loop(
       }
     }
   }
+  InputClosed
 }
 
 ///|
@@ -657,8 +672,11 @@ fn mcp_run() -> Unit raise {
   if uds_fd >= 0 {
     // Run loop; on server restart, wait and reconnect automatically
     for {
-      mcp_run_uds_loop(uds_fd, role, config, local_cfg)
+      let exit_reason = mcp_run_uds_loop(uds_fd, role, config, local_cfg)
       @uds.close(uds_fd)
+      if not(mcp_should_reconnect_after_uds_loop(exit_reason)) {
+        break
+      }
       if not(@io.wait_for_socket(config.listen_uds, 60)) {
         break
       }
@@ -759,6 +777,12 @@ fn mcp_run() -> Unit raise {
     }
     conn.close()
   })
+}
+
+///|
+test "mcp UDS reconnect policy stops after stdin EOF" {
+  assert_false(mcp_should_reconnect_after_uds_loop(InputClosed))
+  assert_true(mcp_should_reconnect_after_uds_loop(Reconnect))
 }
 
 ///|
