@@ -48,6 +48,14 @@ some external tools.
 The Nix dev shell includes the open-source dependencies above. Proprietary
 agent CLIs still need to be installed and authenticated separately.
 
+## Releases
+
+Native binaries are intended to ship through GitHub Releases.
+
+- `choir-linux-x86_64`
+- `choir-macos-arm64`
+- `SHA256SUMS`
+
 ## Nix
 
 ```bash

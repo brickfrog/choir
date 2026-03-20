@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang pkg-config libuv1-dev libssl-dev
+
+      - name: Install MoonBit
+        env:
+          MOON_HOME: ${{ runner.temp }}/moon
+        run: |
+          bash scripts/install-moonbit.sh latest "$MOON_HOME"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Cache mooncakes
+        uses: actions/cache@v4
+        with:
+          path: .mooncakes
+          key: ${{ runner.os }}-mooncakes-${{ hashFiles('moon.mod.json', 'src/**/moon.pkg', 'src/**/moon.pkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-mooncakes-
+
+      - name: Update registry
+        run: moon update
+
+      - name: Test
+        run: moon test --target native
+
+      - name: Build release binary
+        run: moon build --target native --release

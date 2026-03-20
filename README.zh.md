@@ -45,6 +45,14 @@ moon fmt
 
 Nix dev shell 会提供上面的开源依赖。专有代理 CLI 仍需要你自行安装并完成认证。
 
+## Releases
+
+原生二进制计划通过 GitHub Releases 分发。
+
+- `choir-linux-x86_64`
+- `choir-macos-arm64`
+- `SHA256SUMS`
+
 ## Nix
 
 ```bash

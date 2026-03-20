@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux-x86_64
+            artifact_name: choir-linux-x86_64
+            shell: bash
+          - runner: macos-14
+            target: macos-arm64
+            artifact_name: choir-macos-arm64
+            shell: bash
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang pkg-config libuv1-dev libssl-dev
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install libuv openssl pkg-config
+
+      - name: Install MoonBit
+        env:
+          MOON_HOME: ${{ runner.temp }}/moon
+        run: |
+          bash scripts/install-moonbit.sh latest "$MOON_HOME"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Cache mooncakes
+        uses: actions/cache@v4
+        with:
+          path: .mooncakes
+          key: release-${{ runner.os }}-mooncakes-${{ hashFiles('moon.mod.json', 'src/**/moon.pkg', 'src/**/moon.pkg.json') }}
+          restore-keys: |
+            release-${{ runner.os }}-mooncakes-
+            ${{ runner.os }}-mooncakes-
+
+      - name: Update registry
+        run: moon update
+
+      - name: Build release binary
+        run: moon build --target native --release
+
+      - name: Package artifact
+        run: |
+          mkdir -p release
+          cp _build/native/release/build/src/bin/choir/choir.exe "release/${{ matrix.artifact_name }}"
+          chmod +x "release/${{ matrix.artifact_name }}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
+          fi
+          mv "${{ matrix.artifact_name }}.sha256" release/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Write combined checksums
+        run: |
+          cd release
+          cat *.sha256 > SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body: |
+            Native Choir binaries for the current tag.
+
+            Runtime dependencies:
+            - git
+            - gh for PR workflow
+            - tmux or zellij for local session management
+            - the agent CLIs you actually use: claude, gemini, moon
