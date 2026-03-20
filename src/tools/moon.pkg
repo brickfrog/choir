@@ -9,6 +9,9 @@ import {
   "choir/src/poller",
   "choir/src/uds",
   "moonbitlang/async",
+  "moonbitlang/async/pipe",
+  "moonbitlang/async/process",
+  "moonbitlang/core/encoding/utf8",
 }
 
 options(

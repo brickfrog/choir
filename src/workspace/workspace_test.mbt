@@ -17,6 +17,20 @@ test "nested branch name" {
 }
 
 ///|
+test "canonical agent id uses parent branch and slug" {
+  let spec = @types.SpawnSpec::{
+    slug: "leaf-task",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    task: "do work",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main.subtl",
+  }
+  assert_eq(@workspace.canonical_agent_id(spec), "main.subtl.leaf-task")
+}
+
+///|
 test "git_worktree_add args" {
   let cmd = @workspace.git_worktree_add("/path/to/worktree", "main.test-slug")
   assert_eq(cmd.program, "git")
@@ -64,11 +78,11 @@ test "agent_launch_command for each AgentType" {
   let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
 
   assert_eq(cmd_claude.program, "claude")
-  assert_eq(cmd_claude.args, ["-p", "fix bugs"])
+  assert_eq(cmd_claude.args, ["--dangerously-skip-permissions", "fix bugs"])
   assert_eq(cmd_claude.workdir, Some("/path"))
 
   assert_eq(cmd_gemini.program, "gemini")
-  assert_eq(cmd_gemini.args, ["-p", "fix bugs"])
+  assert_eq(cmd_gemini.args, ["--prompt-interactive", "fix bugs"])
   assert_eq(cmd_gemini.workdir, Some("/path"))
 
   assert_eq(cmd_moon.program, "moon")
@@ -93,7 +107,9 @@ test "agent_launch_command wraps with shell_command" {
     shell_command=Some("nix develop"),
   )
   assert_eq(cmd.program, "nix")
-  assert_eq(cmd.args, ["develop", "--command", "claude", "-p", "fix bugs"])
+  assert_eq(cmd.args, [
+    "develop", "--command", "claude", "--dangerously-skip-permissions", "fix bugs",
+  ])
   assert_eq(cmd.workdir, Some("/path"))
 }
 
@@ -110,7 +126,30 @@ test "agent_launch_command no wrap when shell_command is None" {
   }
   let cmd = @workspace.agent_launch_command(spec, "/path", shell_command=None)
   assert_eq(cmd.program, "claude")
-  assert_eq(cmd.args, ["-p", "fix bugs"])
+  assert_eq(cmd.args, ["--dangerously-skip-permissions", "fix bugs"])
+}
+
+///|
+test "agent_launch_command supports Claude fork_session" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "fix bugs",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+  }
+  let cmd = @workspace.agent_launch_command(
+    spec,
+    "/path",
+    parent_session_id=Some("session-123"),
+  )
+  assert_eq(cmd.program, "claude")
+  assert_eq(cmd.args, [
+    "--dangerously-skip-permissions", "--resume", "session-123", "--fork-session",
+    "fix bugs",
+  ])
 }
 
 ///|
@@ -152,11 +191,14 @@ test "spawn_commands worktree config write content" {
   assert_eq(cmds[1].program, "sh")
   assert_true(cmds[1].args[3].contains("feature-a")) // worktree path
   assert_true(cmds[1].args[4].contains("dev")) // role content
+  assert_true(cmds[1].args[4].contains("agent_id = \"main.feature-a\""))
+  assert_true(cmds[1].args[4].contains("parent_id = \"root\""))
+  assert_true(cmds[1].args[4].contains("tmux_target = \"exo:feature-a\""))
   // .mcp.json write: positional args — $1=worktree_path, $2=json
   assert_eq(cmds[2].program, "sh")
   assert_true(cmds[2].args[3].contains("feature-a")) // worktree path
   assert_true(cmds[2].args[4].contains("--role")) // mcp json has role arg
-  assert_true(cmds[2].args[4].contains("feature-a")) // mcp json has name arg
+  assert_true(cmds[2].args[4].contains("main.feature-a")) // canonical agent id
 }
 
 ///|
@@ -176,6 +218,11 @@ test "spawn_commands standalone includes config writes" {
   assert_eq(cmds[0].program, "git")
   assert_eq(cmds[1].program, "sh")
   assert_true(cmds[1].args[4].contains("dev"))
+  assert_true(
+    cmds[1].args[4].contains(
+      "workspace = \"/proj/.choir/agents/standalone-task\"",
+    ),
+  )
   assert_eq(cmds[2].program, "sh")
   assert_true(cmds[2].args[4].contains("--role"))
 }
@@ -199,20 +246,61 @@ test "spawn_commands for inline mode skips git worktree" {
 }
 
 ///|
+test "spawn_commands launch text does not duplicate workdir cd" {
+  let spec = @types.SpawnSpec::{
+    slug: "feature-a",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    task: "do something",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
+  assert_eq(cmds[4].program, "tmux")
+  assert_eq(cmds[4].args[0], "send-keys")
+  assert_eq(cmds[4].args[1], "-t")
+  assert_eq(cmds[4].args[2], "exo:feature-a")
+  assert_true(cmds[4].args[3].contains("CHOIR_AGENT_ID='main.feature-a'"))
+  assert_true(cmds[4].args[3].contains("CHOIR_TMUX_TARGET='exo:feature-a'"))
+  assert_true(cmds[4].args[3].contains("EXOMONAD_PARENT_AGENT='root'"))
+  assert_true(
+    cmds[4].args[3].contains("gemini '--prompt-interactive' 'do something'"),
+  )
+  assert_eq(cmds[4].args[4], "C-m")
+}
+
+///|
 test "Command::to_string output" {
   let cmd1 = @workspace.Command::{
     program: "git",
     args: ["status"],
     workdir: None,
   }
-  assert_eq(cmd1.to_string(), "git status")
+  assert_eq(cmd1.to_string(), "git 'status'")
 
   let cmd2 = @workspace.Command::{
     program: "claude",
-    args: ["-p", "hello"],
+    args: ["--dangerously-skip-permissions", "hello"],
     workdir: Some("/path"),
   }
-  assert_eq(cmd2.to_string(), "cd /path && claude -p hello")
+  assert_eq(
+    cmd2.to_string(),
+    "cd '/path' && claude '--dangerously-skip-permissions' 'hello'",
+  )
+}
+
+///|
+test "Command::to_string quotes spaced args" {
+  let cmd = @workspace.Command::{
+    program: "gemini",
+    args: ["--prompt-interactive", "Reply with READY and then stop."],
+    workdir: None,
+  }
+  assert_eq(
+    cmd.to_string(),
+    "gemini '--prompt-interactive' 'Reply with READY and then stop.'",
+  )
 }
 
 ///|
@@ -257,4 +345,6 @@ test "remote_spawn_commands produces 4 ssh commands" {
   assert_true(cmds[1].args[3].contains("10.0.0.1:9100"))
   assert_true(cmds[2].args[3].contains(".mcp.json"))
   assert_true(cmds[3].args[3].contains("claude"))
+  assert_true(cmds[3].args[3].contains("CHOIR_AGENT_ID='main.remote-worker'"))
+  assert_true(cmds[3].args[3].contains("EXOMONAD_PARENT_AGENT='root'"))
 }

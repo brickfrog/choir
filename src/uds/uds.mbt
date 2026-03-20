@@ -6,6 +6,9 @@ extern "C" fn uds_server_create_ffi(path : Bytes, len : Int) -> Int = "choir_uds
 extern "C" fn uds_accept_ffi(server_fd : Int) -> Int = "choir_uds_accept"
 
 ///|
+extern "C" fn uds_accept_nonblocking_ffi(server_fd : Int) -> Int = "choir_uds_accept_nonblocking"
+
+///|
 #borrow(path)
 extern "C" fn uds_client_connect_ffi(path : Bytes, len : Int) -> Int = "choir_uds_client_connect"
 
@@ -20,6 +23,15 @@ extern "C" fn uds_read_ffi(
 
 ///|
 #borrow(buf)
+extern "C" fn uds_read_nonblocking_ffi(
+  fd : Int,
+  buf : Bytes,
+  offset : Int,
+  len : Int,
+) -> Int = "choir_uds_read_nonblocking"
+
+///|
+#borrow(buf)
 extern "C" fn uds_write_ffi(
   fd : Int,
   buf : Bytes,
@@ -29,6 +41,9 @@ extern "C" fn uds_write_ffi(
 
 ///|
 extern "C" fn uds_close_ffi(fd : Int) = "choir_uds_close"
+
+///|
+extern "C" fn uds_set_nonblocking_ffi(fd : Int) -> Int = "choir_uds_set_nonblocking"
 
 ///|
 #borrow(path, body)
@@ -63,6 +78,11 @@ pub fn accept(server_fd : Int) -> Int {
 }
 
 ///|
+pub fn accept_nonblocking(server_fd : Int) -> Int {
+  uds_accept_nonblocking_ffi(server_fd)
+}
+
+///|
 pub fn client_connect(path : String) -> Int {
   let (path_bytes, len) = string_to_null_terminated_bytes(path)
   uds_client_connect_ffi(path_bytes, len)
@@ -79,8 +99,23 @@ pub fn read_bytes(
 }
 
 ///|
+pub fn read_bytes_nonblocking(
+  fd : Int,
+  buf : FixedArray[Byte],
+  offset : Int,
+  len : Int,
+) -> Int {
+  uds_read_nonblocking_ffi(fd, buf.unsafe_reinterpret_as_bytes(), offset, len)
+}
+
+///|
 pub fn write_bytes(fd : Int, buf : Bytes, offset : Int, len : Int) -> Int {
   uds_write_ffi(fd, buf, offset, len)
+}
+
+///|
+pub fn set_nonblocking(fd : Int) -> Bool {
+  uds_set_nonblocking_ffi(fd) == 0
 }
 
 ///|

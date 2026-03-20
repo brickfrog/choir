@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 int choir_get_file_size(const char* path) {
@@ -30,16 +32,24 @@ void choir_stdout_write(const char *buf, int size) {
     fflush(stdout);
 }
 
+void choir_stderr_write(const char *buf, int size) {
+    fwrite(buf, 1, size, stderr);
+    fflush(stderr);
+}
+
 int choir_stdin_read_line(char *buf, int max_size) {
     if (fgets(buf, max_size, stdin) == NULL) {
-        return 0;
+        return -1;
     }
     int len = strlen(buf);
     if (len > 0 && buf[len - 1] == '\n') {
         buf[len - 1] = '\0';
         return len - 1;
     }
-    return len;
+    if (feof(stdin)) {
+        return len;
+    }
+    return -(len + 1);
 }
 
 int choir_argc(void) {
@@ -100,12 +110,33 @@ int choir_spawn_serve(const char* exe, int exe_len) {
     return system(cmd);
 }
 
-/* Poll for existence of a socket file, sleeping 200ms between checks.
-   Returns 0 if found within max_tries attempts, -1 on timeout. */
+static int choir_wait_for_uds_ready(const char* path) {
+    struct sockaddr_un addr;
+    size_t path_len = strlen(path);
+    if (path_len >= sizeof(addr.sun_path)) {
+        return -1;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    memcpy(addr.sun_path, path, path_len);
+    addr.sun_path[path_len] = '\0';
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return -1;
+    }
+
+    int ok = connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == 0 ? 0 : -1;
+    close(fd);
+    return ok;
+}
+
+/* Poll for a UDS server to accept connections, sleeping 200ms between checks.
+   Returns 0 if reachable within max_tries attempts, -1 on timeout. */
 int choir_wait_for_socket(const char* path, int max_tries) {
-    struct stat st;
     for (int i = 0; i < max_tries; i++) {
-        if (stat(path, &st) == 0) return 0;
+        if (choir_wait_for_uds_ready(path) == 0) return 0;
         usleep(200000); /* 200ms */
     }
     return -1;
@@ -120,6 +151,20 @@ void choir_write_pid_file(const char* path) {
     if (!f) return;
     fprintf(f, "%d", (int)getpid());
     fclose(f);
+}
+
+int choir_getenv(const char* name, char* out, int out_size) {
+    const char* value = getenv(name);
+    if (!value || out_size <= 0) {
+        return 0;
+    }
+    int len = (int)strlen(value);
+    if (len >= out_size) {
+        len = out_size - 1;
+    }
+    memcpy(out, value, (size_t)len);
+    out[len] = '\0';
+    return len;
 }
 
 /* Recursively create directories (like mkdir -p). Returns 0 on success. */

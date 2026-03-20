@@ -12,7 +12,7 @@ fn mcp_json_content() -> String {
   "    \"choir\": {\n" +
   "      \"type\": \"stdio\",\n" +
   "      \"command\": \"choir\",\n" +
-  "      \"args\": [\"mcp-stdio\"]\n" +
+  "      \"args\": [\"mcp-stdio\", \"--name\", \"root\"]\n" +
   "    }\n" +
   "  }\n" +
   "}\n"

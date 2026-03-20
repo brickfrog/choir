@@ -23,10 +23,11 @@ test "HookResponse::fail_open equals allow" {
 
 ///|
 test "HookInput::from_json_string parses valid SessionStart" {
-  let json = "{\"event\":\"SessionStart\",\"agent_id\":\"agent-123\",\"role\":\"dev\"}"
+  let json = "{\"event\":\"SessionStart\",\"session_id\":\"sess-1\",\"agent_id\":\"agent-123\",\"role\":\"dev\"}"
   match HookInput::from_json_string(json) {
     Some(input) => {
       assert_eq(input.event, HookEvent::SessionStart)
+      assert_eq(input.session_id, Some("sess-1"))
       assert_eq(input.agent_id, Some("agent-123"))
       assert_eq(input.role, Some(@types.Role::Dev))
     }
@@ -59,6 +60,7 @@ test "HookInput::from_json_string fails on invalid event" {
 test "HookInput construction with all fields" {
   let input = HookInput::{
     event: HookEvent::PreToolUse,
+    session_id: Some("session-1"),
     agent_id: Some("agent-1"),
     role: Some(@types.Role::Dev),
     tool_name: Some("test_tool"),
@@ -71,6 +73,7 @@ test "HookInput construction with all fields" {
 test "HookInput construction with minimal fields" {
   let input = HookInput::{
     event: HookEvent::SessionStart,
+    session_id: None,
     agent_id: None,
     role: None,
     tool_name: None,

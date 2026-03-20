@@ -6,13 +6,29 @@ pub(all) struct Command {
 } derive(Show, Eq)
 
 ///|
+fn shell_quote(s : String) -> String {
+  let buf = StringBuilder::new()
+  buf.write_char('\'')
+  for c in s {
+    if c == '\'' {
+      buf.write_string("'\\''")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.write_char('\'')
+  buf.to_string()
+}
+
+///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
+    let quoted = shell_quote(arg)
     if args_str == "" {
-      args_str = arg
+      args_str = quoted
     } else {
-      args_str = args_str + " " + arg
+      args_str = args_str + " " + quoted
     }
   }
   let base = if args_str == "" {
@@ -22,7 +38,7 @@ pub fn Command::to_string(self : Command) -> String {
   }
   match self.workdir {
     None => base
-    Some(dir) => "cd " + dir + " && " + base
+    Some(dir) => "cd " + shell_quote(dir) + " && " + base
   }
 }
 

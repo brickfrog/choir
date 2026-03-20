@@ -7,6 +7,7 @@ import {
   "choir/src/poller",
   "choir/src/config",
   "choir/src/io",
+  "choir/src/workspace",
   "moonbitlang/async",
   "moonbitlang/async/http",
   "moonbitlang/async/pipe",

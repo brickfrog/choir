@@ -1,8 +1,14 @@
 ///|
+pub(all) enum JsonRpcId {
+  Number(Int)
+  String(String)
+} derive(Show, Eq)
+
+///|
 /// A JSON-RPC request from an MCP client.
 pub(all) struct JsonRpcRequest {
   jsonrpc : String
-  id : Int
+  id : JsonRpcId?
   req_method : String
   params : Map[String, String]?
 } derive(Show)
@@ -18,7 +24,7 @@ pub(all) struct JsonRpcError {
 /// A JSON-RPC response to an MCP client.
 pub(all) struct JsonRpcResponse {
   jsonrpc : String
-  id : Int
+  id : JsonRpcId
   result : Map[String, String]?
   error : JsonRpcError?
 } derive(Show)

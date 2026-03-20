@@ -551,9 +551,10 @@ Merging follows a recursive fold up the tree: leaf → sub-TL → TL → main.
 ### 11.2 `file_pr`
 
 1. Push current branch to remote
-2. `gh pr create --base {parent_branch} --head {current_branch}`
+2. Resolve existing PR for the branch, or `gh pr create --base {parent_branch} --head {current_branch}`
 3. If PR already exists, update it (push is sufficient)
-4. Return PR URL
+4. Auto-track the PR in the poller when available
+5. Return PR number and URL
 
 ### 11.3 `merge_pr`
 

@@ -11,6 +11,41 @@ test "file_pr_commands produces correct git push and gh pr create" {
 }
 
 ///|
+async fn mock_ensure_pr(
+  branch : String,
+  parent_branch : String,
+  _project_dir : String,
+) -> Result[PullRequestInfo, String] {
+  @async.sleep(0)
+  if branch == "fail" {
+    Err("lookup failed")
+  } else {
+    Ok({
+      number: if parent_branch == "release" {
+        77
+      } else {
+        22
+      },
+      url: "https://example.test/pr/" + branch,
+    })
+  }
+}
+
+///|
+test "parse_pull_request_info extracts number and url" {
+  let parsed = parse_pull_request_info(
+    "{\"number\":22,\"url\":\"https://example.test/pr/feature\"}",
+  )
+  match parsed {
+    Some(pr) => {
+      assert_eq(pr.number, 22)
+      assert_eq(pr.url, "https://example.test/pr/feature")
+    }
+    None => fail("expected pull request info")
+  }
+}
+
+///|
 test "merge_pr_commands produces correct gh pr merge and git fetch" {
   let cmds = merge_pr_commands(123)
   assert_eq(cmds.length(), 2)
@@ -28,9 +63,59 @@ test "dispatch file_pr returns Ok" {
       name: "file_pr",
       args: { "branch": "feat", "parent_branch": "main" },
     }
-    let res = dispatch(call, runner=mock_runner)
+    let res = dispatch(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
     match res {
-      Ok(m) => assert_eq(m.get("status"), Some("pr_created"))
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("pr_created"))
+        assert_eq(m.get("pr_number"), Some("22"))
+        assert_eq(m.get("pr_url"), Some("https://example.test/pr/feat"))
+        assert_eq(m.get("tracked"), Some("false"))
+      }
+      Err(_) => assert_true(false)
+    }
+  })
+}
+
+///|
+test "dispatch file_pr auto_tracks returned pr number" {
+  @async.with_event_loop(_ => {
+    let poller = @poller.PollerState::new()
+    let call : ToolCall = {
+      role: @types.Role::Dev,
+      name: "file_pr",
+      args: { "branch": "feat", "parent_branch": "main" },
+    }
+    let res = dispatch(
+      call,
+      runner=mock_runner,
+      ensure_pr=mock_ensure_pr,
+      poller_state=Some(poller),
+    )
+    match res {
+      Ok(m) => assert_eq(m.get("tracked"), Some("true"))
+      Err(_) => assert_true(false)
+    }
+    match poller.get(22) {
+      Some(tracked) => assert_eq(tracked.agent_id, "feat")
+      None => fail("expected tracked PR")
+    }
+  })
+}
+
+///|
+test "dispatch file_pr accepts agent_id alias for branch" {
+  @async.with_event_loop(_ => {
+    let call : ToolCall = {
+      role: @types.Role::Dev,
+      name: "file_pr",
+      args: { "agent_id": "main.child", "parent_branch": "release" },
+    }
+    let res = dispatch(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("pr_number"), Some("77"))
+        assert_eq(m.get("pr_url"), Some("https://example.test/pr/main.child"))
+      }
       Err(_) => assert_true(false)
     }
   })
@@ -44,10 +129,26 @@ test "dispatch file_pr missing branch returns Err" {
       name: "file_pr",
       args: { "parent_branch": "main" },
     }
-    let res = dispatch(call, runner=mock_runner)
+    let res = dispatch(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
     match res {
       Ok(_) => assert_true(false)
       Err(msg) => assert_eq(msg, "missing branch")
+    }
+  })
+}
+
+///|
+test "dispatch file_pr surfaces ensure_pr failures" {
+  @async.with_event_loop(_ => {
+    let call : ToolCall = {
+      role: @types.Role::Dev,
+      name: "file_pr",
+      args: { "branch": "fail", "parent_branch": "main" },
+    }
+    let res = dispatch(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+    match res {
+      Ok(_) => assert_true(false)
+      Err(msg) => assert_eq(msg, "lookup failed")
     }
   })
 }

@@ -12,11 +12,38 @@ fn fixed_array_slice_to_string(
 }
 
 ///|
+fn grow_connection_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
+  let next = FixedArray::make(buf.length() * 2, (0 : Byte))
+  for i = 0; i < buf.length(); i = i + 1 {
+    next[i] = buf[i]
+  }
+  next
+}
+
+///|
+struct UDSClient {
+  fd : Int
+  mut buf : FixedArray[Byte]
+  mut read_pos : Int
+  mut connected_agent_id : String?
+}
+
+///|
+fn UDSClient::new(fd : Int) -> UDSClient {
+  {
+    fd,
+    buf: FixedArray::make(4096, (0 : Byte)),
+    read_pos: 0,
+    connected_agent_id: None,
+  }
+}
+
+///|
 async fn handle_connection(
   conn : @socket.TCP,
   state : @server.ServerState,
 ) -> Unit {
-  let buf = FixedArray::make(4096, (0 : Byte))
+  let mut buf = FixedArray::make(4096, (0 : Byte))
   let mut read_pos = 0
   let mut authenticated = match state.config.tcp_auth_token {
     None => true
@@ -24,6 +51,9 @@ async fn handle_connection(
   }
   let mut connected_agent_id : String? = None
   for {
+    if read_pos == buf.length() {
+      buf = grow_connection_buffer(buf)
+    }
     let n = conn.read(buf, offset=read_pos, max_len=buf.length() - read_pos)
     if n == 0 {
       break
@@ -72,9 +102,6 @@ async fn handle_connection(
         i = i + 1
       }
     }
-    if read_pos == buf.length() {
-      read_pos = 0
-    }
   }
   match connected_agent_id {
     Some(agent_id) => state.handle_disconnect(agent_id)
@@ -96,57 +123,71 @@ fn write_all_uds(fd : Int, data : Bytes) -> Unit {
 
 ///|
 async fn handle_uds_connection(
-  client_fd : Int,
+  client : UDSClient,
   state : @server.ServerState,
-) -> Unit {
-  let buf = FixedArray::make(4096, (0 : Byte))
-  let mut read_pos = 0
-  let mut connected_agent_id : String? = None
+) -> Bool {
   for {
-    let n = @uds.read_bytes(client_fd, buf, read_pos, buf.length() - read_pos)
-    if n <= 0 {
-      break
+    if client.read_pos == client.buf.length() {
+      client.buf = grow_connection_buffer(client.buf)
     }
-    read_pos = read_pos + n
+    let n = @uds.read_bytes_nonblocking(
+      client.fd,
+      client.buf,
+      client.read_pos,
+      client.buf.length() - client.read_pos,
+    )
+    if n == -2 {
+      return true
+    }
+    if n <= 0 {
+      return false
+    }
+    client.read_pos = client.read_pos + n
     let mut i = 0
-    while i < read_pos {
-      if buf[i] == (10 : Byte) {
-        let line = fixed_array_slice_to_string(buf, 0, i)
+    while i < client.read_pos {
+      if client.buf[i] == (10 : Byte) {
+        let line = fixed_array_slice_to_string(client.buf, 0, i)
         let req_res = @transport.parse_request(line)
         match req_res {
           Ok(req) => {
             if req.req_method == "register" {
-              connected_agent_id = req.args.get("agent_id")
+              client.connected_agent_id = req.args.get("agent_id")
             }
             let resp = state.handle(req)
             let resp_str = @transport.format_response(resp) + "\n"
-            write_all_uds(client_fd, @utf8.encode(resp_str))
+            write_all_uds(client.fd, @utf8.encode(resp_str))
           }
           Err(err) => {
             let resp = @types.Response::Err("parse error: " + err)
             write_all_uds(
-              client_fd,
+              client.fd,
               @utf8.encode(@transport.format_response(resp) + "\n"),
             )
           }
         }
-        let remaining = read_pos - (i + 1)
+        let remaining = client.read_pos - (i + 1)
         if remaining > 0 {
           for j = 0; j < remaining; j = j + 1 {
-            buf[j] = buf[i + 1 + j]
+            client.buf[j] = client.buf[i + 1 + j]
           }
         }
-        read_pos = remaining
+        client.read_pos = remaining
         i = 0
       } else {
         i = i + 1
       }
     }
-    if read_pos == buf.length() {
-      read_pos = 0
-    }
   }
-  match connected_agent_id {
+  true
+}
+
+///|
+async fn close_uds_client(
+  client : UDSClient,
+  state : @server.ServerState,
+) -> Unit {
+  @uds.close(client.fd)
+  match client.connected_agent_id {
     Some(agent_id) => state.handle_disconnect(agent_id)
     None => ()
   }
@@ -177,7 +218,7 @@ fn main_prog() -> Unit raise {
   }
   let state = @server.ServerState::new(config)
   @async.with_event_loop(async fn(root) {
-    @server.recover_state(state, "choir")
+    @server.recover_state(state, config.tmux_session)
     root.spawn_bg(async fn() {
       let timeout_sec = 900L
       let interval_ms = 30000
@@ -212,18 +253,38 @@ fn main_prog() -> Unit raise {
         println("failed to bind UDS server on \{config.listen_uds}")
         return
       }
+      ignore(@uds.set_nonblocking(server_fd))
       println("UDS server listening on \{config.listen_uds}")
+      let clients : Array[UDSClient] = []
       for {
-        let client_fd = @uds.accept(server_fd)
-        if client_fd < 0 {
-          break
+        for {
+          let client_fd = @uds.accept_nonblocking(server_fd)
+          if client_fd == -2 {
+            break
+          }
+          if client_fd < 0 {
+            @uds.close(server_fd)
+            return
+          }
+          ignore(@uds.set_nonblocking(client_fd))
+          clients.push(UDSClient::new(client_fd))
         }
-        handle_uds_connection(client_fd, state) catch {
-          _ => ()
+        let mut i = 0
+        while i < clients.length() {
+          let alive = handle_uds_connection(clients[i], state) catch {
+            _ => false
+          }
+          if alive {
+            i = i + 1
+          } else {
+            let client = clients.remove(i)
+            close_uds_client(client, state) catch {
+              _ => ()
+            }
+          }
         }
-        @uds.close(client_fd)
+        @async.sleep(10)
       }
-      @uds.close(server_fd)
     })
     match config.listen_tcp {
       Some(addr_str) => {

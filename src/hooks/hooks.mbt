@@ -7,6 +7,7 @@ pub(all) enum HookEvent {
 ///|
 pub(all) struct HookInput {
   event : HookEvent
+  session_id : String?
   agent_id : String?
   role : @types.Role?
   tool_name : String?
@@ -105,6 +106,7 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     "PreToolUse" => HookEvent::PreToolUse
     _ => return None
   }
+  let session_id = get_string_value(line, "session_id")
   let agent_id = get_string_value(line, "agent_id")
   let role_str = get_string_value(line, "role")
   let role = match role_str {
@@ -118,5 +120,5 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
 
   // Minimal support for args, as it's not strictly used for logic yet
   let tool_args = None
-  Some({ event, agent_id, role, tool_name, tool_args })
+  Some({ event, session_id, agent_id, role, tool_name, tool_args })
 }

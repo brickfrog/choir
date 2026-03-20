@@ -308,6 +308,56 @@ test "dispatch spawn_gemini validates slug" {
 }
 
 ///|
+test "dispatch spawn_gemini returns agent_id and renders leaf protocol" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "spawn_gemini",
+      args: {
+        "task": "Implement feature X",
+        "slug": "gem-feat",
+        "parent_branch": "main",
+        "read_first": "AGENTS.md\nsrc/tools/dispatch.mbt",
+      },
+    }
+    let res = @tools.dispatch(call, runner=mock_runner)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("spawned"))
+        assert_eq(m.get("agent_id"), Some("main.gem-feat"))
+        assert_eq(m.get("slug"), Some("gem-feat"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
+test "dispatch spawn_gemini accepts branch alias for slug" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "spawn_gemini",
+      args: { "task": "Implement feature X", "branch": "gem-alias" },
+    }
+    let res = @tools.dispatch(call, runner=mock_runner)
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("agent_id"), Some("main.gem-alias"))
+        assert_eq(m.get("slug"), Some("gem-alias"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
 test "dispatch spawn_moon_pilot returns agent_id with mock" {
   @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
@@ -467,20 +517,55 @@ test "dispatch spawn_worker succeeds with inline worker" {
 }
 
 ///|
+test "dispatch spawn_worker accepts agent_id alias" {
+  @async.with_event_loop(_ => {
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "spawn_worker",
+      args: { "agent_id": "worker-a", "task": "investigate" },
+    }
+    let res = @tools.dispatch(call, runner=mock_runner)
+    match res {
+      Ok(m) => assert_eq(m.get("status"), Some("spawned"))
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
+  })
+}
+
+///|
 test "dispatch register inserts agent into registry" {
   @async.with_event_loop(_ => {
     let reg = @registry.AgentRegistry::new()
     let call : @tools.ToolCall = {
       role: @types.Role::Dev,
       name: "register",
-      args: { "agent_id": "leaf-0" },
+      args: {
+        "agent_id": "leaf-0",
+        "parent_id": "root",
+        "branch": "main.leaf-0",
+        "workspace": "/tmp/leaf-0",
+        "tmux_target": "choir:leaf-0",
+        "agent_type": "gemini",
+      },
     }
     let res = @tools.dispatch(call, runner=mock_runner, registry=Some(reg))
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("registered"))
         assert_eq(m.get("agent_id"), Some("leaf-0"))
-        assert_true(reg.get("leaf-0") is Ok(_))
+        match reg.get("leaf-0") {
+          Ok(agent) => {
+            assert_eq(agent.parent, Some("root"))
+            assert_eq(agent.branch, "main.leaf-0")
+            assert_eq(agent.workspace, "/tmp/leaf-0")
+            assert_eq(agent.tmux_target, Some("choir:leaf-0"))
+            assert_eq(agent.agent_type, @types.AgentType::Gemini)
+          }
+          Err(_) => assert_true(false)
+        }
       }
       Err(e) => {
         println(e)

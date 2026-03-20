@@ -66,11 +66,19 @@ fn map_to_json(m : Map[String, String]) -> String {
 }
 
 ///|
+fn id_to_json(id : JsonRpcId) -> String {
+  match id {
+    Number(n) => n.to_string()
+    String(s) => "\"" + escape_json_string(s) + "\""
+  }
+}
+
+///|
 /// Serialize a JsonRpcResponse to a JSON string.
 pub fn JsonRpcResponse::to_json_string(self : JsonRpcResponse) -> String {
   let buf = StringBuilder::new()
   buf.write_string("{\"jsonrpc\":\"2.0\",\"id\":")
-  buf.write_string(self.id.to_string())
+  buf.write_string(id_to_json(self.id))
   match self.result {
     Some(data) => {
       buf.write_string(",\"result\":")

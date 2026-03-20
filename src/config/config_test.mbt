@@ -121,6 +121,28 @@ test "parse_config_local - valid" {
 }
 
 ///|
+test "parse_local_config - metadata" {
+  let content =
+    #|role = "dev"
+    #|agent_id = "main.child"
+    #|parent_id = "main"
+    #|branch = "main.child"
+    #|parent_branch = "main"
+    #|workspace = "/tmp/worktree"
+    #|tmux_target = "choir:child"
+    #|agent_type = "gemini"
+  let local = parse_local_config(content).unwrap()
+  assert_eq(local.role, Some(@types.Role::Dev))
+  assert_eq(local.agent_id, Some("main.child"))
+  assert_eq(local.parent_id, Some("main"))
+  assert_eq(local.branch, Some("main.child"))
+  assert_eq(local.parent_branch, Some("main"))
+  assert_eq(local.workspace, Some("/tmp/worktree"))
+  assert_eq(local.tmux_target, Some("choir:child"))
+  assert_eq(local.agent_type, Some(@types.AgentType::Gemini))
+}
+
+///|
 test "resolve_role" {
   let cfg = @types.Config::default()
   let local_role : @types.Role? = Some(@types.Role::Dev)

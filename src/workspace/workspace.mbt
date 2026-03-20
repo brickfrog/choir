@@ -11,15 +11,37 @@ pub fn branch_name(parent_branch : String, slug : String) -> String {
 }
 
 ///|
-/// Construct the config.local.toml content for a worktree.
-pub fn config_local_content(role : @types.Role) -> String {
-  let role_str = match role {
-    @types.Role::Root => "root"
-    @types.Role::TL => "tl"
-    @types.Role::Dev => "dev"
-    @types.Role::Worker => "worker"
-  }
-  "role = \"" + role_str + "\"\n"
+pub fn canonical_agent_id(spec : @types.SpawnSpec) -> String {
+  branch_name(spec.parent_branch, spec.slug)
+}
+
+///|
+/// Construct the config.local.toml content for a spawned agent.
+pub fn config_local_content(
+  spec : @types.SpawnSpec,
+  workspace : String,
+  tmux_target : String,
+) -> String {
+  let role_str = @config.role_to_string(spec.role)
+  let agent_type_str = @config.agent_type_to_string(spec.agent_type)
+  let agent_id = canonical_agent_id(spec)
+  "role = \"" +
+  role_str +
+  "\"\nagent_id = \"" +
+  agent_id +
+  "\"\nparent_id = \"" +
+  spec.parent_id +
+  "\"\nbranch = \"" +
+  agent_id +
+  "\"\nparent_branch = \"" +
+  spec.parent_branch +
+  "\"\nworkspace = \"" +
+  workspace +
+  "\"\nagent_type = \"" +
+  agent_type_str +
+  "\"\ntmux_target = \"" +
+  tmux_target +
+  "\"\n"
 }
 
 ///|
@@ -38,7 +60,7 @@ fn strip_json_object_braces(s : String) -> String? {
 /// Construct the .mcp.json content for a child worktree.
 pub fn mcp_json_content(
   role : @types.Role,
-  agent_name : String,
+  agent_id : String,
   extra_mcp_servers_json? : String? = None,
 ) -> String {
   let role_str = match role {
@@ -50,7 +72,7 @@ pub fn mcp_json_content(
   let base = "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--role\",\"" +
     role_str +
     "\",\"--name\",\"" +
-    agent_name +
+    agent_id +
     "\"]}}"
   match extra_mcp_servers_json {
     Some(extra) =>

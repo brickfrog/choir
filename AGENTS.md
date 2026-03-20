@@ -112,7 +112,7 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 | `task_get` | `id` | Get task by ID |
 | `task_create` | `id`, `title`, `status?`, `assignee?`, `notes?` | Create a new task |
 | `task_update` | `id`, `status?`, `assignee?`, `notes?` | Update task fields |
-| `file_pr` | `branch`, `parent_branch` | Push branch, create PR targeting parent_branch |
+| `file_pr` | `branch?`, `agent_id?`, `parent_branch?` | Push branch, create or resolve PR, auto-track it for review events |
 
 ### TL + Root
 | Tool | Key args | What it does |
@@ -141,8 +141,7 @@ Your role determines which tools you can call. See SPEC.md §6 for full schemas.
 5. `git add {specific files}` — never `git add .`
 6. `git commit -m "feat: ..."`
 7. `file_pr` with your branch and parent_branch
-8. `track_pr` with the PR number and your agent_id
-9. `notify_parent` with `[PR READY] {pr_url}`
+8. `notify_parent` with `[PR READY] {pr_url}`
 
 ### As a Worker agent (inline pane, no branch)
 

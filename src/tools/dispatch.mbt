@@ -31,6 +31,57 @@ fn parse_int(s : String) -> Int? {
 }
 
 ///|
+fn get_arg_or_alias(
+  args : Map[String, String],
+  key : String,
+  fallback_key : String,
+  default : String,
+) -> String {
+  match args.get(key) {
+    Some(v) => if v == "" { default } else { v }
+    None =>
+      match args.get(fallback_key) {
+        Some(v) => if v == "" { default } else { v }
+        None => default
+      }
+  }
+}
+
+///|
+fn parse_truthy_spawn_flag(s : String) -> Bool {
+  let lowered = s.trim().to_lower()
+  lowered == "true" || lowered == "1" || lowered == "yes"
+}
+
+///|
+fn lookup_parent_session_id(
+  project_dir : String,
+  args : Map[String, String],
+) -> String? {
+  match args.get("parent_session_id") {
+    Some(v) => if v.trim() != "" { return Some(v.trim().to_string()) }
+    None => ()
+  }
+  if not(parse_truthy_spawn_flag(args.get("fork_session").unwrap_or("false"))) {
+    return None
+  }
+  let caller_id = args.get("caller_id").unwrap_or("")
+  if caller_id == "" {
+    return None
+  }
+  let path = project_dir +
+    "/.choir/sessions/claude/" +
+    caller_id +
+    ".session_id"
+  let session_id = @io.read_file(path).trim().to_string()
+  if session_id == "" {
+    None
+  } else {
+    Some(session_id)
+  }
+}
+
+///|
 fn is_alphanumeric_or_dash(c : Char) -> Bool {
   (c >= 'a' && c <= 'z') ||
   (c >= 'A' && c <= 'Z') ||
@@ -572,6 +623,8 @@ fn parse_agent_type(s : String) -> Result[@types.AgentType, String] {
   match s {
     "claude" => Ok(@types.AgentType::Claude)
     "gemini" => Ok(@types.AgentType::Gemini)
+    "moon_pilot" => Ok(@types.AgentType::MoonPilot)
+    "moonpilot" => Ok(@types.AgentType::MoonPilot)
     _ => Err("invalid agent_type: " + s)
   }
 }
@@ -582,6 +635,7 @@ pub async fn dispatch(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   registry? : @registry.AgentRegistry? = None,
@@ -597,16 +651,36 @@ pub async fn dispatch(
             None => return @types.Response::Err("missing agent_id")
           }
           let role = call.role
+          let agent_type = match call.args.get("agent_type") {
+            Some(v) =>
+              match parse_agent_type(v) {
+                Ok(agent_type) => agent_type
+                Err(e) => return @types.Response::Err(e)
+              }
+            None =>
+              match role {
+                @types.Role::Root => @types.AgentType::Claude
+                @types.Role::TL => @types.AgentType::Claude
+                @types.Role::Dev => @types.AgentType::Gemini
+                @types.Role::Worker => @types.AgentType::Gemini
+              }
+          }
           let agent = @types.Agent::{
             agent_id,
             role,
-            agent_type: @types.AgentType::Claude,
+            agent_type,
             state: @types.AgentState::Active,
-            parent: None,
-            tmux_target: None,
+            parent: match call.args.get("parent_id") {
+              Some(v) => if v == "" { None } else { Some(v) }
+              None => None
+            },
+            tmux_target: match call.args.get("tmux_target") {
+              Some(v) => if v == "" { None } else { Some(v) }
+              None => None
+            },
             host: @types.Host::Local,
-            workspace: "",
-            branch: "",
+            workspace: call.args.get("workspace").unwrap_or(""),
+            branch: call.args.get("branch").unwrap_or(""),
           }
           match reg.insert(agent) {
             Ok(_) =>
@@ -624,14 +698,14 @@ pub async fn dispatch(
         Some(v) => v
         None => return @types.Response::Err("missing count")
       }
-      let task = match call.args.get("task") {
-        Some(v) => v
-        None => ""
-      }
-      let parent_branch = match call.args.get("parent_branch") {
-        Some(v) => if v == "" { "main" } else { v }
-        None => "main"
-      }
+      let task = render_leaf_spawn_prompt(call.args)
+      let parent_branch = get_arg_or_alias(
+        call.args,
+        "parent_branch",
+        "branch",
+        "main",
+      )
+      let parent_session_id = lookup_parent_session_id(project_dir, call.args)
       let slug_prefix = match call.args.get("slug_prefix") {
         Some(v) => if v == "" { "wave" } else { v }
         None => "wave"
@@ -648,6 +722,7 @@ pub async fn dispatch(
         Some(c) => c
         None => return @types.Response::Err("invalid count: " + count_str)
       }
+      let caller_id = call.args.get("caller_id").unwrap_or("main")
       let agent_ids = StringBuilder::new()
       let cmds : Array[@workspace.Command] = []
       for i = 0; i < count; i = i + 1 {
@@ -663,7 +738,7 @@ pub async fn dispatch(
           agent_type: @types.AgentType::Claude,
           task,
           isolation: @types.IsolationMode::Worktree,
-          parent_id: "main", // Stub
+          parent_id: caller_id,
           parent_branch,
         }
         for
@@ -671,6 +746,7 @@ pub async fn dispatch(
             spec,
             project_dir,
             session,
+            parent_session_id~,
             extra_mcp_servers_json~,
             shell_command~,
           ) {
@@ -715,14 +791,9 @@ pub async fn dispatch(
       }
     }
     "file_pr" => {
-      let branch = match call.args.get("branch") {
-        Some(v) =>
-          if v == "" {
-            return @types.Response::Err("missing branch")
-          } else {
-            v
-          }
-        None => return @types.Response::Err("missing branch")
+      let branch = get_arg_or_alias(call.args, "branch", "agent_id", "")
+      if branch == "" {
+        return @types.Response::Err("missing branch")
       }
       let parent_branch = match call.args.get("parent_branch") {
         Some(v) => if v == "" { "main" } else { v }
@@ -736,10 +807,38 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err("invalid parent_branch: " + e)
         Ok(_) => ()
       }
-      let cmds = file_pr_commands(branch, parent_branch)
-      match run_strict(runner, cmds) {
-        Ok(_) => @types.Response::Ok({ "status": "pr_created" })
+      let tracked_agent_id = get_arg_or_alias(
+        call.args,
+        "agent_id",
+        "caller_id",
+        branch,
+      )
+      match run_strict(runner, [@workspace.git_push(branch)]) {
         Err(e) => @types.Response::Err(e)
+        Ok(_) =>
+          match ensure_pr(branch, parent_branch, project_dir) {
+            Err(e) => @types.Response::Err(e)
+            Ok(pr) => {
+              let mut tracked = false
+              match poller_state {
+                Some(ps) => {
+                  ps.track(pr.number, tracked_agent_id, @poller.now_sec())
+                  tracked = true
+                }
+                None => ()
+              }
+              @types.Response::Ok({
+                "status": "pr_created",
+                "pr_number": pr.number.to_string(),
+                "pr_url": pr.url,
+                "tracked": if tracked {
+                  "true"
+                } else {
+                  "false"
+                },
+              })
+            }
+          }
       }
     }
     "merge_pr" => {
@@ -1151,18 +1250,15 @@ pub async fn dispatch(
       }
     }
     "spawn_gemini" => {
-      let task = match call.args.get("task") {
-        Some(v) => v
-        None => ""
-      }
-      let slug = match call.args.get("slug") {
-        Some(v) => if v == "" { "gemini-leaf" } else { v }
-        None => "gemini-leaf"
-      }
-      let parent_branch = match call.args.get("parent_branch") {
-        Some(v) => if v == "" { "main" } else { v }
-        None => "main"
-      }
+      let task = render_leaf_spawn_prompt(call.args)
+      let caller_id = call.args.get("caller_id").unwrap_or("main")
+      let slug = get_arg_or_alias(call.args, "slug", "branch", "gemini-leaf")
+      let parent_branch = get_arg_or_alias(
+        call.args,
+        "parent_branch",
+        "base_branch",
+        "main",
+      )
       match validate_slug(slug) {
         Err(e) => return @types.Response::Err("invalid slug: " + e)
         Ok(_) => ()
@@ -1177,34 +1273,41 @@ pub async fn dispatch(
         agent_type: @types.AgentType::Gemini,
         task,
         isolation: @types.IsolationMode::Worktree,
-        parent_id: "main", // Stub
+        parent_id: caller_id,
         parent_branch,
       }
       let cmds = @workspace.spawn_commands(
         spec,
         project_dir,
         session,
+        parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
       )
       match run_strict(runner, cmds) {
-        Ok(_) => @types.Response::Ok({ "status": "spawned" })
+        Ok(_) =>
+          @types.Response::Ok({
+            "status": "spawned",
+            "agent_id": @workspace.branch_name(parent_branch, slug),
+            "slug": slug,
+          })
         Err(e) => @types.Response::Err(e)
       }
     }
     "spawn_moon_pilot" => {
-      let task = match call.args.get("task") {
-        Some(v) => v
-        None => ""
-      }
-      let slug = match call.args.get("slug") {
-        Some(v) => if v == "" { "moon-pilot-leaf" } else { v }
-        None => "moon-pilot-leaf"
-      }
-      let parent_branch = match call.args.get("parent_branch") {
-        Some(v) => if v == "" { "main" } else { v }
-        None => "main"
-      }
+      let task = render_leaf_spawn_prompt(call.args)
+      let slug = get_arg_or_alias(
+        call.args,
+        "slug",
+        "branch",
+        "moon-pilot-leaf",
+      )
+      let parent_branch = get_arg_or_alias(
+        call.args,
+        "parent_branch",
+        "base_branch",
+        "main",
+      )
       match validate_slug(slug) {
         Err(e) => return @types.Response::Err("invalid slug: " + e)
         Ok(_) => ()
@@ -1226,6 +1329,7 @@ pub async fn dispatch(
         spec,
         project_dir,
         session,
+        parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
       )
@@ -1240,18 +1344,14 @@ pub async fn dispatch(
       }
     }
     "spawn_remote" => {
-      let task = match call.args.get("task") {
-        Some(v) => v
-        None => ""
-      }
-      let slug = match call.args.get("slug") {
-        Some(v) => if v == "" { "remote-leaf" } else { v }
-        None => "remote-leaf"
-      }
-      let parent_branch = match call.args.get("parent_branch") {
-        Some(v) => if v == "" { "main" } else { v }
-        None => "main"
-      }
+      let task = render_leaf_spawn_prompt(call.args)
+      let slug = get_arg_or_alias(call.args, "slug", "branch", "remote-leaf")
+      let parent_branch = get_arg_or_alias(
+        call.args,
+        "parent_branch",
+        "base_branch",
+        "main",
+      )
       let ssh_target = match call.args.get("ssh_target") {
         Some(v) => v
         None => return @types.Response::Err("missing ssh_target")
@@ -1286,6 +1386,7 @@ pub async fn dispatch(
         ssh_target,
         repo_url,
         tcp_addr,
+        parent_session_id=lookup_parent_session_id(project_dir, call.args),
         extra_mcp_servers_json~,
       )
       match run_strict(runner, cmds) {
@@ -1300,14 +1401,14 @@ pub async fn dispatch(
       }
     }
     "spawn_worker" => {
-      let task = match call.args.get("task") {
-        Some(v) => v
-        None => ""
-      }
-      let slug = match call.args.get("slug") {
-        Some(v) => if v == "" { "inline-worker" } else { v }
-        None => "inline-worker"
-      }
+      let task = render_worker_spawn_prompt(call.args)
+      let caller_id = call.args.get("caller_id").unwrap_or("main")
+      let slug = get_arg_or_alias(
+        call.args,
+        "slug",
+        "agent_id",
+        "inline-worker",
+      )
       let agent_type_str = match call.args.get("agent_type") {
         Some(v) => if v == "" { "gemini" } else { v }
         None => "gemini"
@@ -1326,13 +1427,14 @@ pub async fn dispatch(
         agent_type,
         task,
         isolation: @types.IsolationMode::Inline,
-        parent_id: "main",
+        parent_id: caller_id,
         parent_branch: "main",
       }
       let cmds = @workspace.spawn_commands(
         spec,
         project_dir,
         session,
+        parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
       )
@@ -1375,6 +1477,7 @@ pub async fn handle_request(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   agent_registry? : @registry.AgentRegistry? = None,
@@ -1395,6 +1498,7 @@ pub async fn handle_request(
         project_dir~,
         session~,
         runner~,
+        ensure_pr~,
         extra_mcp_servers_json~,
         shell_command~,
         registry=agent_registry,

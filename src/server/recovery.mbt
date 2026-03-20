@@ -176,26 +176,125 @@ async fn capture_stdout(
 }
 
 ///|
-fn recover_role(project_dir : String, slug : String) -> @types.Role {
+fn default_agent_type(role : @types.Role) -> @types.AgentType {
+  match role {
+    @types.Role::Root => @types.AgentType::Claude
+    @types.Role::TL => @types.AgentType::Claude
+    @types.Role::Dev => @types.AgentType::Gemini
+    @types.Role::Worker => @types.AgentType::Gemini
+  }
+}
+
+///|
+fn tmux_target_window_name(target : String) -> String? {
+  let idx = index_of(target, ":")
+  if idx == -1 || idx + 1 >= target.length() {
+    None
+  } else {
+    Some(target[idx + 1:target.length()].to_string() catch { _ => "" })
+  }
+}
+
+///|
+fn is_tmux_target_alive(
+  target : String?,
+  session : String,
+  tmux_windows : Array[String],
+) -> Bool {
+  match target {
+    Some(value) =>
+      match tmux_target_window_name(value) {
+        Some(window_name) =>
+          value.has_prefix(session + ":") && tmux_windows.contains(window_name)
+        None => false
+      }
+    None => false
+  }
+}
+
+///|
+fn recover_agent_from_local_config(
+  project_dir : String,
+  rel_workspace : String,
+  fallback_slug : String,
+  session : String,
+  tmux_windows : Array[String],
+) -> @types.Agent? {
   let config_path = project_dir +
-    "/.choir/worktrees/" +
-    slug +
+    "/" +
+    rel_workspace +
     "/.choir/config.local.toml"
   let content = @io.read_file(config_path)
-  match @config.parse_config_local(content) {
-    Ok(role) => role
-    Err(_) => @types.Role::TL
+  if content == "" {
+    return None
+  }
+  let local_cfg = match @config.parse_local_config(content) {
+    Ok(cfg) => cfg
+    Err(_) => return None
+  }
+  let role = local_cfg.role.unwrap_or(@types.Role::TL)
+  let agent_id = local_cfg.agent_id.unwrap_or(fallback_slug)
+  let branch = local_cfg.branch.unwrap_or(agent_id)
+  let workspace = local_cfg.workspace.unwrap_or(rel_workspace)
+  let alive = is_tmux_target_alive(local_cfg.tmux_target, session, tmux_windows)
+  Some({
+    agent_id,
+    role,
+    agent_type: local_cfg.agent_type.unwrap_or(default_agent_type(role)),
+    state: if alive {
+      @types.AgentState::Active
+    } else {
+      @types.AgentState::Done
+    },
+    parent: local_cfg.parent_id,
+    tmux_target: if alive {
+      local_cfg.tmux_target
+    } else {
+      None
+    },
+    host: @types.Host::Local,
+    workspace,
+    branch,
+  })
+}
+
+///|
+async fn recover_local_agents(
+  state : ServerState,
+  session : String,
+  tmux_windows : Array[String],
+  dir_name : String,
+) -> Unit {
+  let project_dir = state.config.project_dir
+  let output = capture_stdout(
+    "sh",
+    ["-c", "ls .choir/" + dir_name + "/ 2>/dev/null"],
+    cwd=Some(project_dir),
+  )
+  for slug in split_lines(output) {
+    let rel_workspace = ".choir/" + dir_name + "/" + slug
+    match
+      recover_agent_from_local_config(
+        project_dir, rel_workspace, slug, session, tmux_windows,
+      ) {
+      Some(agent) =>
+        match state.registry.insert(agent) {
+          Ok(_) =>
+            if not(
+                is_tmux_target_alive(agent.tmux_target, session, tmux_windows),
+              ) {
+              ignore(state.registry.set_alive(agent.agent_id, false))
+            }
+          Err(_) => ()
+        }
+      None => ()
+    }
   }
 }
 
 ///|
 pub async fn recover_state(state : ServerState, session : String) -> Unit {
   let project_dir = state.config.project_dir
-  let worktree_output = capture_stdout(
-    "sh",
-    ["-c", "ls .choir/worktrees/ 2>/dev/null"],
-    cwd=Some(project_dir),
-  )
   let tmux_output = capture_stdout(
     "sh",
     [
@@ -205,38 +304,8 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
     cwd=Some(project_dir),
   )
   let tmux_windows = split_lines(tmux_output)
-  for slug in split_lines(worktree_output) {
-    let alive = tmux_windows.contains(slug)
-    let agent : @types.Agent = {
-      agent_id: slug,
-      role: recover_role(project_dir, slug),
-      agent_type: @types.AgentType::Claude,
-      state: if alive {
-        @types.AgentState::Active
-      } else {
-        @types.AgentState::Done
-      },
-      parent: None,
-      tmux_target: if alive {
-        Some(session + ":" + slug)
-      } else {
-        None
-      },
-      host: @types.Host::Local,
-      workspace: ".choir/worktrees/" + slug,
-      branch: slug,
-    }
-    match state.registry.insert(agent) {
-      Ok(_) =>
-        if not(alive) {
-          match state.registry.set_alive(slug, false) {
-            Ok(_) => ()
-            Err(_) => ()
-          }
-        }
-      Err(_) => ()
-    }
-  }
+  recover_local_agents(state, session, tmux_windows, "worktrees")
+  recover_local_agents(state, session, tmux_windows, "agents")
 
   let open_pr_output = capture_stdout(
     "sh",

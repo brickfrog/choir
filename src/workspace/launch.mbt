@@ -30,19 +30,35 @@ fn wrap_with_shell(cmd : Command, shell : String) -> Command {
 pub fn agent_launch_command(
   spec : @types.SpawnSpec,
   workspace_path : String,
+  parent_session_id? : String? = None,
   shell_command? : String? = None,
 ) -> Command {
   let cmd = match spec.agent_type {
     Claude =>
-      {
-        program: "claude",
-        args: ["-p", spec.task],
-        workdir: Some(workspace_path),
+      match parent_session_id {
+        Some(session_id) =>
+          {
+            program: "claude",
+            args: [
+              "--dangerously-skip-permissions",
+              "--resume",
+              session_id,
+              "--fork-session",
+              spec.task,
+            ],
+            workdir: Some(workspace_path),
+          }
+        None =>
+          {
+            program: "claude",
+            args: ["--dangerously-skip-permissions", spec.task],
+            workdir: Some(workspace_path),
+          }
       }
     Gemini =>
       {
         program: "gemini",
-        args: ["-p", spec.task],
+        args: ["--prompt-interactive", spec.task],
         workdir: Some(workspace_path),
       }
     MoonPilot =>

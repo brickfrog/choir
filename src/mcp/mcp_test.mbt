@@ -2,7 +2,7 @@
 test "translate tools/call to internal request" {
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
-    id: 1,
+    id: Some(Number(1)),
     req_method: method_tools_call,
     params: Some({
       "name": "fork_wave",
@@ -24,7 +24,7 @@ test "translate tools/call to internal request" {
 test "translate tools/list to internal request" {
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
-    id: 2,
+    id: Some(Number(2)),
     req_method: method_tools_list,
     params: None,
   }
@@ -43,7 +43,7 @@ test "translate tools/list to internal request" {
 test "translate unknown method returns error" {
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
-    id: 4,
+    id: Some(Number(4)),
     req_method: "unknown/method",
     params: None,
   }
@@ -53,8 +53,8 @@ test "translate unknown method returns error" {
 
 ///|
 test "tools_list_response" {
-  let rpc = @mcp.tools_list_response(20)
-  assert_eq(rpc.id, 20)
+  let rpc = @mcp.tools_list_response(Number(20))
+  assert_eq(rpc.id, Number(20))
   match rpc.result {
     Some(res) => {
       let tools = res.get("tools")
@@ -70,6 +70,10 @@ test "tools_list_response" {
           assert_true(t.contains("spawn_gemini"))
           assert_true(t.contains("spawn_moon_pilot"))
           assert_true(t.contains("spawn_worker"))
+          assert_true(t.contains("read_first"))
+          assert_true(t.contains("done_criteria"))
+          assert_true(t.contains("key_decisions"))
+          assert_true(t.contains("agent_id"))
           assert_true(t.contains("kv_get"))
           assert_true(t.contains("kv_set"))
           assert_true(t.contains("kv_delete"))
@@ -92,7 +96,7 @@ test "tools_list_response" {
 test "translate missing name returns error" {
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
-    id: 3,
+    id: Some(Number(3)),
     req_method: method_tools_call,
     params: Some({ "task": "something" }),
   }
@@ -103,9 +107,9 @@ test "translate missing name returns error" {
 ///|
 test "from_internal_response Ok" {
   let resp = @types.Response::Ok({ "url": "https://github.com/pr/1" })
-  let rpc = @mcp.from_internal_response(5, resp)
+  let rpc = @mcp.from_internal_response(Number(5), resp)
   assert_eq(rpc.jsonrpc, "2.0")
-  assert_eq(rpc.id, 5)
+  assert_eq(rpc.id, Number(5))
   assert_true(rpc.result is Some(_))
   assert_true(rpc.error is None)
 }
@@ -113,19 +117,29 @@ test "from_internal_response Ok" {
 ///|
 test "from_internal_response Err" {
   let resp = @types.Response::Err("tool not found")
-  let rpc = @mcp.from_internal_response(6, resp)
-  assert_eq(rpc.id, 6)
-  assert_true(rpc.result is None)
-  match rpc.error {
-    Some(e) => assert_eq(e.code, @mcp.err_internal)
-    None => fail("expected error")
+  let rpc = @mcp.from_internal_response(Number(6), resp)
+  assert_eq(rpc.id, Number(6))
+  assert_true(rpc.error is None)
+  match rpc.result {
+    Some(result) => {
+      assert_eq(result.get("isError"), Some("true"))
+      match result.get("content") {
+        Some(content) => assert_true(content.contains("tool not found"))
+        None => fail("expected content")
+      }
+    }
+    None => fail("expected result")
   }
 }
 
 ///|
 test "error_response" {
-  let rpc = @mcp.error_response(7, @mcp.err_method_not_found, "no such method")
-  assert_eq(rpc.id, 7)
+  let rpc = @mcp.error_response(
+    Number(7),
+    @mcp.err_method_not_found,
+    "no such method",
+  )
+  assert_eq(rpc.id, Number(7))
   match rpc.error {
     Some(e) => {
       assert_eq(e.code, -32601)
@@ -138,7 +152,7 @@ test "error_response" {
 ///|
 test "serialize successful response" {
   let resp = @types.Response::Ok({ "status": "ok" })
-  let rpc = @mcp.from_internal_response(10, resp)
+  let rpc = @mcp.from_internal_response(Number(10), resp)
   let json = rpc.to_json_string()
   assert_true(json.contains("\"jsonrpc\":\"2.0\""))
   assert_true(json.contains("\"id\":10"))
@@ -150,7 +164,7 @@ test "serialize successful response" {
 
 ///|
 test "serialize error response" {
-  let rpc = @mcp.error_response(11, -32603, "internal error")
+  let rpc = @mcp.error_response(Number(11), -32603, "internal error")
   let json = rpc.to_json_string()
   assert_true(json.contains("\"jsonrpc\":\"2.0\""))
   assert_true(json.contains("\"id\":11"))

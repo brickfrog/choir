@@ -65,6 +65,15 @@ pub async fn ServerState::handle(
   self : ServerState,
   req : @types.Request,
 ) -> @types.Response {
+  self.handle_with_runner(req, runner=@exec.run_sequence)
+}
+
+///|
+pub async fn ServerState::handle_with_runner(
+  self : ServerState,
+  req : @types.Request,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+) -> @types.Response {
   let start_sec = @poller.now_sec()
   let resp = if req.req_method == "tools/list" {
     @types.Response::Ok({ "tools_list": "true" })
@@ -73,6 +82,8 @@ pub async fn ServerState::handle(
       self.tool_registry,
       req,
       project_dir=self.config.project_dir,
+      session=self.config.tmux_session,
+      runner~,
       extra_mcp_servers_json=self.config.extra_mcp_servers_json,
       shell_command=self.config.shell_command,
       agent_registry=Some(self.registry),

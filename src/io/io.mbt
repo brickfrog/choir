@@ -15,6 +15,10 @@ extern "C" fn c_stdin_read_line(buf : Bytes, max_size : Int) -> Int = "choir_std
 extern "C" fn c_stdout_write(buf : Bytes, size : Int) = "choir_stdout_write"
 
 ///|
+#borrow(buf)
+extern "C" fn c_stderr_write(buf : Bytes, size : Int) = "choir_stderr_write"
+
+///|
 extern "C" fn c_exit(code : Int) = "choir_exit"
 
 ///|
@@ -46,6 +50,10 @@ extern "C" fn c_system(cmd : Bytes) -> Int = "choir_system"
 ///|
 #borrow(path)
 extern "C" fn c_write_pid_file(path : Bytes) -> Unit = "choir_write_pid_file"
+
+///|
+#borrow(name, out)
+extern "C" fn c_getenv(name : Bytes, out : Bytes, out_size : Int) -> Int = "choir_getenv"
 
 ///|
 fn string_to_null_terminated_bytes(s : String) -> Bytes {
@@ -83,10 +91,40 @@ pub fn write_stdout_bytes(b : Bytes) -> Unit {
 }
 
 ///|
-pub fn read_stdin_line(max_size : Int) -> (Bytes, Int) {
+pub fn write_stderr(s : String) -> Unit {
+  let b = @utf8.encode(s)
+  c_stderr_write(b, b.length())
+}
+
+///|
+fn read_stdin_chunk(max_size : Int) -> (Bytes, Int, Bool, Bool) {
   let buf = Bytes::new(max_size)
-  let len = c_stdin_read_line(buf, max_size)
-  (buf, len)
+  let status = c_stdin_read_line(buf, max_size)
+  if status == -1 {
+    return (buf, 0, false, true)
+  }
+  if status >= 0 {
+    return (buf, status, false, false)
+  }
+  (buf, -(status + 1), true, false)
+}
+
+///|
+pub fn read_stdin_line(max_size : Int) -> String? {
+  let line = StringBuilder::new()
+  let mut saw_data = false
+  for {
+    let (buf, len, has_more, eof) = read_stdin_chunk(max_size)
+    if eof {
+      return if saw_data { Some(line.to_string()) } else { None }
+    }
+    line.write_string(@utf8.decode_lossy(buf[:len]))
+    saw_data = true
+    if not(has_more) {
+      return Some(line.to_string())
+    }
+  }
+  None
 }
 
 ///|
@@ -117,6 +155,17 @@ pub fn get_pid() -> Int {
 pub fn write_pid_file(path : String) -> Unit {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_write_pid_file(path_bytes)
+}
+
+///|
+pub fn getenv(name : String) -> String? {
+  let name_bytes = string_to_null_terminated_bytes(name)
+  let buf = Bytes::new(4096)
+  let len = c_getenv(name_bytes, buf, 4096)
+  if len <= 0 {
+    return None
+  }
+  Some(@utf8.decode_lossy(buf[:len]))
 }
 
 ///|

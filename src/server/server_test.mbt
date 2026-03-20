@@ -37,6 +37,26 @@ fn build_agent(id : String, parent : String?) -> @types.Agent {
 }
 
 ///|
+async fn mock_spawn_runner_server(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  assert_eq(cmds.length(), 5)
+  assert_eq(cmds[3].args, [
+    "new-window", "-t", "server-proof", "-n", "leaf-a", "-c", "/tmp/server-proof/.choir/worktrees/leaf-a",
+  ])
+  assert_eq(cmds[4].args[0], "send-keys")
+  assert_eq(cmds[4].args[1], "-t")
+  assert_eq(cmds[4].args[2], "server-proof:leaf-a")
+  assert_true(cmds[4].args[3].contains("gemini '--prompt-interactive'"))
+  assert_true(cmds[4].args[3].contains("## TASK\nreply READY"))
+  assert_true(cmds[4].args[3].contains("## READ FIRST\n- AGENTS.md"))
+  assert_true(cmds[4].args[3].contains("## Completion Protocol (Leaf)"))
+  assert_eq(cmds[4].args[4], "C-m")
+  [0, 0, 0, 0, 0]
+}
+
+///|
 test "ServerState::handle valid request returns Ok" {
   @async.with_event_loop(_ => {
     let state = ServerState::new(@types.Config::default())
@@ -63,6 +83,41 @@ test "ServerState::handle invalid role returns Err" {
     }
     let res = state.handle(req)
     assert_true(res is Err(_))
+  })
+}
+
+///|
+test "ServerState::handle_with_runner passes configured tmux session to spawns" {
+  @async.with_event_loop(_ => {
+    let config = {
+      ..@types.Config::default(),
+      project_dir: "/tmp/server-proof",
+      tmux_session: "server-proof",
+    }
+    let state = ServerState::new(config)
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::TL,
+      name: "spawn_gemini",
+      args: {
+        "caller_id": "root",
+        "slug": "leaf-a",
+        "parent_branch": "main",
+        "task": "reply READY",
+        "read_first": "AGENTS.md",
+      },
+    }
+    let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
+    match res {
+      Ok(result) => {
+        assert_eq(result.get("status"), Some("spawned"))
+        assert_eq(result.get("agent_id"), Some("main.leaf-a"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
   })
 }
 

@@ -8,6 +8,15 @@ test "parse_flat_json_object extracts string key-value pairs" {
 }
 
 ///|
+test "parse_flat_json_object unescapes newlines and quotes" {
+  let m = parse_flat_json_object(
+    "{\"task\":\"line one\\nline two\",\"note\":\"say \\\"hi\\\"\"}",
+  )
+  assert_eq(m.get("task"), Some("line one\nline two"))
+  assert_eq(m.get("note"), Some("say \"hi\""))
+}
+
+///|
 test "parse_flat_json_object empty object" {
   let m = parse_flat_json_object("{}")
   assert_eq(m.length(), 0)
@@ -19,7 +28,7 @@ test "parse valid jsonrpc request with tools/call" {
   match parse_jsonrpc_request(line) {
     Ok(req) => {
       assert_eq(req.jsonrpc, "2.0")
-      assert_eq(req.id, 1)
+      assert_eq(req.id, Some(Number(1)))
       assert_eq(req.req_method, "tools/call")
       match req.params {
         Some(params) => {
@@ -37,7 +46,16 @@ test "parse valid jsonrpc request with tools/call" {
 test "parse request with missing id returns notification (id=-1)" {
   let line = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
   match parse_jsonrpc_request(line) {
-    Ok(rpc) => assert_eq(rpc.id, -1)
+    Ok(rpc) => assert_eq(rpc.id, None)
+    Err(e) => fail("should have succeeded, got: \{e.message}")
+  }
+}
+
+///|
+test "parse request with string id" {
+  let line = "{\"jsonrpc\":\"2.0\",\"id\":\"abc123\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"text\":\"hello\"}}}"
+  match parse_jsonrpc_request(line) {
+    Ok(rpc) => assert_eq(rpc.id, Some(String("abc123")))
     Err(e) => fail("should have succeeded, got: \{e.message}")
   }
 }
@@ -98,7 +116,7 @@ test "read_line_from_bytes with multiple lines returns first" {
 test "response_to_bytes produces valid result" {
   let resp : JsonRpcResponse = {
     jsonrpc: "2.0",
-    id: 1,
+    id: Number(1),
     result: Some({ "status": "ok" }),
     error: None,
   }

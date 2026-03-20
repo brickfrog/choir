@@ -1,4 +1,6 @@
 #include <stddef.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -23,9 +25,34 @@ static int choir_copy_uds_path(struct sockaddr_un *addr, const char *path, int p
     return 0;
 }
 
+static int choir_uds_can_connect(const struct sockaddr_un *addr) {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    int ok = connect(fd, (const struct sockaddr *)addr, sizeof(*addr)) == 0;
+    close(fd);
+    return ok;
+}
+
+static int choir_set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        return -1;
+    }
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 int choir_uds_server_create(const char *path, int path_len) {
     struct sockaddr_un addr;
     if (choir_copy_uds_path(&addr, path, path_len) != 0) {
+        return -1;
+    }
+
+    if (choir_uds_can_connect(&addr)) {
         return -1;
     }
 
@@ -54,6 +81,14 @@ int choir_uds_accept(int server_fd) {
     return accept(server_fd, NULL, NULL);
 }
 
+int choir_uds_accept_nonblocking(int server_fd) {
+    int fd = accept(server_fd, NULL, NULL);
+    if (fd < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        return -2;
+    }
+    return fd;
+}
+
 int choir_uds_client_connect(const char *path, int path_len) {
     struct sockaddr_un addr;
     if (choir_copy_uds_path(&addr, path, path_len) != 0) {
@@ -77,12 +112,24 @@ int choir_uds_read(int fd, void *buf, int offset, int len) {
     return (int)read(fd, ((char *)buf) + offset, (size_t)len);
 }
 
+int choir_uds_read_nonblocking(int fd, void *buf, int offset, int len) {
+    int n = (int)read(fd, ((char *)buf) + offset, (size_t)len);
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        return -2;
+    }
+    return n;
+}
+
 int choir_uds_write(int fd, const void *buf, int offset, int len) {
     return (int)write(fd, ((const char *)buf) + offset, (size_t)len);
 }
 
 void choir_uds_close(int fd) {
     close(fd);
+}
+
+int choir_uds_set_nonblocking(int fd) {
+    return choir_set_nonblocking(fd);
 }
 
 /* Fire-and-forget HTTP POST to a Unix domain socket.

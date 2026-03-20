@@ -11,6 +11,19 @@ pub fn parse_role(s : String) -> Result[@types.Role, @types.ExoError] {
 }
 
 ///|
+pub fn parse_agent_type(
+  s : String,
+) -> Result[@types.AgentType, @types.ExoError] {
+  match s {
+    "claude" => Ok(@types.AgentType::Claude)
+    "gemini" => Ok(@types.AgentType::Gemini)
+    "moon_pilot" => Ok(@types.AgentType::MoonPilot)
+    "moonpilot" => Ok(@types.AgentType::MoonPilot)
+    _ => Err(@types.ExoError::ConfigError("unknown agent_type: " + s))
+  }
+}
+
+///|
 /// Role to its config string representation.
 pub fn role_to_string(role : @types.Role) -> String {
   match role {
@@ -18,6 +31,15 @@ pub fn role_to_string(role : @types.Role) -> String {
     @types.Role::TL => "tl"
     @types.Role::Dev => "dev"
     @types.Role::Worker => "worker"
+  }
+}
+
+///|
+pub fn agent_type_to_string(agent_type : @types.AgentType) -> String {
+  match agent_type {
+    @types.AgentType::Claude => "claude"
+    @types.AgentType::Gemini => "gemini"
+    @types.AgentType::MoonPilot => "moon_pilot"
   }
 }
 
@@ -108,13 +130,74 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
 }
 
 ///|
-/// Parses config.local.toml
+/// Parses config.local.toml into the local spawn/session metadata.
+pub fn parse_local_config(
+  content : String,
+) -> Result[@types.LocalConfig, @types.ExoError] {
+  let map = parse_toml(content)
+  let role = match map.get("role") {
+    Some(r) =>
+      match parse_role(r) {
+        Ok(role) => Some(role)
+        Err(e) => return Err(e)
+      }
+    None => None
+  }
+  let agent_id = match map.get("agent_id") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
+  }
+  let parent_id = match map.get("parent_id") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
+  }
+  let branch = match map.get("branch") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
+  }
+  let parent_branch = match map.get("parent_branch") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
+  }
+  let workspace = match map.get("workspace") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
+  }
+  let tmux_target = match map.get("tmux_target") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
+  }
+  let agent_type = match map.get("agent_type") {
+    Some(v) =>
+      match parse_agent_type(v) {
+        Ok(agent_type) => Some(agent_type)
+        Err(e) => return Err(e)
+      }
+    None => None
+  }
+  Ok({
+    role,
+    agent_id,
+    parent_id,
+    branch,
+    parent_branch,
+    workspace,
+    tmux_target,
+    agent_type,
+  })
+}
+
+///|
+/// Parses config.local.toml for role-only compatibility.
 pub fn parse_config_local(
   content : String,
 ) -> Result[@types.Role, @types.ExoError] {
-  let map = parse_toml(content)
-  match map.get("role") {
-    Some(r) => parse_role(r)
+  let local_cfg = match parse_local_config(content) {
+    Ok(local_cfg) => local_cfg
+    Err(e) => return Err(e)
+  }
+  match local_cfg.role {
+    Some(r) => Ok(r)
     None => Err(@types.ExoError::ConfigError("missing role in local config"))
   }
 }

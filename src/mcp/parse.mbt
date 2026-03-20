@@ -38,6 +38,50 @@ fn find_substring(s : String, sub : String, start : Int) -> Int {
 }
 
 ///|
+fn unescape_json_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  let mut i = 0
+  while i < s.length() {
+    if s[i] == '\\' && i + 1 < s.length() {
+      match s[i + 1] {
+        'n' => {
+          buf.write_char('\n')
+          i = i + 2
+        }
+        'r' => {
+          buf.write_char('\r')
+          i = i + 2
+        }
+        't' => {
+          buf.write_char('\t')
+          i = i + 2
+        }
+        '"' => {
+          buf.write_char('"')
+          i = i + 2
+        }
+        '\\' => {
+          buf.write_char('\\')
+          i = i + 2
+        }
+        '/' => {
+          buf.write_char('/')
+          i = i + 2
+        }
+        _ => {
+          buf.write_char(Int::unsafe_to_char(s[i].to_int()))
+          i = i + 1
+        }
+      }
+    } else {
+      buf.write_char(Int::unsafe_to_char(s[i].to_int()))
+      i = i + 1
+    }
+  }
+  buf.to_string()
+}
+
+///|
 fn get_string_value(json : String, key : String) -> String? {
   let key_pattern = "\"" + key + "\":\""
   let i = find_substring(json, key_pattern, 0)
@@ -55,9 +99,7 @@ fn get_string_value(json : String, key : String) -> String? {
     if end >= json.length() {
       None
     } else {
-      Some(json[start:end].to_string()) catch {
-        _ => None
-      }
+      Some(unescape_json_string(json[start:end].to_string() catch { _ => "" }))
     }
   }
 }
@@ -80,6 +122,30 @@ fn get_int_value(json : String, key : String) -> Int? {
       parse_int(json[start:end].to_string()) catch {
         _ => None
       }
+    }
+  }
+}
+
+///|
+fn get_id_value(json : String) -> JsonRpcId? {
+  let key_pattern = "\"id\":"
+  let i = find_substring(json, key_pattern, 0)
+  if i == -1 {
+    return None
+  }
+  let start = i + key_pattern.length()
+  if start >= json.length() {
+    return None
+  }
+  if json[start] == '"' {
+    match get_string_value(json, "id") {
+      Some(v) => Some(String(v))
+      None => None
+    }
+  } else {
+    match get_int_value(json, "id") {
+      Some(v) => Some(Number(v))
+      None => None
     }
   }
 }
@@ -193,7 +259,11 @@ pub fn parse_flat_json_object(s : String) -> Map[String, String] {
           val_end = val_end + 1
         }
         if val_end < s.length() {
-          let val = s[val_start:val_end].to_string() catch { _ => "" }
+          let val = unescape_json_string(
+            s[val_start:val_end].to_string() catch {
+              _ => ""
+            },
+          )
           if key != "" {
             map.set(key, val)
           }
@@ -219,10 +289,7 @@ pub fn parse_jsonrpc_request(
     Some(v) => v
     None => return Err({ code: err_invalid_params, message: "missing jsonrpc" })
   }
-  let id = match get_int_value(line, "id") {
-    Some(v) => v
-    None => -1 // notifications have no id; callers must not send a response when id < 0
-  }
+  let id = get_id_value(line)
   let method_val = match get_string_value(line, "method") {
     Some(v) => v
     None => return Err({ code: err_invalid_params, message: "missing method" })

@@ -40,7 +40,7 @@ pub fn to_internal_request(
 
 ///|
 /// Create a JSON-RPC response for the MCP initialize handshake.
-pub fn initialize_response(id : Int) -> JsonRpcResponse {
+pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
   {
     jsonrpc: "2.0",
     id,
@@ -68,8 +68,80 @@ fn prop(name : String, desc : String) -> String {
 }
 
 ///|
+fn spawn_leaf_props(default_slug : String, agent_label : String) -> String {
+  prop("task", "Primary task for the " + agent_label) +
+  "," +
+  prop("prompt", "Optional full prompt override") +
+  "," +
+  prop("slug", "Agent slug / branch suffix (default " + default_slug + ")") +
+  "," +
+  prop("branch", "Compatibility alias for slug") +
+  "," +
+  prop("parent_branch", "Parent branch (default main)") +
+  "," +
+  prop(
+    "fork_session", "For Claude children, inherit parent session context when true",
+  ) +
+  "," +
+  prop(
+    "parent_session_id", "Explicit Claude parent session id override for --resume",
+  ) +
+  "," +
+  prop("read_first", "Newline-separated paths to read first") +
+  "," +
+  prop("steps", "Newline-separated implementation steps") +
+  "," +
+  prop("verify", "Newline-separated verification commands") +
+  "," +
+  prop("done_criteria", "Newline-separated acceptance criteria") +
+  "," +
+  prop("boundary", "Newline-separated things the agent must not do") +
+  "," +
+  prop("constraints", "Newline-separated extra constraints") +
+  "," +
+  prop("context", "Context or reasoning summary for the child agent") +
+  "," +
+  prop("key_decisions", "Newline-separated decisions that are already fixed") +
+  "," +
+  prop("non_goals", "Newline-separated non-goals")
+}
+
+///|
+fn spawn_worker_props() -> String {
+  prop("task", "Primary task for the worker agent") +
+  "," +
+  prop("prompt", "Optional full prompt override") +
+  "," +
+  prop("slug", "Worker slug (default inline-worker)") +
+  "," +
+  prop("agent_id", "Compatibility alias for slug") +
+  "," +
+  prop("agent_type", "Worker agent type: gemini, claude, or moon_pilot") +
+  "," +
+  prop("type", "Worker profile: implementation or research") +
+  "," +
+  prop("read_first", "Newline-separated paths to read first") +
+  "," +
+  prop("steps", "Newline-separated implementation steps") +
+  "," +
+  prop("verify", "Newline-separated verification commands") +
+  "," +
+  prop("done_criteria", "Newline-separated acceptance criteria") +
+  "," +
+  prop("boundary", "Newline-separated things the worker must not do") +
+  "," +
+  prop("constraints", "Newline-separated extra constraints") +
+  "," +
+  prop("context", "Context or reasoning summary for the worker") +
+  "," +
+  prop("key_decisions", "Newline-separated decisions that are already fixed") +
+  "," +
+  prop("non_goals", "Newline-separated non-goals")
+}
+
+///|
 /// Create a JSON-RPC response with the list of available tools.
-pub fn tools_list_response(id : Int) -> JsonRpcResponse {
+pub fn tools_list_response(id : JsonRpcId) -> JsonRpcResponse {
   let s = schema
   let p = prop
   let tools_json = "[" +
@@ -77,14 +149,45 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
     s(
       p("task", "Task description for the wave") +
       "," +
-      p("branch", "Branch name for the worktree") +
+      p("parent_branch", "Parent branch for spawned children (default main)") +
       "," +
-      p("count", "Number of workers to spawn (default 1)"),
-      "\"task\",\"branch\"",
+      p("branch", "Compatibility alias for parent_branch") +
+      "," +
+      p("count", "Number of workers to spawn (default 1)") +
+      "," +
+      p("slug_prefix", "Slug prefix for spawned children") +
+      "," +
+      p("read_first", "Newline-separated paths to read first") +
+      "," +
+      p("steps", "Newline-separated implementation steps") +
+      "," +
+      p("verify", "Newline-separated verification commands") +
+      "," +
+      p("done_criteria", "Newline-separated acceptance criteria") +
+      "," +
+      p("boundary", "Newline-separated things children must not do") +
+      "," +
+      p("constraints", "Newline-separated extra constraints") +
+      "," +
+      p("context", "Context or reasoning summary for the wave") +
+      "," +
+      p("key_decisions", "Newline-separated decisions that are already fixed") +
+      "," +
+      p("non_goals", "Newline-separated non-goals"),
+      "\"task\",\"count\"",
     ) +
     "}," +
-    "{\"name\":\"file_pr\",\"description\":\"File a pull request for the current branch\",\"inputSchema\":" +
-    s(p("agent_id", "ID of the agent filing the PR"), "\"agent_id\"") +
+    "{\"name\":\"file_pr\",\"description\":\"Push the branch, create or resolve its PR, and auto-track it for review events\",\"inputSchema\":" +
+    s(
+      p("branch", "Branch to file a PR for") +
+      "," +
+      p("agent_id", "Compatibility alias for branch and tracked agent id") +
+      "," +
+      p("parent_branch", "Parent branch to target (default main)") +
+      "," +
+      p("caller_id", "Optional tracked agent id override"),
+      "",
+    ) +
     "}," +
     "{\"name\":\"merge_pr\",\"description\":\"Merge a pull request by number\",\"inputSchema\":" +
     s(
@@ -119,28 +222,13 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
     ) +
     "}," +
     "{\"name\":\"spawn_gemini\",\"description\":\"Spawn a Gemini leaf agent in a new worktree\",\"inputSchema\":" +
-    s(
-      p("task", "Task for the Gemini agent") +
-      "," +
-      p("branch", "Branch name for the worktree"),
-      "\"task\",\"branch\"",
-    ) +
+    s(spawn_leaf_props("gemini-leaf", "Gemini leaf agent"), "\"task\"") +
     "}," +
     "{\"name\":\"spawn_moon_pilot\",\"description\":\"Spawn a Moon Pilot leaf agent in a new worktree\",\"inputSchema\":" +
-    s(
-      p("task", "Task for the Moon Pilot agent") +
-      "," +
-      p("branch", "Branch name for the worktree"),
-      "\"task\",\"branch\"",
-    ) +
+    s(spawn_leaf_props("moon-pilot-leaf", "Moon Pilot leaf agent"), "\"task\"") +
     "}," +
     "{\"name\":\"spawn_worker\",\"description\":\"Spawn an inline worker agent in a tmux window\",\"inputSchema\":" +
-    s(
-      p("task", "Task for the worker agent") +
-      "," +
-      p("agent_id", "ID to assign the worker"),
-      "\"task\",\"agent_id\"",
-    ) +
+    s(spawn_worker_props(), "\"task\"") +
     "}," +
     "{\"name\":\"kv_get\",\"description\":\"Read one value from shared KV storage\",\"inputSchema\":" +
     s(p("key", "Storage key to read"), "\"key\"") +
@@ -231,7 +319,7 @@ pub fn tools_list_response(id : Int) -> JsonRpcResponse {
 ///|
 /// Translate an internal Response to a JSON-RPC response.
 pub fn from_internal_response(
-  id : Int,
+  id : JsonRpcId,
   resp : @types.Response,
 ) -> JsonRpcResponse {
   match resp {
@@ -247,20 +335,24 @@ pub fn from_internal_response(
         error: None,
       }
     }
-    @types.Response::Err(msg) =>
+    @types.Response::Err(msg) => {
+      let content = "[{\"type\":\"text\",\"text\":\"" +
+        escape_json_string(msg) +
+        "\"}]"
       {
         jsonrpc: "2.0",
         id,
-        result: None,
-        error: Some({ code: err_internal, message: msg }),
+        result: Some({ "content": content, "isError": "true" }),
+        error: None,
       }
+    }
   }
 }
 
 ///|
 /// Create a JSON-RPC error response.
 pub fn error_response(
-  id : Int,
+  id : JsonRpcId,
   code : Int,
   message : String,
 ) -> JsonRpcResponse {

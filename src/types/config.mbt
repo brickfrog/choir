@@ -16,6 +16,18 @@ pub(all) struct Config {
 } derive(Show)
 
 ///|
+pub(all) struct LocalConfig {
+  role : Role?
+  agent_id : String?
+  parent_id : String?
+  branch : String?
+  parent_branch : String?
+  workspace : String?
+  tmux_target : String?
+  agent_type : AgentType?
+} derive(Show)
+
+///|
 /// Default configuration values.
 pub fn Config::default() -> Config {
   {
@@ -31,5 +43,19 @@ pub fn Config::default() -> Config {
     companions_json: None,
     plugins_json: None,
     tmux_session: "choir",
+  }
+}
+
+///|
+pub fn LocalConfig::default() -> LocalConfig {
+  {
+    role: None,
+    agent_id: None,
+    parent_id: None,
+    branch: None,
+    parent_branch: None,
+    workspace: None,
+    tmux_target: None,
+    agent_type: None,
   }
 }
