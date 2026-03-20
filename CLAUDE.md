@@ -82,7 +82,7 @@ If Choir cannot do that loop cleanly, it is not done.
 
 ## Development Rules
 
-- `moon fmt` before committing. No exceptions.
+- `moon fmt` before committing. No exceptions. (This ensures consistent code style across the project.)
 - `moon test` must pass. Do not skip, ignore, or weaken tests.
 - Immutable by default. Explicit `mut` only where needed.
 - Pattern matching over conditionals.
