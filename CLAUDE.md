@@ -107,6 +107,7 @@ Still needs hard proof or more hardening:
 - stronger guarantees around child completion/reporting discipline
 - continued hardening of multi-client bridge/server behavior under real concurrent use
 - richer parity with ExoMonad session/routing semantics
+- disposable live GitHub smoke PRs are acceptable for validating the real workflow, but should be closed after verification
 
 ## Implementation Phasing
 
