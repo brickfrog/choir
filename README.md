@@ -26,9 +26,6 @@ workspaces.
 - agent CLIs: Claude, Gemini, Moon Pilot
 - workflow: spawn, message, file PR, track review, merge, recover after restart
 
-Choir is a MoonBit reimplementation of ExoMonad's core orchestration loop
-without the Haskell WASM stack.
-
 ## Build
 
 ```bash
@@ -77,5 +74,3 @@ AGENTS.md                 leaf-agent instructions
 - [SPEC.md](SPEC.md)
 - [CLAUDE.md](CLAUDE.md)
 - [AGENTS.md](AGENTS.md)
-- [exomonad](https://github.com/tidepool-heavy-industries/exomonad)
-
