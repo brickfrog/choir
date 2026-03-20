@@ -1229,6 +1229,9 @@ pub async fn dispatch(
   ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
+  listen_uds? : String = ".choir/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
@@ -1302,6 +1305,9 @@ pub async fn dispatch(
             parent_session_id=fork_wave_args.parent_session_id,
             extra_mcp_servers_json~,
             shell_command~,
+            listen_uds~,
+            listen_tcp~,
+            tcp_auth_token~,
           ) {
           cmds.push(cmd)
         }
@@ -1766,6 +1772,9 @@ pub async fn dispatch(
         parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
@@ -1801,6 +1810,9 @@ pub async fn dispatch(
         parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
@@ -1870,6 +1882,9 @@ pub async fn dispatch(
         parent_session_id=None,
         extra_mcp_servers_json~,
         shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
@@ -1917,6 +1932,9 @@ pub async fn handle_request(
   ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
+  listen_uds? : String = ".choir/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
   agent_registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
@@ -1938,6 +1956,9 @@ pub async fn handle_request(
         ensure_pr~,
         extra_mcp_servers_json~,
         shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
         registry=agent_registry,
         mutex_registry~,
         poller_state~,

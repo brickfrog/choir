@@ -31,6 +31,72 @@ pub fn canonical_agent_id(spec : @types.SpawnSpec) -> String {
 }
 
 ///|
+fn escape_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn resolve_child_path(project_dir : String, path : String) -> String {
+  if path.has_prefix("/") {
+    path
+  } else {
+    project_dir + "/" + path
+  }
+}
+
+///|
+pub fn child_config_content(
+  role : @types.Role,
+  session : String,
+  project_dir : String,
+  listen_uds : String,
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
+) -> String {
+  let role_str = @config.role_to_string(role)
+  let buf = StringBuilder::new()
+  buf.write_string("default_role = \"")
+  buf.write_string(escape_toml_string(role_str))
+  buf.write_string("\"\nproject_dir = \"")
+  buf.write_string(escape_toml_string(project_dir))
+  buf.write_string("\"\nlisten_uds = \"")
+  buf.write_string(
+    escape_toml_string(resolve_child_path(project_dir, listen_uds)),
+  )
+  buf.write_string("\"\ntmux_session = \"")
+  buf.write_string(escape_toml_string(session))
+  buf.write_string("\"\n")
+  match listen_tcp {
+    Some(addr) => {
+      buf.write_string("listen_tcp = \"")
+      buf.write_string(escape_toml_string(addr))
+      buf.write_string("\"\n")
+    }
+    None => ()
+  }
+  match tcp_auth_token {
+    Some(token) => {
+      buf.write_string("tcp_auth_token = \"")
+      buf.write_string(escape_toml_string(token))
+      buf.write_string("\"\n")
+    }
+    None => ()
+  }
+  buf.to_string()
+}
+
+///|
 /// Construct the config.local.toml content for a spawned agent.
 pub fn config_local_content(
   spec : @types.SpawnSpec,

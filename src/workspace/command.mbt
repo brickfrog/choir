@@ -57,6 +57,19 @@ pub fn write_local_config(worktree_path : String, content : String) -> Command {
 }
 
 ///|
+/// Write .choir/config.toml into worktree with client connection settings.
+pub fn write_spawn_config(worktree_path : String, content : String) -> Command {
+  {
+    program: "sh",
+    args: [
+      "-c", "mkdir -p \"$1/.choir\" && printf '%s' \"$2\" > \"$1/.choir/config.toml\"",
+      "sh", worktree_path, content,
+    ],
+    workdir: None,
+  }
+}
+
+///|
 /// Write .mcp.json into worktree pointing to the server.
 /// Uses positional shell args to safely handle paths with spaces.
 pub fn write_mcp_json(worktree_path : String, json : String) -> Command {
@@ -65,6 +78,39 @@ pub fn write_mcp_json(worktree_path : String, json : String) -> Command {
     args: [
       "-c", "printf '%s' \"$2\" > \"$1/.mcp.json\"", "sh", worktree_path, json,
     ],
+    workdir: None,
+  }
+}
+
+///|
+/// Install shell helpers for CLIs that do not load MCP tools directly.
+pub fn write_leaf_helper_scripts(worktree_path : String) -> Command {
+  {
+    program: "sh",
+    args: [
+      "-c",
+      "mkdir -p \"$1/.choir/bin\" && " +
+      "cat > \"$1/.choir/bin/choir-leaf-tool\" <<'EOF'\n" +
+      "#!/bin/sh\n" +
+      "tool=\"${0##*/}\"\n" +
+      "exec choir leaf-tool \"$tool\" \"$@\"\n" +
+      "EOF\n" +
+      "chmod +x \"$1/.choir/bin/choir-leaf-tool\" && " +
+      "for name in file_pr notify_parent shutdown task_list task_get task_create task_update; do " +
+      "ln -sf choir-leaf-tool \"$1/.choir/bin/$name\"; " +
+      "done",
+      "sh",
+      worktree_path,
+    ],
+    workdir: None,
+  }
+}
+
+///|
+pub fn trust_gemini_folder(worktree_path : String) -> Command {
+  {
+    program: "choir",
+    args: ["trust-gemini-folder", worktree_path],
     workdir: None,
   }
 }

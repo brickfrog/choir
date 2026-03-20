@@ -34,6 +34,20 @@ fn env_assignment(key : String, value : String) -> String {
 }
 
 ///|
+fn path_assignment(prefix : String) -> String {
+  "PATH=" + quote(prefix) + ":$PATH"
+}
+
+///|
+fn resolved_project_dir(project_dir : String) -> String {
+  if project_dir.has_prefix("/") {
+    project_dir
+  } else {
+    @io.getcwd() + "/" + project_dir
+  }
+}
+
+///|
 fn launch_env_prefix(
   spec : @types.SpawnSpec,
   session : String,
@@ -44,6 +58,7 @@ fn launch_env_prefix(
   let agent_id = canonical_agent_id(spec)
   let agent_type = @config.agent_type_to_string(spec.agent_type)
   let assignments : Array[String] = [
+    path_assignment(workspace + "/.choir/bin"),
     env_assignment("CHOIR_AGENT_ID", agent_id),
     env_assignment("CHOIR_PARENT_ID", spec.parent_id),
     env_assignment("CHOIR_BRANCH", agent_id),
@@ -96,12 +111,16 @@ pub fn spawn_commands(
   parent_session_id? : String? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
+  listen_uds? : String = ".choir/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
 ) -> Array[Command] {
+  let root_project = resolved_project_dir(project_dir)
   let branch = canonical_agent_id(spec)
   let workspace = match spec.isolation {
-    Worktree => worktree_path(project_dir, spec.slug)
-    Inline => project_dir
-    Standalone => project_dir + "/.choir/agents/" + spec.slug
+    Worktree => worktree_path(root_project, spec.slug)
+    Inline => root_project
+    Standalone => root_project + "/.choir/agents/" + spec.slug
   }
   let target = match spec.isolation {
     Worktree => session + ":" + spec.slug
@@ -122,36 +141,80 @@ pub fn spawn_commands(
   let launch_str = launch_env_prefix(spec, session, workspace, tmux_target) +
     command_text_for_tmux(launch_cmd)
   match spec.isolation {
-    Worktree =>
-      [
-        git_worktree_add(workspace, branch),
+    Worktree => {
+      let cmds : Array[Command] = [git_worktree_add(workspace, branch)]
+      cmds.push(
+        write_spawn_config(
+          workspace,
+          child_config_content(
+            spec.role,
+            session,
+            root_project,
+            listen_uds,
+            listen_tcp~,
+            tcp_auth_token~,
+          ),
+        ),
+      )
+      cmds.push(
         write_local_config(
           workspace,
           config_local_content(spec, workspace, tmux_target),
         ),
+      )
+      cmds.push(
         write_mcp_json(
           workspace,
           mcp_json_content(spec.role, branch, extra_mcp_servers_json~),
         ),
-        tmux_new_window(session, spec.slug, workspace),
-        tmux_send_keys(target, launch_str),
-      ]
+      )
+      cmds.push(write_leaf_helper_scripts(workspace))
+      if spec.agent_type == Gemini {
+        cmds.push(trust_gemini_folder(workspace))
+      }
+      cmds.push(tmux_new_window(session, spec.slug, workspace))
+      cmds.push(tmux_send_keys(target, launch_str))
+      cmds
+    }
     Inline =>
       [tmux_split_pane(session, workspace), tmux_send_keys(target, launch_str)]
-    Standalone =>
-      [
+    Standalone => {
+      let cmds : Array[Command] = [
         { program: "git", args: ["init", workspace], workdir: None },
+      ]
+      cmds.push(
+        write_spawn_config(
+          workspace,
+          child_config_content(
+            spec.role,
+            session,
+            root_project,
+            listen_uds,
+            listen_tcp~,
+            tcp_auth_token~,
+          ),
+        ),
+      )
+      cmds.push(
         write_local_config(
           workspace,
           config_local_content(spec, workspace, tmux_target),
         ),
+      )
+      cmds.push(
         write_mcp_json(
           workspace,
           mcp_json_content(spec.role, branch, extra_mcp_servers_json~),
         ),
-        tmux_new_window(session, spec.slug, workspace),
-        tmux_send_keys(target, launch_str),
-      ]
+      )
+      cmds.push(write_leaf_helper_scripts(workspace))
+      if spec.agent_type == Gemini {
+        cmds.push(trust_gemini_folder(workspace))
+      }
+      cmds.push(tmux_new_window(session, spec.slug, workspace))
+      cmds.push(tmux_send_keys(target, launch_str))
+      cmds
+    }
   }
 }
 

@@ -22,6 +22,7 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
   assert_true(prompt.contains("Do not merge your own PR."))
   assert_true(prompt.contains("`file_pr`"))
   assert_true(prompt.contains("`notify_parent`"))
+  assert_true(prompt.contains("shell command on PATH"))
 }
 
 ///|

@@ -41,19 +41,36 @@ async fn mock_spawn_runner_server(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
   @async.sleep(0)
-  assert_eq(cmds.length(), 5)
-  assert_eq(cmds[3].args, [
+  assert_eq(cmds.length(), 8)
+  assert_eq(
+    cmds[1].args[4].contains(
+      "listen_uds = \"/tmp/server-proof/.choir/server.sock\"",
+    ),
+    true,
+  )
+  assert_eq(cmds[4].program, "sh")
+  assert_true(cmds[4].args[1].contains("choir leaf-tool"))
+  assert_eq(cmds[5].program, "choir")
+  assert_eq(cmds[5].args, [
+    "trust-gemini-folder", "/tmp/server-proof/.choir/worktrees/leaf-a",
+  ])
+  assert_eq(cmds[6].args, [
     "new-window", "-t", "server-proof", "-n", "leaf-a", "-c", "/tmp/server-proof/.choir/worktrees/leaf-a",
   ])
-  assert_eq(cmds[4].args[0], "send-keys")
-  assert_eq(cmds[4].args[1], "-t")
-  assert_eq(cmds[4].args[2], "server-proof:leaf-a")
-  assert_true(cmds[4].args[3].contains("gemini '--prompt-interactive'"))
-  assert_true(cmds[4].args[3].contains("## TASK\nreply READY"))
-  assert_true(cmds[4].args[3].contains("## READ FIRST\n- AGENTS.md"))
-  assert_true(cmds[4].args[3].contains("## Completion Protocol (Leaf)"))
-  assert_eq(cmds[4].args[4], "C-m")
-  [0, 0, 0, 0, 0]
+  assert_eq(cmds[7].args[0], "send-keys")
+  assert_eq(cmds[7].args[1], "-t")
+  assert_eq(cmds[7].args[2], "server-proof:leaf-a")
+  assert_true(
+    cmds[7].args[3].contains(
+      "PATH='/tmp/server-proof/.choir/worktrees/leaf-a/.choir/bin':$PATH",
+    ),
+  )
+  assert_true(cmds[7].args[3].contains("gemini '--prompt-interactive'"))
+  assert_true(cmds[7].args[3].contains("## TASK\nreply READY"))
+  assert_true(cmds[7].args[3].contains("## READ FIRST\n- AGENTS.md"))
+  assert_true(cmds[7].args[3].contains("shell command on PATH"))
+  assert_eq(cmds[7].args[4], "C-m")
+  [0, 0, 0, 0, 0, 0, 0, 0]
 }
 
 ///|

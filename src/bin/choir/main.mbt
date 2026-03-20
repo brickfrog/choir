@@ -806,6 +806,383 @@ fn mcp_run() -> Unit raise {
 }
 
 ///|
+priv struct LeafCliArgs {
+  flags : Map[String, String]
+  positionals : Array[String]
+}
+
+///|
+fn normalize_cli_key(key : String) -> String {
+  let buf = StringBuilder::new()
+  for c in key {
+    if c == '-' {
+      buf.write_char('_')
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn parse_leaf_cli_args(args : Array[String]) -> LeafCliArgs {
+  let flags : Map[String, String] = {}
+  let positionals : Array[String] = []
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    if arg.has_prefix("--") {
+      let eq_idx = @jsonutil.find_substring(arg, "=")
+      if eq_idx > 2 {
+        let key = normalize_cli_key(arg[2:eq_idx].to_string() catch { _ => "" })
+        let value = arg[eq_idx + 1:arg.length()].to_string() catch { _ => "" }
+        flags.set(key, value)
+        i = i + 1
+      } else {
+        let key = normalize_cli_key(
+          arg[2:arg.length()].to_string() catch {
+            _ => ""
+          },
+        )
+        if i + 1 < args.length() && not(args[i + 1].has_prefix("--")) {
+          flags.set(key, args[i + 1])
+          i = i + 2
+        } else {
+          flags.set(key, "true")
+          i = i + 1
+        }
+      }
+    } else {
+      positionals.push(arg)
+      i = i + 1
+    }
+  }
+  { flags, positionals }
+}
+
+///|
+fn args_tail(args : Array[String], start : Int) -> Array[String] {
+  let tail : Array[String] = []
+  for i = start; i < args.length(); i = i + 1 {
+    tail.push(args[i])
+  }
+  tail
+}
+
+///|
+fn join_positionals(items : Array[String], start : Int) -> String {
+  let buf = StringBuilder::new()
+  for i = start; i < items.length(); i = i + 1 {
+    if i > start {
+      buf.write_char(' ')
+    }
+    buf.write_string(items[i])
+  }
+  buf.to_string()
+}
+
+///|
+fn is_status_word(s : String) -> Bool {
+  let lowered = s.trim().to_lower()
+  lowered == "success" || lowered == "failure" || lowered == "info"
+}
+
+///|
+fn leaf_tool_request_args(
+  tool : String,
+  cli_args : LeafCliArgs,
+) -> Result[Map[String, String], String] {
+  let flags = cli_args.flags
+  let positionals = cli_args.positionals
+  match tool {
+    "file_pr" => {
+      if not(flags.contains("branch")) && positionals.length() > 0 {
+        flags.set("branch", positionals[0])
+      }
+      if not(flags.contains("parent_branch")) && positionals.length() > 1 {
+        flags.set("parent_branch", positionals[1])
+      }
+      Ok(flags)
+    }
+    "notify_parent" => {
+      if not(flags.contains("status")) &&
+        positionals.length() > 0 &&
+        is_status_word(positionals[0]) {
+        flags.set("status", positionals[0].trim().to_lower().to_string())
+      }
+      if not(flags.contains("message")) {
+        let message_start = if flags.contains("status") &&
+          positionals.length() > 0 &&
+          is_status_word(positionals[0]) {
+          1
+        } else {
+          0
+        }
+        let message = join_positionals(positionals, message_start)
+          .trim()
+          .to_string()
+        if message != "" {
+          flags.set("message", message)
+        }
+      }
+      match flags.get("message") {
+        Some(message) =>
+          if message.trim() == "" {
+            Err("notify_parent requires a message")
+          } else {
+            Ok(flags)
+          }
+        None => Err("notify_parent requires a message")
+      }
+    }
+    "shutdown" => Ok(flags)
+    "task_list" => Ok(flags)
+    "task_get" =>
+      match flags.get("id") {
+        Some(id) =>
+          if id.trim() == "" {
+            Err("task_get requires id")
+          } else {
+            Ok(flags)
+          }
+        None =>
+          if positionals.length() == 0 || positionals[0].trim() == "" {
+            Err("task_get requires id")
+          } else {
+            flags.set("id", positionals[0])
+            Ok(flags)
+          }
+      }
+    "task_create" => {
+      if not(flags.contains("id")) && positionals.length() > 0 {
+        flags.set("id", positionals[0])
+      }
+      if not(flags.contains("title")) && positionals.length() > 1 {
+        flags.set("title", join_positionals(positionals, 1))
+      }
+      match (flags.get("id"), flags.get("title")) {
+        (Some(id), Some(title)) =>
+          if id.trim() == "" || title.trim() == "" {
+            Err("task_create requires id and title")
+          } else {
+            Ok(flags)
+          }
+        _ => Err("task_create requires id and title")
+      }
+    }
+    "task_update" => {
+      if not(flags.contains("id")) && positionals.length() > 0 {
+        flags.set("id", positionals[0])
+      }
+      match flags.get("id") {
+        Some(id) =>
+          if id.trim() == "" {
+            Err("task_update requires id")
+          } else {
+            Ok(flags)
+          }
+        None => Err("task_update requires id")
+      }
+    }
+    _ => Err("unsupported leaf tool: " + tool)
+  }
+}
+
+///|
+fn leaf_tool_response_json(resp : @types.Response) -> String {
+  @transport.format_response(resp) + "\n"
+}
+
+///|
+fn leaf_tool_emit(resp : @types.Response) -> Unit {
+  @io.write_stdout(leaf_tool_response_json(resp))
+  @io.exit(if resp.is_ok() { 0 } else { 1 })
+}
+
+///|
+fn leaf_tool_load_config() -> Result[
+  (@types.Role, @types.Config, @types.LocalConfig),
+  String,
+] {
+  let config_content = @io.read_file(".choir/config.toml")
+  if config_content == "" {
+    return Err("missing .choir/config.toml")
+  }
+  let config = match @config.parse_config(config_content) {
+    Ok(cfg) => cfg
+    Err(e) => return Err(e.message())
+  }
+  let local_content = @io.read_file(".choir/config.local.toml")
+  if local_content == "" {
+    return Err("missing .choir/config.local.toml")
+  }
+  let local_cfg = match @config.parse_local_config(local_content) {
+    Ok(cfg) => cfg
+    Err(e) => return Err(e.message())
+  }
+  Ok((@config.resolve_role(local_cfg.role, config), config, local_cfg))
+}
+
+///|
+fn leaf_tool_register_if_needed(
+  uds_fd : Int,
+  reader : UDSLineReader,
+  role : @types.Role,
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> Result[Unit, String] {
+  let reg_msg = mcp_build_registration_message(role, config, local_cfg)
+  if not(mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg))) {
+    return Err("failed to write registration request")
+  }
+  let reg_resp_line = reader.read_line()
+  if reg_resp_line == "" {
+    return Err("server connection closed during registration")
+  }
+  match @transport.parse_response(reg_resp_line) {
+    Ok(resp) =>
+      if resp.is_ok() {
+        Ok(())
+      } else {
+        let err = resp.error_message().unwrap_or("registration failed")
+        if err.contains("agent already exists:") {
+          Ok(())
+        } else {
+          Err(err)
+        }
+      }
+    Err(err) => Err("failed to parse registration response: " + err)
+  }
+}
+
+///|
+fn leaf_tool_run() -> Unit {
+  let args = @io.get_args()
+  if args.length() < 3 {
+    leaf_tool_emit(
+      @types.Response::Err("usage: choir leaf-tool <tool> [args...]"),
+    )
+    return
+  }
+  let tool = args[2]
+  let req_args = match
+    leaf_tool_request_args(tool, parse_leaf_cli_args(args_tail(args, 3))) {
+    Ok(parsed) => parsed
+    Err(err) => {
+      leaf_tool_emit(@types.Response::Err(err))
+      return
+    }
+  }
+  let (role, config, local_cfg) = match leaf_tool_load_config() {
+    Ok(loaded) => loaded
+    Err(err) => {
+      leaf_tool_emit(@types.Response::Err(err))
+      return
+    }
+  }
+  let uds_fd = @uds.client_connect(config.listen_uds)
+  if uds_fd < 0 {
+    leaf_tool_emit(
+      @types.Response::Err("cannot connect to server at " + config.listen_uds),
+    )
+    return
+  }
+  let reader = UDSLineReader::new(uds_fd)
+  match leaf_tool_register_if_needed(uds_fd, reader, role, config, local_cfg) {
+    Ok(_) => ()
+    Err(err) => {
+      @uds.close(uds_fd)
+      leaf_tool_emit(@types.Response::Err(err))
+      return
+    }
+  }
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role,
+    name: tool,
+    args: @types.RequestArgs::new(req_args),
+  }
+  let wire_req = mcp_build_wire_request(req, role, config, local_cfg)
+  if not(mcp_write_all_uds(uds_fd, @utf8.encode(wire_req))) {
+    @uds.close(uds_fd)
+    leaf_tool_emit(@types.Response::Err("failed to write tool request"))
+    return
+  }
+  let resp_line = reader.read_line()
+  @uds.close(uds_fd)
+  if resp_line == "" {
+    leaf_tool_emit(@types.Response::Err("server connection closed"))
+    return
+  }
+  match @transport.parse_response(resp_line) {
+    Ok(resp) => leaf_tool_emit(resp)
+    Err(err) =>
+      leaf_tool_emit(@types.Response::Err("failed to parse response: " + err))
+  }
+}
+
+///|
+fn trusted_folders_json(existing : String, workspace : String) -> String {
+  let values = @jsonutil.parse_flat_json_object(existing)
+  values.set(workspace, "TRUST_FOLDER")
+  let buf = StringBuilder::new()
+  buf.write_char('{')
+  let mut first = true
+  values.each(fn(path, trust) {
+    if not(first) {
+      buf.write_char(',')
+    }
+    buf.write_char('"')
+    buf.write_string(choir_escape_json_string(path))
+    buf.write_string("\":\"")
+    buf.write_string(choir_escape_json_string(trust))
+    buf.write_char('"')
+    first = false
+  })
+  buf.write_char('}')
+  buf.to_string()
+}
+
+///|
+fn trust_gemini_folder_run() -> Unit {
+  let args = @io.get_args()
+  if args.length() < 3 {
+    @io.write_stdout("usage: choir trust-gemini-folder <workspace>\n")
+    @io.exit(1)
+    return
+  }
+  let home = match @io.getenv("HOME") {
+    Some(path) =>
+      if path == "" {
+        @io.write_stdout("error: HOME is not set\n")
+        @io.exit(1)
+        return
+      } else {
+        path
+      }
+    None => {
+      @io.write_stdout("error: HOME is not set\n")
+      @io.exit(1)
+      return
+    }
+  }
+  let gemini_dir = home + "/.gemini"
+  let trusted_path = gemini_dir + "/trustedFolders.json"
+  ignore(
+    @io.system("mkdir -p '" + init_escape_shell_single_quoted(gemini_dir) + "'"),
+  )
+  let content = @io.read_file(trusted_path)
+  let updated = trusted_folders_json(content, args[2])
+  if @io.write_file_sync(trusted_path, updated) {
+    @io.write_stdout("trusted " + args[2] + "\n")
+    @io.exit(0)
+  } else {
+    @io.write_stdout("error: failed to write " + trusted_path + "\n")
+    @io.exit(1)
+  }
+}
+
+///|
 test "mcp UDS reconnect policy stops after stdin EOF" {
   assert_false(mcp_should_reconnect_after_uds_loop(InputClosed))
   assert_true(mcp_should_reconnect_after_uds_loop(Reconnect))
@@ -948,6 +1325,36 @@ test "mcp request loop returns Reconnect on empty server response" {
   assert_eq(server_reads, 1)
   assert_eq(outputs.length(), 1)
   assert_true(outputs[0].contains("server restarting, retry"))
+}
+
+///|
+test "leaf tool parser supports notify_parent positional message and status" {
+  let parsed = leaf_tool_request_args(
+    "notify_parent",
+    parse_leaf_cli_args(["failure", "[BLOCKED]", "need", "help"]),
+  ).unwrap()
+  assert_eq(parsed.get("status"), Some("failure"))
+  assert_eq(parsed.get("message"), Some("[BLOCKED] need help"))
+}
+
+///|
+test "leaf tool parser supports task_create positionals" {
+  let parsed = leaf_tool_request_args(
+    "task_create",
+    parse_leaf_cli_args(["task-1", "Write", "better", "tests"]),
+  ).unwrap()
+  assert_eq(parsed.get("id"), Some("task-1"))
+  assert_eq(parsed.get("title"), Some("Write better tests"))
+}
+
+///|
+test "trusted_folders_json preserves existing paths and adds workspace" {
+  let updated = trusted_folders_json(
+    "{\"/existing\":\"TRUST_FOLDER\"}", "/new/worktree",
+  )
+  let parsed = @jsonutil.parse_flat_json_object(updated)
+  assert_eq(parsed.get("/existing"), Some("TRUST_FOLDER"))
+  assert_eq(parsed.get("/new/worktree"), Some("TRUST_FOLDER"))
 }
 
 ///|
@@ -1615,7 +2022,9 @@ fn main {
   match subcmd {
     "serve" => serve_run() catch { _ => @io.exit(1) }
     "dev" => dev_run()
+    "leaf-tool" => leaf_tool_run()
     "mcp-stdio" => mcp_run() catch { err => println("fatal: \{err}") }
+    "trust-gemini-folder" => trust_gemini_folder_run()
     "hook" =>
       hook_run() catch {
         _ =>
@@ -1629,7 +2038,7 @@ fn main {
     "watch" => watch_run()
     _ => {
       @io.write_stdout(
-        "usage: choir <serve|dev|mcp-stdio|hook|init [--recreate]|reply|smoke [--keep-temp]|watch>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|hook|init [--recreate]|reply|smoke [--keep-temp]|watch>\n",
       )
       @io.exit(1)
     }

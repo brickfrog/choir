@@ -10,6 +10,7 @@ import {
   "choir/src/mcp",
   "choir/src/hooks",
   "choir/src/workspace",
+  "choir/src/jsonutil",
   "moonbitlang/async",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",

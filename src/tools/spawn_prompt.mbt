@@ -137,8 +137,10 @@ fn leaf_profile_text() -> String {
   "   - `git add <specific files>`\n" +
   "   - NEVER `git add .`\n" +
   "2. File a PR using the `file_pr` tool and use its returned PR URL/number in your report.\n" +
+  "   - If your CLI does not load MCP tools directly, `file_pr` is also available as a shell command on PATH.\n" +
   "   - `file_pr` also starts review tracking automatically.\n" +
-  "3. Use `notify_parent` for status updates and blockers.\n\n" +
+  "3. Use `notify_parent` for status updates and blockers.\n" +
+  "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n\n" +
   "Do not merge your own PR.\n" +
   "Do not push to main.\n" +
   "Do not create extra branches."
