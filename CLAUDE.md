@@ -1,6 +1,6 @@
 # Choir
 
-MoonBit reimplementation of [exomonad](https://github.com/tidepool-heavy-industries/exomonad) — type-safe agent orchestration without the Haskell WASM toolchain pain.
+MoonBit agent orchestration server.
 
 ## What This Is
 
@@ -8,7 +8,7 @@ A persistent server that orchestrates heterogeneous coding agent teams. Agents (
 
 ## Architecture
 
-Option B from the exomonad design: persistent server, pure MoonBit native binary.
+Persistent server, pure MoonBit native binary.
 
 ```
 choir serve                        # persistent server on UDS (.choir/server.sock)
@@ -108,7 +108,6 @@ Still less proven or still rough:
 - live TCP/remote smoke coverage
 - stronger guarantees around child completion/reporting discipline
 - continued hardening of multi-client bridge/server behavior under real concurrent use
-- richer parity with ExoMonad session/routing semantics
 - Claude still uses the Teams inbox delivery path because `--channels` is not usable for manual MCP servers yet
 
 ## Implementation Phasing
@@ -120,11 +119,10 @@ Server + UDS, mcp-stdio translator, core tools, agent registry, workspace manage
 Reliable PR lifecycle, review feedback routing, restart recovery, shutdown protection, and end-to-end proof of the north-star loop.
 
 ### Phase 3: Extensions
-TCP transport, SSH remote agents, and the remaining ExoMonad parity work.
+TCP transport, SSH remote agents, and the remaining remote/runtime hardening work.
 
 ## References
 
 - `AGENTS.md` — instructions for leaf agents (Gemini, Moon Pilot)
-- [exomonad](https://github.com/tidepool-heavy-industries/exomonad) — the Haskell+Rust original
 - [MoonBit docs](https://docs.moonbitlang.com)
 - [moonbitlang/async](https://github.com/moonbitlang/async) — native async I/O library
