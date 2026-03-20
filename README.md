@@ -35,6 +35,29 @@ moon build --target native --release
 moon fmt
 ```
 
+## Runtime Dependencies
+
+The release artifact is the `choir` executable, but the workflow also expects
+some external tools.
+
+- required: `git`
+- required for PR workflow: `gh`
+- required for local session management: `tmux` or `zellij`
+- required for the agent CLIs you actually use: `claude`, `gemini`, `moon`
+
+The Nix dev shell includes the open-source dependencies above. Proprietary
+agent CLIs still need to be installed and authenticated separately.
+
+## Nix
+
+```bash
+nix develop
+```
+
+The flake currently provides a reproducible development shell and MoonBit
+toolchain for Choir. It does not yet expose a standalone `nix build .#choir`
+package.
+
 ## Quick Start
 
 ```bash

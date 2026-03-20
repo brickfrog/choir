@@ -9,3 +9,4 @@ test_syntax.mbt
 _build/
 .serena/
 SPEC.md
+.nix-moon/

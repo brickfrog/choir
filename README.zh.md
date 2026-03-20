@@ -34,6 +34,26 @@ moon build --target native --release
 moon fmt
 ```
 
+## 运行依赖
+
+发布产物主要是 `choir` 可执行文件，但完整工作流仍依赖一些外部工具。
+
+- 必需：`git`
+- PR 工作流必需：`gh`
+- 本地会话管理必需：`tmux` 或 `zellij`
+- 你实际使用到的代理 CLI：`claude`、`gemini`、`moon`
+
+Nix dev shell 会提供上面的开源依赖。专有代理 CLI 仍需要你自行安装并完成认证。
+
+## Nix
+
+```bash
+nix develop
+```
+
+当前 flake 提供的是 Choir 的可复现开发环境和 MoonBit 工具链；暂时还没有
+暴露独立的 `nix build .#choir` 打包产物。
+
 ## 快速开始
 
 ```bash
