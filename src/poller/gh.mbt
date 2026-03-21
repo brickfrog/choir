@@ -77,7 +77,7 @@ fn find_json_string_field(
 fn parse_review_state(data : String) -> ReviewState {
   let mut start = 0
   let mut review = ReviewState::None_
-  for {
+  for ;; {
     match find_json_string_field(data, "state", start~) {
       Some((value, next_start)) => {
         match value {
@@ -105,7 +105,7 @@ fn parse_head_ref_oid(data : String) -> String {
 fn parse_review_bodies(data : String) -> String {
   let bodies : Array[String] = []
   let mut start = 0
-  for {
+  for ;; {
     match find_json_string_field(data, "body", start~) {
       Some((value, next_start)) => {
         if value != "" {
@@ -156,7 +156,7 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
   }
   let buf = FixedArray::make(65536, (0 : Byte))
   let mut total = 0
-  for {
+  for ;; {
     if total >= buf.length() {
       break
     }

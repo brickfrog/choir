@@ -50,7 +50,7 @@ async fn handle_connection(
     Some(_) => false
   }
   let mut connected_agent_id : String? = None
-  for {
+  for ;; {
     if read_pos == buf.length() {
       buf = grow_connection_buffer(buf)
     }
@@ -126,7 +126,7 @@ async fn handle_uds_connection(
   client : UDSClient,
   state : @server.ServerState,
 ) -> Bool {
-  for {
+  for ;; {
     if client.read_pos == client.buf.length() {
       client.buf = grow_connection_buffer(client.buf)
     }
@@ -207,7 +207,7 @@ fn main_prog() -> Unit raise {
       let timeout_sec = 900L
       let disconnect_grace_sec = 60L
       let interval_ms = 30000
-      for {
+      for ;; {
         @async.sleep(interval_ms)
         let now = @poller.now_sec()
         state.process_pending_disconnects(now, disconnect_grace_sec)
@@ -223,8 +223,8 @@ fn main_prog() -> Unit raise {
       ignore(@uds.set_nonblocking(server_fd))
       println("UDS server listening on \{config.listen_uds}")
       let clients : Array[UDSClient] = []
-      for {
-        for {
+      for ;; {
+        for ;; {
           let client_fd = @uds.accept_nonblocking(server_fd)
           if client_fd == -2 {
             break
@@ -258,7 +258,7 @@ fn main_prog() -> Unit raise {
         let server = @socket.TCPServer::new(@socket.Addr::parse(addr_str))
         try {
           println("TCP server listening on \{addr_str}")
-          for {
+          for ;; {
             let (conn, addr) = server.accept()
             println("connection from \{addr}")
             root.spawn_bg(async fn() {

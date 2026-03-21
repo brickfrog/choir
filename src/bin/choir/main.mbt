@@ -50,7 +50,7 @@ async fn serve_handle_connection(
     Some(_) => false
   }
   let mut connected_agent_id : String? = None
-  for {
+  for ;; {
     if read_pos == buf.length() {
       buf = grow_connection_buffer(buf)
     }
@@ -139,7 +139,7 @@ async fn serve_handle_uds_connection(
   client : ServeUDSClient,
   state : @server.ServerState,
 ) -> Bool {
-  for {
+  for ;; {
     if client.read_pos == client.buf.length() {
       client.buf = grow_connection_buffer(client.buf)
     }
@@ -227,7 +227,7 @@ fn serve_run() -> Unit raise {
       let timeout_sec = 900L
       let disconnect_grace_sec = 60L
       let interval_ms = 30000
-      for {
+      for ;; {
         @async.sleep(interval_ms)
         let now = @poller.now_sec()
         state.process_pending_disconnects(now, disconnect_grace_sec)
@@ -243,8 +243,8 @@ fn serve_run() -> Unit raise {
       ignore(@uds.set_nonblocking(server_fd))
       println("UDS server listening on \{config.listen_uds}")
       let clients : Array[ServeUDSClient] = []
-      for {
-        for {
+      for ;; {
+        for ;; {
           let client_fd = @uds.accept_nonblocking(server_fd)
           if client_fd == -2 {
             break
@@ -278,7 +278,7 @@ fn serve_run() -> Unit raise {
         let server = @socket.TCPServer::new(@socket.Addr::parse(addr_str))
         try {
           println("TCP server listening on \{addr_str}")
-          for {
+          for ;; {
             let (conn, addr) = server.accept()
             println("connection from \{addr}")
             root.spawn_bg(async fn() {
@@ -337,7 +337,7 @@ fn grow_line_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 
 ///|
 async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
-  for {
+  for ;; {
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
     for i = self.read_pos; i < self.write_pos; i = i + 1 {
       if bytes[i] == (10 : Byte) {
@@ -381,7 +381,7 @@ async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
 
 ///|
 fn UDSLineReader::read_line(self : UDSLineReader) -> String {
-  for {
+  for ;; {
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
     for i = self.read_pos; i < self.write_pos; i = i + 1 {
       if bytes[i] == (10 : Byte) {
@@ -603,7 +603,7 @@ fn mcp_run_request_loop(
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> McpUdsLoopExit {
-  for {
+  for ;; {
     let line = match read_input() {
       Some(line) => line
       None => break
@@ -726,7 +726,7 @@ fn mcp_run() -> Unit raise {
   let mut uds_fd = @uds.client_connect(config.listen_uds)
   if uds_fd >= 0 {
     // Run loop; on server restart, wait and reconnect automatically
-    for {
+    for ;; {
       let exit_reason = mcp_run_uds_loop(uds_fd, role, config, local_cfg)
       @uds.close(uds_fd)
       if not(mcp_should_reconnect_after_uds_loop(exit_reason)) {
@@ -778,7 +778,7 @@ fn mcp_run() -> Unit raise {
       }
     }
 
-    for {
+    for ;; {
       let line = match @io.read_stdin_line(8192) {
         Some(line) => line
         None => break
@@ -1315,7 +1315,7 @@ async fn capture_stdout_main(program : String, args : Array[String]) -> String {
   write_end.close()
   let buf = FixedArray::make(65536, (0 : Byte))
   let mut total = 0
-  for {
+  for ;; {
     if total >= buf.length() {
       break
     }

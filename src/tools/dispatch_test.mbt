@@ -29,39 +29,10 @@ async fn run_shell(script : String) -> Unit {
 }
 
 ///|
-test "dispatch fork_wave returns agent_ids with mock" {
-  @async.with_event_loop(_ => {
-    let call : @tools.ToolCall = {
-      role: @types.Role::TL,
-      name: "fork_wave",
-      args: {
-        "count": "2",
-        "task": "test task",
-        "slug_prefix": "wave",
-        "parent_branch": "main",
-      },
-    }
-    let res = @tools.dispatch(call, runner=mock_runner)
-    match res {
-      Ok(m) => {
-        assert_eq(m.get("status"), Some("spawned"))
-        assert_eq(m.get("count"), Some("2"))
-        assert_eq(m.get("agent_ids"), Some("main.wave-0,main.wave-1"))
-        assert_eq(m.get_value("count"), Some(@types.WireValue::Raw("2")))
-      }
-      Err(e) => {
-        println(e)
-        assert_true(false)
-      }
-    }
-  })
-}
-
-///|
 test "dispatch fork_wave defaults to gemini fanout" {
   @async.with_event_loop(_ => {
     let recorded : Array[@workspace.Command] = []
-    let res = @tools.dispatch(
+    let res = @tools.dispatch_call(
       {
         role: @types.Role::TL,
         name: "fork_wave",
@@ -119,7 +90,7 @@ test "dispatch fork_wave skips already-alive agents" {
       branch: "main.wave-0",
     }
     ignore(reg.insert(existing))
-    let res = @tools.dispatch(
+    let res = @tools.dispatch_call(
       {
         role: @types.Role::TL,
         name: "fork_wave",
@@ -220,7 +191,11 @@ test "dispatch task_list reads task files" {
       name: "task_list",
       args: {},
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -261,7 +236,11 @@ test "dispatch task_get reads one task" {
       name: "task_get",
       args: { "id": "1" },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -307,7 +286,11 @@ test "dispatch task_update merges and writes task file" {
         "notes": "finished",
       },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -352,7 +335,11 @@ test "dispatch task_update validates status" {
       name: "task_update",
       args: { "id": "1", "status": "blocked" },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(_) => assert_true(false)
       Err(e) => assert_eq(e, "invalid status: blocked")
@@ -374,7 +361,11 @@ test "dispatch task_get rejects invalid task json" {
       name: "task_get",
       args: { "id": "1" },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(_) => assert_true(false)
       Err(e) => assert_true(e.contains("invalid task file"))
@@ -395,7 +386,11 @@ test "dispatch reply stores payload in reply kv path" {
       name: "reply",
       args: { "id": "req-1", "payload": "{\"ok\":true}" },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -426,7 +421,11 @@ test "dispatch reply cancel stores cancel marker" {
       name: "reply",
       args: { "id": "req-2", "payload": "ignored", "cancel": "true" },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -451,7 +450,7 @@ test "dispatch fork_wave handles failure" {
       name: "fork_wave",
       args: { "count": "1" },
     }
-    let res = @tools.dispatch(call, runner=mock_fail_runner)
+    let res = @tools.dispatch_call(call, runner=mock_fail_runner)
     match res {
       Ok(_) => assert_true(false)
       Err(e) => assert_eq(e, "command failed with status 1")
@@ -467,7 +466,7 @@ test "dispatch fork_wave validates count" {
       name: "fork_wave",
       args: { "count": "abc" },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Ok(_) => assert_true(false)
       Err(e) => assert_eq(e, "invalid count: abc")
@@ -483,7 +482,7 @@ test "dispatch fork_wave validates slug_prefix" {
       name: "fork_wave",
       args: { "count": "1", "slug_prefix": "../bad" },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Ok(_) => assert_true(false)
       Err(e) =>
@@ -507,7 +506,7 @@ test "dispatch spawn_remote returns agent_id with mock" {
         "tcp_addr": "10.0.0.1:9100",
       },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("spawned"))
@@ -538,7 +537,7 @@ test "dispatch spawn_remote requires ssh_target" {
         "tcp_addr": "10.0.0.1:9100",
       },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Err(e) => assert_true(e.contains("ssh_target"))
       Ok(_) => assert_true(false)
@@ -696,7 +695,7 @@ test "dispatch spawn_worker validates agent type" {
       name: "spawn_worker",
       args: { "agent_type": "moon" },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Ok(_) => assert_true(false)
       Err(e) => assert_eq(e, "invalid agent_type: moon")
@@ -708,7 +707,7 @@ test "dispatch spawn_worker validates agent type" {
 test "dispatch spawn_worker defaults to research profile" {
   @async.with_event_loop(_ => {
     let recorded : Array[@workspace.Command] = []
-    let res = @tools.dispatch(
+    let res = @tools.dispatch_call(
       {
         role: @types.Role::TL,
         name: "spawn_worker",
@@ -738,7 +737,7 @@ test "dispatch spawn_worker defaults to research profile" {
 ///|
 test "dispatch spawn_worker rejects implementation profile" {
   @async.with_event_loop(_ => {
-    let res = @tools.dispatch(
+    let res = @tools.dispatch_call(
       {
         role: @types.Role::TL,
         name: "spawn_worker",
@@ -761,7 +760,7 @@ test "dispatch spawn_worker succeeds with inline worker" {
       name: "spawn_worker",
       args: { "slug": "worker-a", "task": "investigate" },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("spawned"))
@@ -786,7 +785,7 @@ test "dispatch spawn_worker accepts agent_id alias" {
       name: "spawn_worker",
       args: { "agent_id": "worker-a", "task": "investigate" },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("spawned"))
@@ -819,7 +818,7 @@ test "dispatch register inserts agent into registry" {
         "agent_type": "gemini",
       },
     }
-    let res = @tools.dispatch(call, runner=mock_runner, registry=Some(reg))
+    let res = @tools.dispatch_call(call, runner=mock_runner, registry=Some(reg))
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("registered"))
@@ -860,7 +859,7 @@ test "dispatch register requires agent_id arg" {
       name: "register",
       args: {},
     }
-    let res = @tools.dispatch(call, runner=mock_runner, registry=Some(reg))
+    let res = @tools.dispatch_call(call, runner=mock_runner, registry=Some(reg))
     assert_true(res is Err(_))
   })
 }
@@ -886,7 +885,7 @@ test "dispatch shutdown marks agent Done in registry" {
       name: "shutdown",
       args: { "caller_id": "leaf-1" },
     }
-    let res = @tools.dispatch(call, runner=mock_runner, registry=Some(reg))
+    let res = @tools.dispatch_call(call, runner=mock_runner, registry=Some(reg))
     assert_true(res is Ok(_))
     match reg.get("leaf-1") {
       Ok(a) => assert_eq(a.state, @types.AgentState::Done)
@@ -912,7 +911,7 @@ test "dispatch shutdown marks agent completing before terminal close" {
     }
     let _ = reg.insert(agent)
     let close_seen = Ref::new(false)
-    let res = @tools.dispatch(
+    let res = @tools.dispatch_call(
       {
         role: @types.Role::Dev,
         name: "shutdown",
@@ -954,7 +953,7 @@ test "dispatch shutdown allowed for TL role" {
       name: "shutdown",
       args: { "caller_id": "main.tl-1" },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("shutdown"))
@@ -989,7 +988,7 @@ test "dispatch shutdown blocks during critical review phase" {
       name: "shutdown",
       args: { "caller_id": "leaf-2" },
     }
-    let res = @tools.dispatch(
+    let res = @tools.dispatch_call(
       call,
       runner=mock_runner,
       poller_state=Some(poller),
@@ -1017,7 +1016,7 @@ test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
       name: "kv_set",
       args: { "key": "build/status", "value": "green" },
     }
-    let set_res = @tools.dispatch(
+    let set_res = @tools.dispatch_call(
       set_call,
       project_dir~,
       runner=@exec.run_sequence,
@@ -1035,7 +1034,7 @@ test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
       name: "kv_get",
       args: { "key": "build/status" },
     }
-    let get_res = @tools.dispatch(
+    let get_res = @tools.dispatch_call(
       get_call,
       project_dir~,
       runner=@exec.run_sequence,
@@ -1053,7 +1052,7 @@ test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
       name: "kv_delete",
       args: { "key": "build/status" },
     }
-    let delete_res = @tools.dispatch(
+    let delete_res = @tools.dispatch_call(
       delete_call,
       project_dir~,
       runner=@exec.run_sequence,
@@ -1066,7 +1065,7 @@ test "dispatch kv_set, kv_get, and kv_delete use shared storage" {
       }
     }
 
-    let after_delete = @tools.dispatch(
+    let after_delete = @tools.dispatch_call(
       get_call,
       project_dir~,
       runner=@exec.run_sequence,
@@ -1097,7 +1096,11 @@ test "dispatch kv_list returns keys" {
       name: "kv_list",
       args: {},
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -1129,7 +1132,7 @@ test "dispatch kv_list empty dir returns empty array" {
       name: "kv_list",
       args: {},
     }
-    let res = @tools.dispatch(
+    let res = @tools.dispatch_call(
       call,
       project_dir="/tmp/choir-kv-list-nonexistent-dir-xyz",
       runner=@exec.run_sequence,
@@ -1163,7 +1166,11 @@ test "dispatch task_create creates task" {
         "notes": "initial",
       },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -1203,7 +1210,11 @@ test "dispatch task_create returns existing task if already exists" {
       name: "task_create",
       args: { "id": "dup", "title": "Duplicate" },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -1228,7 +1239,7 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
       name: "mutex_acquire",
       args: { "name": "README", "agent_id": "agent-a", "ttl_sec": "30" },
     }
-    let acquire_first_res = @tools.dispatch(
+    let acquire_first_res = @tools.dispatch_call(
       acquire_first,
       runner=mock_runner,
       mutex_registry=Some(mutex_registry),
@@ -1254,7 +1265,7 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
       name: "mutex_acquire",
       args: { "name": "README", "agent_id": "agent-b", "ttl_sec": "30" },
     }
-    let acquire_second_res = @tools.dispatch(
+    let acquire_second_res = @tools.dispatch_call(
       acquire_second,
       runner=mock_runner,
       mutex_registry=Some(mutex_registry),
@@ -1280,7 +1291,7 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
       name: "mutex_status",
       args: { "name": "README" },
     }
-    let status_res = @tools.dispatch(
+    let status_res = @tools.dispatch_call(
       status_call,
       runner=mock_runner,
       mutex_registry=Some(mutex_registry),
@@ -1302,7 +1313,7 @@ test "dispatch mutex_acquire, mutex_status, and mutex_release use shared registr
       name: "mutex_release",
       args: { "name": "README", "agent_id": "agent-a" },
     }
-    let release_res = @tools.dispatch(
+    let release_res = @tools.dispatch_call(
       release_call,
       runner=mock_runner,
       mutex_registry=Some(mutex_registry),
@@ -1332,7 +1343,7 @@ test "dispatch mutex_release returns false when agent does not hold or wait" {
       name: "mutex_release",
       args: { "name": "README", "agent_id": "agent-z" },
     }
-    let release_res = @tools.dispatch(
+    let release_res = @tools.dispatch_call(
       release_call,
       runner=mock_runner,
       mutex_registry=Some(mutex_registry),
@@ -1367,7 +1378,7 @@ test "dispatch merge_pr blocks concurrent merges on the same parent_branch" {
         },
       }
       nested_results.push(
-        @tools.dispatch(
+        @tools.dispatch_call(
           nested_call,
           runner=mock_runner,
           mutex_registry=Some(mutex_registry),
@@ -1388,7 +1399,7 @@ test "dispatch merge_pr blocks concurrent merges on the same parent_branch" {
         "caller_id": "agent-a",
       },
     }
-    let first_res = @tools.dispatch(
+    let first_res = @tools.dispatch_call(
       first_call,
       runner~,
       mutex_registry=Some(mutex_registry),
@@ -1424,7 +1435,11 @@ test "dispatch fork_session creates session dir" {
       name: "fork_session",
       args: { "name": "sub-team-1" },
     }
-    let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
+    let res = @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
@@ -1466,7 +1481,7 @@ test "dispatch fork_session rejects invalid name" {
       name: "fork_session",
       args: { "name": "../evil" },
     }
-    let res = @tools.dispatch(call, runner=mock_runner)
+    let res = @tools.dispatch_call(call, runner=mock_runner)
     match res {
       Err(e) => assert_true(e.contains("invalid name"))
       Ok(_) => assert_true(false)
