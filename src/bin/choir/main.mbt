@@ -2241,6 +2241,79 @@ test "init no attach flag parser" {
 }
 
 ///|
+test "companion commands use isolated worktree with unique choir identity" {
+  let config = {
+    ..@types.Config::default(),
+    extra_mcp_servers_json: Some("{\"extra\":{\"type\":\"stdio\"}}"),
+  }
+  let cmds = init_companion_commands(
+    "/proj",
+    "choir",
+    @types.TerminalBackend::Tmux,
+    config,
+    "main",
+    { name: "monitor", role: "dev", command: "claude", task: "watch tests" },
+  )
+  assert_eq(cmds.length(), 9)
+  assert_eq(cmds[0].program, "sh")
+  assert_true(cmds[0].args[3].contains("/proj/.choir/agents/monitor"))
+  assert_true(cmds[0].args[4].contains("main.companion.monitor"))
+  assert_eq(cmds[1].program, "git")
+  assert_eq(cmds[1].args, [
+    "worktree", "add", "/proj/.choir/agents/monitor", "-b", "main.companion.monitor",
+  ])
+  assert_true(cmds[2].args[4].contains("default_role = \"dev\""))
+  assert_true(cmds[2].args[4].contains("terminal_session = \"choir\""))
+  assert_true(cmds[3].args[4].contains("agent_id = \"main.companion.monitor\""))
+  assert_true(cmds[3].args[4].contains("parent_branch = \"main\""))
+  assert_true(cmds[3].args[4].contains("terminal_target = \"choir:monitor\""))
+  assert_true(cmds[3].args[4].contains("agent_type = \"claude\""))
+  assert_true(cmds[4].args[4].contains("\"--role\",\"dev\""))
+  assert_true(cmds[4].args[4].contains("main.companion.monitor"))
+  assert_true(cmds[4].args[4].contains("\"extra\":{\"type\":\"stdio\"}"))
+  assert_eq(cmds[7].args, [
+    "new-window", "-t", "choir", "-n", "monitor", "-c", "/proj/.choir/agents/monitor",
+  ])
+  assert_true(cmds[8].args[3].contains(".choir/bin"))
+  assert_true(
+    cmds[8].args[3].contains("CHOIR_AGENT_ID='main.companion.monitor'"),
+  )
+}
+
+///|
+test "companion gemini commands trust workspace and use zellij tab cwd" {
+  let cmds = init_companion_commands(
+    "/proj",
+    "howdy",
+    @types.TerminalBackend::Zellij,
+    @types.Config::default(),
+    "main",
+    {
+      name: "gem-helper",
+      role: "worker",
+      command: "gemini --model flash",
+      task: "reply READY",
+    },
+  )
+  assert_eq(cmds.length(), 9)
+  assert_eq(cmds[7].program, "choir")
+  assert_eq(cmds[7].args, [
+    "trust-gemini-folder", "/proj/.choir/agents/gem-helper",
+  ])
+  assert_eq(cmds[8].program, "zellij")
+  assert_eq(cmds[8].args[0], "--session")
+  assert_eq(cmds[8].args[1], "howdy")
+  assert_eq(cmds[8].args[2], "action")
+  assert_eq(cmds[8].args[3], "new-tab")
+  assert_eq(cmds[8].args[7], "/proj/.choir/agents/gem-helper")
+  assert_true(
+    cmds[8].args[11].contains(
+      "CHOIR_TERMINAL_TARGET='zellij-tab:howdy:gem-helper'",
+    ),
+  )
+}
+
+///|
 test "smoke review flag parser" {
   assert_false(smoke_review_enabled(["choir", "smoke"]))
   assert_true(smoke_review_enabled(["choir", "smoke", "--review"]))
@@ -2445,6 +2518,273 @@ fn init_escape_shell_single_quoted(s : String) -> String {
 }
 
 ///|
+fn init_shell_quote(s : String) -> String {
+  "'" + init_escape_shell_single_quoted(s) + "'"
+}
+
+///|
+fn init_env_assignment(key : String, value : String) -> String {
+  key + "=" + init_shell_quote(value)
+}
+
+///|
+fn init_split_words(s : String) -> Array[String] {
+  let parts : Array[String] = []
+  let trimmed = s.trim().to_string()
+  let mut start = 0
+  for i = 0; i <= trimmed.length(); i = i + 1 {
+    if i == trimmed.length() || trimmed[i] == ' ' {
+      if i > start {
+        parts.push(trimmed[start:i].to_string() catch { _ => "" })
+      }
+      start = i + 1
+    }
+  }
+  parts
+}
+
+///|
+fn init_companion_role(role : String) -> @types.Role {
+  match @config.parse_role(role) {
+    Ok(parsed) => parsed
+    Err(_) => @types.Role::Worker
+  }
+}
+
+///|
+fn init_companion_branch(parent_branch : String, name : String) -> String {
+  parent_branch + ".companion." + name
+}
+
+///|
+fn init_companion_agent_type(command : String) -> @types.AgentType? {
+  let parts = init_split_words(command)
+  if parts.is_empty() {
+    return None
+  }
+  let first = parts[0]
+  if first == "claude" || first.has_suffix("/claude") {
+    return Some(@types.AgentType::Claude)
+  }
+  if first == "gemini" || first.has_suffix("/gemini") {
+    return Some(@types.AgentType::Gemini)
+  }
+  if (first == "moon" || first.has_suffix("/moon")) &&
+    parts.length() > 1 &&
+    parts[1] == "pilot" {
+    return Some(@types.AgentType::MoonPilot)
+  }
+  None
+}
+
+///|
+fn init_companion_local_config_content(
+  role : @types.Role,
+  agent_id : String,
+  parent_id : String,
+  branch : String,
+  parent_branch : String,
+  workspace : String,
+  terminal_target : String,
+  agent_type? : @types.AgentType? = None,
+) -> String {
+  let buf = StringBuilder::new()
+  buf.write_string("role = \"")
+  buf.write_string(@config.role_to_string(role))
+  buf.write_string("\"\nagent_id = \"")
+  buf.write_string(agent_id)
+  buf.write_string("\"\nparent_id = \"")
+  buf.write_string(parent_id)
+  buf.write_string("\"\nbranch = \"")
+  buf.write_string(branch)
+  buf.write_string("\"\nparent_branch = \"")
+  buf.write_string(parent_branch)
+  buf.write_string("\"\nworkspace = \"")
+  buf.write_string(workspace)
+  buf.write_string("\"\nterminal_target = \"")
+  buf.write_string(terminal_target)
+  buf.write_string("\"\n")
+  match agent_type {
+    Some(kind) => {
+      buf.write_string("agent_type = \"")
+      buf.write_string(@config.agent_type_to_string(kind))
+      buf.write_string("\"\n")
+    }
+    None => ()
+  }
+  buf.to_string()
+}
+
+///|
+fn init_companion_launch_prefix(
+  role : @types.Role,
+  agent_id : String,
+  parent_id : String,
+  branch : String,
+  parent_branch : String,
+  workspace : String,
+  terminal_backend : @types.TerminalBackend,
+  terminal_target : String,
+  session : String,
+  agent_type? : @types.AgentType? = None,
+) -> String {
+  let assignments : Array[String] = [
+    "PATH=" + init_shell_quote(workspace + "/.choir/bin") + ":$PATH",
+    init_env_assignment("CHOIR_AGENT_ID", agent_id),
+    init_env_assignment("CHOIR_PARENT_ID", parent_id),
+    init_env_assignment("CHOIR_BRANCH", branch),
+    init_env_assignment("CHOIR_PARENT_BRANCH", parent_branch),
+    init_env_assignment("CHOIR_WORKSPACE", workspace),
+    init_env_assignment("CHOIR_ROLE", @config.role_to_string(role)),
+    init_env_assignment(
+      "CHOIR_TERMINAL_BACKEND",
+      @config.terminal_backend_to_string(terminal_backend),
+    ),
+    init_env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
+    init_env_assignment("CHOIR_TERMINAL_SESSION", session),
+    init_env_assignment("EXOMONAD_AGENT_ID", agent_id),
+    init_env_assignment("EXOMONAD_SESSION_ID", agent_id),
+    init_env_assignment("EXOMONAD_ROLE", @config.role_to_string(role)),
+    init_env_assignment("EXOMONAD_PARENT_AGENT", parent_id),
+  ]
+  match agent_type {
+    Some(kind) =>
+      assignments.push(
+        init_env_assignment(
+          "CHOIR_AGENT_TYPE",
+          @config.agent_type_to_string(kind),
+        ),
+      )
+    None => ()
+  }
+  match @io.getenv("TRACEPARENT") {
+    Some(value) =>
+      if value != "" {
+        assignments.push(init_env_assignment("TRACEPARENT", value))
+      }
+    None => ()
+  }
+  let buf = StringBuilder::new()
+  for i = 0; i < assignments.length(); i = i + 1 {
+    if i > 0 {
+      buf.write_char(' ')
+    }
+    buf.write_string(assignments[i])
+  }
+  buf.to_string() + " "
+}
+
+///|
+fn init_companion_commands(
+  project_dir : String,
+  session : String,
+  terminal_backend : @types.TerminalBackend,
+  config : @types.Config,
+  current_branch : String,
+  companion : @config.CompanionDef,
+) -> Array[@workspace.Command] {
+  let role = init_companion_role(companion.role)
+  let branch = init_companion_branch(current_branch, companion.name)
+  let workspace = project_dir + "/.choir/agents/" + companion.name
+  let terminal_target = @workspace.local_target_for(
+    terminal_backend,
+    session,
+    companion.name,
+    @types.IsolationMode::Worktree,
+  )
+  let agent_type = init_companion_agent_type(companion.command)
+  let launch_str = init_companion_launch_prefix(
+      role,
+      branch,
+      "root",
+      branch,
+      current_branch,
+      workspace,
+      terminal_backend,
+      terminal_target,
+      session,
+      agent_type~,
+    ) +
+    companion.command +
+    " '" +
+    init_escape_shell_single_quoted(companion.task) +
+    "'"
+  let cmds : Array[@workspace.Command] = [
+    {
+      program: "sh",
+      args: [
+        "-c", "git worktree remove --force \"$1\" 2>/dev/null || true; rm -rf \"$1\"; git branch -D \"$2\" 2>/dev/null || true",
+        "sh", workspace, branch,
+      ],
+      workdir: None,
+    },
+    @workspace.git_worktree_add(workspace, branch),
+    @workspace.write_spawn_config(
+      workspace,
+      @workspace.child_config_content(
+        role,
+        terminal_backend,
+        session,
+        project_dir,
+        config.listen_uds,
+        listen_tcp=config.listen_tcp,
+        tcp_auth_token=config.tcp_auth_token,
+      ),
+    ),
+    @workspace.write_local_config(
+      workspace,
+      init_companion_local_config_content(
+        role,
+        branch,
+        "root",
+        branch,
+        current_branch,
+        workspace,
+        terminal_target,
+        agent_type~,
+      ),
+    ),
+    @workspace.write_mcp_json(
+      workspace,
+      @workspace.mcp_json_content(
+        role,
+        branch,
+        extra_mcp_servers_json=config.extra_mcp_servers_json,
+      ),
+    ),
+    @workspace.write_leaf_helper_scripts(workspace),
+    {
+      program: "sh",
+      args: [
+        "-c", "printf '%s' \"$2\" > \"$1/.birth_branch\"", "sh", workspace, branch,
+      ],
+      workdir: None,
+    },
+  ]
+  if agent_type == Some(@types.AgentType::Gemini) {
+    cmds.push(@workspace.trust_gemini_folder(workspace))
+  }
+  match terminal_backend {
+    @types.TerminalBackend::Tmux => {
+      cmds.push(@workspace.tmux_new_window(session, companion.name, workspace))
+      cmds.push(
+        @workspace.tmux_send_keys(session + ":" + companion.name, launch_str),
+      )
+    }
+    @types.TerminalBackend::Zellij =>
+      cmds.push(
+        @workspace.zellij_new_tab(
+          session,
+          companion.name,
+          workspace,
+          launch_str,
+        ),
+      )
+  }
+  cmds
+}
+
+///|
 fn choir_escape_json_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -2513,6 +2853,16 @@ fn init_run() -> Unit raise {
     let config = match @config.parse_config(config_content) {
       Ok(cfg) => cfg
       Err(_) => @types.Config::default()
+    }
+    let current_branch_raw = capture_stdout_main("git", [
+      "branch", "--show-current",
+    ])
+    let current_branch_trimmed = current_branch_raw.trim().to_string()
+    let current_branch = if current_branch_trimmed == "" ||
+      current_branch_trimmed == "HEAD" {
+      "main"
+    } else {
+      current_branch_trimmed
     }
     let session = config.terminal_session
     let terminal_backend = config.terminal_backend
@@ -2700,78 +3050,11 @@ fn init_run() -> Unit raise {
       Some(json) => {
         let companions = @config.parse_companions_json(json)
         for c in companions {
-          let agent_dir = ".choir/agents/" + c.name
-          ignore(
-            @exec.run({
-              program: "sh",
-              args: [
-                "-c",
-                "mkdir -p \"$1\" && printf '%s' \"$2\" > \"$1/.mcp.json\"",
-                "sh",
-                agent_dir,
-                init_mcp_json_content(project_dir),
-              ],
-              workdir: None,
-            }) catch {
-              _ => 0
-            },
-          )
-          ignore(
-            @exec.run({
-              program: "sh",
-              args: [
-                "-c",
-                "printf '%s' \"$2\" > \"$1/.birth_branch\"",
-                "sh",
-                agent_dir,
-                c.name,
-              ],
-              workdir: None,
-            }) catch {
-              _ => 0
-            },
-          )
-          let window_cmd = c.command +
-            " '" +
-            init_escape_shell_single_quoted(c.task) +
-            "'"
-          ignore(
-            @exec.run(
-              match terminal_backend {
-                @types.TerminalBackend::Tmux =>
-                  {
-                    program: "tmux",
-                    args: ["new-window", "-t", session, "-n", c.name],
-                    workdir: None,
-                  }
-                @types.TerminalBackend::Zellij =>
-                  @workspace.zellij_new_tab(
-                    session,
-                    c.name,
-                    project_dir,
-                    window_cmd,
-                  )
-              },
-            ) catch {
-              _ => 0
-            },
-          )
-          if terminal_backend == @types.TerminalBackend::Tmux {
-            ignore(
-              @exec.run({
-                program: "tmux",
-                args: [
-                  "send-keys",
-                  "-t",
-                  session + ":" + c.name,
-                  window_cmd,
-                  "Enter",
-                ],
-                workdir: None,
-              }) catch {
-                _ => 0
-              },
-            )
+          for
+            cmd in init_companion_commands(
+              project_dir, session, terminal_backend, config, current_branch, c,
+            ) {
+            ignore(@exec.run(cmd) catch { _ => 0 })
           }
           @io.write_stdout("Spawned companion: \{c.name}\n")
         }
