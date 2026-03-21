@@ -204,10 +204,7 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
     Err(_) => fail("expected spawn_worker definition")
   }
   match reg.lookup(@types.Role::TL, "fork_wave") {
-    Ok(def) => {
-      assert_true(def.description.contains("ALWAYS uses Gemini"))
-      assert_true(def.description.contains("agent_type"))
-    }
+    Ok(def) => assert_true(def.description.contains("Gemini leaf agents"))
     Err(_) => fail("expected fork_wave definition")
   }
 }

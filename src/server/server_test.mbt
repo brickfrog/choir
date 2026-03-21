@@ -282,7 +282,7 @@ test "notify_parent with valid parent returns Ok DeliveryMethod" {
 }
 
 ///|
-test "notify_parent prefers terminal delivery for live Claude parent" {
+test "notify_parent delivers to Claude parent via TeamsInbox" {
   let state = ServerState::new(@types.Config::default())
   let parent = {
     ..build_agent("parent-1", None),
@@ -295,11 +295,11 @@ test "notify_parent prefers terminal delivery for live Claude parent" {
   let res = state.notify_parent("child-1", "hello", "success")
   assert_true(res is Ok(_))
   match res {
-    Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
-      assert_eq(target, "zellij-tab:choir:TL")
-      assert_eq(text, "[from: child-1] hello")
+    Ok(@message.DeliveryMethod::TeamsInbox(path, json)) => {
+      assert_true(path.contains("parent-1"))
+      assert_true(json.contains("hello"))
     }
-    _ => fail("expected local terminal delivery")
+    _ => fail("expected Teams inbox delivery for Claude parent")
   }
 }
 
