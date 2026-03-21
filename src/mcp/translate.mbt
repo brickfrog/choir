@@ -116,9 +116,9 @@ pub fn to_internal_request(
     None => {}
     Some(_) => {}
   }
-  // Inject caller_id from connection identity if not explicitly provided
+  // Always set caller_id from connection identity — agents cannot self-identify
   match default_caller_id {
-    Some(id) => if not(args.contains("caller_id")) { args.set("caller_id", id) }
+    Some(id) => args.set("caller_id", id)
     None => ()
   }
   Ok({
