@@ -229,7 +229,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "fork_wave",
-      description: "Spawn N parallel Claude sub-TL agents in new worktrees. Use this only when you specifically want Claude fan-out, not the default Gemini leaf path",
+      description: "Spawn N parallel implementation leaf agents in new worktrees. This defaults to Gemini fan-out. If you specifically want Claude fan-out, pass agent_type=claude explicitly",
       props: [
         { name: "task", desc: "Task description for the wave" },
         {
@@ -239,6 +239,10 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "branch", desc: "Compatibility alias for parent_branch" },
         { name: "count", desc: "Number of workers to spawn (default 1)" },
         { name: "slug_prefix", desc: "Slug prefix for spawned children" },
+        {
+          name: "agent_type",
+          desc: "Wave leaf agent type: gemini by default, or claude/moon_pilot when explicitly requested",
+        },
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },
         { name: "verify", desc: "Newline-separated verification commands" },

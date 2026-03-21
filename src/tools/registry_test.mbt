@@ -216,8 +216,8 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
   }
   match reg.lookup(@types.Role::TL, "fork_wave") {
     Ok(def) => {
-      assert_true(def.description.contains("Claude sub-TL"))
-      assert_true(def.description.contains("not the default Gemini leaf path"))
+      assert_true(def.description.contains("defaults to Gemini fan-out"))
+      assert_true(def.description.contains("agent_type=claude explicitly"))
     }
     Err(_) => fail("expected fork_wave definition")
   }

@@ -58,6 +58,39 @@ test "dispatch fork_wave returns agent_ids with mock" {
 }
 
 ///|
+test "dispatch fork_wave defaults to gemini fanout" {
+  @async.with_event_loop(_ => {
+    let recorded : Array[@workspace.Command] = []
+    let res = @tools.dispatch(
+      {
+        role: @types.Role::TL,
+        name: "fork_wave",
+        args: {
+          "count": "1",
+          "task": "Implement feature X",
+          "slug_prefix": "wave",
+          "parent_branch": "main",
+        },
+      },
+      runner=async fn(cmds) {
+        @async.sleep(0)
+        for cmd in cmds {
+          recorded.push(cmd)
+        }
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      },
+    )
+    assert_true(res is Ok(_))
+    let launch = recorded[recorded.length() - 1]
+    assert_true(launch.args[3].contains("gemini '--prompt-interactive'"))
+  })
+}
+
+///|
 test "handle_request fork_wave accepts raw primitive request args" {
   @async.with_event_loop(_ => {
     let reg = @tools.ToolRegistry::new()

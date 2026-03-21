@@ -125,6 +125,7 @@ struct ForkWaveArgs {
   parent_branch : String
   caller_id : String
   slug_prefix : String
+  agent_type : @types.AgentType
   parent_session_id : String?
 } derive(Show, Eq)
 
@@ -435,6 +436,16 @@ fn parse_fork_wave_args(
   } else {
     slug_prefix
   }
+  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("gemini")
+  let normalized_agent_type_str = if agent_type_str == "" {
+    "gemini"
+  } else {
+    agent_type_str
+  }
+  let agent_type = match parse_agent_type(normalized_agent_type_str) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
   match validate_slug(normalized_slug_prefix) {
     Ok(_) => ()
     Err(e) => return Err("invalid slug_prefix: " + e)
@@ -445,6 +456,7 @@ fn parse_fork_wave_args(
     parent_branch,
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug_prefix: normalized_slug_prefix,
+    agent_type,
     parent_session_id: lookup_parent_session_id(project_dir, args),
   })
 }
@@ -1296,7 +1308,7 @@ pub async fn dispatch(
         let spec = @types.SpawnSpec::{
           slug,
           role: @types.Role::Dev,
-          agent_type: @types.AgentType::Claude,
+          agent_type: fork_wave_args.agent_type,
           task: fork_wave_args.task,
           isolation: @types.IsolationMode::Worktree,
           parent_id: fork_wave_args.caller_id,
@@ -2104,6 +2116,20 @@ test "parse_fork_wave_args applies defaults" {
   assert_eq(parsed.slug_prefix, "wave")
   assert_eq(parsed.parent_branch, "main")
   assert_eq(parsed.caller_id, "main")
+  assert_eq(parsed.agent_type, @types.AgentType::Gemini)
+}
+
+///|
+test "parse_fork_wave_args accepts explicit claude fanout" {
+  let parsed = parse_fork_wave_args(
+    ".",
+    tool_args_from_map({
+      "count": "2",
+      "task": "Investigate architecture",
+      "agent_type": "claude",
+    }),
+  ).unwrap()
+  assert_eq(parsed.agent_type, @types.AgentType::Claude)
 }
 
 ///|

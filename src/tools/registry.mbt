@@ -32,7 +32,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn N parallel Claude sub-TL agents in worktrees. Use this only when you specifically want Claude fan-out, not the default Gemini leaf path",
+      description: "Spawn N parallel implementation leaf agents in worktrees. This defaults to Gemini fan-out. If you specifically want Claude fan-out, pass agent_type=claude explicitly",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
