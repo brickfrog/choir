@@ -2378,6 +2378,27 @@ test "companion gemini commands trust workspace and use zellij tab cwd" {
 }
 
 ///|
+test "init choir source tree detection only matches choir source markers" {
+  assert_true(
+    init_is_choir_source_files(
+      "{\"name\":\"choir\",\"version\":\"0.1.0\"}", "fn main {}",
+    ),
+  )
+  assert_true(
+    init_is_choir_source_files("{\n  \"name\": \"choir\"\n}", "fn main {}"),
+  )
+  assert_false(init_is_choir_source_files("", "fn main {}"))
+  assert_false(init_is_choir_source_files("{\"name\":\"other\"}", "fn main {}"))
+  assert_false(init_is_choir_source_files("{\"name\":\"choir\"}", ""))
+}
+
+///|
+test "init server command switches between dev and serve" {
+  assert_eq(init_server_command(true), "choir dev")
+  assert_eq(init_server_command(false), "choir serve")
+}
+
+///|
 test "smoke review flag parser" {
   assert_false(smoke_review_enabled(["choir", "smoke"]))
   assert_true(smoke_review_enabled(["choir", "smoke", "--review"]))
@@ -2871,6 +2892,35 @@ fn init_companion_commands(
 }
 
 ///|
+fn init_is_choir_source_files(
+  moon_mod_content : String,
+  main_mbt_content : String,
+) -> Bool {
+  main_mbt_content != "" &&
+  (
+    moon_mod_content.contains("\"name\": \"choir\"") ||
+    moon_mod_content.contains("\"name\":\"choir\"")
+  )
+}
+
+///|
+fn init_is_choir_source_tree(project_dir : String) -> Bool {
+  init_is_choir_source_files(
+    @io.read_file(project_dir + "/moon.mod.json"),
+    @io.read_file(project_dir + "/src/bin/choir/main.mbt"),
+  )
+}
+
+///|
+fn init_server_command(use_dev : Bool) -> String {
+  if use_dev {
+    "choir dev"
+  } else {
+    "choir serve"
+  }
+}
+
+///|
 fn choir_escape_json_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -2901,13 +2951,17 @@ fn init_run() -> Unit raise {
     let recreate = args.contains("--recreate")
     let no_attach = init_no_attach(args)
     let project_dir = @io.getcwd()
+    let use_dev = init_is_choir_source_tree(project_dir)
+    let server_cmd = init_server_command(use_dev)
 
-    // Rebuild binary before doing anything else so the new server uses fresh code
-    init_run_or_exit({
-      program: "moon",
-      args: ["build", "--target", "native", "--release"],
-      workdir: None,
-    })
+    if use_dev {
+      // Rebuild binary before doing anything else so the new server uses fresh code
+      init_run_or_exit({
+        program: "moon",
+        args: ["build", "--target", "native", "--release"],
+        workdir: None,
+      })
+    }
 
     init_run_or_exit({
       program: "sh",
@@ -3080,7 +3134,7 @@ fn init_run() -> Unit raise {
 
         init_run_or_exit({
           program: "tmux",
-          args: ["send-keys", "-t", session + ":Server", "choir dev", "Enter"],
+          args: ["send-keys", "-t", session + ":Server", server_cmd, "Enter"],
           workdir: None,
         })
 
@@ -3104,7 +3158,7 @@ fn init_run() -> Unit raise {
       @types.TerminalBackend::Zellij => {
         init_run_or_exit(@workspace.zellij_create_background_session(session))
         init_run_or_exit(
-          @workspace.zellij_new_tab(session, "Server", project_dir, "choir dev"),
+          @workspace.zellij_new_tab(session, "Server", project_dir, server_cmd),
         )
         init_run_or_exit(
           @workspace.zellij_new_tab(
