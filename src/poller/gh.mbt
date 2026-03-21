@@ -139,7 +139,16 @@ pub fn parse_gh_pr_view_output(
 ///|
 pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
   let (read_end, write_end) = @pipe.pipe() catch {
-    _ => return (None_, "", false, "")
+    e => {
+      @io.write_stderr(
+        "[poller] pipe() failed for PR #" +
+        pr_number.to_string() +
+        ": " +
+        e.to_string() +
+        "\n",
+      )
+      return (None_, "", false, "")
+    }
   }
   let exit_code = @process.run(
     "gh",
@@ -152,7 +161,16 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
     ],
     stdout=write_end,
   ) catch {
-    _ => -1
+    e => {
+      @io.write_stderr(
+        "[poller] gh pr view failed for PR #" +
+        pr_number.to_string() +
+        ": " +
+        e.to_string() +
+        "\n",
+      )
+      -1
+    }
   }
   let buf = FixedArray::make(65536, (0 : Byte))
   let mut total = 0
@@ -170,6 +188,15 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
   }
   read_end.close()
   if exit_code != 0 {
+    @io.write_stderr(
+      "[poller] gh exit=" +
+      exit_code.to_string() +
+      " for PR #" +
+      pr_number.to_string() +
+      " (read " +
+      total.to_string() +
+      " bytes)\n",
+    )
     return (None_, "", false, "")
   }
   let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
