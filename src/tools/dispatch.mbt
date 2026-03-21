@@ -490,7 +490,7 @@ fn slugify_task(task : String, index : Int) -> String {
       buf.write_char(c)
       in_word = true
     } else if c >= 'A' && c <= 'Z' {
-      buf.write_char(Char::from_int(c.to_int() + 32))
+      buf.write_char(Int::unsafe_to_char(c.to_int() + 32))
       in_word = true
     }
     // skip other chars
