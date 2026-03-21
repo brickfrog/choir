@@ -2399,6 +2399,95 @@ test "init server command switches between dev and serve" {
 }
 
 ///|
+fn init_session_exists_command(
+  terminal_backend : @types.TerminalBackend,
+  session : String,
+) -> @workspace.Command {
+  match terminal_backend {
+    @types.TerminalBackend::Tmux =>
+      {
+        program: "sh",
+        args: ["-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session],
+        workdir: None,
+      }
+    @types.TerminalBackend::Zellij => @workspace.zellij_session_exists(session)
+  }
+}
+
+///|
+fn init_kill_session_command(
+  terminal_backend : @types.TerminalBackend,
+  session : String,
+) -> @workspace.Command {
+  match terminal_backend {
+    @types.TerminalBackend::Tmux =>
+      { program: "tmux", args: ["kill-session", "-t", session], workdir: None }
+    @types.TerminalBackend::Zellij => @workspace.zellij_kill_session(session)
+  }
+}
+
+///|
+fn init_kill_server_pid_command(pid_str : String) -> @workspace.Command {
+  {
+    program: "sh",
+    args: [
+      "-c", "kill -TERM \"$1\" 2>/dev/null; sleep 0.3; kill -KILL \"$1\" 2>/dev/null; true",
+      "sh", pid_str,
+    ],
+    workdir: None,
+  }
+}
+
+///|
+fn init_cleanup_server_artifacts_command() -> @workspace.Command {
+  {
+    program: "sh",
+    args: ["-c", "rm -f .choir/server.pid .choir/server.sock"],
+    workdir: None,
+  }
+}
+
+///|
+test "init session lifecycle commands match backend" {
+  let tmux_exists = init_session_exists_command(
+    @types.TerminalBackend::Tmux,
+    "choir",
+  )
+  assert_eq(tmux_exists.program, "sh")
+  assert_eq(tmux_exists.args[3], "choir")
+
+  let zellij_exists = init_session_exists_command(
+    @types.TerminalBackend::Zellij,
+    "choir",
+  )
+  assert_eq(zellij_exists.program, "sh")
+  assert_true(zellij_exists.args[1].contains("zellij list-sessions"))
+
+  let tmux_kill = init_kill_session_command(
+    @types.TerminalBackend::Tmux,
+    "choir",
+  )
+  assert_eq(tmux_kill.args, ["kill-session", "-t", "choir"])
+
+  let zellij_kill = init_kill_session_command(
+    @types.TerminalBackend::Zellij,
+    "choir",
+  )
+  assert_eq(zellij_kill.args, ["kill-session", "choir"])
+}
+
+///|
+test "init server cleanup commands cover pid and socket teardown" {
+  let kill_cmd = init_kill_server_pid_command("123")
+  assert_eq(kill_cmd.program, "sh")
+  assert_eq(kill_cmd.args[3], "123")
+  let cleanup_cmd = init_cleanup_server_artifacts_command()
+  assert_eq(cleanup_cmd.program, "sh")
+  assert_true(cleanup_cmd.args[1].contains(".choir/server.pid"))
+  assert_true(cleanup_cmd.args[1].contains(".choir/server.sock"))
+}
+
+///|
 test "smoke review flag parser" {
   assert_false(smoke_review_enabled(["choir", "smoke"]))
   assert_true(smoke_review_enabled(["choir", "smoke", "--review"]))
@@ -3012,58 +3101,25 @@ fn init_run() -> Unit raise {
       if pid_str != "" {
         @io.write_stdout("Stopping server (PID \{pid_str})...\n")
         ignore(
-          @exec.run({
-            program: "sh",
-            args: [
-              "-c", "kill -TERM \"$1\" 2>/dev/null; sleep 0.3; kill -KILL \"$1\" 2>/dev/null; true",
-              "sh", pid_str,
-            ],
-            workdir: None,
-          }) catch {
+          @exec.run(init_kill_server_pid_command(pid_str)) catch {
             _ => 0
           },
         )
         ignore(
-          @exec.run({
-            program: "sh",
-            args: ["-c", "rm -f .choir/server.pid .choir/server.sock"],
-            workdir: None,
-          }) catch {
+          @exec.run(init_cleanup_server_artifacts_command()) catch {
             _ => 0
           },
         )
       }
       let has_session = @exec.run(
-        match terminal_backend {
-          @types.TerminalBackend::Tmux =>
-            {
-              program: "sh",
-              args: [
-                "-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session,
-              ],
-              workdir: None,
-            }
-          @types.TerminalBackend::Zellij =>
-            @workspace.zellij_session_exists(session)
-        },
+        init_session_exists_command(terminal_backend, session),
       ) catch {
         _ => 1
       }
       if has_session == 0 {
         @io.write_stdout("Killing session \{session}...\n")
         ignore(
-          @exec.run(
-            match terminal_backend {
-              @types.TerminalBackend::Tmux =>
-                {
-                  program: "tmux",
-                  args: ["kill-session", "-t", session],
-                  workdir: None,
-                }
-              @types.TerminalBackend::Zellij =>
-                @workspace.zellij_kill_session(session)
-            },
-          ) catch {
+          @exec.run(init_kill_session_command(terminal_backend, session)) catch {
             _ => 0
           },
         )
@@ -3071,18 +3127,7 @@ fn init_run() -> Unit raise {
     }
 
     let session_alive = @exec.run(
-      match terminal_backend {
-        @types.TerminalBackend::Tmux =>
-          {
-            program: "sh",
-            args: [
-              "-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session,
-            ],
-            workdir: None,
-          }
-        @types.TerminalBackend::Zellij =>
-          @workspace.zellij_session_exists(session)
-      },
+      init_session_exists_command(terminal_backend, session),
     ) catch {
       _ => 1
     }
@@ -3234,6 +3279,44 @@ fn init_run() -> Unit raise {
 }
 
 ///|
+fn stop_run() -> Unit raise {
+  @async.with_event_loop(async fn(_root) {
+    let config_content = @io.read_file(".choir/config.toml")
+    let config = match @config.parse_config(config_content) {
+      Ok(cfg) => cfg
+      Err(_) => @types.Config::default()
+    }
+    let session = config.terminal_session
+    let terminal_backend = config.terminal_backend
+    let pid_str = @io.read_file(".choir/server.pid").trim().to_string()
+
+    if pid_str != "" {
+      @io.write_stdout("Stopping server (PID \{pid_str})...\n")
+      ignore(@exec.run(init_kill_server_pid_command(pid_str)) catch { _ => 0 })
+    }
+
+    let has_session = @exec.run(
+      init_session_exists_command(terminal_backend, session),
+    ) catch {
+      _ => 1
+    }
+    if has_session == 0 {
+      @io.write_stdout("Killing session \{session}...\n")
+      ignore(
+        @exec.run(init_kill_session_command(terminal_backend, session)) catch {
+          _ => 0
+        },
+      )
+    } else {
+      @io.write_stdout("Session \{session} not running.\n")
+    }
+
+    ignore(@exec.run(init_cleanup_server_artifacts_command()) catch { _ => 0 })
+    @io.write_stdout("Choir stopped.\n")
+  })
+}
+
+///|
 fn dev_run() -> Unit {
   let cmd = "command -v watchexec > /dev/null 2>&1 && " +
     "exec watchexec -e mbt,toml -r --shell=none -- sh -c 'moon build --target native --release && exec choir serve'; " +
@@ -3376,12 +3459,13 @@ fn main {
           )
       }
     "init" => init_run() catch { _ => @io.exit(1) }
+    "stop" => stop_run() catch { _ => @io.exit(1) }
     "reply" => reply_run()
     "smoke" => smoke_run() catch { _ => @io.exit(1) }
     "watch" => watch_run()
     _ => {
       @io.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate]|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
       )
       @io.exit(1)
     }

@@ -10,6 +10,7 @@
 
 ```bash
 choir init
+choir stop
 choir serve
 choir mcp-stdio
 choir smoke

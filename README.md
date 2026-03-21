@@ -10,6 +10,7 @@ English | [简体中文](README.zh.md)
 
 ```bash
 choir init
+choir stop
 choir serve
 choir mcp-stdio
 choir smoke
