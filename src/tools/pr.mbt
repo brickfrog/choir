@@ -241,6 +241,34 @@ pub async fn ensure_pull_request(
 }
 
 ///|
+/// Detect the repo's default branch via git symbolic-ref.
+/// Falls back to "main" if detection fails.
+pub async fn detect_default_branch(project_dir : String) -> String {
+  let cmd : @workspace.Command = {
+    program: "git",
+    args: ["symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture_command_output(cmd)
+  if exit_code == 0 {
+    let trimmed = output.trim().to_string()
+    // Output is "origin/main" or "origin/master" — strip the "origin/" prefix
+    let prefix = "origin/"
+    if trimmed.has_prefix(prefix) {
+      trimmed[prefix.length():].to_string() catch {
+        _ => "main"
+      }
+    } else if trimmed != "" {
+      trimmed
+    } else {
+      "main"
+    }
+  } else {
+    "main"
+  }
+}
+
+///|
 pub fn merge_pr_commands(pr_number : Int) -> Array[@workspace.Command] {
   [
     {

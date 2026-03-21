@@ -105,7 +105,7 @@ fn get_arg_or_alias(
 ///|
 struct FilePrArgs {
   branch : String
-  parent_branch : String
+  parent_branch : String?
   tracked_agent_id : String
 } derive(Show, Eq)
 
@@ -353,23 +353,25 @@ fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, String] {
   if branch == "" {
     return Err("missing branch")
   }
-  let parent_branch = tool_args_get(args, "parent_branch").unwrap_or("main")
-  let normalized_parent_branch = if parent_branch == "" {
-    "main"
-  } else {
-    parent_branch
+  let parent_branch = match tool_args_get(args, "parent_branch") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
   }
   match validate_branch(branch) {
     Ok(_) => ()
     Err(e) => return Err("invalid branch: " + e)
   }
-  match validate_branch(normalized_parent_branch) {
-    Ok(_) => ()
-    Err(e) => return Err("invalid parent_branch: " + e)
+  match parent_branch {
+    Some(pb) =>
+      match validate_branch(pb) {
+        Ok(_) => ()
+        Err(e) => return Err("invalid parent_branch: " + e)
+      }
+    None => ()
   }
   Ok({
     branch,
-    parent_branch: normalized_parent_branch,
+    parent_branch,
     tracked_agent_id: get_arg_or_alias(args, "agent_id", "caller_id", branch),
   })
 }
@@ -1369,7 +1371,10 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err(e)
       }
       let branch = file_pr_args.branch
-      let parent_branch = file_pr_args.parent_branch
+      let parent_branch = match file_pr_args.parent_branch {
+        Some(pb) => pb
+        None => detect_default_branch(project_dir)
+      }
       let tracked_agent_id = file_pr_args.tracked_agent_id
       match run_strict(runner, [@workspace.git_push(branch)]) {
         Err(e) => @types.Response::Err(e)
@@ -2012,7 +2017,7 @@ test "parse_file_pr_args accepts agent_id alias" {
   ).unwrap()
   assert_eq(parsed, {
     branch: "main.leaf-1",
-    parent_branch: "main",
+    parent_branch: Some("main"),
     tracked_agent_id: "main.leaf-1",
   })
 }
