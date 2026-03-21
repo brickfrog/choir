@@ -31,6 +31,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "spawn_gemini",
+      description: "Spawn a single Gemini leaf agent in a worktree",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "spawn_remote",
       description: "Spawn an agent on a remote machine via SSH, connecting back over TCP",
       allowed_roles: [@types.Role::Root, @types.Role::TL],

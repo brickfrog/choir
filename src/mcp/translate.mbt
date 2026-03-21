@@ -246,6 +246,17 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["task", "count"],
     },
     {
+      name: "spawn_gemini",
+      description: "Spawn a single Gemini leaf agent in a worktree",
+      props: [
+        { name: "task", desc: "Task for the agent" },
+        { name: "slug", desc: "Agent slug (auto-derived if omitted)" },
+        { name: "parent_branch", desc: "Parent branch (default main)" },
+        { name: "caller_id", desc: "ID of the caller" },
+      ],
+      required: ["task"],
+    },
+    {
       name: "spawn_worker",
       description: "Spawn an inline worker in the current repo/session for research or review only. Workers are non-editing support agents and do not own a branch or PR",
       props: spawn_worker_props(),

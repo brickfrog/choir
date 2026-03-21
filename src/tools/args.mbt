@@ -36,6 +36,15 @@ struct ForkWaveArgs {
 } derive(Show, Eq)
 
 ///|
+struct SpawnGeminiArgs {
+  task : String
+  caller_id : String
+  slug : String
+  parent_branch : String
+  parent_session_id : String?
+} derive(Show, Eq)
+
+///|
 struct LeafSpawnArgs {
   task : String
   caller_id : String
