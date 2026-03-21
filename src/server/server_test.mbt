@@ -145,93 +145,85 @@ async fn mock_ensure_pr_server(
 }
 
 ///|
-test "ServerState::handle valid request returns Ok" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::Dev,
-      name: "task_list",
-      args: @types.RequestArgs::new({}),
-    }
-    let res = state.handle(req)
-    assert_true(res.is_ok())
-  })
+async test "ServerState::handle valid request returns Ok" {
+  let state = ServerState::new(@types.Config::default())
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "task_list",
+    args: @types.RequestArgs::new({}),
+  }
+  let res = state.handle(req)
+  assert_true(res.is_ok())
 }
 
 ///|
-test "ServerState::handle invalid role returns Err" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::Dev,
-      name: "fork_wave",
-      args: @types.RequestArgs::new({}),
-    }
-    let res = state.handle(req)
-    assert_false(res.is_ok())
-  })
+async test "ServerState::handle invalid role returns Err" {
+  let state = ServerState::new(@types.Config::default())
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "fork_wave",
+    args: @types.RequestArgs::new({}),
+  }
+  let res = state.handle(req)
+  assert_false(res.is_ok())
 }
 
 ///|
-test "ServerState::handle_with_runner passes configured tmux session to spawns" {
-  @async.with_event_loop(_ => {
-    let config = {
-      ..@types.Config::default(),
-      project_dir: "/tmp/server-proof",
-      terminal_session: "server-proof",
-    }
-    let state = ServerState::new(config)
-    let req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::TL,
-      name: "fork_wave",
-      args: @types.RequestArgs::new({
-        "caller_id": "root",
-        "slug_prefix": "leaf-a",
-        "parent_branch": "main",
-        "task": "reply READY",
-        "count": "1",
-        "read_first": "AGENTS.md",
-      }),
-    }
-    let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
-    assert_eq(res.ok_field("status"), Some("spawned"))
-    assert_eq(res.ok_field("agent_ids"), Some("main.leaf-a-0"))
-  })
+async test "ServerState::handle_with_runner passes configured tmux session to spawns" {
+  let config = {
+    ..@types.Config::default(),
+    project_dir: "/tmp/server-proof",
+    terminal_session: "server-proof",
+  }
+  let state = ServerState::new(config)
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: @types.RequestArgs::new({
+      "caller_id": "root",
+      "slug_prefix": "leaf-a",
+      "parent_branch": "main",
+      "task": "reply READY",
+      "count": "1",
+      "read_first": "AGENTS.md",
+    }),
+  }
+  let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
+  assert_eq(res.ok_field("status"), Some("spawned"))
+  assert_eq(res.ok_field("agent_ids"), Some("main.leaf-a-0"))
 }
 
 ///|
-test "ServerState::handle_with_runner passes zellij backend to spawns" {
-  @async.with_event_loop(_ => {
-    let config = {
-      ..@types.Config::default(),
-      project_dir: "/tmp/server-proof",
-      terminal_session: "server-proof",
-      terminal_backend: @types.TerminalBackend::Zellij,
-    }
-    let state = ServerState::new(config)
-    let req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::TL,
-      name: "fork_wave",
-      args: @types.RequestArgs::new({
-        "caller_id": "root",
-        "slug_prefix": "leaf-a",
-        "parent_branch": "main",
-        "task": "reply READY",
-        "count": "1",
-        "read_first": "AGENTS.md",
-      }),
-    }
-    let res = state.handle_with_runner(
-      req,
-      runner=mock_spawn_runner_server_zellij,
-    )
-    assert_eq(res.ok_field("status"), Some("spawned"))
-    assert_eq(res.ok_field("agent_ids"), Some("main.leaf-a-0"))
-  })
+async test "ServerState::handle_with_runner passes zellij backend to spawns" {
+  let config = {
+    ..@types.Config::default(),
+    project_dir: "/tmp/server-proof",
+    terminal_session: "server-proof",
+    terminal_backend: @types.TerminalBackend::Zellij,
+  }
+  let state = ServerState::new(config)
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: @types.RequestArgs::new({
+      "caller_id": "root",
+      "slug_prefix": "leaf-a",
+      "parent_branch": "main",
+      "task": "reply READY",
+      "count": "1",
+      "read_first": "AGENTS.md",
+    }),
+  }
+  let res = state.handle_with_runner(
+    req,
+    runner=mock_spawn_runner_server_zellij,
+  )
+  assert_eq(res.ok_field("status"), Some("spawned"))
+  assert_eq(res.ok_field("agent_ids"), Some("main.leaf-a-0"))
 }
 
 ///|
@@ -459,379 +451,369 @@ test "plan_poll_event_deliveries routes review to parent when owner is Done" {
 }
 
 ///|
-test "process_poller_tick_with routes comment-only reviews to owning agent" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
-    let child = {
-      ..build_agent("main.leaf-1", Some("parent-1")),
-      role: @types.Role::Dev,
-      branch: "main.leaf-1",
-    }
-    ignore(state.registry.insert(parent))
-    ignore(state.registry.insert(child))
-    state.poller.track(
-      61, "main.leaf-1", "main.leaf-1", "main", "https://example.test/pr/61", 100L,
-    )
+async test "process_poller_tick_with routes comment-only reviews to owning agent" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+  let child = {
+    ..build_agent("main.leaf-1", Some("parent-1")),
+    role: @types.Role::Dev,
+    branch: "main.leaf-1",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+  state.poller.track(
+    61, "main.leaf-1", "main.leaf-1", "main", "https://example.test/pr/61", 100L,
+  )
 
-    let review_cmds : Array[@workspace.Command] = []
-    state.process_poller_tick_with(
-      200L,
-      900L,
-      fn(_pr_number) {
-        (
-          @poller.ReviewState::None_,
-          "sha-comment-1",
-          false,
-          "Please tighten the wording in CLAUDE.md",
-        )
-      },
-      runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
-    )
-    // Parent + owner deliveries + gh pr comment
-    assert_eq(review_cmds.length(), 3)
-    // Parent gets summary
-    assert_true(
-      review_cmds[0].args[4].contains(
-        "/.claude/teams/parent-1/inboxes/default.json",
-      ),
-    )
-    assert_true(review_cmds[0].args[3].contains("[REVIEW] main.leaf-1 PR #61"))
-    // Owner gets detail
-    assert_true(
-      review_cmds[1].args[4].contains(
-        "/.claude/teams/main.leaf-1/inboxes/default.json",
-      ),
-    )
-    assert_true(
-      review_cmds[1].args[3].contains(
-        "[REVIEW] PR #61 has review comments:\\nPlease tighten the wording in CLAUDE.md",
-      ),
-    )
-    // PR comment audit trail
-    assert_eq(review_cmds[2].program, "gh")
-    assert_eq(review_cmds[2].args[0], "pr")
-    assert_eq(review_cmds[2].args[1], "comment")
-    assert_eq(review_cmds[2].args[2], "61")
-    assert_true(review_cmds[2].args[4].contains("**Choir:** review received"))
-  })
+  let review_cmds : Array[@workspace.Command] = []
+  state.process_poller_tick_with(
+    200L,
+    900L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::None_,
+        "sha-comment-1",
+        false,
+        "Please tighten the wording in CLAUDE.md",
+      )
+    },
+    runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
+  )
+  // Parent + owner deliveries + gh pr comment
+  assert_eq(review_cmds.length(), 3)
+  // Parent gets summary
+  assert_true(
+    review_cmds[0].args[4].contains(
+      "/.claude/teams/parent-1/inboxes/default.json",
+    ),
+  )
+  assert_true(review_cmds[0].args[3].contains("[REVIEW] main.leaf-1 PR #61"))
+  // Owner gets detail
+  assert_true(
+    review_cmds[1].args[4].contains(
+      "/.claude/teams/main.leaf-1/inboxes/default.json",
+    ),
+  )
+  assert_true(
+    review_cmds[1].args[3].contains(
+      "[REVIEW] PR #61 has review comments:\\nPlease tighten the wording in CLAUDE.md",
+    ),
+  )
+  // PR comment audit trail
+  assert_eq(review_cmds[2].program, "gh")
+  assert_eq(review_cmds[2].args[0], "pr")
+  assert_eq(review_cmds[2].args[1], "comment")
+  assert_eq(review_cmds[2].args[2], "61")
+  assert_true(review_cmds[2].args[4].contains("**Choir:** review received"))
 }
 
 ///|
-test "process_poller_tick_with drives PR review workflow and merge cleanup" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
-    let child = {
-      ..build_agent("main.leaf-1", Some("parent-1")),
-      role: @types.Role::Dev,
-      branch: "main.leaf-1",
+async test "process_poller_tick_with drives PR review workflow and merge cleanup" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+  let child = {
+    ..build_agent("main.leaf-1", Some("parent-1")),
+    role: @types.Role::Dev,
+    branch: "main.leaf-1",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+
+  let file_req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: @types.RequestArgs::from_values({
+      "branch": @types.wire_string("main.leaf-1"),
+      "parent_branch": @types.wire_string("main"),
+      "caller_id": @types.wire_string("main.leaf-1"),
+    }),
+  }
+  let file_res = @tools.handle_request(
+    state.tool_registry,
+    file_req,
+    project_dir="/tmp",
+    runner=mock_runner_server,
+    ensure_pr=mock_ensure_pr_server,
+    agent_registry=Some(state.registry),
+    mutex_registry=Some(state.mutex_registry),
+    poller_state=Some(state.poller),
+  )
+  assert_eq(file_res.ok_field("status"), Some("pr_created"))
+  assert_eq(file_res.ok_field("tracked"), Some("true"))
+  match state.poller.get(52) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "main.leaf-1")
+      assert_eq(tracked.branch, "main.leaf-1")
+      assert_eq(tracked.parent_branch, "main")
+      assert_eq(tracked.pr_url, "https://example.test/pr/main.leaf-1")
     }
-    ignore(state.registry.insert(parent))
-    ignore(state.registry.insert(child))
+    None => fail("expected tracked PR after file_pr")
+  }
 
-    let file_req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::Dev,
-      name: "file_pr",
-      args: @types.RequestArgs::from_values({
-        "branch": @types.wire_string("main.leaf-1"),
-        "parent_branch": @types.wire_string("main"),
-        "caller_id": @types.wire_string("main.leaf-1"),
-      }),
-    }
-    let file_res = @tools.handle_request(
-      state.tool_registry,
-      file_req,
-      project_dir="/tmp",
-      runner=mock_runner_server,
-      ensure_pr=mock_ensure_pr_server,
-      agent_registry=Some(state.registry),
-      mutex_registry=Some(state.mutex_registry),
-      poller_state=Some(state.poller),
-    )
-    assert_eq(file_res.ok_field("status"), Some("pr_created"))
-    assert_eq(file_res.ok_field("tracked"), Some("true"))
-    match state.poller.get(52) {
-      Some(tracked) => {
-        assert_eq(tracked.agent_id, "main.leaf-1")
-        assert_eq(tracked.branch, "main.leaf-1")
-        assert_eq(tracked.parent_branch, "main")
-        assert_eq(tracked.pr_url, "https://example.test/pr/main.leaf-1")
-      }
-      None => fail("expected tracked PR after file_pr")
-    }
+  let review_cmds : Array[@workspace.Command] = []
+  state.process_poller_tick_with(
+    200L,
+    900L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::ChangesRequested,
+        "sha-review-1",
+        false,
+        "Please add tests",
+      )
+    },
+    runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
+  )
+  // Parent + owner + gh pr comment
+  assert_eq(review_cmds.length(), 3)
+  assert_eq(review_cmds[0].program, "sh")
+  // Parent delivery
+  assert_true(
+    review_cmds[0].args[4].contains(
+      "/.claude/teams/parent-1/inboxes/default.json",
+    ),
+  )
+  assert_true(review_cmds[0].args[3].contains("[REVIEW] main.leaf-1 PR #52"))
+  // Owner delivery
+  assert_true(
+    review_cmds[1].args[4].contains(
+      "/.claude/teams/main.leaf-1/inboxes/default.json",
+    ),
+  )
+  assert_true(
+    review_cmds[1].args[3].contains(
+      "[REVIEW] PR #52 has review comments:\\nPlease add tests",
+    ),
+  )
+  assert_true(review_cmds[1].args[3].contains("\"from\":\"poller\""))
+  // PR comment
+  assert_eq(review_cmds[2].program, "gh")
 
-    let review_cmds : Array[@workspace.Command] = []
-    state.process_poller_tick_with(
-      200L,
-      900L,
-      fn(_pr_number) {
-        (
-          @poller.ReviewState::ChangesRequested,
-          "sha-review-1",
-          false,
-          "Please add tests",
-        )
-      },
-      runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
-    )
-    // Parent + owner + gh pr comment
-    assert_eq(review_cmds.length(), 3)
-    assert_eq(review_cmds[0].program, "sh")
-    // Parent delivery
-    assert_true(
-      review_cmds[0].args[4].contains(
-        "/.claude/teams/parent-1/inboxes/default.json",
-      ),
-    )
-    assert_true(review_cmds[0].args[3].contains("[REVIEW] main.leaf-1 PR #52"))
-    // Owner delivery
-    assert_true(
-      review_cmds[1].args[4].contains(
-        "/.claude/teams/main.leaf-1/inboxes/default.json",
-      ),
-    )
-    assert_true(
-      review_cmds[1].args[3].contains(
-        "[REVIEW] PR #52 has review comments:\\nPlease add tests",
-      ),
-    )
-    assert_true(review_cmds[1].args[3].contains("\"from\":\"poller\""))
-    // PR comment
-    assert_eq(review_cmds[2].program, "gh")
+  let fixes_cmds : Array[@workspace.Command] = []
+  state.process_poller_tick_with(
+    201L,
+    900L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::ChangesRequested,
+        "sha-review-2",
+        false,
+        "Please add tests",
+      )
+    },
+    runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
+  )
+  // Parent delivery + gh pr comment
+  assert_eq(fixes_cmds.length(), 2)
+  assert_true(
+    fixes_cmds[0].args[4].contains(
+      "/.claude/teams/parent-1/inboxes/default.json",
+    ),
+  )
+  assert_true(
+    fixes_cmds[0].args[3].contains(
+      "[FIXES PUSHED] main.leaf-1 PR #52 has new commits after review",
+    ),
+  )
+  assert_true(fixes_cmds[0].args[3].contains("\"from\":\"main.leaf-1\""))
+  assert_eq(fixes_cmds[1].program, "gh")
 
-    let fixes_cmds : Array[@workspace.Command] = []
-    state.process_poller_tick_with(
-      201L,
-      900L,
-      fn(_pr_number) {
-        (
-          @poller.ReviewState::ChangesRequested,
-          "sha-review-2",
-          false,
-          "Please add tests",
-        )
-      },
-      runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
-    )
-    // Parent delivery + gh pr comment
-    assert_eq(fixes_cmds.length(), 2)
-    assert_true(
-      fixes_cmds[0].args[4].contains(
-        "/.claude/teams/parent-1/inboxes/default.json",
-      ),
-    )
-    assert_true(
-      fixes_cmds[0].args[3].contains(
-        "[FIXES PUSHED] main.leaf-1 PR #52 has new commits after review",
-      ),
-    )
-    assert_true(fixes_cmds[0].args[3].contains("\"from\":\"main.leaf-1\""))
-    assert_eq(fixes_cmds[1].program, "gh")
+  let ready_cmds : Array[@workspace.Command] = []
+  state.process_poller_tick_with(
+    202L,
+    900L,
+    fn(_pr_number) {
+      (@poller.ReviewState::Approved, "sha-review-2", false, "")
+    },
+    runner=async fn(cmds) { record_runner_server(ready_cmds, cmds) },
+  )
+  // Parent delivery + gh pr comment
+  assert_eq(ready_cmds.length(), 2)
+  assert_true(
+    ready_cmds[0].args[4].contains(
+      "/.claude/teams/parent-1/inboxes/default.json",
+    ),
+  )
+  assert_true(
+    ready_cmds[0].args[3].contains("[PR READY] main.leaf-1 PR #52 approved"),
+  )
+  assert_true(
+    ready_cmds[0].args[3].contains(
+      "merge_pr(pr_number: \\\"52\\\", parent_branch: \\\"main\\\")",
+    ),
+  )
+  assert_true(ready_cmds[0].args[3].contains("\"from\":\"main.leaf-1\""))
 
-    let ready_cmds : Array[@workspace.Command] = []
-    state.process_poller_tick_with(
-      202L,
-      900L,
-      fn(_pr_number) {
-        (@poller.ReviewState::Approved, "sha-review-2", false, "")
-      },
-      runner=async fn(cmds) { record_runner_server(ready_cmds, cmds) },
-    )
-    // Parent delivery + gh pr comment
-    assert_eq(ready_cmds.length(), 2)
-    assert_true(
-      ready_cmds[0].args[4].contains(
-        "/.claude/teams/parent-1/inboxes/default.json",
-      ),
-    )
-    assert_true(
-      ready_cmds[0].args[3].contains("[PR READY] main.leaf-1 PR #52 approved"),
-    )
-    assert_true(
-      ready_cmds[0].args[3].contains(
-        "merge_pr(pr_number: \\\"52\\\", parent_branch: \\\"main\\\")",
-      ),
-    )
-    assert_true(ready_cmds[0].args[3].contains("\"from\":\"main.leaf-1\""))
-
-    let merge_req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::TL,
-      name: "merge_pr",
-      args: @types.RequestArgs::from_values({
-        "pr_number": @types.wire_int(52),
-        "parent_branch": @types.wire_string("main"),
-        "caller_id": @types.wire_string("parent-1"),
-      }),
-    }
-    let merge_res = @tools.handle_request(
-      state.tool_registry,
-      merge_req,
-      project_dir="/tmp",
-      runner=mock_runner_server,
-      agent_registry=Some(state.registry),
-      mutex_registry=Some(state.mutex_registry),
-      poller_state=Some(state.poller),
-    )
-    assert_eq(merge_res.ok_field("status"), Some("merged"))
-    assert_eq(state.poller.get(52), None)
-  })
+  let merge_req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::from_values({
+      "pr_number": @types.wire_int(52),
+      "parent_branch": @types.wire_string("main"),
+      "caller_id": @types.wire_string("parent-1"),
+    }),
+  }
+  let merge_res = @tools.handle_request(
+    state.tool_registry,
+    merge_req,
+    project_dir="/tmp",
+    runner=mock_runner_server,
+    agent_registry=Some(state.registry),
+    mutex_registry=Some(state.mutex_registry),
+    poller_state=Some(state.poller),
+  )
+  assert_eq(merge_res.ok_field("status"), Some("merged"))
+  assert_eq(state.poller.get(52), None)
 }
 
 ///|
-test "process_poller_tick_with suppresses duplicate recovered review events" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
-    let child = {
-      ..build_agent("main.leaf-1", Some("parent-1")),
-      role: @types.Role::Dev,
-      branch: "main.leaf-1",
-    }
-    ignore(state.registry.insert(parent))
-    ignore(state.registry.insert(child))
-    state.poller.track_recovered(
-      52,
-      "main.leaf-1",
-      "main.leaf-1",
-      "main",
-      "https://example.test/pr/52",
-      100L,
-      @poller.ReviewState::ChangesRequested,
-      "Please add tests",
-      "sha-review-1",
-      false,
-    )
+async test "process_poller_tick_with suppresses duplicate recovered review events" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+  let child = {
+    ..build_agent("main.leaf-1", Some("parent-1")),
+    role: @types.Role::Dev,
+    branch: "main.leaf-1",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+  state.poller.track_recovered(
+    52,
+    "main.leaf-1",
+    "main.leaf-1",
+    "main",
+    "https://example.test/pr/52",
+    100L,
+    @poller.ReviewState::ChangesRequested,
+    "Please add tests",
+    "sha-review-1",
+    false,
+  )
 
-    let duplicate_cmds : Array[@workspace.Command] = []
-    state.process_poller_tick_with(
-      200L,
-      900L,
-      fn(_pr_number) {
-        (
-          @poller.ReviewState::ChangesRequested,
-          "sha-review-1",
-          false,
-          "Please add tests",
-        )
-      },
-      runner=async fn(cmds) { record_runner_server(duplicate_cmds, cmds) },
-    )
-    assert_eq(duplicate_cmds.length(), 0)
+  let duplicate_cmds : Array[@workspace.Command] = []
+  state.process_poller_tick_with(
+    200L,
+    900L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::ChangesRequested,
+        "sha-review-1",
+        false,
+        "Please add tests",
+      )
+    },
+    runner=async fn(cmds) { record_runner_server(duplicate_cmds, cmds) },
+  )
+  assert_eq(duplicate_cmds.length(), 0)
 
-    let fixes_cmds : Array[@workspace.Command] = []
-    state.process_poller_tick_with(
-      201L,
-      900L,
-      fn(_pr_number) {
-        (
-          @poller.ReviewState::ChangesRequested,
-          "sha-review-2",
-          false,
-          "Please add tests",
-        )
-      },
-      runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
-    )
-    // Parent delivery + gh pr comment
-    assert_eq(fixes_cmds.length(), 2)
-    assert_true(
-      fixes_cmds[0].args[4].contains(
-        "/.claude/teams/parent-1/inboxes/default.json",
-      ),
-    )
-    assert_true(
-      fixes_cmds[0].args[3].contains(
-        "[FIXES PUSHED] main.leaf-1 PR #52 has new commits after review",
-      ),
-    )
-  })
+  let fixes_cmds : Array[@workspace.Command] = []
+  state.process_poller_tick_with(
+    201L,
+    900L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::ChangesRequested,
+        "sha-review-2",
+        false,
+        "Please add tests",
+      )
+    },
+    runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
+  )
+  // Parent delivery + gh pr comment
+  assert_eq(fixes_cmds.length(), 2)
+  assert_true(
+    fixes_cmds[0].args[4].contains(
+      "/.claude/teams/parent-1/inboxes/default.json",
+    ),
+  )
+  assert_true(
+    fixes_cmds[0].args[3].contains(
+      "[FIXES PUSHED] main.leaf-1 PR #52 has new commits after review",
+    ),
+  )
 }
 
 ///|
-test "process_poller_tick_with suppresses duplicate recovered approval events" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
-    let child = {
-      ..build_agent("main.leaf-1", Some("parent-1")),
-      role: @types.Role::Dev,
-      branch: "main.leaf-1",
-    }
-    ignore(state.registry.insert(parent))
-    ignore(state.registry.insert(child))
-    state.poller.track_recovered(
-      53,
-      "main.leaf-1",
-      "main.leaf-1",
-      "main",
-      "https://example.test/pr/53",
-      100L,
-      @poller.ReviewState::Approved,
-      "",
-      "sha-review-2",
-      false,
-    )
+async test "process_poller_tick_with suppresses duplicate recovered approval events" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+  let child = {
+    ..build_agent("main.leaf-1", Some("parent-1")),
+    role: @types.Role::Dev,
+    branch: "main.leaf-1",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+  state.poller.track_recovered(
+    53,
+    "main.leaf-1",
+    "main.leaf-1",
+    "main",
+    "https://example.test/pr/53",
+    100L,
+    @poller.ReviewState::Approved,
+    "",
+    "sha-review-2",
+    false,
+  )
 
-    let duplicate_cmds : Array[@workspace.Command] = []
-    state.process_poller_tick_with(
-      200L,
-      900L,
-      fn(_pr_number) {
-        (@poller.ReviewState::Approved, "sha-review-2", false, "")
-      },
-      runner=async fn(cmds) { record_runner_server(duplicate_cmds, cmds) },
-    )
-    assert_eq(duplicate_cmds.length(), 0)
-  })
+  let duplicate_cmds : Array[@workspace.Command] = []
+  state.process_poller_tick_with(
+    200L,
+    900L,
+    fn(_pr_number) {
+      (@poller.ReviewState::Approved, "sha-review-2", false, "")
+    },
+    runner=async fn(cmds) { record_runner_server(duplicate_cmds, cmds) },
+  )
+  assert_eq(duplicate_cmds.length(), 0)
 }
 
 ///|
-test "process_poller_tick_with preserves timeout age after recovery" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
-    let child = {
-      ..build_agent("main.leaf-1", Some("parent-1")),
-      role: @types.Role::Dev,
-      branch: "main.leaf-1",
-    }
-    ignore(state.registry.insert(parent))
-    ignore(state.registry.insert(child))
-    state.poller.track_recovered(
-      54,
-      "main.leaf-1",
-      "main.leaf-1",
-      "main",
-      "https://example.test/pr/54",
-      100L,
-      @poller.ReviewState::None_,
-      "",
-      "",
-      false,
-    )
+async test "process_poller_tick_with preserves timeout age after recovery" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+  let child = {
+    ..build_agent("main.leaf-1", Some("parent-1")),
+    role: @types.Role::Dev,
+    branch: "main.leaf-1",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+  state.poller.track_recovered(
+    54,
+    "main.leaf-1",
+    "main.leaf-1",
+    "main",
+    "https://example.test/pr/54",
+    100L,
+    @poller.ReviewState::None_,
+    "",
+    "",
+    false,
+  )
 
-    let timeout_cmds : Array[@workspace.Command] = []
-    state.process_poller_tick_with(
-      1101L,
-      900L,
-      fn(_pr_number) { (@poller.ReviewState::None_, "", false, "") },
-      runner=async fn(cmds) { record_runner_server(timeout_cmds, cmds) },
-    )
-    assert_eq(timeout_cmds.length(), 1)
-    assert_true(
-      timeout_cmds[0].args[4].contains(
-        "/.claude/teams/parent-1/inboxes/default.json",
-      ),
-    )
-    assert_true(
-      timeout_cmds[0].args[3].contains(
-        "[REVIEW TIMEOUT] main.leaf-1 PR #54 has no review after 15min",
-      ),
-    )
-  })
+  let timeout_cmds : Array[@workspace.Command] = []
+  state.process_poller_tick_with(
+    1101L,
+    900L,
+    fn(_pr_number) { (@poller.ReviewState::None_, "", false, "") },
+    runner=async fn(cmds) { record_runner_server(timeout_cmds, cmds) },
+  )
+  assert_eq(timeout_cmds.length(), 1)
+  assert_true(
+    timeout_cmds[0].args[4].contains(
+      "/.claude/teams/parent-1/inboxes/default.json",
+    ),
+  )
+  assert_true(
+    timeout_cmds[0].args[3].contains(
+      "[REVIEW TIMEOUT] main.leaf-1 PR #54 has no review after 15min",
+    ),
+  )
 }
 
 ///|
@@ -852,164 +834,151 @@ test "ServerState::new initializes run_id and mutex registry" {
 }
 
 ///|
-test "handle_disconnect notifies parent when agent was Active" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("root", None), role: @types.Role::TL }
-    ignore(state.registry.insert(parent))
-    let child = {
-      ..build_agent("main.worker-1", Some("root")),
-      branch: "main.worker-1",
-    }
-    ignore(state.registry.insert(child))
-    let delivered_cmds : Array[@workspace.Command] = []
-    state.handle_disconnect_with_runner("main.worker-1", runner=async fn(cmds) {
-      record_runner_server(delivered_cmds, cmds)
-    })
-    match state.registry.get("main.worker-1") {
-      Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
-      Err(_) => fail("Expected child agent to remain in registry")
-    }
-    assert_eq(delivered_cmds.length(), 1)
-    assert_eq(delivered_cmds[0].program, "sh")
-    assert_true(
-      delivered_cmds[0].args[4].contains(
-        "/.claude/teams/root/inboxes/default.json",
-      ),
-    )
-    assert_true(
-      delivered_cmds[0].args[3].contains(
-        "[FAILED: main.worker-1] disconnected unexpectedly - agent may have crashed or run out of context",
-      ),
-    )
+async test "handle_disconnect notifies parent when agent was Active" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("root", None), role: @types.Role::TL }
+  ignore(state.registry.insert(parent))
+  let child = {
+    ..build_agent("main.worker-1", Some("root")),
+    branch: "main.worker-1",
+  }
+  ignore(state.registry.insert(child))
+  let delivered_cmds : Array[@workspace.Command] = []
+  state.handle_disconnect_with_runner("main.worker-1", runner=async fn(cmds) {
+    record_runner_server(delivered_cmds, cmds)
   })
+  match state.registry.get("main.worker-1") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
+    Err(_) => fail("Expected child agent to remain in registry")
+  }
+  assert_eq(delivered_cmds.length(), 1)
+  assert_eq(delivered_cmds[0].program, "sh")
+  assert_true(
+    delivered_cmds[0].args[4].contains(
+      "/.claude/teams/root/inboxes/default.json",
+    ),
+  )
+  assert_true(
+    delivered_cmds[0].args[3].contains(
+      "[FAILED: main.worker-1] disconnected unexpectedly - agent may have crashed or run out of context",
+    ),
+  )
 }
 
 ///|
-test "handle_disconnect transitions Completing agent to Done" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let agent = {
-      ..build_agent("main.dev-1", None),
-      branch: "main.dev-1",
-      state: @types.AgentState::Completing,
-    }
-    ignore(state.registry.insert(agent))
-    state.handle_disconnect("main.dev-1")
-    match state.registry.get("main.dev-1") {
-      Ok(updated_agent) =>
-        assert_eq(updated_agent.state, @types.AgentState::Done)
-      Err(_) => fail("Expected agent to remain in registry")
-    }
-  })
+async test "handle_disconnect transitions Completing agent to Done" {
+  let state = ServerState::new(@types.Config::default())
+  let agent = {
+    ..build_agent("main.dev-1", None),
+    branch: "main.dev-1",
+    state: @types.AgentState::Completing,
+  }
+  ignore(state.registry.insert(agent))
+  state.handle_disconnect("main.dev-1")
+  match state.registry.get("main.dev-1") {
+    Ok(updated_agent) => assert_eq(updated_agent.state, @types.AgentState::Done)
+    Err(_) => fail("Expected agent to remain in registry")
+  }
 }
 
 ///|
-test "handle_disconnect is no-op when agent already removed" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    state.handle_disconnect("main.never-existed")
-    assert_true(true)
-  })
+async test "handle_disconnect is no-op when agent already removed" {
+  let state = ServerState::new(@types.Config::default())
+  state.handle_disconnect("main.never-existed")
+  assert_true(true)
 }
 
 ///|
-test "handle_disconnect skips agents with tracked PRs" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("root", None), role: @types.Role::TL }
-    ignore(state.registry.insert(parent))
-    let child = {
-      ..build_agent("main.leaf-pr", Some("root")),
-      branch: "main.leaf-pr",
-    }
-    ignore(state.registry.insert(child))
-    // Track a PR for this agent
-    state.poller.track(
-      99, "main.leaf-pr", "main.leaf-pr", "main", "https://example.test/pr/99", 100L,
-    )
-    let delivered_cmds : Array[@workspace.Command] = []
-    state.handle_disconnect_with_runner("main.leaf-pr", runner=async fn(cmds) {
-      record_runner_server(delivered_cmds, cmds)
-    })
-    // Agent should remain Active — disconnect skipped because PR is tracked
-    match state.registry.get("main.leaf-pr") {
-      Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
-      Err(_) => fail("agent should remain in registry")
-    }
-    assert_eq(delivered_cmds.length(), 0)
+async test "handle_disconnect skips agents with tracked PRs" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("root", None), role: @types.Role::TL }
+  ignore(state.registry.insert(parent))
+  let child = {
+    ..build_agent("main.leaf-pr", Some("root")),
+    branch: "main.leaf-pr",
+  }
+  ignore(state.registry.insert(child))
+  // Track a PR for this agent
+  state.poller.track(
+    99, "main.leaf-pr", "main.leaf-pr", "main", "https://example.test/pr/99", 100L,
+  )
+  let delivered_cmds : Array[@workspace.Command] = []
+  state.handle_disconnect_with_runner("main.leaf-pr", runner=async fn(cmds) {
+    record_runner_server(delivered_cmds, cmds)
   })
+  // Agent should remain Active — disconnect skipped because PR is tracked
+  match state.registry.get("main.leaf-pr") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+    Err(_) => fail("agent should remain in registry")
+  }
+  assert_eq(delivered_cmds.length(), 0)
 }
 
 ///|
-test "schedule_disconnect is cancelled by re-register within grace period" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("root", None), role: @types.Role::TL }
-    ignore(state.registry.insert(parent))
-    let child = {
-      ..build_agent("main.gem-1", Some("root")),
-      branch: "main.gem-1",
-    }
-    ignore(state.registry.insert(child))
-    // Connection closes — schedule disconnect at t=100
-    state.schedule_disconnect("main.gem-1", 100L)
-    assert_true(state.pending_disconnects.contains("main.gem-1"))
-    // Agent re-registers at t=105 (within grace period)
-    ignore(state.register_agent(child))
-    assert_false(state.pending_disconnects.contains("main.gem-1"))
-    // Process at t=200 — nothing should happen, agent is still Active
-    let delivered_cmds : Array[@workspace.Command] = []
-    state.process_pending_disconnects_with_runner(200L, 60L, runner=async fn(
-      cmds,
-    ) {
-      record_runner_server(delivered_cmds, cmds)
-    })
-    match state.registry.get("main.gem-1") {
-      Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
-      Err(_) => fail("Expected agent to remain Active")
-    }
-    assert_eq(delivered_cmds.length(), 0)
+async test "schedule_disconnect is cancelled by re-register within grace period" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("root", None), role: @types.Role::TL }
+  ignore(state.registry.insert(parent))
+  let child = {
+    ..build_agent("main.gem-1", Some("root")),
+    branch: "main.gem-1",
+  }
+  ignore(state.registry.insert(child))
+  // Connection closes — schedule disconnect at t=100
+  state.schedule_disconnect("main.gem-1", 100L)
+  assert_true(state.pending_disconnects.contains("main.gem-1"))
+  // Agent re-registers at t=105 (within grace period)
+  ignore(state.register_agent(child))
+  assert_false(state.pending_disconnects.contains("main.gem-1"))
+  // Process at t=200 — nothing should happen, agent is still Active
+  let delivered_cmds : Array[@workspace.Command] = []
+  state.process_pending_disconnects_with_runner(200L, 60L, runner=async fn(
+    cmds,
+  ) {
+    record_runner_server(delivered_cmds, cmds)
   })
+  match state.registry.get("main.gem-1") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+    Err(_) => fail("Expected agent to remain Active")
+  }
+  assert_eq(delivered_cmds.length(), 0)
 }
 
 ///|
-test "schedule_disconnect fires after grace period expires" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    let parent = { ..build_agent("root", None), role: @types.Role::TL }
-    ignore(state.registry.insert(parent))
-    let child = {
-      ..build_agent("main.dead-1", Some("root")),
-      branch: "main.dead-1",
-    }
-    ignore(state.registry.insert(child))
-    // Connection closes at t=100
-    state.schedule_disconnect("main.dead-1", 100L)
-    // Process at t=130 — within grace period, nothing happens
-    let cmds1 : Array[@workspace.Command] = []
-    state.process_pending_disconnects_with_runner(130L, 60L, runner=async fn(
-      cmds,
-    ) {
-      record_runner_server(cmds1, cmds)
-    })
-    assert_eq(cmds1.length(), 0)
-    match state.registry.get("main.dead-1") {
-      Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
-      Err(_) => fail("Expected agent still Active")
-    }
-    // Process at t=161 — grace period expired, fires FAILED
-    let cmds2 : Array[@workspace.Command] = []
-    state.process_pending_disconnects_with_runner(161L, 60L, runner=async fn(
-      cmds,
-    ) {
-      record_runner_server(cmds2, cmds)
-    })
-    match state.registry.get("main.dead-1") {
-      Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
-      Err(_) => fail("Expected agent to remain in registry")
-    }
-    assert_eq(cmds2.length(), 1)
-    assert_true(cmds2[0].args[3].contains("[FAILED: main.dead-1]"))
+async test "schedule_disconnect fires after grace period expires" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("root", None), role: @types.Role::TL }
+  ignore(state.registry.insert(parent))
+  let child = {
+    ..build_agent("main.dead-1", Some("root")),
+    branch: "main.dead-1",
+  }
+  ignore(state.registry.insert(child))
+  // Connection closes at t=100
+  state.schedule_disconnect("main.dead-1", 100L)
+  // Process at t=130 — within grace period, nothing happens
+  let cmds1 : Array[@workspace.Command] = []
+  state.process_pending_disconnects_with_runner(130L, 60L, runner=async fn(
+    cmds,
+  ) {
+    record_runner_server(cmds1, cmds)
   })
+  assert_eq(cmds1.length(), 0)
+  match state.registry.get("main.dead-1") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+    Err(_) => fail("Expected agent still Active")
+  }
+  // Process at t=161 — grace period expired, fires FAILED
+  let cmds2 : Array[@workspace.Command] = []
+  state.process_pending_disconnects_with_runner(161L, 60L, runner=async fn(
+    cmds,
+  ) {
+    record_runner_server(cmds2, cmds)
+  })
+  match state.registry.get("main.dead-1") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
+    Err(_) => fail("Expected agent to remain in registry")
+  }
+  assert_eq(cmds2.length(), 1)
+  assert_true(cmds2[0].args[3].contains("[FAILED: main.dead-1]"))
 }

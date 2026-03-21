@@ -1,13 +1,13 @@
 ///|
-priv struct TCPLineReader {
-  conn : @socket.TCP
+priv struct TcpLineReader {
+  conn : @socket.Tcp
   mut buf : FixedArray[Byte]
   mut read_pos : Int
   mut write_pos : Int
 }
 
 ///|
-fn TCPLineReader::new(conn : @socket.TCP) -> TCPLineReader {
+fn TcpLineReader::new(conn : @socket.Tcp) -> TcpLineReader {
   { conn, buf: FixedArray::make(8192, (0 : Byte)), read_pos: 0, write_pos: 0 }
 }
 
@@ -34,7 +34,7 @@ fn grow_line_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 }
 
 ///|
-async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
+async fn TcpLineReader::read_line(self : TcpLineReader) -> String {
   for ;; {
     // Check if we already have a line in buffer
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
@@ -326,136 +326,4 @@ fn run_uds_loop(
   }
 
   @uds.close(uds_fd)
-}
-
-///|
-fn main_prog() -> Unit raise {
-  let args = @io.get_args()
-  let config_content = @io.read_file(".choir/config.toml")
-  let base_config = match @config.parse_config(config_content) {
-    Ok(cfg) => cfg
-    Err(_) => {
-      println("error: failed to parse .choir/config.toml")
-      @io.exit(1)
-      @types.Config::default() // unreachable
-    }
-  }
-
-  let local_content = @io.read_file(".choir/config.local.toml")
-  let local_cfg = match @config.parse_local_config(local_content) {
-    Ok(cfg) => cfg
-    Err(_) => @types.LocalConfig::default()
-  }
-  let config = {
-    ..base_config,
-    agent_id: match local_cfg.agent_id {
-      Some(agent_id) => Some(agent_id)
-      None =>
-        match cli_override_agent_id(args) {
-          Some(agent_id) => Some(agent_id)
-          None => base_config.agent_id
-        }
-    },
-  }
-  let role = match cli_override_role(args) {
-    Some(role) => role
-    None => @config.resolve_role(local_cfg.role, config)
-  }
-
-  let uds_fd = @uds.client_connect(config.listen_uds)
-  if uds_fd >= 0 {
-    run_uds_loop(uds_fd, role, config, local_cfg)
-    return
-  }
-
-  @async.with_event_loop(async fn(_root) {
-    let addr_str = match config.listen_tcp {
-      Some(addr) => addr
-      None => {
-        println("error: listen_tcp not configured in .choir/config.toml")
-        @io.exit(1)
-        ""
-      }
-    }
-
-    let conn = @socket.TCP::connect(@socket.Addr::parse(addr_str)) catch {
-      err => {
-        println("error: failed to connect to \{addr_str}: \{err}")
-        @io.exit(1)
-        raise err
-      }
-    }
-
-    let reader = TCPLineReader::new(conn)
-
-    let reg_msg = build_registration_message(role, config, local_cfg)
-    try {
-      match config.tcp_auth_token {
-        Some(token) => conn.write(@utf8.encode(token + "\n"))
-        None => ()
-      }
-      conn.write(@utf8.encode(reg_msg))
-      // Read and discard the registration response
-      let _ = reader.read_line()
-    } catch {
-      err => {
-        println("error: registration failed: \{err}")
-        @io.exit(1)
-      }
-    }
-
-    for ;; {
-      let line = match @io.read_stdin_line(8192) {
-        Some(line) => line
-        None => break
-      }
-      match @mcp.parse_jsonrpc_request(line) {
-        Ok(rpc) => {
-          let id = match rpc.id {
-            Some(id) => id
-            None => continue
-          }
-          if rpc.req_method == @mcp.method_initialize {
-            let resp = @mcp.initialize_response(id)
-            @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
-          } else if rpc.req_method == @mcp.method_tools_list {
-            let resp = @mcp.tools_list_response(id)
-            @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
-          } else {
-            match @mcp.to_internal_request(rpc, role) {
-              Ok(internal_req) => {
-                let wire_req = build_wire_request(
-                  internal_req, role, config, local_cfg,
-                )
-
-                try {
-                  conn.write(@utf8.encode(wire_req))
-                  let resp_line = reader.read_line()
-                  write_server_response(id, resp_line)
-                } catch {
-                  err => {
-                    let err_resp = @mcp.error_response(
-                      id,
-                      @mcp.err_internal,
-                      "TCP error: \{err}",
-                    )
-                    @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-                  }
-                }
-              }
-              Err(e) => {
-                let err_resp = @mcp.error_response(id, e.code, e.message)
-                @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-              }
-            }
-          }
-        }
-        Err(e) => {
-          let err_resp = @mcp.error_response(Number(0), e.code, e.message)
-          @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
-        }
-      }
-    }
-    conn.close()
-  })
 }

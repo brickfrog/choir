@@ -2,7 +2,7 @@
   "name": "choir",
   "version": "0.1.0",
   "deps": {
-    "moonbitlang/async": "0.4.0"
+    "moonbitlang/async": "0.16.8"
   },
   "readme": "README.md",
   "license": "MIT"

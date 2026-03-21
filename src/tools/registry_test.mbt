@@ -81,108 +81,100 @@ test "kv tools allowed for all roles" {
 }
 
 ///|
-test "handle_request with valid tool returns Ok" {
-  @async.with_event_loop(_ => {
-    let reg = @tools.ToolRegistry::new()
-    let req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::TL,
-      name: "fork_wave",
-      args: @types.RequestArgs::new({ "count": "3" }),
-    }
-    let res = handle_request(reg, req, runner=mock_runner)
-    assert_true(res is Ok(_))
-  })
+async test "handle_request with valid tool returns Ok" {
+  let reg = @tools.ToolRegistry::new()
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: @types.RequestArgs::new({ "count": "3" }),
+  }
+  let res = handle_request(reg, req, runner=mock_runner)
+  assert_true(res is Ok(_))
 }
 
 ///|
-test "handle_request with wrong role returns Err" {
-  @async.with_event_loop(_ => {
-    let reg = @tools.ToolRegistry::new()
-    let req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::Worker,
-      name: "fork_wave",
-      args: @types.RequestArgs::new({}),
-    }
-    let res = handle_request(reg, req)
-    assert_true(res is Err(_))
-  })
+async test "handle_request with wrong role returns Err" {
+  let reg = @tools.ToolRegistry::new()
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "fork_wave",
+    args: @types.RequestArgs::new({}),
+  }
+  let res = handle_request(reg, req)
+  assert_true(res is Err(_))
 }
 
 ///|
-test "handle_request with unknown tool returns Err" {
-  @async.with_event_loop(_ => {
-    let reg = @tools.ToolRegistry::new()
-    let req = @types.Request::{
-      req_method: "tools/call",
-      role: @types.Role::TL,
-      name: "nonexistent",
-      args: @types.RequestArgs::new({}),
-    }
-    let res = handle_request(reg, req)
-    assert_true(res is Err(_))
-  })
+async test "handle_request with unknown tool returns Err" {
+  let reg = @tools.ToolRegistry::new()
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "nonexistent",
+    args: @types.RequestArgs::new({}),
+  }
+  let res = handle_request(reg, req)
+  assert_true(res is Err(_))
 }
 
 ///|
-test "dispatch returns correct stub for each tool name" {
-  @async.with_event_loop(_ => {
-    let cases = [
-      ("fork_wave", "spawned", { "count": "1" }),
-      ("fork_session", "ok", { "name": "nested-team" }),
-      ("file_pr", "pr_created", { "branch": "test" }),
-      ("merge_pr", "merged", { "pr_number": "1" }),
-      ("track_pr", "tracked", { "pr_number": "1", "agent_id": "agent-1" }),
-      ("notify_parent", "notified", { "caller_id": "test-agent" }),
-      ("send_message", "sent", { "target_id": "test-agent" }),
-      ("reply", "ok", { "id": "req-1" }),
-      ("kv_get", "", { "key": "missing" }),
-      ("mutex_status", "", { "name": "readme" }),
-      ("shutdown", "shutdown", Map::new()),
-      ("task_list", "ok", Map::new()),
-      ("spawn_worker", "spawned", Map::new()),
-    ]
-    for c in cases {
-      let (name, expected_status, args) = c
-      let call = ToolCall::{ role: @types.Role::Dev, name, args }
-      let res = @tools.dispatch_call(
-        call,
-        runner=mock_runner,
-        ensure_pr=mock_registry_ensure_pr,
-        mutex_registry=Some(@registry.MutexRegistry::new()),
-        poller_state=Some(@poller.PollerState::new()),
-      )
-      match res {
-        Ok(map) =>
-          if name == "kv_get" {
-            assert_eq(map.get("value"), Some("null"))
-          } else if name == "mutex_status" {
-            assert_eq(map.get("holder"), Some(""))
-            assert_eq(map.get("queue_length"), Some("0"))
-            assert_eq(
-              map.get_value("queue_length"),
-              Some(@types.WireValue::Raw("0")),
-            )
-          } else if name == "track_pr" {
-            assert_eq(map.get("status"), Some("tracked"))
-            assert_eq(map.get("branch"), Some("agent-1"))
-            assert_eq(map.get("parent_branch"), Some("main"))
-            assert_eq(map.get("pr_url"), Some(""))
-            assert_eq(
-              map.get_value("status"),
-              Some(@types.WireValue::String("tracked")),
-            )
-          } else {
-            assert_eq(map.get("status"), Some(expected_status))
-          }
-        Err(msg) => {
-          println(name + ": " + msg)
-          assert_true(false)
+async test "dispatch returns correct stub for each tool name" {
+  let cases = [
+    ("fork_wave", "spawned", { "count": "1" }),
+    ("fork_session", "ok", { "name": "nested-team" }),
+    ("file_pr", "pr_created", { "branch": "test" }),
+    ("merge_pr", "merged", { "pr_number": "1" }),
+    ("track_pr", "tracked", { "pr_number": "1", "agent_id": "agent-1" }),
+    ("notify_parent", "notified", { "caller_id": "test-agent" }),
+    ("send_message", "sent", { "target_id": "test-agent" }),
+    ("reply", "ok", { "id": "req-1" }),
+    ("kv_get", "", { "key": "missing" }),
+    ("mutex_status", "", { "name": "readme" }),
+    ("shutdown", "shutdown", Map::new()),
+    ("task_list", "ok", Map::new()),
+    ("spawn_worker", "spawned", Map::new()),
+  ]
+  for c in cases {
+    let (name, expected_status, args) = c
+    let call = ToolCall::{ role: @types.Role::Dev, name, args }
+    let res = @tools.dispatch_call(
+      call,
+      runner=mock_runner,
+      ensure_pr=mock_registry_ensure_pr,
+      mutex_registry=Some(@registry.MutexRegistry::new()),
+      poller_state=Some(@poller.PollerState::new()),
+    )
+    match res {
+      Ok(map) =>
+        if name == "kv_get" {
+          assert_eq(map.get("value"), Some("null"))
+        } else if name == "mutex_status" {
+          assert_eq(map.get("holder"), Some(""))
+          assert_eq(map.get("queue_length"), Some("0"))
+          assert_eq(
+            map.get_value("queue_length"),
+            Some(@types.WireValue::Raw("0")),
+          )
+        } else if name == "track_pr" {
+          assert_eq(map.get("status"), Some("tracked"))
+          assert_eq(map.get("branch"), Some("agent-1"))
+          assert_eq(map.get("parent_branch"), Some("main"))
+          assert_eq(map.get("pr_url"), Some(""))
+          assert_eq(
+            map.get_value("status"),
+            Some(@types.WireValue::String("tracked")),
+          )
+        } else {
+          assert_eq(map.get("status"), Some(expected_status))
         }
+      Err(msg) => {
+        println(name + ": " + msg)
+        assert_true(false)
       }
     }
-  })
+  }
 }
 
 ///|

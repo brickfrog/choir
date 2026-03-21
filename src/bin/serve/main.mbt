@@ -40,7 +40,7 @@ fn UDSClient::new(fd : Int) -> UDSClient {
 
 ///|
 async fn handle_connection(
-  conn : @socket.TCP,
+  conn : @socket.Tcp,
   state : @server.ServerState,
 ) -> Unit {
   let mut buf = FixedArray::make(4096, (0 : Byte))
@@ -201,81 +201,83 @@ fn main_prog() -> Unit raise {
     Err(_) => @types.Config::default()
   }
   let state = @server.ServerState::new(config)
-  @async.with_event_loop(async fn(root) {
-    @server.recover_state(state, config.terminal_session)
-    root.spawn_bg(async fn() {
-      let timeout_sec = 900L
-      let disconnect_grace_sec = 60L
-      let interval_ms = 30000
-      for ;; {
-        @async.sleep(interval_ms)
-        let now = @poller.now_sec()
-        state.process_pending_disconnects(now, disconnect_grace_sec)
-        state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
-      }
-    })
-    root.spawn_bg(async fn() {
-      let server_fd = @uds.server_create(config.listen_uds)
-      if server_fd < 0 {
-        println("failed to bind UDS server on \{config.listen_uds}")
-        return
-      }
-      ignore(@uds.set_nonblocking(server_fd))
-      println("UDS server listening on \{config.listen_uds}")
-      let clients : Array[UDSClient] = []
-      for ;; {
+  @async.run_async_main(async fn() {
+    @async.with_task_group(async fn(root) {
+      @server.recover_state(state, config.terminal_session)
+      root.spawn_bg(async fn() {
+        let timeout_sec = 900L
+        let disconnect_grace_sec = 60L
+        let interval_ms = 30000
         for ;; {
-          let client_fd = @uds.accept_nonblocking(server_fd)
-          if client_fd == -2 {
-            break
-          }
-          if client_fd < 0 {
-            @uds.close(server_fd)
-            return
-          }
-          ignore(@uds.set_nonblocking(client_fd))
-          clients.push(UDSClient::new(client_fd))
+          @async.sleep(interval_ms)
+          let now = @poller.now_sec()
+          state.process_pending_disconnects(now, disconnect_grace_sec)
+          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
         }
-        let mut i = 0
-        while i < clients.length() {
-          let alive = handle_uds_connection(clients[i], state) catch {
-            _ => false
+      })
+      root.spawn_bg(async fn() {
+        let server_fd = @uds.server_create(config.listen_uds)
+        if server_fd < 0 {
+          println("failed to bind UDS server on \{config.listen_uds}")
+          return
+        }
+        ignore(@uds.set_nonblocking(server_fd))
+        println("UDS server listening on \{config.listen_uds}")
+        let clients : Array[UDSClient] = []
+        for ;; {
+          for ;; {
+            let client_fd = @uds.accept_nonblocking(server_fd)
+            if client_fd == -2 {
+              break
+            }
+            if client_fd < 0 {
+              @uds.close(server_fd)
+              return
+            }
+            ignore(@uds.set_nonblocking(client_fd))
+            clients.push(UDSClient::new(client_fd))
           }
-          if alive {
-            i = i + 1
-          } else {
-            let client = clients.remove(i)
-            close_uds_client(client, state) catch {
-              _ => ()
+          let mut i = 0
+          while i < clients.length() {
+            let alive = handle_uds_connection(clients[i], state) catch {
+              _ => false
+            }
+            if alive {
+              i = i + 1
+            } else {
+              let client = clients.remove(i)
+              close_uds_client(client, state) catch {
+                _ => ()
+              }
+            }
+          }
+          @async.sleep(10)
+        }
+      })
+      match config.listen_tcp {
+        Some(addr_str) => {
+          let server = @socket.TcpServer::new(@socket.Addr::parse(addr_str))
+          try {
+            println("TCP server listening on \{addr_str}")
+            for ;; {
+              let (conn, addr) = server.accept()
+              println("connection from \{addr}")
+              root.spawn_bg(async fn() {
+                handle_connection(conn, state) catch {
+                  _ => ()
+                }
+                conn.close()
+              })
+            }
+          } catch {
+            err => {
+              server.close()
+              raise err
             }
           }
         }
-        @async.sleep(10)
+        None => println("no listen_tcp configured")
       }
     })
-    match config.listen_tcp {
-      Some(addr_str) => {
-        let server = @socket.TCPServer::new(@socket.Addr::parse(addr_str))
-        try {
-          println("TCP server listening on \{addr_str}")
-          for ;; {
-            let (conn, addr) = server.accept()
-            println("connection from \{addr}")
-            root.spawn_bg(async fn() {
-              handle_connection(conn, state) catch {
-                _ => ()
-              }
-              conn.close()
-            })
-          }
-        } catch {
-          err => {
-            server.close()
-            raise err
-          }
-        }
-      }
-      None => println("no listen_tcp configured")
-    }
   })
 }

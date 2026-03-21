@@ -197,11 +197,7 @@ pub fn gh_pr_view_command(branch : String) -> @workspace.Command {
 async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
   let (read_end, write_end) = @pipe.pipe() catch { _ => return (-1, "") }
   let shell_cmd = @exec.command_to_shell_string(cmd) + " 2>&1"
-  let exit_code = @process.run(
-    @utf8.encode("sh"),
-    [@utf8.encode("-c"), @utf8.encode(shell_cmd)],
-    stdout=write_end,
-  ) catch {
+  let exit_code = @process.run("sh", ["-c", shell_cmd], stdout=write_end) catch {
     _ => -1
   }
   write_end.close()
