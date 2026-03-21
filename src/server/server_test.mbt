@@ -273,6 +273,28 @@ test "notify_parent with valid parent returns Ok DeliveryMethod" {
 }
 
 ///|
+test "notify_parent prefers terminal delivery for live Claude parent" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = {
+    ..build_agent("parent-1", None),
+    role: @types.Role::TL,
+    terminal_target: Some("zellij-tab:choir:TL"),
+  }
+  let child = build_agent("child-1", Some("parent-1"))
+  let _ = state.register_agent(parent)
+  let _ = state.register_agent(child)
+  let res = state.notify_parent("child-1", "hello", "success")
+  assert_true(res is Ok(_))
+  match res {
+    Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
+      assert_eq(target, "zellij-tab:choir:TL")
+      assert_eq(text, "[from: child-1] hello")
+    }
+    _ => fail("expected local terminal delivery")
+  }
+}
+
+///|
 test "notify_parent with no parent returns Err" {
   let state = ServerState::new(@types.Config::default())
   let root = build_agent("root-1", None)

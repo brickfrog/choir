@@ -9,7 +9,11 @@ pub fn git_worktree_add(path : String, branch : String) -> Command {
 
 ///|
 pub fn git_worktree_remove(path : String) -> Command {
-  { program: "git", args: ["worktree", "remove", path], workdir: None }
+  {
+    program: "git",
+    args: ["worktree", "remove", "--force", path],
+    workdir: None,
+  }
 }
 
 ///|

@@ -82,26 +82,27 @@ pub fn plan_delivery(
   match agent.host {
     Remote(_) => TcpPush(agent.agent_id, format_message(sender_id, content))
     Local =>
-      match agent.agent_type {
-        Claude =>
-          TeamsInbox(
-            teams_inbox_path(agent.agent_id),
-            teams_inbox_json(sender_id, content, status),
-          )
-        Gemini => {
-          let target = match agent.terminal_target {
-            Some(t) => t
-            None => agent.agent_id
-          }
+      match agent.terminal_target {
+        Some(target) =>
           LocalTerminalInput(target, format_message(sender_id, content))
-        }
-        MoonPilot => {
-          let target = match agent.terminal_target {
-            Some(t) => t
-            None => agent.agent_id
+        None =>
+          match agent.agent_type {
+            Claude =>
+              TeamsInbox(
+                teams_inbox_path(agent.agent_id),
+                teams_inbox_json(sender_id, content, status),
+              )
+            Gemini =>
+              LocalTerminalInput(
+                agent.agent_id,
+                format_message(sender_id, content),
+              )
+            MoonPilot =>
+              LocalTerminalInput(
+                agent.agent_id,
+                format_message(sender_id, content),
+              )
           }
-          LocalTerminalInput(target, format_message(sender_id, content))
-        }
       }
   }
 }
