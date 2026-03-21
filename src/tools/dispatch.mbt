@@ -122,6 +122,7 @@ struct TrackPrArgs {
 struct ForkWaveArgs {
   count : Int
   tasks : Array[String]
+  has_per_leaf_tasks : Bool
   parent_branch : String
   caller_id : String
   slug_prefix : String
@@ -468,6 +469,46 @@ fn parse_tasks_array(raw : String) -> Array[String] {
 }
 
 ///|
+
+///|
+/// Generate a slug from task text: first few words, lowercased, hyphenated.
+fn slugify_task(task : String, index : Int) -> String {
+  let buf = StringBuilder::new()
+  let mut word_count = 0
+  let mut in_word = false
+  for c in task {
+    if c == ' ' || c == '\n' || c == '\t' || c == '.' || c == ',' || c == ':' {
+      if in_word {
+        word_count = word_count + 1
+        in_word = false
+        if word_count >= 4 {
+          break
+        }
+        buf.write_char('-')
+      }
+    } else if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+      buf.write_char(c)
+      in_word = true
+    } else if c >= 'A' && c <= 'Z' {
+      buf.write_char(Char::from_int(c.to_int() + 32))
+      in_word = true
+    }
+    // skip other chars
+  }
+  let result = buf.to_string()
+  if result == "" {
+    "leaf-" + index.to_string()
+    // Trim trailing hyphen
+  } else if result.has_suffix("-") {
+    result[0:result.length() - 1].to_string() catch {
+      _ => result
+    }
+  } else {
+    result
+  }
+}
+
+///|
 fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
@@ -537,6 +578,7 @@ fn parse_fork_wave_args(
   Ok({
     count,
     tasks,
+    has_per_leaf_tasks: per_leaf_tasks.length() > 0,
     parent_branch,
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug_prefix: normalized_slug_prefix,
@@ -1386,7 +1428,12 @@ pub async fn dispatch(
       let mut spawned_count = 0
       let mut skipped_count = 0
       for i = 0; i < fork_wave_args.count; i = i + 1 {
-        let slug = fork_wave_args.slug_prefix + "-" + i.to_string()
+        let slug = if fork_wave_args.has_per_leaf_tasks {
+          // Derive slug from task text — first 4 words, lowercased, hyphenated
+          slugify_task(fork_wave_args.tasks[i], i)
+        } else {
+          fork_wave_args.slug_prefix + "-" + i.to_string()
+        }
         let agent_id = fork_wave_args.parent_branch + "." + slug
         // Idempotency: skip if agent is already alive in registry
         let already_alive = match registry {
