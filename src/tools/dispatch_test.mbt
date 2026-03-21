@@ -1506,3 +1506,61 @@ test "handle_request fork_session denied for Dev role" {
     }
   })
 }
+
+///|
+test "dispatch fork_wave writes tl phase to KV" {
+  @async.with_event_loop(_ => {
+    let project_dir = "/tmp/choir-test-fork-wave-phase"
+    run_shell(
+      "rm -rf /tmp/choir-test-fork-wave-phase && mkdir -p /tmp/choir-test-fork-wave-phase",
+    )
+    let call : @tools.ToolCall = {
+      role: @types.Role::TL,
+      name: "fork_wave",
+      args: {
+        "count": "1",
+        "task": "Test task",
+        "slug_prefix": "wave",
+        "parent_branch": "main",
+        "caller_id": "tl-agent",
+      },
+    }
+    let res = @tools.dispatch_call(call, project_dir~, runner=mock_runner)
+    assert_true(res is Ok(_))
+    let phase_json = @io.read_file(
+      project_dir + "/.choir/kv/phase-tl--tl-agent",
+    )
+    assert_true(phase_json.contains("\"phase\":\"Waiting\""))
+    assert_true(phase_json.contains("\"count\":1"))
+    run_shell("rm -rf /tmp/choir-test-fork-wave-phase")
+  })
+}
+
+///|
+test "dispatch shutdown blocks when dev phase is ChangesRequested" {
+  @async.with_event_loop(_ => {
+    let project_dir = "/tmp/choir-test-shutdown-block"
+    run_shell(
+      "rm -rf /tmp/choir-test-shutdown-block && mkdir -p /tmp/choir-test-shutdown-block/.choir/kv",
+    )
+    // Set dev phase to ChangesRequested(42)
+    let phase_json = "{\"phase\":\"ChangesRequested\",\"pr_number\":42}"
+    ignore(
+      @io.write_file_sync(
+        project_dir + "/.choir/kv/phase-dev--leaf-agent",
+        phase_json,
+      ),
+    )
+    let call : @tools.ToolCall = {
+      role: @types.Role::Dev,
+      name: "shutdown",
+      args: { "caller_id": "leaf-agent" },
+    }
+    let res = @tools.dispatch_call(call, project_dir~, runner=mock_runner)
+    match res {
+      Ok(_) => fail("shutdown should have been blocked")
+      Err(e) => assert_eq(e, "Changes requested")
+    }
+    run_shell("rm -rf /tmp/choir-test-shutdown-block")
+  })
+}

@@ -317,6 +317,27 @@ pub fn ServerState::plan_poll_event_deliveries(
     Err(_) => None
   }
   let tracked = self.poller.get(poll_event_pr_number(event))
+  match (tracked, event) {
+    (Some(pr), ReviewReceived(n, body)) =>
+      @tools.apply_dev_event(
+        self.config.project_dir,
+        agent_id,
+        @phase.DevEvent::ReviewReceivedEv(n, body),
+      )
+    (Some(_), PRReady(n)) =>
+      @tools.apply_dev_event(
+        self.config.project_dir,
+        agent_id,
+        @phase.DevEvent::ReviewApprovedEv(n),
+      )
+    (Some(pr), FixesPushed(n)) =>
+      @tools.apply_dev_event(
+        self.config.project_dir,
+        agent_id,
+        @phase.DevEvent::FixesPushedEv(n, pr.last_sha),
+      )
+    _ => ()
+  }
   // Parent notification — all event types
   match tracked {
     Some(pr) =>
