@@ -82,19 +82,20 @@ pub fn plan_delivery(
   match agent.host {
     Remote(_) => TcpPush(agent.agent_id, format_message(sender_id, content))
     Local =>
-      match agent.agent_type {
-        Claude =>
-          // Claude uses Teams inbox — terminal injection shows as
-          // "Interrupted" in Claude Code's UI and doesn't auto-submit.
-          TeamsInbox(
-            teams_inbox_path(agent.agent_id),
-            teams_inbox_json(sender_id, content, status),
-          )
-        _ =>
-          match agent.terminal_target {
-            Some(target) =>
-              LocalTerminalInput(target, format_message(sender_id, content))
-            None =>
+      match agent.terminal_target {
+        Some(target) =>
+          // Terminal injection for all agents with a live terminal.
+          // For Claude TL this is essential — InboxPoller only runs
+          // while Claude is processing a turn, not while idle at prompt.
+          LocalTerminalInput(target, format_message(sender_id, content))
+        None =>
+          match agent.agent_type {
+            Claude =>
+              TeamsInbox(
+                teams_inbox_path(agent.agent_id),
+                teams_inbox_json(sender_id, content, status),
+              )
+            _ =>
               LocalTerminalInput(
                 agent.agent_id,
                 format_message(sender_id, content),

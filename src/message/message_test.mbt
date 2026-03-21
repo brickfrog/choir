@@ -55,7 +55,7 @@ test "plan delivery for Claude agent -> TeamsInbox" {
 }
 
 ///|
-test "plan delivery for Claude agent with terminal target -> TeamsInbox" {
+test "plan delivery for Claude agent with terminal target -> LocalTerminalInput" {
   let agent : @types.Agent = {
     agent_id: "agent-claude",
     role: @types.Role::TL,
@@ -68,8 +68,8 @@ test "plan delivery for Claude agent with terminal target -> TeamsInbox" {
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
-  let expected = @message.DeliveryMethod::TeamsInbox(
-    "~/.claude/teams/agent-claude/inboxes/default.json", "{\"from\":\"sender-1\",\"content\":\"hi\",\"status\":\"Success\"}",
+  let expected = @message.DeliveryMethod::LocalTerminalInput(
+    "zellij-tab:choir:TL", "[from: sender-1] hi",
   )
   assert_eq(res, expected)
 }
