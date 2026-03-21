@@ -2,6 +2,7 @@ import {
   "choir/src/config",
   "choir/src/io",
   "choir/src/types",
+  "choir/src/jsonutil",
 }
 
 options(
