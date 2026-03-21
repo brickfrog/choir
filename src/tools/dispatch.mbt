@@ -476,6 +476,12 @@ fn parse_leaf_spawn_args(
 
 ///|
 fn parse_worker_spawn_args(args : ToolArgs) -> Result[WorkerSpawnArgs, String] {
+  let prompt_spec = prompt_spec_from_tool_args(args)
+  match prompt_spec.worker_type {
+    "research" => ()
+    "review" => ()
+    _ => return Err("invalid worker type: " + prompt_spec.worker_type)
+  }
   let slug = get_arg_or_alias(args, "slug", "agent_id", "inline-worker")
   match validate_slug(slug) {
     Ok(_) => ()
@@ -492,7 +498,7 @@ fn parse_worker_spawn_args(args : ToolArgs) -> Result[WorkerSpawnArgs, String] {
     Err(e) => return Err(e)
   }
   Ok({
-    task: render_worker_spawn_prompt(prompt_spec_from_tool_args(args)),
+    task: render_worker_spawn_prompt(prompt_spec),
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     agent_type,

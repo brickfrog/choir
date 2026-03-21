@@ -47,7 +47,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker in the current repo/session for research, review, or very small in-place tasks. Workers do not own a branch or PR and must not be used for tasks that should end in file_pr, track_pr, or parent-merge flow",
+      description: "Spawn an inline worker in the current repo/session for research or review only. Workers are non-editing support agents and do not own a branch or PR",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

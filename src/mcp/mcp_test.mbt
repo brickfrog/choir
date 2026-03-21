@@ -97,9 +97,8 @@ test "tools_list_response" {
           assert_true(t.contains("default implementation-leaf path"))
           assert_true(t.contains("Claude sub-TL agents"))
           assert_true(t.contains("not the default Gemini leaf path"))
-          assert_true(
-            t.contains("must not be used for tasks that should end in file_pr"),
-          )
+          assert_true(t.contains("research or review only"))
+          assert_true(t.contains("non-editing support agents"))
         }
         _ => fail("expected raw tools json")
       }

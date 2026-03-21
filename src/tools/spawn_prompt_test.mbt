@@ -52,11 +52,11 @@ test "render_worker_spawn_prompt respects prompt override" {
   let prompt = render_worker_spawn_prompt(
     PromptSpec::from_map({
       "prompt": "Use this exact prompt.",
-      "type": "implementation",
+      "type": "review",
     }),
   )
   assert_true(prompt.has_prefix("Use this exact prompt."))
-  assert_true(prompt.contains("## Completion Protocol (Worker)"))
+  assert_true(prompt.contains("## Completion Protocol (Review Worker)"))
 }
 
 ///|
@@ -66,11 +66,10 @@ test "render_worker_spawn_prompt strips leaf-only instructions" {
       "task": "Investigate CLI tests",
       "steps": "Read files\nFile a PR through Choir\nCommit your changes\nNotify parent",
       "done_criteria": "PR is filed\nParent is notified\nTests pass",
-      "type": "implementation",
+      "type": "review",
     }),
   )
-  assert_true(prompt.contains("## Completion Protocol (Worker)"))
-  assert_true(prompt.contains("Workers do not own branches or PRs."))
+  assert_true(prompt.contains("## Completion Protocol (Review Worker)"))
   assert_true(prompt.contains("1. Read files"))
   assert_true(prompt.contains("2. Notify parent"))
   assert_false(prompt.contains("File a PR through Choir"))

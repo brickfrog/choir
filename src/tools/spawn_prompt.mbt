@@ -105,7 +105,7 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
     non_goals: split_nonempty_lines(args.get("non_goals").unwrap_or("")),
     worker_type: args
     .get("type")
-    .unwrap_or("implementation")
+    .unwrap_or("research")
     .trim()
     .to_lower()
     .to_string(),
@@ -158,6 +158,14 @@ fn worker_profile_text(worker_type : String) -> String {
     "You are a research worker. Explore, read, search, and synthesize.\n\n" +
     "When you are done:\n\n" +
     "1. Call `notify_parent` with status `success` and your findings.\n" +
+    "2. If you fail, call `notify_parent` with status `failure` and explain why.\n\n" +
+    "Do not edit files.\n" +
+    "Do not commit, push, or file PRs."
+  } else if worker_type == "review" {
+    "## Completion Protocol (Review Worker)\n" +
+    "You are a review worker. Inspect code, diffs, tests, and behavior, then report findings.\n\n" +
+    "When you are done:\n\n" +
+    "1. Call `notify_parent` with status `success` and your review findings.\n" +
     "2. If you fail, call `notify_parent` with status `failure` and explain why.\n\n" +
     "Do not edit files.\n" +
     "Do not commit, push, or file PRs."

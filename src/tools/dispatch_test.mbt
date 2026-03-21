@@ -742,6 +742,55 @@ test "dispatch spawn_worker validates agent type" {
 }
 
 ///|
+test "dispatch spawn_worker defaults to research profile" {
+  @async.with_event_loop(_ => {
+    let recorded : Array[@workspace.Command] = []
+    let res = @tools.dispatch(
+      {
+        role: @types.Role::TL,
+        name: "spawn_worker",
+        args: { "agent_id": "worker-a", "task": "investigate flaky tests" },
+      },
+      runner=async fn(cmds) {
+        @async.sleep(0)
+        for cmd in cmds {
+          recorded.push(cmd)
+        }
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      },
+    )
+    assert_true(res is Ok(_))
+    assert_true(recorded.length() > 0)
+    let launch = recorded[recorded.length() - 1]
+    assert_true(
+      launch.args[3].contains("## Completion Protocol (Research Worker)"),
+    )
+  })
+}
+
+///|
+test "dispatch spawn_worker rejects implementation profile" {
+  @async.with_event_loop(_ => {
+    let res = @tools.dispatch(
+      {
+        role: @types.Role::TL,
+        name: "spawn_worker",
+        args: { "task": "edit code", "type": "implementation" },
+      },
+      runner=mock_runner,
+    )
+    match res {
+      Ok(_) => fail("expected invalid worker type")
+      Err(e) => assert_eq(e, "invalid worker type: implementation")
+    }
+  })
+}
+
+///|
 test "dispatch spawn_worker succeeds with inline worker" {
   @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
