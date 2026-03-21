@@ -53,17 +53,17 @@ async fn mock_spawn_runner_server(
   assert_true(cmds[5].args[1].contains("choir leaf-tool"))
   assert_eq(cmds[6].program, "choir")
   assert_eq(cmds[6].args, [
-    "trust-gemini-folder", "/tmp/server-proof/.choir/worktrees/leaf-a",
+    "trust-gemini-folder", "/tmp/server-proof/.choir/worktrees/leaf-a-0",
   ])
   assert_eq(cmds[7].args, [
-    "new-window", "-t", "server-proof", "-n", "leaf-a", "-c", "/tmp/server-proof/.choir/worktrees/leaf-a",
+    "new-window", "-t", "server-proof", "-n", "leaf-a-0", "-c", "/tmp/server-proof/.choir/worktrees/leaf-a-0",
   ])
   assert_eq(cmds[8].args[0], "send-keys")
   assert_eq(cmds[8].args[1], "-t")
-  assert_eq(cmds[8].args[2], "server-proof:leaf-a")
+  assert_eq(cmds[8].args[2], "server-proof:leaf-a-0")
   assert_true(
     cmds[8].args[3].contains(
-      "PATH='/tmp/server-proof/.choir/worktrees/leaf-a/.choir/bin':$PATH",
+      "PATH='/tmp/server-proof/.choir/worktrees/leaf-a-0/.choir/bin':$PATH",
     ),
   )
   assert_true(
@@ -86,22 +86,22 @@ async fn mock_spawn_runner_server_zellij(
   assert_true(cmds[2].args[4].contains("terminal_backend = \"zellij\""))
   assert_true(
     cmds[3].args[4].contains(
-      "terminal_target = \"zellij-tab:server-proof:leaf-a\"",
+      "terminal_target = \"zellij-tab:server-proof:leaf-a-0\"",
     ),
   )
   assert_eq(cmds[6].program, "choir")
   assert_eq(cmds[6].args, [
-    "trust-gemini-folder", "/tmp/server-proof/.choir/worktrees/leaf-a",
+    "trust-gemini-folder", "/tmp/server-proof/.choir/worktrees/leaf-a-0",
   ])
   assert_eq(cmds[7].program, "zellij")
   assert_eq(cmds[7].args[0], "--session")
   assert_eq(cmds[7].args[1], "server-proof")
   assert_eq(cmds[7].args[2], "action")
   assert_eq(cmds[7].args[3], "new-tab")
-  assert_eq(cmds[7].args[5], "leaf-a")
+  assert_eq(cmds[7].args[5], "leaf-a-0")
   assert_true(
     cmds[7].args[11].contains(
-      "CHOIR_TERMINAL_TARGET='zellij-tab:server-proof:leaf-a'",
+      "CHOIR_TERMINAL_TARGET='zellij-tab:server-proof:leaf-a-0'",
     ),
   )
   [0, 0, 0, 0, 0, 0, 0, 0]
@@ -183,18 +183,19 @@ test "ServerState::handle_with_runner passes configured tmux session to spawns" 
     let req = @types.Request::{
       req_method: "tools/call",
       role: @types.Role::TL,
-      name: "spawn_gemini",
+      name: "fork_wave",
       args: @types.RequestArgs::new({
         "caller_id": "root",
-        "slug": "leaf-a",
+        "slug_prefix": "leaf-a",
         "parent_branch": "main",
         "task": "reply READY",
+        "count": "1",
         "read_first": "AGENTS.md",
       }),
     }
     let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
     assert_eq(res.ok_field("status"), Some("spawned"))
-    assert_eq(res.ok_field("agent_id"), Some("main.leaf-a"))
+    assert_eq(res.ok_field("agent_ids"), Some("main.leaf-a-0"))
   })
 }
 
@@ -211,12 +212,13 @@ test "ServerState::handle_with_runner passes zellij backend to spawns" {
     let req = @types.Request::{
       req_method: "tools/call",
       role: @types.Role::TL,
-      name: "spawn_gemini",
+      name: "fork_wave",
       args: @types.RequestArgs::new({
         "caller_id": "root",
-        "slug": "leaf-a",
+        "slug_prefix": "leaf-a",
         "parent_branch": "main",
         "task": "reply READY",
+        "count": "1",
         "read_first": "AGENTS.md",
       }),
     }
@@ -225,7 +227,7 @@ test "ServerState::handle_with_runner passes zellij backend to spawns" {
       runner=mock_spawn_runner_server_zellij,
     )
     assert_eq(res.ok_field("status"), Some("spawned"))
-    assert_eq(res.ok_field("agent_id"), Some("main.leaf-a"))
+    assert_eq(res.ok_field("agent_ids"), Some("main.leaf-a-0"))
   })
 }
 

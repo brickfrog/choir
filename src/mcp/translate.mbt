@@ -143,46 +143,6 @@ pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
 }
 
 ///|
-fn spawn_leaf_props(
-  default_slug : String,
-  agent_label : String,
-) -> Array[SchemaProp] {
-  [
-    { name: "task", desc: "Primary task for the " + agent_label },
-    { name: "prompt", desc: "Optional full prompt override" },
-    {
-      name: "slug",
-      desc: "Agent slug / branch suffix (default " + default_slug + ")",
-    },
-    { name: "branch", desc: "Compatibility alias for slug" },
-    { name: "parent_branch", desc: "Parent branch (default main)" },
-    {
-      name: "fork_session",
-      desc: "For Claude children, inherit parent session context when true",
-    },
-    {
-      name: "parent_session_id",
-      desc: "Explicit Claude parent session id override for --resume",
-    },
-    { name: "read_first", desc: "Newline-separated paths to read first" },
-    { name: "steps", desc: "Newline-separated implementation steps" },
-    { name: "verify", desc: "Newline-separated verification commands" },
-    { name: "done_criteria", desc: "Newline-separated acceptance criteria" },
-    { name: "boundary", desc: "Newline-separated things the agent must not do" },
-    { name: "constraints", desc: "Newline-separated extra constraints" },
-    {
-      name: "context",
-      desc: "Context or reasoning summary for the child agent",
-    },
-    {
-      name: "key_decisions",
-      desc: "Newline-separated decisions that are already fixed",
-    },
-    { name: "non_goals", desc: "Newline-separated non-goals" },
-  ]
-}
-
-///|
 fn spawn_worker_props() -> Array[SchemaProp] {
   [
     { name: "task", desc: "Primary task for the worker agent" },
@@ -216,20 +176,8 @@ fn spawn_worker_props() -> Array[SchemaProp] {
 fn tool_defs() -> Array[CatalogTool] {
   [
     {
-      name: "spawn_gemini",
-      description: "Spawn a Gemini leaf agent in a new worktree and branch. This is the default implementation-leaf path for tasks that should end in commit, PR, review follow-up, and eventual parent merge. PR creation alone is not terminal completion",
-      props: spawn_leaf_props("gemini-leaf", "Gemini leaf agent"),
-      required: ["task"],
-    },
-    {
-      name: "spawn_moon_pilot",
-      description: "Spawn a Moon Pilot leaf agent in a new worktree and branch. Use this for implementation tasks that should end in commit, PR, review follow-up, and eventual parent merge. PR creation alone is not terminal completion",
-      props: spawn_leaf_props("moon-pilot-leaf", "Moon Pilot leaf agent"),
-      required: ["task"],
-    },
-    {
       name: "fork_wave",
-      description: "Spawn N parallel implementation leaf agents in new worktrees. This defaults to Gemini fan-out. If you specifically want Claude fan-out, pass agent_type=claude explicitly",
+      description: "Spawn one or more implementation leaf agents in new worktrees. Defaults to Gemini. Pass agent_type=claude or agent_type=moon_pilot to change engine. Use count=1 for a single leaf, count=N for parallel fan-out",
       props: [
         { name: "task", desc: "Task description for the wave" },
         {

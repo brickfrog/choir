@@ -141,8 +141,6 @@ test "dispatch returns correct stub for each tool name" {
       ("mutex_status", "", { "name": "readme" }),
       ("shutdown", "shutdown", Map::new()),
       ("task_list", "ok", Map::new()),
-      ("spawn_gemini", "spawned", Map::new()),
-      ("spawn_moon_pilot", "spawned", Map::new()),
       ("spawn_worker", "spawned", Map::new()),
     ]
     for c in cases {
@@ -205,19 +203,10 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
     }
     Err(_) => fail("expected spawn_worker definition")
   }
-  match reg.lookup(@types.Role::TL, "spawn_gemini") {
-    Ok(def) => {
-      assert_true(def.description.contains("default implementation-leaf path"))
-      assert_true(def.description.contains("commit, PR"))
-      assert_true(def.description.contains("eventual parent merge"))
-      assert_true(def.description.contains("not terminal completion"))
-    }
-    Err(_) => fail("expected spawn_gemini definition")
-  }
   match reg.lookup(@types.Role::TL, "fork_wave") {
     Ok(def) => {
-      assert_true(def.description.contains("defaults to Gemini fan-out"))
-      assert_true(def.description.contains("agent_type=claude explicitly"))
+      assert_true(def.description.contains("Defaults to Gemini"))
+      assert_true(def.description.contains("agent_type"))
     }
     Err(_) => fail("expected fork_wave definition")
   }
@@ -227,12 +216,5 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
 test "tool registry lookup fork_session allowed for TL" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "fork_session")
-  assert_true(result is Ok(_))
-}
-
-///|
-test "tool registry lookup spawn_moon_pilot allowed for TL" {
-  let reg = @tools.ToolRegistry::new()
-  let result = reg.lookup(@types.Role::TL, "spawn_moon_pilot")
   assert_true(result is Ok(_))
 }

@@ -39,7 +39,7 @@ AGENTS.md              # instructions for Gemini/Moon Pilot leaf agents
 src/
   server/              # persistent server, transport listeners
   mcp/                 # MCP JSON-RPC translation
-  tools/               # tool handlers (fork_wave, spawn_gemini, etc.)
+  tools/               # tool handlers (fork_wave, spawn_worker, etc.)
   registry/            # agent registry, mutex registry
   workspace/           # git worktree + tmux management
   message/             # message routing (Teams inbox, tmux STDIN)
@@ -64,7 +64,7 @@ This is the workflow Choir is supposed to make routine. Treat this as the produc
 1. User runs `choir init` from a normal terminal or outer multiplexer session.
 2. Choir brings up one persistent server and one TL client session.
 3. User asks Claude/TL for a feature or fix.
-4. TL decomposes the work and uses `fork_wave`, `spawn_gemini`, `spawn_moon_pilot`, or `spawn_worker`.
+4. TL decomposes the work and uses `fork_wave` (single or parallel leaves, any engine) or `spawn_worker` (research only).
 5. Each child runs in its own isolated worktree/branch/pane with a structured spawn contract, not just a raw prompt.
 6. Each leaf implements, verifies, commits, and calls `file_pr`.
 7. `file_pr` pushes the branch, resolves or creates the PR, and starts PR tracking automatically.

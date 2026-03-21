@@ -67,8 +67,7 @@ test "tools_list_response" {
           assert_true(t.contains("track_pr"))
           assert_true(t.contains("notify_parent"))
           assert_true(t.contains("send_message"))
-          assert_true(t.contains("spawn_gemini"))
-          assert_true(t.contains("spawn_moon_pilot"))
+          assert_true(t.contains("fork_wave"))
           assert_true(t.contains("spawn_worker"))
           assert_true(t.contains("read_first"))
           assert_true(t.contains("done_criteria"))
@@ -89,14 +88,10 @@ test "tools_list_response" {
           assert_true(t.contains("\"id\""))
           assert_true(t.contains("caller_id"))
           assert_true(t.contains("shutdown"))
-          assert_true(
-            t.contains(
-              "commit, PR, review follow-up, and eventual parent merge",
-            ),
-          )
-          assert_true(t.contains("default implementation-leaf path"))
-          assert_true(t.contains("defaults to Gemini fan-out"))
-          assert_true(t.contains("agent_type=claude explicitly"))
+          assert_true(t.contains("Defaults to Gemini"))
+          assert_true(t.contains("agent_type=claude"))
+          assert_true(t.contains("agent_type=moon_pilot"))
+          assert_true(t.contains("parallel fan-out"))
           assert_true(t.contains("research or review only"))
           assert_true(t.contains("non-editing support agents"))
         }

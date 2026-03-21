@@ -21,18 +21,8 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: all_roles,
     },
     {
-      name: "spawn_gemini",
-      description: "Spawn a Gemini leaf agent in its own worktree and branch. This is the default implementation-leaf path. Use it for tasks that should end in commit, PR, review follow-up, and eventual parent merge; PR creation alone is not terminal completion",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "spawn_moon_pilot",
-      description: "Spawn a Moon Pilot leaf agent in its own worktree and branch. Use this for implementation tasks that should end in commit, PR, review follow-up, and eventual parent merge; PR creation alone is not terminal completion",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
       name: "fork_wave",
-      description: "Spawn N parallel implementation leaf agents in worktrees. This defaults to Gemini fan-out. If you specifically want Claude fan-out, pass agent_type=claude explicitly",
+      description: "Spawn one or more implementation leaf agents in worktrees. Defaults to Gemini. Pass agent_type to change engine",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

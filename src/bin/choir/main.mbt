@@ -1950,12 +1950,12 @@ fn smoke_leaf_script() -> String {
     #|EOF
     #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
     #|spawn_leaf() {
-    #|  tool="$1"
-    #|  slug="$2"
+    #|  slug="$1"
+    #|  agent_type="${2:-gemini}"
     #|  req="$ROOT/$slug.req.jsonl"
     #|  cat > "$req" <<EOF
     #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"$tool","arguments":{"caller_id":"root-smoke","slug":"$slug","parent_branch":"main","task":"Make a tiny doc-only change to CLAUDE.md, run moon fmt and moon test --target native, commit it, then use file_pr and notify_parent with the returned PR URL. Do not use raw gh commands.","read_first":"AGENTS.md\nCLAUDE.md","done_criteria":"A PR is filed through file_pr and the parent has been notified."}}}
+    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fork_wave","arguments":{"caller_id":"root-smoke","slug_prefix":"$slug","count":"1","agent_type":"$agent_type","parent_branch":"main","task":"Make a tiny doc-only change to CLAUDE.md, run moon fmt and moon test --target native, commit it, then use file_pr and notify_parent with the returned PR URL. Do not use raw gh commands.","read_first":"AGENTS.md\nCLAUDE.md","done_criteria":"A PR is filed through file_pr and the parent has been notified."}}}
     #|EOF
     #|  (cd "$ROOT/repo" && cat "$req" | timeout 120 "$BIN" mcp-stdio --name root-smoke >"$ROOT/$slug.out" 2>"$ROOT/$slug.err")
     #|}
@@ -2003,12 +2003,12 @@ fn smoke_leaf_script() -> String {
     #|  echo "error: timed out waiting for poller tracking for $agent"
     #|  return 1
     #|}
-    #|spawn_leaf "spawn_moon_pilot" "$MOON_SLUG"
+    #|spawn_leaf "$MOON_SLUG" "moon_pilot"
     #|wait_for_pr "$MOON_BRANCH" "$ROOT/moon.pr"
     #|wait_for_notify "$MOON_BRANCH"
     #|wait_for_poller_tracking "$MOON_BRANCH"
     #|MOON_PR="$(cut -d' ' -f1 "$ROOT/moon.pr")"
-    #|spawn_leaf "spawn_gemini" "$GEMINI_SLUG"
+    #|spawn_leaf "$GEMINI_SLUG" "gemini"
     #|wait_for_pr "$GEMINI_BRANCH" "$ROOT/gemini.pr"
     #|wait_for_notify "$GEMINI_BRANCH"
     #|wait_for_poller_tracking "$GEMINI_BRANCH"
@@ -2123,7 +2123,7 @@ fn smoke_review_script() -> String {
     #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
     #|cat > "$ROOT/moon.req.jsonl" <<EOF
     #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"spawn_moon_pilot","arguments":{"caller_id":"root-smoke","slug":"$MOON_SLUG","parent_branch":"main","task":"Make a tiny doc-only change to CLAUDE.md, run moon fmt and moon test --target native, commit it, file a PR through file_pr, notify_parent with the returned PR URL, and remain available in the session for follow-up review feedback. Do not use raw gh commands.","read_first":"AGENTS.md\nCLAUDE.md","done_criteria":"A PR is filed through file_pr, the parent has been notified, and you remain available for review feedback."}}}
+    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fork_wave","arguments":{"caller_id":"root-smoke","slug_prefix":"$MOON_SLUG","count":"1","agent_type":"moon_pilot","parent_branch":"main","task":"Make a tiny doc-only change to CLAUDE.md, run moon fmt and moon test --target native, commit it, file a PR through file_pr, notify_parent with the returned PR URL, and remain available in the session for follow-up review feedback. Do not use raw gh commands.","read_first":"AGENTS.md\nCLAUDE.md","done_criteria":"A PR is filed through file_pr, the parent has been notified, and you remain available for review feedback."}}}
     #|EOF
     #|(cd "$ROOT/repo" && cat "$ROOT/moon.req.jsonl" | timeout 120 "$BIN" mcp-stdio --name root-smoke >"$ROOT/moon.out" 2>"$ROOT/moon.err")
     #|wait_for_pr() {
@@ -2248,7 +2248,7 @@ fn smoke_e2e_script() -> String {
     #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
     #|cat > "$ROOT/moon.req.jsonl" <<EOF
     #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"spawn_moon_pilot","arguments":{"caller_id":"root-smoke","slug":"$MOON_SLUG","parent_branch":"$ROOT_BRANCH","task":"Make a tiny doc-only change to CLAUDE.md, run moon fmt and moon test --target native, commit it, file a PR through file_pr, notify_parent with the returned PR URL, and remain available in the session for follow-up review feedback. Do not use raw gh commands.","read_first":"AGENTS.md\nCLAUDE.md","done_criteria":"A PR is filed through file_pr, the parent has been notified, and you remain available for review feedback."}}}
+    #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fork_wave","arguments":{"caller_id":"root-smoke","slug_prefix":"$MOON_SLUG","count":"1","agent_type":"moon_pilot","parent_branch":"$ROOT_BRANCH","task":"Make a tiny doc-only change to CLAUDE.md, run moon fmt and moon test --target native, commit it, file a PR through file_pr, notify_parent with the returned PR URL, and remain available in the session for follow-up review feedback. Do not use raw gh commands.","read_first":"AGENTS.md\nCLAUDE.md","done_criteria":"A PR is filed through file_pr, the parent has been notified, and you remain available for review feedback."}}}
     #|EOF
     #|(cd "$ROOT/repo" && cat "$ROOT/moon.req.jsonl" | timeout 120 "$BIN" mcp-stdio --name root-smoke >"$ROOT/moon.out" 2>"$ROOT/moon.err")
     #|wait_for_pr() {
@@ -2657,8 +2657,9 @@ test "smoke script covers EOF and multi-client checks" {
 ///|
 test "smoke leaf script covers Moon Pilot and Gemini proof" {
   let script = smoke_leaf_script()
-  assert_true(script.contains("spawn_moon_pilot"))
-  assert_true(script.contains("spawn_gemini"))
+  assert_true(script.contains("fork_wave"))
+  assert_true(script.contains("moon_pilot"))
+  assert_true(script.contains("gemini"))
   assert_true(script.contains("wait_for_pr"))
   assert_true(script.contains("wait_for_notify"))
   assert_true(script.contains("wait_for_poller_tracking"))
@@ -2688,7 +2689,7 @@ test "smoke companion script covers isolated companion proof" {
 ///|
 test "smoke review script covers live review delivery proof" {
   let script = smoke_review_script()
-  assert_true(script.contains("spawn_moon_pilot"))
+  assert_true(script.contains("fork_wave"))
   assert_true(script.contains("gh pr review"))
   assert_true(script.contains("wait_for_leaf_review"))
   assert_true(
@@ -2700,7 +2701,7 @@ test "smoke review script covers live review delivery proof" {
 test "smoke e2e script covers review and merge proof" {
   let script = smoke_e2e_script()
   assert_true(script.contains("git push -u origin \"$ROOT_BRANCH\""))
-  assert_true(script.contains("spawn_moon_pilot"))
+  assert_true(script.contains("fork_wave"))
   assert_true(script.contains("gh pr review \"$MOON_PR\" --comment"))
   assert_true(script.contains("\"name\":\"merge_pr\""))
   assert_true(script.contains("wait_for_pr_merged"))

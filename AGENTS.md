@@ -120,10 +120,8 @@ Your role determines which tools you can call. See `src/tools/registry.mbt` and
 ### TL + Root
 | Tool | Key args | What it does |
 |------|----------|-------------|
-| `fork_wave` | `count`, `task`, `parent_branch`, `slug_prefix` | Spawn N parallel Claude agents in worktrees |
+| `fork_wave` | `count`, `task`, `parent_branch`, `slug_prefix`, `agent_type?` | Spawn 1+ leaf agents in worktrees (default Gemini; pass agent_type=claude or moon_pilot) |
 | `fork_session` | `name` | Create a named session subdirectory for a nested team |
-| `spawn_gemini` | `task`, `slug`, `parent_branch` | Spawn Gemini agent in worktree with own branch + PR |
-| `spawn_moon_pilot` | `task`, `slug`, `parent_branch` | Spawn Moon Pilot agent in worktree with own branch + PR |
 | `spawn_remote` | `task`, `slug`, `parent_branch`, `ssh_target`, `repo_url`, `tcp_addr` | Spawn a remote SSH agent that connects back over TCP |
 | `spawn_worker` | `task`, `slug`, `agent_type` | Spawn ephemeral inline pane worker (no branch, no PR) |
 | `merge_pr` | `pr_number`, `parent_branch`, `caller_id` | Merge PR (auto-acquires `branch:{parent_branch}` mutex) |
