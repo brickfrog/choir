@@ -359,18 +359,6 @@ fn tool_defs() -> Array[CatalogTool] {
       required: [],
     },
     {
-      name: "task_create",
-      description: "Create a new task in shared task storage",
-      props: [
-        { name: "id", desc: "Task slug/ID" },
-        { name: "title", desc: "Task title" },
-        { name: "status", desc: "Initial status (default todo)" },
-        { name: "assignee", desc: "Assignee agent ID" },
-        { name: "notes", desc: "Task notes" },
-      ],
-      required: ["id", "title"],
-    },
-    {
       name: "fork_session",
       description: "Create a new named session directory",
       props: [{ name: "name", desc: "Session name (slug)" }],

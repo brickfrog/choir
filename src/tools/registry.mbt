@@ -125,11 +125,6 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       description: "Update task status/owner",
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
-    {
-      name: "task_create",
-      description: "Create a new task",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
-    },
   ]
   for def in defs {
     tools.set(def.name, def)

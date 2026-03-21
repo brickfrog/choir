@@ -84,7 +84,7 @@ test "tools_list_response" {
           assert_true(t.contains("task_list"))
           assert_true(t.contains("task_get"))
           assert_true(t.contains("task_update"))
-          assert_true(t.contains("\"id\",\"title\""))
+          assert_true(t.contains("\"id\""))
           assert_true(t.contains("\"id\""))
           assert_true(t.contains("caller_id"))
           assert_true(t.contains("shutdown"))
