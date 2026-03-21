@@ -195,6 +195,26 @@ test "tool registry lookup spawn_worker allowed for TL" {
 }
 
 ///|
+test "tool registry spawn descriptions distinguish leaves from workers" {
+  let reg = @tools.ToolRegistry::new()
+  match reg.lookup(@types.Role::TL, "spawn_worker") {
+    Ok(def) => {
+      assert_true(def.description.contains("must not be used"))
+      assert_true(def.description.contains("file_pr"))
+      assert_true(def.description.contains("branch or PR"))
+    }
+    Err(_) => fail("expected spawn_worker definition")
+  }
+  match reg.lookup(@types.Role::TL, "spawn_gemini") {
+    Ok(def) => {
+      assert_true(def.description.contains("commit, PR"))
+      assert_true(def.description.contains("parent notification"))
+    }
+    Err(_) => fail("expected spawn_gemini definition")
+  }
+}
+
+///|
 test "tool registry lookup fork_session allowed for TL" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "fork_session")

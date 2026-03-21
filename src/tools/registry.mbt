@@ -32,12 +32,12 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_gemini",
-      description: "Spawn Gemini agent",
+      description: "Spawn a Gemini leaf agent in its own worktree and branch; use this for implementation tasks that should end in a commit, PR, and parent notification",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
       name: "spawn_moon_pilot",
-      description: "Spawn a Moon Pilot agent in a worktree with its own branch and PR",
+      description: "Spawn a Moon Pilot leaf agent in its own worktree and branch; use this for implementation tasks that should end in a commit, PR, and parent notification",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -47,7 +47,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker in the current repo/session for research or small in-place tasks; no branch or PR",
+      description: "Spawn an inline worker in the current repo/session for research, review, or very small in-place tasks. Workers do not own a branch or PR and must not be used for tasks that should end in file_pr, track_pr, or parent-merge flow",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

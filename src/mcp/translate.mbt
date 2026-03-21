@@ -309,19 +309,19 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "spawn_gemini",
-      description: "Spawn a Gemini leaf agent in a new worktree",
+      description: "Spawn a Gemini leaf agent in a new worktree and branch. Use this for implementation tasks that should end in a commit, PR, and parent notification",
       props: spawn_leaf_props("gemini-leaf", "Gemini leaf agent"),
       required: ["task"],
     },
     {
       name: "spawn_moon_pilot",
-      description: "Spawn a Moon Pilot leaf agent in a new worktree",
+      description: "Spawn a Moon Pilot leaf agent in a new worktree and branch. Use this for implementation tasks that should end in a commit, PR, and parent notification",
       props: spawn_leaf_props("moon-pilot-leaf", "Moon Pilot leaf agent"),
       required: ["task"],
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker in the current repo/session for research or small in-place tasks; no branch or PR",
+      description: "Spawn an inline worker in the current repo/session for research, review, or very small in-place tasks. Workers do not own a branch or PR and must not be used for tasks that should end in file_pr, track_pr, or parent-merge flow",
       props: spawn_worker_props(),
       required: ["task"],
     },
