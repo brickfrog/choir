@@ -198,6 +198,20 @@ int choir_write_file_sync(const char* path, const char* content, int content_len
     return 0;
 }
 
+/* Append content to a file, creating parent dirs. Returns 0 on success, -1 on error. */
+int choir_append_file_sync(const char* path, const char* content, int content_len) {
+    /* create parent dir */
+    char dir[4096];
+    snprintf(dir, sizeof(dir), "%s", path);
+    char* slash = strrchr(dir, '/');
+    if (slash) { *slash = '\0'; mkdir_p(dir); }
+    FILE* f = fopen(path, "ab");
+    if (!f) return -1;
+    if (content_len > 0) fwrite(content, 1, (size_t)content_len, f);
+    fclose(f);
+    return 0;
+}
+
 /* Delete a file. Returns 0 on success. */
 int choir_delete_file_sync(const char* path) {
     return remove(path);

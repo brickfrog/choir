@@ -54,6 +54,17 @@ async fn emit_span(
     Some(ep) => span.export_otlp(ep) catch { _ => () }
     None => ()
   }
+  let agent_id_str = request_agent_id(req).unwrap_or("")
+  if agent_id_str != "" {
+    let data = "{\"tool\":\"" +
+      escape_for_json(req.name) +
+      "\",\"status\":\"" +
+      resp.status_tag() +
+      "\"}"
+    ignore(
+      append_event(state.config.project_dir, agent_id_str, "tools.call", data),
+    )
+  }
 }
 
 ///|

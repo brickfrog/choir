@@ -113,7 +113,7 @@ fn read_stdin_chunk(max_size : Int) -> (Bytes, Int, Bool, Bool) {
 pub fn read_stdin_line(max_size : Int) -> String? {
   let line = StringBuilder::new()
   let mut saw_data = false
-  for ;; {
+  for {
     let (buf, len, has_more, eof) = read_stdin_chunk(max_size)
     if eof {
       return if saw_data { Some(line.to_string()) } else { None }
@@ -205,6 +205,21 @@ pub fn write_file_sync(path : String, content : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   let content_bytes = @utf8.encode(content)
   c_write_file_sync(path_bytes, content_bytes, content_bytes.length()) == 0
+}
+
+///|
+#borrow(path, content)
+extern "C" fn c_append_file_sync(
+  path : Bytes,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "choir_append_file_sync"
+
+///|
+pub fn append_file_sync(path : String, content : String) -> Bool {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let content_bytes = @utf8.encode(content)
+  c_append_file_sync(path_bytes, content_bytes, content_bytes.length()) == 0
 }
 
 ///|
