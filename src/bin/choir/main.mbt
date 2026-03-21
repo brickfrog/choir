@@ -219,6 +219,7 @@ fn serve_run() -> Unit raise {
     Err(_) => @types.Config::default()
   }
   @io.write_pid_file(".choir/server.pid")
+  ignore(@io.system("rm -f .choir/tasks/*.json 2>/dev/null; true"))
   let state = @server.ServerState::new(config)
   @async.with_event_loop(async fn(root) {
     @server.recover_state(state, config.terminal_session)
