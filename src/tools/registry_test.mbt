@@ -5,7 +5,7 @@ async fn mock_registry_ensure_pr(
   _project_dir : String,
 ) -> Result[@tools.PullRequestInfo, String] {
   @async.sleep(0)
-  Ok({ number: 1, url: "https://example.test/pr/" + branch })
+  Ok({ number: 1, url: "https://example.test/pr/" + branch, state: "OPEN" })
 }
 
 ///|

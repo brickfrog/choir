@@ -2,6 +2,7 @@
 pub(all) struct PullRequestInfo {
   number : Int
   url : String
+  state : String
 } derive(Show, Eq)
 
 ///|
@@ -123,8 +124,12 @@ pub fn parse_pull_request_info(data : String) -> PullRequestInfo? {
     Some((value, _)) => value
     None => return None
   }
+  let state = match find_json_string_field(data, "state") {
+    Some((value, _)) => value
+    None => return None
+  }
   match number {
-    Some(value) => Some({ number: value, url })
+    Some(value) => Some({ number: value, url, state })
     None => None
   }
 }
@@ -156,7 +161,7 @@ pub fn gh_pr_create_command(
 pub fn gh_pr_view_command(branch : String) -> @workspace.Command {
   {
     program: "gh",
-    args: ["pr", "view", branch, "--json", "number,url"],
+    args: ["pr", "view", branch, "--json", "number,url,state"],
     workdir: None,
   }
 }
@@ -202,7 +207,7 @@ pub async fn ensure_pull_request(
   let (view_exit, view_output) = capture_command_output(view_cmd)
   if view_exit == 0 {
     match parse_pull_request_info(view_output) {
-      Some(pr) => return Ok(pr)
+      Some(pr) => if pr.state == "OPEN" { return Ok(pr) }
       None =>
         return Err("failed to parse gh pr view output for branch: " + branch)
     }

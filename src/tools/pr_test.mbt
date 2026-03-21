@@ -29,6 +29,7 @@ async fn mock_ensure_pr(
         22
       },
       url: "https://example.test/pr/" + branch,
+      state: "OPEN",
     })
   }
 }
@@ -36,12 +37,13 @@ async fn mock_ensure_pr(
 ///|
 test "parse_pull_request_info extracts number and url" {
   let parsed = parse_pull_request_info(
-    "{\"number\":22,\"url\":\"https://example.test/pr/feature\"}",
+    "{\"number\":22,\"url\":\"https://example.test/pr/feature\",\"state\":\"OPEN\"}",
   )
   match parsed {
     Some(pr) => {
       assert_eq(pr.number, 22)
       assert_eq(pr.url, "https://example.test/pr/feature")
+      assert_eq(pr.state, "OPEN")
     }
     None => fail("expected pull request info")
   }

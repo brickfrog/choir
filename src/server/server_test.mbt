@@ -136,7 +136,7 @@ async fn mock_ensure_pr_server(
   _project_dir : String,
 ) -> Result[@tools.PullRequestInfo, String] {
   @async.sleep(0)
-  Ok({ number: 52, url: "https://example.test/pr/" + branch })
+  Ok({ number: 52, url: "https://example.test/pr/" + branch, state: "OPEN" })
 }
 
 ///|

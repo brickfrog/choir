@@ -480,7 +480,26 @@ fn mcp_build_registration_message(
   local_cfg : @types.LocalConfig,
 ) -> String {
   let agent_id = mcp_resolved_agent_id(role, config, local_cfg)
-  @transport.format_registration_request(role, agent_id, local_cfg) + "\n"
+  let registration_local_cfg = if local_cfg.terminal_target is None &&
+    local_cfg.parent_id is None &&
+    local_cfg.workspace is None &&
+    role == @types.Role::TL {
+    {
+      ..local_cfg,
+      terminal_target: Some(
+        @workspace.local_target_for(
+          config.terminal_backend,
+          config.terminal_session,
+          "TL",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
+    }
+  } else {
+    local_cfg
+  }
+  @transport.format_registration_request(role, agent_id, registration_local_cfg) +
+  "\n"
 }
 
 ///|
@@ -1548,6 +1567,40 @@ test "mcp config keeps local agent id over CLI agent id" {
   assert_eq(
     mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg),
     "local-agent",
+  )
+}
+
+///|
+test "mcp registration infers tmux TL terminal target for top-level session" {
+  let cfg = {
+    ..@types.Config::default(),
+    terminal_backend: @types.TerminalBackend::Tmux,
+    terminal_session: "choir-resorter-py",
+  }
+  let output = mcp_build_registration_message(
+    @types.Role::TL,
+    cfg,
+    @types.LocalConfig::default(),
+  )
+  assert_true(output.contains("\"name\":\"register\""))
+  assert_true(output.contains("\"terminal_target\":\"choir-resorter-py:TL\""))
+}
+
+///|
+test "mcp registration infers zellij TL terminal target for top-level session" {
+  let cfg = {
+    ..@types.Config::default(),
+    terminal_backend: @types.TerminalBackend::Zellij,
+    terminal_session: "choir-resorter-py",
+  }
+  let output = mcp_build_registration_message(
+    @types.Role::TL,
+    cfg,
+    @types.LocalConfig::default(),
+  )
+  assert_true(output.contains("\"name\":\"register\""))
+  assert_true(
+    output.contains("\"terminal_target\":\"zellij-tab:choir-resorter-py:TL\""),
   )
 }
 
