@@ -89,6 +89,8 @@ fn tracked_pr_json(tracked : TrackedPR) -> String {
   notified_parent +
   ",\"last_ci_failed\":" +
   last_ci_failed +
+  ",\"last_timeout_at\":" +
+  tracked.last_timeout_at.to_string() +
   "}"
 }
 
@@ -172,6 +174,14 @@ fn parse_tracked_pr(
       }
     None => return None
   }
+  let last_timeout_at = match json_text_value(fields, "last_timeout_at") {
+    Some(value) =>
+      match parse_int_value(value) {
+        Some(parsed) => parsed.to_int64()
+        None => 0L
+      }
+    None => 0L
+  }
   Some({
     pr_number,
     agent_id,
@@ -184,6 +194,7 @@ fn parse_tracked_pr(
     last_sha,
     notified_parent,
     last_ci_failed,
+    last_timeout_at,
   })
 }
 
@@ -214,6 +225,7 @@ pub fn PollerState::track(
     last_sha: "",
     notified_parent: false,
     last_ci_failed: false,
+    last_timeout_at: 0L,
   }
   self.tracked.set(pr_number, pr)
 }
@@ -253,6 +265,7 @@ pub fn PollerState::track_recovered(
     last_sha: sha,
     notified_parent: recovered_notified_parent(review),
     last_ci_failed: ci_failed,
+    last_timeout_at: 0L,
   }
   self.tracked.set(pr_number, pr)
 }
@@ -387,8 +400,13 @@ pub async fn PollerState::tick_with(
     let events = detect_events(
       tracked, review, sha, ci_failed, review_bodies, now, timeout,
     )
+    let mut timeout_at = tracked.last_timeout_at
     for event in events {
       on_event(event, tracked.agent_id)
+      match event {
+        ReviewTimeout(_) => timeout_at = now
+        _ => ()
+      }
     }
     let notified_parent = next_notified_parent(
       tracked, review, review_bodies, sha,
@@ -400,6 +418,7 @@ pub async fn PollerState::tick_with(
         last_review_bodies: review_bodies,
         notified_parent,
         last_ci_failed: ci_failed,
+        last_timeout_at: timeout_at,
       }
     } else {
       {
@@ -409,6 +428,7 @@ pub async fn PollerState::tick_with(
         last_sha: sha,
         notified_parent,
         last_ci_failed: ci_failed,
+        last_timeout_at: timeout_at,
       }
     }
     self.tracked.set(pr_number, updated)

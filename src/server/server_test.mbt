@@ -827,3 +827,76 @@ test "handle_disconnect is no-op when agent already removed" {
     assert_true(true)
   })
 }
+
+///|
+test "schedule_disconnect is cancelled by re-register within grace period" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("root", None), role: @types.Role::TL }
+    ignore(state.registry.insert(parent))
+    let child = {
+      ..build_agent("main.gem-1", Some("root")),
+      branch: "main.gem-1",
+    }
+    ignore(state.registry.insert(child))
+    // Connection closes — schedule disconnect at t=100
+    state.schedule_disconnect("main.gem-1", 100L)
+    assert_true(state.pending_disconnects.contains("main.gem-1"))
+    // Agent re-registers at t=105 (within grace period)
+    ignore(state.register_agent(child))
+    assert_false(state.pending_disconnects.contains("main.gem-1"))
+    // Process at t=200 — nothing should happen, agent is still Active
+    let delivered_cmds : Array[@workspace.Command] = []
+    state.process_pending_disconnects_with_runner(200L, 60L, runner=async fn(
+      cmds,
+    ) {
+      record_runner_server(delivered_cmds, cmds)
+    })
+    match state.registry.get("main.gem-1") {
+      Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+      Err(_) => fail("Expected agent to remain Active")
+    }
+    assert_eq(delivered_cmds.length(), 0)
+  })
+}
+
+///|
+test "schedule_disconnect fires after grace period expires" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("root", None), role: @types.Role::TL }
+    ignore(state.registry.insert(parent))
+    let child = {
+      ..build_agent("main.dead-1", Some("root")),
+      branch: "main.dead-1",
+    }
+    ignore(state.registry.insert(child))
+    // Connection closes at t=100
+    state.schedule_disconnect("main.dead-1", 100L)
+    // Process at t=130 — within grace period, nothing happens
+    let cmds1 : Array[@workspace.Command] = []
+    state.process_pending_disconnects_with_runner(130L, 60L, runner=async fn(
+      cmds,
+    ) {
+      record_runner_server(cmds1, cmds)
+    })
+    assert_eq(cmds1.length(), 0)
+    match state.registry.get("main.dead-1") {
+      Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+      Err(_) => fail("Expected agent still Active")
+    }
+    // Process at t=161 — grace period expired, fires FAILED
+    let cmds2 : Array[@workspace.Command] = []
+    state.process_pending_disconnects_with_runner(161L, 60L, runner=async fn(
+      cmds,
+    ) {
+      record_runner_server(cmds2, cmds)
+    })
+    match state.registry.get("main.dead-1") {
+      Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
+      Err(_) => fail("Expected agent to remain in registry")
+    }
+    assert_eq(cmds2.length(), 1)
+    assert_true(cmds2[0].args[3].contains("[FAILED: main.dead-1]"))
+  })
+}

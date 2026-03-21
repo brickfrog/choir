@@ -45,6 +45,7 @@ fn tracked_pr(
     last_sha: sha,
     notified_parent,
     last_ci_failed,
+    last_timeout_at: 0L,
   }
 }
 
@@ -144,6 +145,27 @@ test "PollerState JSON roundtrip preserves tracked metadata" {
   assert_eq(parsed[0].last_sha, "sha-roundtrip")
   assert_true(parsed[0].notified_parent)
   assert_true(parsed[0].last_ci_failed)
+  assert_eq(parsed[0].last_timeout_at, 0L)
+}
+
+///|
+test "PollerState JSON roundtrip preserves last_timeout_at" {
+  let state = PollerState::new()
+  state.restore({
+    ..tracked_pr(
+      13,
+      "agent13",
+      400L,
+      ReviewState::None_,
+      "sha-timeout",
+      false,
+      false,
+    ),
+    last_timeout_at: 999L,
+  })
+  let parsed = parse_tracked_prs_json(state.to_json())
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].last_timeout_at, 999L)
 }
 
 ///|
@@ -291,6 +313,87 @@ test "detect_events::timeout" {
     1000,
   )
   assert_eq(events, [PollEvent::ReviewTimeout(1)])
+}
+
+///|
+test "detect_events::timeout does not re-fire within same interval" {
+  let tracked : TrackedPR = {
+    ..tracked_pr(1, "agent1", 100, ReviewState::None_, "sha1", false, false),
+    last_timeout_at: 1100L,
+  }
+  // 30s later (1130) — not enough time since last notification (needs 1000)
+  let events = detect_events(
+    tracked,
+    ReviewState::None_,
+    "sha1",
+    false,
+    "",
+    1130,
+    1000,
+  )
+  assert_eq(events, [])
+}
+
+///|
+test "detect_events::timeout re-fires after full interval" {
+  let tracked : TrackedPR = {
+    ..tracked_pr(1, "agent1", 100, ReviewState::None_, "sha1", false, false),
+    last_timeout_at: 1100L,
+  }
+  // Another full interval later (2100)
+  let events = detect_events(
+    tracked,
+    ReviewState::None_,
+    "sha1",
+    false,
+    "",
+    2100,
+    1000,
+  )
+  assert_eq(events, [PollEvent::ReviewTimeout(1)])
+}
+
+///|
+test "detect_events::timeout suppressed when review bodies exist" {
+  let tracked : TrackedPR = tracked_pr(
+    1,
+    "agent1",
+    100,
+    ReviewState::None_,
+    "sha1",
+    false,
+    false,
+  )
+  let events = detect_events(
+    tracked,
+    ReviewState::None_,
+    "sha1",
+    false,
+    "Automated review summary",
+    1200,
+    1000,
+  )
+  // Should get ReviewReceived but NOT ReviewTimeout
+  assert_eq(events, [PollEvent::ReviewReceived(1, "Automated review summary")])
+}
+
+///|
+test "detect_events::timeout suppressed when prior review bodies recorded" {
+  let tracked : TrackedPR = {
+    ..tracked_pr(1, "agent1", 100, ReviewState::None_, "sha1", false, false),
+    last_review_bodies: "Previous review content",
+  }
+  let events = detect_events(
+    tracked,
+    ReviewState::None_,
+    "sha1",
+    false,
+    "Previous review content",
+    1200,
+    1000,
+  )
+  // Same bodies as before — no new ReviewReceived, no timeout
+  assert_eq(events, [])
 }
 
 ///|
@@ -454,6 +557,47 @@ test "PollerState::tick_with tracks latest comment-only review bodies" {
       }
       None => fail("tracked PR not found")
     }
+  })
+}
+
+///|
+test "PollerState::tick_with records last_timeout_at and throttles re-fire" {
+  @async.with_event_loop(_ => {
+    let state = PollerState::new()
+    state.track(
+      20, "agent20", "main.agent20", "main", "https://example.test/pr/20", 100,
+    )
+    let events = []
+    // First tick at t=1200 — timeout fires (first_seen=100, timeout=900)
+    state.tick_with(
+      1200,
+      900L,
+      fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+      fn(event, _agent_id) { events.push(event) },
+    )
+    assert_eq(events, [PollEvent::ReviewTimeout(20)])
+    match state.get(20) {
+      Some(tracked) => assert_eq(tracked.last_timeout_at, 1200L)
+      None => fail("tracked PR not found")
+    }
+    // Second tick 100s later — does NOT re-fire (needs 900s since last)
+    let events2 = []
+    state.tick_with(
+      1300,
+      900L,
+      fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+      fn(event, _agent_id) { events2.push(event) },
+    )
+    assert_eq(events2, [])
+    // Third tick 900s later — re-fires
+    let events3 = []
+    state.tick_with(
+      2200,
+      900L,
+      fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+      fn(event, _agent_id) { events3.push(event) },
+    )
+    assert_eq(events3, [PollEvent::ReviewTimeout(20)])
   })
 }
 

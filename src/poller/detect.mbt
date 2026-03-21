@@ -35,9 +35,21 @@ pub fn detect_events(
     events.push(PollEvent::FixesPushed(tracked.pr_number))
   }
 
-  // Timeout
-  if now - tracked.first_seen > timeout && tracked.last_review_state == None_ {
-    events.push(PollEvent::ReviewTimeout(tracked.pr_number))
+  // Timeout — fire periodically (every timeout interval), not on every tick.
+  // Suppress entirely if any review content has been received.
+  let has_any_review_content = review_bodies != "" ||
+    tracked.last_review_bodies != ""
+  if now - tracked.first_seen > timeout &&
+    tracked.last_review_state == None_ &&
+    not(has_any_review_content) {
+    let since_last = if tracked.last_timeout_at == 0L {
+      now - tracked.first_seen
+    } else {
+      now - tracked.last_timeout_at
+    }
+    if since_last >= timeout {
+      events.push(PollEvent::ReviewTimeout(tracked.pr_number))
+    }
   }
 
   // CI failure — only fire once per failure episode

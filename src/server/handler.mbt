@@ -102,6 +102,7 @@ pub fn ServerState::register_agent(
   self : ServerState,
   agent : @types.Agent,
 ) -> Result[Unit, @types.ExoError] {
+  self.clear_pending_disconnect(agent.agent_id)
   ignore(self.registry.upsert(agent))
   Ok(())
 }
@@ -392,4 +393,57 @@ pub async fn ServerState::handle_disconnect(
   agent_id : String,
 ) -> Unit {
   self.handle_disconnect_with_runner(agent_id, runner=@exec.run_sequence)
+}
+
+///|
+/// Schedule a disconnect instead of firing immediately.
+/// The pending disconnect is resolved on the next poller tick after the grace period.
+pub fn ServerState::schedule_disconnect(
+  self : ServerState,
+  agent_id : String,
+  now : Int64,
+) -> Unit {
+  self.pending_disconnects.set(agent_id, now)
+}
+
+///|
+/// Clear a pending disconnect (called when an agent re-registers).
+pub fn ServerState::clear_pending_disconnect(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.pending_disconnects.remove(agent_id)
+}
+
+///|
+/// Process pending disconnects older than grace_seconds. Fire handle_disconnect for stale ones.
+pub async fn ServerState::process_pending_disconnects_with_runner(
+  self : ServerState,
+  now : Int64,
+  grace_seconds : Int64,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+) -> Unit {
+  let stale : Array[String] = []
+  for agent_id, disconnect_time in self.pending_disconnects {
+    if now - disconnect_time >= grace_seconds {
+      stale.push(agent_id)
+    }
+  }
+  for agent_id in stale {
+    self.pending_disconnects.remove(agent_id)
+    self.handle_disconnect_with_runner(agent_id, runner~)
+  }
+}
+
+///|
+pub async fn ServerState::process_pending_disconnects(
+  self : ServerState,
+  now : Int64,
+  grace_seconds : Int64,
+) -> Unit {
+  self.process_pending_disconnects_with_runner(
+    now,
+    grace_seconds,
+    runner=@exec.run_sequence,
+  )
 }

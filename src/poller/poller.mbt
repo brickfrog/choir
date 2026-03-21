@@ -20,6 +20,7 @@ pub(all) struct TrackedPR {
   mut last_sha : String
   mut notified_parent : Bool
   mut last_ci_failed : Bool
+  mut last_timeout_at : Int64
 } derive(Show, Eq)
 
 ///|

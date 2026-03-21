@@ -104,7 +104,7 @@ async fn handle_connection(
     }
   }
   match connected_agent_id {
-    Some(agent_id) => state.handle_disconnect(agent_id)
+    Some(agent_id) => state.schedule_disconnect(agent_id, @poller.now_sec())
     None => ()
   }
 }
@@ -188,7 +188,7 @@ async fn close_uds_client(
 ) -> Unit {
   @uds.close(client.fd)
   match client.connected_agent_id {
-    Some(agent_id) => state.handle_disconnect(agent_id)
+    Some(agent_id) => state.schedule_disconnect(agent_id, @poller.now_sec())
     None => ()
   }
 }
@@ -205,10 +205,12 @@ fn main_prog() -> Unit raise {
     @server.recover_state(state, config.terminal_session)
     root.spawn_bg(async fn() {
       let timeout_sec = 900L
+      let disconnect_grace_sec = 60L
       let interval_ms = 30000
       for {
         @async.sleep(interval_ms)
         let now = @poller.now_sec()
+        state.process_pending_disconnects(now, disconnect_grace_sec)
         state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
       }
     })

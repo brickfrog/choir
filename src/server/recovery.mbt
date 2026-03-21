@@ -1007,6 +1007,7 @@ test "recover_open_pr_tracking_with prefers persisted poller state" {
           last_sha: "sha-persisted",
           notified_parent: true,
           last_ci_failed: true,
+          last_timeout_at: 0L,
         },
       ],
       123L,

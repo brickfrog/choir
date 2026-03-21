@@ -8,6 +8,7 @@ pub struct ServerState {
   poller : @poller.PollerState
   run_id : String
   mut span_counter : Int
+  pending_disconnects : Map[String, Int64]
 }
 
 ///|
@@ -91,5 +92,6 @@ pub fn ServerState::new(config : @types.Config) -> ServerState {
     poller: @poller.PollerState::new(),
     run_id,
     span_counter: 0,
+    pending_disconnects: {},
   }
 }
