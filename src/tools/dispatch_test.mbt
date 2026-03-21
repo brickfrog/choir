@@ -1537,6 +1537,58 @@ test "dispatch fork_wave writes tl phase to KV" {
 }
 
 ///|
+test "dispatch spawn_gemini spawns single leaf" {
+  @async.with_event_loop(_ => {
+    let recorded : Array[@workspace.Command] = []
+    let res = @tools.dispatch_call(
+      {
+        role: @types.Role::TL,
+        name: "spawn_gemini",
+        args: {
+          "task": "Implement feature Y",
+          "slug": "leaf-y",
+          "parent_branch": "main",
+        },
+      },
+      runner=async fn(cmds) {
+        @async.sleep(0)
+        for cmd in cmds {
+          recorded.push(cmd)
+        }
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      },
+    )
+    assert_true(res is Ok(_))
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("spawned"))
+        assert_eq(m.get("agent_id"), Some("main.leaf-y"))
+        assert_eq(m.get("slug"), Some("leaf-y"))
+      }
+      Err(_) => assert_true(false)
+    }
+    // Verify it spawned Gemini
+    let mut found = false
+    for cmd in recorded {
+      if cmd.program == "tmux" &&
+        cmd.args.length() > 3 &&
+        cmd.args[0] == "send-keys" {
+        assert_true(
+          cmd.args[3].contains("gemini '--yolo' '--prompt-interactive'"),
+        )
+        found = true
+        break
+      }
+    }
+    assert_true(found)
+  })
+}
+
+///|
 test "dispatch shutdown blocks when dev phase is ChangesRequested" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-test-shutdown-block"
@@ -1562,5 +1614,35 @@ test "dispatch shutdown blocks when dev phase is ChangesRequested" {
       Err(e) => assert_eq(e, "Changes requested")
     }
     run_shell("rm -rf /tmp/choir-test-shutdown-block")
+  })
+}
+
+///|
+test "handle_request enforces pre_tool_use hook" {
+  @async.with_event_loop(_ => {
+    let project_dir = "/tmp/choir-hook-test"
+    run_shell(
+      "rm -rf /tmp/choir-hook-test && mkdir -p /tmp/choir-hook-test/.choir/hooks && " +
+      "printf '%s' '#!/bin/sh\nprintf \"{\\\"continue\\\":false,\\\"message\\\":\\\"hook block\\\"}\"' > /tmp/choir-hook-test/.choir/hooks/pre_tool_use.sh && " +
+      "chmod +x /tmp/choir-hook-test/.choir/hooks/pre_tool_use.sh",
+    )
+    let reg = @tools.ToolRegistry::new()
+    let req = @types.Request::{
+      req_method: "tools/call",
+      role: @types.Role::TL,
+      name: "kv_list",
+      args: @types.RequestArgs::new({}),
+    }
+    let res = @tools.handle_request(
+      reg,
+      req,
+      project_dir~,
+      runner=@exec.run_sequence,
+    )
+    match res {
+      Ok(_) => assert_true(false)
+      Err(e) => assert_eq(e, "hook block")
+    }
+    run_shell("rm -rf /tmp/choir-hook-test")
   })
 }

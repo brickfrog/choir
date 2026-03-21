@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "command": "exomonad hook after-agent --runtime gemini",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "BeforeTool": [
+      {
+        "hooks": [
+          {
+            "command": "exomonad hook before-tool --runtime gemini",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  },
+  "mcpServers": {
+    "exomonad": {
+      "args": [
+        "mcp-stdio",
+        "--role",
+        "dev",
+        "--name",
+        "spawn-gemini-hooks"
+      ],
+      "command": "exomonad",
+      "type": "stdio"
+    }
+  }
+}

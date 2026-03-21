@@ -15,6 +15,58 @@ pub(all) struct HookInput {
 } derive(Show)
 
 ///|
+pub fn HookInput::to_json_string(self : HookInput) -> String {
+  let buf = StringBuilder::new()
+  buf.write_string("{\"event\":\"")
+  match self.event {
+    SessionStart => buf.write_string("SessionStart")
+    PreToolUse => buf.write_string("PreToolUse")
+  }
+  buf.write_string("\"")
+  match self.session_id {
+    Some(v) => {
+      buf.write_string(",\"session_id\":\"")
+      buf.write_string(v)
+      buf.write_string("\"")
+    }
+    None => ()
+  }
+  match self.agent_id {
+    Some(v) => {
+      buf.write_string(",\"agent_id\":\"")
+      buf.write_string(v)
+      buf.write_string("\"")
+    }
+    None => ()
+  }
+  match self.role {
+    Some(r) => {
+      buf.write_string(",\"role\":\"")
+      match r {
+        Root => buf.write_string("root")
+        TL => buf.write_string("tl")
+        Dev => buf.write_string("dev")
+        Worker => buf.write_string("worker")
+      }
+      buf.write_string("\"")
+    }
+    None => ()
+  }
+  match self.tool_name {
+    Some(v) => {
+      buf.write_string(",\"tool_name\":\"")
+      buf.write_string(v)
+      buf.write_string("\"")
+    }
+    None => ()
+  }
+  // Simplified tool_args serialization as it's not strictly required by the prompt
+  // but good to have if we want to follow the schema.
+  buf.write_string("}")
+  buf.to_string()
+}
+
+///|
 pub(all) struct HookResponse {
   continue_ : Bool
   message : String?
@@ -121,4 +173,31 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
   // Minimal support for args, as it's not strictly used for logic yet
   let tool_args = None
   Some({ event, session_id, agent_id, role, tool_name, tool_args })
+}
+
+///|
+pub fn HookResponse::from_json_string(line : String) -> HookResponse? {
+  let continue_str = match get_string_value(line, "continue") {
+    Some(v) => v
+    None => {
+      // Try boolean without quotes
+      let key_pattern = "\"continue\":"
+      let i = find_substring(line, key_pattern, 0)
+      if i == -1 {
+        return None
+      }
+      let start = i + key_pattern.length()
+      let rest = line[start:].to_string() catch { _ => return None }
+      if rest.has_prefix("true") {
+        "true"
+      } else if rest.has_prefix("false") {
+        "false"
+      } else {
+        return None
+      }
+    }
+  }
+  let continue_ = continue_str == "true"
+  let message = get_string_value(line, "message")
+  Some({ continue_, message })
 }

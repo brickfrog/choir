@@ -21,6 +21,7 @@ pub(all) enum ToolRequest {
   TaskGet(IdArgs)
   TaskCreate(TaskCreateArgs)
   TaskUpdate(TaskUpdateArgs)
+  SpawnGemini(SpawnGeminiArgs)
   SpawnRemote(RemoteSpawnArgs)
   SpawnWorker(WorkerSpawnArgs)
 } derive(Show, Eq)
@@ -49,6 +50,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     TaskGet(_) => "task_get"
     TaskCreate(_) => "task_create"
     TaskUpdate(_) => "task_update"
+    SpawnGemini(_) => "spawn_gemini"
     SpawnRemote(_) => "spawn_remote"
     SpawnWorker(_) => "spawn_worker"
   }

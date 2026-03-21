@@ -663,6 +663,40 @@ pub async fn dispatch(
         @types.Response::Err("failed to write task file: " + path)
       }
     }
+    ToolRequest::SpawnGemini(spawn_args) => {
+      let spec = @types.SpawnSpec::{
+        slug: spawn_args.slug,
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Gemini,
+        task: spawn_args.task,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: spawn_args.caller_id,
+        parent_branch: spawn_args.parent_branch,
+      }
+      let cmds = @workspace.spawn_commands(
+        spec,
+        project_dir,
+        session,
+        terminal_backend~,
+        parent_session_id=spawn_args.parent_session_id,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
+      )
+      match run_strict(runner, cmds) {
+        Ok(_) =>
+          @types.Response::ok_values({
+            "status": @types.wire_string("spawned"),
+            "agent_id": @types.wire_string(
+              @workspace.branch_name(spawn_args.parent_branch, spawn_args.slug),
+            ),
+            "slug": @types.wire_string(spawn_args.slug),
+          })
+        Err(e) => @types.Response::Err(e)
+      }
+    }
     ToolRequest::SpawnRemote(spawn_args) => {
       let spec = @types.SpawnSpec::{
         slug: spawn_args.slug,
@@ -773,6 +807,44 @@ pub async fn handle_request(
       }
     Ok(_) => {
       let tool_args = tool_args_from_request_args(req.args)
+      let hook_path = project_dir + "/.choir/hooks/pre_tool_use.sh"
+      if @io.read_file(hook_path) != "" {
+        let input = @hooks.HookInput::{
+          event: @hooks.HookEvent::PreToolUse,
+          session_id: Some(session),
+          agent_id: tool_args_get(tool_args, "caller_id"),
+          role: Some(req.role),
+          tool_name: Some(req.name),
+          tool_args: Some(tool_args_to_map(tool_args)),
+        }
+        let input_json = input.to_json_string()
+        let output_path = project_dir + "/.choir/hooks/pre_tool_use.out"
+        let hook_cmd = @workspace.Command::{
+          program: "sh",
+          args: [
+            "-c", "printf '%s' \"$1\" | \"$2\" > \"$3\" 2>&1", "sh", input_json,
+            hook_path, output_path,
+          ],
+          workdir: Some(project_dir),
+        }
+        let codes = runner([hook_cmd]) catch {
+          _ => return @types.Response::Err("hook execution failed")
+        }
+        if codes.length() > 0 && codes[0] == 0 {
+          let output_json = @io.read_file(output_path)
+          match @hooks.HookResponse::from_json_string(output_json) {
+            Some(res) =>
+              if not(res.continue_) {
+                let msg = match res.message {
+                  Some(v) => v
+                  None => "hook blocked request"
+                }
+                return @types.Response::Err(msg)
+              }
+            None => ()
+          }
+        }
+      }
       match parse_tool_request(req.name, req.role, project_dir, tool_args) {
         Err(e) => @types.Response::Err(e)
         Ok(tool_req) =>

@@ -288,6 +288,33 @@ fn slugify_task(task : String, index : Int) -> String {
 }
 
 ///|
+fn parse_spawn_gemini_args(
+  project_dir : String,
+  args : ToolArgs,
+) -> Result[SpawnGeminiArgs, String] {
+  let task = tool_args_get(args, "task").unwrap_or("")
+  if task == "" {
+    return Err("missing task")
+  }
+  let caller_id = tool_args_get(args, "caller_id").unwrap_or("main")
+  let slug = match tool_args_get(args, "slug") {
+    Some(v) => if v == "" { slugify_task(task, 0) } else { v }
+    None => slugify_task(task, 0)
+  }
+  match validate_slug(slug) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid slug: " + e)
+  }
+  let parent_branch = tool_args_get(args, "parent_branch").unwrap_or("main")
+  match validate_branch(parent_branch) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid parent_branch: " + e)
+  }
+  let parent_session_id = lookup_parent_session_id(project_dir, args)
+  Ok({ task, caller_id, slug, parent_branch, parent_session_id })
+}
+
+///|
 fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
@@ -752,6 +779,10 @@ fn parse_tool_request(
   match name {
     "register" =>
       parse_register_args(_role, args).map(fn(a) { ToolRequest::Register(a) })
+    "spawn_gemini" =>
+      parse_spawn_gemini_args(_project_dir, args).map(fn(a) {
+        ToolRequest::SpawnGemini(a)
+      })
     "fork_wave" =>
       parse_fork_wave_args(_project_dir, args).map(fn(a) {
         ToolRequest::ForkWave(a)
