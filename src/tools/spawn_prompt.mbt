@@ -140,7 +140,12 @@ fn leaf_profile_text() -> String {
   "   - If your CLI does not load MCP tools directly, `file_pr` is also available as a shell command on PATH.\n" +
   "   - `file_pr` also starts review tracking automatically.\n" +
   "3. Use `notify_parent` for status updates and blockers.\n" +
-  "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n\n" +
+  "   - After filing the PR, notify the parent that the PR is open and include the PR URL.\n" +
+  "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n" +
+  "4. After the PR is open, remain available in the session for review feedback, follow-up fixes, and merge coordination.\n" +
+  "   - PR creation is not the end of the task.\n" +
+  "   - Do not call `shutdown` immediately after opening the PR.\n" +
+  "   - Only shut down when the parent explicitly releases you, the PR is merged, or you are blocked and have reported that.\n\n" +
   "Do not merge your own PR.\n" +
   "Do not push to main.\n" +
   "Do not create extra branches."

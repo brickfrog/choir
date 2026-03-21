@@ -217,13 +217,13 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "spawn_gemini",
-      description: "Spawn a Gemini leaf agent in a new worktree and branch. This is the default implementation-leaf path for tasks that should end in a commit, PR, and parent notification",
+      description: "Spawn a Gemini leaf agent in a new worktree and branch. This is the default implementation-leaf path for tasks that should end in commit, PR, review follow-up, and eventual parent merge. PR creation alone is not terminal completion",
       props: spawn_leaf_props("gemini-leaf", "Gemini leaf agent"),
       required: ["task"],
     },
     {
       name: "spawn_moon_pilot",
-      description: "Spawn a Moon Pilot leaf agent in a new worktree and branch. Use this for implementation tasks that should end in a commit, PR, and parent notification",
+      description: "Spawn a Moon Pilot leaf agent in a new worktree and branch. Use this for implementation tasks that should end in commit, PR, review follow-up, and eventual parent merge. PR creation alone is not terminal completion",
       props: spawn_leaf_props("moon-pilot-leaf", "Moon Pilot leaf agent"),
       required: ["task"],
     },

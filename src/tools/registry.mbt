@@ -22,12 +22,12 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_gemini",
-      description: "Spawn a Gemini leaf agent in its own worktree and branch. This is the default implementation-leaf path for tasks that should end in a commit, PR, and parent notification",
+      description: "Spawn a Gemini leaf agent in its own worktree and branch. This is the default implementation-leaf path. Use it for tasks that should end in commit, PR, review follow-up, and eventual parent merge; PR creation alone is not terminal completion",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
       name: "spawn_moon_pilot",
-      description: "Spawn a Moon Pilot leaf agent in its own worktree and branch; use this for implementation tasks that should end in a commit, PR, and parent notification",
+      description: "Spawn a Moon Pilot leaf agent in its own worktree and branch. Use this for implementation tasks that should end in commit, PR, review follow-up, and eventual parent merge; PR creation alone is not terminal completion",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

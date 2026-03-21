@@ -209,7 +209,8 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
     Ok(def) => {
       assert_true(def.description.contains("default implementation-leaf path"))
       assert_true(def.description.contains("commit, PR"))
-      assert_true(def.description.contains("parent notification"))
+      assert_true(def.description.contains("eventual parent merge"))
+      assert_true(def.description.contains("not terminal completion"))
     }
     Err(_) => fail("expected spawn_gemini definition")
   }
