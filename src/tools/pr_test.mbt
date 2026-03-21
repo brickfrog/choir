@@ -13,6 +13,13 @@ test "file_pr_commands produces correct git push and gh pr create" {
 }
 
 ///|
+test "gh_pr_create_command uses slug for title not full branch" {
+  let cmd = gh_pr_create_command("master.test-0", "master")
+  assert_eq(cmd.args[7], "test-0")
+  assert_eq(cmd.args[5], "master.test-0")
+}
+
+///|
 async fn mock_ensure_pr(
   branch : String,
   parent_branch : String,

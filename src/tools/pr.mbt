@@ -143,6 +143,25 @@ pub fn file_pr_commands(
 }
 
 ///|
+
+///|
+fn slug_from_branch(branch : String) -> String {
+  let mut last_dot = -1
+  for i = 0; i < branch.length(); i = i + 1 {
+    if branch[i] == '.' {
+      last_dot = i
+    }
+  }
+  if last_dot >= 0 {
+    branch[last_dot + 1:].to_string() catch {
+      _ => branch
+    }
+  } else {
+    branch
+  }
+}
+
+///|
 pub fn gh_pr_create_command(
   branch : String,
   parent_branch : String,
@@ -150,8 +169,16 @@ pub fn gh_pr_create_command(
   {
     program: "gh",
     args: [
-      "pr", "create", "--base", parent_branch, "--head", branch, "--title", branch,
-      "--body", "",
+      "pr",
+      "create",
+      "--base",
+      parent_branch,
+      "--head",
+      branch,
+      "--title",
+      slug_from_branch(branch),
+      "--body",
+      "",
     ],
     workdir: None,
   }
