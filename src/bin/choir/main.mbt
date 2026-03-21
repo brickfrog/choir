@@ -231,8 +231,19 @@ fn serve_run() -> Unit raise {
         for ;; {
           @async.sleep(interval_ms)
           let now = @poller.now_sec()
-          state.process_pending_disconnects(now, disconnect_grace_sec)
-          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
+          try {
+            state.process_pending_disconnects(now, disconnect_grace_sec)
+            state.process_poller_tick(
+              now,
+              timeout_sec,
+              runner=@exec.run_sequence,
+            )
+          } catch {
+            e =>
+              @io.write_stderr(
+                "[choir serve] poller tick error: " + e.to_string() + "\n",
+              )
+          }
         }
       })
       root.spawn_bg(async fn() {
