@@ -491,6 +491,7 @@ pub fn from_internal_response(
         result: Some(
           JsonValue::Object({
             "content": JsonValue::Raw(content),
+            "structuredContent": JsonValue::Object(payload),
             "isError": JsonValue::Raw("false"),
           }),
         ),
@@ -509,6 +510,9 @@ pub fn from_internal_response(
         result: Some(
           JsonValue::Object({
             "content": JsonValue::Raw(content),
+            "structuredContent": JsonValue::Object({
+              "error": JsonValue::String(msg),
+            }),
             "isError": JsonValue::Raw("true"),
           }),
         ),

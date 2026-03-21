@@ -118,7 +118,19 @@ test "from_internal_response Ok" {
   let rpc = @mcp.from_internal_response(Number(5), resp)
   assert_eq(rpc.jsonrpc, "2.0")
   assert_eq(rpc.id, Number(5))
-  assert_true(rpc.result is Some(_))
+  match rpc.result {
+    Some(@mcp.JsonValue::Object(result)) =>
+      match result.get("structuredContent") {
+        Some(@mcp.JsonValue::Object(structured)) =>
+          match structured.get("url") {
+            Some(@mcp.JsonValue::String(url)) =>
+              assert_eq(url, "https://github.com/pr/1")
+            _ => fail("expected structured url")
+          }
+        _ => fail("expected structuredContent object")
+      }
+    _ => fail("expected object result")
+  }
   assert_true(rpc.error is None)
 }
 
@@ -130,7 +142,7 @@ test "from_internal_response preserves raw primitives" {
   })
   let rpc = @mcp.from_internal_response(Number(55), resp)
   match rpc.result {
-    Some(@mcp.JsonValue::Object(result)) =>
+    Some(@mcp.JsonValue::Object(result)) => {
       match result.get("content") {
         Some(@mcp.JsonValue::Raw(content)) => {
           assert_true(content.contains("\\\"tracked\\\":true"))
@@ -138,6 +150,20 @@ test "from_internal_response preserves raw primitives" {
         }
         _ => fail("expected raw content")
       }
+      match result.get("structuredContent") {
+        Some(@mcp.JsonValue::Object(structured)) => {
+          match structured.get("tracked") {
+            Some(@mcp.JsonValue::Raw(value)) => assert_eq(value, "true")
+            _ => fail("expected structured tracked raw bool")
+          }
+          match structured.get("pr_number") {
+            Some(@mcp.JsonValue::Raw(value)) => assert_eq(value, "22")
+            _ => fail("expected structured pr_number raw int")
+          }
+        }
+        _ => fail("expected structuredContent")
+      }
+    }
     _ => fail("expected object result")
   }
 }
@@ -159,6 +185,15 @@ test "from_internal_response Err" {
         Some(@mcp.JsonValue::Raw(content)) =>
           assert_true(content.contains("tool not found"))
         _ => fail("expected content")
+      }
+      match result.get("structuredContent") {
+        Some(@mcp.JsonValue::Object(structured)) =>
+          match structured.get("error") {
+            Some(@mcp.JsonValue::String(msg)) =>
+              assert_eq(msg, "tool not found")
+            _ => fail("expected structured error message")
+          }
+        _ => fail("expected structuredContent")
       }
     }
     None => fail("expected result")
@@ -192,6 +227,7 @@ test "serialize successful response" {
   assert_true(json.contains("\"id\":10"))
   assert_true(json.contains("\"result\":{"))
   assert_true(json.contains("\"content\""))
+  assert_true(json.contains("\"structuredContent\""))
   assert_true(json.contains("status"))
   assert_true(json.contains("isError"))
 }
