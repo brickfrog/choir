@@ -215,15 +215,24 @@ pub fn spawn_commands(
       }
       cmds
     }
-    Inline =>
-      launch_commands(
-        terminal_backend,
-        session,
-        spec.slug,
-        workspace,
-        launch_str,
-        spec.isolation,
-      )
+    Inline => {
+      let cmds : Array[Command] = []
+      if spec.agent_type == Gemini {
+        cmds.push(trust_gemini_folder(workspace))
+      }
+      for
+        cmd in launch_commands(
+          terminal_backend,
+          session,
+          spec.slug,
+          workspace,
+          launch_str,
+          spec.isolation,
+        ) {
+        cmds.push(cmd)
+      }
+      cmds
+    }
     Standalone => {
       let cmds : Array[Command] = [
         { program: "git", args: ["init", workspace], workdir: None },
