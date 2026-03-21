@@ -121,7 +121,7 @@ struct TrackPrArgs {
 ///|
 struct ForkWaveArgs {
   count : Int
-  task : String
+  tasks : Array[String]
   parent_branch : String
   caller_id : String
   slug_prefix : String
@@ -415,17 +415,99 @@ fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, String] {
 }
 
 ///|
+
+///|
+/// Split a "tasks" value into individual task strings.
+/// Accepts JSON array format ["task1","task2"] or newline-separated.
+fn parse_tasks_array(raw : String) -> Array[String] {
+  let trimmed = raw.trim().to_string()
+  if trimmed.length() > 0 && trimmed[0] == '[' {
+    // JSON array — extract quoted strings
+    let tasks : Array[String] = []
+    let mut i = 1
+    while i < trimmed.length() {
+      if trimmed[i] == '"' {
+        let mut j = i + 1
+        while j < trimmed.length() && trimmed[j] != '"' {
+          if trimmed[j] == '\\' {
+            j = j + 1
+          }
+          j = j + 1
+        }
+        let task = trimmed[i + 1:j].to_string() catch { _ => "" }
+        if task != "" {
+          tasks.push(task)
+        }
+        i = j + 1
+      } else {
+        i = i + 1
+      }
+    }
+    tasks
+  } else {
+    // Newline-separated
+    let parts : Array[String] = []
+    let buf = StringBuilder::new()
+    for c in trimmed {
+      if c == '\n' {
+        let part = buf.to_string().trim().to_string()
+        if part != "" {
+          parts.push(part)
+        }
+        buf.reset()
+      } else {
+        buf.write_char(c)
+      }
+    }
+    let last = buf.to_string().trim().to_string()
+    if last != "" {
+      parts.push(last)
+    }
+    parts
+  }
+}
+
+///|
 fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
 ) -> Result[ForkWaveArgs, String] {
-  let count_str = tool_args_get(args, "count").unwrap_or("")
-  if count_str == "" {
-    return Err("missing count")
+  // Determine tasks: either per-leaf "tasks" array or shared "task" string
+  let tasks_raw = tool_args_get(args, "tasks").unwrap_or("")
+  let per_leaf_tasks = if tasks_raw != "" {
+    parse_tasks_array(tasks_raw)
+  } else {
+    []
   }
-  let count = match tool_args_get_int(args, "count") {
-    Some(c) => c
-    None => return Err("invalid count: " + count_str)
+  let count = if per_leaf_tasks.length() > 0 {
+    // Count derived from tasks array length
+    per_leaf_tasks.length()
+  } else {
+    let count_str = tool_args_get(args, "count").unwrap_or("")
+    if count_str == "" {
+      return Err("missing count (or provide tasks array)")
+    }
+    match tool_args_get_int(args, "count") {
+      Some(c) => c
+      None => return Err("invalid count: " + count_str)
+    }
+  }
+  let tasks = if per_leaf_tasks.length() > 0 {
+    // Render each per-leaf task through the prompt builder
+    let rendered : Array[String] = []
+    for task in per_leaf_tasks {
+      let spec = prompt_spec_from_tool_args(args)
+      rendered.push(render_leaf_spawn_prompt({ ..spec, task, }))
+    }
+    rendered
+  } else {
+    // Shared task — same prompt for all leaves
+    let shared = render_leaf_spawn_prompt(prompt_spec_from_tool_args(args))
+    let arr : Array[String] = []
+    for i = 0; i < count; i = i + 1 {
+      arr.push(shared)
+    }
+    arr
   }
   let parent_branch = get_arg_or_alias(args, "parent_branch", "branch", "main")
   match validate_branch(parent_branch) {
@@ -454,7 +536,7 @@ fn parse_fork_wave_args(
   }
   Ok({
     count,
-    task: render_leaf_spawn_prompt(prompt_spec_from_tool_args(args)),
+    tasks,
     parent_branch,
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug_prefix: normalized_slug_prefix,
@@ -1337,7 +1419,7 @@ pub async fn dispatch(
           slug,
           role: @types.Role::Dev,
           agent_type: fork_wave_args.agent_type,
-          task: fork_wave_args.task,
+          task: fork_wave_args.tasks[i],
           isolation: @types.IsolationMode::Worktree,
           parent_id: fork_wave_args.caller_id,
           parent_branch: fork_wave_args.parent_branch,

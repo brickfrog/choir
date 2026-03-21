@@ -89,8 +89,8 @@ test "tools_list_response" {
           assert_true(t.contains("caller_id"))
           assert_true(t.contains("shutdown"))
           assert_true(t.contains("Gemini leaf agents"))
-          assert_true(t.contains("count=1 for a single leaf"))
-          assert_true(t.contains("count=1 for a single leaf"))
+          assert_true(t.contains("tasks"))
+          assert_true(t.contains("per-leaf task"))
           assert_true(t.contains("research or review only"))
           assert_true(t.contains("non-editing support agents"))
         }

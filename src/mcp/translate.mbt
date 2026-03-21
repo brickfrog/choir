@@ -183,15 +183,19 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
-      description: "Spawn one or more Gemini leaf agents in new worktrees. Use count=1 for a single leaf, count=N for parallel fan-out",
+      description: "Spawn Gemini leaf agents in new worktrees. For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks (best-of-N), pass task + count",
       props: [
-        { name: "task", desc: "Task description for the wave" },
+        { name: "task", desc: "Shared task for all leaves (use with count)" },
+        {
+          name: "tasks",
+          desc: "JSON array of per-leaf task strings — each leaf gets exactly one. Count is inferred from array length. Mutually exclusive with task+count",
+        },
         {
           name: "parent_branch",
           desc: "Parent branch for spawned children (default main)",
         },
         { name: "branch", desc: "Compatibility alias for parent_branch" },
-        { name: "count", desc: "Number of workers to spawn (default 1)" },
+        { name: "count", desc: "Number of leaves when using shared task" },
         { name: "slug_prefix", desc: "Slug prefix for spawned children" },
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },
