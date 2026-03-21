@@ -22,7 +22,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn one or more implementation leaf agents in worktrees. Defaults to Gemini. Pass agent_type to change engine",
+      description: "Spawn one or more implementation leaf agents in worktrees. ALWAYS uses Gemini by default — do NOT pass agent_type=claude unless the user explicitly requested it",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

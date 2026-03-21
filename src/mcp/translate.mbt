@@ -177,7 +177,7 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
-      description: "Spawn one or more implementation leaf agents in new worktrees. Defaults to Gemini. Pass agent_type=claude or agent_type=moon_pilot to change engine. Use count=1 for a single leaf, count=N for parallel fan-out",
+      description: "Spawn one or more implementation leaf agents in new worktrees. ALWAYS uses Gemini by default — do NOT pass agent_type=claude unless the user explicitly requested Claude leaves. Use count=1 for a single leaf, count=N for parallel fan-out",
       props: [
         { name: "task", desc: "Task description for the wave" },
         {
