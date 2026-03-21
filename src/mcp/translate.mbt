@@ -131,6 +131,35 @@ pub fn to_internal_request(
 
 ///|
 /// Create a JSON-RPC response for the MCP initialize handshake.
+fn choir_mcp_instructions() -> String {
+  let buf = StringBuilder::new()
+  buf.write_string(
+    "Choir is an agent orchestration server. You are the Team Lead (TL). ",
+  )
+  buf.write_string(
+    "Delegate all implementation to Gemini leaf agents via fork_wave. ",
+  )
+  buf.write_string(
+    "Never edit files directly — read code to understand it, then delegate. ",
+  )
+  buf.write_string(
+    "For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). ",
+  )
+  buf.write_string("For identical parallel work, pass task + count. ")
+  buf.write_string(
+    "spawn_worker is research-only — workers cannot edit files or file PRs. ",
+  )
+  buf.write_string(
+    "After spawning leaves, stop and wait for notify_parent messages. ",
+  )
+  buf.write_string("Do not poll with sleep or git log. ")
+  buf.write_string(
+    "Use merge_pr to merge PRs, not git merge. Merge one at a time.",
+  )
+  buf.to_string()
+}
+
+///|
 pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
   {
     jsonrpc: "2.0",
@@ -142,6 +171,7 @@ pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
         "serverInfo": JsonValue::Raw(
           "{\"name\":\"choir\",\"version\":\"1.0.0\"}",
         ),
+        "instructions": JsonValue::String(choir_mcp_instructions()),
       }),
     ),
     error: None,
