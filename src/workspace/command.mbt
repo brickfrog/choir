@@ -169,8 +169,8 @@ pub fn write_gemini_settings(
 }
 
 ///|
-/// Register a synthetic member in a Claude Teams config.json.
-/// Reads existing config, appends member if not already present, writes back.
+/// LEGACY: Register a synthetic member in a Claude Teams config.json via shell.
+/// Native version is @workspace.register_team_member_native.
 pub fn register_team_member(
   parent_agent_id : String,
   member_name : String,

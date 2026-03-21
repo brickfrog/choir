@@ -180,18 +180,15 @@ pub async fn dispatch(
       match run_strict(runner, cmds) {
         Ok(_) => {
           // Register spawned agents as synthetic team members (best-effort)
-          let reg_cmds : Array[@workspace.Command] = []
           for i = 0; i < fork_wave_args.count; i = i + 1 {
             let slug = fork_wave_args.slug_prefix + "-" + i.to_string()
-            reg_cmds.push(
-              @workspace.register_team_member(
-                fork_wave_args.caller_id,
-                slug,
-                @config.agent_type_to_string(fork_wave_args.agent_type),
-              ),
+            let _ = @workspace.register_team_member_native(
+              fork_wave_args.caller_id,
+              slug,
+              @config.agent_type_to_string(fork_wave_args.agent_type),
             )
+            ()
           }
-          ignore(runner(reg_cmds) catch { _ => [] })
           let result : Map[String, @types.WireValue] = {
             "status": @types.wire_string("spawned"),
             "count": @types.wire_int(spawned_count),
@@ -418,6 +415,21 @@ pub async fn dispatch(
           let _ = reg.set_state(caller_id, @types.AgentState::Completing)
           match reg.get_parent(caller_id) {
             Ok(parent) => {
+              let mut last_dot = -1
+              for i = caller_id.length() - 1; i >= 0; i = i - 1 {
+                if caller_id[i] == '.' {
+                  last_dot = i
+                  break
+                }
+              }
+              let slug = if last_dot == -1 {
+                caller_id
+              } else {
+                caller_id[last_dot + 1:].to_string()
+              }
+              ignore(
+                @workspace.remove_team_member_native(parent.agent_id, slug),
+              )
               let delivery = @message.plan_delivery(
                 parent, caller_id, "agent shutdown", "success",
               )
