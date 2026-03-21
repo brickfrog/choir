@@ -1705,7 +1705,15 @@ pub async fn dispatch(
       }
       let existing = @io.read_file(task_file_path(project_dir, task_args.id))
       if existing != "" {
-        return @types.Response::Err("task already exists: " + task_args.id)
+        return match read_task_file(project_dir, task_args.id) {
+          Ok(task) =>
+            @types.Response::ok_values({
+              "status": @types.wire_string("ok"),
+              "created": @types.wire_bool(false),
+              "task": @types.wire_raw(task_file_to_json(task)),
+            })
+          Err(e) => @types.Response::Err(e)
+        }
       }
       let task = TaskFile::{
         id: task_args.id,
@@ -1719,6 +1727,7 @@ pub async fn dispatch(
       if @io.write_file_sync(path, content) {
         @types.Response::ok_values({
           "status": @types.wire_string("ok"),
+          "created": @types.wire_bool(true),
           "task": @types.wire_raw(content),
         })
       } else {

@@ -1101,6 +1101,7 @@ test "dispatch task_create creates task" {
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("ok"))
+        assert_eq(m.get("created"), Some("true"))
         let task_json = m.get("task").unwrap_or("")
         assert_true(task_json.contains("\"id\":\"task-1\""))
         assert_true(task_json.contains("\"title\":\"Build the thing\""))
@@ -1124,7 +1125,7 @@ test "dispatch task_create creates task" {
 }
 
 ///|
-test "dispatch task_create fails if already exists" {
+test "dispatch task_create returns existing task if already exists" {
   @async.with_event_loop(_ => {
     let project_dir = "/tmp/choir-dispatch-task-create-dup"
     run_shell(
@@ -1138,8 +1139,14 @@ test "dispatch task_create fails if already exists" {
     }
     let res = @tools.dispatch(call, project_dir~, runner=@exec.run_sequence)
     match res {
-      Err(e) => assert_true(e.contains("already exists"))
-      Ok(_) => assert_true(false)
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("ok"))
+        assert_eq(m.get("created"), Some("false"))
+        let task_json = m.get("task").unwrap_or("")
+        assert_true(task_json.contains("\"id\":\"dup\""))
+        assert_true(task_json.contains("\"title\":\"Dup\""))
+      }
+      Err(e) => fail(e)
     }
     run_shell("rm -rf /tmp/choir-dispatch-task-create-dup")
   })
