@@ -482,8 +482,8 @@ test "process_poller_tick_with routes comment-only reviews to owning agent" {
       },
       runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
     )
-    // Both parent and owner get deliveries
-    assert_eq(review_cmds.length(), 2)
+    // Parent + owner deliveries + gh pr comment
+    assert_eq(review_cmds.length(), 3)
     // Parent gets summary
     assert_true(
       review_cmds[0].args[4].contains(
@@ -502,6 +502,12 @@ test "process_poller_tick_with routes comment-only reviews to owning agent" {
         "[REVIEW] PR #61 has review comments:\\nPlease tighten the wording in CLAUDE.md",
       ),
     )
+    // PR comment audit trail
+    assert_eq(review_cmds[2].program, "gh")
+    assert_eq(review_cmds[2].args[0], "pr")
+    assert_eq(review_cmds[2].args[1], "comment")
+    assert_eq(review_cmds[2].args[2], "61")
+    assert_true(review_cmds[2].args[4].contains("**Choir:** review received"))
   })
 }
 
@@ -564,8 +570,8 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
       },
       runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
     )
-    // Parent gets summary, owner gets detail
-    assert_eq(review_cmds.length(), 2)
+    // Parent + owner + gh pr comment
+    assert_eq(review_cmds.length(), 3)
     assert_eq(review_cmds[0].program, "sh")
     // Parent delivery
     assert_true(
@@ -586,6 +592,8 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
       ),
     )
     assert_true(review_cmds[1].args[3].contains("\"from\":\"poller\""))
+    // PR comment
+    assert_eq(review_cmds[2].program, "gh")
 
     let fixes_cmds : Array[@workspace.Command] = []
     state.process_poller_tick_with(
@@ -601,7 +609,8 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
       },
       runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
     )
-    assert_eq(fixes_cmds.length(), 1)
+    // Parent delivery + gh pr comment
+    assert_eq(fixes_cmds.length(), 2)
     assert_true(
       fixes_cmds[0].args[4].contains(
         "/.claude/teams/parent-1/inboxes/default.json",
@@ -613,6 +622,7 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
       ),
     )
     assert_true(fixes_cmds[0].args[3].contains("\"from\":\"main.leaf-1\""))
+    assert_eq(fixes_cmds[1].program, "gh")
 
     let ready_cmds : Array[@workspace.Command] = []
     state.process_poller_tick_with(
@@ -623,7 +633,8 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
       },
       runner=async fn(cmds) { record_runner_server(ready_cmds, cmds) },
     )
-    assert_eq(ready_cmds.length(), 1)
+    // Parent delivery + gh pr comment
+    assert_eq(ready_cmds.length(), 2)
     assert_true(
       ready_cmds[0].args[4].contains(
         "/.claude/teams/parent-1/inboxes/default.json",
@@ -718,7 +729,8 @@ test "process_poller_tick_with suppresses duplicate recovered review events" {
       },
       runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
     )
-    assert_eq(fixes_cmds.length(), 1)
+    // Parent delivery + gh pr comment
+    assert_eq(fixes_cmds.length(), 2)
     assert_true(
       fixes_cmds[0].args[4].contains(
         "/.claude/teams/parent-1/inboxes/default.json",

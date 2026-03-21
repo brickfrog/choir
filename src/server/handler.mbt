@@ -342,6 +342,50 @@ pub fn ServerState::plan_poll_event_deliveries(
 }
 
 ///|
+/// Generate a PR comment body for a poll event, if it warrants one.
+fn pr_comment_body(
+  event : @poller.PollEvent,
+  agent_id : String,
+) -> (Int, String)? {
+  match event {
+    ReviewReceived(n, _) =>
+      Some(
+        (
+          n,
+          "**Choir:** review received — routed to `" +
+          agent_id +
+          "` and parent for triage.",
+        ),
+      )
+    PRReady(n) =>
+      Some(
+        (
+          n, "**Choir:** PR approved — parent notified, awaiting merge decision.",
+        ),
+      )
+    CIFailed(n) =>
+      Some(
+        (
+          n,
+          "**Choir:** CI checks failing — routed to `" +
+          agent_id +
+          "` for fixes.",
+        ),
+      )
+    FixesPushed(n) =>
+      Some(
+        (
+          n,
+          "**Choir:** fixes pushed by `" +
+          agent_id +
+          "` — awaiting re-review.",
+        ),
+      )
+    ReviewTimeout(_) => None
+  }
+}
+
+///|
 async fn deliver_pending_poll_events(
   state : ServerState,
   pending_events : Array[@poller.PollEvent],
@@ -353,6 +397,16 @@ async fn deliver_pending_poll_events(
     let agent_id = pending_agent_ids[i]
     for delivery in state.plan_poll_event_deliveries(event, agent_id) {
       ignore(@tools.execute_delivery(delivery, runner))
+    }
+    // Post a comment on the PR for audit trail
+    match pr_comment_body(event, agent_id) {
+      Some((pr_number, body)) =>
+        ignore(
+          runner([
+            @workspace.gh_pr_comment(pr_number, body, state.config.project_dir),
+          ]),
+        )
+      None => ()
     }
   }
 }

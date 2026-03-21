@@ -114,3 +114,17 @@ pub fn trust_gemini_folder(worktree_path : String) -> Command {
     workdir: None,
   }
 }
+
+///|
+/// Post a comment on a GitHub PR via `gh pr comment`.
+pub fn gh_pr_comment(
+  pr_number : Int,
+  body : String,
+  project_dir : String,
+) -> Command {
+  {
+    program: "gh",
+    args: ["pr", "comment", pr_number.to_string(), "--body", body],
+    workdir: Some(project_dir),
+  }
+}
