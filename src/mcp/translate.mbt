@@ -321,7 +321,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker agent in a tmux window",
+      description: "Spawn an inline worker in the current repo/session for research or small in-place tasks; no branch or PR",
       props: spawn_worker_props(),
       required: ["task"],
     },

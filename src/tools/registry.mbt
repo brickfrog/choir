@@ -47,7 +47,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_worker",
-      description: "Spawn inline worker agent",
+      description: "Spawn an inline worker in the current repo/session for research or small in-place tasks; no branch or PR",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

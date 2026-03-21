@@ -159,6 +159,8 @@ fn worker_profile_text(worker_type : String) -> String {
   } else {
     "## Completion Protocol (Worker)\n" +
     "You are an ephemeral worker in the parent's directory and branch.\n\n" +
+    "If upstream instructions mention commits, branches, PRs, or PR-tracking tools, ignore those parts.\n" +
+    "Workers do not own branches or PRs.\n\n" +
     "When you are done:\n\n" +
     "1. Call `notify_parent` with status `success` and a detailed summary.\n" +
     "2. If you fail, call `notify_parent` with status `failure` and explain why.\n\n" +
@@ -180,10 +182,35 @@ fn render_lines(lines : Array[String]) -> String {
 }
 
 ///|
+fn line_mentions_worker_forbidden_action(line : String) -> Bool {
+  let lowered = line.to_lower()
+  lowered.contains("pr") ||
+  lowered.contains("pull request") ||
+  lowered.contains("file_pr") ||
+  lowered.contains("merge_pr") ||
+  lowered.contains("track_pr") ||
+  lowered.contains("commit") ||
+  lowered.contains("push") ||
+  lowered.contains("branch")
+}
+
+///|
+fn sanitize_worker_lines(lines : Array[String]) -> Array[String] {
+  let filtered : Array[String] = []
+  for line in lines {
+    if not(line_mentions_worker_forbidden_action(line)) {
+      filtered.push(line)
+    }
+  }
+  filtered
+}
+
+///|
 fn render_common_prompt(
   spec : PromptSpec,
   profile : String,
   include_agents_md : Bool,
+  sanitize_worker? : Bool = false,
 ) -> String {
   if spec.prompt != "" {
     return spec.prompt + "\n\n" + profile
@@ -198,7 +225,12 @@ fn render_common_prompt(
     push_unique(read_first, "AGENTS.md")
   }
   add_section(sections, "READ FIRST", render_bullets(read_first))
-  add_section(sections, "STEPS", render_numbered(spec.steps))
+  let steps = if sanitize_worker {
+    sanitize_worker_lines(spec.steps)
+  } else {
+    spec.steps
+  }
+  add_section(sections, "STEPS", render_numbered(steps))
   add_section(sections, "CONTEXT", render_context_block(spec))
 
   let verify_lines : Array[String] = []
@@ -206,7 +238,12 @@ fn render_common_prompt(
     verify_lines.push("- `" + cmd + "`")
   }
   add_section(sections, "VERIFY", render_lines(verify_lines))
-  add_section(sections, "DONE CRITERIA", render_bullets(spec.done_criteria))
+  let done_criteria = if sanitize_worker {
+    sanitize_worker_lines(spec.done_criteria)
+  } else {
+    spec.done_criteria
+  }
+  add_section(sections, "DONE CRITERIA", render_bullets(done_criteria))
 
   let constraints = spec.constraints
   if spec.no_commit {
@@ -224,5 +261,10 @@ pub fn render_leaf_spawn_prompt(spec : PromptSpec) -> String {
 
 ///|
 pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
-  render_common_prompt(spec, worker_profile_text(spec.worker_type), true)
+  render_common_prompt(
+    spec,
+    worker_profile_text(spec.worker_type),
+    true,
+    sanitize_worker=true,
+  )
 }
