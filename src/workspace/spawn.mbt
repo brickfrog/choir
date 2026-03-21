@@ -146,7 +146,17 @@ pub fn spawn_commands(
     command_text_for_launch(launch_cmd)
   match spec.isolation {
     Worktree => {
-      let cmds : Array[Command] = [git_worktree_add(workspace, branch)]
+      let cmds : Array[Command] = [
+        {
+          program: "sh",
+          args: [
+            "-c", "git worktree remove --force \"$1\" 2>/dev/null || true; rm -rf \"$1\"; git branch -D \"$2\" 2>/dev/null || true",
+            "sh", workspace, branch,
+          ],
+          workdir: None,
+        },
+        git_worktree_add(workspace, branch),
+      ]
       cmds.push(
         write_spawn_config(
           workspace,

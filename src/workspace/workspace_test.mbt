@@ -244,19 +244,21 @@ test "spawn_commands for worktree mode returns helper and config commands" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // git worktree add, write config.toml, write config.local.toml, write .mcp.json, write helpers, tmux new-window, tmux send-keys
-  assert_eq(cmds.length(), 7)
-  assert_eq(cmds[0].program, "git")
-  assert_eq(cmds[1].program, "sh")
+  // cleanup existing slug, git worktree add, write config.toml, write config.local.toml, write .mcp.json, write helpers, tmux new-window, tmux send-keys
+  assert_eq(cmds.length(), 8)
+  assert_eq(cmds[0].program, "sh")
+  assert_true(cmds[0].args[1].contains("git worktree remove --force"))
+  assert_eq(cmds[1].program, "git")
   assert_eq(cmds[2].program, "sh")
   assert_eq(cmds[3].program, "sh")
   assert_eq(cmds[4].program, "sh")
-  assert_eq(cmds[5].program, "tmux")
+  assert_eq(cmds[5].program, "sh")
   assert_eq(cmds[6].program, "tmux")
-  assert_eq(cmds[5].args[0], "new-window")
-  assert_true(cmds[4].args[1].contains("choir leaf-tool"))
-  assert_true(cmds[4].args[1].contains("notify_parent"))
-  assert_true(cmds[6].args[3].contains(".choir/bin"))
+  assert_eq(cmds[7].program, "tmux")
+  assert_eq(cmds[6].args[0], "new-window")
+  assert_true(cmds[5].args[1].contains("choir leaf-tool"))
+  assert_true(cmds[5].args[1].contains("notify_parent"))
+  assert_true(cmds[7].args[3].contains(".choir/bin"))
 }
 
 ///|
@@ -271,29 +273,31 @@ test "spawn_commands worktree config write content" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 7)
+  assert_eq(cmds.length(), 8)
+  assert_eq(cmds[0].program, "sh")
+  assert_true(cmds[0].args[1].contains("git branch -D"))
   // config.toml write: positional args — $1=worktree_path, $2=content
-  assert_eq(cmds[1].program, "sh")
-  assert_true(cmds[1].args[3].contains("feature-a")) // worktree path
-  assert_true(cmds[1].args[4].contains("default_role = \"dev\""))
-  assert_true(
-    cmds[1].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
-  )
-  assert_true(cmds[1].args[4].contains("terminal_session = \"exo\""))
-  assert_true(cmds[1].args[4].contains("terminal_backend = \"tmux\""))
-  // config.local.toml write: positional args — $1=worktree_path, $2=content
   assert_eq(cmds[2].program, "sh")
   assert_true(cmds[2].args[3].contains("feature-a")) // worktree path
-  assert_true(cmds[2].args[4].contains("dev")) // role content
-  assert_true(cmds[2].args[4].contains("agent_id = \"main.feature-a\""))
-  assert_true(cmds[2].args[4].contains("parent_id = \"root\""))
-  assert_true(cmds[2].args[4].contains("terminal_target = \"exo:feature-a\""))
-  // .mcp.json write: positional args — $1=worktree_path, $2=json
+  assert_true(cmds[2].args[4].contains("default_role = \"dev\""))
+  assert_true(
+    cmds[2].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
+  )
+  assert_true(cmds[2].args[4].contains("terminal_session = \"exo\""))
+  assert_true(cmds[2].args[4].contains("terminal_backend = \"tmux\""))
+  // config.local.toml write: positional args — $1=worktree_path, $2=content
   assert_eq(cmds[3].program, "sh")
   assert_true(cmds[3].args[3].contains("feature-a")) // worktree path
-  assert_true(cmds[3].args[4].contains("--role")) // mcp json has role arg
-  assert_true(cmds[3].args[4].contains("main.feature-a")) // canonical agent id
-  assert_true(cmds[6].args[3].contains("PATH="))
+  assert_true(cmds[3].args[4].contains("dev")) // role content
+  assert_true(cmds[3].args[4].contains("agent_id = \"main.feature-a\""))
+  assert_true(cmds[3].args[4].contains("parent_id = \"root\""))
+  assert_true(cmds[3].args[4].contains("terminal_target = \"exo:feature-a\""))
+  // .mcp.json write: positional args — $1=worktree_path, $2=json
+  assert_eq(cmds[4].program, "sh")
+  assert_true(cmds[4].args[3].contains("feature-a")) // worktree path
+  assert_true(cmds[4].args[4].contains("--role")) // mcp json has role arg
+  assert_true(cmds[4].args[4].contains("main.feature-a")) // canonical agent id
+  assert_true(cmds[7].args[3].contains("PATH="))
 }
 
 ///|
@@ -313,18 +317,19 @@ test "spawn_commands for zellij worktree uses new tab target" {
     "howdy",
     terminal_backend=@types.TerminalBackend::Zellij,
   )
-  assert_eq(cmds.length(), 7)
-  assert_eq(cmds[5].program, "choir")
-  assert_eq(cmds[6].program, "zellij")
-  assert_eq(cmds[6].args[0], "--session")
-  assert_eq(cmds[6].args[1], "howdy")
-  assert_eq(cmds[6].args[2], "action")
-  assert_eq(cmds[6].args[3], "new-tab")
+  assert_eq(cmds.length(), 8)
+  assert_eq(cmds[0].program, "sh")
+  assert_eq(cmds[6].program, "choir")
+  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[7].args[0], "--session")
+  assert_eq(cmds[7].args[1], "howdy")
+  assert_eq(cmds[7].args[2], "action")
+  assert_eq(cmds[7].args[3], "new-tab")
   assert_true(
-    cmds[2].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
+    cmds[3].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
   )
   assert_true(
-    cmds[6].args[11].contains(
+    cmds[7].args[11].contains(
       "CHOIR_TERMINAL_TARGET='zellij-tab:howdy:feature-z'",
     ),
   )
@@ -371,9 +376,9 @@ test "spawn_commands adds Gemini trust bootstrap" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 8)
-  assert_eq(cmds[5].program, "choir")
-  assert_eq(cmds[5].args, [
+  assert_eq(cmds.length(), 9)
+  assert_eq(cmds[6].program, "choir")
+  assert_eq(cmds[6].args, [
     "trust-gemini-folder", "/project/.choir/worktrees/gemini-slug",
   ])
 }
@@ -438,17 +443,17 @@ test "spawn_commands launch text does not duplicate workdir cd" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds[7].program, "tmux")
-  assert_eq(cmds[7].args[0], "send-keys")
-  assert_eq(cmds[7].args[1], "-t")
-  assert_eq(cmds[7].args[2], "exo:feature-a")
-  assert_true(cmds[7].args[3].contains("CHOIR_AGENT_ID='main.feature-a'"))
-  assert_true(cmds[7].args[3].contains("CHOIR_TERMINAL_TARGET='exo:feature-a'"))
-  assert_true(cmds[7].args[3].contains("EXOMONAD_PARENT_AGENT='root'"))
+  assert_eq(cmds[8].program, "tmux")
+  assert_eq(cmds[8].args[0], "send-keys")
+  assert_eq(cmds[8].args[1], "-t")
+  assert_eq(cmds[8].args[2], "exo:feature-a")
+  assert_true(cmds[8].args[3].contains("CHOIR_AGENT_ID='main.feature-a'"))
+  assert_true(cmds[8].args[3].contains("CHOIR_TERMINAL_TARGET='exo:feature-a'"))
+  assert_true(cmds[8].args[3].contains("EXOMONAD_PARENT_AGENT='root'"))
   assert_true(
-    cmds[7].args[3].contains("gemini '--prompt-interactive' 'do something'"),
+    cmds[8].args[3].contains("gemini '--prompt-interactive' 'do something'"),
   )
-  assert_eq(cmds[7].args[4], "C-m")
+  assert_eq(cmds[8].args[4], "C-m")
 }
 
 ///|
