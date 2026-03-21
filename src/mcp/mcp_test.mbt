@@ -90,6 +90,9 @@ test "tools_list_response" {
           assert_true(t.contains("caller_id"))
           assert_true(t.contains("shutdown"))
           assert_true(t.contains("commit, PR, and parent notification"))
+          assert_true(t.contains("default implementation-leaf path"))
+          assert_true(t.contains("Claude sub-TL agents"))
+          assert_true(t.contains("not the default Gemini leaf path"))
           assert_true(
             t.contains("must not be used for tasks that should end in file_pr"),
           )

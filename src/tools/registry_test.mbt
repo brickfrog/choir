@@ -207,10 +207,18 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
   }
   match reg.lookup(@types.Role::TL, "spawn_gemini") {
     Ok(def) => {
+      assert_true(def.description.contains("default implementation-leaf path"))
       assert_true(def.description.contains("commit, PR"))
       assert_true(def.description.contains("parent notification"))
     }
     Err(_) => fail("expected spawn_gemini definition")
+  }
+  match reg.lookup(@types.Role::TL, "fork_wave") {
+    Ok(def) => {
+      assert_true(def.description.contains("Claude sub-TL"))
+      assert_true(def.description.contains("not the default Gemini leaf path"))
+    }
+    Err(_) => fail("expected fork_wave definition")
   }
 }
 

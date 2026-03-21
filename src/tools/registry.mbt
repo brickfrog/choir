@@ -21,23 +21,23 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: all_roles,
     },
     {
-      name: "fork_wave",
-      description: "Spawn N parallel Claude agents in worktrees",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "fork_session",
-      description: "Create a named session subdirectory for a nested team",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
       name: "spawn_gemini",
-      description: "Spawn a Gemini leaf agent in its own worktree and branch; use this for implementation tasks that should end in a commit, PR, and parent notification",
+      description: "Spawn a Gemini leaf agent in its own worktree and branch. This is the default implementation-leaf path for tasks that should end in a commit, PR, and parent notification",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
       name: "spawn_moon_pilot",
       description: "Spawn a Moon Pilot leaf agent in its own worktree and branch; use this for implementation tasks that should end in a commit, PR, and parent notification",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
+      name: "fork_wave",
+      description: "Spawn N parallel Claude sub-TL agents in worktrees. Use this only when you specifically want Claude fan-out, not the default Gemini leaf path",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
+      name: "fork_session",
+      description: "Create a named session subdirectory for a nested team",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

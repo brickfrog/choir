@@ -216,8 +216,20 @@ fn spawn_worker_props() -> Array[SchemaProp] {
 fn tool_defs() -> Array[CatalogTool] {
   [
     {
+      name: "spawn_gemini",
+      description: "Spawn a Gemini leaf agent in a new worktree and branch. This is the default implementation-leaf path for tasks that should end in a commit, PR, and parent notification",
+      props: spawn_leaf_props("gemini-leaf", "Gemini leaf agent"),
+      required: ["task"],
+    },
+    {
+      name: "spawn_moon_pilot",
+      description: "Spawn a Moon Pilot leaf agent in a new worktree and branch. Use this for implementation tasks that should end in a commit, PR, and parent notification",
+      props: spawn_leaf_props("moon-pilot-leaf", "Moon Pilot leaf agent"),
+      required: ["task"],
+    },
+    {
       name: "fork_wave",
-      description: "Fork a new wave of worker agents in a new git worktree",
+      description: "Spawn N parallel Claude sub-TL agents in new worktrees. Use this only when you specifically want Claude fan-out, not the default Gemini leaf path",
       props: [
         { name: "task", desc: "Task description for the wave" },
         {
@@ -244,6 +256,12 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "non_goals", desc: "Newline-separated non-goals" },
       ],
       required: ["task", "count"],
+    },
+    {
+      name: "spawn_worker",
+      description: "Spawn an inline worker in the current repo/session for research, review, or very small in-place tasks. Workers do not own a branch or PR and must not be used for tasks that should end in file_pr, track_pr, or parent-merge flow",
+      props: spawn_worker_props(),
+      required: ["task"],
     },
     {
       name: "file_pr",
@@ -306,24 +324,6 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "message", desc: "Message content to send" },
       ],
       required: ["target_id", "message"],
-    },
-    {
-      name: "spawn_gemini",
-      description: "Spawn a Gemini leaf agent in a new worktree and branch. Use this for implementation tasks that should end in a commit, PR, and parent notification",
-      props: spawn_leaf_props("gemini-leaf", "Gemini leaf agent"),
-      required: ["task"],
-    },
-    {
-      name: "spawn_moon_pilot",
-      description: "Spawn a Moon Pilot leaf agent in a new worktree and branch. Use this for implementation tasks that should end in a commit, PR, and parent notification",
-      props: spawn_leaf_props("moon-pilot-leaf", "Moon Pilot leaf agent"),
-      required: ["task"],
-    },
-    {
-      name: "spawn_worker",
-      description: "Spawn an inline worker in the current repo/session for research, review, or very small in-place tasks. Workers do not own a branch or PR and must not be used for tasks that should end in file_pr, track_pr, or parent-merge flow",
-      props: spawn_worker_props(),
-      required: ["task"],
     },
     {
       name: "kv_get",
