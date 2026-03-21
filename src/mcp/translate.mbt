@@ -76,6 +76,7 @@ fn text_content_json(text : String) -> String {
 pub fn to_internal_request(
   rpc : JsonRpcRequest,
   role : @types.Role,
+  default_caller_id? : String? = None,
 ) -> Result[@types.Request, JsonRpcError] {
   if rpc.req_method == method_tools_list {
     // Return a sentinel request that the server will recognize
@@ -114,6 +115,11 @@ pub fn to_internal_request(
     Some(JsonValue::Raw(json_str)) => parse_flat_json_object(json_str)
     None => {}
     Some(_) => {}
+  }
+  // Inject caller_id from connection identity if not explicitly provided
+  match default_caller_id {
+    Some(id) => if not(args.contains("caller_id")) { args.set("caller_id", id) }
+    None => ()
   }
   Ok({
     req_method: rpc.req_method,

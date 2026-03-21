@@ -619,7 +619,14 @@ fn mcp_run_request_loop(
         } else if rpc.req_method == @mcp.method_tools_list {
           write_output(mcp_response_line(@mcp.tools_list_response(id)))
         } else {
-          match @mcp.to_internal_request(rpc, role) {
+          match
+            @mcp.to_internal_request(
+              rpc,
+              role,
+              default_caller_id=Some(
+                mcp_resolved_agent_id(role, config, local_cfg),
+              ),
+            ) {
             Ok(internal_req) => {
               let wire_req = mcp_build_wire_request(
                 internal_req, role, config, local_cfg,
@@ -946,6 +953,12 @@ fn leaf_tool_request_args(
   let positionals = cli_args.positionals
   match tool {
     "file_pr" => {
+      if not(flags.contains("caller_id")) {
+        match @io.getenv("CHOIR_AGENT_ID") {
+          Some(id) => if id != "" { flags.set("caller_id", id) }
+          None => ()
+        }
+      }
       let used_legacy_branch = not(flags.contains("branch")) &&
         positionals.length() > 0 &&
         looks_like_legacy_branch_arg(positionals[0])
@@ -963,6 +976,12 @@ fn leaf_tool_request_args(
       Ok(flags)
     }
     "notify_parent" => {
+      if not(flags.contains("caller_id")) {
+        match @io.getenv("CHOIR_AGENT_ID") {
+          Some(id) => if id != "" { flags.set("caller_id", id) }
+          None => ()
+        }
+      }
       if not(flags.contains("status")) &&
         positionals.length() > 0 &&
         is_status_word(positionals[0]) {
@@ -993,7 +1012,15 @@ fn leaf_tool_request_args(
         None => Err("notify_parent requires a message")
       }
     }
-    "shutdown" => Ok(flags)
+    "shutdown" => {
+      if not(flags.contains("caller_id")) {
+        match @io.getenv("CHOIR_AGENT_ID") {
+          Some(id) => if id != "" { flags.set("caller_id", id) }
+          None => ()
+        }
+      }
+      Ok(flags)
+    }
     "task_list" => Ok(flags)
     "task_get" =>
       match flags.get("id") {
