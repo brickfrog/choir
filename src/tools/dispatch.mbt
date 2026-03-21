@@ -108,6 +108,7 @@ pub async fn dispatch(
       let agent_ids = StringBuilder::new()
       let skipped_ids = StringBuilder::new()
       let cmds : Array[@workspace.Command] = []
+      let spawned_slugs : Array[String] = []
       let mut spawned_count = 0
       let mut skipped_count = 0
       for i = 0; i < fork_wave_args.count; i = i + 1 {
@@ -145,6 +146,7 @@ pub async fn dispatch(
         }
         agent_ids.write_string(agent_id)
         spawned_count = spawned_count + 1
+        spawned_slugs.push(slug)
         let spec = @types.SpawnSpec::{
           slug,
           role: @types.Role::Dev,
@@ -180,14 +182,17 @@ pub async fn dispatch(
       match run_strict(runner, cmds) {
         Ok(_) => {
           // Register spawned agents as synthetic team members (best-effort)
-          for i = 0; i < fork_wave_args.count; i = i + 1 {
-            let slug = fork_wave_args.slug_prefix + "-" + i.to_string()
+          for slug in spawned_slugs {
             let _ = @workspace.register_team_member_native(
               fork_wave_args.caller_id,
               slug,
               @config.agent_type_to_string(fork_wave_args.agent_type),
             )
-            ()
+            apply_tl_event(
+              project_dir,
+              fork_wave_args.caller_id,
+              @phase.TLEvent::ChildSpawned(slug),
+            )
           }
           let result : Map[String, @types.WireValue] = {
             "status": @types.wire_string("spawned"),
@@ -253,6 +258,11 @@ pub async fn dispatch(
                 }
                 None => ()
               }
+              apply_dev_event(
+                project_dir,
+                branch,
+                @phase.DevEvent::PRCreated(pr.number, pr.url, branch),
+              )
               @types.Response::ok_values({
                 "status": @types.wire_string("pr_created"),
                 "pr_number": @types.wire_int(pr.number),
@@ -287,6 +297,18 @@ pub async fn dispatch(
             Ok(_) => {
               match poller_state {
                 Some(ps) => {
+                  match ps.get(merge_args.pr_number) {
+                    Some(tracked) =>
+                      apply_tl_event(
+                        project_dir,
+                        merge_args.caller_id,
+                        @phase.TLEvent::PRMerged(
+                          merge_args.pr_number,
+                          extract_slug(tracked.branch),
+                        ),
+                      )
+                    None => ()
+                  }
                   ps.untrack(merge_args.pr_number)
                   ignore(ps.write_state_file(project_dir))
                 }
@@ -304,6 +326,18 @@ pub async fn dispatch(
             Ok(_) => {
               match poller_state {
                 Some(ps) => {
+                  match ps.get(merge_args.pr_number) {
+                    Some(tracked) =>
+                      apply_tl_event(
+                        project_dir,
+                        merge_args.caller_id,
+                        @phase.TLEvent::PRMerged(
+                          merge_args.pr_number,
+                          extract_slug(tracked.branch),
+                        ),
+                      )
+                    None => ()
+                  }
                   ps.untrack(merge_args.pr_number)
                   ignore(ps.write_state_file(project_dir))
                 }
@@ -350,19 +384,31 @@ pub async fn dispatch(
                 notify_args.status,
               )
               match execute_delivery(delivery, runner) {
-                Ok(_) =>
+                Ok(_) => {
+                  apply_dev_event(
+                    project_dir,
+                    notify_args.caller_id,
+                    @phase.DevEvent::NotifyParentSuccess(notify_args.message),
+                  )
                   @types.Response::ok_values({
                     "status": @types.wire_string("notified"),
                   })
+                }
                 Err(e) => @types.Response::Err(e)
               }
             }
             Err(e) => @types.Response::Err(e.message())
           }
-        None =>
+        None => {
+          apply_dev_event(
+            project_dir,
+            notify_args.caller_id,
+            @phase.DevEvent::NotifyParentSuccess(notify_args.message),
+          )
           @types.Response::ok_values({
             "status": @types.wire_string("notified"),
           })
+        }
       }
     ToolRequest::SendMessage(send_args) =>
       match registry {
@@ -395,6 +441,21 @@ pub async fn dispatch(
           return @types.Response::ok_values({
             "status": @types.wire_string("shutdown"),
           }) // best-effort
+      }
+      let mut warning : String? = None
+      let phase_json = @phase.get_phase(project_dir, "dev", caller_id)
+      match phase_json {
+        Some(j) =>
+          match @phase.dev_phase_from_json(j) {
+            Some(phase) =>
+              match @phase.dev_can_exit(phase) {
+                MustBlock(msg) => return @types.Response::Err(msg)
+                ShouldNudge(msg) => warning = Some(msg)
+                Clean => ()
+              }
+            None => ()
+          }
+        None => ()
       }
       match poller_state {
         Some(ps) =>
@@ -466,7 +527,14 @@ pub async fn dispatch(
         }
         None => ()
       }
-      @types.Response::ok_values({ "status": @types.wire_string("shutdown") })
+      let result : Map[String, @types.WireValue] = {
+        "status": @types.wire_string("shutdown"),
+      }
+      match warning {
+        Some(msg) => result.set("warning", @types.wire_string(msg))
+        None => ()
+      }
+      @types.Response::ok_values(result)
     }
     ToolRequest::KvGet(key_args) => {
       let value = @io.read_file(kv_file_path(project_dir, key_args.key))
@@ -766,5 +834,75 @@ pub async fn dispatch_call(
         mutex_registry~,
         poller_state~,
       )
+  }
+}
+
+///|
+fn extract_slug(s : String) -> String {
+  let mut last_dot = -1
+  for i = s.length() - 1; i >= 0; i = i - 1 {
+    if s[i] == '.' {
+      last_dot = i
+      break
+    }
+  }
+  if last_dot == -1 {
+    s
+  } else {
+    s[last_dot + 1:].to_string() catch {
+      _ => s
+    }
+  }
+}
+
+///|
+pub fn apply_tl_event(
+  project_dir : String,
+  scope : String,
+  event : @phase.TLEvent,
+) -> Unit {
+  let phase_json = @phase.get_phase(project_dir, "tl", scope)
+  let current = match phase_json {
+    Some(j) => @phase.tl_phase_from_json(j)
+    None => None
+  }
+  let phase = current.unwrap_or(@phase.TLPhase::Planning)
+  match @phase.tl_transition(phase, event) {
+    Transitioned(new_phase) =>
+      ignore(
+        @phase.set_phase(
+          project_dir,
+          "tl",
+          scope,
+          @phase.tl_phase_to_json(new_phase),
+        ),
+      )
+    InvalidTransition(_) => ()
+  }
+}
+
+///|
+pub fn apply_dev_event(
+  project_dir : String,
+  scope : String,
+  event : @phase.DevEvent,
+) -> Unit {
+  let phase_json = @phase.get_phase(project_dir, "dev", scope)
+  let current = match phase_json {
+    Some(j) => @phase.dev_phase_from_json(j)
+    None => None
+  }
+  let phase = current.unwrap_or(@phase.DevPhase::Spawned)
+  match @phase.dev_transition(phase, event) {
+    Transitioned(new_phase) =>
+      ignore(
+        @phase.set_phase(
+          project_dir,
+          "dev",
+          scope,
+          @phase.dev_phase_to_json(new_phase),
+        ),
+      )
+    InvalidTransition(_) => ()
   }
 }
