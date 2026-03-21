@@ -938,7 +938,7 @@ test "dispatch register requires agent_id arg" {
 }
 
 ///|
-test "dispatch shutdown removes agent from registry" {
+test "dispatch shutdown marks agent Done in registry" {
   @async.with_event_loop(_ => {
     let reg = @registry.AgentRegistry::new()
     let agent = @types.Agent::{
@@ -960,7 +960,10 @@ test "dispatch shutdown removes agent from registry" {
     }
     let res = @tools.dispatch(call, runner=mock_runner, registry=Some(reg))
     assert_true(res is Ok(_))
-    assert_true(reg.get("leaf-1") is Err(_))
+    match reg.get("leaf-1") {
+      Ok(a) => assert_eq(a.state, @types.AgentState::Done)
+      Err(_) => fail("agent should remain in registry as Done")
+    }
   })
 }
 
@@ -1008,7 +1011,10 @@ test "dispatch shutdown marks agent completing before terminal close" {
     )
     assert_true(res is Ok(_))
     assert_true(close_seen.val)
-    assert_true(reg.get("leaf-1") is Err(_))
+    match reg.get("leaf-1") {
+      Ok(a) => assert_eq(a.state, @types.AgentState::Done)
+      Err(_) => fail("agent should remain in registry as Done")
+    }
   })
 }
 

@@ -1606,7 +1606,7 @@ pub async fn dispatch(
             }
             Err(_) => ()
           }
-          let _ = reg.remove(caller_id)
+          let _ = reg.set_state(caller_id, @types.AgentState::Done)
           ()
         }
         None => ()

@@ -308,7 +308,7 @@ test "notify_parent with no parent returns Err" {
 }
 
 ///|
-test "plan_poll_event_delivery routes PR ready to parent" {
+test "plan_poll_event_deliveries routes PR ready to parent" {
   let state = ServerState::new(@types.Config::default())
   let parent = build_agent("parent-1", None)
   let child = {
@@ -320,12 +320,13 @@ test "plan_poll_event_delivery routes PR ready to parent" {
   state.poller.track(
     42, "child-1", "main.child-1", "main", "https://example.test/pr/42", 100L,
   )
-  let delivery = state.plan_poll_event_delivery(
+  let deliveries = state.plan_poll_event_deliveries(
     @poller.PollEvent::PRReady(42),
     "child-1",
   )
-  match delivery {
-    Some(@message.DeliveryMethod::TeamsInbox(path, payload)) => {
+  assert_true(deliveries.length() >= 1)
+  match deliveries[0] {
+    @message.DeliveryMethod::TeamsInbox(path, payload) => {
       assert_true(path.contains("parent-1"))
       assert_true(payload.contains("[PR READY] child-1 PR #42 approved"))
       assert_true(payload.contains("branch: main.child-1"))
@@ -343,7 +344,7 @@ test "plan_poll_event_delivery routes PR ready to parent" {
 }
 
 ///|
-test "plan_poll_event_delivery routes fixes pushed to parent with next action" {
+test "plan_poll_event_deliveries routes fixes pushed to parent with next action" {
   let state = ServerState::new(@types.Config::default())
   let parent = build_agent("parent-1", None)
   let child = {
@@ -356,12 +357,13 @@ test "plan_poll_event_delivery routes fixes pushed to parent with next action" {
     43, "child-1", "main.subtl.child-1", "main.subtl", "https://example.test/pr/43",
     100L,
   )
-  let delivery = state.plan_poll_event_delivery(
+  let deliveries = state.plan_poll_event_deliveries(
     @poller.PollEvent::FixesPushed(43),
     "child-1",
   )
-  match delivery {
-    Some(@message.DeliveryMethod::TeamsInbox(path, payload)) => {
+  assert_true(deliveries.length() >= 1)
+  match deliveries[0] {
+    @message.DeliveryMethod::TeamsInbox(path, payload) => {
       assert_true(path.contains("parent-1"))
       assert_true(
         payload.contains(
@@ -381,18 +383,34 @@ test "plan_poll_event_delivery routes fixes pushed to parent with next action" {
 }
 
 ///|
-test "plan_poll_event_delivery routes review comments to owning agent" {
+test "plan_poll_event_deliveries routes review to both parent and owner" {
   let state = ServerState::new(@types.Config::default())
   let parent = build_agent("parent-1", None)
   let child = build_agent("child-1", Some("parent-1"))
   let _ = state.register_agent(parent)
   let _ = state.register_agent(child)
-  let delivery = state.plan_poll_event_delivery(
+  state.poller.track(
+    42, "child-1", "main.child-1", "main", "https://example.test/pr/42", 100L,
+  )
+  let deliveries = state.plan_poll_event_deliveries(
     @poller.PollEvent::ReviewReceived(42, "Please add tests"),
     "child-1",
   )
-  match delivery {
-    Some(@message.DeliveryMethod::TeamsInbox(path, payload)) => {
+  // Both parent and owner should receive deliveries
+  assert_eq(deliveries.length(), 2)
+  // First delivery: parent gets summary
+  match deliveries[0] {
+    @message.DeliveryMethod::TeamsInbox(path, payload) => {
+      assert_true(path.contains("parent-1"))
+      assert_true(payload.contains("[REVIEW] child-1 PR #42"))
+      assert_true(payload.contains("Please add tests"))
+      assert_true(payload.contains("\"from\":\"child-1\""))
+    }
+    _ => fail("expected parent Teams inbox delivery")
+  }
+  // Second delivery: owner gets detail
+  match deliveries[1] {
+    @message.DeliveryMethod::TeamsInbox(path, payload) => {
       assert_true(path.contains("child-1"))
       assert_true(
         payload.contains(
@@ -402,6 +420,35 @@ test "plan_poll_event_delivery routes review comments to owning agent" {
       assert_true(payload.contains("\"from\":\"poller\""))
     }
     _ => fail("expected owning agent Teams inbox delivery")
+  }
+}
+
+///|
+test "plan_poll_event_deliveries routes review to parent when owner is Done" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = build_agent("parent-1", None)
+  let child = {
+    ..build_agent("child-1", Some("parent-1")),
+    state: @types.AgentState::Done,
+  }
+  let _ = state.register_agent(parent)
+  ignore(state.registry.insert(child))
+  state.poller.track(
+    42, "child-1", "main.child-1", "main", "https://example.test/pr/42", 100L,
+  )
+  let deliveries = state.plan_poll_event_deliveries(
+    @poller.PollEvent::ReviewReceived(42, "Copilot review summary"),
+    "child-1",
+  )
+  // Only parent gets delivery — owner is Done
+  assert_eq(deliveries.length(), 1)
+  match deliveries[0] {
+    @message.DeliveryMethod::TeamsInbox(path, payload) => {
+      assert_true(path.contains("parent-1"))
+      assert_true(payload.contains("[REVIEW] child-1 PR #42"))
+      assert_true(payload.contains("Copilot review summary"))
+    }
+    _ => fail("expected parent Teams inbox delivery")
   }
 }
 
@@ -435,14 +482,23 @@ test "process_poller_tick_with routes comment-only reviews to owning agent" {
       },
       runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
     )
-    assert_eq(review_cmds.length(), 1)
+    // Both parent and owner get deliveries
+    assert_eq(review_cmds.length(), 2)
+    // Parent gets summary
     assert_true(
       review_cmds[0].args[4].contains(
+        "/.claude/teams/parent-1/inboxes/default.json",
+      ),
+    )
+    assert_true(review_cmds[0].args[3].contains("[REVIEW] main.leaf-1 PR #61"))
+    // Owner gets detail
+    assert_true(
+      review_cmds[1].args[4].contains(
         "/.claude/teams/main.leaf-1/inboxes/default.json",
       ),
     )
     assert_true(
-      review_cmds[0].args[3].contains(
+      review_cmds[1].args[3].contains(
         "[REVIEW] PR #61 has review comments:\\nPlease tighten the wording in CLAUDE.md",
       ),
     )
@@ -508,19 +564,28 @@ test "process_poller_tick_with drives PR review workflow and merge cleanup" {
       },
       runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
     )
-    assert_eq(review_cmds.length(), 1)
+    // Parent gets summary, owner gets detail
+    assert_eq(review_cmds.length(), 2)
     assert_eq(review_cmds[0].program, "sh")
+    // Parent delivery
     assert_true(
       review_cmds[0].args[4].contains(
+        "/.claude/teams/parent-1/inboxes/default.json",
+      ),
+    )
+    assert_true(review_cmds[0].args[3].contains("[REVIEW] main.leaf-1 PR #52"))
+    // Owner delivery
+    assert_true(
+      review_cmds[1].args[4].contains(
         "/.claude/teams/main.leaf-1/inboxes/default.json",
       ),
     )
     assert_true(
-      review_cmds[0].args[3].contains(
+      review_cmds[1].args[3].contains(
         "[REVIEW] PR #52 has review comments:\\nPlease add tests",
       ),
     )
-    assert_true(review_cmds[0].args[3].contains("\"from\":\"poller\""))
+    assert_true(review_cmds[1].args[3].contains("\"from\":\"poller\""))
 
     let fixes_cmds : Array[@workspace.Command] = []
     state.process_poller_tick_with(

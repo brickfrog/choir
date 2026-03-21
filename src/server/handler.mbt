@@ -205,8 +205,54 @@ fn parent_poll_event_message(
         "Next action: inspect the PR or retrigger review."
       Some((message, "failure"))
     }
-    ReviewReceived(_, _) => None
-    CIFailed(_) => None
+    ReviewReceived(n, comments) =>
+      if comments == "" {
+        Some(
+          (
+            "[REVIEW] " +
+            agent_id +
+            " PR #" +
+            n.to_string() +
+            " has review comments\n" +
+            "branch: " +
+            branch +
+            "\n" +
+            "parent_branch: " +
+            parent_branch.unwrap_or("<unknown>") +
+            pr_url,
+            "info",
+          ),
+        )
+      } else {
+        Some(
+          (
+            "[REVIEW] " +
+            agent_id +
+            " PR #" +
+            n.to_string() +
+            " has review comments:\n" +
+            comments,
+            "info",
+          ),
+        )
+      }
+    CIFailed(n) =>
+      Some(
+        (
+          "[CI FAILED] " +
+          agent_id +
+          " PR #" +
+          n.to_string() +
+          " CI checks failing\n" +
+          "branch: " +
+          branch +
+          "\n" +
+          "parent_branch: " +
+          parent_branch.unwrap_or("<unknown>") +
+          pr_url,
+          "failure",
+        ),
+      )
   }
 }
 
@@ -249,40 +295,50 @@ fn owner_poll_event_message(event : @poller.PollEvent) -> (String, String)? {
 }
 
 ///|
-pub fn ServerState::plan_poll_event_delivery(
+pub fn ServerState::plan_poll_event_deliveries(
   self : ServerState,
   event : @poller.PollEvent,
   agent_id : String,
-) -> @message.DeliveryMethod? {
+) -> Array[@message.DeliveryMethod] {
+  let deliveries : Array[@message.DeliveryMethod] = []
   let owner = match self.registry.get(agent_id) {
     Ok(agent) => Some(agent)
     Err(_) => None
   }
   let tracked = self.poller.get(poll_event_pr_number(event))
-  match owner {
-    Some(agent) => {
-      let parent_message = match tracked {
-        Some(pr) => parent_poll_event_message(pr, event)
-        None => None
-      }
-      match parent_message {
+  // Parent notification — all event types
+  match tracked {
+    Some(pr) =>
+      match parent_poll_event_message(pr, event) {
         Some((message, status)) =>
           match self.registry.get_parent(agent_id) {
             Ok(parent) =>
-              Some(@message.plan_delivery(parent, agent_id, message, status))
-            Err(_) =>
-              Some(@message.plan_delivery(agent, "poller", message, status))
+              deliveries.push(
+                @message.plan_delivery(parent, agent_id, message, status),
+              )
+            Err(_) => ()
           }
-        None =>
+        None => ()
+      }
+    None => ()
+  }
+  // Owner notification — review details, CI status — only if agent is alive
+  match owner {
+    Some(agent) =>
+      match agent.state {
+        @types.AgentState::Active | @types.AgentState::Completing =>
           match owner_poll_event_message(event) {
             Some((message, status)) =>
-              Some(@message.plan_delivery(agent, "poller", message, status))
-            None => None
+              deliveries.push(
+                @message.plan_delivery(agent, "poller", message, status),
+              )
+            None => ()
           }
+        _ => () // Done/Failed/Spawning — skip owner delivery
       }
-    }
-    None => None
+    None => ()
   }
+  deliveries
 }
 
 ///|
@@ -295,9 +351,8 @@ async fn deliver_pending_poll_events(
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
-    match state.plan_poll_event_delivery(event, agent_id) {
-      Some(delivery) => ignore(@tools.execute_delivery(delivery, runner))
-      None => ()
+    for delivery in state.plan_poll_event_deliveries(event, agent_id) {
+      ignore(@tools.execute_delivery(delivery, runner))
     }
   }
 }
