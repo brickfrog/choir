@@ -2399,6 +2399,29 @@ test "init server command switches between dev and serve" {
 }
 
 ///|
+test "init default terminal session is derived from project path" {
+  assert_eq(
+    init_default_terminal_session(
+      "/mnt/data/Code/live2d_investigation/pixi-live2d5",
+    ),
+    "choir-pixi-live2d5",
+  )
+  assert_eq(
+    init_default_terminal_session("/mnt/data/Code/resorter.py"),
+    "choir-resorter-py",
+  )
+  assert_eq(init_default_terminal_session("/"), "choir-project")
+}
+
+///|
+test "init config content includes derived terminal session" {
+  let content = init_config_toml_content("choir-demo")
+  assert_true(content.contains("terminal_session = \"choir-demo\""))
+  assert_true(init_config_has_terminal_session(content))
+  assert_false(init_config_has_terminal_session("default_role = \"tl\"\n"))
+}
+
+///|
 fn init_session_exists_command(
   terminal_backend : @types.TerminalBackend,
   session : String,
@@ -2675,11 +2698,69 @@ fn hook_run() -> Unit raise {
 }
 
 ///|
-fn init_config_toml_content() -> String {
+fn init_default_terminal_session(project_dir : String) -> String {
+  let mut end = project_dir.length()
+  while end > 1 && project_dir[end - 1] == '/' {
+    end = end - 1
+  }
+  let trimmed = project_dir[:end].to_string() catch { _ => project_dir }
+  let base = if trimmed == "" {
+    "project"
+  } else {
+    let mut last_slash = -1
+    for i = 0; i < trimmed.length(); i = i + 1 {
+      if trimmed[i] == '/' {
+        last_slash = i
+      }
+    }
+    if last_slash < 0 || last_slash + 1 >= trimmed.length() {
+      trimmed
+    } else {
+      trimmed[last_slash + 1:].to_string() catch {
+        _ => "project"
+      }
+    }
+  }
+  let buf = StringBuilder::new()
+  for c in base {
+    if (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      c == '-' ||
+      c == '_' {
+      buf.write_char(c)
+    } else {
+      buf.write_char('-')
+    }
+  }
+  let normalized_raw = buf.to_string()
+  let mut start = 0
+  let mut finish = normalized_raw.length()
+  while start < finish && normalized_raw[start] == '-' {
+    start = start + 1
+  }
+  while finish > start && normalized_raw[finish - 1] == '-' {
+    finish = finish - 1
+  }
+  let suffix = normalized_raw[start:finish].to_string() catch { _ => "" }
+  let normalized = if suffix == "" { "project" } else { suffix }
+  "choir-" + normalized
+}
+
+///|
+fn init_config_toml_content(default_session : String) -> String {
   "default_role = \"tl\"\n" +
   "project_dir = \".\"\n" +
   "listen_uds = \".choir/server.sock\"\n" +
-  "terminal_backend = \"tmux\"\n"
+  "terminal_backend = \"tmux\"\n" +
+  "terminal_session = \"" +
+  default_session +
+  "\"\n"
+}
+
+///|
+fn init_config_has_terminal_session(content : String) -> Bool {
+  content.contains("terminal_session")
 }
 
 ///|
@@ -3040,6 +3121,7 @@ fn init_run() -> Unit raise {
     let recreate = args.contains("--recreate")
     let no_attach = init_no_attach(args)
     let project_dir = @io.getcwd()
+    let default_session = init_default_terminal_session(project_dir)
     let use_dev = init_is_choir_source_tree(project_dir)
     let server_cmd = init_server_command(use_dev)
 
@@ -3063,10 +3145,25 @@ fn init_run() -> Unit raise {
         "-c",
         "test -f .choir/config.toml || printf '%s' \"$1\" > .choir/config.toml",
         "sh",
-        init_config_toml_content(),
+        init_config_toml_content(default_session),
       ],
       workdir: None,
     })
+    let maybe_patch_config = @io.read_file(".choir/config.toml")
+    if maybe_patch_config != "" &&
+      not(init_config_has_terminal_session(maybe_patch_config)) {
+      let separator = if maybe_patch_config.has_suffix("\n") {
+        ""
+      } else {
+        "\n"
+      }
+      let patched = maybe_patch_config +
+        separator +
+        "terminal_session = \"" +
+        default_session +
+        "\"\n"
+      ignore(@io.write_file_sync(".choir/config.toml", patched))
+    }
     init_run_or_exit({
       program: "sh",
       args: [
