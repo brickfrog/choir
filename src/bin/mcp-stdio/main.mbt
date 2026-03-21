@@ -35,7 +35,7 @@ fn grow_line_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 
 ///|
 async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
-  for {
+  for ;; {
     // Check if we already have a line in buffer
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
     for i = self.read_pos; i < self.write_pos; i = i + 1 {
@@ -84,7 +84,7 @@ async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
 
 ///|
 fn UDSLineReader::read_line(self : UDSLineReader) -> String {
-  for {
+  for ;; {
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
     for i = self.read_pos; i < self.write_pos; i = i + 1 {
       if bytes[i] == (10 : Byte) {
@@ -273,7 +273,7 @@ fn run_uds_loop(
     @io.exit(1)
   }
 
-  for {
+  for ;; {
     let line = match @io.read_stdin_line(8192) {
       Some(line) => line
       None => break
@@ -404,7 +404,7 @@ fn main_prog() -> Unit raise {
       }
     }
 
-    for {
+    for ;; {
       let line = match @io.read_stdin_line(8192) {
         Some(line) => line
         None => break

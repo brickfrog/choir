@@ -74,7 +74,7 @@ test "dispatch file_pr returns Ok" {
       name: "file_pr",
       args: { "branch": "feat", "parent_branch": "main" },
     }
-    let res = dispatch(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+    let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("pr_created"))
@@ -98,7 +98,7 @@ test "dispatch file_pr auto_tracks returned pr number" {
       name: "file_pr",
       args: { "branch": "feat", "parent_branch": "main" },
     }
-    let res = dispatch(
+    let res = dispatch_call(
       call,
       runner=mock_runner,
       ensure_pr=mock_ensure_pr,
@@ -131,7 +131,7 @@ test "dispatch file_pr accepts agent_id alias for branch" {
       name: "file_pr",
       args: { "agent_id": "main.child", "parent_branch": "release" },
     }
-    let res = dispatch(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+    let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
     match res {
       Ok(m) => {
         assert_eq(m.get("pr_number"), Some("77"))
@@ -150,7 +150,7 @@ test "dispatch file_pr missing branch returns Err" {
       name: "file_pr",
       args: { "parent_branch": "main" },
     }
-    let res = dispatch(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+    let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
     match res {
       Ok(_) => assert_true(false)
       Err(msg) => assert_eq(msg, "missing branch")
@@ -166,7 +166,7 @@ test "dispatch file_pr surfaces ensure_pr failures" {
       name: "file_pr",
       args: { "branch": "fail", "parent_branch": "main" },
     }
-    let res = dispatch(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+    let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
     match res {
       Ok(_) => assert_true(false)
       Err(msg) => assert_eq(msg, "lookup failed")
@@ -186,7 +186,7 @@ test "dispatch merge_pr returns Ok" {
       name: "merge_pr",
       args: { "pr_number": "456" },
     }
-    let res = dispatch(call, runner=mock_runner, poller_state=Some(poller))
+    let res = dispatch_call(call, runner=mock_runner, poller_state=Some(poller))
     match res {
       Ok(m) => assert_eq(m.get("status"), Some("merged"))
       Err(_) => assert_true(false)
@@ -203,7 +203,7 @@ test "dispatch merge_pr invalid pr_number returns Err" {
       name: "merge_pr",
       args: { "pr_number": "abc" },
     }
-    let res = dispatch(call, runner=mock_runner)
+    let res = dispatch_call(call, runner=mock_runner)
     match res {
       Ok(_) => assert_true(false)
       Err(msg) => assert_eq(msg, "invalid pr_number: abc")
@@ -215,7 +215,7 @@ test "dispatch merge_pr invalid pr_number returns Err" {
 test "dispatch merge_pr missing pr_number returns Err" {
   @async.with_event_loop(_ => {
     let call : ToolCall = { role: @types.Role::TL, name: "merge_pr", args: {} }
-    let res = dispatch(call, runner=mock_runner)
+    let res = dispatch_call(call, runner=mock_runner)
     match res {
       Ok(_) => assert_true(false)
       Err(msg) => assert_eq(msg, "missing pr_number")
@@ -232,7 +232,7 @@ test "dispatch track_pr stores tracked PR" {
       name: "track_pr",
       args: { "pr_number": "22", "agent_id": "agent-22" },
     }
-    let res = dispatch(call, runner=mock_runner, poller_state=Some(poller))
+    let res = dispatch_call(call, runner=mock_runner, poller_state=Some(poller))
     match res {
       Ok(m) => {
         assert_eq(m.get("status"), Some("tracked"))

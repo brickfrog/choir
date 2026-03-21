@@ -339,7 +339,7 @@ async fn capture_stdout(
   write_end.close()
   let buf = FixedArray::make(65536, (0 : Byte))
   let mut total = 0
-  for {
+  for ;; {
     if total >= buf.length() {
       break
     }

@@ -146,7 +146,7 @@ test "dispatch returns correct stub for each tool name" {
     for c in cases {
       let (name, expected_status, args) = c
       let call = ToolCall::{ role: @types.Role::Dev, name, args }
-      let res = @tools.dispatch(
+      let res = @tools.dispatch_call(
         call,
         runner=mock_runner,
         ensure_pr=mock_registry_ensure_pr,
