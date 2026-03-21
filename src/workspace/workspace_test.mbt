@@ -133,7 +133,10 @@ test "agent_launch_command for each AgentType" {
   let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
 
   assert_eq(cmd_claude.program, "claude")
-  assert_eq(cmd_claude.args, ["--dangerously-skip-permissions", "fix bugs"])
+  assert_eq(cmd_claude.args, [
+    "--dangerously-skip-permissions", "--mcp-config", ".mcp.json", "--strict-mcp-config",
+    "fix bugs",
+  ])
   assert_eq(cmd_claude.workdir, Some("/path"))
 
   assert_eq(cmd_gemini.program, "gemini")
@@ -163,7 +166,8 @@ test "agent_launch_command wraps with shell_command" {
   )
   assert_eq(cmd.program, "nix")
   assert_eq(cmd.args, [
-    "develop", "--command", "claude", "--dangerously-skip-permissions", "fix bugs",
+    "develop", "--command", "claude", "--dangerously-skip-permissions", "--mcp-config",
+    ".mcp.json", "--strict-mcp-config", "fix bugs",
   ])
   assert_eq(cmd.workdir, Some("/path"))
 }
@@ -181,7 +185,10 @@ test "agent_launch_command no wrap when shell_command is None" {
   }
   let cmd = @workspace.agent_launch_command(spec, "/path", shell_command=None)
   assert_eq(cmd.program, "claude")
-  assert_eq(cmd.args, ["--dangerously-skip-permissions", "fix bugs"])
+  assert_eq(cmd.args, [
+    "--dangerously-skip-permissions", "--mcp-config", ".mcp.json", "--strict-mcp-config",
+    "fix bugs",
+  ])
 }
 
 ///|
@@ -202,8 +209,8 @@ test "agent_launch_command supports Claude fork_session" {
   )
   assert_eq(cmd.program, "claude")
   assert_eq(cmd.args, [
-    "--dangerously-skip-permissions", "--resume", "session-123", "--fork-session",
-    "fix bugs",
+    "--dangerously-skip-permissions", "--mcp-config", ".mcp.json", "--strict-mcp-config",
+    "--resume", "session-123", "--fork-session", "fix bugs",
   ])
 }
 
@@ -455,12 +462,15 @@ test "Command::to_string output" {
 
   let cmd2 = @workspace.Command::{
     program: "claude",
-    args: ["--dangerously-skip-permissions", "hello"],
+    args: [
+      "--dangerously-skip-permissions", "--mcp-config", ".mcp.json", "--strict-mcp-config",
+      "hello",
+    ],
     workdir: Some("/path"),
   }
   assert_eq(
     cmd2.to_string(),
-    "cd '/path' && claude '--dangerously-skip-permissions' 'hello'",
+    "cd '/path' && claude '--dangerously-skip-permissions' '--mcp-config' '.mcp.json' '--strict-mcp-config' 'hello'",
   )
 }
 

@@ -33,6 +33,7 @@ pub fn agent_launch_command(
   parent_session_id? : String? = None,
   shell_command? : String? = None,
 ) -> Command {
+  let claude_mcp_args = ["--mcp-config", ".mcp.json", "--strict-mcp-config"]
   let cmd = match spec.agent_type {
     Claude =>
       match parent_session_id {
@@ -41,6 +42,7 @@ pub fn agent_launch_command(
             program: "claude",
             args: [
               "--dangerously-skip-permissions",
+              ..claude_mcp_args,
               "--resume",
               session_id,
               "--fork-session",
@@ -51,7 +53,11 @@ pub fn agent_launch_command(
         None =>
           {
             program: "claude",
-            args: ["--dangerously-skip-permissions", spec.task],
+            args: [
+              "--dangerously-skip-permissions",
+              ..claude_mcp_args,
+              spec.task,
+            ],
             workdir: Some(workspace_path),
           }
       }

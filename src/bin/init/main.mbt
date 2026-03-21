@@ -19,6 +19,11 @@ fn mcp_json_content() -> String {
 }
 
 ///|
+fn mcp_config_path() -> String {
+  ".choir/claude.mcp.json"
+}
+
+///|
 async fn run_or_exit(cmd : @workspace.Command) -> Unit {
   let exit_code = @exec.run(cmd) catch { _ => 1 }
   if exit_code != 0 {
@@ -29,7 +34,7 @@ async fn run_or_exit(cmd : @workspace.Command) -> Unit {
 ///|
 fn main_prog() -> Unit raise {
   @async.with_event_loop(_ => {
-    if @io.read_file(".mcp.json") != "" {
+    if @io.read_file(mcp_config_path()) != "" {
       @io.write_stdout("Already initialized.\n")
       return
     }
@@ -53,10 +58,16 @@ fn main_prog() -> Unit raise {
 
     run_or_exit({
       program: "sh",
-      args: ["-c", "printf '%s' \"$1\" > .mcp.json", "sh", mcp_json_content()],
+      args: [
+        "-c",
+        "printf '%s' \"$2\" > \"$1\"",
+        "sh",
+        mcp_config_path(),
+        mcp_json_content(),
+      ],
       workdir: None,
     })
 
-    @io.write_stdout("Initialized .choir/ and .mcp.json\n")
+    @io.write_stdout("Initialized .choir/ and .choir/claude.mcp.json\n")
   })
 }

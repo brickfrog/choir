@@ -2780,6 +2780,26 @@ fn init_mcp_json_content(project_dir : String) -> String {
 }
 
 ///|
+fn init_claude_mcp_config_path() -> String {
+  ".choir/claude.mcp.json"
+}
+
+///|
+fn init_claude_launch_command() -> String {
+  "claude --dangerously-skip-permissions --mcp-config " +
+  init_claude_mcp_config_path() +
+  " --strict-mcp-config; echo; echo '[Claude exited]'; exec bash -l"
+}
+
+///|
+test "init claude launch command uses explicit choir mcp config" {
+  let cmd = init_claude_launch_command()
+  assert_true(cmd.contains("--mcp-config .choir/claude.mcp.json"))
+  assert_true(cmd.contains("--strict-mcp-config"))
+  assert_false(cmd.contains(" .mcp.json"))
+}
+
+///|
 
 ///|
 fn init_escape_shell_single_quoted(s : String) -> String {
@@ -3168,8 +3188,9 @@ fn init_run() -> Unit raise {
       program: "sh",
       args: [
         "-c",
-        "printf '%s' \"$1\" > .mcp.json",
+        "printf '%s' \"$2\" > \"$1\"",
         "sh",
+        init_claude_mcp_config_path(),
         init_mcp_json_content(project_dir),
       ],
       workdir: None,
@@ -3291,7 +3312,7 @@ fn init_run() -> Unit raise {
             "send-keys",
             "-t",
             session + ":TL",
-            "claude --dangerously-skip-permissions; echo; echo '[Claude exited]'; exec bash -l",
+            init_claude_launch_command(),
             "Enter",
           ],
           workdir: None,
@@ -3304,7 +3325,10 @@ fn init_run() -> Unit raise {
         )
         init_run_or_exit(
           @workspace.zellij_new_tab(
-            session, "TL", project_dir, "claude --dangerously-skip-permissions; echo; echo '[Claude exited]'; exec bash -l",
+            session,
+            "TL",
+            project_dir,
+            init_claude_launch_command(),
           ),
         )
         ignore(
