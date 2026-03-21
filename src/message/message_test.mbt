@@ -49,7 +49,9 @@ test "plan delivery for Claude agent -> TeamsInbox" {
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
   let expected = @message.DeliveryMethod::TeamsInbox(
-    "~/.claude/teams/agent-claude/inboxes/default.json", "{\"from\":\"sender-1\",\"content\":\"hi\",\"status\":\"Success\"}",
+    "~/.claude/teams/agent-claude/inboxes/default.json",
+    "{\"from\":\"sender-1\",\"content\":\"hi\",\"status\":\"Success\"}",
+    fallback_target=Some("agent-claude"),
   )
   assert_eq(res, expected)
 }

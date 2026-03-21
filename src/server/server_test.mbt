@@ -276,7 +276,7 @@ test "notify_parent with valid parent returns Ok DeliveryMethod" {
   assert_true(res is Ok(_))
   match res {
     Ok(delivery) =>
-      assert_true(delivery is @message.DeliveryMethod::TeamsInbox(_, _))
+      assert_true(delivery is @message.DeliveryMethod::TeamsInbox(_, _, ..))
     Err(_) => fail("Expected Ok")
   }
 }
@@ -332,7 +332,7 @@ test "plan_poll_event_deliveries routes PR ready to parent" {
   )
   assert_true(deliveries.length() >= 1)
   match deliveries[0] {
-    @message.DeliveryMethod::TeamsInbox(path, payload) => {
+    @message.DeliveryMethod::TeamsInbox(path, payload, ..) => {
       assert_true(path.contains("parent-1"))
       assert_true(payload.contains("[PR READY] child-1 PR #42 approved"))
       assert_true(payload.contains("branch: main.child-1"))
