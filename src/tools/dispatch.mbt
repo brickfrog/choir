@@ -1299,14 +1299,40 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err(e)
       }
       let agent_ids = StringBuilder::new()
+      let skipped_ids = StringBuilder::new()
       let cmds : Array[@workspace.Command] = []
+      let mut spawned_count = 0
+      let mut skipped_count = 0
       for i = 0; i < fork_wave_args.count; i = i + 1 {
         let slug = fork_wave_args.slug_prefix + "-" + i.to_string()
         let agent_id = fork_wave_args.parent_branch + "." + slug
-        if i > 0 {
+        // Idempotency: skip if agent is already alive in registry
+        let already_alive = match registry {
+          Some(reg) =>
+            match reg.get(agent_id) {
+              Ok(agent) =>
+                match agent.state {
+                  @types.AgentState::Active | @types.AgentState::Completing =>
+                    true
+                  _ => false
+                }
+              Err(_) => false
+            }
+          None => false
+        }
+        if already_alive {
+          if skipped_count > 0 {
+            skipped_ids.write_string(",")
+          }
+          skipped_ids.write_string(agent_id)
+          skipped_count = skipped_count + 1
+          continue
+        }
+        if spawned_count > 0 {
           agent_ids.write_string(",")
         }
         agent_ids.write_string(agent_id)
+        spawned_count = spawned_count + 1
         let spec = @types.SpawnSpec::{
           slug,
           role: @types.Role::Dev,
@@ -1332,13 +1358,41 @@ pub async fn dispatch(
           cmds.push(cmd)
         }
       }
+      if spawned_count == 0 && skipped_count > 0 {
+        return @types.Response::ok_values({
+          "status": @types.wire_string("already_running"),
+          "count": @types.wire_int(0),
+          "skipped_ids": @types.wire_string(skipped_ids.to_string()),
+        })
+      }
       match run_strict(runner, cmds) {
-        Ok(_) =>
-          @types.Response::ok_values({
+        Ok(_) => {
+          // Register spawned agents as synthetic team members (best-effort)
+          let reg_cmds : Array[@workspace.Command] = []
+          for i = 0; i < fork_wave_args.count; i = i + 1 {
+            let slug = fork_wave_args.slug_prefix + "-" + i.to_string()
+            reg_cmds.push(
+              @workspace.register_team_member(
+                fork_wave_args.caller_id,
+                slug,
+                @config.agent_type_to_string(fork_wave_args.agent_type),
+              ),
+            )
+          }
+          ignore(runner(reg_cmds) catch { _ => [] })
+          let result : Map[String, @types.WireValue] = {
             "status": @types.wire_string("spawned"),
-            "count": @types.wire_int(fork_wave_args.count),
+            "count": @types.wire_int(spawned_count),
             "agent_ids": @types.wire_string(agent_ids.to_string()),
-          })
+          }
+          if skipped_count > 0 {
+            result.set(
+              "skipped_ids",
+              @types.wire_string(skipped_ids.to_string()),
+            )
+          }
+          @types.Response::ok_values(result)
+        }
         Err(e) => @types.Response::Err(e)
       }
     }

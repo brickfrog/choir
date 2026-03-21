@@ -85,10 +85,65 @@ test "dispatch fork_wave defaults to gemini fanout" {
       },
     )
     assert_true(res is Ok(_))
-    let launch = recorded[recorded.length() - 1]
-    assert_true(
-      launch.args[3].contains("gemini '--yolo' '--prompt-interactive'"),
+    // Find the tmux send-keys command (registration commands may follow)
+    let mut found = false
+    for cmd in recorded {
+      if cmd.program == "tmux" &&
+        cmd.args.length() > 3 &&
+        cmd.args[0] == "send-keys" {
+        assert_true(
+          cmd.args[3].contains("gemini '--yolo' '--prompt-interactive'"),
+        )
+        found = true
+        break
+      }
+    }
+    assert_true(found)
+  })
+}
+
+///|
+test "dispatch fork_wave skips already-alive agents" {
+  @async.with_event_loop(_ => {
+    let reg = @registry.AgentRegistry::new()
+    // Pre-register an Active agent with the same id fork_wave would generate
+    let existing = @types.Agent::{
+      agent_id: "main.wave-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Gemini,
+      state: @types.AgentState::Active,
+      parent: Some("root"),
+      terminal_target: None,
+      host: @types.Host::Local,
+      workspace: "",
+      branch: "main.wave-0",
+    }
+    ignore(reg.insert(existing))
+    let res = @tools.dispatch(
+      {
+        role: @types.Role::TL,
+        name: "fork_wave",
+        args: {
+          "count": "1",
+          "task": "Implement feature X",
+          "slug_prefix": "wave",
+          "parent_branch": "main",
+        },
+      },
+      runner=mock_runner,
+      registry=Some(reg),
     )
+    match res {
+      Ok(m) => {
+        assert_eq(m.get("status"), Some("already_running"))
+        assert_eq(m.get("count"), Some("0"))
+        assert_eq(m.get("skipped_ids"), Some("main.wave-0"))
+      }
+      Err(e) => {
+        println(e)
+        assert_true(false)
+      }
+    }
   })
 }
 
