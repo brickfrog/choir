@@ -146,8 +146,12 @@ pub fn zellij_session_exists(session : String) -> Command {
   {
     program: "sh",
     args: [
-      "-c", "NO_COLOR=1 zellij list-sessions | grep -F -- \"$1\" >/dev/null 2>&1",
-      "sh", session,
+      "-c",
+      "NO_COLOR=1 zellij list-sessions | " +
+      "sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' | " +
+      "awk '{print $1}' | grep -Fx -- \"$1\" >/dev/null 2>&1",
+      "sh",
+      session,
     ],
     workdir: None,
   }

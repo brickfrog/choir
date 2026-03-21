@@ -105,6 +105,16 @@ test "zellij_new_tab args" {
 }
 
 ///|
+test "zellij_session_exists matches exact session names" {
+  let cmd = @workspace.zellij_session_exists("choir")
+  assert_eq(cmd.program, "sh")
+  assert_true(cmd.args[1].contains("sed -E"))
+  assert_true(cmd.args[1].contains("awk '{print $1}'"))
+  assert_true(cmd.args[1].contains("grep -Fx -- \"$1\""))
+  assert_eq(cmd.args[3], "choir")
+}
+
+///|
 test "agent_launch_command for each AgentType" {
   let spec_claude = @types.SpawnSpec::{
     slug: "test-slug",
