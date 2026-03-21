@@ -116,6 +116,59 @@ pub fn trust_gemini_folder(worktree_path : String) -> Command {
 }
 
 ///|
+/// Generate Gemini CLI settings.json content with MCP server config and hooks.
+pub fn gemini_settings_json(agent_name : String, role : String) -> String {
+  let buf = StringBuilder::new()
+  buf.write_string("{\n")
+  buf.write_string("  \"mcpServers\": {\n")
+  buf.write_string("    \"choir\": {\n")
+  buf.write_string("      \"type\": \"stdio\",\n")
+  buf.write_string("      \"command\": \"choir\",\n")
+  buf.write_string("      \"args\": [\"mcp-stdio\", \"--role\", \"")
+  buf.write_string(role)
+  buf.write_string("\", \"--name\", \"")
+  buf.write_string(agent_name)
+  buf.write_string("\"]\n")
+  buf.write_string("    }\n")
+  buf.write_string("  },\n")
+  buf.write_string("  \"hooks\": {\n")
+  buf.write_string("    \"AfterAgent\": [\n")
+  buf.write_string("      {\n")
+  buf.write_string("        \"matcher\": \"*\",\n")
+  buf.write_string("        \"hooks\": [\n")
+  buf.write_string("          {\n")
+  buf.write_string("            \"type\": \"command\",\n")
+  buf.write_string(
+    "            \"command\": \"choir hook worker-exit --runtime gemini\"\n",
+  )
+  buf.write_string("          }\n")
+  buf.write_string("        ]\n")
+  buf.write_string("      }\n")
+  buf.write_string("    ]\n")
+  buf.write_string("  }\n")
+  buf.write_string("}")
+  buf.to_string()
+}
+
+///|
+/// Write .gemini/settings.json in the workspace for Gemini agents.
+pub fn write_gemini_settings(
+  worktree_path : String,
+  agent_name : String,
+  role : String,
+) -> Command {
+  let content = gemini_settings_json(agent_name, role)
+  {
+    program: "sh",
+    args: [
+      "-c", "mkdir -p \"$1/.gemini\" && printf '%s' \"$2\" > \"$1/.gemini/settings.json\"",
+      "sh", worktree_path, content,
+    ],
+    workdir: None,
+  }
+}
+
+///|
 /// Post a comment on a GitHub PR via `gh pr comment`.
 pub fn gh_pr_comment(
   pr_number : Int,

@@ -78,6 +78,14 @@ fn launch_env_prefix(
     env_assignment("EXOMONAD_ROLE", role),
     env_assignment("EXOMONAD_PARENT_AGENT", spec.parent_id),
   ]
+  if spec.agent_type == @types.AgentType::Gemini {
+    assignments.push(
+      env_assignment(
+        "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
+        workspace + "/.gemini/settings.json",
+      ),
+    )
+  }
   match @io.getenv("TRACEPARENT") {
     Some(value) =>
       if value != "" {
@@ -186,6 +194,13 @@ pub fn spawn_commands(
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
+        cmds.push(
+          write_gemini_settings(
+            workspace,
+            canonical_agent_id(spec),
+            role_to_string(spec.role),
+          ),
+        )
       }
       for
         cmd in launch_commands(
@@ -242,6 +257,13 @@ pub fn spawn_commands(
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
+        cmds.push(
+          write_gemini_settings(
+            workspace,
+            canonical_agent_id(spec),
+            role_to_string(spec.role),
+          ),
+        )
       }
       for
         cmd in launch_commands(
