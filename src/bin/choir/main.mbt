@@ -2496,7 +2496,7 @@ test "init session lifecycle commands match backend" {
     @types.TerminalBackend::Zellij,
     "choir",
   )
-  assert_eq(zellij_kill.args, ["kill-session", "choir"])
+  assert_eq(zellij_kill.args, ["delete-session", "--force", "choir"])
 }
 
 ///|
@@ -3213,7 +3213,7 @@ fn init_run() -> Unit raise {
       ) catch {
         _ => 1
       }
-      if has_session == 0 {
+      if has_session == 0 || terminal_backend == @types.TerminalBackend::Zellij {
         @io.write_stdout("Killing session \{session}...\n")
         ignore(
           @exec.run(init_kill_session_command(terminal_backend, session)) catch {
@@ -3397,7 +3397,7 @@ fn stop_run() -> Unit raise {
     ) catch {
       _ => 1
     }
-    if has_session == 0 {
+    if has_session == 0 || terminal_backend == @types.TerminalBackend::Zellij {
       @io.write_stdout("Killing session \{session}...\n")
       ignore(
         @exec.run(init_kill_session_command(terminal_backend, session)) catch {

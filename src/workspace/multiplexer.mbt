@@ -168,7 +168,11 @@ pub fn zellij_create_background_session(session : String) -> Command {
 
 ///|
 pub fn zellij_kill_session(session : String) -> Command {
-  { program: "zellij", args: ["kill-session", session], workdir: None }
+  {
+    program: "zellij",
+    args: ["delete-session", "--force", session],
+    workdir: None,
+  }
 }
 
 ///|
