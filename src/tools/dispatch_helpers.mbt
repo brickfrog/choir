@@ -100,6 +100,46 @@ async fn dispatch_to_plugin(
 }
 
 ///|
+
+///|
+fn resolve_home_path(path : String) -> String {
+  if path.length() >= 2 && path[0] == '~' && path[1] == '/' {
+    match @io.getenv("HOME") {
+      Some(home) =>
+        home + "/" + (path[2:path.length()].to_string() catch { _ => path })
+      None => path
+    }
+  } else {
+    path
+  }
+}
+
+///|
+pub async fn verify_teams_delivery(
+  inbox_path : String,
+  message_json : String,
+  fallback_target : String?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  interval_ms? : Int = 10000,
+) -> Unit {
+  let path = resolve_home_path(inbox_path)
+  for i = 0; i < 3; i = i + 1 {
+    @async.sleep(interval_ms)
+    let content = @io.read_file(path)
+    if not(content.contains(message_json)) {
+      return
+    }
+  }
+  match fallback_target {
+    Some(target) => {
+      let cmd = @workspace.local_send_text(target, message_json)
+      ignore(runner([cmd]) catch { _ => [] })
+    }
+    None => ()
+  }
+}
+
+///|
 pub async fn execute_delivery(
   delivery : @message.DeliveryMethod,
   runner : async (Array[@workspace.Command]) -> Array[Int],
@@ -109,17 +149,6 @@ pub async fn execute_delivery(
       Ok(())
     } else {
       Err("delivery command failed with exit code " + statuses[0].to_string())
-    }
-  }
-  fn resolve_home_path(path : String) -> String {
-    if path.length() >= 2 && path[0] == '~' && path[1] == '/' {
-      match @io.getenv("HOME") {
-        Some(home) =>
-          home + "/" + (path[2:path.length()].to_string() catch { _ => path })
-        None => path
-      }
-    } else {
-      path
     }
   }
   fn teams_inbox_command(path : String, json : String) -> @workspace.Command {
@@ -136,11 +165,17 @@ pub async fn execute_delivery(
     }
   }
   match delivery {
-    @message.DeliveryMethod::TeamsInbox(path, json) => {
+    @message.DeliveryMethod::TeamsInbox(path, json, fallback_target~) => {
       let statuses = runner([teams_inbox_command(path, json)]) catch {
         e => return Err(e.to_string())
       }
-      ensure_success(statuses)
+      match ensure_success(statuses) {
+        Ok(_) => {
+          ignore(verify_teams_delivery(path, json, fallback_target, runner))
+          Ok(())
+        }
+        Err(e) => Err(e)
+      }
     }
     @message.DeliveryMethod::LocalTerminalInput(target, text) => {
       let cmd = @workspace.local_send_text(target, text)

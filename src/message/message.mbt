@@ -30,7 +30,7 @@ pub fn format_review_timeout(agent_id : String) -> String {
 
 ///|
 pub(all) enum DeliveryMethod {
-  TeamsInbox(String, String)
+  TeamsInbox(String, String, fallback_target~ : String?)
   LocalTerminalInput(String, String)
   TcpPush(String, String)
   UdsHttp(String, String)
@@ -94,6 +94,7 @@ pub fn plan_delivery(
               TeamsInbox(
                 teams_inbox_path(agent.agent_id),
                 teams_inbox_json(sender_id, content, status),
+                fallback_target=Some(agent.agent_id),
               )
             _ =>
               LocalTerminalInput(
