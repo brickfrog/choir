@@ -1697,6 +1697,11 @@ fn smoke_leafs_enabled(args : Array[String]) -> Bool {
 }
 
 ///|
+fn smoke_companions_enabled(args : Array[String]) -> Bool {
+  args.contains("--companions")
+}
+
+///|
 fn smoke_e2e_enabled(args : Array[String]) -> Bool {
   args.contains("--e2e-live")
 }
@@ -1912,6 +1917,62 @@ fn smoke_leaf_script() -> String {
     #|wait_for_poller_tracking "$GEMINI_BRANCH"
     #|GEMINI_PR="$(cut -d' ' -f1 "$ROOT/gemini.pr")"
     #|echo "leaf smoke ok: moon pilot and gemini created PRs and notified parent"
+  ) +
+  "\n"
+}
+
+///|
+fn smoke_companion_script() -> String {
+  (
+    #|set -eu
+    #|BIN="$1"
+    #|KEEP_TEMP="$2"
+    #|REPO="$3"
+    #|ROOT="$(mktemp -d "${TMPDIR:-/tmp}/choir-companion-smoke-XXXXXX")"
+    #|SESSION="choir-companion-smoke-$$"
+    #|ROOT_BRANCH="live-smoke/companion-root-$$"
+    #|COMPANION_BRANCH="$ROOT_BRANCH.companion.monitor"
+    #|cleanup() {
+    #|  status=$?
+    #|  tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" worktree remove --force "$ROOT/repo/.choir/agents/monitor" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" worktree remove --force "$ROOT/repo" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" branch -D "$COMPANION_BRANCH" >/dev/null 2>&1 || true
+    #|  git -C "$REPO" branch -D "$ROOT_BRANCH" >/dev/null 2>&1 || true
+    #|  if [ "$KEEP_TEMP" = "1" ] || [ "$status" -ne 0 ]; then
+    #|    echo "companion smoke artifacts: $ROOT"
+    #|  else
+    #|    rm -rf "$ROOT"
+    #|  fi
+    #|}
+    #|trap cleanup EXIT INT TERM
+    #|for cmd in tmux git; do
+    #|  command -v "$cmd" >/dev/null 2>&1 || {
+    #|    echo "error: required command not found: $cmd"
+    #|    exit 1
+    #|  }
+    #|done
+    #|git -C "$REPO" rev-parse --verify main >/dev/null 2>&1
+    #|git -C "$REPO" worktree add -b "$ROOT_BRANCH" "$ROOT/repo" main >/dev/null
+    #|mkdir -p "$ROOT/repo/.choir"
+    #|cat > "$ROOT/repo/.choir/config.toml" <<EOF
+    #|default_role = "tl"
+    #|project_dir = "."
+    #|listen_uds = ".choir/server.sock"
+    #|terminal_backend = "tmux"
+    #|terminal_session = "$SESSION"
+    #|companions_json = '[{"name":"monitor","role":"dev","command":"sh","task":"ignored"}]'
+    #|EOF
+    #|(cd "$ROOT/repo" && "$BIN" init --recreate --no-attach >"$ROOT/init.log" 2>&1 || { cat "$ROOT/init.log"; exit 1; })
+    #|AGENT_DIR="$ROOT/repo/.choir/agents/monitor"
+    #|git -C "$AGENT_DIR" rev-parse --is-inside-work-tree >/dev/null
+    #|test "$(git -C "$AGENT_DIR" branch --show-current)" = "$COMPANION_BRANCH"
+    #|grep -F "\"--name\",\"$COMPANION_BRANCH\"" "$AGENT_DIR/.mcp.json" >/dev/null
+    #|grep -F "agent_id = \"$COMPANION_BRANCH\"" "$AGENT_DIR/.choir/config.local.toml" >/dev/null
+    #|grep -F "parent_branch = \"$ROOT_BRANCH\"" "$AGENT_DIR/.choir/config.local.toml" >/dev/null
+    #|grep -F "terminal_target = \"$SESSION:monitor\"" "$AGENT_DIR/.choir/config.local.toml" >/dev/null
+    #|tmux list-windows -t "$SESSION" | grep -E '^[0-9]+: monitor' >/dev/null
+    #|echo "companion smoke ok: init created isolated companion worktree and config"
   ) +
   "\n"
 }
@@ -2207,6 +2268,9 @@ fn smoke_run() -> Unit raise {
     let script = if smoke_e2e_enabled(args) {
       @io.write_stdout("Running isolated live end-to-end smoke...\n")
       smoke_e2e_script()
+    } else if smoke_companions_enabled(args) {
+      @io.write_stdout("Running isolated companion smoke...\n")
+      smoke_companion_script()
     } else if smoke_review_enabled(args) {
       @io.write_stdout("Running isolated review smoke...\n")
       smoke_review_script()
@@ -2326,6 +2390,12 @@ test "smoke leaf flag parser" {
 }
 
 ///|
+test "smoke companion flag parser" {
+  assert_false(smoke_companions_enabled(["choir", "smoke"]))
+  assert_true(smoke_companions_enabled(["choir", "smoke", "--companions"]))
+}
+
+///|
 test "smoke e2e flag parser" {
   assert_false(smoke_e2e_enabled(["choir", "smoke"]))
   assert_true(smoke_e2e_enabled(["choir", "smoke", "--e2e-live"]))
@@ -2365,6 +2435,22 @@ test "smoke leaf script covers Moon Pilot and Gemini proof" {
   assert_true(
     script.contains(
       "leaf smoke ok: moon pilot and gemini created PRs and notified parent",
+    ),
+  )
+}
+
+///|
+test "smoke companion script covers isolated companion proof" {
+  let script = smoke_companion_script()
+  assert_true(script.contains("companions_json"))
+  assert_true(
+    script.contains("COMPANION_BRANCH=\"$ROOT_BRANCH.companion.monitor\""),
+  )
+  assert_true(script.contains("terminal_target = "))
+  assert_true(script.contains("$SESSION:monitor"))
+  assert_true(
+    script.contains(
+      "companion smoke ok: init created isolated companion worktree and config",
     ),
   )
 }
@@ -3241,7 +3327,7 @@ fn main {
     "watch" => watch_run()
     _ => {
       @io.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate]|reply|smoke [--keep-temp|--leafs|--review|--e2e-live]|watch>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate]|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
       )
       @io.exit(1)
     }

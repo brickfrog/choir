@@ -99,7 +99,7 @@ Working and proven:
 - canonical child identity and per-child config propagation
 - `file_pr`, `track_pr`, `merge_pr`, GitHub poller, and restart recovery
 - review event routing back into agent sessions
-- live `choir smoke`, `choir smoke --leafs`, `choir smoke --review`, and `choir smoke --e2e-live`
+- live `choir smoke`, `choir smoke --companions`, `choir smoke --leafs`, `choir smoke --review`, and `choir smoke --e2e-live`
 - restart-mid-review continuity coverage
 - local terminal backends: `tmux` and `zellij`
 - GitHub release workflow and Nix development shell

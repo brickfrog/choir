@@ -13,6 +13,10 @@ choir init
 choir serve
 choir mcp-stdio
 choir smoke
+choir smoke --companions
+choir smoke --leafs
+choir smoke --review
+choir smoke --e2e-live
 ```
 
 ## Description
@@ -86,6 +90,22 @@ This brings up:
 - one TL client session
 - local state under `.choir/`
 
+## Smoke Tests
+
+```bash
+choir smoke
+choir smoke --companions
+choir smoke --leafs
+choir smoke --review
+choir smoke --e2e-live
+```
+
+- `choir smoke`: MCP bridge/runtime smoke
+- `choir smoke --companions`: `init` companion isolation smoke
+- `choir smoke --leafs`: live Moon Pilot + Gemini spawn/PR smoke
+- `choir smoke --review`: live review delivery smoke
+- `choir smoke --e2e-live`: live spawn/review/merge smoke
+
 ## Flow
 
 ```mermaid
@@ -126,7 +146,7 @@ AGENTS.md                 leaf-agent instructions
 - local UDS workflow: proven
 - `tmux` backend: proven
 - `zellij` backend: working
-- live leaf/review/merge smokes: present
+- live companion/leaf/review/merge smokes: present
 - TCP/remote path: implemented, less proven than local UDS
 - Claude `--channels`: not usable for manual MCP servers yet
 

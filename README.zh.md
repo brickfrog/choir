@@ -13,6 +13,10 @@ choir init
 choir serve
 choir mcp-stdio
 choir smoke
+choir smoke --companions
+choir smoke --leafs
+choir smoke --review
+choir smoke --e2e-live
 ```
 
 ## 说明
@@ -82,6 +86,22 @@ choir init
 - 一个 TL 客户端会话
 - 位于 `.choir/` 的本地状态目录
 
+## Smoke 测试
+
+```bash
+choir smoke
+choir smoke --companions
+choir smoke --leafs
+choir smoke --review
+choir smoke --e2e-live
+```
+
+- `choir smoke`：MCP bridge / runtime smoke
+- `choir smoke --companions`：`init` companion 隔离 smoke
+- `choir smoke --leafs`：Moon Pilot + Gemini 的 live spawn/PR smoke
+- `choir smoke --review`：live review 回流 smoke
+- `choir smoke --e2e-live`：live spawn/review/merge smoke
+
 ## 流程
 
 ```mermaid
@@ -122,7 +142,7 @@ AGENTS.md                 叶子代理说明
 - 本地 UDS 工作流：已验证
 - `tmux` 后端：已验证
 - `zellij` 后端：可用
-- 叶子代理 / review / merge 的 live smoke：已具备
+- companion / 叶子代理 / review / merge 的 live smoke：已具备
 - TCP/remote 路径：已实现，但验证程度低于本地 UDS
 - Claude `--channels`：目前还不能用于手动配置的 MCP 服务
 
