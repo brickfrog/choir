@@ -111,12 +111,23 @@ pub async fn dispatch(
       let spawned_slugs : Array[String] = []
       let mut spawned_count = 0
       let mut skipped_count = 0
+      let seen_slugs : Map[String, Int] = {}
       for i = 0; i < fork_wave_args.count; i = i + 1 {
-        let slug = if fork_wave_args.has_per_leaf_tasks {
-          // Derive slug from task text — first 4 words, lowercased, hyphenated
+        let raw_slug = if fork_wave_args.has_per_leaf_tasks {
           slugify_task(fork_wave_args.tasks[i], i)
         } else {
           fork_wave_args.slug_prefix + "-" + i.to_string()
+        }
+        // Disambiguate duplicate slugs by appending index
+        let slug = match seen_slugs.get(raw_slug) {
+          Some(count) => {
+            seen_slugs.set(raw_slug, count + 1)
+            raw_slug + "-" + i.to_string()
+          }
+          None => {
+            seen_slugs.set(raw_slug, 1)
+            raw_slug
+          }
         }
         let agent_id = fork_wave_args.parent_branch + "." + slug
         // Idempotency: skip if agent is already alive in registry
