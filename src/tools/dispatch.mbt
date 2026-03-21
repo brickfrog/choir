@@ -1553,7 +1553,8 @@ pub async fn dispatch(
       }
       // 1. Notify parent if registry available
       match registry {
-        Some(reg) =>
+        Some(reg) => {
+          let _ = reg.set_state(caller_id, @types.AgentState::Completing)
           match reg.get_parent(caller_id) {
             Ok(parent) => {
               let delivery = @message.plan_delivery(
@@ -1564,6 +1565,7 @@ pub async fn dispatch(
             }
             Err(_) => ()
           }
+        }
         None => ()
       }
       // 2. Kill tmux pane and remove from registry

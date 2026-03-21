@@ -881,6 +881,54 @@ test "dispatch shutdown removes agent from registry" {
 }
 
 ///|
+test "dispatch shutdown marks agent completing before terminal close" {
+  @async.with_event_loop(_ => {
+    let reg = @registry.AgentRegistry::new()
+    let agent = @types.Agent::{
+      agent_id: "leaf-1",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      state: @types.AgentState::Active,
+      parent: None,
+      terminal_target: Some("choir:leaf-1"),
+      host: @types.Host::Local,
+      workspace: "",
+      branch: "",
+    }
+    let _ = reg.insert(agent)
+    let close_seen = Ref::new(false)
+    let res = @tools.dispatch(
+      {
+        role: @types.Role::Dev,
+        name: "shutdown",
+        args: { "caller_id": "leaf-1" },
+      },
+      runner=async fn(cmds) {
+        @async.sleep(0)
+        if cmds.length() == 1 &&
+          cmds[0].program == "tmux" &&
+          cmds[0].args == ["kill-pane", "-t", "choir:leaf-1"] {
+          close_seen.val = true
+          match reg.get("leaf-1") {
+            Ok(found) => assert_eq(found.state, @types.AgentState::Completing)
+            Err(_) => fail("expected leaf to remain registered during close")
+          }
+        }
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      },
+      registry=Some(reg),
+    )
+    assert_true(res is Ok(_))
+    assert_true(close_seen.val)
+    assert_true(reg.get("leaf-1") is Err(_))
+  })
+}
+
+///|
 test "dispatch shutdown allowed for TL role" {
   @async.with_event_loop(_ => {
     let call : @tools.ToolCall = {
