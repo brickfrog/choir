@@ -357,6 +357,20 @@ fn next_notified_parent(
 }
 
 ///|
+/// Check if an agent has any tracked PRs.
+pub fn PollerState::has_tracked_pr(
+  self : PollerState,
+  agent_id : String,
+) -> Bool {
+  for tracked in self.tracked.values() {
+    if tracked.agent_id == agent_id {
+      return true
+    }
+  }
+  false
+}
+
+///|
 pub fn PollerState::in_critical_phase(
   self : PollerState,
   agent_id : String,

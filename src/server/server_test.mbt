@@ -896,6 +896,34 @@ test "handle_disconnect is no-op when agent already removed" {
 }
 
 ///|
+test "handle_disconnect skips agents with tracked PRs" {
+  @async.with_event_loop(_ => {
+    let state = ServerState::new(@types.Config::default())
+    let parent = { ..build_agent("root", None), role: @types.Role::TL }
+    ignore(state.registry.insert(parent))
+    let child = {
+      ..build_agent("main.leaf-pr", Some("root")),
+      branch: "main.leaf-pr",
+    }
+    ignore(state.registry.insert(child))
+    // Track a PR for this agent
+    state.poller.track(
+      99, "main.leaf-pr", "main.leaf-pr", "main", "https://example.test/pr/99", 100L,
+    )
+    let delivered_cmds : Array[@workspace.Command] = []
+    state.handle_disconnect_with_runner("main.leaf-pr", runner=async fn(cmds) {
+      record_runner_server(delivered_cmds, cmds)
+    })
+    // Agent should remain Active — disconnect skipped because PR is tracked
+    match state.registry.get("main.leaf-pr") {
+      Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+      Err(_) => fail("agent should remain in registry")
+    }
+    assert_eq(delivered_cmds.length(), 0)
+  })
+}
+
+///|
 test "schedule_disconnect is cancelled by re-register within grace period" {
   @async.with_event_loop(_ => {
     let state = ServerState::new(@types.Config::default())

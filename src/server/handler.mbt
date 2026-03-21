@@ -407,11 +407,18 @@ pub fn ServerState::get_agent(
 
 ///|
 /// Called when a connection closes. Detects unexpected agent death and notifies parent.
+/// Agents with tracked PRs are skipped — the poller manages their lifecycle.
 pub async fn ServerState::handle_disconnect_with_runner(
   self : ServerState,
   agent_id : String,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
+  // If the agent has a tracked PR, the poller owns its lifecycle.
+  // Connection drops are normal for per-request agents (Gemini) that go idle
+  // between tool calls or while waiting for review.
+  if self.poller.has_tracked_pr(agent_id) {
+    return
+  }
   match self.registry.get(agent_id) {
     Err(_) => ()
     Ok(agent) =>
