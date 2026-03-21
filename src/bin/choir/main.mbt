@@ -888,6 +888,34 @@ fn is_status_word(s : String) -> Bool {
 }
 
 ///|
+fn looks_like_branch_token(s : String) -> Bool {
+  let trimmed = s.trim().to_string()
+  if trimmed == "" {
+    return false
+  }
+  for c in trimmed {
+    if not(
+        (c >= 'a' && c <= 'z') ||
+        (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') ||
+        c == '-' ||
+        c == '_' ||
+        c == '/' ||
+        c == '.',
+      ) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn looks_like_legacy_branch_arg(s : String) -> Bool {
+  looks_like_branch_token(s) &&
+  (s.contains(".") || s.contains("/") || s.contains("-") || s.contains("_"))
+}
+
+///|
 fn leaf_tool_request_args(
   tool : String,
   cli_args : LeafCliArgs,
@@ -896,13 +924,17 @@ fn leaf_tool_request_args(
   let positionals = cli_args.positionals
   match tool {
     "file_pr" => {
-      if not(flags.contains("branch")) && positionals.length() > 0 {
+      let used_legacy_branch = not(flags.contains("branch")) &&
+        positionals.length() > 0 &&
+        looks_like_legacy_branch_arg(positionals[0])
+      if not(flags.contains("branch")) && used_legacy_branch {
         flags.set("branch", positionals[0])
       }
-      if not(flags.contains("parent_branch")) {
-        if positionals.length() > 2 {
+      if used_legacy_branch && not(flags.contains("parent_branch")) {
+        if positionals.length() > 2 && looks_like_branch_token(positionals[2]) {
           flags.set("parent_branch", positionals[2])
-        } else if positionals.length() > 1 {
+        } else if positionals.length() > 1 &&
+          looks_like_branch_token(positionals[1]) {
           flags.set("parent_branch", positionals[1])
         }
       }
@@ -1646,6 +1678,16 @@ test "leaf tool parser accepts legacy file_pr positional triplet" {
   ).unwrap()
   assert_eq(parsed.get("branch"), Some("main.gemini-leaf"))
   assert_eq(parsed.get("parent_branch"), Some("main"))
+}
+
+///|
+test "leaf tool parser ignores prose positionals for file_pr" {
+  let parsed = leaf_tool_request_args(
+    "file_pr",
+    parse_leaf_cli_args(["Add", "pytest", "integration", "tests"]),
+  ).unwrap()
+  assert_eq(parsed.get("branch"), None)
+  assert_eq(parsed.get("parent_branch"), None)
 }
 
 ///|
