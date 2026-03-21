@@ -113,7 +113,7 @@ fn read_stdin_chunk(max_size : Int) -> (Bytes, Int, Bool, Bool) {
 pub fn read_stdin_line(max_size : Int) -> String? {
   let line = StringBuilder::new()
   let mut saw_data = false
-  for {
+  for ;; {
     let (buf, len, has_more, eof) = read_stdin_chunk(max_size)
     if eof {
       return if saw_data { Some(line.to_string()) } else { None }

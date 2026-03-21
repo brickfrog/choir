@@ -142,13 +142,13 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
     _ => return (None_, "", false, "")
   }
   let exit_code = @process.run(
-    @utf8.encode("gh"),
+    "gh",
     [
-      @utf8.encode("pr"),
-      @utf8.encode("view"),
-      @utf8.encode(pr_number.to_string()),
-      @utf8.encode("--json"),
-      @utf8.encode("reviews,headRefOid,statusCheckRollup"),
+      "pr",
+      "view",
+      pr_number.to_string(),
+      "--json",
+      "reviews,headRefOid,statusCheckRollup",
     ],
     stdout=write_end,
   ) catch {

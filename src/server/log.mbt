@@ -210,39 +210,24 @@ pub fn Span::to_otlp_json(self : Span) -> String {
 
 ///|
 pub async fn Span::export_otlp(self : Span, endpoint : String) -> Unit {
-  let (host, port) = match endpoint_host_port(endpoint) {
-    Some(parsed) => parsed
-    None => return
+  let base_url = if endpoint.has_prefix("http://") ||
+    endpoint.has_prefix("https://") {
+    endpoint
+  } else {
+    "http://" + endpoint
   }
-  let addr = @socket.Addr::resolve(@utf8.encode(host), port~) catch {
-    _ => return
+  let url = if base_url.has_suffix("/") {
+    base_url + "v1/traces"
+  } else {
+    base_url + "/v1/traces"
   }
-  let tcp = @socket.TCP::connect(addr) catch { _ => return }
-  let body_bytes = @utf8.encode(self.to_otlp_json())
-  let req = @http.Request::{
-    meth: Post,
-    path: @utf8.encode("/v1/traces"),
-    headers: [
-      @http.Header(
-        @utf8.encode("Host"),
-        @utf8.encode(host + ":" + port.to_string()),
-      ),
-      @http.Header(
-        @utf8.encode("Content-Type"),
-        @utf8.encode("application/json"),
-      ),
-      @http.Header(
-        @utf8.encode("Content-Length"),
-        @utf8.encode(body_bytes.length().to_string()),
-      ),
-    ],
+  let body = self.to_otlp_json()
+  let headers = { "Content-Type": "application/json" }
+  try {
+    let _ = @http.post(url, body, headers~)
+  } catch {
+    _ => ()
   }
-  ignore(
-    @http.send_request(tcp, req, @http.Body::Fixed(body_bytes)) catch {
-      _ => ()
-    },
-  )
-  tcp.close()
 }
 
 ///|

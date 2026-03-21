@@ -67,194 +67,176 @@ test "merge_pr_commands produces correct gh pr merge and git fetch" {
 }
 
 ///|
-test "dispatch file_pr returns Ok" {
-  @async.with_event_loop(_ => {
-    let call : ToolCall = {
-      role: @types.Role::Dev,
-      name: "file_pr",
-      args: { "branch": "feat", "parent_branch": "main" },
+async test "dispatch file_pr returns Ok" {
+  let call : ToolCall = {
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: { "branch": "feat", "parent_branch": "main" },
+  }
+  let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+  match res {
+    Ok(m) => {
+      assert_eq(m.get("status"), Some("pr_created"))
+      assert_eq(m.get("pr_number"), Some("22"))
+      assert_eq(m.get("pr_url"), Some("https://example.test/pr/feat"))
+      assert_eq(m.get("tracked"), Some("false"))
+      assert_eq(m.get_value("pr_number"), Some(@types.WireValue::Raw("22")))
+      assert_eq(m.get_value("tracked"), Some(@types.WireValue::Raw("false")))
     }
-    let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
-    match res {
-      Ok(m) => {
-        assert_eq(m.get("status"), Some("pr_created"))
-        assert_eq(m.get("pr_number"), Some("22"))
-        assert_eq(m.get("pr_url"), Some("https://example.test/pr/feat"))
-        assert_eq(m.get("tracked"), Some("false"))
-        assert_eq(m.get_value("pr_number"), Some(@types.WireValue::Raw("22")))
-        assert_eq(m.get_value("tracked"), Some(@types.WireValue::Raw("false")))
-      }
-      Err(_) => assert_true(false)
-    }
-  })
+    Err(_) => assert_true(false)
+  }
 }
 
 ///|
-test "dispatch file_pr auto_tracks returned pr number" {
-  @async.with_event_loop(_ => {
-    let poller = @poller.PollerState::new()
-    let call : ToolCall = {
-      role: @types.Role::Dev,
-      name: "file_pr",
-      args: { "branch": "feat", "parent_branch": "main" },
+async test "dispatch file_pr auto_tracks returned pr number" {
+  let poller = @poller.PollerState::new()
+  let call : ToolCall = {
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: { "branch": "feat", "parent_branch": "main" },
+  }
+  let res = dispatch_call(
+    call,
+    runner=mock_runner,
+    ensure_pr=mock_ensure_pr,
+    poller_state=Some(poller),
+  )
+  match res {
+    Ok(m) => {
+      assert_eq(m.get("tracked"), Some("true"))
+      assert_eq(m.get_value("tracked"), Some(@types.WireValue::Raw("true")))
     }
-    let res = dispatch_call(
-      call,
-      runner=mock_runner,
-      ensure_pr=mock_ensure_pr,
-      poller_state=Some(poller),
-    )
-    match res {
-      Ok(m) => {
-        assert_eq(m.get("tracked"), Some("true"))
-        assert_eq(m.get_value("tracked"), Some(@types.WireValue::Raw("true")))
-      }
-      Err(_) => assert_true(false)
+    Err(_) => assert_true(false)
+  }
+  match poller.get(22) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "feat")
+      assert_eq(tracked.branch, "feat")
+      assert_eq(tracked.parent_branch, "main")
+      assert_eq(tracked.pr_url, "https://example.test/pr/feat")
     }
-    match poller.get(22) {
-      Some(tracked) => {
-        assert_eq(tracked.agent_id, "feat")
-        assert_eq(tracked.branch, "feat")
-        assert_eq(tracked.parent_branch, "main")
-        assert_eq(tracked.pr_url, "https://example.test/pr/feat")
-      }
-      None => fail("expected tracked PR")
-    }
-  })
+    None => fail("expected tracked PR")
+  }
 }
 
 ///|
-test "dispatch file_pr accepts agent_id alias for branch" {
-  @async.with_event_loop(_ => {
-    let call : ToolCall = {
-      role: @types.Role::Dev,
-      name: "file_pr",
-      args: { "agent_id": "main.child", "parent_branch": "release" },
+async test "dispatch file_pr accepts agent_id alias for branch" {
+  let call : ToolCall = {
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: { "agent_id": "main.child", "parent_branch": "release" },
+  }
+  let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+  match res {
+    Ok(m) => {
+      assert_eq(m.get("pr_number"), Some("77"))
+      assert_eq(m.get("pr_url"), Some("https://example.test/pr/main.child"))
     }
-    let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
-    match res {
-      Ok(m) => {
-        assert_eq(m.get("pr_number"), Some("77"))
-        assert_eq(m.get("pr_url"), Some("https://example.test/pr/main.child"))
-      }
-      Err(_) => assert_true(false)
-    }
-  })
+    Err(_) => assert_true(false)
+  }
 }
 
 ///|
-test "dispatch file_pr missing branch returns Err" {
-  @async.with_event_loop(_ => {
-    let call : ToolCall = {
-      role: @types.Role::Dev,
-      name: "file_pr",
-      args: { "parent_branch": "main" },
-    }
-    let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
-    match res {
-      Ok(_) => assert_true(false)
-      Err(msg) => assert_eq(msg, "missing branch")
-    }
-  })
+async test "dispatch file_pr missing branch returns Err" {
+  let call : ToolCall = {
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: { "parent_branch": "main" },
+  }
+  let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+  match res {
+    Ok(_) => assert_true(false)
+    Err(msg) => assert_eq(msg, "missing branch")
+  }
 }
 
 ///|
-test "dispatch file_pr surfaces ensure_pr failures" {
-  @async.with_event_loop(_ => {
-    let call : ToolCall = {
-      role: @types.Role::Dev,
-      name: "file_pr",
-      args: { "branch": "fail", "parent_branch": "main" },
-    }
-    let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
-    match res {
-      Ok(_) => assert_true(false)
-      Err(msg) => assert_eq(msg, "lookup failed")
-    }
-  })
+async test "dispatch file_pr surfaces ensure_pr failures" {
+  let call : ToolCall = {
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: { "branch": "fail", "parent_branch": "main" },
+  }
+  let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+  match res {
+    Ok(_) => assert_true(false)
+    Err(msg) => assert_eq(msg, "lookup failed")
+  }
 }
 
 ///|
-test "dispatch merge_pr returns Ok" {
-  @async.with_event_loop(_ => {
-    let poller = @poller.PollerState::new()
-    poller.track(
-      456, "agent-1", "main.agent-1", "main", "https://example.test/pr/456", 100,
-    )
-    let call : ToolCall = {
-      role: @types.Role::TL,
-      name: "merge_pr",
-      args: { "pr_number": "456" },
-    }
-    let res = dispatch_call(call, runner=mock_runner, poller_state=Some(poller))
-    match res {
-      Ok(m) => assert_eq(m.get("status"), Some("merged"))
-      Err(_) => assert_true(false)
-    }
-    assert_eq(poller.get(456), None)
-  })
+async test "dispatch merge_pr returns Ok" {
+  let poller = @poller.PollerState::new()
+  poller.track(
+    456, "agent-1", "main.agent-1", "main", "https://example.test/pr/456", 100,
+  )
+  let call : ToolCall = {
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: { "pr_number": "456" },
+  }
+  let res = dispatch_call(call, runner=mock_runner, poller_state=Some(poller))
+  match res {
+    Ok(m) => assert_eq(m.get("status"), Some("merged"))
+    Err(_) => assert_true(false)
+  }
+  assert_eq(poller.get(456), None)
 }
 
 ///|
-test "dispatch merge_pr invalid pr_number returns Err" {
-  @async.with_event_loop(_ => {
-    let call : ToolCall = {
-      role: @types.Role::TL,
-      name: "merge_pr",
-      args: { "pr_number": "abc" },
-    }
-    let res = dispatch_call(call, runner=mock_runner)
-    match res {
-      Ok(_) => assert_true(false)
-      Err(msg) => assert_eq(msg, "invalid pr_number: abc")
-    }
-  })
+async test "dispatch merge_pr invalid pr_number returns Err" {
+  let call : ToolCall = {
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: { "pr_number": "abc" },
+  }
+  let res = dispatch_call(call, runner=mock_runner)
+  match res {
+    Ok(_) => assert_true(false)
+    Err(msg) => assert_eq(msg, "invalid pr_number: abc")
+  }
 }
 
 ///|
-test "dispatch merge_pr missing pr_number returns Err" {
-  @async.with_event_loop(_ => {
-    let call : ToolCall = { role: @types.Role::TL, name: "merge_pr", args: {} }
-    let res = dispatch_call(call, runner=mock_runner)
-    match res {
-      Ok(_) => assert_true(false)
-      Err(msg) => assert_eq(msg, "missing pr_number")
-    }
-  })
+async test "dispatch merge_pr missing pr_number returns Err" {
+  let call : ToolCall = { role: @types.Role::TL, name: "merge_pr", args: {} }
+  let res = dispatch_call(call, runner=mock_runner)
+  match res {
+    Ok(_) => assert_true(false)
+    Err(msg) => assert_eq(msg, "missing pr_number")
+  }
 }
 
 ///|
-test "dispatch track_pr stores tracked PR" {
-  @async.with_event_loop(_ => {
-    let poller = @poller.PollerState::new()
-    let call : ToolCall = {
-      role: @types.Role::Dev,
-      name: "track_pr",
-      args: { "pr_number": "22", "agent_id": "agent-22" },
+async test "dispatch track_pr stores tracked PR" {
+  let poller = @poller.PollerState::new()
+  let call : ToolCall = {
+    role: @types.Role::Dev,
+    name: "track_pr",
+    args: { "pr_number": "22", "agent_id": "agent-22" },
+  }
+  let res = dispatch_call(call, runner=mock_runner, poller_state=Some(poller))
+  match res {
+    Ok(m) => {
+      assert_eq(m.get("status"), Some("tracked"))
+      assert_eq(m.get("branch"), Some("agent-22"))
+      assert_eq(m.get("parent_branch"), Some("main"))
+      assert_eq(m.get("pr_url"), Some(""))
+      assert_eq(
+        m.get_value("status"),
+        Some(@types.WireValue::String("tracked")),
+      )
     }
-    let res = dispatch_call(call, runner=mock_runner, poller_state=Some(poller))
-    match res {
-      Ok(m) => {
-        assert_eq(m.get("status"), Some("tracked"))
-        assert_eq(m.get("branch"), Some("agent-22"))
-        assert_eq(m.get("parent_branch"), Some("main"))
-        assert_eq(m.get("pr_url"), Some(""))
-        assert_eq(
-          m.get_value("status"),
-          Some(@types.WireValue::String("tracked")),
-        )
-      }
-      Err(_) => assert_true(false)
+    Err(_) => assert_true(false)
+  }
+  match poller.get(22) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "agent-22")
+      assert_eq(tracked.branch, "agent-22")
+      assert_eq(tracked.parent_branch, "main")
+      assert_eq(tracked.pr_url, "")
+      assert_true(tracked.first_seen > 0L)
     }
-    match poller.get(22) {
-      Some(tracked) => {
-        assert_eq(tracked.agent_id, "agent-22")
-        assert_eq(tracked.branch, "agent-22")
-        assert_eq(tracked.parent_branch, "main")
-        assert_eq(tracked.pr_url, "")
-        assert_true(tracked.first_seen > 0L)
-      }
-      None => fail("expected tracked PR")
-    }
-  })
+    None => fail("expected tracked PR")
+  }
 }

@@ -327,14 +327,12 @@ async fn capture_stdout(
   cwd? : String? = None,
 ) -> String {
   let (read_end, write_end) = @pipe.pipe() catch { _ => return "" }
-  let prog = @utf8.encode(program)
-  let argv = args.map(fn(arg) { @utf8.encode(arg) })
   let _exit_code = match cwd {
     Some(dir) =>
-      @process.run(prog, argv, cwd=@utf8.encode(dir), stdout=write_end) catch {
+      @process.run(program, args, cwd=dir, stdout=write_end) catch {
         _ => -1
       }
-    None => @process.run(prog, argv, stdout=write_end) catch { _ => -1 }
+    None => @process.run(program, args, stdout=write_end) catch { _ => -1 }
   }
   write_end.close()
   let buf = FixedArray::make(65536, (0 : Byte))
@@ -884,154 +882,148 @@ test "recover_agent_from_local_config keeps live zellij tab targets" {
 }
 
 ///|
-test "recover_open_pr_tracking_with seeds current review snapshot" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    ignore(
-      state.registry.insert({
-        agent_id: "main.leaf-a",
-        role: @types.Role::Dev,
-        agent_type: @types.AgentType::Gemini,
-        state: @types.AgentState::Active,
-        parent: Some("main"),
-        terminal_target: Some("howdy:leaf-a"),
-        host: @types.Host::Local,
-        workspace: ".choir/worktrees/leaf-a",
+async test "recover_open_pr_tracking_with seeds current review snapshot" {
+  let state = ServerState::new(@types.Config::default())
+  ignore(
+    state.registry.insert({
+      agent_id: "main.leaf-a",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Gemini,
+      state: @types.AgentState::Active,
+      parent: Some("main"),
+      terminal_target: Some("howdy:leaf-a"),
+      host: @types.Host::Local,
+      workspace: ".choir/worktrees/leaf-a",
+      branch: "main.leaf-a",
+    }),
+  )
+  recover_open_pr_tracking_with(
+    state,
+    [
+      {
+        pr_number: 12,
         branch: "main.leaf-a",
-      }),
-    )
-    recover_open_pr_tracking_with(
-      state,
-      [
-        {
-          pr_number: 12,
-          branch: "main.leaf-a",
-          base: "main",
-          url: "https://example.test/pr/12",
-          created_sec: Some(77L),
-        },
-      ],
-      [],
-      123L,
-      fn(_pr_number) {
-        (
-          @poller.ReviewState::ChangesRequested,
-          "sha-review-1",
-          true,
-          "Please add tests",
-        )
+        base: "main",
+        url: "https://example.test/pr/12",
+        created_sec: Some(77L),
       },
-    )
-    match state.poller.get(12) {
-      Some(tracked) => {
-        assert_eq(tracked.agent_id, "main.leaf-a")
-        assert_eq(tracked.branch, "main.leaf-a")
-        assert_eq(tracked.parent_branch, "main")
-        assert_eq(tracked.pr_url, "https://example.test/pr/12")
-        assert_eq(tracked.first_seen, 77L)
-        assert_eq(
-          tracked.last_review_state,
-          @poller.ReviewState::ChangesRequested,
-        )
-        assert_eq(tracked.last_review_bodies, "Please add tests")
-        assert_eq(tracked.last_sha, "sha-review-1")
-        assert_false(tracked.notified_parent)
-        assert_true(tracked.last_ci_failed)
-      }
-      None => fail("expected recovered tracked PR")
+    ],
+    [],
+    123L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::ChangesRequested,
+        "sha-review-1",
+        true,
+        "Please add tests",
+      )
+    },
+  )
+  match state.poller.get(12) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "main.leaf-a")
+      assert_eq(tracked.branch, "main.leaf-a")
+      assert_eq(tracked.parent_branch, "main")
+      assert_eq(tracked.pr_url, "https://example.test/pr/12")
+      assert_eq(tracked.first_seen, 77L)
+      assert_eq(
+        tracked.last_review_state,
+        @poller.ReviewState::ChangesRequested,
+      )
+      assert_eq(tracked.last_review_bodies, "Please add tests")
+      assert_eq(tracked.last_sha, "sha-review-1")
+      assert_false(tracked.notified_parent)
+      assert_true(tracked.last_ci_failed)
     }
-  })
+    None => fail("expected recovered tracked PR")
+  }
 }
 
 ///|
-test "recover_open_pr_tracking_with ignores unowned PR branches" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    recover_open_pr_tracking_with(
-      state,
-      [
-        {
-          pr_number: 77,
-          branch: "main.unknown",
-          base: "main",
-          url: "https://example.test/pr/77",
-          created_sec: Some(11L),
-        },
-      ],
-      [],
-      123L,
-      fn(_pr_number) { (@poller.ReviewState::Approved, "sha", false, "") },
-    )
-    assert_eq(state.poller.get(77), None)
-  })
+async test "recover_open_pr_tracking_with ignores unowned PR branches" {
+  let state = ServerState::new(@types.Config::default())
+  recover_open_pr_tracking_with(
+    state,
+    [
+      {
+        pr_number: 77,
+        branch: "main.unknown",
+        base: "main",
+        url: "https://example.test/pr/77",
+        created_sec: Some(11L),
+      },
+    ],
+    [],
+    123L,
+    fn(_pr_number) { (@poller.ReviewState::Approved, "sha", false, "") },
+  )
+  assert_eq(state.poller.get(77), None)
 }
 
 ///|
-test "recover_open_pr_tracking_with prefers persisted poller state" {
-  @async.with_event_loop(_ => {
-    let state = ServerState::new(@types.Config::default())
-    ignore(
-      state.registry.insert({
-        agent_id: "main.leaf-a",
-        role: @types.Role::Dev,
-        agent_type: @types.AgentType::Gemini,
-        state: @types.AgentState::Active,
-        parent: Some("main"),
-        terminal_target: Some("howdy:leaf-a"),
-        host: @types.Host::Local,
-        workspace: ".choir/worktrees/leaf-a",
+async test "recover_open_pr_tracking_with prefers persisted poller state" {
+  let state = ServerState::new(@types.Config::default())
+  ignore(
+    state.registry.insert({
+      agent_id: "main.leaf-a",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Gemini,
+      state: @types.AgentState::Active,
+      parent: Some("main"),
+      terminal_target: Some("howdy:leaf-a"),
+      host: @types.Host::Local,
+      workspace: ".choir/worktrees/leaf-a",
+      branch: "main.leaf-a",
+    }),
+  )
+  recover_open_pr_tracking_with(
+    state,
+    [
+      {
+        pr_number: 12,
         branch: "main.leaf-a",
-      }),
-    )
-    recover_open_pr_tracking_with(
-      state,
-      [
-        {
-          pr_number: 12,
-          branch: "main.leaf-a",
-          base: "main",
-          url: "https://example.test/pr/12",
-          created_sec: Some(77L),
-        },
-      ],
-      [
-        {
-          pr_number: 12,
-          agent_id: "stale-agent-id",
-          branch: "main.leaf-a",
-          parent_branch: "stale-base",
-          pr_url: "https://example.test/pr/stale",
-          first_seen: 55L,
-          last_review_state: @poller.ReviewState::ChangesRequested,
-          last_review_bodies: "Persisted review comment",
-          last_sha: "sha-persisted",
-          notified_parent: true,
-          last_ci_failed: true,
-          last_timeout_at: 0L,
-        },
-      ],
-      123L,
-      fn(_pr_number) {
-        (@poller.ReviewState::Approved, "sha-live", false, "Should be ignored")
+        base: "main",
+        url: "https://example.test/pr/12",
+        created_sec: Some(77L),
       },
-    )
-    match state.poller.get(12) {
-      Some(tracked) => {
-        assert_eq(tracked.agent_id, "main.leaf-a")
-        assert_eq(tracked.branch, "main.leaf-a")
-        assert_eq(tracked.parent_branch, "main")
-        assert_eq(tracked.pr_url, "https://example.test/pr/12")
-        assert_eq(tracked.first_seen, 55L)
-        assert_eq(
-          tracked.last_review_state,
-          @poller.ReviewState::ChangesRequested,
-        )
-        assert_eq(tracked.last_review_bodies, "Persisted review comment")
-        assert_eq(tracked.last_sha, "sha-persisted")
-        assert_true(tracked.notified_parent)
-        assert_true(tracked.last_ci_failed)
-      }
-      None => fail("expected restored tracked PR")
+    ],
+    [
+      {
+        pr_number: 12,
+        agent_id: "stale-agent-id",
+        branch: "main.leaf-a",
+        parent_branch: "stale-base",
+        pr_url: "https://example.test/pr/stale",
+        first_seen: 55L,
+        last_review_state: @poller.ReviewState::ChangesRequested,
+        last_review_bodies: "Persisted review comment",
+        last_sha: "sha-persisted",
+        notified_parent: true,
+        last_ci_failed: true,
+        last_timeout_at: 0L,
+      },
+    ],
+    123L,
+    fn(_pr_number) {
+      (@poller.ReviewState::Approved, "sha-live", false, "Should be ignored")
+    },
+  )
+  match state.poller.get(12) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "main.leaf-a")
+      assert_eq(tracked.branch, "main.leaf-a")
+      assert_eq(tracked.parent_branch, "main")
+      assert_eq(tracked.pr_url, "https://example.test/pr/12")
+      assert_eq(tracked.first_seen, 55L)
+      assert_eq(
+        tracked.last_review_state,
+        @poller.ReviewState::ChangesRequested,
+      )
+      assert_eq(tracked.last_review_bodies, "Persisted review comment")
+      assert_eq(tracked.last_sha, "sha-persisted")
+      assert_true(tracked.notified_parent)
+      assert_true(tracked.last_ci_failed)
     }
-  })
+    None => fail("expected restored tracked PR")
+  }
 }

@@ -436,169 +436,159 @@ test "parse_gh_pr_view_output falls back on missing fields" {
 }
 
 ///|
-test "PollerState::tick_with updates tracked state and emits events" {
-  @async.with_event_loop(_ => {
-    let state = PollerState::new()
-    state.track(
-      7, "agent7", "main.agent7", "main", "https://example.test/pr/7", 100,
-    )
-    let events = []
-    let agent_ids = []
-    state.tick_with(
-      200,
-      900L,
-      fn(_pr_number) { (ReviewState::Approved, "sha2", false, "") },
-      fn(event, agent_id) {
-        events.push(event)
-        agent_ids.push(agent_id)
-      },
-    )
-    assert_eq(events, [PollEvent::PRReady(7)])
-    assert_eq(agent_ids, ["agent7"])
-    match state.get(7) {
-      Some(tracked) => {
-        assert_eq(tracked.last_review_state, ReviewState::Approved)
-        assert_eq(tracked.last_sha, "sha2")
-        assert_true(tracked.notified_parent)
-        assert_false(tracked.last_ci_failed)
-      }
-      None => fail("tracked PR not found")
+async test "PollerState::tick_with updates tracked state and emits events" {
+  let state = PollerState::new()
+  state.track(
+    7, "agent7", "main.agent7", "main", "https://example.test/pr/7", 100,
+  )
+  let events = []
+  let agent_ids = []
+  state.tick_with(
+    200,
+    900L,
+    fn(_pr_number) { (ReviewState::Approved, "sha2", false, "") },
+    fn(event, agent_id) {
+      events.push(event)
+      agent_ids.push(agent_id)
+    },
+  )
+  assert_eq(events, [PollEvent::PRReady(7)])
+  assert_eq(agent_ids, ["agent7"])
+  match state.get(7) {
+    Some(tracked) => {
+      assert_eq(tracked.last_review_state, ReviewState::Approved)
+      assert_eq(tracked.last_sha, "sha2")
+      assert_true(tracked.notified_parent)
+      assert_false(tracked.last_ci_failed)
     }
-  })
+    None => fail("tracked PR not found")
+  }
 }
 
 ///|
-test "PollerState::tick_with marks fixes pushed as parent-notified" {
-  @async.with_event_loop(_ => {
-    let state = PollerState::new()
-    state.tracked.set(
+async test "PollerState::tick_with marks fixes pushed as parent-notified" {
+  let state = PollerState::new()
+  state.tracked.set(
+    8,
+    tracked_pr(
       8,
-      tracked_pr(
-        8,
-        "agent8",
-        100L,
-        ReviewState::ChangesRequested,
-        "sha1",
+      "agent8",
+      100L,
+      ReviewState::ChangesRequested,
+      "sha1",
+      false,
+      false,
+    ),
+  )
+  let events = []
+  state.tick_with(
+    200,
+    900L,
+    fn(_pr_number) { (ReviewState::ChangesRequested, "sha2", false, "") },
+    fn(event, _agent_id) { events.push(event) },
+  )
+  assert_eq(events, [PollEvent::FixesPushed(8)])
+  match state.get(8) {
+    Some(tracked) => assert_true(tracked.notified_parent)
+    None => fail("tracked PR not found")
+  }
+}
+
+///|
+async test "PollerState::tick_with resets parent notification on new review request" {
+  let state = PollerState::new()
+  state.tracked.set(
+    9,
+    tracked_pr(9, "agent9", 100L, ReviewState::Approved, "sha2", true, false),
+  )
+  let events = []
+  state.tick_with(
+    200,
+    900L,
+    fn(_pr_number) {
+      (ReviewState::ChangesRequested, "sha2", false, "Please fix")
+    },
+    fn(event, _agent_id) { events.push(event) },
+  )
+  assert_eq(events, [PollEvent::ReviewReceived(9, "Please fix")])
+  match state.get(9) {
+    Some(tracked) => assert_false(tracked.notified_parent)
+    None => fail("tracked PR not found")
+  }
+}
+
+///|
+async test "PollerState::tick_with tracks latest comment-only review bodies" {
+  let state = PollerState::new()
+  state.track(
+    10, "agent10", "main.agent10", "main", "https://example.test/pr/10", 100,
+  )
+  let events = []
+  state.tick_with(
+    200,
+    900L,
+    fn(_pr_number) {
+      (
+        ReviewState::None_,
+        "sha10",
         false,
-        false,
-      ),
-    )
-    let events = []
-    state.tick_with(
-      200,
-      900L,
-      fn(_pr_number) { (ReviewState::ChangesRequested, "sha2", false, "") },
-      fn(event, _agent_id) { events.push(event) },
-    )
-    assert_eq(events, [PollEvent::FixesPushed(8)])
-    match state.get(8) {
-      Some(tracked) => assert_true(tracked.notified_parent)
-      None => fail("tracked PR not found")
+        "Please tighten the wording in CLAUDE.md",
+      )
+    },
+    fn(event, _agent_id) { events.push(event) },
+  )
+  assert_eq(events, [
+    PollEvent::ReviewReceived(10, "Please tighten the wording in CLAUDE.md"),
+  ])
+  match state.get(10) {
+    Some(tracked) => {
+      assert_eq(
+        tracked.last_review_bodies,
+        "Please tighten the wording in CLAUDE.md",
+      )
+      assert_false(tracked.notified_parent)
     }
-  })
+    None => fail("tracked PR not found")
+  }
 }
 
 ///|
-test "PollerState::tick_with resets parent notification on new review request" {
-  @async.with_event_loop(_ => {
-    let state = PollerState::new()
-    state.tracked.set(
-      9,
-      tracked_pr(9, "agent9", 100L, ReviewState::Approved, "sha2", true, false),
-    )
-    let events = []
-    state.tick_with(
-      200,
-      900L,
-      fn(_pr_number) {
-        (ReviewState::ChangesRequested, "sha2", false, "Please fix")
-      },
-      fn(event, _agent_id) { events.push(event) },
-    )
-    assert_eq(events, [PollEvent::ReviewReceived(9, "Please fix")])
-    match state.get(9) {
-      Some(tracked) => assert_false(tracked.notified_parent)
-      None => fail("tracked PR not found")
-    }
-  })
-}
-
-///|
-test "PollerState::tick_with tracks latest comment-only review bodies" {
-  @async.with_event_loop(_ => {
-    let state = PollerState::new()
-    state.track(
-      10, "agent10", "main.agent10", "main", "https://example.test/pr/10", 100,
-    )
-    let events = []
-    state.tick_with(
-      200,
-      900L,
-      fn(_pr_number) {
-        (
-          ReviewState::None_,
-          "sha10",
-          false,
-          "Please tighten the wording in CLAUDE.md",
-        )
-      },
-      fn(event, _agent_id) { events.push(event) },
-    )
-    assert_eq(events, [
-      PollEvent::ReviewReceived(10, "Please tighten the wording in CLAUDE.md"),
-    ])
-    match state.get(10) {
-      Some(tracked) => {
-        assert_eq(
-          tracked.last_review_bodies,
-          "Please tighten the wording in CLAUDE.md",
-        )
-        assert_false(tracked.notified_parent)
-      }
-      None => fail("tracked PR not found")
-    }
-  })
-}
-
-///|
-test "PollerState::tick_with records last_timeout_at and throttles re-fire" {
-  @async.with_event_loop(_ => {
-    let state = PollerState::new()
-    state.track(
-      20, "agent20", "main.agent20", "main", "https://example.test/pr/20", 100,
-    )
-    let events = []
-    // First tick at t=1200 — timeout fires (first_seen=100, timeout=900)
-    state.tick_with(
-      1200,
-      900L,
-      fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
-      fn(event, _agent_id) { events.push(event) },
-    )
-    assert_eq(events, [PollEvent::ReviewTimeout(20)])
-    match state.get(20) {
-      Some(tracked) => assert_eq(tracked.last_timeout_at, 1200L)
-      None => fail("tracked PR not found")
-    }
-    // Second tick 100s later — does NOT re-fire (needs 900s since last)
-    let events2 = []
-    state.tick_with(
-      1300,
-      900L,
-      fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
-      fn(event, _agent_id) { events2.push(event) },
-    )
-    assert_eq(events2, [])
-    // Third tick 900s later — re-fires
-    let events3 = []
-    state.tick_with(
-      2200,
-      900L,
-      fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
-      fn(event, _agent_id) { events3.push(event) },
-    )
-    assert_eq(events3, [PollEvent::ReviewTimeout(20)])
-  })
+async test "PollerState::tick_with records last_timeout_at and throttles re-fire" {
+  let state = PollerState::new()
+  state.track(
+    20, "agent20", "main.agent20", "main", "https://example.test/pr/20", 100,
+  )
+  let events = []
+  // First tick at t=1200 — timeout fires (first_seen=100, timeout=900)
+  state.tick_with(
+    1200,
+    900L,
+    fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+    fn(event, _agent_id) { events.push(event) },
+  )
+  assert_eq(events, [PollEvent::ReviewTimeout(20)])
+  match state.get(20) {
+    Some(tracked) => assert_eq(tracked.last_timeout_at, 1200L)
+    None => fail("tracked PR not found")
+  }
+  // Second tick 100s later — does NOT re-fire (needs 900s since last)
+  let events2 = []
+  state.tick_with(
+    1300,
+    900L,
+    fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+    fn(event, _agent_id) { events2.push(event) },
+  )
+  assert_eq(events2, [])
+  // Third tick 900s later — re-fires
+  let events3 = []
+  state.tick_with(
+    2200,
+    900L,
+    fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+    fn(event, _agent_id) { events3.push(event) },
+  )
+  assert_eq(events3, [PollEvent::ReviewTimeout(20)])
 }
 
 ///|

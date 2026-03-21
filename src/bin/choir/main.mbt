@@ -40,7 +40,7 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
 
 ///|
 async fn serve_handle_connection(
-  conn : @socket.TCP,
+  conn : @socket.Tcp,
   state : @server.ServerState,
 ) -> Unit {
   let mut buf = FixedArray::make(4096, (0 : Byte))
@@ -221,95 +221,97 @@ fn serve_run() -> Unit raise {
   @io.write_pid_file(".choir/server.pid")
   ignore(@io.system("rm -f .choir/tasks/*.json 2>/dev/null; true"))
   let state = @server.ServerState::new(config)
-  @async.with_event_loop(async fn(root) {
-    @server.recover_state(state, config.terminal_session)
-    root.spawn_bg(async fn() {
-      let timeout_sec = 900L
-      let disconnect_grace_sec = 60L
-      let interval_ms = 30000
-      for ;; {
-        @async.sleep(interval_ms)
-        let now = @poller.now_sec()
-        state.process_pending_disconnects(now, disconnect_grace_sec)
-        state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
-      }
-    })
-    root.spawn_bg(async fn() {
-      let server_fd = @uds.server_create(config.listen_uds)
-      if server_fd < 0 {
-        println("failed to bind UDS server on \{config.listen_uds}")
-        return
-      }
-      ignore(@uds.set_nonblocking(server_fd))
-      println("UDS server listening on \{config.listen_uds}")
-      let clients : Array[ServeUDSClient] = []
-      for ;; {
+  @async.run_async_main(async fn() {
+    @async.with_task_group(async fn(root) {
+      @server.recover_state(state, config.terminal_session)
+      root.spawn_bg(async fn() {
+        let timeout_sec = 900L
+        let disconnect_grace_sec = 60L
+        let interval_ms = 30000
         for ;; {
-          let client_fd = @uds.accept_nonblocking(server_fd)
-          if client_fd == -2 {
-            break
-          }
-          if client_fd < 0 {
-            @uds.close(server_fd)
-            return
-          }
-          ignore(@uds.set_nonblocking(client_fd))
-          clients.push(ServeUDSClient::new(client_fd))
+          @async.sleep(interval_ms)
+          let now = @poller.now_sec()
+          state.process_pending_disconnects(now, disconnect_grace_sec)
+          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
         }
-        let mut i = 0
-        while i < clients.length() {
-          let alive = serve_handle_uds_connection(clients[i], state) catch {
-            _ => false
+      })
+      root.spawn_bg(async fn() {
+        let server_fd = @uds.server_create(config.listen_uds)
+        if server_fd < 0 {
+          println("failed to bind UDS server on \{config.listen_uds}")
+          return
+        }
+        ignore(@uds.set_nonblocking(server_fd))
+        println("UDS server listening on \{config.listen_uds}")
+        let clients : Array[ServeUDSClient] = []
+        for ;; {
+          for ;; {
+            let client_fd = @uds.accept_nonblocking(server_fd)
+            if client_fd == -2 {
+              break
+            }
+            if client_fd < 0 {
+              @uds.close(server_fd)
+              return
+            }
+            ignore(@uds.set_nonblocking(client_fd))
+            clients.push(ServeUDSClient::new(client_fd))
           }
-          if alive {
-            i = i + 1
-          } else {
-            let client = clients.remove(i)
-            serve_close_uds_client(client, state) catch {
-              _ => ()
+          let mut i = 0
+          while i < clients.length() {
+            let alive = serve_handle_uds_connection(clients[i], state) catch {
+              _ => false
+            }
+            if alive {
+              i = i + 1
+            } else {
+              let client = clients.remove(i)
+              serve_close_uds_client(client, state) catch {
+                _ => ()
+              }
+            }
+          }
+          @async.sleep(10)
+        }
+      })
+      match config.listen_tcp {
+        Some(addr_str) => {
+          let server = @socket.TcpServer::new(@socket.Addr::parse(addr_str))
+          try {
+            println("TCP server listening on \{addr_str}")
+            for ;; {
+              let (conn, addr) = server.accept()
+              println("connection from \{addr}")
+              root.spawn_bg(async fn() {
+                serve_handle_connection(conn, state) catch {
+                  _ => ()
+                }
+                conn.close()
+              })
+            }
+          } catch {
+            err => {
+              server.close()
+              raise err
             }
           }
         }
-        @async.sleep(10)
+        None => println("no listen_tcp configured")
       }
     })
-    match config.listen_tcp {
-      Some(addr_str) => {
-        let server = @socket.TCPServer::new(@socket.Addr::parse(addr_str))
-        try {
-          println("TCP server listening on \{addr_str}")
-          for ;; {
-            let (conn, addr) = server.accept()
-            println("connection from \{addr}")
-            root.spawn_bg(async fn() {
-              serve_handle_connection(conn, state) catch {
-                _ => ()
-              }
-              conn.close()
-            })
-          }
-        } catch {
-          err => {
-            server.close()
-            raise err
-          }
-        }
-      }
-      None => println("no listen_tcp configured")
-    }
   })
 }
 
 ///|
-struct TCPLineReader {
-  conn : @socket.TCP
+struct TcpLineReader {
+  conn : @socket.Tcp
   mut buf : FixedArray[Byte]
   mut read_pos : Int
   mut write_pos : Int
 }
 
 ///|
-fn TCPLineReader::new(conn : @socket.TCP) -> TCPLineReader {
+fn TcpLineReader::new(conn : @socket.Tcp) -> TcpLineReader {
   { conn, buf: FixedArray::make(8192, (0 : Byte)), read_pos: 0, write_pos: 0 }
 }
 
@@ -336,7 +338,7 @@ fn grow_line_buffer(buf : FixedArray[Byte]) -> FixedArray[Byte] {
 }
 
 ///|
-async fn TCPLineReader::read_line(self : TCPLineReader) -> String {
+async fn TcpLineReader::read_line(self : TcpLineReader) -> String {
   for ;; {
     let bytes = self.buf.unsafe_reinterpret_as_bytes()
     for i = self.read_pos; i < self.write_pos; i = i + 1 {
@@ -743,94 +745,96 @@ fn mcp_run() -> Unit raise {
     return
   }
 
-  @async.with_event_loop(async fn(_root) {
-    let addr_str = match config.listen_tcp {
-      Some(addr) => addr
-      None => {
-        println("error: listen_tcp not configured in .choir/config.toml")
-        @io.exit(1)
-        ""
+  @async.run_async_main(async fn() {
+    @async.with_task_group(async fn(_root) {
+      let addr_str = match config.listen_tcp {
+        Some(addr) => addr
+        None => {
+          println("error: listen_tcp not configured in .choir/config.toml")
+          @io.exit(1)
+          ""
+        }
       }
-    }
 
-    let conn = @socket.TCP::connect(@socket.Addr::parse(addr_str)) catch {
-      err => {
-        println("error: failed to connect to \{addr_str}: \{err}")
-        @io.exit(1)
-        raise err
+      let conn = @socket.Tcp::connect(@socket.Addr::parse(addr_str)) catch {
+        err => {
+          println("error: failed to connect to \{addr_str}: \{err}")
+          @io.exit(1)
+          raise err
+        }
       }
-    }
 
-    let reader = TCPLineReader::new(conn)
+      let reader = TcpLineReader::new(conn)
 
-    let reg_msg = mcp_build_registration_message(role, config, local_cfg)
-    try {
-      match config.tcp_auth_token {
-        Some(token) => conn.write(@utf8.encode(token + "\n"))
-        None => ()
+      let reg_msg = mcp_build_registration_message(role, config, local_cfg)
+      try {
+        match config.tcp_auth_token {
+          Some(token) => conn.write(@utf8.encode(token + "\n"))
+          None => ()
+        }
+        conn.write(@utf8.encode(reg_msg))
+        let _ = reader.read_line()
+      } catch {
+        err => {
+          println("error: registration failed: \{err}")
+          @io.exit(1)
+        }
       }
-      conn.write(@utf8.encode(reg_msg))
-      let _ = reader.read_line()
-    } catch {
-      err => {
-        println("error: registration failed: \{err}")
-        @io.exit(1)
-      }
-    }
 
-    for ;; {
-      let line = match @io.read_stdin_line(8192) {
-        Some(line) => line
-        None => break
-      }
-      match @mcp.parse_jsonrpc_request(line) {
-        Ok(rpc) => {
-          let id = match rpc.id {
-            Some(id) => id
-            None => continue
-          }
-          if rpc.req_method == @mcp.method_initialize {
-            let resp = @mcp.initialize_response(id)
-            @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
-          } else if rpc.req_method == @mcp.method_tools_list {
-            let resp = @mcp.tools_list_response(id)
-            @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
-          } else {
-            match @mcp.to_internal_request(rpc, role) {
-              Ok(internal_req) => {
-                let wire_req = mcp_build_wire_request(
-                  internal_req, role, config, local_cfg,
-                )
+      for ;; {
+        let line = match @io.read_stdin_line(8192) {
+          Some(line) => line
+          None => break
+        }
+        match @mcp.parse_jsonrpc_request(line) {
+          Ok(rpc) => {
+            let id = match rpc.id {
+              Some(id) => id
+              None => continue
+            }
+            if rpc.req_method == @mcp.method_initialize {
+              let resp = @mcp.initialize_response(id)
+              @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
+            } else if rpc.req_method == @mcp.method_tools_list {
+              let resp = @mcp.tools_list_response(id)
+              @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
+            } else {
+              match @mcp.to_internal_request(rpc, role) {
+                Ok(internal_req) => {
+                  let wire_req = mcp_build_wire_request(
+                    internal_req, role, config, local_cfg,
+                  )
 
-                try {
-                  conn.write(@utf8.encode(wire_req))
-                  let resp_line = reader.read_line()
-                  mcp_write_server_response(id, resp_line)
-                } catch {
-                  err => {
-                    let err_resp = @mcp.error_response(
-                      id,
-                      @mcp.err_internal,
-                      "TCP error: \{err}",
-                    )
-                    @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                  try {
+                    conn.write(@utf8.encode(wire_req))
+                    let resp_line = reader.read_line()
+                    mcp_write_server_response(id, resp_line)
+                  } catch {
+                    err => {
+                      let err_resp = @mcp.error_response(
+                        id,
+                        @mcp.err_internal,
+                        "TCP error: \{err}",
+                      )
+                      @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                    }
                   }
                 }
-              }
-              Err(e) => {
-                let err_resp = @mcp.error_response(id, e.code, e.message)
-                @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                Err(e) => {
+                  let err_resp = @mcp.error_response(id, e.code, e.message)
+                  @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                }
               }
             }
           }
-        }
-        Err(e) => {
-          let err_resp = @mcp.error_response(Number(0), e.code, e.message)
-          @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+          Err(e) => {
+            let err_resp = @mcp.error_response(Number(0), e.code, e.message)
+            @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+          }
         }
       }
-    }
-    conn.close()
+      conn.close()
+    })
   })
 }
 
@@ -1306,12 +1310,7 @@ priv struct ZellijPaneRef {
 ///|
 async fn capture_stdout_main(program : String, args : Array[String]) -> String {
   let (read_end, write_end) = @pipe.pipe()
-  let args_bytes = args.map(fn(arg) { @utf8.encode(arg) })
-  ignore(
-    @process.run(@utf8.encode(program), args_bytes, stdout=write_end) catch {
-      _ => -1
-    },
-  )
+  ignore(@process.run(program, args[:], stdout=write_end) catch { _ => -1 })
   write_end.close()
   let buf = FixedArray::make(65536, (0 : Byte))
   let mut total = 0
@@ -1418,149 +1417,153 @@ fn zellij_action_usage() -> String {
 
 ///|
 fn zellij_action_run() -> Unit raise {
-  @async.with_event_loop(async fn(_root) {
-    let args = @io.get_args()
-    if args.length() < 4 {
-      @io.write_stdout(zellij_action_usage() + "\n")
-      @io.exit(1)
-      return
-    }
-    let action = args[2]
-    let target_text = args[3]
-    let target = match @workspace.parse_local_target(target_text) {
-      Some(parsed) =>
-        match parsed.kind {
-          @workspace.LocalTargetKind::ZellijTab
-          | @workspace.LocalTargetKind::ZellijPane => parsed
-          _ => {
-            @io.write_stdout(
-              "error: not a zellij target: " + target_text + "\n",
-            )
-            @io.exit(1)
-            return
-          }
-        }
-      None => {
-        @io.write_stdout("error: invalid zellij target: " + target_text + "\n")
+  @async.run_async_main(async fn() {
+    @async.with_task_group(async fn(_root) {
+      let args = @io.get_args()
+      if args.length() < 4 {
+        @io.write_stdout(zellij_action_usage() + "\n")
         @io.exit(1)
         return
       }
-    }
-    let panes = zellij_list_panes(target.session)
-    match action {
-      "send" => {
-        if args.length() < 5 {
-          @io.write_stdout(zellij_action_usage() + "\n")
+      let action = args[2]
+      let target_text = args[3]
+      let target = match @workspace.parse_local_target(target_text) {
+        Some(parsed) =>
+          match parsed.kind {
+            @workspace.LocalTargetKind::ZellijTab
+            | @workspace.LocalTargetKind::ZellijPane => parsed
+            _ => {
+              @io.write_stdout(
+                "error: not a zellij target: " + target_text + "\n",
+              )
+              @io.exit(1)
+              return
+            }
+          }
+        None => {
+          @io.write_stdout(
+            "error: invalid zellij target: " + target_text + "\n",
+          )
           @io.exit(1)
           return
         }
-        let text = args[4]
-        let pane_id = match zellij_target_pane_id(target, panes) {
-          Some(id) => id
-          None => {
-            @io.write_stdout(
-              "error: zellij target not found: " + target_text + "\n",
-            )
+      }
+      let panes = zellij_list_panes(target.session)
+      match action {
+        "send" => {
+          if args.length() < 5 {
+            @io.write_stdout(zellij_action_usage() + "\n")
             @io.exit(1)
             return
           }
-        }
-        let write_code = @exec.run({
-          program: "zellij",
-          args: [
-            "--session",
-            target.session,
-            "action",
-            "write-chars",
-            "-p",
-            pane_id,
-            text,
-          ],
-          workdir: None,
-        })
-        if write_code != 0 {
-          @io.exit(write_code)
-          return
-        }
-        let key_code = @exec.run({
-          program: "zellij",
-          args: [
-            "--session",
-            target.session,
-            "action",
-            "send-keys",
-            "-p",
-            pane_id,
-            "Enter",
-          ],
-          workdir: None,
-        })
-        @io.exit(key_code)
-      }
-      "close" =>
-        match target.kind {
-          @workspace.LocalTargetKind::ZellijPane => {
-            let pane_id = match
-              zellij_target_pane_id(target, panes, allow_exited=true) {
-              Some(id) => id
-              None => {
-                @io.write_stdout(
-                  "error: zellij target not found: " + target_text + "\n",
-                )
-                @io.exit(1)
-                return
-              }
+          let text = args[4]
+          let pane_id = match zellij_target_pane_id(target, panes) {
+            Some(id) => id
+            None => {
+              @io.write_stdout(
+                "error: zellij target not found: " + target_text + "\n",
+              )
+              @io.exit(1)
+              return
             }
-            let code = @exec.run({
-              program: "zellij",
-              args: [
-                "--session",
-                target.session,
-                "action",
-                "close-pane",
-                "-p",
-                pane_id,
-              ],
-              workdir: None,
-            })
-            @io.exit(code)
           }
-          @workspace.LocalTargetKind::ZellijTab => {
-            let tab_id = match zellij_target_tab_id(target, panes) {
-              Some(id) => id
-              None => {
-                @io.write_stdout(
-                  "error: zellij target not found: " + target_text + "\n",
-                )
-                @io.exit(1)
-                return
-              }
-            }
-            let code = @exec.run({
-              program: "zellij",
-              args: [
-                "--session",
-                target.session,
-                "action",
-                "close-tab-by-id",
-                tab_id,
-              ],
-              workdir: None,
-            })
-            @io.exit(code)
+          let write_code = @exec.run({
+            program: "zellij",
+            args: [
+              "--session",
+              target.session,
+              "action",
+              "write-chars",
+              "-p",
+              pane_id,
+              text,
+            ],
+            workdir: None,
+          })
+          if write_code != 0 {
+            @io.exit(write_code)
+            return
           }
-          _ => {
-            @io.write_stdout(
-              "error: not a zellij target: " + target_text + "\n",
-            )
-            @io.exit(1)
-          }
+          let key_code = @exec.run({
+            program: "zellij",
+            args: [
+              "--session",
+              target.session,
+              "action",
+              "send-keys",
+              "-p",
+              pane_id,
+              "Enter",
+            ],
+            workdir: None,
+          })
+          @io.exit(key_code)
         }
-      _ => {
-        @io.write_stdout(zellij_action_usage() + "\n")
-        @io.exit(1)
+        "close" =>
+          match target.kind {
+            @workspace.LocalTargetKind::ZellijPane => {
+              let pane_id = match
+                zellij_target_pane_id(target, panes, allow_exited=true) {
+                Some(id) => id
+                None => {
+                  @io.write_stdout(
+                    "error: zellij target not found: " + target_text + "\n",
+                  )
+                  @io.exit(1)
+                  return
+                }
+              }
+              let code = @exec.run({
+                program: "zellij",
+                args: [
+                  "--session",
+                  target.session,
+                  "action",
+                  "close-pane",
+                  "-p",
+                  pane_id,
+                ],
+                workdir: None,
+              })
+              @io.exit(code)
+            }
+            @workspace.LocalTargetKind::ZellijTab => {
+              let tab_id = match zellij_target_tab_id(target, panes) {
+                Some(id) => id
+                None => {
+                  @io.write_stdout(
+                    "error: zellij target not found: " + target_text + "\n",
+                  )
+                  @io.exit(1)
+                  return
+                }
+              }
+              let code = @exec.run({
+                program: "zellij",
+                args: [
+                  "--session",
+                  target.session,
+                  "action",
+                  "close-tab-by-id",
+                  tab_id,
+                ],
+                workdir: None,
+              })
+              @io.exit(code)
+            }
+            _ => {
+              @io.write_stdout(
+                "error: not a zellij target: " + target_text + "\n",
+              )
+              @io.exit(1)
+            }
+          }
+        _ => {
+          @io.write_stdout(zellij_action_usage() + "\n")
+          @io.exit(1)
+        }
       }
-    }
+    })
   })
 }
 
@@ -2385,35 +2388,37 @@ fn smoke_e2e_script() -> String {
 
 ///|
 fn smoke_run() -> Unit raise {
-  @async.with_event_loop(async fn(_root) {
-    let args = @io.get_args()
-    let keep_temp = if smoke_keep_temp(args) { "1" } else { "0" }
-    let self_exe = smoke_self_exe(args)
-    let repo_dir = @io.getcwd()
-    let script = if smoke_e2e_enabled(args) {
-      @io.write_stdout("Running isolated live end-to-end smoke...\n")
-      smoke_e2e_script()
-    } else if smoke_companions_enabled(args) {
-      @io.write_stdout("Running isolated companion smoke...\n")
-      smoke_companion_script()
-    } else if smoke_review_enabled(args) {
-      @io.write_stdout("Running isolated review smoke...\n")
-      smoke_review_script()
-    } else if smoke_leafs_enabled(args) {
-      @io.write_stdout("Running isolated leaf smoke...\n")
-      smoke_leaf_script()
-    } else {
-      @io.write_stdout("Running isolated runtime smoke...\n")
-      smoke_script()
-    }
-    let exit_code = @exec.run({
-      program: "sh",
-      args: ["-c", script, "sh", self_exe, keep_temp, repo_dir],
-      workdir: None,
-    }) catch {
-      _ => 1
-    }
-    @io.exit(exit_code)
+  @async.run_async_main(async fn() {
+    @async.with_task_group(async fn(_root) {
+      let args = @io.get_args()
+      let keep_temp = if smoke_keep_temp(args) { "1" } else { "0" }
+      let self_exe = smoke_self_exe(args)
+      let repo_dir = @io.getcwd()
+      let script = if smoke_e2e_enabled(args) {
+        @io.write_stdout("Running isolated live end-to-end smoke...\n")
+        smoke_e2e_script()
+      } else if smoke_companions_enabled(args) {
+        @io.write_stdout("Running isolated companion smoke...\n")
+        smoke_companion_script()
+      } else if smoke_review_enabled(args) {
+        @io.write_stdout("Running isolated review smoke...\n")
+        smoke_review_script()
+      } else if smoke_leafs_enabled(args) {
+        @io.write_stdout("Running isolated leaf smoke...\n")
+        smoke_leaf_script()
+      } else {
+        @io.write_stdout("Running isolated runtime smoke...\n")
+        smoke_script()
+      }
+      let exit_code = @exec.run({
+        program: "sh",
+        args: ["-c", script, "sh", self_exe, keep_temp, repo_dir],
+        workdir: None,
+      }) catch {
+        _ => 1
+      }
+      @io.exit(exit_code)
+    })
   })
 }
 
@@ -2773,7 +2778,7 @@ fn persist_hook_session(input : @hooks.HookInput) -> Unit {
 
 ///|
 fn hook_run() -> Unit raise {
-  @async.with_event_loop(_ => {
+  @async.run_async_main(async fn() {
     let line = match @io.read_stdin_line(8192) {
       Some(line) => line
       None => {
@@ -3262,124 +3267,253 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
 
 ///|
 fn init_run() -> Unit raise {
-  @async.with_event_loop(async fn(_root) {
-    let args = @io.get_args()
-    let recreate = args.contains("--recreate")
-    let no_attach = init_no_attach(args)
-    let project_dir = @io.getcwd()
-    let default_session = init_default_terminal_session(project_dir)
-    let use_dev = init_is_choir_source_tree(project_dir)
-    let server_cmd = init_server_command(use_dev)
+  @async.run_async_main(async fn() {
+    @async.with_task_group(async fn(_root) {
+      let args = @io.get_args()
+      let recreate = args.contains("--recreate")
+      let no_attach = init_no_attach(args)
+      let project_dir = @io.getcwd()
+      let default_session = init_default_terminal_session(project_dir)
+      let use_dev = init_is_choir_source_tree(project_dir)
+      let server_cmd = init_server_command(use_dev)
 
-    if use_dev {
-      // Rebuild binary before doing anything else so the new server uses fresh code
+      if use_dev {
+        // Rebuild binary before doing anything else so the new server uses fresh code
+        init_run_or_exit({
+          program: "moon",
+          args: ["build", "--target", "native", "--release"],
+          workdir: None,
+        })
+      }
+
       init_run_or_exit({
-        program: "moon",
-        args: ["build", "--target", "native", "--release"],
+        program: "sh",
+        args: ["-c", "mkdir -p .choir"],
         workdir: None,
       })
-    }
+      init_run_or_exit({
+        program: "sh",
+        args: [
+          "-c",
+          "test -f .choir/config.toml || printf '%s' \"$1\" > .choir/config.toml",
+          "sh",
+          init_config_toml_content(default_session),
+        ],
+        workdir: None,
+      })
+      let maybe_patch_config = @io.read_file(".choir/config.toml")
+      if maybe_patch_config != "" &&
+        not(init_config_has_terminal_session(maybe_patch_config)) {
+        let separator = if maybe_patch_config.has_suffix("\n") {
+          ""
+        } else {
+          "\n"
+        }
+        let patched = maybe_patch_config +
+          separator +
+          "terminal_session = \"" +
+          default_session +
+          "\"\n"
+        ignore(@io.write_file_sync(".choir/config.toml", patched))
+      }
+      init_run_or_exit({
+        program: "sh",
+        args: [
+          "-c",
+          "printf '%s' \"$2\" > \"$1\"",
+          "sh",
+          init_claude_mcp_config_path(),
+          init_mcp_json_content(project_dir),
+        ],
+        workdir: None,
+      })
 
-    init_run_or_exit({
-      program: "sh",
-      args: ["-c", "mkdir -p .choir"],
-      workdir: None,
-    })
-    init_run_or_exit({
-      program: "sh",
-      args: [
-        "-c",
-        "test -f .choir/config.toml || printf '%s' \"$1\" > .choir/config.toml",
-        "sh",
-        init_config_toml_content(default_session),
-      ],
-      workdir: None,
-    })
-    let maybe_patch_config = @io.read_file(".choir/config.toml")
-    if maybe_patch_config != "" &&
-      not(init_config_has_terminal_session(maybe_patch_config)) {
-      let separator = if maybe_patch_config.has_suffix("\n") {
-        ""
+      let config_content = @io.read_file(".choir/config.toml")
+      let config = match @config.parse_config(config_content) {
+        Ok(cfg) => cfg
+        Err(_) => @types.Config::default()
+      }
+      let current_branch_raw = capture_stdout_main("git", [
+        "branch", "--show-current",
+      ])
+      let current_branch_trimmed = current_branch_raw.trim().to_string()
+      let current_branch = if current_branch_trimmed == "" ||
+        current_branch_trimmed == "HEAD" {
+        "main"
       } else {
-        "\n"
+        current_branch_trimmed
       }
-      let patched = maybe_patch_config +
-        separator +
-        "terminal_session = \"" +
-        default_session +
-        "\"\n"
-      ignore(@io.write_file_sync(".choir/config.toml", patched))
-    }
-    init_run_or_exit({
-      program: "sh",
-      args: [
-        "-c",
-        "printf '%s' \"$2\" > \"$1\"",
-        "sh",
-        init_claude_mcp_config_path(),
-        init_mcp_json_content(project_dir),
-      ],
-      workdir: None,
-    })
+      let session = config.terminal_session
+      let terminal_backend = config.terminal_backend
 
-    let config_content = @io.read_file(".choir/config.toml")
-    let config = match @config.parse_config(config_content) {
-      Ok(cfg) => cfg
-      Err(_) => @types.Config::default()
-    }
-    let current_branch_raw = capture_stdout_main("git", [
-      "branch", "--show-current",
-    ])
-    let current_branch_trimmed = current_branch_raw.trim().to_string()
-    let current_branch = if current_branch_trimmed == "" ||
-      current_branch_trimmed == "HEAD" {
-      "main"
-    } else {
-      current_branch_trimmed
-    }
-    let session = config.terminal_session
-    let terminal_backend = config.terminal_backend
-
-    if recreate {
-      let pid_str = @io.read_file(".choir/server.pid")
-      if pid_str != "" {
-        @io.write_stdout("Stopping server (PID \{pid_str})...\n")
-        ignore(
-          @exec.run(init_kill_server_pid_command(pid_str)) catch {
-            _ => 0
-          },
-        )
-        ignore(
-          @exec.run(init_cleanup_server_artifacts_command()) catch {
-            _ => 0
-          },
-        )
+      if recreate {
+        let pid_str = @io.read_file(".choir/server.pid")
+        if pid_str != "" {
+          @io.write_stdout("Stopping server (PID \{pid_str})...\n")
+          ignore(
+            @exec.run(init_kill_server_pid_command(pid_str)) catch {
+              _ => 0
+            },
+          )
+          ignore(
+            @exec.run(init_cleanup_server_artifacts_command()) catch {
+              _ => 0
+            },
+          )
+        }
+        let has_session = @exec.run(
+          init_session_exists_command(terminal_backend, session),
+        ) catch {
+          _ => 1
+        }
+        if has_session == 0 ||
+          terminal_backend == @types.TerminalBackend::Zellij {
+          @io.write_stdout("Killing session \{session}...\n")
+          ignore(
+            @exec.run(init_kill_session_command(terminal_backend, session)) catch {
+              _ => 0
+            },
+          )
+        }
       }
-      let has_session = @exec.run(
+
+      let session_alive = @exec.run(
         init_session_exists_command(terminal_backend, session),
       ) catch {
         _ => 1
       }
-      if has_session == 0 || terminal_backend == @types.TerminalBackend::Zellij {
-        @io.write_stdout("Killing session \{session}...\n")
-        ignore(
-          @exec.run(init_kill_session_command(terminal_backend, session)) catch {
-            _ => 0
-          },
-        )
+      if session_alive == 0 {
+        if no_attach {
+          @io.write_stdout("Session \{session} already exists.\n")
+        } else {
+          @io.write_stdout("Attaching to existing session \{session}...\n")
+          ignore(
+            @exec.run(
+              match terminal_backend {
+                @types.TerminalBackend::Tmux =>
+                  {
+                    program: "tmux",
+                    args: ["attach-session", "-t", session],
+                    workdir: None,
+                  }
+                @types.TerminalBackend::Zellij =>
+                  @workspace.zellij_attach_session(session)
+              },
+            ) catch {
+              _ => 0
+            },
+          )
+        }
+        return
       }
-    }
 
-    let session_alive = @exec.run(
-      init_session_exists_command(terminal_backend, session),
-    ) catch {
-      _ => 1
-    }
-    if session_alive == 0 {
-      if no_attach {
-        @io.write_stdout("Session \{session} already exists.\n")
+      ignore(
+        @exec.run({
+          program: "sh",
+          args: [
+            "-c", "mkdir -p .choir/agents/root && git branch --show-current > .choir/agents/root/.birth_branch 2>/dev/null || true",
+          ],
+          workdir: None,
+        }) catch {
+          _ => 0
+        },
+      )
+
+      @io.write_stdout("Creating session \{session}...\n")
+      match terminal_backend {
+        @types.TerminalBackend::Tmux => {
+          init_run_or_exit({
+            program: "tmux",
+            args: ["new-session", "-d", "-s", session, "-n", "Server"],
+            workdir: None,
+          })
+
+          init_run_or_exit({
+            program: "tmux",
+            args: ["send-keys", "-t", session + ":Server", server_cmd, "Enter"],
+            workdir: None,
+          })
+
+          init_run_or_exit({
+            program: "tmux",
+            args: ["new-window", "-t", session, "-n", "TL"],
+            workdir: None,
+          })
+          init_run_or_exit({
+            program: "tmux",
+            args: [
+              "send-keys",
+              "-t",
+              session + ":TL",
+              init_claude_launch_command(),
+              "Enter",
+            ],
+            workdir: None,
+          })
+        }
+        @types.TerminalBackend::Zellij => {
+          init_run_or_exit(@workspace.zellij_create_background_session(session))
+          init_run_or_exit(
+            @workspace.zellij_new_tab(
+              session, "Server", project_dir, server_cmd,
+            ),
+          )
+          init_run_or_exit(
+            @workspace.zellij_new_tab(
+              session,
+              "TL",
+              project_dir,
+              init_claude_launch_command(),
+            ),
+          )
+          ignore(
+            @exec.run({
+              program: "zellij",
+              args: ["--session", session, "action", "close-tab-by-id", "0"],
+              workdir: None,
+            }) catch {
+              _ => 0
+            },
+          )
+          ignore(
+            @exec.run({
+              program: "zellij",
+              args: ["--session", session, "action", "go-to-tab-name", "TL"],
+              workdir: None,
+            }) catch {
+              _ => 0
+            },
+          )
+        }
+      }
+
+      match config.companions_json {
+        Some(json) => {
+          let companions = @config.parse_companions_json(json)
+          for c in companions {
+            for
+              cmd in init_companion_commands(
+                project_dir, session, terminal_backend, config, current_branch, c,
+              ) {
+              ignore(@exec.run(cmd) catch { _ => 0 })
+            }
+            @io.write_stdout("Spawned companion: \{c.name}\n")
+          }
+        }
+        None => ()
+      }
+
+      @io.write_stdout("Waiting for server socket...\n")
+      if not(@io.wait_for_socket(config.listen_uds, 60)) {
+        @io.write_stdout("Warning: server socket not ready after 30s\n")
       } else {
-        @io.write_stdout("Attaching to existing session \{session}...\n")
+        @io.write_stdout("Server ready.\n")
+      }
+
+      if no_attach {
+        @io.write_stdout("Session \{session} ready.\n")
+      } else {
+        @io.write_stdout("Attaching to session \{session}...\n")
         ignore(
           @exec.run(
             match terminal_backend {
@@ -3397,169 +3531,55 @@ fn init_run() -> Unit raise {
           },
         )
       }
-      return
-    }
-
-    ignore(
-      @exec.run({
-        program: "sh",
-        args: [
-          "-c", "mkdir -p .choir/agents/root && git branch --show-current > .choir/agents/root/.birth_branch 2>/dev/null || true",
-        ],
-        workdir: None,
-      }) catch {
-        _ => 0
-      },
-    )
-
-    @io.write_stdout("Creating session \{session}...\n")
-    match terminal_backend {
-      @types.TerminalBackend::Tmux => {
-        init_run_or_exit({
-          program: "tmux",
-          args: ["new-session", "-d", "-s", session, "-n", "Server"],
-          workdir: None,
-        })
-
-        init_run_or_exit({
-          program: "tmux",
-          args: ["send-keys", "-t", session + ":Server", server_cmd, "Enter"],
-          workdir: None,
-        })
-
-        init_run_or_exit({
-          program: "tmux",
-          args: ["new-window", "-t", session, "-n", "TL"],
-          workdir: None,
-        })
-        init_run_or_exit({
-          program: "tmux",
-          args: [
-            "send-keys",
-            "-t",
-            session + ":TL",
-            init_claude_launch_command(),
-            "Enter",
-          ],
-          workdir: None,
-        })
-      }
-      @types.TerminalBackend::Zellij => {
-        init_run_or_exit(@workspace.zellij_create_background_session(session))
-        init_run_or_exit(
-          @workspace.zellij_new_tab(session, "Server", project_dir, server_cmd),
-        )
-        init_run_or_exit(
-          @workspace.zellij_new_tab(
-            session,
-            "TL",
-            project_dir,
-            init_claude_launch_command(),
-          ),
-        )
-        ignore(
-          @exec.run({
-            program: "zellij",
-            args: ["--session", session, "action", "close-tab-by-id", "0"],
-            workdir: None,
-          }) catch {
-            _ => 0
-          },
-        )
-        ignore(
-          @exec.run({
-            program: "zellij",
-            args: ["--session", session, "action", "go-to-tab-name", "TL"],
-            workdir: None,
-          }) catch {
-            _ => 0
-          },
-        )
-      }
-    }
-
-    match config.companions_json {
-      Some(json) => {
-        let companions = @config.parse_companions_json(json)
-        for c in companions {
-          for
-            cmd in init_companion_commands(
-              project_dir, session, terminal_backend, config, current_branch, c,
-            ) {
-            ignore(@exec.run(cmd) catch { _ => 0 })
-          }
-          @io.write_stdout("Spawned companion: \{c.name}\n")
-        }
-      }
-      None => ()
-    }
-
-    @io.write_stdout("Waiting for server socket...\n")
-    if not(@io.wait_for_socket(config.listen_uds, 60)) {
-      @io.write_stdout("Warning: server socket not ready after 30s\n")
-    } else {
-      @io.write_stdout("Server ready.\n")
-    }
-
-    if no_attach {
-      @io.write_stdout("Session \{session} ready.\n")
-    } else {
-      @io.write_stdout("Attaching to session \{session}...\n")
-      ignore(
-        @exec.run(
-          match terminal_backend {
-            @types.TerminalBackend::Tmux =>
-              {
-                program: "tmux",
-                args: ["attach-session", "-t", session],
-                workdir: None,
-              }
-            @types.TerminalBackend::Zellij =>
-              @workspace.zellij_attach_session(session)
-          },
-        ) catch {
-          _ => 0
-        },
-      )
-    }
+    })
   })
 }
 
 ///|
 fn stop_run() -> Unit raise {
-  @async.with_event_loop(async fn(_root) {
-    let config_content = @io.read_file(".choir/config.toml")
-    let config = match @config.parse_config(config_content) {
-      Ok(cfg) => cfg
-      Err(_) => @types.Config::default()
-    }
-    let session = config.terminal_session
-    let terminal_backend = config.terminal_backend
-    let pid_str = @io.read_file(".choir/server.pid").trim().to_string()
+  @async.run_async_main(async fn() {
+    @async.with_task_group(async fn(_root) {
+      let config_content = @io.read_file(".choir/config.toml")
+      let config = match @config.parse_config(config_content) {
+        Ok(cfg) => cfg
+        Err(_) => @types.Config::default()
+      }
+      let session = config.terminal_session
+      let terminal_backend = config.terminal_backend
+      let pid_str = @io.read_file(".choir/server.pid").trim().to_string()
 
-    if pid_str != "" {
-      @io.write_stdout("Stopping server (PID \{pid_str})...\n")
-      ignore(@exec.run(init_kill_server_pid_command(pid_str)) catch { _ => 0 })
-    }
+      if pid_str != "" {
+        @io.write_stdout("Stopping server (PID \{pid_str})...\n")
+        ignore(
+          @exec.run(init_kill_server_pid_command(pid_str)) catch {
+            _ => 0
+          },
+        )
+      }
 
-    let has_session = @exec.run(
-      init_session_exists_command(terminal_backend, session),
-    ) catch {
-      _ => 1
-    }
-    if has_session == 0 || terminal_backend == @types.TerminalBackend::Zellij {
-      @io.write_stdout("Killing session \{session}...\n")
+      let has_session = @exec.run(
+        init_session_exists_command(terminal_backend, session),
+      ) catch {
+        _ => 1
+      }
+      if has_session == 0 || terminal_backend == @types.TerminalBackend::Zellij {
+        @io.write_stdout("Killing session \{session}...\n")
+        ignore(
+          @exec.run(init_kill_session_command(terminal_backend, session)) catch {
+            _ => 0
+          },
+        )
+      } else {
+        @io.write_stdout("Session \{session} not running.\n")
+      }
+
       ignore(
-        @exec.run(init_kill_session_command(terminal_backend, session)) catch {
+        @exec.run(init_cleanup_server_artifacts_command()) catch {
           _ => 0
         },
       )
-    } else {
-      @io.write_stdout("Session \{session} not running.\n")
-    }
-
-    ignore(@exec.run(init_cleanup_server_artifacts_command()) catch { _ => 0 })
-    @io.write_stdout("Choir stopped.\n")
+      @io.write_stdout("Choir stopped.\n")
+    })
   })
 }
 
