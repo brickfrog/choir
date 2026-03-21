@@ -18,7 +18,11 @@ pub fn git_worktree_remove(path : String) -> Command {
 
 ///|
 pub fn git_push(branch : String) -> Command {
-  { program: "git", args: ["push", "-u", "origin", branch], workdir: None }
+  {
+    program: "git",
+    args: ["push", "--force-with-lease", "-u", "origin", branch],
+    workdir: None,
+  }
 }
 
 ///|

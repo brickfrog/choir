@@ -3,7 +3,9 @@ test "file_pr_commands produces correct git push and gh pr create" {
   let cmds = file_pr_commands("feature", "main")
   assert_eq(cmds.length(), 2)
   assert_eq(cmds[0].program, "git")
-  assert_eq(cmds[0].args, ["push", "-u", "origin", "feature"])
+  assert_eq(cmds[0].args, [
+    "push", "--force-with-lease", "-u", "origin", "feature",
+  ])
   assert_eq(cmds[1].args, [
     "pr", "create", "--base", "main", "--head", "feature", "--title", "feature",
     "--body", "",
