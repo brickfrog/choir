@@ -86,7 +86,9 @@ test "dispatch fork_wave defaults to gemini fanout" {
     )
     assert_true(res is Ok(_))
     let launch = recorded[recorded.length() - 1]
-    assert_true(launch.args[3].contains("gemini '--prompt-interactive'"))
+    assert_true(
+      launch.args[3].contains("gemini '--yolo' '--prompt-interactive'"),
+    )
   })
 }
 

@@ -140,7 +140,7 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_claude.workdir, Some("/path"))
 
   assert_eq(cmd_gemini.program, "gemini")
-  assert_eq(cmd_gemini.args, ["--prompt-interactive", "fix bugs"])
+  assert_eq(cmd_gemini.args, ["--yolo", "--prompt-interactive", "fix bugs"])
   assert_eq(cmd_gemini.workdir, Some("/path"))
 
   assert_eq(cmd_moon.program, "moon")
@@ -451,7 +451,9 @@ test "spawn_commands launch text does not duplicate workdir cd" {
   assert_true(cmds[8].args[3].contains("CHOIR_TERMINAL_TARGET='exo:feature-a'"))
   assert_true(cmds[8].args[3].contains("EXOMONAD_PARENT_AGENT='root'"))
   assert_true(
-    cmds[8].args[3].contains("gemini '--prompt-interactive' 'do something'"),
+    cmds[8].args[3].contains(
+      "gemini '--yolo' '--prompt-interactive' 'do something'",
+    ),
   )
   assert_eq(cmds[8].args[4], "C-m")
 }

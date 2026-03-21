@@ -64,7 +64,7 @@ pub fn agent_launch_command(
     Gemini =>
       {
         program: "gemini",
-        args: ["--prompt-interactive", spec.task],
+        args: ["--yolo", "--prompt-interactive", spec.task],
         workdir: Some(workspace_path),
       }
     MoonPilot =>

@@ -66,7 +66,9 @@ async fn mock_spawn_runner_server(
       "PATH='/tmp/server-proof/.choir/worktrees/leaf-a/.choir/bin':$PATH",
     ),
   )
-  assert_true(cmds[8].args[3].contains("gemini '--prompt-interactive'"))
+  assert_true(
+    cmds[8].args[3].contains("gemini '--yolo' '--prompt-interactive'"),
+  )
   assert_true(cmds[8].args[3].contains("## TASK\nreply READY"))
   assert_true(cmds[8].args[3].contains("## READ FIRST\n- AGENTS.md"))
   assert_true(cmds[8].args[3].contains("shell command on PATH"))
