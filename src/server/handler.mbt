@@ -468,7 +468,7 @@ pub async fn ServerState::process_poller_tick(
   timeout : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
-  let n = self.poller.tracked.size()
+  let n = self.poller.tracked.length()
   if n > 0 {
     println("[poller] tick: \{n} tracked PRs")
     for pr_number, tracked in self.poller.tracked {
