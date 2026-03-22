@@ -1,10 +1,10 @@
 import {
   "choir/src/io",
-  "choir/src/jsonutil",
   "moonbitlang/async",
   "moonbitlang/async/pipe",
   "moonbitlang/async/process",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
 }
 
 options(

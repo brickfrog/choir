@@ -524,9 +524,9 @@ async test "process_poller_tick_with drives PR review workflow and merge cleanup
     role: @types.Role::Dev,
     name: "file_pr",
     args: @types.RequestArgs::from_values({
-      "branch": @types.wire_string("main.leaf-1"),
-      "parent_branch": @types.wire_string("main"),
-      "caller_id": @types.wire_string("main.leaf-1"),
+      "branch": "main.leaf-1".to_json(),
+      "parent_branch": "main".to_json(),
+      "caller_id": "main.leaf-1".to_json(),
     }),
   }
   let file_res = @tools.handle_request(
@@ -650,9 +650,9 @@ async test "process_poller_tick_with drives PR review workflow and merge cleanup
     role: @types.Role::TL,
     name: "merge_pr",
     args: @types.RequestArgs::from_values({
-      "pr_number": @types.wire_int(52),
-      "parent_branch": @types.wire_string("main"),
-      "caller_id": @types.wire_string("parent-1"),
+      "pr_number": Int::to_json(52),
+      "parent_branch": "main".to_json(),
+      "caller_id": "parent-1".to_json(),
     }),
   }
   let merge_res = @tools.handle_request(

@@ -876,7 +876,10 @@ fn parse_leaf_cli_args(args : Array[String]) -> LeafCliArgs {
   while i < args.length() {
     let arg = args[i]
     if arg.has_prefix("--") {
-      let eq_idx = @jsonutil.find_substring(arg, "=")
+      let eq_idx = match arg.find("=") {
+        Some(idx) => idx
+        None => -1
+      }
       if eq_idx > 2 {
         let key = normalize_cli_key(arg[2:eq_idx].to_string() catch { _ => "" })
         let value = arg[eq_idx + 1:arg.length()].to_string() catch { _ => "" }
@@ -1186,9 +1189,7 @@ fn leaf_tool_run() -> Unit {
   let cli_args = parse_leaf_cli_args(args_tail(args, 3))
   if cli_args.flags.contains("help") {
     leaf_tool_emit(
-      @types.Response::ok_values({
-        "usage": @types.wire_string(leaf_tool_usage(tool)),
-      }),
+      @types.Response::ok_values({ "usage": leaf_tool_usage(tool).to_json() }),
     )
     return
   }
@@ -1249,24 +1250,13 @@ fn leaf_tool_run() -> Unit {
 
 ///|
 fn trusted_folders_json(existing : String, workspace : String) -> String {
-  let values = @jsonutil.parse_flat_json_object(existing)
-  values.set(workspace, "TRUST_FOLDER")
-  let buf = StringBuilder::new()
-  buf.write_char('{')
-  let mut first = true
-  values.each(fn(path, trust) {
-    if not(first) {
-      buf.write_char(',')
-    }
-    buf.write_char('"')
-    buf.write_string(choir_escape_json_string(path))
-    buf.write_string("\":\"")
-    buf.write_string(choir_escape_json_string(trust))
-    buf.write_char('"')
-    first = false
-  })
-  buf.write_char('}')
-  buf.to_string()
+  let json = @json.parse(existing) catch { _ => return "{}" }
+  let obj = match json {
+    Object(m) => m
+    _ => {}
+  }
+  obj.set(workspace, "TRUST_FOLDER".to_json())
+  obj.to_json().stringify()
 }
 
 ///|
@@ -1340,20 +1330,19 @@ async fn capture_stdout_main(program : String, args : Array[String]) -> String {
 }
 
 ///|
-fn zellij_json_bool(value : @jsonutil.JsonValueText?) -> Bool {
+fn zellij_json_bool(value : Json?) -> Bool {
   match value {
-    Some(@jsonutil.JsonValueText::Raw("true")) => true
-    Some(@jsonutil.JsonValueText::String("true")) => true
+    Some(True) => true
     _ => false
   }
 }
 
 ///|
-fn zellij_json_string(value : @jsonutil.JsonValueText?) -> String {
+fn zellij_json_string(value : Json?) -> String {
   match value {
-    Some(@jsonutil.JsonValueText::String(v)) => v
-    Some(@jsonutil.JsonValueText::Raw(v)) => v
-    None => ""
+    Some(String(v)) => v
+    Some(Number(_, repr=Some(r))) => r
+    _ => ""
   }
 }
 
@@ -1363,7 +1352,10 @@ async fn zellij_list_panes(session : String) -> Array[ZellijPaneRef] {
     "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
   ])
   let panes = []
-  for pane in @jsonutil.parse_json_object_array_text(output) {
+  let json = @json.parse(output) catch { _ => [].to_json() }
+  guard json is Array(arr) else { return panes }
+  for item in arr {
+    guard item is Object(pane) else { continue }
     panes.push({
       id: zellij_json_string(pane.get("id")),
       tab_id: zellij_json_string(pane.get("tab_id")),
@@ -1675,10 +1667,14 @@ test "mcp request loop returns InputClosed after successful task call" {
       server_reads = server_reads + 1
       @transport.format_response(
         @types.Response::ok_values({
-          "status": @types.wire_string("ok"),
-          "task": @types.wire_raw(
-            "{\"id\":\"loop-task\",\"title\":\"Loop Task\",\"status\":\"todo\",\"assignee\":\"\",\"notes\":\"\"}",
-          ),
+          "status": "ok".to_json(),
+          "task": {
+            "id": "loop-task".to_json(),
+            "title": "Loop Task".to_json(),
+            "status": "todo".to_json(),
+            "assignee": "".to_json(),
+            "notes": "".to_json(),
+          }.to_json(),
         }),
       )
     },
@@ -1810,9 +1806,10 @@ test "trusted_folders_json preserves existing paths and adds workspace" {
   let updated = trusted_folders_json(
     "{\"/existing\":\"TRUST_FOLDER\"}", "/new/worktree",
   )
-  let parsed = @jsonutil.parse_flat_json_object(updated)
-  assert_eq(parsed.get("/existing"), Some("TRUST_FOLDER"))
-  assert_eq(parsed.get("/new/worktree"), Some("TRUST_FOLDER"))
+  let json = @json.parse(updated) catch { _ => ().to_json() }
+  guard json is Object(parsed) else { panic() }
+  assert_eq(parsed.get("/existing"), Some("TRUST_FOLDER".to_json()))
+  assert_eq(parsed.get("/new/worktree"), Some("TRUST_FOLDER".to_json()))
 }
 
 ///|

@@ -80,8 +80,8 @@ async test "dispatch file_pr returns Ok" {
       assert_eq(m.get("pr_number"), Some("22"))
       assert_eq(m.get("pr_url"), Some("https://example.test/pr/feat"))
       assert_eq(m.get("tracked"), Some("false"))
-      assert_eq(m.get_value("pr_number"), Some(@types.WireValue::Raw("22")))
-      assert_eq(m.get_value("tracked"), Some(@types.WireValue::Raw("false")))
+      assert_eq(m.get_json("pr_number"), Some((22).to_json()))
+      assert_eq(m.get_json("tracked"), Some(false.to_json()))
     }
     Err(_) => assert_true(false)
   }
@@ -104,7 +104,7 @@ async test "dispatch file_pr auto_tracks returned pr number" {
   match res {
     Ok(m) => {
       assert_eq(m.get("tracked"), Some("true"))
-      assert_eq(m.get_value("tracked"), Some(@types.WireValue::Raw("true")))
+      assert_eq(m.get_json("tracked"), Some(true.to_json()))
     }
     Err(_) => assert_true(false)
   }
@@ -222,10 +222,7 @@ async test "dispatch track_pr stores tracked PR" {
       assert_eq(m.get("branch"), Some("agent-22"))
       assert_eq(m.get("parent_branch"), Some("main"))
       assert_eq(m.get("pr_url"), Some(""))
-      assert_eq(
-        m.get_value("status"),
-        Some(@types.WireValue::String("tracked")),
-      )
+      assert_eq(m.get_json("status"), Some("tracked".to_json()))
     }
     Err(_) => assert_true(false)
   }

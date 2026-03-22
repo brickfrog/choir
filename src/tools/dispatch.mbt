@@ -1,4 +1,12 @@
 ///|
+/// Parse a pre-serialized JSON string into a Json value, or Null on failure.
+fn json_parse_raw(s : String) -> Json {
+  @json.parse(s) catch {
+    _ => ().to_json()
+  }
+}
+
+///|
 pub(all) struct ToolCall {
   role : @types.Role
   name : String
@@ -7,38 +15,47 @@ pub(all) struct ToolCall {
 
 ///|
 struct ToolArgs {
-  values : Map[String, @types.WireValue]
+  values : Map[String, Json]
 } derive(Show)
 
 ///|
 fn tool_args_from_map(args : Map[String, String]) -> ToolArgs {
-  let values : Map[String, @types.WireValue] = {}
-  args.each(fn(k, v) { values.set(k, @types.WireValue::String(v)) })
+  let values : Map[String, Json] = {}
+  args.each(fn(k, v) { values.set(k, String::to_json(v)) })
   { values, }
 }
 
 ///|
 fn tool_args_from_request_args(args : @types.RequestArgs) -> ToolArgs {
-  { values: args.to_value_map() }
+  { values: args.to_json_map() }
 }
 
 ///|
 fn tool_args_get(args : ToolArgs, key : String) -> String? {
-  match tool_args_get_value(args, key) {
-    Some(value) => Some(value.to_compat_string())
+  match args.values.get(key) {
+    Some(String(s)) => Some(s)
+    Some(json) => Some(json.stringify())
     None => None
   }
 }
 
 ///|
-fn tool_args_get_value(args : ToolArgs, key : String) -> @types.WireValue? {
+fn tool_args_get_json(args : ToolArgs, key : String) -> Json? {
   args.values.get(key)
 }
 
 ///|
 fn tool_args_to_map(args : ToolArgs) -> Map[String, String] {
   let converted : Map[String, String] = {}
-  args.values.each(fn(k, v) { converted.set(k, v.to_compat_string()) })
+  args.values.each(fn(k, v) {
+    converted.set(
+      k,
+      match v {
+        String(s) => s
+        _ => v.stringify()
+      },
+    )
+  })
   converted
 }
 
@@ -94,15 +111,13 @@ pub async fn dispatch(
           }
           let refreshed = reg.upsert(agent)
           @types.Response::ok_values({
-            "status": @types.wire_string("registered"),
-            "agent_id": @types.wire_string(register_args.agent_id),
-            "refreshed": @types.wire_bool(refreshed),
+            "status": String::to_json("registered"),
+            "agent_id": String::to_json(register_args.agent_id),
+            "refreshed": Bool::to_json(refreshed),
           })
         }
         None =>
-          @types.Response::ok_values({
-            "status": @types.wire_string("registered"),
-          })
+          @types.Response::ok_values({ "status": String::to_json("registered") })
       }
     ToolRequest::ForkWave(fork_wave_args) => {
       let agent_ids = StringBuilder::new()
@@ -185,9 +200,9 @@ pub async fn dispatch(
       }
       if spawned_count == 0 && skipped_count > 0 {
         return @types.Response::ok_values({
-          "status": @types.wire_string("already_running"),
-          "count": @types.wire_int(0),
-          "skipped_ids": @types.wire_string(skipped_ids.to_string()),
+          "status": String::to_json("already_running"),
+          "count": Int::to_json(0),
+          "skipped_ids": String::to_json(skipped_ids.to_string()),
         })
       }
       match run_strict(runner, cmds) {
@@ -205,16 +220,13 @@ pub async fn dispatch(
               @phase.TLEvent::ChildSpawned(slug),
             )
           }
-          let result : Map[String, @types.WireValue] = {
-            "status": @types.wire_string("spawned"),
-            "count": @types.wire_int(spawned_count),
-            "agent_ids": @types.wire_string(agent_ids.to_string()),
+          let result : Map[String, Json] = {
+            "status": String::to_json("spawned"),
+            "count": Int::to_json(spawned_count),
+            "agent_ids": String::to_json(agent_ids.to_string()),
           }
           if skipped_count > 0 {
-            result.set(
-              "skipped_ids",
-              @types.wire_string(skipped_ids.to_string()),
-            )
+            result.set("skipped_ids", String::to_json(skipped_ids.to_string()))
           }
           @types.Response::ok_values(result)
         }
@@ -225,16 +237,17 @@ pub async fn dispatch(
       let session_dir = project_dir + "/.choir/sessions/" + session_args.name
       let context_path = session_dir + "/context.json"
       let created_sec = @poller.now_sec()
-      let context_json = "{\"name\":\"" +
-        escape_json_string(session_args.name) +
-        "\",\"created_sec\":\"" +
-        created_sec.to_string() +
-        "\"}"
+      let context_json = {
+          "name": session_args.name.to_json(),
+          "created_sec": created_sec.to_json(),
+        }
+        .to_json()
+        .stringify()
       if @io.write_file_sync(context_path, context_json) {
         @types.Response::ok_values({
-          "status": @types.wire_string("ok"),
-          "session_dir": @types.wire_string(session_dir),
-          "name": @types.wire_string(session_args.name),
+          "status": String::to_json("ok"),
+          "session_dir": String::to_json(session_dir),
+          "name": String::to_json(session_args.name),
         })
       } else {
         @types.Response::Err("failed to create session: " + session_args.name)
@@ -275,10 +288,10 @@ pub async fn dispatch(
                 @phase.DevEvent::PRCreated(pr.number, pr.url, branch),
               )
               @types.Response::ok_values({
-                "status": @types.wire_string("pr_created"),
-                "pr_number": @types.wire_int(pr.number),
-                "pr_url": @types.wire_string(pr.url),
-                "tracked": @types.wire_bool(tracked),
+                "status": String::to_json("pr_created"),
+                "pr_number": Int::to_json(pr.number),
+                "pr_url": String::to_json(pr.url),
+                "tracked": Bool::to_json(tracked),
               })
             }
           }
@@ -325,9 +338,7 @@ pub async fn dispatch(
                 }
                 None => ()
               }
-              @types.Response::ok_values({
-                "status": @types.wire_string("merged"),
-              })
+              @types.Response::ok_values({ "status": String::to_json("merged") })
             }
             Err(e) => @types.Response::Err(e)
           }
@@ -354,9 +365,7 @@ pub async fn dispatch(
                 }
                 None => ()
               }
-              @types.Response::ok_values({
-                "status": @types.wire_string("merged"),
-              })
+              @types.Response::ok_values({ "status": String::to_json("merged") })
             }
             Err(e) => @types.Response::Err(e)
           }
@@ -375,10 +384,10 @@ pub async fn dispatch(
           )
           ignore(ps.write_state_file(project_dir))
           @types.Response::ok_values({
-            "status": @types.wire_string("tracked"),
-            "branch": @types.wire_string(track_pr_args.branch),
-            "parent_branch": @types.wire_string(track_pr_args.parent_branch),
-            "pr_url": @types.wire_string(track_pr_args.pr_url),
+            "status": String::to_json("tracked"),
+            "branch": String::to_json(track_pr_args.branch),
+            "parent_branch": String::to_json(track_pr_args.parent_branch),
+            "pr_url": String::to_json(track_pr_args.pr_url),
           })
         }
         None => @types.Response::Err("poller unavailable")
@@ -402,7 +411,7 @@ pub async fn dispatch(
                     @phase.DevEvent::NotifyParentSuccess(notify_args.message),
                   )
                   @types.Response::ok_values({
-                    "status": @types.wire_string("notified"),
+                    "status": String::to_json("notified"),
                   })
                 }
                 Err(e) => @types.Response::Err(e)
@@ -416,9 +425,7 @@ pub async fn dispatch(
             notify_args.caller_id,
             @phase.DevEvent::NotifyParentSuccess(notify_args.message),
           )
-          @types.Response::ok_values({
-            "status": @types.wire_string("notified"),
-          })
+          @types.Response::ok_values({ "status": String::to_json("notified") })
         }
       }
     ToolRequest::SendMessage(send_args) =>
@@ -435,7 +442,7 @@ pub async fn dispatch(
               match execute_delivery(delivery, runner) {
                 Ok(_) =>
                   @types.Response::ok_values({
-                    "status": @types.wire_string("sent"),
+                    "status": String::to_json("sent"),
                   })
                 Err(e) => @types.Response::Err(e)
               }
@@ -443,14 +450,14 @@ pub async fn dispatch(
             Err(e) => @types.Response::Err(e.message())
           }
         None =>
-          @types.Response::ok_values({ "status": @types.wire_string("sent") })
+          @types.Response::ok_values({ "status": String::to_json("sent") })
       }
     ToolRequest::Shutdown(shutdown_args) => {
       let caller_id = match shutdown_args.caller_id {
         Some(v) => v
         None =>
           return @types.Response::ok_values({
-            "status": @types.wire_string("shutdown"),
+            "status": String::to_json("shutdown"),
           }) // best-effort
       }
       let mut warning : String? = None
@@ -538,11 +545,9 @@ pub async fn dispatch(
         }
         None => ()
       }
-      let result : Map[String, @types.WireValue] = {
-        "status": @types.wire_string("shutdown"),
-      }
+      let result : Map[String, Json] = { "status": String::to_json("shutdown") }
       match warning {
-        Some(msg) => result.set("warning", @types.wire_string(msg))
+        Some(msg) => result.set("warning", String::to_json(msg))
         None => ()
       }
       @types.Response::ok_values(result)
@@ -579,8 +584,8 @@ pub async fn dispatch(
             @poller.now_sec(),
           )
           @types.Response::ok_values({
-            "acquired": @types.wire_bool(acquired),
-            "queue_position": @types.wire_int(queue_position),
+            "acquired": Bool::to_json(acquired),
+            "queue_position": Int::to_json(queue_position),
           })
         }
         None => @types.Response::Err("mutex registry unavailable")
@@ -593,8 +598,8 @@ pub async fn dispatch(
           let next_waiter = reg.release(mutex_args.name, mutex_args.agent_id)
           let released = holder == Some(mutex_args.agent_id) || was_waiting
           @types.Response::ok_values({
-            "released": @types.wire_bool(released),
-            "next_waiter": @types.wire_string(next_waiter.unwrap_or("")),
+            "released": Bool::to_json(released),
+            "next_waiter": String::to_json(next_waiter.unwrap_or("")),
           })
         }
         None => @types.Response::Err("mutex registry unavailable")
@@ -604,8 +609,8 @@ pub async fn dispatch(
         Some(reg) => {
           let (holder, queue) = reg.status(name_args.name)
           @types.Response::ok_values({
-            "holder": @types.wire_string(holder.unwrap_or("")),
-            "queue_length": @types.wire_int(queue.length()),
+            "holder": String::to_json(holder.unwrap_or("")),
+            "queue_length": Int::to_json(queue.length()),
           })
         }
         None => @types.Response::Err("mutex registry unavailable")
@@ -615,8 +620,8 @@ pub async fn dispatch(
       match read_task_file(project_dir, id_args.id) {
         Ok(task) =>
           @types.Response::ok_values({
-            "status": @types.wire_string("ok"),
-            "task": @types.wire_raw(task_file_to_json(task)),
+            "status": String::to_json("ok"),
+            "task": task_to_json(task),
           })
         Err(e) => @types.Response::Err(e)
       }
@@ -626,9 +631,9 @@ pub async fn dispatch(
         return match read_task_file(project_dir, task_args.id) {
           Ok(task) =>
             @types.Response::ok_values({
-              "status": @types.wire_string("ok"),
-              "created": @types.wire_bool(false),
-              "task": @types.wire_raw(task_file_to_json(task)),
+              "status": String::to_json("ok"),
+              "created": Bool::to_json(false),
+              "task": task_to_json(task),
             })
           Err(e) => @types.Response::Err(e)
         }
@@ -640,13 +645,13 @@ pub async fn dispatch(
         assignee: task_args.assignee,
         notes: task_args.notes,
       }
-      let content = task_file_to_json(task)
+      let task_json = task_to_json(task)
       let path = task_file_path(project_dir, task_args.id)
-      if @io.write_file_sync(path, content) {
+      if @io.write_file_sync(path, task_json.stringify()) {
         @types.Response::ok_values({
-          "status": @types.wire_string("ok"),
-          "created": @types.wire_bool(true),
-          "task": @types.wire_raw(content),
+          "status": String::to_json("ok"),
+          "created": Bool::to_json(true),
+          "task": task_json,
         })
       } else {
         @types.Response::Err("failed to write task file: " + path)
@@ -663,12 +668,12 @@ pub async fn dispatch(
         assignee: update_args.assignee.unwrap_or(task.assignee),
         notes: update_args.notes.unwrap_or(task.notes),
       }
-      let content = task_file_to_json(updated)
+      let updated_json = task_to_json(updated)
       let path = task_file_path(project_dir, update_args.id)
-      if @io.write_file_sync(path, content) {
+      if @io.write_file_sync(path, updated_json.stringify()) {
         @types.Response::ok_values({
-          "status": @types.wire_string("ok"),
-          "task": @types.wire_raw(content),
+          "status": String::to_json("ok"),
+          "task": updated_json,
         })
       } else {
         @types.Response::Err("failed to write task file: " + path)
@@ -699,11 +704,11 @@ pub async fn dispatch(
       match run_strict(runner, cmds) {
         Ok(_) =>
           @types.Response::ok_values({
-            "status": @types.wire_string("spawned"),
-            "agent_id": @types.wire_string(
+            "status": String::to_json("spawned"),
+            "agent_id": String::to_json(
               @workspace.branch_name(spawn_args.parent_branch, spawn_args.slug),
             ),
-            "slug": @types.wire_string(spawn_args.slug),
+            "slug": String::to_json(spawn_args.slug),
           })
         Err(e) => @types.Response::Err(e)
       }
@@ -729,12 +734,12 @@ pub async fn dispatch(
       match run_strict(runner, cmds) {
         Ok(_) =>
           @types.Response::ok_values({
-            "status": @types.wire_string("spawned"),
-            "agent_id": @types.wire_string(
+            "status": String::to_json("spawned"),
+            "agent_id": String::to_json(
               @workspace.branch_name(spawn_args.parent_branch, spawn_args.slug),
             ),
-            "slug": @types.wire_string(spawn_args.slug),
-            "host": @types.wire_string(spawn_args.ssh_target),
+            "slug": String::to_json(spawn_args.slug),
+            "host": String::to_json(spawn_args.ssh_target),
           })
         Err(e) => @types.Response::Err(e)
       }
@@ -763,7 +768,7 @@ pub async fn dispatch(
       )
       match run_strict(runner, cmds) {
         Ok(_) =>
-          @types.Response::ok_values({ "status": @types.wire_string("spawned") })
+          @types.Response::ok_values({ "status": String::to_json("spawned") })
         Err(e) => @types.Response::Err(e)
       }
     }
@@ -780,8 +785,8 @@ pub async fn dispatch(
       let path = kv_file_path(project_dir, key)
       if @io.write_file_sync(path, value) {
         @types.Response::ok_values({
-          "status": @types.wire_string("ok"),
-          "id": @types.wire_string(id),
+          "status": String::to_json("ok"),
+          "id": String::to_json(id),
         })
       } else {
         @types.Response::Err("failed to write reply: " + id)

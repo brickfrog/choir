@@ -28,22 +28,6 @@ pub(all) struct Span {
 } derive(Show)
 
 ///|
-fn escape_json_string(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
 fn normalize_hex_id(value : String, width : Int) -> String {
   if value.length() >= width {
     value[value.length() - width:].to_string() catch {
@@ -122,37 +106,20 @@ pub fn LogEntry::format(self : LogEntry) -> String {
 
 ///|
 pub fn Span::format(self : Span) -> String {
-  let agent = match self.agent_id {
-    Some(a) => a
-    None => ""
+  {
+    "type": "span".to_json(),
+    "name": self.name.to_json(),
+    "trace_id": self.trace_id.to_json(),
+    "span_id": self.span_id.to_json(),
+    "agent_id": self.agent_id.unwrap_or("").to_json(),
+    "role": self.role.unwrap_or("").to_json(),
+    "start_sec": self.start_sec.to_json(),
+    "end_sec": self.end_sec.to_json(),
+    "status": self.status.to_json(),
+    "error": self.error_msg.unwrap_or("").to_json(),
   }
-  let role = match self.role {
-    Some(r) => r
-    None => ""
-  }
-  let err = match self.error_msg {
-    Some(e) => e
-    None => ""
-  }
-  "{\"type\":\"span\",\"name\":\"" +
-  escape_json_string(self.name) +
-  "\",\"trace_id\":\"" +
-  escape_json_string(self.trace_id) +
-  "\",\"span_id\":\"" +
-  escape_json_string(self.span_id) +
-  "\",\"agent_id\":\"" +
-  escape_json_string(agent) +
-  "\",\"role\":\"" +
-  escape_json_string(role) +
-  "\",\"start_sec\":" +
-  self.start_sec.to_string() +
-  ",\"end_sec\":" +
-  self.end_sec.to_string() +
-  ",\"status\":\"" +
-  escape_json_string(self.status) +
-  "\",\"error\":\"" +
-  escape_json_string(err) +
-  "\"}"
+  .to_json()
+  .stringify()
 }
 
 ///|
@@ -161,51 +128,49 @@ pub fn Span::emit(self : Span) -> Unit {
 }
 
 ///|
+fn otlp_string_attr(key : String, value : String) -> Json {
+  {
+    "key": key.to_json(),
+    "value": { "stringValue": value.to_json() }.to_json(),
+  }.to_json()
+}
+
+///|
 pub fn Span::to_otlp_json(self : Span) -> String {
   let trace_id = normalize_hex_id(self.trace_id, 32)
   let span_id = normalize_hex_id(self.span_id, 16)
   let start_unix_nano = (self.start_sec * 1000000000L).to_string()
   let end_unix_nano = (self.end_sec * 1000000000L).to_string()
-  let status_code = if self.status == "ok" { "1" } else { "2" }
-  let attrs = []
+  let status_code : Int = if self.status == "ok" { 1 } else { 2 }
+  let attrs : Array[Json] = []
   match self.agent_id {
-    Some(agent_id) =>
-      attrs.push(
-        "{\"key\":\"agent_id\",\"value\":{\"stringValue\":\"" +
-        escape_json_string(agent_id) +
-        "\"}}",
-      )
+    Some(agent_id) => attrs.push(otlp_string_attr("agent_id", agent_id))
     None => ()
   }
   match self.role {
-    Some(role) =>
-      attrs.push(
-        "{\"key\":\"role\",\"value\":{\"stringValue\":\"" +
-        escape_json_string(role) +
-        "\"}}",
-      )
+    Some(role) => attrs.push(otlp_string_attr("role", role))
     None => ()
   }
-  let attrs_json = if attrs.is_empty() {
-    "[]"
-  } else {
-    "[" + attrs.join(",") + "]"
+  let span_obj : Map[String, Json] = {
+    "traceId": trace_id.to_json(),
+    "spanId": span_id.to_json(),
+    "name": self.name.to_json(),
+    "startTimeUnixNano": start_unix_nano.to_json(),
+    "endTimeUnixNano": end_unix_nano.to_json(),
+    "status": { "code": status_code.to_json() }.to_json(),
+    "attributes": attrs.to_json(),
   }
-  "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"choir\"}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"choir/server\"},\"spans\":[{\"traceId\":\"" +
-  escape_json_string(trace_id) +
-  "\",\"spanId\":\"" +
-  escape_json_string(span_id) +
-  "\",\"name\":\"" +
-  escape_json_string(self.name) +
-  "\",\"startTimeUnixNano\":\"" +
-  escape_json_string(start_unix_nano) +
-  "\",\"endTimeUnixNano\":\"" +
-  escape_json_string(end_unix_nano) +
-  "\",\"status\":{\"code\":" +
-  status_code +
-  "},\"attributes\":" +
-  attrs_json +
-  "}]}]}]}"
+  let scope_span : Map[String, Json] = {
+    "scope": { "name": "choir/server".to_json() }.to_json(),
+    "spans": [span_obj.to_json()].to_json(),
+  }
+  let resource_span : Map[String, Json] = {
+    "resource": {
+      "attributes": [otlp_string_attr("service.name", "choir")].to_json(),
+    }.to_json(),
+    "scopeSpans": [scope_span.to_json()].to_json(),
+  }
+  { "resourceSpans": [resource_span.to_json()].to_json() }.to_json().stringify()
 }
 
 ///|

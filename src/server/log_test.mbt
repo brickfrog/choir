@@ -69,8 +69,8 @@ test "span format emits structured json" {
   assert_true(line.contains("\"span_id\":\"span-1\""))
   assert_true(line.contains("\"agent_id\":\"agent-1\""))
   assert_true(line.contains("\"role\":\"Dev\""))
-  assert_true(line.contains("\"start_sec\":10"))
-  assert_true(line.contains("\"end_sec\":11"))
+  assert_true(line.contains("\"start_sec\":\"10\""))
+  assert_true(line.contains("\"end_sec\":\"11\""))
   assert_true(line.contains("\"status\":\"ok\""))
   assert_true(line.contains("\"error\":\"\""))
 }

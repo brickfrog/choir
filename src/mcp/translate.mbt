@@ -13,62 +13,46 @@ struct CatalogTool {
 } derive(Show, Eq)
 
 ///|
-fn json_string(s : String) -> String {
-  "\"" + escape_json_string(s) + "\""
-}
-
-///|
-fn schema_prop_json(prop : SchemaProp) -> JsonValue {
-  JsonValue::Object({
-    "type": JsonValue::String("string"),
-    "description": JsonValue::String(prop.desc),
-  })
-}
-
-///|
-fn json_string_array(items : Array[String]) -> String {
-  let buf = StringBuilder::new()
-  buf.write_char('[')
-  for i = 0; i < items.length(); i = i + 1 {
-    if i > 0 {
-      buf.write_char(',')
-    }
-    buf.write_string(json_string(items[i]))
+fn schema_prop_json(prop : SchemaProp) -> Json {
+  let m : Map[String, Json] = {
+    "type": "string".to_json(),
+    "description": prop.desc.to_json(),
   }
-  buf.write_char(']')
-  buf.to_string()
+  m.to_json()
 }
 
 ///|
-fn schema_json(
-  props : Array[SchemaProp],
-  required : Array[String],
-) -> JsonValue {
-  let properties : Map[String, JsonValue] = {}
+fn schema_json(props : Array[SchemaProp], required : Array[String]) -> Json {
+  let properties : Map[String, Json] = {}
   for prop in props {
     properties.set(prop.name, schema_prop_json(prop))
   }
-  JsonValue::Object({
-    "type": JsonValue::String("object"),
-    "properties": JsonValue::Object(properties),
-    "required": JsonValue::Raw(json_string_array(required)),
-  })
+  let req_arr : Array[Json] = required.map(fn(s) { s.to_json() })
+  let m : Map[String, Json] = {
+    "type": "object".to_json(),
+    "properties": properties.to_json(),
+    "required": req_arr.to_json(),
+  }
+  m.to_json()
 }
 
 ///|
-fn tool_json(tool : CatalogTool) -> String {
-  json_value_to_json(
-    JsonValue::Object({
-      "name": JsonValue::String(tool.name),
-      "description": JsonValue::String(tool.description),
-      "inputSchema": schema_json(tool.props, tool.required),
-    }),
-  )
+fn tool_json(tool : CatalogTool) -> Json {
+  let m : Map[String, Json] = {
+    "name": tool.name.to_json(),
+    "description": tool.description.to_json(),
+    "inputSchema": schema_json(tool.props, tool.required),
+  }
+  m.to_json()
 }
 
 ///|
-fn text_content_json(text : String) -> String {
-  "[{\"type\":\"text\",\"text\":" + json_string(text) + "}]"
+fn text_content_json(text : String) -> Json {
+  let entry : Map[String, Json] = {
+    "type": "text".to_json(),
+    "text": text.to_json(),
+  }
+  [entry.to_json()].to_json()
 }
 
 ///|
@@ -93,12 +77,12 @@ pub fn to_internal_request(
       message: "unsupported method: " + rpc.req_method,
     })
   }
-  let params = match rpc.params {
-    Some(JsonValue::Object(p)) => p
-    _ => ({} : Map[String, JsonValue])
+  let params : Map[String, Json] = match rpc.params {
+    Some(Object(p)) => p
+    _ => {}
   }
   let name = match params.get("name") {
-    Some(JsonValue::String(n)) => n
+    Some(String(n)) => n
     None =>
       return Err({
         code: err_invalid_params,
@@ -110,22 +94,27 @@ pub fn to_internal_request(
         message: "invalid 'name' in params",
       })
   }
-  let args = match params.get("arguments") {
-    Some(JsonValue::String(json_str)) => parse_flat_json_object(json_str)
-    Some(JsonValue::Raw(json_str)) => parse_flat_json_object(json_str)
-    None => {}
-    Some(_) => {}
+  let args_json : Map[String, Json] = match params.get("arguments") {
+    Some(Object(obj)) => obj
+    Some(String(json_str)) => {
+      // Legacy: arguments passed as a JSON string
+      let flat = parse_flat_json_object(json_str)
+      let converted : Map[String, Json] = {}
+      flat.each(fn(k, v) { converted.set(k, v.to_json()) })
+      converted
+    }
+    _ => {}
   }
-  // Always set caller_id from connection identity — agents cannot self-identify
+  // Always set caller_id from connection identity -- agents cannot self-identify
   match default_caller_id {
-    Some(id) => args.set("caller_id", id)
+    Some(id) => args_json.set("caller_id", id.to_json())
     None => ()
   }
   Ok({
     req_method: rpc.req_method,
     role,
     name,
-    args: @types.RequestArgs::new(args),
+    args: @types.RequestArgs::from_values(args_json),
   })
 }
 
@@ -140,14 +129,14 @@ fn choir_mcp_instructions() -> String {
     "Delegate all implementation to Gemini leaf agents via fork_wave. ",
   )
   buf.write_string(
-    "Never edit files directly — read code to understand it, then delegate. ",
+    "Never edit files directly -- read code to understand it, then delegate. ",
   )
   buf.write_string(
     "For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). ",
   )
   buf.write_string("For identical parallel work, pass task + count. ")
   buf.write_string(
-    "spawn_worker is research-only — workers cannot edit files or file PRs. ",
+    "spawn_worker is research-only -- workers cannot edit files or file PRs. ",
   )
   buf.write_string(
     "After spawning leaves, stop and wait for notify_parent messages. ",
@@ -161,21 +150,18 @@ fn choir_mcp_instructions() -> String {
 
 ///|
 pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
-  {
-    jsonrpc: "2.0",
-    id,
-    result: Some(
-      JsonValue::Object({
-        "protocolVersion": JsonValue::String("2024-11-05"),
-        "capabilities": JsonValue::Raw("{\"tools\":{}}"),
-        "serverInfo": JsonValue::Raw(
-          "{\"name\":\"choir\",\"version\":\"1.0.0\"}",
-        ),
-        "instructions": JsonValue::String(choir_mcp_instructions()),
-      }),
-    ),
-    error: None,
+  let capabilities : Map[String, Json] = { "tools": {}.to_json() }
+  let server_info : Map[String, Json] = {
+    "name": "choir".to_json(),
+    "version": "1.0.0".to_json(),
   }
+  let result : Map[String, Json] = {
+    "protocolVersion": "2024-11-05".to_json(),
+    "capabilities": capabilities.to_json(),
+    "serverInfo": server_info.to_json(),
+    "instructions": choir_mcp_instructions().to_json(),
+  }
+  { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
 }
 
 ///|
@@ -218,7 +204,7 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "task", desc: "Shared task for all leaves (use with count)" },
         {
           name: "tasks",
-          desc: "JSON array of per-leaf task strings — each leaf gets exactly one. Count is inferred from array length. Mutually exclusive with task+count",
+          desc: "JSON array of per-leaf task strings -- each leaf gets exactly one. Count is inferred from array length. Mutually exclusive with task+count",
         },
         {
           name: "parent_branch",
@@ -436,22 +422,9 @@ fn tool_defs() -> Array[CatalogTool] {
 /// Create a JSON-RPC response with the list of available tools.
 pub fn tools_list_response(id : JsonRpcId) -> JsonRpcResponse {
   let defs = tool_defs()
-  let buf = StringBuilder::new()
-  buf.write_char('[')
-  for i = 0; i < defs.length(); i = i + 1 {
-    if i > 0 {
-      buf.write_char(',')
-    }
-    buf.write_string(tool_json(defs[i]))
-  }
-  buf.write_char(']')
-  let tools_json = buf.to_string()
-  {
-    jsonrpc: "2.0",
-    id,
-    result: Some(JsonValue::Object({ "tools": JsonValue::Raw(tools_json) })),
-    error: None,
-  }
+  let tools_arr : Array[Json] = defs.map(fn(d) { tool_json(d) })
+  let result : Map[String, Json] = { "tools": tools_arr.to_json() }
+  { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
 }
 
 ///|
@@ -462,28 +435,16 @@ pub fn from_internal_response(
 ) -> JsonRpcResponse {
   match resp.ok_payload() {
     Some(data) => {
-      let payload : Map[String, JsonValue] = {}
-      data.each_value(fn(k, v) {
-        match v {
-          @types.WireValue::String(text) =>
-            payload.set(k, JsonValue::String(text))
-          @types.WireValue::Raw(text) => payload.set(k, JsonValue::Raw(text))
-        }
-      })
-      let text = json_value_to_json(JsonValue::Object(payload))
+      let payload : Map[String, Json] = {}
+      data.each_json(fn(k, v) { payload.set(k, v) })
+      let text = payload.to_json().stringify()
       let content = text_content_json(text)
-      {
-        jsonrpc: "2.0",
-        id,
-        result: Some(
-          JsonValue::Object({
-            "content": JsonValue::Raw(content),
-            "structuredContent": JsonValue::Object(payload),
-            "isError": JsonValue::Raw("false"),
-          }),
-        ),
-        error: None,
+      let result : Map[String, Json] = {
+        "content": content,
+        "structuredContent": payload.to_json(),
+        "isError": false.to_json(),
       }
+      { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
     }
     None => {
       let msg = match resp.error_message() {
@@ -491,20 +452,13 @@ pub fn from_internal_response(
         None => ""
       }
       let content = text_content_json(msg)
-      {
-        jsonrpc: "2.0",
-        id,
-        result: Some(
-          JsonValue::Object({
-            "content": JsonValue::Raw(content),
-            "structuredContent": JsonValue::Object({
-              "error": JsonValue::String(msg),
-            }),
-            "isError": JsonValue::Raw("true"),
-          }),
-        ),
-        error: None,
+      let structured : Map[String, Json] = { "error": msg.to_json() }
+      let result : Map[String, Json] = {
+        "content": content,
+        "structuredContent": structured.to_json(),
+        "isError": true.to_json(),
       }
+      { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
     }
   }
 }

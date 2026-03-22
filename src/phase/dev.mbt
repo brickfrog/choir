@@ -86,90 +86,61 @@ pub fn dev_can_exit(phase : DevPhase) -> StopCheckResult {
 
 ///|
 pub fn dev_phase_to_json(phase : DevPhase) -> String {
-  match phase {
-    Spawned => "{\"phase\":\"Spawned\"}"
-    Working => "{\"phase\":\"Working\"}"
+  let json : Json = match phase {
+    Spawned => { "phase": "Spawned".to_json() }.to_json()
+    Working => { "phase": "Working".to_json() }.to_json()
     PRFiled(n, url) =>
-      "{\"phase\":\"PRFiled\",\"pr_number\":" +
-      n.to_string() +
-      ",\"url\":\"" +
-      url +
-      "\"}"
+      {
+        "phase": "PRFiled".to_json(),
+        "pr_number": n.to_json(),
+        "url": url.to_json(),
+      }.to_json()
     UnderReview(n, r) =>
-      "{\"phase\":\"UnderReview\",\"pr_number\":" +
-      n.to_string() +
-      ",\"round\":" +
-      r.to_string() +
-      "}"
+      {
+        "phase": "UnderReview".to_json(),
+        "pr_number": n.to_json(),
+        "round": r.to_json(),
+      }.to_json()
     ChangesRequested(n) =>
-      "{\"phase\":\"ChangesRequested\",\"pr_number\":" + n.to_string() + "}"
+      { "phase": "ChangesRequested".to_json(), "pr_number": n.to_json() }.to_json()
     Approved(n) =>
-      "{\"phase\":\"Approved\",\"pr_number\":" + n.to_string() + "}"
-    Done => "{\"phase\":\"Done\"}"
-    Failed(reason) => "{\"phase\":\"Failed\",\"reason\":\"" + reason + "\"}"
+      { "phase": "Approved".to_json(), "pr_number": n.to_json() }.to_json()
+    Done => { "phase": "Done".to_json() }.to_json()
+    Failed(reason) =>
+      { "phase": "Failed".to_json(), "reason": reason.to_json() }.to_json()
   }
+  json.stringify()
 }
 
 ///|
-pub fn dev_phase_from_json(json : String) -> DevPhase? {
-  let parsed = @jsonutil.parse_flat_json_value_object(json)
-  match parsed.get("phase") {
-    Some(@jsonutil.JsonValueText::String(t)) =>
-      match t {
-        "Spawned" => Some(Spawned)
-        "Working" => Some(Working)
-        "PRFiled" => {
-          let pr = match parsed.get("pr_number") {
-            Some(@jsonutil.JsonValueText::Raw(c)) => parse_int(c)
-            _ => None
-          }
-          let url = match parsed.get("url") {
-            Some(@jsonutil.JsonValueText::String(u)) => Some(u)
-            _ => None
-          }
-          match (pr, url) {
-            (Some(p), Some(u)) => Some(PRFiled(p, u))
-            _ => None
-          }
-        }
-        "UnderReview" => {
-          let pr = match parsed.get("pr_number") {
-            Some(@jsonutil.JsonValueText::Raw(c)) => parse_int(c)
-            _ => None
-          }
-          let round = match parsed.get("round") {
-            Some(@jsonutil.JsonValueText::Raw(c)) => parse_int(c)
-            _ => None
-          }
-          match (pr, round) {
-            (Some(p), Some(r)) => Some(UnderReview(p, r))
-            _ => None
-          }
-        }
-        "ChangesRequested" =>
-          match parsed.get("pr_number") {
-            Some(@jsonutil.JsonValueText::Raw(c)) =>
-              match parse_int(c) {
-                Some(p) => Some(ChangesRequested(p))
-                None => None
-              }
-            _ => None
-          }
-        "Approved" =>
-          match parsed.get("pr_number") {
-            Some(@jsonutil.JsonValueText::Raw(c)) =>
-              match parse_int(c) {
-                Some(p) => Some(Approved(p))
-                None => None
-              }
-            _ => None
-          }
-        "Done" => Some(Done)
-        "Failed" =>
-          match parsed.get("reason") {
-            Some(@jsonutil.JsonValueText::String(r)) => Some(Failed(r))
-            _ => None
-          }
+pub fn dev_phase_from_json(json_str : String) -> DevPhase? {
+  let json = @json.parse(json_str) catch { _ => return None }
+  guard json is Object(obj) else { return None }
+  match obj.get("phase") {
+    Some(String("Spawned")) => Some(Spawned)
+    Some(String("Working")) => Some(Working)
+    Some(String("PRFiled")) => {
+      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
+      guard obj.get("url") is Some(String(u)) else { return None }
+      Some(PRFiled(n.to_int(), u))
+    }
+    Some(String("UnderReview")) => {
+      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
+      guard obj.get("round") is Some(Number(r, ..)) else { return None }
+      Some(UnderReview(n.to_int(), r.to_int()))
+    }
+    Some(String("ChangesRequested")) => {
+      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
+      Some(ChangesRequested(n.to_int()))
+    }
+    Some(String("Approved")) => {
+      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
+      Some(Approved(n.to_int()))
+    }
+    Some(String("Done")) => Some(Done)
+    Some(String("Failed")) =>
+      match obj.get("reason") {
+        Some(String(r)) => Some(Failed(r))
         _ => None
       }
     _ => None

@@ -67,8 +67,8 @@ test "build_request format" {
   let req = @plugin.build_request({
     tool: "my_tool",
     args: @types.RequestArgs::from_values({
-      "param": @types.WireValue::String("val"),
-      "count": @types.WireValue::Raw("3"),
+      "param": "val".to_json(),
+      "count": (3).to_json(),
     }),
     agent_id: "agent1",
     role: "tl",
@@ -88,8 +88,7 @@ test "parse_response ok" {
       assert_eq(parsed.ok_field("status"), Some("done"))
       assert_eq(parsed.ok_field("branch"), Some("feat-x"))
       match parsed.ok_payload() {
-        Some(fields) =>
-          assert_eq(fields.get_value("count"), Some(@types.WireValue::Raw("3")))
+        Some(fields) => assert_eq(fields.get_json("count"), Some((3).to_json()))
         None => fail("expected payload")
       }
     }

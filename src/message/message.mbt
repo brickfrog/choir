@@ -37,34 +37,18 @@ pub(all) enum DeliveryMethod {
 } derive(Show, Eq)
 
 ///|
-fn escape_json_string(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
 pub fn teams_inbox_json(
   sender : String,
   content : String,
   status : String,
 ) -> String {
-  "{\"from\":\"" +
-  escape_json_string(sender) +
-  "\",\"content\":\"" +
-  escape_json_string(content) +
-  "\",\"status\":\"" +
-  escape_json_string(status) +
-  "\"}"
+  {
+    "from": sender.to_json(),
+    "content": content.to_json(),
+    "status": status.to_json(),
+  }
+  .to_json()
+  .stringify()
 }
 
 ///|

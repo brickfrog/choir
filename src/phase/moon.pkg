@@ -1,4 +1,4 @@
 import {
   "choir/src/io",
-  "choir/src/jsonutil",
+  "moonbitlang/core/json",
 }

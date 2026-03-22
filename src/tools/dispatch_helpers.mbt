@@ -195,72 +195,54 @@ pub async fn execute_delivery(
 }
 
 ///|
-fn escape_json_string(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
+fn json_get_string(obj : Map[String, Json], key : String) -> String? {
+  match obj.get(key) {
+    Some(String(v)) => Some(v)
+    _ => None
   }
-  buf.to_string()
 }
 
 ///|
 fn parse_task_file(content : String) -> Result[TaskFile, String] {
-  let fields = @jsonutil.parse_flat_json_value_object(content)
-  if fields.length() == 0 {
-    return Err("invalid task json")
+  let json = @json.parse(content) catch { _ => return Err("invalid task json") }
+  guard json is Object(fields) else { return Err("invalid task json") }
+  let id = match json_get_string(fields, "id") {
+    Some(v) => v
+    None => return Err("missing or invalid id")
   }
-  let id = match fields.get("id") {
-    Some(@jsonutil.JsonValueText::String(v)) => v
-    Some(@jsonutil.JsonValueText::Raw(_)) => return Err("id must be a string")
-    None => return Err("missing id")
+  let title = match json_get_string(fields, "title") {
+    Some(v) => v
+    None => return Err("missing or invalid title")
   }
-  let title = match fields.get("title") {
-    Some(@jsonutil.JsonValueText::String(v)) => v
-    Some(@jsonutil.JsonValueText::Raw(_)) =>
-      return Err("title must be a string")
-    None => return Err("missing title")
+  let status = match json_get_string(fields, "status") {
+    Some(v) => v
+    None => return Err("missing or invalid status")
   }
-  let status = match fields.get("status") {
-    Some(@jsonutil.JsonValueText::String(v)) => v
-    Some(@jsonutil.JsonValueText::Raw(_)) =>
-      return Err("status must be a string")
-    None => return Err("missing status")
+  let assignee = match json_get_string(fields, "assignee") {
+    Some(v) => v
+    None => return Err("missing or invalid assignee")
   }
-  let assignee = match fields.get("assignee") {
-    Some(@jsonutil.JsonValueText::String(v)) => v
-    Some(@jsonutil.JsonValueText::Raw(_)) =>
-      return Err("assignee must be a string")
-    None => return Err("missing assignee")
-  }
-  let notes = match fields.get("notes") {
-    Some(@jsonutil.JsonValueText::String(v)) => v
-    Some(@jsonutil.JsonValueText::Raw(_)) =>
-      return Err("notes must be a string")
-    None => return Err("missing notes")
+  let notes = match json_get_string(fields, "notes") {
+    Some(v) => v
+    None => return Err("missing or invalid notes")
   }
   Ok({ id, title, status, assignee, notes })
 }
 
 ///|
+fn task_to_json(task : TaskFile) -> Json {
+  {
+    "id": task.id.to_json(),
+    "title": task.title.to_json(),
+    "status": task.status.to_json(),
+    "assignee": task.assignee.to_json(),
+    "notes": task.notes.to_json(),
+  }.to_json()
+}
+
+///|
 fn task_file_to_json(task : TaskFile) -> String {
-  "{\"id\":\"" +
-  escape_json_string(task.id) +
-  "\",\"title\":\"" +
-  escape_json_string(task.title) +
-  "\",\"status\":\"" +
-  escape_json_string(task.status) +
-  "\",\"assignee\":\"" +
-  escape_json_string(task.assignee) +
-  "\",\"notes\":\"" +
-  escape_json_string(task.notes) +
-  "\"}"
+  task_to_json(task).stringify()
 }
 
 ///|
@@ -355,9 +337,7 @@ async fn handle_task_list(
     Ok(paths) => paths
     Err(e) => return @types.Response::Err(e)
   }
-  let buf = StringBuilder::new()
-  buf.write_char('[')
-  let mut first = true
+  let tasks : Array[Json] = []
   for path in task_paths {
     let content = @io.read_file(path)
     if content == "" {
@@ -368,16 +348,11 @@ async fn handle_task_list(
       Err(e) =>
         return @types.Response::Err("invalid task file at " + path + ": " + e)
     }
-    if not(first) {
-      buf.write_char(',')
-    }
-    buf.write_string(task_file_to_json(task))
-    first = false
+    tasks.push(task_to_json(task))
   }
-  buf.write_char(']')
   @types.Response::ok_values({
-    "status": @types.wire_string("ok"),
-    "tasks": @types.wire_raw(buf.to_string()),
+    "status": "ok".to_json(),
+    "tasks": tasks.to_json(),
   })
 }
 
@@ -402,8 +377,8 @@ async fn handle_kv_list(
     let status = statuses[statuses.length() - 1]
     if status == 3 {
       return @types.Response::ok_values({
-        "status": @types.wire_string("ok"),
-        "keys": @types.wire_raw("[]"),
+        "status": "ok".to_json(),
+        "keys": [].to_json(),
       })
     }
     if status != 0 {
@@ -420,9 +395,7 @@ async fn handle_kv_list(
   }
   ignore(runner([cleanup_cmd]) catch { _ => [] })
   let prefix = project_dir + "/.choir/kv/"
-  let buf = StringBuilder::new()
-  buf.write_char('[')
-  let mut first = true
+  let keys : Array[Json] = []
   for line in content.split("\n") {
     let path = line.to_string().trim().to_string()
     if path == "" {
@@ -433,17 +406,10 @@ async fn handle_kv_list(
       return @types.Response::Err("invalid kv file path: " + path)
     }
     let key = path[prefix.length():].to_string() catch { _ => "" }
-    if not(first) {
-      buf.write_char(',')
-    }
-    buf.write_char('"')
-    buf.write_string(escape_json_string(key))
-    buf.write_char('"')
-    first = false
+    keys.push(key.to_json())
   }
-  buf.write_char(']')
   @types.Response::ok_values({
-    "status": @types.wire_string("ok"),
-    "keys": @types.wire_raw(buf.to_string()),
+    "status": "ok".to_json(),
+    "keys": keys.to_json(),
   })
 }

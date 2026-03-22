@@ -2,43 +2,29 @@
 /// Parse the internal wire format JSON request.
 /// Format: { "method": "...", "role": "...", "name": "...", "args": { ... } }
 pub fn parse_request(data : String) -> Result[@types.Request, String] {
-  let method_val = match get_field(data, "method") {
-    Some(m) => m
-    None => return Err("missing field: method")
+  let json = @json.parse(data) catch { _ => return Err("invalid JSON") }
+  guard json is Object(obj) else { return Err("expected JSON object") }
+  let method_val = match obj.get("method") {
+    Some(String(m)) => m
+    _ => return Err("missing field: method")
   }
-  let role_str = match get_field(data, "role") {
-    Some(r) => r
-    None => return Err("missing field: role")
+  let role = match obj.get("role") {
+    Some(String("root")) => @types.Role::Root
+    Some(String("tl")) => @types.Role::TL
+    Some(String("dev")) => @types.Role::Dev
+    Some(String("worker")) => @types.Role::Worker
+    Some(String(r)) => return Err("invalid role: \{r}")
+    _ => return Err("missing field: role")
   }
-  let role = match role_str {
-    "root" => @types.Role::Root
-    "tl" => @types.Role::TL
-    "dev" => @types.Role::Dev
-    "worker" => @types.Role::Worker
-    _ => return Err("invalid role: \{role_str}")
+  let name = match obj.get("name") {
+    Some(String(n)) => n
+    _ => return Err("missing field: name")
   }
-  let name = match get_field(data, "name") {
-    Some(n) => n
-    None => return Err("missing field: name")
+  let args = match obj.get("args") {
+    Some(Object(a)) => @types.RequestArgs::from_values(a)
+    _ => @types.RequestArgs::from_values({})
   }
-  let args = parse_args(data)
   Ok({ req_method: method_val, role, name, args })
-}
-
-///|
-fn escape_json_string(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
-  }
-  buf.to_string()
 }
 
 ///|
@@ -61,36 +47,17 @@ fn agent_type_to_wire_string(agent_type : @types.AgentType) -> String {
 }
 
 ///|
-fn wire_value_to_json(value : @types.WireValue) -> String {
-  match value {
-    @types.WireValue::String(v) => "\"" + escape_json_string(v) + "\""
-    @types.WireValue::Raw(v) => v
-  }
-}
-
-///|
 pub fn format_request(req : @types.Request) -> String {
-  let buf = StringBuilder::new()
-  buf.write_string("{\"method\":\"")
-  buf.write_string(escape_json_string(req.req_method))
-  buf.write_string("\",\"role\":\"")
-  buf.write_string(role_to_wire_string(req.role))
-  buf.write_string("\",\"name\":\"")
-  buf.write_string(escape_json_string(req.name))
-  buf.write_string("\",\"args\":{")
-  let mut first = true
-  req.args.each_value(fn(k, v) {
-    if not(first) {
-      buf.write_char(',')
-    }
-    buf.write_char('"')
-    buf.write_string(escape_json_string(k))
-    buf.write_string("\":")
-    buf.write_string(wire_value_to_json(v))
-    first = false
-  })
-  buf.write_string("}}")
-  buf.to_string()
+  let args_map : Map[String, Json] = {}
+  req.args.each_json(fn(k, v) { args_map.set(k, v) })
+  {
+    "method": req.req_method.to_json(),
+    "role": role_to_wire_string(req.role).to_json(),
+    "name": req.name.to_json(),
+    "args": args_map.to_json(),
+  }
+  .to_json()
+  .stringify()
 }
 
 ///|
@@ -169,106 +136,44 @@ pub fn format_augmented_request(
 }
 
 ///|
-fn get_field(data : String, field : String) -> String? {
-  match @jsonutil.get_json_field_value(data, field) {
-    Some(@jsonutil.JsonValueText::String(value)) => Some(value)
-    _ => None
-  }
-}
-
-///|
-fn parse_value_map(
-  data : String,
-  key : String,
-) -> Map[String, @types.WireValue] {
-  match @jsonutil.get_json_field_value(data, key) {
-    Some(@jsonutil.JsonValueText::Raw(value)) => {
-      let parsed : Map[String, @types.WireValue] = {}
-      @jsonutil.parse_flat_json_value_object(value).each(fn(k, v) {
-        match v {
-          @jsonutil.JsonValueText::String(text) =>
-            parsed.set(k, @types.WireValue::String(text))
-          @jsonutil.JsonValueText::Raw(text) =>
-            parsed.set(k, @types.WireValue::Raw(text))
-        }
-      })
-      parsed
-    }
-    _ => {}
-  }
-}
-
-///|
-fn parse_args(data : String) -> @types.RequestArgs {
-  @types.RequestArgs::from_values(parse_value_map(data, "args"))
-}
-
-///|
 /// Parse the internal wire format JSON response.
 /// Format: { "ok": true, "result": { ... } }
 /// or: { "ok": false, "error": "..." }
 pub fn parse_response(data : String) -> Result[@types.Response, String] {
-  let ok_true_idx = @jsonutil.find_substring(data, "\"ok\": true")
-  let ok_true_idx_no_space = if ok_true_idx == -1 {
-    @jsonutil.find_substring(data, "\"ok\":true")
-  } else {
-    ok_true_idx
+  let json = @json.parse(data) catch { _ => return Err("invalid JSON") }
+  guard json is Object(obj) else { return Err("expected JSON object") }
+  match obj.get("ok") {
+    Some(True) =>
+      match obj.get("result") {
+        Some(Object(result)) => Ok(@types.Response::ok_values(result))
+        _ => Ok(@types.Response::ok_values({}))
+      }
+    Some(False) =>
+      match obj.get("error") {
+        Some(String(msg)) => Ok(@types.Response::Err(msg))
+        _ => Err("missing field: error")
+      }
+    _ => Err("could not determine response status (ok: true/false)")
   }
-
-  if ok_true_idx_no_space != -1 {
-    let result = parse_value_map(data, "result")
-    return Ok(@types.Response::ok_values(result))
-  }
-
-  let ok_false_idx = @jsonutil.find_substring(data, "\"ok\": false")
-  let ok_false_idx_no_space = if ok_false_idx == -1 {
-    @jsonutil.find_substring(data, "\"ok\":false")
-  } else {
-    ok_false_idx
-  }
-
-  if ok_false_idx_no_space != -1 {
-    let err_msg = match get_field(data, "error") {
-      Some(e) => e
-      None => return Err("missing field: error")
-    }
-    return Ok(@types.Response::Err(err_msg))
-  }
-
-  Err("could not determine response status (ok: true/false)")
 }
 
 ///|
 /// Serialize the internal wire format response.
-/// Format: { "ok": true, "result": { ... } }
-/// or: { "ok": false, "error": "..." }
 pub fn format_response(resp : @types.Response) -> String {
-  let buf = StringBuilder::new()
   match resp.ok_payload() {
     Some(result) => {
-      buf.write_string("{\"ok\": true, \"result\": {")
-      let mut first = true
-      result.each_value(fn(k, v) {
-        if not(first) {
-          buf.write_string(", ")
-        }
-        buf.write_char('"')
-        buf.write_string(escape_json_string(k))
-        buf.write_string("\": ")
-        buf.write_string(wire_value_to_json(v))
-        first = false
-      })
-      buf.write_string("}}")
+      let result_map : Map[String, Json] = {}
+      result.each_json(fn(k, v) { result_map.set(k, v) })
+      { "ok": true.to_json(), "result": result_map.to_json() }
+      .to_json()
+      .stringify()
     }
     None => {
       let err = match resp.error_message() {
         Some(msg) => msg
         None => ""
       }
-      buf.write_string("{\"ok\": false, \"error\": \"")
-      buf.write_string(escape_json_string(err))
-      buf.write_string("\"}")
+      { "ok": false.to_json(), "error": err.to_json() }.to_json().stringify()
     }
   }
-  buf.to_string()
 }

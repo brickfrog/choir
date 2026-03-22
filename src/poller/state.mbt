@@ -4,31 +4,6 @@ pub(all) struct PollerState {
 }
 
 ///|
-fn parse_int_value(s : String) -> Int? {
-  if s == "" {
-    return None
-  }
-  let mut res = 0
-  for c in s {
-    if c >= '0' && c <= '9' {
-      res = res * 10 + (c.to_int() - '0'.to_int())
-    } else {
-      return None
-    }
-  }
-  Some(res)
-}
-
-///|
-fn parse_bool_value(s : String) -> Bool? {
-  match s {
-    "true" => Some(true)
-    "false" => Some(false)
-    _ => None
-  }
-}
-
-///|
 fn review_state_name(review : ReviewState) -> String {
   match review {
     None_ => "none"
@@ -95,54 +70,65 @@ fn tracked_pr_json(tracked : TrackedPR) -> String {
 }
 
 ///|
-fn json_text_value(
-  fields : Map[String, @jsonutil.JsonValueText],
-  key : String,
-) -> String? {
+fn json_field_string(fields : Map[String, Json], key : String) -> String? {
   match fields.get(key) {
-    Some(@jsonutil.JsonValueText::String(value)) => Some(value)
-    Some(@jsonutil.JsonValueText::Raw(value)) => Some(value)
-    None => None
+    Some(String(value)) => Some(value)
+    _ => None
   }
 }
 
 ///|
-fn parse_tracked_pr(
-  fields : Map[String, @jsonutil.JsonValueText],
-) -> TrackedPR? {
-  let pr_number = match json_text_value(fields, "pr_number") {
-    Some(value) =>
-      match parse_int_value(value) {
-        Some(parsed) => parsed
-        None => return None
-      }
-    None => return None
+fn json_field_int(fields : Map[String, Json], key : String) -> Int? {
+  match fields.get(key) {
+    Some(Number(n, ..)) => Some(n.to_int())
+    _ => None
   }
-  let agent_id = match json_text_value(fields, "agent_id") {
+}
+
+///|
+fn json_field_int64(fields : Map[String, Json], key : String) -> Int64? {
+  match fields.get(key) {
+    Some(Number(n, ..)) => Some(n.to_int64())
+    _ => None
+  }
+}
+
+///|
+fn json_field_bool(fields : Map[String, Json], key : String) -> Bool? {
+  match fields.get(key) {
+    Some(True) => Some(true)
+    Some(False) => Some(false)
+    _ => None
+  }
+}
+
+///|
+fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
+  let pr_number = match json_field_int(fields, "pr_number") {
     Some(value) => value
     None => return None
   }
-  let branch = match json_text_value(fields, "branch") {
+  let agent_id = match json_field_string(fields, "agent_id") {
     Some(value) => value
     None => return None
   }
-  let parent_branch = match json_text_value(fields, "parent_branch") {
+  let branch = match json_field_string(fields, "branch") {
     Some(value) => value
     None => return None
   }
-  let pr_url = match json_text_value(fields, "pr_url") {
+  let parent_branch = match json_field_string(fields, "parent_branch") {
     Some(value) => value
     None => return None
   }
-  let first_seen = match json_text_value(fields, "first_seen") {
-    Some(value) =>
-      match parse_int_value(value) {
-        Some(parsed) => parsed.to_int64()
-        None => return None
-      }
+  let pr_url = match json_field_string(fields, "pr_url") {
+    Some(value) => value
     None => return None
   }
-  let last_review_state = match json_text_value(fields, "last_review_state") {
+  let first_seen = match json_field_int64(fields, "first_seen") {
+    Some(value) => value
+    None => return None
+  }
+  let last_review_state = match json_field_string(fields, "last_review_state") {
     Some(value) =>
       match parse_review_state_name(value) {
         Some(parsed) => parsed
@@ -150,36 +136,25 @@ fn parse_tracked_pr(
       }
     None => return None
   }
-  let last_review_bodies = match json_text_value(fields, "last_review_bodies") {
+  let last_review_bodies = match
+    json_field_string(fields, "last_review_bodies") {
     Some(value) => value
     None => return None
   }
-  let last_sha = match json_text_value(fields, "last_sha") {
+  let last_sha = match json_field_string(fields, "last_sha") {
     Some(value) => value
     None => return None
   }
-  let notified_parent = match json_text_value(fields, "notified_parent") {
-    Some(value) =>
-      match parse_bool_value(value) {
-        Some(parsed) => parsed
-        None => return None
-      }
+  let notified_parent = match json_field_bool(fields, "notified_parent") {
+    Some(value) => value
     None => return None
   }
-  let last_ci_failed = match json_text_value(fields, "last_ci_failed") {
-    Some(value) =>
-      match parse_bool_value(value) {
-        Some(parsed) => parsed
-        None => return None
-      }
+  let last_ci_failed = match json_field_bool(fields, "last_ci_failed") {
+    Some(value) => value
     None => return None
   }
-  let last_timeout_at = match json_text_value(fields, "last_timeout_at") {
-    Some(value) =>
-      match parse_int_value(value) {
-        Some(parsed) => parsed.to_int64()
-        None => 0L
-      }
+  let last_timeout_at = match json_field_int64(fields, "last_timeout_at") {
+    Some(value) => value
     None => 0L
   }
   Some({
@@ -291,10 +266,19 @@ pub fn PollerState::to_json(self : PollerState) -> String {
 ///|
 pub fn parse_tracked_prs_json(content : String) -> Array[TrackedPR] {
   let tracked = []
-  for fields in @jsonutil.parse_json_object_array_text(content) {
-    match parse_tracked_pr(fields) {
-      Some(parsed) => tracked.push(parsed)
-      None => ()
+  let json = @json.parse(content) catch { _ => return tracked }
+  let arr = match json {
+    Json::Array(items) => items
+    _ => return tracked
+  }
+  for item in arr {
+    match item {
+      Json::Object(fields) =>
+        match parse_tracked_pr(fields) {
+          Some(parsed) => tracked.push(parsed)
+          None => ()
+        }
+      _ => ()
     }
   }
   tracked

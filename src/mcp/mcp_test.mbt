@@ -1,15 +1,14 @@
 ///|
 test "translate tools/call to internal request" {
+  let params : Map[String, Json] = {
+    "name": "fork_wave".to_json(),
+    "arguments": { "task": "build feature".to_json() }.to_json(),
+  }
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
     id: Some(Number(1)),
     req_method: method_tools_call,
-    params: Some(
-      @mcp.JsonValue::Object({
-        "name": @mcp.JsonValue::String("fork_wave"),
-        "arguments": @mcp.JsonValue::Raw("{\"task\":\"build feature\"}"),
-      }),
-    ),
+    params: Some(params.to_json()),
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::TL)
   match result {
@@ -58,9 +57,10 @@ test "tools_list_response" {
   let rpc = @mcp.tools_list_response(Number(20))
   assert_eq(rpc.id, Number(20))
   match rpc.result {
-    Some(@mcp.JsonValue::Object(res)) =>
+    Some(Object(res)) =>
       match res.get("tools") {
-        Some(@mcp.JsonValue::Raw(t)) => {
+        Some(Array(tools)) => {
+          let t = tools.to_json().stringify()
           assert_true(t.contains("fork_wave"))
           assert_true(t.contains("file_pr"))
           assert_true(t.contains("merge_pr"))
@@ -94,7 +94,7 @@ test "tools_list_response" {
           assert_true(t.contains("research or review only"))
           assert_true(t.contains("non-editing support agents"))
         }
-        _ => fail("expected raw tools json")
+        _ => fail("expected tools array")
       }
     None => fail("expected result")
     Some(_) => fail("expected object result")
@@ -107,9 +107,7 @@ test "translate missing name returns error" {
     jsonrpc: "2.0",
     id: Some(Number(3)),
     req_method: method_tools_call,
-    params: Some(
-      @mcp.JsonValue::Object({ "task": @mcp.JsonValue::String("something") }),
-    ),
+    params: Some({ "task": "something".to_json() }.to_json()),
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::Dev)
   assert_true(result is Err(_))
@@ -123,12 +121,11 @@ test "from_internal_response Ok" {
   assert_eq(rpc.jsonrpc, "2.0")
   assert_eq(rpc.id, Number(5))
   match rpc.result {
-    Some(@mcp.JsonValue::Object(result)) =>
+    Some(Object(result)) =>
       match result.get("structuredContent") {
-        Some(@mcp.JsonValue::Object(structured)) =>
+        Some(Object(structured)) =>
           match structured.get("url") {
-            Some(@mcp.JsonValue::String(url)) =>
-              assert_eq(url, "https://github.com/pr/1")
+            Some(String(url)) => assert_eq(url, "https://github.com/pr/1")
             _ => fail("expected structured url")
           }
         _ => fail("expected structuredContent object")
@@ -141,28 +138,31 @@ test "from_internal_response Ok" {
 ///|
 test "from_internal_response preserves raw primitives" {
   let resp = @types.Response::ok_values({
-    "tracked": @types.WireValue::Raw("true"),
-    "pr_number": @types.WireValue::Raw("22"),
+    "tracked": true.to_json(),
+    "pr_number": 22.0.to_json(),
   })
   let rpc = @mcp.from_internal_response(Number(55), resp)
   match rpc.result {
-    Some(@mcp.JsonValue::Object(result)) => {
+    Some(Object(result)) => {
       match result.get("content") {
-        Some(@mcp.JsonValue::Raw(content)) => {
-          assert_true(content.contains("\\\"tracked\\\":true"))
-          assert_true(content.contains("\\\"pr_number\\\":22"))
+        Some(Array(content_arr)) => {
+          let content = content_arr.to_json().stringify()
+          assert_true(content.contains("tracked"))
+          assert_true(content.contains("true"))
+          assert_true(content.contains("pr_number"))
+          assert_true(content.contains("22"))
         }
-        _ => fail("expected raw content")
+        _ => fail("expected content array")
       }
       match result.get("structuredContent") {
-        Some(@mcp.JsonValue::Object(structured)) => {
+        Some(Object(structured)) => {
           match structured.get("tracked") {
-            Some(@mcp.JsonValue::Raw(value)) => assert_eq(value, "true")
-            _ => fail("expected structured tracked raw bool")
+            Some(True) => ()
+            _ => fail("expected structured tracked true")
           }
           match structured.get("pr_number") {
-            Some(@mcp.JsonValue::Raw(value)) => assert_eq(value, "22")
-            _ => fail("expected structured pr_number raw int")
+            Some(Number(n, ..)) => assert_eq(n.to_int(), 22)
+            _ => fail("expected structured pr_number 22")
           }
         }
         _ => fail("expected structuredContent")
@@ -180,21 +180,22 @@ test "from_internal_response Err" {
   assert_eq(rpc.id, Number(6))
   assert_true(rpc.error is None)
   match rpc.result {
-    Some(@mcp.JsonValue::Object(result)) => {
+    Some(Object(result)) => {
       match result.get("isError") {
-        Some(@mcp.JsonValue::Raw(value)) => assert_eq(value, "true")
-        _ => fail("expected isError raw bool")
+        Some(True) => ()
+        _ => fail("expected isError true")
       }
       match result.get("content") {
-        Some(@mcp.JsonValue::Raw(content)) =>
+        Some(Array(content_arr)) => {
+          let content = content_arr.to_json().stringify()
           assert_true(content.contains("tool not found"))
+        }
         _ => fail("expected content")
       }
       match result.get("structuredContent") {
-        Some(@mcp.JsonValue::Object(structured)) =>
+        Some(Object(structured)) =>
           match structured.get("error") {
-            Some(@mcp.JsonValue::String(msg)) =>
-              assert_eq(msg, "tool not found")
+            Some(String(msg)) => assert_eq(msg, "tool not found")
             _ => fail("expected structured error message")
           }
         _ => fail("expected structuredContent")

@@ -41,14 +41,14 @@ test "parse valid jsonrpc request with tools/call" {
       assert_eq(req.id, Some(Number(1)))
       assert_eq(req.req_method, "tools/call")
       match req.params {
-        Some(@mcp.JsonValue::Object(params)) =>
+        Some(Object(params)) =>
           match (params.get("name"), params.get("arguments")) {
-            (
-              Some(@mcp.JsonValue::String(name)),
-              Some(@mcp.JsonValue::Raw(arguments)),
-            ) => {
+            (Some(String(name)), Some(Object(arguments))) => {
               assert_eq(name, "echo")
-              assert_eq(arguments, "{\"text\":\"hello\"}")
+              match arguments.get("text") {
+                Some(String(text)) => assert_eq(text, "hello")
+                _ => fail("missing text in arguments")
+              }
             }
             _ => fail("missing params")
           }
@@ -80,18 +80,20 @@ test "parse request with string id" {
 
 ///|
 test "translate numeric and boolean MCP arguments into internal string args" {
+  let args : Map[String, Json] = {
+    "task": "build feature".to_json(),
+    "count": 3.0.to_json(),
+    "fork_session": true.to_json(),
+  }
+  let params : Map[String, Json] = {
+    "name": "fork_wave".to_json(),
+    "arguments": args.to_json(),
+  }
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
     id: Some(Number(12)),
     req_method: method_tools_call,
-    params: Some(
-      @mcp.JsonValue::Object({
-        "name": @mcp.JsonValue::String("fork_wave"),
-        "arguments": @mcp.JsonValue::Raw(
-          "{\"task\":\"build feature\",\"count\":3,\"fork_session\":true}",
-        ),
-      }),
-    ),
+    params: Some(params.to_json()),
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::TL)
   match result {
@@ -161,9 +163,7 @@ test "response_to_bytes produces valid result" {
   let resp : JsonRpcResponse = {
     jsonrpc: "2.0",
     id: Number(1),
-    result: Some(
-      @mcp.JsonValue::Object({ "status": @mcp.JsonValue::String("ok") }),
-    ),
+    result: Some({ "status": "ok".to_json() }.to_json()),
     error: None,
   }
   let bytes = response_to_bytes(resp)

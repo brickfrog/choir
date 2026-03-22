@@ -1,46 +1,59 @@
 ///|
-pub(all) enum WireValue {
-  String(String)
-  Raw(String)
-} derive(Show, Eq)
-
-///|
-pub fn WireValue::to_compat_string(self : WireValue) -> String {
-  match self {
-    String(value) => value
-    Raw(value) => value
+/// Extract a compat string from a Json value.
+/// String → inner text (unquoted), everything else → .stringify().
+fn json_to_compat_string(json : Json) -> String {
+  match json {
+    String(s) => s
+    _ => json.stringify()
   }
 }
 
 ///|
 /// Internal wire format request (UDS/TCP, not MCP JSON-RPC).
 pub(all) struct RequestArgs {
-  values : Map[String, WireValue]
+  values : Map[String, Json]
 } derive(Show)
 
 ///|
 pub fn RequestArgs::new(values : Map[String, String]) -> RequestArgs {
-  let converted : Map[String, WireValue] = {}
-  values.each(fn(k, v) { converted.set(k, WireValue::String(v)) })
+  let converted : Map[String, Json] = {}
+  values.each(fn(k, v) { converted.set(k, v.to_json()) })
   { values: converted }
 }
 
 ///|
-pub fn RequestArgs::from_values(values : Map[String, WireValue]) -> RequestArgs {
+pub fn RequestArgs::from_values(values : Map[String, Json]) -> RequestArgs {
   { values, }
 }
 
 ///|
 pub fn RequestArgs::get(self : RequestArgs, key : String) -> String? {
   match self.values.get(key) {
-    Some(value) => Some(value.to_compat_string())
+    Some(value) => Some(json_to_compat_string(value))
     None => None
   }
 }
 
 ///|
-pub fn RequestArgs::get_value(self : RequestArgs, key : String) -> WireValue? {
+pub fn RequestArgs::get_json(self : RequestArgs, key : String) -> Json? {
   self.values.get(key)
+}
+
+///|
+pub fn RequestArgs::get_int(self : RequestArgs, key : String) -> Int? {
+  match self.values.get(key) {
+    Some(Number(n, ..)) => Some(n.to_int())
+    _ => None
+  }
+}
+
+///|
+pub fn RequestArgs::get_bool(self : RequestArgs, key : String) -> Bool? {
+  match self.values.get(key) {
+    Some(True) => Some(true)
+    Some(False) => Some(false)
+    _ => None
+  }
 }
 
 ///|
@@ -53,13 +66,13 @@ pub fn RequestArgs::each(
   self : RequestArgs,
   f : (String, String) -> Unit,
 ) -> Unit {
-  self.values.each(fn(k, v) { f(k, v.to_compat_string()) })
+  self.values.each(fn(k, v) { f(k, json_to_compat_string(v)) })
 }
 
 ///|
-pub fn RequestArgs::each_value(
+pub fn RequestArgs::each_json(
   self : RequestArgs,
-  f : (String, WireValue) -> Unit,
+  f : (String, Json) -> Unit,
 ) -> Unit {
   self.values.each(f)
 }
@@ -67,12 +80,12 @@ pub fn RequestArgs::each_value(
 ///|
 pub fn RequestArgs::to_map(self : RequestArgs) -> Map[String, String] {
   let converted : Map[String, String] = {}
-  self.values.each(fn(k, v) { converted.set(k, v.to_compat_string()) })
+  self.values.each(fn(k, v) { converted.set(k, json_to_compat_string(v)) })
   converted
 }
 
 ///|
-pub fn RequestArgs::to_value_map(self : RequestArgs) -> Map[String, WireValue] {
+pub fn RequestArgs::to_json_map(self : RequestArgs) -> Map[String, Json] {
   self.values
 }
 
@@ -86,19 +99,19 @@ pub(all) struct Request {
 
 ///|
 pub(all) struct ResponseFields {
-  values : Map[String, WireValue]
+  values : Map[String, Json]
 } derive(Show)
 
 ///|
 pub fn ResponseFields::new(values : Map[String, String]) -> ResponseFields {
-  let converted : Map[String, WireValue] = {}
-  values.each(fn(k, v) { converted.set(k, WireValue::String(v)) })
+  let converted : Map[String, Json] = {}
+  values.each(fn(k, v) { converted.set(k, v.to_json()) })
   { values: converted }
 }
 
 ///|
 pub fn ResponseFields::from_values(
-  values : Map[String, WireValue],
+  values : Map[String, Json],
 ) -> ResponseFields {
   { values, }
 }
@@ -106,16 +119,13 @@ pub fn ResponseFields::from_values(
 ///|
 pub fn ResponseFields::get(self : ResponseFields, key : String) -> String? {
   match self.values.get(key) {
-    Some(value) => Some(value.to_compat_string())
+    Some(value) => Some(json_to_compat_string(value))
     None => None
   }
 }
 
 ///|
-pub fn ResponseFields::get_value(
-  self : ResponseFields,
-  key : String,
-) -> WireValue? {
+pub fn ResponseFields::get_json(self : ResponseFields, key : String) -> Json? {
   self.values.get(key)
 }
 
@@ -124,13 +134,13 @@ pub fn ResponseFields::each(
   self : ResponseFields,
   f : (String, String) -> Unit,
 ) -> Unit {
-  self.values.each(fn(k, v) { f(k, v.to_compat_string()) })
+  self.values.each(fn(k, v) { f(k, json_to_compat_string(v)) })
 }
 
 ///|
-pub fn ResponseFields::each_value(
+pub fn ResponseFields::each_json(
   self : ResponseFields,
-  f : (String, WireValue) -> Unit,
+  f : (String, Json) -> Unit,
 ) -> Unit {
   self.values.each(f)
 }
@@ -138,14 +148,12 @@ pub fn ResponseFields::each_value(
 ///|
 pub fn ResponseFields::to_map(self : ResponseFields) -> Map[String, String] {
   let converted : Map[String, String] = {}
-  self.values.each(fn(k, v) { converted.set(k, v.to_compat_string()) })
+  self.values.each(fn(k, v) { converted.set(k, json_to_compat_string(v)) })
   converted
 }
 
 ///|
-pub fn ResponseFields::to_value_map(
-  self : ResponseFields,
-) -> Map[String, WireValue] {
+pub fn ResponseFields::to_json_map(self : ResponseFields) -> Map[String, Json] {
   self.values
 }
 
@@ -162,28 +170,8 @@ pub fn Response::ok(self : Map[String, String]) -> Response {
 }
 
 ///|
-pub fn Response::ok_values(self : Map[String, WireValue]) -> Response {
+pub fn Response::ok_values(self : Map[String, Json]) -> Response {
   Ok(ResponseFields::from_values(self))
-}
-
-///|
-pub fn wire_string(value : String) -> WireValue {
-  WireValue::String(value)
-}
-
-///|
-pub fn wire_raw(value : String) -> WireValue {
-  WireValue::Raw(value)
-}
-
-///|
-pub fn wire_bool(value : Bool) -> WireValue {
-  WireValue::Raw(if value { "true" } else { "false" })
-}
-
-///|
-pub fn wire_int(value : Int) -> WireValue {
-  WireValue::Raw(value.to_string())
 }
 
 ///|

@@ -70,86 +70,52 @@ pub fn tl_can_exit(phase : TLPhase) -> StopCheckResult {
 
 ///|
 pub fn tl_phase_to_json(phase : TLPhase) -> String {
-  match phase {
-    Planning => "{\"phase\":\"Planning\"}"
-    Dispatching => "{\"phase\":\"Dispatching\"}"
-    Waiting(n) => "{\"phase\":\"Waiting\",\"count\":" + n.to_string() + "}"
-    Merging(n) => "{\"phase\":\"Merging\",\"count\":" + n.to_string() + "}"
-    AllMerged => "{\"phase\":\"AllMerged\"}"
+  let json : Json = match phase {
+    Planning => { "phase": "Planning".to_json() }.to_json()
+    Dispatching => { "phase": "Dispatching".to_json() }.to_json()
+    Waiting(n) =>
+      { "phase": "Waiting".to_json(), "count": n.to_json() }.to_json()
+    Merging(n) =>
+      { "phase": "Merging".to_json(), "count": n.to_json() }.to_json()
+    AllMerged => { "phase": "AllMerged".to_json() }.to_json()
     PRFiled(n, url) =>
-      "{\"phase\":\"PRFiled\",\"count\":" +
-      n.to_string() +
-      ",\"url\":\"" +
-      url +
-      "\"}"
-    Done => "{\"phase\":\"Done\"}"
-    Failed(reason) => "{\"phase\":\"Failed\",\"reason\":\"" + reason + "\"}"
+      {
+        "phase": "PRFiled".to_json(),
+        "count": n.to_json(),
+        "url": url.to_json(),
+      }.to_json()
+    Done => { "phase": "Done".to_json() }.to_json()
+    Failed(reason) =>
+      { "phase": "Failed".to_json(), "reason": reason.to_json() }.to_json()
   }
+  json.stringify()
 }
 
 ///|
-fn parse_int(s : String) -> Int? {
-  if s == "" {
-    return None
-  }
-  let mut res = 0
-  for c in s {
-    if c >= '0' && c <= '9' {
-      res = res * 10 + (c.to_int() - '0'.to_int())
-    } else {
-      return None
+pub fn tl_phase_from_json(json_str : String) -> TLPhase? {
+  let json = @json.parse(json_str) catch { _ => return None }
+  guard json is Object(obj) else { return None }
+  match obj.get("phase") {
+    Some(String("Planning")) => Some(Planning)
+    Some(String("Dispatching")) => Some(Dispatching)
+    Some(String("Waiting")) => {
+      guard obj.get("count") is Some(Number(n, ..)) else { return None }
+      Some(Waiting(n.to_int()))
     }
-  }
-  Some(res)
-}
-
-///|
-pub fn tl_phase_from_json(json : String) -> TLPhase? {
-  let parsed = @jsonutil.parse_flat_json_value_object(json)
-  match parsed.get("phase") {
-    Some(@jsonutil.JsonValueText::String(t)) =>
-      match t {
-        "Planning" => Some(Planning)
-        "Dispatching" => Some(Dispatching)
-        "Waiting" =>
-          match parsed.get("count") {
-            Some(@jsonutil.JsonValueText::Raw(c)) =>
-              match parse_int(c) {
-                Some(count) => Some(Waiting(count))
-                None => None
-              }
-            _ => None
-          }
-        "Merging" =>
-          match parsed.get("count") {
-            Some(@jsonutil.JsonValueText::Raw(c)) =>
-              match parse_int(c) {
-                Some(count) => Some(Merging(count))
-                None => None
-              }
-            _ => None
-          }
-        "AllMerged" => Some(AllMerged)
-        "PRFiled" => {
-          let count = match parsed.get("count") {
-            Some(@jsonutil.JsonValueText::Raw(c)) => parse_int(c)
-            _ => None
-          }
-          let url = match parsed.get("url") {
-            Some(@jsonutil.JsonValueText::String(u)) => Some(u)
-            _ => None
-          }
-          match (count, url) {
-            (Some(c), Some(u)) => Some(PRFiled(c, u))
-            _ => None
-          }
-        }
-        "Done" => Some(Done)
-        "Failed" =>
-          match parsed.get("reason") {
-            Some(@jsonutil.JsonValueText::String(r)) => Some(Failed(r))
-            _ => None
-          }
+    Some(String("Merging")) => {
+      guard obj.get("count") is Some(Number(n, ..)) else { return None }
+      Some(Merging(n.to_int()))
+    }
+    Some(String("AllMerged")) => Some(AllMerged)
+    Some(String("PRFiled")) => {
+      guard obj.get("count") is Some(Number(n, ..)) else { return None }
+      guard obj.get("url") is Some(String(u)) else { return None }
+      Some(PRFiled(n.to_int(), u))
+    }
+    Some(String("Done")) => Some(Done)
+    Some(String("Failed")) =>
+      match obj.get("reason") {
+        Some(String(r)) => Some(Failed(r))
         _ => None
       }
     _ => None

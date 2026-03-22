@@ -83,26 +83,25 @@ pub(all) struct CompanionDef {
 ///|
 pub fn parse_companions_json(s : String) -> Array[CompanionDef] {
   let result : Array[CompanionDef] = []
-  for value_map in @jsonutil.parse_json_object_array_text(s) {
-    let name = match value_map.get("name") {
-      Some(@jsonutil.JsonValueText::String(value)) => value
-      Some(@jsonutil.JsonValueText::Raw(value)) => value
-      None => ""
+  let json = @json.parse(s) catch { _ => return result }
+  guard json is Array(arr) else { return result }
+  for item in arr {
+    guard item is Object(obj) else { continue }
+    let name = match obj.get("name") {
+      Some(String(v)) => v
+      _ => ""
     }
-    let role = match value_map.get("role") {
-      Some(@jsonutil.JsonValueText::String(value)) => value
-      Some(@jsonutil.JsonValueText::Raw(value)) => value
-      None => "worker"
+    let role = match obj.get("role") {
+      Some(String(v)) => v
+      _ => "worker"
     }
-    let command = match value_map.get("command") {
-      Some(@jsonutil.JsonValueText::String(value)) => value
-      Some(@jsonutil.JsonValueText::Raw(value)) => value
-      None => ""
+    let command = match obj.get("command") {
+      Some(String(v)) => v
+      _ => ""
     }
-    let task = match value_map.get("task") {
-      Some(@jsonutil.JsonValueText::String(value)) => value
-      Some(@jsonutil.JsonValueText::Raw(value)) => value
-      None => ""
+    let task = match obj.get("task") {
+      Some(String(v)) => v
+      _ => ""
     }
     if name != "" && command != "" {
       result.push({ name, role, command, task })

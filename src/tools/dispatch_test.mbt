@@ -122,11 +122,11 @@ async test "handle_request fork_wave accepts raw primitive request args" {
     role: @types.Role::TL,
     name: "fork_wave",
     args: @types.RequestArgs::from_values({
-      "count": @types.WireValue::Raw("2"),
-      "fork_session": @types.WireValue::Raw("true"),
-      "caller_id": @types.WireValue::String("main"),
-      "task": @types.WireValue::String("test task"),
-      "parent_branch": @types.WireValue::String("main"),
+      "count": Int::to_json(2),
+      "fork_session": Bool::to_json(true),
+      "caller_id": String::to_json("main"),
+      "task": String::to_json("test task"),
+      "parent_branch": String::to_json("main"),
     }),
   }
   let res = @tools.handle_request(
@@ -139,7 +139,7 @@ async test "handle_request fork_wave accepts raw primitive request args" {
     Ok(m) => {
       assert_eq(m.get("status"), Some("spawned"))
       assert_eq(m.get("count"), Some("2"))
-      assert_eq(m.get_value("count"), Some(@types.WireValue::Raw("2")))
+      assert_eq(m.get_json("count"), Some(Int::to_json(2)))
     }
     Err(e) => {
       println(e)
@@ -194,14 +194,10 @@ async test "dispatch task_list reads task files" {
           "[{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"},{\"id\":\"2\",\"title\":\"Second\",\"status\":\"in_progress\",\"assignee\":\"bob\",\"notes\":\"two\"}]",
         ),
       )
-      assert_eq(
-        m.get_value("tasks"),
-        Some(
-          @types.WireValue::Raw(
-            "[{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"},{\"id\":\"2\",\"title\":\"Second\",\"status\":\"in_progress\",\"assignee\":\"bob\",\"notes\":\"two\"}]",
-          ),
-        ),
-      )
+      match m.get_json("tasks") {
+        Some(Array(_)) => () // tasks is a Json array — verified above via get()
+        _ => assert_true(false)
+      }
     }
     Err(e) => {
       println(e)
@@ -233,14 +229,10 @@ async test "dispatch task_get reads one task" {
           "{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}",
         ),
       )
-      assert_eq(
-        m.get_value("task"),
-        Some(
-          @types.WireValue::Raw(
-            "{\"id\":\"1\",\"title\":\"First\",\"status\":\"todo\",\"assignee\":\"alice\",\"notes\":\"one\"}",
-          ),
-        ),
-      )
+      match m.get_json("task") {
+        Some(Object(_)) => () // task is a Json object — verified above via get()
+        _ => assert_true(false)
+      }
     }
     Err(e) => {
       println(e)
@@ -277,14 +269,10 @@ async test "dispatch task_update merges and writes task file" {
           "{\"id\":\"1\",\"title\":\"First\",\"status\":\"done\",\"assignee\":\"carol\",\"notes\":\"finished\"}",
         ),
       )
-      assert_eq(
-        m.get_value("task"),
-        Some(
-          @types.WireValue::Raw(
-            "{\"id\":\"1\",\"title\":\"First\",\"status\":\"done\",\"assignee\":\"carol\",\"notes\":\"finished\"}",
-          ),
-        ),
-      )
+      match m.get_json("task") {
+        Some(Object(_)) => () // task is a Json object — verified above via get()
+        _ => assert_true(false)
+      }
     }
     Err(e) => {
       println(e)
@@ -354,8 +342,8 @@ async test "dispatch reply stores payload in reply kv path" {
     Ok(m) => {
       assert_eq(m.get("status"), Some("ok"))
       assert_eq(m.get("id"), Some("req-1"))
-      assert_eq(m.get_value("status"), Some(@types.WireValue::String("ok")))
-      assert_eq(m.get_value("id"), Some(@types.WireValue::String("req-1")))
+      assert_eq(m.get_json("status"), Some("ok".to_json()))
+      assert_eq(m.get_json("id"), Some("req-1".to_json()))
     }
     Err(e) => {
       println(e)
@@ -382,7 +370,7 @@ async test "dispatch reply cancel stores cancel marker" {
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("ok"))
-      assert_eq(m.get_value("status"), Some(@types.WireValue::String("ok")))
+      assert_eq(m.get_json("status"), Some("ok".to_json()))
     }
     Err(e) => {
       println(e)
@@ -459,10 +447,7 @@ async test "dispatch spawn_remote returns agent_id with mock" {
       assert_eq(m.get("status"), Some("spawned"))
       assert_eq(m.get("agent_id"), Some("main.remote-1"))
       assert_eq(m.get("host"), Some("user@10.0.0.2"))
-      assert_eq(
-        m.get_value("host"),
-        Some(@types.WireValue::String("user@10.0.0.2")),
-      )
+      assert_eq(m.get_json("host"), Some("user@10.0.0.2".to_json()))
     }
     Err(e) => {
       println(e)
@@ -540,8 +525,8 @@ async test "handle_request falls back to plugin and preserves raw response value
     role: @types.Role::Dev,
     name: "search_docs",
     args: @types.RequestArgs::from_values({
-      "agent_id": @types.WireValue::String("leaf-1"),
-      "count": @types.WireValue::Raw("2"),
+      "agent_id": String::to_json("leaf-1"),
+      "count": Int::to_json(2),
     }),
   }
   let res = handle_request(
@@ -559,7 +544,7 @@ async test "handle_request falls back to plugin and preserves raw response value
     Ok(m) => {
       assert_eq(m.get("status"), Some("done"))
       assert_eq(m.get("count"), Some("3"))
-      assert_eq(m.get_value("count"), Some(@types.WireValue::Raw("3")))
+      assert_eq(m.get_json("count"), Some(Int::to_json(3)))
     }
     Err(e) => {
       println(e)
@@ -693,10 +678,7 @@ async test "dispatch spawn_worker succeeds with inline worker" {
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("spawned"))
-      assert_eq(
-        m.get_value("status"),
-        Some(@types.WireValue::String("spawned")),
-      )
+      assert_eq(m.get_json("status"), Some("spawned".to_json()))
     }
     Err(e) => {
       println(e)
@@ -716,10 +698,7 @@ async test "dispatch spawn_worker accepts agent_id alias" {
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("spawned"))
-      assert_eq(
-        m.get_value("status"),
-        Some(@types.WireValue::String("spawned")),
-      )
+      assert_eq(m.get_json("status"), Some("spawned".to_json()))
     }
     Err(e) => {
       println(e)
@@ -748,14 +727,8 @@ async test "dispatch register inserts agent into registry" {
     Ok(m) => {
       assert_eq(m.get("status"), Some("registered"))
       assert_eq(m.get("agent_id"), Some("leaf-0"))
-      assert_eq(
-        m.get_value("status"),
-        Some(@types.WireValue::String("registered")),
-      )
-      assert_eq(
-        m.get_value("agent_id"),
-        Some(@types.WireValue::String("leaf-0")),
-      )
+      assert_eq(m.get_json("status"), Some("registered".to_json()))
+      assert_eq(m.get_json("agent_id"), Some("leaf-0".to_json()))
       match reg.get("leaf-0") {
         Ok(agent) => {
           assert_eq(agent.parent, Some("root"))
@@ -874,10 +847,7 @@ async test "dispatch shutdown allowed for TL role" {
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("shutdown"))
-      assert_eq(
-        m.get_value("status"),
-        Some(@types.WireValue::String("shutdown")),
-      )
+      assert_eq(m.get_json("status"), Some("shutdown".to_json()))
     }
     Err(e) => {
       println(e)
@@ -1012,8 +982,9 @@ async test "dispatch kv_list returns keys" {
       let keys = m.get("keys").unwrap_or("")
       assert_true(keys.contains("shared/bar"))
       assert_true(keys.contains("shared/foo"))
-      match m.get_value("keys") {
-        Some(@types.WireValue::Raw(raw)) => {
+      match m.get_json("keys") {
+        Some(Array(_)) => {
+          let raw = m.get("keys").unwrap_or("")
           assert_true(raw.contains("shared/bar"))
           assert_true(raw.contains("shared/foo"))
         }
@@ -1043,7 +1014,7 @@ async test "dispatch kv_list empty dir returns empty array" {
   match res {
     Ok(m) => {
       assert_eq(m.get("keys"), Some("[]"))
-      assert_eq(m.get_value("keys"), Some(@types.WireValue::Raw("[]")))
+      assert_eq(m.get_json("keys"), Some(([] : Array[Json]).to_json()))
     }
     Err(e) => {
       println(e)
@@ -1076,8 +1047,9 @@ async test "dispatch task_create creates task" {
       assert_true(task_json.contains("\"id\":\"task-1\""))
       assert_true(task_json.contains("\"title\":\"Build the thing\""))
       assert_true(task_json.contains("\"status\":\"todo\""))
-      match m.get_value("task") {
-        Some(@types.WireValue::Raw(raw)) => {
+      match m.get_json("task") {
+        Some(Object(_)) => {
+          let raw = m.get("task").unwrap_or("")
           assert_true(raw.contains("\"id\":\"task-1\""))
           assert_true(raw.contains("\"title\":\"Build the thing\""))
           assert_true(raw.contains("\"status\":\"todo\""))
@@ -1137,8 +1109,8 @@ async test "dispatch mutex_acquire, mutex_status, and mutex_release use shared r
     Ok(m) => {
       assert_eq(m.get("acquired"), Some("true"))
       assert_eq(m.get("queue_position"), Some("0"))
-      assert_eq(m.get_value("acquired"), Some(@types.WireValue::Raw("true")))
-      assert_eq(m.get_value("queue_position"), Some(@types.WireValue::Raw("0")))
+      assert_eq(m.get_json("acquired"), Some(true.to_json()))
+      assert_eq(m.get_json("queue_position"), Some(Int::to_json(0)))
     }
     Err(e) => {
       println(e)
@@ -1160,8 +1132,8 @@ async test "dispatch mutex_acquire, mutex_status, and mutex_release use shared r
     Ok(m) => {
       assert_eq(m.get("acquired"), Some("false"))
       assert_eq(m.get("queue_position"), Some("1"))
-      assert_eq(m.get_value("acquired"), Some(@types.WireValue::Raw("false")))
-      assert_eq(m.get_value("queue_position"), Some(@types.WireValue::Raw("1")))
+      assert_eq(m.get_json("acquired"), Some(false.to_json()))
+      assert_eq(m.get_json("queue_position"), Some(Int::to_json(1)))
     }
     Err(e) => {
       println(e)
@@ -1183,7 +1155,7 @@ async test "dispatch mutex_acquire, mutex_status, and mutex_release use shared r
     Ok(m) => {
       assert_eq(m.get("holder"), Some("agent-a"))
       assert_eq(m.get("queue_length"), Some("1"))
-      assert_eq(m.get_value("queue_length"), Some(@types.WireValue::Raw("1")))
+      assert_eq(m.get_json("queue_length"), Some(Int::to_json(1)))
     }
     Err(e) => {
       println(e)
@@ -1205,7 +1177,7 @@ async test "dispatch mutex_acquire, mutex_status, and mutex_release use shared r
     Ok(m) => {
       assert_eq(m.get("released"), Some("true"))
       assert_eq(m.get("next_waiter"), Some("agent-b"))
-      assert_eq(m.get_value("released"), Some(@types.WireValue::Raw("true")))
+      assert_eq(m.get_json("released"), Some(true.to_json()))
     }
     Err(e) => {
       println(e)
@@ -1233,7 +1205,7 @@ async test "dispatch mutex_release returns false when agent does not hold or wai
     Ok(m) => {
       assert_eq(m.get("released"), Some("false"))
       assert_eq(m.get("next_waiter"), Some(""))
-      assert_eq(m.get_value("released"), Some(@types.WireValue::Raw("false")))
+      assert_eq(m.get_json("released"), Some(false.to_json()))
     }
     Err(e) => {
       println(e)
@@ -1317,15 +1289,11 @@ async test "dispatch fork_session creates session dir" {
     Ok(m) => {
       assert_eq(m.get("status"), Some("ok"))
       assert_eq(m.get("name"), Some("sub-team-1"))
-      assert_eq(
-        m.get_value("name"),
-        Some(@types.WireValue::String("sub-team-1")),
-      )
+      assert_eq(m.get_json("name"), Some("sub-team-1".to_json()))
       let session_dir = m.get("session_dir").unwrap_or("")
       assert_true(session_dir.contains("sub-team-1"))
-      match m.get_value("session_dir") {
-        Some(@types.WireValue::String(raw_dir)) =>
-          assert_true(raw_dir.contains("sub-team-1"))
+      match m.get_json("session_dir") {
+        Some(String(raw_dir)) => assert_true(raw_dir.contains("sub-team-1"))
         _ => assert_true(false)
       }
       run_shell(

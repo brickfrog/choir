@@ -40,18 +40,15 @@ test "parse_args with commas and colons in values" {
 }
 
 ///|
-test "parse_request preserves primitive arg literals as strings" {
+test "parse_request preserves primitive arg literals" {
   let input = "{\"method\":\"tools/call\",\"role\":\"tl\",\"name\":\"fork_wave\",\"args\":{\"count\":3,\"fork_session\":true,\"empty\":null}}"
   match parse_request(input) {
     Ok(req) => {
       assert_eq(req.args.get("count"), Some("3"))
       assert_eq(req.args.get("fork_session"), Some("true"))
       assert_eq(req.args.get("empty"), Some("null"))
-      assert_eq(req.args.get_value("count"), Some(@types.WireValue::Raw("3")))
-      assert_eq(
-        req.args.get_value("fork_session"),
-        Some(@types.WireValue::Raw("true")),
-      )
+      assert_eq(req.args.get_json("count"), Some((3).to_json()))
+      assert_eq(req.args.get_json("fork_session"), Some(true.to_json()))
     }
     Err(e) => fail("Parse failed: \{e}")
   }
@@ -84,9 +81,23 @@ test "format_response ok" {
   assert_eq(resp.status_tag(), "ok")
   assert_eq(resp.ok_field("agent_id"), Some("main.feat-a"))
   let output = format_response(resp)
-  assert_eq(
-    output, "{\"ok\": true, \"result\": {\"agent_id\": \"main.feat-a\"}}",
-  )
+  // Json key order may vary, so check fields individually
+  let json = @json.parse(output) catch {
+    _ => {
+      fail("invalid json")
+      return
+    }
+  }
+  guard json is Object(obj) else {
+    fail("expected object")
+    return
+  }
+  assert_eq(obj.get("ok"), Some(true.to_json()))
+  guard obj.get("result") is Some(Object(res)) else {
+    fail("expected result")
+    return
+  }
+  assert_eq(res.get("agent_id"), Some("main.feat-a".to_json()))
 }
 
 ///|
@@ -96,9 +107,9 @@ test "format_request serializes internal wire request" {
     role: @types.Role::TL,
     name: "fork_wave",
     args: @types.RequestArgs::from_values({
-      "slug": @types.WireValue::String("feat-a"),
-      "count": @types.WireValue::Raw("3"),
-      "fork_session": @types.WireValue::Raw("true"),
+      "slug": "feat-a".to_json(),
+      "count": (3).to_json(),
+      "fork_session": true.to_json(),
     }),
   }
   let output = format_request(req)
@@ -155,9 +166,7 @@ test "format_response escaping" {
   result.set("message", "hello \"quoted\" world")
   let resp = @types.Response::ok(result)
   let output = format_response(resp)
-  assert_eq(
-    output, "{\"ok\": true, \"result\": {\"message\": \"hello \\\"quoted\\\" world\"}}",
-  )
+  assert_true(output.contains("hello \\\"quoted\\\" world"))
 }
 
 ///|
@@ -167,7 +176,18 @@ test "format_response err" {
   assert_eq(resp.status_tag(), "error")
   assert_eq(resp.error_message(), Some("agent not found"))
   let output = format_response(resp)
-  assert_eq(output, "{\"ok\": false, \"error\": \"agent not found\"}")
+  let json = @json.parse(output) catch {
+    _ => {
+      fail("invalid json")
+      return
+    }
+  }
+  guard json is Object(obj) else {
+    fail("expected object")
+    return
+  }
+  assert_eq(obj.get("ok"), Some(false.to_json()))
+  assert_eq(obj.get("error"), Some("agent not found".to_json()))
 }
 
 ///|
@@ -178,14 +198,8 @@ test "parse_response preserves primitive result values" {
       assert_eq(resp.ok_field("status"), Some("ok"))
       match resp.ok_payload() {
         Some(fields) => {
-          assert_eq(
-            fields.get_value("tracked"),
-            Some(@types.WireValue::Raw("true")),
-          )
-          assert_eq(
-            fields.get_value("pr_number"),
-            Some(@types.WireValue::Raw("22")),
-          )
+          assert_eq(fields.get_json("tracked"), Some(true.to_json()))
+          assert_eq(fields.get_json("pr_number"), Some((22).to_json()))
         }
         None => fail("expected payload")
       }

@@ -33,72 +33,6 @@ fn run_shell_recovery(script : String) -> Unit {
 }
 
 ///|
-fn index_of(str : String, sub : String, start? : Int = 0) -> Int {
-  let str_len = str.length()
-  let sub_len = sub.length()
-  if sub_len == 0 {
-    return start
-  }
-  for i = start; i <= str_len - sub_len; i = i + 1 {
-    let mut match_found = true
-    for j = 0; j < sub_len; j = j + 1 {
-      if str[i + j] != sub[j] {
-        match_found = false
-        break
-      }
-    }
-    if match_found {
-      return i
-    }
-  }
-  -1
-}
-
-///|
-fn index_of_quote_end(str : String, start : Int) -> Int {
-  for i = start; i < str.length(); i = i + 1 {
-    if str[i] == '"' && (i == 0 || str[i - 1] != '\\') {
-      return i
-    }
-  }
-  -1
-}
-
-///|
-fn skip_json_ws(s : String, start : Int) -> Int {
-  let mut i = start
-  while i < s.length() &&
-        (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t') {
-    i = i + 1
-  }
-  i
-}
-
-///|
-fn parse_int(s : String) -> Int? {
-  if s == "" {
-    return None
-  }
-  let mut res = 0
-  for c in s {
-    if c >= '0' && c <= '9' {
-      res = res * 10 + (c.to_int() - '0'.to_int())
-    } else {
-      return None
-    }
-  }
-  Some(res)
-}
-
-///|
-fn parse_fixed_width_int(s : String, start : Int, len : Int) -> Int? {
-  if start < 0 || len <= 0 || start + len > s.length() {
-    return None
-  }
-  parse_int(s[start:start + len].to_string() catch { _ => "" })
-}
-
-///|
 fn is_leap_year(year : Int) -> Bool {
   (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
@@ -141,6 +75,34 @@ fn days_from_civil(year : Int, month : Int, day : Int) -> Int64 {
 }
 
 ///|
+fn parse_digits(s : String, start : Int, len : Int) -> Int? {
+  if start < 0 || len <= 0 || start + len > s.length() {
+    return None
+  }
+  let mut res = 0
+  for i = start; i < start + len; i = i + 1 {
+    let c = s[i]
+    if c >= '0' && c <= '9' {
+      res = res * 10 + (c.to_int() - '0'.to_int())
+    } else {
+      return None
+    }
+  }
+  Some(res)
+}
+
+///|
+fn find_char(s : String, c : Char, start : Int) -> Int {
+  let code = c.to_int().to_uint16()
+  for i = start; i < s.length(); i = i + 1 {
+    if s[i] == code {
+      return i
+    }
+  }
+  -1
+}
+
+///|
 fn parse_github_time_utc_sec(s : String) -> Int64? {
   if s.length() < 20 {
     return None
@@ -148,27 +110,27 @@ fn parse_github_time_utc_sec(s : String) -> Int64? {
   if s[4] != '-' || s[7] != '-' || s[10] != 'T' || s[13] != ':' || s[16] != ':' {
     return None
   }
-  let year = match parse_fixed_width_int(s, 0, 4) {
+  let year = match parse_digits(s, 0, 4) {
     Some(value) => value
     None => return None
   }
-  let month = match parse_fixed_width_int(s, 5, 2) {
+  let month = match parse_digits(s, 5, 2) {
     Some(value) => value
     None => return None
   }
-  let day = match parse_fixed_width_int(s, 8, 2) {
+  let day = match parse_digits(s, 8, 2) {
     Some(value) => value
     None => return None
   }
-  let hour = match parse_fixed_width_int(s, 11, 2) {
+  let hour = match parse_digits(s, 11, 2) {
     Some(value) => value
     None => return None
   }
-  let minute = match parse_fixed_width_int(s, 14, 2) {
+  let minute = match parse_digits(s, 14, 2) {
     Some(value) => value
     None => return None
   }
-  let second = match parse_fixed_width_int(s, 17, 2) {
+  let second = match parse_digits(s, 17, 2) {
     Some(value) => value
     None => return None
   }
@@ -187,7 +149,7 @@ fn parse_github_time_utc_sec(s : String) -> Int64? {
   }
   let tz_char = s[tz_start]
   if tz_char == '.' {
-    let z_idx = index_of(s, "Z", start=tz_start)
+    let z_idx = find_char(s, 'Z', tz_start)
     if z_idx == -1 || z_idx != s.length() - 1 {
       return None
     }
@@ -215,107 +177,40 @@ fn split_lines(output : String) -> Array[String] {
 }
 
 ///|
-fn find_json_string_field(
-  data : String,
-  field : String,
-  start? : Int = 0,
-) -> (String, Int)? {
-  let field_name = "\"" + field + "\""
-  let start_idx = index_of(data, field_name, start~)
-  if start_idx == -1 {
-    return None
-  }
-  let colon_idx = index_of(data, ":", start=start_idx + field_name.length())
-  if colon_idx == -1 {
-    return None
-  }
-  let value_start = skip_json_ws(data, colon_idx + 1)
-  if value_start >= data.length() || data[value_start] != '"' {
-    return None
-  }
-  let value_end = index_of_quote_end(data, value_start + 1)
-  if value_end == -1 {
-    return None
-  }
-  Some(
-    (
-      data[value_start + 1:value_end].to_string() catch {
-        _ => ""
-      },
-      value_end + 1,
-    ),
-  )
-}
-
-///|
 fn parse_open_prs(output : String) -> Array[OpenPR] {
   let prs = []
-  let mut start = 0
-  while start < output.length() {
-    let object_start = index_of(output, "{", start~)
-    if object_start == -1 {
-      break
-    }
-    let mut object_end = -1
-    let mut depth = 0
-    let mut in_quote = false
-    for i = object_start; i < output.length(); i = i + 1 {
-      let c = output[i]
-      if c == '"' && (i == 0 || output[i - 1] != '\\') {
-        in_quote = not(in_quote)
-      }
-      if in_quote {
-        continue
-      }
-      if c == '{' {
-        depth = depth + 1
-      } else if c == '}' {
-        depth = depth - 1
-        if depth == 0 {
-          object_end = i
-          break
+  let json = @json.parse(output) catch { _ => return prs }
+  let arr = match json {
+    Json::Array(items) => items
+    _ => return prs
+  }
+  for item in arr {
+    match item {
+      Json::Object(fields) => {
+        let number = match fields.get("number") {
+          Some(Number(n, ..)) => n.to_int()
+          _ => continue
         }
+        let branch = match fields.get("headRefName") {
+          Some(String(v)) => v
+          _ => continue
+        }
+        let base = match fields.get("baseRefName") {
+          Some(String(v)) => v
+          _ => continue
+        }
+        let url = match fields.get("url") {
+          Some(String(v)) => v
+          _ => continue
+        }
+        let created_sec = match fields.get("createdAt") {
+          Some(String(v)) => parse_github_time_utc_sec(v)
+          _ => None
+        }
+        prs.push({ pr_number: number, branch, base, url, created_sec })
       }
+      _ => ()
     }
-    if object_end == -1 {
-      break
-    }
-    let obj = output[object_start:object_end + 1].to_string() catch { _ => "" }
-    let number_idx = index_of(obj, "\"number\":")
-    if number_idx != -1 {
-      let number_start = skip_json_ws(obj, number_idx + 9)
-      let mut number_end = number_start
-      while number_end < obj.length() &&
-            obj[number_end] >= '0' &&
-            obj[number_end] <= '9' {
-        number_end = number_end + 1
-      }
-      let number_str = obj[number_start:number_end].to_string() catch {
-        _ => ""
-      }
-      let branch = match find_json_string_field(obj, "headRefName") {
-        Some((value, _)) => Some(value)
-        None => None
-      }
-      let base = match find_json_string_field(obj, "baseRefName") {
-        Some((value, _)) => Some(value)
-        None => None
-      }
-      let url = match find_json_string_field(obj, "url") {
-        Some((value, _)) => Some(value)
-        None => None
-      }
-      let created_sec = match find_json_string_field(obj, "createdAt") {
-        Some((value, _)) => parse_github_time_utc_sec(value)
-        None => None
-      }
-      match (parse_int(number_str), branch, base, url) {
-        (Some(number), Some(branch), Some(base), Some(url)) =>
-          prs.push({ pr_number: number, branch, base, url, created_sec })
-        _ => ()
-      }
-    }
-    start = object_end + 1
   }
   prs
 }
@@ -363,7 +258,13 @@ fn default_agent_type(role : @types.Role) -> @types.AgentType {
 
 ///|
 fn window_target_name(target : String) -> String? {
-  let idx = index_of(target, ":")
+  let mut idx = -1
+  for i = 0; i < target.length(); i = i + 1 {
+    if target[i] == ':' {
+      idx = i
+      break
+    }
+  }
   if idx == -1 || idx + 1 >= target.length() {
     None
   } else {
@@ -395,20 +296,18 @@ priv struct ZellijLiveTargets {
 }
 
 ///|
-fn json_value_bool(value : @jsonutil.JsonValueText?) -> Bool {
+fn json_value_bool(value : Json?) -> Bool {
   match value {
-    Some(@jsonutil.JsonValueText::Raw("true")) => true
-    Some(@jsonutil.JsonValueText::String("true")) => true
+    Some(True) => true
     _ => false
   }
 }
 
 ///|
-fn json_value_string(value : @jsonutil.JsonValueText?) -> String {
+fn json_value_string(value : Json?) -> String {
   match value {
-    Some(@jsonutil.JsonValueText::String(v)) => v
-    Some(@jsonutil.JsonValueText::Raw(v)) => v
-    None => ""
+    Some(String(v)) => v
+    _ => ""
   }
 }
 
@@ -423,13 +322,23 @@ fn push_unique(values : Array[String], value : String) -> Unit {
 fn parse_zellij_live_targets(output : String) -> ZellijLiveTargets {
   let tabs = []
   let panes = []
-  for pane in @jsonutil.parse_json_object_array_text(output) {
-    if json_value_bool(pane.get("is_plugin")) ||
-      json_value_bool(pane.get("exited")) {
-      continue
+  let json = @json.parse(output) catch { _ => return { tabs, panes } }
+  let arr = match json {
+    Json::Array(items) => items
+    _ => return { tabs, panes }
+  }
+  for item in arr {
+    match item {
+      Json::Object(fields) => {
+        if json_value_bool(fields.get("is_plugin")) ||
+          json_value_bool(fields.get("exited")) {
+          continue
+        }
+        push_unique(tabs, json_value_string(fields.get("tab_name")))
+        push_unique(panes, json_value_string(fields.get("title")))
+      }
+      _ => ()
     }
-    push_unique(tabs, json_value_string(pane.get("tab_name")))
-    push_unique(panes, json_value_string(pane.get("title")))
   }
   { tabs, panes }
 }
