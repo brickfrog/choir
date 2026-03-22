@@ -924,9 +924,7 @@ fn extract_slug(s : String) -> String {
   if last_dot == -1 {
     s
   } else {
-    s[last_dot + 1:].to_string() catch {
-      _ => s
-    }
+    s[last_dot + 1:].to_string()
   }
 }
 

@@ -43,9 +43,7 @@ fn slug_from_branch(branch : String) -> String {
     }
   }
   if last_dot >= 0 {
-    branch[last_dot + 1:].to_string() catch {
-      _ => branch
-    }
+    branch[last_dot + 1:].to_string()
   } else {
     branch
   }
@@ -168,9 +166,7 @@ pub async fn detect_default_branch(project_dir : String) -> String {
     // Output is "origin/main" or "origin/master" — strip the "origin/" prefix
     let prefix = "origin/"
     if trimmed.has_prefix(prefix) {
-      trimmed[prefix.length():].to_string() catch {
-        _ => "main"
-      }
+      trimmed[prefix.length():].to_string()
     } else if trimmed != "" {
       trimmed
     } else {

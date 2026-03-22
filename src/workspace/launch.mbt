@@ -5,7 +5,7 @@ fn wrap_with_shell(cmd : Command, shell : String) -> Command {
   for i = 0; i <= shell.length(); i = i + 1 {
     if i == shell.length() || shell[i] == ' ' {
       if i > start {
-        parts.push(shell[start:i].to_string() catch { _ => "" })
+        parts.push(shell[start:i].to_string())
       }
       start = i + 1
     }

@@ -214,7 +214,7 @@ fn parse_tasks_array(raw : String) -> Array[String] {
           }
           j = j + 1
         }
-        let task = trimmed[i + 1:j].to_string() catch { _ => "" }
+        let task = trimmed[i + 1:j].to_string()
         if task != "" {
           tasks.push(task)
         }
@@ -279,9 +279,7 @@ fn slugify_task(task : String, index : Int) -> String {
     "leaf-" + index.to_string()
     // Trim trailing hyphen
   } else if result.has_suffix("-") {
-    result[0:result.length() - 1].to_string() catch {
-      _ => result
-    }
+    result[0:result.length() - 1].to_string()
   } else {
     result
   }

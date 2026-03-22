@@ -200,7 +200,7 @@ async fn serve_handle_uds_connection(
 }
 
 ///|
-async fn serve_close_uds_client(
+fn serve_close_uds_client(
   client : ServeUDSClient,
   state : @server.ServerState,
 ) -> Unit {
@@ -212,7 +212,7 @@ async fn serve_close_uds_client(
 }
 
 ///|
-fn serve_run() -> Unit raise {
+fn serve_run() -> Unit {
   let config_content = @io.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
@@ -277,9 +277,7 @@ fn serve_run() -> Unit raise {
               i = i + 1
             } else {
               let client = clients.remove(i)
-              serve_close_uds_client(client, state) catch {
-                _ => ()
-              }
+              serve_close_uds_client(client, state)
             }
           }
           @async.sleep(10)
@@ -713,7 +711,7 @@ fn mcp_run_uds_loop(
 }
 
 ///|
-fn mcp_run() -> Unit raise {
+fn mcp_run() -> Unit {
   let args = @env.args()
   let config_content = @io.read_file(".choir/config.toml")
   let base_config = match @config.parse_config(config_content) {
@@ -881,16 +879,12 @@ fn parse_leaf_cli_args(args : Array[String]) -> LeafCliArgs {
         None => -1
       }
       if eq_idx > 2 {
-        let key = normalize_cli_key(arg[2:eq_idx].to_string() catch { _ => "" })
-        let value = arg[eq_idx + 1:arg.length()].to_string() catch { _ => "" }
+        let key = normalize_cli_key(arg[2:eq_idx].to_string())
+        let value = arg[eq_idx + 1:arg.length()].to_string()
         flags.set(key, value)
         i = i + 1
       } else {
-        let key = normalize_cli_key(
-          arg[2:arg.length()].to_string() catch {
-            _ => ""
-          },
-        )
+        let key = normalize_cli_key(arg[2:arg.length()].to_string())
         if i + 1 < args.length() && not(args[i + 1].has_prefix("--")) {
           flags.set(key, args[i + 1])
           i = i + 2
@@ -1419,7 +1413,7 @@ fn zellij_action_usage() -> String {
 }
 
 ///|
-fn zellij_action_run() -> Unit raise {
+fn zellij_action_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
       let args = @env.args()
@@ -2395,7 +2389,7 @@ fn smoke_e2e_script() -> String {
 }
 
 ///|
-fn smoke_run() -> Unit raise {
+fn smoke_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
       let args = @env.args()
@@ -2781,7 +2775,7 @@ fn persist_hook_session(input : @hooks.HookInput) -> Unit {
 }
 
 ///|
-fn hook_run() -> Unit raise {
+fn hook_run() -> Unit {
   @async.run_async_main(async fn() {
     let line = match @io.read_stdin_line(8192) {
       Some(line) => line
@@ -2838,7 +2832,7 @@ fn init_default_terminal_session(project_dir : String) -> String {
   while end > 1 && project_dir[end - 1] == '/' {
     end = end - 1
   }
-  let trimmed = project_dir[:end].to_string() catch { _ => project_dir }
+  let trimmed = project_dir[:end].to_string()
   let base = if trimmed == "" {
     "project"
   } else {
@@ -2851,9 +2845,7 @@ fn init_default_terminal_session(project_dir : String) -> String {
     if last_slash < 0 || last_slash + 1 >= trimmed.length() {
       trimmed
     } else {
-      trimmed[last_slash + 1:].to_string() catch {
-        _ => "project"
-      }
+      trimmed[last_slash + 1:].to_string()
     }
   }
   let buf = StringBuilder::new()
@@ -2877,7 +2869,7 @@ fn init_default_terminal_session(project_dir : String) -> String {
   while finish > start && normalized_raw[finish - 1] == '-' {
     finish = finish - 1
   }
-  let suffix = normalized_raw[start:finish].to_string() catch { _ => "" }
+  let suffix = normalized_raw[start:finish].to_string()
   let normalized = if suffix == "" { "project" } else { suffix }
   "choir-" + normalized
 }
@@ -2967,7 +2959,7 @@ fn init_split_words(s : String) -> Array[String] {
   for i = 0; i <= trimmed.length(); i = i + 1 {
     if i == trimmed.length() || trimmed[i] == ' ' {
       if i > start {
-        parts.push(trimmed[start:i].to_string() catch { _ => "" })
+        parts.push(trimmed[start:i].to_string())
       }
       start = i + 1
     }
@@ -3270,7 +3262,7 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
 }
 
 ///|
-fn init_run() -> Unit raise {
+fn init_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
       let args = @env.args()
@@ -3540,7 +3532,7 @@ fn init_run() -> Unit raise {
 }
 
 ///|
-fn stop_run() -> Unit raise {
+fn stop_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
       let config_content = @io.read_file(".choir/config.toml")
@@ -3716,23 +3708,17 @@ fn main {
   let args = @env.args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
   match subcmd {
-    "serve" => serve_run() catch { _ => @io.exit(1) }
+    "serve" => serve_run()
     "dev" => dev_run()
     "leaf-tool" => leaf_tool_run()
-    "mcp-stdio" => mcp_run() catch { err => println("fatal: \{err}") }
+    "mcp-stdio" => mcp_run()
     "trust-gemini-folder" => trust_gemini_folder_run()
-    "zellij-action" => zellij_action_run() catch { _ => @io.exit(1) }
-    "hook" =>
-      hook_run() catch {
-        _ =>
-          @io.write_stdout(
-            @hooks.HookResponse::fail_open().to_json_string() + "\n",
-          )
-      }
-    "init" => init_run() catch { _ => @io.exit(1) }
-    "stop" => stop_run() catch { _ => @io.exit(1) }
+    "zellij-action" => zellij_action_run()
+    "hook" => hook_run()
+    "init" => init_run()
+    "stop" => stop_run()
     "reply" => reply_run()
-    "smoke" => smoke_run() catch { _ => @io.exit(1) }
+    "smoke" => smoke_run()
     "watch" => watch_run()
     _ => {
       @io.write_stdout(

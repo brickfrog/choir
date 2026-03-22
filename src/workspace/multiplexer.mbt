@@ -17,7 +17,7 @@ fn prefix_after(s : String, prefix : String) -> String? {
   if not(s.has_prefix(prefix)) {
     return None
   }
-  Some(s[prefix.length():].to_string() catch { _ => "" })
+  Some(s[prefix.length():].to_string())
 }
 
 ///|
@@ -27,16 +27,7 @@ fn split_once(s : String, needle : String) -> (String, String)? {
   }
   for i = 0; i < s.length(); i = i + 1 {
     if s[i] == needle[0] {
-      return Some(
-        (
-          s[:i].to_string() catch {
-            _ => ""
-          },
-          s[i + 1:s.length()].to_string() catch {
-            _ => ""
-          },
-        ),
-      )
+      return Some((s[:i].to_string(), s[i + 1:s.length()].to_string()))
     }
   }
   None

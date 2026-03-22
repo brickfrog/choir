@@ -30,63 +30,9 @@ pub(all) struct Span {
 ///|
 fn normalize_hex_id(value : String, width : Int) -> String {
   if value.length() >= width {
-    value[value.length() - width:].to_string() catch {
-      _ => value
-    }
+    value[value.length() - width:].to_string()
   } else {
     "0".repeat(width - value.length()) + value
-  }
-}
-
-///|
-fn parse_port_int(s : String) -> Int? {
-  if s == "" {
-    return None
-  }
-  let mut res = 0
-  for c in s {
-    if c >= '0' && c <= '9' {
-      res = res * 10 + (c.to_int() - '0'.to_int())
-    } else {
-      return None
-    }
-  }
-  Some(res)
-}
-
-///|
-fn endpoint_host_port(endpoint : String) -> (String, Int)? {
-  let stripped = if endpoint.has_prefix("http://") {
-    endpoint[7:].to_string() catch {
-      _ => ""
-    }
-  } else if endpoint.has_prefix("https://") {
-    endpoint[8:].to_string() catch {
-      _ => ""
-    }
-  } else {
-    endpoint
-  }
-  let authority = match stripped.rev_find("/") {
-    Some(idx) => stripped[:idx].to_string() catch { _ => "" }
-    None => stripped
-  }
-  if authority == "" {
-    return None
-  }
-  match authority.rev_find(":") {
-    Some(idx) => {
-      let host = authority[:idx].to_string() catch { _ => "" }
-      let port_str = authority[idx + 1:].to_string() catch { _ => "" }
-      if host == "" || port_str == "" {
-        return None
-      }
-      match parse_port_int(port_str) {
-        Some(port) => Some((host, port))
-        None => None
-      }
-    }
-    None => Some((authority, 4318))
   }
 }
 

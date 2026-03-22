@@ -21,7 +21,7 @@ pub fn parent_branch(branch : String) -> String? {
   if last_dot <= 0 {
     None
   } else {
-    Some(branch[:last_dot].to_string() catch { _ => "" })
+    Some(branch[:last_dot].to_string())
   }
 }
 
@@ -140,7 +140,7 @@ fn strip_json_object_braces(s : String) -> String? {
   if trimmed[0] != '{' || trimmed[trimmed.length() - 1] != '}' {
     return None
   }
-  Some(trimmed[1:trimmed.length() - 1].to_string() catch { _ => "" })
+  Some(trimmed[1:trimmed.length() - 1].to_string())
 }
 
 ///|

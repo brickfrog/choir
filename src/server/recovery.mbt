@@ -268,7 +268,7 @@ fn window_target_name(target : String) -> String? {
   if idx == -1 || idx + 1 >= target.length() {
     None
   } else {
-    Some(target[idx + 1:target.length()].to_string() catch { _ => "" })
+    Some(target[idx + 1:target.length()].to_string())
   }
 }
 

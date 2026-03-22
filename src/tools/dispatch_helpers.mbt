@@ -105,8 +105,7 @@ async fn dispatch_to_plugin(
 fn resolve_home_path(path : String) -> String {
   if path.length() >= 2 && path[0] == '~' && path[1] == '/' {
     match @io.getenv("HOME") {
-      Some(home) =>
-        home + "/" + (path[2:path.length()].to_string() catch { _ => path })
+      Some(home) => home + "/" + path[2:path.length()].to_string()
       None => path
     }
   } else {
@@ -396,11 +395,11 @@ async fn handle_kv_list(
     if path == "" {
       continue
     }
-    let actual_prefix = path[:prefix.length()].to_string() catch { _ => "" }
+    let actual_prefix = path[:prefix.length()].to_string()
     if actual_prefix != prefix {
       return @types.Response::Err("invalid kv file path: " + path)
     }
-    let key = path[prefix.length():].to_string() catch { _ => "" }
+    let key = path[prefix.length():].to_string()
     keys.push(key.to_json())
   }
   @types.Response::ok_values({

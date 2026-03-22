@@ -318,7 +318,7 @@ pub fn ServerState::plan_poll_event_deliveries(
   }
   let tracked = self.poller.get(poll_event_pr_number(event))
   match (tracked, event) {
-    (Some(pr), ReviewReceived(n, body)) =>
+    (Some(_), ReviewReceived(n, body)) =>
       @tools.apply_dev_event(
         self.config.project_dir,
         agent_id,

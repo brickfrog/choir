@@ -47,16 +47,12 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
       }
     }
     if idx != -1 {
-      let key = str[0:idx].to_string().trim().to_string() catch {
-          _ => continue
-        }
-      let mut val = str[idx + 1:].to_string().trim().to_string() catch {
-          _ => continue
-        }
+      let key = str[0:idx].to_string().trim().to_string()
+      let mut val = str[idx + 1:].to_string().trim().to_string()
       if val.has_prefix("\"") && val.has_suffix("\"") && val.length() >= 2 {
-        val = val[1:val.length() - 1].to_string() catch { _ => val }
+        val = val[1:val.length() - 1].to_string()
       } else if val.has_prefix("'") && val.has_suffix("'") && val.length() >= 2 {
-        val = val[1:val.length() - 1].to_string() catch { _ => val }
+        val = val[1:val.length() - 1].to_string()
       }
       map.set(key, val)
     }

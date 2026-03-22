@@ -21,7 +21,7 @@ fn split_nonempty_lines(s : String) -> Array[String] {
   let mut start = 0
   for i = 0; i <= s.length(); i = i + 1 {
     if i == s.length() || s[i] == '\n' {
-      let raw = s[start:i].to_string() catch { _ => "" }
+      let raw = s[start:i].to_string()
       let line = raw.trim().to_string()
       if line != "" {
         items.push(line)

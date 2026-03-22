@@ -140,9 +140,7 @@ fn get_string_value(json : String, key : String) -> String? {
     if end >= json.length() {
       None
     } else {
-      Some(json[start:end].to_string()) catch {
-        _ => None
-      }
+      Some(json[start:end].to_string())
     }
   }
 }
@@ -187,7 +185,7 @@ pub fn HookResponse::from_json_string(line : String) -> HookResponse? {
         return None
       }
       let start = i + key_pattern.length()
-      let rest = line[start:].to_string() catch { _ => return None }
+      let rest = line[start:].to_string()
       if rest.has_prefix("true") {
         "true"
       } else if rest.has_prefix("false") {
