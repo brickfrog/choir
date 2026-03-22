@@ -457,9 +457,7 @@ test "spawn_commands launch text does not duplicate workdir cd" {
   assert_true(cmds[9].args[3].contains("CHOIR_TERMINAL_TARGET='exo:feature-a'"))
   assert_true(cmds[9].args[3].contains("CHOIR_PARENT_AGENT='root'"))
   assert_true(
-    cmds[9].args[3].contains(
-      "gemini '--yolo' '--prompt-interactive' 'do something'",
-    ),
+    cmds[9].args[3].contains("gemini '--yolo' '--prompt-interactive' \"$(cat "),
   )
   assert_true(cmds[9].args[3].contains("GEMINI_CLI_SYSTEM_SETTINGS_PATH="))
   assert_eq(cmds[9].args[4], "C-m")

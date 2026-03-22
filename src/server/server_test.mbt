@@ -71,9 +71,7 @@ async fn mock_spawn_runner_server(
   assert_true(
     cmds[9].args[3].contains("gemini '--yolo' '--prompt-interactive'"),
   )
-  assert_true(cmds[9].args[3].contains("## TASK\nreply READY"))
-  assert_true(cmds[9].args[3].contains("## READ FIRST\n- AGENTS.md"))
-  assert_true(cmds[9].args[3].contains("shell command on PATH"))
+  assert_true(cmds[9].args[3].contains("\"$(cat "))
   assert_eq(cmds[9].args[4], "C-m")
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 }

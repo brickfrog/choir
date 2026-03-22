@@ -14,6 +14,42 @@ fn quote(s : String) -> String {
 }
 
 ///|
+fn write_prompt_file(
+  project_dir : String,
+  slug : String,
+  prompt : String,
+) -> String {
+  let ts = @env.now().reinterpret_as_int64()
+  let path = project_dir +
+    "/.choir/tmp/prompt-" +
+    ts.to_string() +
+    "-" +
+    slug +
+    ".txt"
+  ignore(@io.write_file_sync(path, prompt))
+  if path.has_prefix("/") {
+    path
+  } else {
+    @env.current_dir().unwrap_or(".") + "/" + path
+  }
+}
+
+///|
+fn replace_placeholder(
+  s : String,
+  placeholder : String,
+  replacement : String,
+) -> String {
+  let idx = match s.find(placeholder) {
+    Some(i) => i
+    None => return s
+  }
+  let before = s[:idx].to_string()
+  let after = s[idx + placeholder.length():].to_string()
+  before + replacement + after
+}
+
+///|
 fn role_to_string(role : @types.Role) -> String {
   match role {
     Root => "root"
@@ -136,8 +172,9 @@ pub fn spawn_commands(
     Inline => root_project
     Standalone => root_project + "/.choir/agents/" + spec.slug
   }
+  let prompt_path = write_prompt_file(root_project, spec.slug, spec.task)
   let launch_cmd = agent_launch_command(
-    spec,
+    { ..spec, task: "__PROMPT_PLACEHOLDER__" },
     workspace,
     parent_session_id~,
     shell_command~,
@@ -148,10 +185,15 @@ pub fn spawn_commands(
     spec.slug,
     spec.isolation,
   )
+  let prompt_ref = "\"$(cat " + quote(prompt_path) + ")\""
+  let raw_launch = command_text_for_launch(launch_cmd)
+  let launch_with_prompt = replace_placeholder(
+    raw_launch, "'__PROMPT_PLACEHOLDER__'", prompt_ref,
+  )
   let launch_str = launch_env_prefix(
       spec, terminal_backend, session, workspace, terminal_target,
     ) +
-    command_text_for_launch(launch_cmd)
+    launch_with_prompt
   match spec.isolation {
     Worktree => {
       let cmds : Array[Command] = [

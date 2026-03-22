@@ -646,9 +646,7 @@ async test "dispatch spawn_worker defaults to research profile" {
   assert_true(res is Ok(_))
   assert_true(recorded.length() > 0)
   let launch = recorded[recorded.length() - 1]
-  assert_true(
-    launch.args[3].contains("## Completion Protocol (Research Worker)"),
-  )
+  assert_true(launch.args[3].contains("\"$(cat "))
 }
 
 ///|
