@@ -1,12 +1,4 @@
 ///|
-/// Parse a pre-serialized JSON string into a Json value, or Null on failure.
-fn json_parse_raw(s : String) -> Json {
-  @json.parse(s) catch {
-    _ => ().to_json()
-  }
-}
-
-///|
 pub(all) struct ToolCall {
   role : @types.Role
   name : String
@@ -37,11 +29,6 @@ fn tool_args_get(args : ToolArgs, key : String) -> String? {
     Some(json) => Some(json.stringify())
     None => None
   }
-}
-
-///|
-fn tool_args_get_json(args : ToolArgs, key : String) -> Json? {
-  args.values.get(key)
 }
 
 ///|

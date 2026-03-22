@@ -241,11 +241,6 @@ fn task_to_json(task : TaskFile) -> Json {
 }
 
 ///|
-fn task_file_to_json(task : TaskFile) -> String {
-  task_to_json(task).stringify()
-}
-
-///|
 fn task_file_path(project_dir : String, id : String) -> String {
   project_dir + "/.choir/tasks/" + id + ".json"
 }
