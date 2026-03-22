@@ -3238,22 +3238,6 @@ fn init_server_command(use_dev : Bool) -> String {
 }
 
 ///|
-fn choir_escape_json_string(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
 async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
   let exit_code = @exec.run(cmd) catch { _ => 1 }
   if exit_code != 0 {
@@ -3665,14 +3649,19 @@ fn reply_run() -> Unit {
   let rbuf = FixedArray::make(1024, (0 : Byte))
   let _ = @uds.read_bytes(uds_fd, rbuf, 0, rbuf.length())
 
-  let cancel_str = if cancel { "true" } else { "false" }
-  let req_msg = "{\"method\":\"reply\",\"role\":\"root\",\"name\":\"reply\",\"args\":{\"id\":\"" +
-    choir_escape_json_string(id) +
-    "\",\"payload\":\"" +
-    choir_escape_json_string(payload) +
-    "\",\"cancel\":\"" +
-    cancel_str +
-    "\"}}\n"
+  let req_msg = {
+      "method": "reply".to_json(),
+      "role": "root".to_json(),
+      "name": "reply".to_json(),
+      "args": {
+        "id": id.to_json(),
+        "payload": payload.to_json(),
+        "cancel": cancel.to_string().to_json(),
+      }.to_json(),
+    }
+    .to_json()
+    .stringify() +
+    "\n"
   let req_bytes = @utf8.encode(req_msg)
   written = 0
   while written < req_bytes.length() {

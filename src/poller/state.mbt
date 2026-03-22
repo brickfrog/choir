@@ -25,50 +25,23 @@ fn parse_review_state_name(s : String) -> ReviewState? {
 }
 
 ///|
-fn escape_json_string(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
 fn tracked_pr_json(tracked : TrackedPR) -> String {
-  let notified_parent = if tracked.notified_parent { "true" } else { "false" }
-  let last_ci_failed = if tracked.last_ci_failed { "true" } else { "false" }
-  "{\"pr_number\":" +
-  tracked.pr_number.to_string() +
-  ",\"agent_id\":\"" +
-  escape_json_string(tracked.agent_id) +
-  "\",\"branch\":\"" +
-  escape_json_string(tracked.branch) +
-  "\",\"parent_branch\":\"" +
-  escape_json_string(tracked.parent_branch) +
-  "\",\"pr_url\":\"" +
-  escape_json_string(tracked.pr_url) +
-  "\",\"first_seen\":" +
-  tracked.first_seen.to_string() +
-  ",\"last_review_state\":\"" +
-  review_state_name(tracked.last_review_state) +
-  "\",\"last_review_bodies\":\"" +
-  escape_json_string(tracked.last_review_bodies) +
-  "\",\"last_sha\":\"" +
-  escape_json_string(tracked.last_sha) +
-  "\",\"notified_parent\":" +
-  notified_parent +
-  ",\"last_ci_failed\":" +
-  last_ci_failed +
-  ",\"last_timeout_at\":" +
-  tracked.last_timeout_at.to_string() +
-  "}"
+  {
+    "pr_number": tracked.pr_number.to_json(),
+    "agent_id": tracked.agent_id.to_json(),
+    "branch": tracked.branch.to_json(),
+    "parent_branch": tracked.parent_branch.to_json(),
+    "pr_url": tracked.pr_url.to_json(),
+    "first_seen": tracked.first_seen.to_json(),
+    "last_review_state": review_state_name(tracked.last_review_state).to_json(),
+    "last_review_bodies": tracked.last_review_bodies.to_json(),
+    "last_sha": tracked.last_sha.to_json(),
+    "notified_parent": tracked.notified_parent.to_json(),
+    "last_ci_failed": tracked.last_ci_failed.to_json(),
+    "last_timeout_at": tracked.last_timeout_at.to_json(),
+  }
+  .to_json()
+  .stringify()
 }
 
 ///|
@@ -91,6 +64,22 @@ fn json_field_int(fields : Map[String, Json], key : String) -> Int? {
 fn json_field_int64(fields : Map[String, Json], key : String) -> Int64? {
   match fields.get(key) {
     Some(Number(n, ..)) => Some(n.to_int64())
+    Some(String(s)) => {
+      let mut res = 0L
+      let mut valid = s != ""
+      for c in s {
+        if c >= '0' && c <= '9' {
+          res = res * 10L + (c.to_int() - '0'.to_int()).to_int64()
+        } else {
+          valid = false
+        }
+      }
+      if valid {
+        Some(res)
+      } else {
+        None
+      }
+    }
     _ => None
   }
 }
