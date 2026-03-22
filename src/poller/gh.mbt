@@ -126,6 +126,7 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
       -1
     }
   }
+  write_end.close()
   let buf = FixedArray::make(65536, (0 : Byte))
   let mut total = 0
   for ;; {
