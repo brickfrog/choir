@@ -159,13 +159,13 @@ pub fn gemini_settings_json(
 /// Checks project-local .choir/context/{role}.md first,
 /// then global ~/.choir/context/{role}.md.
 pub fn resolve_context_path(project_dir : String, role : String) -> String? {
-  let local = project_dir + "/.choir/context/" + role + ".md"
-  if @io.read_file(local) != "" {
+  let local_path = project_dir + "/.choir/context/" + role + ".md"
+  if @io.read_file(local_path) != "" {
     return Some(
-      if local.has_prefix("/") {
-        local
+      if local_path.has_prefix("/") {
+        local_path
       } else {
-        @env.current_dir().unwrap_or(".") + "/" + local
+        @env.current_dir().unwrap_or(".") + "/" + local_path
       },
     )
   }
