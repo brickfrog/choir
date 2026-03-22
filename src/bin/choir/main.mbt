@@ -1335,7 +1335,7 @@ fn zellij_json_bool(value : Json?) -> Bool {
 fn zellij_json_string(value : Json?) -> String {
   match value {
     Some(String(v)) => v
-    Some(Number(_, repr=Some(r))) => r
+    Some(Number(n, ..)) => n.to_int().to_string()
     _ => ""
   }
 }
