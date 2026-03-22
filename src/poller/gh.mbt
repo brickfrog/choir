@@ -91,18 +91,30 @@ pub fn parse_gh_pr_view_output(
 }
 
 ///|
-/// Poll a PR by shelling out to gh and capturing output via temp file.
-/// Avoids pipe deadlock by not using pipe stdout capture.
 pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
-  let tmp = "/tmp/choir-poll-" + pr_number.to_string() + ".json"
-  let exit_code = @process.run("sh", [
-    "-c",
-    "gh pr view " +
-    pr_number.to_string() +
-    " --json reviews,headRefOid,statusCheckRollup,comments > " +
-    tmp +
-    " 2>/dev/null",
-  ]) catch {
+  let (reader, writer) = @process.read_from_process() catch {
+    e => {
+      @io.write_stderr(
+        "[poller] pipe failed for PR #" +
+        pr_number.to_string() +
+        ": " +
+        e.to_string() +
+        "\n",
+      )
+      return (None_, "", false, "")
+    }
+  }
+  let exit_code = @process.run(
+    "gh",
+    [
+      "pr",
+      "view",
+      pr_number.to_string(),
+      "--json",
+      "reviews,headRefOid,statusCheckRollup,comments",
+    ],
+    stdout=writer,
+  ) catch {
     e => {
       @io.write_stderr(
         "[poller] gh pr view failed for PR #" +
@@ -111,22 +123,37 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
         e.to_string() +
         "\n",
       )
-      -1
+      reader.close()
+      return (None_, "", false, "")
     }
   }
+  let buf = FixedArray::make(65536, (0 : Byte))
+  let mut total = 0
+  for ;; {
+    if total >= buf.length() {
+      break
+    }
+    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
+      _ => 0
+    }
+    if n == 0 {
+      break
+    }
+    total = total + n
+  }
+  reader.close()
   if exit_code != 0 {
     @io.write_stderr(
       "[poller] gh exit=" +
       exit_code.to_string() +
       " for PR #" +
       pr_number.to_string() +
-      "\n",
+      " (read " +
+      total.to_string() +
+      " bytes)\n",
     )
     return (None_, "", false, "")
   }
-  let output = @io.read_file(tmp)
-  if output == "" {
-    return (None_, "", false, "")
-  }
+  let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
   parse_gh_pr_view_output(output)
 }
