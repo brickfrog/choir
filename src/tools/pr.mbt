@@ -53,20 +53,22 @@ fn slug_from_branch(branch : String) -> String {
 pub fn gh_pr_create_command(
   branch : String,
   parent_branch : String,
+  title? : String? = None,
+  body? : String? = None,
 ) -> @workspace.Command {
+  let pr_title = match title {
+    Some(t) => t
+    None => slug_from_branch(branch)
+  }
+  let pr_body = match body {
+    Some(b) => b
+    None => ""
+  }
   {
     program: "gh",
     args: [
-      "pr",
-      "create",
-      "--base",
-      parent_branch,
-      "--head",
-      branch,
-      "--title",
-      slug_from_branch(branch),
-      "--body",
-      "",
+      "pr", "create", "--base", parent_branch, "--head", branch, "--title", pr_title,
+      "--body", pr_body,
     ],
     workdir: None,
   }
@@ -113,6 +115,8 @@ pub async fn ensure_pull_request(
   branch : String,
   parent_branch : String,
   project_dir : String,
+  title : String?,
+  body : String?,
 ) -> Result[PullRequestInfo, String] {
   let view_cmd = { ..gh_pr_view_command(branch), workdir: Some(project_dir) }
   let (view_exit, view_output) = capture_command_output(view_cmd)
@@ -125,7 +129,7 @@ pub async fn ensure_pull_request(
   }
 
   let create_cmd = {
-    ..gh_pr_create_command(branch, parent_branch),
+    ..gh_pr_create_command(branch, parent_branch, title~, body~),
     workdir: Some(project_dir),
   }
   let (create_exit, create_output) = capture_command_output(create_cmd)

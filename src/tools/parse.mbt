@@ -149,10 +149,20 @@ fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, String] {
       }
     None => ()
   }
+  let title = match tool_args_get(args, "title") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
+  }
+  let body = match tool_args_get(args, "body") {
+    Some(v) => if v == "" { None } else { Some(v) }
+    None => None
+  }
   Ok({
     branch,
     parent_branch,
     tracked_agent_id: get_arg_or_alias(args, "agent_id", "caller_id", branch),
+    title,
+    body,
   })
 }
 

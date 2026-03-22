@@ -24,6 +24,8 @@ async fn mock_ensure_pr(
   branch : String,
   parent_branch : String,
   _project_dir : String,
+  _title : String?,
+  _body : String?,
 ) -> Result[PullRequestInfo, String] {
   @async.sleep(0)
   if branch == "fail" {

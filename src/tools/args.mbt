@@ -12,6 +12,8 @@ struct FilePrArgs {
   branch : String
   parent_branch : String?
   tracked_agent_id : String
+  title : String?
+  body : String?
 } derive(Show, Eq)
 
 ///|

@@ -71,7 +71,10 @@ pub async fn dispatch(
   session? : String = "choir",
   terminal_backend? : @types.TerminalBackend = @types.TerminalBackend::Tmux,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
+  ensure_pr? : async (String, String, String, String?, String?) -> Result[
+    PullRequestInfo,
+    String,
+  ] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -250,7 +253,14 @@ pub async fn dispatch(
       match run_strict(runner, [@workspace.git_push(branch)]) {
         Err(e) => @types.Response::Err(e)
         Ok(_) =>
-          match ensure_pr(branch, parent_branch, project_dir) {
+          match
+            ensure_pr(
+              branch,
+              parent_branch,
+              project_dir,
+              file_pr_args.title,
+              file_pr_args.body,
+            ) {
             Err(e) => @types.Response::Err(e)
             Ok(pr) => {
               let mut tracked = false
@@ -790,7 +800,10 @@ pub async fn handle_request(
   session? : String = "choir",
   terminal_backend? : @types.TerminalBackend = @types.TerminalBackend::Tmux,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
+  ensure_pr? : async (String, String, String, String?, String?) -> Result[
+    PullRequestInfo,
+    String,
+  ] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -879,7 +892,10 @@ pub async fn dispatch_call(
   session? : String = "choir",
   terminal_backend? : @types.TerminalBackend = @types.TerminalBackend::Tmux,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  ensure_pr? : async (String, String, String) -> Result[PullRequestInfo, String] = ensure_pull_request,
+  ensure_pr? : async (String, String, String, String?, String?) -> Result[
+    PullRequestInfo,
+    String,
+  ] = ensure_pull_request,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",

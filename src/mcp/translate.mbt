@@ -263,6 +263,8 @@ fn tool_defs() -> Array[CatalogTool] {
           desc: "Parent branch to target (default main)",
         },
         { name: "caller_id", desc: "Optional tracked agent id override" },
+        { name: "title", desc: "PR title (default: branch slug)" },
+        { name: "body", desc: "PR description body" },
       ],
       required: [],
     },
