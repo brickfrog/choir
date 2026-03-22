@@ -236,11 +236,17 @@ pub fn spawn_commands(
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
+        let ctx_paths : Array[String] = []
+        match resolve_context_path(root_project, role_to_string(spec.role)) {
+          Some(p) => ctx_paths.push(p)
+          None => ()
+        }
         cmds.push(
           write_gemini_settings(
             workspace,
             canonical_agent_id(spec),
             role_to_string(spec.role),
+            context_paths=ctx_paths,
           ),
         )
       }
@@ -308,11 +314,17 @@ pub fn spawn_commands(
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
+        let ctx_paths : Array[String] = []
+        match resolve_context_path(root_project, role_to_string(spec.role)) {
+          Some(p) => ctx_paths.push(p)
+          None => ()
+        }
         cmds.push(
           write_gemini_settings(
             workspace,
             canonical_agent_id(spec),
             role_to_string(spec.role),
+            context_paths=ctx_paths,
           ),
         )
       }

@@ -116,38 +116,67 @@ pub fn trust_gemini_folder(worktree_path : String) -> Command {
 }
 
 ///|
-/// Generate Gemini CLI settings.json content with MCP server config and hooks.
-pub fn gemini_settings_json(agent_name : String, role : String) -> String {
-  let buf = StringBuilder::new()
-  buf.write_string("{\n")
-  buf.write_string("  \"mcpServers\": {\n")
-  buf.write_string("    \"choir\": {\n")
-  buf.write_string("      \"type\": \"stdio\",\n")
-  buf.write_string("      \"command\": \"choir\",\n")
-  buf.write_string("      \"args\": [\"mcp-stdio\", \"--role\", \"")
-  buf.write_string(role)
-  buf.write_string("\", \"--name\", \"")
-  buf.write_string(agent_name)
-  buf.write_string("\"]\n")
-  buf.write_string("    }\n")
-  buf.write_string("  },\n")
-  buf.write_string("  \"hooks\": {\n")
-  buf.write_string("    \"AfterAgent\": [\n")
-  buf.write_string("      {\n")
-  buf.write_string("        \"matcher\": \"*\",\n")
-  buf.write_string("        \"hooks\": [\n")
-  buf.write_string("          {\n")
-  buf.write_string("            \"type\": \"command\",\n")
-  buf.write_string(
-    "            \"command\": \"choir hook worker-exit --runtime gemini\"\n",
-  )
-  buf.write_string("          }\n")
-  buf.write_string("        ]\n")
-  buf.write_string("      }\n")
-  buf.write_string("    ]\n")
-  buf.write_string("  }\n")
-  buf.write_string("}")
-  buf.to_string()
+/// Generate Gemini CLI settings.json content with MCP server config, hooks,
+/// and optional context files.
+pub fn gemini_settings_json(
+  agent_name : String,
+  role : String,
+  context_paths? : Array[String] = [],
+) -> String {
+  let mcp = {
+    "choir": {
+      "type": "stdio".to_json(),
+      "command": "choir".to_json(),
+      "args": ["mcp-stdio", "--role", role, "--name", agent_name].to_json(),
+    }.to_json(),
+  }
+  let hook_entry = {
+    "matcher": "*".to_json(),
+    "hooks": [
+      {
+        "type": "command".to_json(),
+        "command": "choir hook worker-exit --runtime gemini".to_json(),
+      }.to_json(),
+    ].to_json(),
+  }
+  let settings : Map[String, Json] = {
+    "mcpServers": mcp.to_json(),
+    "hooks": { "AfterAgent": [hook_entry.to_json()].to_json() }.to_json(),
+  }
+  if context_paths.length() > 0 {
+    let files : Array[Json] = []
+    files.push("AGENTS.md".to_json())
+    for path in context_paths {
+      files.push(path.to_json())
+    }
+    settings.set("context", { "fileName": files.to_json() }.to_json())
+  }
+  settings.to_json().stringify(indent=2)
+}
+
+///|
+/// Resolve role context file path with two-tier fallback.
+/// Checks project-local .choir/context/{role}.md first,
+/// then global ~/.choir/context/{role}.md.
+pub fn resolve_context_path(project_dir : String, role : String) -> String? {
+  let local = project_dir + "/.choir/context/" + role + ".md"
+  if @io.read_file(local) != "" {
+    return Some(
+      if local.has_prefix("/") {
+        local
+      } else {
+        @env.current_dir().unwrap_or(".") + "/" + local
+      },
+    )
+  }
+  let home = @io.getenv("HOME").unwrap_or("")
+  if home != "" {
+    let global = home + "/.choir/context/" + role + ".md"
+    if @io.read_file(global) != "" {
+      return Some(global)
+    }
+  }
+  None
 }
 
 ///|
@@ -156,8 +185,9 @@ pub fn write_gemini_settings(
   worktree_path : String,
   agent_name : String,
   role : String,
+  context_paths? : Array[String] = [],
 ) -> Command {
-  let content = gemini_settings_json(agent_name, role)
+  let content = gemini_settings_json(agent_name, role, context_paths~)
   {
     program: "sh",
     args: [
