@@ -2758,11 +2758,7 @@ test "smoke e2e script covers review and merge proof" {
 fn hook_agent_id(input : @hooks.HookInput) -> String? {
   match input.agent_id {
     Some(agent_id) => Some(agent_id)
-    None =>
-      match @io.getenv("CHOIR_AGENT_ID") {
-        Some(agent_id) => Some(agent_id)
-        None => @io.getenv("EXOMONAD_AGENT_ID")
-      }
+    None => @io.getenv("CHOIR_AGENT_ID")
   }
 }
 
@@ -3078,10 +3074,10 @@ fn init_companion_launch_prefix(
     ),
     init_env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
     init_env_assignment("CHOIR_TERMINAL_SESSION", session),
-    init_env_assignment("EXOMONAD_AGENT_ID", agent_id),
-    init_env_assignment("EXOMONAD_SESSION_ID", agent_id),
-    init_env_assignment("EXOMONAD_ROLE", @config.role_to_string(role)),
-    init_env_assignment("EXOMONAD_PARENT_AGENT", parent_id),
+    init_env_assignment("CHOIR_AGENT_ID", agent_id),
+    init_env_assignment("CHOIR_SESSION_ID", agent_id),
+    init_env_assignment("CHOIR_ROLE", @config.role_to_string(role)),
+    init_env_assignment("CHOIR_PARENT_AGENT", parent_id),
   ]
   match agent_type {
     Some(kind) =>

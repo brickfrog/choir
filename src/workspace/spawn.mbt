@@ -73,10 +73,10 @@ fn launch_env_prefix(
     env_assignment("CHOIR_TERMINAL_BACKEND", terminal_backend_str),
     env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
     env_assignment("CHOIR_TERMINAL_SESSION", session),
-    env_assignment("EXOMONAD_AGENT_ID", agent_id),
-    env_assignment("EXOMONAD_SESSION_ID", agent_id),
-    env_assignment("EXOMONAD_ROLE", role),
-    env_assignment("EXOMONAD_PARENT_AGENT", spec.parent_id),
+    env_assignment("CHOIR_AGENT_ID", agent_id),
+    env_assignment("CHOIR_SESSION_ID", agent_id),
+    env_assignment("CHOIR_ROLE", role),
+    env_assignment("CHOIR_PARENT_AGENT", spec.parent_id),
   ]
   if spec.agent_type == @types.AgentType::Gemini {
     assignments.push(

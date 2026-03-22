@@ -455,7 +455,7 @@ test "spawn_commands launch text does not duplicate workdir cd" {
   assert_eq(cmds[9].args[2], "exo:feature-a")
   assert_true(cmds[9].args[3].contains("CHOIR_AGENT_ID='main.feature-a'"))
   assert_true(cmds[9].args[3].contains("CHOIR_TERMINAL_TARGET='exo:feature-a'"))
-  assert_true(cmds[9].args[3].contains("EXOMONAD_PARENT_AGENT='root'"))
+  assert_true(cmds[9].args[3].contains("CHOIR_PARENT_AGENT='root'"))
   assert_true(
     cmds[9].args[3].contains(
       "gemini '--yolo' '--prompt-interactive' 'do something'",
@@ -544,5 +544,5 @@ test "remote_spawn_commands produces 4 ssh commands" {
   assert_true(cmds[2].args[3].contains(".mcp.json"))
   assert_true(cmds[3].args[3].contains("claude"))
   assert_true(cmds[3].args[3].contains("CHOIR_AGENT_ID='main.remote-worker'"))
-  assert_true(cmds[3].args[3].contains("EXOMONAD_PARENT_AGENT='root'"))
+  assert_true(cmds[3].args[3].contains("CHOIR_PARENT_AGENT='root'"))
 }

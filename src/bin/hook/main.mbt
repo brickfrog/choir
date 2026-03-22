@@ -2,11 +2,7 @@
 fn hook_agent_id(input : @hooks.HookInput) -> String? {
   match input.agent_id {
     Some(agent_id) => Some(agent_id)
-    None =>
-      match @io.getenv("CHOIR_AGENT_ID") {
-        Some(agent_id) => Some(agent_id)
-        None => @io.getenv("EXOMONAD_AGENT_ID")
-      }
+    None => @io.getenv("CHOIR_AGENT_ID")
   }
 }
 
