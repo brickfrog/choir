@@ -1,7 +1,4 @@
 ///|
-extern "C" fn c_now_sec() -> Int64 = "choir_now_sec"
-
-///|
 pub fn register_team_member_native(
   parent_agent_id : String,
   member_name : String,
@@ -18,7 +15,7 @@ pub fn register_team_member_native(
   if content.contains("\"name\":\"" + member_name + "\"") {
     return true
   }
-  let now_ms = c_now_sec() * 1000L
+  let now_ms = @env.now().to_int64() / 1000L * 1000L
   let new_member = {
     "agentId": (member_name + "@" + parent_agent_id).to_json(),
     "name": member_name.to_json(),

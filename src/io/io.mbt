@@ -22,18 +22,7 @@ extern "C" fn c_stderr_write(buf : Bytes, size : Int) = "choir_stderr_write"
 extern "C" fn c_exit(code : Int) = "choir_exit"
 
 ///|
-extern "C" fn c_argc() -> Int = "choir_argc"
-
-///|
-#borrow(out)
-extern "C" fn c_argv_get(n : Int, out : Bytes, out_size : Int) -> Int = "choir_argv_get"
-
-///|
 extern "C" fn c_getpid() -> Int = "choir_getpid"
-
-///|
-#borrow(buf)
-extern "C" fn c_getcwd(buf : Bytes, buf_size : Int) -> Int = "choir_getcwd"
 
 ///|
 #borrow(exe)
@@ -133,20 +122,6 @@ pub fn exit(code : Int) -> Unit {
 }
 
 ///|
-pub fn get_args() -> Array[String] {
-  let count = c_argc()
-  let args : Array[String] = []
-  for i = 0; i < count; i = i + 1 {
-    let buf = Bytes::new(4096)
-    let len = c_argv_get(i, buf, 4096)
-    if len > 0 {
-      args.push(@utf8.decode_lossy(buf[:len]))
-    }
-  }
-  args
-}
-
-///|
 pub fn get_pid() -> Int {
   c_getpid()
 }
@@ -175,14 +150,12 @@ pub fn system(cmd : String) -> Int {
 }
 
 ///|
-/// Spawn `<self_exe> serve` as a detached background daemon.
 pub fn spawn_serve(self_exe : String) -> Bool {
   let exe_bytes = string_to_null_terminated_bytes(self_exe)
   c_spawn_serve(exe_bytes, exe_bytes.length() - 1) == 0
 }
 
 ///|
-/// Poll for a socket file to appear (200ms intervals). Returns true if found.
 pub fn wait_for_socket(path : String, max_tries : Int) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_wait_for_socket(path_bytes, max_tries) == 0
@@ -226,14 +199,4 @@ pub fn append_file_sync(path : String, content : String) -> Bool {
 pub fn delete_file_sync(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_delete_file_sync(path_bytes) == 0
-}
-
-///|
-pub fn getcwd() -> String {
-  let buf = Bytes::new(4096)
-  let len = c_getcwd(buf, 4096)
-  if len <= 0 {
-    return "."
-  }
-  @utf8.decode_lossy(buf[:len])
 }

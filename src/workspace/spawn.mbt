@@ -43,7 +43,7 @@ fn resolved_project_dir(project_dir : String) -> String {
   if project_dir.has_prefix("/") {
     project_dir
   } else {
-    @io.getcwd() + "/" + project_dir
+    @env.current_dir().unwrap_or(".") + "/" + project_dir
   }
 }
 

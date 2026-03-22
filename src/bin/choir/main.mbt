@@ -714,7 +714,7 @@ fn mcp_run_uds_loop(
 
 ///|
 fn mcp_run() -> Unit raise {
-  let args = @io.get_args()
+  let args = @env.args()
   let config_content = @io.read_file(".choir/config.toml")
   let base_config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
@@ -1178,7 +1178,7 @@ fn leaf_tool_register_if_needed(
 
 ///|
 fn leaf_tool_run() -> Unit {
-  let args = @io.get_args()
+  let args = @env.args()
   if args.length() < 3 {
     leaf_tool_emit(
       @types.Response::Err("usage: choir leaf-tool <tool> [args...]"),
@@ -1261,7 +1261,7 @@ fn trusted_folders_json(existing : String, workspace : String) -> String {
 
 ///|
 fn trust_gemini_folder_run() -> Unit {
-  let args = @io.get_args()
+  let args = @env.args()
   if args.length() < 3 {
     @io.write_stdout("usage: choir trust-gemini-folder <workspace>\n")
     @io.exit(1)
@@ -1422,7 +1422,7 @@ fn zellij_action_usage() -> String {
 fn zellij_action_run() -> Unit raise {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
-      let args = @io.get_args()
+      let args = @env.args()
       if args.length() < 4 {
         @io.write_stdout(zellij_action_usage() + "\n")
         @io.exit(1)
@@ -1848,7 +1848,7 @@ fn smoke_self_exe(args : Array[String]) -> String {
   if argv0.has_prefix("/") || not(argv0.contains("/")) {
     argv0
   } else {
-    @io.getcwd() + "/" + argv0
+    @env.current_dir().unwrap_or(".") + "/" + argv0
   }
 }
 
@@ -2398,10 +2398,10 @@ fn smoke_e2e_script() -> String {
 fn smoke_run() -> Unit raise {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
-      let args = @io.get_args()
+      let args = @env.args()
       let keep_temp = if smoke_keep_temp(args) { "1" } else { "0" }
       let self_exe = smoke_self_exe(args)
-      let repo_dir = @io.getcwd()
+      let repo_dir = @env.current_dir().unwrap_or(".")
       let script = if smoke_e2e_enabled(args) {
         @io.write_stdout("Running isolated live end-to-end smoke...\n")
         smoke_e2e_script()
@@ -2674,7 +2674,7 @@ test "smoke e2e flag parser" {
 
 ///|
 test "smoke self exe resolves relative binary path" {
-  let cwd = @io.getcwd()
+  let cwd = @env.current_dir().unwrap_or(".")
   assert_eq(smoke_self_exe(["choir"]), "choir")
   assert_eq(smoke_self_exe(["/tmp/choir"]), "/tmp/choir")
   assert_eq(
@@ -3277,10 +3277,10 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
 fn init_run() -> Unit raise {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
-      let args = @io.get_args()
+      let args = @env.args()
       let recreate = args.contains("--recreate")
       let no_attach = init_no_attach(args)
-      let project_dir = @io.getcwd()
+      let project_dir = @env.current_dir().unwrap_or(".")
       let default_session = init_default_terminal_session(project_dir)
       let use_dev = init_is_choir_source_tree(project_dir)
       let server_cmd = init_server_command(use_dev)
@@ -3605,7 +3605,7 @@ fn dev_run() -> Unit {
 
 ///|
 fn reply_run() -> Unit {
-  let args = @io.get_args()
+  let args = @env.args()
 
   let mut id = ""
   let mut payload = ""
@@ -3717,7 +3717,7 @@ fn watch_run() -> Unit {
 
 ///|
 fn main {
-  let args = @io.get_args()
+  let args = @env.args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
   match subcmd {
     "serve" => serve_run() catch { _ => @io.exit(1) }
