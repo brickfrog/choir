@@ -49,6 +49,21 @@ moon.mod.json
 moon.pkg.json
 ```
 
+## Role Context Files
+
+Agents can be primed with role-specific instructions via markdown files:
+
+```
+.choir/context/
+  dev.md       # leaf agent protocol (read by Gemini via settings.json)
+  tl.md        # TL protocol
+  worker.md    # worker protocol
+```
+
+Resolution: project-local `.choir/context/{role}.md` first, then `~/.choir/context/{role}.md` as global fallback. If neither exists, agents get the compiled-in defaults from `spawn_prompt.mbt` plus `AGENTS.md`.
+
+For Gemini agents, context files are injected via `settings.json` `context.fileName`. For Claude agents, the prompt text is the primary channel.
+
 ## Key Design Decisions
 
 1. **Pure MoonBit native** — no WASM split, no Rust runtime, no protobuf boundary. Tool logic runs in-process. Compiles in <2s.
