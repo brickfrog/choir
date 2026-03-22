@@ -151,6 +151,14 @@ AGENTS.md                 leaf-agent instructions
 - TCP/remote path: implemented, less proven than local UDS
 - Claude `--channels`: not usable for manual MCP servers yet
 
+## Acknowledgements
+
+Choir's architecture is informed by [exomonad](https://github.com/tidepool-heavy-industries/exomonad), a Rust/WASM agent orchestration framework. The tree-of-agents model, role context files, prompt-via-temp-file pattern, and several workflow conventions originated there.
+
+## License
+
+MIT
+
 ## See Also
 
 - [CLAUDE.md](CLAUDE.md)

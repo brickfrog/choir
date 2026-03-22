@@ -37,14 +37,21 @@ moon fmt              # format
 CLAUDE.md              # overview, workflow target, dev notes
 AGENTS.md              # instructions for Gemini/Moon Pilot leaf agents
 src/
-  server/              # persistent server, transport listeners
+  server/              # persistent server, transport listeners, recovery
   mcp/                 # MCP JSON-RPC translation
   tools/               # tool handlers (fork_wave, spawn_worker, etc.)
   registry/            # agent registry, mutex registry
-  workspace/           # git worktree + tmux management
-  message/             # message routing (Teams inbox, tmux STDIN)
+  workspace/           # git worktree + tmux/zellij management
+  message/             # message routing (Teams inbox, terminal injection)
   poller/              # GitHub PR/CI status polling
   config/              # TOML config parsing
+  sys/                 # C FFI for file I/O, stdio, process control
+  uds/                 # Unix domain socket C FFI
+  exec/                # async process execution
+  phase/               # dev/TL phase state machines
+  hooks/               # pre-tool-use hook support
+  plugin/              # subprocess plugin protocol
+  bin/choir/           # single binary entry point
 moon.mod.json
 moon.pkg.json
 ```
