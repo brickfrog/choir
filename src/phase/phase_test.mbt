@@ -57,21 +57,43 @@ test "dev_can_exit" {
 }
 
 ///|
-test "tl json roundtrip" {
-  let p = TLPhase::Waiting(3)
-  let j = tl_phase_to_json(p)
-  match tl_phase_from_json(j) {
-    Some(p2) => assert_eq(p, p2)
-    None => fail("failed to parse")
+test "tl phase json round-trip all variants" {
+  let phases : Array[TLPhase] = [
+    Planning,
+    Dispatching,
+    Waiting(3),
+    Merging(2),
+    AllMerged,
+    PRFiled(42, "https://github.com/org/repo/pull/42"),
+    Done,
+    Failed("merge conflict"),
+  ]
+  for phase in phases {
+    let json = tl_phase_to_json(phase)
+    match tl_phase_from_json(json) {
+      Some(restored) => assert_eq(restored, phase)
+      None => fail("round-trip failed for: " + json)
+    }
   }
 }
 
 ///|
-test "dev json roundtrip" {
-  let p = DevPhase::UnderReview(123, 2)
-  let j = dev_phase_to_json(p)
-  match dev_phase_from_json(j) {
-    Some(p2) => assert_eq(p, p2)
-    None => fail("failed to parse")
+test "dev phase json round-trip all variants" {
+  let phases : Array[DevPhase] = [
+    Spawned,
+    Working,
+    PRFiled(99, "https://github.com/org/repo/pull/99"),
+    UnderReview(99, 3),
+    ChangesRequested(99),
+    Approved(99),
+    Done,
+    Failed("lint errors"),
+  ]
+  for phase in phases {
+    let json = dev_phase_to_json(phase)
+    match dev_phase_from_json(json) {
+      Some(restored) => assert_eq(restored, phase)
+      None => fail("round-trip failed for: " + json)
+    }
   }
 }
