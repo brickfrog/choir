@@ -448,7 +448,7 @@ pub async fn ServerState::process_poller_tick_with(
   self : ServerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (@poller.ReviewState, String, Bool, String),
+  poll : async (Int) -> (@poller.ReviewState, String, Bool, String, Bool),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
   let pending_events = []
@@ -468,23 +468,26 @@ pub async fn ServerState::process_poller_tick(
   timeout : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
-  let n = self.poller.tracked.length()
-  if n > 0 {
-    println("[poller] tick: \{n} tracked PRs")
-    for pr_number, tracked in self.poller.tracked {
-      println(
-        "[poller] PR #\{pr_number} agent=\{tracked.agent_id} review=\{tracked.last_review_state} ci_failed=\{tracked.last_ci_failed}",
-      )
-    }
-  }
+  let n_before = self.poller.tracked.length()
   let pending_events = []
   let pending_agent_ids = []
   self.poller.tick(now, timeout, fn(event, agent_id) {
     pending_events.push(event)
     pending_agent_ids.push(agent_id)
   })
-  for i = 0; i < pending_events.length(); i = i + 1 {
-    println("[poller] event: \{pending_events[i]} for \{pending_agent_ids[i]}")
+  let n_after = self.poller.tracked.length()
+  if pending_events.length() > 0 || n_before != n_after {
+    println(
+      "[poller] tick at \{now}: \{n_before} PRs, \{pending_events.length()} events",
+    )
+    for i = 0; i < pending_events.length(); i = i + 1 {
+      println(
+        "[poller] event: \{pending_events[i]} for \{pending_agent_ids[i]}",
+      )
+    }
+    if n_before != n_after {
+      println("[poller] tracked PRs: \{n_before} -> \{n_after}")
+    }
   }
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))

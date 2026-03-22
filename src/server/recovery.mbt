@@ -506,7 +506,7 @@ async fn recover_open_pr_tracking_with(
   open_prs : Array[OpenPR],
   persisted : Array[@poller.TrackedPR],
   recovered_at : Int64,
-  snapshot : async (Int) -> (@poller.ReviewState, String, Bool, String),
+  snapshot : async (Int) -> (@poller.ReviewState, String, Bool, String, Bool),
 ) -> Unit {
   for pr in open_prs {
     match state.registry.get(pr.branch) {
@@ -526,7 +526,9 @@ async fn recover_open_pr_tracking_with(
               pr_url: pr.url,
             })
           None => {
-            let (review, sha, ci_failed, review_bodies) = snapshot(pr.pr_number)
+            let (review, sha, ci_failed, review_bodies, _) = snapshot(
+              pr.pr_number,
+            )
             state.poller.track_recovered(
               pr.pr_number,
               agent.agent_id,
@@ -828,6 +830,7 @@ async test "recover_open_pr_tracking_with seeds current review snapshot" {
         "sha-review-1",
         true,
         "Please add tests",
+        true,
       )
     },
   )
@@ -867,7 +870,7 @@ async test "recover_open_pr_tracking_with ignores unowned PR branches" {
     ],
     [],
     123L,
-    fn(_pr_number) { (@poller.ReviewState::Approved, "sha", false, "") },
+    fn(_pr_number) { (@poller.ReviewState::Approved, "sha", false, "", true) },
   )
   assert_eq(state.poller.get(77), None)
 }
@@ -917,7 +920,13 @@ async test "recover_open_pr_tracking_with prefers persisted poller state" {
     ],
     123L,
     fn(_pr_number) {
-      (@poller.ReviewState::Approved, "sha-live", false, "Should be ignored")
+      (
+        @poller.ReviewState::Approved,
+        "sha-live",
+        false,
+        "Should be ignored",
+        true,
+      )
     },
   )
   match state.poller.get(12) {

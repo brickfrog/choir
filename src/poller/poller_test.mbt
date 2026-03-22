@@ -421,7 +421,7 @@ test "detect_events::no_change" {
 
 ///|
 test "parse_gh_pr_view_output returns last actionable review and head sha" {
-  let (review, sha, _, _) = parse_gh_pr_view_output(
+  let (review, sha, _, _, _) = parse_gh_pr_view_output(
     "{\"reviews\":[{\"state\":\"COMMENTED\"},{\"state\":\"CHANGES_REQUESTED\"},{\"state\":\"APPROVED\"}],\"headRefOid\":\"abc123\"}",
   )
   assert_eq(review, ReviewState::Approved)
@@ -430,7 +430,7 @@ test "parse_gh_pr_view_output returns last actionable review and head sha" {
 
 ///|
 test "parse_gh_pr_view_output falls back on missing fields" {
-  let (review, sha, _, _) = parse_gh_pr_view_output("{\"reviews\":[]}")
+  let (review, sha, _, _, _) = parse_gh_pr_view_output("{\"reviews\":[]}")
   assert_eq(review, ReviewState::None_)
   assert_eq(sha, "")
 }
@@ -446,7 +446,7 @@ async test "PollerState::tick_with updates tracked state and emits events" {
   state.tick_with(
     200,
     900L,
-    fn(_pr_number) { (ReviewState::Approved, "sha2", false, "") },
+    fn(_pr_number) { (ReviewState::Approved, "sha2", false, "", true) },
     fn(event, agent_id) {
       events.push(event)
       agent_ids.push(agent_id)
@@ -484,7 +484,7 @@ async test "PollerState::tick_with marks fixes pushed as parent-notified" {
   state.tick_with(
     200,
     900L,
-    fn(_pr_number) { (ReviewState::ChangesRequested, "sha2", false, "") },
+    fn(_pr_number) { (ReviewState::ChangesRequested, "sha2", false, "", true) },
     fn(event, _agent_id) { events.push(event) },
   )
   assert_eq(events, [PollEvent::FixesPushed(8)])
@@ -506,7 +506,7 @@ async test "PollerState::tick_with resets parent notification on new review requ
     200,
     900L,
     fn(_pr_number) {
-      (ReviewState::ChangesRequested, "sha2", false, "Please fix")
+      (ReviewState::ChangesRequested, "sha2", false, "Please fix", true)
     },
     fn(event, _agent_id) { events.push(event) },
   )
@@ -533,6 +533,7 @@ async test "PollerState::tick_with tracks latest comment-only review bodies" {
         "sha10",
         false,
         "Please tighten the wording in CLAUDE.md",
+        true,
       )
     },
     fn(event, _agent_id) { events.push(event) },
@@ -563,7 +564,7 @@ async test "PollerState::tick_with records last_timeout_at and throttles re-fire
   state.tick_with(
     1200,
     900L,
-    fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+    fn(_pr_number) { (ReviewState::None_, "sha1", false, "", true) },
     fn(event, _agent_id) { events.push(event) },
   )
   assert_eq(events, [PollEvent::ReviewTimeout(20)])
@@ -576,7 +577,7 @@ async test "PollerState::tick_with records last_timeout_at and throttles re-fire
   state.tick_with(
     1300,
     900L,
-    fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+    fn(_pr_number) { (ReviewState::None_, "sha1", false, "", true) },
     fn(event, _agent_id) { events2.push(event) },
   )
   assert_eq(events2, [])
@@ -585,7 +586,7 @@ async test "PollerState::tick_with records last_timeout_at and throttles re-fire
   state.tick_with(
     2200,
     900L,
-    fn(_pr_number) { (ReviewState::None_, "sha1", false, "") },
+    fn(_pr_number) { (ReviewState::None_, "sha1", false, "", true) },
     fn(event, _agent_id) { events3.push(event) },
   )
   assert_eq(events3, [PollEvent::ReviewTimeout(20)])
@@ -639,7 +640,7 @@ test "detect_events::ci_failed does not re-fire if already failed" {
 
 ///|
 test "parse_gh_pr_view_output detects CI failure" {
-  let (review, sha, ci_failed, _) = parse_gh_pr_view_output(
+  let (review, sha, ci_failed, _, _) = parse_gh_pr_view_output(
     "{\"reviews\":[],\"headRefOid\":\"abc\",\"statusCheckRollup\":[{\"state\":\"FAILURE\"}]}",
   )
   assert_eq(review, ReviewState::None_)
@@ -649,7 +650,7 @@ test "parse_gh_pr_view_output detects CI failure" {
 
 ///|
 test "parse_gh_pr_view_output CI passing is not failed" {
-  let (review, sha, ci_failed, _) = parse_gh_pr_view_output(
+  let (review, sha, ci_failed, _, _) = parse_gh_pr_view_output(
     "{\"reviews\":[],\"headRefOid\":\"abc\",\"statusCheckRollup\":[{\"state\":\"SUCCESS\"}]}",
   )
   assert_eq(review, ReviewState::None_)
@@ -659,7 +660,7 @@ test "parse_gh_pr_view_output CI passing is not failed" {
 
 ///|
 test "parse_gh_pr_view_output ERROR state is ci_failed" {
-  let (_, _, ci_failed, _) = parse_gh_pr_view_output(
+  let (_, _, ci_failed, _, _) = parse_gh_pr_view_output(
     "{\"reviews\":[],\"headRefOid\":\"\",\"statusCheckRollup\":[{\"state\":\"ERROR\"}]}",
   )
   assert_true(ci_failed)
@@ -667,7 +668,7 @@ test "parse_gh_pr_view_output ERROR state is ci_failed" {
 
 ///|
 test "parse_review_bodies extracts non-empty review bodies" {
-  let (_, _, _, bodies) = parse_gh_pr_view_output(
+  let (_, _, _, bodies, _) = parse_gh_pr_view_output(
     "{\"reviews\":[{\"state\":\"CHANGES_REQUESTED\",\"body\":\"Please fix the indentation\"},{\"state\":\"COMMENTED\",\"body\":\"Also update the docs\"}],\"headRefOid\":\"abc\",\"statusCheckRollup\":[]}",
   )
   assert_true(bodies.contains("Please fix the indentation"))
@@ -676,7 +677,7 @@ test "parse_review_bodies extracts non-empty review bodies" {
 
 ///|
 test "parse_review_bodies ignores empty bodies" {
-  let (_, _, _, bodies) = parse_gh_pr_view_output(
+  let (_, _, _, bodies, _) = parse_gh_pr_view_output(
     "{\"reviews\":[{\"state\":\"APPROVED\",\"body\":\"\"}],\"headRefOid\":\"abc\",\"statusCheckRollup\":[]}",
   )
   assert_eq(bodies, "")

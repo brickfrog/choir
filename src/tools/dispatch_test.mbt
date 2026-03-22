@@ -863,7 +863,7 @@ async test "dispatch shutdown blocks during critical review phase" {
   poller.tick_with(
     200L,
     900L,
-    fn(_) { (@poller.ReviewState::ChangesRequested, "sha1", false, "") },
+    fn(_) { (@poller.ReviewState::ChangesRequested, "sha1", false, "", true) },
     fn(_, _) { () },
   )
   let call : @tools.ToolCall = {

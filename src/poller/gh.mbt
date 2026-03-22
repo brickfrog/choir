@@ -67,20 +67,35 @@ fn parse_ci_failed(json : Json) -> Bool {
 }
 
 ///|
+fn parse_pr_is_open(json : Json) -> Bool {
+  guard json is Object(obj) else { return true }
+  match obj.get("state") {
+    Some(String("OPEN")) => true
+    Some(String(_)) => false
+    _ => true
+  }
+}
+
+///|
 pub fn parse_gh_pr_view_output(
   data : String,
-) -> (ReviewState, String, Bool, String) {
-  let json = @json.parse(data) catch { _ => return (None_, "", false, "") }
+) -> (ReviewState, String, Bool, String, Bool) {
+  let json = @json.parse(data) catch {
+    _ => return (None_, "", false, "", true)
+  }
   (
     parse_review_state(json),
     parse_head_ref_oid(json),
     parse_ci_failed(json),
     parse_review_bodies(json),
+    parse_pr_is_open(json),
   )
 }
 
 ///|
-pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
+pub async fn gh_poll_pr(
+  pr_number : Int,
+) -> (ReviewState, String, Bool, String, Bool) {
   let (reader, writer) = @process.read_from_process() catch {
     e => {
       @sys.write_stderr(
@@ -90,11 +105,11 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
         e.to_string() +
         "\n",
       )
-      return (None_, "", false, "")
+      return (None_, "", false, "", true)
     }
   }
   let (err_reader, err_writer) = @process.read_from_process() catch {
-    _ => return (None_, "", false, "")
+    _ => return (None_, "", false, "", true)
   }
   let pid = @process.spawn_orphan(
     "gh",
@@ -103,7 +118,7 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
       "view",
       pr_number.to_string(),
       "--json",
-      "reviews,headRefOid,statusCheckRollup",
+      "reviews,headRefOid,statusCheckRollup,state",
     ],
     stdout=writer,
     stderr=err_writer,
@@ -117,7 +132,7 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
         "\n",
       )
       reader.close()
-      return (None_, "", false, "")
+      return (None_, "", false, "", true)
     }
   }
   let buf = FixedArray::make(65536, (0 : Byte))
@@ -172,7 +187,7 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
       "\n",
     )
     if total == 0 {
-      return (None_, "", false, "")
+      return (None_, "", false, "", true)
     }
   }
   let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])

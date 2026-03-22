@@ -475,6 +475,7 @@ async test "process_poller_tick_with routes comment-only reviews to owning agent
         "sha-comment-1",
         false,
         "Please tighten the wording in CLAUDE.md",
+        true,
       )
     },
     runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
@@ -561,6 +562,7 @@ async test "process_poller_tick_with drives PR review workflow and merge cleanup
         "sha-review-1",
         false,
         "Please add tests",
+        true,
       )
     },
     runner=async fn(cmds) { record_runner_server(review_cmds, cmds) },
@@ -600,6 +602,7 @@ async test "process_poller_tick_with drives PR review workflow and merge cleanup
         "sha-review-2",
         false,
         "Please add tests",
+        true,
       )
     },
     runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
@@ -624,7 +627,7 @@ async test "process_poller_tick_with drives PR review workflow and merge cleanup
     202L,
     900L,
     fn(_pr_number) {
-      (@poller.ReviewState::Approved, "sha-review-2", false, "")
+      (@poller.ReviewState::Approved, "sha-review-2", false, "", true)
     },
     runner=async fn(cmds) { record_runner_server(ready_cmds, cmds) },
   )
@@ -702,6 +705,7 @@ async test "process_poller_tick_with suppresses duplicate recovered review event
         "sha-review-1",
         false,
         "Please add tests",
+        true,
       )
     },
     runner=async fn(cmds) { record_runner_server(duplicate_cmds, cmds) },
@@ -718,6 +722,7 @@ async test "process_poller_tick_with suppresses duplicate recovered review event
         "sha-review-2",
         false,
         "Please add tests",
+        true,
       )
     },
     runner=async fn(cmds) { record_runner_server(fixes_cmds, cmds) },
@@ -765,7 +770,7 @@ async test "process_poller_tick_with suppresses duplicate recovered approval eve
     200L,
     900L,
     fn(_pr_number) {
-      (@poller.ReviewState::Approved, "sha-review-2", false, "")
+      (@poller.ReviewState::Approved, "sha-review-2", false, "", true)
     },
     runner=async fn(cmds) { record_runner_server(duplicate_cmds, cmds) },
   )
@@ -800,7 +805,7 @@ async test "process_poller_tick_with preserves timeout age after recovery" {
   state.process_poller_tick_with(
     1101L,
     900L,
-    fn(_pr_number) { (@poller.ReviewState::None_, "", false, "") },
+    fn(_pr_number) { (@poller.ReviewState::None_, "", false, "", true) },
     runner=async fn(cmds) { record_runner_server(timeout_cmds, cmds) },
   )
   assert_eq(timeout_cmds.length(), 1)
