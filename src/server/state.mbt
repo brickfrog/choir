@@ -70,7 +70,7 @@ fn normalize_run_id(content : String) -> String? {
 ///|
 fn init_run_id(project_dir : String) -> String {
   let run_id_path = project_dir + "/.choir/run_id"
-  match normalize_run_id(@io.read_file(run_id_path)) {
+  match normalize_run_id(@sys.read_file(run_id_path)) {
     Some(existing) => existing
     None => {
       let generated = @poller.now_sec().to_string()

@@ -1,6 +1,6 @@
 import {
   "choir/src/config",
-  "choir/src/io",
+  "choir/src/sys",
   "choir/src/types",
   "moonbitlang/core/env",
   "moonbitlang/core/json",

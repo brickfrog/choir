@@ -46,7 +46,7 @@ pub fn get_phase(
 ) -> String? {
   let key = scoped_phase_key(machine_name, branch)
   let path = project_dir + "/.choir/kv/" + key
-  let content = @io.read_file(path)
+  let content = @sys.read_file(path)
   if content == "" {
     None
   } else {
@@ -63,7 +63,7 @@ pub fn set_phase(
 ) -> Bool {
   let key = scoped_phase_key(machine_name, branch)
   let path = project_dir + "/.choir/kv/" + key
-  @io.write_file_sync(path, json)
+  @sys.write_file_sync(path, json)
 }
 
 ///|

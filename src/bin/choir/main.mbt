@@ -112,7 +112,7 @@ async fn serve_handle_connection(
 ///|
 fn serve_write_all_uds(fd : Int, data : Bytes) -> Unit {
   let mut written = 0
-  @io.write_stderr(
+  @sys.write_stderr(
     "[choir serve] writing UDS response bytes=" +
     data.length().to_string() +
     "\n",
@@ -120,7 +120,7 @@ fn serve_write_all_uds(fd : Int, data : Bytes) -> Unit {
   while written < data.length() {
     let n = @uds.write_bytes(fd, data, written, data.length() - written)
     if n <= 0 {
-      @io.write_stderr(
+      @sys.write_stderr(
         "[choir serve] UDS write failed after " +
         written.to_string() +
         " bytes\n",
@@ -129,7 +129,7 @@ fn serve_write_all_uds(fd : Int, data : Bytes) -> Unit {
     }
     written = written + n
   }
-  @io.write_stderr(
+  @sys.write_stderr(
     "[choir serve] UDS write complete bytes=" + written.to_string() + "\n",
   )
 }
@@ -168,13 +168,13 @@ async fn serve_handle_uds_connection(
             }
             let resp = state.handle(req)
             let resp_str = @transport.format_response(resp) + "\n"
-            @io.write_stderr("[choir serve] request: " + line + "\n")
-            @io.write_stderr("[choir serve] response: " + resp_str)
+            @sys.write_stderr("[choir serve] request: " + line + "\n")
+            @sys.write_stderr("[choir serve] response: " + resp_str)
             serve_write_all_uds(client.fd, @utf8.encode(resp_str))
           }
           Err(err) => {
             let resp = @types.Response::Err("parse error: " + err)
-            @io.write_stderr(
+            @sys.write_stderr(
               "[choir serve] parse error for line: " + line + "\n",
             )
             serve_write_all_uds(
@@ -213,13 +213,13 @@ fn serve_close_uds_client(
 
 ///|
 fn serve_run() -> Unit {
-  let config_content = @io.read_file(".choir/config.toml")
+  let config_content = @sys.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
   }
-  @io.write_pid_file(".choir/server.pid")
-  ignore(@io.system("rm -f .choir/tasks/*.json 2>/dev/null; true"))
+  @sys.write_pid_file(".choir/server.pid")
+  ignore(@sys.system("rm -f .choir/tasks/*.json 2>/dev/null; true"))
   let state = @server.ServerState::new(config)
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(root) {
@@ -240,7 +240,7 @@ fn serve_run() -> Unit {
             )
           } catch {
             e =>
-              @io.write_stderr(
+              @sys.write_stderr(
                 "[choir serve] poller tick error: " + e.to_string() + "\n",
               )
           }
@@ -463,7 +463,7 @@ fn mcp_resolved_agent_id(
           "agent-" +
           @config.role_to_string(role) +
           "-" +
-          @io.get_pid().to_string()
+          @sys.get_pid().to_string()
       }
   }
 }
@@ -587,7 +587,7 @@ fn mcp_server_response_line(id : @mcp.JsonRpcId, resp_line : String) -> String {
 
 ///|
 fn mcp_write_server_response(id : @mcp.JsonRpcId, resp_line : String) -> Unit {
-  @io.write_stdout(mcp_server_response_line(id, resp_line))
+  @sys.write_stdout(mcp_server_response_line(id, resp_line))
 }
 
 ///|
@@ -700,10 +700,10 @@ fn mcp_run_uds_loop(
   }
 
   mcp_run_request_loop(
-    fn() { @io.read_stdin_line(8192) },
+    fn() { @sys.read_stdin_line(8192) },
     fn(wire_req) { mcp_write_all_uds(uds_fd, @utf8.encode(wire_req)) },
     fn() { reader.read_line() },
-    fn(output) { @io.write_stdout(output) },
+    fn(output) { @sys.write_stdout(output) },
     role,
     config,
     local_cfg,
@@ -713,17 +713,17 @@ fn mcp_run_uds_loop(
 ///|
 fn mcp_run() -> Unit {
   let args = @env.args()
-  let config_content = @io.read_file(".choir/config.toml")
+  let config_content = @sys.read_file(".choir/config.toml")
   let base_config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => {
       println("error: failed to parse .choir/config.toml")
-      @io.exit(1)
+      @sys.exit(1)
       @types.Config::default()
     }
   }
 
-  let local_content = @io.read_file(".choir/config.local.toml")
+  let local_content = @sys.read_file(".choir/config.local.toml")
   let local_cfg = match @config.parse_local_config(local_content) {
     Ok(cfg) => cfg
     Err(_) => @types.LocalConfig::default()
@@ -743,7 +743,7 @@ fn mcp_run() -> Unit {
       if not(mcp_should_reconnect_after_uds_loop(exit_reason)) {
         break
       }
-      if not(@io.wait_for_socket(config.listen_uds, 60)) {
+      if not(@sys.wait_for_socket(config.listen_uds, 60)) {
         break
       }
       uds_fd = @uds.client_connect(config.listen_uds)
@@ -760,7 +760,7 @@ fn mcp_run() -> Unit {
         Some(addr) => addr
         None => {
           println("error: listen_tcp not configured in .choir/config.toml")
-          @io.exit(1)
+          @sys.exit(1)
           ""
         }
       }
@@ -768,7 +768,7 @@ fn mcp_run() -> Unit {
       let conn = @socket.Tcp::connect(@socket.Addr::parse(addr_str)) catch {
         err => {
           println("error: failed to connect to \{addr_str}: \{err}")
-          @io.exit(1)
+          @sys.exit(1)
           raise err
         }
       }
@@ -786,12 +786,12 @@ fn mcp_run() -> Unit {
       } catch {
         err => {
           println("error: registration failed: \{err}")
-          @io.exit(1)
+          @sys.exit(1)
         }
       }
 
       for ;; {
-        let line = match @io.read_stdin_line(8192) {
+        let line = match @sys.read_stdin_line(8192) {
           Some(line) => line
           None => break
         }
@@ -803,10 +803,10 @@ fn mcp_run() -> Unit {
             }
             if rpc.req_method == @mcp.method_initialize {
               let resp = @mcp.initialize_response(id)
-              @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
+              @sys.write_stdout_bytes(@mcp.response_to_bytes(resp))
             } else if rpc.req_method == @mcp.method_tools_list {
               let resp = @mcp.tools_list_response(id)
-              @io.write_stdout_bytes(@mcp.response_to_bytes(resp))
+              @sys.write_stdout_bytes(@mcp.response_to_bytes(resp))
             } else {
               match @mcp.to_internal_request(rpc, role) {
                 Ok(internal_req) => {
@@ -825,20 +825,20 @@ fn mcp_run() -> Unit {
                         @mcp.err_internal,
                         "TCP error: \{err}",
                       )
-                      @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                      @sys.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
                     }
                   }
                 }
                 Err(e) => {
                   let err_resp = @mcp.error_response(id, e.code, e.message)
-                  @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                  @sys.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
                 }
               }
             }
           }
           Err(e) => {
             let err_resp = @mcp.error_response(Number(0), e.code, e.message)
-            @io.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+            @sys.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
           }
         }
       }
@@ -966,7 +966,7 @@ fn leaf_tool_request_args(
   match tool {
     "file_pr" => {
       if not(flags.contains("caller_id")) {
-        match @io.getenv("CHOIR_AGENT_ID") {
+        match @sys.getenv("CHOIR_AGENT_ID") {
           Some(id) => if id != "" { flags.set("caller_id", id) }
           None => ()
         }
@@ -989,7 +989,7 @@ fn leaf_tool_request_args(
     }
     "notify_parent" => {
       if not(flags.contains("caller_id")) {
-        match @io.getenv("CHOIR_AGENT_ID") {
+        match @sys.getenv("CHOIR_AGENT_ID") {
           Some(id) => if id != "" { flags.set("caller_id", id) }
           None => ()
         }
@@ -1026,7 +1026,7 @@ fn leaf_tool_request_args(
     }
     "shutdown" => {
       if not(flags.contains("caller_id")) {
-        match @io.getenv("CHOIR_AGENT_ID") {
+        match @sys.getenv("CHOIR_AGENT_ID") {
           Some(id) => if id != "" { flags.set("caller_id", id) }
           None => ()
         }
@@ -1110,8 +1110,8 @@ fn leaf_tool_response_json(resp : @types.Response) -> String {
 
 ///|
 fn leaf_tool_emit(resp : @types.Response) -> Unit {
-  @io.write_stdout(leaf_tool_response_json(resp))
-  @io.exit(if resp.is_ok() { 0 } else { 1 })
+  @sys.write_stdout(leaf_tool_response_json(resp))
+  @sys.exit(if resp.is_ok() { 0 } else { 1 })
 }
 
 ///|
@@ -1119,7 +1119,7 @@ fn leaf_tool_load_config() -> Result[
   (@types.Role, @types.Config, @types.LocalConfig),
   String,
 ] {
-  let config_content = @io.read_file(".choir/config.toml")
+  let config_content = @sys.read_file(".choir/config.toml")
   if config_content == "" {
     return Err("missing .choir/config.toml")
   }
@@ -1127,7 +1127,7 @@ fn leaf_tool_load_config() -> Result[
     Ok(cfg) => cfg
     Err(e) => return Err(e.message())
   }
-  let local_content = @io.read_file(".choir/config.local.toml")
+  let local_content = @sys.read_file(".choir/config.local.toml")
   if local_content == "" {
     return Err("missing .choir/config.local.toml")
   }
@@ -1257,38 +1257,40 @@ fn trusted_folders_json(existing : String, workspace : String) -> String {
 fn trust_gemini_folder_run() -> Unit {
   let args = @env.args()
   if args.length() < 3 {
-    @io.write_stdout("usage: choir trust-gemini-folder <workspace>\n")
-    @io.exit(1)
+    @sys.write_stdout("usage: choir trust-gemini-folder <workspace>\n")
+    @sys.exit(1)
     return
   }
-  let home = match @io.getenv("HOME") {
+  let home = match @sys.getenv("HOME") {
     Some(path) =>
       if path == "" {
-        @io.write_stdout("error: HOME is not set\n")
-        @io.exit(1)
+        @sys.write_stdout("error: HOME is not set\n")
+        @sys.exit(1)
         return
       } else {
         path
       }
     None => {
-      @io.write_stdout("error: HOME is not set\n")
-      @io.exit(1)
+      @sys.write_stdout("error: HOME is not set\n")
+      @sys.exit(1)
       return
     }
   }
   let gemini_dir = home + "/.gemini"
   let trusted_path = gemini_dir + "/trustedFolders.json"
   ignore(
-    @io.system("mkdir -p '" + init_escape_shell_single_quoted(gemini_dir) + "'"),
+    @sys.system(
+      "mkdir -p '" + init_escape_shell_single_quoted(gemini_dir) + "'",
+    ),
   )
-  let content = @io.read_file(trusted_path)
+  let content = @sys.read_file(trusted_path)
   let updated = trusted_folders_json(content, args[2])
-  if @io.write_file_sync(trusted_path, updated) {
-    @io.write_stdout("trusted " + args[2] + "\n")
-    @io.exit(0)
+  if @sys.write_file_sync(trusted_path, updated) {
+    @sys.write_stdout("trusted " + args[2] + "\n")
+    @sys.exit(0)
   } else {
-    @io.write_stdout("error: failed to write " + trusted_path + "\n")
-    @io.exit(1)
+    @sys.write_stdout("error: failed to write " + trusted_path + "\n")
+    @sys.exit(1)
   }
 }
 
@@ -1418,8 +1420,8 @@ fn zellij_action_run() -> Unit {
     @async.with_task_group(async fn(_root) {
       let args = @env.args()
       if args.length() < 4 {
-        @io.write_stdout(zellij_action_usage() + "\n")
-        @io.exit(1)
+        @sys.write_stdout(zellij_action_usage() + "\n")
+        @sys.exit(1)
         return
       }
       let action = args[2]
@@ -1430,18 +1432,18 @@ fn zellij_action_run() -> Unit {
             @workspace.LocalTargetKind::ZellijTab
             | @workspace.LocalTargetKind::ZellijPane => parsed
             _ => {
-              @io.write_stdout(
+              @sys.write_stdout(
                 "error: not a zellij target: " + target_text + "\n",
               )
-              @io.exit(1)
+              @sys.exit(1)
               return
             }
           }
         None => {
-          @io.write_stdout(
+          @sys.write_stdout(
             "error: invalid zellij target: " + target_text + "\n",
           )
-          @io.exit(1)
+          @sys.exit(1)
           return
         }
       }
@@ -1449,18 +1451,18 @@ fn zellij_action_run() -> Unit {
       match action {
         "send" => {
           if args.length() < 5 {
-            @io.write_stdout(zellij_action_usage() + "\n")
-            @io.exit(1)
+            @sys.write_stdout(zellij_action_usage() + "\n")
+            @sys.exit(1)
             return
           }
           let text = args[4]
           let pane_id = match zellij_target_pane_id(target, panes) {
             Some(id) => id
             None => {
-              @io.write_stdout(
+              @sys.write_stdout(
                 "error: zellij target not found: " + target_text + "\n",
               )
-              @io.exit(1)
+              @sys.exit(1)
               return
             }
           }
@@ -1478,7 +1480,7 @@ fn zellij_action_run() -> Unit {
             workdir: None,
           })
           if write_code != 0 {
-            @io.exit(write_code)
+            @sys.exit(write_code)
             return
           }
           let key_code = @exec.run({
@@ -1494,7 +1496,7 @@ fn zellij_action_run() -> Unit {
             ],
             workdir: None,
           })
-          @io.exit(key_code)
+          @sys.exit(key_code)
         }
         "close" =>
           match target.kind {
@@ -1503,10 +1505,10 @@ fn zellij_action_run() -> Unit {
                 zellij_target_pane_id(target, panes, allow_exited=true) {
                 Some(id) => id
                 None => {
-                  @io.write_stdout(
+                  @sys.write_stdout(
                     "error: zellij target not found: " + target_text + "\n",
                   )
-                  @io.exit(1)
+                  @sys.exit(1)
                   return
                 }
               }
@@ -1522,16 +1524,16 @@ fn zellij_action_run() -> Unit {
                 ],
                 workdir: None,
               })
-              @io.exit(code)
+              @sys.exit(code)
             }
             @workspace.LocalTargetKind::ZellijTab => {
               let tab_id = match zellij_target_tab_id(target, panes) {
                 Some(id) => id
                 None => {
-                  @io.write_stdout(
+                  @sys.write_stdout(
                     "error: zellij target not found: " + target_text + "\n",
                   )
-                  @io.exit(1)
+                  @sys.exit(1)
                   return
                 }
               }
@@ -1546,18 +1548,18 @@ fn zellij_action_run() -> Unit {
                 ],
                 workdir: None,
               })
-              @io.exit(code)
+              @sys.exit(code)
             }
             _ => {
-              @io.write_stdout(
+              @sys.write_stdout(
                 "error: not a zellij target: " + target_text + "\n",
               )
-              @io.exit(1)
+              @sys.exit(1)
             }
           }
         _ => {
-          @io.write_stdout(zellij_action_usage() + "\n")
-          @io.exit(1)
+          @sys.write_stdout(zellij_action_usage() + "\n")
+          @sys.exit(1)
         }
       }
     })
@@ -2397,19 +2399,19 @@ fn smoke_run() -> Unit {
       let self_exe = smoke_self_exe(args)
       let repo_dir = @env.current_dir().unwrap_or(".")
       let script = if smoke_e2e_enabled(args) {
-        @io.write_stdout("Running isolated live end-to-end smoke...\n")
+        @sys.write_stdout("Running isolated live end-to-end smoke...\n")
         smoke_e2e_script()
       } else if smoke_companions_enabled(args) {
-        @io.write_stdout("Running isolated companion smoke...\n")
+        @sys.write_stdout("Running isolated companion smoke...\n")
         smoke_companion_script()
       } else if smoke_review_enabled(args) {
-        @io.write_stdout("Running isolated review smoke...\n")
+        @sys.write_stdout("Running isolated review smoke...\n")
         smoke_review_script()
       } else if smoke_leafs_enabled(args) {
-        @io.write_stdout("Running isolated leaf smoke...\n")
+        @sys.write_stdout("Running isolated leaf smoke...\n")
         smoke_leaf_script()
       } else {
-        @io.write_stdout("Running isolated runtime smoke...\n")
+        @sys.write_stdout("Running isolated runtime smoke...\n")
         smoke_script()
       }
       let exit_code = @exec.run({
@@ -2419,7 +2421,7 @@ fn smoke_run() -> Unit {
       }) catch {
         _ => 1
       }
-      @io.exit(exit_code)
+      @sys.exit(exit_code)
     })
   })
 }
@@ -2752,7 +2754,7 @@ test "smoke e2e script covers review and merge proof" {
 fn hook_agent_id(input : @hooks.HookInput) -> String? {
   match input.agent_id {
     Some(agent_id) => Some(agent_id)
-    None => @io.getenv("CHOIR_AGENT_ID")
+    None => @sys.getenv("CHOIR_AGENT_ID")
   }
 }
 
@@ -2763,7 +2765,7 @@ fn persist_hook_session(input : @hooks.HookInput) -> Unit {
       match (input.session_id, hook_agent_id(input)) {
         (Some(session_id), Some(agent_id)) =>
           ignore(
-            @io.write_file_sync(
+            @sys.write_file_sync(
               ".choir/sessions/claude/" + agent_id + ".session_id",
               session_id,
             ),
@@ -2777,10 +2779,10 @@ fn persist_hook_session(input : @hooks.HookInput) -> Unit {
 ///|
 fn hook_run() -> Unit {
   @async.run_async_main(async fn() {
-    let line = match @io.read_stdin_line(8192) {
+    let line = match @sys.read_stdin_line(8192) {
       Some(line) => line
       None => {
-        @io.write_stdout(
+        @sys.write_stdout(
           @hooks.HookResponse::fail_open().to_json_string() + "\n",
         )
         return
@@ -2789,7 +2791,7 @@ fn hook_run() -> Unit {
     let input = match @hooks.HookInput::from_json_string(line) {
       Some(i) => i
       None => {
-        @io.write_stdout(
+        @sys.write_stdout(
           @hooks.HookResponse::fail_open().to_json_string() + "\n",
         )
         return
@@ -2797,7 +2799,7 @@ fn hook_run() -> Unit {
     }
     persist_hook_session(input)
 
-    let config_content = @io.read_file(".choir/config.toml")
+    let config_content = @sys.read_file(".choir/config.toml")
 
     let hook_key = match input.event {
       @hooks.HookEvent::SessionStart => "hook.session_start"
@@ -2806,7 +2808,7 @@ fn hook_run() -> Unit {
 
     match @config.hook_command_path(config_content, hook_key) {
       None =>
-        @io.write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
+        @sys.write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
       Some(cmd_path) => {
         let cmd = @workspace.Command::{
           program: cmd_path,
@@ -2815,9 +2817,11 @@ fn hook_run() -> Unit {
         }
         let exit_code = @exec.run(cmd) catch { _ => 1 }
         if exit_code == 0 {
-          @io.write_stdout(@hooks.HookResponse::allow().to_json_string() + "\n")
+          @sys.write_stdout(
+            @hooks.HookResponse::allow().to_json_string() + "\n",
+          )
         } else {
-          @io.write_stdout(
+          @sys.write_stdout(
             @hooks.HookResponse::block("blocked").to_json_string() + "\n",
           )
         }
@@ -3081,7 +3085,7 @@ fn init_companion_launch_prefix(
       )
     None => ()
   }
-  match @io.getenv("TRACEPARENT") {
+  match @sys.getenv("TRACEPARENT") {
     Some(value) =>
       if value != "" {
         assignments.push(init_env_assignment("TRACEPARENT", value))
@@ -3223,8 +3227,8 @@ fn init_is_choir_source_files(
 ///|
 fn init_is_choir_source_tree(project_dir : String) -> Bool {
   init_is_choir_source_files(
-    @io.read_file(project_dir + "/moon.mod.json"),
-    @io.read_file(project_dir + "/src/bin/choir/main.mbt"),
+    @sys.read_file(project_dir + "/moon.mod.json"),
+    @sys.read_file(project_dir + "/src/bin/choir/main.mbt"),
   )
 }
 
@@ -3241,7 +3245,7 @@ fn init_server_command(use_dev : Bool) -> String {
 async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
   let exit_code = @exec.run(cmd) catch { _ => 1 }
   if exit_code != 0 {
-    @io.exit(exit_code)
+    @sys.exit(exit_code)
   }
 }
 
@@ -3281,7 +3285,7 @@ fn init_run() -> Unit {
         ],
         workdir: None,
       })
-      let maybe_patch_config = @io.read_file(".choir/config.toml")
+      let maybe_patch_config = @sys.read_file(".choir/config.toml")
       if maybe_patch_config != "" &&
         not(init_config_has_terminal_session(maybe_patch_config)) {
         let separator = if maybe_patch_config.has_suffix("\n") {
@@ -3294,7 +3298,7 @@ fn init_run() -> Unit {
           "terminal_session = \"" +
           default_session +
           "\"\n"
-        ignore(@io.write_file_sync(".choir/config.toml", patched))
+        ignore(@sys.write_file_sync(".choir/config.toml", patched))
       }
       init_run_or_exit({
         program: "sh",
@@ -3308,7 +3312,7 @@ fn init_run() -> Unit {
         workdir: None,
       })
 
-      let config_content = @io.read_file(".choir/config.toml")
+      let config_content = @sys.read_file(".choir/config.toml")
       let config = match @config.parse_config(config_content) {
         Ok(cfg) => cfg
         Err(_) => @types.Config::default()
@@ -3327,9 +3331,9 @@ fn init_run() -> Unit {
       let terminal_backend = config.terminal_backend
 
       if recreate {
-        let pid_str = @io.read_file(".choir/server.pid")
+        let pid_str = @sys.read_file(".choir/server.pid")
         if pid_str != "" {
-          @io.write_stdout("Stopping server (PID \{pid_str})...\n")
+          @sys.write_stdout("Stopping server (PID \{pid_str})...\n")
           ignore(
             @exec.run(init_kill_server_pid_command(pid_str)) catch {
               _ => 0
@@ -3348,7 +3352,7 @@ fn init_run() -> Unit {
         }
         if has_session == 0 ||
           terminal_backend == @types.TerminalBackend::Zellij {
-          @io.write_stdout("Killing session \{session}...\n")
+          @sys.write_stdout("Killing session \{session}...\n")
           ignore(
             @exec.run(init_kill_session_command(terminal_backend, session)) catch {
               _ => 0
@@ -3364,9 +3368,9 @@ fn init_run() -> Unit {
       }
       if session_alive == 0 {
         if no_attach {
-          @io.write_stdout("Session \{session} already exists.\n")
+          @sys.write_stdout("Session \{session} already exists.\n")
         } else {
-          @io.write_stdout("Attaching to existing session \{session}...\n")
+          @sys.write_stdout("Attaching to existing session \{session}...\n")
           ignore(
             @exec.run(
               match terminal_backend {
@@ -3399,7 +3403,7 @@ fn init_run() -> Unit {
         },
       )
 
-      @io.write_stdout("Creating session \{session}...\n")
+      @sys.write_stdout("Creating session \{session}...\n")
       match terminal_backend {
         @types.TerminalBackend::Tmux => {
           init_run_or_exit({
@@ -3477,23 +3481,23 @@ fn init_run() -> Unit {
               ) {
               ignore(@exec.run(cmd) catch { _ => 0 })
             }
-            @io.write_stdout("Spawned companion: \{c.name}\n")
+            @sys.write_stdout("Spawned companion: \{c.name}\n")
           }
         }
         None => ()
       }
 
-      @io.write_stdout("Waiting for server socket...\n")
-      if not(@io.wait_for_socket(config.listen_uds, 60)) {
-        @io.write_stdout("Warning: server socket not ready after 30s\n")
+      @sys.write_stdout("Waiting for server socket...\n")
+      if not(@sys.wait_for_socket(config.listen_uds, 60)) {
+        @sys.write_stdout("Warning: server socket not ready after 30s\n")
       } else {
-        @io.write_stdout("Server ready.\n")
+        @sys.write_stdout("Server ready.\n")
       }
 
       if no_attach {
-        @io.write_stdout("Session \{session} ready.\n")
+        @sys.write_stdout("Session \{session} ready.\n")
       } else {
-        @io.write_stdout("Attaching to session \{session}...\n")
+        @sys.write_stdout("Attaching to session \{session}...\n")
         ignore(
           @exec.run(
             match terminal_backend {
@@ -3519,17 +3523,17 @@ fn init_run() -> Unit {
 fn stop_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
-      let config_content = @io.read_file(".choir/config.toml")
+      let config_content = @sys.read_file(".choir/config.toml")
       let config = match @config.parse_config(config_content) {
         Ok(cfg) => cfg
         Err(_) => @types.Config::default()
       }
       let session = config.terminal_session
       let terminal_backend = config.terminal_backend
-      let pid_str = @io.read_file(".choir/server.pid").trim().to_string()
+      let pid_str = @sys.read_file(".choir/server.pid").trim().to_string()
 
       if pid_str != "" {
-        @io.write_stdout("Stopping server (PID \{pid_str})...\n")
+        @sys.write_stdout("Stopping server (PID \{pid_str})...\n")
         ignore(
           @exec.run(init_kill_server_pid_command(pid_str)) catch {
             _ => 0
@@ -3543,14 +3547,14 @@ fn stop_run() -> Unit {
         _ => 1
       }
       if has_session == 0 || terminal_backend == @types.TerminalBackend::Zellij {
-        @io.write_stdout("Killing session \{session}...\n")
+        @sys.write_stdout("Killing session \{session}...\n")
         ignore(
           @exec.run(init_kill_session_command(terminal_backend, session)) catch {
             _ => 0
           },
         )
       } else {
-        @io.write_stdout("Session \{session} not running.\n")
+        @sys.write_stdout("Session \{session} not running.\n")
       }
 
       ignore(
@@ -3558,7 +3562,7 @@ fn stop_run() -> Unit {
           _ => 0
         },
       )
-      @io.write_stdout("Choir stopped.\n")
+      @sys.write_stdout("Choir stopped.\n")
     })
   })
 }
@@ -3571,8 +3575,8 @@ fn dev_run() -> Unit {
     "exec sh -c '(find src -name \"*.mbt\"; find . -maxdepth 2 -name \"*.toml\") | entr -r sh -c \"moon build --target native --release && exec choir serve\"'; " +
     "echo 'choir dev: watchexec and entr not found, running without hot reload'; " +
     "moon build --target native --release && exec choir serve"
-  let code = @io.system(cmd)
-  @io.exit(code)
+  let code = @sys.system(cmd)
+  @sys.exit(code)
 }
 
 ///|
@@ -3608,14 +3612,14 @@ fn reply_run() -> Unit {
   }
 
   if id == "" {
-    @io.write_stdout(
+    @sys.write_stdout(
       "usage: choir reply --id <id> [--payload <json>] [--cancel]\n",
     )
-    @io.exit(1)
+    @sys.exit(1)
     return
   }
 
-  let config_content = @io.read_file(".choir/config.toml")
+  let config_content = @sys.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
@@ -3623,10 +3627,10 @@ fn reply_run() -> Unit {
 
   let uds_fd = @uds.client_connect(config.listen_uds)
   if uds_fd < 0 {
-    @io.write_stdout(
+    @sys.write_stdout(
       "error: cannot connect to server at \{config.listen_uds}\n",
     )
-    @io.exit(1)
+    @sys.exit(1)
     return
   }
 
@@ -3681,7 +3685,7 @@ fn reply_run() -> Unit {
   let n = @uds.read_bytes(uds_fd, resp_buf, 0, resp_buf.length())
   if n > 0 {
     let resp = @utf8.decode_lossy(resp_buf.unsafe_reinterpret_as_bytes()[:n])
-    @io.write_stdout(resp + "\n")
+    @sys.write_stdout(resp + "\n")
   }
 
   @uds.close(uds_fd)
@@ -3710,10 +3714,10 @@ fn main {
     "smoke" => smoke_run()
     "watch" => watch_run()
     _ => {
-      @io.write_stdout(
+      @sys.write_stdout(
         "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
       )
-      @io.exit(1)
+      @sys.exit(1)
     }
   }
 }

@@ -7,7 +7,7 @@ import {
   "choir/src/workspace",
   "choir/src/registry",
   "choir/src/message",
-  "choir/src/io",
+  "choir/src/sys",
   "choir/src/plugin",
   "choir/src/poller",
   "choir/src/uds",

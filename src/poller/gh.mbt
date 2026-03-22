@@ -92,68 +92,34 @@ pub fn parse_gh_pr_view_output(
 
 ///|
 pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
-  let (reader, writer) = @process.read_from_process() catch {
+  let (exit_code, output) = @process.collect_stdout("gh", [
+    "pr",
+    "view",
+    pr_number.to_string(),
+    "--json",
+    "reviews,headRefOid,statusCheckRollup,comments",
+  ]) catch {
     e => {
-      @io.write_stderr(
-        "[poller] pipe failed for PR #" +
-        pr_number.to_string() +
-        ": " +
-        e.to_string() +
-        "\n",
-      )
-      return (None_, "", false, "")
-    }
-  }
-  let exit_code = @process.run(
-    "gh",
-    [
-      "pr",
-      "view",
-      pr_number.to_string(),
-      "--json",
-      "reviews,headRefOid,statusCheckRollup,comments",
-    ],
-    stdout=writer,
-  ) catch {
-    e => {
-      @io.write_stderr(
+      @sys.write_stderr(
         "[poller] gh pr view failed for PR #" +
         pr_number.to_string() +
         ": " +
         e.to_string() +
         "\n",
       )
-      reader.close()
       return (None_, "", false, "")
     }
   }
-  let buf = FixedArray::make(65536, (0 : Byte))
-  let mut total = 0
-  for ;; {
-    if total >= buf.length() {
-      break
-    }
-    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
-      _ => 0
-    }
-    if n == 0 {
-      break
-    }
-    total = total + n
-  }
-  reader.close()
   if exit_code != 0 {
-    @io.write_stderr(
+    @sys.write_stderr(
       "[poller] gh exit=" +
       exit_code.to_string() +
       " for PR #" +
       pr_number.to_string() +
-      " (read " +
-      total.to_string() +
-      " bytes)\n",
+      "\n",
     )
     return (None_, "", false, "")
   }
-  let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
-  parse_gh_pr_view_output(output)
+  let text = output.text() catch { _ => return (None_, "", false, "") }
+  parse_gh_pr_view_output(text)
 }

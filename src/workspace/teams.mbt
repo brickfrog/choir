@@ -4,9 +4,9 @@ pub fn register_team_member_native(
   member_name : String,
   agent_type : String,
 ) -> Bool {
-  let home = @io.getenv("HOME").unwrap_or("/tmp")
+  let home = @sys.getenv("HOME").unwrap_or("/tmp")
   let config_path = home + "/.claude/teams/" + parent_agent_id + "/config.json"
-  let content = @io.read_file(config_path)
+  let content = @sys.read_file(config_path)
   if content == "" {
     return false
   }
@@ -33,7 +33,7 @@ pub fn register_team_member_native(
   }
   members.push(new_member)
   obj.set("members", members.to_json())
-  @io.write_file_sync(config_path, obj.to_json().stringify(indent=2))
+  @sys.write_file_sync(config_path, obj.to_json().stringify(indent=2))
 }
 
 ///|
@@ -41,9 +41,9 @@ pub fn remove_team_member_native(
   parent_agent_id : String,
   member_name : String,
 ) -> Bool {
-  let home = @io.getenv("HOME").unwrap_or("/tmp")
+  let home = @sys.getenv("HOME").unwrap_or("/tmp")
   let config_path = home + "/.claude/teams/" + parent_agent_id + "/config.json"
-  let content = @io.read_file(config_path)
+  let content = @sys.read_file(config_path)
   if content == "" {
     return false
   }
@@ -75,7 +75,7 @@ pub fn remove_team_member_native(
         return true
       }
       obj.set("members", kept.to_json())
-      @io.write_file_sync(config_path, obj.to_json().stringify(indent=2))
+      @sys.write_file_sync(config_path, obj.to_json().stringify(indent=2))
     }
     _ => true
   }

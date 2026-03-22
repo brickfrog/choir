@@ -54,7 +54,7 @@ fn lookup_parent_session_id(project_dir : String, args : ToolArgs) -> String? {
     "/.choir/sessions/claude/" +
     caller_id +
     ".session_id"
-  let session_id = @io.read_file(path).trim().to_string()
+  let session_id = @sys.read_file(path).trim().to_string()
   if session_id == "" {
     None
   } else {

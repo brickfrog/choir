@@ -26,7 +26,7 @@ fn write_prompt_file(
     "-" +
     slug +
     ".txt"
-  ignore(@io.write_file_sync(path, prompt))
+  ignore(@sys.write_file_sync(path, prompt))
   if path.has_prefix("/") {
     path
   } else {
@@ -122,7 +122,7 @@ fn launch_env_prefix(
       ),
     )
   }
-  match @io.getenv("TRACEPARENT") {
+  match @sys.getenv("TRACEPARENT") {
     Some(value) =>
       if value != "" {
         assignments.push(env_assignment("TRACEPARENT", value))

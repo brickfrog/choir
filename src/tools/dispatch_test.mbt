@@ -163,7 +163,7 @@ async test "execute_delivery creates Teams inbox directories" {
   match res {
     Ok(_) =>
       assert_eq(
-        @io.read_file(inbox_path).trim().to_string(),
+        @sys.read_file(inbox_path).trim().to_string(),
         "{\"from\":\"sender\",\"content\":\"hello\",\"status\":\"info\"}",
       )
     Err(e) => fail(e)
@@ -279,7 +279,7 @@ async test "dispatch task_update merges and writes task file" {
       assert_true(false)
     }
   }
-  let written = @io.read_file(project_dir + "/.choir/tasks/1.json")
+  let written = @sys.read_file(project_dir + "/.choir/tasks/1.json")
   assert_eq(
     written, "{\"id\":\"1\",\"title\":\"First\",\"status\":\"done\",\"assignee\":\"carol\",\"notes\":\"finished\"}",
   )
@@ -350,7 +350,7 @@ async test "dispatch reply stores payload in reply kv path" {
       assert_true(false)
     }
   }
-  let written = @io.read_file(project_dir + "/.choir/kv/reply/req-1")
+  let written = @sys.read_file(project_dir + "/.choir/kv/reply/req-1")
   assert_eq(written, "{\"ok\":true}")
   run_shell("rm -rf /tmp/choir-dispatch-reply")
 }
@@ -377,7 +377,7 @@ async test "dispatch reply cancel stores cancel marker" {
       assert_true(false)
     }
   }
-  let written = @io.read_file(project_dir + "/.choir/kv/reply/req-2")
+  let written = @sys.read_file(project_dir + "/.choir/kv/reply/req-2")
   assert_eq(written, "cancel")
   run_shell("rm -rf /tmp/choir-dispatch-reply-cancel")
 }
@@ -511,7 +511,7 @@ async test "handle_request falls back to plugin and preserves raw response value
     for cmd in cmds {
       captured_requests.push(cmd.args[4])
       ignore(
-        @io.write_file_sync(
+        @sys.write_file_sync(
           cmd.args[5],
           "{\"ok\":true,\"status\":\"done\",\"count\":3}",
         ),
@@ -560,7 +560,7 @@ async test "handle_request returns plugin error message" {
     @async.sleep(0)
     for cmd in cmds {
       ignore(
-        @io.write_file_sync(cmd.args[5], "{\"ok\":false,\"error\":\"boom\"}"),
+        @sys.write_file_sync(cmd.args[5], "{\"ok\":false,\"error\":\"boom\"}"),
       )
     }
     [0]
@@ -1303,7 +1303,7 @@ async test "dispatch fork_session creates session dir" {
       assert_true(false)
     }
   }
-  let context_json = @io.read_file(
+  let context_json = @sys.read_file(
     project_dir + "/.choir/sessions/sub-team-1/context.json",
   )
   assert_true(context_json.contains("\"name\":\"sub-team-1\""))
@@ -1360,7 +1360,7 @@ async test "dispatch fork_wave writes tl phase to KV" {
   }
   let res = @tools.dispatch_call(call, project_dir~, runner=mock_runner)
   assert_true(res is Ok(_))
-  let phase_json = @io.read_file(project_dir + "/.choir/kv/phase-tl--tl-agent")
+  let phase_json = @sys.read_file(project_dir + "/.choir/kv/phase-tl--tl-agent")
   assert_true(phase_json.contains("\"phase\":\"Waiting\""))
   assert_true(phase_json.contains("\"count\":1"))
   run_shell("rm -rf /tmp/choir-test-fork-wave-phase")
@@ -1425,7 +1425,7 @@ async test "dispatch shutdown blocks when dev phase is ChangesRequested" {
   // Set dev phase to ChangesRequested(42)
   let phase_json = "{\"phase\":\"ChangesRequested\",\"pr_number\":42}"
   ignore(
-    @io.write_file_sync(
+    @sys.write_file_sync(
       project_dir + "/.choir/kv/phase-dev--leaf-agent",
       phase_json,
     ),
@@ -1475,7 +1475,7 @@ async test "handle_request enforces pre_tool_use hook" {
 async test "verify_teams_delivery falls back to tmux if message remains" {
   let inbox_path = "/tmp/choir-verify-test/inbox.json"
   ignore(
-    @io.system(
+    @sys.system(
       "mkdir -p /tmp/choir-verify-test && printf '{\"msg\":\"test\"}' > /tmp/choir-verify-test/inbox.json",
     ),
   )
@@ -1502,14 +1502,14 @@ async test "verify_teams_delivery falls back to tmux if message remains" {
   assert_true(fallback_cmd.args.contains("test-pane"))
   assert_true(fallback_cmd.args.contains("{\"msg\":\"test\"}"))
 
-  ignore(@io.system("rm -rf /tmp/choir-verify-test"))
+  ignore(@sys.system("rm -rf /tmp/choir-verify-test"))
 }
 
 ///|
 async test "verify_teams_delivery returns early if message is consumed" {
   let inbox_path = "/tmp/choir-verify-test-consumed/inbox.json"
   ignore(
-    @io.system(
+    @sys.system(
       "mkdir -p /tmp/choir-verify-test-consumed && printf '{\"msg\":\"test\"}' > /tmp/choir-verify-test-consumed/inbox.json",
     ),
   )
@@ -1523,7 +1523,7 @@ async test "verify_teams_delivery returns early if message is consumed" {
     [0]
   }
 
-  ignore(@io.system("printf '' > /tmp/choir-verify-test-consumed/inbox.json"))
+  ignore(@sys.system("printf '' > /tmp/choir-verify-test-consumed/inbox.json"))
 
   @tools.verify_teams_delivery(
     inbox_path,
@@ -1535,5 +1535,5 @@ async test "verify_teams_delivery returns early if message is consumed" {
 
   assert_eq(recorded.length(), 0)
 
-  ignore(@io.system("rm -rf /tmp/choir-verify-test-consumed"))
+  ignore(@sys.system("rm -rf /tmp/choir-verify-test-consumed"))
 }

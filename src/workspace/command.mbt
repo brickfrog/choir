@@ -160,7 +160,7 @@ pub fn gemini_settings_json(
 /// then global ~/.choir/context/{role}.md.
 pub fn resolve_context_path(project_dir : String, role : String) -> String? {
   let local_path = project_dir + "/.choir/context/" + role + ".md"
-  if @io.read_file(local_path) != "" {
+  if @sys.read_file(local_path) != "" {
     return Some(
       if local_path.has_prefix("/") {
         local_path
@@ -169,10 +169,10 @@ pub fn resolve_context_path(project_dir : String, role : String) -> String? {
       },
     )
   }
-  let home = @io.getenv("HOME").unwrap_or("")
+  let home = @sys.getenv("HOME").unwrap_or("")
   if home != "" {
     let global = home + "/.choir/context/" + role + ".md"
-    if @io.read_file(global) != "" {
+    if @sys.read_file(global) != "" {
       return Some(global)
     }
   }

@@ -52,7 +52,7 @@ fn append_event(
     "\",\"data\":" +
     data_json +
     "}\n"
-  @io.append_file_sync(path, line)
+  @sys.append_file_sync(path, line)
 }
 
 ///|
@@ -70,7 +70,7 @@ test "escape_for_json" {
 test "append_event writes jsonl" {
   let project_dir = "/tmp/choir_event_log_test"
   ignore(
-    @io.system(
+    @sys.system(
       "rm -rf " + project_dir + " && mkdir -p " + project_dir + "/.choir/events",
     ),
   )
@@ -78,7 +78,7 @@ test "append_event writes jsonl" {
     project_dir, "test/agent", "tools.call", "{\"tool\":\"test\"}",
   )
   assert_true(ok)
-  let content = @io.read_file(project_dir + "/.choir/events/test_agent.jsonl")
+  let content = @sys.read_file(project_dir + "/.choir/events/test_agent.jsonl")
   assert_true(content.contains("\"type\":\"tools.call\""))
   assert_true(content.contains("\"agent_id\":\"test/agent\""))
   assert_true(content.contains("\"data\":{\"tool\":\"test\"}"))
@@ -88,8 +88,8 @@ test "append_event writes jsonl" {
     project_dir, "test/agent", "tools.call", "{\"tool\":\"test2\"}",
   )
   assert_true(ok2)
-  let content2 = @io.read_file(project_dir + "/.choir/events/test_agent.jsonl")
+  let content2 = @sys.read_file(project_dir + "/.choir/events/test_agent.jsonl")
   assert_true(content2.contains("test2"))
 
-  ignore(@io.system("rm -rf " + project_dir))
+  ignore(@sys.system("rm -rf " + project_dir))
 }

@@ -90,7 +90,7 @@ async fn dispatch_to_plugin(
           e => return @types.Response::Err(e.to_string())
         },
       )
-      let resp_str = @io.read_file(resp_path)
+      let resp_str = @sys.read_file(resp_path)
       match @plugin.parse_response(resp_str) {
         Ok(result) => result
         Err(e) => @types.Response::Err("plugin error: " + e)
@@ -104,7 +104,7 @@ async fn dispatch_to_plugin(
 ///|
 fn resolve_home_path(path : String) -> String {
   if path.length() >= 2 && path[0] == '~' && path[1] == '/' {
-    match @io.getenv("HOME") {
+    match @sys.getenv("HOME") {
       Some(home) => home + "/" + path[2:path.length()].to_string()
       None => path
     }
@@ -124,7 +124,7 @@ pub async fn verify_teams_delivery(
   let path = resolve_home_path(inbox_path)
   for i = 0; i < 3; i = i + 1 {
     @async.sleep(interval_ms)
-    let content = @io.read_file(path)
+    let content = @sys.read_file(path)
     if not(content.contains(message_json)) {
       return
     }
@@ -268,7 +268,7 @@ fn read_task_file(
     Err(e) => return Err("invalid id: " + e)
     Ok(_) => ()
   }
-  let content = @io.read_file(task_file_path(project_dir, id))
+  let content = @sys.read_file(task_file_path(project_dir, id))
   if content == "" {
     return Err("task not found: " + id)
   }
@@ -302,7 +302,7 @@ async fn list_task_files(
       return Err("command failed with status " + status.to_string())
     }
   }
-  let content = @io.read_file(manifest_path)
+  let content = @sys.read_file(manifest_path)
   let cleanup_cmd = @workspace.Command::{
     program: "sh",
     args: ["-c", "rm -f \"$1\"", "sh", manifest_path],
@@ -333,7 +333,7 @@ async fn handle_task_list(
   }
   let tasks : Array[Json] = []
   for path in task_paths {
-    let content = @io.read_file(path)
+    let content = @sys.read_file(path)
     if content == "" {
       return @types.Response::Err("failed to read task file: " + path)
     }
@@ -381,7 +381,7 @@ async fn handle_kv_list(
       )
     }
   }
-  let content = @io.read_file(manifest_path)
+  let content = @sys.read_file(manifest_path)
   let cleanup_cmd = @workspace.Command::{
     program: "sh",
     args: ["-c", "rm -f \"$1\"", "sh", manifest_path],

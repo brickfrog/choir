@@ -233,7 +233,7 @@ pub async fn dispatch(
         }
         .to_json()
         .stringify()
-      if @io.write_file_sync(context_path, context_json) {
+      if @sys.write_file_sync(context_path, context_json) {
         @types.Response::ok_values({
           "status": String::to_json("ok"),
           "session_dir": String::to_json(session_dir),
@@ -550,7 +550,7 @@ pub async fn dispatch(
       @types.Response::ok_values(result)
     }
     ToolRequest::KvGet(key_args) => {
-      let value = @io.read_file(kv_file_path(project_dir, key_args.key))
+      let value = @sys.read_file(kv_file_path(project_dir, key_args.key))
       if value == "" {
         @types.Response::ok({ "value": "null" })
       } else {
@@ -559,7 +559,7 @@ pub async fn dispatch(
     }
     ToolRequest::KvSet(kv_args) => {
       let path = kv_file_path(project_dir, kv_args.key)
-      if @io.write_file_sync(path, kv_args.value) {
+      if @sys.write_file_sync(path, kv_args.value) {
         @types.Response::ok({ "status": "ok" })
       } else {
         @types.Response::Err("failed to write kv file: " + path)
@@ -567,7 +567,7 @@ pub async fn dispatch(
     }
     ToolRequest::KvDelete(key_args) => {
       let path = kv_file_path(project_dir, key_args.key)
-      ignore(@io.delete_file_sync(path))
+      ignore(@sys.delete_file_sync(path))
       @types.Response::ok({ "status": "ok" })
     }
     ToolRequest::KvList => handle_kv_list(project_dir, runner)
@@ -623,7 +623,7 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     ToolRequest::TaskCreate(task_args) => {
-      let existing = @io.read_file(task_file_path(project_dir, task_args.id))
+      let existing = @sys.read_file(task_file_path(project_dir, task_args.id))
       if existing != "" {
         return match read_task_file(project_dir, task_args.id) {
           Ok(task) =>
@@ -644,7 +644,7 @@ pub async fn dispatch(
       }
       let task_json = task_to_json(task)
       let path = task_file_path(project_dir, task_args.id)
-      if @io.write_file_sync(path, task_json.stringify()) {
+      if @sys.write_file_sync(path, task_json.stringify()) {
         @types.Response::ok_values({
           "status": String::to_json("ok"),
           "created": Bool::to_json(true),
@@ -667,7 +667,7 @@ pub async fn dispatch(
       }
       let updated_json = task_to_json(updated)
       let path = task_file_path(project_dir, update_args.id)
-      if @io.write_file_sync(path, updated_json.stringify()) {
+      if @sys.write_file_sync(path, updated_json.stringify()) {
         @types.Response::ok_values({
           "status": String::to_json("ok"),
           "task": updated_json,
@@ -780,7 +780,7 @@ pub async fn dispatch(
         Ok(_) => ()
       }
       let path = kv_file_path(project_dir, key)
-      if @io.write_file_sync(path, value) {
+      if @sys.write_file_sync(path, value) {
         @types.Response::ok_values({
           "status": String::to_json("ok"),
           "id": String::to_json(id),
@@ -824,7 +824,7 @@ pub async fn handle_request(
     Ok(_) => {
       let tool_args = tool_args_from_request_args(req.args)
       let hook_path = project_dir + "/.choir/hooks/pre_tool_use.sh"
-      if @io.read_file(hook_path) != "" {
+      if @sys.read_file(hook_path) != "" {
         let input = @hooks.HookInput::{
           event: @hooks.HookEvent::PreToolUse,
           session_id: Some(session),
@@ -847,7 +847,7 @@ pub async fn handle_request(
           _ => return @types.Response::Err("hook execution failed")
         }
         if codes.length() > 0 && codes[0] == 0 {
-          let output_json = @io.read_file(output_path)
+          let output_json = @sys.read_file(output_path)
           match @hooks.HookResponse::from_json_string(output_json) {
             Some(res) =>
               if not(res.continue_) {

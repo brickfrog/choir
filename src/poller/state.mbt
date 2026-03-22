@@ -284,12 +284,12 @@ pub fn PollerState::write_state_file(
   self : PollerState,
   project_dir : String,
 ) -> Bool {
-  @io.write_file_sync(poller_state_path(project_dir), self.to_json())
+  @sys.write_file_sync(poller_state_path(project_dir), self.to_json())
 }
 
 ///|
 pub fn read_state_file(project_dir : String) -> Array[TrackedPR] {
-  parse_tracked_prs_json(@io.read_file(poller_state_path(project_dir)))
+  parse_tracked_prs_json(@sys.read_file(poller_state_path(project_dir)))
 }
 
 ///|

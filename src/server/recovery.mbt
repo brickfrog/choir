@@ -404,7 +404,7 @@ fn recover_agent_from_local_config(
     "/" +
     rel_workspace +
     "/.choir/config.local.toml"
-  let content = @io.read_file(config_path)
+  let content = @sys.read_file(config_path)
   if content == "" {
     return None
   }
@@ -675,7 +675,7 @@ test "recover_agent_from_local_config restores active agent metadata" {
     #|workspace = ".choir/worktrees/leaf-a"
     #|terminal_target = "howdy:leaf-a"
     #|agent_type = "gemini"
-  assert_true(@io.write_file_sync(local_path, content))
+  assert_true(@sys.write_file_sync(local_path, content))
   let recovered = recover_agent_from_local_config(
     project_dir,
     rel_workspace,
@@ -720,7 +720,7 @@ test "recover_agent_from_local_config falls back and clears dead tmux targets" {
   let content =
     #|role = "tl"
     #|terminal_target = "howdy:helper"
-  assert_true(@io.write_file_sync(local_path, content))
+  assert_true(@sys.write_file_sync(local_path, content))
   let recovered = recover_agent_from_local_config(
     project_dir,
     rel_workspace,
@@ -770,7 +770,7 @@ test "recover_agent_from_local_config keeps live zellij tab targets" {
     #|workspace = ".choir/worktrees/leaf-z"
     #|terminal_target = "zellij-tab:howdy:leaf-z"
     #|agent_type = "gemini"
-  assert_true(@io.write_file_sync(local_path, content))
+  assert_true(@sys.write_file_sync(local_path, content))
   let recovered = recover_agent_from_local_config(
     project_dir,
     rel_workspace,
