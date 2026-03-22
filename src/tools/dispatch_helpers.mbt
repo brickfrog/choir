@@ -378,7 +378,7 @@ async fn handle_kv_list(
     if status == 3 {
       return @types.Response::ok_values({
         "status": "ok".to_json(),
-        "keys": [].to_json(),
+        "keys": ([] : Array[Json]).to_json(),
       })
     }
     if status != 0 {

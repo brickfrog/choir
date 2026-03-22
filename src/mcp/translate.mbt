@@ -150,7 +150,8 @@ fn choir_mcp_instructions() -> String {
 
 ///|
 pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
-  let capabilities : Map[String, Json] = { "tools": {}.to_json() }
+  let empty_obj : Map[String, Json] = {}
+  let capabilities : Map[String, Json] = { "tools": empty_obj.to_json() }
   let server_info : Map[String, Json] = {
     "name": "choir".to_json(),
     "version": "1.0.0".to_json(),

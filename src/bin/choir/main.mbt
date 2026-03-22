@@ -1352,7 +1352,7 @@ async fn zellij_list_panes(session : String) -> Array[ZellijPaneRef] {
     "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
   ])
   let panes = []
-  let json = @json.parse(output) catch { _ => [].to_json() }
+  let json = @json.parse(output) catch { _ => ([] : Array[Json]).to_json() }
   guard json is Array(arr) else { return panes }
   for item in arr {
     guard item is Object(pane) else { continue }
