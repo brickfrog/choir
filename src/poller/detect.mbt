@@ -16,8 +16,12 @@ pub fn detect_events(
   if current_review != tracked.last_review_state {
     match current_review {
       Approved => events.push(PollEvent::PRReady(tracked.pr_number))
-      ChangesRequested =>
-        events.push(PollEvent::ReviewReceived(tracked.pr_number, review_bodies))
+      ChangesRequested | Commented =>
+        if has_new_review_bodies || current_review == ChangesRequested {
+          events.push(
+            PollEvent::ReviewReceived(tracked.pr_number, review_bodies),
+          )
+        }
       None_ =>
         if has_new_review_bodies {
           events.push(
@@ -30,7 +34,10 @@ pub fn detect_events(
   }
 
   // Fixes pushed
-  if tracked.last_review_state == ChangesRequested &&
+  if (
+      tracked.last_review_state == ChangesRequested ||
+      tracked.last_review_state == Commented
+    ) &&
     current_sha != tracked.last_sha {
     events.push(PollEvent::FixesPushed(tracked.pr_number))
   }

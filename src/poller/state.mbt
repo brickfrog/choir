@@ -9,6 +9,7 @@ fn review_state_name(review : ReviewState) -> String {
     None_ => "none"
     Approved => "approved"
     ChangesRequested => "changes_requested"
+    Commented => "commented"
   }
 }
 
@@ -18,6 +19,7 @@ fn parse_review_state_name(s : String) -> ReviewState? {
     "none" => Some(None_)
     "approved" => Some(Approved)
     "changes_requested" => Some(ChangesRequested)
+    "commented" => Some(Commented)
     _ => None
   }
 }
@@ -209,8 +211,7 @@ pub fn PollerState::track(
 fn recovered_notified_parent(review : ReviewState) -> Bool {
   match review {
     Approved => true
-    ChangesRequested => false
-    None_ => false
+    ChangesRequested | Commented | None_ => false
   }
 }
 
@@ -322,7 +323,7 @@ fn next_notified_parent(
   let mut notified_parent = tracked.notified_parent
   if review != tracked.last_review_state {
     match review {
-      ChangesRequested => notified_parent = false
+      ChangesRequested | Commented => notified_parent = false
       Approved => notified_parent = true
       None_ => notified_parent = false
     }
@@ -332,7 +333,10 @@ fn next_notified_parent(
     review_bodies != tracked.last_review_bodies {
     notified_parent = false
   }
-  if tracked.last_review_state == ChangesRequested &&
+  if (
+      tracked.last_review_state == ChangesRequested ||
+      tracked.last_review_state == Commented
+    ) &&
     sha != "" &&
     sha != tracked.last_sha {
     notified_parent = true

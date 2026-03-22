@@ -4,6 +4,7 @@ pub(all) enum ReviewState {
   None_
   Approved
   ChangesRequested
+  Commented
 } derive(Show, Eq)
 
 ///|
