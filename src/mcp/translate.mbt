@@ -143,7 +143,13 @@ fn choir_mcp_instructions() -> String {
   )
   buf.write_string("Do not poll with sleep or git log. ")
   buf.write_string(
-    "Use merge_pr to merge PRs, not git merge. Merge one at a time.",
+    "Use merge_pr to merge PRs, not git merge. Merge one at a time. ",
+  )
+  buf.write_string(
+    "Do not merge PRs until Copilot has reviewed them -- review notifications arrive automatically via the poller. ",
+  )
+  buf.write_string(
+    "When a leaf reports a PR, wait for the [REVIEW] notification before merging.",
   )
   buf.to_string()
 }
