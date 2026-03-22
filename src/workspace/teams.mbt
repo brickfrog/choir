@@ -53,10 +53,10 @@ pub fn remove_team_member_native(
     Some(Array(members)) => {
       let kept : Array[Json] = []
       let mut changed = false
-      for member in members {
+      for entry in members {
         let mut keep = true
-        guard member is Object(m) else {
-          kept.push(member)
+        guard entry is Object(m) else {
+          kept.push(entry)
           continue
         }
         match m.get("name") {
@@ -68,7 +68,7 @@ pub fn remove_team_member_native(
           _ => ()
         }
         if keep {
-          kept.push(member)
+          kept.push(entry)
         }
       }
       if not(changed) {

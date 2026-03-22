@@ -361,7 +361,7 @@ test "plan_poll_event_deliveries routes fixes pushed to parent with next action"
   )
   assert_true(deliveries.length() >= 1)
   match deliveries[0] {
-    @message.DeliveryMethod::TeamsInbox(path, payload) => {
+    @message.DeliveryMethod::TeamsInbox(path, payload, ..) => {
       assert_true(path.contains("parent-1"))
       assert_true(
         payload.contains(
@@ -398,7 +398,7 @@ test "plan_poll_event_deliveries routes review to both parent and owner" {
   assert_eq(deliveries.length(), 2)
   // First delivery: parent gets summary
   match deliveries[0] {
-    @message.DeliveryMethod::TeamsInbox(path, payload) => {
+    @message.DeliveryMethod::TeamsInbox(path, payload, ..) => {
       assert_true(path.contains("parent-1"))
       assert_true(payload.contains("[REVIEW] child-1 PR #42"))
       assert_true(payload.contains("Please add tests"))
@@ -408,7 +408,7 @@ test "plan_poll_event_deliveries routes review to both parent and owner" {
   }
   // Second delivery: owner gets detail
   match deliveries[1] {
-    @message.DeliveryMethod::TeamsInbox(path, payload) => {
+    @message.DeliveryMethod::TeamsInbox(path, payload, ..) => {
       assert_true(path.contains("child-1"))
       assert_true(
         payload.contains(
@@ -441,7 +441,7 @@ test "plan_poll_event_deliveries routes review to parent when owner is Done" {
   // Only parent gets delivery — owner is Done
   assert_eq(deliveries.length(), 1)
   match deliveries[0] {
-    @message.DeliveryMethod::TeamsInbox(path, payload) => {
+    @message.DeliveryMethod::TeamsInbox(path, payload, ..) => {
       assert_true(path.contains("parent-1"))
       assert_true(payload.contains("[REVIEW] child-1 PR #42"))
       assert_true(payload.contains("Copilot review summary"))
