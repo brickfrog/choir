@@ -104,6 +104,9 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
       return (None_, "", false, "")
     }
   }
+  let (err_reader, err_writer) = @process.read_from_process() catch {
+    _ => return (None_, "", false, "")
+  }
   let pid = @process.spawn_orphan(
     "gh",
     [
@@ -114,6 +117,7 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
       "reviews,headRefOid,statusCheckRollup,comments",
     ],
     stdout=writer,
+    stderr=err_writer,
   ) catch {
     e => {
       @sys.write_stderr(
@@ -142,18 +146,45 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
     total = total + n
   }
   reader.close()
+  // Read stderr
+  let err_buf = FixedArray::make(4096, (0 : Byte))
+  let mut err_total = 0
+  for ;; {
+    if err_total >= err_buf.length() {
+      break
+    }
+    let n = err_reader.read(
+      err_buf,
+      offset=err_total,
+      max_len=err_buf.length() - err_total,
+    ) catch {
+      _ => 0
+    }
+    if n == 0 {
+      break
+    }
+    err_total = err_total + n
+  }
+  err_reader.close()
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
-  if exit_code != 0 {
+  if exit_code != 0 || total == 0 {
+    let err_text = @utf8.decode_lossy(
+      err_buf.unsafe_reinterpret_as_bytes()[:err_total],
+    )
     @sys.write_stderr(
       "[poller] gh exit=" +
       exit_code.to_string() +
       " for PR #" +
       pr_number.to_string() +
-      " (read " +
+      " stdout=" +
       total.to_string() +
-      " bytes)\n",
+      "b stderr=" +
+      err_text.trim().to_string() +
+      "\n",
     )
-    return (None_, "", false, "")
+    if total == 0 {
+      return (None_, "", false, "")
+    }
   }
   let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
   parse_gh_pr_view_output(output)

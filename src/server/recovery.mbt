@@ -221,29 +221,32 @@ async fn capture_stdout(
   args : Array[String],
   cwd? : String? = None,
 ) -> String {
-  let (read_end, write_end) = @pipe.pipe() catch { _ => return "" }
-  let _exit_code = match cwd {
-    Some(dir) =>
-      @process.run(program, args, cwd=dir, stdout=write_end) catch {
-        _ => -1
-      }
-    None => @process.run(program, args, stdout=write_end) catch { _ => -1 }
+  let tmp = "/tmp/choir-recovery-" +
+    @env.now().reinterpret_as_int64().to_string() +
+    ".tmp"
+  let shell_args = StringBuilder::new()
+  shell_args.write_string(program)
+  for arg in args {
+    shell_args.write_string(" '")
+    shell_args.write_string(arg)
+    shell_args.write_string("'")
   }
-  write_end.close()
-  let buf = FixedArray::make(65536, (0 : Byte))
-  let mut total = 0
-  for ;; {
-    if total >= buf.length() {
-      break
-    }
-    let n = read_end.read(buf, offset=total, max_len=buf.length() - total)
-    if n == 0 {
-      break
-    }
-    total = total + n
-  }
-  read_end.close()
-  @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
+  shell_args.write_string(" > '")
+  shell_args.write_string(tmp)
+  shell_args.write_string("' 2>/dev/null")
+  let shell_cmd = shell_args.to_string()
+  ignore(
+    match cwd {
+      Some(dir) =>
+        @process.run("sh", ["-c", shell_cmd], cwd=dir) catch {
+          _ => -1
+        }
+      None => @process.run("sh", ["-c", shell_cmd]) catch { _ => -1 }
+    },
+  )
+  let result = @sys.read_file(tmp)
+  ignore(@process.run("rm", ["-f", tmp]) catch { _ => -1 })
+  result
 }
 
 ///|

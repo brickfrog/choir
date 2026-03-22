@@ -1306,22 +1306,29 @@ priv struct ZellijPaneRef {
 
 ///|
 async fn capture_stdout_main(program : String, args : Array[String]) -> String {
-  let (read_end, write_end) = @pipe.pipe()
-  ignore(@process.run(program, args[:], stdout=write_end) catch { _ => -1 })
-  write_end.close()
+  let (reader, writer) = @process.read_from_process() catch { _ => return "" }
+  let pid = @process.spawn_orphan(program, args[:], stdout=writer) catch {
+    _ => {
+      reader.close()
+      return ""
+    }
+  }
   let buf = FixedArray::make(65536, (0 : Byte))
   let mut total = 0
   for ;; {
     if total >= buf.length() {
       break
     }
-    let n = read_end.read(buf, offset=total, max_len=buf.length() - total)
+    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
+      _ => 0
+    }
     if n == 0 {
       break
     }
     total = total + n
   }
-  read_end.close()
+  reader.close()
+  ignore(@process.wait_pid(pid) catch { _ => -1 })
   @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
 }
 
