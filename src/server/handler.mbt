@@ -468,12 +468,24 @@ pub async fn ServerState::process_poller_tick(
   timeout : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
+  let n = self.poller.tracked.size()
+  if n > 0 {
+    println("[poller] tick: \{n} tracked PRs")
+    for pr_number, tracked in self.poller.tracked {
+      println(
+        "[poller] PR #\{pr_number} agent=\{tracked.agent_id} review=\{tracked.last_review_state} ci_failed=\{tracked.last_ci_failed}",
+      )
+    }
+  }
   let pending_events = []
   let pending_agent_ids = []
   self.poller.tick(now, timeout, fn(event, agent_id) {
     pending_events.push(event)
     pending_agent_ids.push(agent_id)
   })
+  for i = 0; i < pending_events.length(); i = i + 1 {
+    println("[poller] event: \{pending_events[i]} for \{pending_agent_ids[i]}")
+  }
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
