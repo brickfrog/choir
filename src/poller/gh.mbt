@@ -92,16 +92,10 @@ pub fn parse_gh_pr_view_output(
 
 ///|
 pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) {
-  let (exit_code, output) = @process.collect_stdout("gh", [
-    "pr",
-    "view",
-    pr_number.to_string(),
-    "--json",
-    "reviews,headRefOid,statusCheckRollup,comments",
-  ]) catch {
+  let (reader, writer) = @process.read_from_process() catch {
     e => {
       @sys.write_stderr(
-        "[poller] gh pr view failed for PR #" +
+        "[poller] pipe failed for PR #" +
         pr_number.to_string() +
         ": " +
         e.to_string() +
@@ -110,16 +104,57 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
       return (None_, "", false, "")
     }
   }
+  let pid = @process.spawn_orphan(
+    "gh",
+    [
+      "pr",
+      "view",
+      pr_number.to_string(),
+      "--json",
+      "reviews,headRefOid,statusCheckRollup,comments",
+    ],
+    stdout=writer,
+  ) catch {
+    e => {
+      @sys.write_stderr(
+        "[poller] gh spawn failed for PR #" +
+        pr_number.to_string() +
+        ": " +
+        e.to_string() +
+        "\n",
+      )
+      reader.close()
+      return (None_, "", false, "")
+    }
+  }
+  let buf = FixedArray::make(65536, (0 : Byte))
+  let mut total = 0
+  for ;; {
+    if total >= buf.length() {
+      break
+    }
+    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
+      _ => 0
+    }
+    if n == 0 {
+      break
+    }
+    total = total + n
+  }
+  reader.close()
+  let exit_code = @process.wait_pid(pid) catch { _ => -1 }
   if exit_code != 0 {
     @sys.write_stderr(
       "[poller] gh exit=" +
       exit_code.to_string() +
       " for PR #" +
       pr_number.to_string() +
-      "\n",
+      " (read " +
+      total.to_string() +
+      " bytes)\n",
     )
     return (None_, "", false, "")
   }
-  let text = output.text() catch { _ => return (None_, "", false, "") }
-  parse_gh_pr_view_output(text)
+  let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
+  parse_gh_pr_view_output(output)
 }
