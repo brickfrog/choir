@@ -43,17 +43,6 @@ fn parse_review_bodies(json : Json) -> String {
       }
     _ => ()
   }
-  match obj.get("comments") {
-    Some(Array(comments)) =>
-      for c in comments {
-        guard c is Object(comment) else { continue }
-        match comment.get("body") {
-          Some(String(v)) => if v != "" { bodies.push(v) }
-          _ => ()
-        }
-      }
-    _ => ()
-  }
   bodies.join("\n---\n")
 }
 
@@ -114,7 +103,7 @@ pub async fn gh_poll_pr(pr_number : Int) -> (ReviewState, String, Bool, String) 
       "view",
       pr_number.to_string(),
       "--json",
-      "reviews,headRefOid,statusCheckRollup,comments",
+      "reviews,headRefOid,statusCheckRollup",
     ],
     stdout=writer,
     stderr=err_writer,
