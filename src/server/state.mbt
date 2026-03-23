@@ -9,6 +9,8 @@ pub struct ServerState {
   run_id : String
   mut span_counter : Int
   pending_disconnects : Map[String, Int64]
+  pane_watchers : Map[String, Int64] // agent_id -> last_change_at (unix sec)
+  pane_hashes : Map[String, Int] // agent_id -> hash of last screen dump
 }
 
 ///|
@@ -93,5 +95,7 @@ pub fn ServerState::new(config : @types.Config) -> ServerState {
     run_id,
     span_counter: 0,
     pending_disconnects: {},
+    pane_watchers: {},
+    pane_hashes: {},
   }
 }

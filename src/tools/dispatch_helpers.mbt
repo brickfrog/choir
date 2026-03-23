@@ -102,6 +102,69 @@ async fn dispatch_to_plugin(
 ///|
 
 ///|
+/// Resolve the zellij pane ID for a named tab by running list-panes.
+/// Returns Some("terminal_N") if found, None otherwise.
+pub async fn resolve_zellij_pane_id(
+  session : String,
+  tab_name : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> String? {
+  let manifest = "/tmp/choir-pane-resolve-" + tab_name + ".json"
+  let cmd = @workspace.Command::{
+    program: "sh",
+    args: [
+      "-c", "zellij --session \"$1\" action list-panes --json -a -t -s > \"$2\" 2>/dev/null",
+      "sh", session, manifest,
+    ],
+    workdir: None,
+  }
+  let statuses = runner([cmd]) catch { _ => return None }
+  if statuses.length() > 0 && statuses[0] != 0 {
+    return None
+  }
+  let content = @sys.read_file(manifest)
+  ignore(
+    runner([
+      {
+        program: "sh",
+        args: ["-c", "rm -f \"$1\"", "sh", manifest],
+        workdir: None,
+      },
+    ]) catch {
+      _ => []
+    },
+  )
+  if content == "" {
+    return None
+  }
+  let json = @json.parse(content) catch { _ => return None }
+  guard json is Array(panes) else { return None }
+  for pane in panes {
+    guard pane is Object(obj) else { continue }
+    let is_plugin = match obj.get("is_plugin") {
+      Some(True) => true
+      _ => false
+    }
+    if is_plugin {
+      continue
+    }
+    let pane_tab = match obj.get("tab_name") {
+      Some(String(v)) => v
+      _ => continue
+    }
+    if pane_tab != tab_name {
+      continue
+    }
+    let pane_id = match obj.get("id") {
+      Some(Number(n, ..)) => n.to_int()
+      _ => continue
+    }
+    return Some("terminal_" + pane_id.to_string())
+  }
+  None
+}
+
+///|
 fn resolve_home_path(path : String) -> String {
   if path.length() >= 2 && path[0] == '~' && path[1] == '/' {
     match @sys.getenv("HOME") {

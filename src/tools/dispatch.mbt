@@ -196,6 +196,7 @@ pub async fn dispatch(
       match run_strict(runner, cmds) {
         Ok(_) => {
           // Register spawned agents as synthetic team members (best-effort)
+          let resolved_pane_ids : Array[(String, String)] = []
           for slug in spawned_slugs {
             let _ = @workspace.register_team_member_native(
               fork_wave_args.caller_id,
@@ -207,6 +208,32 @@ pub async fn dispatch(
               fork_wave_args.caller_id,
               @phase.TLEvent::ChildSpawned(slug),
             )
+            // Resolve zellij pane ID for faster delivery (best-effort)
+            let agent_id = @workspace.branch_name(
+              fork_wave_args.parent_branch,
+              slug,
+            )
+            match resolve_zellij_pane_id(session, slug, runner) {
+              Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
+              None => ()
+            }
+          }
+          // Update registry with resolved pane IDs
+          match registry {
+            Some(reg) =>
+              for pair in resolved_pane_ids {
+                let (agent_id, pane_id) = pair
+                match reg.get(agent_id) {
+                  Ok(agent) => {
+                    let target = @workspace.zellij_pane_target(session, pane_id)
+                    ignore(
+                      reg.upsert({ ..agent, terminal_target: Some(target) }),
+                    )
+                  }
+                  Err(_) => ()
+                }
+              }
+            None => ()
           }
           let result : Map[String, Json] = {
             "status": String::to_json("spawned"),

@@ -252,6 +252,7 @@ fn serve_run() -> Unit {
               timeout_sec,
               runner=@exec.run_sequence,
             )
+            state.check_idle_agents(now, 300L, @exec.run_sequence)
           } catch {
             e =>
               @sys.write_stderr(
@@ -1455,7 +1456,16 @@ fn zellij_action_run() -> Unit {
           return
         }
       }
-      let panes = zellij_list_panes(target.session)
+      // If the target name is already a pane ID (terminal_N), skip list-panes
+      let direct_pane_id = if target.name.has_prefix("terminal_") {
+        Some(target.name)
+      } else {
+        None
+      }
+      let panes = match direct_pane_id {
+        Some(_) => [] // skip list-panes when we have a direct ID
+        None => zellij_list_panes(target.session)
+      }
       match action {
         "send" => {
           if args.length() < 5 {
@@ -1464,15 +1474,19 @@ fn zellij_action_run() -> Unit {
             return
           }
           let text = args[4]
-          let pane_id = match zellij_target_pane_id(target, panes) {
+          let pane_id = match direct_pane_id {
             Some(id) => id
-            None => {
-              @sys.write_stdout(
-                "error: zellij target not found: " + target_text + "\n",
-              )
-              @sys.exit(1)
-              return
-            }
+            None =>
+              match zellij_target_pane_id(target, panes) {
+                Some(id) => id
+                None => {
+                  @sys.write_stdout(
+                    "error: zellij target not found: " + target_text + "\n",
+                  )
+                  @sys.exit(1)
+                  return
+                }
+              }
           }
           let write_code = @exec.run({
             program: "zellij",
@@ -1511,16 +1525,20 @@ fn zellij_action_run() -> Unit {
         "close" =>
           match target.kind {
             @workspace.LocalTargetKind::ZellijPane => {
-              let pane_id = match
-                zellij_target_pane_id(target, panes, allow_exited=true) {
+              let pane_id = match direct_pane_id {
                 Some(id) => id
-                None => {
-                  @sys.write_stdout(
-                    "error: zellij target not found: " + target_text + "\n",
-                  )
-                  @sys.exit(1)
-                  return
-                }
+                None =>
+                  match
+                    zellij_target_pane_id(target, panes, allow_exited=true) {
+                    Some(id) => id
+                    None => {
+                      @sys.write_stdout(
+                        "error: zellij target not found: " + target_text + "\n",
+                      )
+                      @sys.exit(1)
+                      return
+                    }
+                  }
               }
               let code = @exec.run({
                 program: "zellij",

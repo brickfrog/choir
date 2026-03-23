@@ -106,6 +106,31 @@ pub async fn ServerState::handle_with_runner(
   emit_span(self, req, start_sec, end_sec, resp) catch {
     _ => ()
   }
+  // Start pane watchers for newly spawned agents
+  if (req.name == "fork_wave" || req.name == "spawn_worker") && resp.is_ok() {
+    match resp.ok_field("agent_ids") {
+      Some(ids) =>
+        for part in ids.split(",") {
+          let agent_id = part.to_string().trim().to_string()
+          if agent_id == "" {
+            continue
+          }
+          match self.registry.get(agent_id) {
+            Ok(agent) =>
+              match agent.terminal_target {
+                Some(target) =>
+                  match @workspace.parse_local_target(target) {
+                    Some(_) => self.watch_pane(agent_id)
+                    None => ()
+                  }
+                None => ()
+              }
+            Err(_) => ()
+          }
+        }
+      None => ()
+    }
+  }
   resp
 }
 
@@ -505,6 +530,124 @@ pub async fn ServerState::process_poller_tick(
   }
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
+}
+
+///|
+/// Register a pane for idle watchdog monitoring.
+pub fn ServerState::watch_pane(self : ServerState, agent_id : String) -> Unit {
+  self.pane_watchers.set(agent_id, @poller.now_sec())
+}
+
+///|
+fn simple_hash(s : String) -> Int {
+  let mut h = 0
+  for c in s {
+    h = h * 31 + c.to_int()
+  }
+  h
+}
+
+///|
+/// Check for idle agents by dumping pane screens and comparing hashes.
+/// If a pane's screen hasn't changed for `timeout` seconds, kill the agent.
+pub async fn ServerState::check_idle_agents(
+  self : ServerState,
+  now : Int64,
+  timeout : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_ids = []
+  self.pane_watchers.each(fn(agent_id, _) { agent_ids.push(agent_id) })
+  for agent_id in agent_ids {
+    let agent = match self.registry.get(agent_id) {
+      Ok(a) => a
+      Err(_) => {
+        self.pane_watchers.remove(agent_id)
+        self.pane_hashes.remove(agent_id)
+        continue
+      }
+    }
+    if agent.state != @types.AgentState::Active {
+      self.pane_watchers.remove(agent_id)
+      self.pane_hashes.remove(agent_id)
+      continue
+    }
+    if agent.role == @types.Role::Root || agent.role == @types.Role::TL {
+      continue
+    }
+    // Skip agents with tracked PRs awaiting review
+    let mut has_tracked_pr = false
+    self.poller.tracked.each(fn(_pr_num, tracked) {
+      if tracked.agent_id == agent_id {
+        has_tracked_pr = true
+      }
+    })
+    if has_tracked_pr {
+      continue
+    }
+    let target = match agent.terminal_target {
+      Some(t) => t
+      None => continue
+    }
+    let dump_path = "/tmp/choir-watchdog-" + agent_id + ".txt"
+    let (session_name, pane_id) = match @workspace.parse_local_target(target) {
+      Some(lt) => (lt.session, lt.name)
+      None => continue
+    }
+    ignore(
+      runner([
+        {
+          program: "sh",
+          args: [
+            "-c", "zellij --session \"$1\" action dump-screen --pane-id \"$2\" > \"$3\" 2>/dev/null || true",
+            "sh", session_name, pane_id, dump_path,
+          ],
+          workdir: None,
+        },
+      ]) catch {
+        _ => continue
+      },
+    )
+    let screen = @sys.read_file(dump_path)
+    let hash = simple_hash(screen)
+    let prev_hash = self.pane_hashes.get(agent_id).unwrap_or(0)
+    if hash != prev_hash {
+      self.pane_watchers.set(agent_id, now)
+      self.pane_hashes.set(agent_id, hash)
+      continue
+    }
+    // Screen unchanged — check if idle too long
+    let last_change = self.pane_watchers.get(agent_id).unwrap_or(now)
+    let elapsed = now - last_change
+    if elapsed < timeout {
+      continue
+    }
+    // Kill the agent
+    println("[watchdog] agent \{agent_id} idle for \{elapsed}s, killing")
+    ignore(runner([@workspace.local_close_target(target)]) catch { _ => [] })
+    ignore(self.registry.set_state(agent_id, @types.AgentState::Failed))
+    self.pane_watchers.remove(agent_id)
+    self.pane_hashes.remove(agent_id)
+    // Notify parent
+    match agent.parent {
+      Some(parent_id) =>
+        match self.registry.get(parent_id) {
+          Ok(parent) => {
+            let message = "[WATCHDOG] agent " +
+              agent_id +
+              " killed after " +
+              elapsed.to_string() +
+              "s idle (no pane output change)"
+            let delivery = @message.plan_delivery(
+              parent, agent_id, message, "failure",
+            )
+            ignore(@tools.execute_delivery(delivery, runner))
+          }
+          Err(_) => ()
+        }
+      None => ()
+    }
+  }
 }
 
 ///|
