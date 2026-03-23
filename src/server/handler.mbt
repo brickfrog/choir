@@ -104,7 +104,9 @@ pub async fn ServerState::handle_with_runner(
     )
   }
   let end_sec = @poller.now_sec()
-  emit_span(self, req, start_sec, end_sec, resp)
+  emit_span(self, req, start_sec, end_sec, resp) catch {
+    _ => ()
+  }
   resp
 }
 

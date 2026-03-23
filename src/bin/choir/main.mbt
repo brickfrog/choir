@@ -89,7 +89,14 @@ async fn serve_handle_connection(
             if req.req_method == "register" {
               connected_agent_id = req.args.get("agent_id")
             }
-            let resp = state.handle(req)
+            let resp = state.handle(req) catch {
+              e => {
+                @sys.write_stderr(
+                  "[choir serve] PANIC in handler: " + e.to_string() + "\n",
+                )
+                @types.Response::Err("internal error: " + e.to_string())
+              }
+            }
             let resp_str = @transport.format_response(resp) + "\n"
             conn.write(@utf8.encode(resp_str))
           }
@@ -166,7 +173,14 @@ async fn serve_handle_uds_connection(
             if req.req_method == "register" {
               client.connected_agent_id = req.args.get("agent_id")
             }
-            let resp = state.handle(req)
+            let resp = state.handle(req) catch {
+              e => {
+                @sys.write_stderr(
+                  "[choir serve] PANIC in handler: " + e.to_string() + "\n",
+                )
+                @types.Response::Err("internal error: " + e.to_string())
+              }
+            }
             let resp_str = @transport.format_response(resp) + "\n"
             @sys.write_stderr("[choir serve] request: " + line + "\n")
             @sys.write_stderr("[choir serve] response: " + resp_str)
