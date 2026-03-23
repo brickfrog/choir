@@ -2,33 +2,33 @@
 
 [English](README.md) | 简体中文
 
-## 名称
+用 MoonBit 编写的本地多代理编排器。Claude 担任 TL（技术负责人），拆解任务后
+分派给运行在隔离 tmux/zellij 窗格中的 Gemini、Moon Pilot 或其他 Claude 实例。
+每个叶子代理在独立的 git worktree 中工作，完成后提交 PR，内置 poller 自动接收
+GitHub Copilot 的 review 反馈。TL 在 PR 通过后合并，将所有分支折叠回 main。
 
-`choir` - 用 MoonBit 编写的多代理编排服务。
+```
+choir init
+  服务端 (常驻, UDS)
+    TL (Claude) ──fork_wave──▶ 叶子 (Gemini) ──file_pr──▶ GitHub PR
+                                                              │
+                               Poller ◀── Copilot review ─────┘
+                               Poller ──▶ 叶子 (修复 review 意见)
+                               Poller ──▶ TL   (通过后合并)
+```
 
 ## 概要
 
 ```bash
-choir init
-choir stop
-choir serve
-choir mcp-stdio
-choir smoke
-choir smoke --companions
-choir smoke --leafs
-choir smoke --review
-choir smoke --e2e-live
+choir init              # 拉起服务端 + TL 会话
+choir stop              # 关闭服务端
+choir serve             # 直接运行服务端
+choir mcp-stdio         # MCP JSON-RPC 桥接（每个代理一个）
+choir smoke             # MCP bridge smoke 测试
+choir smoke --leafs     # live spawn/PR smoke
+choir smoke --review    # live review 回流 smoke
+choir smoke --e2e-live  # 完整 spawn/review/merge smoke
 ```
-
-## 说明
-
-Choir 运行一个常驻本地服务，并在隔离工作区中协调多个编码代理。
-
-- 本地传输：默认 UDS
-- 可选传输：TCP
-- 本地终端后端：`tmux`、`zellij`
-- 代理 CLI：Claude、Gemini、Moon Pilot
-- 工作流：spawn、消息传递、提 PR、跟踪 review、合并、重启恢复
 
 ## 构建
 

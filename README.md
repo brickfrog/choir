@@ -2,34 +2,35 @@
 
 English | [简体中文](README.zh.md)
 
-## Name
+A local agent orchestrator built in MoonBit. Claude acts as a team lead,
+decomposing tasks and dispatching them to Gemini, Moon Pilot, or other Claude
+instances running in isolated tmux/zellij panes. Each leaf agent works in its
+own git worktree, files a PR when done, and receives GitHub Copilot review
+feedback automatically via a built-in poller. The TL merges approved PRs and
+collapses everything back to main.
 
-`choir` - MoonBit agent orchestration server.
+```
+choir init
+  Server (persistent, UDS)
+    TL (Claude) ──fork_wave──▶ Leaf (Gemini) ──file_pr──▶ GitHub PR
+                                                              │
+                               Poller ◀── Copilot review ─────┘
+                               Poller ──▶ Leaf (fix review comments)
+                               Poller ──▶ TL   (merge when approved)
+```
 
 ## Synopsis
 
 ```bash
-choir init
-choir stop
-choir serve
-choir mcp-stdio
-choir smoke
-choir smoke --companions
-choir smoke --leafs
-choir smoke --review
-choir smoke --e2e-live
+choir init              # bring up server + TL session
+choir stop              # shut down server
+choir serve             # run server directly
+choir mcp-stdio         # MCP JSON-RPC bridge (one per agent)
+choir smoke             # MCP bridge smoke test
+choir smoke --leafs     # live spawn/PR smoke
+choir smoke --review    # live review delivery smoke
+choir smoke --e2e-live  # full spawn/review/merge smoke
 ```
-
-## Description
-
-Choir runs a persistent local server and coordinates coding agents in isolated
-workspaces.
-
-- local transport: UDS by default
-- optional transport: TCP
-- local terminal backends: `tmux`, `zellij`
-- agent CLIs: Claude, Gemini, Moon Pilot
-- workflow: spawn, message, file PR, track review, merge, recover after restart
 
 ## Build
 
