@@ -46,7 +46,7 @@ test "registry upsert refreshes existing agent metadata" {
     parent: Some("root"),
     workspace: ".choir/worktrees/refresh-a",
     branch: "main.refresh",
-    terminal_target: Some("choir:refresh-a"),
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:refresh-a"),
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
@@ -55,13 +55,16 @@ test "registry upsert refreshes existing agent metadata" {
   let refreshed_second = reg.upsert({
     ..agent,
     workspace: ".choir/worktrees/refresh-b",
-    terminal_target: Some("choir:refresh-b"),
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:refresh-b"),
   })
   assert_true(refreshed_second)
   match reg.get("main.refresh") {
     Ok(found) => {
       assert_eq(found.workspace, ".choir/worktrees/refresh-b")
-      assert_eq(found.terminal_target, Some("choir:refresh-b"))
+      assert_eq(
+        found.terminal_target,
+        @types.LocalTarget::parse("zellij-tab:choir:refresh-b"),
+      )
     }
     Err(_) => fail("expected refreshed agent")
   }

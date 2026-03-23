@@ -130,7 +130,7 @@ test "format_registration_request includes local config metadata" {
     branch: Some("main.leaf-1"),
     parent_branch: Some("main"),
     workspace: Some("/tmp/leaf-1"),
-    terminal_target: Some("choir:leaf-1"),
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf-1"),
     agent_type: Some(@types.AgentType::Gemini),
   }
   let output = format_registration_request(
@@ -143,7 +143,9 @@ test "format_registration_request includes local config metadata" {
   assert_true(output.contains("\"parent_id\":\"root\""))
   assert_true(output.contains("\"branch\":\"main.leaf-1\""))
   assert_true(output.contains("\"agent_type\":\"gemini\""))
-  assert_true(output.contains("\"terminal_target\":\"choir:leaf-1\""))
+  assert_true(
+    output.contains("\"terminal_target\":\"zellij-tab:choir:leaf-1\""),
+  )
 }
 
 ///|

@@ -31,7 +31,7 @@ pub fn format_review_timeout(agent_id : String) -> String {
 ///|
 pub(all) enum DeliveryMethod {
   TeamsInbox(String, String, fallback_target~ : String?)
-  LocalTerminalInput(String, String)
+  LocalTerminalInput(@types.LocalTarget, String)
   TcpPush(String, String)
   UdsHttp(String, String)
 } derive(Show, Eq)
@@ -73,19 +73,11 @@ pub fn plan_delivery(
           // while Claude is processing a turn, not while idle at prompt.
           LocalTerminalInput(target, format_message(sender_id, content))
         None =>
-          match agent.agent_type {
-            Claude =>
-              TeamsInbox(
-                teams_inbox_path(agent.agent_id),
-                teams_inbox_json(sender_id, content, status),
-                fallback_target=Some(agent.agent_id),
-              )
-            _ =>
-              LocalTerminalInput(
-                agent.agent_id,
-                format_message(sender_id, content),
-              )
-          }
+          TeamsInbox(
+            teams_inbox_path(agent.agent_id),
+            teams_inbox_json(sender_id, content, status),
+            fallback_target=Some(agent.agent_id),
+          )
       }
   }
 }

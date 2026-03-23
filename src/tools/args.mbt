@@ -97,7 +97,7 @@ struct RegisterArgs {
   role : @types.Role
   agent_type : @types.AgentType
   parent : String?
-  terminal_target : String?
+  terminal_target : @types.LocalTarget?
   workspace : String
   branch : String
 } derive(Show, Eq)

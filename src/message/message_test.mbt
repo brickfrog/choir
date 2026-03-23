@@ -65,13 +65,14 @@ test "plan delivery for Claude agent with terminal target -> LocalTerminalInput"
     parent: None,
     workspace: "ws1",
     branch: "main",
-    terminal_target: Some("zellij-tab:choir:TL"),
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:TL"),
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
   let expected = @message.DeliveryMethod::LocalTerminalInput(
-    "zellij-tab:choir:TL", "[from: sender-1] hi",
+    @types.LocalTarget::parse("zellij-tab:choir:TL").unwrap(),
+    "[from: sender-1] hi",
   )
   assert_eq(res, expected)
 }
@@ -85,13 +86,14 @@ test "plan delivery for Gemini agent -> LocalTerminalInput" {
     parent: None,
     workspace: "ws1",
     branch: "main",
-    terminal_target: Some("target-pane"),
+    terminal_target: @types.LocalTarget::parse("zellij-pane:choir:target-pane"),
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
   let expected = @message.DeliveryMethod::LocalTerminalInput(
-    "target-pane", "[from: sender-1] hi",
+    @types.LocalTarget::parse("zellij-pane:choir:target-pane").unwrap(),
+    "[from: sender-1] hi",
   )
   assert_eq(res, expected)
 }
@@ -105,13 +107,14 @@ test "plan delivery for MoonPilot agent -> LocalTerminalInput" {
     parent: None,
     workspace: "ws1",
     branch: "main",
-    terminal_target: Some("choir:moonpilot"),
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:moonpilot"),
     host: @types.Host::Local,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
   let expected = @message.DeliveryMethod::LocalTerminalInput(
-    "choir:moonpilot", "[from: sender-1] hi",
+    @types.LocalTarget::parse("zellij-tab:choir:moonpilot").unwrap(),
+    "[from: sender-1] hi",
   )
   assert_eq(res, expected)
 }

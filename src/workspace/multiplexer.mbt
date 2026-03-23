@@ -1,67 +1,14 @@
 ///|
-pub(all) enum LocalTargetKind {
-  ZellijTab
-  ZellijPane
-} derive(Show, Eq)
-
-///|
-pub(all) struct LocalTarget {
-  kind : LocalTargetKind
-  session : String
-  name : String
-} derive(Show, Eq)
-
-///|
-fn prefix_after(s : String, prefix : String) -> String? {
-  if not(s.has_prefix(prefix)) {
-    return None
-  }
-  Some(s[prefix.length():].to_string())
+pub fn zellij_tab_target(session : String, name : String) -> @types.LocalTarget {
+  { kind: ZellijTab, session, name }
 }
 
 ///|
-fn split_once(s : String, needle : String) -> (String, String)? {
-  if needle.length() != 1 {
-    return None
-  }
-  for i = 0; i < s.length(); i = i + 1 {
-    if s[i] == needle[0] {
-      return Some((s[:i].to_string(), s[i + 1:s.length()].to_string()))
-    }
-  }
-  None
-}
-
-///|
-pub fn zellij_tab_target(session : String, name : String) -> String {
-  "zellij-tab:" + session + ":" + name
-}
-
-///|
-pub fn zellij_pane_target(session : String, name : String) -> String {
-  "zellij-pane:" + session + ":" + name
-}
-
-///|
-pub fn parse_local_target(target : String) -> LocalTarget? {
-  match prefix_after(target, "zellij-tab:") {
-    Some(rest) =>
-      match split_once(rest, ":") {
-        Some((session, name)) if session != "" && name != "" =>
-          Some({ kind: ZellijTab, session, name })
-        _ => None
-      }
-    None =>
-      match prefix_after(target, "zellij-pane:") {
-        Some(rest) =>
-          match split_once(rest, ":") {
-            Some((session, name)) if session != "" && name != "" =>
-              Some({ kind: ZellijPane, session, name })
-            _ => None
-          }
-        None => None
-      }
-  }
+pub fn zellij_pane_target(
+  session : String,
+  name : String,
+) -> @types.LocalTarget {
+  { kind: ZellijPane, session, name }
 }
 
 ///|
@@ -69,7 +16,7 @@ pub fn local_target_for(
   session : String,
   slug : String,
   isolation : @types.IsolationMode,
-) -> String {
+) -> @types.LocalTarget {
   match isolation {
     @types.IsolationMode::Inline => zellij_pane_target(session, slug)
     _ => zellij_tab_target(session, slug)
@@ -178,15 +125,19 @@ pub fn launch_commands(
 }
 
 ///|
-pub fn local_send_text(target : String, text : String) -> Command {
+pub fn local_send_text(target : @types.LocalTarget, text : String) -> Command {
   {
     program: "choir",
-    args: ["zellij-action", "send", target, text],
+    args: ["zellij-action", "send", target.to_string(), text],
     workdir: None,
   }
 }
 
 ///|
-pub fn local_close_target(target : String) -> Command {
-  { program: "choir", args: ["zellij-action", "close", target], workdir: None }
+pub fn local_close_target(target : @types.LocalTarget) -> Command {
+  {
+    program: "choir",
+    args: ["zellij-action", "close", target.to_string()],
+    workdir: None,
+  }
 }

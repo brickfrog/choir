@@ -183,7 +183,10 @@ pub fn parse_local_config(
   let branch = doc.get_optional_nonempty("branch")
   let parent_branch = doc.get_optional_nonempty("parent_branch")
   let workspace = doc.get_optional_nonempty("workspace")
-  let terminal_target = doc.get_optional_nonempty("terminal_target")
+  let terminal_target = match doc.get_optional_nonempty("terminal_target") {
+    Some(s) => @types.LocalTarget::parse(s)
+    None => None
+  }
   let agent_type = match doc.get("agent_type") {
     Some(v) =>
       match parse_agent_type(v) {

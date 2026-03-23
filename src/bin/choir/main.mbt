@@ -1387,7 +1387,7 @@ async fn zellij_list_panes(session : String) -> Array[ZellijPaneRef] {
 
 ///|
 fn zellij_target_pane_id(
-  target : @workspace.LocalTarget,
+  target : @types.LocalTarget,
   panes : Array[ZellijPaneRef],
   allow_exited? : Bool = false,
 ) -> String? {
@@ -1400,11 +1400,11 @@ fn zellij_target_pane_id(
       continue
     }
     match target.kind {
-      @workspace.LocalTargetKind::ZellijPane =>
+      @types.TargetKind::ZellijPane =>
         if pane.title == target.name {
           return Some(pane.id)
         }
-      @workspace.LocalTargetKind::ZellijTab =>
+      @types.TargetKind::ZellijTab =>
         if pane.tab_name == target.name {
           return Some(pane.id)
         }
@@ -1415,7 +1415,7 @@ fn zellij_target_pane_id(
 
 ///|
 fn zellij_target_tab_id(
-  target : @workspace.LocalTarget,
+  target : @types.LocalTarget,
   panes : Array[ZellijPaneRef],
 ) -> String? {
   for pane in panes {
@@ -1446,7 +1446,7 @@ fn zellij_action_run() -> Unit {
       }
       let action = args[2]
       let target_text = args[3]
-      let target = match @workspace.parse_local_target(target_text) {
+      let target = match @types.LocalTarget::parse(target_text) {
         Some(parsed) => parsed
         None => {
           @sys.write_stdout(
@@ -1524,7 +1524,7 @@ fn zellij_action_run() -> Unit {
         }
         "close" =>
           match target.kind {
-            @workspace.LocalTargetKind::ZellijPane => {
+            @types.TargetKind::ZellijPane => {
               let pane_id = match direct_pane_id {
                 Some(id) => id
                 None =>
@@ -1554,7 +1554,7 @@ fn zellij_action_run() -> Unit {
               })
               @sys.exit(code)
             }
-            @workspace.LocalTargetKind::ZellijTab => {
+            @types.TargetKind::ZellijTab => {
               let tab_id = match zellij_target_tab_id(target, panes) {
                 Some(id) => id
                 None => {
@@ -2973,7 +2973,7 @@ fn init_companion_local_config_content(
   branch : String,
   parent_branch : String,
   workspace : String,
-  terminal_target : String,
+  terminal_target : @types.LocalTarget,
   agent_type? : @types.AgentType? = None,
 ) -> String {
   let buf = StringBuilder::new()
@@ -2990,7 +2990,7 @@ fn init_companion_local_config_content(
   buf.write_string("\"\nworkspace = \"")
   buf.write_string(workspace)
   buf.write_string("\"\nterminal_target = \"")
-  buf.write_string(terminal_target)
+  buf.write_string(terminal_target.to_string())
   buf.write_string("\"\n")
   match agent_type {
     Some(kind) => {
@@ -3011,7 +3011,7 @@ fn init_companion_launch_prefix(
   branch : String,
   parent_branch : String,
   workspace : String,
-  terminal_target : String,
+  terminal_target : @types.LocalTarget,
   session : String,
   agent_type? : @types.AgentType? = None,
 ) -> String {
@@ -3023,7 +3023,7 @@ fn init_companion_launch_prefix(
     init_env_assignment("CHOIR_PARENT_BRANCH", parent_branch),
     init_env_assignment("CHOIR_WORKSPACE", workspace),
     init_env_assignment("CHOIR_ROLE", @config.role_to_string(role)),
-    init_env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
+    init_env_assignment("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
     init_env_assignment("CHOIR_TERMINAL_SESSION", session),
     init_env_assignment("CHOIR_AGENT_ID", agent_id),
     init_env_assignment("CHOIR_SESSION_ID", agent_id),

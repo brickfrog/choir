@@ -146,7 +146,7 @@ test "parse_local_config - metadata" {
     #|branch = "main.child"
     #|parent_branch = "main"
     #|workspace = "/tmp/worktree"
-    #|terminal_target = "choir:child"
+    #|terminal_target = "zellij-tab:choir:child"
     #|agent_type = "gemini"
   let local_cfg = parse_local_config(content).unwrap()
   assert_eq(local_cfg.role, Some(@types.Role::Dev))
@@ -155,7 +155,10 @@ test "parse_local_config - metadata" {
   assert_eq(local_cfg.branch, Some("main.child"))
   assert_eq(local_cfg.parent_branch, Some("main"))
   assert_eq(local_cfg.workspace, Some("/tmp/worktree"))
-  assert_eq(local_cfg.terminal_target, Some("choir:child"))
+  assert_eq(
+    local_cfg.terminal_target,
+    @types.LocalTarget::parse("zellij-tab:choir:child"),
+  )
   assert_eq(local_cfg.agent_type, Some(@types.AgentType::Gemini))
 }
 

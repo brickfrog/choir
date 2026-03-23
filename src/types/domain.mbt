@@ -33,6 +33,71 @@ pub(all) enum AgentState {
 } derive(Show, Eq)
 
 ///|
+/// Zellij target type for agent panes.
+pub(all) enum TargetKind {
+  ZellijTab
+  ZellijPane
+} derive(Show, Eq)
+
+///|
+/// A typed terminal target — session + pane/tab identifier.
+pub(all) struct LocalTarget {
+  kind : TargetKind
+  session : String
+  name : String
+} derive(Show, Eq)
+
+///|
+pub fn LocalTarget::to_string(self : LocalTarget) -> String {
+  let prefix = match self.kind {
+    ZellijTab => "zellij-tab:"
+    ZellijPane => "zellij-pane:"
+  }
+  prefix + self.session + ":" + self.name
+}
+
+///|
+fn lt_prefix_after(s : String, prefix : String) -> String? {
+  if not(s.has_prefix(prefix)) {
+    return None
+  }
+  Some(s[prefix.length():].to_string())
+}
+
+///|
+fn lt_split_once(s : String, ch : Char) -> (String, String)? {
+  let needle = ch.to_int().to_uint16()
+  for i = 0; i < s.length(); i = i + 1 {
+    if s[i] == needle {
+      return Some((s[:i].to_string(), s[i + 1:s.length()].to_string()))
+    }
+  }
+  None
+}
+
+///|
+pub fn LocalTarget::parse(target : String) -> LocalTarget? {
+  match lt_prefix_after(target, "zellij-tab:") {
+    Some(rest) =>
+      match lt_split_once(rest, ':') {
+        Some((session, name)) if session != "" && name != "" =>
+          Some({ kind: ZellijTab, session, name })
+        _ => None
+      }
+    None =>
+      match lt_prefix_after(target, "zellij-pane:") {
+        Some(rest) =>
+          match lt_split_once(rest, ':') {
+            Some((session, name)) if session != "" && name != "" =>
+              Some({ kind: ZellijPane, session, name })
+            _ => None
+          }
+        None => None
+      }
+  }
+}
+
+///|
 /// A managed agent in the orchestration tree.
 pub(all) struct Agent {
   agent_id : String
@@ -41,7 +106,7 @@ pub(all) struct Agent {
   parent : String?
   workspace : String
   branch : String
-  terminal_target : String?
+  terminal_target : LocalTarget?
   host : Host
   state : AgentState
 } derive(Show)

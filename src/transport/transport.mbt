@@ -84,7 +84,7 @@ pub fn format_registration_request(
     None => ()
   }
   match local_cfg.terminal_target {
-    Some(v) => args.set("terminal_target", v)
+    Some(v) => args.set("terminal_target", v.to_string())
     None => ()
   }
   match local_cfg.agent_type {

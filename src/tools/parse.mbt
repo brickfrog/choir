@@ -577,7 +577,7 @@ fn parse_register_args(
       None => None
     },
     terminal_target: match tool_args_get(args, "terminal_target") {
-      Some(v) => if v == "" { None } else { Some(v) }
+      Some(v) => if v == "" { None } else { @types.LocalTarget::parse(v) }
       None => None
     },
     workspace: tool_args_get(args, "workspace").unwrap_or(""),

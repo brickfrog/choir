@@ -166,13 +166,16 @@ test "register_agent duplicate refreshes existing agent" {
   let res = state.register_agent({
     ..agent,
     workspace: ".choir/worktrees/child-1",
-    terminal_target: Some("choir:child-1"),
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:child-1"),
   })
   assert_true(res is Ok(_))
   match state.registry.get("child-1") {
     Ok(found) => {
       assert_eq(found.workspace, ".choir/worktrees/child-1")
-      assert_eq(found.terminal_target, Some("choir:child-1"))
+      assert_eq(
+        found.terminal_target,
+        @types.LocalTarget::parse("zellij-tab:choir:child-1"),
+      )
     }
     Err(_) => fail("expected refreshed agent")
   }
@@ -200,7 +203,7 @@ test "notify_parent delivers to Claude parent with terminal via LocalTerminalInp
   let parent = {
     ..build_agent("parent-1", None),
     role: @types.Role::TL,
-    terminal_target: Some("zellij-tab:choir:TL"),
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:TL"),
   }
   let child = build_agent("child-1", Some("parent-1"))
   let _ = state.register_agent(parent)
@@ -209,7 +212,10 @@ test "notify_parent delivers to Claude parent with terminal via LocalTerminalInp
   assert_true(res is Ok(_))
   match res {
     Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
-      assert_eq(target, "zellij-tab:choir:TL")
+      assert_eq(
+        target,
+        @types.LocalTarget::parse("zellij-tab:choir:TL").unwrap(),
+      )
       assert_eq(text, "[from: child-1] hello")
     }
     _ =>

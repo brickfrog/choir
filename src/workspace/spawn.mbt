@@ -88,7 +88,7 @@ fn launch_env_prefix(
   spec : @types.SpawnSpec,
   session : String,
   workspace : String,
-  terminal_target : String,
+  terminal_target : @types.LocalTarget,
 ) -> String {
   let role = role_to_string(spec.role)
   let agent_id = canonical_agent_id(spec)
@@ -102,7 +102,7 @@ fn launch_env_prefix(
     env_assignment("CHOIR_WORKSPACE", workspace),
     env_assignment("CHOIR_ROLE", role),
     env_assignment("CHOIR_AGENT_TYPE", agent_type),
-    env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
+    env_assignment("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
     env_assignment("CHOIR_TERMINAL_SESSION", session),
     env_assignment("CHOIR_SESSION_ID", agent_id),
     env_assignment("CHOIR_PARENT_AGENT", spec.parent_id),
@@ -354,12 +354,11 @@ pub fn remote_spawn_commands(
     "\"\n"
   let mcp_json = mcp_json_content(spec.role, branch, extra_mcp_servers_json~)
   let launch_cmd = agent_launch_command(spec, workspace, parent_session_id~)
-  let agent_cmd = launch_env_prefix(
-      spec,
-      "remote",
-      workspace,
-      "remote:" + spec.slug,
-    ) +
+  let agent_cmd = launch_env_prefix(spec, "remote", workspace, @types.LocalTarget::{
+      kind: ZellijPane,
+      session: "remote",
+      name: spec.slug,
+    }) +
     command_text_for_launch(launch_cmd)
   [
     ssh_cmd(

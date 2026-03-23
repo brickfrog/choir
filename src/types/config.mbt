@@ -23,7 +23,7 @@ pub(all) struct LocalConfig {
   branch : String?
   parent_branch : String?
   workspace : String?
-  terminal_target : String?
+  terminal_target : LocalTarget?
   agent_type : AgentType?
 } derive(Show)
 

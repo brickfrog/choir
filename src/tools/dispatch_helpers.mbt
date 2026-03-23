@@ -193,10 +193,14 @@ pub async fn verify_teams_delivery(
     }
   }
   match fallback_target {
-    Some(target) => {
-      let cmd = @workspace.local_send_text(target, message_json)
-      ignore(runner([cmd]) catch { _ => [] })
-    }
+    Some(target_str) =>
+      match @types.LocalTarget::parse(target_str) {
+        Some(target) => {
+          let cmd = @workspace.local_send_text(target, message_json)
+          ignore(runner([cmd]) catch { _ => [] })
+        }
+        None => ()
+      }
     None => ()
   }
 }
@@ -244,7 +248,11 @@ pub async fn execute_delivery(
       ignore(
         @sys.append_file_sync(
           ".choir/delivery.log",
-          "[delivery] target=" + target + " cmd=" + cmd.to_string() + "\n",
+          "[delivery] target=" +
+          target.to_string() +
+          " cmd=" +
+          cmd.to_string() +
+          "\n",
         ),
       )
       let statuses = runner([cmd]) catch { e => return Err(e.to_string()) }

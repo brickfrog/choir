@@ -54,17 +54,17 @@ test "git_worktree_add args" {
 
 ///|
 test "parse_local_target supports zellij targets" {
-  match @workspace.parse_local_target("zellij-tab:howdy:leaf-a") {
+  match @types.LocalTarget::parse("zellij-tab:howdy:leaf-a") {
     Some(target) => {
-      assert_eq(target.kind, @workspace.LocalTargetKind::ZellijTab)
+      assert_eq(target.kind, @types.TargetKind::ZellijTab)
       assert_eq(target.session, "howdy")
       assert_eq(target.name, "leaf-a")
     }
     None => fail("expected zellij tab target")
   }
-  match @workspace.parse_local_target("zellij-pane:howdy:worker-a") {
+  match @types.LocalTarget::parse("zellij-pane:howdy:worker-a") {
     Some(target) => {
-      assert_eq(target.kind, @workspace.LocalTargetKind::ZellijPane)
+      assert_eq(target.kind, @types.TargetKind::ZellijPane)
       assert_eq(target.session, "howdy")
       assert_eq(target.name, "worker-a")
     }

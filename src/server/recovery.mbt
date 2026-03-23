@@ -347,49 +347,17 @@ fn parse_zellij_live_targets(output : String) -> ZellijLiveTargets {
 }
 
 ///|
-fn is_zellij_target_alive(
-  target : String?,
-  session : String,
-  live : ZellijLiveTargets,
-) -> Bool {
-  match target {
-    Some(value) =>
-      match @workspace.parse_local_target(value) {
-        Some(
-          {
-            kind: @workspace.LocalTargetKind::ZellijTab,
-            session: target_session,
-            name,
-          }
-        ) => target_session == session && live.tabs.contains(name)
-        Some(
-          {
-            kind: @workspace.LocalTargetKind::ZellijPane,
-            session: target_session,
-            name,
-          }
-        ) => target_session == session && live.panes.contains(name)
-        _ => false
-      }
-    None => false
-  }
-}
-
-///|
 fn is_local_target_alive(
-  target : String?,
+  target : @types.LocalTarget?,
   session : String,
-  tmux_windows : Array[String],
+  _tmux_windows : Array[String],
   zellij_live : ZellijLiveTargets,
 ) -> Bool {
   match target {
-    Some(value) =>
-      match @workspace.parse_local_target(value) {
-        Some({ kind: @workspace.LocalTargetKind::ZellijTab, .. })
-        | Some({ kind: @workspace.LocalTargetKind::ZellijPane, .. }) =>
-          is_zellij_target_alive(target, session, zellij_live)
-        _ => is_window_target_alive(target, session, tmux_windows)
-      }
+    Some({ kind: @types.TargetKind::ZellijTab, session: s, name }) =>
+      s == session && zellij_live.tabs.contains(name)
+    Some({ kind: @types.TargetKind::ZellijPane, session: s, name }) =>
+      s == session && zellij_live.panes.contains(name)
     None => false
   }
 }
@@ -661,7 +629,7 @@ test "recover_agent_from_local_config restores active agent metadata" {
     #|parent_id = "main"
     #|branch = "main.leaf-a"
     #|workspace = ".choir/worktrees/leaf-a"
-    #|terminal_target = "howdy:leaf-a"
+    #|terminal_target = "zellij-tab:howdy:leaf-a"
     #|agent_type = "gemini"
   assert_true(@sys.write_file_sync(local_path, content))
   let recovered = recover_agent_from_local_config(
@@ -670,7 +638,7 @@ test "recover_agent_from_local_config restores active agent metadata" {
     "leaf-a",
     "howdy",
     ["leaf-a"],
-    { tabs: [], panes: [] },
+    { tabs: ["leaf-a"], panes: [] },
   )
   match recovered {
     Some(agent) => {
@@ -681,7 +649,10 @@ test "recover_agent_from_local_config restores active agent metadata" {
       assert_eq(agent.role, @types.Role::Dev)
       assert_eq(agent.agent_type, @types.AgentType::Gemini)
       assert_eq(agent.state, @types.AgentState::Active)
-      assert_eq(agent.terminal_target, Some("howdy:leaf-a"))
+      assert_eq(
+        agent.terminal_target,
+        @types.LocalTarget::parse("zellij-tab:howdy:leaf-a"),
+      )
     }
     None => fail("expected local config to recover active agent")
   }
@@ -707,7 +678,7 @@ test "recover_agent_from_local_config falls back and clears dead tmux targets" {
     "/.choir/config.local.toml"
   let content =
     #|role = "tl"
-    #|terminal_target = "howdy:helper"
+    #|terminal_target = "zellij-tab:howdy:helper"
   assert_true(@sys.write_file_sync(local_path, content))
   let recovered = recover_agent_from_local_config(
     project_dir,
@@ -770,7 +741,10 @@ test "recover_agent_from_local_config keeps live zellij tab targets" {
   match recovered {
     Some(agent) => {
       assert_eq(agent.state, @types.AgentState::Active)
-      assert_eq(agent.terminal_target, Some("zellij-tab:howdy:leaf-z"))
+      assert_eq(
+        agent.terminal_target,
+        @types.LocalTarget::parse("zellij-tab:howdy:leaf-z"),
+      )
       assert_eq(agent.agent_type, @types.AgentType::Gemini)
     }
     None => fail("expected local config to recover zellij agent")
@@ -788,7 +762,7 @@ async test "recover_open_pr_tracking_with seeds current review snapshot" {
       agent_type: @types.AgentType::Gemini,
       state: @types.AgentState::Active,
       parent: Some("main"),
-      terminal_target: Some("howdy:leaf-a"),
+      terminal_target: @types.LocalTarget::parse("zellij-tab:howdy:leaf-a"),
       host: @types.Host::Local,
       workspace: ".choir/worktrees/leaf-a",
       branch: "main.leaf-a",
@@ -868,7 +842,7 @@ async test "recover_open_pr_tracking_with prefers persisted poller state" {
       agent_type: @types.AgentType::Gemini,
       state: @types.AgentState::Active,
       parent: Some("main"),
-      terminal_target: Some("howdy:leaf-a"),
+      terminal_target: @types.LocalTarget::parse("zellij-tab:howdy:leaf-a"),
       host: @types.Host::Local,
       workspace: ".choir/worktrees/leaf-a",
       branch: "main.leaf-a",

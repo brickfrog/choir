@@ -101,7 +101,7 @@ pub fn child_config_content(
 pub fn config_local_content(
   spec : @types.SpawnSpec,
   workspace : String,
-  terminal_target : String,
+  terminal_target : @types.LocalTarget,
 ) -> String {
   let role_str = @config.role_to_string(spec.role)
   let agent_type_str = @config.agent_type_to_string(spec.agent_type)
@@ -121,7 +121,7 @@ pub fn config_local_content(
   "\"\nagent_type = \"" +
   agent_type_str +
   "\"\nterminal_target = \"" +
-  terminal_target +
+  terminal_target.to_string() +
   "\"\n"
 }
 

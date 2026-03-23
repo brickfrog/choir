@@ -118,11 +118,7 @@ pub async fn ServerState::handle_with_runner(
           match self.registry.get(agent_id) {
             Ok(agent) =>
               match agent.terminal_target {
-                Some(target) =>
-                  match @workspace.parse_local_target(target) {
-                    Some(_) => self.watch_pane(agent_id)
-                    None => ()
-                  }
+                Some(_) => self.watch_pane(agent_id)
                 None => ()
               }
             Err(_) => ()
@@ -379,7 +375,9 @@ pub fn ServerState::plan_poll_event_deliveries(
                   " parent=" +
                   parent.agent_id +
                   " terminal_target=" +
-                  parent.terminal_target.unwrap_or("NONE") +
+                  parent.terminal_target
+                  .map(@types.LocalTarget::to_string)
+                  .unwrap_or("NONE") +
                   "\n",
                 ),
               )
@@ -590,10 +588,8 @@ pub async fn ServerState::check_idle_agents(
       None => continue
     }
     let dump_path = "/tmp/choir-watchdog-" + agent_id + ".txt"
-    let (session_name, pane_id) = match @workspace.parse_local_target(target) {
-      Some(lt) => (lt.session, lt.name)
-      None => continue
-    }
+    let session_name = target.session
+    let pane_id = target.name
     ignore(
       runner([
         {

@@ -717,7 +717,7 @@ async test "dispatch register inserts agent into registry" {
       "parent_id": "root",
       "branch": "main.leaf-0",
       "workspace": "/tmp/leaf-0",
-      "terminal_target": "choir:leaf-0",
+      "terminal_target": "zellij-tab:choir:leaf-0",
       "agent_type": "gemini",
     },
   }
@@ -733,7 +733,10 @@ async test "dispatch register inserts agent into registry" {
           assert_eq(agent.parent, Some("root"))
           assert_eq(agent.branch, "main.leaf-0")
           assert_eq(agent.workspace, "/tmp/leaf-0")
-          assert_eq(agent.terminal_target, Some("choir:leaf-0"))
+          assert_eq(
+            agent.terminal_target,
+            @types.LocalTarget::parse("zellij-tab:choir:leaf-0"),
+          )
           assert_eq(agent.agent_type, @types.AgentType::Gemini)
         }
         Err(_) => assert_true(false)
@@ -795,7 +798,7 @@ async test "dispatch shutdown marks agent completing before terminal close" {
     agent_type: @types.AgentType::Claude,
     state: @types.AgentState::Active,
     parent: None,
-    terminal_target: Some("choir:leaf-1"),
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf-1"),
     host: @types.Host::Local,
     workspace: "",
     branch: "",
@@ -1493,14 +1496,14 @@ async test "verify_teams_delivery falls back to tmux if message remains" {
   @tools.verify_teams_delivery(
     inbox_path,
     "{\"msg\":\"test\"}",
-    Some("test-pane"),
+    Some("zellij-tab:choir:test-pane"),
     runner,
     interval_ms=1,
   )
 
   assert_eq(recorded.length(), 1)
   let fallback_cmd = recorded[0]
-  assert_true(fallback_cmd.args.contains("test-pane"))
+  assert_true(fallback_cmd.args.contains("zellij-tab:choir:test-pane"))
   assert_true(fallback_cmd.args.contains("{\"msg\":\"test\"}"))
 
   ignore(@sys.system("rm -rf /tmp/choir-verify-test"))

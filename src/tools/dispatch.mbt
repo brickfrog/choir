@@ -473,7 +473,9 @@ pub async fn dispatch(
                   "[send_message] target=" +
                   send_args.target_id +
                   " terminal_target=" +
-                  agent.terminal_target.unwrap_or("NONE") +
+                  agent.terminal_target
+                  .map(@types.LocalTarget::to_string)
+                  .unwrap_or("NONE") +
                   " delivery=" +
                   delivery.to_string() +
                   "\n",
