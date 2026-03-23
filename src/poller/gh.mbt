@@ -43,6 +43,29 @@ fn parse_review_bodies(json : Json) -> String {
       }
     _ => ()
   }
+  // Include inline code comments if present
+  match obj.get("inline_comments") {
+    Some(Array(comments)) =>
+      for c in comments {
+        guard c is Object(comment) else { continue }
+        let path = match comment.get("path") {
+          Some(String(v)) => v
+          _ => ""
+        }
+        let body = match comment.get("body") {
+          Some(String(v)) => v
+          _ => ""
+        }
+        if body != "" {
+          if path != "" {
+            bodies.push("[" + path + "] " + body)
+          } else {
+            bodies.push(body)
+          }
+        }
+      }
+    _ => ()
+  }
   bodies.join("\n---\n")
 }
 
@@ -191,5 +214,62 @@ pub async fn gh_poll_pr(
     }
   }
   let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
-  parse_gh_pr_view_output(output)
+  // Fetch inline code review comments (separate API)
+  let inline_output = fetch_inline_comments(pr_number)
+  let merged = merge_inline_comments(output, inline_output)
+  parse_gh_pr_view_output(merged)
+}
+
+///|
+async fn fetch_inline_comments(pr_number : Int) -> String {
+  let (reader, writer) = @process.read_from_process() catch { _ => return "" }
+  let _pid = @process.spawn_orphan(
+    "gh",
+    [
+      "api",
+      "repos/{owner}/{repo}/pulls/" + pr_number.to_string() + "/comments",
+      "--jq",
+      "[.[] | {path, body}]",
+    ],
+    stdout=writer,
+  ) catch {
+    _ => {
+      reader.close()
+      return ""
+    }
+  }
+  let buf = FixedArray::make(32768, (0 : Byte))
+  let mut total = 0
+  for ;; {
+    if total >= buf.length() {
+      break
+    }
+    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
+      _ => 0
+    }
+    if n == 0 {
+      break
+    }
+    total = total + n
+  }
+  reader.close()
+  ignore(@process.wait_pid(_pid) catch { _ => -1 })
+  if total == 0 {
+    ""
+  } else {
+    @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
+  }
+}
+
+///|
+fn merge_inline_comments(pr_json : String, inline_json : String) -> String {
+  if inline_json == "" {
+    return pr_json
+  }
+  let inline = @json.parse(inline_json) catch { _ => return pr_json }
+  guard inline is Array(_) else { return pr_json }
+  let main = @json.parse(pr_json) catch { _ => return pr_json }
+  guard main is Object(obj) else { return pr_json }
+  obj.set("inline_comments", inline)
+  main.stringify()
 }
