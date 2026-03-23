@@ -348,19 +348,19 @@ pub fn ServerState::plan_poll_event_deliveries(
       @tools.apply_dev_event(
         self.config.project_dir,
         agent_id,
-        @phase.DevEvent::ReviewReceivedEv(n, body),
+        @phase.DevEvent::ReviewReceivedEv(pr_number=n, body~),
       )
     (Some(_), PRReady(n)) =>
       @tools.apply_dev_event(
         self.config.project_dir,
         agent_id,
-        @phase.DevEvent::ReviewApprovedEv(n),
+        @phase.DevEvent::ReviewApprovedEv(pr_number=n),
       )
     (Some(pr), FixesPushed(n)) =>
       @tools.apply_dev_event(
         self.config.project_dir,
         agent_id,
-        @phase.DevEvent::FixesPushedEv(n, pr.last_sha),
+        @phase.DevEvent::FixesPushedEv(pr_number=n, sha=pr.last_sha),
       )
     _ => ()
   }

@@ -206,7 +206,7 @@ pub async fn dispatch(
             apply_tl_event(
               project_dir,
               fork_wave_args.caller_id,
-              @phase.TLEvent::ChildSpawned(slug),
+              @phase.TLEvent::ChildSpawned(child_id=slug),
             )
             // Resolve zellij pane ID for faster delivery (best-effort)
             let agent_id = @workspace.branch_name(
@@ -307,7 +307,11 @@ pub async fn dispatch(
               apply_dev_event(
                 project_dir,
                 branch,
-                @phase.DevEvent::PRCreated(pr.number, pr.url, branch),
+                @phase.DevEvent::PRCreated(
+                  pr_number=pr.number,
+                  url=pr.url,
+                  branch~,
+                ),
               )
               @types.Response::ok_values({
                 "status": String::to_json("pr_created"),
@@ -349,8 +353,8 @@ pub async fn dispatch(
                         project_dir,
                         merge_args.caller_id,
                         @phase.TLEvent::PRMerged(
-                          merge_args.pr_number,
-                          extract_slug(tracked.branch),
+                          number=merge_args.pr_number,
+                          url=extract_slug(tracked.branch),
                         ),
                       )
                     None => ()
@@ -376,8 +380,8 @@ pub async fn dispatch(
                         project_dir,
                         merge_args.caller_id,
                         @phase.TLEvent::PRMerged(
-                          merge_args.pr_number,
-                          extract_slug(tracked.branch),
+                          number=merge_args.pr_number,
+                          url=extract_slug(tracked.branch),
                         ),
                       )
                     None => ()
@@ -430,7 +434,9 @@ pub async fn dispatch(
                   apply_dev_event(
                     project_dir,
                     notify_args.caller_id,
-                    @phase.DevEvent::NotifyParentSuccess(notify_args.message),
+                    @phase.DevEvent::NotifyParentSuccess(
+                      message=notify_args.message,
+                    ),
                   )
                   @types.Response::ok_values({
                     "status": String::to_json("notified"),
@@ -445,7 +451,7 @@ pub async fn dispatch(
           apply_dev_event(
             project_dir,
             notify_args.caller_id,
-            @phase.DevEvent::NotifyParentSuccess(notify_args.message),
+            @phase.DevEvent::NotifyParentSuccess(message=notify_args.message),
           )
           @types.Response::ok_values({ "status": String::to_json("notified") })
         }
@@ -1011,10 +1017,10 @@ pub fn apply_tl_event(
     @phase.ChildTracker::new()
   }
   match event {
-    @phase.TLEvent::ChildSpawned(child_id) =>
+    @phase.TLEvent::ChildSpawned(child_id~) =>
       tracker.add(child_id, { slug: child_id, branch: child_id, agent_type: "" })
-    @phase.TLEvent::ChildCompleted(child_id) => tracker.remove(child_id)
-    @phase.TLEvent::ChildFailed(child_id, _) => tracker.remove(child_id)
+    @phase.TLEvent::ChildCompleted(child_id~) => tracker.remove(child_id)
+    @phase.TLEvent::ChildFailed(child_id~, ..) => tracker.remove(child_id)
     _ => ()
   }
   ignore(
