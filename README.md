@@ -112,22 +112,41 @@ choir smoke --e2e-live
 ```mermaid
 flowchart TD
   U[User] --> I["choir init"]
-  I --> S[choir serve]
-  I --> T[TL session]
-  T --> B["choir mcp-stdio"]
-  B --> S
-  T --> P["spawn leaf / worker"]
-  P --> L[Leaf session]
-  L --> F[file_pr]
-  F --> G[GitHub PR]
-  G --> R[Review / CI]
-  R --> O[Poller]
-  O --> L
-  O --> T
-  T --> M[merge_pr]
-  M --> G
-  S --> X[restart recovery]
-  X --> O
+  I --> S["Server"]
+  I --> TL["TL (Claude)"]
+
+  TL -->|mcp-stdio| S
+  TL -->|fork_wave| G1["Leaf (Gemini)"]
+  TL -->|fork_wave| G2["Leaf (Gemini)"]
+  TL -->|"fork_wave agent_type=claude"| C1["Leaf (Claude)"]
+  TL -->|spawn_worker| W["Worker (Moon Pilot)"]
+
+  G1 -->|file_pr| GH[GitHub PR]
+  G2 -->|file_pr| GH
+  C1 -->|file_pr| GH
+
+  GH -->|Copilot review| Poller
+  Poller -->|ReviewReceived| G1
+  Poller -->|ReviewReceived| G2
+  Poller -->|ReviewReceived| C1
+  Poller -->|notify parent| TL
+
+  G1 -->|notify_parent| TL
+  TL -->|merge_pr| GH
+
+  W -->|notify_parent| TL
+  S --> Recovery[restart recovery]
+  Recovery --> Poller
+
+  style S fill:#374151,color:#fff
+  style TL fill:#7c3aed,color:#fff
+  style G1 fill:#f59e0b,color:#000
+  style G2 fill:#f59e0b,color:#000
+  style C1 fill:#3b82f6,color:#fff
+  style W fill:#10b981,color:#000
+  style GH fill:#1f2937,color:#fff
+  style Poller fill:#6b7280,color:#fff
+  style Recovery fill:#6b7280,color:#fff
 ```
 
 ## Files

@@ -108,22 +108,41 @@ choir smoke --e2e-live
 ```mermaid
 flowchart TD
   U[用户] --> I["choir init"]
-  I --> S[choir serve]
-  I --> T[TL 会话]
-  T --> B["choir mcp-stdio"]
-  B --> S
-  T --> P["spawn leaf / worker"]
-  P --> L[叶子会话]
-  L --> F[file_pr]
-  F --> G[GitHub PR]
-  G --> R[Review / CI]
-  R --> O[Poller]
-  O --> L
-  O --> T
-  T --> M[merge_pr]
-  M --> G
-  S --> X[重启恢复]
-  X --> O
+  I --> S["服务端"]
+  I --> TL["TL (Claude)"]
+
+  TL -->|mcp-stdio| S
+  TL -->|fork_wave| G1["叶子 (Gemini)"]
+  TL -->|fork_wave| G2["叶子 (Gemini)"]
+  TL -->|"fork_wave agent_type=claude"| C1["叶子 (Claude)"]
+  TL -->|spawn_worker| W["Worker (Moon Pilot)"]
+
+  G1 -->|file_pr| GH[GitHub PR]
+  G2 -->|file_pr| GH
+  C1 -->|file_pr| GH
+
+  GH -->|Copilot review| Poller
+  Poller -->|ReviewReceived| G1
+  Poller -->|ReviewReceived| G2
+  Poller -->|ReviewReceived| C1
+  Poller -->|notify parent| TL
+
+  G1 -->|notify_parent| TL
+  TL -->|merge_pr| GH
+
+  W -->|notify_parent| TL
+  S --> Recovery[重启恢复]
+  Recovery --> Poller
+
+  style S fill:#374151,color:#fff
+  style TL fill:#7c3aed,color:#fff
+  style G1 fill:#f59e0b,color:#000
+  style G2 fill:#f59e0b,color:#000
+  style C1 fill:#3b82f6,color:#fff
+  style W fill:#10b981,color:#000
+  style GH fill:#1f2937,color:#fff
+  style Poller fill:#6b7280,color:#fff
+  style Recovery fill:#6b7280,color:#fff
 ```
 
 ## 文件
@@ -146,6 +165,14 @@ AGENTS.md                 叶子代理说明
 - companion / 叶子代理 / review / merge 的 live smoke：已具备
 - TCP/remote 路径：已实现，但验证程度低于本地 UDS
 - Claude `--channels`：目前还不能用于手动配置的 MCP 服务
+
+## 致谢
+
+Choir 的架构参考了 [exomonad](https://github.com/tidepool-heavy-industries/exomonad)（一个 Rust/WASM 多代理编排框架）。代理树模型、角色上下文文件、prompt 临时文件模式等工作流约定均源自该项目。
+
+## 许可证
+
+MIT
 
 ## 另见
 
