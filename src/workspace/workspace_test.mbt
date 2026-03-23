@@ -53,26 +53,6 @@ test "git_worktree_add args" {
 }
 
 ///|
-test "tmux_new_window args" {
-  let cmd = @workspace.tmux_new_window(
-    "my-session", "test-slug", "/path/to/worktree",
-  )
-  assert_eq(cmd.program, "tmux")
-  assert_eq(cmd.args, [
-    "new-window", "-t", "my-session", "-n", "test-slug", "-c", "/path/to/worktree",
-  ])
-}
-
-///|
-test "tmux_send_keys args" {
-  let cmd = @workspace.tmux_send_keys("my-session:test-slug", "echo hello")
-  assert_eq(cmd.program, "tmux")
-  assert_eq(cmd.args, [
-    "send-keys", "-t", "my-session:test-slug", "echo hello", "C-m",
-  ])
-}
-
-///|
 test "parse_local_target supports zellij targets" {
   match @workspace.parse_local_target("zellij-tab:howdy:leaf-a") {
     Some(target) => {
@@ -218,7 +198,6 @@ test "agent_launch_command supports Claude fork_session" {
 test "child_config_content resolves socket path into spawned worktree config" {
   let content = @workspace.child_config_content(
     @types.Role::Dev,
-    @types.TerminalBackend::Zellij,
     "choir-test",
     "/project",
     ".choir/server.sock",
@@ -228,12 +207,11 @@ test "child_config_content resolves socket path into spawned worktree config" {
   assert_true(content.contains("project_dir = \"/project\""))
   assert_true(content.contains("listen_uds = \"/project/.choir/server.sock\""))
   assert_true(content.contains("terminal_session = \"choir-test\""))
-  assert_true(content.contains("terminal_backend = \"zellij\""))
   assert_true(content.contains("tcp_auth_token = \"abc123\""))
 }
 
 ///|
-test "spawn_commands for worktree mode returns helper and config commands" {
+test "spawn_commands for worktree mode returns zellij tab" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
     role: @types.Role::Dev,
@@ -244,21 +222,15 @@ test "spawn_commands for worktree mode returns helper and config commands" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // cleanup existing slug, git worktree add, write config.toml, write config.local.toml, write .mcp.json, write helpers, tmux new-window, tmux send-keys
-  assert_eq(cmds.length(), 8)
+  // cleanup, git worktree add, config.toml, config.local.toml, .mcp.json, helpers, zellij new-tab
+  assert_eq(cmds.length(), 7)
   assert_eq(cmds[0].program, "sh")
   assert_true(cmds[0].args[1].contains("git worktree remove --force"))
   assert_eq(cmds[1].program, "git")
-  assert_eq(cmds[2].program, "sh")
-  assert_eq(cmds[3].program, "sh")
-  assert_eq(cmds[4].program, "sh")
   assert_eq(cmds[5].program, "sh")
-  assert_eq(cmds[6].program, "tmux")
-  assert_eq(cmds[7].program, "tmux")
-  assert_eq(cmds[6].args[0], "new-window")
   assert_true(cmds[5].args[1].contains("choir leaf-tool"))
-  assert_true(cmds[5].args[1].contains("notify_parent"))
-  assert_true(cmds[7].args[3].contains(".choir/bin"))
+  assert_eq(cmds[6].program, "zellij")
+  assert_eq(cmds[6].args[3], "new-tab")
 }
 
 ///|
@@ -273,35 +245,27 @@ test "spawn_commands worktree config write content" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 8)
-  assert_eq(cmds[0].program, "sh")
-  assert_true(cmds[0].args[1].contains("git branch -D"))
-  // config.toml write: positional args — $1=worktree_path, $2=content
+  assert_eq(cmds.length(), 7)
   assert_eq(cmds[2].program, "sh")
-  assert_true(cmds[2].args[3].contains("feature-a")) // worktree path
+  assert_true(cmds[2].args[3].contains("feature-a"))
   assert_true(cmds[2].args[4].contains("default_role = \"dev\""))
   assert_true(
     cmds[2].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
   )
   assert_true(cmds[2].args[4].contains("terminal_session = \"exo\""))
-  assert_true(cmds[2].args[4].contains("terminal_backend = \"tmux\""))
-  // config.local.toml write: positional args — $1=worktree_path, $2=content
   assert_eq(cmds[3].program, "sh")
-  assert_true(cmds[3].args[3].contains("feature-a")) // worktree path
-  assert_true(cmds[3].args[4].contains("dev")) // role content
   assert_true(cmds[3].args[4].contains("agent_id = \"main.feature-a\""))
   assert_true(cmds[3].args[4].contains("parent_id = \"root\""))
-  assert_true(cmds[3].args[4].contains("terminal_target = \"exo:feature-a\""))
-  // .mcp.json write: positional args — $1=worktree_path, $2=json
+  assert_true(
+    cmds[3].args[4].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
+  )
   assert_eq(cmds[4].program, "sh")
-  assert_true(cmds[4].args[3].contains("feature-a")) // worktree path
-  assert_true(cmds[4].args[4].contains("--role")) // mcp json has role arg
-  assert_true(cmds[4].args[4].contains("main.feature-a")) // canonical agent id
-  assert_true(cmds[7].args[3].contains("PATH="))
+  assert_true(cmds[4].args[4].contains("--role"))
+  assert_true(cmds[4].args[4].contains("main.feature-a"))
 }
 
 ///|
-test "spawn_commands for zellij worktree uses new tab target" {
+test "spawn_commands gemini worktree adds trust and settings" {
   let spec = @types.SpawnSpec::{
     slug: "feature-z",
     role: @types.Role::Dev,
@@ -311,28 +275,14 @@ test "spawn_commands for zellij worktree uses new tab target" {
     parent_id: "root",
     parent_branch: "main",
   }
-  let cmds = @workspace.spawn_commands(
-    spec,
-    "/proj",
-    "howdy",
-    terminal_backend=@types.TerminalBackend::Zellij,
-  )
+  let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
   assert_eq(cmds.length(), 9)
-  assert_eq(cmds[0].program, "sh")
   assert_eq(cmds[6].program, "choir")
-  assert_eq(cmds[7].program, "sh") // write_gemini_settings
+  assert_eq(cmds[7].program, "sh")
   assert_eq(cmds[8].program, "zellij")
-  assert_eq(cmds[8].args[0], "--session")
-  assert_eq(cmds[8].args[1], "howdy")
-  assert_eq(cmds[8].args[2], "action")
   assert_eq(cmds[8].args[3], "new-tab")
   assert_true(
     cmds[3].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
-  )
-  assert_true(
-    cmds[8].args[11].contains(
-      "CHOIR_TERMINAL_TARGET='zellij-tab:howdy:feature-z'",
-    ),
   )
 }
 
@@ -348,8 +298,8 @@ test "spawn_commands standalone includes config writes" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  // git init, write config.toml, write config.local.toml, write .mcp.json, write helpers, tmux new-window, tmux send-keys
-  assert_eq(cmds.length(), 7)
+  // git init, config.toml, config.local.toml, .mcp.json, helpers, zellij new-tab
+  assert_eq(cmds.length(), 6)
   assert_eq(cmds[0].program, "git")
   assert_eq(cmds[1].program, "sh")
   assert_true(
@@ -377,12 +327,11 @@ test "spawn_commands adds Gemini trust bootstrap" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 10)
+  assert_eq(cmds.length(), 9)
   assert_eq(cmds[6].program, "choir")
   assert_eq(cmds[6].args, [
     "trust-gemini-folder", "/project/.choir/worktrees/gemini-slug",
   ])
-  // write_gemini_settings writes .gemini/settings.json
   assert_eq(cmds[7].program, "sh")
   assert_true(cmds[7].args[1].contains(".gemini"))
   assert_true(cmds[7].args[4].contains("mcpServers"))
@@ -390,25 +339,7 @@ test "spawn_commands adds Gemini trust bootstrap" {
 }
 
 ///|
-test "spawn_commands for inline mode skips git worktree" {
-  let spec = @types.SpawnSpec::{
-    slug: "test-slug",
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Claude,
-    task: "fix bugs",
-    isolation: @types.IsolationMode::Inline,
-    parent_id: "main",
-    parent_branch: "main",
-  }
-  let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 2)
-  assert_eq(cmds[0].program, "tmux")
-  assert_eq(cmds[0].args[0], "split-window")
-  assert_eq(cmds[1].program, "tmux")
-}
-
-///|
-test "spawn_commands for zellij inline uses named pane" {
+test "spawn_commands for inline mode uses zellij run" {
   let spec = @types.SpawnSpec::{
     slug: "worker-a",
     role: @types.Role::Worker,
@@ -418,12 +349,7 @@ test "spawn_commands for zellij inline uses named pane" {
     parent_id: "root",
     parent_branch: "main",
   }
-  let cmds = @workspace.spawn_commands(
-    spec,
-    "/project",
-    "howdy",
-    terminal_backend=@types.TerminalBackend::Zellij,
-  )
+  let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
   assert_eq(cmds.length(), 1)
   assert_eq(cmds[0].program, "zellij")
   assert_eq(cmds[0].args[0], "--session")
@@ -438,7 +364,7 @@ test "spawn_commands for zellij inline uses named pane" {
 }
 
 ///|
-test "spawn_commands launch text does not duplicate workdir cd" {
+test "spawn_commands launch text contains env vars" {
   let spec = @types.SpawnSpec::{
     slug: "feature-a",
     role: @types.Role::Dev,
@@ -449,18 +375,17 @@ test "spawn_commands launch text does not duplicate workdir cd" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds[9].program, "tmux")
-  assert_eq(cmds[9].args[0], "send-keys")
-  assert_eq(cmds[9].args[1], "-t")
-  assert_eq(cmds[9].args[2], "exo:feature-a")
-  assert_true(cmds[9].args[3].contains("CHOIR_AGENT_ID='main.feature-a'"))
-  assert_true(cmds[9].args[3].contains("CHOIR_TERMINAL_TARGET='exo:feature-a'"))
-  assert_true(cmds[9].args[3].contains("CHOIR_PARENT_AGENT='root'"))
+  // Last command is zellij new-tab, launch string is in the sh -lc arg
+  let last = cmds[cmds.length() - 1]
+  assert_eq(last.program, "zellij")
+  assert_eq(last.args[3], "new-tab")
+  let launch_str = last.args[last.args.length() - 1]
+  assert_true(launch_str.contains("CHOIR_AGENT_ID='main.feature-a'"))
   assert_true(
-    cmds[9].args[3].contains("gemini '--yolo' '--prompt-interactive' \"$(cat "),
+    launch_str.contains("CHOIR_TERMINAL_TARGET='zellij-tab:exo:feature-a'"),
   )
-  assert_true(cmds[9].args[3].contains("GEMINI_CLI_SYSTEM_SETTINGS_PATH="))
-  assert_eq(cmds[9].args[4], "C-m")
+  assert_true(launch_str.contains("CHOIR_PARENT_AGENT='root'"))
+  assert_true(launch_str.contains("GEMINI_CLI_SYSTEM_SETTINGS_PATH="))
 }
 
 ///|

@@ -4,7 +4,7 @@ MoonBit agent orchestration server.
 
 ## What This Is
 
-A persistent server that orchestrates heterogeneous coding agent teams. Agents (Claude, Gemini, Moon Pilot) run in isolated workspaces (git worktrees + tmux). The server manages spawning, messaging, PR workflow, and lifecycle — it makes no decisions, generates no code.
+A persistent server that orchestrates heterogeneous coding agent teams. Agents (Claude, Gemini, Moon Pilot) run in isolated workspaces (git worktrees + zellij). The server manages spawning, messaging, PR workflow, and lifecycle — it makes no decisions, generates no code.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ Persistent server, pure MoonBit native binary.
 ```
 choir serve                        # persistent server on UDS (.choir/server.sock)
   ├── Agent Registry               # in-memory
-  ├── Message Router               # Teams inbox → tmux STDIN fallback
+  ├── Message Router               # Teams inbox → zellij STDIN fallback
   ├── GitHub Poller                # background task
   └── Tool Dispatch                # role-gated MCP tool handlers
 
@@ -41,7 +41,7 @@ src/
   mcp/                 # MCP JSON-RPC translation
   tools/               # tool handlers (fork_wave, spawn_worker, etc.)
   registry/            # agent registry, mutex registry
-  workspace/           # git worktree + tmux/zellij management
+  workspace/           # git worktree + zellij management
   message/             # message routing (Teams inbox, terminal injection)
   poller/              # GitHub PR/CI status polling
   config/              # TOML config parsing
@@ -76,7 +76,7 @@ For Gemini agents, context files are injected via `settings.json` `context.fileN
 1. **Pure MoonBit native** — no WASM split, no Rust runtime, no protobuf boundary. Tool logic runs in-process. Compiles in <2s.
 2. **Persistent server** — shared in-memory state (agent registry, mutex, poller state). Single log stream. Operationally simple for users.
 3. **Transport-agnostic** — UDS for local, TCP for remote. Adding SSH agents is a config change, not an architecture change.
-4. **Agent-type agnostic** — drives Claude, Gemini, Moon Pilot, or anything that speaks MCP or can be poked via tmux.
+4. **Agent-type agnostic** — drives Claude, Gemini, Moon Pilot, or anything that speaks MCP or can be poked via zellij.
 5. **No intelligence** — the server is a tool executor. All decisions come from the TL agent (Claude).
 
 ## North Star Workflow
@@ -107,7 +107,7 @@ If Choir cannot do that loop cleanly, it is not done.
 - Pattern matching over conditionals.
 - Pipe operator (`|>`) for chaining.
 - Error handling via `Result[T, E]` — no panics except for genuine invariant violations.
-- Log before and after subprocess calls (`git`, `gh`, `tmux`). Log exit codes. Log stderr on failure.
+- Log before and after subprocess calls (`git`, `gh`, `zellij`). Log exit codes. Log stderr on failure.
 - Do not call the system production-ready unless the full north-star loop above has been proven end to end against real tools.
 
 ## Current Reality
@@ -123,7 +123,7 @@ Working and proven:
 - review event routing back into agent sessions
 - live `choir smoke`, `choir smoke --companions`, `choir smoke --leafs`, `choir smoke --review`, and `choir smoke --e2e-live`
 - restart-mid-review continuity coverage
-- local terminal backends: `tmux` and `zellij`
+- terminal backend: `zellij` (0.44+)
 - GitHub release workflow and Nix development shell
 
 Still less proven or still rough:

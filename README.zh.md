@@ -3,7 +3,7 @@
 [English](README.md) | 简体中文
 
 用 MoonBit 编写的本地多代理编排器。Claude 担任 TL（技术负责人），拆解任务后
-分派给运行在隔离 tmux/zellij 窗格中的 Gemini、Moon Pilot 或其他 Claude 实例。
+分派给运行在隔离 zellij 窗格中的 Gemini、Moon Pilot 或其他 Claude 实例。
 每个叶子代理在独立的 git worktree 中工作，完成后提交 PR，内置 poller 自动接收
 GitHub Copilot 的 review 反馈。TL 在 PR 通过后合并，将所有分支折叠回 main。
 
@@ -45,7 +45,7 @@ moon fmt
 
 - 必需：`git`
 - PR 工作流必需：`gh`
-- 本地会话管理必需：`tmux` 或 `zellij`
+- 本地会话管理必需：`zellij`（0.44+）
 - 你实际使用到的代理 CLI：`claude`、`gemini`、`moon`
 
 Nix dev shell 会提供上面的开源依赖。专有代理 CLI 仍需要你自行安装并完成认证。
@@ -160,7 +160,7 @@ AGENTS.md                 叶子代理说明
 ## 状态
 
 - 本地 UDS 工作流：已验证
-- `tmux` 后端：已验证
+- `zellij` 后端（0.44+）：已验证
 - `zellij` 后端：可用
 - companion / 叶子代理 / review / merge 的 live smoke：已具备
 - TCP/remote 路径：已实现，但验证程度低于本地 UDS

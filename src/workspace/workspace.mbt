@@ -58,7 +58,6 @@ fn resolve_child_path(project_dir : String, path : String) -> String {
 ///|
 pub fn child_config_content(
   role : @types.Role,
-  terminal_backend : @types.TerminalBackend,
   terminal_session : String,
   project_dir : String,
   listen_uds : String,
@@ -66,9 +65,6 @@ pub fn child_config_content(
   tcp_auth_token? : String? = None,
 ) -> String {
   let role_str = @config.role_to_string(role)
-  let terminal_backend_str = @config.terminal_backend_to_string(
-    terminal_backend,
-  )
   let buf = StringBuilder::new()
   buf.write_string("default_role = \"")
   buf.write_string(escape_toml_string(role_str))
@@ -80,8 +76,6 @@ pub fn child_config_content(
   )
   buf.write_string("\"\nterminal_session = \"")
   buf.write_string(escape_toml_string(terminal_session))
-  buf.write_string("\"\nterminal_backend = \"")
-  buf.write_string(escape_toml_string(terminal_backend_str))
   buf.write_string("\"\n")
   match listen_tcp {
     Some(addr) => {

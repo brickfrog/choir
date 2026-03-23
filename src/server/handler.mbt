@@ -90,7 +90,6 @@ pub async fn ServerState::handle_with_runner(
       req,
       project_dir=self.config.project_dir,
       session=self.config.terminal_session,
-      terminal_backend=self.config.terminal_backend,
       runner~,
       extra_mcp_servers_json=self.config.extra_mcp_servers_json,
       shell_command=self.config.shell_command,

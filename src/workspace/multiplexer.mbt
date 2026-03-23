@@ -1,6 +1,5 @@
 ///|
 pub(all) enum LocalTargetKind {
-  Tmux
   ZellijTab
   ZellijPane
 } derive(Show, Eq)
@@ -60,76 +59,21 @@ pub fn parse_local_target(target : String) -> LocalTarget? {
               Some({ kind: ZellijPane, session, name })
             _ => None
           }
-        None =>
-          match split_once(target, ":") {
-            Some((session, name)) if session != "" && name != "" =>
-              Some({ kind: Tmux, session, name })
-            _ => None
-          }
+        None => None
       }
   }
 }
 
 ///|
 pub fn local_target_for(
-  terminal_backend : @types.TerminalBackend,
   session : String,
   slug : String,
   isolation : @types.IsolationMode,
 ) -> String {
-  match terminal_backend {
-    @types.TerminalBackend::Tmux =>
-      match isolation {
-        @types.IsolationMode::Inline => session
-        _ => session + ":" + slug
-      }
-    @types.TerminalBackend::Zellij =>
-      match isolation {
-        @types.IsolationMode::Inline => zellij_pane_target(session, slug)
-        _ => zellij_tab_target(session, slug)
-      }
+  match isolation {
+    @types.IsolationMode::Inline => zellij_pane_target(session, slug)
+    _ => zellij_tab_target(session, slug)
   }
-}
-
-///|
-pub fn tmux_new_window(
-  session : String,
-  name : String,
-  workdir : String,
-) -> Command {
-  {
-    program: "tmux",
-    args: ["new-window", "-t", session, "-n", name, "-c", workdir],
-    workdir: None,
-  }
-}
-
-///|
-pub fn tmux_split_pane(target : String, workdir : String) -> Command {
-  {
-    program: "tmux",
-    args: ["split-window", "-t", target, "-c", workdir],
-    workdir: None,
-  }
-}
-
-///|
-pub fn tmux_send_keys(target : String, text : String) -> Command {
-  {
-    program: "tmux",
-    args: ["send-keys", "-t", target, text, "C-m"],
-    workdir: None,
-  }
-}
-
-///|
-pub fn tmux_kill_pane(target : String) -> Command {
-  { program: "tmux", args: ["kill-pane", "-t", target], workdir: None }
-}
-
-///|
-pub fn tmux_kill_window(target : String) -> Command {
-  { program: "tmux", args: ["kill-window", "-t", target], workdir: None }
 }
 
 ///|
@@ -220,63 +164,29 @@ pub fn zellij_run_pane(
 
 ///|
 pub fn launch_commands(
-  terminal_backend : @types.TerminalBackend,
   session : String,
   slug : String,
   workdir : String,
   launch_str : String,
   isolation : @types.IsolationMode,
 ) -> Array[Command] {
-  match terminal_backend {
-    @types.TerminalBackend::Tmux =>
-      match isolation {
-        @types.IsolationMode::Worktree =>
-          [
-            tmux_new_window(session, slug, workdir),
-            tmux_send_keys(session + ":" + slug, launch_str),
-          ]
-        @types.IsolationMode::Inline =>
-          [
-            tmux_split_pane(session, workdir),
-            tmux_send_keys(session, launch_str),
-          ]
-        @types.IsolationMode::Standalone =>
-          [
-            tmux_new_window(session, slug, workdir),
-            tmux_send_keys(session + ":" + slug, launch_str),
-          ]
-      }
-    @types.TerminalBackend::Zellij =>
-      match isolation {
-        @types.IsolationMode::Inline =>
-          [zellij_run_pane(session, slug, workdir, launch_str)]
-        _ => [zellij_new_tab(session, slug, workdir, launch_str)]
-      }
+  match isolation {
+    @types.IsolationMode::Inline =>
+      [zellij_run_pane(session, slug, workdir, launch_str)]
+    _ => [zellij_new_tab(session, slug, workdir, launch_str)]
   }
 }
 
 ///|
 pub fn local_send_text(target : String, text : String) -> Command {
-  match parse_local_target(target) {
-    Some({ kind: ZellijTab, .. }) | Some({ kind: ZellijPane, .. }) =>
-      {
-        program: "choir",
-        args: ["zellij-action", "send", target, text],
-        workdir: None,
-      }
-    _ => tmux_send_keys(target, text)
+  {
+    program: "choir",
+    args: ["zellij-action", "send", target, text],
+    workdir: None,
   }
 }
 
 ///|
 pub fn local_close_target(target : String) -> Command {
-  match parse_local_target(target) {
-    Some({ kind: ZellijTab, .. }) | Some({ kind: ZellijPane, .. }) =>
-      {
-        program: "choir",
-        args: ["zellij-action", "close", target],
-        workdir: None,
-      }
-    _ => tmux_kill_pane(target)
-  }
+  { program: "choir", args: ["zellij-action", "close", target], workdir: None }
 }

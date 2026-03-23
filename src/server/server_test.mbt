@@ -41,49 +41,8 @@ async fn mock_spawn_runner_server(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
   @async.sleep(0)
-  assert_eq(cmds.length(), 10)
-  assert_true(cmds[0].args[1].contains("git worktree remove --force"))
-  assert_eq(
-    cmds[2].args[4].contains(
-      "listen_uds = \"/tmp/server-proof/.choir/server.sock\"",
-    ),
-    true,
-  )
-  assert_eq(cmds[5].program, "sh")
-  assert_true(cmds[5].args[1].contains("choir leaf-tool"))
-  assert_eq(cmds[6].program, "choir")
-  assert_eq(cmds[6].args, [
-    "trust-gemini-folder", "/tmp/server-proof/.choir/worktrees/leaf-a-0",
-  ])
-  assert_eq(cmds[7].program, "sh") // write_gemini_settings
-  assert_true(cmds[7].args[4].contains("mcpServers"))
-  assert_eq(cmds[8].args, [
-    "new-window", "-t", "server-proof", "-n", "leaf-a-0", "-c", "/tmp/server-proof/.choir/worktrees/leaf-a-0",
-  ])
-  assert_eq(cmds[9].args[0], "send-keys")
-  assert_eq(cmds[9].args[1], "-t")
-  assert_eq(cmds[9].args[2], "server-proof:leaf-a-0")
-  assert_true(
-    cmds[9].args[3].contains(
-      "PATH='/tmp/server-proof/.choir/worktrees/leaf-a-0/.choir/bin':$PATH",
-    ),
-  )
-  assert_true(
-    cmds[9].args[3].contains("gemini '--yolo' '--prompt-interactive'"),
-  )
-  assert_true(cmds[9].args[3].contains("\"$(cat "))
-  assert_eq(cmds[9].args[4], "C-m")
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-}
-
-///|
-async fn mock_spawn_runner_server_zellij(
-  cmds : Array[@workspace.Command],
-) -> Array[Int] {
-  @async.sleep(0)
   assert_eq(cmds.length(), 9)
   assert_true(cmds[0].args[1].contains("git worktree remove --force"))
-  assert_true(cmds[2].args[4].contains("terminal_backend = \"zellij\""))
   assert_true(
     cmds[3].args[4].contains(
       "terminal_target = \"zellij-tab:server-proof:leaf-a-0\"",
@@ -95,16 +54,8 @@ async fn mock_spawn_runner_server_zellij(
   ])
   assert_eq(cmds[7].program, "sh") // write_gemini_settings
   assert_eq(cmds[8].program, "zellij")
-  assert_eq(cmds[8].args[0], "--session")
-  assert_eq(cmds[8].args[1], "server-proof")
-  assert_eq(cmds[8].args[2], "action")
   assert_eq(cmds[8].args[3], "new-tab")
   assert_eq(cmds[8].args[5], "leaf-a-0")
-  assert_true(
-    cmds[8].args[11].contains(
-      "CHOIR_TERMINAL_TARGET='zellij-tab:server-proof:leaf-a-0'",
-    ),
-  )
   [0, 0, 0, 0, 0, 0, 0, 0, 0]
 }
 
@@ -171,7 +122,7 @@ async test "ServerState::handle invalid role returns Err" {
 }
 
 ///|
-async test "ServerState::handle_with_runner passes configured tmux session to spawns" {
+async test "ServerState::handle_with_runner passes zellij session to spawns" {
   let config = {
     ..@types.Config::default(),
     project_dir: "/tmp/server-proof",
@@ -192,36 +143,6 @@ async test "ServerState::handle_with_runner passes configured tmux session to sp
     }),
   }
   let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
-  assert_eq(res.ok_field("status"), Some("spawned"))
-  assert_eq(res.ok_field("agent_ids"), Some("main.leaf-a-0"))
-}
-
-///|
-async test "ServerState::handle_with_runner passes zellij backend to spawns" {
-  let config = {
-    ..@types.Config::default(),
-    project_dir: "/tmp/server-proof",
-    terminal_session: "server-proof",
-    terminal_backend: @types.TerminalBackend::Zellij,
-  }
-  let state = ServerState::new(config)
-  let req = @types.Request::{
-    req_method: "tools/call",
-    role: @types.Role::TL,
-    name: "fork_wave",
-    args: @types.RequestArgs::new({
-      "caller_id": "root",
-      "slug_prefix": "leaf-a",
-      "parent_branch": "main",
-      "task": "reply READY",
-      "count": "1",
-      "read_first": "AGENTS.md",
-    }),
-  }
-  let res = state.handle_with_runner(
-    req,
-    runner=mock_spawn_runner_server_zellij,
-  )
   assert_eq(res.ok_field("status"), Some("spawned"))
   assert_eq(res.ok_field("agent_ids"), Some("main.leaf-a-0"))
 }

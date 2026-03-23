@@ -555,32 +555,15 @@ async fn recover_open_pr_tracking_with(
 ///|
 pub async fn recover_state(state : ServerState, session : String) -> Unit {
   let project_dir = state.config.project_dir
-  let tmux_windows = match state.config.terminal_backend {
-    @types.TerminalBackend::Tmux =>
-      split_lines(
-        capture_stdout(
-          "tmux",
-          ["list-windows", "-t", session, "-F", "#{window_name}"],
-          cwd=Some(project_dir),
-        ),
-      )
-    @types.TerminalBackend::Zellij => []
-  }
-  let zellij_live = match state.config.terminal_backend {
-    @types.TerminalBackend::Tmux => { tabs: [], panes: [] }
-    @types.TerminalBackend::Zellij =>
-      parse_zellij_live_targets(
-        capture_stdout(
-          "zellij",
-          [
-            "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
-          ],
-          cwd=Some(project_dir),
-        ),
-      )
-  }
-  recover_local_agents(state, session, tmux_windows, zellij_live, "worktrees")
-  recover_local_agents(state, session, tmux_windows, zellij_live, "agents")
+  let zellij_live = parse_zellij_live_targets(
+    capture_stdout(
+      "zellij",
+      ["--session", session, "action", "list-panes", "--json", "-a", "-t", "-s"],
+      cwd=Some(project_dir),
+    ),
+  )
+  recover_local_agents(state, session, [], zellij_live, "worktrees")
+  recover_local_agents(state, session, [], zellij_live, "agents")
 
   let open_pr_output = capture_stdout(
     "sh",

@@ -516,7 +516,6 @@ fn mcp_build_registration_message(
       ..local_cfg,
       terminal_target: Some(
         @workspace.local_target_for(
-          config.terminal_backend,
           config.terminal_session,
           "TL",
           @types.IsolationMode::Worktree,
@@ -1408,7 +1407,6 @@ fn zellij_target_pane_id(
         if pane.tab_name == target.name {
           return Some(pane.id)
         }
-      _ => ()
     }
   }
   None
@@ -1448,18 +1446,7 @@ fn zellij_action_run() -> Unit {
       let action = args[2]
       let target_text = args[3]
       let target = match @workspace.parse_local_target(target_text) {
-        Some(parsed) =>
-          match parsed.kind {
-            @workspace.LocalTargetKind::ZellijTab
-            | @workspace.LocalTargetKind::ZellijPane => parsed
-            _ => {
-              @sys.write_stdout(
-                "error: not a zellij target: " + target_text + "\n",
-              )
-              @sys.exit(1)
-              return
-            }
-          }
+        Some(parsed) => parsed
         None => {
           @sys.write_stdout(
             "error: invalid zellij target: " + target_text + "\n",
@@ -1573,12 +1560,6 @@ fn zellij_action_run() -> Unit {
               })
               @sys.exit(code)
             }
-            _ => {
-              @sys.write_stdout(
-                "error: not a zellij target: " + target_text + "\n",
-              )
-              @sys.exit(1)
-            }
           }
         _ => {
           @sys.write_stdout(zellij_action_usage() + "\n")
@@ -1626,26 +1607,9 @@ test "mcp config keeps local agent id over CLI agent id" {
 }
 
 ///|
-test "mcp registration infers tmux TL terminal target for top-level session" {
-  let cfg = {
-    ..@types.Config::default(),
-    terminal_backend: @types.TerminalBackend::Tmux,
-    terminal_session: "choir-resorter-py",
-  }
-  let output = mcp_build_registration_message(
-    @types.Role::TL,
-    cfg,
-    @types.LocalConfig::default(),
-  )
-  assert_true(output.contains("\"name\":\"register\""))
-  assert_true(output.contains("\"terminal_target\":\"choir-resorter-py:TL\""))
-}
-
-///|
 test "mcp registration infers zellij TL terminal target for top-level session" {
   let cfg = {
     ..@types.Config::default(),
-    terminal_backend: @types.TerminalBackend::Zellij,
     terminal_session: "choir-resorter-py",
   }
   let output = mcp_build_registration_message(
@@ -2114,7 +2078,6 @@ fn smoke_companion_script() -> String {
     #|default_role = "tl"
     #|project_dir = "."
     #|listen_uds = ".choir/server.sock"
-    #|terminal_backend = "tmux"
     #|terminal_session = "$SESSION"
     #|companions_json = '[{"name":"monitor","role":"dev","command":"sh","task":"ignored"}]'
     #|EOF
@@ -2462,20 +2425,18 @@ test "init no attach flag parser" {
 }
 
 ///|
-test "companion commands use isolated worktree with unique choir identity" {
+test "companion commands use isolated worktree with zellij tab" {
   let config = {
     ..@types.Config::default(),
     extra_mcp_servers_json: Some("{\"extra\":{\"type\":\"stdio\"}}"),
   }
-  let cmds = init_companion_commands(
-    "/proj",
-    "choir",
-    @types.TerminalBackend::Tmux,
-    config,
-    "main",
-    { name: "monitor", role: "dev", command: "claude", task: "watch tests" },
-  )
-  assert_eq(cmds.length(), 9)
+  let cmds = init_companion_commands("/proj", "choir", config, "main", {
+    name: "monitor",
+    role: "dev",
+    command: "claude",
+    task: "watch tests",
+  })
+  assert_eq(cmds.length(), 8)
   assert_eq(cmds[0].program, "sh")
   assert_true(cmds[0].args[3].contains("/proj/.choir/agents/monitor"))
   assert_true(cmds[0].args[4].contains("main.companion.monitor"))
@@ -2487,18 +2448,15 @@ test "companion commands use isolated worktree with unique choir identity" {
   assert_true(cmds[2].args[4].contains("terminal_session = \"choir\""))
   assert_true(cmds[3].args[4].contains("agent_id = \"main.companion.monitor\""))
   assert_true(cmds[3].args[4].contains("parent_branch = \"main\""))
-  assert_true(cmds[3].args[4].contains("terminal_target = \"choir:monitor\""))
+  assert_true(
+    cmds[3].args[4].contains("terminal_target = \"zellij-tab:choir:monitor\""),
+  )
   assert_true(cmds[3].args[4].contains("agent_type = \"claude\""))
   assert_true(cmds[4].args[4].contains("\"--role\",\"dev\""))
   assert_true(cmds[4].args[4].contains("main.companion.monitor"))
   assert_true(cmds[4].args[4].contains("\"extra\":{\"type\":\"stdio\"}"))
-  assert_eq(cmds[7].args, [
-    "new-window", "-t", "choir", "-n", "monitor", "-c", "/proj/.choir/agents/monitor",
-  ])
-  assert_true(cmds[8].args[3].contains(".choir/bin"))
-  assert_true(
-    cmds[8].args[3].contains("CHOIR_AGENT_ID='main.companion.monitor'"),
-  )
+  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[7].args[3], "new-tab")
 }
 
 ///|
@@ -2506,7 +2464,6 @@ test "companion gemini commands trust workspace and use zellij tab cwd" {
   let cmds = init_companion_commands(
     "/proj",
     "howdy",
-    @types.TerminalBackend::Zellij,
     @types.Config::default(),
     "main",
     {
@@ -2579,31 +2536,13 @@ test "init config content includes derived terminal session" {
 }
 
 ///|
-fn init_session_exists_command(
-  terminal_backend : @types.TerminalBackend,
-  session : String,
-) -> @workspace.Command {
-  match terminal_backend {
-    @types.TerminalBackend::Tmux =>
-      {
-        program: "sh",
-        args: ["-c", "tmux has-session -t \"$1\" 2>/dev/null", "sh", session],
-        workdir: None,
-      }
-    @types.TerminalBackend::Zellij => @workspace.zellij_session_exists(session)
-  }
+fn init_session_exists_command(session : String) -> @workspace.Command {
+  @workspace.zellij_session_exists(session)
 }
 
 ///|
-fn init_kill_session_command(
-  terminal_backend : @types.TerminalBackend,
-  session : String,
-) -> @workspace.Command {
-  match terminal_backend {
-    @types.TerminalBackend::Tmux =>
-      { program: "tmux", args: ["kill-session", "-t", session], workdir: None }
-    @types.TerminalBackend::Zellij => @workspace.zellij_kill_session(session)
-  }
+fn init_kill_session_command(session : String) -> @workspace.Command {
+  @workspace.zellij_kill_session(session)
 }
 
 ///|
@@ -2628,32 +2567,13 @@ fn init_cleanup_server_artifacts_command() -> @workspace.Command {
 }
 
 ///|
-test "init session lifecycle commands match backend" {
-  let tmux_exists = init_session_exists_command(
-    @types.TerminalBackend::Tmux,
-    "choir",
-  )
-  assert_eq(tmux_exists.program, "sh")
-  assert_eq(tmux_exists.args[3], "choir")
+test "init session lifecycle commands use zellij" {
+  let exists = init_session_exists_command("choir")
+  assert_eq(exists.program, "sh")
+  assert_true(exists.args[1].contains("zellij list-sessions"))
 
-  let zellij_exists = init_session_exists_command(
-    @types.TerminalBackend::Zellij,
-    "choir",
-  )
-  assert_eq(zellij_exists.program, "sh")
-  assert_true(zellij_exists.args[1].contains("zellij list-sessions"))
-
-  let tmux_kill = init_kill_session_command(
-    @types.TerminalBackend::Tmux,
-    "choir",
-  )
-  assert_eq(tmux_kill.args, ["kill-session", "-t", "choir"])
-
-  let zellij_kill = init_kill_session_command(
-    @types.TerminalBackend::Zellij,
-    "choir",
-  )
-  assert_eq(zellij_kill.args, ["delete-session", "--force", "choir"])
+  let kill = init_kill_session_command("choir")
+  assert_eq(kill.args, ["delete-session", "--force", "choir"])
 }
 
 ///|
@@ -2906,7 +2826,6 @@ fn init_config_toml_content(default_session : String) -> String {
   "default_role = \"tl\"\n" +
   "project_dir = \".\"\n" +
   "listen_uds = \".choir/server.sock\"\n" +
-  "terminal_backend = \"tmux\"\n" +
   "terminal_session = \"" +
   default_session +
   "\"\n"
@@ -3074,7 +2993,6 @@ fn init_companion_launch_prefix(
   branch : String,
   parent_branch : String,
   workspace : String,
-  terminal_backend : @types.TerminalBackend,
   terminal_target : String,
   session : String,
   agent_type? : @types.AgentType? = None,
@@ -3087,10 +3005,6 @@ fn init_companion_launch_prefix(
     init_env_assignment("CHOIR_PARENT_BRANCH", parent_branch),
     init_env_assignment("CHOIR_WORKSPACE", workspace),
     init_env_assignment("CHOIR_ROLE", @config.role_to_string(role)),
-    init_env_assignment(
-      "CHOIR_TERMINAL_BACKEND",
-      @config.terminal_backend_to_string(terminal_backend),
-    ),
     init_env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
     init_env_assignment("CHOIR_TERMINAL_SESSION", session),
     init_env_assignment("CHOIR_AGENT_ID", agent_id),
@@ -3129,7 +3043,6 @@ fn init_companion_launch_prefix(
 fn init_companion_commands(
   project_dir : String,
   session : String,
-  terminal_backend : @types.TerminalBackend,
   config : @types.Config,
   current_branch : String,
   companion : @config.CompanionDef,
@@ -3138,7 +3051,6 @@ fn init_companion_commands(
   let branch = init_companion_branch(current_branch, companion.name)
   let workspace = project_dir + "/.choir/agents/" + companion.name
   let terminal_target = @workspace.local_target_for(
-    terminal_backend,
     session,
     companion.name,
     @types.IsolationMode::Worktree,
@@ -3151,7 +3063,6 @@ fn init_companion_commands(
       branch,
       current_branch,
       workspace,
-      terminal_backend,
       terminal_target,
       session,
       agent_type~,
@@ -3174,7 +3085,6 @@ fn init_companion_commands(
       workspace,
       @workspace.child_config_content(
         role,
-        terminal_backend,
         session,
         project_dir,
         config.listen_uds,
@@ -3215,23 +3125,9 @@ fn init_companion_commands(
   if agent_type == Some(@types.AgentType::Gemini) {
     cmds.push(@workspace.trust_gemini_folder(workspace))
   }
-  match terminal_backend {
-    @types.TerminalBackend::Tmux => {
-      cmds.push(@workspace.tmux_new_window(session, companion.name, workspace))
-      cmds.push(
-        @workspace.tmux_send_keys(session + ":" + companion.name, launch_str),
-      )
-    }
-    @types.TerminalBackend::Zellij =>
-      cmds.push(
-        @workspace.zellij_new_tab(
-          session,
-          companion.name,
-          workspace,
-          launch_str,
-        ),
-      )
-  }
+  cmds.push(
+    @workspace.zellij_new_tab(session, companion.name, workspace, launch_str),
+  )
   cmds
 }
 
@@ -3351,7 +3247,6 @@ fn init_run() -> Unit {
         current_branch_trimmed
       }
       let session = config.terminal_session
-      let terminal_backend = config.terminal_backend
 
       if recreate {
         let pid_str = @sys.read_file(".choir/server.pid")
@@ -3368,25 +3263,11 @@ fn init_run() -> Unit {
             },
           )
         }
-        let has_session = @exec.run(
-          init_session_exists_command(terminal_backend, session),
-        ) catch {
-          _ => 1
-        }
-        if has_session == 0 ||
-          terminal_backend == @types.TerminalBackend::Zellij {
-          @sys.write_stdout("Killing session \{session}...\n")
-          ignore(
-            @exec.run(init_kill_session_command(terminal_backend, session)) catch {
-              _ => 0
-            },
-          )
-        }
+        @sys.write_stdout("Killing session \{session}...\n")
+        ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })
       }
 
-      let session_alive = @exec.run(
-        init_session_exists_command(terminal_backend, session),
-      ) catch {
+      let session_alive = @exec.run(init_session_exists_command(session)) catch {
         _ => 1
       }
       if session_alive == 0 {
@@ -3395,18 +3276,7 @@ fn init_run() -> Unit {
         } else {
           @sys.write_stdout("Attaching to existing session \{session}...\n")
           ignore(
-            @exec.run(
-              match terminal_backend {
-                @types.TerminalBackend::Tmux =>
-                  {
-                    program: "tmux",
-                    args: ["attach-session", "-t", session],
-                    workdir: None,
-                  }
-                @types.TerminalBackend::Zellij =>
-                  @workspace.zellij_attach_session(session)
-              },
-            ) catch {
+            @exec.run(@workspace.zellij_attach_session(session)) catch {
               _ => 0
             },
           )
@@ -3427,72 +3297,36 @@ fn init_run() -> Unit {
       )
 
       @sys.write_stdout("Creating session \{session}...\n")
-      match terminal_backend {
-        @types.TerminalBackend::Tmux => {
-          init_run_or_exit({
-            program: "tmux",
-            args: ["new-session", "-d", "-s", session, "-n", "Server"],
-            workdir: None,
-          })
-
-          init_run_or_exit({
-            program: "tmux",
-            args: ["send-keys", "-t", session + ":Server", server_cmd, "Enter"],
-            workdir: None,
-          })
-
-          init_run_or_exit({
-            program: "tmux",
-            args: ["new-window", "-t", session, "-n", "TL"],
-            workdir: None,
-          })
-          init_run_or_exit({
-            program: "tmux",
-            args: [
-              "send-keys",
-              "-t",
-              session + ":TL",
-              init_claude_launch_command(),
-              "Enter",
-            ],
-            workdir: None,
-          })
-        }
-        @types.TerminalBackend::Zellij => {
-          init_run_or_exit(@workspace.zellij_create_background_session(session))
-          init_run_or_exit(
-            @workspace.zellij_new_tab(
-              session, "Server", project_dir, server_cmd,
-            ),
-          )
-          init_run_or_exit(
-            @workspace.zellij_new_tab(
-              session,
-              "TL",
-              project_dir,
-              init_claude_launch_command(),
-            ),
-          )
-          ignore(
-            @exec.run({
-              program: "zellij",
-              args: ["--session", session, "action", "close-tab-by-id", "0"],
-              workdir: None,
-            }) catch {
-              _ => 0
-            },
-          )
-          ignore(
-            @exec.run({
-              program: "zellij",
-              args: ["--session", session, "action", "go-to-tab-name", "TL"],
-              workdir: None,
-            }) catch {
-              _ => 0
-            },
-          )
-        }
-      }
+      init_run_or_exit(@workspace.zellij_create_background_session(session))
+      init_run_or_exit(
+        @workspace.zellij_new_tab(session, "Server", project_dir, server_cmd),
+      )
+      init_run_or_exit(
+        @workspace.zellij_new_tab(
+          session,
+          "TL",
+          project_dir,
+          init_claude_launch_command(),
+        ),
+      )
+      ignore(
+        @exec.run({
+          program: "zellij",
+          args: ["--session", session, "action", "close-tab-by-id", "0"],
+          workdir: None,
+        }) catch {
+          _ => 0
+        },
+      )
+      ignore(
+        @exec.run({
+          program: "zellij",
+          args: ["--session", session, "action", "go-to-tab-name", "TL"],
+          workdir: None,
+        }) catch {
+          _ => 0
+        },
+      )
 
       match config.companions_json {
         Some(json) => {
@@ -3500,7 +3334,7 @@ fn init_run() -> Unit {
           for c in companions {
             for
               cmd in init_companion_commands(
-                project_dir, session, terminal_backend, config, current_branch, c,
+                project_dir, session, config, current_branch, c,
               ) {
               ignore(@exec.run(cmd) catch { _ => 0 })
             }
@@ -3522,18 +3356,7 @@ fn init_run() -> Unit {
       } else {
         @sys.write_stdout("Attaching to session \{session}...\n")
         ignore(
-          @exec.run(
-            match terminal_backend {
-              @types.TerminalBackend::Tmux =>
-                {
-                  program: "tmux",
-                  args: ["attach-session", "-t", session],
-                  workdir: None,
-                }
-              @types.TerminalBackend::Zellij =>
-                @workspace.zellij_attach_session(session)
-            },
-          ) catch {
+          @exec.run(@workspace.zellij_attach_session(session)) catch {
             _ => 0
           },
         )
@@ -3552,7 +3375,6 @@ fn stop_run() -> Unit {
         Err(_) => @types.Config::default()
       }
       let session = config.terminal_session
-      let terminal_backend = config.terminal_backend
       let pid_str = @sys.read_file(".choir/server.pid").trim().to_string()
 
       if pid_str != "" {
@@ -3564,21 +3386,8 @@ fn stop_run() -> Unit {
         )
       }
 
-      let has_session = @exec.run(
-        init_session_exists_command(terminal_backend, session),
-      ) catch {
-        _ => 1
-      }
-      if has_session == 0 || terminal_backend == @types.TerminalBackend::Zellij {
-        @sys.write_stdout("Killing session \{session}...\n")
-        ignore(
-          @exec.run(init_kill_session_command(terminal_backend, session)) catch {
-            _ => 0
-          },
-        )
-      } else {
-        @sys.write_stdout("Session \{session} not running.\n")
-      }
+      @sys.write_stdout("Killing session \{session}...\n")
+      ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })
 
       ignore(
         @exec.run(init_cleanup_server_artifacts_command()) catch {

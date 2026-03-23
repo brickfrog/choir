@@ -55,15 +55,14 @@ async test "dispatch fork_wave defaults to gemini fanout" {
     },
   )
   assert_true(res is Ok(_))
-  // Find the tmux send-keys command (registration commands may follow)
+  // Find the zellij new-tab command (registration commands may follow)
   let mut found = false
   for cmd in recorded {
-    if cmd.program == "tmux" &&
+    if cmd.program == "zellij" &&
       cmd.args.length() > 3 &&
-      cmd.args[0] == "send-keys" {
-      assert_true(
-        cmd.args[3].contains("gemini '--yolo' '--prompt-interactive'"),
-      )
+      cmd.args[3] == "new-tab" {
+      let launch_str = cmd.args[cmd.args.length() - 1]
+      assert_true(launch_str.contains("gemini '--yolo' '--prompt-interactive'"))
       found = true
       break
     }
@@ -646,7 +645,9 @@ async test "dispatch spawn_worker defaults to research profile" {
   assert_true(res is Ok(_))
   assert_true(recorded.length() > 0)
   let launch = recorded[recorded.length() - 1]
-  assert_true(launch.args[3].contains("\"$(cat "))
+  // zellij run: launch string is last arg (sh -lc <launch_str>)
+  let launch_str = launch.args[launch.args.length() - 1]
+  assert_true(launch_str.contains("\"$(cat "))
 }
 
 ///|
@@ -810,8 +811,9 @@ async test "dispatch shutdown marks agent completing before terminal close" {
     runner=async fn(cmds) {
       @async.sleep(0)
       if cmds.length() == 1 &&
-        cmds[0].program == "tmux" &&
-        cmds[0].args == ["kill-pane", "-t", "choir:leaf-1"] {
+        cmds[0].program == "choir" &&
+        cmds[0].args[0] == "zellij-action" &&
+        cmds[0].args[1] == "close" {
         close_seen.val = true
         match reg.get("leaf-1") {
           Ok(found) => assert_eq(found.state, @types.AgentState::Completing)
@@ -1400,15 +1402,14 @@ async test "dispatch spawn_gemini spawns single leaf" {
     }
     Err(_) => assert_true(false)
   }
-  // Verify it spawned Gemini
+  // Verify it spawned Gemini via zellij new-tab
   let mut found = false
   for cmd in recorded {
-    if cmd.program == "tmux" &&
+    if cmd.program == "zellij" &&
       cmd.args.length() > 3 &&
-      cmd.args[0] == "send-keys" {
-      assert_true(
-        cmd.args[3].contains("gemini '--yolo' '--prompt-interactive'"),
-      )
+      cmd.args[3] == "new-tab" {
+      let launch_str = cmd.args[cmd.args.length() - 1]
+      assert_true(launch_str.contains("gemini '--yolo' '--prompt-interactive'"))
       found = true
       break
     }

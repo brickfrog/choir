@@ -86,7 +86,6 @@ fn resolved_project_dir(project_dir : String) -> String {
 ///|
 fn launch_env_prefix(
   spec : @types.SpawnSpec,
-  terminal_backend : @types.TerminalBackend,
   session : String,
   workspace : String,
   terminal_target : String,
@@ -94,9 +93,6 @@ fn launch_env_prefix(
   let role = role_to_string(spec.role)
   let agent_id = canonical_agent_id(spec)
   let agent_type = @config.agent_type_to_string(spec.agent_type)
-  let terminal_backend_str = @config.terminal_backend_to_string(
-    terminal_backend,
-  )
   let assignments : Array[String] = [
     path_assignment(workspace + "/.choir/bin"),
     env_assignment("CHOIR_AGENT_ID", agent_id),
@@ -106,12 +102,9 @@ fn launch_env_prefix(
     env_assignment("CHOIR_WORKSPACE", workspace),
     env_assignment("CHOIR_ROLE", role),
     env_assignment("CHOIR_AGENT_TYPE", agent_type),
-    env_assignment("CHOIR_TERMINAL_BACKEND", terminal_backend_str),
     env_assignment("CHOIR_TERMINAL_TARGET", terminal_target),
     env_assignment("CHOIR_TERMINAL_SESSION", session),
-    env_assignment("CHOIR_AGENT_ID", agent_id),
     env_assignment("CHOIR_SESSION_ID", agent_id),
-    env_assignment("CHOIR_ROLE", role),
     env_assignment("CHOIR_PARENT_AGENT", spec.parent_id),
   ]
   if spec.agent_type == @types.AgentType::Gemini {
@@ -157,7 +150,6 @@ pub fn spawn_commands(
   spec : @types.SpawnSpec,
   project_dir : String,
   session : String,
-  terminal_backend? : @types.TerminalBackend = @types.TerminalBackend::Tmux,
   parent_session_id? : String? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
@@ -179,20 +171,13 @@ pub fn spawn_commands(
     parent_session_id~,
     shell_command~,
   )
-  let terminal_target = local_target_for(
-    terminal_backend,
-    session,
-    spec.slug,
-    spec.isolation,
-  )
+  let terminal_target = local_target_for(session, spec.slug, spec.isolation)
   let prompt_ref = "\"$(cat " + quote(prompt_path) + ")\""
   let raw_launch = command_text_for_launch(launch_cmd)
   let launch_with_prompt = replace_placeholder(
     raw_launch, "'__PROMPT_PLACEHOLDER__'", prompt_ref,
   )
-  let launch_str = launch_env_prefix(
-      spec, terminal_backend, session, workspace, terminal_target,
-    ) +
+  let launch_str = launch_env_prefix(spec, session, workspace, terminal_target) +
     launch_with_prompt
   match spec.isolation {
     Worktree => {
@@ -212,7 +197,6 @@ pub fn spawn_commands(
           workspace,
           child_config_content(
             spec.role,
-            terminal_backend,
             session,
             root_project,
             listen_uds,
@@ -252,7 +236,6 @@ pub fn spawn_commands(
       }
       for
         cmd in launch_commands(
-          terminal_backend,
           session,
           spec.slug,
           workspace,
@@ -270,7 +253,6 @@ pub fn spawn_commands(
       }
       for
         cmd in launch_commands(
-          terminal_backend,
           session,
           spec.slug,
           workspace,
@@ -290,7 +272,6 @@ pub fn spawn_commands(
           workspace,
           child_config_content(
             spec.role,
-            terminal_backend,
             session,
             root_project,
             listen_uds,
@@ -330,7 +311,6 @@ pub fn spawn_commands(
       }
       for
         cmd in launch_commands(
-          terminal_backend,
           session,
           spec.slug,
           workspace,
@@ -376,7 +356,6 @@ pub fn remote_spawn_commands(
   let launch_cmd = agent_launch_command(spec, workspace, parent_session_id~)
   let agent_cmd = launch_env_prefix(
       spec,
-      @types.TerminalBackend::Tmux,
       "remote",
       workspace,
       "remote:" + spec.slug,

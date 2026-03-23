@@ -1,12 +1,4 @@
 ///|
-
-///|
-pub(all) enum TerminalBackend {
-  Tmux
-  Zellij
-} derive(Show, Eq)
-
-///|
 /// Parsed server configuration.
 pub(all) struct Config {
   default_role : Role
@@ -20,7 +12,6 @@ pub(all) struct Config {
   extra_mcp_servers_json : String?
   companions_json : String?
   plugins_json : String?
-  terminal_backend : TerminalBackend
   terminal_session : String
 } derive(Show)
 
@@ -51,7 +42,6 @@ pub fn Config::default() -> Config {
     extra_mcp_servers_json: None,
     companions_json: None,
     plugins_json: None,
-    terminal_backend: Tmux,
     terminal_session: "choir",
   }
 }

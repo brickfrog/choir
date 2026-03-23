@@ -4,7 +4,7 @@ English | [简体中文](README.zh.md)
 
 A local agent orchestrator built in MoonBit. Claude acts as a team lead,
 decomposing tasks and dispatching them to Gemini, Moon Pilot, or other Claude
-instances running in isolated tmux/zellij panes. Each leaf agent works in its
+instances running in isolated zellij panes. Each leaf agent works in its
 own git worktree, files a PR when done, and receives GitHub Copilot review
 feedback automatically via a built-in poller. The TL merges approved PRs and
 collapses everything back to main.
@@ -48,7 +48,7 @@ some external tools.
 
 - required: `git`
 - required for PR workflow: `gh`
-- required for local session management: `tmux` or `zellij`
+- required for local session management: `zellij` (0.44+)
 - required for the agent CLIs you actually use: `claude`, `gemini`, `moon`
 
 The Nix dev shell includes the open-source dependencies above. Proprietary
@@ -165,7 +165,7 @@ AGENTS.md                 leaf-agent instructions
 ## Status
 
 - local UDS workflow: proven
-- `tmux` backend: proven
+- `zellij` backend (0.44+): proven
 - `zellij` backend: working
 - live companion/leaf/review/merge smokes: present
 - TCP/remote path: implemented, less proven than local UDS
