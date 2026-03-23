@@ -344,10 +344,23 @@ pub fn ServerState::plan_poll_event_deliveries(
       match parent_poll_event_message(pr, event) {
         Some((message, status)) =>
           match self.registry.get_parent(agent_id) {
-            Ok(parent) =>
+            Ok(parent) => {
+              ignore(
+                @sys.append_file_sync(
+                  ".choir/delivery.log",
+                  "[poller-parent] agent=" +
+                  agent_id +
+                  " parent=" +
+                  parent.agent_id +
+                  " terminal_target=" +
+                  parent.terminal_target.unwrap_or("NONE") +
+                  "\n",
+                ),
+              )
               deliveries.push(
                 @message.plan_delivery(parent, agent_id, message, status),
               )
+            }
             Err(_) => ()
           }
         None => ()

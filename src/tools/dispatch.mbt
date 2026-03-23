@@ -437,10 +437,12 @@ pub async fn dispatch(
                 send_args.status,
               )
               ignore(
-                @sys.write_file_sync(
+                @sys.append_file_sync(
                   ".choir/delivery.log",
                   "[send_message] target=" +
                   send_args.target_id +
+                  " terminal_target=" +
+                  agent.terminal_target.unwrap_or("NONE") +
                   " delivery=" +
                   delivery.to_string() +
                   "\n",

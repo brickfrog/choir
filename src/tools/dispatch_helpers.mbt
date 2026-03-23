@@ -181,7 +181,7 @@ pub async fn execute_delivery(
       ignore(
         @sys.append_file_sync(
           ".choir/delivery.log",
-          "[delivery] cmd=" + cmd.to_string() + "\n",
+          "[delivery] target=" + target + " cmd=" + cmd.to_string() + "\n",
         ),
       )
       let statuses = runner([cmd]) catch { e => return Err(e.to_string()) }
