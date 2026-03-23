@@ -62,28 +62,39 @@ options("is-main": true)
 
 **C FFI only works in library packages** (`is-main: false`). Never put `native-stub` in a binary package.
 
-## MoonBit Async (moonbitlang/async 0.4.0)
+## MoonBit Async (moonbitlang/async 0.16.8)
 
 ```moonbit
-// Event loop — start async context:
-@async.with_event_loop(fn(root) {
-  root.spawn_bg(fn() { some_async_call() })
-})
+// Process — run and wait:
+let exit_code = @process.run("git", ["status"])
 
-// Process execution (non-blocking):
-let exit_code = @process.run(prog_bytes, args_bytes_array)
+// Process — capture stdout (safe, no deadlock):
+let (exit_code, data) = @process.collect_stdout("git", ["log", "--oneline"])
 
-// Capture stdout:
-let (read_end, write_end) = @pipe.pipe()
-ignore(@process.run(prog, args, stdout=write_end) catch { _ => -1 })
-write_end.close()
-// read from read_end...
+// Process — fire-and-forget + manual wait:
+let pid = @process.spawn_orphan("git", ["push"])
+let exit_code = @process.wait_pid(pid)
+
+// Process — capture stdout via spawn_orphan (large output):
+let (reader, writer) = @process.read_from_process() catch { _ => ... }
+let pid = @process.spawn_orphan("gh", ["pr", "view"], stdout=writer)
+// read from reader, then:
+reader.close()
+let exit_code = @process.wait_pid(pid)
+
+// ⚠ DEADLOCK: @process.run() with stdout=pipe blocks forever
+//   (awaits child exit, child blocks on full pipe buffer)
 
 // TCP server:
-let server = @socket.TCPServer::new(@socket.Addr::parse("127.0.0.1:9100"))
+let server = @socket.TcpServer::new(@socket.Addr::parse("127.0.0.1:9100"))
 let (conn, addr) = server.accept()
-conn.read(buf, offset=0, max_len=buf.length())
-conn.write(@encoding/utf8.encode(s))
+// conn implements @io.Reader and @io.Writer
+
+// TCP client:
+let conn = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:9100"))
+
+// Async sleep (milliseconds):
+@async.sleep(1000)
 ```
 
 ---
