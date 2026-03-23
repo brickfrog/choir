@@ -436,12 +436,25 @@ pub async fn dispatch(
                 send_args.message,
                 send_args.status,
               )
+              ignore(
+                @sys.write_file_sync(
+                  ".choir/delivery.log",
+                  "[send_message] target=" +
+                  send_args.target_id +
+                  " delivery=" +
+                  delivery.to_string() +
+                  "\n",
+                ),
+              )
               match execute_delivery(delivery, runner) {
                 Ok(_) =>
                   @types.Response::ok_values({
                     "status": String::to_json("sent"),
                   })
-                Err(e) => @types.Response::Err(e)
+                Err(e) => {
+                  println("[send_message] delivery FAILED: \{e}")
+                  @types.Response::Err(e)
+                }
               }
             }
             Err(e) => @types.Response::Err(e.message())

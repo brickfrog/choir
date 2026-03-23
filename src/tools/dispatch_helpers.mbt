@@ -178,7 +178,19 @@ pub async fn execute_delivery(
     }
     @message.DeliveryMethod::LocalTerminalInput(target, text) => {
       let cmd = @workspace.local_send_text(target, text)
+      ignore(
+        @sys.append_file_sync(
+          ".choir/delivery.log",
+          "[delivery] cmd=" + cmd.to_string() + "\n",
+        ),
+      )
       let statuses = runner([cmd]) catch { e => return Err(e.to_string()) }
+      ignore(
+        @sys.append_file_sync(
+          ".choir/delivery.log",
+          "[delivery] exit=" + statuses[0].to_string() + "\n",
+        ),
+      )
       ensure_success(statuses)
     }
     @message.DeliveryMethod::TcpPush(_, _) => Ok(()) // Phase 2
