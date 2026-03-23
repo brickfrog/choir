@@ -13,7 +13,6 @@ import {
   "choir/src/uds",
   "choir/src/hooks",
   "moonbitlang/async",
-  "moonbitlang/async/pipe",
   "moonbitlang/async/process",
   "moonbitlang/core/encoding/utf8",
 }
