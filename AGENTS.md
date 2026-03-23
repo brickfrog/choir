@@ -157,6 +157,8 @@ Your role determines which tools you can call. See `src/tools/registry.mbt` and
 6. `git commit -m "feat: ..."`
 7. `file_pr` with your branch and parent_branch
 8. `notify_parent` with `[PR READY] {pr_url}`
+9. If review feedback arrives, address it, push fixes, then `notify_parent` again
+10. `shutdown` when done — do NOT wait idle for instructions
 
 ### As a Worker agent (inline pane, no branch)
 
