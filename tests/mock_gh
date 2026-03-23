@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+# Mock gh CLI for offline testing.
+# Place in PATH before real gh to intercept all calls.
+# Records invocations to $GH_MOCK_LOG and returns canned JSON.
+#
+# Environment:
+#   GH_MOCK_LOG       - log file path (default: /tmp/choir-mock-gh.log)
+#   GH_MOCK_REVIEW    - JSON review body to return for review queries
+#   GH_MOCK_PR_STATE  - PR state to return (default: OPEN)
+
+LOG_FILE="${GH_MOCK_LOG:-/tmp/choir-mock-gh.log}"
+TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+echo "[$TIMESTAMP] $*" >> "$LOG_FILE"
+
+get_pr_number() {
+    for arg in "$@"; do
+        if [[ "$arg" =~ ^[0-9]+$ ]]; then
+            echo "$arg"
+            return
+        fi
+    done
+    echo "1"
+}
+
+PR_STATE="${GH_MOCK_PR_STATE:-OPEN}"
+
+case "$1" in
+    --version)
+        echo "gh version 2.0.0-mock (choir test)"
+        exit 0
+        ;;
+    pr)
+        case "$2" in
+            create)
+                echo '{"number": 1, "url": "https://github.com/test/repo/pull/1"}'
+                ;;
+            merge)
+                echo 'Merged pull request'
+                ;;
+            view)
+                PR_NUM=$(get_pr_number "$@")
+                # Check if --json is used
+                if [[ "$*" == *"--json"* ]]; then
+                    REVIEW_BODY="${GH_MOCK_REVIEW:-}"
+                    if [ -n "$REVIEW_BODY" ]; then
+                        echo "{\"number\": $PR_NUM, \"state\": \"$PR_STATE\", \"headRefOid\": \"abc123\", \"reviews\": [{\"state\": \"COMMENTED\", \"body\": \"$REVIEW_BODY\", \"author\": {\"login\": \"copilot[bot]\"}}], \"statusCheckRollup\": []}"
+                    else
+                        echo "{\"number\": $PR_NUM, \"state\": \"$PR_STATE\", \"headRefOid\": \"abc123\", \"reviews\": [], \"statusCheckRollup\": []}"
+                    fi
+                else
+                    echo "title: Mock PR #$PR_NUM"
+                    echo "state: $PR_STATE"
+                    echo "url: https://github.com/test/repo/pull/$PR_NUM"
+                fi
+                ;;
+            list)
+                echo '[]'
+                ;;
+            review)
+                echo 'Reviewed pull request'
+                ;;
+            close)
+                echo 'Closed pull request'
+                ;;
+            comment)
+                echo 'https://github.com/test/repo/pull/1#issuecomment-1'
+                ;;
+            *)
+                ;;
+        esac
+        ;;
+    api)
+        # gh api repos/{owner}/{repo}/pulls/{n}/comments
+        if [[ "$*" =~ pulls/[0-9]+/comments ]]; then
+            REVIEW_BODY="${GH_MOCK_REVIEW:-Mock review comment}"
+            echo "[{\"path\": \"src/main.mbt\", \"body\": \"$REVIEW_BODY\"}]"
+        # gh api repos/{owner}/{repo}/pulls/{n}/reviews
+        elif [[ "$*" =~ pulls/[0-9]+/reviews ]]; then
+            echo '[{"id":1,"user":{"login":"copilot[bot]"},"state":"APPROVED","body":"LGTM"}]'
+        else
+            echo '{}'
+        fi
+        ;;
+    *)
+        ;;
+esac
+
+exit 0

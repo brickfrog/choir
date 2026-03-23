@@ -1002,6 +1002,27 @@ pub fn apply_tl_event(
       )
     InvalidTransition(_) => ()
   }
+  // Update child tracker
+  let tracker_key = "children--" + scope
+  let tracker_json = @sys.read_file(project_dir + "/.choir/kv/" + tracker_key)
+  let tracker = if tracker_json != "" {
+    @phase.ChildTracker::from_json(tracker_json)
+  } else {
+    @phase.ChildTracker::new()
+  }
+  match event {
+    @phase.TLEvent::ChildSpawned(child_id) =>
+      tracker.add(child_id, { slug: child_id, branch: child_id, agent_type: "" })
+    @phase.TLEvent::ChildCompleted(child_id) => tracker.remove(child_id)
+    @phase.TLEvent::ChildFailed(child_id, _) => tracker.remove(child_id)
+    _ => ()
+  }
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/" + tracker_key,
+      tracker.to_json(),
+    ),
+  )
 }
 
 ///|

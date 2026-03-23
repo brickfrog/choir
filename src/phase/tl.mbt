@@ -1,4 +1,89 @@
 ///|
+pub(all) struct ChildHandle {
+  slug : String
+  branch : String
+  agent_type : String
+} derive(Show, Eq)
+
+///|
+pub(all) struct ChildTracker {
+  children : Map[String, ChildHandle] // agent_id -> handle
+}
+
+///|
+pub fn ChildTracker::new() -> ChildTracker {
+  { children: {} }
+}
+
+///|
+pub fn ChildTracker::add(
+  self : ChildTracker,
+  agent_id : String,
+  handle : ChildHandle,
+) -> Unit {
+  self.children.set(agent_id, handle)
+}
+
+///|
+pub fn ChildTracker::remove(self : ChildTracker, agent_id : String) -> Unit {
+  self.children.remove(agent_id)
+}
+
+///|
+pub fn ChildTracker::active_ids(self : ChildTracker) -> Array[String] {
+  self.children.keys().collect()
+}
+
+///|
+pub fn ChildTracker::count(self : ChildTracker) -> Int {
+  self.children.length()
+}
+
+///|
+pub fn ChildTracker::to_json(self : ChildTracker) -> String {
+  let entries : Array[Json] = []
+  self.children.each(fn(id, h) {
+    entries.push(
+      {
+        "id": id.to_json(),
+        "slug": h.slug.to_json(),
+        "branch": h.branch.to_json(),
+        "agent_type": h.agent_type.to_json(),
+      }.to_json(),
+    )
+  })
+  entries.to_json().stringify()
+}
+
+///|
+pub fn ChildTracker::from_json(json_str : String) -> ChildTracker {
+  let tracker = ChildTracker::new()
+  let json = @json.parse(json_str) catch { _ => return tracker }
+  guard json is Array(arr) else { return tracker }
+  for item in arr {
+    guard item is Object(obj) else { continue }
+    let id = match obj.get("id") {
+      Some(String(v)) => v
+      _ => continue
+    }
+    let slug = match obj.get("slug") {
+      Some(String(v)) => v
+      _ => continue
+    }
+    let branch = match obj.get("branch") {
+      Some(String(v)) => v
+      _ => continue
+    }
+    let agent_type = match obj.get("agent_type") {
+      Some(String(v)) => v
+      _ => continue
+    }
+    tracker.add(id, { slug, branch, agent_type })
+  }
+  tracker
+}
+
+///|
 pub(all) enum TLPhase {
   Planning
   Dispatching
