@@ -17,15 +17,12 @@ pub fn AgentRegistry::insert(
   self : AgentRegistry,
   agent : @types.Agent,
 ) -> Result[Unit, @types.ExoError] {
-  if self.agents.contains(agent.agent_id) {
-    Err(
-      @types.ExoError::ValidationError(
-        "agent already exists: " + agent.agent_id,
-      ),
-    )
+  let id = agent.agent_id.to_string()
+  if self.agents.contains(id) {
+    Err(@types.ExoError::ValidationError("agent already exists: " + id))
   } else {
-    self.agents.set(agent.agent_id, agent)
-    self.alive.set(agent.agent_id, true)
+    self.agents.set(id, agent)
+    self.alive.set(id, true)
     Ok(())
   }
 }
@@ -36,9 +33,10 @@ pub fn AgentRegistry::upsert(
   self : AgentRegistry,
   agent : @types.Agent,
 ) -> Bool {
-  let existed = self.agents.contains(agent.agent_id)
-  self.agents.set(agent.agent_id, agent)
-  self.alive.set(agent.agent_id, true)
+  let id = agent.agent_id.to_string()
+  let existed = self.agents.contains(id)
+  self.agents.set(id, agent)
+  self.alive.set(id, true)
   existed
 }
 

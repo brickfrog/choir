@@ -552,7 +552,10 @@ pub async fn dispatch(
                 caller_id[last_dot + 1:].to_string()
               }
               ignore(
-                @workspace.remove_team_member_native(parent.agent_id, slug),
+                @workspace.remove_team_member_native(
+                  parent.agent_id.to_string(),
+                  slug,
+                ),
               )
               let delivery = @message.plan_delivery(
                 parent, caller_id, "agent shutdown", "success",

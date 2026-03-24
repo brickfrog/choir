@@ -23,6 +23,15 @@ pub(all) enum Host {
 } derive(Show, Eq)
 
 ///|
+/// Type-safe agent identifier. Prevents mixing with branch names, slugs, etc.
+pub(all) struct AgentId(String) derive(Show, Eq, Compare, Hash)
+
+///|
+pub fn AgentId::to_string(self : AgentId) -> String {
+  self.0
+}
+
+///|
 /// Agent lifecycle states.
 pub(all) enum AgentState {
   Spawning
@@ -100,7 +109,7 @@ pub fn LocalTarget::parse(target : String) -> LocalTarget? {
 ///|
 /// A managed agent in the orchestration tree.
 pub(all) struct Agent {
-  agent_id : String
+  agent_id : AgentId
   role : Role
   agent_type : AgentType
   parent : String?

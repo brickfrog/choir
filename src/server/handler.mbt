@@ -135,7 +135,7 @@ pub fn ServerState::register_agent(
   self : ServerState,
   agent : @types.Agent,
 ) -> Result[Unit, @types.ExoError] {
-  self.clear_pending_disconnect(agent.agent_id)
+  self.clear_pending_disconnect(agent.agent_id.to_string())
   ignore(self.registry.upsert(agent))
   Ok(())
 }
@@ -373,7 +373,7 @@ pub fn ServerState::plan_poll_event_deliveries(
                   "[poller-parent] agent=" +
                   agent_id +
                   " parent=" +
-                  parent.agent_id +
+                  parent.agent_id.to_string() +
                   " terminal_target=" +
                   parent.terminal_target
                   .map(@types.LocalTarget::to_string)

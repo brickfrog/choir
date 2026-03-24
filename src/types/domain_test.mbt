@@ -7,7 +7,7 @@ test "role equality" {
 ///|
 test "agent construction" {
   let agent : @types.Agent = {
-    agent_id: "main.feature-a",
+    agent_id: @types.AgentId("main.feature-a"),
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Gemini,
     parent: Some("root"),

@@ -64,7 +64,8 @@ pub fn plan_delivery(
   status : String,
 ) -> DeliveryMethod {
   match agent.host {
-    Remote(_) => TcpPush(agent.agent_id, format_message(sender_id, content))
+    Remote(_) =>
+      TcpPush(agent.agent_id.to_string(), format_message(sender_id, content))
     Local =>
       match agent.terminal_target {
         Some(target) =>
@@ -74,9 +75,9 @@ pub fn plan_delivery(
           LocalTerminalInput(target, format_message(sender_id, content))
         None =>
           TeamsInbox(
-            teams_inbox_path(agent.agent_id),
+            teams_inbox_path(agent.agent_id.to_string()),
             teams_inbox_json(sender_id, content, status),
-            fallback_target=Some(agent.agent_id),
+            fallback_target=Some(agent.agent_id.to_string()),
           )
       }
   }

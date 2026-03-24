@@ -445,7 +445,9 @@ async fn recover_local_agents(
                   zellij_live,
                 ),
               ) {
-              ignore(state.registry.set_alive(agent.agent_id, false))
+              ignore(
+                state.registry.set_alive(agent.agent_id.to_string(), false),
+              )
             }
           Err(_) => ()
         }
@@ -488,7 +490,7 @@ async fn recover_open_pr_tracking_with(
           Some(existing) =>
             state.poller.restore({
               ..existing,
-              agent_id: agent.agent_id,
+              agent_id: agent.agent_id.to_string(),
               branch: pr.branch,
               parent_branch: pr.base,
               pr_url: pr.url,
@@ -499,7 +501,7 @@ async fn recover_open_pr_tracking_with(
             )
             state.poller.track_recovered(
               pr.pr_number,
-              agent.agent_id,
+              agent.agent_id.to_string(),
               pr.branch,
               pr.base,
               pr.url,
