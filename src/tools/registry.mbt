@@ -22,7 +22,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn one or more Gemini leaf agents in worktrees",
+      description: "Spawn one or more leaf agents in worktrees; optional agent_type (gemini|claude|moon_pilot, default gemini)",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -42,7 +42,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker in the current repo/session for research or review only. Workers are non-editing support agents and do not own a branch or PR",
+      description: "Spawn an inline worker for research/review; optional agent_type (gemini|claude|moon_pilot, default gemini). Workers do not own a branch or PR",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

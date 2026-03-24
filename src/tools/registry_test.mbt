@@ -185,14 +185,13 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
   let reg = @tools.ToolRegistry::new()
   match reg.lookup(@types.Role::TL, "spawn_worker") {
     Ok(def) => {
-      assert_true(def.description.contains("research or review only"))
-      assert_true(def.description.contains("non-editing support agents"))
-      assert_true(def.description.contains("branch or PR"))
+      assert_true(def.description.contains("research/review"))
+      assert_true(def.description.contains("do not own a branch or PR"))
     }
     Err(_) => fail("expected spawn_worker definition")
   }
   match reg.lookup(@types.Role::TL, "fork_wave") {
-    Ok(def) => assert_true(def.description.contains("Gemini leaf agents"))
+    Ok(def) => assert_true(def.description.contains("leaf agents"))
     Err(_) => fail("expected fork_wave definition")
   }
 }

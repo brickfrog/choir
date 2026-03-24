@@ -126,7 +126,7 @@ fn choir_mcp_instructions() -> String {
     "Choir is an agent orchestration server. You are the Team Lead (TL). ",
   )
   buf.write_string(
-    "Delegate all implementation to Gemini leaf agents via fork_wave. ",
+    "Delegate all implementation to leaf agents via fork_wave (default gemini; set agent_type for claude or moon_pilot). ",
   )
   buf.write_string(
     "Never edit files directly -- read code to understand it, then delegate. ",
@@ -206,12 +206,16 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
-      description: "Spawn Gemini leaf agents in new worktrees. For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks (best-of-N), pass task + count",
+      description: "Spawn leaf agents in new worktrees. For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks (best-of-N), pass task + count",
       props: [
         { name: "task", desc: "Shared task for all leaves (use with count)" },
         {
           name: "tasks",
           desc: "JSON array of per-leaf task strings -- each leaf gets exactly one. Count is inferred from array length. Mutually exclusive with task+count",
+        },
+        {
+          name: "agent_type",
+          desc: "Agent type: gemini (default), claude, or moon_pilot",
         },
         {
           name: "parent_branch",
@@ -251,7 +255,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker in the current repo/session for research or review only. Workers are non-editing support agents and do not own a branch or PR",
+      description: "Spawn an inline worker for research/review. Workers do not own a branch or PR",
       props: spawn_worker_props(),
       required: ["task"],
     },
