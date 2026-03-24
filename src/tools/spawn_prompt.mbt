@@ -143,8 +143,9 @@ fn leaf_profile_text() -> String {
   "3. Use `notify_parent` for status updates and blockers.\n" +
   "   - After filing the PR, notify the parent that the PR is open and include the PR URL.\n" +
   "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n" +
-  "4. If review feedback arrives, address the comments, push fixes, and `notify_parent` again.\n" +
-  "5. After notifying the parent that your work is complete, call `shutdown`. Do NOT wait idle.\n\n" +
+  "4. Wait for review feedback — it arrives automatically via the poller.\n" +
+  "5. If review feedback arrives, address the comments, push fixes, and `notify_parent` again.\n" +
+  "6. Call `shutdown` only AFTER the review comes back clean or the parent tells you to stop.\n\n" +
   "Do not merge your own PR.\n" +
   "Do not push to main.\n" +
   "Do not create extra branches."
