@@ -131,8 +131,8 @@ fn serve_write_all_uds(fd : Int, data : Bytes) -> Unit {
   while written < data.length() {
     let n = @uds.write_bytes(fd, data, written, data.length() - written)
     if n <= 0 {
-      @moontrace.error(
-        "UDS write failed",
+      @moontrace.warn(
+        "UDS client disconnected",
         fields=@moontrace.fields([("written", written.to_json())]),
       )
       break
