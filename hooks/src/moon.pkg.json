@@ -1,0 +1,17 @@
+{
+  "import": [
+    "extism/moonbit-pdk/pdk/host",
+    "extism/moonbit-pdk/pdk/config",
+    "moonbitlang/core/json"
+  ],
+  "link": {
+    "wasm": {
+      "exports": ["before_model", "after_model", "pre_tool_use"],
+      "export-memory-name": "memory"
+    },
+    "wasm-gc": {
+      "exports": ["before_model", "after_model", "pre_tool_use"],
+      "export-memory-name": "memory"
+    }
+  }
+}
