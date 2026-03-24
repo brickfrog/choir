@@ -24,37 +24,48 @@ fn request_span_name(req : @types.Request) -> String {
 }
 
 ///|
-fn next_span_id(state : ServerState) -> String {
-  let span_id = state.span_counter.to_string()
-  state.span_counter = state.span_counter + 1
-  span_id
-}
-
-///|
 async fn emit_span(
   state : ServerState,
   req : @types.Request,
-  start_sec : Int64,
-  end_sec : Int64,
+  start_ms : UInt64,
+  end_ms : UInt64,
   resp : @types.Response,
 ) -> Unit {
-  let span = Span::{
-    trace_id: state.run_id,
-    span_id: next_span_id(state),
-    name: request_span_name(req),
-    agent_id: request_agent_id(req),
-    role: Some(req.role.to_string()),
-    start_sec,
-    end_sec,
-    status: resp.status_tag(),
-    error_msg: resp.error_message(),
-  }
-  span.emit()
-  match state.config.otlp_endpoint {
-    Some(ep) => span.export_otlp(ep) catch { _ => () }
+  let name = request_span_name(req)
+  let agent_id_str = request_agent_id(req).unwrap_or("")
+  let role_str = req.role.to_string()
+  let status = resp.status_tag()
+  let duration_ms = end_ms - start_ms
+  let fields = @moontrace.fields([
+    ("agent_id", agent_id_str.to_json()),
+    ("role", role_str.to_json()),
+    ("status", status.to_json()),
+    ("duration_ms", duration_ms.to_json()),
+  ])
+  match resp.error_message() {
+    Some(msg) => fields.push({ key: "error", value: msg.to_json() })
     None => ()
   }
-  let agent_id_str = request_agent_id(req).unwrap_or("")
+  @moontrace.info(name, fields~)
+  match state.config.otlp_endpoint {
+    Some(ep) => {
+      let mt_span = @moontrace.span(name, fields~)
+      mt_span.start_time = start_ms
+      mt_span.end_time = end_ms
+      let status_code = if resp.is_ok() { 1 } else { 2 }
+      let status_message = resp.error_message().unwrap_or("")
+      let otlp_span = @otlp.span_to_otlp(
+        mt_span,
+        trace_id=normalize_trace_id(state.run_id),
+        status_code~,
+        status_message~,
+      )
+      export_otlp_span(otlp_span, ep) catch {
+        _ => ()
+      }
+    }
+    None => ()
+  }
   if agent_id_str != "" {
     let data = "{\"tool\":\"" +
       escape_for_json(req.name) +
@@ -81,7 +92,7 @@ pub async fn ServerState::handle_with_runner(
   req : @types.Request,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> @types.Response {
-  let start_sec = @poller.now_sec()
+  let start_ms = @env.now()
   let resp = if req.req_method == "tools/list" {
     @types.Response::ok({ "tools_list": "true" })
   } else {
@@ -102,8 +113,8 @@ pub async fn ServerState::handle_with_runner(
       plugins_json=self.config.plugins_json,
     )
   }
-  let end_sec = @poller.now_sec()
-  emit_span(self, req, start_sec, end_sec, resp) catch {
+  let end_ms = @env.now()
+  emit_span(self, req, start_ms, end_ms, resp) catch {
     _ => ()
   }
   // Start pane watchers for newly spawned agents
