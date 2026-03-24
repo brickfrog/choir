@@ -136,6 +136,7 @@ struct MergePrArgs {
   pr_number : Int
   parent_branch : String
   caller_id : String
+  force : Bool
 } derive(Show, Eq)
 
 ///|

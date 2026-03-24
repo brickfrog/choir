@@ -210,6 +210,54 @@ async test "dispatch merge_pr missing pr_number returns Err" {
 }
 
 ///|
+async test "dispatch merge_pr blocks when ChangesRequested" {
+  let poller = @poller.PollerState::new()
+  poller.track(
+    789, "agent-1", "main.agent-1", "main", "https://example.test/pr/789", 100,
+  )
+  match poller.get(789) {
+    Some(tracked) =>
+      tracked.last_review_state = @poller.ReviewState::ChangesRequested
+    None => assert_true(false)
+  }
+  let call : ToolCall = {
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: { "pr_number": "789" },
+  }
+  let res = dispatch_call(call, runner=mock_runner, poller_state=Some(poller))
+  match res {
+    Ok(_) => assert_true(false)
+    Err(msg) => assert_true(msg.contains("ChangesRequested"))
+  }
+  // PR should still be tracked (merge was blocked)
+  assert_true(poller.get(789) != None)
+}
+
+///|
+async test "dispatch merge_pr force bypasses ChangesRequested guard" {
+  let poller = @poller.PollerState::new()
+  poller.track(
+    790, "agent-1", "main.agent-1", "main", "https://example.test/pr/790", 100,
+  )
+  match poller.get(790) {
+    Some(tracked) =>
+      tracked.last_review_state = @poller.ReviewState::ChangesRequested
+    None => assert_true(false)
+  }
+  let call : ToolCall = {
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: { "pr_number": "790", "force": "true" },
+  }
+  let res = dispatch_call(call, runner=mock_runner, poller_state=Some(poller))
+  match res {
+    Ok(m) => assert_eq(m.get("status"), Some("merged"))
+    Err(_) => assert_true(false)
+  }
+}
+
+///|
 async test "dispatch track_pr stores tracked PR" {
   let poller = @poller.PollerState::new()
   let call : ToolCall = {

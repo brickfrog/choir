@@ -324,6 +324,25 @@ pub async fn dispatch(
       }
     }
     ToolRequest::MergePr(merge_args) => {
+      if not(merge_args.force) {
+        match poller_state {
+          Some(ps) =>
+            match ps.get(merge_args.pr_number) {
+              Some(tracked) =>
+                if tracked.last_review_state ==
+                  @poller.ReviewState::ChangesRequested {
+                  return @types.Response::Err(
+                    "PR #" +
+                    merge_args.pr_number.to_string() +
+                    " has unresolved review comments (ChangesRequested). " +
+                    "Wait for the owning agent to push fixes, or pass force=true to override.",
+                  )
+                }
+              None => ()
+            }
+          None => ()
+        }
+      }
       let cmds = merge_pr_commands(merge_args.pr_number)
       let mutex_name = "branch:" + merge_args.parent_branch
       match mutex_registry {

@@ -52,7 +52,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "merge_pr",
-      description: "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id (defaults to server)",
+      description: "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id, force (bypass ChangesRequested guard)",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

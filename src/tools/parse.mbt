@@ -686,6 +686,13 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, String] {
       Some(v) => if v == "" { "server" } else { v }
       None => "server"
     },
+    force: match tool_args_get(args, "force") {
+      Some(v) => {
+        let lowered = v.trim().to_lower()
+        lowered == "true" || lowered == "1" || lowered == "yes"
+      }
+      None => false
+    },
   })
 }
 
