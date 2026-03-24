@@ -139,9 +139,26 @@ pub fn gemini_settings_json(
       }.to_json(),
     ].to_json(),
   }
+  let model_hook = fn(func_name : String) -> Json {
+    {
+      "matcher": "*".to_json(),
+      "hooks": [
+        {
+          "type": "command".to_json(),
+          "command": ("extism call .choir/hooks/hook.wasm " +
+          func_name +
+          " --wasi").to_json(),
+        }.to_json(),
+      ].to_json(),
+    }.to_json()
+  }
   let settings : Map[String, Json] = {
     "mcpServers": mcp.to_json(),
-    "hooks": { "AfterAgent": [hook_entry.to_json()].to_json() }.to_json(),
+    "hooks": {
+      "AfterAgent": [hook_entry.to_json()].to_json(),
+      "BeforeModel": [model_hook("before_model")].to_json(),
+      "AfterModel": [model_hook("after_model")].to_json(),
+    }.to_json(),
   }
   if context_paths.length() > 0 {
     let files : Array[Json] = []
