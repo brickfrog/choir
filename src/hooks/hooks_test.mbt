@@ -65,6 +65,8 @@ test "HookInput construction with all fields" {
     role: Some(@types.Role::Dev),
     tool_name: Some("test_tool"),
     tool_args: Some(Map::of([("key", "value")])),
+    tool_result_status: None,
+    exit_reason: None,
   }
   assert_eq(input.event, HookEvent::PreToolUse)
 }
@@ -78,6 +80,8 @@ test "HookInput construction with minimal fields" {
     role: None,
     tool_name: None,
     tool_args: None,
+    tool_result_status: None,
+    exit_reason: None,
   }
   assert_eq(input.event, HookEvent::SessionStart)
 }

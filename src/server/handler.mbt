@@ -620,6 +620,21 @@ pub async fn ServerState::check_idle_agents(
     }
     // Kill the agent
     println("[watchdog] agent \{agent_id} idle for \{elapsed}s, killing")
+    @tools.fire_hook_async(
+      @hooks.HookEvent::AgentExit,
+      {
+        event: @hooks.HookEvent::AgentExit,
+        session_id: None,
+        agent_id: Some(agent_id),
+        role: Some(agent.role),
+        tool_name: None,
+        tool_args: None,
+        tool_result_status: None,
+        exit_reason: Some("watchdog"),
+      },
+      self.config.project_dir,
+      runner,
+    )
     ignore(runner([@workspace.local_close_target(target)]) catch { _ => [] })
     ignore(self.registry.set_state(agent_id, @types.AgentState::Failed))
     self.pane_watchers.remove(agent_id)

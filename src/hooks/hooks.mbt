@@ -2,6 +2,11 @@
 pub(all) enum HookEvent {
   SessionStart
   PreToolUse
+  PostToolUse
+  AgentExit
+  SessionStop
+  BeforeModel
+  AfterModel
 } derive(Show, Eq)
 
 ///|
@@ -12,6 +17,8 @@ pub(all) struct HookInput {
   role : @types.Role?
   tool_name : String?
   tool_args : Map[String, String]?
+  tool_result_status : String?
+  exit_reason : String?
 } derive(Show)
 
 ///|
@@ -21,6 +28,11 @@ pub fn HookInput::to_json_string(self : HookInput) -> String {
   match self.event {
     SessionStart => buf.write_string("SessionStart")
     PreToolUse => buf.write_string("PreToolUse")
+    PostToolUse => buf.write_string("PostToolUse")
+    AgentExit => buf.write_string("AgentExit")
+    SessionStop => buf.write_string("SessionStop")
+    BeforeModel => buf.write_string("BeforeModel")
+    AfterModel => buf.write_string("AfterModel")
   }
   buf.write_string("\"")
   match self.session_id {
@@ -60,8 +72,22 @@ pub fn HookInput::to_json_string(self : HookInput) -> String {
     }
     None => ()
   }
-  // Simplified tool_args serialization as it's not strictly required by the prompt
-  // but good to have if we want to follow the schema.
+  match self.tool_result_status {
+    Some(v) => {
+      buf.write_string(",\"tool_result_status\":\"")
+      buf.write_string(v)
+      buf.write_string("\"")
+    }
+    None => ()
+  }
+  match self.exit_reason {
+    Some(v) => {
+      buf.write_string(",\"exit_reason\":\"")
+      buf.write_string(v)
+      buf.write_string("\"")
+    }
+    None => ()
+  }
   buf.write_string("}")
   buf.to_string()
 }
@@ -154,6 +180,11 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
   let event = match event_str {
     "SessionStart" => HookEvent::SessionStart
     "PreToolUse" => HookEvent::PreToolUse
+    "PostToolUse" => HookEvent::PostToolUse
+    "AgentExit" => HookEvent::AgentExit
+    "SessionStop" => HookEvent::SessionStop
+    "BeforeModel" => HookEvent::BeforeModel
+    "AfterModel" => HookEvent::AfterModel
     _ => return None
   }
   let session_id = get_string_value(line, "session_id")
@@ -170,7 +201,31 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
 
   // Minimal support for args, as it's not strictly used for logic yet
   let tool_args = None
-  Some({ event, session_id, agent_id, role, tool_name, tool_args })
+  let tool_result_status = get_string_value(line, "tool_result_status")
+  let exit_reason = get_string_value(line, "exit_reason")
+  Some({
+    event,
+    session_id,
+    agent_id,
+    role,
+    tool_name,
+    tool_args,
+    tool_result_status,
+    exit_reason,
+  })
+}
+
+///|
+pub fn HookEvent::script_name(self : HookEvent) -> String {
+  match self {
+    SessionStart => "session_start"
+    PreToolUse => "pre_tool_use"
+    PostToolUse => "post_tool_use"
+    AgentExit => "agent_exit"
+    SessionStop => "session_stop"
+    BeforeModel => "before_model"
+    AfterModel => "after_model"
+  }
 }
 
 ///|

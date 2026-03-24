@@ -9,6 +9,7 @@ import {
   "choir/src/config",
   "choir/src/sys",
   "choir/src/workspace",
+  "choir/src/hooks",
   "moonbitlang/async",
   "moonbitlang/async/http",
   "moonbitlang/core/env",

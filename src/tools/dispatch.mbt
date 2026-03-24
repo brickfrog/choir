@@ -568,7 +568,32 @@ pub async fn dispatch(
         }
         None => ()
       }
-      // 2. Kill tmux pane and remove from registry
+      // 2. Fire AgentExit hook
+      fire_hook_async(
+        @hooks.HookEvent::AgentExit,
+        {
+          event: @hooks.HookEvent::AgentExit,
+          session_id: None,
+          agent_id: Some(caller_id),
+          role: Some(
+            match registry {
+              Some(reg) =>
+                match reg.get(caller_id) {
+                  Ok(a) => a.role
+                  Err(_) => @types.Role::Dev
+                }
+              None => @types.Role::Dev
+            },
+          ),
+          tool_name: None,
+          tool_args: None,
+          tool_result_status: None,
+          exit_reason: Some("shutdown"),
+        },
+        project_dir,
+        runner,
+      )
+      // 3. Kill pane and remove from registry
       match registry {
         Some(reg) => {
           match reg.get(caller_id) {
@@ -880,6 +905,8 @@ pub async fn handle_request(
           role: Some(req.role),
           tool_name: Some(req.name),
           tool_args: Some(tool_args_to_map(tool_args)),
+          tool_result_status: None,
+          exit_reason: None,
         }
         let input_json = input.to_json_string()
         let output_path = project_dir + "/.choir/hooks/pre_tool_use.out"
@@ -909,7 +936,8 @@ pub async fn handle_request(
           }
         }
       }
-      match parse_tool_request(req.name, req.role, project_dir, tool_args) {
+      let resp = match
+        parse_tool_request(req.name, req.role, project_dir, tool_args) {
         Err(e) => @types.Response::Err(e)
         Ok(tool_req) =>
           dispatch(
@@ -928,8 +956,53 @@ pub async fn handle_request(
             poller_state~,
           )
       }
+      // Fire PostToolUse hook (fire-and-forget)
+      let status_tag = if resp.is_ok() { "ok" } else { "error" }
+      fire_hook_async(
+        @hooks.HookEvent::PostToolUse,
+        {
+          event: @hooks.HookEvent::PostToolUse,
+          session_id: Some(session),
+          agent_id: tool_args_get(tool_args, "caller_id"),
+          role: Some(req.role),
+          tool_name: Some(req.name),
+          tool_args: None,
+          tool_result_status: Some(status_tag),
+          exit_reason: None,
+        },
+        project_dir,
+        runner,
+      )
+      resp
     }
   }
+}
+
+///|
+pub async fn fire_hook_async(
+  event : @hooks.HookEvent,
+  input : @hooks.HookInput,
+  project_dir : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let hook_path = project_dir + "/.choir/hooks/" + event.script_name() + ".sh"
+  if @sys.read_file(hook_path) == "" {
+    return
+  }
+  let input_json = input.to_json_string()
+  let output_path = project_dir +
+    "/.choir/hooks/" +
+    event.script_name() +
+    ".out"
+  let cmd = @workspace.Command::{
+    program: "sh",
+    args: [
+      "-c", "printf '%s' \"$1\" | \"$2\" > \"$3\" 2>&1", "sh", input_json, hook_path,
+      output_path,
+    ],
+    workdir: Some(project_dir),
+  }
+  ignore(runner([cmd]) catch { _ => [] })
 }
 
 ///|

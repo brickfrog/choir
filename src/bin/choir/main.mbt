@@ -2765,6 +2765,11 @@ fn hook_run() -> Unit {
     let hook_key = match input.event {
       @hooks.HookEvent::SessionStart => "hook.session_start"
       @hooks.HookEvent::PreToolUse => "hook.pre_tool_use"
+      @hooks.HookEvent::PostToolUse => "hook.post_tool_use"
+      @hooks.HookEvent::AgentExit => "hook.agent_exit"
+      @hooks.HookEvent::SessionStop => "hook.session_stop"
+      @hooks.HookEvent::BeforeModel => "hook.before_model"
+      @hooks.HookEvent::AfterModel => "hook.after_model"
     }
 
     match @config.hook_command_path(config_content, hook_key) {
