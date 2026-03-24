@@ -16,6 +16,7 @@ import {
   "moonbitlang/async/process",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
+  "brickfrog/moontrace",
 }
 
 options(

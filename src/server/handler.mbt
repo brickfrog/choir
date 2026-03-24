@@ -514,16 +514,30 @@ pub async fn ServerState::process_poller_tick(
   })
   let n_after = self.poller.tracked.length()
   if pending_events.length() > 0 || n_before != n_after {
-    println(
-      "[poller] tick at \{now}: \{n_before} PRs, \{pending_events.length()} events",
+    @moontrace.info(
+      "poller tick",
+      fields=@moontrace.fields([
+        ("prs", n_before.to_json()),
+        ("events", pending_events.length().to_json()),
+      ]),
     )
     for i = 0; i < pending_events.length(); i = i + 1 {
-      println(
-        "[poller] event: \{pending_events[i]} for \{pending_agent_ids[i]}",
+      @moontrace.info(
+        "poller event",
+        fields=@moontrace.fields([
+          ("event", pending_events[i].to_string().to_json()),
+          ("agent", pending_agent_ids[i].to_json()),
+        ]),
       )
     }
     if n_before != n_after {
-      println("[poller] tracked PRs: \{n_before} -> \{n_after}")
+      @moontrace.info(
+        "poller tracking changed",
+        fields=@moontrace.fields([
+          ("before", n_before.to_json()),
+          ("after", n_after.to_json()),
+        ]),
+      )
     }
   }
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
@@ -619,7 +633,13 @@ pub async fn ServerState::check_idle_agents(
       continue
     }
     // Kill the agent
-    println("[watchdog] agent \{agent_id} idle for \{elapsed}s, killing")
+    @moontrace.warn(
+      "watchdog killing idle agent",
+      fields=@moontrace.fields([
+        ("agent", agent_id.to_json()),
+        ("idle_sec", elapsed.to_json()),
+      ]),
+    )
     @tools.fire_hook_async(
       @hooks.HookEvent::AgentExit,
       {

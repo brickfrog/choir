@@ -506,7 +506,10 @@ pub async fn dispatch(
                     "status": String::to_json("sent"),
                   })
                 Err(e) => {
-                  println("[send_message] delivery FAILED: \{e}")
+                  @moontrace.error(
+                    "send_message delivery failed",
+                    fields=@moontrace.fields([("error", e.to_json())]),
+                  )
                   @types.Response::Err(e)
                 }
               }

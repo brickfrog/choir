@@ -1,20 +1,4 @@
 ///|
-pub(all) enum LogLevel {
-  Debug
-  Info
-  Warn
-  Error_
-} derive(Show, Eq)
-
-///|
-pub(all) struct LogEntry {
-  level : LogLevel
-  component : String
-  agent_id : String?
-  message : String
-} derive(Show)
-
-///|
 pub(all) struct Span {
   trace_id : String
   span_id : String
@@ -33,20 +17,6 @@ fn normalize_hex_id(value : String, width : Int) -> String {
     value[value.length() - width:].to_string()
   } else {
     "0".repeat(width - value.length()) + value
-  }
-}
-
-///|
-pub fn LogEntry::format(self : LogEntry) -> String {
-  let level_str = match self.level {
-    Debug => "DEBUG"
-    Info => "INFO"
-    Warn => "WARN"
-    Error_ => "ERROR"
-  }
-  match self.agent_id {
-    None => "[\{level_str}] [\{self.component}] \{self.message}"
-    Some(id) => "[\{level_str}] [\{self.component}] [\{id}] \{self.message}"
   }
 }
 
@@ -139,29 +109,4 @@ pub async fn Span::export_otlp(self : Span, endpoint : String) -> Unit {
   } catch {
     _ => ()
   }
-}
-
-///|
-pub fn log_info(component : String, message : String) -> LogEntry {
-  { level: Info, component, agent_id: None, message }
-}
-
-///|
-pub fn log_error(component : String, message : String) -> LogEntry {
-  { level: Error_, component, agent_id: None, message }
-}
-
-///|
-pub fn log_warn(component : String, message : String) -> LogEntry {
-  { level: Warn, component, agent_id: None, message }
-}
-
-///|
-pub fn log_with_agent(
-  level : LogLevel,
-  component : String,
-  agent_id : String,
-  message : String,
-) -> LogEntry {
-  { level, component, agent_id: Some(agent_id), message }
 }
