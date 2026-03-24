@@ -158,9 +158,55 @@ flowchart TD
 .choir/tasks/             task files
 .choir/kv/                key-value store
 .choir/worktrees/         spawned worktrees
+.choir/hooks/hook.wasm    optional WASM hook plugin
+.choir/rewrite_rules.json optional PII rewrite rules
 CLAUDE.md                 operator/developer notes
 AGENTS.md                 leaf-agent instructions
 ```
+
+## WASM Hooks
+
+Choir supports WASM plugins for Gemini model hooks (BeforeModel/AfterModel)
+via [extism](https://extism.org/). The plugin is written in MoonBit using the
+`extism/moonbit-pdk` and compiled to WASM.
+
+### Setup
+
+```bash
+# install extism CLI (host runtime)
+curl -s https://get.extism.org/cli | sh -s -- -v v1.6.2 -y
+extism lib install --prefix ~/.local
+
+# build the hook plugin
+cd hooks
+moon build --target wasm --release
+
+# install to project
+cp _build/wasm/release/build/src/src.wasm ../.choir/hooks/hook.wasm
+```
+
+When `.choir/hooks/hook.wasm` exists, Gemini agents automatically get
+BeforeModel/AfterModel hooks in their settings. No plugin = no hooks.
+
+### What the plugin does
+
+- **before_model**: rewrites PII in LLM requests (real terms to tokens)
+- **after_model**: reverses rewrites in LLM responses (tokens to real terms)
+- **pre_tool_use**: blocks known Gemini failure patterns (pragma corruption, read-only Json constructors)
+
+### Rewrite rules
+
+Create `.choir/rewrite_rules.json`:
+
+```json
+[
+  {"real": "Acme Corp", "token": "COMPANY_ALPHA"},
+  {"real": "john@acme.com", "token": "EMAIL_ONE"}
+]
+```
+
+Pass rules via extism config when calling the plugin. Without rules,
+the plugin passes input through unchanged.
 
 ## Status
 

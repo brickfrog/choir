@@ -153,9 +153,22 @@ flowchart TD
 .choir/tasks/             任务文件
 .choir/kv/                键值存储
 .choir/worktrees/         派生工作树
+.choir/hooks/hook.wasm    可选 WASM hook 插件
+.choir/rewrite_rules.json 可选 PII 重写规则
 CLAUDE.md                 操作/开发说明
 AGENTS.md                 叶子代理说明
 ```
+
+## WASM Hooks
+
+Choir 通过 [extism](https://extism.org/) 支持 Gemini 模型 hook（BeforeModel/AfterModel）的 WASM 插件。插件使用 MoonBit 的 `extism/moonbit-pdk` 编写并编译为 WASM。
+
+当 `.choir/hooks/hook.wasm` 存在时，Gemini 代理会自动启用模型 hook。无插件则无 hook。
+
+功能：
+- **before_model**：重写 LLM 请求中的 PII（真实信息 → 令牌）
+- **after_model**：反向重写 LLM 响应（令牌 → 真实信息）
+- **pre_tool_use**：拦截已知的 Gemini 故障模式
 
 ## 状态
 
