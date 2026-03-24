@@ -225,12 +225,19 @@ pub fn spawn_commands(
           Some(p) => ctx_paths.push(p)
           None => ()
         }
+        let wasm_path = root_project + "/.choir/hooks/hook.wasm"
+        let wasm_hooks = if @sys.read_file(wasm_path) != "" {
+          Some(wasm_path)
+        } else {
+          None
+        }
         cmds.push(
           write_gemini_settings(
             workspace,
             canonical_agent_id(spec),
             role_to_string(spec.role),
             context_paths=ctx_paths,
+            wasm_hooks_path=wasm_hooks,
           ),
         )
       }
@@ -300,12 +307,19 @@ pub fn spawn_commands(
           Some(p) => ctx_paths.push(p)
           None => ()
         }
+        let wasm_path = root_project + "/.choir/hooks/hook.wasm"
+        let wasm_hooks = if @sys.read_file(wasm_path) != "" {
+          Some(wasm_path)
+        } else {
+          None
+        }
         cmds.push(
           write_gemini_settings(
             workspace,
             canonical_agent_id(spec),
             role_to_string(spec.role),
             context_paths=ctx_paths,
+            wasm_hooks_path=wasm_hooks,
           ),
         )
       }

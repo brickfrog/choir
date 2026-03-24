@@ -122,6 +122,7 @@ pub fn gemini_settings_json(
   agent_name : String,
   role : String,
   context_paths? : Array[String] = [],
+  wasm_hooks_path? : String? = None,
 ) -> String {
   let mcp = {
     "choir": {
@@ -139,26 +140,30 @@ pub fn gemini_settings_json(
       }.to_json(),
     ].to_json(),
   }
-  let model_hook = fn(func_name : String) -> Json {
-    {
-      "matcher": "*".to_json(),
-      "hooks": [
+  let hooks_obj : Map[String, Json] = {
+    "AfterAgent": [hook_entry.to_json()].to_json(),
+  }
+  match wasm_hooks_path {
+    Some(path) => {
+      let model_hook = fn(func_name : String) -> Json {
         {
-          "type": "command".to_json(),
-          "command": ("extism call .choir/hooks/hook.wasm " +
-          func_name +
-          " --wasi").to_json(),
-        }.to_json(),
-      ].to_json(),
-    }.to_json()
+          "matcher": "*".to_json(),
+          "hooks": [
+            {
+              "type": "command".to_json(),
+              "command": ("extism call " + path + " " + func_name + " --wasi").to_json(),
+            }.to_json(),
+          ].to_json(),
+        }.to_json()
+      }
+      hooks_obj.set("BeforeModel", [model_hook("before_model")].to_json())
+      hooks_obj.set("AfterModel", [model_hook("after_model")].to_json())
+    }
+    None => ()
   }
   let settings : Map[String, Json] = {
     "mcpServers": mcp.to_json(),
-    "hooks": {
-      "AfterAgent": [hook_entry.to_json()].to_json(),
-      "BeforeModel": [model_hook("before_model")].to_json(),
-      "AfterModel": [model_hook("after_model")].to_json(),
-    }.to_json(),
+    "hooks": hooks_obj.to_json(),
   }
   if context_paths.length() > 0 {
     let files : Array[Json] = []
@@ -203,8 +208,14 @@ pub fn write_gemini_settings(
   agent_name : String,
   role : String,
   context_paths? : Array[String] = [],
+  wasm_hooks_path? : String? = None,
 ) -> Command {
-  let content = gemini_settings_json(agent_name, role, context_paths~)
+  let content = gemini_settings_json(
+    agent_name,
+    role,
+    context_paths~,
+    wasm_hooks_path~,
+  )
   {
     program: "sh",
     args: [
