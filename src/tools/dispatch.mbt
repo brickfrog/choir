@@ -343,7 +343,6 @@ pub async fn dispatch(
           None => ()
         }
       }
-      let cmds = merge_pr_commands(merge_args.pr_number)
       let mutex_name = "branch:" + merge_args.parent_branch
       match mutex_registry {
         Some(reg) => {
@@ -360,61 +359,60 @@ pub async fn dispatch(
               "merge serialization lock held by another agent, retry shortly",
             )
           }
-          let merge_result = run_strict(runner, cmds)
-          ignore(reg.release(mutex_name, merge_args.caller_id))
-          match merge_result {
-            Ok(_) => {
-              match poller_state {
-                Some(ps) => {
-                  match ps.get(merge_args.pr_number) {
-                    Some(tracked) =>
-                      apply_tl_event(
-                        project_dir,
-                        merge_args.caller_id,
-                        @phase.TLEvent::PRMerged(
-                          number=merge_args.pr_number,
-                          url=extract_slug(tracked.branch),
-                        ),
-                      )
-                    None => ()
-                  }
-                  ps.untrack(merge_args.pr_number)
-                  ignore(ps.write_state_file(project_dir))
-                }
-                None => ()
-              }
-              @types.Response::ok_values({ "status": String::to_json("merged") })
-            }
-            Err(e) => @types.Response::Err(e)
-          }
         }
-        None =>
-          match run_strict(runner, cmds) {
-            Ok(_) => {
-              match poller_state {
-                Some(ps) => {
-                  match ps.get(merge_args.pr_number) {
-                    Some(tracked) =>
-                      apply_tl_event(
-                        project_dir,
-                        merge_args.caller_id,
-                        @phase.TLEvent::PRMerged(
-                          number=merge_args.pr_number,
-                          url=extract_slug(tracked.branch),
-                        ),
-                      )
-                    None => ()
-                  }
-                  ps.untrack(merge_args.pr_number)
-                  ignore(ps.write_state_file(project_dir))
-                }
-                None => ()
-              }
-              @types.Response::ok_values({ "status": String::to_json("merged") })
-            }
-            Err(e) => @types.Response::Err(e)
-          }
+        None => ()
       }
+      let cmds = merge_pr_commands(merge_args.pr_number)
+      let merge_result = run_strict(runner, cmds)
+      match mutex_registry {
+        Some(reg) => ignore(reg.release(mutex_name, merge_args.caller_id))
+        None => ()
+      }
+      match merge_result {
+        Err(_) => {
+          // Re-run merge command with output capture for detailed error
+          let (_, output) = capture_command_output(
+            merge_pr_command(merge_args.pr_number),
+          )
+          let trimmed = output.trim().to_string()
+          let msg = if trimmed.to_lower().contains("conflict") ||
+            trimmed.to_lower().contains("not mergeable") {
+            "merge conflict on PR #" +
+            merge_args.pr_number.to_string() +
+            ": " +
+            trimmed
+          } else if trimmed.length() > 0 {
+            "merge failed for PR #" +
+            merge_args.pr_number.to_string() +
+            ": " +
+            trimmed
+          } else {
+            "merge failed for PR #" + merge_args.pr_number.to_string()
+          }
+          return @types.Response::Err(msg)
+        }
+        Ok(_) => ()
+      }
+      match poller_state {
+        Some(ps) => {
+          match ps.get(merge_args.pr_number) {
+            Some(tracked) =>
+              apply_tl_event(
+                project_dir,
+                merge_args.caller_id,
+                @phase.TLEvent::PRMerged(
+                  number=merge_args.pr_number,
+                  url=extract_slug(tracked.branch),
+                ),
+              )
+            None => ()
+          }
+          ps.untrack(merge_args.pr_number)
+          ignore(ps.write_state_file(project_dir))
+        }
+        None => ()
+      }
+      @types.Response::ok_values({ "status": String::to_json("merged") })
     }
     ToolRequest::TrackPr(track_pr_args) =>
       match poller_state {

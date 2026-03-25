@@ -187,13 +187,15 @@ pub async fn detect_default_branch(project_dir : String) -> String {
 }
 
 ///|
+pub fn merge_pr_command(pr_number : Int) -> @workspace.Command {
+  {
+    program: "gh",
+    args: ["pr", "merge", pr_number.to_string(), "--merge"],
+    workdir: None,
+  }
+}
+
+///|
 pub fn merge_pr_commands(pr_number : Int) -> Array[@workspace.Command] {
-  [
-    {
-      program: "gh",
-      args: ["pr", "merge", pr_number.to_string(), "--merge"],
-      workdir: None,
-    },
-    @workspace.git_fetch(),
-  ]
+  [merge_pr_command(pr_number), @workspace.git_fetch()]
 }
