@@ -260,39 +260,6 @@ fn default_agent_type(role : @types.Role) -> @types.AgentType {
 }
 
 ///|
-fn window_target_name(target : String) -> String? {
-  let mut idx = -1
-  for i = 0; i < target.length(); i = i + 1 {
-    if target[i] == ':' {
-      idx = i
-      break
-    }
-  }
-  if idx == -1 || idx + 1 >= target.length() {
-    None
-  } else {
-    Some(target[idx + 1:target.length()].to_string())
-  }
-}
-
-///|
-fn is_window_target_alive(
-  target : String?,
-  session : String,
-  tmux_windows : Array[String],
-) -> Bool {
-  match target {
-    Some(value) =>
-      match window_target_name(value) {
-        Some(window_name) =>
-          value.has_prefix(session + ":") && tmux_windows.contains(window_name)
-        None => false
-      }
-    None => false
-  }
-}
-
-///|
 priv struct ZellijLiveTargets {
   tabs : Array[String]
   panes : Array[String]
@@ -350,7 +317,6 @@ fn parse_zellij_live_targets(output : String) -> ZellijLiveTargets {
 fn is_local_target_alive(
   target : @types.LocalTarget?,
   session : String,
-  _tmux_windows : Array[String],
   zellij_live : ZellijLiveTargets,
 ) -> Bool {
   match target {
@@ -368,7 +334,6 @@ fn recover_agent_from_local_config(
   rel_workspace : String,
   fallback_slug : String,
   session : String,
-  tmux_windows : Array[String],
   zellij_live : ZellijLiveTargets,
 ) -> @types.Agent? {
   let config_path = project_dir +
@@ -390,7 +355,6 @@ fn recover_agent_from_local_config(
   let alive = is_local_target_alive(
     local_cfg.terminal_target,
     session,
-    tmux_windows,
     zellij_live,
   )
   Some({
@@ -418,7 +382,6 @@ fn recover_agent_from_local_config(
 async fn recover_local_agents(
   state : ServerState,
   session : String,
-  tmux_windows : Array[String],
   zellij_live : ZellijLiveTargets,
   dir_name : String,
 ) -> Unit {
@@ -432,7 +395,7 @@ async fn recover_local_agents(
     let rel_workspace = ".choir/" + dir_name + "/" + slug
     match
       recover_agent_from_local_config(
-        project_dir, rel_workspace, slug, session, tmux_windows, zellij_live,
+        project_dir, rel_workspace, slug, session, zellij_live,
       ) {
       Some(agent) =>
         match state.registry.insert(agent) {
@@ -441,7 +404,6 @@ async fn recover_local_agents(
                 is_local_target_alive(
                   agent.terminal_target,
                   session,
-                  tmux_windows,
                   zellij_live,
                 ),
               ) {
@@ -532,8 +494,8 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
       cwd=Some(project_dir),
     ),
   )
-  recover_local_agents(state, session, [], zellij_live, "worktrees")
-  recover_local_agents(state, session, [], zellij_live, "agents")
+  recover_local_agents(state, session, zellij_live, "worktrees")
+  recover_local_agents(state, session, zellij_live, "agents")
 
   let open_pr_output = capture_stdout(
     "sh",
@@ -639,7 +601,6 @@ test "recover_agent_from_local_config restores active agent metadata" {
     rel_workspace,
     "leaf-a",
     "howdy",
-    ["leaf-a"],
     { tabs: ["leaf-a"], panes: [] },
   )
   match recovered {
@@ -687,7 +648,6 @@ test "recover_agent_from_local_config falls back and clears dead tmux targets" {
     rel_workspace,
     "helper",
     "howdy",
-    [],
     { tabs: [], panes: [] },
   )
   match recovered {
@@ -737,7 +697,6 @@ test "recover_agent_from_local_config keeps live zellij tab targets" {
     rel_workspace,
     "leaf-z",
     "howdy",
-    [],
     { tabs: ["leaf-z"], panes: [] },
   )
   match recovered {
