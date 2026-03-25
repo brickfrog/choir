@@ -2906,23 +2906,59 @@ fn init_mcp_json_content(project_dir : String) -> String {
 }
 
 ///|
-fn init_claude_mcp_config_path() -> String {
-  ".choir/claude.mcp.json"
+fn init_tl_mcp_config_path() -> String {
+  ".choir/tl.mcp.json"
 }
 
 ///|
-fn init_claude_launch_command() -> String {
-  "claude --dangerously-skip-permissions --mcp-config " +
-  init_claude_mcp_config_path() +
-  " --strict-mcp-config; echo; echo '[Claude exited]'; exec bash -l"
+fn init_tl_launch_command(tl_type : String) -> String {
+  let mcp_path = init_tl_mcp_config_path()
+  let cmd = match tl_type {
+    "codex" =>
+      "codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen --mcp-config " +
+      mcp_path
+    "gemini" => "gemini --yolo --prompt-interactive"
+    _ =>
+      "claude --dangerously-skip-permissions --mcp-config " +
+      mcp_path +
+      " --strict-mcp-config"
+  }
+  cmd + "; echo; echo '[TL exited]'; exec bash -l"
 }
 
 ///|
-test "init claude launch command uses explicit choir mcp config" {
-  let cmd = init_claude_launch_command()
-  assert_true(cmd.contains("--mcp-config .choir/claude.mcp.json"))
-  assert_true(cmd.contains("--strict-mcp-config"))
-  assert_false(cmd.contains(" .mcp.json"))
+fn init_parse_tl_type(args : Array[String]) -> String {
+  for i = 0; i < args.length() - 1; i = i + 1 {
+    if args[i] == "--tl" {
+      return args[i + 1]
+    }
+  }
+  "claude"
+}
+
+///|
+test "init TL launch command defaults to claude" {
+  let cmd = init_tl_launch_command("claude")
+  assert_true(cmd.contains("claude --dangerously-skip-permissions"))
+  assert_true(cmd.contains("--mcp-config .choir/tl.mcp.json"))
+}
+
+///|
+test "init TL launch command supports codex" {
+  let cmd = init_tl_launch_command("codex")
+  assert_true(cmd.contains("codex --dangerously-bypass-approvals-and-sandbox"))
+  assert_true(cmd.contains("--no-alt-screen"))
+  assert_true(cmd.contains("--mcp-config .choir/tl.mcp.json"))
+}
+
+///|
+test "init parse_tl_type extracts --tl flag" {
+  assert_eq(init_parse_tl_type(["choir", "init", "--tl", "codex"]), "codex")
+  assert_eq(init_parse_tl_type(["choir", "init"]), "claude")
+  assert_eq(
+    init_parse_tl_type(["choir", "init", "--recreate", "--tl", "gemini"]),
+    "gemini",
+  )
 }
 
 ///|
@@ -3228,6 +3264,7 @@ fn init_run() -> Unit {
       let args = @env.args()
       let recreate = args.contains("--recreate")
       let no_attach = init_no_attach(args)
+      let tl_type = init_parse_tl_type(args)
       let project_dir = @env.current_dir().unwrap_or(".")
       let default_session = init_default_terminal_session(project_dir)
       let use_dev = init_is_choir_source_tree(project_dir)
@@ -3278,7 +3315,7 @@ fn init_run() -> Unit {
           "-c",
           "printf '%s' \"$2\" > \"$1\"",
           "sh",
-          init_claude_mcp_config_path(),
+          init_tl_mcp_config_path(),
           init_mcp_json_content(project_dir),
         ],
         workdir: None,
@@ -3359,7 +3396,7 @@ fn init_run() -> Unit {
           session,
           "TL",
           project_dir,
-          init_claude_launch_command(),
+          init_tl_launch_command(tl_type),
         ),
       )
       ignore(
@@ -3600,7 +3637,7 @@ fn main {
     "watch" => watch_run()
     _ => {
       @sys.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
       )
       @sys.exit(1)
     }
