@@ -556,8 +556,107 @@ pub async fn ServerState::process_poller_tick(
 
 ///|
 /// Register a pane for idle watchdog monitoring.
+/// Starts a `zellij subscribe` process that streams pane viewport updates
+/// to a snapshot file, replacing the old dump-screen polling approach.
 pub fn ServerState::watch_pane(self : ServerState, agent_id : String) -> Unit {
   self.pane_watchers.set(agent_id, @poller.now_sec())
+  let agent = match self.registry.get(agent_id) {
+    Ok(a) => a
+    Err(_) => return
+  }
+  let target = match agent.terminal_target {
+    Some(t) => t
+    None => return
+  }
+  let snapshot_path = "/tmp/choir-viewport-" + agent_id + ".json"
+  // Pipe: zellij subscribe streams JSON, shell overwrites snapshot on each line
+  let cmd = "zellij --session '" +
+    target.session +
+    "' subscribe pane-viewport --pane-id '" +
+    target.name +
+    "' --format json 2>/dev/null | while IFS= read -r line; do printf '%s' \"$line\" > '" +
+    snapshot_path +
+    "'; done"
+  // Background the subscribe pipeline; store its PID via a pidfile
+  let pid_path = "/tmp/choir-subscribe-" + agent_id + ".pid"
+  let bg_cmd = cmd + " & echo $! > '" + pid_path + "'"
+  ignore(c_system(string_to_null_terminated_bytes(bg_cmd)))
+  let pid_str = @sys.read_file(pid_path).trim().to_string()
+  let pid = parse_int_simple(pid_str)
+  if pid > 0 {
+    self.subscribe_pids.set(agent_id, pid)
+  }
+}
+
+///|
+fn parse_int_simple(s : String) -> Int {
+  let mut result = 0
+  for c in s {
+    let d = c.to_int() - '0'.to_int()
+    if d >= 0 && d <= 9 {
+      result = result * 10 + d
+    }
+  }
+  result
+}
+
+///|
+/// Stop the zellij subscribe process for an agent and clean up state.
+fn ServerState::stop_subscribe(self : ServerState, agent_id : String) -> Unit {
+  match self.subscribe_pids.get(agent_id) {
+    Some(pid) => {
+      ignore(
+        c_system(
+          string_to_null_terminated_bytes(
+            "kill " + pid.to_string() + " 2>/dev/null || true",
+          ),
+        ),
+      )
+      self.subscribe_pids.remove(agent_id)
+    }
+    None => ()
+  }
+  ignore(
+    c_system(
+      string_to_null_terminated_bytes(
+        "rm -f '/tmp/choir-viewport-" +
+        agent_id +
+        ".json' '/tmp/choir-subscribe-" +
+        agent_id +
+        ".pid'",
+      ),
+    ),
+  )
+}
+
+///|
+/// Extract viewport text from a zellij subscribe JSON snapshot.
+/// Format: {"event":"pane_update","viewport":["line1","line2",...]}
+fn extract_viewport_text(json_str : String) -> String {
+  if json_str == "" {
+    return ""
+  }
+  let parsed : Json = @json.parse(json_str) catch { _ => return json_str }
+  match parsed {
+    Object(obj) =>
+      match obj.get("viewport") {
+        Some(Array(lines)) => {
+          let buf = StringBuilder::new()
+          for line in lines {
+            match line {
+              String(s) => {
+                buf.write_string(s)
+                buf.write_char('\n')
+              }
+              _ => ()
+            }
+          }
+          buf.to_string()
+        }
+        _ => json_str
+      }
+    _ => json_str
+  }
 }
 
 ///|
@@ -584,12 +683,14 @@ pub async fn ServerState::check_idle_agents(
     let agent = match self.registry.get(agent_id) {
       Ok(a) => a
       Err(_) => {
+        self.stop_subscribe(agent_id)
         self.pane_watchers.remove(agent_id)
         self.pane_hashes.remove(agent_id)
         continue
       }
     }
     if agent.state != @types.AgentState::Active {
+      self.stop_subscribe(agent_id)
       self.pane_watchers.remove(agent_id)
       self.pane_hashes.remove(agent_id)
       continue
@@ -611,24 +712,11 @@ pub async fn ServerState::check_idle_agents(
       Some(t) => t
       None => continue
     }
-    let dump_path = "/tmp/choir-watchdog-" + agent_id + ".txt"
-    let session_name = target.session
-    let pane_id = target.name
-    ignore(
-      runner([
-        {
-          program: "sh",
-          args: [
-            "-c", "zellij --session \"$1\" action dump-screen --pane-id \"$2\" > \"$3\" 2>/dev/null || true",
-            "sh", session_name, pane_id, dump_path,
-          ],
-          workdir: None,
-        },
-      ]) catch {
-        _ => continue
-      },
-    )
-    let screen = @sys.read_file(dump_path)
+    // Read viewport snapshot written by the zellij subscribe process
+    let snapshot_path = "/tmp/choir-viewport-" + agent_id + ".json"
+    let snapshot = @sys.read_file(snapshot_path)
+    // Extract viewport lines from JSON: {"viewport":["line1","line2",...]}
+    let screen = extract_viewport_text(snapshot)
     let hash = simple_hash(screen)
     let prev_hash = self.pane_hashes.get(agent_id).unwrap_or(0)
     if hash != prev_hash {
@@ -667,6 +755,7 @@ pub async fn ServerState::check_idle_agents(
     )
     ignore(runner([@workspace.local_close_target(target)]) catch { _ => [] })
     ignore(self.registry.set_state(agent_id, @types.AgentState::Failed))
+    self.stop_subscribe(agent_id)
     self.pane_watchers.remove(agent_id)
     self.pane_hashes.remove(agent_id)
     // Notify parent
