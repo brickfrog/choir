@@ -49,17 +49,16 @@ async fn emit_span(
   @moontrace.info(name, fields~)
   match state.config.otlp_endpoint {
     Some(ep) => {
-      let mt_span = @moontrace.span(name, fields~)
+      let mt_span = @moontrace.span_with_trace(
+        name,
+        normalize_trace_id(state.run_id),
+        fields~,
+      )
       mt_span.start_time = start_ms
       mt_span.end_time = end_ms
       let status_code = if resp.is_ok() { 1 } else { 2 }
       let status_message = resp.error_message().unwrap_or("")
-      let otlp_span = @otlp.span_to_otlp(
-        mt_span,
-        trace_id=normalize_trace_id(state.run_id),
-        status_code~,
-        status_message~,
-      )
+      let otlp_span = @otlp.span_to_otlp(mt_span, status_code~, status_message~)
       export_otlp_span(otlp_span, ep) catch {
         _ => ()
       }
