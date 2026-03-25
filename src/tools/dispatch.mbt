@@ -647,6 +647,43 @@ pub async fn dispatch(
       }
       @types.Response::ok_values(result)
     }
+    ToolRequest::KillAgent(kill_args) =>
+      match registry {
+        Some(reg) =>
+          match reg.get(kill_args.agent_id) {
+            Ok(agent) => {
+              // Close the pane
+              match agent.terminal_target {
+                Some(terminal_target) => {
+                  let kill_cmd = @workspace.local_close_target(terminal_target)
+                  let _ = runner([kill_cmd])
+                  ()
+                }
+                None => ()
+              }
+              // Clean up worktree if applicable
+              if agent.workspace.contains(".choir/worktrees/") {
+                let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
+                ()
+              }
+              let _ = reg.set_state(kill_args.agent_id, @types.AgentState::Done)
+              @moontrace.warn(
+                "agent killed",
+                fields=@moontrace.fields([
+                  ("agent_id", kill_args.agent_id.to_json()),
+                  ("reason", kill_args.reason.to_json()),
+                ]),
+              )
+              @types.Response::ok_values({
+                "status": String::to_json("killed"),
+                "agent_id": String::to_json(kill_args.agent_id),
+              })
+            }
+            Err(_) =>
+              @types.Response::Err("agent not found: " + kill_args.agent_id)
+          }
+        None => @types.Response::Err("no agent registry available")
+      }
     ToolRequest::KvGet(key_args) => {
       let value = @sys.read_file(kv_file_path(project_dir, key_args.key))
       if value == "" {

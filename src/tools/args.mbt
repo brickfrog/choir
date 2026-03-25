@@ -160,6 +160,12 @@ struct ShutdownArgs {
 } derive(Show, Eq)
 
 ///|
+struct KillAgentArgs {
+  agent_id : String
+  reason : String
+} derive(Show, Eq)
+
+///|
 struct IdArgs {
   id : String
 } derive(Show, Eq)

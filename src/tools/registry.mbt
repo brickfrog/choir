@@ -81,6 +81,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {
+      name: "kill_agent",
+      description: "Kill a child agent by agent_id; closes its pane and cleans up registry",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "kv_get",
       description: "Read one value from shared KV storage",
       allowed_roles: all_roles,

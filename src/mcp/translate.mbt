@@ -428,6 +428,18 @@ fn tool_defs() -> Array[CatalogTool] {
       ],
       required: [],
     },
+    {
+      name: "kill_agent",
+      description: "Kill a child agent — closes its pane and cleans up. Use when an agent is stuck or its work is done",
+      props: [
+        { name: "agent_id", desc: "Agent ID to kill" },
+        {
+          name: "reason",
+          desc: "Reason for killing (default: killed by parent)",
+        },
+      ],
+      required: ["agent_id"],
+    },
   ]
 }
 

@@ -838,6 +838,15 @@ fn parse_tool_request(
       })
     "spawn_worker" =>
       parse_worker_spawn_args(args).map(fn(a) { ToolRequest::SpawnWorker(a) })
+    "kill_agent" => {
+      let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
+      if agent_id == "" {
+        Err("missing agent_id")
+      } else {
+        let reason = tool_args_get(args, "reason").unwrap_or("killed by parent")
+        Ok(ToolRequest::KillAgent({ agent_id, reason }))
+      }
+    }
     _ => Err("unknown tool: " + name)
   }
 }
