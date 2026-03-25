@@ -180,7 +180,7 @@ fn spawn_worker_props() -> Array[SchemaProp] {
     { name: "agent_id", desc: "Compatibility alias for slug" },
     {
       name: "agent_type",
-      desc: "Worker agent type: gemini, claude, or moon_pilot",
+      desc: "Worker agent type: gemini, claude, moon_pilot, or codex",
     },
     { name: "type", desc: "Worker profile: research or review" },
     { name: "read_first", desc: "Newline-separated paths to read first" },
@@ -215,7 +215,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "agent_type",
-          desc: "Agent type: gemini (default), claude, or moon_pilot",
+          desc: "Agent type: gemini (default), claude, moon_pilot, or codex",
         },
         {
           name: "parent_branch",

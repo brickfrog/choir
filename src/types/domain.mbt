@@ -13,6 +13,7 @@ pub(all) enum AgentType {
   Claude
   Gemini
   MoonPilot
+  Codex
 } derive(Show, Eq)
 
 ///|

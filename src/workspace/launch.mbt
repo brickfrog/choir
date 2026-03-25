@@ -73,6 +73,16 @@ pub fn agent_launch_command(
         args: ["pilot", spec.task],
         workdir: Some(workspace_path),
       }
+    Codex =>
+      {
+        program: "codex",
+        args: [
+          "--dangerously-bypass-approvals-and-sandbox",
+          "--no-alt-screen",
+          spec.task,
+        ],
+        workdir: Some(workspace_path),
+      }
   }
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)
