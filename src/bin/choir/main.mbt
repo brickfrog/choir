@@ -1511,6 +1511,11 @@ fn zellij_action_run() -> Unit {
                 }
               }
           }
+          // Wrap in bracketed paste (ESC[200~ ... ESC[201~) so agents
+          // like Moon Pilot treat multi-line text as a single paste event
+          // instead of executing each newline as Enter.
+          let esc = Int::unsafe_to_char(0x1B).to_string()
+          let pasted = esc + "[200~" + text + esc + "[201~"
           let write_code = @exec.run({
             program: "zellij",
             args: [
@@ -1520,7 +1525,7 @@ fn zellij_action_run() -> Unit {
               "write-chars",
               "-p",
               pane_id,
-              text,
+              pasted,
             ],
             workdir: None,
           })
