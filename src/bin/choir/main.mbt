@@ -2915,8 +2915,7 @@ fn init_tl_launch_command(tl_type : String) -> String {
   let mcp_path = init_tl_mcp_config_path()
   let cmd = match tl_type {
     "codex" =>
-      "codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen --mcp-config " +
-      mcp_path
+      "codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
     "gemini" => "gemini --yolo --prompt-interactive"
     _ =>
       "claude --dangerously-skip-permissions --mcp-config " +
@@ -2948,7 +2947,7 @@ test "init TL launch command supports codex" {
   let cmd = init_tl_launch_command("codex")
   assert_true(cmd.contains("codex --dangerously-bypass-approvals-and-sandbox"))
   assert_true(cmd.contains("--no-alt-screen"))
-  assert_true(cmd.contains("--mcp-config .choir/tl.mcp.json"))
+  assert_false(cmd.contains("--mcp-config"))
 }
 
 ///|
