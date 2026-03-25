@@ -2,17 +2,17 @@
 
 [English](README.md) | 简体中文
 
-用 MoonBit 编写的本地多代理编排器。Claude 担任 TL（技术负责人），拆解任务后
-分派给运行在隔离 zellij 窗格中的 Gemini、Moon Pilot 或其他 Claude 实例。
+用 MoonBit 编写的本地多代理编排器。用你昂贵的订阅来思考（Claude 担任 TL），
+用更便宜或更专业的订阅来实现（Gemini、Codex、Moon Pilot 作为叶子代理）。
 每个叶子代理在独立的 git worktree 中工作，完成后提交 PR，内置 poller 自动接收
 GitHub Copilot 的 review 反馈。TL 在 PR 通过后合并，将所有分支折叠回 main。
 
 ```
 choir init
   服务端 (常驻, UDS)
-    TL (Claude) ──fork_wave──▶ 叶子 (Gemini) ──file_pr──▶ GitHub PR
-                                                              │
-                               Poller ◀── Copilot review ─────┘
+    TL (Claude) ──fork_wave──▶ 叶子 (Gemini/Codex/Moon Pilot) ──file_pr──▶ GitHub PR
+                                                                               │
+                               Poller ◀── Copilot review ─────────────────────┘
                                Poller ──▶ 叶子 (修复 review 意见)
                                Poller ──▶ TL   (通过后合并)
 ```
@@ -46,7 +46,7 @@ moon fmt
 - 必需：`git`
 - PR 工作流必需：`gh`
 - 本地会话管理必需：`zellij`（0.44+）
-- 你实际使用到的代理 CLI：`claude`、`gemini`、`moon`
+- 你实际使用到的代理 CLI：`claude`、`gemini`、`moon`、`codex`
 
 Nix dev shell 会提供上面的开源依赖。专有代理 CLI 仍需要你自行安装并完成认证。
 
@@ -114,17 +114,20 @@ flowchart TD
   TL -->|mcp-stdio| S
   TL -->|fork_wave| G1["叶子 (Gemini)"]
   TL -->|fork_wave| G2["叶子 (Gemini)"]
-  TL -->|"fork_wave agent_type=claude"| C1["叶子 (Claude)"]
-  TL -->|spawn_worker| W["Worker (Moon Pilot)"]
+  TL -->|"agent_type=codex"| X1["叶子 (Codex)"]
+  TL -->|"agent_type=moon_pilot"| M1["叶子 (Moon Pilot)"]
+  TL -->|"agent_type=claude"| C1["叶子 (Claude)"]
+  TL -->|spawn_worker| W["Worker"]
 
   G1 -->|file_pr| GH[GitHub PR]
   G2 -->|file_pr| GH
+  X1 -->|file_pr| GH
+  M1 -->|file_pr| GH
   C1 -->|file_pr| GH
 
   GH -->|Copilot review| Poller
   Poller -->|ReviewReceived| G1
   Poller -->|ReviewReceived| G2
-  Poller -->|ReviewReceived| C1
   Poller -->|notify parent| TL
 
   G1 -->|notify_parent| TL
@@ -138,8 +141,10 @@ flowchart TD
   style TL fill:#7c3aed,color:#fff
   style G1 fill:#f59e0b,color:#000
   style G2 fill:#f59e0b,color:#000
+  style X1 fill:#22c55e,color:#000
+  style M1 fill:#10b981,color:#000
   style C1 fill:#3b82f6,color:#fff
-  style W fill:#10b981,color:#000
+  style W fill:#6b7280,color:#fff
   style GH fill:#1f2937,color:#fff
   style Poller fill:#6b7280,color:#fff
   style Recovery fill:#6b7280,color:#fff
@@ -173,11 +178,11 @@ Choir 通过 [extism](https://extism.org/) 支持 Gemini 模型 hook（BeforeMod
 ## 状态
 
 - 本地 UDS 工作流：已验证
-- `zellij` 后端（0.44+）：已验证
-- `zellij` 后端：可用
+- zellij 后端（0.44+）：已验证
+- 叶子代理：Claude、Gemini、Moon Pilot、Codex
+- 结构化日志：[moontrace](https://github.com/brickfrog/moontrace)，支持彩色输出和 OTLP span 导出
 - companion / 叶子代理 / review / merge 的 live smoke：已具备
 - TCP/remote 路径：已实现，但验证程度低于本地 UDS
-- Claude `--channels`：目前还不能用于手动配置的 MCP 服务
 
 ## 致谢
 
