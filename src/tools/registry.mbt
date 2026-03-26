@@ -86,6 +86,16 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "rescue_leaf",
+      description: "Manual rescue: replace a stuck Dev leaf using its existing worktree and branch; requires source_agent_id (or agent_id) and agent_type (gemini|claude|...); transfers tracked PR ownership when the replacement re-registers under the same agent id",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
+      name: "handoff_leaf",
+      description: "Alias of rescue_leaf for manual handoff to a replacement agent type",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "kv_get",
       description: "Read one value from shared KV storage",
       allowed_roles: all_roles,

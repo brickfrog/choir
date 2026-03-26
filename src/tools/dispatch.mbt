@@ -121,6 +121,53 @@ fn resolve_parent_for_notify(
 }
 
 ///|
+fn rescue_caller_may_act(
+  reg : @registry.AgentRegistry,
+  caller_id : String,
+  from_agent : @types.Agent,
+) -> Bool {
+  match reg.get(caller_id) {
+    Err(_) => false
+    Ok(caller) =>
+      match caller.role {
+        @types.Role::Root => true
+        @types.Role::TL => from_agent.parent == Some(caller_id)
+        _ => false
+      }
+  }
+}
+
+///|
+fn rescue_leaf_refusal(
+  from_agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+) -> String? {
+  if from_agent.role != @types.Role::Dev {
+    return Some("rescue only supports Dev leaves; nothing salvageable")
+  }
+  match from_agent.state {
+    @types.AgentState::Active
+    | @types.AgentState::Completing
+    | @types.AgentState::Spawning => ()
+    _ => return Some("agent is not active; nothing salvageable")
+  }
+  if from_agent.branch == "" {
+    return Some("missing branch metadata; nothing salvageable")
+  }
+  if not(from_agent.workspace.contains(".choir/worktrees/")) {
+    return Some("no leaf worktree to reuse; nothing salvageable")
+  }
+  match lifecycle.process {
+    @phase.ProcessState::Connected | @phase.ProcessState::Finalizing(_) => ()
+    _ => return Some("agent lifecycle is finalized; nothing salvageable")
+  }
+  match @workspace.parent_branch(from_agent.branch) {
+    Some(_) => None
+    None => Some("invalid leaf branch; nothing salvageable")
+  }
+}
+
+///|
 pub async fn dispatch(
   req : ToolRequest,
   project_dir? : String = ".",
@@ -255,6 +302,10 @@ pub async fn dispatch(
           // Register spawned agents as synthetic team members (best-effort)
           let resolved_pane_ids : Array[(String, String)] = []
           for slug in spawned_slugs {
+            let agent_id = @workspace.branch_name(
+              fork_wave_args.parent_branch,
+              slug,
+            )
             let _ = @workspace.register_team_member_native(
               fork_wave_args.caller_id,
               slug,
@@ -263,14 +314,10 @@ pub async fn dispatch(
             apply_tl_event(
               project_dir,
               fork_wave_args.caller_id,
-              @phase.TLEvent::ChildSpawned(child_id=slug),
+              @phase.TLEvent::ChildSpawned(child_id=agent_id),
               registry~,
             )
             // Resolve zellij pane ID for faster delivery (best-effort)
-            let agent_id = @workspace.branch_name(
-              fork_wave_args.parent_branch,
-              slug,
-            )
             match resolve_zellij_pane_id(session, slug, runner) {
               Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
               None => ()
@@ -912,6 +959,136 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
+    ToolRequest::RescueLeaf(rescue_args) =>
+      match registry {
+        None => @types.Response::Err("agent registry unavailable")
+        Some(reg) =>
+          match reg.get(rescue_args.source_agent_id) {
+            Err(e) => @types.Response::Err(e.message())
+            Ok(from_agent) => {
+              if not(
+                  rescue_caller_may_act(reg, rescue_args.caller_id, from_agent),
+                ) {
+                return @types.Response::Err(
+                  "caller cannot rescue this leaf (must be Root or the leaf's TL parent)",
+                )
+              }
+              let lifecycle = @phase.read_or_default_lifecycle(
+                project_dir,
+                rescue_args.source_agent_id,
+                @types.Role::Dev,
+              )
+              match rescue_leaf_refusal(from_agent, lifecycle) {
+                Some(msg) => return @types.Response::Err(msg)
+                None => ()
+              }
+              let parent_id = match from_agent.parent {
+                Some(p) => p
+                None =>
+                  return @types.Response::Err("rescued leaf has no parent id")
+              }
+              let parent_branch_str = match
+                @workspace.parent_branch(from_agent.branch) {
+                Some(pb) => pb
+                None => return @types.Response::Err("invalid leaf branch")
+              }
+              let slug = @phase.extract_slug(rescue_args.source_agent_id)
+              match from_agent.terminal_target {
+                Some(terminal_target) =>
+                  ignore(
+                    runner([@workspace.local_close_target(terminal_target)]),
+                  )
+                None => ()
+              }
+              let rescued_lifecycle : @phase.AgentLifecycle = {
+                ..lifecycle,
+                process: @phase.ProcessState::Finalized(
+                  reason=@phase.FinalizeReason::RecoveredDone,
+                ),
+                workflow: @phase.WorkflowState::Dev(
+                  @phase.DevLifecycle::Done(
+                    reason=@phase.FinalizeReason::RecoveredDone,
+                  ),
+                ),
+              }
+              ignore(@phase.write_lifecycle(project_dir, rescued_lifecycle))
+              apply_tl_event(
+                project_dir,
+                parent_id,
+                @phase.TLEvent::ChildRemoved(
+                  child_id=rescue_args.source_agent_id,
+                ),
+                registry=Some(reg),
+              )
+              match reg.remove(rescue_args.source_agent_id) {
+                Err(e) => return @types.Response::Err(e.message())
+                Ok(_) => ()
+              }
+              match poller_state {
+                Some(ps) => {
+                  let pb = match @workspace.parent_branch(from_agent.branch) {
+                    Some(p) => p
+                    None => ""
+                  }
+                  ignore(
+                    ps.transfer_owner(
+                      rescue_args.source_agent_id,
+                      rescue_args.source_agent_id,
+                      from_agent.branch,
+                      pb,
+                    ),
+                  )
+                  ignore(ps.write_state_file(project_dir))
+                }
+                None => ()
+              }
+              let spec = @types.SpawnSpec::{
+                slug,
+                role: @types.Role::Dev,
+                agent_type: rescue_args.agent_type,
+                task: rescue_args.task,
+                isolation: @types.IsolationMode::Worktree,
+                parent_id,
+                parent_branch: parent_branch_str,
+              }
+              let cmds = @workspace.spawn_commands(
+                spec,
+                project_dir,
+                session,
+                parent_session_id=rescue_args.parent_session_id,
+                extra_mcp_servers_json~,
+                shell_command~,
+                listen_uds~,
+                listen_tcp~,
+                tcp_auth_token~,
+                reuse_existing_worktree=true,
+              )
+              match run_strict(runner, cmds) {
+                Err(e) => @types.Response::Err(e)
+                Ok(_) => {
+                  let _ = @workspace.register_team_member_native(
+                    parent_id,
+                    slug,
+                    @config.agent_type_to_string(rescue_args.agent_type),
+                  )
+                  apply_tl_event(
+                    project_dir,
+                    parent_id,
+                    @phase.TLEvent::ChildSpawned(
+                      child_id=rescue_args.source_agent_id,
+                    ),
+                    registry=Some(reg),
+                  )
+                  @types.Response::ok_values({
+                    "status": String::to_json("rescued"),
+                    "agent_id": String::to_json(rescue_args.source_agent_id),
+                    "slug": String::to_json(slug),
+                  })
+                }
+              }
+            }
+          }
+      }
     ToolRequest::Reply(reply_args) => {
       let id = reply_args.id
       let cancel = reply_args.cancel
@@ -1218,16 +1395,23 @@ pub fn apply_tl_event(
     _ => @phase.SupervisorLifecycle::Planning
   }
   let transitioned = match event {
-    @phase.TLEvent::ChildSpawned(child_id~) =>
+    @phase.TLEvent::ChildSpawned(child_id~) => {
+      let slug = @phase.extract_slug(child_id)
       @phase.supervisor_transition(
         supervisor,
         @phase.SupervisorEvent::ChildSpawned(child={
           child_id,
-          slug: child_id,
+          slug,
           branch: child_id,
           agent_type: "",
           summary: @phase.ChildLifecycleSummary::Working,
         }),
+      )
+    }
+    @phase.TLEvent::ChildRemoved(child_id~) =>
+      @phase.supervisor_transition(
+        supervisor,
+        @phase.SupervisorEvent::ChildRemoved(child_id~),
       )
     @phase.TLEvent::ChildCompleted(child_id~) =>
       @phase.supervisor_transition(

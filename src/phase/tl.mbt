@@ -98,6 +98,7 @@ pub(all) enum TLPhase {
 ///|
 pub(all) enum TLEvent {
   ChildSpawned(child_id~ : String)
+  ChildRemoved(child_id~ : String)
   ChildCompleted(child_id~ : String)
   ChildFailed(child_id~ : String, reason~ : String)
   PRMerged(number~ : Int, url~ : String)

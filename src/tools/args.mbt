@@ -166,6 +166,15 @@ struct KillAgentArgs {
 } derive(Show, Eq)
 
 ///|
+struct RescueLeafArgs {
+  source_agent_id : String
+  agent_type : @types.AgentType
+  caller_id : String
+  task : String
+  parent_session_id : String?
+} derive(Show, Eq)
+
+///|
 struct IdArgs {
   id : String
 } derive(Show, Eq)

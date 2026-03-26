@@ -208,7 +208,13 @@ pub async fn ServerState::handle_with_runner(
     _ => ()
   }
   // Start pane watchers for newly spawned agents
-  if (req.name == "fork_wave" || req.name == "spawn_worker") && resp.is_ok() {
+  if (
+      req.name == "fork_wave" ||
+      req.name == "spawn_worker" ||
+      req.name == "rescue_leaf" ||
+      req.name == "handoff_leaf"
+    ) &&
+    resp.is_ok() {
     match resp.ok_field("agent_ids") {
       Some(ids) =>
         for part in ids.split(",") {
@@ -225,7 +231,21 @@ pub async fn ServerState::handle_with_runner(
             Err(_) => ()
           }
         }
-      None => ()
+      None =>
+        match resp.ok_field("agent_id") {
+          Some(agent_id) =>
+            if agent_id != "" {
+              match self.registry.get(agent_id) {
+                Ok(agent) =>
+                  match agent.terminal_target {
+                    Some(_) => self.watch_pane(agent_id)
+                    None => ()
+                  }
+                Err(_) => ()
+              }
+            }
+          None => ()
+        }
     }
   }
   resp

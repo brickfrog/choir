@@ -731,6 +731,43 @@ fn parse_shutdown_args(args : ToolArgs) -> ShutdownArgs {
 }
 
 ///|
+fn parse_rescue_leaf_args(
+  project_dir : String,
+  args : ToolArgs,
+) -> Result[RescueLeafArgs, String] {
+  let source_agent_id = get_arg_or_alias(
+    args, "source_agent_id", "agent_id", "",
+  )
+  if source_agent_id == "" {
+    return Err("missing source_agent_id (or agent_id)")
+  }
+  match validate_branch(source_agent_id) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid source_agent_id: " + e)
+  }
+  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("")
+  if agent_type_str == "" {
+    return Err("missing agent_type")
+  }
+  let agent_type = match parse_agent_type(agent_type_str) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let default_task = "You are taking over this worktree after a manual rescue or handoff. Continue from the current git state and your parent's instructions."
+  let task = match tool_args_get(args, "task") {
+    Some(v) => if v == "" { default_task } else { v }
+    None => default_task
+  }
+  Ok({
+    source_agent_id,
+    agent_type,
+    caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
+    task,
+    parent_session_id: lookup_parent_session_id(project_dir, args),
+  })
+}
+
+///|
 fn parse_id_args(args : ToolArgs) -> Result[IdArgs, String] {
   let id = tool_args_get(args, "id").unwrap_or("")
   if id == "" {
@@ -841,6 +878,14 @@ fn parse_tool_request(
       })
     "spawn_worker" =>
       parse_worker_spawn_args(args).map(fn(a) { ToolRequest::SpawnWorker(a) })
+    "rescue_leaf" =>
+      parse_rescue_leaf_args(_project_dir, args).map(fn(a) {
+        ToolRequest::RescueLeaf(a)
+      })
+    "handoff_leaf" =>
+      parse_rescue_leaf_args(_project_dir, args).map(fn(a) {
+        ToolRequest::RescueLeaf(a)
+      })
     "kill_agent" => {
       let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
       if agent_id == "" {
