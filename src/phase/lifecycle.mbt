@@ -1088,3 +1088,19 @@ pub fn read_or_default_lifecycle(
     None => lifecycle_for_role(agent_id, role)
   }
 }
+
+///|
+pub fn extract_slug(agent_id : String) -> String {
+  let mut last_dot = -1
+  for i = agent_id.length() - 1; i >= 0; i = i - 1 {
+    if agent_id[i] == '.' {
+      last_dot = i
+      break
+    }
+  }
+  if last_dot == -1 {
+    agent_id
+  } else {
+    agent_id[last_dot + 1:].to_string()
+  }
+}

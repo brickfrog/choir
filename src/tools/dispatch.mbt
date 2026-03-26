@@ -402,7 +402,7 @@ pub async fn dispatch(
                 merge_args.caller_id,
                 @phase.TLEvent::PRMerged(
                   number=merge_args.pr_number,
-                  url=extract_slug(tracked.branch),
+                  url=@phase.extract_slug(tracked.branch),
                 ),
               )
             None => ()
@@ -1047,28 +1047,8 @@ pub async fn dispatch_call(
 }
 
 ///|
-fn extract_slug(s : String) -> String {
-  let mut last_dot = -1
-  for i = s.length() - 1; i >= 0; i = i - 1 {
-    if s[i] == '.' {
-      last_dot = i
-      break
-    }
-  }
-  if last_dot == -1 {
-    s
-  } else {
-    s[last_dot + 1:].to_string()
-  }
-}
-
-///|
-fn supervisor_role_for_scope(scope : String) -> @types.Role {
-  if scope == "root" {
-    @types.Role::Root
-  } else {
-    @types.Role::TL
-  }
+fn supervisor_role_for_scope(_scope : String) -> @types.Role {
+  @types.Role::TL
 }
 
 ///|

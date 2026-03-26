@@ -706,22 +706,6 @@ fn ServerState::stop_subscribe(self : ServerState, agent_id : String) -> Unit {
 }
 
 ///|
-fn leaf_slug(agent_id : String) -> String {
-  let mut last_dot = -1
-  for i = agent_id.length() - 1; i >= 0; i = i - 1 {
-    if agent_id[i] == '.' {
-      last_dot = i
-      break
-    }
-  }
-  if last_dot == -1 {
-    agent_id
-  } else {
-    agent_id[last_dot + 1:].to_string()
-  }
-}
-
-///|
 fn child_exists(
   children : Array[@phase.ChildLifecycle],
   child_id : String,
@@ -789,7 +773,7 @@ fn ServerState::sync_parent_child_lifecycle(
   }
   let child : @phase.ChildLifecycle = {
     child_id: agent_id,
-    slug: leaf_slug(agent_id),
+    slug: @phase.extract_slug(agent_id),
     branch: agent.branch,
     agent_type: @config.agent_type_to_string(agent.agent_type),
     summary: @phase.child_summary_from_lifecycle(lifecycle),
@@ -889,7 +873,10 @@ async fn ServerState::finalize_agent_with_runner(
     match agent.parent {
       Some(parent_id) => {
         ignore(
-          @workspace.remove_team_member_native(parent_id, leaf_slug(agent_id)),
+          @workspace.remove_team_member_native(
+            parent_id,
+            @phase.extract_slug(agent_id),
+          ),
         )
         match self.registry.get(parent_id) {
           Ok(parent) => {

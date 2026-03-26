@@ -149,8 +149,8 @@ async test "handle_request fork_wave accepts raw primitive request args" {
 
 ///|
 async test "execute_delivery creates Teams inbox directories" {
-  let inbox_path = "/tmp/choir-dispatch-delivery/inboxes/default.json"
-  run_shell("rm -rf /tmp/choir-dispatch-delivery")
+  let inbox_path = "/tmp/choir-dispatch-delivery-unique/inboxes/default.json"
+  run_shell("rm -rf /tmp/choir-dispatch-delivery-unique")
   let res = @tools.execute_delivery(
     @message.DeliveryMethod::TeamsInbox(
       inbox_path,
@@ -167,7 +167,7 @@ async test "execute_delivery creates Teams inbox directories" {
       )
     Err(e) => fail(e)
   }
-  run_shell("rm -rf /tmp/choir-dispatch-delivery")
+  run_shell("rm -rf /tmp/choir-dispatch-delivery-unique")
 }
 
 ///|
@@ -763,6 +763,10 @@ async test "dispatch register requires agent_id arg" {
 
 ///|
 async test "dispatch shutdown returns shutdown without finalizing registry" {
+  let project_dir = "/tmp/choir-dispatch-shutdown-hermetic"
+  run_shell(
+    "rm -rf /tmp/choir-dispatch-shutdown-hermetic && mkdir -p /tmp/choir-dispatch-shutdown-hermetic/.choir/kv",
+  )
   let reg = @registry.AgentRegistry::new()
   let agent = @types.Agent::{
     agent_id: "leaf-1",
@@ -781,7 +785,12 @@ async test "dispatch shutdown returns shutdown without finalizing registry" {
     name: "shutdown",
     args: { "caller_id": "leaf-1" },
   }
-  let res = @tools.dispatch_call(call, runner=mock_runner, registry=Some(reg))
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    runner=mock_runner,
+    registry=Some(reg),
+  )
   match res {
     Ok(fields) => assert_eq(fields.get("status"), Some("shutdown"))
     Err(_) => fail("shutdown should succeed")
@@ -790,6 +799,7 @@ async test "dispatch shutdown returns shutdown without finalizing registry" {
     Ok(a) => assert_eq(a.state, @types.AgentState::Active)
     Err(_) => fail("agent should remain registered and active")
   }
+  run_shell("rm -rf /tmp/choir-dispatch-shutdown-hermetic")
 }
 
 ///|
@@ -852,12 +862,16 @@ async test "dispatch shutdown defers review-owned dev lifecycle" {
 
 ///|
 async test "dispatch shutdown allowed for TL role" {
+  let project_dir = "/tmp/choir-dispatch-shutdown-tl"
+  run_shell(
+    "rm -rf /tmp/choir-dispatch-shutdown-tl && mkdir -p /tmp/choir-dispatch-shutdown-tl/.choir/kv",
+  )
   let call : @tools.ToolCall = {
     role: @types.Role::TL,
     name: "shutdown",
     args: { "caller_id": "main.tl-1" },
   }
-  let res = @tools.dispatch_call(call, runner=mock_runner)
+  let res = @tools.dispatch_call(call, project_dir~, runner=mock_runner)
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("shutdown"))
@@ -868,10 +882,15 @@ async test "dispatch shutdown allowed for TL role" {
       assert_true(false)
     }
   }
+  run_shell("rm -rf /tmp/choir-dispatch-shutdown-tl")
 }
 
 ///|
 async test "dispatch shutdown blocks during critical review phase" {
+  let project_dir = "/tmp/choir-dispatch-shutdown-block"
+  run_shell(
+    "rm -rf /tmp/choir-dispatch-shutdown-block && mkdir -p /tmp/choir-dispatch-shutdown-block/.choir/kv",
+  )
   let poller = @poller.PollerState::new()
   poller.track(
     42, "leaf-2", "main.leaf-2", "main", "https://example.test/pr/42", 100L,
@@ -889,6 +908,7 @@ async test "dispatch shutdown blocks during critical review phase" {
   }
   let res = @tools.dispatch_call(
     call,
+    project_dir~,
     runner=mock_runner,
     poller_state=Some(poller),
   )
@@ -899,6 +919,7 @@ async test "dispatch shutdown blocks during critical review phase" {
         e, "cannot shutdown: PR #42 has changes requested — push fixes first",
       )
   }
+  run_shell("rm -rf /tmp/choir-dispatch-shutdown-block")
 }
 
 ///|

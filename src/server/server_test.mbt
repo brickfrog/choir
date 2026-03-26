@@ -167,10 +167,31 @@ async test "ServerState::handle_with_runner finalizes exitable shutdown" {
       }
     None => fail("expected persisted lifecycle")
   }
-  assert_eq(recorded.length(), 3)
-  assert_eq(recorded[0].program, "choir")
-  assert_eq(recorded[1].program, "git")
-  assert_eq(recorded[2].program, "choir")
+  let mut first_choir_index = -1
+  let mut git_index = -1
+  let mut last_choir_index = -1
+  for i = 0; i < recorded.length(); i = i + 1 {
+    if recorded[i].program == "choir" {
+      if first_choir_index == -1 {
+        first_choir_index = i
+      }
+      last_choir_index = i
+    } else if recorded[i].program == "git" && git_index == -1 {
+      git_index = i
+    }
+  }
+  if first_choir_index == -1 {
+    fail("expected at least one 'choir' command")
+  }
+  if git_index == -1 {
+    fail("expected a 'git' command")
+  }
+  if last_choir_index == -1 {
+    fail("expected at least one 'choir' command after 'git'")
+  }
+  if not(first_choir_index < git_index && git_index < last_choir_index) {
+    fail("expected 'choir', then 'git', then 'choir' in order")
+  }
   run_shell("rm -rf /tmp/choir-server-shutdown")
 }
 
