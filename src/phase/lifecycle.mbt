@@ -2,7 +2,6 @@
 pub(all) enum FinalizeReason {
   Shutdown
   Merged
-  ParentKill
   DisconnectFinalized
   RecoveredDone
 } derive(Show, Eq)
@@ -14,6 +13,10 @@ pub(all) enum FailureReason {
   ParentFailureNotification
   ChildFailure(message~ : String)
   RecoveredFailed
+  ModelAtCapacity
+  MCPInitializeFailure
+  ParentKilled
+  BlockedByReview
 } derive(Show, Eq)
 
 ///|
@@ -502,7 +505,6 @@ fn finalize_reason_to_json(reason : FinalizeReason) -> Json {
   match reason {
     Shutdown => { "tag": "Shutdown".to_json() }.to_json()
     Merged => { "tag": "Merged".to_json() }.to_json()
-    ParentKill => { "tag": "ParentKill".to_json() }.to_json()
     DisconnectFinalized => { "tag": "DisconnectFinalized".to_json() }.to_json()
     RecoveredDone => { "tag": "RecoveredDone".to_json() }.to_json()
   }
@@ -514,7 +516,6 @@ fn finalize_reason_from_json(json : Json) -> FinalizeReason? {
   match obj.get("tag") {
     Some(String("Shutdown")) => Some(Shutdown)
     Some(String("Merged")) => Some(Merged)
-    Some(String("ParentKill")) => Some(ParentKill)
     Some(String("DisconnectFinalized")) => Some(DisconnectFinalized)
     Some(String("RecoveredDone")) => Some(RecoveredDone)
     _ => None
@@ -532,6 +533,11 @@ fn failure_reason_to_json(reason : FailureReason) -> Json {
     ChildFailure(message~) =>
       { "tag": "ChildFailure".to_json(), "message": message.to_json() }.to_json()
     RecoveredFailed => { "tag": "RecoveredFailed".to_json() }.to_json()
+    ModelAtCapacity => { "tag": "ModelAtCapacity".to_json() }.to_json()
+    MCPInitializeFailure =>
+      { "tag": "MCPInitializeFailure".to_json() }.to_json()
+    ParentKilled => { "tag": "ParentKilled".to_json() }.to_json()
+    BlockedByReview => { "tag": "BlockedByReview".to_json() }.to_json()
   }
 }
 
@@ -543,6 +549,35 @@ pub fn failure_reason_message(reason : FailureReason) -> String {
     ParentFailureNotification => "parent failure notification"
     ChildFailure(message~) => message
     RecoveredFailed => "recovered failed"
+    ModelAtCapacity => "model at capacity"
+    MCPInitializeFailure => "MCP initialize failure"
+    ParentKilled => "parent killed"
+    BlockedByReview => "blocked by review"
+  }
+}
+
+///|
+pub fn classify_failure(message : String) -> FailureReason {
+  let lower = message.to_lower()
+  if lower.contains("at capacity") || lower.contains("rate limit") {
+    ModelAtCapacity
+  } else if lower.contains("mcp initialize") ||
+    lower.contains("mcp handshake") ||
+    lower.contains("failed to initialize") {
+    MCPInitializeFailure
+  } else if lower.contains("watchdog") ||
+    (lower.contains("timeout") && lower.contains("idle")) {
+    WatchdogTimeout
+  } else if lower.contains("killed") ||
+    (lower.contains("parent") && lower.contains("kill")) {
+    ParentKilled
+  } else if lower.contains("blocked") ||
+    (lower.contains("review") && lower.contains("changes requested")) {
+    BlockedByReview
+  } else if lower.contains("disconnect") || lower.contains("crashed") {
+    UnexpectedDisconnect
+  } else {
+    ChildFailure(message~)
   }
 }
 
@@ -559,6 +594,10 @@ fn failure_reason_from_json(json : Json) -> FailureReason? {
         _ => None
       }
     Some(String("RecoveredFailed")) => Some(RecoveredFailed)
+    Some(String("ModelAtCapacity")) => Some(ModelAtCapacity)
+    Some(String("MCPInitializeFailure")) => Some(MCPInitializeFailure)
+    Some(String("ParentKilled")) => Some(ParentKilled)
+    Some(String("BlockedByReview")) => Some(BlockedByReview)
     _ => None
   }
 }

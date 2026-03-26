@@ -604,7 +604,6 @@ pub async fn dispatch(
                 let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
                 ()
               }
-              let _ = reg.set_state(kill_args.agent_id, @types.AgentState::Done)
               @moontrace.warn(
                 "agent killed",
                 fields=@moontrace.fields([
@@ -1178,7 +1177,7 @@ pub fn apply_tl_event(
         supervisor,
         @phase.SupervisorEvent::ChildFailed(
           child_id~,
-          reason=@phase.FailureReason::ChildFailure(message=reason),
+          reason=@phase.classify_failure(reason),
         ),
       )
     @phase.TLEvent::PRMerged(url~, ..) =>

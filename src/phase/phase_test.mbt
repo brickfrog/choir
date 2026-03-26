@@ -98,6 +98,38 @@ test "dev_can_exit" {
 }
 
 ///|
+test "failure classification" {
+  assert_eq(
+    classify_failure("model is at capacity, try again later"),
+    ModelAtCapacity,
+  )
+  assert_eq(classify_failure("rate limit reached"), ModelAtCapacity)
+  assert_eq(
+    classify_failure("MCP initialize failure: connection refused"),
+    MCPInitializeFailure,
+  )
+  assert_eq(
+    classify_failure("failed to initialize MCP server"),
+    MCPInitializeFailure,
+  )
+  assert_eq(classify_failure("watchdog killed idle agent"), WatchdogTimeout)
+  assert_eq(classify_failure("timeout due to idle"), WatchdogTimeout)
+  assert_eq(classify_failure("agent was killed by parent"), ParentKilled)
+  assert_eq(classify_failure("parent kill request received"), ParentKilled)
+  assert_eq(
+    classify_failure("cannot shutdown: blocked by review changes requested"),
+    BlockedByReview,
+  )
+  assert_eq(classify_failure("review blocked"), BlockedByReview)
+  assert_eq(classify_failure("agent crashed"), UnexpectedDisconnect)
+  assert_eq(classify_failure("unexpected disconnect"), UnexpectedDisconnect)
+  assert_eq(
+    classify_failure("some other error"),
+    ChildFailure(message="some other error"),
+  )
+}
+
+///|
 test "lifecycle dev transition carries typed review ownership" {
   let mut lifecycle = DevLifecycle::Working
   match

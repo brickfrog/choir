@@ -122,6 +122,60 @@ async test "ServerState::handle invalid role returns Err" {
 }
 
 ///|
+async test "ServerState::handle_with_runner fails killed agent" {
+  let project_dir = "/tmp/choir-server-kill"
+  run_shell(
+    "rm -rf /tmp/choir-server-kill && mkdir -p /tmp/choir-server-kill/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = {
+    ..build_agent("root", None),
+    role: @types.Role::TL,
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:TL"),
+  }
+  let child = {
+    ..build_agent("main.dev-1", Some("root")),
+    branch: "main.dev-1",
+    workspace: project_dir + "/.choir/worktrees/main.dev-1",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:main.dev-1"),
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "kill_agent",
+    args: @types.RequestArgs::from_values({
+      "agent_id": "main.dev-1".to_json(),
+      "reason": "stop it".to_json(),
+    }),
+  }
+  let recorded : Array[@workspace.Command] = []
+  let res = state.handle_with_runner(req, runner=async fn(cmds) {
+    record_runner_server(recorded, cmds)
+  })
+  assert_eq(res.ok_field("status"), Some("killed"))
+  match state.registry.get("main.dev-1") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
+    Err(_) => fail("expected failed agent")
+  }
+  match @phase.read_lifecycle(project_dir, "main.dev-1") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(reason=ParentKilled)
+        ) => ()
+        _ => fail("expected failed dev lifecycle with ParentKilled reason")
+      }
+    None => fail("expected persisted lifecycle")
+  }
+  // 1 for local_close_target, 1 for git_worktree_remove (in dispatch), 
+  // plus 1 for notify_parent (in fail_agent_with_runner)
+  assert_eq(recorded.length(), 3)
+  run_shell("rm -rf /tmp/choir-server-kill")
+}
+
+///|
 async test "ServerState::handle_with_runner finalizes exitable shutdown" {
   let project_dir = "/tmp/choir-server-shutdown"
   run_shell(

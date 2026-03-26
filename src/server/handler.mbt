@@ -160,6 +160,22 @@ pub async fn ServerState::handle_with_runner(
       _ => ()
     }
   }
+  if req.name == "kill_agent" && resp.is_ok() {
+    match resp.ok_field("agent_id") {
+      Some(agent_id) => {
+        let reason = req.args.get("reason").unwrap_or("killed by parent")
+        self.fail_agent_with_runner(
+          agent_id,
+          @phase.FailureReason::ParentKilled,
+          "[KILLED] " + agent_id + " killed: " + reason,
+          "killed",
+          runner,
+          close_target=false,
+        )
+      }
+      None => ()
+    }
+  }
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp) catch {
     _ => ()
@@ -1206,10 +1222,37 @@ pub async fn ServerState::handle_disconnect_with_runner(
                 remove_worktree=false,
               )
             @phase.LifecycleDisconnectPolicy::Ignore => ()
-            @phase.LifecycleDisconnectPolicy::Fail(reason~) => {
-              let msg = "[FAILED: " +
-                agent_id +
-                "] disconnected unexpectedly - agent may have crashed or run out of context"
+            @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
+              let snapshot_path = "/tmp/choir-viewport-" + agent_id + ".json"
+              let snapshot = @sys.read_file(snapshot_path)
+              let screen = extract_viewport_text(snapshot)
+              let (reason, msg) = if screen != "" {
+                let classified = @phase.classify_failure(screen)
+                match classified {
+                  ChildFailure(_) =>
+                    (
+                      default_reason,
+                      "[FAILED: " +
+                      agent_id +
+                      "] disconnected unexpectedly - agent may have crashed or run out of context",
+                    )
+                  _ =>
+                    (
+                      classified,
+                      "[FAILED: " +
+                      agent_id +
+                      "] " +
+                      @phase.failure_reason_message(classified),
+                    )
+                }
+              } else {
+                (
+                  default_reason,
+                  "[FAILED: " +
+                  agent_id +
+                  "] disconnected unexpectedly - agent may have crashed or run out of context",
+                )
+              }
               self.fail_agent_with_runner(
                 agent_id, reason, msg, "disconnect", runner,
               )
