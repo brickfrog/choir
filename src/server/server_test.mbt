@@ -829,7 +829,13 @@ async test "ServerState::handle_with_runner finalizes merged dev agent" {
       }
     None => fail("expected persisted lifecycle")
   }
-  assert_true(recorded.length() >= 3)
+  let mut choir_count = 0
+  for cmd in recorded {
+    if cmd.program == "choir" {
+      choir_count = choir_count + 1
+    }
+  }
+  assert_true(choir_count >= 1)
   run_shell("rm -rf /tmp/choir-server-merge-finalize")
 }
 

@@ -1090,17 +1090,22 @@ pub fn read_or_default_lifecycle(
 }
 
 ///|
-pub fn extract_slug(agent_id : String) -> String {
+pub fn last_segment_after_dot(value : String) -> String {
   let mut last_dot = -1
-  for i = agent_id.length() - 1; i >= 0; i = i - 1 {
-    if agent_id[i] == '.' {
+  for i = value.length() - 1; i >= 0; i = i - 1 {
+    if value[i] == '.' {
       last_dot = i
       break
     }
   }
   if last_dot == -1 {
-    agent_id
+    value
   } else {
-    agent_id[last_dot + 1:].to_string()
+    value[last_dot + 1:].to_string()
   }
+}
+
+///|
+pub fn extract_slug(agent_id : String) -> String {
+  last_segment_after_dot(agent_id)
 }

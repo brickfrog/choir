@@ -207,6 +207,7 @@ pub async fn dispatch(
               project_dir,
               fork_wave_args.caller_id,
               @phase.TLEvent::ChildSpawned(child_id=slug),
+              registry~,
             )
             // Resolve zellij pane ID for faster delivery (best-effort)
             let agent_id = @workspace.branch_name(
@@ -404,6 +405,7 @@ pub async fn dispatch(
                   number=merge_args.pr_number,
                   url=@phase.extract_slug(tracked.branch),
                 ),
+                registry~,
               )
             None => ()
           }
@@ -1048,6 +1050,7 @@ pub async fn dispatch_call(
 
 ///|
 fn supervisor_role_for_scope(_scope : String) -> @types.Role {
+  // Default to TL; do not infer Root purely from scope == "root".
   @types.Role::TL
 }
 
@@ -1126,11 +1129,18 @@ pub fn apply_tl_event(
   project_dir : String,
   scope : String,
   event : @phase.TLEvent,
+  registry? : @registry.AgentRegistry? = None,
 ) -> Unit {
+  let default_role = match registry {
+    Some(reg) =>
+      match reg.get(scope) {
+        Ok(agent) => agent.role
+        Err(_) => supervisor_role_for_scope(scope)
+      }
+    None => supervisor_role_for_scope(scope)
+  }
   let lifecycle = @phase.read_or_default_lifecycle(
-    project_dir,
-    scope,
-    supervisor_role_for_scope(scope),
+    project_dir, scope, default_role,
   )
   let supervisor = match lifecycle.workflow {
     @phase.WorkflowState::Supervisor(supervisor) => supervisor
