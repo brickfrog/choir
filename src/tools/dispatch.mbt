@@ -525,21 +525,6 @@ pub async fn dispatch(
             "status": String::to_json("shutdown"),
           }) // best-effort
       }
-      let mut warning : String? = None
-      let phase_json = @phase.get_phase(project_dir, "dev", caller_id)
-      match phase_json {
-        Some(j) =>
-          match @phase.dev_phase_from_json(j) {
-            Some(phase) =>
-              match @phase.dev_can_exit(phase) {
-                MustBlock(msg) => return @types.Response::Err(msg)
-                ShouldNudge(msg) => warning = Some(msg)
-                Clean => ()
-              }
-            None => ()
-          }
-        None => ()
-      }
       match poller_state {
         Some(ps) =>
           match ps.critical_phase_pr_number(caller_id) {
@@ -553,97 +538,34 @@ pub async fn dispatch(
           }
         None => ()
       }
-      // 1. Notify parent if registry available
-      match registry {
-        Some(reg) => {
-          let _ = reg.set_state(caller_id, @types.AgentState::Completing)
-          match reg.get_parent(caller_id) {
-            Ok(parent) => {
-              let mut last_dot = -1
-              for i = caller_id.length() - 1; i >= 0; i = i - 1 {
-                if caller_id[i] == '.' {
-                  last_dot = i
-                  break
-                }
-              }
-              let slug = if last_dot == -1 {
-                caller_id
-              } else {
-                caller_id[last_dot + 1:].to_string()
-              }
-              ignore(
-                @workspace.remove_team_member_native(
-                  parent.agent_id.to_string(),
-                  slug,
-                ),
-              )
-              let delivery = @message.plan_delivery(
-                parent, caller_id, "agent shutdown", "success",
-              )
-              let _ = execute_delivery(delivery, runner) // best-effort, ignore failure
-              ()
-            }
-            Err(_) => ()
-          }
+      let phase = current_dev_phase(project_dir, caller_id)
+      match @phase.dev_exit_decision(phase) {
+        @phase.DevExitDecision::Blocked(message~) =>
+          @types.Response::Err(message)
+        @phase.DevExitDecision::Deferred(message~) => {
+          ignore(
+            apply_dev_event_checked(
+              project_dir,
+              caller_id,
+              @phase.DevEvent::ExitRequested,
+            ),
+          )
+          @types.Response::ok_values({
+            "status": String::to_json("deferred"),
+            "warning": String::to_json(message),
+          })
         }
-        None => ()
-      }
-      // 2. Fire AgentExit hook
-      fire_hook_async(
-        @hooks.HookEvent::AgentExit,
-        {
-          event: @hooks.HookEvent::AgentExit,
-          session_id: None,
-          agent_id: Some(caller_id),
-          role: Some(
-            match registry {
-              Some(reg) =>
-                match reg.get(caller_id) {
-                  Ok(a) => a.role
-                  Err(_) => @types.Role::Dev
-                }
-              None => @types.Role::Dev
-            },
-          ),
-          tool_name: None,
-          tool_args: None,
-          tool_result_status: None,
-          exit_reason: Some("shutdown"),
-        },
-        project_dir,
-        runner,
-      )
-      // 3. Kill pane and remove from registry
-      match registry {
-        Some(reg) => {
-          match reg.get(caller_id) {
-            Ok(agent) => {
-              if agent.workspace.contains(".choir/worktrees/") {
-                let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
-                ()
-              }
-              match agent.terminal_target {
-                Some(terminal_target) => {
-                  let kill_cmd = @workspace.local_close_target(terminal_target)
-                  let _ = runner([kill_cmd])
-                  ()
-                }
-                None => ()
-              }
-            }
-            Err(_) => ()
-          }
-          let _ = reg.set_state(caller_id, @types.AgentState::Done)
-          ()
+        @phase.DevExitDecision::ExitableNow => {
+          ignore(
+            apply_dev_event_checked(
+              project_dir,
+              caller_id,
+              @phase.DevEvent::ExitRequested,
+            ),
+          )
+          @types.Response::ok_values({ "status": String::to_json("shutdown") })
         }
-        None => ()
       }
-      let result : Map[String, Json] = { "status": String::to_json("shutdown") }
-      match warning {
-        Some(msg) => result.set("warning", String::to_json(msg))
-        None => ()
-      }
-      @types.Response::ok_values(result)
     }
     ToolRequest::KillAgent(kill_args) =>
       match registry {
@@ -1172,14 +1094,31 @@ pub fn apply_dev_event(
   scope : String,
   event : @phase.DevEvent,
 ) -> Unit {
+  ignore(apply_dev_event_checked(project_dir, scope, event))
+}
+
+///|
+pub fn current_dev_phase(
+  project_dir : String,
+  scope : String,
+) -> @phase.DevPhase {
   let phase_json = @phase.get_phase(project_dir, "dev", scope)
   let current = match phase_json {
     Some(j) => @phase.dev_phase_from_json(j)
     None => None
   }
-  let phase = current.unwrap_or(@phase.DevPhase::Spawned)
+  current.unwrap_or(@phase.DevPhase::Working)
+}
+
+///|
+pub fn apply_dev_event_checked(
+  project_dir : String,
+  scope : String,
+  event : @phase.DevEvent,
+) -> Result[@phase.DevPhase, String] {
+  let phase = current_dev_phase(project_dir, scope)
   match @phase.dev_transition(phase, event) {
-    Transitioned(new_phase) =>
+    Transitioned(new_phase) => {
       ignore(
         @phase.set_phase(
           project_dir,
@@ -1188,6 +1127,8 @@ pub fn apply_dev_event(
           @phase.dev_phase_to_json(new_phase),
         ),
       )
-    InvalidTransition(_) => ()
+      Ok(new_phase)
+    }
+    InvalidTransition(message) => Err(message)
   }
 }

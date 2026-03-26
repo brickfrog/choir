@@ -21,12 +21,12 @@ test "tl_transition" {
 
 ///|
 test "dev_transition" {
-  let mut p = DevPhase::Spawned
+  let mut p = DevPhase::Working
   match
     dev_transition(p, PRCreated(pr_number=123, url="url", branch="branch")) {
-    Transitioned(PRFiled(pr_number=123, url="url")) =>
-      p = PRFiled(pr_number=123, url="url")
-    _ => fail("expected PRFiled")
+    Transitioned(PROpenUnreviewed(pr_number=123, url="url")) =>
+      p = PROpenUnreviewed(pr_number=123, url="url")
+    _ => fail("expected PROpenUnreviewed")
   }
   match dev_transition(p, ReviewReceivedEv(pr_number=123, body="msg")) {
     Transitioned(ChangesRequested(pr_number=123)) =>
@@ -34,13 +34,35 @@ test "dev_transition" {
     _ => fail("expected ChangesRequested")
   }
   match dev_transition(p, FixesPushedEv(pr_number=123, sha="hash")) {
-    Transitioned(UnderReview(pr_number=123, round=1)) =>
-      p = UnderReview(pr_number=123, round=1)
-    _ => fail("expected UnderReview")
+    Transitioned(FixesPushedAwaitingReview(pr_number=123, round=1)) =>
+      p = FixesPushedAwaitingReview(pr_number=123, round=1)
+    _ => fail("expected FixesPushedAwaitingReview")
   }
   match dev_transition(p, ReviewApprovedEv(pr_number=123)) {
-    Transitioned(Approved(pr_number=123)) => p = Approved(pr_number=123)
-    _ => fail("expected Approved")
+    Transitioned(ApprovedAwaitingMerge(pr_number=123)) =>
+      p = ApprovedAwaitingMerge(pr_number=123)
+    _ => fail("expected ApprovedAwaitingMerge")
+  }
+  match dev_transition(p, ExitRequested) {
+    Transitioned(
+      ExitRequestedDeferred(
+        pr_number=123,
+        stage="ApprovedAwaitingMerge",
+        round=0,
+        url=""
+      )
+    ) =>
+      p = ExitRequestedDeferred(
+        pr_number=123,
+        stage="ApprovedAwaitingMerge",
+        round=0,
+        url="",
+      )
+    _ => fail("expected ExitRequestedDeferred")
+  }
+  match dev_transition(p, MergeObserved(pr_number=123)) {
+    Transitioned(Done) => p = Done
+    _ => fail("expected Done")
   }
 }
 
@@ -64,9 +86,15 @@ test "dev_can_exit" {
     MustBlock("Changes requested"),
   )
   assert_eq(
-    dev_can_exit(UnderReview(pr_number=123, round=1)),
+    dev_can_exit(PRUnderReview(pr_number=123, round=1)),
     ShouldNudge("PR 123 under review (round 1)"),
   )
+  assert_eq(dev_disconnect_policy(Working), Fail)
+  assert_eq(
+    dev_disconnect_policy(PROpenUnreviewed(pr_number=123, url="url")),
+    Preserve,
+  )
+  assert_eq(dev_disconnect_policy(Exitable), FinalizeDone)
 }
 
 ///|
@@ -95,10 +123,18 @@ test "dev phase json round-trip all variants" {
   let phases : Array[DevPhase] = [
     Spawned,
     Working,
-    PRFiled(pr_number=99, url="https://github.com/org/repo/pull/99"),
-    UnderReview(pr_number=99, round=3),
+    PROpenUnreviewed(pr_number=99, url="https://github.com/org/repo/pull/99"),
+    PRUnderReview(pr_number=99, round=3),
     ChangesRequested(pr_number=99),
-    Approved(pr_number=99),
+    FixesPushedAwaitingReview(pr_number=99, round=2),
+    ApprovedAwaitingMerge(pr_number=99),
+    ExitRequestedDeferred(
+      pr_number=99,
+      stage="ApprovedAwaitingMerge",
+      round=0,
+      url="",
+    ),
+    Exitable,
     Done,
     Failed(reason="lint errors"),
   ]

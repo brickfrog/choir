@@ -762,7 +762,7 @@ async test "dispatch register requires agent_id arg" {
 }
 
 ///|
-async test "dispatch shutdown marks agent Done in registry" {
+async test "dispatch shutdown returns shutdown without finalizing registry" {
   let reg = @registry.AgentRegistry::new()
   let agent = @types.Agent::{
     agent_id: "leaf-1",
@@ -782,61 +782,70 @@ async test "dispatch shutdown marks agent Done in registry" {
     args: { "caller_id": "leaf-1" },
   }
   let res = @tools.dispatch_call(call, runner=mock_runner, registry=Some(reg))
-  assert_true(res is Ok(_))
+  match res {
+    Ok(fields) => assert_eq(fields.get("status"), Some("shutdown"))
+    Err(_) => fail("shutdown should succeed")
+  }
   match reg.get("leaf-1") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Done)
-    Err(_) => fail("agent should remain in registry as Done")
+    Ok(a) => assert_eq(a.state, @types.AgentState::Active)
+    Err(_) => fail("agent should remain registered and active")
   }
 }
 
 ///|
-async test "dispatch shutdown marks agent completing before terminal close" {
-  let reg = @registry.AgentRegistry::new()
-  let agent = @types.Agent::{
-    agent_id: "leaf-1",
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Claude,
-    state: @types.AgentState::Active,
-    parent: None,
-    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf-1"),
-    host: @types.Host::Local,
-    workspace: "",
-    branch: "",
-  }
-  let _ = reg.insert(agent)
-  let close_seen = Ref::new(false)
+async test "dispatch shutdown defers review-owned dev lifecycle" {
+  let project_dir = "/tmp/choir-dispatch-shutdown-deferred"
+  run_shell(
+    "rm -rf /tmp/choir-dispatch-shutdown-deferred && mkdir -p /tmp/choir-dispatch-shutdown-deferred/.choir/kv",
+  )
+  ignore(
+    @phase.set_phase(
+      project_dir,
+      "dev",
+      "leaf-1",
+      @phase.dev_phase_to_json(
+        @phase.DevPhase::PROpenUnreviewed(
+          pr_number=42,
+          url="https://example.test/pr/42",
+        ),
+      ),
+    ),
+  )
   let res = @tools.dispatch_call(
     {
       role: @types.Role::Dev,
       name: "shutdown",
       args: { "caller_id": "leaf-1" },
     },
-    runner=async fn(cmds) {
-      @async.sleep(0)
-      if cmds.length() == 1 &&
-        cmds[0].program == "choir" &&
-        cmds[0].args[0] == "zellij-action" &&
-        cmds[0].args[1] == "close" {
-        close_seen.val = true
-        match reg.get("leaf-1") {
-          Ok(found) => assert_eq(found.state, @types.AgentState::Completing)
-          Err(_) => fail("expected leaf to remain registered during close")
-        }
-      }
-      let statuses = []
-      for _ in cmds {
-        statuses.push(0)
-      }
-      statuses
-    },
-    registry=Some(reg),
+    project_dir~,
+    runner=mock_runner,
   )
-  assert_true(res is Ok(_))
-  assert_true(close_seen.val)
-  match reg.get("leaf-1") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Done)
-    Err(_) => fail("agent should remain in registry as Done")
+  match res {
+    Ok(fields) => {
+      assert_eq(fields.get("status"), Some("deferred"))
+      assert_eq(
+        fields.get("warning"),
+        Some("PR filed (42) at https://example.test/pr/42"),
+      )
+    }
+    Err(_) => fail("shutdown should defer")
   }
+  match @phase.get_phase(project_dir, "dev", "leaf-1") {
+    Some(json) =>
+      match @phase.dev_phase_from_json(json) {
+        Some(
+          @phase.DevPhase::ExitRequestedDeferred(
+            pr_number=42,
+            stage="PROpenUnreviewed",
+            round=0,
+            url="https://example.test/pr/42"
+          )
+        ) => ()
+        _ => fail("expected deferred exit phase")
+      }
+    None => fail("expected persisted dev phase")
+  }
+  run_shell("rm -rf /tmp/choir-dispatch-shutdown-deferred")
 }
 
 ///|

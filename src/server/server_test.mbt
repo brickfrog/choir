@@ -122,6 +122,104 @@ async test "ServerState::handle invalid role returns Err" {
 }
 
 ///|
+async test "ServerState::handle_with_runner finalizes exitable shutdown" {
+  let project_dir = "/tmp/choir-server-shutdown"
+  run_shell(
+    "rm -rf /tmp/choir-server-shutdown && mkdir -p /tmp/choir-server-shutdown/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = {
+    ..build_agent("root", None),
+    role: @types.Role::TL,
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:TL"),
+  }
+  let child = {
+    ..build_agent("main.dev-1", Some("root")),
+    branch: "main.dev-1",
+    workspace: project_dir + "/.choir/worktrees/main.dev-1",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:main.dev-1"),
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "caller_id": "main.dev-1".to_json(),
+    }),
+  }
+  let recorded : Array[@workspace.Command] = []
+  let res = state.handle_with_runner(req, runner=async fn(cmds) {
+    record_runner_server(recorded, cmds)
+  })
+  assert_eq(res.ok_field("status"), Some("shutdown"))
+  match state.registry.get("main.dev-1") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Done)
+    Err(_) => fail("expected finalized agent")
+  }
+  match @phase.get_phase(project_dir, "dev", "main.dev-1") {
+    Some(json) =>
+      match @phase.dev_phase_from_json(json) {
+        Some(@phase.DevPhase::Done) => ()
+        _ => fail("expected Done phase")
+      }
+    None => fail("expected persisted dev phase")
+  }
+  assert_eq(recorded.length(), 3)
+  assert_eq(recorded[0].program, "choir")
+  assert_eq(recorded[1].program, "git")
+  assert_eq(recorded[2].program, "choir")
+  run_shell("rm -rf /tmp/choir-server-shutdown")
+}
+
+///|
+async test "ServerState::handle_with_runner defers shutdown for review-owned dev lifecycle" {
+  let project_dir = "/tmp/choir-server-shutdown-deferred"
+  run_shell(
+    "rm -rf /tmp/choir-server-shutdown-deferred && mkdir -p /tmp/choir-server-shutdown-deferred/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let child = {
+    ..build_agent("main.dev-review", None),
+    branch: "main.dev-review",
+  }
+  ignore(state.registry.insert(child))
+  ignore(
+    @phase.set_phase(
+      project_dir,
+      "dev",
+      "main.dev-review",
+      @phase.dev_phase_to_json(
+        @phase.DevPhase::PROpenUnreviewed(
+          pr_number=11,
+          url="https://example.test/pr/11",
+        ),
+      ),
+    ),
+  )
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "caller_id": "main.dev-review".to_json(),
+    }),
+  }
+  let recorded : Array[@workspace.Command] = []
+  let res = state.handle_with_runner(req, runner=async fn(cmds) {
+    record_runner_server(recorded, cmds)
+  })
+  assert_eq(res.ok_field("status"), Some("deferred"))
+  match state.registry.get("main.dev-review") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+    Err(_) => fail("expected active agent")
+  }
+  assert_eq(recorded.length(), 0)
+  run_shell("rm -rf /tmp/choir-server-shutdown-deferred")
+}
+
+///|
 async test "ServerState::handle_with_runner passes zellij session to spawns" {
   let config = {
     ..@types.Config::default(),
@@ -599,6 +697,68 @@ async test "process_poller_tick_with drives PR review workflow and merge cleanup
 }
 
 ///|
+async test "ServerState::handle_with_runner finalizes merged dev agent" {
+  let project_dir = "/tmp/choir-server-merge-finalize"
+  run_shell(
+    "rm -rf /tmp/choir-server-merge-finalize && mkdir -p /tmp/choir-server-merge-finalize/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+  let child = {
+    ..build_agent("main.leaf-1", Some("parent-1")),
+    role: @types.Role::Dev,
+    branch: "main.leaf-1",
+    workspace: project_dir + "/.choir/worktrees/main.leaf-1",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:main.leaf-1"),
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+  state.poller.track(
+    52, "main.leaf-1", "main.leaf-1", "main", "https://example.test/pr/52", 100L,
+  )
+  ignore(
+    @phase.set_phase(
+      project_dir,
+      "dev",
+      "main.leaf-1",
+      @phase.dev_phase_to_json(
+        @phase.DevPhase::ApprovedAwaitingMerge(pr_number=52),
+      ),
+    ),
+  )
+  let merge_req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::from_values({
+      "pr_number": Int::to_json(52),
+      "parent_branch": "main".to_json(),
+      "caller_id": "parent-1".to_json(),
+    }),
+  }
+  let recorded : Array[@workspace.Command] = []
+  let merge_res = state.handle_with_runner(merge_req, runner=async fn(cmds) {
+    record_runner_server(recorded, cmds)
+  })
+  assert_eq(merge_res.ok_field("status"), Some("merged"))
+  assert_eq(state.poller.get(52), None)
+  match state.registry.get("main.leaf-1") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Done)
+    Err(_) => fail("expected finalized agent")
+  }
+  match @phase.get_phase(project_dir, "dev", "main.leaf-1") {
+    Some(json) =>
+      match @phase.dev_phase_from_json(json) {
+        Some(@phase.DevPhase::Done) => ()
+        _ => fail("expected Done phase")
+      }
+    None => fail("expected persisted dev phase")
+  }
+  assert_true(recorded.length() >= 3)
+  run_shell("rm -rf /tmp/choir-server-merge-finalize")
+}
+
+///|
 async test "process_poller_tick_with suppresses duplicate recovered review events" {
   let state = ServerState::new(@types.Config::default())
   let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
@@ -767,7 +927,11 @@ test "ServerState::new initializes run_id and mutex registry" {
 
 ///|
 async test "handle_disconnect notifies parent when agent was Active" {
-  let state = ServerState::new(@types.Config::default())
+  let project_dir = "/tmp/choir-server-disconnect-active"
+  run_shell(
+    "rm -rf /tmp/choir-server-disconnect-active && mkdir -p /tmp/choir-server-disconnect-active/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
   let parent = { ..build_agent("root", None), role: @types.Role::TL }
   ignore(state.registry.insert(parent))
   let child = {
@@ -795,11 +959,16 @@ async test "handle_disconnect notifies parent when agent was Active" {
       "[FAILED: main.worker-1] disconnected unexpectedly - agent may have crashed or run out of context",
     ),
   )
+  run_shell("rm -rf /tmp/choir-server-disconnect-active")
 }
 
 ///|
 async test "handle_disconnect transitions Completing agent to Done" {
-  let state = ServerState::new(@types.Config::default())
+  let project_dir = "/tmp/choir-server-disconnect-completing"
+  run_shell(
+    "rm -rf /tmp/choir-server-disconnect-completing && mkdir -p /tmp/choir-server-disconnect-completing/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
   let agent = {
     ..build_agent("main.dev-1", None),
     branch: "main.dev-1",
@@ -811,6 +980,7 @@ async test "handle_disconnect transitions Completing agent to Done" {
     Ok(updated_agent) => assert_eq(updated_agent.state, @types.AgentState::Done)
     Err(_) => fail("Expected agent to remain in registry")
   }
+  run_shell("rm -rf /tmp/choir-server-disconnect-completing")
 }
 
 ///|
@@ -821,8 +991,12 @@ async test "handle_disconnect is no-op when agent already removed" {
 }
 
 ///|
-async test "handle_disconnect skips agents with tracked PRs" {
-  let state = ServerState::new(@types.Config::default())
+async test "handle_disconnect preserves review-owned dev agents" {
+  let project_dir = "/tmp/choir-server-disconnect-review"
+  run_shell(
+    "rm -rf /tmp/choir-server-disconnect-review && mkdir -p /tmp/choir-server-disconnect-review/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
   let parent = { ..build_agent("root", None), role: @types.Role::TL }
   ignore(state.registry.insert(parent))
   let child = {
@@ -830,20 +1004,68 @@ async test "handle_disconnect skips agents with tracked PRs" {
     branch: "main.leaf-pr",
   }
   ignore(state.registry.insert(child))
-  // Track a PR for this agent
-  state.poller.track(
-    99, "main.leaf-pr", "main.leaf-pr", "main", "https://example.test/pr/99", 100L,
+  ignore(
+    @phase.set_phase(
+      state.config.project_dir,
+      "dev",
+      "main.leaf-pr",
+      @phase.dev_phase_to_json(
+        @phase.DevPhase::PROpenUnreviewed(
+          pr_number=99,
+          url="https://example.test/pr/99",
+        ),
+      ),
+    ),
   )
   let delivered_cmds : Array[@workspace.Command] = []
   state.handle_disconnect_with_runner("main.leaf-pr", runner=async fn(cmds) {
     record_runner_server(delivered_cmds, cmds)
   })
-  // Agent should remain Active — disconnect skipped because PR is tracked
   match state.registry.get("main.leaf-pr") {
     Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
     Err(_) => fail("agent should remain in registry")
   }
   assert_eq(delivered_cmds.length(), 0)
+  run_shell("rm -rf /tmp/choir-server-disconnect-review")
+}
+
+///|
+async test "handle_disconnect fails dev agents with requested changes" {
+  let project_dir = "/tmp/choir-server-disconnect-fixes"
+  run_shell(
+    "rm -rf /tmp/choir-server-disconnect-fixes && mkdir -p /tmp/choir-server-disconnect-fixes/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = { ..build_agent("root", None), role: @types.Role::TL }
+  ignore(state.registry.insert(parent))
+  let child = {
+    ..build_agent("main.leaf-fix", Some("root")),
+    branch: "main.leaf-fix",
+  }
+  ignore(state.registry.insert(child))
+  ignore(
+    @phase.set_phase(
+      state.config.project_dir,
+      "dev",
+      "main.leaf-fix",
+      @phase.dev_phase_to_json(@phase.DevPhase::ChangesRequested(pr_number=77)),
+    ),
+  )
+  let delivered_cmds : Array[@workspace.Command] = []
+  state.handle_disconnect_with_runner("main.leaf-fix", runner=async fn(cmds) {
+    record_runner_server(delivered_cmds, cmds)
+  })
+  match state.registry.get("main.leaf-fix") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
+    Err(_) => fail("agent should remain in registry")
+  }
+  assert_eq(delivered_cmds.length(), 1)
+  assert_true(
+    delivered_cmds[0].args[3].contains(
+      "[FAILED: main.leaf-fix] disconnected unexpectedly - agent may have crashed or run out of context",
+    ),
+  )
+  run_shell("rm -rf /tmp/choir-server-disconnect-fixes")
 }
 
 ///|
@@ -878,7 +1100,11 @@ async test "schedule_disconnect is cancelled by re-register within grace period"
 
 ///|
 async test "schedule_disconnect fires after grace period expires" {
-  let state = ServerState::new(@types.Config::default())
+  let project_dir = "/tmp/choir-server-disconnect-expiry"
+  run_shell(
+    "rm -rf /tmp/choir-server-disconnect-expiry && mkdir -p /tmp/choir-server-disconnect-expiry/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
   let parent = { ..build_agent("root", None), role: @types.Role::TL }
   ignore(state.registry.insert(parent))
   let child = {
@@ -913,4 +1139,5 @@ async test "schedule_disconnect fires after grace period expires" {
   }
   assert_eq(cmds2.length(), 1)
   assert_true(cmds2[0].args[3].contains("[FAILED: main.dead-1]"))
+  run_shell("rm -rf /tmp/choir-server-disconnect-expiry")
 }

@@ -92,6 +92,18 @@ pub async fn ServerState::handle_with_runner(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> @types.Response {
   let start_ms = @env.now()
+  let merged_agent_id = if req.name == "merge_pr" {
+    match req.args.get_int("pr_number") {
+      Some(pr_number) =>
+        match self.poller.get(pr_number) {
+          Some(tracked) => Some(tracked.agent_id)
+          None => None
+        }
+      None => None
+    }
+  } else {
+    None
+  }
   let resp = if req.req_method == "tools/list" {
     @types.Response::ok({ "tools_list": "true" })
   } else {
@@ -111,6 +123,42 @@ pub async fn ServerState::handle_with_runner(
       poller_state=Some(self.poller),
       plugins_json=self.config.plugins_json,
     )
+  }
+  if req.name == "shutdown" && resp.is_ok() {
+    match request_agent_id(req) {
+      Some(agent_id) =>
+        match resp.ok_field("status") {
+          Some("shutdown") =>
+            self.finalize_agent_with_runner(
+              agent_id,
+              "shutdown",
+              runner,
+              notify_parent=true,
+            )
+          _ => ()
+        }
+      None => ()
+    }
+  }
+  if req.name == "merge_pr" && resp.is_ok() {
+    match (req.args.get_int("pr_number"), merged_agent_id) {
+      (Some(pr_number), Some(agent_id)) => {
+        ignore(
+          @tools.apply_dev_event_checked(
+            self.config.project_dir,
+            agent_id,
+            @phase.DevEvent::MergeObserved(pr_number~),
+          ),
+        )
+        self.finalize_agent_with_runner(
+          agent_id,
+          "merged",
+          runner,
+          notify_parent=false,
+        )
+      }
+      _ => ()
+    }
   }
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp) catch {
@@ -630,6 +678,226 @@ fn ServerState::stop_subscribe(self : ServerState, agent_id : String) -> Unit {
 }
 
 ///|
+fn leaf_slug(agent_id : String) -> String {
+  let mut last_dot = -1
+  for i = agent_id.length() - 1; i >= 0; i = i - 1 {
+    if agent_id[i] == '.' {
+      last_dot = i
+      break
+    }
+  }
+  if last_dot == -1 {
+    agent_id
+  } else {
+    agent_id[last_dot + 1:].to_string()
+  }
+}
+
+///|
+fn ServerState::current_dev_phase(
+  self : ServerState,
+  agent_id : String,
+) -> @phase.DevPhase {
+  @tools.current_dev_phase(self.config.project_dir, agent_id)
+}
+
+///|
+fn ServerState::set_dev_phase(
+  self : ServerState,
+  agent_id : String,
+  phase : @phase.DevPhase,
+) -> Unit {
+  ignore(
+    @phase.set_phase(
+      self.config.project_dir,
+      "dev",
+      agent_id,
+      @phase.dev_phase_to_json(phase),
+    ),
+  )
+}
+
+///|
+fn ServerState::clear_agent_runtime_tracking(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.stop_subscribe(agent_id)
+  self.pane_watchers.remove(agent_id)
+  self.pane_hashes.remove(agent_id)
+  self.pending_disconnects.remove(agent_id)
+}
+
+///|
+async fn ServerState::finalize_agent_with_runner(
+  self : ServerState,
+  agent_id : String,
+  exit_reason : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  notify_parent? : Bool = false,
+  close_target? : Bool = true,
+  remove_worktree? : Bool = true,
+) -> Unit {
+  let agent = match self.registry.get(agent_id) {
+    Ok(agent) => agent
+    Err(_) => {
+      self.clear_agent_runtime_tracking(agent_id)
+      return
+    }
+  }
+  match agent.state {
+    @types.AgentState::Done => {
+      self.clear_agent_runtime_tracking(agent_id)
+      return
+    }
+    @types.AgentState::Failed =>
+      ignore(self.registry.set_state(agent_id, @types.AgentState::Done))
+    @types.AgentState::Active =>
+      ignore(self.registry.set_state(agent_id, @types.AgentState::Completing))
+    @types.AgentState::Completing => ()
+    @types.AgentState::Spawning => ()
+  }
+  if notify_parent {
+    match agent.parent {
+      Some(parent_id) => {
+        ignore(
+          @workspace.remove_team_member_native(parent_id, leaf_slug(agent_id)),
+        )
+        match self.registry.get(parent_id) {
+          Ok(parent) => {
+            let delivery = @message.plan_delivery(
+              parent, agent_id, "agent shutdown", "success",
+            )
+            ignore(
+              @tools.execute_delivery(delivery, runner) catch {
+                _ => Ok(())
+              },
+            )
+          }
+          Err(_) => ()
+        }
+      }
+      None => ()
+    }
+  }
+  @tools.fire_hook_async(
+    @hooks.HookEvent::AgentExit,
+    {
+      event: @hooks.HookEvent::AgentExit,
+      session_id: None,
+      agent_id: Some(agent_id),
+      role: Some(agent.role),
+      tool_name: None,
+      tool_args: None,
+      tool_result_status: None,
+      exit_reason: Some(exit_reason),
+    },
+    self.config.project_dir,
+    runner,
+  )
+  if remove_worktree && agent.workspace.contains(".choir/worktrees/") {
+    ignore(
+      runner([@workspace.git_worktree_remove(agent.workspace)]) catch {
+        _ => []
+      },
+    )
+  }
+  if close_target {
+    match agent.terminal_target {
+      Some(target) =>
+        ignore(
+          runner([@workspace.local_close_target(target)]) catch {
+            _ => []
+          },
+        )
+      None => ()
+    }
+  }
+  ignore(self.registry.set_state(agent_id, @types.AgentState::Done))
+  if agent.role == @types.Role::Dev {
+    self.set_dev_phase(agent_id, @phase.DevPhase::Done)
+  }
+  self.clear_agent_runtime_tracking(agent_id)
+}
+
+///|
+async fn ServerState::fail_agent_with_runner(
+  self : ServerState,
+  agent_id : String,
+  reason : String,
+  parent_message : String,
+  exit_reason : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  close_target? : Bool = false,
+) -> Unit {
+  let agent = match self.registry.get(agent_id) {
+    Ok(agent) => agent
+    Err(_) => {
+      self.clear_agent_runtime_tracking(agent_id)
+      return
+    }
+  }
+  match agent.state {
+    @types.AgentState::Done | @types.AgentState::Failed => {
+      self.clear_agent_runtime_tracking(agent_id)
+      return
+    }
+    @types.AgentState::Active =>
+      ignore(self.registry.set_state(agent_id, @types.AgentState::Failed))
+    @types.AgentState::Completing =>
+      ignore(self.registry.set_state(agent_id, @types.AgentState::Done))
+    @types.AgentState::Spawning => ()
+  }
+  @tools.fire_hook_async(
+    @hooks.HookEvent::AgentExit,
+    {
+      event: @hooks.HookEvent::AgentExit,
+      session_id: None,
+      agent_id: Some(agent_id),
+      role: Some(agent.role),
+      tool_name: None,
+      tool_args: None,
+      tool_result_status: None,
+      exit_reason: Some(exit_reason),
+    },
+    self.config.project_dir,
+    runner,
+  )
+  if close_target {
+    match agent.terminal_target {
+      Some(target) =>
+        ignore(
+          runner([@workspace.local_close_target(target)]) catch {
+            _ => []
+          },
+        )
+      None => ()
+    }
+  }
+  if agent.role == @types.Role::Dev {
+    self.set_dev_phase(agent_id, @phase.DevPhase::Failed(reason~))
+  }
+  match agent.parent {
+    Some(parent_id) =>
+      match self.registry.get(parent_id) {
+        Ok(parent) => {
+          let delivery = @message.plan_delivery(
+            parent, agent_id, parent_message, "failure",
+          )
+          ignore(
+            @tools.execute_delivery(delivery, runner) catch {
+              _ => Ok(())
+            },
+          )
+        }
+        Err(_) => ()
+      }
+    None => ()
+  }
+  self.clear_agent_runtime_tracking(agent_id)
+}
+
+///|
 /// Extract viewport text from a zellij subscribe JSON snapshot.
 /// Format: {"event":"pane_update","viewport":["line1","line2",...]}
 fn extract_viewport_text(json_str : String) -> String {
@@ -698,18 +966,18 @@ pub async fn ServerState::check_idle_agents(
     if agent.role == @types.Role::Root || agent.role == @types.Role::TL {
       continue
     }
-    // Skip agents with tracked PRs awaiting review
-    let mut has_tracked_pr = false
-    self.poller.tracked.each(fn(_pr_num, tracked) {
-      if tracked.agent_id == agent_id {
-        has_tracked_pr = true
-      }
-    })
-    if has_tracked_pr {
-      continue
+    let dev_policy = if agent.role == @types.Role::Dev {
+      Some(@phase.dev_disconnect_policy(self.current_dev_phase(agent_id)))
+    } else {
+      None
     }
-    let target = match agent.terminal_target {
-      Some(t) => t
+    match dev_policy {
+      Some(@phase.DevDisconnectPolicy::Preserve)
+      | Some(@phase.DevDisconnectPolicy::Ignore) => continue
+      _ => ()
+    }
+    match agent.terminal_target {
+      Some(_) => ()
       None => continue
     }
     // Read viewport snapshot written by the zellij subscribe process
@@ -738,45 +1006,19 @@ pub async fn ServerState::check_idle_agents(
         ("idle_sec", elapsed.to_json()),
       ]),
     )
-    @tools.fire_hook_async(
-      @hooks.HookEvent::AgentExit,
-      {
-        event: @hooks.HookEvent::AgentExit,
-        session_id: None,
-        agent_id: Some(agent_id),
-        role: Some(agent.role),
-        tool_name: None,
-        tool_args: None,
-        tool_result_status: None,
-        exit_reason: Some("watchdog"),
-      },
-      self.config.project_dir,
+    let message = "[WATCHDOG] agent " +
+      agent_id +
+      " killed after " +
+      elapsed.to_string() +
+      "s idle (no pane output change)"
+    self.fail_agent_with_runner(
+      agent_id,
+      "watchdog timeout",
+      message,
+      "watchdog",
       runner,
+      close_target=true,
     )
-    ignore(runner([@workspace.local_close_target(target)]) catch { _ => [] })
-    ignore(self.registry.set_state(agent_id, @types.AgentState::Failed))
-    self.stop_subscribe(agent_id)
-    self.pane_watchers.remove(agent_id)
-    self.pane_hashes.remove(agent_id)
-    // Notify parent
-    match agent.parent {
-      Some(parent_id) =>
-        match self.registry.get(parent_id) {
-          Ok(parent) => {
-            let message = "[WATCHDOG] agent " +
-              agent_id +
-              " killed after " +
-              elapsed.to_string() +
-              "s idle (no pane output change)"
-            let delivery = @message.plan_delivery(
-              parent, agent_id, message, "failure",
-            )
-            ignore(@tools.execute_delivery(delivery, runner))
-          }
-          Err(_) => ()
-        }
-      None => ()
-    }
   }
 }
 
@@ -795,44 +1037,58 @@ pub fn ServerState::get_agent(
 
 ///|
 /// Called when a connection closes. Detects unexpected agent death and notifies parent.
-/// Agents with tracked PRs are skipped — the poller manages their lifecycle.
+/// Review-owned agents are preserved; agent-owned disconnects fail.
 pub async fn ServerState::handle_disconnect_with_runner(
   self : ServerState,
   agent_id : String,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
-  // If the agent has a tracked PR, the poller owns its lifecycle.
-  // Connection drops are normal for per-request agents (Gemini) that go idle
-  // between tool calls or while waiting for review.
-  if self.poller.has_tracked_pr(agent_id) {
-    return
-  }
   match self.registry.get(agent_id) {
     Err(_) => ()
     Ok(agent) =>
       match agent.state {
         Done | Failed => ()
         Completing =>
-          ignore(self.registry.set_state(agent_id, @types.AgentState::Done))
-        _ => {
-          ignore(self.registry.set_state(agent_id, @types.AgentState::Failed))
-          match self.registry.get_parent(agent_id) {
-            Err(_) => ()
-            Ok(parent) => {
-              let msg = "[FAILED: " +
-                agent_id +
-                "] disconnected unexpectedly - agent may have crashed or run out of context"
-              let delivery = @message.plan_delivery(
-                parent, agent_id, msg, "failure",
-              )
-              ignore(
-                @tools.execute_delivery(delivery, runner) catch {
-                  _ => Ok(())
-                },
-              )
+          self.finalize_agent_with_runner(
+            agent_id,
+            "disconnect",
+            runner,
+            notify_parent=false,
+            close_target=false,
+            remove_worktree=false,
+          )
+        _ =>
+          if agent.role == @types.Role::Dev {
+            match
+              @phase.dev_disconnect_policy(self.current_dev_phase(agent_id)) {
+              @phase.DevDisconnectPolicy::Preserve => ()
+              @phase.DevDisconnectPolicy::FinalizeDone =>
+                self.finalize_agent_with_runner(
+                  agent_id,
+                  "disconnect",
+                  runner,
+                  notify_parent=false,
+                  close_target=false,
+                  remove_worktree=false,
+                )
+              @phase.DevDisconnectPolicy::Ignore => ()
+              @phase.DevDisconnectPolicy::Fail => {
+                let msg = "[FAILED: " +
+                  agent_id +
+                  "] disconnected unexpectedly - agent may have crashed or run out of context"
+                self.fail_agent_with_runner(
+                  agent_id, "unexpected disconnect", msg, "disconnect", runner,
+                )
+              }
             }
+          } else {
+            let msg = "[FAILED: " +
+              agent_id +
+              "] disconnected unexpectedly - agent may have crashed or run out of context"
+            self.fail_agent_with_runner(
+              agent_id, "unexpected disconnect", msg, "disconnect", runner,
+            )
           }
-        }
       }
   }
 }
