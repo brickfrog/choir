@@ -35,6 +35,7 @@ struct ForkWaveArgs {
   slug_prefix : String
   agent_type : @types.AgentType
   parent_session_id : String?
+  reuse_worktree : Bool
 } derive(Show, Eq)
 
 ///|
@@ -163,6 +164,12 @@ struct ShutdownArgs {
 struct KillAgentArgs {
   agent_id : String
   reason : String
+} derive(Show, Eq)
+
+///|
+struct RescueLeafArgs {
+  from_agent_id : String
+  to_agent_id : String
 } derive(Show, Eq)
 
 ///|

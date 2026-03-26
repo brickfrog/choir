@@ -398,7 +398,31 @@ fn parse_fork_wave_args(
     slug_prefix: normalized_slug_prefix,
     agent_type,
     parent_session_id: lookup_parent_session_id(project_dir, args),
+    reuse_worktree: tool_args_get_bool(args, "reuse_worktree"),
   })
+}
+
+///|
+fn parse_rescue_leaf_args(args : ToolArgs) -> Result[RescueLeafArgs, String] {
+  let from_agent_id = get_arg_or_alias(args, "from_agent_id", "from_agent", "")
+  let to_agent_id = get_arg_or_alias(
+    args, "to_agent_id", "replacement_agent_id", "",
+  )
+  if from_agent_id == "" {
+    return Err("missing from_agent_id")
+  }
+  if to_agent_id == "" {
+    return Err("missing to_agent_id (or replacement_agent_id)")
+  }
+  match validate_branch(from_agent_id) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid from_agent_id: " + e)
+  }
+  match validate_branch(to_agent_id) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid to_agent_id: " + e)
+  }
+  Ok({ from_agent_id, to_agent_id })
 }
 
 ///|
@@ -850,6 +874,8 @@ fn parse_tool_request(
         Ok(ToolRequest::KillAgent({ agent_id, reason }))
       }
     }
+    "rescue_leaf" =>
+      parse_rescue_leaf_args(args).map(fn(a) { ToolRequest::RescueLeaf(a) })
     _ => Err("unknown tool: " + name)
   }
 }

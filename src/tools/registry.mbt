@@ -22,7 +22,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn one or more leaf agents in worktrees; optional agent_type (gemini|claude|moon_pilot, default gemini)",
+      description: "Spawn one or more leaf agents in worktrees; optional agent_type (gemini|claude|moon_pilot, default gemini). Set reuse_worktree=true to skip worktree reset when reusing an existing branch path (manual rescue)",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -83,6 +83,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     {
       name: "kill_agent",
       description: "Kill a child agent by agent_id; closes its pane and cleans up registry",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
+      name: "rescue_leaf",
+      description: "Transfer tracked PR ownership and lifecycle from a replaced leaf to a replacement agent (same parent/role); marks the old leaf as rescued rather than failed. Replacement must use the same git branch when the old leaf has tracked PRs",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

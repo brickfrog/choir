@@ -156,6 +156,7 @@ pub fn spawn_commands(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  reuse_worktree? : Bool = false,
 ) -> Array[Command] {
   let root_project = resolved_project_dir(project_dir)
   let branch = canonical_agent_id(spec)
@@ -182,17 +183,18 @@ pub fn spawn_commands(
     launch_with_prompt
   match spec.isolation {
     Worktree => {
-      let cmds : Array[Command] = [
-        {
+      let cmds : Array[Command] = []
+      if not(reuse_worktree) {
+        cmds.push({
           program: "sh",
           args: [
             "-c", "git worktree remove --force \"$1\" 2>/dev/null || true; rm -rf \"$1\"; git branch -D \"$2\" 2>/dev/null || true",
             "sh", workspace, branch,
           ],
           workdir: None,
-        },
-        git_worktree_add(workspace, branch),
-      ]
+        })
+        cmds.push(git_worktree_add(workspace, branch))
+      }
       cmds.push(
         write_spawn_config(
           workspace,

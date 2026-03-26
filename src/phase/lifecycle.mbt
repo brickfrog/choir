@@ -4,6 +4,7 @@ pub(all) enum FinalizeReason {
   Merged
   DisconnectFinalized
   RecoveredDone
+  ReplacedByRescue
 } derive(Show, Eq)
 
 ///|
@@ -507,6 +508,7 @@ fn finalize_reason_to_json(reason : FinalizeReason) -> Json {
     Merged => { "tag": "Merged".to_json() }.to_json()
     DisconnectFinalized => { "tag": "DisconnectFinalized".to_json() }.to_json()
     RecoveredDone => { "tag": "RecoveredDone".to_json() }.to_json()
+    ReplacedByRescue => { "tag": "ReplacedByRescue".to_json() }.to_json()
   }
 }
 
@@ -518,6 +520,7 @@ fn finalize_reason_from_json(json : Json) -> FinalizeReason? {
     Some(String("Merged")) => Some(Merged)
     Some(String("DisconnectFinalized")) => Some(DisconnectFinalized)
     Some(String("RecoveredDone")) => Some(RecoveredDone)
+    Some(String("ReplacedByRescue")) => Some(ReplacedByRescue)
     _ => None
   }
 }

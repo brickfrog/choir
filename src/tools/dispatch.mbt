@@ -239,6 +239,7 @@ pub async fn dispatch(
             listen_uds~,
             listen_tcp~,
             tcp_auth_token~,
+            reuse_worktree=fork_wave_args.reuse_worktree,
           ) {
           cmds.push(cmd)
         }
@@ -654,6 +655,34 @@ pub async fn dispatch(
         }
       }
     }
+    ToolRequest::RescueLeaf(rescue_args) =>
+      match registry {
+        Some(reg) =>
+          match poller_state {
+            Some(ps) =>
+              match
+                @phase.execute_leaf_ownership_transfer(
+                  project_dir,
+                  reg,
+                  ps,
+                  rescue_args.from_agent_id,
+                  rescue_args.to_agent_id,
+                ) {
+                Ok(n) => {
+                  ignore(ps.write_state_file(project_dir))
+                  @types.Response::ok_values({
+                    "status": String::to_json("rescued"),
+                    "prs_transferred": Int::to_json(n),
+                    "from_agent_id": String::to_json(rescue_args.from_agent_id),
+                    "to_agent_id": String::to_json(rescue_args.to_agent_id),
+                  })
+                }
+                Err(e) => @types.Response::Err(e.message())
+              }
+            None => @types.Response::Err("poller unavailable")
+          }
+        None => @types.Response::Err("agent registry unavailable")
+      }
     ToolRequest::KillAgent(kill_args) =>
       match registry {
         Some(reg) =>

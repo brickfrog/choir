@@ -248,6 +248,10 @@ fn tool_defs() -> Array[CatalogTool] {
           desc: "Newline-separated decisions that are already fixed",
         },
         { name: "non_goals", desc: "Newline-separated non-goals" },
+        {
+          name: "reuse_worktree",
+          desc: "If true, do not delete/recreate the worktree (reuse path for same slug/branch rescue)",
+        },
       ],
       required: ["task", "count"],
     },
@@ -436,6 +440,20 @@ fn tool_defs() -> Array[CatalogTool] {
         },
       ],
       required: [],
+    },
+    {
+      name: "rescue_leaf",
+      description: "Manual rescue: move poller PR tracking and dev lifecycle from a replaced leaf to a replacement leaf; finalize the old leaf as replaced by rescue (not generic failure)",
+      props: [
+        { name: "from_agent_id", desc: "Agent id of the leaf being replaced" },
+        {
+          name: "to_agent_id",
+          desc: "Agent id of the replacement leaf (already registered)",
+        },
+        { name: "from_agent", desc: "Alias for from_agent_id" },
+        { name: "replacement_agent_id", desc: "Alias for to_agent_id" },
+      ],
+      required: ["from_agent_id", "to_agent_id"],
     },
     {
       name: "kill_agent",

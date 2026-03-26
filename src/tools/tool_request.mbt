@@ -25,6 +25,7 @@ pub(all) enum ToolRequest {
   SpawnRemote(RemoteSpawnArgs)
   SpawnWorker(WorkerSpawnArgs)
   KillAgent(KillAgentArgs)
+  RescueLeaf(RescueLeafArgs)
 } derive(Show, Eq)
 
 ///|
@@ -55,5 +56,6 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     SpawnRemote(_) => "spawn_remote"
     SpawnWorker(_) => "spawn_worker"
     KillAgent(_) => "kill_agent"
+    RescueLeaf(_) => "rescue_leaf"
   }
 }

@@ -1012,110 +1012,18 @@ fn ServerState::sync_parent_child_lifecycle(
 }
 
 ///|
-fn ServerState::remove_parent_child_lifecycle(
-  self : ServerState,
-  agent_id : String,
-) -> Unit {
-  let agent = match self.registry.get(agent_id) {
-    Ok(agent) => agent
-    Err(_) => return
-  }
-  let parent_id = match agent.parent {
-    Some(parent_id) => parent_id
-    None => return
-  }
-  let parent = match self.registry.get(parent_id) {
-    Ok(parent) => parent
-    Err(_) => return
-  }
-  let parent_lifecycle = @phase.read_or_default_lifecycle(
-    self.config.project_dir,
-    parent_id,
-    parent.role,
-  )
-  let supervisor = match parent_lifecycle.workflow {
-    @phase.WorkflowState::Supervisor(supervisor) => supervisor
-    _ => @phase.SupervisorLifecycle::Planning
-  }
-  match
-    @phase.supervisor_transition(
-      supervisor,
-      @phase.SupervisorEvent::ChildRemoved(child_id=agent_id),
-    ) {
-    Transitioned(new_supervisor) =>
-      self.persist_lifecycle({
-        ..parent_lifecycle,
-        workflow: @phase.WorkflowState::Supervisor(new_supervisor),
-      })
-    InvalidTransition(_) => ()
-  }
-}
-
-///|
 pub fn ServerState::transfer_leaf_ownership(
   self : ServerState,
   from_agent_id : String,
   to_agent_id : String,
 ) -> Result[Int, @types.ExoError] {
-  if from_agent_id == to_agent_id {
-    return Ok(0)
-  }
-  let from_agent = match self.registry.get(from_agent_id) {
-    Ok(agent) => agent
-    Err(e) => return Err(e)
-  }
-  let to_agent = match self.registry.get(to_agent_id) {
-    Ok(agent) => agent
-    Err(e) => return Err(e)
-  }
-  if from_agent.parent != to_agent.parent {
-    return Err(
-      @types.ExoError::ValidationError(
-        "cannot transfer ownership across different parents",
-      ),
-    )
-  }
-  if from_agent.role != to_agent.role {
-    return Err(
-      @types.ExoError::ValidationError(
-        "cannot transfer ownership across different roles",
-      ),
-    )
-  }
-  match from_agent.role {
-    @types.Role::Dev | @types.Role::Worker => ()
-    _ =>
-      return Err(
-        @types.ExoError::ValidationError(
-          "ownership transfer only supports leaf roles",
-        ),
-      )
-  }
-  let transferred = self.poller.transfer_owner(
+  @phase.execute_leaf_ownership_transfer(
+    self.config.project_dir,
+    self.registry,
+    self.poller,
     from_agent_id,
     to_agent_id,
-    to_agent.branch,
-    @workspace.parent_branch(to_agent.branch).unwrap_or(""),
   )
-  let from_lifecycle = self.current_lifecycle(from_agent_id)
-  let to_lifecycle = self.current_lifecycle(to_agent_id)
-  let workflow = match (from_lifecycle.workflow, to_lifecycle.workflow) {
-    (@phase.WorkflowState::Dev(from_dev), @phase.WorkflowState::Dev(_)) =>
-      @phase.WorkflowState::Dev(from_dev)
-    (@phase.WorkflowState::Worker(from_worker), @phase.WorkflowState::Worker(_)) =>
-      @phase.WorkflowState::Worker(from_worker)
-    _ => to_lifecycle.workflow
-  }
-  let carried_lifecycle = {
-    ..to_lifecycle,
-    agent_id: to_agent_id,
-    role: to_agent.role,
-    workflow,
-  }
-  self.persist_lifecycle(carried_lifecycle)
-  self.sync_parent_child_lifecycle(to_agent_id, carried_lifecycle)
-  self.remove_parent_child_lifecycle(from_agent_id)
-  Ok(transferred)
 }
 
 ///|

@@ -251,6 +251,28 @@ test "child_config_content resolves socket path into spawned worktree config" {
 }
 
 ///|
+test "spawn_commands reuse_worktree skips worktree remove and add" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "fix bugs",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(
+    spec,
+    "/project",
+    "session",
+    reuse_worktree=true,
+  )
+  assert_eq(cmds.length(), 4)
+  assert_false(cmds[0].args[1].contains("worktree remove"))
+  assert_eq(cmds[3].program, "zellij")
+}
+
+///|
 test "spawn_commands for worktree mode returns zellij tab" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
