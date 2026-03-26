@@ -1,6 +1,7 @@
 import {
   "choir/src/sys",
   "choir/src/types",
+  "choir/src/config",
   "choir/src/registry",
   "choir/src/poller",
   "choir/src/workspace",

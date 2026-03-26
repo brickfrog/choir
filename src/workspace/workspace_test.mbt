@@ -267,9 +267,15 @@ test "spawn_commands reuse_worktree skips worktree remove and add" {
     "session",
     reuse_worktree=true,
   )
-  assert_eq(cmds.length(), 4)
-  assert_false(cmds[0].args[1].contains("worktree remove"))
-  assert_eq(cmds[3].program, "zellij")
+  assert_eq(cmds.length(), 5)
+  for cmd in cmds {
+    assert_false(cmd.program == "git")
+    for arg in cmd.args {
+      assert_false(arg.contains("git worktree remove"))
+      assert_false(arg.contains("git worktree add"))
+    }
+  }
+  assert_eq(cmds[cmds.length() - 1].program, "zellij")
 }
 
 ///|

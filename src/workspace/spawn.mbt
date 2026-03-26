@@ -194,6 +194,15 @@ pub fn spawn_commands(
           workdir: None,
         })
         cmds.push(git_worktree_add(workspace, branch))
+      } else {
+        cmds.push({
+          program: "sh",
+          args: [
+            "-c", "if [ ! -d \"$1\" ]; then echo \"error: reuse_worktree=true but workspace does not exist: $1\" >&2; exit 1; fi; if ! git -C \"$1\" rev-parse --is-inside-work-tree >/dev/null 2>&1; then echo \"error: reuse_worktree=true but directory is not a git worktree: $1\" >&2; exit 1; fi",
+            "sh", workspace,
+          ],
+          workdir: None,
+        })
       }
       cmds.push(
         write_spawn_config(

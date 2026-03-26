@@ -78,7 +78,7 @@ fn sync_parent_child_lifecycle_transfer(
     child_id: agent_id,
     slug: extract_slug(agent_id),
     branch: agent.branch,
-    agent_type: agent.agent_type.to_string(),
+    agent_type: @config.agent_type_to_string(agent.agent_type),
     summary: child_summary_from_lifecycle(lifecycle),
   }
   let parent_lifecycle = read_or_default_lifecycle(
