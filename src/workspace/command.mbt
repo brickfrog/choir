@@ -70,33 +70,6 @@ pub fn write_spawn_config(worktree_path : String, content : String) -> Command {
 }
 
 ///|
-/// Write .mcp.json into worktree pointing to the server.
-/// Uses positional shell args to safely handle paths with spaces.
-pub fn write_mcp_json(worktree_path : String, json : String) -> Command {
-  {
-    program: "sh",
-    args: [
-      "-c", "printf '%s' \"$2\" > \"$1/.mcp.json\"", "sh", worktree_path, json,
-    ],
-    workdir: None,
-  }
-}
-
-///|
-/// Write .codex/config.toml into worktree.
-/// Uses positional shell args to safely handle paths with spaces.
-pub fn write_codex_config(worktree_path : String, toml : String) -> Command {
-  {
-    program: "sh",
-    args: [
-      "-c", "mkdir -p \"$1/.codex\" && printf '%s' \"$2\" > \"$1/.codex/config.toml\"",
-      "sh", worktree_path, toml,
-    ],
-    workdir: None,
-  }
-}
-
-///|
 /// Install shell helpers for CLIs that do not load MCP tools directly.
 pub fn write_leaf_helper_scripts(worktree_path : String) -> Command {
   {
@@ -216,7 +189,7 @@ pub fn resolve_context_path(project_dir : String, role : String) -> String? {
 }
 
 ///|
-/// Write .gemini/settings.json in the workspace for Gemini agents.
+/// Write .choir/gemini-settings.json in the workspace for Gemini agents.
 pub fn write_gemini_settings(
   worktree_path : String,
   agent_name : String,
@@ -233,7 +206,7 @@ pub fn write_gemini_settings(
   {
     program: "sh",
     args: [
-      "-c", "mkdir -p \"$1/.gemini\" && printf '%s' \"$2\" > \"$1/.gemini/settings.json\"",
+      "-c", "mkdir -p \"$1/.choir\" && printf '%s' \"$2\" > \"$1/.choir/gemini-settings.json\"",
       "sh", worktree_path, content,
     ],
     workdir: None,

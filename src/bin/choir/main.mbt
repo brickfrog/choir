@@ -2484,7 +2484,7 @@ test "companion commands use isolated worktree with zellij tab" {
     command: "claude",
     task: "watch tests",
   })
-  assert_eq(cmds.length(), 8)
+  assert_eq(cmds.length(), 7)
   assert_eq(cmds[0].program, "sh")
   assert_true(cmds[0].args[3].contains("/proj/.choir/agents/monitor"))
   assert_true(cmds[0].args[4].contains("main.companion.monitor"))
@@ -2500,11 +2500,12 @@ test "companion commands use isolated worktree with zellij tab" {
     cmds[3].args[4].contains("terminal_target = \"zellij-tab:choir:monitor\""),
   )
   assert_true(cmds[3].args[4].contains("agent_type = \"claude\""))
-  assert_true(cmds[4].args[4].contains("\"--role\",\"dev\""))
-  assert_true(cmds[4].args[4].contains("main.companion.monitor"))
-  assert_true(cmds[4].args[4].contains("\"extra\":{\"type\":\"stdio\"}"))
-  assert_eq(cmds[7].program, "zellij")
-  assert_eq(cmds[7].args[3], "new-tab")
+  assert_true(cmds[6].args[11].contains("claude"))
+  assert_true(cmds[6].args[11].contains("\"mcpServers\""))
+  assert_true(cmds[6].args[11].contains("main.companion.monitor"))
+  assert_true(cmds[6].args[11].contains("\"extra\":{\"type\":\"stdio\"}"))
+  assert_eq(cmds[6].program, "zellij")
+  assert_eq(cmds[6].args[3], "new-tab")
 }
 
 ///|
@@ -2521,19 +2522,19 @@ test "companion gemini commands trust workspace and use zellij tab cwd" {
       task: "reply READY",
     },
   )
-  assert_eq(cmds.length(), 9)
-  assert_eq(cmds[7].program, "choir")
-  assert_eq(cmds[7].args, [
+  assert_eq(cmds.length(), 8)
+  assert_eq(cmds[6].program, "choir")
+  assert_eq(cmds[6].args, [
     "trust-gemini-folder", "/proj/.choir/agents/gem-helper",
   ])
-  assert_eq(cmds[8].program, "zellij")
-  assert_eq(cmds[8].args[0], "--session")
-  assert_eq(cmds[8].args[1], "howdy")
-  assert_eq(cmds[8].args[2], "action")
-  assert_eq(cmds[8].args[3], "new-tab")
-  assert_eq(cmds[8].args[7], "/proj/.choir/agents/gem-helper")
+  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[7].args[0], "--session")
+  assert_eq(cmds[7].args[1], "howdy")
+  assert_eq(cmds[7].args[2], "action")
+  assert_eq(cmds[7].args[3], "new-tab")
+  assert_eq(cmds[7].args[7], "/proj/.choir/agents/gem-helper")
   assert_true(
-    cmds[8].args[11].contains(
+    cmds[7].args[11].contains(
       "CHOIR_TERMINAL_TARGET='zellij-tab:howdy:gem-helper'",
     ),
   )
@@ -2890,48 +2891,61 @@ fn init_config_has_terminal_session(content : String) -> Bool {
 }
 
 ///|
-fn init_mcp_json_content(project_dir : String) -> String {
-  "{\n" +
-  "  \"mcpServers\": {\n" +
-  "    \"choir\": {\n" +
-  "      \"type\": \"stdio\",\n" +
-  "      \"command\": \"sh\",\n" +
-  "      \"args\": [\"-lc\", \"exec choir mcp-stdio --name root 2>> .choir/mcp-stdio.stderr.log\"],\n" +
-  "      \"cwd\": \"" +
-  project_dir +
-  "\"\n" +
-  "    }\n" +
-  "  }\n" +
-  "}\n"
+fn init_codex_mcp_override_args(
+  role : @types.Role,
+  agent_id : String,
+  project_dir : String,
+) -> Array[String] {
+  let role_args = match role {
+    @types.Role::TL => ""
+    _ => " --role " + @config.role_to_string(role)
+  }
+  let cmd = "i=0; while [ ! -S .choir/server.sock ] && [ \"$i\" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; " +
+    "exec choir mcp-stdio" +
+    role_args +
+    " --name " +
+    init_shell_quote(agent_id) +
+    " 2>> .choir/mcp-stdio.stderr.log"
+  [
+    "-c",
+    "mcp_servers.choir.command=\"sh\"",
+    "-c",
+    "mcp_servers.choir.args=[\"-lc\", \"" + init_escape_toml_string(cmd) + "\"]",
+    "-c",
+    "mcp_servers.choir.cwd=\"" + init_escape_toml_string(project_dir) + "\"",
+  ]
 }
 
 ///|
-fn init_tl_mcp_config_path() -> String {
-  ".choir/tl.mcp.json"
+fn init_claude_mcp_config_json() -> String {
+  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\"]}}}"
 }
 
 ///|
-fn init_codex_config_path() -> String {
-  ".codex/config.toml"
-}
-
-///|
-fn init_codex_config_content() -> String {
-  "[mcp_servers.choir]\n" +
-  "command = \"choir\"\n" +
-  "args = [\"mcp-stdio\", \"--role\", \"tl\", \"--name\", \"root\"]\n"
-}
-
-///|
-fn init_tl_launch_command(tl_type : String) -> String {
-  let mcp_path = init_tl_mcp_config_path()
+fn init_tl_launch_command(tl_type : String, project_dir : String) -> String {
   let cmd = match tl_type {
-    "codex" =>
-      "codex --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
+    "codex" => {
+      let parts : Array[String] = [
+        "codex",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--no-alt-screen",
+        ..init_codex_mcp_override_args(@types.Role::TL, "root", project_dir),
+        "-C",
+        project_dir,
+      ]
+      let buf = StringBuilder::new()
+      for i = 0; i < parts.length(); i = i + 1 {
+        if i > 0 {
+          buf.write_char(' ')
+        }
+        buf.write_string(init_shell_quote(parts[i]))
+      }
+      buf.to_string()
+    }
     "gemini" => "gemini --yolo --prompt-interactive"
     _ =>
       "claude --dangerously-skip-permissions --mcp-config " +
-      mcp_path +
+      init_shell_quote(init_claude_mcp_config_json()) +
       " --strict-mcp-config"
   }
   cmd + "; echo; echo '[TL exited]'; exec bash -l"
@@ -2949,16 +2963,20 @@ fn init_parse_tl_type(args : Array[String]) -> String {
 
 ///|
 test "init TL launch command defaults to claude" {
-  let cmd = init_tl_launch_command("claude")
+  let cmd = init_tl_launch_command("claude", ".")
   assert_true(cmd.contains("claude --dangerously-skip-permissions"))
-  assert_true(cmd.contains("--mcp-config .choir/tl.mcp.json"))
+  assert_true(cmd.contains("--mcp-config '{\"mcpServers\""))
 }
 
 ///|
 test "init TL launch command supports codex" {
-  let cmd = init_tl_launch_command("codex")
-  assert_true(cmd.contains("codex --dangerously-bypass-approvals-and-sandbox"))
-  assert_true(cmd.contains("--no-alt-screen"))
+  let cmd = init_tl_launch_command("codex", "/tmp/choir repo")
+  assert_true(cmd.contains("'codex'"))
+  assert_true(cmd.contains("'--dangerously-bypass-approvals-and-sandbox'"))
+  assert_true(cmd.contains("'--no-alt-screen'"))
+  assert_true(cmd.contains("'mcp_servers.choir.command=\"sh\"'"))
+  assert_true(cmd.contains("'mcp_servers.choir.cwd=\"/tmp/choir repo\"'"))
+  assert_true(cmd.contains("'-C' '/tmp/choir repo'"))
   assert_false(cmd.contains("--mcp-config"))
 }
 
@@ -2970,6 +2988,22 @@ test "init parse_tl_type extracts --tl flag" {
     init_parse_tl_type(["choir", "init", "--recreate", "--tl", "gemini"]),
     "gemini",
   )
+}
+
+///|
+fn init_escape_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
 }
 
 ///|
@@ -3140,6 +3174,70 @@ fn init_companion_launch_prefix(
 }
 
 ///|
+fn init_join_shell_words(parts : Array[String]) -> String {
+  let buf = StringBuilder::new()
+  for i = 0; i < parts.length(); i = i + 1 {
+    if i > 0 {
+      buf.write_char(' ')
+    }
+    buf.write_string(init_shell_quote(parts[i]))
+  }
+  buf.to_string()
+}
+
+///|
+fn init_companion_launch_command(
+  role : @types.Role,
+  branch : String,
+  workspace : String,
+  command : String,
+  task : String,
+  extra_mcp_servers_json? : String? = None,
+) -> String {
+  let parts = init_split_words(command)
+  if parts.is_empty() {
+    return init_shell_quote(task)
+  }
+  let program = parts[0]
+  let extra_args : Array[String] = []
+  for i = 1; i < parts.length(); i = i + 1 {
+    extra_args.push(parts[i])
+  }
+  match init_companion_agent_type(command) {
+    Some(@types.AgentType::Claude) =>
+      init_join_shell_words(
+        [
+          program,
+          ..extra_args,
+          "--dangerously-skip-permissions",
+          "--mcp-config",
+          @workspace.mcp_json_content(role, branch, extra_mcp_servers_json~),
+          "--strict-mcp-config",
+          task,
+        ],
+      )
+    Some(@types.AgentType::Gemini) =>
+      init_join_shell_words([program, ..extra_args, task])
+    Some(@types.AgentType::MoonPilot) =>
+      init_join_shell_words([program, ..extra_args, task])
+    Some(@types.AgentType::Codex) =>
+      init_join_shell_words(
+        [
+          program,
+          ..extra_args,
+          "--dangerously-bypass-approvals-and-sandbox",
+          "--no-alt-screen",
+          ..init_codex_mcp_override_args(role, branch, workspace),
+          "-C",
+          workspace,
+          task,
+        ],
+      )
+    None => command + " '" + init_escape_shell_single_quoted(task) + "'"
+  }
+}
+
+///|
 fn init_companion_commands(
   project_dir : String,
   session : String,
@@ -3167,10 +3265,14 @@ fn init_companion_commands(
       session,
       agent_type~,
     ) +
-    companion.command +
-    " '" +
-    init_escape_shell_single_quoted(companion.task) +
-    "'"
+    init_companion_launch_command(
+      role,
+      branch,
+      workspace,
+      companion.command,
+      companion.task,
+      extra_mcp_servers_json=config.extra_mcp_servers_json,
+    )
   let cmds : Array[@workspace.Command] = [
     {
       program: "sh",
@@ -3203,14 +3305,6 @@ fn init_companion_commands(
         workspace,
         terminal_target,
         agent_type~,
-      ),
-    ),
-    @workspace.write_mcp_json(
-      workspace,
-      @workspace.mcp_json_content(
-        role,
-        branch,
-        extra_mcp_servers_json=config.extra_mcp_servers_json,
       ),
     ),
     @workspace.write_leaf_helper_scripts(workspace),
@@ -3320,29 +3414,6 @@ fn init_run() -> Unit {
           "\"\n"
         ignore(@sys.write_file_sync(".choir/config.toml", patched))
       }
-      init_run_or_exit({
-        program: "sh",
-        args: [
-          "-c",
-          "printf '%s' \"$2\" > \"$1\"",
-          "sh",
-          init_tl_mcp_config_path(),
-          init_mcp_json_content(project_dir),
-        ],
-        workdir: None,
-      })
-      init_run_or_exit({
-        program: "sh",
-        args: [
-          "-c",
-          "mkdir -p .codex && printf '%s' \"$2\" > \"$1\"",
-          "sh",
-          init_codex_config_path(),
-          init_codex_config_content(),
-        ],
-        workdir: None,
-      })
-
       let config_content = @sys.read_file(".choir/config.toml")
       let config = match @config.parse_config(config_content) {
         Ok(cfg) => cfg
@@ -3418,7 +3489,7 @@ fn init_run() -> Unit {
           session,
           "TL",
           project_dir,
-          init_tl_launch_command(tl_type),
+          init_tl_launch_command(tl_type, project_dir),
         ),
       )
       ignore(

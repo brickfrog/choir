@@ -107,16 +107,21 @@ test "agent_launch_command for each AgentType" {
   }
   let spec_gemini = { ..spec_claude, agent_type: @types.AgentType::Gemini }
   let spec_moon = { ..spec_claude, agent_type: @types.AgentType::MoonPilot }
+  let spec_codex = { ..spec_claude, agent_type: @types.AgentType::Codex }
 
   let cmd_claude = @workspace.agent_launch_command(spec_claude, "/path")
   let cmd_gemini = @workspace.agent_launch_command(spec_gemini, "/path")
   let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
+  let cmd_codex = @workspace.agent_launch_command(spec_codex, "/path")
 
   assert_eq(cmd_claude.program, "claude")
-  assert_eq(cmd_claude.args, [
-    "--dangerously-skip-permissions", "--mcp-config", ".mcp.json", "--strict-mcp-config",
-    "fix bugs",
-  ])
+  assert_eq(cmd_claude.args[0], "--dangerously-skip-permissions")
+  assert_eq(cmd_claude.args[1], "--mcp-config")
+  assert_true(cmd_claude.args[2].contains("\"mcpServers\""))
+  assert_true(cmd_claude.args[2].contains("\"--role\",\"dev\""))
+  assert_true(cmd_claude.args[2].contains("\"--name\",\"main.test-slug\""))
+  assert_eq(cmd_claude.args[3], "--strict-mcp-config")
+  assert_eq(cmd_claude.args[4], "fix bugs")
   assert_eq(cmd_claude.workdir, Some("/path"))
 
   assert_eq(cmd_gemini.program, "gemini")
@@ -126,6 +131,22 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_moon.program, "moon")
   assert_eq(cmd_moon.args, ["pilot", "fix bugs"])
   assert_eq(cmd_moon.workdir, Some("/path"))
+
+  assert_eq(cmd_codex.program, "codex")
+  assert_eq(cmd_codex.args[0], "--dangerously-bypass-approvals-and-sandbox")
+  assert_eq(cmd_codex.args[1], "--no-alt-screen")
+  assert_eq(cmd_codex.args[2], "-c")
+  assert_true(cmd_codex.args[3].contains("mcp_servers.choir.command"))
+  assert_eq(cmd_codex.args[4], "-c")
+  assert_true(
+    cmd_codex.args[5].contains("mcp-stdio --role dev --name 'main.test-slug'"),
+  )
+  assert_eq(cmd_codex.args[6], "-c")
+  assert_true(cmd_codex.args[7].contains("mcp_servers.choir.cwd=\"/path\""))
+  assert_eq(cmd_codex.args[8], "-C")
+  assert_eq(cmd_codex.args[9], "/path")
+  assert_eq(cmd_codex.args[10], "fix bugs")
+  assert_eq(cmd_codex.workdir, Some("/path"))
 }
 
 ///|
@@ -145,10 +166,14 @@ test "agent_launch_command wraps with shell_command" {
     shell_command=Some("nix develop"),
   )
   assert_eq(cmd.program, "nix")
-  assert_eq(cmd.args, [
-    "develop", "--command", "claude", "--dangerously-skip-permissions", "--mcp-config",
-    ".mcp.json", "--strict-mcp-config", "fix bugs",
-  ])
+  assert_eq(cmd.args[0], "develop")
+  assert_eq(cmd.args[1], "--command")
+  assert_eq(cmd.args[2], "claude")
+  assert_eq(cmd.args[3], "--dangerously-skip-permissions")
+  assert_eq(cmd.args[4], "--mcp-config")
+  assert_true(cmd.args[5].contains("\"mcpServers\""))
+  assert_eq(cmd.args[6], "--strict-mcp-config")
+  assert_eq(cmd.args[7], "fix bugs")
   assert_eq(cmd.workdir, Some("/path"))
 }
 
@@ -165,10 +190,11 @@ test "agent_launch_command no wrap when shell_command is None" {
   }
   let cmd = @workspace.agent_launch_command(spec, "/path", shell_command=None)
   assert_eq(cmd.program, "claude")
-  assert_eq(cmd.args, [
-    "--dangerously-skip-permissions", "--mcp-config", ".mcp.json", "--strict-mcp-config",
-    "fix bugs",
-  ])
+  assert_eq(cmd.args[0], "--dangerously-skip-permissions")
+  assert_eq(cmd.args[1], "--mcp-config")
+  assert_true(cmd.args[2].contains("\"mcpServers\""))
+  assert_eq(cmd.args[3], "--strict-mcp-config")
+  assert_eq(cmd.args[4], "fix bugs")
 }
 
 ///|
@@ -188,10 +214,14 @@ test "agent_launch_command supports Claude fork_session" {
     parent_session_id=Some("session-123"),
   )
   assert_eq(cmd.program, "claude")
-  assert_eq(cmd.args, [
-    "--dangerously-skip-permissions", "--mcp-config", ".mcp.json", "--strict-mcp-config",
-    "--resume", "session-123", "--fork-session", "fix bugs",
-  ])
+  assert_eq(cmd.args[0], "--dangerously-skip-permissions")
+  assert_eq(cmd.args[1], "--mcp-config")
+  assert_true(cmd.args[2].contains("\"mcpServers\""))
+  assert_eq(cmd.args[3], "--strict-mcp-config")
+  assert_eq(cmd.args[4], "--resume")
+  assert_eq(cmd.args[5], "session-123")
+  assert_eq(cmd.args[6], "--fork-session")
+  assert_eq(cmd.args[7], "fix bugs")
 }
 
 ///|
@@ -222,15 +252,15 @@ test "spawn_commands for worktree mode returns zellij tab" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // cleanup, git worktree add, config.toml, config.local.toml, .mcp.json, .codex/config.toml, helpers, zellij new-tab
-  assert_eq(cmds.length(), 8)
+  // cleanup, git worktree add, config.toml, config.local.toml, helpers, zellij new-tab
+  assert_eq(cmds.length(), 6)
   assert_eq(cmds[0].program, "sh")
   assert_true(cmds[0].args[1].contains("git worktree remove --force"))
   assert_eq(cmds[1].program, "git")
-  assert_eq(cmds[6].program, "sh")
-  assert_true(cmds[6].args[1].contains("choir leaf-tool"))
-  assert_eq(cmds[7].program, "zellij")
-  assert_eq(cmds[7].args[3], "new-tab")
+  assert_eq(cmds[4].program, "sh")
+  assert_true(cmds[4].args[1].contains("choir leaf-tool"))
+  assert_eq(cmds[5].program, "zellij")
+  assert_eq(cmds[5].args[3], "new-tab")
 }
 
 ///|
@@ -245,7 +275,7 @@ test "spawn_commands worktree config write content" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 8)
+  assert_eq(cmds.length(), 6)
   assert_eq(cmds[2].program, "sh")
   assert_true(cmds[2].args[3].contains("feature-a"))
   assert_true(cmds[2].args[4].contains("default_role = \"dev\""))
@@ -260,8 +290,7 @@ test "spawn_commands worktree config write content" {
     cmds[3].args[4].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
   )
   assert_eq(cmds[4].program, "sh")
-  assert_true(cmds[4].args[4].contains("--role"))
-  assert_true(cmds[4].args[4].contains("main.feature-a"))
+  assert_eq(cmds[5].program, "zellij")
 }
 
 ///|
@@ -276,11 +305,11 @@ test "spawn_commands gemini worktree adds trust and settings" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  assert_eq(cmds.length(), 10)
-  assert_eq(cmds[7].program, "choir")
-  assert_eq(cmds[8].program, "sh")
-  assert_eq(cmds[9].program, "zellij")
-  assert_eq(cmds[9].args[3], "new-tab")
+  assert_eq(cmds.length(), 8)
+  assert_eq(cmds[5].program, "choir")
+  assert_eq(cmds[6].program, "sh")
+  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[7].args[3], "new-tab")
   assert_true(
     cmds[3].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
   )
@@ -298,8 +327,8 @@ test "spawn_commands standalone includes config writes" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  // git init, config.toml, config.local.toml, .mcp.json, .codex/config.toml, helpers, zellij new-tab
-  assert_eq(cmds.length(), 7)
+  // git init, config.toml, config.local.toml, helpers, zellij new-tab
+  assert_eq(cmds.length(), 5)
   assert_eq(cmds[0].program, "git")
   assert_eq(cmds[1].program, "sh")
   assert_true(
@@ -311,11 +340,7 @@ test "spawn_commands standalone includes config writes" {
     ),
   )
   assert_eq(cmds[3].program, "sh")
-  assert_true(cmds[3].args[4].contains("--role"))
-  assert_eq(cmds[4].program, "sh")
-  assert_true(cmds[4].args[4].contains("mcp_servers.choir"))
-  assert_eq(cmds[5].program, "sh")
-  assert_true(cmds[5].args[1].contains("task_create"))
+  assert_true(cmds[3].args[1].contains("task_create"))
 }
 
 ///|
@@ -330,15 +355,15 @@ test "spawn_commands adds Gemini trust bootstrap" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 10)
-  assert_eq(cmds[7].program, "choir")
-  assert_eq(cmds[7].args, [
+  assert_eq(cmds.length(), 8)
+  assert_eq(cmds[5].program, "choir")
+  assert_eq(cmds[5].args, [
     "trust-gemini-folder", "/project/.choir/worktrees/gemini-slug",
   ])
-  assert_eq(cmds[8].program, "sh")
-  assert_true(cmds[8].args[1].contains(".gemini"))
-  assert_true(cmds[8].args[4].contains("mcpServers"))
-  assert_true(cmds[8].args[4].contains("main.gemini-slug"))
+  assert_eq(cmds[6].program, "sh")
+  assert_true(cmds[6].args[1].contains(".choir/gemini-settings.json"))
+  assert_true(cmds[6].args[4].contains("mcpServers"))
+  assert_true(cmds[6].args[4].contains("main.gemini-slug"))
 }
 
 ///|
@@ -388,7 +413,11 @@ test "spawn_commands launch text contains env vars" {
     launch_str.contains("CHOIR_TERMINAL_TARGET='zellij-tab:exo:feature-a'"),
   )
   assert_true(launch_str.contains("CHOIR_PARENT_AGENT='root'"))
-  assert_true(launch_str.contains("GEMINI_CLI_SYSTEM_SETTINGS_PATH="))
+  assert_true(
+    launch_str.contains(
+      "GEMINI_CLI_SYSTEM_SETTINGS_PATH='/proj/.choir/worktrees/feature-a/.choir/gemini-settings.json'",
+    ),
+  )
 }
 
 ///|
@@ -403,14 +432,14 @@ test "Command::to_string output" {
   let cmd2 = @workspace.Command::{
     program: "claude",
     args: [
-      "--dangerously-skip-permissions", "--mcp-config", ".mcp.json", "--strict-mcp-config",
+      "--dangerously-skip-permissions", "--mcp-config", "{\"mcpServers\":{}}", "--strict-mcp-config",
       "hello",
     ],
     workdir: Some("/path"),
   }
   assert_eq(
     cmd2.to_string(),
-    "cd '/path' && claude '--dangerously-skip-permissions' '--mcp-config' '.mcp.json' '--strict-mcp-config' 'hello'",
+    "cd '/path' && claude '--dangerously-skip-permissions' '--mcp-config' '{\"mcpServers\":{}}' '--strict-mcp-config' 'hello'",
   )
 }
 
@@ -442,15 +471,6 @@ test "mcp_json_content merges extra servers" {
 }
 
 ///|
-test "codex_config_content generation" {
-  let toml = @workspace.codex_config_content(@types.Role::TL, "agent-tl")
-  assert_true(toml.contains("[mcp_servers.choir]"))
-  assert_true(toml.contains("command = \"choir\""))
-  assert_true(toml.contains("\"--role\", \"tl\""))
-  assert_true(toml.contains("\"--name\", \"agent-tl\""))
-}
-
-///|
 test "remote_spawn_commands produces 4 ssh commands" {
   let spec = @types.SpawnSpec::{
     slug: "remote-worker",
@@ -464,7 +484,7 @@ test "remote_spawn_commands produces 4 ssh commands" {
   let cmds = @workspace.remote_spawn_commands(
     spec, "user@remote-host", "git@github.com:org/repo.git", "10.0.0.1:9100",
   )
-  assert_eq(cmds.length(), 4)
+  assert_eq(cmds.length(), 3)
   for cmd in cmds {
     assert_eq(cmd.program, "ssh")
     assert_true(cmd.args.length() >= 3)
@@ -476,8 +496,7 @@ test "remote_spawn_commands produces 4 ssh commands" {
   assert_true(cmds[0].args[3].contains("main.remote-worker"))
   assert_true(cmds[1].args[3].contains("config.toml"))
   assert_true(cmds[1].args[3].contains("10.0.0.1:9100"))
-  assert_true(cmds[2].args[3].contains(".mcp.json"))
-  assert_true(cmds[3].args[3].contains("claude"))
-  assert_true(cmds[3].args[3].contains("CHOIR_AGENT_ID='main.remote-worker'"))
-  assert_true(cmds[3].args[3].contains("CHOIR_PARENT_AGENT='root'"))
+  assert_true(cmds[2].args[3].contains("claude"))
+  assert_true(cmds[2].args[3].contains("CHOIR_AGENT_ID='main.remote-worker'"))
+  assert_true(cmds[2].args[3].contains("CHOIR_PARENT_AGENT='root'"))
 }

@@ -111,7 +111,7 @@ fn launch_env_prefix(
     assignments.push(
       env_assignment(
         "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
-        workspace + "/.gemini/settings.json",
+        workspace + "/.choir/gemini-settings.json",
       ),
     )
   }
@@ -170,6 +170,7 @@ pub fn spawn_commands(
     workspace,
     parent_session_id~,
     shell_command~,
+    extra_mcp_servers_json~,
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
   let prompt_ref = "\"$(cat " + quote(prompt_path) + ")\""
@@ -210,15 +211,6 @@ pub fn spawn_commands(
           workspace,
           config_local_content(spec, workspace, terminal_target),
         ),
-      )
-      cmds.push(
-        write_mcp_json(
-          workspace,
-          mcp_json_content(spec.role, branch, extra_mcp_servers_json~),
-        ),
-      )
-      cmds.push(
-        write_codex_config(workspace, codex_config_content(spec.role, branch)),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
@@ -296,15 +288,6 @@ pub fn spawn_commands(
           config_local_content(spec, workspace, terminal_target),
         ),
       )
-      cmds.push(
-        write_mcp_json(
-          workspace,
-          mcp_json_content(spec.role, branch, extra_mcp_servers_json~),
-        ),
-      )
-      cmds.push(
-        write_codex_config(workspace, codex_config_content(spec.role, branch)),
-      )
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
@@ -372,8 +355,12 @@ pub fn remote_spawn_commands(
     "\"\nagent_type = \"" +
     @config.agent_type_to_string(spec.agent_type) +
     "\"\n"
-  let mcp_json = mcp_json_content(spec.role, branch, extra_mcp_servers_json~)
-  let launch_cmd = agent_launch_command(spec, workspace, parent_session_id~)
+  let launch_cmd = agent_launch_command(
+    spec,
+    workspace,
+    parent_session_id~,
+    extra_mcp_servers_json~,
+  )
   let agent_cmd = launch_env_prefix(spec, "remote", workspace, @types.LocalTarget::{
       kind: ZellijPane,
       session: "remote",
@@ -403,10 +390,6 @@ pub fn remote_spawn_commands(
       " > " +
       workspace +
       "/.choir/config.toml",
-    ),
-    ssh_cmd(
-      ssh_target,
-      "printf '%s' " + quote(mcp_json) + " > " + workspace + "/.mcp.json",
     ),
     ssh_cmd(
       ssh_target,
