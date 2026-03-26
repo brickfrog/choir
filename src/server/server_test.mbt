@@ -595,6 +595,7 @@ async test "process_poller_tick_with routes comment-only reviews to owning agent
     ),
   )
   assert_true(review_cmds[0].args[3].contains("[REVIEW] main.leaf-1 PR #61"))
+  assert_true(review_cmds[0].args[3].contains("non-blocking review comments"))
   // Owner gets detail
   assert_true(
     review_cmds[1].args[4].contains(
@@ -603,7 +604,7 @@ async test "process_poller_tick_with routes comment-only reviews to owning agent
   )
   assert_true(
     review_cmds[1].args[3].contains(
-      "[REVIEW] PR #61 has review comments:\\nPlease tighten the wording in .choir/context/common.md",
+      "[REVIEW] PR #61 has non-blocking review comments:\\nPlease tighten the wording in .choir/context/common.md",
     ),
   )
   // PR comment audit trail
@@ -611,7 +612,86 @@ async test "process_poller_tick_with routes comment-only reviews to owning agent
   assert_eq(review_cmds[2].args[0], "pr")
   assert_eq(review_cmds[2].args[1], "comment")
   assert_eq(review_cmds[2].args[2], "61")
-  assert_true(review_cmds[2].args[4].contains("**Choir:** review received"))
+  assert_true(
+    review_cmds[2].args[4].contains("**Choir:** comment-only review received"),
+  )
+}
+
+///|
+async test "comment-only review does not block shutdown" {
+  let project_dir = "/tmp/choir-server-commented-review"
+  run_shell(
+    "rm -rf /tmp/choir-server-commented-review && mkdir -p /tmp/choir-server-commented-review/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+  let child = {
+    ..build_agent("main.leaf-commented", Some("parent-1")),
+    role: @types.Role::Dev,
+    branch: "main.leaf-commented",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(child))
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "main.leaf-commented",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=71,
+          state=@phase.ReviewOwnership::OpenUnreviewed(
+            url="https://example.test/pr/71",
+          ),
+        ),
+      ),
+    }),
+  )
+  state.poller.track(
+    71, "main.leaf-commented", "main.leaf-commented", "main", "https://example.test/pr/71",
+    100L,
+  )
+  state.process_poller_tick_with(
+    200L,
+    900L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::Commented,
+        "sha-commented-1",
+        false,
+        "Looks good; maybe tighten wording.",
+        true,
+      )
+    },
+    runner=mock_runner_server,
+  )
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "shutdown",
+    args: @types.RequestArgs::from_values({
+      "caller_id": "main.leaf-commented".to_json(),
+    }),
+  }
+  let res = state.handle_with_runner(req, runner=mock_runner_server)
+  assert_eq(res.ok_field("status"), Some("deferred"))
+  match @phase.read_lifecycle(project_dir, "main.leaf-commented") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number=71,
+            state=@phase.ReviewOwnership::OpenUnreviewed(url~)
+          )
+        ) => assert_eq(url, "https://example.test/pr/71")
+        _ =>
+          fail(
+            "expected review-owned deferred lifecycle after comment-only review",
+          )
+      }
+    None => fail("expected lifecycle")
+  }
+  run_shell("rm -rf /tmp/choir-server-commented-review")
 }
 
 ///|

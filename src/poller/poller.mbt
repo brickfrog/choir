@@ -28,6 +28,7 @@ pub(all) struct TrackedPR {
 /// Events emitted by the poller on each tick.
 pub(all) enum PollEvent {
   ReviewReceived(Int, String)
+  ReviewCommented(Int, String)
   PRReady(Int)
   FixesPushed(Int)
   ReviewTimeout(Int)

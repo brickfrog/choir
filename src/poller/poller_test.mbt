@@ -299,7 +299,7 @@ test "detect_events::comment_only_review" {
     1000,
   )
   assert_eq(events, [
-    PollEvent::ReviewReceived(
+    PollEvent::ReviewCommented(
       1, "Looks good overall, but clarify the docs wording.",
     ),
   ])
@@ -409,8 +409,8 @@ test "detect_events::timeout suppressed when review bodies exist" {
     1200,
     1000,
   )
-  // Should get ReviewReceived but NOT ReviewTimeout
-  assert_eq(events, [PollEvent::ReviewReceived(1, "Automated review summary")])
+  // Should get ReviewCommented but NOT ReviewTimeout
+  assert_eq(events, [PollEvent::ReviewCommented(1, "Automated review summary")])
 }
 
 ///|
@@ -575,7 +575,7 @@ async test "PollerState::tick_with tracks latest comment-only review bodies" {
     fn(event, _agent_id) { events.push(event) },
   )
   assert_eq(events, [
-    PollEvent::ReviewReceived(
+    PollEvent::ReviewCommented(
       10, "Please tighten the wording in .choir/context/common.md",
     ),
   ])

@@ -458,11 +458,40 @@ fn recover_dev_lifecycle_for_pr(
           state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
         )
       }
-    @poller.ReviewState::ChangesRequested | @poller.ReviewState::Commented =>
+    @poller.ReviewState::ChangesRequested =>
       @phase.DevLifecycle::ChangesRequested(
         pr_number~,
         next_round=inferred_next_round_from_lifecycle(current),
       )
+    @poller.ReviewState::Commented =>
+      match current {
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=n,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+        ) if n == pr_number =>
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+          )
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number=n,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+        ) if n == pr_number =>
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+          )
+        @phase.DevLifecycle::ExitRequestedDeferred(..) =>
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number~,
+            state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+          )
+        _ =>
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+          )
+      }
     @poller.ReviewState::None_ =>
       match current {
         @phase.DevLifecycle::ReviewOwned(
@@ -910,6 +939,101 @@ async test "recover_open_pr_tracking_with seeds current review snapshot" {
         lifecycle.workflow,
         @phase.WorkflowState::Dev(
           @phase.DevLifecycle::ChangesRequested(pr_number=12, next_round=1),
+        ),
+      )
+    None => fail("expected recovered lifecycle")
+  }
+  run_shell_recovery("rm -rf " + project_dir)
+}
+
+///|
+async test "recover_open_pr_tracking_with keeps comment-only review non-blocking" {
+  let project_dir = "/tmp/choir-recovery-commented-review"
+  run_shell_recovery(
+    "rm -rf " + project_dir + " && mkdir -p " + project_dir + "/.choir/kv",
+  )
+  let config = { ..@types.Config::default(), project_dir, }
+  let state = ServerState::new(config)
+  ignore(
+    state.register_agent({
+      agent_id: "main",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      state: @types.AgentState::Active,
+      parent: None,
+      terminal_target: None,
+      host: @types.Host::Local,
+      workspace: ".",
+      branch: "main",
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: "main.leaf-b",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Gemini,
+      state: @types.AgentState::Active,
+      parent: Some("main"),
+      terminal_target: @types.LocalTarget::parse("zellij-tab:howdy:leaf-b"),
+      host: @types.Host::Local,
+      workspace: ".choir/worktrees/leaf-b",
+      branch: "main.leaf-b",
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(state.config.project_dir, {
+      agent_id: "main.leaf-b",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number=13,
+          state=@phase.ReviewOwnership::OpenUnreviewed(
+            url="https://example.test/pr/13",
+          ),
+        ),
+      ),
+    }),
+  )
+  recover_open_pr_tracking_with(
+    state,
+    [
+      {
+        pr_number: 13,
+        branch: "main.leaf-b",
+        base: "main",
+        url: "https://example.test/pr/13",
+        created_sec: Some(88L),
+      },
+    ],
+    [],
+    123L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::Commented,
+        "sha-commented",
+        false,
+        "Nit: tighten the summary wording.",
+        true,
+      )
+    },
+  )
+  match state.poller.get(13) {
+    Some(tracked) =>
+      assert_eq(tracked.last_review_state, @poller.ReviewState::Commented)
+    None => fail("expected recovered tracked PR")
+  }
+  match @phase.read_lifecycle(state.config.project_dir, "main.leaf-b") {
+    Some(lifecycle) =>
+      assert_eq(
+        lifecycle.workflow,
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number=13,
+            state=@phase.ReviewOwnership::OpenUnreviewed(
+              url="https://example.test/pr/13",
+            ),
+          ),
         ),
       )
     None => fail("expected recovered lifecycle")

@@ -354,6 +354,37 @@ fn parent_poll_event_message(
           ),
         )
       }
+    ReviewCommented(n, comments) =>
+      if comments == "" {
+        Some(
+          (
+            "[REVIEW] " +
+            agent_id +
+            " PR #" +
+            n.to_string() +
+            " has non-blocking review comments\n" +
+            "branch: " +
+            branch +
+            "\n" +
+            "parent_branch: " +
+            parent_branch.unwrap_or("<unknown>") +
+            pr_url,
+            "info",
+          ),
+        )
+      } else {
+        Some(
+          (
+            "[REVIEW] " +
+            agent_id +
+            " PR #" +
+            n.to_string() +
+            " has non-blocking review comments:\n" +
+            comments,
+            "info",
+          ),
+        )
+      }
     CIFailed(n) =>
       Some(
         (
@@ -379,6 +410,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
   match event {
     PRReady(n) => n
     ReviewReceived(n, _) => n
+    ReviewCommented(n, _) => n
     FixesPushed(n) => n
     ReviewTimeout(n) => n
     CIFailed(n) => n
@@ -397,6 +429,27 @@ fn owner_poll_event_message(event : @poller.PollEvent) -> (String, String)? {
             "[REVIEW] PR #" +
             n.to_string() +
             " has review comments:\n" +
+            comments,
+            "info",
+          ),
+        )
+      }
+    ReviewCommented(n, comments) =>
+      if comments == "" {
+        Some(
+          (
+            "[REVIEW] PR #" +
+            n.to_string() +
+            " has non-blocking review comments",
+            "info",
+          ),
+        )
+      } else {
+        Some(
+          (
+            "[REVIEW] PR #" +
+            n.to_string() +
+            " has non-blocking review comments:\n" +
             comments,
             "info",
           ),
@@ -431,6 +484,7 @@ pub fn ServerState::plan_poll_event_deliveries(
         agent_id,
         @phase.DevEvent::ReviewReceivedEv(pr_number=n, body~),
       )
+    (Some(_), ReviewCommented(_, _)) => ()
     (Some(_), PRReady(n)) =>
       @tools.apply_dev_event(
         self.config.project_dir,
@@ -510,6 +564,15 @@ fn pr_comment_body(
           "**Choir:** review received — routed to `" +
           agent_id +
           "` and parent for triage.",
+        ),
+      )
+    ReviewCommented(n, _) =>
+      Some(
+        (
+          n,
+          "**Choir:** comment-only review received — routed to `" +
+          agent_id +
+          "` and parent for awareness.",
         ),
       )
     PRReady(n) =>
