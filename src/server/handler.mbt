@@ -269,27 +269,23 @@ fn ServerState::resolve_parent_by_id(
     Err(_) =>
       match @phase.read_lifecycle(self.config.project_dir, parent_id) {
         Some(lifecycle) =>
-          match lifecycle.role {
-            @types.Role::Root | @types.Role::TL =>
-              Ok({
-                agent_id: parent_id,
-                role: lifecycle.role,
-                agent_type: synthesized_parent_agent_type(lifecycle.role),
-                parent: None,
-                workspace: self.config.project_dir,
-                branch: parent_id,
-                terminal_target: Some(
-                  synthesized_parent_terminal_target(
-                    self.config.terminal_session,
-                    parent_id,
-                    lifecycle.role,
-                  ),
-                ),
-                host: @types.Host::Local,
-                state: lifecycle.to_agent_state(),
-              })
-            _ => Err(@types.ExoError::AgentNotFound(parent_id))
-          }
+          Ok({
+            agent_id: parent_id,
+            role: lifecycle.role,
+            agent_type: synthesized_parent_agent_type(lifecycle.role),
+            parent: None,
+            workspace: self.config.project_dir,
+            branch: parent_id,
+            terminal_target: Some(
+              synthesized_parent_terminal_target(
+                self.config.terminal_session,
+                parent_id,
+                lifecycle.role,
+              ),
+            ),
+            host: @types.Host::Local,
+            state: lifecycle.to_agent_state(),
+          })
         None => Err(@types.ExoError::AgentNotFound(parent_id))
       }
   }

@@ -93,27 +93,23 @@ fn resolve_parent_for_notify(
             Err(_) =>
               match @phase.read_lifecycle(project_dir, parent_id) {
                 Some(lifecycle) =>
-                  match lifecycle.role {
-                    @types.Role::Root | @types.Role::TL =>
-                      Ok({
-                        agent_id: parent_id,
-                        role: lifecycle.role,
-                        agent_type: @types.AgentType::Claude,
-                        parent: None,
-                        workspace: project_dir,
-                        branch: parent_id,
-                        terminal_target: Some(
-                          synthesized_notify_parent_target(
-                            session,
-                            parent_id,
-                            lifecycle.role,
-                          ),
-                        ),
-                        host: @types.Host::Local,
-                        state: lifecycle.to_agent_state(),
-                      })
-                    _ => Err(@types.ExoError::AgentNotFound(parent_id))
-                  }
+                  Ok({
+                    agent_id: parent_id,
+                    role: lifecycle.role,
+                    agent_type: @types.AgentType::Claude,
+                    parent: None,
+                    workspace: project_dir,
+                    branch: parent_id,
+                    terminal_target: Some(
+                      synthesized_notify_parent_target(
+                        session,
+                        parent_id,
+                        lifecycle.role,
+                      ),
+                    ),
+                    host: @types.Host::Local,
+                    state: lifecycle.to_agent_state(),
+                  })
                 None => Err(@types.ExoError::AgentNotFound(parent_id))
               }
           }
