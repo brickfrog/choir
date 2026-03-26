@@ -121,6 +121,27 @@ fn resolve_parent_for_notify(
 }
 
 ///|
+fn file_pr_workdir(
+  root_project_dir : String,
+  tracked_agent_id : String,
+  reg : @registry.AgentRegistry?,
+) -> String {
+  match reg {
+    Some(agent_reg) =>
+      match agent_reg.get(tracked_agent_id) {
+        Ok(agent) =>
+          if agent.workspace != "" {
+            agent.workspace
+          } else {
+            root_project_dir
+          }
+        Err(_) => root_project_dir
+      }
+    None => root_project_dir
+  }
+}
+
+///|
 pub async fn dispatch(
   req : ToolRequest,
   project_dir? : String = ".",
@@ -336,17 +357,21 @@ pub async fn dispatch(
         None => detect_default_branch(project_dir)
       }
       let tracked_agent_id = file_pr_args.tracked_agent_id
-      match ensure_branch_ready(branch, parent_branch, project_dir) {
+      let file_pr_dir = file_pr_workdir(project_dir, tracked_agent_id, registry)
+      match ensure_branch_ready(branch, parent_branch, file_pr_dir) {
         Err(e) => @types.Response::Err(e)
         Ok(_) =>
-          match run_strict(runner, [@workspace.git_push(branch)]) {
+          match
+            run_strict(runner, [
+              { ..@workspace.git_push(branch), workdir: Some(file_pr_dir) },
+            ]) {
             Err(e) => @types.Response::Err(e)
             Ok(_) =>
               match
                 ensure_pr(
                   branch,
                   parent_branch,
-                  project_dir,
+                  file_pr_dir,
                   file_pr_args.title,
                   file_pr_args.body,
                 ) {

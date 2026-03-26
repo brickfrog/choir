@@ -31,6 +31,51 @@ async fn mock_registry_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
 }
 
 ///|
+async fn mock_registry_branch_ready_capture(
+  _branch : String,
+  _parent_branch : String,
+  project_dir : String,
+) -> Result[Unit, String] {
+  @async.sleep(0)
+  if project_dir == "/tmp/task-leaf-worktree" {
+    Ok(())
+  } else {
+    Err("wrong ensure_branch_ready project_dir: " + project_dir)
+  }
+}
+
+///|
+async fn mock_registry_ensure_pr_capture(
+  branch : String,
+  _parent_branch : String,
+  project_dir : String,
+  _title : String?,
+  _body : String?,
+) -> Result[@tools.PullRequestInfo, String] {
+  @async.sleep(0)
+  if project_dir != "/tmp/task-leaf-worktree" {
+    return Err("wrong ensure_pr project_dir: " + project_dir)
+  }
+  Ok({ number: 1, url: "https://example.test/pr/" + branch, state: "OPEN" })
+}
+
+///|
+async fn mock_registry_runner_capture_workdir(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for cmd in cmds {
+    let status = match cmd.workdir {
+      Some(path) => if path == "/tmp/task-leaf-worktree" { 0 } else { 17 }
+      None => 18
+    }
+    statuses.push(status)
+  }
+  statuses
+}
+
+///|
 test "tool registry lookup success" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "fork_wave")
@@ -191,6 +236,47 @@ async test "dispatch returns correct stub for each tool name" {
         assert_true(false)
       }
     }
+  }
+}
+
+///|
+async test "dispatch file_pr uses registered agent workspace for git and gh operations" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.task-leaf",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::CursorAgent,
+      parent: Some("root"),
+      workspace: "/tmp/task-leaf-worktree",
+      branch: "main.task-leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: {
+      "caller_id": "main.task-leaf",
+      "branch": "main.task-leaf",
+      "parent_branch": "main",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/mnt/data/Code/choir",
+    runner=mock_registry_runner_capture_workdir,
+    ensure_branch_ready=mock_registry_branch_ready_capture,
+    ensure_pr=mock_registry_ensure_pr_capture,
+    registry=Some(reg),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Ok(map) => assert_eq(map.get("status"), Some("pr_created"))
+    Err(msg) => fail("expected file_pr success: " + msg)
   }
 }
 

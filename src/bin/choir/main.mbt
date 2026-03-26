@@ -1013,15 +1013,32 @@ fn leaf_tool_request_args(
       let used_legacy_branch = not(flags.contains("branch")) &&
         positionals.length() > 0 &&
         looks_like_legacy_branch_arg(positionals[0])
-      if not(flags.contains("branch")) && used_legacy_branch {
-        flags.set("branch", positionals[0])
+      if not(flags.contains("branch")) {
+        if used_legacy_branch {
+          flags.set("branch", positionals[0])
+        } else {
+          match @sys.getenv("CHOIR_BRANCH") {
+            Some(branch) => if branch != "" { flags.set("branch", branch) }
+            None => ()
+          }
+        }
       }
-      if used_legacy_branch && not(flags.contains("parent_branch")) {
-        if positionals.length() > 2 && looks_like_branch_token(positionals[2]) {
-          flags.set("parent_branch", positionals[2])
-        } else if positionals.length() > 1 &&
-          looks_like_branch_token(positionals[1]) {
-          flags.set("parent_branch", positionals[1])
+      if not(flags.contains("parent_branch")) {
+        if used_legacy_branch {
+          if positionals.length() > 2 && looks_like_branch_token(positionals[2]) {
+            flags.set("parent_branch", positionals[2])
+          } else if positionals.length() > 1 &&
+            looks_like_branch_token(positionals[1]) {
+            flags.set("parent_branch", positionals[1])
+          }
+        } else {
+          match @sys.getenv("CHOIR_PARENT_BRANCH") {
+            Some(parent_branch) =>
+              if parent_branch != "" {
+                flags.set("parent_branch", parent_branch)
+              }
+            None => ()
+          }
         }
       }
       Ok(flags)
