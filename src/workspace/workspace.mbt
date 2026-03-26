@@ -169,3 +169,21 @@ pub fn mcp_json_content(
     None => base + "}"
   }
 }
+
+///|
+/// Construct the .codex/config.toml content for a child worktree.
+pub fn codex_config_content(role : @types.Role, agent_id : String) -> String {
+  let role_str = match role {
+    @types.Role::Root => "root"
+    @types.Role::TL => "tl"
+    @types.Role::Dev => "dev"
+    @types.Role::Worker => "worker"
+  }
+  "[mcp_servers.choir]\n" +
+  "command = \"choir\"\n" +
+  "args = [\"mcp-stdio\", \"--role\", \"" +
+  role_str +
+  "\", \"--name\", \"" +
+  agent_id +
+  "\"]\n"
+}

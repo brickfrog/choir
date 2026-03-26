@@ -217,6 +217,9 @@ pub fn spawn_commands(
           mcp_json_content(spec.role, branch, extra_mcp_servers_json~),
         ),
       )
+      cmds.push(
+        write_codex_config(workspace, codex_config_content(spec.role, branch)),
+      )
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
@@ -298,6 +301,9 @@ pub fn spawn_commands(
           workspace,
           mcp_json_content(spec.role, branch, extra_mcp_servers_json~),
         ),
+      )
+      cmds.push(
+        write_codex_config(workspace, codex_config_content(spec.role, branch)),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
