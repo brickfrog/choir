@@ -123,7 +123,7 @@ async test "ensure_pull_request errors when branch has no commits ahead" {
     "printf 'seed\\n' > README.md && " +
     "git add README.md && " +
     "git commit -m init >/dev/null 2>&1 && " +
-    "git branch feature",
+    "git branch -f feature main",
   )
   let res = ensure_pull_request("feature", "main", project_dir, None, None)
   match res {
@@ -174,7 +174,7 @@ async test "dispatch file_pr fails before push when branch is not ahead" {
     "printf 'seed\\n' > README.md && " +
     "git add README.md && " +
     "git commit -m init >/dev/null 2>&1 && " +
-    "git branch feature",
+    "git branch -f feature main",
   )
   let recorded : Array[@workspace.Command] = []
   let res = dispatch_call(
