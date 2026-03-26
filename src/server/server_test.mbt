@@ -15,9 +15,30 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 }
 
 ///|
+
+///|
+fn escape_for_sh_single_quotes(script : String) -> String {
+  // Escape single quotes for safe embedding inside `sh -c '<script>'`.
+  // Bash pattern: close quote, escape quote, reopen: `'\''`.
+  let buf = StringBuilder::new()
+  for c in script {
+    if c == '\'' {
+      buf.write_string("'\\''")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
 fn run_shell(script : String) -> Unit {
   ignore(
-    c_system_test(string_to_null_terminated_bytes("sh -c '" + script + "'")),
+    c_system_test(
+      string_to_null_terminated_bytes(
+        "sh -c '" + escape_for_sh_single_quotes(script) + "'",
+      ),
+    ),
   )
 }
 
