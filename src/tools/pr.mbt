@@ -208,6 +208,18 @@ pub fn parse_left_right_counts(output : String) -> (Int, Int)? {
 }
 
 ///|
+
+///|
+fn preflight_spawn_or_wait_failure_detail(output : String) -> String {
+  let trimmed = output.trim().to_string()
+  if trimmed != "" {
+    "failed to run command (process error): " + trimmed
+  } else {
+    "failed to run command (process spawn or wait failed; no output captured)."
+  }
+}
+
+///|
 async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
@@ -240,10 +252,11 @@ async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
-async fn rev_list_left_right_counts(
+async fn rev_list_left_right_counts_with_capture(
   parent_branch : String,
   branch : String,
   project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[(Int, Int), FilePrPreflightError] {
   let cmd : @workspace.Command = {
     program: "git",
@@ -255,7 +268,19 @@ async fn rev_list_left_right_counts(
     ],
     workdir: Some(project_dir),
   }
-  let (exit_code, output) = capture_command_output(cmd)
+  let rev_step = "git rev-list --left-right --count " +
+    parent_branch +
+    "..." +
+    branch
+  let (exit_code, output) = capture(cmd)
+  if exit_code < 0 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        rev_step,
+        preflight_spawn_or_wait_failure_detail(output),
+      ),
+    )
+  }
   if exit_code != 0 {
     let message = output.trim().to_string()
     if message != "" {
@@ -279,6 +304,17 @@ async fn rev_list_left_right_counts(
 }
 
 ///|
+async fn rev_list_left_right_counts(
+  parent_branch : String,
+  branch : String,
+  project_dir : String,
+) -> Result[(Int, Int), FilePrPreflightError] {
+  rev_list_left_right_counts_with_capture(
+    parent_branch, branch, project_dir, capture_command_output,
+  )
+}
+
+///|
 pub async fn ensure_branch_has_unique_commits(
   branch : String,
   parent_branch : String,
@@ -299,17 +335,27 @@ pub async fn ensure_branch_has_unique_commits(
 
 ///|
 /// Validates local branch state before `file_pr` runs `git push` / `gh`.
-pub async fn file_pr_preflight(
+pub async fn file_pr_preflight_with_capture(
   branch : String,
   parent_branch : String,
   project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[Unit, FilePrPreflightError] {
   let verify_cmd : @workspace.Command = {
     program: "git",
     args: ["rev-parse", "--verify", "refs/heads/" + branch],
     workdir: Some(project_dir),
   }
-  let (vcode, vout) = capture_command_output(verify_cmd)
+  let verify_step = "git rev-parse --verify refs/heads/" + branch
+  let (vcode, vout) = capture(verify_cmd)
+  if vcode < 0 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        verify_step,
+        preflight_spawn_or_wait_failure_detail(vout),
+      ),
+    )
+  }
   if vcode != 0 {
     return Err(
       FilePrPreflightError::BranchMissing(branch, vout.trim().to_string()),
@@ -320,7 +366,15 @@ pub async fn file_pr_preflight(
     args: ["rev-parse", "--abbrev-ref", "HEAD"],
     workdir: Some(project_dir),
   }
-  let (hcode, hout) = capture_command_output(head_cmd)
+  let (hcode, hout) = capture(head_cmd)
+  if hcode < 0 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        "git rev-parse --abbrev-ref HEAD",
+        preflight_spawn_or_wait_failure_detail(hout),
+      ),
+    )
+  }
   if hcode != 0 {
     return Err(FilePrPreflightError::HeadUnreadable(hout.trim().to_string()))
   }
@@ -333,7 +387,15 @@ pub async fn file_pr_preflight(
     args: ["status", "--porcelain"],
     workdir: Some(project_dir),
   }
-  let (scode, sout) = capture_command_output(status_cmd)
+  let (scode, sout) = capture(status_cmd)
+  if scode < 0 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        "git status --porcelain",
+        preflight_spawn_or_wait_failure_detail(sout),
+      ),
+    )
+  }
   if scode != 0 {
     return Err(
       FilePrPreflightError::GitCommandFailed(
@@ -351,13 +413,24 @@ pub async fn file_pr_preflight(
     args: ["remote", "get-url", "origin"],
     workdir: Some(project_dir),
   }
-  let (ocode, oout) = capture_command_output(origin_cmd)
+  let (ocode, oout) = capture(origin_cmd)
+  if ocode < 0 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        "git remote get-url origin",
+        preflight_spawn_or_wait_failure_detail(oout),
+      ),
+    )
+  }
   if ocode != 0 {
     return Err(
       FilePrPreflightError::MissingOriginGitRemote(oout.trim().to_string()),
     )
   }
-  match rev_list_left_right_counts(parent_branch, branch, project_dir) {
+  match
+    rev_list_left_right_counts_with_capture(
+      parent_branch, branch, project_dir, capture,
+    ) {
     Ok((_, ahead)) =>
       if ahead <= 0 {
         return Err(
@@ -371,28 +444,61 @@ pub async fn file_pr_preflight(
     args: ["diff", "--no-ext-diff", "--quiet", parent_branch + "..." + branch],
     workdir: Some(project_dir),
   }
-  let (dcode, _) = capture_command_output(diff_cmd)
+  let diff_step = "git diff --no-ext-diff --quiet " +
+    parent_branch +
+    "..." +
+    branch
+  let (dcode, dout) = capture(diff_cmd)
+  if dcode < 0 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        diff_step,
+        preflight_spawn_or_wait_failure_detail(dout),
+      ),
+    )
+  }
   if dcode == 0 {
     return Err(FilePrPreflightError::EmptyDiffVsParent(branch, parent_branch))
   }
   if dcode != 1 {
-    return Err(
-      FilePrPreflightError::GitCommandFailed(
-        "git diff --no-ext-diff --quiet " + parent_branch + "..." + branch,
-        "unexpected exit code " + dcode.to_string(),
-      ),
-    )
+    let trimmed = dout.trim().to_string()
+    let tail = if trimmed != "" {
+      "unexpected exit code " + dcode.to_string() + ": " + trimmed
+    } else {
+      "unexpected exit code " + dcode.to_string()
+    }
+    return Err(FilePrPreflightError::GitCommandFailed(diff_step, tail))
   }
   let gh_cmd : @workspace.Command = {
     program: "gh",
     args: ["auth", "status"],
     workdir: Some(project_dir),
   }
-  let (gcode, gout) = capture_command_output(gh_cmd)
+  let (gcode, gout) = capture(gh_cmd)
+  if gcode < 0 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        "gh auth status",
+        preflight_spawn_or_wait_failure_detail(gout),
+      ),
+    )
+  }
   if gcode != 0 {
     return Err(FilePrPreflightError::GhAuthFailed(gout.trim().to_string()))
   }
   Ok(())
+}
+
+///|
+/// Validates local branch state before `file_pr` runs `git push` / `gh`.
+pub async fn file_pr_preflight(
+  branch : String,
+  parent_branch : String,
+  project_dir : String,
+) -> Result[Unit, FilePrPreflightError] {
+  file_pr_preflight_with_capture(
+    branch, parent_branch, project_dir, capture_command_output,
+  )
 }
 
 ///|
