@@ -16,21 +16,34 @@ pub fn detect_events(
   if current_review != tracked.last_review_state {
     match current_review {
       Approved => events.push(PollEvent::PRReady(tracked.pr_number))
-      ChangesRequested | Commented =>
+      ChangesRequested =>
         if has_new_review_bodies || current_review == ChangesRequested {
           events.push(
             PollEvent::ReviewReceived(tracked.pr_number, review_bodies),
           )
         }
+      Commented =>
+        if has_new_review_bodies {
+          events.push(
+            PollEvent::ReviewCommented(tracked.pr_number, review_bodies),
+          )
+        }
       None_ =>
         if has_new_review_bodies {
           events.push(
-            PollEvent::ReviewReceived(tracked.pr_number, review_bodies),
+            PollEvent::ReviewCommented(tracked.pr_number, review_bodies),
           )
         }
     }
   } else if current_review != Approved && has_new_review_bodies {
-    events.push(PollEvent::ReviewReceived(tracked.pr_number, review_bodies))
+    match current_review {
+      ChangesRequested =>
+        events.push(PollEvent::ReviewReceived(tracked.pr_number, review_bodies))
+      _ =>
+        events.push(
+          PollEvent::ReviewCommented(tracked.pr_number, review_bodies),
+        )
+    }
   }
 
   // Fixes pushed
