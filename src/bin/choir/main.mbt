@@ -2911,6 +2911,18 @@ fn init_tl_mcp_config_path() -> String {
 }
 
 ///|
+fn init_codex_config_path() -> String {
+  ".codex/config.toml"
+}
+
+///|
+fn init_codex_config_content() -> String {
+  "[mcp_servers.choir]\n" +
+  "command = \"choir\"\n" +
+  "args = [\"mcp-stdio\", \"--role\", \"tl\", \"--name\", \"root\"]\n"
+}
+
+///|
 fn init_tl_launch_command(tl_type : String) -> String {
   let mcp_path = init_tl_mcp_config_path()
   let cmd = match tl_type {
@@ -3316,6 +3328,17 @@ fn init_run() -> Unit {
           "sh",
           init_tl_mcp_config_path(),
           init_mcp_json_content(project_dir),
+        ],
+        workdir: None,
+      })
+      init_run_or_exit({
+        program: "sh",
+        args: [
+          "-c",
+          "mkdir -p .codex && printf '%s' \"$2\" > \"$1\"",
+          "sh",
+          init_codex_config_path(),
+          init_codex_config_content(),
         ],
         workdir: None,
       })

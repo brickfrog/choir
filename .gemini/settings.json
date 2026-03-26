@@ -1,39 +1,28 @@
 {
-  "hooks": {
-    "AfterAgent": [
-      {
-        "hooks": [
-          {
-            "command": "exomonad hook after-agent --runtime gemini",
-            "type": "command"
-          }
-        ],
-        "matcher": "*"
-      }
-    ],
-    "BeforeTool": [
-      {
-        "hooks": [
-          {
-            "command": "exomonad hook before-tool --runtime gemini",
-            "type": "command"
-          }
-        ],
-        "matcher": "*"
-      }
-    ]
-  },
   "mcpServers": {
-    "exomonad": {
+    "choir": {
+      "type": "stdio",
+      "command": "choir",
       "args": [
         "mcp-stdio",
         "--role",
         "dev",
         "--name",
-        "spawn-gemini-hooks"
-      ],
-      "command": "exomonad",
-      "type": "stdio"
+        "main.gemini-project-mcp-0"
+      ]
     }
+  },
+  "hooks": {
+    "AfterAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "choir hook worker-exit --runtime gemini"
+          }
+        ]
+      }
+    ]
   }
 }

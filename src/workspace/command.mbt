@@ -83,6 +83,20 @@ pub fn write_mcp_json(worktree_path : String, json : String) -> Command {
 }
 
 ///|
+/// Write .codex/config.toml into worktree.
+/// Uses positional shell args to safely handle paths with spaces.
+pub fn write_codex_config(worktree_path : String, toml : String) -> Command {
+  {
+    program: "sh",
+    args: [
+      "-c", "mkdir -p \"$1/.codex\" && printf '%s' \"$2\" > \"$1/.codex/config.toml\"",
+      "sh", worktree_path, toml,
+    ],
+    workdir: None,
+  }
+}
+
+///|
 /// Install shell helpers for CLIs that do not load MCP tools directly.
 pub fn write_leaf_helper_scripts(worktree_path : String) -> Command {
   {

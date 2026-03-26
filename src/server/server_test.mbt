@@ -41,22 +41,22 @@ async fn mock_spawn_runner_server(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
   @async.sleep(0)
-  assert_eq(cmds.length(), 9)
+  assert_eq(cmds.length(), 10)
   assert_true(cmds[0].args[1].contains("git worktree remove --force"))
   assert_true(
     cmds[3].args[4].contains(
       "terminal_target = \"zellij-tab:server-proof:leaf-a-0\"",
     ),
   )
-  assert_eq(cmds[6].program, "choir")
-  assert_eq(cmds[6].args, [
+  assert_eq(cmds[7].program, "choir")
+  assert_eq(cmds[7].args, [
     "trust-gemini-folder", "/tmp/server-proof/.choir/worktrees/leaf-a-0",
   ])
-  assert_eq(cmds[7].program, "sh") // write_gemini_settings
-  assert_eq(cmds[8].program, "zellij")
-  assert_eq(cmds[8].args[3], "new-tab")
-  assert_eq(cmds[8].args[5], "leaf-a-0")
-  [0, 0, 0, 0, 0, 0, 0, 0, 0]
+  assert_eq(cmds[8].program, "sh") // write_gemini_settings
+  assert_eq(cmds[9].program, "zellij")
+  assert_eq(cmds[9].args[3], "new-tab")
+  assert_eq(cmds[9].args[5], "leaf-a-0")
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 }
 
 ///|

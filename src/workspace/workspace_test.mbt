@@ -222,15 +222,15 @@ test "spawn_commands for worktree mode returns zellij tab" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // cleanup, git worktree add, config.toml, config.local.toml, .mcp.json, helpers, zellij new-tab
-  assert_eq(cmds.length(), 7)
+  // cleanup, git worktree add, config.toml, config.local.toml, .mcp.json, codex/config.toml, helpers, zellij new-tab
+  assert_eq(cmds.length(), 8)
   assert_eq(cmds[0].program, "sh")
   assert_true(cmds[0].args[1].contains("git worktree remove --force"))
   assert_eq(cmds[1].program, "git")
-  assert_eq(cmds[5].program, "sh")
-  assert_true(cmds[5].args[1].contains("choir leaf-tool"))
-  assert_eq(cmds[6].program, "zellij")
-  assert_eq(cmds[6].args[3], "new-tab")
+  assert_eq(cmds[6].program, "sh")
+  assert_true(cmds[6].args[1].contains("choir leaf-tool"))
+  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[7].args[3], "new-tab")
 }
 
 ///|
@@ -245,7 +245,7 @@ test "spawn_commands worktree config write content" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 7)
+  assert_eq(cmds.length(), 8)
   assert_eq(cmds[2].program, "sh")
   assert_true(cmds[2].args[3].contains("feature-a"))
   assert_true(cmds[2].args[4].contains("default_role = \"dev\""))
@@ -276,11 +276,11 @@ test "spawn_commands gemini worktree adds trust and settings" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  assert_eq(cmds.length(), 9)
-  assert_eq(cmds[6].program, "choir")
-  assert_eq(cmds[7].program, "sh")
-  assert_eq(cmds[8].program, "zellij")
-  assert_eq(cmds[8].args[3], "new-tab")
+  assert_eq(cmds.length(), 10)
+  assert_eq(cmds[7].program, "choir")
+  assert_eq(cmds[8].program, "sh")
+  assert_eq(cmds[9].program, "zellij")
+  assert_eq(cmds[9].args[3], "new-tab")
   assert_true(
     cmds[3].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
   )
@@ -298,8 +298,8 @@ test "spawn_commands standalone includes config writes" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  // git init, config.toml, config.local.toml, .mcp.json, helpers, zellij new-tab
-  assert_eq(cmds.length(), 6)
+  // git init, config.toml, config.local.toml, .mcp.json, codex/config.toml, helpers, zellij new-tab
+  assert_eq(cmds.length(), 7)
   assert_eq(cmds[0].program, "git")
   assert_eq(cmds[1].program, "sh")
   assert_true(
@@ -312,7 +312,10 @@ test "spawn_commands standalone includes config writes" {
   )
   assert_eq(cmds[3].program, "sh")
   assert_true(cmds[3].args[4].contains("--role"))
-  assert_true(cmds[4].args[1].contains("task_create"))
+  assert_eq(cmds[4].program, "sh")
+  assert_true(cmds[4].args[4].contains("mcp_servers.choir"))
+  assert_eq(cmds[5].program, "sh")
+  assert_true(cmds[5].args[1].contains("task_create"))
 }
 
 ///|
@@ -327,15 +330,15 @@ test "spawn_commands adds Gemini trust bootstrap" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 9)
-  assert_eq(cmds[6].program, "choir")
-  assert_eq(cmds[6].args, [
+  assert_eq(cmds.length(), 10)
+  assert_eq(cmds[7].program, "choir")
+  assert_eq(cmds[7].args, [
     "trust-gemini-folder", "/project/.choir/worktrees/gemini-slug",
   ])
-  assert_eq(cmds[7].program, "sh")
-  assert_true(cmds[7].args[1].contains(".gemini"))
-  assert_true(cmds[7].args[4].contains("mcpServers"))
-  assert_true(cmds[7].args[4].contains("main.gemini-slug"))
+  assert_eq(cmds[8].program, "sh")
+  assert_true(cmds[8].args[1].contains(".gemini"))
+  assert_true(cmds[8].args[4].contains("mcpServers"))
+  assert_true(cmds[8].args[4].contains("main.gemini-slug"))
 }
 
 ///|
@@ -436,6 +439,15 @@ test "mcp_json_content merges extra servers" {
   assert_true(json.contains("\"choir\""))
   assert_true(json.contains("\"notebook\""))
   assert_true(json.contains("\"agent-a\""))
+}
+
+///|
+test "codex_config_content generation" {
+  let toml = @workspace.codex_config_content(@types.Role::TL, "agent-tl")
+  assert_true(toml.contains("[mcp_servers.choir]"))
+  assert_true(toml.contains("command = \"choir\""))
+  assert_true(toml.contains("\"--role\", \"tl\""))
+  assert_true(toml.contains("\"--name\", \"agent-tl\""))
 }
 
 ///|
