@@ -4,6 +4,8 @@ pub(all) enum FinalizeReason {
   Merged
   DisconnectFinalized
   RecoveredDone
+  /// Prior leaf finished after a rescue handoff; not a hard failure.
+  RescuedByReplacement
 } derive(Show, Eq)
 
 ///|
@@ -507,6 +509,8 @@ fn finalize_reason_to_json(reason : FinalizeReason) -> Json {
     Merged => { "tag": "Merged".to_json() }.to_json()
     DisconnectFinalized => { "tag": "DisconnectFinalized".to_json() }.to_json()
     RecoveredDone => { "tag": "RecoveredDone".to_json() }.to_json()
+    RescuedByReplacement =>
+      { "tag": "RescuedByReplacement".to_json() }.to_json()
   }
 }
 
@@ -518,6 +522,7 @@ fn finalize_reason_from_json(json : Json) -> FinalizeReason? {
     Some(String("Merged")) => Some(Merged)
     Some(String("DisconnectFinalized")) => Some(DisconnectFinalized)
     Some(String("RecoveredDone")) => Some(RecoveredDone)
+    Some(String("RescuedByReplacement")) => Some(RescuedByReplacement)
     _ => None
   }
 }
@@ -1114,4 +1119,81 @@ pub fn last_segment_after_dot(value : String) -> String {
 ///|
 pub fn extract_slug(agent_id : String) -> String {
   last_segment_after_dot(agent_id)
+}
+
+///|
+/// Copy dev workflow state from a failing leaf to a pending replacement agent id (KV lifecycle file).
+pub fn handoff_dev_workflow_to_new_agent(
+  project_dir : String,
+  from_agent_id : String,
+  to_agent_id : String,
+  to_role : @types.Role,
+) -> Result[Unit, String] {
+  match read_lifecycle(project_dir, from_agent_id) {
+    Some(lc) =>
+      match lc.workflow {
+        Dev(dev) => {
+          let next = {
+            agent_id: to_agent_id,
+            role: to_role,
+            process: Connected,
+            workflow: Dev(dev),
+          }
+          if write_lifecycle(project_dir, next) {
+            Ok(())
+          } else {
+            Err("failed to write lifecycle for " + to_agent_id)
+          }
+        }
+        _ => Err("rescue source must be a dev leaf lifecycle")
+      }
+    None => Err("missing lifecycle for " + from_agent_id)
+  }
+}
+
+///|
+pub fn mark_agent_rescued_superseded(
+  project_dir : String,
+  from_agent_id : String,
+  role : @types.Role,
+) -> Bool {
+  let lc = read_or_default_lifecycle(project_dir, from_agent_id, role)
+  let next_workflow = match lc.workflow {
+    Dev(_) => Dev(Done(reason=RescuedByReplacement))
+    Worker(_) => Worker(Done(reason=RescuedByReplacement))
+    Supervisor(sup) => Supervisor(sup)
+  }
+  let next = {
+    ..lc,
+    process: Finalized(reason=RescuedByReplacement),
+    workflow: next_workflow,
+  }
+  write_lifecycle(project_dir, next)
+}
+
+///|
+/// Drop a child entry from a supervisor's persisted lifecycle (TL/Root).
+pub fn remove_child_from_supervisor_lifecycle(
+  project_dir : String,
+  parent_id : String,
+  child_id : String,
+) -> Unit {
+  let parent_lifecycle = match read_lifecycle(project_dir, parent_id) {
+    Some(lc) => lc
+    None => return
+  }
+  let supervisor = match parent_lifecycle.workflow {
+    Supervisor(supervisor) => supervisor
+    _ => return
+  }
+  match supervisor_transition(supervisor, ChildRemoved(child_id~)) {
+    Transitioned(new_supervisor) =>
+      ignore(
+        write_lifecycle(project_dir, {
+          ..parent_lifecycle,
+          workflow: Supervisor(new_supervisor),
+        }),
+      )
+    InvalidTransition(_) => ()
+  }
 }

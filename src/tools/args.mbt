@@ -47,6 +47,16 @@ struct SpawnGeminiArgs {
 } derive(Show, Eq)
 
 ///|
+struct RescueLeafArgs {
+  task : String
+  caller_id : String
+  from_agent_id : String
+  new_slug : String
+  agent_type : @types.AgentType
+  parent_session_id : String?
+} derive(Show, Eq)
+
+///|
 struct LeafSpawnArgs {
   task : String
   caller_id : String

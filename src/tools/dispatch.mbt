@@ -227,6 +227,9 @@ pub async fn dispatch(
           isolation: @types.IsolationMode::Worktree,
           parent_id: fork_wave_args.caller_id,
           parent_branch: fork_wave_args.parent_branch,
+          reuse_workspace: false,
+          workspace_slug: None,
+          reuse_git_branch: None,
         }
         for
           cmd in @workspace.spawn_commands(
@@ -830,6 +833,9 @@ pub async fn dispatch(
         isolation: @types.IsolationMode::Worktree,
         parent_id: spawn_args.caller_id,
         parent_branch: spawn_args.parent_branch,
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
       }
       let cmds = @workspace.spawn_commands(
         spec,
@@ -854,6 +860,159 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
+    ToolRequest::RescueLeaf(rescue_args) => {
+      let reg = match registry {
+        Some(r) => r
+        None =>
+          return @types.Response::Err(
+            "agent registry unavailable for rescue_leaf",
+          )
+      }
+      let ps = match poller_state {
+        Some(p) => p
+        None =>
+          return @types.Response::Err("poller unavailable for rescue_leaf")
+      }
+      let from_agent_id = rescue_args.from_agent_id
+      let from_agent = match reg.get(from_agent_id) {
+        Ok(a) => a
+        Err(e) => return @types.Response::Err(e.message())
+      }
+      if from_agent.role != @types.Role::Dev {
+        return @types.Response::Err("rescue_leaf only supports dev leaves")
+      }
+      match from_agent.parent {
+        Some(p) =>
+          if p != rescue_args.caller_id {
+            return @types.Response::Err(
+              "caller_id must match the salvaged leaf parent",
+            )
+          }
+        None =>
+          return @types.Response::Err("salvaged leaf has no parent in registry")
+      }
+      if not(from_agent.workspace.contains(".choir/worktrees/")) {
+        return @types.Response::Err(
+          "salvaged leaf has no choir worktree path to reuse",
+        )
+      }
+      let parent_prefix = match @workspace.parent_branch(from_agent_id) {
+        Some(pb) => pb
+        None =>
+          return @types.Response::Err(
+            "invalid from_agent_id (expected nested branch like parent.child)",
+          )
+      }
+      let to_id = @workspace.branch_name(parent_prefix, rescue_args.new_slug)
+      let salvage_slug = @phase.extract_slug(from_agent_id)
+      let git_branch = if from_agent.branch != "" {
+        from_agent.branch
+      } else {
+        from_agent_id
+      }
+      let spec = @types.SpawnSpec::{
+        slug: rescue_args.new_slug,
+        role: @types.Role::Dev,
+        agent_type: rescue_args.agent_type,
+        task: rescue_args.task,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: rescue_args.caller_id,
+        parent_branch: parent_prefix,
+        reuse_workspace: true,
+        workspace_slug: Some(salvage_slug),
+        reuse_git_branch: Some(git_branch),
+      }
+      match @workspace.validate_reuse_spawn_spec(spec) {
+        Err(e) => return @types.Response::Err(e)
+        Ok(_) => ()
+      }
+      match
+        @phase.handoff_dev_workflow_to_new_agent(
+          project_dir,
+          from_agent_id,
+          to_id,
+          @types.Role::Dev,
+        ) {
+        Err(e) => return @types.Response::Err(e)
+        Ok(_) => ()
+      }
+      ignore(ps.transfer_owner(from_agent_id, to_id, git_branch, ""))
+      ignore(ps.write_state_file(project_dir))
+      if not(
+          @phase.mark_agent_rescued_superseded(
+            project_dir,
+            from_agent_id,
+            @types.Role::Dev,
+          ),
+        ) {
+        return @types.Response::Err(
+          "failed to persist superseded lifecycle for " + from_agent_id,
+        )
+      }
+      match reg.remove(from_agent_id) {
+        Ok(_) => ()
+        Err(e) => return @types.Response::Err(e.message())
+      }
+      @phase.remove_child_from_supervisor_lifecycle(
+        project_dir,
+        rescue_args.caller_id,
+        from_agent_id,
+      )
+      let cmds = @workspace.spawn_commands(
+        spec,
+        project_dir,
+        session,
+        parent_session_id=rescue_args.parent_session_id,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
+      )
+      match run_strict(runner, cmds) {
+        Err(e) => @types.Response::Err(e)
+        Ok(_) => {
+          let _ = @workspace.register_team_member_native(
+            rescue_args.caller_id,
+            rescue_args.new_slug,
+            @config.agent_type_to_string(rescue_args.agent_type),
+          )
+          apply_tl_event(
+            project_dir,
+            rescue_args.caller_id,
+            @phase.TLEvent::ChildSpawned(child_id=rescue_args.new_slug),
+            registry~,
+          )
+          let resolved_pane_ids : Array[(String, String)] = []
+          match resolve_zellij_pane_id(session, rescue_args.new_slug, runner) {
+            Some(pane_id) => resolved_pane_ids.push((to_id, pane_id))
+            None => ()
+          }
+          match registry {
+            Some(r2) =>
+              for pair in resolved_pane_ids {
+                let (agent_id, pane_id) = pair
+                match r2.get(agent_id) {
+                  Ok(agent) => {
+                    let target = @workspace.zellij_pane_target(session, pane_id)
+                    ignore(
+                      r2.upsert({ ..agent, terminal_target: Some(target) }),
+                    )
+                  }
+                  Err(_) => ()
+                }
+              }
+            None => ()
+          }
+          @types.Response::ok_values({
+            "status": String::to_json("spawned"),
+            "agent_id": String::to_json(to_id),
+            "from_agent_id": String::to_json(from_agent_id),
+            "slug": String::to_json(rescue_args.new_slug),
+          })
+        }
+      }
+    }
     ToolRequest::SpawnRemote(spawn_args) => {
       let spec = @types.SpawnSpec::{
         slug: spawn_args.slug,
@@ -863,6 +1022,9 @@ pub async fn dispatch(
         isolation: @types.IsolationMode::Worktree,
         parent_id: spawn_args.caller_id,
         parent_branch: spawn_args.parent_branch,
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
       }
       let cmds = @workspace.remote_spawn_commands(
         spec,
@@ -894,6 +1056,9 @@ pub async fn dispatch(
         isolation: @types.IsolationMode::Inline,
         parent_id: worker_args.caller_id,
         parent_branch: "main",
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
       }
       let cmds = @workspace.spawn_commands(
         spec,

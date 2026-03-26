@@ -263,6 +263,30 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["task"],
     },
     {
+      name: "rescue_leaf",
+      description: "Reuse a salvageable dev worktree/branch: spawn replacement agent (default cursor_agent), hand off dev lifecycle, transfer tracked PR ownership, supersede old leaf",
+      props: [
+        { name: "task", desc: "Task prompt for the replacement leaf" },
+        {
+          name: "from_agent_id",
+          desc: "Salvaged leaf agent id (git branch / prior CHOIR_AGENT_ID)",
+        },
+        {
+          name: "new_slug",
+          desc: "Slug for the replacement agent (new id = parent_prefix.new_slug)",
+        },
+        {
+          name: "caller_id",
+          desc: "Owning parent id (must match salvaged leaf parent)",
+        },
+        {
+          name: "agent_type",
+          desc: "gemini|claude|moon_pilot|codex|cursor_agent (default cursor_agent)",
+        },
+      ],
+      required: ["task", "from_agent_id", "new_slug", "caller_id"],
+    },
+    {
       name: "spawn_worker",
       description: "Spawn an inline worker for research/review. Workers do not own a branch or PR",
       props: spawn_worker_props(),

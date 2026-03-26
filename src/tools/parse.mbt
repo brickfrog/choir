@@ -296,6 +296,48 @@ fn slugify_task(task : String, index : Int) -> String {
 }
 
 ///|
+fn parse_rescue_leaf_args(
+  project_dir : String,
+  args : ToolArgs,
+) -> Result[RescueLeafArgs, String] {
+  let task = tool_args_get(args, "task").unwrap_or("")
+  if task == "" {
+    return Err("missing task")
+  }
+  let caller_id = tool_args_get(args, "caller_id").unwrap_or("main")
+  let from_agent_id = tool_args_get(args, "from_agent_id").unwrap_or("")
+  if from_agent_id == "" {
+    return Err("missing from_agent_id")
+  }
+  match validate_branch(from_agent_id) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid from_agent_id: " + e)
+  }
+  let new_slug = match tool_args_get(args, "new_slug") {
+    Some(v) => if v == "" { return Err("missing new_slug") } else { v }
+    None => return Err("missing new_slug")
+  }
+  match validate_slug(new_slug) {
+    Ok(_) => ()
+    Err(e) => return Err("invalid new_slug: " + e)
+  }
+  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or(
+    "cursor_agent",
+  )
+  let normalized = if agent_type_str == "" {
+    "cursor_agent"
+  } else {
+    agent_type_str
+  }
+  let agent_type = match parse_agent_type(normalized) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let parent_session_id = lookup_parent_session_id(project_dir, args)
+  Ok({ task, caller_id, from_agent_id, new_slug, agent_type, parent_session_id })
+}
+
+///|
 fn parse_spawn_gemini_args(
   project_dir : String,
   args : ToolArgs,
@@ -800,6 +842,10 @@ fn parse_tool_request(
     "spawn_gemini" =>
       parse_spawn_gemini_args(_project_dir, args).map(fn(a) {
         ToolRequest::SpawnGemini(a)
+      })
+    "rescue_leaf" =>
+      parse_rescue_leaf_args(_project_dir, args).map(fn(a) {
+        ToolRequest::RescueLeaf(a)
       })
     "fork_wave" =>
       parse_fork_wave_args(_project_dir, args).map(fn(a) {

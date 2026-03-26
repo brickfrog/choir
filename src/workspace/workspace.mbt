@@ -31,6 +31,56 @@ pub fn canonical_agent_id(spec : @types.SpawnSpec) -> String {
 }
 
 ///|
+/// Git branch for commits / `CHOIR_BRANCH`, honoring `reuse_git_branch` when reusing a worktree.
+pub fn spawn_git_branch(spec : @types.SpawnSpec) -> String {
+  if spec.reuse_workspace {
+    match spec.reuse_git_branch {
+      Some(b) => if b != "" { b } else { canonical_agent_id(spec) }
+      None => canonical_agent_id(spec)
+    }
+  } else {
+    canonical_agent_id(spec)
+  }
+}
+
+///|
+/// Worktree directory slug under `.choir/worktrees/` (may differ from `spec.slug` during rescue).
+pub fn spawn_workspace_dir_slug(spec : @types.SpawnSpec) -> String {
+  if spec.reuse_workspace {
+    match spec.workspace_slug {
+      Some(s) => if s != "" { s } else { spec.slug }
+      None => spec.slug
+    }
+  } else {
+    spec.slug
+  }
+}
+
+///|
+pub fn validate_reuse_spawn_spec(
+  spec : @types.SpawnSpec,
+) -> Result[Unit, String] {
+  if not(spec.reuse_workspace) {
+    return Ok(())
+  }
+  match spec.workspace_slug {
+    Some(s) =>
+      if s == "" {
+        return Err("reuse_workspace requires non-empty workspace_slug")
+      }
+    None => return Err("reuse_workspace requires workspace_slug")
+  }
+  match spec.reuse_git_branch {
+    Some(b) =>
+      if b == "" {
+        return Err("reuse_workspace requires non-empty reuse_git_branch")
+      }
+    None => return Err("reuse_workspace requires reuse_git_branch")
+  }
+  Ok(())
+}
+
+///|
 fn escape_toml_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -106,6 +156,7 @@ pub fn config_local_content(
   let role_str = @config.role_to_string(spec.role)
   let agent_type_str = @config.agent_type_to_string(spec.agent_type)
   let agent_id = canonical_agent_id(spec)
+  let git_branch = spawn_git_branch(spec)
   "role = \"" +
   role_str +
   "\"\nagent_id = \"" +
@@ -113,7 +164,7 @@ pub fn config_local_content(
   "\"\nparent_id = \"" +
   spec.parent_id +
   "\"\nbranch = \"" +
-  agent_id +
+  git_branch +
   "\"\nparent_branch = \"" +
   spec.parent_branch +
   "\"\nworkspace = \"" +
