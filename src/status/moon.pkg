@@ -1,0 +1,13 @@
+import {
+  "moonbitlang/core/json",
+  "moonbitlang/core/env",
+  "choir/src/sys",
+  "choir/src/phase",
+  "choir/src/poller",
+  "choir/src/registry",
+  "choir/src/types",
+}
+
+options(
+  "is-main": false,
+)

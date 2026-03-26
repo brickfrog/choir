@@ -10,6 +10,8 @@ import {
   "choir/src/mcp",
   "choir/src/hooks",
   "choir/src/workspace",
+  "choir/src/status",
+  "choir/src/registry",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/async",
@@ -18,7 +20,3 @@ import {
   "moonbitlang/core/encoding/utf8",
   "brickfrog/moontrace",
 }
-
-options(
-  "is-main": true,
-)

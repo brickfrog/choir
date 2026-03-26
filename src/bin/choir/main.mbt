@@ -3712,6 +3712,44 @@ fn watch_run() -> Unit {
 }
 
 ///|
+fn status_run() -> Unit {
+  let args = @env.args()
+  let mut json_output = false
+  let mut i = 2
+  while i < args.length() {
+    match args[i] {
+      "--json" => {
+        json_output = true
+        i = i + 1
+      }
+      _ => i = i + 1
+    }
+  }
+  let config_content = @sys.read_file(".choir/config.toml")
+  let config = match @config.parse_config(config_content) {
+    Ok(parsed) => parsed
+    Err(e) => {
+      @sys.write_stderr("Failed to parse config: " + e.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
+  let poller_state = @poller.read_state_file(config.project_dir)
+  let registry = @registry.AgentRegistry::new()
+  let snapshot = @status.build_status_snapshot(
+    config.project_dir,
+    registry,
+    @poller.PollerState::new(),
+  )
+  let output = if json_output {
+    @status.render_json(snapshot)
+  } else {
+    @status.render_human(snapshot)
+  }
+  @sys.write_stdout(output)
+}
+
+///|
 fn main {
   let args = @env.args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
@@ -3728,9 +3766,10 @@ fn main {
     "reply" => reply_run()
     "smoke" => smoke_run()
     "watch" => watch_run()
+    "status" => status_run()
     _ => {
       @sys.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|status [--json]>\n",
       )
       @sys.exit(1)
     }
