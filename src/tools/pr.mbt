@@ -84,6 +84,43 @@ pub fn gh_pr_view_command(branch : String) -> @workspace.Command {
 }
 
 ///|
+fn parse_non_negative_int(s : String) -> Int? {
+  let trimmed = s.trim().to_string()
+  if trimmed == "" {
+    return None
+  }
+  let mut res = 0
+  for c in trimmed {
+    if c < '0' || c > '9' {
+      return None
+    }
+    res = res * 10 + (c.to_int() - '0'.to_int())
+  }
+  Some(res)
+}
+
+///|
+pub fn parse_left_right_counts(output : String) -> (Int, Int)? {
+  let trimmed = output.trim().to_string()
+  let mut tab_index = -1
+  for i = 0; i < trimmed.length(); i = i + 1 {
+    if trimmed[i] == '\t' {
+      tab_index = i
+      break
+    }
+  }
+  if tab_index <= 0 || tab_index >= trimmed.length() - 1 {
+    return None
+  }
+  let left = trimmed[:tab_index].to_string()
+  let right = trimmed[tab_index + 1:].to_string()
+  match (parse_non_negative_int(left), parse_non_negative_int(right)) {
+    (Some(left), Some(right)) => Some((left, right))
+    _ => None
+  }
+}
+
+///|
 async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
@@ -116,6 +153,42 @@ async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+pub async fn ensure_branch_has_unique_commits(
+  branch : String,
+  parent_branch : String,
+  project_dir : String,
+) -> Result[Unit, String] {
+  let cmd : @workspace.Command = {
+    program: "git",
+    args: [
+      "rev-list",
+      "--left-right",
+      "--count",
+      parent_branch + "..." + branch,
+    ],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture_command_output(cmd)
+  if exit_code != 0 {
+    let message = output.trim().to_string()
+    if message != "" {
+      return Err(message)
+    } else {
+      return Err("failed to inspect branch state before filing PR: " + branch)
+    }
+  }
+  match parse_left_right_counts(output) {
+    Some((_, ahead)) =>
+      if ahead > 0 {
+        Ok(())
+      } else {
+        Err("cannot file PR: branch has no commits ahead of " + parent_branch)
+      }
+    None => Err("failed to parse branch state before filing PR: " + branch)
+  }
+}
+
+///|
 pub async fn ensure_pull_request(
   branch : String,
   parent_branch : String,
@@ -131,6 +204,10 @@ pub async fn ensure_pull_request(
       None =>
         return Err("failed to parse gh pr view output for branch: " + branch)
     }
+  }
+  match ensure_branch_has_unique_commits(branch, parent_branch, project_dir) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
   }
 
   let create_cmd = {

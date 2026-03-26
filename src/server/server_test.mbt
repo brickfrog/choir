@@ -96,6 +96,16 @@ async fn mock_ensure_pr_server(
 }
 
 ///|
+async fn mock_branch_ready_server(
+  _branch : String,
+  _parent_branch : String,
+  _project_dir : String,
+) -> Result[Unit, String] {
+  @async.sleep(0)
+  Ok(())
+}
+
+///|
 async test "ServerState::handle valid request returns Ok" {
   let state = ServerState::new(@types.Config::default())
   let req = @types.Request::{
@@ -631,6 +641,7 @@ async test "process_poller_tick_with drives PR review workflow and merge cleanup
     file_req,
     project_dir="/tmp",
     runner=mock_runner_server,
+    ensure_branch_ready=mock_branch_ready_server,
     ensure_pr=mock_ensure_pr_server,
     agent_registry=Some(state.registry),
     mutex_registry=Some(state.mutex_registry),

@@ -1,4 +1,29 @@
 ///|
+#borrow(cmd)
+extern "C" fn c_system_pr_test(cmd : Bytes) -> Int = "system"
+
+///|
+fn string_to_null_terminated_bytes_pr_test(s : String) -> Bytes {
+  let b = @utf8.encode(s)
+  let len = b.length()
+  let result = FixedArray::make(len + 1, (0 : Byte))
+  for i = 0; i < len; i = i + 1 {
+    result[i] = b[i]
+  }
+  result[len] = (0 : Byte)
+  result.unsafe_reinterpret_as_bytes()
+}
+
+///|
+fn run_shell_pr_test(script : String) -> Unit {
+  ignore(
+    c_system_pr_test(
+      string_to_null_terminated_bytes_pr_test("sh -c '" + script + "'"),
+    ),
+  )
+}
+
+///|
 test "file_pr_commands produces correct git push and gh pr create" {
   let cmds = file_pr_commands("feature", "main")
   assert_eq(cmds.length(), 2)
@@ -17,6 +42,14 @@ test "gh_pr_create_command uses slug for title not full branch" {
   let cmd = gh_pr_create_command("master.test-0", "master")
   assert_eq(cmd.args[7], "test-0")
   assert_eq(cmd.args[5], "master.test-0")
+}
+
+///|
+test "parse_left_right_counts parses git rev-list output" {
+  assert_eq(parse_left_right_counts("0\t1\n"), Some((0, 1)))
+  assert_eq(parse_left_right_counts("12\t34"), Some((12, 34)))
+  assert_eq(parse_left_right_counts(""), None)
+  assert_eq(parse_left_right_counts("oops"), None)
 }
 
 ///|
@@ -41,6 +74,16 @@ async fn mock_ensure_pr(
       state: "OPEN",
     })
   }
+}
+
+///|
+async fn mock_branch_ready(
+  _branch : String,
+  _parent_branch : String,
+  _project_dir : String,
+) -> Result[Unit, String] {
+  @async.sleep(0)
+  Ok(())
 }
 
 ///|
@@ -69,13 +112,41 @@ test "merge_pr_commands produces correct gh pr merge and git fetch" {
 }
 
 ///|
+async test "ensure_pull_request errors when branch has no commits ahead" {
+  let project_dir = "/tmp/choir-pr-no-ahead"
+  run_shell_pr_test(
+    "rm -rf /tmp/choir-pr-no-ahead && mkdir -p /tmp/choir-pr-no-ahead && " +
+    "cd /tmp/choir-pr-no-ahead && " +
+    "git init -b main >/dev/null 2>&1 && " +
+    "git config user.email test@example.com && " +
+    "git config user.name test && " +
+    "printf 'seed\\n' > README.md && " +
+    "git add README.md && " +
+    "git commit -m init >/dev/null 2>&1 && " +
+    "git branch feature",
+  )
+  let res = ensure_pull_request("feature", "main", project_dir, None, None)
+  match res {
+    Ok(_) => fail("expected no-ahead branch to fail")
+    Err(msg) =>
+      assert_eq(msg, "cannot file PR: branch has no commits ahead of main")
+  }
+  run_shell_pr_test("rm -rf /tmp/choir-pr-no-ahead")
+}
+
+///|
 async test "dispatch file_pr returns Ok" {
   let call : ToolCall = {
     role: @types.Role::Dev,
     name: "file_pr",
     args: { "branch": "feat", "parent_branch": "main" },
   }
-  let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+  let res = dispatch_call(
+    call,
+    runner=mock_runner,
+    ensure_branch_ready=mock_branch_ready,
+    ensure_pr=mock_ensure_pr,
+  )
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("pr_created"))
@@ -90,6 +161,49 @@ async test "dispatch file_pr returns Ok" {
 }
 
 ///|
+async test "dispatch file_pr fails before push when branch is not ahead" {
+  let project_dir = "/tmp/choir-dispatch-file-pr-no-ahead"
+  run_shell_pr_test(
+    "rm -rf /tmp/choir-dispatch-file-pr-no-ahead && mkdir -p /tmp/choir-dispatch-file-pr-no-ahead && " +
+    "cd /tmp/choir-dispatch-file-pr-no-ahead && " +
+    "git init -b main >/dev/null 2>&1 && " +
+    "git config user.email test@example.com && " +
+    "git config user.name test && " +
+    "printf 'seed\\n' > README.md && " +
+    "git add README.md && " +
+    "git commit -m init >/dev/null 2>&1 && " +
+    "git branch feature",
+  )
+  let recorded : Array[@workspace.Command] = []
+  let res = dispatch_call(
+    {
+      role: @types.Role::Dev,
+      name: "file_pr",
+      args: { "branch": "feature", "parent_branch": "main" },
+    },
+    project_dir~,
+    runner=async fn(cmds) {
+      @async.sleep(0)
+      for cmd in cmds {
+        recorded.push(cmd)
+      }
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+  )
+  match res {
+    Ok(_) => fail("expected no-ahead branch to fail")
+    Err(msg) =>
+      assert_eq(msg, "cannot file PR: branch has no commits ahead of main")
+  }
+  assert_eq(recorded.length(), 0)
+  run_shell_pr_test("rm -rf /tmp/choir-dispatch-file-pr-no-ahead")
+}
+
+///|
 async test "dispatch file_pr auto_tracks returned pr number" {
   let poller = @poller.PollerState::new()
   let call : ToolCall = {
@@ -100,6 +214,7 @@ async test "dispatch file_pr auto_tracks returned pr number" {
   let res = dispatch_call(
     call,
     runner=mock_runner,
+    ensure_branch_ready=mock_branch_ready,
     ensure_pr=mock_ensure_pr,
     poller_state=Some(poller),
   )
@@ -146,6 +261,7 @@ async test "dispatch file_pr preserves tracked review state for existing PR" {
   let res = dispatch_call(
     call,
     runner=mock_runner,
+    ensure_branch_ready=mock_branch_ready,
     ensure_pr=mock_ensure_pr,
     poller_state=Some(poller),
   )
@@ -190,7 +306,12 @@ async test "dispatch file_pr accepts agent_id alias for branch" {
     name: "file_pr",
     args: { "agent_id": "main.child", "parent_branch": "release" },
   }
-  let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+  let res = dispatch_call(
+    call,
+    runner=mock_runner,
+    ensure_branch_ready=mock_branch_ready,
+    ensure_pr=mock_ensure_pr,
+  )
   match res {
     Ok(m) => {
       assert_eq(m.get("pr_number"), Some("77"))
@@ -207,7 +328,12 @@ async test "dispatch file_pr missing branch returns Err" {
     name: "file_pr",
     args: { "parent_branch": "main" },
   }
-  let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+  let res = dispatch_call(
+    call,
+    runner=mock_runner,
+    ensure_branch_ready=mock_branch_ready,
+    ensure_pr=mock_ensure_pr,
+  )
   match res {
     Ok(_) => assert_true(false)
     Err(msg) => assert_eq(msg, "missing branch")
@@ -221,7 +347,12 @@ async test "dispatch file_pr surfaces ensure_pr failures" {
     name: "file_pr",
     args: { "branch": "fail", "parent_branch": "main" },
   }
-  let res = dispatch_call(call, runner=mock_runner, ensure_pr=mock_ensure_pr)
+  let res = dispatch_call(
+    call,
+    runner=mock_runner,
+    ensure_branch_ready=mock_branch_ready,
+    ensure_pr=mock_ensure_pr,
+  )
   match res {
     Ok(_) => assert_true(false)
     Err(msg) => assert_eq(msg, "lookup failed")

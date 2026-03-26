@@ -11,6 +11,16 @@ async fn mock_registry_ensure_pr(
 }
 
 ///|
+async fn mock_registry_branch_ready(
+  _branch : String,
+  _parent_branch : String,
+  _project_dir : String,
+) -> Result[Unit, String] {
+  @async.sleep(0)
+  Ok(())
+}
+
+///|
 test "tool registry lookup success" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "fork_wave")
@@ -144,6 +154,7 @@ async test "dispatch returns correct stub for each tool name" {
     let res = @tools.dispatch_call(
       call,
       runner=mock_runner,
+      ensure_branch_ready=mock_registry_branch_ready,
       ensure_pr=mock_registry_ensure_pr,
       mutex_registry=Some(@registry.MutexRegistry::new()),
       poller_state=Some(@poller.PollerState::new()),

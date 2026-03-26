@@ -70,6 +70,7 @@ pub async fn dispatch(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_has_unique_commits,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,
@@ -276,51 +277,55 @@ pub async fn dispatch(
         None => detect_default_branch(project_dir)
       }
       let tracked_agent_id = file_pr_args.tracked_agent_id
-      match run_strict(runner, [@workspace.git_push(branch)]) {
+      match ensure_branch_ready(branch, parent_branch, project_dir) {
         Err(e) => @types.Response::Err(e)
         Ok(_) =>
-          match
-            ensure_pr(
-              branch,
-              parent_branch,
-              project_dir,
-              file_pr_args.title,
-              file_pr_args.body,
-            ) {
+          match run_strict(runner, [@workspace.git_push(branch)]) {
             Err(e) => @types.Response::Err(e)
-            Ok(pr) => {
-              let mut tracked = false
-              match poller_state {
-                Some(ps) => {
-                  ps.ensure_tracked(
-                    pr.number,
-                    tracked_agent_id,
+            Ok(_) =>
+              match
+                ensure_pr(
+                  branch,
+                  parent_branch,
+                  project_dir,
+                  file_pr_args.title,
+                  file_pr_args.body,
+                ) {
+                Err(e) => @types.Response::Err(e)
+                Ok(pr) => {
+                  let mut tracked = false
+                  match poller_state {
+                    Some(ps) => {
+                      ps.ensure_tracked(
+                        pr.number,
+                        tracked_agent_id,
+                        branch,
+                        parent_branch,
+                        pr.url,
+                        @poller.now_sec(),
+                      )
+                      ignore(ps.write_state_file(project_dir))
+                      tracked = true
+                    }
+                    None => ()
+                  }
+                  apply_dev_event(
+                    project_dir,
                     branch,
-                    parent_branch,
-                    pr.url,
-                    @poller.now_sec(),
+                    @phase.DevEvent::PRCreated(
+                      pr_number=pr.number,
+                      url=pr.url,
+                      branch~,
+                    ),
                   )
-                  ignore(ps.write_state_file(project_dir))
-                  tracked = true
+                  @types.Response::ok_values({
+                    "status": String::to_json("pr_created"),
+                    "pr_number": Int::to_json(pr.number),
+                    "pr_url": String::to_json(pr.url),
+                    "tracked": Bool::to_json(tracked),
+                  })
                 }
-                None => ()
               }
-              apply_dev_event(
-                project_dir,
-                branch,
-                @phase.DevEvent::PRCreated(
-                  pr_number=pr.number,
-                  url=pr.url,
-                  branch~,
-                ),
-              )
-              @types.Response::ok_values({
-                "status": String::to_json("pr_created"),
-                "pr_number": Int::to_json(pr.number),
-                "pr_url": String::to_json(pr.url),
-                "tracked": Bool::to_json(tracked),
-              })
-            }
           }
       }
     }
@@ -875,6 +880,7 @@ pub async fn handle_request(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_has_unique_commits,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,
@@ -947,6 +953,7 @@ pub async fn handle_request(
             project_dir~,
             session~,
             runner~,
+            ensure_branch_ready~,
             ensure_pr~,
             extra_mcp_servers_json~,
             shell_command~,
@@ -1013,6 +1020,7 @@ pub async fn dispatch_call(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_has_unique_commits,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,
@@ -1035,6 +1043,7 @@ pub async fn dispatch_call(
         project_dir~,
         session~,
         runner~,
+        ensure_branch_ready~,
         ensure_pr~,
         extra_mcp_servers_json~,
         shell_command~,

@@ -140,6 +140,8 @@ fn leaf_profile_text() -> String {
   "   - Pass `--title \"Short descriptive title\"` and `--body \"What this PR does and why\"` for better PR descriptions.\n" +
   "   - If your CLI does not load MCP tools directly, `file_pr` is also available as a shell command on PATH.\n" +
   "   - `file_pr` also starts review tracking automatically.\n" +
+  "   - Before filing, verify repo state with `git status --short`, `git log --oneline -1`, and `git rev-list --left-right --count <parent_branch>...HEAD`.\n" +
+  "   - If the branch is not ahead of the parent branch, stop and report failure instead of retrying `file_pr`.\n" +
   "3. Use `notify_parent` for status updates and blockers.\n" +
   "   - After filing the PR, notify the parent that the PR is open and include the PR URL.\n" +
   "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n" +

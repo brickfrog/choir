@@ -24,6 +24,8 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
   assert_true(prompt.contains("`file_pr`"))
   assert_true(prompt.contains("`notify_parent`"))
   assert_true(prompt.contains("shell command on PATH"))
+  assert_true(prompt.contains("git rev-list --left-right --count"))
+  assert_true(prompt.contains("branch is not ahead of the parent branch"))
   assert_true(prompt.contains("Call `shutdown`"))
   assert_true(prompt.contains("Wait for review feedback"))
 }
