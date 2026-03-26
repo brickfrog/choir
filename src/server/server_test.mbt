@@ -1061,6 +1061,21 @@ async test "handle_disconnect transitions Completing agent to Done" {
     Ok(updated_agent) => assert_eq(updated_agent.state, @types.AgentState::Done)
     Err(_) => fail("Expected agent to remain in registry")
   }
+  match @phase.read_lifecycle(project_dir, "main.dev-1") {
+    Some(lifecycle) => {
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Shutdown),
+      )
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Done(reason=@phase.FinalizeReason::Shutdown)
+        ) => ()
+        _ => fail("expected shutdown finalized lifecycle")
+      }
+    }
+    None => fail("expected persisted lifecycle")
+  }
   run_shell("rm -rf /tmp/choir-server-disconnect-completing")
 }
 

@@ -1187,7 +1187,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
         Completing =>
           self.finalize_agent_with_runner(
             agent_id,
-            "disconnect",
+            "shutdown",
             runner,
             notify_parent=false,
             close_target=false,
