@@ -946,6 +946,22 @@ pub fn ServerState::transfer_leaf_ownership(
       ),
     )
   }
+  if from_agent.role != to_agent.role {
+    return Err(
+      @types.ExoError::ValidationError(
+        "cannot transfer ownership across different roles",
+      ),
+    )
+  }
+  match from_agent.role {
+    @types.Role::Dev | @types.Role::Worker => ()
+    _ =>
+      return Err(
+        @types.ExoError::ValidationError(
+          "ownership transfer only supports leaf roles",
+        ),
+      )
+  }
   let transferred = self.poller.transfer_owner(
     from_agent_id,
     to_agent_id,
@@ -953,10 +969,19 @@ pub fn ServerState::transfer_leaf_ownership(
     @workspace.parent_branch(to_agent.branch).unwrap_or(""),
   )
   let from_lifecycle = self.current_lifecycle(from_agent_id)
+  let to_lifecycle = self.current_lifecycle(to_agent_id)
+  let workflow = match (from_lifecycle.workflow, to_lifecycle.workflow) {
+    (@phase.WorkflowState::Dev(from_dev), @phase.WorkflowState::Dev(_)) =>
+      @phase.WorkflowState::Dev(from_dev)
+    (@phase.WorkflowState::Worker(from_worker), @phase.WorkflowState::Worker(_)) =>
+      @phase.WorkflowState::Worker(from_worker)
+    _ => to_lifecycle.workflow
+  }
   let carried_lifecycle = {
-    ..from_lifecycle,
+    ..to_lifecycle,
     agent_id: to_agent_id,
     role: to_agent.role,
+    workflow,
   }
   self.persist_lifecycle(carried_lifecycle)
   self.sync_parent_child_lifecycle(to_agent_id, carried_lifecycle)

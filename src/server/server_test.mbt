@@ -569,6 +569,72 @@ test "plan_poll_event_deliveries routes to new owner after transfer_leaf_ownersh
 }
 
 ///|
+test "transfer_leaf_ownership preserves destination process state" {
+  let project_dir = "/tmp/choir-server-transfer-preserve-process"
+  run_shell(
+    "rm -rf /tmp/choir-server-transfer-preserve-process && mkdir -p /tmp/choir-server-transfer-preserve-process/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = {
+    ..build_agent("parent-1", None),
+    role: @types.Role::TL,
+    state: @types.AgentState::Active,
+  }
+  let old_child = {
+    ..build_agent("main.leaf-old", Some("parent-1")),
+    branch: "main.leaf-old",
+  }
+  let new_child = {
+    ..build_agent("main.leaf-new", Some("parent-1")),
+    branch: "main.leaf-new",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(old_child))
+  ignore(state.registry.insert(new_child))
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "main.leaf-old",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Finalized(
+        reason=@phase.FinalizeReason::Shutdown,
+      ),
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ChangesRequested(pr_number=90, next_round=1),
+      ),
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "main.leaf-new",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+    }),
+  )
+  let transferred = state.transfer_leaf_ownership(
+    "main.leaf-old", "main.leaf-new",
+  )
+  assert_eq(transferred, Ok(0))
+  match @phase.read_lifecycle(project_dir, "main.leaf-new") {
+    Some(lifecycle) => {
+      assert_eq(lifecycle.process, @phase.ProcessState::Connected)
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ChangesRequested(pr_number=90, next_round=1)
+        ) => ()
+        _ => fail("expected dev workflow transfer")
+      }
+    }
+    None => fail("expected transferred lifecycle")
+  }
+  match state.registry.get("main.leaf-new") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+    Err(_) => fail("expected replacement agent")
+  }
+  run_shell("rm -rf /tmp/choir-server-transfer-preserve-process")
+}
+
+///|
 test "plan_poll_event_deliveries routes PR ready to parent" {
   let state = ServerState::new(@types.Config::default())
   let parent = build_agent("parent-1", None)
