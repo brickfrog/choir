@@ -926,6 +926,21 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err(e)
         Ok(_) => ()
       }
+      let cmds = @workspace.spawn_commands(
+        spec,
+        project_dir,
+        session,
+        parent_session_id=rescue_args.parent_session_id,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
+      )
+      match run_strict(runner, cmds) {
+        Err(e) => return @types.Response::Err(e)
+        Ok(_) => ()
+      }
       match
         @phase.handoff_dev_workflow_to_new_agent(
           project_dir,
@@ -933,7 +948,11 @@ pub async fn dispatch(
           to_id,
           @types.Role::Dev,
         ) {
-        Err(e) => return @types.Response::Err(e)
+        Err(e) =>
+          return @types.Response::Err(
+            "rescue_leaf: replacement spawned but lifecycle handoff failed — manual repair may be needed: " +
+            e,
+          )
         Ok(_) => ()
       }
       ignore(ps.transfer_owner(from_agent_id, to_id, git_branch, ""))
@@ -958,60 +977,49 @@ pub async fn dispatch(
         rescue_args.caller_id,
         from_agent_id,
       )
-      let cmds = @workspace.spawn_commands(
-        spec,
-        project_dir,
-        session,
-        parent_session_id=rescue_args.parent_session_id,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
-      )
-      match run_strict(runner, cmds) {
-        Err(e) => @types.Response::Err(e)
-        Ok(_) => {
-          let _ = @workspace.register_team_member_native(
-            rescue_args.caller_id,
-            rescue_args.new_slug,
-            @config.agent_type_to_string(rescue_args.agent_type),
-          )
-          apply_tl_event(
-            project_dir,
-            rescue_args.caller_id,
-            @phase.TLEvent::ChildSpawned(child_id=rescue_args.new_slug),
-            registry~,
-          )
-          let resolved_pane_ids : Array[(String, String)] = []
-          match resolve_zellij_pane_id(session, rescue_args.new_slug, runner) {
-            Some(pane_id) => resolved_pane_ids.push((to_id, pane_id))
-            None => ()
-          }
-          match registry {
-            Some(r2) =>
-              for pair in resolved_pane_ids {
-                let (agent_id, pane_id) = pair
-                match r2.get(agent_id) {
-                  Ok(agent) => {
-                    let target = @workspace.zellij_pane_target(session, pane_id)
-                    ignore(
-                      r2.upsert({ ..agent, terminal_target: Some(target) }),
-                    )
-                  }
-                  Err(_) => ()
-                }
-              }
-            None => ()
-          }
-          @types.Response::ok_values({
-            "status": String::to_json("spawned"),
-            "agent_id": String::to_json(to_id),
-            "from_agent_id": String::to_json(from_agent_id),
-            "slug": String::to_json(rescue_args.new_slug),
-          })
-        }
+      if salvage_slug != from_agent_id {
+        @phase.remove_child_from_supervisor_lifecycle(
+          project_dir,
+          rescue_args.caller_id,
+          salvage_slug,
+        )
       }
+      let _ = @workspace.register_team_member_native(
+        rescue_args.caller_id,
+        rescue_args.new_slug,
+        @config.agent_type_to_string(rescue_args.agent_type),
+      )
+      apply_tl_event(
+        project_dir,
+        rescue_args.caller_id,
+        @phase.TLEvent::ChildSpawned(child_id=rescue_args.new_slug),
+        registry~,
+      )
+      let resolved_pane_ids : Array[(String, String)] = []
+      match resolve_zellij_pane_id(session, rescue_args.new_slug, runner) {
+        Some(pane_id) => resolved_pane_ids.push((to_id, pane_id))
+        None => ()
+      }
+      match registry {
+        Some(r2) =>
+          for pair in resolved_pane_ids {
+            let (agent_id, pane_id) = pair
+            match r2.get(agent_id) {
+              Ok(agent) => {
+                let target = @workspace.zellij_pane_target(session, pane_id)
+                ignore(r2.upsert({ ..agent, terminal_target: Some(target) }))
+              }
+              Err(_) => ()
+            }
+          }
+        None => ()
+      }
+      @types.Response::ok_values({
+        "status": String::to_json("spawned"),
+        "agent_id": String::to_json(to_id),
+        "from_agent_id": String::to_json(from_agent_id),
+        "slug": String::to_json(rescue_args.new_slug),
+      })
     }
     ToolRequest::SpawnRemote(spawn_args) => {
       let spec = @types.SpawnSpec::{

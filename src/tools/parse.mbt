@@ -304,7 +304,10 @@ fn parse_rescue_leaf_args(
   if task == "" {
     return Err("missing task")
   }
-  let caller_id = tool_args_get(args, "caller_id").unwrap_or("main")
+  let caller_id = match tool_args_get(args, "caller_id") {
+    Some(v) => if v == "" { return Err("missing caller_id") } else { v }
+    None => return Err("missing caller_id")
+  }
   let from_agent_id = tool_args_get(args, "from_agent_id").unwrap_or("")
   if from_agent_id == "" {
     return Err("missing from_agent_id")
