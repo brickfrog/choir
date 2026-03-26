@@ -137,11 +137,9 @@ async test "ensure_pull_request errors when branch has no commits ahead" {
     "rm -rf /tmp/choir-pr-no-ahead && mkdir -p /tmp/choir-pr-no-ahead && " +
     "cd /tmp/choir-pr-no-ahead && " +
     "git init -b main >/dev/null 2>&1 && " +
-    "git config user.email test@example.com && " +
-    "git config user.name test && " +
     "printf 'seed\\n' > README.md && " +
     "git add README.md && " +
-    "git commit -m init >/dev/null 2>&1 && " +
+    "git -c user.email=test@example.com -c user.name=test commit -m init >/dev/null 2>&1 && " +
     "git branch -f feature main",
   )
   let res = ensure_pull_request("feature", "main", project_dir, None, None)
@@ -188,11 +186,9 @@ async test "dispatch file_pr fails before push when branch is not ahead" {
     "rm -rf /tmp/choir-dispatch-file-pr-no-ahead && mkdir -p /tmp/choir-dispatch-file-pr-no-ahead && " +
     "cd /tmp/choir-dispatch-file-pr-no-ahead && " +
     "git init -b main >/dev/null 2>&1 && " +
-    "git config user.email test@example.com && " +
-    "git config user.name test && " +
     "printf 'seed\\n' > README.md && " +
     "git add README.md && " +
-    "git commit -m init >/dev/null 2>&1 && " +
+    "git -c user.email=test@example.com -c user.name=test commit -m init >/dev/null 2>&1 && " +
     "git branch -f feature main",
   )
   let recorded : Array[@workspace.Command] = []
