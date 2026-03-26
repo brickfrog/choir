@@ -433,6 +433,47 @@ test "notify_parent with no parent returns Err" {
 }
 
 ///|
+test "notify_parent falls back to persisted TL parent lifecycle" {
+  let project_dir = "/tmp/choir-test-notify-parent-fallback"
+  run_shell(
+    "rm -rf " + project_dir + " && mkdir -p " + project_dir + "/.choir/kv",
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "root",
+      role: @types.Role::TL,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Planning,
+      ),
+    }),
+  )
+  let state = ServerState::new({
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "choir-test",
+  })
+  let child = {
+    ..build_agent("main.leaf-1", Some("root")),
+    branch: "main.leaf-1",
+  }
+  let _ = state.register_agent(child)
+  let res = state.notify_parent("main.leaf-1", "hello", "success")
+  assert_true(res is Ok(_))
+  match res {
+    Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
+      assert_eq(
+        target,
+        @types.LocalTarget::parse("zellij-tab:choir-test:TL").unwrap(),
+      )
+      assert_eq(text, "[from: main.leaf-1] hello")
+    }
+    _ =>
+      fail("expected fallback local terminal delivery for persisted TL parent")
+  }
+}
+
+///|
 test "transfer_leaf_ownership moves tracked PR owner and parent child summary" {
   let project_dir = "/tmp/choir-server-transfer-owner"
   run_shell(

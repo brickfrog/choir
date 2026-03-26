@@ -232,8 +232,81 @@ pub fn ServerState::notify_parent(
   message : String,
   status : String,
 ) -> Result[@message.DeliveryMethod, @types.ExoError] {
-  match self.registry.get_parent(caller_id) {
+  match self.resolve_parent_for_delivery(caller_id) {
     Ok(parent) => Ok(@message.plan_delivery(parent, caller_id, message, status))
+    Err(e) => Err(e)
+  }
+}
+
+///|
+fn synthesized_parent_terminal_target(
+  session : String,
+  parent_id : String,
+  role : @types.Role,
+) -> @types.LocalTarget {
+  let slug = match role {
+    @types.Role::Root | @types.Role::TL => "TL"
+    _ => @phase.extract_slug(parent_id)
+  }
+  @workspace.local_target_for(session, slug, @types.IsolationMode::Worktree)
+}
+
+///|
+fn synthesized_parent_agent_type(role : @types.Role) -> @types.AgentType {
+  match role {
+    @types.Role::Worker => @types.AgentType::Claude
+    _ => @types.AgentType::Claude
+  }
+}
+
+///|
+fn ServerState::resolve_parent_by_id(
+  self : ServerState,
+  parent_id : String,
+) -> Result[@types.Agent, @types.ExoError] {
+  match self.registry.get(parent_id) {
+    Ok(parent) => Ok(parent)
+    Err(_) =>
+      match @phase.read_lifecycle(self.config.project_dir, parent_id) {
+        Some(lifecycle) =>
+          match lifecycle.role {
+            @types.Role::Root | @types.Role::TL =>
+              Ok({
+                agent_id: parent_id,
+                role: lifecycle.role,
+                agent_type: synthesized_parent_agent_type(lifecycle.role),
+                parent: None,
+                workspace: self.config.project_dir,
+                branch: parent_id,
+                terminal_target: Some(
+                  synthesized_parent_terminal_target(
+                    self.config.terminal_session,
+                    parent_id,
+                    lifecycle.role,
+                  ),
+                ),
+                host: @types.Host::Local,
+                state: lifecycle.to_agent_state(),
+              })
+            _ => Err(@types.ExoError::AgentNotFound(parent_id))
+          }
+        None => Err(@types.ExoError::AgentNotFound(parent_id))
+      }
+  }
+}
+
+///|
+fn ServerState::resolve_parent_for_delivery(
+  self : ServerState,
+  caller_id : String,
+) -> Result[@types.Agent, @types.ExoError] {
+  match self.registry.get(caller_id) {
+    Ok(agent) =>
+      match agent.parent {
+        Some(parent_id) => self.resolve_parent_by_id(parent_id)
+        None =>
+          Err(@types.ExoError::AgentNotFound("no parent for " + caller_id))
+      }
     Err(e) => Err(e)
   }
 }
@@ -505,7 +578,7 @@ pub fn ServerState::plan_poll_event_deliveries(
     Some(pr) =>
       match parent_poll_event_message(pr, event) {
         Some((message, status)) =>
-          match self.registry.get_parent(agent_id) {
+          match self.resolve_parent_for_delivery(agent_id) {
             Ok(parent) => {
               ignore(
                 @sys.append_file_sync(
@@ -830,7 +903,7 @@ fn ServerState::sync_parent_child_lifecycle(
     Some(parent_id) => parent_id
     None => return
   }
-  let parent = match self.registry.get(parent_id) {
+  let parent = match self.resolve_parent_by_id(parent_id) {
     Ok(parent) => parent
     Err(_) => return
   }
@@ -1048,7 +1121,7 @@ async fn ServerState::finalize_agent_with_runner(
             @phase.extract_slug(agent_id),
           ),
         )
-        match self.registry.get(parent_id) {
+        match self.resolve_parent_by_id(parent_id) {
           Ok(parent) => {
             let delivery = @message.plan_delivery(
               parent, agent_id, "agent shutdown", "success",
@@ -1190,7 +1263,7 @@ async fn ServerState::fail_agent_with_runner(
   self.sync_parent_child_lifecycle(agent_id, failed)
   match agent.parent {
     Some(parent_id) =>
-      match self.registry.get(parent_id) {
+      match self.resolve_parent_by_id(parent_id) {
         Ok(parent) => {
           let delivery = @message.plan_delivery(
             parent, agent_id, parent_message, "failure",

@@ -24,10 +24,19 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
   assert_true(prompt.contains("`file_pr`"))
   assert_true(prompt.contains("`notify_parent`"))
   assert_true(prompt.contains("shell command on PATH"))
+  assert_true(
+    prompt.contains("notify_parent [--status <success|failure|info>] <message>"),
+  )
+  assert_true(prompt.contains("If `notify_parent` fails, stop"))
+  assert_true(prompt.contains("Do not invent extra flags"))
   assert_true(prompt.contains("git rev-list --left-right --count"))
   assert_true(prompt.contains("branch is not ahead of the parent branch"))
   assert_true(prompt.contains("Call `shutdown`"))
   assert_true(prompt.contains("Wait for review feedback"))
+  assert_true(
+    prompt.contains("Run requested verification once per code change"),
+  )
+  assert_true(prompt.contains("Do not rerun the same tests repeatedly"))
 }
 
 ///|

@@ -145,10 +145,18 @@ fn leaf_profile_text() -> String {
   "3. Use `notify_parent` for status updates and blockers.\n" +
   "   - After filing the PR, notify the parent that the PR is open and include the PR URL.\n" +
   "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n" +
+  "   - Shell form: `notify_parent [--status <success|failure|info>] <message>`.\n" +
+  "   - Do not invent extra flags or alternate CLI syntaxes.\n" +
+  "   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.\n" +
   "4. Wait for review feedback — it arrives automatically via the poller.\n" +
   "5. If review feedback arrives, address the comments, push fixes, and `notify_parent` again.\n" +
   "6. Call `shutdown` only AFTER the review comes back clean or the parent tells you to stop.\n" +
   "7. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
+  "Execution discipline:\n" +
+  "- Run requested verification once per code change.\n" +
+  "- Do not rerun the same tests repeatedly without new code changes.\n" +
+  "- Do not inspect wrapper scripts, help text, env dumps, or process lists unless the task explicitly requires it.\n" +
+  "- If a helper command fails, stop after one precise failure report instead of thrashing.\n\n" +
   "Do not merge your own PR.\n" +
   "Do not push to main.\n" +
   "Do not create extra branches."
