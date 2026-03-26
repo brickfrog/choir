@@ -150,6 +150,35 @@ pub async fn ServerState::handle_with_runner(
             @phase.DevEvent::MergeObserved(pr_number~),
           ),
         )
+        match self.registry.get(agent_id) {
+          Ok(leaf) =>
+            match leaf.parent {
+              Some(parent_id) =>
+                match self.resolve_parent_by_id(parent_id) {
+                  Ok(parent) => {
+                    let (branch, parent_branch_str, url) = match
+                      self.poller.get(pr_number) {
+                      Some(t) => (t.branch, t.parent_branch, t.pr_url)
+                      None => (leaf.branch, "", "")
+                    }
+                    let body = merged_pr_parent_message(
+                      pr_number, agent_id, branch, parent_branch_str, url,
+                    )
+                    let delivery = @message.plan_delivery(
+                      parent, agent_id, body, "success",
+                    )
+                    ignore(
+                      @tools.execute_delivery(delivery, runner) catch {
+                        _ => Ok(())
+                      },
+                    )
+                  }
+                  Err(_) => ()
+                }
+              None => ()
+            }
+          Err(_) => ()
+        }
         self.finalize_agent_with_runner(
           agent_id,
           "merged",
@@ -312,6 +341,29 @@ fn ServerState::resolve_parent_for_delivery(
 }
 
 ///|
+/// Parent-facing text after `merge_pr` tool succeeds — distinct from poller pre-merge signals.
+fn merged_pr_parent_message(
+  pr_number : Int,
+  leaf_agent_id : String,
+  branch : String,
+  parent_branch : String,
+  pr_url : String,
+) -> String {
+  let url_line = if pr_url == "" { "" } else { "\npr_url: " + pr_url }
+  "[PR MERGED] merge_pr succeeded — PR #" +
+  pr_number.to_string() +
+  " is merged on the remote." +
+  "\nleaf_agent: " +
+  leaf_agent_id +
+  "\nbranch: " +
+  branch +
+  "\nparent_branch: " +
+  parent_branch +
+  url_line +
+  "\nAuthoritative merge signal: do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
+}
+
+///|
 fn render_parent_next_action(
   pr_number : Int,
   parent_branch : String?,
@@ -353,7 +405,7 @@ fn parent_poll_event_message(
         agent_id +
         " PR #" +
         n.to_string() +
-        " approved\n" +
+        " approved (not merged yet)\n" +
         "branch: " +
         branch +
         "\n" +
@@ -361,6 +413,7 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
+        "Pre-merge: wait for [PR MERGED] after merge_pr succeeds (or verify merged on GitHub) before claiming merged.\n" +
         render_parent_next_action(n, parent_branch)
       Some((message, "success"))
     }
@@ -369,7 +422,7 @@ fn parent_poll_event_message(
         agent_id +
         " PR #" +
         n.to_string() +
-        " has new commits after review\n" +
+        " has new commits after review (not merged yet)\n" +
         "branch: " +
         branch +
         "\n" +
@@ -377,6 +430,7 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
+        "Pre-merge: re-check the PR; merge only after review is clear and merge_pr succeeds.\n" +
         "Next action: re-check the PR and merge when ready."
       Some((message, "info"))
     }
@@ -651,7 +705,7 @@ fn pr_comment_body(
     PRReady(n) =>
       Some(
         (
-          n, "**Choir:** PR approved — parent notified, awaiting merge decision.",
+          n, "**Choir:** PR approved — parent notified. PR is not merged until merge_pr succeeds.",
         ),
       )
     CIFailed(n) =>
@@ -669,7 +723,7 @@ fn pr_comment_body(
           n,
           "**Choir:** fixes pushed by `" +
           agent_id +
-          "` — awaiting re-review.",
+          "` — awaiting re-review (not merged yet).",
         ),
       )
     ReviewTimeout(_) => None
@@ -1560,4 +1614,75 @@ pub async fn ServerState::process_pending_disconnects(
     grace_seconds,
     runner=@exec.run_sequence,
   )
+}
+
+///|
+test "merged_pr_parent_message is distinct from pre-merge signals" {
+  let msg = merged_pr_parent_message(
+    42, "main.leaf-z", "feat/z", "main", "https://github.com/o/r/pull/42",
+  )
+  assert_true(msg.contains("[PR MERGED]"))
+  assert_true(msg.contains("merge_pr succeeded"))
+  assert_true(msg.contains("PR #42"))
+  assert_true(msg.contains("main.leaf-z"))
+  assert_true(msg.contains("feat/z"))
+  assert_true(msg.contains("parent_branch: main"))
+  assert_true(msg.contains("pr_url: https://github.com/o/r/pull/42"))
+  assert_true(msg.contains("[PR READY]"))
+  assert_true(msg.contains("[FIXES PUSHED]"))
+}
+
+///|
+test "parent_poll_event_message PR READY stresses not merged" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 7,
+    agent_id: "main.dev-a",
+    branch: "work/a",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/7",
+    first_seen: 0,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "",
+    notified_parent: false,
+    last_ci_failed: false,
+    last_timeout_at: 0,
+  }
+  match parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7)) {
+    Some((message, status)) => {
+      assert_eq(status, "success")
+      assert_true(message.contains("[PR READY]"))
+      assert_true(message.contains("(not merged yet)"))
+      assert_true(message.contains("Pre-merge:"))
+      assert_true(message.contains("[PR MERGED]"))
+    }
+    None => fail("expected PRReady message")
+  }
+}
+
+///|
+test "parent_poll_event_message FixesPushed stresses not merged" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 8,
+    agent_id: "main.dev-b",
+    branch: "work/b",
+    parent_branch: "main",
+    pr_url: "",
+    first_seen: 0,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "abc",
+    notified_parent: false,
+    last_ci_failed: false,
+    last_timeout_at: 0,
+  }
+  match parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8)) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(message.contains("[FIXES PUSHED]"))
+      assert_true(message.contains("(not merged yet)"))
+      assert_true(message.contains("Pre-merge:"))
+    }
+    None => fail("expected FixesPushed message")
+  }
 }
