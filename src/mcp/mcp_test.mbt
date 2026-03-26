@@ -207,6 +207,25 @@ test "from_internal_response Err" {
 }
 
 ///|
+test "initialize MCP instructions forbid premature merge claims" {
+  let rpc = @mcp.initialize_response(Number(21))
+  match rpc.result {
+    Some(Object(res)) =>
+      match res.get("instructions") {
+        Some(String(s)) => {
+          assert_true(s.contains("[PR READY]"))
+          assert_true(s.contains("[FIXES PUSHED]"))
+          assert_true(s.contains("merge_pr"))
+          assert_true(s.contains("[PR MERGED]"))
+          assert_true(s.contains("directly verified"))
+        }
+        _ => fail("expected instructions string")
+      }
+    _ => fail("expected initialize result")
+  }
+}
+
+///|
 test "error_response" {
   let rpc = @mcp.error_response(
     Number(7),

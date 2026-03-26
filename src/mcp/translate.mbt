@@ -149,7 +149,16 @@ fn choir_mcp_instructions() -> String {
     "Do not merge PRs until Copilot has reviewed them -- review notifications arrive automatically via the poller. ",
   )
   buf.write_string(
-    "When a leaf reports a PR, wait for the [REVIEW] notification before merging.",
+    "When a leaf reports a PR, wait for the [REVIEW] notification before merging. ",
+  )
+  buf.write_string(
+    "Do not tell the user a PR is merged based on [PR READY], [FIXES PUSHED], or leaf notify_parent/shutdown text alone. ",
+  )
+  buf.write_string(
+    "Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). ",
+  )
+  buf.write_string(
+    "The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.",
   )
   buf.to_string()
 }
