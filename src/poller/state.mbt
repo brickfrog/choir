@@ -197,6 +197,29 @@ pub fn PollerState::track(
 }
 
 ///|
+pub fn PollerState::ensure_tracked(
+  self : PollerState,
+  pr_number : Int,
+  agent_id : String,
+  branch : String,
+  parent_branch : String,
+  pr_url : String,
+  now : Int64,
+) -> Unit {
+  match self.tracked.get(pr_number) {
+    Some(existing) =>
+      self.tracked.set(pr_number, {
+        ..existing,
+        agent_id,
+        branch,
+        parent_branch,
+        pr_url,
+      })
+    None => self.track(pr_number, agent_id, branch, parent_branch, pr_url, now)
+  }
+}
+
+///|
 fn recovered_notified_parent(review : ReviewState) -> Bool {
   match review {
     Approved => true

@@ -154,7 +154,6 @@ pub fn gemini_settings_json(
   }
   if context_paths.length() > 0 {
     let files : Array[Json] = []
-    files.push("AGENTS.md".to_json())
     for path in context_paths {
       files.push(path.to_json())
     }
@@ -164,11 +163,8 @@ pub fn gemini_settings_json(
 }
 
 ///|
-/// Resolve role context file path with two-tier fallback.
-/// Checks project-local .choir/context/{role}.md first,
-/// then global ~/.choir/context/{role}.md.
-pub fn resolve_context_path(project_dir : String, role : String) -> String? {
-  let local_path = project_dir + "/.choir/context/" + role + ".md"
+fn resolve_named_context_path(project_dir : String, name : String) -> String? {
+  let local_path = project_dir + "/.choir/context/" + name + ".md"
   if @sys.read_file(local_path) != "" {
     return Some(
       if local_path.has_prefix("/") {
@@ -180,12 +176,30 @@ pub fn resolve_context_path(project_dir : String, role : String) -> String? {
   }
   let home = @sys.getenv("HOME").unwrap_or("")
   if home != "" {
-    let global = home + "/.choir/context/" + role + ".md"
+    let global = home + "/.choir/context/" + name + ".md"
     if @sys.read_file(global) != "" {
       return Some(global)
     }
   }
   None
+}
+
+///|
+/// Resolve hidden Choir-owned context files with two-tier fallback.
+/// For each name, checks project-local `.choir/context/{name}.md` first,
+/// then global `~/.choir/context/{name}.md`.
+pub fn resolve_context_paths(
+  project_dir : String,
+  role : String,
+) -> Array[String] {
+  let paths : Array[String] = []
+  for name in ["common", role] {
+    match resolve_named_context_path(project_dir, name) {
+      Some(path) => if not(paths.contains(path)) { paths.push(path) }
+      None => ()
+    }
+  }
+  paths
 }
 
 ///|

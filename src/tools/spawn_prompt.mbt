@@ -223,7 +223,7 @@ fn sanitize_worker_lines(lines : Array[String]) -> Array[String] {
 fn render_common_prompt(
   spec : PromptSpec,
   profile : String,
-  include_agents_md : Bool,
+  default_read_first : Array[String],
   sanitize_worker? : Bool = false,
 ) -> String {
   if spec.prompt != "" {
@@ -235,8 +235,8 @@ fn render_common_prompt(
   add_section(sections, "BOUNDARY", render_bullets(spec.boundary))
 
   let read_first = spec.read_first
-  if include_agents_md {
-    push_unique(read_first, "AGENTS.md")
+  for path in default_read_first {
+    push_unique(read_first, path)
   }
   add_section(sections, "READ FIRST", render_bullets(read_first))
   let steps = if sanitize_worker {
@@ -270,7 +270,9 @@ fn render_common_prompt(
 
 ///|
 pub fn render_leaf_spawn_prompt(spec : PromptSpec) -> String {
-  render_common_prompt(spec, leaf_profile_text(), true)
+  render_common_prompt(spec, leaf_profile_text(), [
+    ".choir/context/common.md", ".choir/context/dev.md",
+  ])
 }
 
 ///|
@@ -278,7 +280,7 @@ pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
   render_common_prompt(
     spec,
     worker_profile_text(spec.worker_type),
-    true,
+    [".choir/context/common.md", ".choir/context/worker.md"],
     sanitize_worker=true,
   )
 }

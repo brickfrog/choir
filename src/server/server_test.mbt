@@ -308,7 +308,7 @@ async test "ServerState::handle_with_runner passes zellij session to spawns" {
       "parent_branch": "main",
       "task": "reply READY",
       "count": "1",
-      "read_first": "AGENTS.md",
+      "read_first": ".choir/context/dev.md",
     }),
   }
   let res = state.handle_with_runner(req, runner=mock_spawn_runner_server)
@@ -570,7 +570,7 @@ async test "process_poller_tick_with routes comment-only reviews to owning agent
         @poller.ReviewState::None_,
         "sha-comment-1",
         false,
-        "Please tighten the wording in CLAUDE.md",
+        "Please tighten the wording in .choir/context/common.md",
         true,
       )
     },
@@ -593,7 +593,7 @@ async test "process_poller_tick_with routes comment-only reviews to owning agent
   )
   assert_true(
     review_cmds[1].args[3].contains(
-      "[REVIEW] PR #61 has review comments:\\nPlease tighten the wording in CLAUDE.md",
+      "[REVIEW] PR #61 has review comments:\\nPlease tighten the wording in .choir/context/common.md",
     ),
   )
   // PR comment audit trail

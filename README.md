@@ -185,8 +185,10 @@ flowchart TD
 .choir/worktrees/         spawned worktrees
 .choir/hooks/hook.wasm    optional WASM hook plugin
 .choir/rewrite_rules.json optional PII rewrite rules
-CLAUDE.md                 operator/developer notes
-AGENTS.md                 leaf-agent instructions
+.choir/context/common.md  shared Choir guidance
+.choir/context/dev.md     leaf-agent guidance
+.choir/context/tl.md      TL guidance
+.choir/context/worker.md  worker guidance
 ```
 
 ## WASM Hooks
@@ -252,5 +254,7 @@ MIT
 
 ## See Also
 
-- [CLAUDE.md](CLAUDE.md)
-- [AGENTS.md](AGENTS.md)
+- [`.choir/context/common.md`](.choir/context/common.md)
+- [`.choir/context/dev.md`](.choir/context/dev.md)
+- [`.choir/context/tl.md`](.choir/context/tl.md)
+- [`.choir/context/worker.md`](.choir/context/worker.md)

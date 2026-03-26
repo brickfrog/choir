@@ -1,7 +1,9 @@
 target/
 .mooncakes/
 .exo/
-.choir/
+.choir/*
+!.choir/context/
+!.choir/context/*.md
 .mcp.json
 .claude/settings.local.json
 .moonagent/

@@ -160,8 +160,10 @@ flowchart TD
 .choir/worktrees/         派生工作树
 .choir/hooks/hook.wasm    可选 WASM hook 插件
 .choir/rewrite_rules.json 可选 PII 重写规则
-CLAUDE.md                 操作/开发说明
-AGENTS.md                 叶子代理说明
+.choir/context/common.md  共享 Choir 指南
+.choir/context/dev.md     叶子代理指南
+.choir/context/tl.md      TL 指南
+.choir/context/worker.md  worker 指南
 ```
 
 ## WASM Hooks
@@ -194,5 +196,7 @@ MIT
 
 ## 另见
 
-- [CLAUDE.md](CLAUDE.md)
-- [AGENTS.md](AGENTS.md)
+- [`.choir/context/common.md`](.choir/context/common.md)
+- [`.choir/context/dev.md`](.choir/context/dev.md)
+- [`.choir/context/tl.md`](.choir/context/tl.md)
+- [`.choir/context/worker.md`](.choir/context/worker.md)

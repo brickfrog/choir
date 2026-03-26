@@ -69,6 +69,42 @@ test "PollerState::track and get" {
 }
 
 ///|
+test "PollerState::ensure_tracked preserves review memory for existing PR" {
+  let state = PollerState::new()
+  state.restore({
+    pr_number: 1,
+    agent_id: "agent1",
+    branch: "main.agent1",
+    parent_branch: "main",
+    pr_url: "https://example.test/pr/1",
+    first_seen: 100L,
+    last_review_state: ReviewState::ChangesRequested,
+    last_review_bodies: "Please fix the flaky test",
+    last_sha: "sha1",
+    notified_parent: false,
+    last_ci_failed: true,
+    last_timeout_at: 250L,
+  })
+  state.ensure_tracked(
+    1, "agent1", "main.agent1", "release", "https://example.test/pr/1-updated", 999L,
+  )
+  match state.get(1) {
+    Some(pr) => {
+      assert_eq(pr.first_seen, 100L)
+      assert_eq(pr.last_review_state, ReviewState::ChangesRequested)
+      assert_eq(pr.last_review_bodies, "Please fix the flaky test")
+      assert_eq(pr.last_sha, "sha1")
+      assert_false(pr.notified_parent)
+      assert_true(pr.last_ci_failed)
+      assert_eq(pr.last_timeout_at, 250L)
+      assert_eq(pr.parent_branch, "release")
+      assert_eq(pr.pr_url, "https://example.test/pr/1-updated")
+    }
+    None => fail("tracked PR not found")
+  }
+}
+
+///|
 test "PollerState::untrack" {
   let state = PollerState::new()
   state.track(
@@ -532,20 +568,22 @@ async test "PollerState::tick_with tracks latest comment-only review bodies" {
         ReviewState::None_,
         "sha10",
         false,
-        "Please tighten the wording in CLAUDE.md",
+        "Please tighten the wording in .choir/context/common.md",
         true,
       )
     },
     fn(event, _agent_id) { events.push(event) },
   )
   assert_eq(events, [
-    PollEvent::ReviewReceived(10, "Please tighten the wording in CLAUDE.md"),
+    PollEvent::ReviewReceived(
+      10, "Please tighten the wording in .choir/context/common.md",
+    ),
   ])
   match state.get(10) {
     Some(tracked) => {
       assert_eq(
         tracked.last_review_bodies,
-        "Please tighten the wording in CLAUDE.md",
+        "Please tighten the wording in .choir/context/common.md",
       )
       assert_false(tracked.notified_parent)
     }

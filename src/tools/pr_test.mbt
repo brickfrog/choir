@@ -122,6 +122,68 @@ async test "dispatch file_pr auto_tracks returned pr number" {
 }
 
 ///|
+async test "dispatch file_pr preserves tracked review state for existing PR" {
+  let poller = @poller.PollerState::new()
+  poller.restore({
+    pr_number: 22,
+    agent_id: "feat",
+    branch: "feat",
+    parent_branch: "main",
+    pr_url: "https://example.test/pr/feat",
+    first_seen: 100L,
+    last_review_state: @poller.ReviewState::ChangesRequested,
+    last_review_bodies: "Please add tests",
+    last_sha: "sha1",
+    notified_parent: false,
+    last_ci_failed: false,
+    last_timeout_at: 0L,
+  })
+  let call : ToolCall = {
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: { "branch": "feat", "parent_branch": "main" },
+  }
+  let res = dispatch_call(
+    call,
+    runner=mock_runner,
+    ensure_pr=mock_ensure_pr,
+    poller_state=Some(poller),
+  )
+  match res {
+    Ok(m) => assert_eq(m.get("tracked"), Some("true"))
+    Err(_) => fail("expected file_pr to succeed")
+  }
+  match poller.get(22) {
+    Some(tracked) => {
+      assert_eq(
+        tracked.last_review_state,
+        @poller.ReviewState::ChangesRequested,
+      )
+      assert_eq(tracked.last_review_bodies, "Please add tests")
+      assert_eq(tracked.last_sha, "sha1")
+      assert_false(tracked.notified_parent)
+    }
+    None => fail("expected tracked PR")
+  }
+  let events = []
+  poller.tick_with(
+    200L,
+    900L,
+    fn(_pr_number) {
+      (
+        @poller.ReviewState::ChangesRequested,
+        "sha2",
+        false,
+        "Please add tests",
+        true,
+      )
+    },
+    fn(event, _agent_id) { events.push(event) },
+  )
+  assert_eq(events, [@poller.PollEvent::FixesPushed(22)])
+}
+
+///|
 async test "dispatch file_pr accepts agent_id alias for branch" {
   let call : ToolCall = {
     role: @types.Role::Dev,

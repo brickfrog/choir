@@ -3,7 +3,7 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
   let prompt = render_leaf_spawn_prompt(
     PromptSpec::from_map({
       "task": "Implement agent routing",
-      "read_first": "CLAUDE.md\nsrc/tools/dispatch.mbt",
+      "read_first": ".choir/context/common.md\nsrc/tools/dispatch.mbt",
       "steps": "Add routing metadata\nUpdate tests",
       "verify": "moon test --target native\nmoon build --target native --release",
       "done_criteria": "Routing metadata is persisted",
@@ -15,7 +15,8 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
   )
   assert_true(prompt.contains("## TASK\nImplement agent routing"))
   assert_true(prompt.contains("## READ FIRST"))
-  assert_true(prompt.contains("AGENTS.md"))
+  assert_true(prompt.contains(".choir/context/common.md"))
+  assert_true(prompt.contains(".choir/context/dev.md"))
   assert_true(prompt.contains("1. Add routing metadata"))
   assert_true(prompt.contains("- `moon test --target native`"))
   assert_true(prompt.contains("Key decisions:"))

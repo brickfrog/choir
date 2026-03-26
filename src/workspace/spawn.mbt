@@ -215,11 +215,10 @@ pub fn spawn_commands(
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
-        let ctx_paths : Array[String] = []
-        match resolve_context_path(root_project, role_to_string(spec.role)) {
-          Some(p) => ctx_paths.push(p)
-          None => ()
-        }
+        let ctx_paths = resolve_context_paths(
+          root_project,
+          role_to_string(spec.role),
+        )
         let wasm_path = root_project + "/.choir/hooks/hook.wasm"
         let wasm_hooks = if @sys.read_file(wasm_path) != "" {
           Some(wasm_path)
@@ -291,11 +290,10 @@ pub fn spawn_commands(
       cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
-        let ctx_paths : Array[String] = []
-        match resolve_context_path(root_project, role_to_string(spec.role)) {
-          Some(p) => ctx_paths.push(p)
-          None => ()
-        }
+        let ctx_paths = resolve_context_paths(
+          root_project,
+          role_to_string(spec.role),
+        )
         let wasm_path = root_project + "/.choir/hooks/hook.wasm"
         let wasm_hooks = if @sys.read_file(wasm_path) != "" {
           Some(wasm_path)

@@ -292,7 +292,7 @@ pub async fn dispatch(
               let mut tracked = false
               match poller_state {
                 Some(ps) => {
-                  ps.track(
+                  ps.ensure_tracked(
                     pr.number,
                     tracked_agent_id,
                     branch,
@@ -419,7 +419,7 @@ pub async fn dispatch(
     ToolRequest::TrackPr(track_pr_args) =>
       match poller_state {
         Some(ps) => {
-          ps.track(
+          ps.ensure_tracked(
             track_pr_args.pr_number,
             track_pr_args.agent_id,
             track_pr_args.branch,
