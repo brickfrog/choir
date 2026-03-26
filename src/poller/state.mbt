@@ -220,6 +220,43 @@ pub fn PollerState::ensure_tracked(
 }
 
 ///|
+pub fn PollerState::transfer_owner(
+  self : PollerState,
+  from_agent_id : String,
+  to_agent_id : String,
+  to_branch : String,
+  to_parent_branch : String,
+) -> Int {
+  let pr_numbers = []
+  for tracked in self.tracked.values() {
+    if tracked.agent_id == from_agent_id {
+      pr_numbers.push(tracked.pr_number)
+    }
+  }
+  for pr_number in pr_numbers {
+    match self.tracked.get(pr_number) {
+      Some(tracked) =>
+        self.tracked.set(pr_number, {
+          ..tracked,
+          agent_id: to_agent_id,
+          branch: if to_branch == "" {
+            tracked.branch
+          } else {
+            to_branch
+          },
+          parent_branch: if to_parent_branch == "" {
+            tracked.parent_branch
+          } else {
+            to_parent_branch
+          },
+        })
+      None => ()
+    }
+  }
+  pr_numbers.length()
+}
+
+///|
 fn recovered_notified_parent(review : ReviewState) -> Bool {
   match review {
     Approved => true

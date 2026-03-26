@@ -15,9 +15,30 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 }
 
 ///|
+
+///|
+fn escape_for_sh_single_quotes(script : String) -> String {
+  // Escape single quotes for safe embedding inside `sh -c '<script>'`.
+  // Bash pattern: close quote, escape quote, reopen: `'\''`.
+  let buf = StringBuilder::new()
+  for c in script {
+    if c == '\'' {
+      buf.write_string("'\\''")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
 fn run_shell(script : String) -> Unit {
   ignore(
-    c_system_test(string_to_null_terminated_bytes("sh -c '" + script + "'")),
+    c_system_test(
+      string_to_null_terminated_bytes(
+        "sh -c '" + escape_for_sh_single_quotes(script) + "'",
+      ),
+    ),
   )
 }
 
@@ -409,6 +430,229 @@ test "notify_parent with no parent returns Err" {
   let _ = state.register_agent(root)
   let res = state.notify_parent("root-1", "hello", "success")
   assert_true(res is Err(_))
+}
+
+///|
+test "transfer_leaf_ownership moves tracked PR owner and parent child summary" {
+  let project_dir = "/tmp/choir-server-transfer-owner"
+  run_shell(
+    "rm -rf /tmp/choir-server-transfer-owner && mkdir -p /tmp/choir-server-transfer-owner/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = {
+    ..build_agent("parent-1", None),
+    role: @types.Role::TL,
+    state: @types.AgentState::Active,
+  }
+  let old_child = {
+    ..build_agent("main.leaf-old", Some("parent-1")),
+    branch: "main.leaf-old",
+  }
+  let new_child = {
+    ..build_agent("main.leaf-new", Some("parent-1")),
+    branch: "main.leaf-new",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(old_child))
+  ignore(state.registry.insert(new_child))
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "main.leaf-old",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ChangesRequested(pr_number=88, next_round=2),
+      ),
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "parent-1",
+      role: @types.Role::TL,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Supervising(children=[
+          {
+            child_id: "main.leaf-old",
+            slug: "leaf-old",
+            branch: "main.leaf-old",
+            agent_type: "claude",
+            summary: @phase.ChildLifecycleSummary::ChangesRequested(
+              pr_number=88,
+              next_round=2,
+            ),
+          },
+        ]),
+      ),
+    }),
+  )
+  state.poller.track(
+    88, "main.leaf-old", "main.leaf-old", "main", "https://example.test/pr/88", 100L,
+  )
+  let transferred = state.transfer_leaf_ownership(
+    "main.leaf-old", "main.leaf-new",
+  )
+  match transferred {
+    Ok(count) => assert_eq(count, 1)
+    Err(e) => fail("transfer should succeed: " + e.message())
+  }
+  match state.poller.get(88) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "main.leaf-new")
+      assert_eq(tracked.branch, "main.leaf-new")
+    }
+    None => fail("expected tracked PR after transfer")
+  }
+  match @phase.read_lifecycle(project_dir, "main.leaf-new") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ChangesRequested(pr_number=88, next_round=2)
+        ) => ()
+        _ => fail("expected lifecycle transferred to new owner")
+      }
+    None => fail("expected transferred lifecycle")
+  }
+  match @phase.read_lifecycle(project_dir, "parent-1") {
+    Some(parent_lifecycle) =>
+      match parent_lifecycle.workflow {
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~)
+        ) => {
+          let mut has_old = false
+          let mut has_new = false
+          for child in children {
+            if child.child_id == "main.leaf-old" {
+              has_old = true
+            }
+            if child.child_id == "main.leaf-new" &&
+              child.summary ==
+              @phase.ChildLifecycleSummary::ChangesRequested(
+                pr_number=88,
+                next_round=2,
+              ) {
+              has_new = true
+            }
+          }
+          assert_false(has_old)
+          assert_true(has_new)
+        }
+        _ => fail("expected supervising parent lifecycle")
+      }
+    None => fail("expected parent lifecycle")
+  }
+  run_shell("rm -rf /tmp/choir-server-transfer-owner")
+}
+
+///|
+test "plan_poll_event_deliveries routes to new owner after transfer_leaf_ownership" {
+  let state = ServerState::new(@types.Config::default())
+  let parent = { ..build_agent("parent-1", None), role: @types.Role::TL }
+  let old_child = {
+    ..build_agent("main.leaf-old", Some("parent-1")),
+    branch: "main.leaf-old",
+  }
+  let new_child = {
+    ..build_agent("main.leaf-new", Some("parent-1")),
+    branch: "main.leaf-new",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(old_child))
+  ignore(state.registry.insert(new_child))
+  state.poller.track(
+    42, "main.leaf-old", "main.leaf-old", "main", "https://example.test/pr/42", 100L,
+  )
+  let transferred = state.transfer_leaf_ownership(
+    "main.leaf-old", "main.leaf-new",
+  )
+  assert_eq(transferred, Ok(1))
+  let deliveries = state.plan_poll_event_deliveries(
+    @poller.PollEvent::ReviewReceived(42, "Please add tests"),
+    "main.leaf-new",
+  )
+  assert_eq(deliveries.length(), 2)
+  match deliveries[0] {
+    @message.DeliveryMethod::TeamsInbox(path, payload, ..) => {
+      assert_true(path.contains("parent-1"))
+      assert_true(payload.contains("[REVIEW] main.leaf-new PR #42"))
+      assert_true(payload.contains("\"from\":\"main.leaf-new\""))
+    }
+    _ => fail("expected parent Teams inbox delivery")
+  }
+  match deliveries[1] {
+    @message.DeliveryMethod::TeamsInbox(path, payload, ..) => {
+      assert_true(path.contains("main.leaf-new"))
+      assert_true(payload.contains("[REVIEW] PR #42 has review comments"))
+      assert_true(payload.contains("\"from\":\"poller\""))
+    }
+    _ => fail("expected new owner Teams inbox delivery")
+  }
+}
+
+///|
+test "transfer_leaf_ownership preserves destination process state" {
+  let project_dir = "/tmp/choir-server-transfer-preserve-process"
+  run_shell(
+    "rm -rf /tmp/choir-server-transfer-preserve-process && mkdir -p /tmp/choir-server-transfer-preserve-process/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = {
+    ..build_agent("parent-1", None),
+    role: @types.Role::TL,
+    state: @types.AgentState::Active,
+  }
+  let old_child = {
+    ..build_agent("main.leaf-old", Some("parent-1")),
+    branch: "main.leaf-old",
+  }
+  let new_child = {
+    ..build_agent("main.leaf-new", Some("parent-1")),
+    branch: "main.leaf-new",
+  }
+  ignore(state.registry.insert(parent))
+  ignore(state.registry.insert(old_child))
+  ignore(state.registry.insert(new_child))
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "main.leaf-old",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Finalized(
+        reason=@phase.FinalizeReason::Shutdown,
+      ),
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ChangesRequested(pr_number=90, next_round=1),
+      ),
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "main.leaf-new",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+    }),
+  )
+  let transferred = state.transfer_leaf_ownership(
+    "main.leaf-old", "main.leaf-new",
+  )
+  assert_eq(transferred, Ok(0))
+  match @phase.read_lifecycle(project_dir, "main.leaf-new") {
+    Some(lifecycle) => {
+      assert_eq(lifecycle.process, @phase.ProcessState::Connected)
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ChangesRequested(pr_number=90, next_round=1)
+        ) => ()
+        _ => fail("expected dev workflow transfer")
+      }
+    }
+    None => fail("expected transferred lifecycle")
+  }
+  match state.registry.get("main.leaf-new") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Active)
+    Err(_) => fail("expected replacement agent")
+  }
+  run_shell("rm -rf /tmp/choir-server-transfer-preserve-process")
 }
 
 ///|

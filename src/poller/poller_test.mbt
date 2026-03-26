@@ -15,10 +15,29 @@ fn string_to_null_terminated_bytes_poller(s : String) -> Bytes {
 }
 
 ///|
+
+///|
+fn escape_for_sh_single_quotes(script : String) -> String {
+  // Escape single quotes for safe embedding inside `sh -c '<script>'`.
+  // Bash pattern: close quote, escape quote, reopen: `'\''`.
+  let buf = StringBuilder::new()
+  for c in script {
+    if c == '\'' {
+      buf.write_string("'\\''")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
 fn run_shell_poller(script : String) -> Unit {
   ignore(
     c_system_poller_test(
-      string_to_null_terminated_bytes_poller("sh -c '" + script + "'"),
+      string_to_null_terminated_bytes_poller(
+        "sh -c '" + escape_for_sh_single_quotes(script) + "'",
+      ),
     ),
   )
 }
@@ -101,6 +120,61 @@ test "PollerState::ensure_tracked preserves review memory for existing PR" {
       assert_eq(pr.pr_url, "https://example.test/pr/1-updated")
     }
     None => fail("tracked PR not found")
+  }
+}
+
+///|
+test "PollerState::transfer_owner moves tracked PR ownership" {
+  let state = PollerState::new()
+  state.restore({
+    pr_number: 22,
+    agent_id: "main.leaf-old",
+    branch: "main.leaf-old",
+    parent_branch: "main",
+    pr_url: "https://example.test/pr/22",
+    first_seen: 222L,
+    last_review_state: ReviewState::ChangesRequested,
+    last_review_bodies: "Need fixes",
+    last_sha: "sha-old",
+    notified_parent: false,
+    last_ci_failed: true,
+    last_timeout_at: 333L,
+  })
+  state.restore({
+    pr_number: 23,
+    agent_id: "main.other",
+    branch: "main.other",
+    parent_branch: "main",
+    pr_url: "https://example.test/pr/23",
+    first_seen: 223L,
+    last_review_state: ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha-other",
+    notified_parent: true,
+    last_ci_failed: false,
+    last_timeout_at: 0L,
+  })
+  let transferred = state.transfer_owner(
+    "main.leaf-old", "main.leaf-new", "main.leaf-new", "main",
+  )
+  assert_eq(transferred, 1)
+  match state.get(22) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "main.leaf-new")
+      assert_eq(tracked.branch, "main.leaf-new")
+      assert_eq(tracked.parent_branch, "main")
+      assert_eq(tracked.last_review_state, ReviewState::ChangesRequested)
+      assert_eq(tracked.last_review_bodies, "Need fixes")
+      assert_eq(tracked.last_sha, "sha-old")
+      assert_false(tracked.notified_parent)
+      assert_true(tracked.last_ci_failed)
+      assert_eq(tracked.last_timeout_at, 333L)
+    }
+    None => fail("expected transferred tracked PR")
+  }
+  match state.get(23) {
+    Some(tracked) => assert_eq(tracked.agent_id, "main.other")
+    None => fail("expected unrelated tracked PR")
   }
 }
 
