@@ -126,7 +126,7 @@ pub async fn dispatch(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_has_unique_commits,
+  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,
@@ -942,7 +942,7 @@ pub async fn handle_request(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_has_unique_commits,
+  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,
@@ -1082,7 +1082,7 @@ pub async fn dispatch_call(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_has_unique_commits,
+  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,

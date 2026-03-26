@@ -1,4 +1,91 @@
 ///|
+/// Typed preflight failures for `file_pr` (user-facing messages via
+/// `FilePrPreflightError::to_user_message`).
+pub(all) enum FilePrPreflightError {
+  BranchMissing(String, String)
+  HeadUnreadable(String)
+  WrongBranchCheckedOut(String, String)
+  UncommittedChanges(String)
+  MissingOriginGitRemote(String)
+  NotAheadOfParent(String, String)
+  EmptyDiffVsParent(String, String)
+  BranchRangeUnreadable(String)
+  GitCommandFailed(String, String)
+  GhAuthFailed(String)
+} derive(Show, Eq)
+
+///|
+pub fn FilePrPreflightError::to_user_message(
+  self : FilePrPreflightError,
+) -> String {
+  match self {
+    BranchMissing(branch, detail) =>
+      if detail != "" {
+        "cannot file PR: branch '" + branch + "' is missing locally: " + detail
+      } else {
+        "cannot file PR: branch '" + branch + "' is missing locally."
+      }
+    HeadUnreadable(detail) =>
+      if detail != "" {
+        "cannot file PR: could not read current branch (HEAD): " + detail
+      } else {
+        "cannot file PR: could not read current branch (HEAD)."
+      }
+    WrongBranchCheckedOut(expected, got) =>
+      "cannot file PR: git HEAD is '" +
+      got +
+      "' but file_pr targets branch '" +
+      expected +
+      "'. Check out the correct branch in this worktree before filing a PR."
+    UncommittedChanges(detail) => {
+      let suffix = if detail != "" {
+        "\nPending changes:\n" + detail
+      } else {
+        ""
+      }
+      "cannot file PR: working tree has uncommitted changes. Commit or stash before filing a PR." +
+      suffix
+    }
+    MissingOriginGitRemote(detail) =>
+      if detail != "" {
+        "cannot file PR: git remote 'origin' is not configured or unreachable: " +
+        detail
+      } else {
+        "cannot file PR: git remote 'origin' is not configured. Add 'origin' before filing a PR."
+      }
+    NotAheadOfParent(branch, parent) =>
+      "cannot file PR: branch '" +
+      branch +
+      "' has no commits ahead of parent branch '" +
+      parent +
+      "'. Commit your changes before filing a PR."
+    EmptyDiffVsParent(branch, parent) =>
+      "cannot file PR: branch '" +
+      branch +
+      "' introduces no file changes relative to '" +
+      parent +
+      "' (only empty or already-reachable commits). Add real changes before filing a PR."
+    BranchRangeUnreadable(detail) =>
+      if detail != "" {
+        "cannot inspect branch range for PR preflight: " + detail
+      } else {
+        "cannot inspect branch range for PR preflight."
+      }
+    GitCommandFailed(step, detail) => {
+      let tail = if detail != "" { detail } else { "(no output)" }
+      "file_pr preflight failed during `" + step + "`: " + tail
+    }
+    GhAuthFailed(detail) =>
+      if detail != "" {
+        "cannot file PR: GitHub CLI is not authenticated or `gh` failed. Fix `gh auth login` (or install gh) before filing. Details: " +
+        detail
+      } else {
+        "cannot file PR: GitHub CLI is not authenticated. Run `gh auth login` before filing a PR."
+      }
+  }
+}
+
+///|
 pub(all) struct PullRequestInfo {
   number : Int
   url : String
@@ -153,11 +240,11 @@ async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
-pub async fn ensure_branch_has_unique_commits(
-  branch : String,
+async fn rev_list_left_right_counts(
   parent_branch : String,
+  branch : String,
   project_dir : String,
-) -> Result[Unit, String] {
+) -> Result[(Int, Int), FilePrPreflightError] {
   let cmd : @workspace.Command = {
     program: "git",
     args: [
@@ -172,25 +259,152 @@ pub async fn ensure_branch_has_unique_commits(
   if exit_code != 0 {
     let message = output.trim().to_string()
     if message != "" {
-      return Err(message)
-    } else {
-      return Err("failed to inspect branch state before filing PR: " + branch)
+      return Err(FilePrPreflightError::BranchRangeUnreadable(message))
     }
+    return Err(
+      FilePrPreflightError::BranchRangeUnreadable(
+        "failed to inspect branch state before filing PR: " + branch,
+      ),
+    )
   }
   match parse_left_right_counts(output) {
-    Some((_, ahead)) =>
+    Some(counts) => Ok(counts)
+    None =>
+      Err(
+        FilePrPreflightError::BranchRangeUnreadable(
+          "failed to parse branch state before filing PR: " + branch,
+        ),
+      )
+  }
+}
+
+///|
+pub async fn ensure_branch_has_unique_commits(
+  branch : String,
+  parent_branch : String,
+  project_dir : String,
+) -> Result[Unit, String] {
+  match rev_list_left_right_counts(parent_branch, branch, project_dir) {
+    Ok((_, ahead)) =>
       if ahead > 0 {
         Ok(())
       } else {
         Err(
-          "cannot file PR: branch '" +
-          branch +
-          "' has no commits ahead of parent branch '" +
-          parent_branch +
-          "'. Commit your changes before filing a PR.",
+          FilePrPreflightError::NotAheadOfParent(branch, parent_branch).to_user_message(),
         )
       }
-    None => Err("failed to parse branch state before filing PR: " + branch)
+    Err(e) => Err(e.to_user_message())
+  }
+}
+
+///|
+/// Validates local branch state before `file_pr` runs `git push` / `gh`.
+pub async fn file_pr_preflight(
+  branch : String,
+  parent_branch : String,
+  project_dir : String,
+) -> Result[Unit, FilePrPreflightError] {
+  let verify_cmd : @workspace.Command = {
+    program: "git",
+    args: ["rev-parse", "--verify", "refs/heads/" + branch],
+    workdir: Some(project_dir),
+  }
+  let (vcode, vout) = capture_command_output(verify_cmd)
+  if vcode != 0 {
+    return Err(
+      FilePrPreflightError::BranchMissing(branch, vout.trim().to_string()),
+    )
+  }
+  let head_cmd : @workspace.Command = {
+    program: "git",
+    args: ["rev-parse", "--abbrev-ref", "HEAD"],
+    workdir: Some(project_dir),
+  }
+  let (hcode, hout) = capture_command_output(head_cmd)
+  if hcode != 0 {
+    return Err(FilePrPreflightError::HeadUnreadable(hout.trim().to_string()))
+  }
+  let current = hout.trim().to_string()
+  if current != branch {
+    return Err(FilePrPreflightError::WrongBranchCheckedOut(branch, current))
+  }
+  let status_cmd : @workspace.Command = {
+    program: "git",
+    args: ["status", "--porcelain"],
+    workdir: Some(project_dir),
+  }
+  let (scode, sout) = capture_command_output(status_cmd)
+  if scode != 0 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        "git status --porcelain",
+        sout.trim().to_string(),
+      ),
+    )
+  }
+  let pending = sout.trim().to_string()
+  if pending != "" {
+    return Err(FilePrPreflightError::UncommittedChanges(pending))
+  }
+  let origin_cmd : @workspace.Command = {
+    program: "git",
+    args: ["remote", "get-url", "origin"],
+    workdir: Some(project_dir),
+  }
+  let (ocode, oout) = capture_command_output(origin_cmd)
+  if ocode != 0 {
+    return Err(
+      FilePrPreflightError::MissingOriginGitRemote(oout.trim().to_string()),
+    )
+  }
+  match rev_list_left_right_counts(parent_branch, branch, project_dir) {
+    Ok((_, ahead)) =>
+      if ahead <= 0 {
+        return Err(
+          FilePrPreflightError::NotAheadOfParent(branch, parent_branch),
+        )
+      }
+    Err(e) => return Err(e)
+  }
+  let diff_cmd : @workspace.Command = {
+    program: "git",
+    args: ["diff", "--no-ext-diff", "--quiet", parent_branch + "..." + branch],
+    workdir: Some(project_dir),
+  }
+  let (dcode, _) = capture_command_output(diff_cmd)
+  if dcode == 0 {
+    return Err(FilePrPreflightError::EmptyDiffVsParent(branch, parent_branch))
+  }
+  if dcode != 1 {
+    return Err(
+      FilePrPreflightError::GitCommandFailed(
+        "git diff --no-ext-diff --quiet " + parent_branch + "..." + branch,
+        "unexpected exit code " + dcode.to_string(),
+      ),
+    )
+  }
+  let gh_cmd : @workspace.Command = {
+    program: "gh",
+    args: ["auth", "status"],
+    workdir: Some(project_dir),
+  }
+  let (gcode, gout) = capture_command_output(gh_cmd)
+  if gcode != 0 {
+    return Err(FilePrPreflightError::GhAuthFailed(gout.trim().to_string()))
+  }
+  Ok(())
+}
+
+///|
+/// `Result` form used as the default `ensure_branch_ready` hook for `file_pr`.
+pub async fn ensure_branch_ready_for_file_pr(
+  branch : String,
+  parent_branch : String,
+  project_dir : String,
+) -> Result[Unit, String] {
+  match file_pr_preflight(branch, parent_branch, project_dir) {
+    Ok(_) => Ok(())
+    Err(e) => Err(e.to_user_message())
   }
 }
 
