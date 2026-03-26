@@ -9,7 +9,7 @@ test "notify_parent uses live registry parent when present" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = @server.ServerState::new(config)
+  let state = ServerState::new(config)
 
   let parent_id = "main.parent"
   let live_target = match
@@ -70,7 +70,7 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = @server.ServerState::new(config)
+  let state = ServerState::new(config)
 
   let parent_id = "main.parent"
   // Persisted lifecycle exists on disk, but the parent agent is intentionally not inserted into the live registry.
@@ -124,7 +124,7 @@ test "notify_parent returns clear error when parent cannot be resolved" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = @server.ServerState::new(config)
+  let state = ServerState::new(config)
 
   let parent_id = "main.parent"
   let caller_id = "main.child"
