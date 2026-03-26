@@ -349,6 +349,12 @@ fn merged_pr_parent_message(
   parent_branch : String,
   pr_url : String,
 ) -> String {
+  let branch_disp = if branch == "" { "<unknown>" } else { branch }
+  let parent_disp = if parent_branch == "" {
+    "<unknown>"
+  } else {
+    parent_branch
+  }
   let url_line = if pr_url == "" { "" } else { "\npr_url: " + pr_url }
   "[PR MERGED] merge_pr succeeded — PR #" +
   pr_number.to_string() +
@@ -356,9 +362,9 @@ fn merged_pr_parent_message(
   "\nleaf_agent: " +
   leaf_agent_id +
   "\nbranch: " +
-  branch +
+  branch_disp +
   "\nparent_branch: " +
-  parent_branch +
+  parent_disp +
   url_line +
   "\nAuthoritative merge signal: do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
 }
@@ -1630,6 +1636,14 @@ test "merged_pr_parent_message is distinct from pre-merge signals" {
   assert_true(msg.contains("pr_url: https://github.com/o/r/pull/42"))
   assert_true(msg.contains("[PR READY]"))
   assert_true(msg.contains("[FIXES PUSHED]"))
+}
+
+///|
+test "merged_pr_parent_message uses unknown when branch or parent_branch missing" {
+  let msg = merged_pr_parent_message(3, "leaf", "", "", "")
+  assert_true(msg.contains("branch: <unknown>"))
+  assert_true(msg.contains("parent_branch: <unknown>"))
+  assert_false(msg.contains("pr_url:"))
 }
 
 ///|
