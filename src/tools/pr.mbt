@@ -220,6 +220,12 @@ fn preflight_spawn_or_wait_failure_detail(output : String) -> String {
 }
 
 ///|
+/// `capture_command_output` uses negative codes when spawn/pipe/wait fails.
+fn preflight_is_runner_failure(exit_code : Int) -> Bool {
+  exit_code < 0
+}
+
+///|
 async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
@@ -273,7 +279,7 @@ async fn rev_list_left_right_counts_with_capture(
     "..." +
     branch
   let (exit_code, output) = capture(cmd)
-  if exit_code < 0 {
+  if preflight_is_runner_failure(exit_code) {
     return Err(
       FilePrPreflightError::GitCommandFailed(
         rev_step,
@@ -348,7 +354,7 @@ pub async fn file_pr_preflight_with_capture(
   }
   let verify_step = "git rev-parse --verify refs/heads/" + branch
   let (vcode, vout) = capture(verify_cmd)
-  if vcode < 0 {
+  if preflight_is_runner_failure(vcode) {
     return Err(
       FilePrPreflightError::GitCommandFailed(
         verify_step,
@@ -367,7 +373,7 @@ pub async fn file_pr_preflight_with_capture(
     workdir: Some(project_dir),
   }
   let (hcode, hout) = capture(head_cmd)
-  if hcode < 0 {
+  if preflight_is_runner_failure(hcode) {
     return Err(
       FilePrPreflightError::GitCommandFailed(
         "git rev-parse --abbrev-ref HEAD",
@@ -388,7 +394,7 @@ pub async fn file_pr_preflight_with_capture(
     workdir: Some(project_dir),
   }
   let (scode, sout) = capture(status_cmd)
-  if scode < 0 {
+  if preflight_is_runner_failure(scode) {
     return Err(
       FilePrPreflightError::GitCommandFailed(
         "git status --porcelain",
@@ -414,7 +420,7 @@ pub async fn file_pr_preflight_with_capture(
     workdir: Some(project_dir),
   }
   let (ocode, oout) = capture(origin_cmd)
-  if ocode < 0 {
+  if preflight_is_runner_failure(ocode) {
     return Err(
       FilePrPreflightError::GitCommandFailed(
         "git remote get-url origin",
@@ -449,7 +455,7 @@ pub async fn file_pr_preflight_with_capture(
     "..." +
     branch
   let (dcode, dout) = capture(diff_cmd)
-  if dcode < 0 {
+  if preflight_is_runner_failure(dcode) {
     return Err(
       FilePrPreflightError::GitCommandFailed(
         diff_step,
@@ -475,7 +481,7 @@ pub async fn file_pr_preflight_with_capture(
     workdir: Some(project_dir),
   }
   let (gcode, gout) = capture(gh_cmd)
-  if gcode < 0 {
+  if preflight_is_runner_failure(gcode) {
     return Err(
       FilePrPreflightError::GitCommandFailed(
         "gh auth status",

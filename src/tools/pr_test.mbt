@@ -274,6 +274,80 @@ async test "file_pr_preflight_with_capture maps spawn failure to GitCommandFaile
 }
 
 ///|
+async fn mock_preflight_spawn_fail_verify_with_stderr(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  match preflight_mock_step(cmd) {
+    0 => (-1, "resource temporarily unavailable\n")
+    _ => (0, "")
+  }
+}
+
+///|
+async test "file_pr_preflight_with_capture includes stderr when runner fails with output" {
+  let got = file_pr_preflight_with_capture(
+    "t.leaf", "main", "/repo", mock_preflight_spawn_fail_verify_with_stderr,
+  )
+  match got {
+    Err(FilePrPreflightError::GitCommandFailed(_, detail)) =>
+      assert_true(detail.contains("resource temporarily unavailable"))
+    _ => fail("expected GitCommandFailed with stderr")
+  }
+}
+
+///|
+async fn mock_preflight_branch_missing(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  match preflight_mock_step(cmd) {
+    0 => (128, "fatal: Needed a single revision\n")
+    _ => (0, "")
+  }
+}
+
+///|
+async test "file_pr_preflight_with_capture reports missing local branch" {
+  let got = file_pr_preflight_with_capture(
+    "t.leaf", "main", "/repo", mock_preflight_branch_missing,
+  )
+  match got {
+    Err(FilePrPreflightError::BranchMissing(b, msg)) => {
+      assert_eq(b, "t.leaf")
+      assert_true(msg.contains("fatal"))
+    }
+    _ => fail("expected BranchMissing")
+  }
+}
+
+///|
+async fn mock_preflight_missing_origin(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  match preflight_mock_step(cmd) {
+    0 => (0, "")
+    1 => (0, "t.leaf\n")
+    2 => (0, "")
+    3 => (2, "error: No such remote 'origin'\n")
+    _ => (0, "")
+  }
+}
+
+///|
+async test "file_pr_preflight_with_capture reports missing origin remote" {
+  let got = file_pr_preflight_with_capture(
+    "t.leaf", "main", "/repo", mock_preflight_missing_origin,
+  )
+  match got {
+    Err(FilePrPreflightError::MissingOriginGitRemote(msg)) =>
+      assert_true(msg.contains("origin"))
+    _ => fail("expected MissingOriginGitRemote")
+  }
+}
+
+///|
 async fn mock_preflight_gh_fail(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   match preflight_mock_step(cmd) {
