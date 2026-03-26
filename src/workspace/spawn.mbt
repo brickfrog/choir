@@ -92,12 +92,13 @@ fn launch_env_prefix(
 ) -> String {
   let role = role_to_string(spec.role)
   let agent_id = canonical_agent_id(spec)
+  let git_branch = spawn_git_branch(spec)
   let agent_type = @config.agent_type_to_string(spec.agent_type)
   let assignments : Array[String] = [
     path_assignment(workspace + "/.choir/bin"),
     env_assignment("CHOIR_AGENT_ID", agent_id),
     env_assignment("CHOIR_PARENT_ID", spec.parent_id),
-    env_assignment("CHOIR_BRANCH", agent_id),
+    env_assignment("CHOIR_BRANCH", git_branch),
     env_assignment("CHOIR_PARENT_BRANCH", spec.parent_branch),
     env_assignment("CHOIR_WORKSPACE", workspace),
     env_assignment("CHOIR_ROLE", role),
@@ -160,7 +161,7 @@ pub fn spawn_commands(
   let root_project = resolved_project_dir(project_dir)
   let branch = canonical_agent_id(spec)
   let workspace = match spec.isolation {
-    Worktree => worktree_path(root_project, spec.slug)
+    Worktree => worktree_path(root_project, spawn_workspace_dir_slug(spec))
     Inline => root_project
     Standalone => root_project + "/.choir/agents/" + spec.slug
   }
@@ -182,17 +183,18 @@ pub fn spawn_commands(
     launch_with_prompt
   match spec.isolation {
     Worktree => {
-      let cmds : Array[Command] = [
-        {
+      let cmds : Array[Command] = []
+      if not(spec.reuse_workspace) {
+        cmds.push({
           program: "sh",
           args: [
             "-c", "git worktree remove --force \"$1\" 2>/dev/null || true; rm -rf \"$1\"; git branch -D \"$2\" 2>/dev/null || true",
             "sh", workspace, branch,
           ],
           workdir: None,
-        },
-        git_worktree_add(workspace, branch),
-      ]
+        })
+        cmds.push(git_worktree_add(workspace, branch))
+      }
       cmds.push(
         write_spawn_config(
           workspace,

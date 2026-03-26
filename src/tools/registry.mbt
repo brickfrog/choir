@@ -36,6 +36,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "rescue_leaf",
+      description: "Manual rescue: spawn a replacement dev leaf (default cursor_agent) into an existing salvaged worktree/branch; hand off lifecycle and re-point tracked PRs",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "spawn_remote",
       description: "Spawn an agent on a remote machine via SSH, connecting back over TCP",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
