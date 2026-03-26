@@ -160,6 +160,20 @@ pub async fn ServerState::handle_with_runner(
       _ => ()
     }
   }
+  if req.name == "kill_agent" && resp.is_ok() {
+    match req.args.get("agent_id") {
+      Some(agent_id) =>
+        self.fail_agent_with_runner(
+          agent_id,
+          @phase.FailureReason::ParentKilled,
+          "agent killed by parent",
+          "killed",
+          runner,
+          close_target=false,
+        )
+      _ => ()
+    }
+  }
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp) catch {
     _ => ()

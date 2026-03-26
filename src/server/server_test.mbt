@@ -223,6 +223,53 @@ async test "ServerState::handle_with_runner defers shutdown for review-owned dev
 }
 
 ///|
+async test "ServerState::handle_with_runner records kill_agent as ParentKilled failure" {
+  let project_dir = "/tmp/choir-server-kill-agent"
+  run_shell(
+    "rm -rf /tmp/choir-server-kill-agent && mkdir -p /tmp/choir-server-kill-agent/.choir/kv",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let child = {
+    ..build_agent("main.leaf-kill", None),
+    branch: "main.leaf-kill",
+    workspace: project_dir + "/.choir/worktrees/main.leaf-kill",
+    terminal_target: @types.LocalTarget::parse(
+      "zellij-tab:choir:main.leaf-kill",
+    ),
+  }
+  ignore(state.registry.insert(child))
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "kill_agent",
+    args: @types.RequestArgs::from_values({
+      "agent_id": "main.leaf-kill".to_json(),
+      "reason": "testing kill".to_json(),
+    }),
+  }
+  let recorded : Array[@workspace.Command] = []
+  let res = state.handle_with_runner(req, runner=async fn(cmds) {
+    record_runner_server(recorded, cmds)
+  })
+  assert_eq(res.ok_field("status"), Some("killed"))
+  match state.registry.get("main.leaf-kill") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
+    Err(_) => fail("expected agent in registry")
+  }
+  match @phase.read_lifecycle(project_dir, "main.leaf-kill") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(reason=ParentKilled)
+        ) => ()
+        _ => fail("expected ParentKilled lifecycle failure")
+      }
+    None => fail("expected persisted lifecycle")
+  }
+  run_shell("rm -rf /tmp/choir-server-kill-agent")
+}
+
+///|
 async test "ServerState::handle_with_runner passes zellij session to spawns" {
   let config = {
     ..@types.Config::default(),

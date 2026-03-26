@@ -210,6 +210,23 @@ test "lifecycle json round-trip covers supervisor children" {
 }
 
 ///|
+test "classify_failure variants" {
+  assert_eq(classify_failure("model at capacity"), ModelAtCapacity)
+  assert_eq(classify_failure("Rate limit exceeded"), ModelAtCapacity)
+  assert_eq(classify_failure("MCP initialize failure"), McpInitializeFailure)
+  assert_eq(classify_failure("mcp connection failed"), McpInitializeFailure)
+  assert_eq(classify_failure("watchdog timeout"), WatchdogTimeout)
+  assert_eq(classify_failure("unexpected disconnect"), UnexpectedDisconnect)
+  assert_eq(classify_failure("agent killed by parent"), ParentKilled)
+  assert_eq(classify_failure("blocked by review"), BlockedByReview)
+  assert_eq(classify_failure("changes requested"), BlockedByReview)
+  assert_eq(
+    classify_failure("generic error"),
+    ChildFailure(message="generic error"),
+  )
+}
+
+///|
 test "tl phase json round-trip all variants" {
   let phases : Array[TLPhase] = [
     Planning,
