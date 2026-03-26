@@ -1169,6 +1169,67 @@ async test "handle_disconnect fails dev agents with requested changes" {
 }
 
 ///|
+async test "handle_disconnect classifies viewport failure details" {
+  let project_dir = "/tmp/choir-server-disconnect-capacity"
+  let snapshot_path = "/tmp/choir-viewport-main.worker-capacity.json"
+  run_shell(
+    "rm -rf /tmp/choir-server-disconnect-capacity && mkdir -p /tmp/choir-server-disconnect-capacity/.choir/kv && rm -f /tmp/choir-viewport-main.worker-capacity.json",
+  )
+  let state = ServerState::new({ ..@types.Config::default(), project_dir, })
+  let parent = { ..build_agent("root", None), role: @types.Role::TL }
+  ignore(state.registry.insert(parent))
+  let child = {
+    ..build_agent("main.worker-capacity", Some("root")),
+    role: @types.Role::Worker,
+    branch: "main.worker-capacity",
+  }
+  ignore(state.registry.insert(child))
+  ignore(
+    @sys.write_file_sync(
+      snapshot_path, "{\"viewport\":[\"Error: model at capacity\"]}",
+    ),
+  )
+  let delivered_cmds : Array[@workspace.Command] = []
+  state.handle_disconnect_with_runner("main.worker-capacity", runner=async fn(
+    cmds,
+  ) {
+    record_runner_server(delivered_cmds, cmds)
+  })
+  match state.registry.get("main.worker-capacity") {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Failed)
+    Err(_) => fail("agent should remain in registry")
+  }
+  match @phase.read_lifecycle(project_dir, "main.worker-capacity") {
+    Some(lifecycle) => {
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::ModelAtCapacity,
+        ),
+      )
+      match lifecycle.workflow {
+        @phase.WorkflowState::Worker(
+          @phase.WorkerLifecycle::Failed(
+            reason=@phase.FailureReason::ModelAtCapacity
+          )
+        ) => ()
+        _ => fail("expected typed model-capacity failure")
+      }
+    }
+    None => fail("expected persisted lifecycle")
+  }
+  assert_eq(delivered_cmds.length(), 1)
+  assert_true(
+    delivered_cmds[0].args[3].contains(
+      "[FAILED: main.worker-capacity] model at capacity",
+    ),
+  )
+  run_shell(
+    "rm -rf /tmp/choir-server-disconnect-capacity && rm -f /tmp/choir-viewport-main.worker-capacity.json",
+  )
+}
+
+///|
 async test "schedule_disconnect is cancelled by re-register within grace period" {
   let state = ServerState::new(@types.Config::default())
   let parent = { ..build_agent("root", None), role: @types.Role::TL }

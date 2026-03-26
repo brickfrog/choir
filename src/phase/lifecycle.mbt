@@ -559,14 +559,20 @@ pub fn failure_reason_message(reason : FailureReason) -> String {
 ///|
 pub fn classify_failure(message : String) -> FailureReason {
   let lower = message.to_lower()
-  if lower.contains("model at capacity") || lower.contains("rate limit") {
+  if lower.contains("model at capacity") ||
+    lower.contains("at capacity") ||
+    lower.contains("rate limit") {
     ModelAtCapacity
   } else if lower.contains("mcp initialize failure") ||
-    lower.contains("mcp connection failed") {
+    lower.contains("mcp connection failed") ||
+    lower.contains("mcp initialize") ||
+    lower.contains("mcp handshake") ||
+    lower.contains("failed to initialize") {
     McpInitializeFailure
-  } else if lower.contains("watchdog") {
+  } else if lower.contains("watchdog") ||
+    (lower.contains("timeout") && lower.contains("idle")) {
     WatchdogTimeout
-  } else if lower.contains("disconnect") {
+  } else if lower.contains("disconnect") || lower.contains("crashed") {
     UnexpectedDisconnect
   } else if lower.contains("parent killed") ||
     lower.contains("killed by parent") ||

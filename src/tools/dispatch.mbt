@@ -1093,7 +1093,7 @@ fn legacy_dev_phase_from_lifecycle(
     ) =>
       @phase.DevPhase::ExitRequestedDeferred(
         pr_number~,
-        stage="PROpenUnreviewed",
+        stage=@phase.DevStage::PROpenUnreviewed,
         round=0,
         url~,
       )
@@ -1103,7 +1103,7 @@ fn legacy_dev_phase_from_lifecycle(
     ) =>
       @phase.DevPhase::ExitRequestedDeferred(
         pr_number~,
-        stage="FixesPushedAwaitingReview",
+        stage=@phase.DevStage::FixesPushedAwaitingReview,
         round~,
         url="",
       )
@@ -1113,7 +1113,7 @@ fn legacy_dev_phase_from_lifecycle(
     ) =>
       @phase.DevPhase::ExitRequestedDeferred(
         pr_number~,
-        stage="ApprovedAwaitingMerge",
+        stage=@phase.DevStage::ApprovedAwaitingMerge,
         round=0,
         url="",
       )

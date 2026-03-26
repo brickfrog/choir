@@ -47,14 +47,14 @@ test "dev_transition" {
     Transitioned(
       ExitRequestedDeferred(
         pr_number=123,
-        stage="ApprovedAwaitingMerge",
+        stage=ApprovedAwaitingMerge,
         round=0,
         url=""
       )
     ) =>
       p = ExitRequestedDeferred(
         pr_number=123,
-        stage="ApprovedAwaitingMerge",
+        stage=ApprovedAwaitingMerge,
         round=0,
         url="",
       )
@@ -212,11 +212,18 @@ test "lifecycle json round-trip covers supervisor children" {
 ///|
 test "classify_failure variants" {
   assert_eq(classify_failure("model at capacity"), ModelAtCapacity)
+  assert_eq(classify_failure("service at capacity"), ModelAtCapacity)
   assert_eq(classify_failure("Rate limit exceeded"), ModelAtCapacity)
   assert_eq(classify_failure("MCP initialize failure"), McpInitializeFailure)
   assert_eq(classify_failure("mcp connection failed"), McpInitializeFailure)
+  assert_eq(
+    classify_failure("failed to initialize MCP server"),
+    McpInitializeFailure,
+  )
   assert_eq(classify_failure("watchdog timeout"), WatchdogTimeout)
+  assert_eq(classify_failure("timeout due to idle"), WatchdogTimeout)
   assert_eq(classify_failure("unexpected disconnect"), UnexpectedDisconnect)
+  assert_eq(classify_failure("agent crashed"), UnexpectedDisconnect)
   assert_eq(classify_failure("agent killed by parent"), ParentKilled)
   assert_eq(classify_failure("blocked by review"), BlockedByReview)
   assert_eq(classify_failure("changes requested"), BlockedByReview)
@@ -259,7 +266,7 @@ test "dev phase json round-trip all variants" {
     ApprovedAwaitingMerge(pr_number=99),
     ExitRequestedDeferred(
       pr_number=99,
-      stage="ApprovedAwaitingMerge",
+      stage=ApprovedAwaitingMerge,
       round=0,
       url="",
     ),

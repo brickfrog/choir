@@ -1184,15 +1184,26 @@ pub async fn ServerState::handle_disconnect_with_runner(
     Ok(agent) =>
       match agent.state {
         Done | Failed => ()
-        Completing =>
+        Completing => {
+          let lifecycle = self.current_lifecycle(agent_id)
+          let exit_reason = match lifecycle.process {
+            @phase.ProcessState::Finalizing(
+              reason=@phase.FinalizeReason::Merged
+            ) => "merged"
+            @phase.ProcessState::Finalizing(
+              reason=@phase.FinalizeReason::DisconnectFinalized
+            ) => "disconnect"
+            _ => "shutdown"
+          }
           self.finalize_agent_with_runner(
             agent_id,
-            "shutdown",
+            exit_reason,
             runner,
             notify_parent=false,
             close_target=false,
             remove_worktree=false,
           )
+        }
         _ =>
           match
             @phase.lifecycle_disconnect_policy(self.current_lifecycle(agent_id)) {
@@ -1207,10 +1218,37 @@ pub async fn ServerState::handle_disconnect_with_runner(
                 remove_worktree=false,
               )
             @phase.LifecycleDisconnectPolicy::Ignore => ()
-            @phase.LifecycleDisconnectPolicy::Fail(reason~) => {
-              let msg = "[FAILED: " +
-                agent_id +
-                "] disconnected unexpectedly - agent may have crashed or run out of context"
+            @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
+              let snapshot_path = "/tmp/choir-viewport-" + agent_id + ".json"
+              let snapshot = @sys.read_file(snapshot_path)
+              let screen = extract_viewport_text(snapshot)
+              let (reason, msg) = if screen != "" {
+                let classified = @phase.classify_failure(screen)
+                match classified {
+                  @phase.FailureReason::ChildFailure(_) =>
+                    (
+                      default_reason,
+                      "[FAILED: " +
+                      agent_id +
+                      "] disconnected unexpectedly - agent may have crashed or run out of context",
+                    )
+                  _ =>
+                    (
+                      classified,
+                      "[FAILED: " +
+                      agent_id +
+                      "] " +
+                      @phase.failure_reason_message(classified),
+                    )
+                }
+              } else {
+                (
+                  default_reason,
+                  "[FAILED: " +
+                  agent_id +
+                  "] disconnected unexpectedly - agent may have crashed or run out of context",
+                )
+              }
               self.fail_agent_with_runner(
                 agent_id, reason, msg, "disconnect", runner,
               )

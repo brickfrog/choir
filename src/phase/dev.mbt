@@ -1,4 +1,12 @@
 ///|
+pub(all) enum DevStage {
+  PROpenUnreviewed
+  PRUnderReview
+  FixesPushedAwaitingReview
+  ApprovedAwaitingMerge
+} derive(Show, Eq)
+
+///|
 pub(all) enum DevPhase {
   Spawned
   Working
@@ -9,7 +17,7 @@ pub(all) enum DevPhase {
   ApprovedAwaitingMerge(pr_number~ : Int)
   ExitRequestedDeferred(
     pr_number~ : Int,
-    stage~ : String,
+    stage~ : DevStage,
     round~ : Int,
     url~ : String
   )
@@ -48,30 +56,29 @@ pub(all) enum DevDisconnectPolicy {
 ///|
 fn deferred_message(
   pr_number : Int,
-  stage : String,
+  stage : DevStage,
   round : Int,
   url : String,
 ) -> String {
   match stage {
-    "PROpenUnreviewed" => {
+    PROpenUnreviewed => {
       let suffix = if url == "" { "" } else { " at " + url }
       "PR filed (" + pr_number.to_string() + ")" + suffix
     }
-    "PRUnderReview" =>
+    PRUnderReview =>
       "PR " +
       pr_number.to_string() +
       " under review (round " +
       round.to_string() +
       ")"
-    "FixesPushedAwaitingReview" =>
+    FixesPushedAwaitingReview =>
       "PR " +
       pr_number.to_string() +
       " awaiting re-review (round " +
       round.to_string() +
       ")"
-    "ApprovedAwaitingMerge" =>
+    ApprovedAwaitingMerge =>
       "PR " + pr_number.to_string() + " approved and awaiting merge"
-    _ => "PR " + pr_number.to_string() + " still in review flow"
   }
 }
 
@@ -133,7 +140,7 @@ pub fn dev_transition(
         InvalidTransition("Fixes count mismatch")
       }
     (
-      ExitRequestedDeferred(pr_number=n, stage="PROpenUnreviewed", ..),
+      ExitRequestedDeferred(pr_number=n, stage=PROpenUnreviewed, ..),
       ReviewReceivedEv(pr_number=c, ..),
     ) =>
       if c == n {
@@ -142,14 +149,14 @@ pub fn dev_transition(
         InvalidTransition("Review count mismatch")
       }
     (
-      ExitRequestedDeferred(pr_number=n, stage="PROpenUnreviewed", round~, url~),
+      ExitRequestedDeferred(pr_number=n, stage=PROpenUnreviewed, round~, url~),
       ReviewApprovedEv(pr_number=c),
     ) =>
       if c == n {
         Transitioned(
           ExitRequestedDeferred(
             pr_number=c,
-            stage="ApprovedAwaitingMerge",
+            stage=ApprovedAwaitingMerge,
             round~,
             url~,
           ),
@@ -158,7 +165,7 @@ pub fn dev_transition(
         InvalidTransition("Review count mismatch")
       }
     (
-      ExitRequestedDeferred(pr_number=n, stage="PRUnderReview", ..),
+      ExitRequestedDeferred(pr_number=n, stage=PRUnderReview, ..),
       ReviewReceivedEv(pr_number=c, ..),
     ) =>
       if c == n {
@@ -167,14 +174,14 @@ pub fn dev_transition(
         InvalidTransition("Review count mismatch")
       }
     (
-      ExitRequestedDeferred(pr_number=n, stage="PRUnderReview", url~, ..),
+      ExitRequestedDeferred(pr_number=n, stage=PRUnderReview, url~, ..),
       ReviewApprovedEv(pr_number=c),
     ) =>
       if c == n {
         Transitioned(
           ExitRequestedDeferred(
             pr_number=c,
-            stage="ApprovedAwaitingMerge",
+            stage=ApprovedAwaitingMerge,
             round=0,
             url~,
           ),
@@ -183,7 +190,7 @@ pub fn dev_transition(
         InvalidTransition("Review count mismatch")
       }
     (
-      ExitRequestedDeferred(pr_number=n, stage="FixesPushedAwaitingReview", ..),
+      ExitRequestedDeferred(pr_number=n, stage=FixesPushedAwaitingReview, ..),
       ReviewReceivedEv(pr_number=c, ..),
     ) =>
       if c == n {
@@ -194,7 +201,7 @@ pub fn dev_transition(
     (
       ExitRequestedDeferred(
         pr_number=n,
-        stage="FixesPushedAwaitingReview",
+        stage=FixesPushedAwaitingReview,
         url~,
         ..
       ),
@@ -204,7 +211,7 @@ pub fn dev_transition(
         Transitioned(
           ExitRequestedDeferred(
             pr_number=c,
-            stage="ApprovedAwaitingMerge",
+            stage=ApprovedAwaitingMerge,
             round=0,
             url~,
           ),
@@ -217,22 +224,17 @@ pub fn dev_transition(
     (Exitable, ExitRequested) => Transitioned(Exitable)
     (PROpenUnreviewed(pr_number~, url~), ExitRequested) =>
       Transitioned(
-        ExitRequestedDeferred(
-          pr_number~,
-          stage="PROpenUnreviewed",
-          round=0,
-          url~,
-        ),
+        ExitRequestedDeferred(pr_number~, stage=PROpenUnreviewed, round=0, url~),
       )
     (PRUnderReview(pr_number~, round~), ExitRequested) =>
       Transitioned(
-        ExitRequestedDeferred(pr_number~, stage="PRUnderReview", round~, url=""),
+        ExitRequestedDeferred(pr_number~, stage=PRUnderReview, round~, url=""),
       )
     (FixesPushedAwaitingReview(pr_number~, round~), ExitRequested) =>
       Transitioned(
         ExitRequestedDeferred(
           pr_number~,
-          stage="FixesPushedAwaitingReview",
+          stage=FixesPushedAwaitingReview,
           round~,
           url="",
         ),
@@ -241,7 +243,7 @@ pub fn dev_transition(
       Transitioned(
         ExitRequestedDeferred(
           pr_number~,
-          stage="ApprovedAwaitingMerge",
+          stage=ApprovedAwaitingMerge,
           round=0,
           url="",
         ),
@@ -289,18 +291,21 @@ pub fn dev_exit_decision(phase : DevPhase) -> DevExitDecision {
   match phase {
     ChangesRequested(_) => Blocked(message="Changes requested")
     PROpenUnreviewed(pr_number~, url~) =>
-      Deferred(message=deferred_message(pr_number, "PROpenUnreviewed", 0, url))
+      Deferred(message=deferred_message(pr_number, PROpenUnreviewed, 0, url))
     PRUnderReview(pr_number~, round~) =>
-      Deferred(message=deferred_message(pr_number, "PRUnderReview", round, ""))
+      Deferred(message=deferred_message(pr_number, PRUnderReview, round, ""))
     FixesPushedAwaitingReview(pr_number~, round~) =>
       Deferred(
         message=deferred_message(
-          pr_number, "FixesPushedAwaitingReview", round, "",
+          pr_number,
+          FixesPushedAwaitingReview,
+          round,
+          "",
         ),
       )
     ApprovedAwaitingMerge(pr_number~) =>
       Deferred(
-        message=deferred_message(pr_number, "ApprovedAwaitingMerge", 0, ""),
+        message=deferred_message(pr_number, ApprovedAwaitingMerge, 0, ""),
       )
     ExitRequestedDeferred(pr_number~, stage~, round~, url~) =>
       Deferred(message=deferred_message(pr_number, stage, round, url))
@@ -375,7 +380,7 @@ pub fn dev_phase_to_json(phase : DevPhase) -> String {
       {
         "phase": "ExitRequestedDeferred".to_json(),
         "pr_number": pr_number.to_json(),
-        "stage": stage.to_json(),
+        "stage": stage.to_string().to_json(),
         "round": round.to_json(),
         "url": url.to_json(),
       }.to_json()
@@ -385,6 +390,17 @@ pub fn dev_phase_to_json(phase : DevPhase) -> String {
       { "phase": "Failed".to_json(), "reason": reason.to_json() }.to_json()
   }
   json.stringify()
+}
+
+///|
+fn dev_stage_from_string(s : String) -> DevStage? {
+  match s {
+    "PROpenUnreviewed" => Some(PROpenUnreviewed)
+    "PRUnderReview" => Some(PRUnderReview)
+    "FixesPushedAwaitingReview" => Some(FixesPushedAwaitingReview)
+    "ApprovedAwaitingMerge" => Some(ApprovedAwaitingMerge)
+    _ => None
+  }
 }
 
 ///|
@@ -433,17 +449,21 @@ pub fn dev_phase_from_json(json_str : String) -> DevPhase? {
     }
     Some(String("ExitRequestedDeferred")) => {
       guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("stage") is Some(String(stage)) else { return None }
+      guard obj.get("stage") is Some(String(stage_str)) else { return None }
       guard obj.get("round") is Some(Number(r, ..)) else { return None }
       guard obj.get("url") is Some(String(u)) else { return None }
-      Some(
-        ExitRequestedDeferred(
-          pr_number=n.to_int(),
-          stage~,
-          round=r.to_int(),
-          url=u,
-        ),
-      )
+      match dev_stage_from_string(stage_str) {
+        Some(stage) =>
+          Some(
+            ExitRequestedDeferred(
+              pr_number=n.to_int(),
+              stage~,
+              round=r.to_int(),
+              url=u,
+            ),
+          )
+        None => None
+      }
     }
     Some(String("Exitable")) => Some(Exitable)
     Some(String("Done")) => Some(Done)
