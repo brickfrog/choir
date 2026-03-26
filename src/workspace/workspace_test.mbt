@@ -222,7 +222,7 @@ test "spawn_commands for worktree mode returns zellij tab" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // cleanup, git worktree add, config.toml, config.local.toml, .mcp.json, codex/config.toml, helpers, zellij new-tab
+  // cleanup, git worktree add, config.toml, config.local.toml, .mcp.json, .codex/config.toml, helpers, zellij new-tab
   assert_eq(cmds.length(), 8)
   assert_eq(cmds[0].program, "sh")
   assert_true(cmds[0].args[1].contains("git worktree remove --force"))
@@ -298,7 +298,7 @@ test "spawn_commands standalone includes config writes" {
     parent_branch: "main",
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  // git init, config.toml, config.local.toml, .mcp.json, codex/config.toml, helpers, zellij new-tab
+  // git init, config.toml, config.local.toml, .mcp.json, .codex/config.toml, helpers, zellij new-tab
   assert_eq(cmds.length(), 7)
   assert_eq(cmds[0].program, "git")
   assert_eq(cmds[1].program, "sh")
