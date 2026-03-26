@@ -194,7 +194,20 @@ pub fn ServerState::register_agent(
   agent : @types.Agent,
 ) -> Result[Unit, @types.ExoError] {
   self.clear_pending_disconnect(agent.agent_id.to_string())
-  ignore(self.registry.upsert(agent))
+  let agent_id = agent.agent_id.to_string()
+  let lifecycle = match
+    @phase.read_lifecycle(self.config.project_dir, agent_id) {
+    Some(existing) =>
+      match existing.process {
+        @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) =>
+          existing
+        _ => { ..existing, process: @phase.ProcessState::Connected }
+      }
+    None => @phase.lifecycle_for_agent(agent)
+  }
+  ignore(self.registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+  self.persist_lifecycle(lifecycle)
+  self.sync_parent_child_lifecycle(agent_id, lifecycle)
   Ok(())
 }
 
@@ -418,6 +431,7 @@ pub fn ServerState::plan_poll_event_deliveries(
       )
     _ => ()
   }
+  self.sync_parent_child_lifecycle(agent_id, self.current_lifecycle(agent_id))
   // Parent notification — all event types
   match tracked {
     Some(pr) =>
@@ -694,27 +708,117 @@ fn leaf_slug(agent_id : String) -> String {
 }
 
 ///|
-fn ServerState::current_dev_phase(
-  self : ServerState,
-  agent_id : String,
-) -> @phase.DevPhase {
-  @tools.current_dev_phase(self.config.project_dir, agent_id)
+fn child_exists(
+  children : Array[@phase.ChildLifecycle],
+  child_id : String,
+) -> Bool {
+  for child in children {
+    if child.child_id == child_id {
+      return true
+    }
+  }
+  false
 }
 
 ///|
-fn ServerState::set_dev_phase(
+fn ServerState::current_lifecycle(
   self : ServerState,
   agent_id : String,
-  phase : @phase.DevPhase,
+) -> @phase.AgentLifecycle {
+  match self.registry.get(agent_id) {
+    Ok(agent) =>
+      @phase.read_or_default_lifecycle(
+        self.config.project_dir,
+        agent_id,
+        agent.role,
+      )
+    Err(_) =>
+      match @phase.read_lifecycle(self.config.project_dir, agent_id) {
+        Some(lifecycle) => lifecycle
+        None => @phase.lifecycle_for_role(agent_id, @types.Role::Dev)
+      }
+  }
+}
+
+///|
+fn ServerState::persist_lifecycle(
+  self : ServerState,
+  lifecycle : @phase.AgentLifecycle,
 ) -> Unit {
-  ignore(
-    @phase.set_phase(
-      self.config.project_dir,
-      "dev",
-      agent_id,
-      @phase.dev_phase_to_json(phase),
-    ),
+  ignore(@phase.write_lifecycle(self.config.project_dir, lifecycle))
+  match self.registry.get(lifecycle.agent_id) {
+    Ok(agent) =>
+      ignore(
+        self.registry.upsert({ ..agent, state: lifecycle.to_agent_state() }),
+      )
+    Err(_) => ()
+  }
+}
+
+///|
+fn ServerState::sync_parent_child_lifecycle(
+  self : ServerState,
+  agent_id : String,
+  lifecycle : @phase.AgentLifecycle,
+) -> Unit {
+  let agent = match self.registry.get(agent_id) {
+    Ok(agent) => agent
+    Err(_) => return
+  }
+  let parent_id = match agent.parent {
+    Some(parent_id) => parent_id
+    None => return
+  }
+  let parent = match self.registry.get(parent_id) {
+    Ok(parent) => parent
+    Err(_) => return
+  }
+  let child : @phase.ChildLifecycle = {
+    child_id: agent_id,
+    slug: leaf_slug(agent_id),
+    branch: agent.branch,
+    agent_type: @config.agent_type_to_string(agent.agent_type),
+    summary: @phase.child_summary_from_lifecycle(lifecycle),
+  }
+  let parent_lifecycle = @phase.read_or_default_lifecycle(
+    self.config.project_dir,
+    parent_id,
+    parent.role,
   )
+  let supervisor = match parent_lifecycle.workflow {
+    @phase.WorkflowState::Supervisor(supervisor) => supervisor
+    _ => @phase.SupervisorLifecycle::Planning
+  }
+  let transitioned = match supervisor {
+    @phase.SupervisorLifecycle::Supervising(children~) =>
+      if child_exists(children, agent_id) {
+        @phase.supervisor_transition(
+          supervisor,
+          @phase.SupervisorEvent::ChildUpdated(
+            child_id=agent_id,
+            summary=child.summary,
+          ),
+        )
+      } else {
+        @phase.supervisor_transition(
+          supervisor,
+          @phase.SupervisorEvent::ChildSpawned(child~),
+        )
+      }
+    _ =>
+      @phase.supervisor_transition(
+        supervisor,
+        @phase.SupervisorEvent::ChildSpawned(child~),
+      )
+  }
+  match transitioned {
+    Transitioned(new_supervisor) =>
+      self.persist_lifecycle({
+        ..parent_lifecycle,
+        workflow: @phase.WorkflowState::Supervisor(new_supervisor),
+      })
+    InvalidTransition(_) => ()
+  }
 }
 
 ///|
@@ -726,6 +830,15 @@ fn ServerState::clear_agent_runtime_tracking(
   self.pane_watchers.remove(agent_id)
   self.pane_hashes.remove(agent_id)
   self.pending_disconnects.remove(agent_id)
+}
+
+///|
+fn finalize_reason_for_exit(exit_reason : String) -> @phase.FinalizeReason {
+  match exit_reason {
+    "merged" => @phase.FinalizeReason::Merged
+    "disconnect" => @phase.FinalizeReason::DisconnectFinalized
+    _ => @phase.FinalizeReason::Shutdown
+  }
 }
 
 ///|
@@ -745,17 +858,18 @@ async fn ServerState::finalize_agent_with_runner(
       return
     }
   }
-  match agent.state {
-    @types.AgentState::Done => {
+  let finalize_reason = finalize_reason_for_exit(exit_reason)
+  let lifecycle = self.current_lifecycle(agent_id)
+  match lifecycle.process {
+    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => {
       self.clear_agent_runtime_tracking(agent_id)
       return
     }
-    @types.AgentState::Failed =>
-      ignore(self.registry.set_state(agent_id, @types.AgentState::Done))
-    @types.AgentState::Active =>
-      ignore(self.registry.set_state(agent_id, @types.AgentState::Completing))
-    @types.AgentState::Completing => ()
-    @types.AgentState::Spawning => ()
+    _ =>
+      self.persist_lifecycle({
+        ..lifecycle,
+        process: @phase.ProcessState::Finalizing(reason=finalize_reason),
+      })
   }
   if notify_parent {
     match agent.parent {
@@ -813,10 +927,25 @@ async fn ServerState::finalize_agent_with_runner(
       None => ()
     }
   }
-  ignore(self.registry.set_state(agent_id, @types.AgentState::Done))
-  if agent.role == @types.Role::Dev {
-    self.set_dev_phase(agent_id, @phase.DevPhase::Done)
+  let finalized_workflow = match lifecycle.workflow {
+    @phase.WorkflowState::Dev(_) =>
+      @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::Done(reason=finalize_reason),
+      )
+    @phase.WorkflowState::Worker(_) =>
+      @phase.WorkflowState::Worker(
+        @phase.WorkerLifecycle::Done(reason=finalize_reason),
+      )
+    @phase.WorkflowState::Supervisor(_) =>
+      @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Done)
   }
+  let finalized = {
+    ..lifecycle,
+    process: @phase.ProcessState::Finalized(reason=finalize_reason),
+    workflow: finalized_workflow,
+  }
+  self.persist_lifecycle(finalized)
+  self.sync_parent_child_lifecycle(agent_id, finalized)
   self.clear_agent_runtime_tracking(agent_id)
 }
 
@@ -824,7 +953,7 @@ async fn ServerState::finalize_agent_with_runner(
 async fn ServerState::fail_agent_with_runner(
   self : ServerState,
   agent_id : String,
-  reason : String,
+  reason : @phase.FailureReason,
   parent_message : String,
   exit_reason : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
@@ -837,16 +966,13 @@ async fn ServerState::fail_agent_with_runner(
       return
     }
   }
-  match agent.state {
-    @types.AgentState::Done | @types.AgentState::Failed => {
+  let lifecycle = self.current_lifecycle(agent_id)
+  match lifecycle.process {
+    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => {
       self.clear_agent_runtime_tracking(agent_id)
       return
     }
-    @types.AgentState::Active =>
-      ignore(self.registry.set_state(agent_id, @types.AgentState::Failed))
-    @types.AgentState::Completing =>
-      ignore(self.registry.set_state(agent_id, @types.AgentState::Done))
-    @types.AgentState::Spawning => ()
+    _ => ()
   }
   @tools.fire_hook_async(
     @hooks.HookEvent::AgentExit,
@@ -874,9 +1000,23 @@ async fn ServerState::fail_agent_with_runner(
       None => ()
     }
   }
-  if agent.role == @types.Role::Dev {
-    self.set_dev_phase(agent_id, @phase.DevPhase::Failed(reason~))
+  let failed_workflow = match lifecycle.workflow {
+    @phase.WorkflowState::Dev(_) =>
+      @phase.WorkflowState::Dev(@phase.DevLifecycle::Failed(reason~))
+    @phase.WorkflowState::Worker(_) =>
+      @phase.WorkflowState::Worker(@phase.WorkerLifecycle::Failed(reason~))
+    @phase.WorkflowState::Supervisor(_) =>
+      @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Failed(reason~),
+      )
   }
+  let failed = {
+    ..lifecycle,
+    process: @phase.ProcessState::Failed(reason~),
+    workflow: failed_workflow,
+  }
+  self.persist_lifecycle(failed)
+  self.sync_parent_child_lifecycle(agent_id, failed)
   match agent.parent {
     Some(parent_id) =>
       match self.registry.get(parent_id) {
@@ -966,14 +1106,9 @@ pub async fn ServerState::check_idle_agents(
     if agent.role == @types.Role::Root || agent.role == @types.Role::TL {
       continue
     }
-    let dev_policy = if agent.role == @types.Role::Dev {
-      Some(@phase.dev_disconnect_policy(self.current_dev_phase(agent_id)))
-    } else {
-      None
-    }
-    match dev_policy {
-      Some(@phase.DevDisconnectPolicy::Preserve)
-      | Some(@phase.DevDisconnectPolicy::Ignore) => continue
+    match @phase.lifecycle_disconnect_policy(self.current_lifecycle(agent_id)) {
+      @phase.LifecycleDisconnectPolicy::Preserve
+      | @phase.LifecycleDisconnectPolicy::Ignore => continue
       _ => ()
     }
     match agent.terminal_target {
@@ -1013,7 +1148,7 @@ pub async fn ServerState::check_idle_agents(
       "s idle (no pane output change)"
     self.fail_agent_with_runner(
       agent_id,
-      "watchdog timeout",
+      @phase.FailureReason::WatchdogTimeout,
       message,
       "watchdog",
       runner,
@@ -1058,36 +1193,27 @@ pub async fn ServerState::handle_disconnect_with_runner(
             remove_worktree=false,
           )
         _ =>
-          if agent.role == @types.Role::Dev {
-            match
-              @phase.dev_disconnect_policy(self.current_dev_phase(agent_id)) {
-              @phase.DevDisconnectPolicy::Preserve => ()
-              @phase.DevDisconnectPolicy::FinalizeDone =>
-                self.finalize_agent_with_runner(
-                  agent_id,
-                  "disconnect",
-                  runner,
-                  notify_parent=false,
-                  close_target=false,
-                  remove_worktree=false,
-                )
-              @phase.DevDisconnectPolicy::Ignore => ()
-              @phase.DevDisconnectPolicy::Fail => {
-                let msg = "[FAILED: " +
-                  agent_id +
-                  "] disconnected unexpectedly - agent may have crashed or run out of context"
-                self.fail_agent_with_runner(
-                  agent_id, "unexpected disconnect", msg, "disconnect", runner,
-                )
-              }
+          match
+            @phase.lifecycle_disconnect_policy(self.current_lifecycle(agent_id)) {
+            @phase.LifecycleDisconnectPolicy::Preserve => ()
+            @phase.LifecycleDisconnectPolicy::FinalizeDone(..) =>
+              self.finalize_agent_with_runner(
+                agent_id,
+                "disconnect",
+                runner,
+                notify_parent=false,
+                close_target=false,
+                remove_worktree=false,
+              )
+            @phase.LifecycleDisconnectPolicy::Ignore => ()
+            @phase.LifecycleDisconnectPolicy::Fail(reason~) => {
+              let msg = "[FAILED: " +
+                agent_id +
+                "] disconnected unexpectedly - agent may have crashed or run out of context"
+              self.fail_agent_with_runner(
+                agent_id, reason, msg, "disconnect", runner,
+              )
             }
-          } else {
-            let msg = "[FAILED: " +
-              agent_id +
-              "] disconnected unexpectedly - agent may have crashed or run out of context"
-            self.fail_agent_with_runner(
-              agent_id, "unexpected disconnect", msg, "disconnect", runner,
-            )
           }
       }
   }

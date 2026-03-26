@@ -98,6 +98,118 @@ test "dev_can_exit" {
 }
 
 ///|
+test "lifecycle dev transition carries typed review ownership" {
+  let mut lifecycle = DevLifecycle::Working
+  match
+    dev_lifecycle_transition(
+      lifecycle,
+      DevLifecycleEvent::PRCreated(
+        pr_number=123,
+        url="https://example.test/pr/123",
+      ),
+    ) {
+    Transitioned(ReviewOwned(pr_number=123, state=OpenUnreviewed(url~))) => {
+      assert_eq(url, "https://example.test/pr/123")
+      lifecycle = ReviewOwned(pr_number=123, state=OpenUnreviewed(url~))
+    }
+    _ => fail("expected review-owned lifecycle")
+  }
+  match
+    dev_lifecycle_transition(
+      lifecycle,
+      DevLifecycleEvent::ReviewReceived(pr_number=123, body="needs tests"),
+    ) {
+    Transitioned(ChangesRequested(pr_number=123, next_round=1)) =>
+      lifecycle = ChangesRequested(pr_number=123, next_round=1)
+    _ => fail("expected changes requested")
+  }
+  match
+    dev_lifecycle_transition(
+      lifecycle,
+      DevLifecycleEvent::FixesPushed(pr_number=123, sha="abc123"),
+    ) {
+    Transitioned(ReviewOwned(pr_number=123, state=FixesAwaitingReview(round=1))) =>
+      lifecycle = ReviewOwned(pr_number=123, state=FixesAwaitingReview(round=1))
+    _ => fail("expected fixes awaiting review")
+  }
+  match
+    dev_lifecycle_transition(
+      lifecycle,
+      DevLifecycleEvent::ReviewApproved(pr_number=123),
+    ) {
+    Transitioned(ReviewOwned(pr_number=123, state=ApprovedAwaitingMerge)) =>
+      lifecycle = ReviewOwned(pr_number=123, state=ApprovedAwaitingMerge)
+    _ => fail("expected approved awaiting merge")
+  }
+  match dev_lifecycle_transition(lifecycle, DevLifecycleEvent::ExitRequested) {
+    Transitioned(
+      ExitRequestedDeferred(pr_number=123, state=ApprovedAwaitingMerge)
+    ) =>
+      lifecycle = ExitRequestedDeferred(
+        pr_number=123,
+        state=ApprovedAwaitingMerge,
+      )
+    _ => fail("expected deferred exit")
+  }
+  match
+    dev_lifecycle_transition(
+      lifecycle,
+      DevLifecycleEvent::MergeObserved(pr_number=123),
+    ) {
+    Transitioned(Done(reason=Merged)) => ()
+    _ => fail("expected merge completion")
+  }
+}
+
+///|
+test "lifecycle policy preserves deferred review ownership on disconnect" {
+  let lifecycle : AgentLifecycle = {
+    agent_id: "main.leaf-a",
+    role: @types.Role::Dev,
+    process: Connected,
+    workflow: Dev(
+      ExitRequestedDeferred(pr_number=99, state=FixesAwaitingReview(round=2)),
+    ),
+  }
+  assert_eq(
+    lifecycle_exit_policy(lifecycle),
+    Deferred(message="PR 99 awaiting re-review (round 2)"),
+  )
+  assert_eq(lifecycle_disconnect_policy(lifecycle), Preserve)
+}
+
+///|
+test "lifecycle json round-trip covers supervisor children" {
+  let lifecycle : AgentLifecycle = {
+    agent_id: "main",
+    role: @types.Role::TL,
+    process: Connected,
+    workflow: Supervisor(
+      Supervising(children=[
+        {
+          child_id: "main.leaf-a",
+          slug: "leaf-a",
+          branch: "main.leaf-a",
+          agent_type: "gemini",
+          summary: ReviewOwned(pr_number=7, state=FixesAwaitingReview(round=2)),
+        },
+        {
+          child_id: "main.leaf-b",
+          slug: "leaf-b",
+          branch: "main.leaf-b",
+          agent_type: "gemini",
+          summary: Failed(reason=ChildFailure(message="ci failed")),
+        },
+      ]),
+    ),
+  }
+  match lifecycle_from_json(lifecycle_to_json(lifecycle)) {
+    Some(restored) => assert_eq(restored, lifecycle)
+    None => fail("expected lifecycle round-trip")
+  }
+}
+
+///|
 test "tl phase json round-trip all variants" {
   let phases : Array[TLPhase] = [
     Planning,

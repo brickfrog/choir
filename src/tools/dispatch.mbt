@@ -538,31 +538,49 @@ pub async fn dispatch(
           }
         None => ()
       }
-      let phase = current_dev_phase(project_dir, caller_id)
-      match @phase.dev_exit_decision(phase) {
-        @phase.DevExitDecision::Blocked(message~) =>
-          @types.Response::Err(message)
-        @phase.DevExitDecision::Deferred(message~) => {
-          ignore(
-            apply_dev_event_checked(
-              project_dir,
-              caller_id,
-              @phase.DevEvent::ExitRequested,
-            ),
-          )
+      let role = match registry {
+        Some(reg) =>
+          match reg.get(caller_id) {
+            Ok(agent) => agent.role
+            Err(_) => @types.Role::Dev
+          }
+        None => @types.Role::Dev
+      }
+      let lifecycle = @phase.read_or_default_lifecycle(
+        project_dir, caller_id, role,
+      )
+      match @phase.lifecycle_exit_policy(lifecycle) {
+        @phase.LifecycleExitPolicy::Blocked(reason~) =>
+          @types.Response::Err(@phase.exit_block_reason_message(reason))
+        @phase.LifecycleExitPolicy::Deferred(message~) => {
+          match lifecycle.workflow {
+            @phase.WorkflowState::Dev(_) =>
+              ignore(
+                apply_dev_event_checked(
+                  project_dir,
+                  caller_id,
+                  @phase.DevEvent::ExitRequested,
+                ),
+              )
+            _ => ()
+          }
           @types.Response::ok_values({
             "status": String::to_json("deferred"),
             "warning": String::to_json(message),
           })
         }
-        @phase.DevExitDecision::ExitableNow => {
-          ignore(
-            apply_dev_event_checked(
-              project_dir,
-              caller_id,
-              @phase.DevEvent::ExitRequested,
-            ),
-          )
+        @phase.LifecycleExitPolicy::Allowed => {
+          match lifecycle.workflow {
+            @phase.WorkflowState::Dev(_) =>
+              ignore(
+                apply_dev_event_checked(
+                  project_dir,
+                  caller_id,
+                  @phase.DevEvent::ExitRequested,
+                ),
+              )
+            _ => ()
+          }
           @types.Response::ok_values({ "status": String::to_json("shutdown") })
         }
       }
@@ -1042,50 +1060,160 @@ fn extract_slug(s : String) -> String {
 }
 
 ///|
+fn supervisor_role_for_scope(scope : String) -> @types.Role {
+  if scope == "root" {
+    @types.Role::Root
+  } else {
+    @types.Role::TL
+  }
+}
+
+///|
+fn child_summary_for_slug(
+  children : Array[@phase.ChildLifecycle],
+  slug : String,
+) -> (String, @phase.ChildLifecycleSummary)? {
+  for child in children {
+    if child.slug == slug || child.branch == slug || child.child_id == slug {
+      return Some((child.child_id, child.summary))
+    }
+  }
+  None
+}
+
+///|
+fn legacy_dev_phase_from_lifecycle(
+  lifecycle : @phase.DevLifecycle,
+) -> @phase.DevPhase {
+  match lifecycle {
+    @phase.DevLifecycle::Working => @phase.DevPhase::Working
+    @phase.DevLifecycle::ReviewOwned(
+      pr_number~,
+      state=@phase.ReviewOwnership::OpenUnreviewed(url~)
+    ) => @phase.DevPhase::PROpenUnreviewed(pr_number~, url~)
+    @phase.DevLifecycle::ReviewOwned(
+      pr_number~,
+      state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+    ) => @phase.DevPhase::FixesPushedAwaitingReview(pr_number~, round~)
+    @phase.DevLifecycle::ReviewOwned(
+      pr_number~,
+      state=@phase.ReviewOwnership::ApprovedAwaitingMerge
+    ) => @phase.DevPhase::ApprovedAwaitingMerge(pr_number~)
+    @phase.DevLifecycle::ChangesRequested(pr_number~, ..) =>
+      @phase.DevPhase::ChangesRequested(pr_number~)
+    @phase.DevLifecycle::ExitRequestedDeferred(
+      pr_number~,
+      state=@phase.ReviewOwnership::OpenUnreviewed(url~)
+    ) =>
+      @phase.DevPhase::ExitRequestedDeferred(
+        pr_number~,
+        stage="PROpenUnreviewed",
+        round=0,
+        url~,
+      )
+    @phase.DevLifecycle::ExitRequestedDeferred(
+      pr_number~,
+      state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+    ) =>
+      @phase.DevPhase::ExitRequestedDeferred(
+        pr_number~,
+        stage="FixesPushedAwaitingReview",
+        round~,
+        url="",
+      )
+    @phase.DevLifecycle::ExitRequestedDeferred(
+      pr_number~,
+      state=@phase.ReviewOwnership::ApprovedAwaitingMerge
+    ) =>
+      @phase.DevPhase::ExitRequestedDeferred(
+        pr_number~,
+        stage="ApprovedAwaitingMerge",
+        round=0,
+        url="",
+      )
+    @phase.DevLifecycle::Exitable => @phase.DevPhase::Exitable
+    @phase.DevLifecycle::Done(..) => @phase.DevPhase::Done
+    @phase.DevLifecycle::Failed(reason~) =>
+      @phase.DevPhase::Failed(reason=@phase.failure_reason_message(reason))
+  }
+}
+
+///|
 pub fn apply_tl_event(
   project_dir : String,
   scope : String,
   event : @phase.TLEvent,
 ) -> Unit {
-  let phase_json = @phase.get_phase(project_dir, "tl", scope)
-  let current = match phase_json {
-    Some(j) => @phase.tl_phase_from_json(j)
-    None => None
+  let lifecycle = @phase.read_or_default_lifecycle(
+    project_dir,
+    scope,
+    supervisor_role_for_scope(scope),
+  )
+  let supervisor = match lifecycle.workflow {
+    @phase.WorkflowState::Supervisor(supervisor) => supervisor
+    _ => @phase.SupervisorLifecycle::Planning
   }
-  let phase = current.unwrap_or(@phase.TLPhase::Planning)
-  match @phase.tl_transition(phase, event) {
-    Transitioned(new_phase) =>
-      ignore(
-        @phase.set_phase(
-          project_dir,
-          "tl",
-          scope,
-          @phase.tl_phase_to_json(new_phase),
+  let transitioned = match event {
+    @phase.TLEvent::ChildSpawned(child_id~) =>
+      @phase.supervisor_transition(
+        supervisor,
+        @phase.SupervisorEvent::ChildSpawned(child={
+          child_id,
+          slug: child_id,
+          branch: child_id,
+          agent_type: "",
+          summary: @phase.ChildLifecycleSummary::Working,
+        }),
+      )
+    @phase.TLEvent::ChildCompleted(child_id~) =>
+      @phase.supervisor_transition(
+        supervisor,
+        @phase.SupervisorEvent::ChildUpdated(
+          child_id~,
+          summary=@phase.ChildLifecycleSummary::Done,
         ),
+      )
+    @phase.TLEvent::ChildFailed(child_id~, reason~) =>
+      @phase.supervisor_transition(
+        supervisor,
+        @phase.SupervisorEvent::ChildFailed(
+          child_id~,
+          reason=@phase.FailureReason::ChildFailure(message=reason),
+        ),
+      )
+    @phase.TLEvent::PRMerged(url~, ..) =>
+      match supervisor {
+        @phase.SupervisorLifecycle::Supervising(children~) =>
+          match child_summary_for_slug(children, url) {
+            Some((child_id, _)) =>
+              @phase.supervisor_transition(
+                supervisor,
+                @phase.SupervisorEvent::ChildUpdated(
+                  child_id~,
+                  summary=@phase.ChildLifecycleSummary::Done,
+                ),
+              )
+            None => InvalidTransition("child not found")
+          }
+        _ => InvalidTransition("no supervising children")
+      }
+    @phase.TLEvent::OwnPRFiled(number~, url~, ..) =>
+      @phase.supervisor_transition(
+        supervisor,
+        @phase.SupervisorEvent::OwnPRFiled(number~, url~),
+      )
+    _ => InvalidTransition("unsupported tl event")
+  }
+  match transitioned {
+    Transitioned(new_supervisor) =>
+      ignore(
+        @phase.write_lifecycle(project_dir, {
+          ..lifecycle,
+          workflow: @phase.WorkflowState::Supervisor(new_supervisor),
+        }),
       )
     InvalidTransition(_) => ()
   }
-  // Update child tracker
-  let tracker_key = "children--" + scope
-  let tracker_json = @sys.read_file(project_dir + "/.choir/kv/" + tracker_key)
-  let tracker = if tracker_json != "" {
-    @phase.ChildTracker::from_json(tracker_json)
-  } else {
-    @phase.ChildTracker::new()
-  }
-  match event {
-    @phase.TLEvent::ChildSpawned(child_id~) =>
-      tracker.add(child_id, { slug: child_id, branch: child_id, agent_type: "" })
-    @phase.TLEvent::ChildCompleted(child_id~) => tracker.remove(child_id)
-    @phase.TLEvent::ChildFailed(child_id~, ..) => tracker.remove(child_id)
-    _ => ()
-  }
-  ignore(
-    @sys.write_file_sync(
-      project_dir + "/.choir/kv/" + tracker_key,
-      tracker.to_json(),
-    ),
-  )
 }
 
 ///|
@@ -1102,12 +1230,15 @@ pub fn current_dev_phase(
   project_dir : String,
   scope : String,
 ) -> @phase.DevPhase {
-  let phase_json = @phase.get_phase(project_dir, "dev", scope)
-  let current = match phase_json {
-    Some(j) => @phase.dev_phase_from_json(j)
-    None => None
+  let lifecycle = @phase.read_or_default_lifecycle(
+    project_dir,
+    scope,
+    @types.Role::Dev,
+  )
+  match lifecycle.workflow {
+    @phase.WorkflowState::Dev(dev) => legacy_dev_phase_from_lifecycle(dev)
+    _ => @phase.DevPhase::Working
   }
-  current.unwrap_or(@phase.DevPhase::Working)
 }
 
 ///|
@@ -1116,19 +1247,62 @@ pub fn apply_dev_event_checked(
   scope : String,
   event : @phase.DevEvent,
 ) -> Result[@phase.DevPhase, String] {
-  let phase = current_dev_phase(project_dir, scope)
-  match @phase.dev_transition(phase, event) {
-    Transitioned(new_phase) => {
-      ignore(
-        @phase.set_phase(
-          project_dir,
-          "dev",
-          scope,
-          @phase.dev_phase_to_json(new_phase),
-        ),
+  let lifecycle = @phase.read_or_default_lifecycle(
+    project_dir,
+    scope,
+    @types.Role::Dev,
+  )
+  let dev = match lifecycle.workflow {
+    @phase.WorkflowState::Dev(dev) => dev
+    _ => @phase.DevLifecycle::Working
+  }
+  match event {
+    @phase.DevEvent::NotifyParentSuccess(..) =>
+      Ok(legacy_dev_phase_from_lifecycle(dev))
+    @phase.DevEvent::NotifyParentFailure(..) => {
+      let failed = @phase.DevLifecycle::Failed(
+        reason=@phase.FailureReason::ParentFailureNotification,
       )
-      Ok(new_phase)
+      ignore(
+        @phase.write_lifecycle(project_dir, {
+          ..lifecycle,
+          workflow: @phase.WorkflowState::Dev(failed),
+        }),
+      )
+      Ok(legacy_dev_phase_from_lifecycle(failed))
     }
-    InvalidTransition(message) => Err(message)
+    _ => {
+      let lifecycle_event = match event {
+        @phase.DevEvent::PRCreated(pr_number~, url~, ..) =>
+          Some(@phase.DevLifecycleEvent::PRCreated(pr_number~, url~))
+        @phase.DevEvent::ReviewReceivedEv(pr_number~, body~) =>
+          Some(@phase.DevLifecycleEvent::ReviewReceived(pr_number~, body~))
+        @phase.DevEvent::ReviewApprovedEv(pr_number~) =>
+          Some(@phase.DevLifecycleEvent::ReviewApproved(pr_number~))
+        @phase.DevEvent::FixesPushedEv(pr_number~, sha~) =>
+          Some(@phase.DevLifecycleEvent::FixesPushed(pr_number~, sha~))
+        @phase.DevEvent::ExitRequested =>
+          Some(@phase.DevLifecycleEvent::ExitRequested)
+        @phase.DevEvent::MergeObserved(pr_number~) =>
+          Some(@phase.DevLifecycleEvent::MergeObserved(pr_number~))
+        _ => None
+      }
+      match lifecycle_event {
+        Some(dev_event) =>
+          match @phase.dev_lifecycle_transition(dev, dev_event) {
+            Transitioned(new_dev) => {
+              ignore(
+                @phase.write_lifecycle(project_dir, {
+                  ..lifecycle,
+                  workflow: @phase.WorkflowState::Dev(new_dev),
+                }),
+              )
+              Ok(legacy_dev_phase_from_lifecycle(new_dev))
+            }
+            InvalidTransition(message) => Err(message)
+          }
+        None => Err("unsupported dev event")
+      }
+    }
   }
 }

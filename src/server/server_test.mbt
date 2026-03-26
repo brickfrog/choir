@@ -158,13 +158,14 @@ async test "ServerState::handle_with_runner finalizes exitable shutdown" {
     Ok(agent) => assert_eq(agent.state, @types.AgentState::Done)
     Err(_) => fail("expected finalized agent")
   }
-  match @phase.get_phase(project_dir, "dev", "main.dev-1") {
-    Some(json) =>
-      match @phase.dev_phase_from_json(json) {
-        Some(@phase.DevPhase::Done) => ()
-        _ => fail("expected Done phase")
+  match @phase.read_lifecycle(project_dir, "main.dev-1") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(@phase.DevLifecycle::Done(reason=Shutdown)) =>
+          ()
+        _ => fail("expected persisted dev lifecycle")
       }
-    None => fail("expected persisted dev phase")
+    None => fail("expected persisted lifecycle")
   }
   assert_eq(recorded.length(), 3)
   assert_eq(recorded[0].program, "choir")
@@ -186,17 +187,19 @@ async test "ServerState::handle_with_runner defers shutdown for review-owned dev
   }
   ignore(state.registry.insert(child))
   ignore(
-    @phase.set_phase(
-      project_dir,
-      "dev",
-      "main.dev-review",
-      @phase.dev_phase_to_json(
-        @phase.DevPhase::PROpenUnreviewed(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "main.dev-review",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
           pr_number=11,
-          url="https://example.test/pr/11",
+          state=@phase.ReviewOwnership::OpenUnreviewed(
+            url="https://example.test/pr/11",
+          ),
         ),
       ),
-    ),
+    }),
   )
   let req = @types.Request::{
     req_method: "tools/call",
@@ -717,14 +720,17 @@ async test "ServerState::handle_with_runner finalizes merged dev agent" {
     52, "main.leaf-1", "main.leaf-1", "main", "https://example.test/pr/52", 100L,
   )
   ignore(
-    @phase.set_phase(
-      project_dir,
-      "dev",
-      "main.leaf-1",
-      @phase.dev_phase_to_json(
-        @phase.DevPhase::ApprovedAwaitingMerge(pr_number=52),
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "main.leaf-1",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=52,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        ),
       ),
-    ),
+    }),
   )
   let merge_req = @types.Request::{
     req_method: "tools/call",
@@ -746,13 +752,14 @@ async test "ServerState::handle_with_runner finalizes merged dev agent" {
     Ok(agent) => assert_eq(agent.state, @types.AgentState::Done)
     Err(_) => fail("expected finalized agent")
   }
-  match @phase.get_phase(project_dir, "dev", "main.leaf-1") {
-    Some(json) =>
-      match @phase.dev_phase_from_json(json) {
-        Some(@phase.DevPhase::Done) => ()
-        _ => fail("expected Done phase")
+  match @phase.read_lifecycle(project_dir, "main.leaf-1") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(@phase.DevLifecycle::Done(reason=Merged)) =>
+          ()
+        _ => fail("expected Done lifecycle")
       }
-    None => fail("expected persisted dev phase")
+    None => fail("expected persisted lifecycle")
   }
   assert_true(recorded.length() >= 3)
   run_shell("rm -rf /tmp/choir-server-merge-finalize")
@@ -1005,17 +1012,19 @@ async test "handle_disconnect preserves review-owned dev agents" {
   }
   ignore(state.registry.insert(child))
   ignore(
-    @phase.set_phase(
-      state.config.project_dir,
-      "dev",
-      "main.leaf-pr",
-      @phase.dev_phase_to_json(
-        @phase.DevPhase::PROpenUnreviewed(
+    @phase.write_lifecycle(state.config.project_dir, {
+      agent_id: "main.leaf-pr",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
           pr_number=99,
-          url="https://example.test/pr/99",
+          state=@phase.ReviewOwnership::OpenUnreviewed(
+            url="https://example.test/pr/99",
+          ),
         ),
       ),
-    ),
+    }),
   )
   let delivered_cmds : Array[@workspace.Command] = []
   state.handle_disconnect_with_runner("main.leaf-pr", runner=async fn(cmds) {
@@ -1044,12 +1053,14 @@ async test "handle_disconnect fails dev agents with requested changes" {
   }
   ignore(state.registry.insert(child))
   ignore(
-    @phase.set_phase(
-      state.config.project_dir,
-      "dev",
-      "main.leaf-fix",
-      @phase.dev_phase_to_json(@phase.DevPhase::ChangesRequested(pr_number=77)),
-    ),
+    @phase.write_lifecycle(state.config.project_dir, {
+      agent_id: "main.leaf-fix",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ChangesRequested(pr_number=77, next_round=1),
+      ),
+    }),
   )
   let delivered_cmds : Array[@workspace.Command] = []
   state.handle_disconnect_with_runner("main.leaf-fix", runner=async fn(cmds) {

@@ -799,17 +799,19 @@ async test "dispatch shutdown defers review-owned dev lifecycle" {
     "rm -rf /tmp/choir-dispatch-shutdown-deferred && mkdir -p /tmp/choir-dispatch-shutdown-deferred/.choir/kv",
   )
   ignore(
-    @phase.set_phase(
-      project_dir,
-      "dev",
-      "leaf-1",
-      @phase.dev_phase_to_json(
-        @phase.DevPhase::PROpenUnreviewed(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "leaf-1",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
           pr_number=42,
-          url="https://example.test/pr/42",
+          state=@phase.ReviewOwnership::OpenUnreviewed(
+            url="https://example.test/pr/42",
+          ),
         ),
       ),
-    ),
+    }),
   )
   let res = @tools.dispatch_call(
     {
@@ -830,20 +832,20 @@ async test "dispatch shutdown defers review-owned dev lifecycle" {
     }
     Err(_) => fail("shutdown should defer")
   }
-  match @phase.get_phase(project_dir, "dev", "leaf-1") {
-    Some(json) =>
-      match @phase.dev_phase_from_json(json) {
-        Some(
-          @phase.DevPhase::ExitRequestedDeferred(
+  match @phase.read_lifecycle(project_dir, "leaf-1") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ExitRequestedDeferred(
             pr_number=42,
-            stage="PROpenUnreviewed",
-            round=0,
-            url="https://example.test/pr/42"
+            state=@phase.ReviewOwnership::OpenUnreviewed(
+              url="https://example.test/pr/42"
+            )
           )
         ) => ()
-        _ => fail("expected deferred exit phase")
+        _ => fail("expected deferred lifecycle")
       }
-    None => fail("expected persisted dev phase")
+    None => fail("expected persisted lifecycle")
   }
   run_shell("rm -rf /tmp/choir-dispatch-shutdown-deferred")
 }
@@ -1374,9 +1376,16 @@ async test "dispatch fork_wave writes tl phase to KV" {
   }
   let res = @tools.dispatch_call(call, project_dir~, runner=mock_runner)
   assert_true(res is Ok(_))
-  let phase_json = @sys.read_file(project_dir + "/.choir/kv/phase-tl--tl-agent")
-  assert_true(phase_json.contains("\"phase\":\"Waiting\""))
-  assert_true(phase_json.contains("\"count\":1"))
+  match @phase.read_lifecycle(project_dir, "tl-agent") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~)
+        ) => assert_eq(children.length(), 1)
+        _ => fail("expected supervising lifecycle")
+      }
+    None => fail("expected persisted lifecycle")
+  }
   run_shell("rm -rf /tmp/choir-test-fork-wave-phase")
 }
 
@@ -1435,13 +1444,15 @@ async test "dispatch shutdown blocks when dev phase is ChangesRequested" {
   run_shell(
     "rm -rf /tmp/choir-test-shutdown-block && mkdir -p /tmp/choir-test-shutdown-block/.choir/kv",
   )
-  // Set dev phase to ChangesRequested(42)
-  let phase_json = "{\"phase\":\"ChangesRequested\",\"pr_number\":42}"
   ignore(
-    @sys.write_file_sync(
-      project_dir + "/.choir/kv/phase-dev--leaf-agent",
-      phase_json,
-    ),
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "leaf-agent",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ChangesRequested(pr_number=42, next_round=1),
+      ),
+    }),
   )
   let call : @tools.ToolCall = {
     role: @types.Role::Dev,

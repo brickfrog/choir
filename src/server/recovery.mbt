@@ -398,7 +398,7 @@ async fn recover_local_agents(
         project_dir, rel_workspace, slug, session, zellij_live,
       ) {
       Some(agent) =>
-        match state.registry.insert(agent) {
+        match state.register_agent(agent) {
           Ok(_) =>
             if not(
                 is_local_target_alive(
@@ -416,6 +416,114 @@ async fn recover_local_agents(
       None => ()
     }
   }
+}
+
+///|
+fn inferred_next_round_from_lifecycle(lifecycle : @phase.DevLifecycle) -> Int {
+  match lifecycle {
+    @phase.DevLifecycle::ReviewOwned(
+      state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+      ..
+    ) => round + 1
+    @phase.DevLifecycle::ChangesRequested(next_round~, ..) => next_round
+    @phase.DevLifecycle::ExitRequestedDeferred(
+      state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+      ..
+    ) => round + 1
+    _ => 1
+  }
+}
+
+///|
+fn recover_dev_lifecycle_for_pr(
+  current : @phase.DevLifecycle,
+  pr_number : Int,
+  pr_url : String,
+  review : @poller.ReviewState,
+) -> @phase.DevLifecycle {
+  let preserve_exit = match current {
+    @phase.DevLifecycle::ExitRequestedDeferred(..) => true
+    _ => false
+  }
+  match review {
+    @poller.ReviewState::Approved =>
+      if preserve_exit {
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        )
+      } else {
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        )
+      }
+    @poller.ReviewState::ChangesRequested | @poller.ReviewState::Commented =>
+      @phase.DevLifecycle::ChangesRequested(
+        pr_number~,
+        next_round=inferred_next_round_from_lifecycle(current),
+      )
+    @poller.ReviewState::None_ =>
+      match current {
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=n,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+        ) if n == pr_number =>
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+          )
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number=n,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+        ) if n == pr_number =>
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+          )
+        @phase.DevLifecycle::ExitRequestedDeferred(pr_number=n, ..) =>
+          if n == pr_number {
+            @phase.DevLifecycle::ExitRequestedDeferred(
+              pr_number~,
+              state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+            )
+          } else {
+            @phase.DevLifecycle::ReviewOwned(
+              pr_number~,
+              state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+            )
+          }
+        _ =>
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+          )
+      }
+  }
+}
+
+///|
+fn sync_recovered_pr_lifecycle(
+  state : ServerState,
+  agent : @types.Agent,
+  pr : OpenPR,
+  review : @poller.ReviewState,
+) -> Unit {
+  let lifecycle = state.current_lifecycle(agent.agent_id.to_string())
+  let workflow = match lifecycle.workflow {
+    @phase.WorkflowState::Dev(dev) =>
+      @phase.WorkflowState::Dev(
+        recover_dev_lifecycle_for_pr(dev, pr.pr_number, pr.url, review),
+      )
+    other => other
+  }
+  let recovered = {
+    ..lifecycle,
+    workflow,
+    process: @phase.ProcessState::Connected,
+  }
+  state.persist_lifecycle(recovered)
+  state.sync_parent_child_lifecycle(agent.agent_id.to_string(), recovered)
 }
 
 ///|
@@ -449,7 +557,7 @@ async fn recover_open_pr_tracking_with(
           pr.branch,
         )
         match restored {
-          Some(existing) =>
+          Some(existing) => {
             state.poller.restore({
               ..existing,
               agent_id: agent.agent_id.to_string(),
@@ -457,6 +565,13 @@ async fn recover_open_pr_tracking_with(
               parent_branch: pr.base,
               pr_url: pr.url,
             })
+            sync_recovered_pr_lifecycle(
+              state,
+              agent,
+              pr,
+              existing.last_review_state,
+            )
+          }
           None => {
             let (review, sha, ci_failed, review_bodies, _) = snapshot(
               pr.pr_number,
@@ -476,6 +591,7 @@ async fn recover_open_pr_tracking_with(
               sha,
               ci_failed,
             )
+            sync_recovered_pr_lifecycle(state, agent, pr, review)
           }
         }
       }
@@ -715,9 +831,27 @@ test "recover_agent_from_local_config keeps live zellij tab targets" {
 
 ///|
 async test "recover_open_pr_tracking_with seeds current review snapshot" {
-  let state = ServerState::new(@types.Config::default())
+  let project_dir = "/tmp/choir-recovery-tracked-snapshot"
+  run_shell_recovery(
+    "rm -rf " + project_dir + " && mkdir -p " + project_dir + "/.choir/kv",
+  )
+  let config = { ..@types.Config::default(), project_dir, }
+  let state = ServerState::new(config)
   ignore(
-    state.registry.insert({
+    state.register_agent({
+      agent_id: "main",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      state: @types.AgentState::Active,
+      parent: None,
+      terminal_target: None,
+      host: @types.Host::Local,
+      workspace: ".",
+      branch: "main",
+    }),
+  )
+  ignore(
+    state.register_agent({
       agent_id: "main.leaf-a",
       role: @types.Role::Dev,
       agent_type: @types.AgentType::Gemini,
@@ -770,11 +904,27 @@ async test "recover_open_pr_tracking_with seeds current review snapshot" {
     }
     None => fail("expected recovered tracked PR")
   }
+  match @phase.read_lifecycle(state.config.project_dir, "main.leaf-a") {
+    Some(lifecycle) =>
+      assert_eq(
+        lifecycle.workflow,
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ChangesRequested(pr_number=12, next_round=1),
+        ),
+      )
+    None => fail("expected recovered lifecycle")
+  }
+  run_shell_recovery("rm -rf " + project_dir)
 }
 
 ///|
 async test "recover_open_pr_tracking_with ignores unowned PR branches" {
-  let state = ServerState::new(@types.Config::default())
+  let project_dir = "/tmp/choir-recovery-unowned-branch"
+  run_shell_recovery(
+    "rm -rf " + project_dir + " && mkdir -p " + project_dir + "/.choir/kv",
+  )
+  let config = { ..@types.Config::default(), project_dir, }
+  let state = ServerState::new(config)
   recover_open_pr_tracking_with(
     state,
     [
@@ -791,13 +941,32 @@ async test "recover_open_pr_tracking_with ignores unowned PR branches" {
     fn(_pr_number) { (@poller.ReviewState::Approved, "sha", false, "", true) },
   )
   assert_eq(state.poller.get(77), None)
+  run_shell_recovery("rm -rf " + project_dir)
 }
 
 ///|
 async test "recover_open_pr_tracking_with prefers persisted poller state" {
-  let state = ServerState::new(@types.Config::default())
+  let project_dir = "/tmp/choir-recovery-persisted-poller"
+  run_shell_recovery(
+    "rm -rf " + project_dir + " && mkdir -p " + project_dir + "/.choir/kv",
+  )
+  let config = { ..@types.Config::default(), project_dir, }
+  let state = ServerState::new(config)
   ignore(
-    state.registry.insert({
+    state.register_agent({
+      agent_id: "main",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      state: @types.AgentState::Active,
+      parent: None,
+      terminal_target: None,
+      host: @types.Host::Local,
+      workspace: ".",
+      branch: "main",
+    }),
+  )
+  ignore(
+    state.register_agent({
       agent_id: "main.leaf-a",
       role: @types.Role::Dev,
       agent_type: @types.AgentType::Gemini,
@@ -807,6 +976,19 @@ async test "recover_open_pr_tracking_with prefers persisted poller state" {
       host: @types.Host::Local,
       workspace: ".choir/worktrees/leaf-a",
       branch: "main.leaf-a",
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(state.config.project_dir, {
+      agent_id: "main.leaf-a",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number=12,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round=2),
+        ),
+      ),
     }),
   )
   recover_open_pr_tracking_with(
@@ -865,4 +1047,15 @@ async test "recover_open_pr_tracking_with prefers persisted poller state" {
     }
     None => fail("expected restored tracked PR")
   }
+  match @phase.read_lifecycle(state.config.project_dir, "main.leaf-a") {
+    Some(lifecycle) =>
+      assert_eq(
+        lifecycle.workflow,
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ChangesRequested(pr_number=12, next_round=3),
+        ),
+      )
+    None => fail("expected restored lifecycle")
+  }
+  run_shell_recovery("rm -rf " + project_dir)
 }
