@@ -21,6 +21,16 @@ async fn mock_registry_branch_ready(
 }
 
 ///|
+async fn mock_registry_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for _ in cmds {
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
 test "tool registry lookup success" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "fork_wave")
@@ -101,7 +111,7 @@ async test "handle_request with valid tool returns Ok" {
     name: "fork_wave",
     args: @types.RequestArgs::new({ "count": "3" }),
   }
-  let res = handle_request(reg, req, runner=mock_runner)
+  let res = handle_request(reg, req, runner=mock_registry_runner)
   assert_true(res is Ok(_))
 }
 
@@ -153,7 +163,7 @@ async test "dispatch returns correct stub for each tool name" {
     let call = ToolCall::{ role: @types.Role::Dev, name, args }
     let res = @tools.dispatch_call(
       call,
-      runner=mock_runner,
+      runner=mock_registry_runner,
       ensure_branch_ready=mock_registry_branch_ready,
       ensure_pr=mock_registry_ensure_pr,
       mutex_registry=Some(@registry.MutexRegistry::new()),
