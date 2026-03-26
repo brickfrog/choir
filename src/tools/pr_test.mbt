@@ -129,7 +129,9 @@ async test "ensure_pull_request errors when branch has no commits ahead" {
   match res {
     Ok(_) => fail("expected no-ahead branch to fail")
     Err(msg) =>
-      assert_eq(msg, "cannot file PR: branch has no commits ahead of main")
+      assert_eq(
+        msg, "cannot file PR: branch 'feature' has no commits ahead of parent branch 'main'. Commit your changes before filing a PR.",
+      )
   }
   run_shell_pr_test("rm -rf /tmp/choir-pr-no-ahead")
 }
@@ -197,7 +199,9 @@ async test "dispatch file_pr fails before push when branch is not ahead" {
   match res {
     Ok(_) => fail("expected no-ahead branch to fail")
     Err(msg) =>
-      assert_eq(msg, "cannot file PR: branch has no commits ahead of main")
+      assert_eq(
+        msg, "cannot file PR: branch 'feature' has no commits ahead of parent branch 'main'. Commit your changes before filing a PR.",
+      )
   }
   assert_eq(recorded.length(), 0)
   run_shell_pr_test("rm -rf /tmp/choir-dispatch-file-pr-no-ahead")

@@ -182,7 +182,13 @@ pub async fn ensure_branch_has_unique_commits(
       if ahead > 0 {
         Ok(())
       } else {
-        Err("cannot file PR: branch has no commits ahead of " + parent_branch)
+        Err(
+          "cannot file PR: branch '" +
+          branch +
+          "' has no commits ahead of parent branch '" +
+          parent_branch +
+          "'. Commit your changes before filing a PR.",
+        )
       }
     None => Err("failed to parse branch state before filing PR: " + branch)
   }
