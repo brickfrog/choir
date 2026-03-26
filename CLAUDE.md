@@ -29,6 +29,8 @@ moon check            # typecheck
 moon build            # compile
 moon test             # run all tests
 moon fmt              # format
+./scripts/verify-fast.sh    # fast local gate (fmt + native check)
+./scripts/verify-strict.sh  # full native release gate
 ```
 
 ## Project Layout
@@ -102,7 +104,9 @@ If Choir cannot do that loop cleanly, it is not done.
 ## Development Rules
 
 - `moon fmt` before committing. No exceptions.
-- `moon test` must pass. Do not skip, ignore, or weaken tests.
+- Use the two-tier verifier:
+  `./scripts/verify-fast.sh` for normal local commits, `./scripts/verify-strict.sh` before push / merge confidence work.
+- `moon test` must pass for real verification. Do not skip, ignore, or weaken tests.
 - Immutable by default. Explicit `mut` only where needed.
 - Pattern matching over conditionals.
 - Pipe operator (`|>`) for chaining.

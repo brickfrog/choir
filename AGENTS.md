@@ -26,10 +26,14 @@ moon check            # typecheck — run first, fast
 moon build --target native --release   # compile native binary
 moon test --target native              # run tests (meaningful target)
 moon fmt              # format — ALWAYS before committing
+./scripts/verify-fast.sh               # fast local verification (fmt + native check)
+./scripts/verify-strict.sh             # full native release verification
 ```
 
 - `moon fmt` before every commit. No exceptions.
-- `moon test --target native` must pass. Do NOT delete, skip, or weaken any test.
+- Use `./scripts/verify-fast.sh` for ordinary local iteration and commits.
+- Use `./scripts/verify-strict.sh` before push when you need full confidence.
+- `moon test --target native` must pass for real verification. Do NOT delete, skip, or weaken any test.
 - Functions: `snake_case`. Types/constructors: `PascalCase`. Constants: `UPPER_CASE`.
 - `Result[T, E]` for errors. No `panic()` except true invariant violations.
 - Prefer `|>` pipe, pattern match over if/else, immutable-by-default.

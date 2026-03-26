@@ -41,6 +41,26 @@ moon build --target native --release
 moon fmt
 ```
 
+## Verification
+
+Choir uses a two-tier local verification policy:
+
+```bash
+./scripts/verify-fast.sh    # moon fmt + moon check --target native
+./scripts/verify-strict.sh  # full native release test sweep
+```
+
+Recommended hook setup:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+That gives you:
+
+- `pre-commit` → fast verification for iteration speed
+- `pre-push` → strict verification before branches/PRs are pushed
+
 ## Runtime Dependencies
 
 The release artifact is the `choir` executable, but the workflow also expects
