@@ -14,6 +14,7 @@ pub(all) enum AgentType {
   Gemini
   MoonPilot
   Codex
+  CursorAgent
 } derive(Show, Eq)
 
 ///|

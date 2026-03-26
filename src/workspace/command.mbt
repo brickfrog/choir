@@ -228,6 +228,38 @@ pub fn write_gemini_settings(
 }
 
 ///|
+/// Generate .cursor/mcp.json content for Cursor Agent worktrees.
+pub fn cursor_mcp_json(agent_name : String, role : String) -> String {
+  let mcp = {
+    "choir": {
+      "command": "choir".to_json(),
+      "args": ["mcp-stdio", "--role", role, "--name", agent_name].to_json(),
+      "type": "stdio".to_json(),
+    }.to_json(),
+  }
+  let settings : Map[String, Json] = { "mcpServers": mcp.to_json() }
+  settings.to_json().stringify(indent=2)
+}
+
+///|
+/// Write .cursor/mcp.json in the workspace for Cursor Agent.
+pub fn write_cursor_mcp_json(
+  worktree_path : String,
+  agent_name : String,
+  role : String,
+) -> Command {
+  let content = cursor_mcp_json(agent_name, role)
+  {
+    program: "sh",
+    args: [
+      "-c", "mkdir -p \"$1/.cursor\" && printf '%s' \"$2\" > \"$1/.cursor/mcp.json\"",
+      "sh", worktree_path, content,
+    ],
+    workdir: None,
+  }
+}
+
+///|
 /// LEGACY: Register a synthetic member in a Claude Teams config.json via shell.
 /// Native version is @workspace.register_team_member_native.
 pub fn register_team_member(

@@ -147,6 +147,16 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_codex.args[9], "/path")
   assert_eq(cmd_codex.args[10], "fix bugs")
   assert_eq(cmd_codex.workdir, Some("/path"))
+
+  let spec_cursor = { ..spec_claude, agent_type: @types.AgentType::CursorAgent }
+  let cmd_cursor = @workspace.agent_launch_command(spec_cursor, "/path")
+  assert_eq(cmd_cursor.program, "agent")
+  assert_eq(cmd_cursor.args[0], "--yolo")
+  assert_eq(cmd_cursor.args[1], "--approve-mcps")
+  assert_eq(cmd_cursor.args[2], "--workspace")
+  assert_eq(cmd_cursor.args[3], "/path")
+  assert_eq(cmd_cursor.args[4], "fix bugs")
+  assert_eq(cmd_cursor.workdir, Some("/path"))
 }
 
 ///|
@@ -364,6 +374,28 @@ test "spawn_commands adds Gemini trust bootstrap" {
   assert_true(cmds[6].args[1].contains(".choir/gemini-settings.json"))
   assert_true(cmds[6].args[4].contains("mcpServers"))
   assert_true(cmds[6].args[4].contains("main.gemini-slug"))
+}
+
+///|
+test "spawn_commands cursor_agent worktree adds mcp json" {
+  let spec = @types.SpawnSpec::{
+    slug: "feature-c",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::CursorAgent,
+    task: "do something",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+  }
+  let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
+  // cleanup, worktree add, config.toml, config.local.toml, helpers, .cursor/mcp.json, zellij new-tab
+  assert_eq(cmds.length(), 7)
+  assert_eq(cmds[5].program, "sh")
+  assert_true(cmds[5].args[1].contains(".cursor"))
+  assert_true(cmds[5].args[4].contains("mcpServers"))
+  assert_true(cmds[5].args[4].contains("main.feature-c"))
+  assert_eq(cmds[6].program, "zellij")
+  assert_eq(cmds[6].args[3], "new-tab")
 }
 
 ///|

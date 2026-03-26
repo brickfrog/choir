@@ -2943,6 +2943,8 @@ fn init_tl_launch_command(tl_type : String, project_dir : String) -> String {
       buf.to_string()
     }
     "gemini" => "gemini --yolo --prompt-interactive"
+    "cursor_agent" =>
+      "agent --yolo --approve-mcps --workspace " + init_shell_quote(project_dir)
     _ =>
       "claude --dangerously-skip-permissions --mcp-config " +
       init_shell_quote(init_claude_mcp_config_json()) +
@@ -2977,6 +2979,14 @@ test "init TL launch command supports codex" {
   assert_true(cmd.contains("'mcp_servers.choir.command=\"sh\"'"))
   assert_true(cmd.contains("'mcp_servers.choir.cwd=\"/tmp/choir repo\"'"))
   assert_true(cmd.contains("'-C' '/tmp/choir repo'"))
+  assert_false(cmd.contains("--mcp-config"))
+}
+
+///|
+test "init TL launch command supports cursor_agent" {
+  let cmd = init_tl_launch_command("cursor_agent", "/tmp/choir repo")
+  assert_true(cmd.contains("agent --yolo --approve-mcps --workspace"))
+  assert_true(cmd.contains("'/tmp/choir repo'"))
   assert_false(cmd.contains("--mcp-config"))
 }
 
@@ -3077,6 +3087,12 @@ fn init_companion_agent_type(command : String) -> @types.AgentType? {
     parts.length() > 1 &&
     parts[1] == "pilot" {
     return Some(@types.AgentType::MoonPilot)
+  }
+  if first == "codex" || first.has_suffix("/codex") {
+    return Some(@types.AgentType::Codex)
+  }
+  if first == "agent" || first.has_suffix("/agent") {
+    return Some(@types.AgentType::CursorAgent)
   }
   None
 }
@@ -3233,6 +3249,13 @@ fn init_companion_launch_command(
           task,
         ],
       )
+    Some(@types.AgentType::CursorAgent) =>
+      init_join_shell_words(
+        [
+          program, ..extra_args, "--yolo", "--approve-mcps", "--workspace", workspace,
+          task,
+        ],
+      )
     None => command + " '" + init_escape_shell_single_quoted(task) + "'"
   }
 }
@@ -3318,6 +3341,15 @@ fn init_companion_commands(
   ]
   if agent_type == Some(@types.AgentType::Gemini) {
     cmds.push(@workspace.trust_gemini_folder(workspace))
+  }
+  if agent_type == Some(@types.AgentType::CursorAgent) {
+    cmds.push(
+      @workspace.write_cursor_mcp_json(
+        workspace,
+        branch,
+        @config.role_to_string(role),
+      ),
+    )
   }
   cmds.push(
     @workspace.zellij_new_tab(session, companion.name, workspace, launch_str),
@@ -3730,7 +3762,7 @@ fn main {
     "watch" => watch_run()
     _ => {
       @sys.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini|cursor_agent]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
       )
       @sys.exit(1)
     }

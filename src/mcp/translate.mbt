@@ -126,7 +126,7 @@ fn choir_mcp_instructions() -> String {
     "Choir is an agent orchestration server. You are the Team Lead (TL). ",
   )
   buf.write_string(
-    "Delegate all implementation to leaf agents via fork_wave (default gemini; set agent_type for claude or moon_pilot). ",
+    "Delegate all implementation to leaf agents via fork_wave (default gemini; set agent_type for claude, moon_pilot, codex, or cursor_agent). ",
   )
   buf.write_string(
     "Never edit files directly -- read code to understand it, then delegate. ",
@@ -180,7 +180,7 @@ fn spawn_worker_props() -> Array[SchemaProp] {
     { name: "agent_id", desc: "Compatibility alias for slug" },
     {
       name: "agent_type",
-      desc: "Worker agent type: gemini, claude, moon_pilot, or codex",
+      desc: "Worker agent type: gemini, claude, moon_pilot, codex, or cursor_agent",
     },
     { name: "type", desc: "Worker profile: research or review" },
     { name: "read_first", desc: "Newline-separated paths to read first" },
@@ -215,7 +215,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "agent_type",
-          desc: "Agent type: gemini (default), claude, moon_pilot, or codex",
+          desc: "Agent type: gemini (default), claude, moon_pilot, codex, or cursor_agent",
         },
         {
           name: "parent_branch",

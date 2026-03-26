@@ -44,6 +44,7 @@ fn agent_type_to_wire_string(agent_type : @types.AgentType) -> String {
     @types.AgentType::Gemini => "gemini"
     @types.AgentType::MoonPilot => "moon_pilot"
     @types.AgentType::Codex => "codex"
+    @types.AgentType::CursorAgent => "cursor_agent"
   }
 }
 

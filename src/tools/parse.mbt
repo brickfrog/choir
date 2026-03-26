@@ -767,6 +767,8 @@ fn parse_agent_type(s : String) -> Result[@types.AgentType, String] {
     "moon_pilot" => Ok(@types.AgentType::MoonPilot)
     "moonpilot" => Ok(@types.AgentType::MoonPilot)
     "codex" => Ok(@types.AgentType::Codex)
+    "cursor_agent" => Ok(@types.AgentType::CursorAgent)
+    "cursoragent" => Ok(@types.AgentType::CursorAgent)
     _ => Err("invalid agent_type: " + s)
   }
 }

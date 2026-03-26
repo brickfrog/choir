@@ -235,6 +235,15 @@ pub fn spawn_commands(
           ),
         )
       }
+      if spec.agent_type == CursorAgent {
+        cmds.push(
+          write_cursor_mcp_json(
+            workspace,
+            canonical_agent_id(spec),
+            role_to_string(spec.role),
+          ),
+        )
+      }
       for
         cmd in launch_commands(
           session,
@@ -307,6 +316,15 @@ pub fn spawn_commands(
             role_to_string(spec.role),
             context_paths=ctx_paths,
             wasm_hooks_path=wasm_hooks,
+          ),
+        )
+      }
+      if spec.agent_type == CursorAgent {
+        cmds.push(
+          write_cursor_mcp_json(
+            workspace,
+            canonical_agent_id(spec),
+            role_to_string(spec.role),
           ),
         )
       }

@@ -4,7 +4,7 @@ English | [简体中文](README.zh.md)
 
 A local agent orchestrator built in MoonBit. Use your expensive subscription
 to think (Claude as team lead), and cheaper or specialized subscriptions to
-implement (Gemini, Codex, Moon Pilot as leaf agents). Each leaf works in its
+implement (Gemini, Codex, Moon Pilot, Cursor Agent as leaf agents). Each leaf works in its
 own git worktree, files a PR when done, and receives GitHub Copilot review
 feedback automatically via a built-in poller. The TL merges approved PRs and
 collapses everything back to main.
@@ -12,7 +12,7 @@ collapses everything back to main.
 ```
 choir init
   Server (persistent, UDS)
-    TL (Claude) ──fork_wave──▶ Leaf (Gemini/Codex/Moon Pilot) ──file_pr──▶ GitHub PR
+    TL (Claude) ──fork_wave──▶ Leaf (Gemini/Codex/Moon Pilot/Cursor) ──file_pr──▶ GitHub PR
                                                                                │
                                Poller ◀── Copilot review ─────────────────────┘
                                Poller ──▶ Leaf (fix review comments)
@@ -69,7 +69,7 @@ some external tools.
 - required: `git`
 - required for PR workflow: `gh`
 - required for local session management: `zellij` (0.44+)
-- required for the agent CLIs you actually use: `claude`, `gemini`, `moon`, `codex`
+- required for the agent CLIs you actually use: `claude`, `gemini`, `moon`, `codex`, `agent` (Cursor)
 
 The Nix dev shell includes the open-source dependencies above. Proprietary
 agent CLIs still need to be installed and authenticated separately.
@@ -142,6 +142,7 @@ flowchart TD
   TL -->|"agent_type=codex"| X1["Leaf (Codex)"]
   TL -->|"agent_type=moon_pilot"| M1["Leaf (Moon Pilot)"]
   TL -->|"agent_type=claude"| C1["Leaf (Claude)"]
+  TL -->|"agent_type=cursor_agent"| CR1["Leaf (Cursor)"]
   TL -->|spawn_worker| W["Worker"]
 
   G1 -->|file_pr| GH[GitHub PR]
@@ -149,6 +150,7 @@ flowchart TD
   X1 -->|file_pr| GH
   M1 -->|file_pr| GH
   C1 -->|file_pr| GH
+  CR1 -->|file_pr| GH
 
   GH -->|Copilot review| Poller
   Poller -->|ReviewReceived| G1
@@ -169,6 +171,7 @@ flowchart TD
   style X1 fill:#22c55e,color:#000
   style M1 fill:#10b981,color:#000
   style C1 fill:#3b82f6,color:#fff
+  style CR1 fill:#8b5cf6,color:#fff
   style W fill:#6b7280,color:#fff
   style GH fill:#1f2937,color:#fff
   style Poller fill:#6b7280,color:#fff
@@ -239,7 +242,7 @@ the plugin passes input through unchanged.
 
 - local UDS workflow: proven
 - zellij backend (0.44+): proven
-- leaf agents: Claude, Gemini, Moon Pilot, Codex
+- leaf agents: Claude, Gemini, Moon Pilot, Codex, Cursor Agent
 - structured logging: [moontrace](https://github.com/brickfrog/moontrace) with colored output and OTLP span export
 - live companion/leaf/review/merge smokes: present
 - TCP/remote path: implemented, less proven than local UDS

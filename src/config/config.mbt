@@ -20,6 +20,8 @@ pub fn parse_agent_type(
     "moon_pilot" => Ok(@types.AgentType::MoonPilot)
     "moonpilot" => Ok(@types.AgentType::MoonPilot)
     "codex" => Ok(@types.AgentType::Codex)
+    "cursor_agent" => Ok(@types.AgentType::CursorAgent)
+    "cursoragent" => Ok(@types.AgentType::CursorAgent)
     _ => Err(@types.ExoError::ConfigError("unknown agent_type: " + s))
   }
 }
@@ -42,6 +44,7 @@ pub fn agent_type_to_string(agent_type : @types.AgentType) -> String {
     @types.AgentType::Gemini => "gemini"
     @types.AgentType::MoonPilot => "moon_pilot"
     @types.AgentType::Codex => "codex"
+    @types.AgentType::CursorAgent => "cursor_agent"
   }
 }
 
