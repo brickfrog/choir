@@ -149,8 +149,8 @@ async test "handle_request fork_wave accepts raw primitive request args" {
 
 ///|
 async test "execute_delivery creates Teams inbox directories" {
-  let inbox_path = "/tmp/choir-dispatch-delivery/inboxes/default.json"
-  run_shell("rm -rf /tmp/choir-dispatch-delivery")
+  let inbox_path = "/tmp/choir-dispatch-delivery-unique/inboxes/default.json"
+  run_shell("rm -rf /tmp/choir-dispatch-delivery-unique")
   let res = @tools.execute_delivery(
     @message.DeliveryMethod::TeamsInbox(
       inbox_path,
@@ -167,7 +167,7 @@ async test "execute_delivery creates Teams inbox directories" {
       )
     Err(e) => fail(e)
   }
-  run_shell("rm -rf /tmp/choir-dispatch-delivery")
+  run_shell("rm -rf /tmp/choir-dispatch-delivery-unique")
 }
 
 ///|
@@ -762,7 +762,11 @@ async test "dispatch register requires agent_id arg" {
 }
 
 ///|
-async test "dispatch shutdown marks agent Done in registry" {
+async test "dispatch shutdown returns shutdown without finalizing registry" {
+  let project_dir = "/tmp/choir-dispatch-shutdown-hermetic"
+  run_shell(
+    "rm -rf /tmp/choir-dispatch-shutdown-hermetic && mkdir -p /tmp/choir-dispatch-shutdown-hermetic/.choir/kv",
+  )
   let reg = @registry.AgentRegistry::new()
   let agent = @types.Agent::{
     agent_id: "leaf-1",
@@ -781,72 +785,93 @@ async test "dispatch shutdown marks agent Done in registry" {
     name: "shutdown",
     args: { "caller_id": "leaf-1" },
   }
-  let res = @tools.dispatch_call(call, runner=mock_runner, registry=Some(reg))
-  assert_true(res is Ok(_))
-  match reg.get("leaf-1") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Done)
-    Err(_) => fail("agent should remain in registry as Done")
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    runner=mock_runner,
+    registry=Some(reg),
+  )
+  match res {
+    Ok(fields) => assert_eq(fields.get("status"), Some("shutdown"))
+    Err(_) => fail("shutdown should succeed")
   }
+  match reg.get("leaf-1") {
+    Ok(a) => assert_eq(a.state, @types.AgentState::Active)
+    Err(_) => fail("agent should remain registered and active")
+  }
+  run_shell("rm -rf /tmp/choir-dispatch-shutdown-hermetic")
 }
 
 ///|
-async test "dispatch shutdown marks agent completing before terminal close" {
-  let reg = @registry.AgentRegistry::new()
-  let agent = @types.Agent::{
-    agent_id: "leaf-1",
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Claude,
-    state: @types.AgentState::Active,
-    parent: None,
-    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf-1"),
-    host: @types.Host::Local,
-    workspace: "",
-    branch: "",
-  }
-  let _ = reg.insert(agent)
-  let close_seen = Ref::new(false)
+async test "dispatch shutdown defers review-owned dev lifecycle" {
+  let project_dir = "/tmp/choir-dispatch-shutdown-deferred"
+  run_shell(
+    "rm -rf /tmp/choir-dispatch-shutdown-deferred && mkdir -p /tmp/choir-dispatch-shutdown-deferred/.choir/kv",
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "leaf-1",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=42,
+          state=@phase.ReviewOwnership::OpenUnreviewed(
+            url="https://example.test/pr/42",
+          ),
+        ),
+      ),
+    }),
+  )
   let res = @tools.dispatch_call(
     {
       role: @types.Role::Dev,
       name: "shutdown",
       args: { "caller_id": "leaf-1" },
     },
-    runner=async fn(cmds) {
-      @async.sleep(0)
-      if cmds.length() == 1 &&
-        cmds[0].program == "choir" &&
-        cmds[0].args[0] == "zellij-action" &&
-        cmds[0].args[1] == "close" {
-        close_seen.val = true
-        match reg.get("leaf-1") {
-          Ok(found) => assert_eq(found.state, @types.AgentState::Completing)
-          Err(_) => fail("expected leaf to remain registered during close")
-        }
-      }
-      let statuses = []
-      for _ in cmds {
-        statuses.push(0)
-      }
-      statuses
-    },
-    registry=Some(reg),
+    project_dir~,
+    runner=mock_runner,
   )
-  assert_true(res is Ok(_))
-  assert_true(close_seen.val)
-  match reg.get("leaf-1") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Done)
-    Err(_) => fail("agent should remain in registry as Done")
+  match res {
+    Ok(fields) => {
+      assert_eq(fields.get("status"), Some("deferred"))
+      assert_eq(
+        fields.get("warning"),
+        Some("PR filed (42) at https://example.test/pr/42"),
+      )
+    }
+    Err(_) => fail("shutdown should defer")
   }
+  match @phase.read_lifecycle(project_dir, "leaf-1") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number=42,
+            state=@phase.ReviewOwnership::OpenUnreviewed(
+              url="https://example.test/pr/42"
+            )
+          )
+        ) => ()
+        _ => fail("expected deferred lifecycle")
+      }
+    None => fail("expected persisted lifecycle")
+  }
+  run_shell("rm -rf /tmp/choir-dispatch-shutdown-deferred")
 }
 
 ///|
 async test "dispatch shutdown allowed for TL role" {
+  let project_dir = "/tmp/choir-dispatch-shutdown-tl"
+  run_shell(
+    "rm -rf /tmp/choir-dispatch-shutdown-tl && mkdir -p /tmp/choir-dispatch-shutdown-tl/.choir/kv",
+  )
   let call : @tools.ToolCall = {
     role: @types.Role::TL,
     name: "shutdown",
     args: { "caller_id": "main.tl-1" },
   }
-  let res = @tools.dispatch_call(call, runner=mock_runner)
+  let res = @tools.dispatch_call(call, project_dir~, runner=mock_runner)
   match res {
     Ok(m) => {
       assert_eq(m.get("status"), Some("shutdown"))
@@ -857,10 +882,15 @@ async test "dispatch shutdown allowed for TL role" {
       assert_true(false)
     }
   }
+  run_shell("rm -rf /tmp/choir-dispatch-shutdown-tl")
 }
 
 ///|
 async test "dispatch shutdown blocks during critical review phase" {
+  let project_dir = "/tmp/choir-dispatch-shutdown-block"
+  run_shell(
+    "rm -rf /tmp/choir-dispatch-shutdown-block && mkdir -p /tmp/choir-dispatch-shutdown-block/.choir/kv",
+  )
   let poller = @poller.PollerState::new()
   poller.track(
     42, "leaf-2", "main.leaf-2", "main", "https://example.test/pr/42", 100L,
@@ -878,6 +908,7 @@ async test "dispatch shutdown blocks during critical review phase" {
   }
   let res = @tools.dispatch_call(
     call,
+    project_dir~,
     runner=mock_runner,
     poller_state=Some(poller),
   )
@@ -888,6 +919,7 @@ async test "dispatch shutdown blocks during critical review phase" {
         e, "cannot shutdown: PR #42 has changes requested — push fixes first",
       )
   }
+  run_shell("rm -rf /tmp/choir-dispatch-shutdown-block")
 }
 
 ///|
@@ -1365,9 +1397,16 @@ async test "dispatch fork_wave writes tl phase to KV" {
   }
   let res = @tools.dispatch_call(call, project_dir~, runner=mock_runner)
   assert_true(res is Ok(_))
-  let phase_json = @sys.read_file(project_dir + "/.choir/kv/phase-tl--tl-agent")
-  assert_true(phase_json.contains("\"phase\":\"Waiting\""))
-  assert_true(phase_json.contains("\"count\":1"))
+  match @phase.read_lifecycle(project_dir, "tl-agent") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~)
+        ) => assert_eq(children.length(), 1)
+        _ => fail("expected supervising lifecycle")
+      }
+    None => fail("expected persisted lifecycle")
+  }
   run_shell("rm -rf /tmp/choir-test-fork-wave-phase")
 }
 
@@ -1426,13 +1465,15 @@ async test "dispatch shutdown blocks when dev phase is ChangesRequested" {
   run_shell(
     "rm -rf /tmp/choir-test-shutdown-block && mkdir -p /tmp/choir-test-shutdown-block/.choir/kv",
   )
-  // Set dev phase to ChangesRequested(42)
-  let phase_json = "{\"phase\":\"ChangesRequested\",\"pr_number\":42}"
   ignore(
-    @sys.write_file_sync(
-      project_dir + "/.choir/kv/phase-dev--leaf-agent",
-      phase_json,
-    ),
+    @phase.write_lifecycle(project_dir, {
+      agent_id: "leaf-agent",
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ChangesRequested(pr_number=42, next_round=1),
+      ),
+    }),
   )
   let call : @tools.ToolCall = {
     role: @types.Role::Dev,
