@@ -1,5 +1,6 @@
 import {
   "choir/src/sys",
+  "moonbitlang/async",
   "moonbitlang/async/process",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",

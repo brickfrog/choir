@@ -628,3 +628,92 @@ pub async fn PollerState::tick(
 ) -> Unit {
   self.tick_with(now, timeout, gh_poll_pr, on_event, fn(_) { () })
 }
+
+///|
+async fn state_tick_backoff_mock_failure(
+  _pr_number : Int,
+) -> (Bool, ReviewState, String, Bool, String, Bool) {
+  @async.sleep(0)
+  (false, None_, "", false, "", true)
+}
+
+///|
+async fn state_tick_backoff_mock_success(
+  _pr_number : Int,
+) -> (Bool, ReviewState, String, Bool, String, Bool) {
+  @async.sleep(0)
+  (true, Commented, "sha-1", false, "body", true)
+}
+
+///|
+async test "tick_with failed poll increments consecutive_failures and backoff_until" {
+  let ps = PollerState::new()
+  ps.track(101, "main.leaf", "main.leaf", "main", "u", 100L)
+  let _ = ps.tick_with(
+    200L,
+    3600L,
+    state_tick_backoff_mock_failure,
+    fn(_e : PollEvent, _a : String) -> Unit { () },
+    fn(_l : PollerPrTickLog) -> Unit { () },
+  )
+  match ps.get(101) {
+    Some(t) => {
+      assert_eq(t.consecutive_failures, 1)
+      assert_eq(t.backoff_until, 200L + poller_backoff_delay_after_failure(1))
+    }
+    None => fail("expected PR 101")
+  }
+}
+
+///|
+async test "tick_with skips poll while now is before backoff_until" {
+  let ps = PollerState::new()
+  ps.track(102, "main.leaf", "main.leaf", "main", "u", 100L)
+  let noop_ev = fn(_e : PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : PollerPrTickLog) -> Unit { () }
+  let _ = ps.tick_with(
+    200L, 3600L, state_tick_backoff_mock_failure, noop_ev, noop_log,
+  )
+  let until = match ps.get(102) {
+    Some(t) => t.backoff_until
+    None => fail("expected PR 102")
+  }
+  let mid = 200L + (until - 200L) / 2L
+  let _ = ps.tick_with(
+    mid, 3600L, state_tick_backoff_mock_success, noop_ev, noop_log,
+  )
+  match ps.get(102) {
+    Some(t) => {
+      assert_eq(t.consecutive_failures, 1)
+      assert_eq(t.backoff_until, until)
+      assert_eq(t.last_sha, "")
+    }
+    None => fail("expected PR 102 after mid tick")
+  }
+}
+
+///|
+async test "tick_with successful poll resets consecutive_failures and backoff_until" {
+  let ps = PollerState::new()
+  ps.track(103, "main.leaf", "main.leaf", "main", "u", 100L)
+  let noop_ev = fn(_e : PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : PollerPrTickLog) -> Unit { () }
+  let _ = ps.tick_with(
+    200L, 3600L, state_tick_backoff_mock_failure, noop_ev, noop_log,
+  )
+  let until = match ps.get(103) {
+    Some(t) => t.backoff_until
+    None => fail("expected PR 103")
+  }
+  let _ = ps.tick_with(
+    until, 3600L, state_tick_backoff_mock_success, noop_ev, noop_log,
+  )
+  match ps.get(103) {
+    Some(t) => {
+      assert_eq(t.consecutive_failures, 0)
+      assert_eq(t.backoff_until, 0L)
+      assert_eq(t.last_sha, "sha-1")
+    }
+    None => fail("expected PR 103 after success")
+  }
+}
