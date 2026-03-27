@@ -113,6 +113,7 @@ pub fn AgentRegistry::set_state(
     Some(agent) => {
       let valid = match (agent.state, new_state) {
         (Spawning, Active) => true
+        (Spawning, Failed) => true
         (Active, Completing) => true
         (Active, Failed) => true
         (Completing, Done) => true

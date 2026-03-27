@@ -474,6 +474,23 @@ pub fn PollerState::critical_phase_pr_number(
 }
 
 ///|
+pub fn PollerState::untrack_by_agent_id(
+  self : PollerState,
+  agent_id : String,
+) -> Int {
+  let to_untrack = []
+  for pr in self.tracked.values() {
+    if pr.agent_id == agent_id {
+      to_untrack.push(pr.pr_number)
+    }
+  }
+  for pr_number in to_untrack {
+    self.untrack(pr_number)
+  }
+  to_untrack.length()
+}
+
+///|
 pub async fn PollerState::tick_with(
   self : PollerState,
   now : Int64,

@@ -815,11 +815,12 @@ pub async fn dispatch(
             match poller_state {
               Some(ps) =>
                 for agent in non_terminal {
-                  match ps.critical_phase_pr_number(agent.agent_id.0) {
+                  let agent_id_str = agent.agent_id.to_string()
+                  match ps.critical_phase_pr_number(agent_id_str) {
                     Some(pr_number) =>
                       return @types.Response::Err(
                         "cancel_wave: agent " +
-                        agent.agent_id.0 +
+                        agent_id_str +
                         " is blocked by PR #" +
                         pr_number.to_string() +
                         " with changes requested -- use force=true to override",
@@ -833,6 +834,7 @@ pub async fn dispatch(
           let mut cancelled = 0
           let mut poller_changed = false
           for agent in non_terminal {
+            let agent_id_str = agent.agent_id.to_string()
             // 1. Close terminal pane
             match agent.terminal_target {
               Some(t) => {
@@ -848,18 +850,12 @@ pub async fn dispatch(
               ()
             }
             // 3. Mark failed in registry
-            let _ = reg.set_state(agent.agent_id.0, @types.AgentState::Failed)
+            let _ = reg.set_state(agent_id_str, @types.AgentState::Failed)
             // 4. Untrack PRs
             match poller_state {
               Some(ps) => {
-                let to_untrack = []
-                for tracked in ps.tracked.values() {
-                  if tracked.agent_id == agent.agent_id.0 {
-                    to_untrack.push(tracked.pr_number)
-                  }
-                }
-                for pr_number in to_untrack {
-                  ps.untrack(pr_number)
+                let untracked = ps.untrack_by_agent_id(agent_id_str)
+                if untracked > 0 {
                   poller_changed = true
                 }
               }
