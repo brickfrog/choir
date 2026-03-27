@@ -1,4 +1,5 @@
 import {
+  "choir/src/types",
   "choir/src/sys",
   "moonbitlang/async",
   "moonbitlang/async/process",

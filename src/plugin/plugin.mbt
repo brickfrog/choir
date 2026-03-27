@@ -14,27 +14,24 @@ pub(all) struct PluginCall {
 } derive(Show)
 
 ///|
-fn json_field_string(
-  obj : Map[String, Json],
-  key : String,
-  default? : String = "",
-) -> String {
-  match obj.get(key) {
-    Some(String(s)) => s
-    _ => default
-  }
-}
-
-///|
 pub fn parse_plugins_json(s : String) -> Array[PluginDef] {
   let result : Array[PluginDef] = []
   let json = @json.parse(s) catch { _ => return result }
   guard json is Array(arr) else { return result }
   for item in arr {
     guard item is Object(obj) else { continue }
-    let name = json_field_string(obj, "name")
-    let command = json_field_string(obj, "command")
-    let tools = json_field_string(obj, "tools")
+    let name = match @types.json_field_string(obj, "name") {
+      Some(s) => s
+      None => ""
+    }
+    let command = match @types.json_field_string(obj, "command") {
+      Some(s) => s
+      None => ""
+    }
+    let tools = match @types.json_field_string(obj, "tools") {
+      Some(s) => s
+      None => ""
+    }
     if name != "" && command != "" {
       result.push({ name, command, tools })
     }
