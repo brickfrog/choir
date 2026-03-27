@@ -170,6 +170,10 @@ extern "C" fn c_write_file_sync(
 ) -> Int = "choir_write_file_sync"
 
 ///|
+#borrow(from_path, to_path)
+extern "C" fn c_rename_file_sync(from_path : Bytes, to_path : Bytes) -> Int = "choir_rename_file_sync"
+
+///|
 #borrow(path)
 extern "C" fn c_delete_file_sync(path : Bytes) -> Int = "choir_delete_file_sync"
 
@@ -178,6 +182,21 @@ pub fn write_file_sync(path : String, content : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   let content_bytes = @utf8.encode(content)
   c_write_file_sync(path_bytes, content_bytes, content_bytes.length()) == 0
+}
+
+///|
+pub fn write_file_atomic(path : String, content : String) -> Bool {
+  let tmp_path = path + ".tmp." + c_getpid().to_string()
+  if not(write_file_sync(tmp_path, content)) {
+    return false
+  }
+  let from_bytes = string_to_null_terminated_bytes(tmp_path)
+  let to_bytes = string_to_null_terminated_bytes(path)
+  if c_rename_file_sync(from_bytes, to_bytes) != 0 {
+    ignore(c_delete_file_sync(from_bytes))
+    return false
+  }
+  true
 }
 
 ///|

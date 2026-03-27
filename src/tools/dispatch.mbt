@@ -732,7 +732,7 @@ pub async fn dispatch(
     }
     ToolRequest::KvSet(kv_args) => {
       let path = kv_file_path(project_dir, kv_args.key)
-      if @sys.write_file_sync(path, kv_args.value) {
+      if @sys.write_file_atomic(path, kv_args.value) {
         @types.Response::ok({ "status": "ok" })
       } else {
         @types.Response::Err("failed to write kv file: " + path)

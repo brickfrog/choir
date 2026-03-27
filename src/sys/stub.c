@@ -147,6 +147,10 @@ int choir_write_file_sync(const char* path, const char* content, int content_len
     return 0;
 }
 
+int choir_rename_file_sync(const char* from_path, const char* to_path) {
+    return rename(from_path, to_path);
+}
+
 int choir_append_file_sync(const char* path, const char* content, int content_len) {
     char dir[4096];
     snprintf(dir, sizeof(dir), "%s", path);
