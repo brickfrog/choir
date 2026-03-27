@@ -119,7 +119,7 @@ void choir_write_pid_file(const char* path) {
     fclose(f);
 }
 
-static int mkdir_p(const char* path) {
+static int choir_ensure_dir_path(const char* path) {
     char tmp[4096];
     snprintf(tmp, sizeof(tmp), "%s", path);
     int len = (int)strlen(tmp);
@@ -135,11 +135,16 @@ static int mkdir_p(const char* path) {
     return 0;
 }
 
+int choir_create_dir_all(const char* path) {
+    choir_ensure_dir_path(path);
+    return 0;
+}
+
 int choir_write_file_sync(const char* path, const char* content, int content_len) {
     char dir[4096];
     snprintf(dir, sizeof(dir), "%s", path);
     char* slash = strrchr(dir, '/');
-    if (slash) { *slash = '\0'; mkdir_p(dir); }
+    if (slash) { *slash = '\0'; choir_ensure_dir_path(dir); }
     FILE* f = fopen(path, "wb");
     if (!f) return -1;
     if (content_len > 0) fwrite(content, 1, (size_t)content_len, f);
@@ -155,7 +160,7 @@ int choir_append_file_sync(const char* path, const char* content, int content_le
     char dir[4096];
     snprintf(dir, sizeof(dir), "%s", path);
     char* slash = strrchr(dir, '/');
-    if (slash) { *slash = '\0'; mkdir_p(dir); }
+    if (slash) { *slash = '\0'; choir_ensure_dir_path(dir); }
     FILE* f = fopen(path, "ab");
     if (!f) return -1;
     if (content_len > 0) fwrite(content, 1, (size_t)content_len, f);

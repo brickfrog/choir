@@ -527,7 +527,7 @@ fn sync_recovered_pr_lifecycle(
     workflow,
     process: @phase.ProcessState::Connected,
   }
-  state.persist_lifecycle(recovered)
+  ignore(state.persist_lifecycle(recovered))
   state.sync_parent_child_lifecycle(agent.agent_id.to_string(), recovered)
 }
 

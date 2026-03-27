@@ -268,7 +268,7 @@ pub fn ServerState::register_agent(
     None => @phase.lifecycle_for_agent(agent)
   }
   ignore(self.registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
-  self.persist_lifecycle(lifecycle)
+  ignore(self.persist_lifecycle(lifecycle))
   self.sync_parent_child_lifecycle(agent_id, lifecycle)
   Ok(())
 }
@@ -985,8 +985,8 @@ fn ServerState::current_lifecycle(
 fn ServerState::persist_lifecycle(
   self : ServerState,
   lifecycle : @phase.AgentLifecycle,
-) -> Unit {
-  ignore(@phase.write_lifecycle(self.config.project_dir, lifecycle))
+) -> Bool {
+  let ok = @phase.write_lifecycle(self.config.project_dir, lifecycle)
   match self.registry.get(lifecycle.agent_id) {
     Ok(agent) =>
       ignore(
@@ -994,6 +994,7 @@ fn ServerState::persist_lifecycle(
       )
     Err(_) => ()
   }
+  ok
 }
 
 ///|
@@ -1030,35 +1031,56 @@ fn ServerState::sync_parent_child_lifecycle(
     @phase.WorkflowState::Supervisor(supervisor) => supervisor
     _ => @phase.SupervisorLifecycle::Planning
   }
-  let transitioned = match supervisor {
+  let (transitioned, supervisor_trigger) = match supervisor {
     @phase.SupervisorLifecycle::Supervising(children~, ..)
     | @phase.SupervisorLifecycle::WaveComplete(children~, ..) =>
       if child_exists(children, agent_id) {
-        @phase.supervisor_transition(
-          supervisor,
-          @phase.SupervisorEvent::ChildUpdated(
-            child_id=agent_id,
-            summary=child.summary,
+        (
+          @phase.supervisor_transition(
+            supervisor,
+            @phase.SupervisorEvent::ChildUpdated(
+              child_id=agent_id,
+              summary=child.summary,
+            ),
           ),
+          "ChildUpdated",
         )
       } else {
-        @phase.supervisor_transition(
-          supervisor,
-          @phase.SupervisorEvent::ChildSpawned(child~),
+        (
+          @phase.supervisor_transition(
+            supervisor,
+            @phase.SupervisorEvent::ChildSpawned(child~),
+          ),
+          "ChildSpawned",
         )
       }
     _ =>
-      @phase.supervisor_transition(
-        supervisor,
-        @phase.SupervisorEvent::ChildSpawned(child~),
+      (
+        @phase.supervisor_transition(
+          supervisor,
+          @phase.SupervisorEvent::ChildSpawned(child~),
+        ),
+        "ChildSpawned",
       )
   }
   match transitioned {
-    Transitioned(new_supervisor) =>
-      self.persist_lifecycle({
+    Transitioned(new_supervisor) => {
+      let next_parent = {
         ..parent_lifecycle,
         workflow: @phase.WorkflowState::Supervisor(new_supervisor),
-      })
+      }
+      if self.persist_lifecycle(next_parent) {
+        ignore(
+          append_lifecycle_event(
+            self.config.project_dir,
+            parent_id,
+            @phase.lifecycle_to_json(parent_lifecycle),
+            @phase.lifecycle_to_json(next_parent),
+            supervisor_trigger,
+          ),
+        )
+      }
+    }
     InvalidTransition(_) => ()
   }
 }
@@ -1094,11 +1116,23 @@ fn ServerState::remove_parent_child_lifecycle(
       supervisor,
       @phase.SupervisorEvent::ChildRemoved(child_id=agent_id),
     ) {
-    Transitioned(new_supervisor) =>
-      self.persist_lifecycle({
+    Transitioned(new_supervisor) => {
+      let next_parent = {
         ..parent_lifecycle,
         workflow: @phase.WorkflowState::Supervisor(new_supervisor),
-      })
+      }
+      if self.persist_lifecycle(next_parent) {
+        ignore(
+          append_lifecycle_event(
+            self.config.project_dir,
+            parent_id,
+            @phase.lifecycle_to_json(parent_lifecycle),
+            @phase.lifecycle_to_json(next_parent),
+            "ChildRemoved",
+          ),
+        )
+      }
+    }
     InvalidTransition(_) => ()
   }
 }
@@ -1164,7 +1198,7 @@ pub fn ServerState::transfer_leaf_ownership(
     role: to_agent.role,
     workflow,
   }
-  self.persist_lifecycle(carried_lifecycle)
+  ignore(self.persist_lifecycle(carried_lifecycle))
   self.sync_parent_child_lifecycle(to_agent_id, carried_lifecycle)
   self.remove_parent_child_lifecycle(from_agent_id)
   Ok(transferred)
@@ -1214,11 +1248,23 @@ async fn ServerState::finalize_agent_with_runner(
       self.clear_agent_runtime_tracking(agent_id)
       return
     }
-    _ =>
-      self.persist_lifecycle({
+    _ => {
+      let with_finalizing = {
         ..lifecycle,
         process: @phase.ProcessState::Finalizing(reason=finalize_reason),
-      })
+      }
+      if self.persist_lifecycle(with_finalizing) {
+        ignore(
+          append_lifecycle_event(
+            self.config.project_dir,
+            agent_id,
+            @phase.lifecycle_to_json(lifecycle),
+            @phase.lifecycle_to_json(with_finalizing),
+            exit_reason,
+          ),
+        )
+      }
+    }
   }
   if notify_parent {
     match agent.parent {
@@ -1296,7 +1342,21 @@ async fn ServerState::finalize_agent_with_runner(
     process: @phase.ProcessState::Finalized(reason=finalize_reason),
     workflow: finalized_workflow,
   }
-  self.persist_lifecycle(finalized)
+  let with_finalizing = {
+    ..lifecycle,
+    process: @phase.ProcessState::Finalizing(reason=finalize_reason),
+  }
+  if self.persist_lifecycle(finalized) {
+    ignore(
+      append_lifecycle_event(
+        self.config.project_dir,
+        agent_id,
+        @phase.lifecycle_to_json(with_finalizing),
+        @phase.lifecycle_to_json(finalized),
+        "FinalizeComplete",
+      ),
+    )
+  }
   self.sync_parent_child_lifecycle(agent_id, finalized)
   self.clear_agent_runtime_tracking(agent_id)
 }
@@ -1367,7 +1427,17 @@ async fn ServerState::fail_agent_with_runner(
     process: @phase.ProcessState::Failed(reason~),
     workflow: failed_workflow,
   }
-  self.persist_lifecycle(failed)
+  if self.persist_lifecycle(failed) {
+    ignore(
+      append_lifecycle_event(
+        self.config.project_dir,
+        agent_id,
+        @phase.lifecycle_to_json(lifecycle),
+        @phase.lifecycle_to_json(failed),
+        exit_reason,
+      ),
+    )
+  }
   self.sync_parent_child_lifecycle(agent_id, failed)
   match agent.parent {
     Some(parent_id) =>

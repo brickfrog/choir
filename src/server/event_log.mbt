@@ -56,6 +56,19 @@ fn append_event(
 }
 
 ///|
+pub fn append_lifecycle_event(
+  project_dir : String,
+  agent_id : String,
+  from_state : String,
+  to_state : String,
+  trigger : String,
+) -> Bool {
+  @phase.append_lifecycle_event(
+    project_dir, agent_id, from_state, to_state, trigger,
+  )
+}
+
+///|
 test "sanitize_agent_id" {
   assert_eq(sanitize_agent_id("agent/1\\2\u00003"), "agent_1_2_3")
   assert_eq(sanitize_agent_id("normal_agent-id"), "normal_agent-id")
