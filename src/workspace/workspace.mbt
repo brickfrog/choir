@@ -173,7 +173,9 @@ pub fn config_local_content(
   agent_type_str +
   "\"\nterminal_target = \"" +
   terminal_target.to_string() +
-  "\"\n"
+  "\"\nspawn_depth = " +
+  spec.spawn_depth.to_string() +
+  "\n"
 }
 
 ///|

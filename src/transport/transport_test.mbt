@@ -132,6 +132,7 @@ test "format_registration_request includes local config metadata" {
     workspace: Some("/tmp/leaf-1"),
     terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf-1"),
     agent_type: Some(@types.AgentType::Gemini),
+    spawn_depth: Some(1),
   }
   let output = format_registration_request(
     @types.Role::Dev,
@@ -146,6 +147,7 @@ test "format_registration_request includes local config metadata" {
   assert_true(
     output.contains("\"terminal_target\":\"zellij-tab:choir:leaf-1\""),
   )
+  assert_true(output.contains("\"spawn_depth\":\"1\""))
 }
 
 ///|

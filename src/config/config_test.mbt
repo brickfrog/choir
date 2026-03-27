@@ -163,6 +163,22 @@ test "parse_local_config - metadata" {
 }
 
 ///|
+test "parse_local_config spawn_depth" {
+  let with_depth =
+    #|role = "tl"
+    #|spawn_depth = 1
+    #|agent_id = "main.sub"
+  let local_cfg = parse_local_config(with_depth).unwrap()
+  assert_eq(local_cfg.spawn_depth, Some(1))
+}
+
+///|
+test "parse_local_config rejects spawn_depth above 1" {
+  let bad = "role = \"tl\"\nspawn_depth = 2\n"
+  assert_true(parse_local_config(bad) is Err(_))
+}
+
+///|
 test "parse_companions_json shared helper" {
   let parsed = parse_companions_json(
     "[{\"name\":\"monitor\",\"role\":\"worker\",\"command\":\"claude\",\"task\":\"watch build\"},true,{\"name\":\"reviewer\",\"command\":\"gemini\"}]",

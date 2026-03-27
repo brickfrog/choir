@@ -216,6 +216,14 @@ test "lifecycle json round-trip covers supervisor children" {
 }
 
 ///|
+test "default_workflow_state TL is Supervisor Planning" {
+  match default_workflow_state(@types.Role::TL) {
+    Supervisor(Planning) => ()
+    other => fail("expected Supervisor(Planning), got " + other.to_string())
+  }
+}
+
+///|
 test "classify_failure variants" {
   assert_eq(classify_failure("model at capacity"), ModelAtCapacity)
   assert_eq(classify_failure("service at capacity"), ModelAtCapacity)

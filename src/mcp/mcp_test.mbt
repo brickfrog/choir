@@ -88,7 +88,7 @@ test "tools_list_response" {
           assert_true(t.contains("\"id\""))
           assert_true(t.contains("caller_id"))
           assert_true(t.contains("shutdown"))
-          assert_true(t.contains("leaf agents"))
+          assert_true(t.contains("dev leaves") || t.contains("sub-team-lead"))
           assert_true(t.contains("agent_type"))
           assert_true(t.contains("tasks"))
           assert_true(t.contains("per-leaf task"))

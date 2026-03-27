@@ -1827,8 +1827,10 @@ test "leaf tool parser ignores prose positionals for file_pr" {
     "file_pr",
     parse_leaf_cli_args(["Add", "pytest", "integration", "tests"]),
   ).unwrap()
-  assert_true(parsed.get("branch") != Some("Add"))
-  assert_true(parsed.get("parent_branch") != Some("pytest"))
+  assert_not_eq(parsed.get("branch"), Some("Add"))
+  assert_not_eq(parsed.get("branch"), Some("pytest"))
+  assert_not_eq(parsed.get("parent_branch"), Some("Add"))
+  assert_not_eq(parsed.get("parent_branch"), Some("pytest"))
 }
 
 ///|
@@ -3141,7 +3143,7 @@ fn init_companion_local_config_content(
   buf.write_string(workspace)
   buf.write_string("\"\nterminal_target = \"")
   buf.write_string(terminal_target.to_string())
-  buf.write_string("\"\n")
+  buf.write_string("\"\nspawn_depth = 0\n")
   match agent_type {
     Some(kind) => {
       buf.write_string("agent_type = \"")

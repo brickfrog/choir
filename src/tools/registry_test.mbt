@@ -252,6 +252,7 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
       branch: "main.task-leaf",
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -298,7 +299,11 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
     Err(_) => fail("expected spawn_worker definition")
   }
   match reg.lookup(@types.Role::TL, "fork_wave") {
-    Ok(def) => assert_true(def.description.contains("leaf agents"))
+    Ok(def) =>
+      assert_true(
+        def.description.contains("worktrees") &&
+        def.description.contains("optional role"),
+      )
     Err(_) => fail("expected fork_wave definition")
   }
 }
@@ -308,4 +313,43 @@ test "tool registry lookup fork_session allowed for TL" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "fork_session")
   assert_true(result is Ok(_))
+}
+
+///|
+async test "fork_wave role tl rejected when caller spawn_depth is 1" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.subtl",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("root"),
+      workspace: ".",
+      branch: "main.subtl",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: {
+      "caller_id": "main.subtl",
+      "count": "1",
+      "task": "nested",
+      "parent_branch": "main.subtl",
+      "role": "tl",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    runner=mock_registry_runner,
+    registry=Some(reg),
+  )
+  match res {
+    Ok(_) => fail("expected fork_wave to fail for nested sub-TL")
+    Err(msg) => assert_true(msg.contains("sub-TL nesting limited to depth 1"))
+  }
 }

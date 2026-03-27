@@ -350,6 +350,7 @@ fn recover_agent_from_local_config(
     host: @types.Host::Local,
     workspace,
     branch,
+    spawn_depth: local_cfg.spawn_depth.unwrap_or(0),
   })
 }
 

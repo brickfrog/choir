@@ -10,6 +10,7 @@ test "registry insert and get" {
     branch: "main.feat",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let _ = reg.insert(agent)
@@ -29,6 +30,7 @@ test "registry duplicate insert fails" {
     branch: "main.dup",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let _ = reg.insert(agent)
@@ -48,6 +50,7 @@ test "registry upsert refreshes existing agent metadata" {
     branch: "main.refresh",
     terminal_target: @types.LocalTarget::parse("zellij-tab:choir:refresh-a"),
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let refreshed_first = reg.upsert(agent)
@@ -82,6 +85,7 @@ test "registry get parent" {
     branch: "main",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let child : @types.Agent = {
@@ -93,6 +97,7 @@ test "registry get parent" {
     branch: "main.child",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let _ = reg.insert(parent)
@@ -116,6 +121,7 @@ test "registry children" {
     branch: "main",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let child1 : @types.Agent = {
@@ -127,6 +133,7 @@ test "registry children" {
     branch: "main.a",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let child2 : @types.Agent = {
@@ -138,6 +145,7 @@ test "registry children" {
     branch: "main.b",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let _ = reg.insert(parent)
@@ -159,6 +167,7 @@ test "registry set state valid transitions" {
     branch: "main.test",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Spawning,
   }
   let _ = reg.insert(agent)
@@ -206,6 +215,7 @@ test "registry set state invalid transition" {
     branch: "main.test",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Spawning,
   }
   let _ = reg.insert(agent)
@@ -227,6 +237,7 @@ test "registry set alive" {
     branch: "main.test",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let _ = reg.insert(agent)
@@ -250,6 +261,7 @@ test "registry active agents" {
     branch: "a1",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Spawning,
   }
   let a2 : @types.Agent = {
@@ -284,6 +296,7 @@ test "registry by role" {
     branch: "a1",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let a2 : @types.Agent = { ..a1, agent_id: "a2", role: @types.Role::Dev }
