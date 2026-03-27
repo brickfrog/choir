@@ -5,18 +5,25 @@ English | [简体中文](README.zh.md)
 A local agent orchestrator built in MoonBit. Use your expensive subscription
 to think (Claude as team lead), and cheaper or specialized subscriptions to
 implement (Gemini, Codex, Moon Pilot, Cursor Agent as leaf agents). Each leaf works in its
-own git worktree, files a PR when done, and receives GitHub Copilot review
-feedback automatically via a built-in poller. The TL merges approved PRs and
-collapses everything back to main.
+own git worktree, files a PR targeting the TL's branch when done, and receives
+GitHub Copilot review feedback automatically via a built-in poller. The TL
+merges approved PRs and can fork further waves — or file its own PR upward.
 
 ```
 choir init
   Server (persistent, UDS)
-    TL (Claude) ──fork_wave──▶ Leaf (Gemini/Codex/Moon Pilot/Cursor) ──file_pr──▶ GitHub PR
-                                                                               │
-                               Poller ◀── Copilot review ─────────────────────┘
-                               Poller ──▶ Leaf (fix review comments)
-                               Poller ──▶ TL   (merge when approved)
+    TL (Claude)
+      │  1. scaffold commit (shared types/stubs)
+      │  2. fork_wave ──▶ Leaf A ──file_pr──▶ PR → TL branch
+      │              ──▶ Leaf B ──file_pr──▶ PR → TL branch
+      │                     │
+      │        Poller ◀─ Copilot review ──▶ Leaf (fix)
+      │        Poller ──▶ TL (merge when approved)
+      │  3. WaveComplete → fork_wave again (wave 2) or file own PR up
+      │
+      └── optional: fork_wave(role=tl) ──▶ Sub-TL
+                      Sub-TL runs same scaffold-fork-converge cycle
+                      Sub-TL files PR → TL branch when done
 ```
 
 ## Synopsis
@@ -123,48 +130,49 @@ choir smoke --e2e-live
 
 ## Flow
 
+The core pattern is **scaffold → fork → converge**, optionally repeated across
+multiple waves or delegated to a sub-TL.
+
 ```mermaid
 flowchart TD
   U[User] --> I["choir init"]
   I --> S["Server"]
   I --> TL["TL (Claude)"]
 
-  TL -->|mcp-stdio| S
-  TL -->|fork_wave| G1["Leaf (Gemini)"]
-  TL -->|fork_wave| G2["Leaf (Gemini)"]
-  TL -->|"agent_type=codex"| X1["Leaf (Codex)"]
-  TL -->|"agent_type=moon_pilot"| M1["Leaf (Moon Pilot)"]
-  TL -->|"agent_type=claude"| C1["Leaf (Claude)"]
-  TL -->|"agent_type=cursor_agent"| CR1["Leaf (Cursor)"]
-  TL -->|spawn_worker| W["Worker"]
+  TL -->|"1. scaffold commit\n(types, stubs, CLAUDE.md)"| TL
+  TL -->|"2. fork_wave\n(commit+push required)"| L1["Leaf (Gemini/Codex/\nMoon Pilot/Cursor/Claude)"]
+  TL -->|fork_wave| L2["Leaf"]
+  TL -->|"fork_wave role=tl"| STL["Sub-TL (Claude)"]
+  TL -->|spawn_worker| W["Worker (research only)"]
 
-  G1 -->|file_pr| GH[GitHub PR]
-  G2 -->|file_pr| GH
-  X1 -->|file_pr| GH
-  M1 -->|file_pr| GH
-  C1 -->|file_pr| GH
-  CR1 -->|file_pr| GH
+  STL -->|"scaffold + fork_wave"| SL1["Sub-Leaf"]
+  STL -->|fork_wave| SL2["Sub-Leaf"]
+  SL1 -->|"file_pr → Sub-TL branch"| GH[GitHub]
+  SL2 -->|"file_pr → Sub-TL branch"| GH
+  STL -->|"file_pr → TL branch"| GH
+
+  L1 -->|"file_pr → TL branch"| GH
+  L2 -->|"file_pr → TL branch"| GH
 
   GH -->|Copilot review| Poller
-  Poller -->|ReviewReceived| G1
-  Poller -->|ReviewReceived| G2
-  Poller -->|notify parent| TL
+  Poller -->|"CHANGES_REQUESTED\n→ leaf + TL"| L1
+  Poller -->|"APPROVED\n→ TL"| TL
 
-  G1 -->|notify_parent| TL
+  L1 -->|"notify_parent (auto)"| TL
   TL -->|merge_pr| GH
+  TL -->|"3. WaveComplete\n→ fork again or file own PR"| TL
 
   W -->|notify_parent| TL
-  S --> Recovery[restart recovery]
+  S --> Recovery["restart recovery"]
   Recovery --> Poller
 
   style S fill:#374151,color:#fff
   style TL fill:#7c3aed,color:#fff
-  style G1 fill:#f59e0b,color:#000
-  style G2 fill:#f59e0b,color:#000
-  style X1 fill:#22c55e,color:#000
-  style M1 fill:#10b981,color:#000
-  style C1 fill:#3b82f6,color:#fff
-  style CR1 fill:#8b5cf6,color:#fff
+  style STL fill:#6d28d9,color:#fff
+  style L1 fill:#f59e0b,color:#000
+  style L2 fill:#f59e0b,color:#000
+  style SL1 fill:#d97706,color:#000
+  style SL2 fill:#d97706,color:#000
   style W fill:#6b7280,color:#fff
   style GH fill:#1f2937,color:#fff
   style Poller fill:#6b7280,color:#fff
@@ -231,18 +239,54 @@ Create `.choir/rewrite_rules.json`:
 Pass rules via extism config when calling the plugin. Without rules,
 the plugin passes input through unchanged.
 
+## Architecture Notes
+
+### Scaffold-Fork-Converge
+
+`fork_wave` enforces that the TL's working tree is clean and pushed before
+spawning. Children fork from the TL's HEAD, so any scaffold work (shared
+types, stubs, CLAUDE.md changes) committed before the fork is automatically
+inherited by all leaves in the wave. This is the same invariant as exomonad's
+pre-fork git state check.
+
+### Multi-Wave
+
+After all leaves in a wave are merged the TL lifecycle reaches `WaveComplete`.
+The TL can then fork a second wave that builds on the merged output of the
+first, repeating until ready to file its own PR upward. This is the
+hylomorphism: unfold (fork waves downward), fold (merge upward).
+
+### Sub-TL
+
+`fork_wave role=tl` spawns a child with full TL capability — it can scaffold,
+fork its own wave of leaves, merge them, and file a PR to the parent TL's
+branch. Sub-TL nesting is unbounded; depth is tracked for informational
+purposes.
+
+### Effect Architecture
+
+The `fork_wave` execution path is modelled as a pure `Eff[A]` tree (scaffold
+gate checks + spawn commands) interpreted by an async trampoline. The plan
+is pure data; no IO runs until `interpret` is called. Tests walk the tree
+directly without mocks or async infrastructure.
+
 ## Status
 
 - local UDS workflow: proven
 - zellij backend (0.44+): proven
 - leaf agents: Claude, Gemini, Moon Pilot, Codex, Cursor Agent
 - structured logging: [moontrace](https://github.com/brickfrog/moontrace) with colored output and OTLP span export
+- multi-wave lifecycle (WaveComplete): implemented
+- sub-TL nesting (role=tl): implemented, unbounded depth
+- scaffold gate (commit+push before fork): enforced
+- typed errors (ParseError, ForkWaveError, ChoirError): implemented
+- StateMachine trait (machine_name, can_exit): implemented
 - live companion/leaf/review/merge smokes: present
 - TCP/remote path: implemented, less proven than local UDS
 
 ## Acknowledgements
 
-Choir's architecture is informed by [exomonad](https://github.com/tidepool-heavy-industries/exomonad), a Rust/WASM agent orchestration framework. The tree-of-agents model, role context files, prompt-via-temp-file pattern, and several workflow conventions originated there.
+Choir's architecture is informed by [exomonad](https://github.com/tidepool-heavy-industries/exomonad), a Rust/WASM agent orchestration framework. The tree-of-agents model, scaffold-fork-converge pattern, role context files, and several workflow conventions originated there.
 
 ## License
 
