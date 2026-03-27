@@ -31,6 +31,32 @@ async fn mock_registry_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
 }
 
 ///|
+async fn mock_clean_git(_program : String, _args : Array[String]) -> String {
+  @async.sleep(0)
+  ""
+}
+
+///|
+async fn mock_dirty_git(_program : String, args : Array[String]) -> String {
+  @async.sleep(0)
+  if args.contains("status") {
+    " M src/foo.mbt\n"
+  } else {
+    ""
+  }
+}
+
+///|
+async fn mock_unpushed_git(_program : String, args : Array[String]) -> String {
+  @async.sleep(0)
+  if args.contains("log") {
+    "abc1234 scaffold: add types\n"
+  } else {
+    ""
+  }
+}
+
+///|
 async fn mock_registry_branch_ready_capture(
   _branch : String,
   _parent_branch : String,
@@ -168,7 +194,12 @@ async test "handle_request with valid tool returns Ok" {
     name: "fork_wave",
     args: @types.RequestArgs::new({ "count": "3" }),
   }
-  let res = handle_request(reg, req, runner=mock_registry_runner)
+  let res = handle_request(
+    reg,
+    req,
+    runner=mock_registry_runner,
+    git_capture=mock_clean_git,
+  )
   assert_true(res is Ok(_))
 }
 
@@ -221,6 +252,7 @@ async test "dispatch returns correct stub for each tool name" {
     let res = @tools.dispatch_call(
       call,
       runner=mock_registry_runner,
+      git_capture=mock_clean_git,
       ensure_branch_ready=mock_registry_branch_ready,
       ensure_pr=mock_registry_ensure_pr,
       mutex_registry=Some(@registry.MutexRegistry::new()),
@@ -451,47 +483,48 @@ test "tool registry lookup fork_session allowed for TL" {
 }
 
 ///|
-async test "fork_wave role tl requires agent registry" {
+async test "fork_wave scaffold gate blocks dirty working tree" {
   let call = ToolCall::{
     role: @types.Role::TL,
     name: "fork_wave",
     args: {
-      "caller_id": "main.tl",
+      "caller_id": "main",
       "count": "1",
-      "task": "subtree",
+      "task": "work",
       "parent_branch": "main",
-      "role": "tl",
-    },
-  }
-  let res = @tools.dispatch_call(call, runner=mock_registry_runner)
-  match res {
-    Ok(_) => fail("expected fork_wave role=tl to fail without registry")
-    Err(msg) => assert_true(msg.contains("fork_wave role=tl requires"))
-  }
-}
-
-///|
-async test "fork_wave role tl requires registered caller_id" {
-  let reg = @registry.AgentRegistry::new()
-  let call = ToolCall::{
-    role: @types.Role::TL,
-    name: "fork_wave",
-    args: {
-      "caller_id": "main.unknown-tl",
-      "count": "1",
-      "task": "subtree",
-      "parent_branch": "main",
-      "role": "tl",
     },
   }
   let res = @tools.dispatch_call(
     call,
     runner=mock_registry_runner,
-    registry=Some(reg),
+    git_capture=mock_dirty_git,
   )
   match res {
-    Ok(_) => fail("expected fork_wave role=tl to fail for unregistered caller")
-    Err(msg) => assert_true(msg.contains("fork_wave role=tl requires"))
+    Err(msg) => assert_true(msg.contains("uncommitted changes"))
+    Ok(_) => fail("expected scaffold gate to block")
+  }
+}
+
+///|
+async test "fork_wave scaffold gate blocks unpushed commits" {
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: {
+      "caller_id": "main",
+      "count": "1",
+      "task": "work",
+      "parent_branch": "main",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    runner=mock_registry_runner,
+    git_capture=mock_unpushed_git,
+  )
+  match res {
+    Err(msg) => assert_true(msg.contains("Unpushed commits"))
+    Ok(_) => fail("expected scaffold gate to block")
   }
 }
 
@@ -516,44 +549,5 @@ async test "register accepts whitespace-trimmed spawn_depth" {
   match reg.get("main.depth-trim") {
     Ok(agent) => assert_eq(agent.spawn_depth, 1)
     Err(_) => fail("expected registered agent")
-  }
-}
-
-///|
-async test "fork_wave role tl rejected when caller spawn_depth is 1" {
-  let reg = @registry.AgentRegistry::new()
-  ignore(
-    reg.upsert({
-      agent_id: "main.subtl",
-      role: @types.Role::TL,
-      agent_type: @types.AgentType::Claude,
-      parent: Some("root"),
-      workspace: ".",
-      branch: "main.subtl",
-      terminal_target: None,
-      host: @types.Host::Local,
-      spawn_depth: 1,
-      state: @types.AgentState::Active,
-    }),
-  )
-  let call = ToolCall::{
-    role: @types.Role::TL,
-    name: "fork_wave",
-    args: {
-      "caller_id": "main.subtl",
-      "count": "1",
-      "task": "nested",
-      "parent_branch": "main.subtl",
-      "role": "tl",
-    },
-  }
-  let res = @tools.dispatch_call(
-    call,
-    runner=mock_registry_runner,
-    registry=Some(reg),
-  )
-  match res {
-    Ok(_) => fail("expected fork_wave to fail for nested sub-TL")
-    Err(msg) => assert_true(msg.contains("sub-TL nesting limited to depth 1"))
   }
 }

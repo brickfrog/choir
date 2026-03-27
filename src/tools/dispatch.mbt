@@ -148,6 +148,7 @@ pub async fn dispatch(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
@@ -198,21 +199,30 @@ pub async fn dispatch(
         None => None
       }
       let child_spawn_depth = if fork_wave_args.child_role == @types.Role::TL {
-        let caller_depth = match caller_spawn_depth_resolved {
-          Some(d) => d
-          None =>
-            return @types.Response::Err(
-              "fork_wave role=tl requires an agent registry and a registered caller_id matching caller_id (got: " +
-              fork_wave_args.caller_id +
-              ")",
-            )
-        }
-        if caller_depth >= 1 {
-          return @types.Response::Err("sub-TL nesting limited to depth 1")
-        }
-        caller_depth + 1
+        caller_spawn_depth_resolved.unwrap_or(0) + 1
       } else {
         caller_spawn_depth_resolved.unwrap_or(0)
+      }
+      // Scaffold gate: require clean, pushed working tree before forking.
+      // Children fork from the TL's current HEAD — uncommitted or unpushed
+      // work would be invisible to them.
+      let status_out = git_capture("git", [
+        "-C", project_dir, "status", "--porcelain",
+      ])
+      if status_out.trim().to_string() != "" {
+        return @types.Response::Err(
+          "Working tree has uncommitted changes. Commit and push your scaffold work first, then call fork_wave.\n" +
+          status_out.trim().to_string(),
+        )
+      }
+      let unpushed_out = git_capture("git", [
+        "-C", project_dir, "log", "--oneline", "@{u}..HEAD",
+      ])
+      if unpushed_out.trim().to_string() != "" {
+        return @types.Response::Err(
+          "Unpushed commits exist. Run 'git push' first, then call fork_wave.\n" +
+          unpushed_out.trim().to_string(),
+        )
       }
       let agent_ids = StringBuilder::new()
       let skipped_ids = StringBuilder::new()
@@ -1238,6 +1248,7 @@ pub async fn handle_request(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
@@ -1311,6 +1322,7 @@ pub async fn handle_request(
             project_dir~,
             session~,
             runner~,
+            git_capture~,
             ensure_branch_ready~,
             ensure_pr~,
             extra_mcp_servers_json~,
@@ -1378,6 +1390,7 @@ pub async fn dispatch_call(
   project_dir? : String = ".",
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
   ensure_pr? : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
@@ -1401,6 +1414,7 @@ pub async fn dispatch_call(
         project_dir~,
         session~,
         runner~,
+        git_capture~,
         ensure_branch_ready~,
         ensure_pr~,
         extra_mcp_servers_json~,
