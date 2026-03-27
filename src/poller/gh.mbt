@@ -159,46 +159,11 @@ pub async fn gh_poll_pr(
       return (false, None_, "", false, "", true)
     }
   }
-  let buf = FixedArray::make(65536, (0 : Byte))
-  let mut total = 0
-  for ;; {
-    if total >= buf.length() {
-      break
-    }
-    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
-      _ => 0
-    }
-    if n == 0 {
-      break
-    }
-    total = total + n
-  }
-  reader.close()
-  // Read stderr
-  let err_buf = FixedArray::make(4096, (0 : Byte))
-  let mut err_total = 0
-  for ;; {
-    if err_total >= err_buf.length() {
-      break
-    }
-    let n = err_reader.read(
-      err_buf,
-      offset=err_total,
-      max_len=err_buf.length() - err_total,
-    ) catch {
-      _ => 0
-    }
-    if n == 0 {
-      break
-    }
-    err_total = err_total + n
-  }
-  err_reader.close()
+  let (output, total) = @exec.drain_process_stdout(reader, 65536)
+  let (err_text_raw, _err_total) = @exec.drain_process_stdout(err_reader, 4096)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
   if exit_code != 0 || total == 0 {
-    let err_text = @utf8.decode_lossy(
-      err_buf.unsafe_reinterpret_as_bytes()[:err_total],
-    )
+    let err_text = err_text_raw
     @sys.write_stderr(
       "[poller] gh exit=" +
       exit_code.to_string() +
@@ -214,7 +179,6 @@ pub async fn gh_poll_pr(
       return (false, None_, "", false, "", true)
     }
   }
-  let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
   // Fetch inline code review comments (separate API)
   let inline_output = fetch_inline_comments(pr_number)
   let merged = merge_inline_comments(output, inline_output)
@@ -227,43 +191,12 @@ pub async fn gh_poll_pr(
 
 ///|
 async fn fetch_inline_comments(pr_number : Int) -> String {
-  let (reader, writer) = @process.read_from_process() catch { _ => return "" }
-  let _pid = @process.spawn_orphan(
-    "gh",
-    [
-      "api",
-      "repos/{owner}/{repo}/pulls/" + pr_number.to_string() + "/comments",
-      "--jq",
-      "[.[] | {path, body}]",
-    ],
-    stdout=writer,
-  ) catch {
-    _ => {
-      reader.close()
-      return ""
-    }
-  }
-  let buf = FixedArray::make(32768, (0 : Byte))
-  let mut total = 0
-  for ;; {
-    if total >= buf.length() {
-      break
-    }
-    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
-      _ => 0
-    }
-    if n == 0 {
-      break
-    }
-    total = total + n
-  }
-  reader.close()
-  ignore(@process.wait_pid(_pid) catch { _ => -1 })
-  if total == 0 {
-    ""
-  } else {
-    @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
-  }
+  @exec.capture_stdout("gh", [
+    "api",
+    "repos/{owner}/{repo}/pulls/" + pr_number.to_string() + "/comments",
+    "--jq",
+    "[.[] | {path, body}]",
+  ])
 }
 
 ///|
