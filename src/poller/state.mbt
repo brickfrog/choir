@@ -33,6 +33,8 @@ fn tracked_pr_json(tracked : TrackedPR) -> String {
     "parent_branch": tracked.parent_branch.to_json(),
     "pr_url": tracked.pr_url.to_json(),
     "first_seen": tracked.first_seen.to_json(),
+    "consecutive_failures": tracked.consecutive_failures.to_json(),
+    "backoff_until": tracked.backoff_until.to_json(),
     "last_review_state": review_state_name(tracked.last_review_state).to_json(),
     "last_review_bodies": tracked.last_review_bodies.to_json(),
     "last_sha": tracked.last_sha.to_json(),
@@ -119,6 +121,15 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => return None
   }
+  let consecutive_failures = match
+    json_field_int(fields, "consecutive_failures") {
+    Some(value) => value
+    None => 0
+  }
+  let backoff_until = match json_field_int64(fields, "backoff_until") {
+    Some(value) => value
+    None => 0L
+  }
   let last_review_state = match json_field_string(fields, "last_review_state") {
     Some(value) =>
       match parse_review_state_name(value) {
@@ -155,6 +166,8 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     parent_branch,
     pr_url,
     first_seen,
+    consecutive_failures,
+    backoff_until,
     last_review_state,
     last_review_bodies,
     last_sha,
@@ -186,6 +199,8 @@ pub fn PollerState::track(
     parent_branch,
     pr_url,
     first_seen: now,
+    consecutive_failures: 0,
+    backoff_until: 0L,
     last_review_state: None_,
     last_review_bodies: "",
     last_sha: "",
@@ -285,6 +300,8 @@ pub fn PollerState::track_recovered(
     parent_branch,
     pr_url,
     first_seen,
+    consecutive_failures: 0,
+    backoff_until: 0L,
     last_review_state: review,
     last_review_bodies: review_bodies,
     last_sha: sha,
@@ -394,6 +411,39 @@ fn next_notified_parent(
 }
 
 ///|
+fn poll_failed_sentinel(
+  review : ReviewState,
+  sha : String,
+  ci_failed : Bool,
+  review_bodies : String,
+  is_open : Bool,
+) -> Bool {
+  review == None_ &&
+  sha == "" &&
+  not(ci_failed) &&
+  review_bodies == "" &&
+  is_open
+}
+
+///|
+fn backoff_delay_seconds(consecutive_failures : Int) -> Int64 {
+  let mut delay = 30L
+  let mut i = 0
+  while i < consecutive_failures {
+    if delay >= 300L {
+      return 300L
+    }
+    delay = delay * 2L
+    i = i + 1
+  }
+  if delay > 300L {
+    300L
+  } else {
+    delay
+  }
+}
+
+///|
 /// Check if an agent has any tracked PRs.
 pub fn PollerState::has_tracked_pr(
   self : PollerState,
@@ -447,9 +497,22 @@ pub async fn PollerState::tick_with(
       Some(value) => value
       None => continue
     }
+    if now < tracked.backoff_until {
+      continue
+    }
     let (review, sha, ci_failed, review_bodies, is_open) = poll(pr_number)
     if not(is_open) {
       self.tracked.remove(pr_number)
+      continue
+    }
+    if poll_failed_sentinel(review, sha, ci_failed, review_bodies, is_open) {
+      let failures = tracked.consecutive_failures + 1
+      let delay = backoff_delay_seconds(failures)
+      self.tracked.set(pr_number, {
+        ..tracked,
+        consecutive_failures: failures,
+        backoff_until: now + delay,
+      })
       continue
     }
     let events = detect_events(
@@ -469,6 +532,8 @@ pub async fn PollerState::tick_with(
     let updated = if sha == "" {
       {
         ..tracked,
+        consecutive_failures: 0,
+        backoff_until: 0L,
         last_review_state: review,
         last_review_bodies: review_bodies,
         notified_parent,
@@ -478,6 +543,8 @@ pub async fn PollerState::tick_with(
     } else {
       {
         ..tracked,
+        consecutive_failures: 0,
+        backoff_until: 0L,
         last_review_state: review,
         last_review_bodies: review_bodies,
         last_sha: sha,
