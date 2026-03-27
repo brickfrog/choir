@@ -47,14 +47,6 @@ fn tracked_pr_json(tracked : TrackedPR) -> String {
 }
 
 ///|
-fn json_field_string(fields : Map[String, Json], key : String) -> String? {
-  match fields.get(key) {
-    Some(String(value)) => Some(value)
-    _ => None
-  }
-}
-
-///|
 fn json_field_int(fields : Map[String, Json], key : String) -> Int? {
   match fields.get(key) {
     Some(Number(n, ..)) => Some(n.to_int())
@@ -101,19 +93,19 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => return None
   }
-  let agent_id = match json_field_string(fields, "agent_id") {
+  let agent_id = match @types.json_field_string(fields, "agent_id") {
     Some(value) => value
     None => return None
   }
-  let branch = match json_field_string(fields, "branch") {
+  let branch = match @types.json_field_string(fields, "branch") {
     Some(value) => value
     None => return None
   }
-  let parent_branch = match json_field_string(fields, "parent_branch") {
+  let parent_branch = match @types.json_field_string(fields, "parent_branch") {
     Some(value) => value
     None => return None
   }
-  let pr_url = match json_field_string(fields, "pr_url") {
+  let pr_url = match @types.json_field_string(fields, "pr_url") {
     Some(value) => value
     None => return None
   }
@@ -130,7 +122,8 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => 0L
   }
-  let last_review_state = match json_field_string(fields, "last_review_state") {
+  let last_review_state = match
+    @types.json_field_string(fields, "last_review_state") {
     Some(value) =>
       match parse_review_state_name(value) {
         Some(parsed) => parsed
@@ -139,11 +132,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     None => return None
   }
   let last_review_bodies = match
-    json_field_string(fields, "last_review_bodies") {
+    @types.json_field_string(fields, "last_review_bodies") {
     Some(value) => value
     None => return None
   }
-  let last_sha = match json_field_string(fields, "last_sha") {
+  let last_sha = match @types.json_field_string(fields, "last_sha") {
     Some(value) => value
     None => return None
   }

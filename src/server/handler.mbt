@@ -67,7 +67,7 @@ async fn emit_span(
   }
   if agent_id_str != "" {
     let data = "{\"tool\":\"" +
-      escape_for_json(req.name) +
+      @types.escape_for_json(req.name) +
       "\",\"status\":\"" +
       resp.status_tag() +
       "\"}"
