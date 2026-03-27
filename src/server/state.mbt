@@ -30,32 +30,17 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 }
 
 ///|
-fn shell_quote(s : String) -> String {
-  let buf = StringBuilder::new()
-  buf.write_char('\'')
-  for c in s {
-    if c == '\'' {
-      buf.write_string("'\"'\"'")
-    } else {
-      buf.write_char(c)
-    }
-  }
-  buf.write_char('\'')
-  buf.to_string()
-}
-
-///|
 fn persist_run_id(project_dir : String, run_id : String) -> Unit {
   let exo_dir = project_dir + "/.choir"
   let path = exo_dir + "/run_id"
   let script = "mkdir -p " +
-    shell_quote(exo_dir) +
+    @exec.quote(exo_dir) +
     " && printf '%s' " +
-    shell_quote(run_id) +
+    @exec.quote(run_id) +
     " > " +
-    shell_quote(path)
+    @exec.quote(path)
   ignore(
-    c_system(string_to_null_terminated_bytes("sh -c " + shell_quote(script))),
+    c_system(string_to_null_terminated_bytes("sh -c " + @exec.quote(script))),
   )
 }
 

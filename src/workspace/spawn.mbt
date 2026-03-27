@@ -1,19 +1,4 @@
 ///|
-fn quote(s : String) -> String {
-  let buf = StringBuilder::new()
-  buf.write_char('\'')
-  for c in s {
-    if c == '\'' {
-      buf.write_string("'\\''")
-    } else {
-      buf.write_char(c)
-    }
-  }
-  buf.write_char('\'')
-  buf.to_string()
-}
-
-///|
 fn write_prompt_file(
   project_dir : String,
   slug : String,
@@ -50,28 +35,18 @@ fn replace_placeholder(
 }
 
 ///|
-fn role_to_string(role : @types.Role) -> String {
-  match role {
-    Root => "root"
-    TL => "tl"
-    Dev => "dev"
-    Worker => "worker"
-  }
-}
-
-///|
 fn command_text_for_launch(cmd : Command) -> String {
   { ..cmd, workdir: None }.to_string()
 }
 
 ///|
 fn env_assignment(key : String, value : String) -> String {
-  key + "=" + quote(value)
+  key + "=" + @sys.shell_quote(value)
 }
 
 ///|
 fn path_assignment(prefix : String) -> String {
-  "PATH=" + quote(prefix) + ":$PATH"
+  "PATH=" + @sys.shell_quote(prefix) + ":$PATH"
 }
 
 ///|
@@ -90,7 +65,7 @@ fn launch_env_prefix(
   workspace : String,
   terminal_target : @types.LocalTarget,
 ) -> String {
-  let role = role_to_string(spec.role)
+  let role = @config.role_to_string(spec.role)
   let agent_id = canonical_agent_id(spec)
   let git_branch = spawn_git_branch(spec)
   let agent_type = @config.agent_type_to_string(spec.agent_type)
@@ -174,7 +149,7 @@ pub fn spawn_commands(
     extra_mcp_servers_json~,
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
-  let prompt_ref = "\"$(cat " + quote(prompt_path) + ")\""
+  let prompt_ref = "\"$(cat " + @sys.shell_quote(prompt_path) + ")\""
   let raw_launch = command_text_for_launch(launch_cmd)
   let launch_with_prompt = replace_placeholder(
     raw_launch, "'__PROMPT_PLACEHOLDER__'", prompt_ref,
@@ -219,7 +194,7 @@ pub fn spawn_commands(
         cmds.push(trust_gemini_folder(workspace))
         let ctx_paths = resolve_context_paths(
           root_project,
-          role_to_string(spec.role),
+          @config.role_to_string(spec.role),
         )
         let wasm_path = root_project + "/.choir/hooks/hook.wasm"
         let wasm_hooks = if @sys.read_file(wasm_path) != "" {
@@ -231,7 +206,7 @@ pub fn spawn_commands(
           write_gemini_settings(
             workspace,
             canonical_agent_id(spec),
-            role_to_string(spec.role),
+            @config.role_to_string(spec.role),
             context_paths=ctx_paths,
             wasm_hooks_path=wasm_hooks,
           ),
@@ -242,7 +217,7 @@ pub fn spawn_commands(
           write_cursor_mcp_json(
             workspace,
             canonical_agent_id(spec),
-            role_to_string(spec.role),
+            @config.role_to_string(spec.role),
           ),
         )
       }
@@ -303,7 +278,7 @@ pub fn spawn_commands(
         cmds.push(trust_gemini_folder(workspace))
         let ctx_paths = resolve_context_paths(
           root_project,
-          role_to_string(spec.role),
+          @config.role_to_string(spec.role),
         )
         let wasm_path = root_project + "/.choir/hooks/hook.wasm"
         let wasm_hooks = if @sys.read_file(wasm_path) != "" {
@@ -315,7 +290,7 @@ pub fn spawn_commands(
           write_gemini_settings(
             workspace,
             canonical_agent_id(spec),
-            role_to_string(spec.role),
+            @config.role_to_string(spec.role),
             context_paths=ctx_paths,
             wasm_hooks_path=wasm_hooks,
           ),
@@ -326,7 +301,7 @@ pub fn spawn_commands(
           write_cursor_mcp_json(
             workspace,
             canonical_agent_id(spec),
-            role_to_string(spec.role),
+            @config.role_to_string(spec.role),
           ),
         )
       }
@@ -357,7 +332,7 @@ pub fn remote_spawn_commands(
   let branch = canonical_agent_id(spec)
   let workspace = "$HOME/exo-workspaces/" + branch
   let config_toml = "default_role = \"" +
-    role_to_string(spec.role) +
+    @config.role_to_string(spec.role) +
     "\"\nlisten_tcp = \"" +
     tcp_addr +
     "\"\nagent_id = \"" +
@@ -389,22 +364,22 @@ pub fn remote_spawn_commands(
     ssh_cmd(
       ssh_target,
       "git clone -b " +
-      quote(spec.parent_branch) +
+      @sys.shell_quote(spec.parent_branch) +
       " " +
-      quote(repo_url) +
+      @sys.shell_quote(repo_url) +
       " " +
       workspace +
       " && cd " +
       workspace +
       " && git checkout -b " +
-      quote(branch),
+      @sys.shell_quote(branch),
     ),
     ssh_cmd(
       ssh_target,
       "mkdir -p " +
       workspace +
       "/.choir && printf '%s' " +
-      quote(config_toml) +
+      @sys.shell_quote(config_toml) +
       " > " +
       workspace +
       "/.choir/config.toml",
@@ -416,7 +391,7 @@ pub fn remote_spawn_commands(
       " && nohup " +
       agent_cmd +
       " > /tmp/" +
-      quote(spec.slug) +
+      @sys.shell_quote(spec.slug) +
       ".log 2>&1 &",
     ),
   ]

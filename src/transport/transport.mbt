@@ -28,33 +28,12 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
 }
 
 ///|
-fn role_to_wire_string(role : @types.Role) -> String {
-  match role {
-    @types.Role::Root => "root"
-    @types.Role::TL => "tl"
-    @types.Role::Dev => "dev"
-    @types.Role::Worker => "worker"
-  }
-}
-
-///|
-fn agent_type_to_wire_string(agent_type : @types.AgentType) -> String {
-  match agent_type {
-    @types.AgentType::Claude => "claude"
-    @types.AgentType::Gemini => "gemini"
-    @types.AgentType::MoonPilot => "moon_pilot"
-    @types.AgentType::Codex => "codex"
-    @types.AgentType::CursorAgent => "cursor_agent"
-  }
-}
-
-///|
 pub fn format_request(req : @types.Request) -> String {
   let args_map : Map[String, Json] = {}
   req.args.each_json(fn(k, v) { args_map.set(k, v) })
   {
     "method": req.req_method.to_json(),
-    "role": role_to_wire_string(req.role).to_json(),
+    "role": @config.role_to_string(req.role).to_json(),
     "name": req.name.to_json(),
     "args": args_map.to_json(),
   }
@@ -90,7 +69,7 @@ pub fn format_registration_request(
     None => ()
   }
   match local_cfg.agent_type {
-    Some(v) => args.set("agent_type", agent_type_to_wire_string(v))
+    Some(v) => args.set("agent_type", @config.agent_type_to_string(v))
     None => ()
   }
   match local_cfg.spawn_depth {
