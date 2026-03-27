@@ -1,7 +1,10 @@
 ///| Non-native stubs: UDS is native-only; stubs satisfy wasm/js package graph.
 
+/// Reference @utf8 so `moonbitlang/core/encoding/utf8` is not unused when only this file builds.
+
 ///|
 pub fn server_create(_path : String) -> Int {
+  ignore(@utf8.encode(_path).length())
   -1
 }
 

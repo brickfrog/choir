@@ -1,7 +1,10 @@
 ///| Non-native stubs: Choir targets native; wasm/js builds still type-check this package.
 
+/// Reference @utf8 so `moonbitlang/core/encoding/utf8` is not unused when only this file builds.
+
 ///|
 pub fn read_file(_path : String) -> String {
+  ignore(@utf8.encode(_path).length())
   ""
 }
 
