@@ -16,6 +16,8 @@ pub(all) struct TrackedPR {
   parent_branch : String
   pr_url : String
   first_seen : Int64
+  mut consecutive_failures : Int
+  mut backoff_until : Int64
   mut last_review_state : ReviewState
   mut last_review_bodies : String
   mut last_sha : String

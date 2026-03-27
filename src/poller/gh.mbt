@@ -102,11 +102,12 @@ fn parse_pr_is_open(json : Json) -> Bool {
 ///|
 pub fn parse_gh_pr_view_output(
   data : String,
-) -> (ReviewState, String, Bool, String, Bool) {
+) -> (Bool, ReviewState, String, Bool, String, Bool) {
   let json = @json.parse(data) catch {
-    _ => return (None_, "", false, "", true)
+    _ => return (false, None_, "", false, "", true)
   }
   (
+    true,
     parse_review_state(json),
     parse_head_ref_oid(json),
     parse_ci_failed(json),
@@ -118,7 +119,7 @@ pub fn parse_gh_pr_view_output(
 ///|
 pub async fn gh_poll_pr(
   pr_number : Int,
-) -> (ReviewState, String, Bool, String, Bool) {
+) -> (Bool, ReviewState, String, Bool, String, Bool) {
   let (reader, writer) = @process.read_from_process() catch {
     e => {
       @sys.write_stderr(
@@ -128,11 +129,11 @@ pub async fn gh_poll_pr(
         e.to_string() +
         "\n",
       )
-      return (None_, "", false, "", true)
+      return (false, None_, "", false, "", true)
     }
   }
   let (err_reader, err_writer) = @process.read_from_process() catch {
-    _ => return (None_, "", false, "", true)
+    _ => return (false, None_, "", false, "", true)
   }
   let pid = @process.spawn_orphan(
     "gh",
@@ -155,7 +156,7 @@ pub async fn gh_poll_pr(
         "\n",
       )
       reader.close()
-      return (None_, "", false, "", true)
+      return (false, None_, "", false, "", true)
     }
   }
   let buf = FixedArray::make(65536, (0 : Byte))
@@ -210,7 +211,7 @@ pub async fn gh_poll_pr(
       "\n",
     )
     if total == 0 {
-      return (None_, "", false, "", true)
+      return (false, None_, "", false, "", true)
     }
   }
   let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])

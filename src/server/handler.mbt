@@ -782,7 +782,7 @@ pub async fn ServerState::process_poller_tick_with(
   self : ServerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (@poller.ReviewState, String, Bool, String, Bool),
+  poll : async (Int) -> (Bool, @poller.ReviewState, String, Bool, String, Bool),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
   let pending_events = []
@@ -1670,6 +1670,8 @@ test "parent_poll_event_message PR READY stresses not merged" {
     parent_branch: "main",
     pr_url: "https://ex/pr/7",
     first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0,
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "",
@@ -1698,6 +1700,8 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     parent_branch: "main",
     pr_url: "",
     first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0,
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "abc",

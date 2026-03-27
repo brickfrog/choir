@@ -550,7 +550,14 @@ async fn recover_open_pr_tracking_with(
   open_prs : Array[OpenPR],
   persisted : Array[@poller.TrackedPR],
   recovered_at : Int64,
-  snapshot : async (Int) -> (@poller.ReviewState, String, Bool, String, Bool),
+  snapshot : async (Int) -> (
+    Bool,
+    @poller.ReviewState,
+    String,
+    Bool,
+    String,
+    Bool,
+  ),
 ) -> Unit {
   for pr in open_prs {
     match state.registry.get(pr.branch) {
@@ -577,7 +584,7 @@ async fn recover_open_pr_tracking_with(
             )
           }
           None => {
-            let (review, sha, ci_failed, review_bodies, _) = snapshot(
+            let (_, review, sha, ci_failed, review_bodies, _) = snapshot(
               pr.pr_number,
             )
             state.poller.track_recovered(
