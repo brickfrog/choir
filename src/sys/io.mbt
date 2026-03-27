@@ -208,6 +208,15 @@ extern "C" fn c_append_file_sync(
 ) -> Int = "choir_append_file_sync"
 
 ///|
+#borrow(path)
+extern "C" fn c_create_dir_all(path : Bytes) -> Int = "choir_create_dir_all"
+
+///|
+pub fn create_dir_all(path : String) -> Bool {
+  c_create_dir_all(string_to_null_terminated_bytes(path)) == 0
+}
+
+///|
 pub fn append_file_sync(path : String, content : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   let content_bytes = @utf8.encode(content)
