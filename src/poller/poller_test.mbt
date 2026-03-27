@@ -60,17 +60,17 @@ test "transfer_owner overwrites branch when replacement publishes new head name"
 ///|
 async fn mock_poll_failure_sentinel(
   _pr_number : Int,
-) -> (@poller.ReviewState, String, Bool, String, Bool) {
+) -> (Bool, @poller.ReviewState, String, Bool, String, Bool) {
   @async.sleep(0)
-  (@poller.ReviewState::None_, "", false, "", true)
+  (false, @poller.ReviewState::None_, "", false, "", true)
 }
 
 ///|
 async fn mock_poll_success_open(
   _pr_number : Int,
-) -> (@poller.ReviewState, String, Bool, String, Bool) {
+) -> (Bool, @poller.ReviewState, String, Bool, String, Bool) {
   @async.sleep(0)
-  (@poller.ReviewState::Commented, "sha-1", false, "body", true)
+  (true, @poller.ReviewState::Commented, "sha-1", false, "body", true)
 }
 
 ///|
@@ -144,4 +144,22 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   let t = parsed[0]
   assert_eq(t.consecutive_failures, 0)
   assert_eq(t.backoff_until, 0L)
+}
+
+///|
+async test "tick_with clamps failure counter once delay is saturated" {
+  let ps = @poller.PollerState::new()
+  ps.track(14, "main.leaf", "main.leaf", "main", "u", 100L)
+  ps.tick_with(200L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
+  ps.tick_with(260L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
+  ps.tick_with(380L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
+  ps.tick_with(620L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
+  ps.tick_with(920L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
+  match ps.get(14) {
+    Some(t) => {
+      assert_eq(t.consecutive_failures, 4)
+      assert_eq(t.backoff_until, 1220L)
+    }
+    None => fail("expected PR 14")
+  }
 }

@@ -782,7 +782,7 @@ pub async fn ServerState::process_poller_tick_with(
   self : ServerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (@poller.ReviewState, String, Bool, String, Bool),
+  poll : async (Int) -> (Bool, @poller.ReviewState, String, Bool, String, Bool),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
   let pending_events = []

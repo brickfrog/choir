@@ -411,21 +411,6 @@ fn next_notified_parent(
 }
 
 ///|
-fn poll_failed_sentinel(
-  review : ReviewState,
-  sha : String,
-  ci_failed : Bool,
-  review_bodies : String,
-  is_open : Bool,
-) -> Bool {
-  review == None_ &&
-  sha == "" &&
-  not(ci_failed) &&
-  review_bodies == "" &&
-  is_open
-}
-
-///|
 fn backoff_delay_seconds(consecutive_failures : Int) -> Int64 {
   let mut delay = 30L
   let mut i = 0
@@ -440,6 +425,16 @@ fn backoff_delay_seconds(consecutive_failures : Int) -> Int64 {
     300L
   } else {
     delay
+  }
+}
+
+///|
+fn clamp_consecutive_failures(consecutive_failures : Int) -> Int {
+  // 2^4 * 30 already exceeds the 300s cap, so tracking beyond 4 adds no value.
+  if consecutive_failures > 4 {
+    4
+  } else {
+    consecutive_failures
   }
 }
 
@@ -485,7 +480,7 @@ pub async fn PollerState::tick_with(
   self : PollerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (ReviewState, String, Bool, String, Bool),
+  poll : async (Int) -> (Bool, ReviewState, String, Bool, String, Bool),
   on_event : (PollEvent, String) -> Unit,
 ) -> Unit {
   let pr_numbers = []
@@ -500,13 +495,17 @@ pub async fn PollerState::tick_with(
     if now < tracked.backoff_until {
       continue
     }
-    let (review, sha, ci_failed, review_bodies, is_open) = poll(pr_number)
+    let (poll_ok, review, sha, ci_failed, review_bodies, is_open) = poll(
+      pr_number,
+    )
     if not(is_open) {
       self.tracked.remove(pr_number)
       continue
     }
-    if poll_failed_sentinel(review, sha, ci_failed, review_bodies, is_open) {
-      let failures = tracked.consecutive_failures + 1
+    if not(poll_ok) {
+      let failures = clamp_consecutive_failures(
+        tracked.consecutive_failures + 1,
+      )
       let delay = backoff_delay_seconds(failures)
       self.tracked.set(pr_number, {
         ..tracked,
