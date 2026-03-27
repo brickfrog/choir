@@ -8,7 +8,7 @@ test "parse_fork_wave_args defaults child_role to Dev" {
   })
   match @tools.parse_fork_wave_args(".", args) {
     Ok(fork) => assert_eq(fork.child_role, @types.Role::Dev)
-    Err(e) => fail("parse_fork_wave_args: " + e)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
 
@@ -23,7 +23,7 @@ test "parse_fork_wave_args role tl" {
   })
   match @tools.parse_fork_wave_args(".", args) {
     Ok(fork) => assert_eq(fork.child_role, @types.Role::TL)
-    Err(e) => fail("parse_fork_wave_args: " + e)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
 
