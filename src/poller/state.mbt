@@ -354,7 +354,7 @@ pub fn PollerState::write_state_file(
   self : PollerState,
   project_dir : String,
 ) -> Bool {
-  @sys.write_file_sync(poller_state_path(project_dir), self.to_json())
+  @sys.write_file_atomic(poller_state_path(project_dir), self.to_json())
 }
 
 ///|

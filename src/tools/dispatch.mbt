@@ -891,7 +891,7 @@ pub async fn dispatch(
       }
       let task_json = task_to_json(task)
       let path = task_file_path(project_dir, task_args.id)
-      if @sys.write_file_sync(path, task_json.stringify()) {
+      if @sys.write_file_atomic(path, task_json.stringify()) {
         @types.Response::ok_values({
           "status": String::to_json("ok"),
           "created": Bool::to_json(true),
@@ -914,7 +914,7 @@ pub async fn dispatch(
       }
       let updated_json = task_to_json(updated)
       let path = task_file_path(project_dir, update_args.id)
-      if @sys.write_file_sync(path, updated_json.stringify()) {
+      if @sys.write_file_atomic(path, updated_json.stringify()) {
         @types.Response::ok_values({
           "status": String::to_json("ok"),
           "task": updated_json,
@@ -1199,7 +1199,7 @@ pub async fn dispatch(
         Ok(_) => ()
       }
       let path = kv_file_path(project_dir, key)
-      if @sys.write_file_sync(path, value) {
+      if @sys.write_file_atomic(path, value) {
         @types.Response::ok_values({
           "status": String::to_json("ok"),
           "id": String::to_json(id),

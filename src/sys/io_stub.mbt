@@ -74,6 +74,11 @@ pub fn write_file_sync(_path : String, _content : String) -> Bool {
 }
 
 ///|
+pub fn write_file_atomic(_path : String, _content : String) -> Bool {
+  false
+}
+
+///|
 pub fn append_file_sync(_path : String, _content : String) -> Bool {
   false
 }
