@@ -40,7 +40,7 @@ fn codex_mcp_override_args(
     "exec choir mcp-stdio" +
     role_args +
     " --name " +
-    shell_quote(agent_id) +
+    @sys.shell_quote(agent_id) +
     " 2>> .choir/mcp-stdio.stderr.log"
   [
     "-c",

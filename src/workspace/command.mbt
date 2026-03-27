@@ -6,25 +6,10 @@ pub(all) struct Command {
 } derive(Show, Eq)
 
 ///|
-fn shell_quote(s : String) -> String {
-  let buf = StringBuilder::new()
-  buf.write_char('\'')
-  for c in s {
-    if c == '\'' {
-      buf.write_string("'\\''")
-    } else {
-      buf.write_char(c)
-    }
-  }
-  buf.write_char('\'')
-  buf.to_string()
-}
-
-///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
-    let quoted = shell_quote(arg)
+    let quoted = @sys.shell_quote(arg)
     if args_str == "" {
       args_str = quoted
     } else {
@@ -38,7 +23,7 @@ pub fn Command::to_string(self : Command) -> String {
   }
   match self.workdir {
     None => base
-    Some(dir) => "cd " + shell_quote(dir) + " && " + base
+    Some(dir) => "cd " + @sys.shell_quote(dir) + " && " + base
   }
 }
 
@@ -270,7 +255,7 @@ pub fn register_team_member(
   // Shell script: read config.json, check for existing member, append if missing
   let config_path = "~/.claude/teams/" + parent_agent_id + "/config.json"
   let script = "CONFIG=" +
-    shell_quote(config_path) +
+    @sys.shell_quote(config_path) +
     "; CONFIG=\"${CONFIG/#\\~/\"$HOME\"}\"; " +
     "[ -f \"$CONFIG\" ] || exit 0; " +
     "grep -q '\"name\":\"'\"$1\"'\"' \"$CONFIG\" 2>/dev/null && exit 0; " +
@@ -282,7 +267,7 @@ pub fn register_team_member(
     "c['members'].append({'agentId':sys.argv[2]+'@'+sys.argv[3],'name':sys.argv[2],'agentType':sys.argv[4],'model':'gemini','color':'green','joinedAt':int(time.time()*1000),'tmuxPaneId':'synthetic','subscriptions':[],'backendType':'choir'}); " +
     "json.dump(c,open(sys.argv[5],'w'),indent=2)" +
     "\" \"$CONFIG\" \"$1\" " +
-    shell_quote(parent_agent_id) +
+    @sys.shell_quote(parent_agent_id) +
     " \"$2\" \"$TMP\" && mv \"$TMP\" \"$CONFIG\""
   {
     program: "sh",

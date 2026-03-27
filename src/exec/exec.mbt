@@ -1,16 +1,6 @@
 ///|
 pub fn quote(s : String) -> String {
-  let buf = StringBuilder::new()
-  buf.write_char('\'')
-  for c in s {
-    if c == '\'' {
-      buf.write_string("'\\''")
-    } else {
-      buf.write_char(c)
-    }
-  }
-  buf.write_char('\'')
-  buf.to_string()
+  @sys.shell_quote(s)
 }
 
 ///|

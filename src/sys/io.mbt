@@ -200,3 +200,19 @@ pub fn delete_file_sync(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_delete_file_sync(path_bytes) == 0
 }
+
+///|
+/// POSIX single-quote style for embedding in `sh -c` (same as exec.quote).
+pub fn shell_quote(s : String) -> String {
+  let buf = StringBuilder::new()
+  buf.write_char('\'')
+  for c in s {
+    if c == '\'' {
+      buf.write_string("'\\''")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.write_char('\'')
+  buf.to_string()
+}
