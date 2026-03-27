@@ -26,6 +26,8 @@ pub(all) enum ToolRequest {
   SpawnRemote(RemoteSpawnArgs)
   SpawnWorker(WorkerSpawnArgs)
   KillAgent(KillAgentArgs)
+  AgentList(AgentListArgs)
+  CancelWave(CancelWaveArgs)
 } derive(Show, Eq)
 
 ///|
@@ -57,5 +59,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     SpawnRemote(_) => "spawn_remote"
     SpawnWorker(_) => "spawn_worker"
     KillAgent(_) => "kill_agent"
+    AgentList(_) => "agent_list"
+    CancelWave(_) => "cancel_wave"
   }
 }

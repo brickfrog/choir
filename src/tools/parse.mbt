@@ -1003,6 +1003,22 @@ fn parse_tool_request(
         Ok(ToolRequest::KillAgent({ agent_id, reason }))
       }
     }
+    "agent_list" => {
+      let parent_id = match tool_args_get(args, "parent_id") {
+        Some(v) =>
+          if v.trim() == "" {
+            None
+          } else {
+            Some(v.trim().to_string())
+          }
+        None => None
+      }
+      Ok(ToolRequest::AgentList({ parent_id, }))
+    }
+    "cancel_wave" => {
+      let force = tool_args_get_bool(args, "force")
+      Ok(ToolRequest::CancelWave({ force, }))
+    }
     _ => Err(ParseError::UnknownTool(name~))
   }
 }

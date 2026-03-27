@@ -179,6 +179,16 @@ struct KillAgentArgs {
 } derive(Show, Eq)
 
 ///|
+pub(all) struct AgentListArgs {
+  parent_id : String?
+} derive(Show, Eq)
+
+///|
+pub(all) struct CancelWaveArgs {
+  force : Bool
+} derive(Show, Eq)
+
+///|
 struct IdArgs {
   id : String
 } derive(Show, Eq)

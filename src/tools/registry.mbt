@@ -140,6 +140,16 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       description: "Update task status/owner",
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
+    {
+      name: "agent_list",
+      description: "List agents in the registry; optional parent_id to filter to direct children",
+      allowed_roles: all_roles,
+    },
+    {
+      name: "cancel_wave",
+      description: "Kill all active children of the calling agent and clean up their lifecycle/PR tracking; optional force=true to cancel even mid-review children",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
   ]
   for def in defs {
     tools.set(def.name, def)

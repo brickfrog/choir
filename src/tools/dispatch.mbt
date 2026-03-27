@@ -796,6 +796,10 @@ pub async fn dispatch(
           }
         None => @types.Response::Err("no agent registry available")
       }
+    ToolRequest::AgentList(_) =>
+      @types.Response::Err("agent_list: not implemented")
+    ToolRequest::CancelWave(_) =>
+      @types.Response::Err("cancel_wave: not implemented")
     ToolRequest::KvGet(key_args) => {
       let value = @sys.read_file(kv_file_path(project_dir, key_args.key))
       if value == "" {
