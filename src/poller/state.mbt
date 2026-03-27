@@ -560,6 +560,7 @@ pub async fn PollerState::tick_with(
     }
     let tracked_ok = { ..tracked, consecutive_failures: 0, backoff_until: 0L }
     if not(is_open) {
+      on_event(PRMerged(pr_number), tracked_ok.agent_id)
       log_pr({
         pr_number,
         agent_id,
@@ -570,7 +571,7 @@ pub async fn PollerState::tick_with(
         backoff_until: 0L,
         prior_review_state: prior_state,
         detected_review_state: review,
-        events: [],
+        events: [PRMerged(pr_number)],
         consecutive_failures: 0,
         previous_consecutive_failures: prev_failures,
       })

@@ -52,4 +52,5 @@ pub(all) enum PollEvent {
   FixesPushed(Int)
   ReviewTimeout(Int)
   CIFailed(Int)
+  PRMerged(Int)
 } derive(Show, Eq)

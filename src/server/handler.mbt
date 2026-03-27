@@ -552,6 +552,25 @@ fn parent_poll_event_message(
           "failure",
         ),
       )
+    PRMerged(n) =>
+      Some(
+        (
+          "[PR MERGED] " +
+          agent_id +
+          " PR #" +
+          n.to_string() +
+          " merged externally\n" +
+          "branch: " +
+          branch +
+          "\n" +
+          "parent_branch: " +
+          parent_branch.unwrap_or("<unknown>") +
+          pr_url +
+          "\n" +
+          "Next action: the leaf will shut down automatically.",
+          "success",
+        ),
+      )
   }
 }
 
@@ -564,6 +583,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     FixesPushed(n) => n
     ReviewTimeout(n) => n
     CIFailed(n) => n
+    PRMerged(n) => n
   }
 }
 
@@ -630,6 +650,13 @@ fn leaf_poll_review_injection_message(
       )
     FixesPushed(_) => None
     ReviewTimeout(_) => None
+    PRMerged(n) =>
+      Some(
+        (
+          "[PR MERGED] PR #" + n.to_string() + " merged — call shutdown",
+          "success",
+        ),
+      )
   }
 }
 
@@ -668,6 +695,14 @@ pub fn ServerState::plan_poll_event_deliveries(
         self.config.project_dir,
         leaf_agent_id,
         @phase.DevEvent::FixesPushedEv(pr_number=n, sha=pr.last_sha),
+      )
+    (Some(_), PRMerged(n)) =>
+      ignore(
+        @tools.apply_dev_event_checked(
+          self.config.project_dir,
+          leaf_agent_id,
+          @phase.DevEvent::MergeObserved(pr_number=n),
+        ),
       )
     _ => ()
   }
@@ -781,6 +816,7 @@ fn pr_comment_body(
         ),
       )
     ReviewTimeout(_) => None
+    PRMerged(_) => None
   }
 }
 
