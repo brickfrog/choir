@@ -469,6 +469,18 @@ fn remove_child(
 }
 
 ///|
+fn children_all_terminal(children : Array[ChildLifecycle]) -> Bool {
+  let mut all_terminal = true
+  for child in children {
+    match child.summary {
+      Done | Failed(_) => ()
+      _ => all_terminal = false
+    }
+  }
+  all_terminal
+}
+
+///|
 pub fn supervisor_transition(
   lifecycle : SupervisorLifecycle,
   event : SupervisorEvent,
@@ -495,14 +507,7 @@ pub fn supervisor_transition(
       Transitioned(OwnPRFiled(number~, url~))
     (Supervising(children~, wave~), ChildUpdated(child_id~, summary~)) => {
       let updated = update_child_summary(children, child_id, summary)
-      let mut all_terminal = true
-      for child in updated {
-        match child.summary {
-          Done | Failed(_) => ()
-          _ => all_terminal = false
-        }
-      }
-      if all_terminal {
+      if children_all_terminal(updated) {
         Transitioned(WaveComplete(wave~, children=updated))
       } else {
         Transitioned(Supervising(children=updated, wave~))
@@ -514,14 +519,7 @@ pub fn supervisor_transition(
         child_id,
         ChildLifecycleSummary::Failed(reason~),
       )
-      let mut all_terminal = true
-      for child in updated {
-        match child.summary {
-          Done | Failed(_) => ()
-          _ => all_terminal = false
-        }
-      }
-      if all_terminal {
+      if children_all_terminal(updated) {
         Transitioned(WaveComplete(wave~, children=updated))
       } else {
         Transitioned(Supervising(children=updated, wave~))
@@ -531,20 +529,40 @@ pub fn supervisor_transition(
       Transitioned(
         Supervising(children=remove_child(children, child_id), wave~),
       )
-    (Supervising(children~, wave~), AllChildrenComplete) => {
-      let mut all_terminal = true
-      for child in children {
-        match child.summary {
-          Done | Failed(_) => ()
-          _ => all_terminal = false
-        }
+    (WaveComplete(wave~, children~), ChildUpdated(child_id~, summary~)) => {
+      let updated = update_child_summary(children, child_id, summary)
+      if children_all_terminal(updated) {
+        Transitioned(WaveComplete(wave~, children=updated))
+      } else {
+        Transitioned(Supervising(children=updated, wave~))
       }
-      if all_terminal {
+    }
+    (WaveComplete(wave~, children~), ChildFailed(child_id~, reason~)) => {
+      let updated = update_child_summary(
+        children,
+        child_id,
+        ChildLifecycleSummary::Failed(reason~),
+      )
+      if children_all_terminal(updated) {
+        Transitioned(WaveComplete(wave~, children=updated))
+      } else {
+        Transitioned(Supervising(children=updated, wave~))
+      }
+    }
+    (WaveComplete(wave~, children~), ChildRemoved(child_id~)) => {
+      let updated = remove_child(children, child_id)
+      if children_all_terminal(updated) {
+        Transitioned(WaveComplete(wave~, children=updated))
+      } else {
+        Transitioned(Supervising(children=updated, wave~))
+      }
+    }
+    (Supervising(children~, wave~), AllChildrenComplete) =>
+      if children_all_terminal(children) {
         Transitioned(WaveComplete(wave~, children~))
       } else {
         InvalidTransition("children still active")
       }
-    }
     (_, _) => InvalidTransition("invalid transition for SupervisorLifecycle")
   }
 }
