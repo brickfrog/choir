@@ -1489,6 +1489,7 @@ async fn ServerState::fail_agent_with_runner(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   close_target? : Bool = false,
 ) -> Unit {
+  @async.sleep(0)
   let agent = match self.registry.get(agent_id) {
     Ok(agent) => agent
     Err(_) => {
@@ -1558,7 +1559,7 @@ async fn ServerState::fail_agent_with_runner(
   }
   self.sync_parent_child_lifecycle(agent_id, failed)
   match agent.parent {
-    Some(parent_id) =>
+    Some(parent_id) => {
       match self.resolve_parent_by_id(parent_id) {
         Ok(parent) => {
           let delivery = @message.plan_delivery(
@@ -1572,6 +1573,32 @@ async fn ServerState::fail_agent_with_runner(
         }
         Err(_) => ()
       }
+      let is_self_reported = match reason {
+        @phase.FailureReason::ChildFailure(_) => true
+        _ => false
+      }
+      if not(is_self_reported) {
+        match self.registry.get(parent_id) {
+          Ok(parent_agent) =>
+            match parent_agent.terminal_target {
+              Some(target) => {
+                let reason_str = reason.to_string()
+                let msg = @message.format_failure(agent_id, reason_str)
+                ignore(
+                  @tools.execute_delivery(
+                    @message.DeliveryMethod::LocalTerminalInput(target, msg),
+                    runner,
+                  ) catch {
+                    _ => Ok(())
+                  },
+                )
+              }
+              None => ()
+            }
+          Err(_) => ()
+        }
+      }
+    }
     None => ()
   }
   self.clear_agent_runtime_tracking(agent_id)
@@ -1963,4 +1990,91 @@ test "clamp_review_summary_for_pane truncates long Copilot-style bodies" {
   let out = clamp_review_summary_for_pane(long)
   assert_true(out.contains("[truncated"))
   assert_true(out.length() < long.length())
+}
+
+///|
+async test "fail_agent_with_runner injects failure to parent terminal" {
+  let project_dir = "/tmp/choir-watchdog-test-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config)
+
+  let parent_id = "main.parent"
+  let live_target = match
+    @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":live-parent") {
+    Some(t) => t
+    None => fail("expected parseable local target")
+  }
+
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: parent_id,
+      terminal_target: Some(live_target),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  let caller_id = "main.child"
+  ignore(
+    state.register_agent({
+      agent_id: caller_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some(parent_id),
+      workspace: project_dir,
+      branch: caller_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  ignore(
+    @phase.write_lifecycle(
+      project_dir,
+      @phase.lifecycle_for_role(caller_id, @types.Role::Dev),
+    ),
+  )
+
+  @async.sleep(0)
+
+  let mut injected_failure_msg = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.contains("zellij-action") &&
+        cmd.args.contains("send") {
+        let text = cmd.args[cmd.args.length() - 1]
+        if text.contains("[FAILED: " + caller_id + "]") &&
+          text.contains("WatchdogTimeout") {
+          injected_failure_msg = true
+        }
+      }
+    }
+    [0]
+  }
+
+  state.fail_agent_with_runner(
+    caller_id,
+    @phase.FailureReason::WatchdogTimeout,
+    "watchdog timeout",
+    "watchdog",
+    runner,
+  )
+
+  assert_true(injected_failure_msg)
 }
