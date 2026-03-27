@@ -168,7 +168,13 @@ pub async fn ServerState::handle_with_runner(
                       parent, agent_id, body, "success",
                     )
                     ignore(
-                      @tools.execute_delivery(delivery, runner) catch {
+                      @tools.execute_delivery(
+                        delivery,
+                        runner,
+                        delivery_log_path=Some(
+                          self.config.project_dir + "/.choir/delivery.log",
+                        ),
+                      ) catch {
                         _ => Ok(())
                       },
                     )
@@ -686,7 +692,7 @@ pub fn ServerState::plan_poll_event_deliveries(
                 Ok(parent) => {
                   ignore(
                     @sys.append_file_sync(
-                      ".choir/delivery.log",
+                      self.config.project_dir + "/.choir/delivery.log",
                       "[poller-parent] agent=" +
                       leaf_agent_id +
                       " parent=" +
@@ -793,8 +799,15 @@ async fn deliver_pending_poll_events(
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
+    let delivery_log_path = state.config.project_dir + "/.choir/delivery.log"
     for delivery in state.plan_poll_event_deliveries(event, agent_id) {
-      ignore(@tools.execute_delivery(delivery, runner))
+      ignore(
+        @tools.execute_delivery(
+          delivery,
+          runner,
+          delivery_log_path=Some(delivery_log_path),
+        ),
+      )
     }
     // Post a comment on the PR for audit trail
     match pr_comment_body(event, agent_id) {
@@ -1235,7 +1248,13 @@ async fn ServerState::finalize_agent_with_runner(
               parent, agent_id, "agent shutdown", "success",
             )
             ignore(
-              @tools.execute_delivery(delivery, runner) catch {
+              @tools.execute_delivery(
+                delivery,
+                runner,
+                delivery_log_path=Some(
+                  self.config.project_dir + "/.choir/delivery.log",
+                ),
+              ) catch {
                 _ => Ok(())
               },
             )
@@ -1377,7 +1396,13 @@ async fn ServerState::fail_agent_with_runner(
             parent, agent_id, parent_message, "failure",
           )
           ignore(
-            @tools.execute_delivery(delivery, runner) catch {
+            @tools.execute_delivery(
+              delivery,
+              runner,
+              delivery_log_path=Some(
+                self.config.project_dir + "/.choir/delivery.log",
+              ),
+            ) catch {
               _ => Ok(())
             },
           )

@@ -210,7 +210,12 @@ pub async fn execute_delivery(
   delivery : @message.DeliveryMethod,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  delivery_log_path? : String? = None,
 ) -> Result[Unit, String] {
+  let log_file = match delivery_log_path {
+    Some(p) => p
+    None => ".choir/delivery.log"
+  }
   fn ensure_success(statuses : Array[Int]) -> Result[Unit, String] {
     if statuses.length() == 0 || statuses[0] == 0 {
       Ok(())
@@ -253,7 +258,7 @@ pub async fn execute_delivery(
   ) -> Unit {
     ignore(
       @sys.append_file_sync(
-        ".choir/delivery.log",
+        log_file,
         "[delivery-retry] ts_ms=" +
         delivery_timestamp() +
         " target=" +
@@ -271,7 +276,7 @@ pub async fn execute_delivery(
   fn log_delivery_failure(target : String, error : String) -> Unit {
     ignore(
       @sys.append_file_sync(
-        ".choir/delivery.log",
+        log_file,
         "[delivery-failed] ts_ms=" +
         delivery_timestamp() +
         " target=" +
@@ -333,7 +338,7 @@ pub async fn execute_delivery(
       let cmd = @workspace.local_send_text(target, text)
       ignore(
         @sys.append_file_sync(
-          ".choir/delivery.log",
+          log_file,
           "[delivery] target=" +
           target.to_string() +
           " cmd=" +
@@ -343,7 +348,7 @@ pub async fn execute_delivery(
       )
       ignore(
         @sys.append_file_sync(
-          ".choir/delivery.log",
+          log_file,
           "[delivery] dispatch-with-retry target=" + target.to_string() + "\n",
         ),
       )

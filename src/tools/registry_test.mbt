@@ -316,6 +316,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
       branch: "main.auto-notify-tl",
       terminal_target: Some(tl_target),
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -329,6 +330,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
       branch: "main.auto-notify-leaf",
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -360,6 +362,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
   assert_true(log.contains("parent=main.auto-notify-tl"))
   let expected_payload = "[from: main.auto-notify-leaf] [PR READY] PR #99 filed: https://auto.test/pr"
   assert_true(log.contains(expected_payload))
+  assert_true(log.contains("[delivery] dispatch-with-retry"))
 }
 
 ///|
@@ -380,6 +383,7 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
       branch: "main.auto-notify-orphan",
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )

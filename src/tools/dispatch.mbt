@@ -457,7 +457,12 @@ pub async fn dispatch(
                               "\n",
                             ),
                           )
-                          match execute_delivery(delivery, runner) {
+                          match
+                            execute_delivery(
+                              delivery,
+                              runner,
+                              delivery_log_path=Some(delivery_log_path),
+                            ) {
                             Ok(_) => ()
                             Err(e) => {
                               @moontrace.error(
@@ -637,7 +642,13 @@ pub async fn dispatch(
                 notify_args.message,
                 notify_args.status,
               )
-              match execute_delivery(delivery, runner) {
+              let delivery_log_path = project_dir + "/.choir/delivery.log"
+              match
+                execute_delivery(
+                  delivery,
+                  runner,
+                  delivery_log_path=Some(delivery_log_path),
+                ) {
                 Ok(_) => {
                   apply_dev_event(
                     project_dir,
@@ -675,9 +686,10 @@ pub async fn dispatch(
                 send_args.message,
                 send_args.status,
               )
+              let delivery_log_path = project_dir + "/.choir/delivery.log"
               ignore(
                 @sys.append_file_sync(
-                  ".choir/delivery.log",
+                  delivery_log_path,
                   "[send_message] target=" +
                   send_args.target_id +
                   " terminal_target=" +
@@ -689,7 +701,12 @@ pub async fn dispatch(
                   "\n",
                 ),
               )
-              match execute_delivery(delivery, runner) {
+              match
+                execute_delivery(
+                  delivery,
+                  runner,
+                  delivery_log_path=Some(delivery_log_path),
+                ) {
                 Ok(_) =>
                   @types.Response::ok_values({
                     "status": String::to_json("sent"),
