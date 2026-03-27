@@ -1827,10 +1827,12 @@ test "leaf tool parser ignores prose positionals for file_pr" {
     "file_pr",
     parse_leaf_cli_args(["Add", "pytest", "integration", "tests"]),
   ).unwrap()
+  // Prose must not be interpreted as the legacy branch triplet (ambient CHOIR_* may still set branch).
   assert_not_eq(parsed.get("branch"), Some("Add"))
   assert_not_eq(parsed.get("branch"), Some("pytest"))
   assert_not_eq(parsed.get("parent_branch"), Some("Add"))
   assert_not_eq(parsed.get("parent_branch"), Some("pytest"))
+  assert_not_eq(parsed.get("parent_branch"), Some("integration"))
 }
 
 ///|
