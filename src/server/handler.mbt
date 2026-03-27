@@ -999,7 +999,8 @@ fn ServerState::sync_parent_child_lifecycle(
     _ => @phase.SupervisorLifecycle::Planning
   }
   let transitioned = match supervisor {
-    @phase.SupervisorLifecycle::Supervising(children~) =>
+    @phase.SupervisorLifecycle::Supervising(children~, ..)
+    | @phase.SupervisorLifecycle::WaveComplete(children~, ..) =>
       if child_exists(children, agent_id) {
         @phase.supervisor_transition(
           supervisor,

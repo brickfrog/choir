@@ -1337,6 +1337,47 @@ fn child_summary_for_slug(
 }
 
 ///|
+fn child_summary_terminal(summary : @phase.ChildLifecycleSummary) -> Bool {
+  match summary {
+    @phase.ChildLifecycleSummary::Done => true
+    @phase.ChildLifecycleSummary::Failed(_) => true
+    _ => false
+  }
+}
+
+///|
+fn all_children_terminal(children : Array[@phase.ChildLifecycle]) -> Bool {
+  for child in children {
+    if not(child_summary_terminal(child.summary)) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn promote_if_wave_complete(
+  supervisor : @phase.SupervisorLifecycle,
+) -> @phase.SupervisorLifecycle {
+  match supervisor {
+    @phase.SupervisorLifecycle::Supervising(children~, ..) =>
+      if all_children_terminal(children) {
+        match
+          @phase.supervisor_transition(
+            supervisor,
+            @phase.SupervisorEvent::AllChildrenComplete,
+          ) {
+          Transitioned(next) => next
+          InvalidTransition(_) => supervisor
+        }
+      } else {
+        supervisor
+      }
+    _ => supervisor
+  }
+}
+
+///|
 fn legacy_dev_phase_from_lifecycle(
   lifecycle : @phase.DevLifecycle,
 ) -> @phase.DevPhase {
@@ -1428,33 +1469,47 @@ pub fn apply_tl_event(
         }),
       )
     @phase.TLEvent::ChildCompleted(child_id~) =>
-      @phase.supervisor_transition(
-        supervisor,
-        @phase.SupervisorEvent::ChildUpdated(
-          child_id~,
-          summary=@phase.ChildLifecycleSummary::Done,
-        ),
-      )
+      match
+        @phase.supervisor_transition(
+          supervisor,
+          @phase.SupervisorEvent::ChildUpdated(
+            child_id~,
+            summary=@phase.ChildLifecycleSummary::Done,
+          ),
+        ) {
+        Transitioned(next) => Transitioned(promote_if_wave_complete(next))
+        invalid => invalid
+      }
     @phase.TLEvent::ChildFailed(child_id~, reason~) =>
-      @phase.supervisor_transition(
-        supervisor,
-        @phase.SupervisorEvent::ChildFailed(
-          child_id~,
-          reason=@phase.classify_failure(reason),
-        ),
-      )
+      match
+        @phase.supervisor_transition(
+          supervisor,
+          @phase.SupervisorEvent::ChildFailed(
+            child_id~,
+            reason=@phase.classify_failure(reason),
+          ),
+        ) {
+        Transitioned(next) => Transitioned(promote_if_wave_complete(next))
+        invalid => invalid
+      }
     @phase.TLEvent::PRMerged(url~, ..) =>
       match supervisor {
-        @phase.SupervisorLifecycle::Supervising(children~) =>
+        @phase.SupervisorLifecycle::Supervising(children~, ..)
+        | @phase.SupervisorLifecycle::WaveComplete(children~, ..) =>
           match child_summary_for_slug(children, url) {
             Some((child_id, _)) =>
-              @phase.supervisor_transition(
-                supervisor,
-                @phase.SupervisorEvent::ChildUpdated(
-                  child_id~,
-                  summary=@phase.ChildLifecycleSummary::Done,
-                ),
-              )
+              match
+                @phase.supervisor_transition(
+                  supervisor,
+                  @phase.SupervisorEvent::ChildUpdated(
+                    child_id~,
+                    summary=@phase.ChildLifecycleSummary::Done,
+                  ),
+                ) {
+                Transitioned(next) =>
+                  Transitioned(promote_if_wave_complete(next))
+                invalid => invalid
+              }
             None => InvalidTransition("child not found")
           }
         _ => InvalidTransition("no supervising children")

@@ -193,7 +193,7 @@ pub fn spawn_commands(
           ],
           workdir: None,
         })
-        cmds.push(git_worktree_add(workspace, branch))
+        cmds.push(git_worktree_add(workspace, branch, spec.parent_branch))
       }
       cmds.push(
         write_spawn_config(

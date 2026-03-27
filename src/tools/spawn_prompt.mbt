@@ -132,6 +132,9 @@ fn render_context_block(spec : PromptSpec) -> String {
 fn leaf_profile_text() -> String {
   "## Completion Protocol (Leaf)\n" +
   "You are a leaf agent in your own git worktree and branch.\n\n" +
+  "Scaffold-fork-converge note for TLs:\n" +
+  "- TLs can commit shared scaffold/foundation changes on the parent branch before calling `fork_wave`.\n" +
+  "- Child worktrees branch from the parent branch head at spawn time, so scaffold commits are inherited by all leaves in that wave.\n\n" +
   "When you are done:\n\n" +
   "1. Commit your changes with a descriptive message.\n" +
   "   - `git add <specific files>`\n" +

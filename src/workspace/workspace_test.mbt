@@ -48,10 +48,12 @@ test "canonical agent id uses parent branch and slug" {
 
 ///|
 test "git_worktree_add args" {
-  let cmd = @workspace.git_worktree_add("/path/to/worktree", "main.test-slug")
+  let cmd = @workspace.git_worktree_add(
+    "/path/to/worktree", "main.test-slug", "main",
+  )
   assert_eq(cmd.program, "git")
   assert_eq(cmd.args, [
-    "worktree", "add", "/path/to/worktree", "-b", "main.test-slug",
+    "worktree", "add", "/path/to/worktree", "-b", "main.test-slug", "main",
   ])
 }
 

@@ -58,7 +58,8 @@ pub(all) struct ChildLifecycle {
 pub(all) enum SupervisorLifecycle {
   Planning
   Dispatching
-  Supervising(children~ : Array[ChildLifecycle])
+  Supervising(children~ : Array[ChildLifecycle], wave~ : Int)
+  WaveComplete(wave~ : Int, children~ : Array[ChildLifecycle])
   OwnPRFiled(number~ : Int, url~ : String)
   Done
   Failed(reason~ : FailureReason)
@@ -137,6 +138,7 @@ pub(all) enum SupervisorEvent {
   ChildUpdated(child_id~ : String, summary~ : ChildLifecycleSummary)
   ChildRemoved(child_id~ : String)
   ChildFailed(child_id~ : String, reason~ : FailureReason)
+  AllChildrenComplete
   OwnPRFiled(number~ : Int, url~ : String)
 } derive(Show, Eq)
 
@@ -254,7 +256,7 @@ pub fn supervisor_exit_policy(
   match lifecycle {
     Planning => Allowed
     Dispatching => Deferred(message="Still dispatching children")
-    Supervising(children~) => {
+    Supervising(children~, ..) => {
       let mut active = 0
       for child in children {
         match child.summary {
@@ -268,6 +270,7 @@ pub fn supervisor_exit_policy(
         Deferred(message="Waiting for " + active.to_string() + " children")
       }
     }
+    WaveComplete(..) => Allowed
     OwnPRFiled(number~, url~) => Blocked(reason=OwnPROpen(number~, url~))
     Done => Allowed
     Failed(_) => Allowed
@@ -466,38 +469,100 @@ fn remove_child(
 }
 
 ///|
+fn children_all_terminal(children : Array[ChildLifecycle]) -> Bool {
+  let mut all_terminal = true
+  for child in children {
+    match child.summary {
+      Done | Failed(_) => ()
+      _ => all_terminal = false
+    }
+  }
+  all_terminal
+}
+
+///|
 pub fn supervisor_transition(
   lifecycle : SupervisorLifecycle,
   event : SupervisorEvent,
 ) -> TransitionResult[SupervisorLifecycle] {
   match (lifecycle, event) {
     (Planning, ChildSpawned(child~)) =>
-      Transitioned(Supervising(children=[child]))
+      Transitioned(Supervising(children=[child], wave=1))
     (Dispatching, ChildSpawned(child~)) =>
-      Transitioned(Supervising(children=[child]))
-    (Supervising(children~), ChildSpawned(child~)) => {
+      Transitioned(Supervising(children=[child], wave=1))
+    (Supervising(children~, wave~), ChildSpawned(child~)) => {
       let next = children.copy()
       next.push(child)
-      Transitioned(Supervising(children=next))
+      Transitioned(Supervising(children=next, wave~))
     }
+    (WaveComplete(wave~, ..), ChildSpawned(child~)) =>
+      Transitioned(Supervising(children=[child], wave=wave + 1))
     (Planning, OwnPRFiled(number~, url~)) =>
       Transitioned(OwnPRFiled(number~, url~))
-    (Supervising(children~), ChildUpdated(child_id~, summary~)) =>
-      Transitioned(
-        Supervising(children=update_child_summary(children, child_id, summary)),
+    (Dispatching, OwnPRFiled(number~, url~)) =>
+      Transitioned(OwnPRFiled(number~, url~))
+    (Supervising(..), OwnPRFiled(number~, url~)) =>
+      Transitioned(OwnPRFiled(number~, url~))
+    (WaveComplete(_, ..), OwnPRFiled(number~, url~)) =>
+      Transitioned(OwnPRFiled(number~, url~))
+    (Supervising(children~, wave~), ChildUpdated(child_id~, summary~)) => {
+      let updated = update_child_summary(children, child_id, summary)
+      if children_all_terminal(updated) {
+        Transitioned(WaveComplete(wave~, children=updated))
+      } else {
+        Transitioned(Supervising(children=updated, wave~))
+      }
+    }
+    (Supervising(children~, wave~), ChildFailed(child_id~, reason~)) => {
+      let updated = update_child_summary(
+        children,
+        child_id,
+        ChildLifecycleSummary::Failed(reason~),
       )
-    (Supervising(children~), ChildFailed(child_id~, reason~)) =>
+      if children_all_terminal(updated) {
+        Transitioned(WaveComplete(wave~, children=updated))
+      } else {
+        Transitioned(Supervising(children=updated, wave~))
+      }
+    }
+    (Supervising(children~, wave~), ChildRemoved(child_id~)) =>
       Transitioned(
-        Supervising(
-          children=update_child_summary(
-            children,
-            child_id,
-            ChildLifecycleSummary::Failed(reason~),
-          ),
-        ),
+        Supervising(children=remove_child(children, child_id), wave~),
       )
-    (Supervising(children~), ChildRemoved(child_id~)) =>
-      Transitioned(Supervising(children=remove_child(children, child_id)))
+    (WaveComplete(wave~, children~), ChildUpdated(child_id~, summary~)) => {
+      let updated = update_child_summary(children, child_id, summary)
+      if children_all_terminal(updated) {
+        Transitioned(WaveComplete(wave~, children=updated))
+      } else {
+        Transitioned(Supervising(children=updated, wave~))
+      }
+    }
+    (WaveComplete(wave~, children~), ChildFailed(child_id~, reason~)) => {
+      let updated = update_child_summary(
+        children,
+        child_id,
+        ChildLifecycleSummary::Failed(reason~),
+      )
+      if children_all_terminal(updated) {
+        Transitioned(WaveComplete(wave~, children=updated))
+      } else {
+        Transitioned(Supervising(children=updated, wave~))
+      }
+    }
+    (WaveComplete(wave~, children~), ChildRemoved(child_id~)) => {
+      let updated = remove_child(children, child_id)
+      if children_all_terminal(updated) {
+        Transitioned(WaveComplete(wave~, children=updated))
+      } else {
+        Transitioned(Supervising(children=updated, wave~))
+      }
+    }
+    (Supervising(children~, wave~), AllChildrenComplete) =>
+      if children_all_terminal(children) {
+        Transitioned(WaveComplete(wave~, children~))
+      } else {
+        InvalidTransition("children still active")
+      }
     (_, _) => InvalidTransition("invalid transition for SupervisorLifecycle")
   }
 }
@@ -756,9 +821,16 @@ fn supervisor_lifecycle_to_json(state : SupervisorLifecycle) -> Json {
   match state {
     Planning => { "tag": "Planning".to_json() }.to_json()
     Dispatching => { "tag": "Dispatching".to_json() }.to_json()
-    Supervising(children~) =>
+    Supervising(children~, wave~) =>
       {
         "tag": "Supervising".to_json(),
+        "children": children.map(child_lifecycle_to_json).to_json(),
+        "wave": wave.to_json(),
+      }.to_json()
+    WaveComplete(wave~, children~) =>
+      {
+        "tag": "WaveComplete".to_json(),
+        "wave": wave.to_json(),
         "children": children.map(child_lifecycle_to_json).to_json(),
       }.to_json()
     OwnPRFiled(number~, url~) =>
@@ -789,10 +861,30 @@ fn supervisor_lifecycle_from_json(json : Json) -> SupervisorLifecycle? {
               None => return None
             }
           }
-          Some(Supervising(children~))
+          let wave = match obj.get("wave") {
+            Some(Number(n, ..)) => n.to_int()
+            _ => 1
+          }
+          Some(Supervising(children~, wave~))
         }
         _ => None
       }
+    Some(String("WaveComplete")) => {
+      guard obj.get("wave") is Some(Number(w, ..)) else { return None }
+      match obj.get("children") {
+        Some(Array(children_json)) => {
+          let children = []
+          for child_json in children_json {
+            match child_lifecycle_from_json(child_json) {
+              Some(child) => children.push(child)
+              None => return None
+            }
+          }
+          Some(WaveComplete(wave=w.to_int(), children~))
+        }
+        _ => None
+      }
+    }
     Some(String("OwnPRFiled")) => {
       guard obj.get("number") is Some(Number(number, ..)) else { return None }
       guard obj.get("url") is Some(String(url)) else { return None }

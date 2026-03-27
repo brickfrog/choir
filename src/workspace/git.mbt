@@ -1,8 +1,12 @@
 ///|
-pub fn git_worktree_add(path : String, branch : String) -> Command {
+pub fn git_worktree_add(
+  path : String,
+  branch : String,
+  start_point : String,
+) -> Command {
   {
     program: "git",
-    args: ["worktree", "add", path, "-b", branch],
+    args: ["worktree", "add", path, "-b", branch, start_point],
     workdir: None,
   }
 }
