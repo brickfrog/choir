@@ -59,6 +59,26 @@ test "git_worktree_add args" {
 }
 
 ///|
+test "git_fetch_origin_branch_best_effort runs fetch in project dir" {
+  let cmd = @workspace.git_fetch_origin_branch_best_effort("/repo", "main")
+  assert_eq(cmd.program, "sh")
+  assert_eq(cmd.args[3], "/repo")
+  assert_eq(cmd.args[4], "main")
+  assert_true(cmd.args[1].contains("git fetch origin \"$2\""))
+}
+
+///|
+test "git_merge_ff_origin_branch_best_effort runs ff merge from origin" {
+  let cmd = @workspace.git_merge_ff_origin_branch_best_effort(
+    "/repo", "feature/x",
+  )
+  assert_eq(cmd.program, "sh")
+  assert_eq(cmd.args[3], "/repo")
+  assert_eq(cmd.args[4], "feature/x")
+  assert_true(cmd.args[1].contains("git merge --ff-only \"origin/$2\""))
+}
+
+///|
 test "parse_local_target supports zellij targets" {
   match @types.LocalTarget::parse("zellij-tab:howdy:leaf-a") {
     Some(target) => {
@@ -312,15 +332,19 @@ test "spawn_commands for worktree mode returns zellij tab" {
     spawn_depth: 0,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // cleanup, git worktree add, config.toml, config.local.toml, helpers, zellij new-tab
-  assert_eq(cmds.length(), 6)
+  // cleanup, fetch/merge parent, git worktree add, configs, helpers, zellij new-tab
+  assert_eq(cmds.length(), 8)
   assert_eq(cmds[0].program, "sh")
   assert_true(cmds[0].args[1].contains("git worktree remove --force"))
-  assert_eq(cmds[1].program, "git")
-  assert_eq(cmds[4].program, "sh")
-  assert_true(cmds[4].args[1].contains("choir leaf-tool"))
-  assert_eq(cmds[5].program, "zellij")
-  assert_eq(cmds[5].args[3], "new-tab")
+  assert_eq(cmds[1].program, "sh")
+  assert_true(cmds[1].args[1].contains("git fetch origin"))
+  assert_eq(cmds[2].program, "sh")
+  assert_true(cmds[2].args[1].contains("git merge --ff-only"))
+  assert_eq(cmds[3].program, "git")
+  assert_eq(cmds[6].program, "sh")
+  assert_true(cmds[6].args[1].contains("choir leaf-tool"))
+  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[7].args[3], "new-tab")
 }
 
 ///|
@@ -339,22 +363,22 @@ test "spawn_commands worktree config write content" {
     spawn_depth: 0,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 6)
-  assert_eq(cmds[2].program, "sh")
-  assert_true(cmds[2].args[3].contains("feature-a"))
-  assert_true(cmds[2].args[4].contains("default_role = \"dev\""))
-  assert_true(
-    cmds[2].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
-  )
-  assert_true(cmds[2].args[4].contains("terminal_session = \"exo\""))
-  assert_eq(cmds[3].program, "sh")
-  assert_true(cmds[3].args[4].contains("agent_id = \"main.feature-a\""))
-  assert_true(cmds[3].args[4].contains("parent_id = \"root\""))
-  assert_true(
-    cmds[3].args[4].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
-  )
+  assert_eq(cmds.length(), 8)
   assert_eq(cmds[4].program, "sh")
-  assert_eq(cmds[5].program, "zellij")
+  assert_true(cmds[4].args[3].contains("feature-a"))
+  assert_true(cmds[4].args[4].contains("default_role = \"dev\""))
+  assert_true(
+    cmds[4].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
+  )
+  assert_true(cmds[4].args[4].contains("terminal_session = \"exo\""))
+  assert_eq(cmds[5].program, "sh")
+  assert_true(cmds[5].args[4].contains("agent_id = \"main.feature-a\""))
+  assert_true(cmds[5].args[4].contains("parent_id = \"root\""))
+  assert_true(
+    cmds[5].args[4].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
+  )
+  assert_eq(cmds[6].program, "sh")
+  assert_eq(cmds[7].program, "zellij")
 }
 
 ///|
@@ -373,13 +397,13 @@ test "spawn_commands gemini worktree adds trust and settings" {
     spawn_depth: 0,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  assert_eq(cmds.length(), 8)
-  assert_eq(cmds[5].program, "choir")
-  assert_eq(cmds[6].program, "sh")
-  assert_eq(cmds[7].program, "zellij")
-  assert_eq(cmds[7].args[3], "new-tab")
+  assert_eq(cmds.length(), 10)
+  assert_eq(cmds[7].program, "choir")
+  assert_eq(cmds[8].program, "sh")
+  assert_eq(cmds[9].program, "zellij")
+  assert_eq(cmds[9].args[3], "new-tab")
   assert_true(
-    cmds[3].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
+    cmds[5].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
   )
 }
 
@@ -431,15 +455,15 @@ test "spawn_commands adds Gemini trust bootstrap" {
     spawn_depth: 0,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 8)
-  assert_eq(cmds[5].program, "choir")
-  assert_eq(cmds[5].args, [
+  assert_eq(cmds.length(), 10)
+  assert_eq(cmds[7].program, "choir")
+  assert_eq(cmds[7].args, [
     "trust-gemini-folder", "/project/.choir/worktrees/gemini-slug",
   ])
-  assert_eq(cmds[6].program, "sh")
-  assert_true(cmds[6].args[1].contains(".choir/gemini-settings.json"))
-  assert_true(cmds[6].args[4].contains("mcpServers"))
-  assert_true(cmds[6].args[4].contains("main.gemini-slug"))
+  assert_eq(cmds[8].program, "sh")
+  assert_true(cmds[8].args[1].contains(".choir/gemini-settings.json"))
+  assert_true(cmds[8].args[4].contains("mcpServers"))
+  assert_true(cmds[8].args[4].contains("main.gemini-slug"))
 }
 
 ///|
@@ -458,14 +482,14 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
     spawn_depth: 0,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  // cleanup, worktree add, config.toml, config.local.toml, helpers, .cursor/mcp.json, zellij new-tab
-  assert_eq(cmds.length(), 7)
-  assert_eq(cmds[5].program, "sh")
-  assert_true(cmds[5].args[1].contains(".cursor"))
-  assert_true(cmds[5].args[4].contains("mcpServers"))
-  assert_true(cmds[5].args[4].contains("main.feature-c"))
-  assert_eq(cmds[6].program, "zellij")
-  assert_eq(cmds[6].args[3], "new-tab")
+  // cleanup, fetch/merge parent, worktree add, configs, helpers, .cursor/mcp.json, zellij new-tab
+  assert_eq(cmds.length(), 9)
+  assert_eq(cmds[7].program, "sh")
+  assert_true(cmds[7].args[1].contains(".cursor"))
+  assert_true(cmds[7].args[4].contains("mcpServers"))
+  assert_true(cmds[7].args[4].contains("main.feature-c"))
+  assert_eq(cmds[8].program, "zellij")
+  assert_eq(cmds[8].args[3], "new-tab")
 }
 
 ///|
