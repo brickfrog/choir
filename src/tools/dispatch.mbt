@@ -1285,7 +1285,7 @@ pub async fn handle_request(
       }
       let resp = match
         parse_tool_request(req.name, req.role, project_dir, tool_args) {
-        Err(e) => @types.Response::Err(e)
+        Err(e) => @types.Response::Err(e.message())
         Ok(tool_req) =>
           dispatch(
             tool_req,
@@ -1377,7 +1377,7 @@ pub async fn dispatch_call(
 ) -> @types.Response {
   let tool_args = tool_args_from_map(call.args)
   match parse_tool_request(call.name, call.role, project_dir, tool_args) {
-    Err(e) => @types.Response::Err(e)
+    Err(e) => @types.Response::Err(e.message())
     Ok(tool_req) =>
       dispatch(
         tool_req,

@@ -1,4 +1,28 @@
 ///|
+pub(all) enum ParseError {
+  MissingField(field~ : String)
+  InvalidValue(field~ : String, value~ : String)
+  InvalidFormat(field~ : String, message~ : String)
+  UnknownTool(name~ : String)
+  UnknownRole(value~ : String)
+  UnknownAgentType(value~ : String)
+  UnknownTaskStatus(value~ : String)
+} derive(Show, Eq)
+
+///|
+pub fn ParseError::message(self : ParseError) -> String {
+  match self {
+    MissingField(field~) => "missing " + field
+    InvalidValue(field~, value~) => "invalid " + field + ": " + value
+    InvalidFormat(field~, message~) => "invalid " + field + ": " + message
+    UnknownTool(name~) => "unknown tool: " + name
+    UnknownRole(value~) => "invalid role: " + value
+    UnknownAgentType(value~) => "invalid agent_type: " + value
+    UnknownTaskStatus(value~) => "invalid status: " + value
+  }
+}
+
+///|
 fn parse_int(s : String) -> Int? {
   if s == "" {
     return None
@@ -128,10 +152,10 @@ fn validate_kv_key(s : String) -> Result[Unit, String] {
 }
 
 ///|
-fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, String] {
+fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
   let branch = get_arg_or_alias(args, "branch", "agent_id", "")
   if branch == "" {
-    return Err("missing branch")
+    return Err(ParseError::MissingField(field="branch"))
   }
   let parent_branch = match tool_args_get(args, "parent_branch") {
     Some(v) => if v == "" { None } else { Some(v) }
@@ -139,13 +163,16 @@ fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, String] {
   }
   match validate_branch(branch) {
     Ok(_) => ()
-    Err(e) => return Err("invalid branch: " + e)
+    Err(e) => return Err(ParseError::InvalidFormat(field="branch", message=e))
   }
   match parent_branch {
     Some(pb) =>
       match validate_branch(pb) {
         Ok(_) => ()
-        Err(e) => return Err("invalid parent_branch: " + e)
+        Err(e) =>
+          return Err(
+            ParseError::InvalidFormat(field="parent_branch", message=e),
+          )
       }
     None => ()
   }
@@ -167,18 +194,19 @@ fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, String] {
 }
 
 ///|
-fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, String] {
+fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, ParseError] {
   let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
   if pr_str == "" {
-    return Err("missing pr_number")
+    return Err(ParseError::MissingField(field="pr_number"))
   }
   let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
   if agent_id == "" {
-    return Err("missing agent_id")
+    return Err(ParseError::MissingField(field="agent_id"))
   }
   let pr_number = match tool_args_get_int(args, "pr_number") {
     Some(value) => value
-    None => return Err("invalid pr_number: " + pr_str)
+    None =>
+      return Err(ParseError::InvalidValue(field="pr_number", value=pr_str))
   }
   let branch = get_arg_or_alias(args, "branch", "agent_id", agent_id)
   let parent_branch = get_arg_or_alias(
@@ -189,11 +217,12 @@ fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, String] {
   )
   match validate_branch(branch) {
     Ok(_) => ()
-    Err(e) => return Err("invalid branch: " + e)
+    Err(e) => return Err(ParseError::InvalidFormat(field="branch", message=e))
   }
   match validate_branch(parent_branch) {
     Ok(_) => ()
-    Err(e) => return Err("invalid parent_branch: " + e)
+    Err(e) =>
+      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
   }
   Ok({
     pr_number,
@@ -299,30 +328,41 @@ fn slugify_task(task : String, index : Int) -> String {
 fn parse_rescue_leaf_args(
   project_dir : String,
   args : ToolArgs,
-) -> Result[RescueLeafArgs, String] {
+) -> Result[RescueLeafArgs, ParseError] {
   let task = tool_args_get(args, "task").unwrap_or("")
   if task == "" {
-    return Err("missing task")
+    return Err(ParseError::MissingField(field="task"))
   }
   let caller_id = match tool_args_get(args, "caller_id") {
-    Some(v) => if v == "" { return Err("missing caller_id") } else { v }
-    None => return Err("missing caller_id")
+    Some(v) =>
+      if v == "" {
+        return Err(ParseError::MissingField(field="caller_id"))
+      } else {
+        v
+      }
+    None => return Err(ParseError::MissingField(field="caller_id"))
   }
   let from_agent_id = tool_args_get(args, "from_agent_id").unwrap_or("")
   if from_agent_id == "" {
-    return Err("missing from_agent_id")
+    return Err(ParseError::MissingField(field="from_agent_id"))
   }
   match validate_branch(from_agent_id) {
     Ok(_) => ()
-    Err(e) => return Err("invalid from_agent_id: " + e)
+    Err(e) =>
+      return Err(ParseError::InvalidFormat(field="from_agent_id", message=e))
   }
   let new_slug = match tool_args_get(args, "new_slug") {
-    Some(v) => if v == "" { return Err("missing new_slug") } else { v }
-    None => return Err("missing new_slug")
+    Some(v) =>
+      if v == "" {
+        return Err(ParseError::MissingField(field="new_slug"))
+      } else {
+        v
+      }
+    None => return Err(ParseError::MissingField(field="new_slug"))
   }
   match validate_slug(new_slug) {
     Ok(_) => ()
-    Err(e) => return Err("invalid new_slug: " + e)
+    Err(e) => return Err(ParseError::InvalidFormat(field="new_slug", message=e))
   }
   let agent_type_str = tool_args_get(args, "agent_type").unwrap_or(
     "cursor_agent",
@@ -344,10 +384,10 @@ fn parse_rescue_leaf_args(
 fn parse_spawn_gemini_args(
   project_dir : String,
   args : ToolArgs,
-) -> Result[SpawnGeminiArgs, String] {
+) -> Result[SpawnGeminiArgs, ParseError] {
   let task = tool_args_get(args, "task").unwrap_or("")
   if task == "" {
-    return Err("missing task")
+    return Err(ParseError::MissingField(field="task"))
   }
   let caller_id = tool_args_get(args, "caller_id").unwrap_or("main")
   let slug = match tool_args_get(args, "slug") {
@@ -356,12 +396,13 @@ fn parse_spawn_gemini_args(
   }
   match validate_slug(slug) {
     Ok(_) => ()
-    Err(e) => return Err("invalid slug: " + e)
+    Err(e) => return Err(ParseError::InvalidFormat(field="slug", message=e))
   }
   let parent_branch = tool_args_get(args, "parent_branch").unwrap_or("main")
   match validate_branch(parent_branch) {
     Ok(_) => ()
-    Err(e) => return Err("invalid parent_branch: " + e)
+    Err(e) =>
+      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
   }
   let parent_session_id = lookup_parent_session_id(project_dir, args)
   Ok({ task, caller_id, slug, parent_branch, parent_session_id })
@@ -371,7 +412,7 @@ fn parse_spawn_gemini_args(
 pub fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
-) -> Result[ForkWaveArgs, String] {
+) -> Result[ForkWaveArgs, ParseError] {
   // Determine tasks: either per-leaf "tasks" array or shared "task" string
   let tasks_raw = tool_args_get(args, "tasks").unwrap_or("")
   let per_leaf_tasks = if tasks_raw != "" {
@@ -385,11 +426,17 @@ pub fn parse_fork_wave_args(
   } else {
     let count_str = tool_args_get(args, "count").unwrap_or("")
     if count_str == "" {
-      return Err("missing count (or provide tasks array)")
+      return Err(ParseError::MissingField(field="count"))
     }
     match tool_args_get_int(args, "count") {
       Some(c) => c
-      None => return Err("invalid count: " + count_str)
+      None =>
+        return Err(
+          ParseError::InvalidValue(
+            field="count",
+            value=tool_args_get(args, "count").unwrap_or(""),
+          ),
+        )
     }
   }
   let tasks = if per_leaf_tasks.length() > 0 {
@@ -412,7 +459,8 @@ pub fn parse_fork_wave_args(
   let parent_branch = get_arg_or_alias(args, "parent_branch", "branch", "main")
   match validate_branch(parent_branch) {
     Ok(_) => ()
-    Err(e) => return Err("invalid parent_branch: " + e)
+    Err(e) =>
+      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
   }
   let slug_prefix = tool_args_get(args, "slug_prefix").unwrap_or("wave")
   let normalized_slug_prefix = if slug_prefix == "" {
@@ -432,7 +480,8 @@ pub fn parse_fork_wave_args(
   }
   match validate_slug(normalized_slug_prefix) {
     Ok(_) => ()
-    Err(e) => return Err("invalid slug_prefix: " + e)
+    Err(e) =>
+      return Err(ParseError::InvalidFormat(field="slug_prefix", message=e))
   }
   let role_raw = tool_args_get(args, "role").unwrap_or("dev")
   let normalized_role = role_raw.trim().to_lower().to_string()
@@ -440,7 +489,7 @@ pub fn parse_fork_wave_args(
   let child_role = match role_norm {
     "dev" => @types.Role::Dev
     "tl" => @types.Role::TL
-    _ => return Err("invalid role: " + role_raw + " (expected dev or tl)")
+    _ => return Err(ParseError::UnknownRole(value=role_raw))
   }
   Ok({
     count,
@@ -459,18 +508,19 @@ pub fn parse_fork_wave_args(
 fn parse_leaf_spawn_args(
   args : ToolArgs,
   default_slug : String,
-) -> Result[LeafSpawnArgs, String] {
+) -> Result[LeafSpawnArgs, ParseError] {
   let slug = get_arg_or_alias(args, "slug", "branch", default_slug)
   let parent_branch = get_arg_or_alias(
     args, "parent_branch", "base_branch", "main",
   )
   match validate_slug(slug) {
     Ok(_) => ()
-    Err(e) => return Err("invalid slug: " + e)
+    Err(e) => return Err(ParseError::InvalidFormat(field="slug", message=e))
   }
   match validate_branch(parent_branch) {
     Ok(_) => ()
-    Err(e) => return Err("invalid parent_branch: " + e)
+    Err(e) =>
+      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
   }
   Ok({
     task: render_leaf_spawn_prompt(prompt_spec_from_tool_args(args)),
@@ -481,17 +531,25 @@ fn parse_leaf_spawn_args(
 }
 
 ///|
-fn parse_worker_spawn_args(args : ToolArgs) -> Result[WorkerSpawnArgs, String] {
+fn parse_worker_spawn_args(
+  args : ToolArgs,
+) -> Result[WorkerSpawnArgs, ParseError] {
   let prompt_spec = prompt_spec_from_tool_args(args)
   match prompt_spec.worker_type {
     "research" => ()
     "review" => ()
-    _ => return Err("invalid worker type: " + prompt_spec.worker_type)
+    _ =>
+      return Err(
+        ParseError::InvalidValue(
+          field="worker_type",
+          value=prompt_spec.worker_type,
+        ),
+      )
   }
   let slug = get_arg_or_alias(args, "slug", "agent_id", "inline-worker")
   match validate_slug(slug) {
     Ok(_) => ()
-    Err(e) => return Err("invalid slug: " + e)
+    Err(e) => return Err(ParseError::InvalidFormat(field="slug", message=e))
   }
   let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("gemini")
   let normalized_agent_type_str = if agent_type_str == "" {
@@ -515,22 +573,22 @@ fn parse_worker_spawn_args(args : ToolArgs) -> Result[WorkerSpawnArgs, String] {
 fn parse_remote_spawn_args(
   project_dir : String,
   args : ToolArgs,
-) -> Result[RemoteSpawnArgs, String] {
+) -> Result[RemoteSpawnArgs, ParseError] {
   let leaf_args = match parse_leaf_spawn_args(args, "remote-leaf") {
     Ok(value) => value
     Err(e) => return Err(e)
   }
   let ssh_target = tool_args_get(args, "ssh_target").unwrap_or("")
   if ssh_target == "" {
-    return Err("missing ssh_target")
+    return Err(ParseError::MissingField(field="ssh_target"))
   }
   let repo_url = tool_args_get(args, "repo_url").unwrap_or("")
   if repo_url == "" {
-    return Err("missing repo_url")
+    return Err(ParseError::MissingField(field="repo_url"))
   }
   let tcp_addr = tool_args_get(args, "tcp_addr").unwrap_or("")
   if tcp_addr == "" {
-    return Err("missing tcp_addr")
+    return Err(ParseError::MissingField(field="tcp_addr"))
   }
   Ok({
     task: leaf_args.task,
@@ -545,18 +603,20 @@ fn parse_remote_spawn_args(
 }
 
 ///|
-fn parse_task_create_args(args : ToolArgs) -> Result[TaskCreateArgs, String] {
+fn parse_task_create_args(
+  args : ToolArgs,
+) -> Result[TaskCreateArgs, ParseError] {
   let id = tool_args_get(args, "id").unwrap_or("")
   if id == "" {
-    return Err("missing id")
+    return Err(ParseError::MissingField(field="id"))
   }
   let title = tool_args_get(args, "title").unwrap_or("")
   if title == "" {
-    return Err("missing title")
+    return Err(ParseError::MissingField(field="title"))
   }
   match validate_slug(id) {
     Ok(_) => ()
-    Err(e) => return Err("invalid id: " + e)
+    Err(e) => return Err(ParseError::InvalidFormat(field="id", message=e))
   }
   let status = tool_args_get(args, "status").unwrap_or("todo")
   let normalized_status = if status == "" { "todo" } else { status }
@@ -574,10 +634,12 @@ fn parse_task_create_args(args : ToolArgs) -> Result[TaskCreateArgs, String] {
 }
 
 ///|
-fn parse_task_update_args(args : ToolArgs) -> Result[TaskUpdateArgs, String] {
+fn parse_task_update_args(
+  args : ToolArgs,
+) -> Result[TaskUpdateArgs, ParseError] {
   let id = tool_args_get(args, "id").unwrap_or("")
   if id == "" {
-    return Err("missing id")
+    return Err(ParseError::MissingField(field="id"))
   }
   let status = match tool_args_get(args, "status") {
     Some(v) =>
@@ -603,10 +665,10 @@ fn parse_task_update_args(args : ToolArgs) -> Result[TaskUpdateArgs, String] {
 fn parse_register_args(
   role : @types.Role,
   args : ToolArgs,
-) -> Result[RegisterArgs, String] {
+) -> Result[RegisterArgs, ParseError] {
   let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
   if agent_id == "" {
-    return Err("missing agent_id")
+    return Err(ParseError::MissingField(field="agent_id"))
   }
   let agent_type = match tool_args_get(args, "agent_type") {
     Some(v) =>
@@ -632,11 +694,17 @@ fn parse_register_args(
         match parse_int(t) {
           Some(d) =>
             if d < 0 || d > 1 {
-              return Err("spawn_depth must be 0 or 1")
+              return Err(
+                ParseError::InvalidFormat(
+                  field="spawn_depth",
+                  message="must be 0 or 1",
+                ),
+              )
             } else {
               d
             }
-          None => return Err("invalid spawn_depth: " + s)
+          None =>
+            return Err(ParseError::InvalidValue(field="spawn_depth", value=s))
         }
       }
     }
@@ -660,26 +728,26 @@ fn parse_register_args(
 }
 
 ///|
-fn parse_kv_key_args(args : ToolArgs) -> Result[KvKeyArgs, String] {
+fn parse_kv_key_args(args : ToolArgs) -> Result[KvKeyArgs, ParseError] {
   let key = tool_args_get(args, "key").unwrap_or("")
   if key == "" {
-    return Err("missing key")
+    return Err(ParseError::MissingField(field="key"))
   }
   match validate_kv_key(key) {
     Ok(_) => Ok({ key, })
-    Err(e) => Err(e)
+    Err(e) => Err(ParseError::InvalidFormat(field="key", message=e))
   }
 }
 
 ///|
-fn parse_kv_set_args(args : ToolArgs) -> Result[KvSetArgs, String] {
+fn parse_kv_set_args(args : ToolArgs) -> Result[KvSetArgs, ParseError] {
   let key_args = match parse_kv_key_args(args) {
     Ok(value) => value
     Err(e) => return Err(e)
   }
   let value = match tool_args_get(args, "value") {
     Some(v) => v
-    None => return Err("missing value")
+    None => return Err(ParseError::MissingField(field="value"))
   }
   Ok({ key: key_args.key, value })
 }
@@ -687,14 +755,14 @@ fn parse_kv_set_args(args : ToolArgs) -> Result[KvSetArgs, String] {
 ///|
 fn parse_mutex_acquire_args(
   args : ToolArgs,
-) -> Result[MutexAcquireArgs, String] {
+) -> Result[MutexAcquireArgs, ParseError] {
   let name = tool_args_get(args, "name").unwrap_or("")
   if name == "" {
-    return Err("missing name")
+    return Err(ParseError::MissingField(field="name"))
   }
   let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
   if agent_id == "" {
-    return Err("missing agent_id")
+    return Err(ParseError::MissingField(field="agent_id"))
   }
   let ttl_str = tool_args_get(args, "ttl_sec").unwrap_or("300")
   let ttl_sec = if ttl_str == "" ||
@@ -703,17 +771,18 @@ fn parse_mutex_acquire_args(
   } else {
     match tool_args_get_int(args, "ttl_sec") {
       Some(value) => value.to_int64()
-      None => return Err("invalid ttl_sec: " + ttl_str)
+      None =>
+        return Err(ParseError::InvalidValue(field="ttl_sec", value=ttl_str))
     }
   }
   Ok({ name, agent_id, ttl_sec })
 }
 
 ///|
-fn parse_mutex_name_args(args : ToolArgs) -> Result[MutexNameArgs, String] {
+fn parse_mutex_name_args(args : ToolArgs) -> Result[MutexNameArgs, ParseError] {
   let name = tool_args_get(args, "name").unwrap_or("")
   if name == "" {
-    return Err("missing name")
+    return Err(ParseError::MissingField(field="name"))
   }
   Ok({ name, })
 }
@@ -721,27 +790,28 @@ fn parse_mutex_name_args(args : ToolArgs) -> Result[MutexNameArgs, String] {
 ///|
 fn parse_mutex_release_args(
   args : ToolArgs,
-) -> Result[MutexReleaseArgs, String] {
+) -> Result[MutexReleaseArgs, ParseError] {
   let name_args = match parse_mutex_name_args(args) {
     Ok(value) => value
     Err(e) => return Err(e)
   }
   let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
   if agent_id == "" {
-    return Err("missing agent_id")
+    return Err(ParseError::MissingField(field="agent_id"))
   }
   Ok({ name: name_args.name, agent_id })
 }
 
 ///|
-fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, String] {
+fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
   let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
   if pr_str == "" {
-    return Err("missing pr_number")
+    return Err(ParseError::MissingField(field="pr_number"))
   }
   let pr_number = match tool_args_get_int(args, "pr_number") {
     Some(value) => value
-    None => return Err("invalid pr_number: " + pr_str)
+    None =>
+      return Err(ParseError::InvalidValue(field="pr_number", value=pr_str))
   }
   let parent_branch = tool_args_get(args, "parent_branch").unwrap_or("main")
   let normalized_parent_branch = if parent_branch == "" {
@@ -751,7 +821,8 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, String] {
   }
   match validate_branch(normalized_parent_branch) {
     Ok(_) => ()
-    Err(e) => return Err("invalid parent_branch: " + e)
+    Err(e) =>
+      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
   }
   Ok({
     pr_number,
@@ -773,10 +844,10 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, String] {
 ///|
 fn parse_caller_message_args(
   args : ToolArgs,
-) -> Result[CallerMessageArgs, String] {
+) -> Result[CallerMessageArgs, ParseError] {
   let caller_id = tool_args_get(args, "caller_id").unwrap_or("")
   if caller_id == "" {
-    return Err("missing caller_id")
+    return Err(ParseError::MissingField(field="caller_id"))
   }
   Ok({
     caller_id,
@@ -786,10 +857,12 @@ fn parse_caller_message_args(
 }
 
 ///|
-fn parse_send_message_args(args : ToolArgs) -> Result[SendMessageArgs, String] {
+fn parse_send_message_args(
+  args : ToolArgs,
+) -> Result[SendMessageArgs, ParseError] {
   let target_id = tool_args_get(args, "target_id").unwrap_or("")
   if target_id == "" {
-    return Err("missing target_id")
+    return Err(ParseError::MissingField(field="target_id"))
   }
   Ok({
     target_id,
@@ -805,36 +878,38 @@ fn parse_shutdown_args(args : ToolArgs) -> ShutdownArgs {
 }
 
 ///|
-fn parse_id_args(args : ToolArgs) -> Result[IdArgs, String] {
+fn parse_id_args(args : ToolArgs) -> Result[IdArgs, ParseError] {
   let id = tool_args_get(args, "id").unwrap_or("")
   if id == "" {
-    return Err("missing id")
+    return Err(ParseError::MissingField(field="id"))
   }
   Ok({ id, })
 }
 
 ///|
-fn parse_session_name_args(args : ToolArgs) -> Result[SessionNameArgs, String] {
+fn parse_session_name_args(
+  args : ToolArgs,
+) -> Result[SessionNameArgs, ParseError] {
   let name = tool_args_get(args, "name").unwrap_or("")
   if name == "" {
-    return Err("missing name")
+    return Err(ParseError::MissingField(field="name"))
   }
   match validate_slug(name) {
     Ok(_) => Ok({ name, })
-    Err(e) => Err("invalid name: " + e)
+    Err(e) => Err(ParseError::InvalidFormat(field="name", message=e))
   }
 }
 
 ///|
-fn validate_task_status(status : String) -> Result[Unit, String] {
+fn validate_task_status(status : String) -> Result[Unit, ParseError] {
   match status {
     "todo" | "in_progress" | "done" => Ok(())
-    _ => Err("invalid status: " + status)
+    _ => Err(ParseError::UnknownTaskStatus(value=status))
   }
 }
 
 ///|
-fn parse_agent_type(s : String) -> Result[@types.AgentType, String] {
+fn parse_agent_type(s : String) -> Result[@types.AgentType, ParseError] {
   match s {
     "claude" => Ok(@types.AgentType::Claude)
     "gemini" => Ok(@types.AgentType::Gemini)
@@ -843,18 +918,18 @@ fn parse_agent_type(s : String) -> Result[@types.AgentType, String] {
     "codex" => Ok(@types.AgentType::Codex)
     "cursor_agent" => Ok(@types.AgentType::CursorAgent)
     "cursoragent" => Ok(@types.AgentType::CursorAgent)
-    _ => Err("invalid agent_type: " + s)
+    _ => Err(ParseError::UnknownAgentType(value=s))
   }
 }
 
 ///|
-fn parse_reply_args(args : ToolArgs) -> Result[ReplyArgs, String] {
+fn parse_reply_args(args : ToolArgs) -> Result[ReplyArgs, ParseError] {
   let id = match tool_args_get(args, "id") {
     Some(v) => v
-    None => return Err("missing id")
+    None => return Err(ParseError::MissingField(field="id"))
   }
   if id == "" {
-    return Err("id cannot be empty")
+    return Err(ParseError::InvalidFormat(field="id", message="cannot be empty"))
   }
   let cancel = tool_args_get_bool(args, "cancel")
   let payload = tool_args_get(args, "payload").unwrap_or("")
@@ -867,7 +942,7 @@ fn parse_tool_request(
   _role : @types.Role,
   _project_dir : String,
   args : ToolArgs,
-) -> Result[ToolRequest, String] {
+) -> Result[ToolRequest, ParseError] {
   match name {
     "register" =>
       parse_register_args(_role, args).map(fn(a) { ToolRequest::Register(a) })
@@ -922,12 +997,12 @@ fn parse_tool_request(
     "kill_agent" => {
       let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
       if agent_id == "" {
-        Err("missing agent_id")
+        Err(ParseError::MissingField(field="agent_id"))
       } else {
         let reason = tool_args_get(args, "reason").unwrap_or("killed by parent")
         Ok(ToolRequest::KillAgent({ agent_id, reason }))
       }
     }
-    _ => Err("unknown tool: " + name)
+    _ => Err(ParseError::UnknownTool(name~))
   }
 }
