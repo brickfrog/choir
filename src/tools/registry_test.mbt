@@ -60,6 +60,18 @@ async fn mock_registry_ensure_pr_capture(
 }
 
 ///|
+async fn mock_auto_notify_ensure_pr(
+  _branch : String,
+  _parent_branch : String,
+  _project_dir : String,
+  _title : String?,
+  _body : String?,
+) -> Result[@tools.PullRequestInfo, String] {
+  @async.sleep(0)
+  Ok({ number: 99, url: "https://auto.test/pr", state: "OPEN" })
+}
+
+///|
 async fn mock_registry_runner_capture_workdir(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
@@ -278,6 +290,126 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
     Ok(map) => assert_eq(map.get("status"), Some("pr_created"))
     Err(msg) => fail("expected file_pr success: " + msg)
   }
+}
+
+///|
+async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
+  let project_dir = "/tmp/choir-file-pr-auto-notify-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir\""))
+  let tl_target = match
+    @types.LocalTarget::parse("zellij-tab:choir-session:auto-notify-tl") {
+    Some(t) => t
+    None => fail("expected parseable zellij target")
+  }
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.auto-notify-tl",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main.auto-notify-tl",
+      terminal_target: Some(tl_target),
+      host: @types.Host::Local,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    reg.upsert({
+      agent_id: "main.auto-notify-leaf",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::CursorAgent,
+      parent: Some("main.auto-notify-tl"),
+      workspace: project_dir,
+      branch: "main.auto-notify-leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: {
+      "caller_id": "main.auto-notify-leaf",
+      "branch": "main.auto-notify-leaf",
+      "parent_branch": "main",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    runner=mock_registry_runner,
+    ensure_branch_ready=mock_registry_branch_ready,
+    ensure_pr=mock_auto_notify_ensure_pr,
+    registry=Some(reg),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Ok(map) => assert_eq(map.get("pr_number"), Some("99"))
+    Err(msg) => fail("expected file_pr success: " + msg)
+  }
+  let log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(log.contains("[auto-notify] caller=main.auto-notify-leaf"))
+  assert_true(log.contains("parent=main.auto-notify-tl"))
+  let expected_payload = "[from: main.auto-notify-leaf] [PR READY] PR #99 filed: https://auto.test/pr"
+  assert_true(log.contains(expected_payload))
+}
+
+///|
+async test "dispatch file_pr logs auto-notify failure when parent is not resolvable" {
+  let project_dir = "/tmp/choir-file-pr-auto-notify-orphan-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir\""))
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.auto-notify-orphan",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::CursorAgent,
+      parent: None,
+      workspace: project_dir,
+      branch: "main.auto-notify-orphan",
+      terminal_target: None,
+      host: @types.Host::Local,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: {
+      "caller_id": "main.auto-notify-orphan",
+      "branch": "main.auto-notify-orphan",
+      "parent_branch": "main",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    runner=mock_registry_runner,
+    ensure_branch_ready=mock_registry_branch_ready,
+    ensure_pr=mock_auto_notify_ensure_pr,
+    registry=Some(reg),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Ok(map) => assert_eq(map.get("status"), Some("pr_created"))
+    Err(msg) => fail("expected file_pr success: " + msg)
+  }
+  let log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(log.contains("[auto-notify] resolve_parent_for_notify failed"))
+  assert_true(
+    log.contains("agent not found: no parent for main.auto-notify-orphan"),
+  )
 }
 
 ///|

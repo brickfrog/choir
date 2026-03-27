@@ -402,6 +402,7 @@ pub async fn dispatch(
                       branch~,
                     ),
                   )
+                  let delivery_log_path = project_dir + "/.choir/delivery.log"
                   match registry {
                     Some(reg) =>
                       match
@@ -418,7 +419,7 @@ pub async fn dispatch(
                           )
                           ignore(
                             @sys.append_file_sync(
-                              ".choir/delivery.log",
+                              delivery_log_path,
                               "[auto-notify] caller=" +
                               tracked_agent_id +
                               " parent=" +
@@ -439,7 +440,7 @@ pub async fn dispatch(
                               )
                               ignore(
                                 @sys.append_file_sync(
-                                  ".choir/delivery.log",
+                                  delivery_log_path,
                                   "[auto-notify] delivery failed error=" +
                                   e +
                                   "\n",
@@ -448,7 +449,22 @@ pub async fn dispatch(
                             }
                           }
                         }
-                        Err(_) => ()
+                        Err(e) => {
+                          @moontrace.error(
+                            "file_pr auto-notify parent resolution failed",
+                            fields=@moontrace.fields([
+                              ("error", e.message().to_json()),
+                            ]),
+                          )
+                          ignore(
+                            @sys.append_file_sync(
+                              delivery_log_path,
+                              "[auto-notify] resolve_parent_for_notify failed error=" +
+                              e.message() +
+                              "\n",
+                            ),
+                          )
+                        }
                       }
                     None => ()
                   }
