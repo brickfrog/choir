@@ -149,7 +149,9 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_codex.args[3].contains("mcp_servers.choir.command"))
   assert_eq(cmd_codex.args[4], "-c")
   assert_true(
-    cmd_codex.args[5].contains("mcp-stdio --role dev --name 'main.test-slug'"),
+    cmd_codex.args[5].contains(
+      "mcp-stdio --role dev --raw-stdio --name 'main.test-slug'",
+    ),
   )
   assert_eq(cmd_codex.args[6], "-c")
   assert_true(cmd_codex.args[7].contains("mcp_servers.choir.cwd=\"/path\""))

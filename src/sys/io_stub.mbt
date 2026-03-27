@@ -29,6 +29,11 @@ pub fn read_stdin_line(_max_size : Int) -> String? {
 }
 
 ///|
+pub fn read_stdin_exact(_size : Int) -> Bytes? {
+  None
+}
+
+///|
 pub fn exit(_code : Int) -> Unit {
 
 }

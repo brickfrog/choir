@@ -12,6 +12,10 @@ extern "C" fn c_stdin_read_line(buf : Bytes, max_size : Int) -> Int = "choir_std
 
 ///|
 #borrow(buf)
+extern "C" fn c_stdin_read(buf : Bytes, max_size : Int) -> Int = "choir_stdin_read"
+
+///|
+#borrow(buf)
 extern "C" fn c_stdout_write(buf : Bytes, size : Int) = "choir_stdout_write"
 
 ///|
@@ -114,6 +118,35 @@ pub fn read_stdin_line(max_size : Int) -> String? {
     }
   }
   None
+}
+
+///|
+pub fn read_stdin_exact(size : Int) -> Bytes? {
+  if size < 0 {
+    return None
+  }
+  if size == 0 {
+    return Some(Bytes::new(0))
+  }
+  let result = FixedArray::make(size, (0 : Byte))
+  let mut offset = 0
+  for ;; {
+    if offset >= size {
+      break
+    }
+    let remaining = size - offset
+    let chunk_size = if remaining < 4096 { remaining } else { 4096 }
+    let chunk = Bytes::new(chunk_size)
+    let n = c_stdin_read(chunk, chunk_size)
+    if n <= 0 {
+      return None
+    }
+    for i = 0; i < n; i = i + 1 {
+      result[offset + i] = chunk[i]
+    }
+    offset = offset + n
+  }
+  Some(result.unsafe_reinterpret_as_bytes())
 }
 
 ///|

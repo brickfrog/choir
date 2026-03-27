@@ -39,6 +39,7 @@ fn codex_mcp_override_args(
   let cmd = "i=0; while [ ! -S .choir/server.sock ] && [ \"$i\" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; " +
     "exec choir mcp-stdio" +
     role_args +
+    " --raw-stdio" +
     " --name " +
     @sys.shell_quote(agent_id) +
     " 2>> .choir/mcp-stdio.stderr.log"

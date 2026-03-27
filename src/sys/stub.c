@@ -52,6 +52,14 @@ int choir_stdin_read_line(char *buf, int max_size) {
     return -(len + 1);
 }
 
+int choir_stdin_read(char *buf, int max_size) {
+    if (max_size <= 0) {
+        return 0;
+    }
+    size_t n = fread(buf, 1, (size_t)max_size, stdin);
+    return (int)n;
+}
+
 int choir_getpid(void) {
     return (int)getpid();
 }

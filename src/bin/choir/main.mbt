@@ -605,30 +605,130 @@ fn mcp_response_line(resp : @mcp.JsonRpcResponse) -> String {
 }
 
 ///|
-fn mcp_server_response_line(id : @mcp.JsonRpcId, resp_line : String) -> String {
+fn mcp_response_wire(resp : @mcp.JsonRpcResponse, raw_stdio : Bool) -> String {
+  if raw_stdio {
+    resp.to_json_string() + "\n"
+  } else {
+    mcp_response_line(resp)
+  }
+}
+
+///|
+fn mcp_parse_content_length(line : String) -> Int? {
+  let trimmed = line.trim().to_string()
+  if not(trimmed.has_prefix("Content-Length:")) &&
+    not(trimmed.has_prefix("content-length:")) {
+    return None
+  }
+  let mut value = 0
+  let mut saw_digit = false
+  let mut saw_colon = false
+  for c in trimmed {
+    if not(saw_colon) {
+      if c == ':' {
+        saw_colon = true
+      }
+      continue
+    }
+    if c >= '0' && c <= '9' {
+      saw_digit = true
+      value = value * 10 + (c.to_int() - '0'.to_int())
+    }
+  }
+  if saw_digit {
+    Some(value)
+  } else {
+    None
+  }
+}
+
+///|
+fn mcp_read_next_message(
+  read_line : () -> String?,
+  read_exact : (Int) -> Bytes?,
+) -> String? {
+  let mut saw_headers = false
+  let mut content_length : Int? = None
+  for ;; {
+    let line = match read_line() {
+      Some(line) => line
+      None => return None
+    }
+    let trimmed = line.trim().to_string()
+    if trimmed == "" {
+      if not(saw_headers) {
+        continue
+      }
+      match content_length {
+        Some(len) =>
+          match read_exact(len) {
+            Some(body) => return Some(@utf8.decode_lossy(body))
+            None => return None
+          }
+        None => continue
+      }
+    }
+    match mcp_parse_content_length(trimmed) {
+      Some(len) => {
+        saw_headers = true
+        content_length = Some(len)
+      }
+      None => if saw_headers { continue } else { return Some(trimmed) }
+    }
+  }
+  None
+}
+
+///|
+fn mcp_server_response_line(
+  id : @mcp.JsonRpcId,
+  resp_line : String,
+  raw_stdio : Bool,
+) -> String {
   if resp_line == "" {
-    return mcp_response_line(
+    return mcp_response_wire(
       @mcp.error_response(id, @mcp.err_internal, "server connection closed"),
+      raw_stdio,
     )
   }
 
   match @transport.parse_response(resp_line) {
     Ok(internal_resp) =>
-      mcp_response_line(@mcp.from_internal_response(id, internal_resp))
+      mcp_response_wire(
+        @mcp.from_internal_response(id, internal_resp),
+        raw_stdio,
+      )
     Err(e) =>
-      mcp_response_line(
+      mcp_response_wire(
         @mcp.error_response(
           id,
           @mcp.err_internal,
           "failed to parse server response: " + e,
         ),
+        raw_stdio,
       )
   }
 }
 
 ///|
-fn mcp_write_server_response(id : @mcp.JsonRpcId, resp_line : String) -> Unit {
-  @sys.write_stdout(mcp_server_response_line(id, resp_line))
+fn mcp_write_server_response(
+  id : @mcp.JsonRpcId,
+  resp_line : String,
+  raw_stdio : Bool,
+) -> Unit {
+  @sys.write_stdout(mcp_server_response_line(id, resp_line, raw_stdio))
+}
+
+///|
+fn mcp_cli_raw_stdio(args : Array[String]) -> Bool {
+  let mut i = 0
+  while i < args.length() {
+    if args[i] == "--raw-stdio" {
+      return true
+    }
+    i = i + 1
+  }
+  false
 }
 
 ///|
@@ -651,22 +751,14 @@ fn mcp_run_request_loop(
   send_wire_request : (String) -> Bool,
   read_server_line : () -> String,
   write_output : (String) -> Unit,
+  raw_stdio : Bool,
   role : @types.Role,
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> McpUdsLoopExit {
   for ;; {
     let line = match read_input() {
-      Some(line) => {
-        let trimmed = line.trim().to_string()
-        // Skip MCP Content-Length headers and blank lines
-        if trimmed.length() == 0 ||
-          trimmed.has_prefix("Content-Length") ||
-          trimmed.has_prefix("content-length") {
-          continue
-        }
-        trimmed
-      }
+      Some(line) => line
       None => break
     }
     match @mcp.parse_jsonrpc_request(line) {
@@ -676,9 +768,13 @@ fn mcp_run_request_loop(
           None => continue
         }
         if rpc.req_method == @mcp.method_initialize {
-          write_output(mcp_response_line(@mcp.initialize_response(id)))
+          write_output(
+            mcp_response_wire(@mcp.initialize_response(id), raw_stdio),
+          )
         } else if rpc.req_method == @mcp.method_tools_list {
-          write_output(mcp_response_line(@mcp.tools_list_response(id)))
+          write_output(
+            mcp_response_wire(@mcp.tools_list_response(id), raw_stdio),
+          )
         } else {
           match
             @mcp.to_internal_request(
@@ -694,10 +790,11 @@ fn mcp_run_request_loop(
               )
               if not(send_wire_request(wire_req)) {
                 write_output(
-                  mcp_response_line(
+                  mcp_response_wire(
                     @mcp.error_response(
                       id, @mcp.err_internal, "server restarting, retry",
                     ),
+                    raw_stdio,
                   ),
                 )
                 return Reconnect
@@ -705,26 +802,33 @@ fn mcp_run_request_loop(
               let resp_line = read_server_line()
               if resp_line == "" {
                 write_output(
-                  mcp_response_line(
+                  mcp_response_wire(
                     @mcp.error_response(
                       id, @mcp.err_internal, "server restarting, retry",
                     ),
+                    raw_stdio,
                   ),
                 )
                 return Reconnect
               }
-              write_output(mcp_server_response_line(id, resp_line))
+              write_output(mcp_server_response_line(id, resp_line, raw_stdio))
             }
             Err(e) =>
               write_output(
-                mcp_response_line(@mcp.error_response(id, e.code, e.message)),
+                mcp_response_wire(
+                  @mcp.error_response(id, e.code, e.message),
+                  raw_stdio,
+                ),
               )
           }
         }
       }
       Err(e) =>
         write_output(
-          mcp_response_line(@mcp.error_response(Number(0), e.code, e.message)),
+          mcp_response_wire(
+            @mcp.error_response(Number(0), e.code, e.message),
+            raw_stdio,
+          ),
         )
     }
   }
@@ -734,6 +838,7 @@ fn mcp_run_request_loop(
 ///|
 fn mcp_run_uds_loop(
   uds_fd : Int,
+  raw_stdio : Bool,
   role : @types.Role,
   config : @types.Config,
   local_cfg : @types.LocalConfig,
@@ -750,10 +855,15 @@ fn mcp_run_uds_loop(
   }
 
   mcp_run_request_loop(
-    fn() { @sys.read_stdin_line(8192) },
+    fn() {
+      mcp_read_next_message(fn() { @sys.read_stdin_line(8192) }, fn(size) {
+        @sys.read_stdin_exact(size)
+      })
+    },
     fn(wire_req) { mcp_write_all_uds(uds_fd, @utf8.encode(wire_req)) },
     fn() { reader.read_line() },
     fn(output) { @sys.write_stdout(output) },
+    raw_stdio,
     role,
     config,
     local_cfg,
@@ -779,6 +889,7 @@ fn mcp_run() -> Unit {
     Err(_) => @types.LocalConfig::default()
   }
   let config = mcp_config_with_cli_overrides(base_config, local_cfg, args)
+  let raw_stdio = mcp_cli_raw_stdio(args)
   let role = match mcp_cli_override_role(args) {
     Some(role) => role
     None => @config.resolve_role(local_cfg.role, config)
@@ -794,7 +905,9 @@ fn mcp_run() -> Unit {
   if uds_fd >= 0 {
     // Run loop; on server restart, wait and reconnect automatically
     for ;; {
-      let exit_reason = mcp_run_uds_loop(uds_fd, role, config, local_cfg)
+      let exit_reason = mcp_run_uds_loop(
+        uds_fd, raw_stdio, role, config, local_cfg,
+      )
       @uds.close(uds_fd)
       if not(mcp_should_reconnect_after_uds_loop(exit_reason)) {
         break
@@ -847,17 +960,11 @@ fn mcp_run() -> Unit {
       }
 
       for ;; {
-        let line = match @sys.read_stdin_line(8192) {
-          Some(line) => {
-            let trimmed = line.trim().to_string()
-            // Skip MCP Content-Length headers and blank lines
-            if trimmed.length() == 0 ||
-              trimmed.has_prefix("Content-Length") ||
-              trimmed.has_prefix("content-length") {
-              continue
-            }
-            trimmed
-          }
+        let line = match
+          mcp_read_next_message(fn() { @sys.read_stdin_line(8192) }, fn(size) {
+            @sys.read_stdin_exact(size)
+          }) {
+          Some(line) => line
           None => break
         }
         match @mcp.parse_jsonrpc_request(line) {
@@ -868,10 +975,10 @@ fn mcp_run() -> Unit {
             }
             if rpc.req_method == @mcp.method_initialize {
               let resp = @mcp.initialize_response(id)
-              @sys.write_stdout_bytes(@mcp.response_to_bytes(resp))
+              @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
             } else if rpc.req_method == @mcp.method_tools_list {
               let resp = @mcp.tools_list_response(id)
-              @sys.write_stdout_bytes(@mcp.response_to_bytes(resp))
+              @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
             } else {
               match @mcp.to_internal_request(rpc, role) {
                 Ok(internal_req) => {
@@ -882,7 +989,7 @@ fn mcp_run() -> Unit {
                   try {
                     conn.write(@utf8.encode(wire_req))
                     let resp_line = reader.read_line()
-                    mcp_write_server_response(id, resp_line)
+                    mcp_write_server_response(id, resp_line, raw_stdio)
                   } catch {
                     err => {
                       let err_resp = @mcp.error_response(
@@ -890,20 +997,20 @@ fn mcp_run() -> Unit {
                         @mcp.err_internal,
                         "TCP error: \{err}",
                       )
-                      @sys.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                      @sys.write_stdout(mcp_response_wire(err_resp, raw_stdio))
                     }
                   }
                 }
                 Err(e) => {
                   let err_resp = @mcp.error_response(id, e.code, e.message)
-                  @sys.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+                  @sys.write_stdout(mcp_response_wire(err_resp, raw_stdio))
                 }
               }
             }
           }
           Err(e) => {
             let err_resp = @mcp.error_response(Number(0), e.code, e.message)
-            @sys.write_stdout_bytes(@mcp.response_to_bytes(err_resp))
+            @sys.write_stdout(mcp_response_wire(err_resp, raw_stdio))
           }
         }
       }
@@ -1387,34 +1494,6 @@ priv struct ZellijPaneRef {
 }
 
 ///|
-async fn capture_stdout_main(program : String, args : Array[String]) -> String {
-  let (reader, writer) = @process.read_from_process() catch { _ => return "" }
-  let pid = @process.spawn_orphan(program, args[:], stdout=writer) catch {
-    _ => {
-      reader.close()
-      return ""
-    }
-  }
-  let buf = FixedArray::make(65536, (0 : Byte))
-  let mut total = 0
-  for ;; {
-    if total >= buf.length() {
-      break
-    }
-    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
-      _ => 0
-    }
-    if n == 0 {
-      break
-    }
-    total = total + n
-  }
-  reader.close()
-  ignore(@process.wait_pid(pid) catch { _ => -1 })
-  @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
-}
-
-///|
 fn zellij_json_bool(value : Json?) -> Bool {
   match value {
     Some(True) => true
@@ -1433,7 +1512,7 @@ fn zellij_json_string(value : Json?) -> String {
 
 ///|
 async fn zellij_list_panes(session : String) -> Array[ZellijPaneRef] {
-  let output = capture_stdout_main("zellij", [
+  let output = @exec.capture_stdout("zellij", [
     "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
   ])
   let panes = []
@@ -1715,6 +1794,54 @@ test "mcp registration infers zellij TL terminal target for top-level session" {
 }
 
 ///|
+test "mcp framed reader parses Content-Length bodies without trailing newline" {
+  let body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}"
+  let body_len = @utf8.encode(body).length()
+  let lines = ["Content-Length: " + body_len.to_string(), ""]
+  let mut line_index = 0
+  let msg = mcp_read_next_message(
+    fn() {
+      if line_index < lines.length() {
+        let next = lines[line_index]
+        line_index = line_index + 1
+        Some(next)
+      } else {
+        None
+      }
+    },
+    fn(size) { if size == body_len { Some(@utf8.encode(body)) } else { None } },
+  )
+  match msg {
+    Some(line) => assert_eq(line, body)
+    None => fail("expected framed MCP body")
+  }
+}
+
+///|
+test "mcp framed reader preserves raw line mode for newline-delimited JSON" {
+  let mut used_exact = false
+  let msg = mcp_read_next_message(
+    fn() {
+      Some(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}",
+      )
+    },
+    fn(_) {
+      used_exact = true
+      None
+    },
+  )
+  match msg {
+    Some(line) =>
+      assert_eq(
+        line, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}",
+      )
+    None => fail("expected raw MCP line")
+  }
+  assert_false(used_exact)
+}
+
+///|
 test "mcp request loop returns InputClosed after successful task call" {
   let requests = [
     "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}", "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"task_create\",\"arguments\":{\"id\":\"loop-task\",\"title\":\"Loop Task\"}}}",
@@ -1753,6 +1880,7 @@ test "mcp request loop returns InputClosed after successful task call" {
       )
     },
     fn(output) { outputs.push(output) },
+    false,
     @types.Role::TL,
     { ..@types.Config::default(), agent_id: Some("smoke-loop") },
     @types.LocalConfig::default(),
@@ -1785,6 +1913,7 @@ test "mcp request loop returns Reconnect on wire write failure" {
       ""
     },
     fn(output) { outputs.push(output) },
+    false,
     @types.Role::TL,
     @types.Config::default(),
     @types.LocalConfig::default(),
@@ -1814,6 +1943,7 @@ test "mcp request loop returns Reconnect on empty server response" {
       ""
     },
     fn(output) { outputs.push(output) },
+    false,
     @types.Role::TL,
     @types.Config::default(),
     @types.LocalConfig::default(),
@@ -1976,7 +2106,7 @@ fn smoke_script() -> String {
     #|'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     #|'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"task_create","arguments":{"id":"runtime-proof-task-1","title":"Runtime Proof Task 1"}}}' \
     #|> "$ROOT/first.reqs.jsonl"
-    #|(cd "$ROOT/repo" && cat "$ROOT/first.reqs.jsonl" | timeout 8 "$BIN" mcp-stdio --name smoke-proof >"$ROOT/first.out" 2>"$ROOT/first.err")
+    #|(cd "$ROOT/repo" && cat "$ROOT/first.reqs.jsonl" | timeout 8 "$BIN" mcp-stdio --raw-stdio --name smoke-proof >"$ROOT/first.out" 2>"$ROOT/first.err")
     #|grep -F '"protocolVersion":"2024-11-05"' "$ROOT/first.out" >/dev/null
     #|grep -F 'runtime-proof-task-1' "$ROOT/first.out" >/dev/null
     #|test -f "$ROOT/repo/.choir/tasks/runtime-proof-task-1.json"
@@ -1990,7 +2120,7 @@ fn smoke_script() -> String {
     #|(
     #|  cd "$ROOT/repo" &&
     #|  { cat "$ROOT/hold.reqs.jsonl"; sleep 2; } |
-    #|    "$BIN" mcp-stdio --name hold-open >"$ROOT/hold.out" 2>"$ROOT/hold.err"
+    #|    "$BIN" mcp-stdio --raw-stdio --name hold-open >"$ROOT/hold.out" 2>"$ROOT/hold.err"
     #|) &
     #|echo $! > "$ROOT/hold.pid"
     #|i=0
@@ -2002,7 +2132,7 @@ fn smoke_script() -> String {
     #|  i=$((i + 1))
     #|done
     #|grep -F '"protocolVersion":"2024-11-05"' "$ROOT/hold.out" >/dev/null
-    #|(cd "$ROOT/repo" && cat "$ROOT/second.reqs.jsonl" | timeout 8 "$BIN" mcp-stdio --name second-client >"$ROOT/second.out" 2>"$ROOT/second.err")
+    #|(cd "$ROOT/repo" && cat "$ROOT/second.reqs.jsonl" | timeout 8 "$BIN" mcp-stdio --raw-stdio --name second-client >"$ROOT/second.out" 2>"$ROOT/second.err")
     #|wait "$(cat "$ROOT/hold.pid")"
     #|grep -F 'runtime-proof-task-2' "$ROOT/second.out" >/dev/null
     #|test -f "$ROOT/repo/.choir/tasks/runtime-proof-task-2.json"
@@ -2074,7 +2204,7 @@ fn smoke_leaf_script() -> String {
     #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
     #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fork_wave","arguments":{"caller_id":"root-smoke","slug_prefix":"$slug","count":"1","agent_type":"$agent_type","parent_branch":"main","task":"Make a tiny doc-only change to .choir/context/common.md, run moon fmt and moon test --target native, commit it, then use file_pr and notify_parent with the returned PR URL. Do not use raw gh commands.","read_first":".choir/context/common.md\n.choir/context/dev.md","done_criteria":"A PR is filed through file_pr and the parent has been notified."}}}
     #|EOF
-    #|  (cd "$ROOT/repo" && cat "$req" | timeout 120 "$BIN" mcp-stdio --name root-smoke >"$ROOT/$slug.out" 2>"$ROOT/$slug.err")
+    #|  (cd "$ROOT/repo" && cat "$req" | timeout 120 "$BIN" mcp-stdio --raw-stdio --name root-smoke >"$ROOT/$slug.out" 2>"$ROOT/$slug.err")
     #|}
     #|wait_for_pr() {
     #|  branch="$1"
@@ -2241,7 +2371,7 @@ fn smoke_review_script() -> String {
     #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
     #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fork_wave","arguments":{"caller_id":"root-smoke","slug_prefix":"$MOON_SLUG","count":"1","agent_type":"moon_pilot","parent_branch":"main","task":"Make a tiny doc-only change to .choir/context/common.md, run moon fmt and moon test --target native, commit it, file a PR through file_pr, notify_parent with the returned PR URL, and remain available in the session for follow-up review feedback. Do not use raw gh commands.","read_first":".choir/context/common.md\n.choir/context/dev.md","done_criteria":"A PR is filed through file_pr, the parent has been notified, and you remain available for review feedback."}}}
     #|EOF
-    #|(cd "$ROOT/repo" && cat "$ROOT/moon.req.jsonl" | timeout 120 "$BIN" mcp-stdio --name root-smoke >"$ROOT/moon.out" 2>"$ROOT/moon.err")
+    #|(cd "$ROOT/repo" && cat "$ROOT/moon.req.jsonl" | timeout 120 "$BIN" mcp-stdio --raw-stdio --name root-smoke >"$ROOT/moon.out" 2>"$ROOT/moon.err")
     #|wait_for_pr() {
     #|  branch="$1"
     #|  out="$2"
@@ -2366,7 +2496,7 @@ fn smoke_e2e_script() -> String {
     #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
     #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fork_wave","arguments":{"caller_id":"root-smoke","slug_prefix":"$MOON_SLUG","count":"1","agent_type":"moon_pilot","parent_branch":"$ROOT_BRANCH","task":"Make a tiny doc-only change to .choir/context/common.md, run moon fmt and moon test --target native, commit it, file a PR through file_pr, notify_parent with the returned PR URL, and remain available in the session for follow-up review feedback. Do not use raw gh commands.","read_first":".choir/context/common.md\n.choir/context/dev.md","done_criteria":"A PR is filed through file_pr, the parent has been notified, and you remain available for review feedback."}}}
     #|EOF
-    #|(cd "$ROOT/repo" && cat "$ROOT/moon.req.jsonl" | timeout 120 "$BIN" mcp-stdio --name root-smoke >"$ROOT/moon.out" 2>"$ROOT/moon.err")
+    #|(cd "$ROOT/repo" && cat "$ROOT/moon.req.jsonl" | timeout 120 "$BIN" mcp-stdio --raw-stdio --name root-smoke >"$ROOT/moon.out" 2>"$ROOT/moon.err")
     #|wait_for_pr() {
     #|  branch="$1"
     #|  out="$2"
@@ -2463,7 +2593,7 @@ fn smoke_e2e_script() -> String {
     #|{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
     #|{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"merge_pr","arguments":{"caller_id":"root-smoke","pr_number":"$MOON_PR","parent_branch":"$ROOT_BRANCH"}}}
     #|EOF
-    #|(cd "$ROOT/repo" && cat "$ROOT/merge.req.jsonl" | timeout 60 "$BIN" mcp-stdio --name root-smoke >"$ROOT/merge.out" 2>"$ROOT/merge.err")
+    #|(cd "$ROOT/repo" && cat "$ROOT/merge.req.jsonl" | timeout 60 "$BIN" mcp-stdio --raw-stdio --name root-smoke >"$ROOT/merge.out" 2>"$ROOT/merge.err")
     #|wait_for_pr_merged "$MOON_PR"
     #|wait_for_untracked "$MOON_BRANCH"
     #|echo "e2e smoke ok: moon pilot PR was reviewed and merged via choir"
@@ -2722,9 +2852,9 @@ test "smoke self exe resolves relative binary path" {
 ///|
 test "smoke script covers EOF and multi-client checks" {
   let script = smoke_script()
-  assert_true(script.contains("mcp-stdio --name smoke-proof"))
-  assert_true(script.contains("mcp-stdio --name hold-open"))
-  assert_true(script.contains("mcp-stdio --name second-client"))
+  assert_true(script.contains("mcp-stdio --raw-stdio --name smoke-proof"))
+  assert_true(script.contains("mcp-stdio --raw-stdio --name hold-open"))
+  assert_true(script.contains("mcp-stdio --raw-stdio --name second-client"))
   assert_true(script.contains("runtime-proof-task-1"))
   assert_true(script.contains("runtime-proof-task-2"))
   assert_true(script.contains("validation error:"))
@@ -2951,6 +3081,7 @@ fn init_codex_mcp_override_args(
   let cmd = "i=0; while [ ! -S .choir/server.sock ] && [ \"$i\" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; " +
     "exec choir mcp-stdio" +
     role_args +
+    " --raw-stdio" +
     " --name " +
     init_shell_quote(agent_id) +
     " 2>> .choir/mcp-stdio.stderr.log"
@@ -3025,6 +3156,7 @@ test "init TL launch command supports codex" {
   assert_true(cmd.contains("'--dangerously-bypass-approvals-and-sandbox'"))
   assert_true(cmd.contains("'--no-alt-screen'"))
   assert_true(cmd.contains("'mcp_servers.choir.command=\"sh\"'"))
+  assert_true(cmd.contains("mcp-stdio --raw-stdio --name"))
   assert_true(cmd.contains("'mcp_servers.choir.cwd=\"/tmp/choir repo\"'"))
   assert_true(cmd.contains("'-C' '/tmp/choir repo'"))
   assert_false(cmd.contains("--mcp-config"))
@@ -3499,7 +3631,7 @@ fn init_run() -> Unit {
         Ok(cfg) => cfg
         Err(_) => @types.Config::default()
       }
-      let current_branch_raw = capture_stdout_main("git", [
+      let current_branch_raw = @exec.capture_stdout("git", [
         "branch", "--show-current",
       ])
       let current_branch_trimmed = current_branch_raw.trim().to_string()
