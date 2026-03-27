@@ -430,6 +430,72 @@ pub async fn dispatch(
                       branch~,
                     ),
                   )
+                  let delivery_log_path = project_dir + "/.choir/delivery.log"
+                  match registry {
+                    Some(reg) =>
+                      match
+                        resolve_parent_for_notify(
+                          project_dir, session, reg, tracked_agent_id,
+                        ) {
+                        Ok(parent) => {
+                          let notify_msg = "[PR READY] PR #" +
+                            pr.number.to_string() +
+                            " filed: " +
+                            pr.url
+                          let delivery = @message.plan_delivery(
+                            parent, tracked_agent_id, notify_msg, "success",
+                          )
+                          ignore(
+                            @sys.append_file_sync(
+                              delivery_log_path,
+                              "[auto-notify] caller=" +
+                              tracked_agent_id +
+                              " parent=" +
+                              parent.agent_id.to_string() +
+                              " delivery=" +
+                              delivery.to_string() +
+                              "\n",
+                            ),
+                          )
+                          match execute_delivery(delivery, runner) {
+                            Ok(_) => ()
+                            Err(e) => {
+                              @moontrace.error(
+                                "file_pr auto-notify delivery failed",
+                                fields=@moontrace.fields([
+                                  ("error", e.to_json()),
+                                ]),
+                              )
+                              ignore(
+                                @sys.append_file_sync(
+                                  delivery_log_path,
+                                  "[auto-notify] delivery failed error=" +
+                                  e +
+                                  "\n",
+                                ),
+                              )
+                            }
+                          }
+                        }
+                        Err(e) => {
+                          @moontrace.error(
+                            "file_pr auto-notify parent resolution failed",
+                            fields=@moontrace.fields([
+                              ("error", e.message().to_json()),
+                            ]),
+                          )
+                          ignore(
+                            @sys.append_file_sync(
+                              delivery_log_path,
+                              "[auto-notify] resolve_parent_for_notify failed error=" +
+                              e.message() +
+                              "\n",
+                            ),
+                          )
+                        }
+                      }
+                    None => ()
+                  }
                   @types.Response::ok_values({
                     "status": String::to_json("pr_created"),
                     "pr_number": Int::to_json(pr.number),
