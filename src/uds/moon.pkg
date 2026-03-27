@@ -4,4 +4,8 @@ import {
 
 options(
   "native-stub": [ "stub.c" ],
+  targets: {
+    "uds.mbt": [ "native" ],
+    "uds_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+  },
 )

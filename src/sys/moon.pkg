@@ -4,4 +4,8 @@ import {
 
 options(
   "native-stub": [ "stub.c" ],
+  targets: {
+    "io.mbt": [ "native" ],
+    "io_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+  },
 )

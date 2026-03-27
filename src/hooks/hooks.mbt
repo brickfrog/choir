@@ -126,47 +126,24 @@ pub fn HookResponse::to_json_string(self : HookResponse) -> String {
 }
 
 ///|
-fn find_substring(s : String, sub : String, start : Int) -> Int {
-  if sub.length() == 0 {
-    return start
-  }
-  if start >= s.length() {
-    return -1
-  }
-  for i = start; i <= s.length() - sub.length(); i = i + 1 {
-    let mut is_match = true
-    for j = 0; j < sub.length(); j = j + 1 {
-      if s[i + j] != sub[j] {
-        is_match = false
-        break
-      }
-    }
-    if is_match {
-      return i
-    }
-  }
-  -1
-}
-
-///|
 fn get_string_value(json : String, key : String) -> String? {
   let key_pattern = "\"" + key + "\":\""
-  let i = find_substring(json, key_pattern, 0)
-  if i == -1 {
-    None
-  } else {
-    let start = i + key_pattern.length()
-    let mut end = start
-    while end < json.length() {
-      if json[end] == '"' && (end == 0 || json[end - 1] != '\\') {
-        break
+  match json.find(key_pattern) {
+    None => None
+    Some(i) => {
+      let start = i + key_pattern.length()
+      let mut end = start
+      while end < json.length() {
+        if json[end] == '"' && (end == 0 || json[end - 1] != '\\') {
+          break
+        }
+        end = end + 1
       }
-      end = end + 1
-    }
-    if end >= json.length() {
-      None
-    } else {
-      Some(json[start:end].to_string())
+      if end >= json.length() {
+        None
+      } else {
+        Some(json[start:end].to_string())
+      }
     }
   }
 }
@@ -235,9 +212,9 @@ pub fn HookResponse::from_json_string(line : String) -> HookResponse? {
     None => {
       // Try boolean without quotes
       let key_pattern = "\"continue\":"
-      let i = find_substring(line, key_pattern, 0)
-      if i == -1 {
-        return None
+      let i = match line.find(key_pattern) {
+        Some(idx) => idx
+        None => return None
       }
       let start = i + key_pattern.length()
       let rest = line[start:].to_string()
