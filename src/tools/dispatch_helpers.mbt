@@ -234,6 +234,17 @@ pub async fn execute_delivery(
   fn delivery_timestamp() -> String {
     @env.now().reinterpret_as_int64().to_string()
   }
+  fn normalize_log_error(error : String) -> String {
+    let buf = StringBuilder::new()
+    for c in error {
+      if c == '\n' || c == '\r' {
+        buf.write_char(' ')
+      } else {
+        buf.write_char(c)
+      }
+    }
+    buf.to_string()
+  }
   fn log_delivery_retry(
     target : String,
     attempt : Int,
@@ -252,7 +263,7 @@ pub async fn execute_delivery(
         " delay_ms=" +
         delay_ms.to_string() +
         " error=" +
-        error +
+        normalize_log_error(error) +
         "\n",
       ),
     )
@@ -266,7 +277,7 @@ pub async fn execute_delivery(
         " target=" +
         target +
         " error=" +
-        error +
+        normalize_log_error(error) +
         "\n",
       ),
     )
@@ -278,13 +289,20 @@ pub async fn execute_delivery(
     let backoff_ms = [1000, 2000, 4000]
     let mut last_error = "unknown delivery error"
     for attempt = 0; attempt < 4; attempt = attempt + 1 {
+      let mut run_threw = false
       let statuses = runner([cmd]) catch {
         e => {
           last_error = e.to_string()
-          continue
+          run_threw = true
+          []
         }
       }
-      match ensure_success(statuses) {
+      let attempt_result = if run_threw {
+        Err(last_error)
+      } else {
+        ensure_success(statuses)
+      }
+      match attempt_result {
         Ok(_) => return Ok(())
         Err(e) => last_error = e
       }

@@ -1,11 +1,19 @@
 ///|
 fn test_counter_path(name : String) -> String {
-  "/tmp/choir-delivery-retry-" + name + ".count"
+  "/tmp/choir-delivery-retry-" +
+  name +
+  "-" +
+  @sys.get_pid().to_string() +
+  ".count"
 }
 
 ///|
 fn test_sleep_path(name : String) -> String {
-  "/tmp/choir-delivery-retry-" + name + ".sleep"
+  "/tmp/choir-delivery-retry-" +
+  name +
+  "-" +
+  @sys.get_pid().to_string() +
+  ".sleep"
 }
 
 ///|
@@ -73,6 +81,30 @@ async fn record_sleep_failure(ms : Int) -> Unit {
 }
 
 ///|
+async fn runner_throw_three_then_succeed(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let attempt = increment_counter(test_counter_path("throws"))
+  if attempt <= 3 {
+    fail("simulated runner exception")
+  }
+  let statuses = []
+  for _ in cmds {
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+async fn record_sleep_throws(ms : Int) -> Unit {
+  ignore(
+    @sys.append_file_sync(test_sleep_path("throws"), ms.to_string() + "\n"),
+  )
+  @async.sleep(0)
+}
+
+///|
 fn sample_delivery(text : String) -> @message.DeliveryMethod {
   let target = @types.LocalTarget::parse("zellij-pane:test:terminal_1").unwrap()
   @message.DeliveryMethod::LocalTerminalInput(target, text)
@@ -108,4 +140,20 @@ async test "execute_delivery returns error after exhausting retries" {
   }
   assert_eq(read_counter(test_counter_path("failure")), 4)
   assert_eq(@sys.read_file(test_sleep_path("failure")), "1000\n2000\n4000\n")
+}
+
+///|
+async test "execute_delivery retries and sleeps when runner throws" {
+  reset_test_files("throws")
+  let result = execute_delivery(
+    sample_delivery("hello throws"),
+    runner_throw_three_then_succeed,
+    sleep_fn=record_sleep_throws,
+  )
+  match result {
+    Ok(_) => ()
+    Err(e) => fail("expected delivery success after thrown retries: " + e)
+  }
+  assert_eq(read_counter(test_counter_path("throws")), 4)
+  assert_eq(@sys.read_file(test_sleep_path("throws")), "1000\n2000\n4000\n")
 }
