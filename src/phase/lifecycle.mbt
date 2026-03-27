@@ -1289,3 +1289,25 @@ pub fn remove_child_from_supervisor_lifecycle(
     InvalidTransition(_) => ()
   }
 }
+
+///|
+pub impl StateMachine for SupervisorLifecycle with machine_name(_) -> String {
+  "supervisor"
+}
+
+///|
+pub impl StateMachine for SupervisorLifecycle with can_exit(self) -> StopCheckResult {
+  match supervisor_exit_policy(self) {
+    Blocked(reason~) => MustBlock(exit_block_reason_message(reason))
+    Deferred(message~) => ShouldNudge(message)
+    Allowed => Clean
+  }
+}
+
+///|
+pub fn SupervisorLifecycle::transition(
+  self : SupervisorLifecycle,
+  event : SupervisorEvent,
+) -> TransitionResult[SupervisorLifecycle] {
+  supervisor_transition(self, event)
+}
