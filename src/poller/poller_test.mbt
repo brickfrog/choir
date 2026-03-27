@@ -147,19 +147,16 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
 }
 
 ///|
-async test "tick_with clamps failure counter once delay is saturated" {
+async test "tick_with clamps failure counter at max bound" {
   let ps = @poller.PollerState::new()
   ps.track(14, "main.leaf", "main.leaf", "main", "u", 100L)
-  ps.tick_with(200L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
-  ps.tick_with(260L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
-  ps.tick_with(380L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
-  ps.tick_with(620L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
-  ps.tick_with(920L, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
+  let mut now = 200L
+  for i = 0; i < 12; i = i + 1 {
+    ps.tick_with(now, 3600L, mock_poll_failure_sentinel, fn(_, _) { () })
+    now = now + 300L
+  }
   match ps.get(14) {
-    Some(t) => {
-      assert_eq(t.consecutive_failures, 4)
-      assert_eq(t.backoff_until, 1220L)
-    }
+    Some(t) => assert_eq(t.consecutive_failures, 10)
     None => fail("expected PR 14")
   }
 }

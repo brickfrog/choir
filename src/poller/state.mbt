@@ -430,9 +430,8 @@ fn backoff_delay_seconds(consecutive_failures : Int) -> Int64 {
 
 ///|
 fn clamp_consecutive_failures(consecutive_failures : Int) -> Int {
-  // 2^4 * 30 already exceeds the 300s cap, so tracking beyond 4 adds no value.
-  if consecutive_failures > 4 {
-    4
+  if consecutive_failures > 10 {
+    10
   } else {
     consecutive_failures
   }
