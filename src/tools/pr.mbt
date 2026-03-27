@@ -237,23 +237,8 @@ async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
       return (-1, "")
     }
   }
-  let buf = FixedArray::make(65536, (0 : Byte))
-  let mut total = 0
-  for ;; {
-    if total >= buf.length() {
-      break
-    }
-    let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
-      _ => 0
-    }
-    if n == 0 {
-      break
-    }
-    total = total + n
-  }
-  reader.close()
+  let (output, _) = @exec.drain_process_stdout(reader, 65536)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
-  let output = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total])
   (exit_code, output)
 }
 
