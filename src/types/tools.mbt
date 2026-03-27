@@ -14,6 +14,8 @@ pub(all) struct SpawnSpec {
   workspace_slug : String?
   /// Git branch checked out in that tree (usually the salvaged agent id / branch name).
   reuse_git_branch : String?
+  /// Same semantics as `Agent.spawn_depth`; 0 at root TL, 1 for a sub-TL spawned under depth 0.
+  spawn_depth : Int
 } derive(Show)
 
 ///|

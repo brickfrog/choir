@@ -93,6 +93,10 @@ pub fn format_registration_request(
     Some(v) => args.set("agent_type", agent_type_to_wire_string(v))
     None => ()
   }
+  match local_cfg.spawn_depth {
+    Some(d) => args.set("spawn_depth", d.to_string())
+    None => ()
+  }
   format_request({
     req_method: "register",
     role,

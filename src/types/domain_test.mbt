@@ -15,6 +15,7 @@ test "agent construction" {
     branch: "main.feature-a",
     terminal_target: @types.LocalTarget::parse("zellij-tab:choir:feature-a"),
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Spawning,
   }
   assert_eq(agent.state, @types.AgentState::Spawning)

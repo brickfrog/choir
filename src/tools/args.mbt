@@ -26,7 +26,7 @@ struct TrackPrArgs {
 } derive(Show, Eq)
 
 ///|
-struct ForkWaveArgs {
+pub(all) struct ForkWaveArgs {
   count : Int
   tasks : Array[String]
   has_per_leaf_tasks : Bool
@@ -34,6 +34,8 @@ struct ForkWaveArgs {
   caller_id : String
   slug_prefix : String
   agent_type : @types.AgentType
+  /// Spawned child role: Dev (default) or TL (sub-team-lead).
+  child_role : @types.Role
   parent_session_id : String?
 } derive(Show, Eq)
 
@@ -110,6 +112,7 @@ struct RegisterArgs {
   terminal_target : @types.LocalTarget?
   workspace : String
   branch : String
+  spawn_depth : Int
 } derive(Show, Eq)
 
 ///|

@@ -215,7 +215,7 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
-      description: "Spawn leaf agents in new worktrees. For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks (best-of-N), pass task + count",
+      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks (best-of-N), pass task + count",
       props: [
         { name: "task", desc: "Shared task for all leaves (use with count)" },
         {
@@ -225,6 +225,10 @@ fn tool_defs() -> Array[CatalogTool] {
         {
           name: "agent_type",
           desc: "Agent type: gemini (default), claude, moon_pilot, codex, or cursor_agent",
+        },
+        {
+          name: "role",
+          desc: "Spawned child role: dev (default) or tl (sub-TL; nesting limited to one level below root TL)",
         },
         {
           name: "parent_branch",

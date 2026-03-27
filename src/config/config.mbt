@@ -170,6 +170,26 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
 }
 
 ///|
+fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ExoError] {
+  let s = raw.trim().to_string()
+  if s == "" {
+    return Err(@types.ExoError::ConfigError("spawn_depth cannot be empty"))
+  }
+  let mut n = 0
+  for c in s {
+    if c >= '0' && c <= '9' {
+      n = n * 10 + (c.to_int() - '0'.to_int())
+    } else {
+      return Err(@types.ExoError::ConfigError("invalid spawn_depth: " + raw))
+    }
+  }
+  if n > 1 {
+    return Err(@types.ExoError::ConfigError("spawn_depth must be 0 or 1"))
+  }
+  Ok(n)
+}
+
+///|
 /// Parses config.local.toml into the local spawn/session metadata.
 pub fn parse_local_config(
   content : String,
@@ -200,6 +220,14 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let spawn_depth = match doc.get_optional_nonempty("spawn_depth") {
+    Some(v) =>
+      match parse_spawn_depth_value(v) {
+        Ok(d) => Some(d)
+        Err(e) => return Err(e)
+      }
+    None => None
+  }
   Ok({
     role,
     agent_id,
@@ -209,6 +237,7 @@ pub fn parse_local_config(
     workspace,
     terminal_target,
     agent_type,
+    spawn_depth,
   })
 }
 

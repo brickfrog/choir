@@ -120,6 +120,8 @@ pub(all) struct Agent {
   terminal_target : LocalTarget?
   host : Host
   state : AgentState
+  /// Sub-TL nesting depth: 0 for root supervisor, 1 for a sub-TL under one TL level.
+  spawn_depth : Int
 } derive(Show)
 
 ///|

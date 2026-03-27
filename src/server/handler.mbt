@@ -333,6 +333,7 @@ fn ServerState::resolve_parent_by_id(
             ),
             host: @types.Host::Local,
             state: lifecycle.to_agent_state(),
+            spawn_depth: 0,
           })
         None => Err(@types.ExoError::AgentNotFound(parent_id))
       }

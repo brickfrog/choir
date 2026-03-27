@@ -368,7 +368,7 @@ fn parse_spawn_gemini_args(
 }
 
 ///|
-fn parse_fork_wave_args(
+pub fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
 ) -> Result[ForkWaveArgs, String] {
@@ -434,6 +434,14 @@ fn parse_fork_wave_args(
     Ok(_) => ()
     Err(e) => return Err("invalid slug_prefix: " + e)
   }
+  let role_raw = tool_args_get(args, "role").unwrap_or("dev")
+  let normalized_role = role_raw.trim().to_lower().to_string()
+  let role_norm = if normalized_role == "" { "dev" } else { normalized_role }
+  let child_role = match role_norm {
+    "dev" => @types.Role::Dev
+    "tl" => @types.Role::TL
+    _ => return Err("invalid role: " + role_raw + " (expected dev or tl)")
+  }
   Ok({
     count,
     tasks,
@@ -442,6 +450,7 @@ fn parse_fork_wave_args(
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug_prefix: normalized_slug_prefix,
     agent_type,
+    child_role,
     parent_session_id: lookup_parent_session_id(project_dir, args),
   })
 }
@@ -613,6 +622,25 @@ fn parse_register_args(
         @types.Role::Worker => @types.AgentType::Gemini
       }
   }
+  let spawn_depth = match tool_args_get(args, "spawn_depth") {
+    None => 0
+    Some(s) => {
+      let t = s.trim().to_string()
+      if t == "" {
+        0
+      } else {
+        match parse_int(t) {
+          Some(d) =>
+            if d < 0 || d > 1 {
+              return Err("spawn_depth must be 0 or 1")
+            } else {
+              d
+            }
+          None => return Err("invalid spawn_depth: " + s)
+        }
+      }
+    }
+  }
   Ok({
     agent_id,
     role,
@@ -627,6 +655,7 @@ fn parse_register_args(
     },
     workspace: tool_args_get(args, "workspace").unwrap_or(""),
     branch: tool_args_get(args, "branch").unwrap_or(""),
+    spawn_depth,
   })
 }
 

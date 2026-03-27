@@ -25,6 +25,7 @@ pub(all) struct LocalConfig {
   workspace : String?
   terminal_target : LocalTarget?
   agent_type : AgentType?
+  spawn_depth : Int?
 } derive(Show)
 
 ///|
@@ -57,5 +58,6 @@ pub fn LocalConfig::default() -> LocalConfig {
     workspace: None,
     terminal_target: None,
     agent_type: None,
+    spawn_depth: None,
   }
 }

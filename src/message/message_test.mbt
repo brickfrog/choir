@@ -45,6 +45,7 @@ test "plan delivery for Claude agent -> TeamsInbox" {
     branch: "main",
     terminal_target: None,
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
@@ -67,6 +68,7 @@ test "plan delivery for Claude agent with terminal target -> LocalTerminalInput"
     branch: "main",
     terminal_target: @types.LocalTarget::parse("zellij-tab:choir:TL"),
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
@@ -88,6 +90,7 @@ test "plan delivery for Gemini agent -> LocalTerminalInput" {
     branch: "main",
     terminal_target: @types.LocalTarget::parse("zellij-pane:choir:target-pane"),
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
@@ -109,6 +112,7 @@ test "plan delivery for MoonPilot agent -> LocalTerminalInput" {
     branch: "main",
     terminal_target: @types.LocalTarget::parse("zellij-tab:choir:moonpilot"),
     host: @types.Host::Local,
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
@@ -130,6 +134,7 @@ test "plan delivery for Remote agent -> TcpPush" {
     branch: "main",
     terminal_target: None,
     host: @types.Host::Remote("192.168.1.1"),
+    spawn_depth: 0,
     state: @types.AgentState::Active,
   }
   let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")

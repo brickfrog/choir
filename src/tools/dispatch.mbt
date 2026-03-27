@@ -11,7 +11,7 @@ struct ToolArgs {
 } derive(Show)
 
 ///|
-fn tool_args_from_map(args : Map[String, String]) -> ToolArgs {
+pub fn tool_args_from_map(args : Map[String, String]) -> ToolArgs {
   let values : Map[String, Json] = {}
   args.each(fn(k, v) { values.set(k, String::to_json(v)) })
   { values, }
@@ -109,6 +109,7 @@ fn resolve_parent_for_notify(
                     ),
                     host: @types.Host::Local,
                     state: lifecycle.to_agent_state(),
+                    spawn_depth: 0,
                   })
                 None => Err(@types.ExoError::AgentNotFound(parent_id))
               }
@@ -175,6 +176,7 @@ pub async fn dispatch(
             host: @types.Host::Local,
             workspace: register_args.workspace,
             branch: register_args.branch,
+            spawn_depth: register_args.spawn_depth,
           }
           let refreshed = reg.upsert(agent)
           @types.Response::ok_values({
@@ -187,6 +189,31 @@ pub async fn dispatch(
           @types.Response::ok_values({ "status": String::to_json("registered") })
       }
     ToolRequest::ForkWave(fork_wave_args) => {
+      let caller_spawn_depth_resolved = match registry {
+        Some(reg) =>
+          match reg.get(fork_wave_args.caller_id) {
+            Ok(agent) => Some(agent.spawn_depth)
+            Err(_) => None
+          }
+        None => None
+      }
+      let child_spawn_depth = if fork_wave_args.child_role == @types.Role::TL {
+        let caller_depth = match caller_spawn_depth_resolved {
+          Some(d) => d
+          None =>
+            return @types.Response::Err(
+              "fork_wave role=tl requires an agent registry and a registered caller_id matching caller_id (got: " +
+              fork_wave_args.caller_id +
+              ")",
+            )
+        }
+        if caller_depth >= 1 {
+          return @types.Response::Err("sub-TL nesting limited to depth 1")
+        }
+        caller_depth + 1
+      } else {
+        caller_spawn_depth_resolved.unwrap_or(0)
+      }
       let agent_ids = StringBuilder::new()
       let skipped_ids = StringBuilder::new()
       let cmds : Array[@workspace.Command] = []
@@ -242,7 +269,7 @@ pub async fn dispatch(
         spawned_slugs.push(slug)
         let spec = @types.SpawnSpec::{
           slug,
-          role: @types.Role::Dev,
+          role: fork_wave_args.child_role,
           agent_type: fork_wave_args.agent_type,
           task: fork_wave_args.tasks[i],
           isolation: @types.IsolationMode::Worktree,
@@ -251,6 +278,7 @@ pub async fn dispatch(
           reuse_workspace: false,
           workspace_slug: None,
           reuse_git_branch: None,
+          spawn_depth: child_spawn_depth,
         }
         for
           cmd in @workspace.spawn_commands(
@@ -861,6 +889,7 @@ pub async fn dispatch(
         reuse_workspace: false,
         workspace_slug: None,
         reuse_git_branch: None,
+        spawn_depth: 0,
       }
       let cmds = @workspace.spawn_commands(
         spec,
@@ -946,6 +975,7 @@ pub async fn dispatch(
         reuse_workspace: true,
         workspace_slug: Some(salvage_slug),
         reuse_git_branch: Some(git_branch),
+        spawn_depth: 0,
       }
       match @workspace.validate_reuse_spawn_spec(spec) {
         Err(e) => return @types.Response::Err(e)
@@ -1058,6 +1088,7 @@ pub async fn dispatch(
         reuse_workspace: false,
         workspace_slug: None,
         reuse_git_branch: None,
+        spawn_depth: 0,
       }
       let cmds = @workspace.remote_spawn_commands(
         spec,
@@ -1092,6 +1123,7 @@ pub async fn dispatch(
         reuse_workspace: false,
         workspace_slug: None,
         reuse_git_branch: None,
+        spawn_depth: 0,
       }
       let cmds = @workspace.spawn_commands(
         spec,

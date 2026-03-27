@@ -28,6 +28,7 @@ test "notify_parent uses live registry parent when present" {
       branch: parent_id,
       terminal_target: Some(live_target),
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -43,6 +44,7 @@ test "notify_parent uses live registry parent when present" {
       branch: caller_id,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -92,6 +94,7 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
       branch: caller_id,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -138,6 +141,7 @@ test "notify_parent returns clear error when parent cannot be resolved" {
       branch: caller_id,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -181,6 +185,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
       branch: parent_id,
       terminal_target: Some(parent_target),
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -212,6 +217,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
       branch: shared_branch,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -225,6 +231,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
       branch: shared_branch,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -323,6 +330,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
       branch: tl_a,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -336,6 +344,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
       branch: tl_b,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -351,6 +360,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
       branch: old_leaf,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
@@ -364,6 +374,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
       branch: new_leaf,
       terminal_target: None,
       host: @types.Host::Local,
+      spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
