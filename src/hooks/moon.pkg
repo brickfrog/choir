@@ -1,5 +1,6 @@
 import {
   "choir/src/types",
+  "moonbitlang/core/json",
 }
 
 options(

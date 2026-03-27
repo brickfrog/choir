@@ -22,74 +22,57 @@ pub(all) struct HookInput {
 } derive(Show)
 
 ///|
-pub fn HookInput::to_json_string(self : HookInput) -> String {
-  let buf = StringBuilder::new()
-  buf.write_string("{\"event\":\"")
-  match self.event {
-    SessionStart => buf.write_string("SessionStart")
-    PreToolUse => buf.write_string("PreToolUse")
-    PostToolUse => buf.write_string("PostToolUse")
-    AgentExit => buf.write_string("AgentExit")
-    SessionStop => buf.write_string("SessionStop")
-    BeforeModel => buf.write_string("BeforeModel")
-    AfterModel => buf.write_string("AfterModel")
+fn HookEvent::hook_event_wire_name(self : HookEvent) -> String {
+  match self {
+    SessionStart => "SessionStart"
+    PreToolUse => "PreToolUse"
+    PostToolUse => "PostToolUse"
+    AgentExit => "AgentExit"
+    SessionStop => "SessionStop"
+    BeforeModel => "BeforeModel"
+    AfterModel => "AfterModel"
   }
-  buf.write_string("\"")
+}
+
+///|
+fn role_wire_name(r : @types.Role) -> String {
+  match r {
+    Root => "root"
+    TL => "tl"
+    Dev => "dev"
+    Worker => "worker"
+  }
+}
+
+///|
+pub fn HookInput::to_json_string(self : HookInput) -> String {
+  let obj : Map[String, Json] = {}
+  obj.set("event", self.event.hook_event_wire_name().to_json())
   match self.session_id {
-    Some(v) => {
-      buf.write_string(",\"session_id\":\"")
-      buf.write_string(v)
-      buf.write_string("\"")
-    }
+    Some(v) => obj.set("session_id", v.to_json())
     None => ()
   }
   match self.agent_id {
-    Some(v) => {
-      buf.write_string(",\"agent_id\":\"")
-      buf.write_string(v)
-      buf.write_string("\"")
-    }
+    Some(v) => obj.set("agent_id", v.to_json())
     None => ()
   }
   match self.role {
-    Some(r) => {
-      buf.write_string(",\"role\":\"")
-      match r {
-        Root => buf.write_string("root")
-        TL => buf.write_string("tl")
-        Dev => buf.write_string("dev")
-        Worker => buf.write_string("worker")
-      }
-      buf.write_string("\"")
-    }
+    Some(r) => obj.set("role", role_wire_name(r).to_json())
     None => ()
   }
   match self.tool_name {
-    Some(v) => {
-      buf.write_string(",\"tool_name\":\"")
-      buf.write_string(v)
-      buf.write_string("\"")
-    }
+    Some(v) => obj.set("tool_name", v.to_json())
     None => ()
   }
   match self.tool_result_status {
-    Some(v) => {
-      buf.write_string(",\"tool_result_status\":\"")
-      buf.write_string(v)
-      buf.write_string("\"")
-    }
+    Some(v) => obj.set("tool_result_status", v.to_json())
     None => ()
   }
   match self.exit_reason {
-    Some(v) => {
-      buf.write_string(",\"exit_reason\":\"")
-      buf.write_string(v)
-      buf.write_string("\"")
-    }
+    Some(v) => obj.set("exit_reason", v.to_json())
     None => ()
   }
-  buf.write_string("}")
-  buf.to_string()
+  obj.to_json().stringify()
 }
 
 ///|
@@ -118,42 +101,39 @@ pub fn HookResponse::fail_open() -> HookResponse {
 
 ///|
 pub fn HookResponse::to_json_string(self : HookResponse) -> String {
-  if self.continue_ {
-    "{\"continue\":true}"
-  } else {
+  let obj : Map[String, Json] = {}
+  obj.set("continue", self.continue_.to_json())
+  if !self.continue_ {
     match self.message {
-      Some(msg) => "{\"continue\":false,\"message\":\"" + msg + "\"}"
-      None => "{\"continue\":false}"
+      Some(msg) => obj.set("message", msg.to_json())
+      None => ()
     }
   }
+  obj.to_json().stringify()
 }
 
 ///|
-fn get_string_value(json : String, key : String) -> String? {
-  let key_pattern = "\"" + key + "\":\""
-  match json.find(key_pattern) {
-    None => None
-    Some(i) => {
-      let start = i + key_pattern.length()
-      let mut end = start
-      while end < json.length() {
-        if json[end] == '"' && (end == 0 || json[end - 1] != '\\') {
-          break
-        }
-        end = end + 1
-      }
-      if end >= json.length() {
-        None
-      } else {
-        Some(json[start:end].to_string())
-      }
-    }
+fn parse_json_object(line : String) -> Map[String, Json]? {
+  let json = @json.parse(line) catch { _ => return None }
+  guard json is Object(obj) else { return None }
+  Some(obj)
+}
+
+///|
+fn json_opt_string(obj : Map[String, Json], key : String) -> String? {
+  match obj.get(key) {
+    Some(String(s)) => Some(s)
+    _ => None
   }
 }
 
 ///|
 pub fn HookInput::from_json_string(line : String) -> HookInput? {
-  let event_str = match get_string_value(line, "event") {
+  let obj = match parse_json_object(line) {
+    Some(o) => o
+    None => return None
+  }
+  let event_str = match json_opt_string(obj, "event") {
     Some(v) => v
     None => return None
   }
@@ -167,9 +147,9 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     "AfterModel" => HookEvent::AfterModel
     _ => return None
   }
-  let session_id = get_string_value(line, "session_id")
-  let agent_id = get_string_value(line, "agent_id")
-  let role_str = get_string_value(line, "role")
+  let session_id = json_opt_string(obj, "session_id")
+  let agent_id = json_opt_string(obj, "agent_id")
+  let role_str = json_opt_string(obj, "role")
   let role = match role_str {
     Some("root") => Some(@types.Role::Root)
     Some("tl") => Some(@types.Role::TL)
@@ -177,12 +157,12 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     Some("worker") => Some(@types.Role::Worker)
     _ => None
   }
-  let tool_name = get_string_value(line, "tool_name")
+  let tool_name = json_opt_string(obj, "tool_name")
 
   // Minimal support for args, as it's not strictly used for logic yet
   let tool_args = None
-  let tool_result_status = get_string_value(line, "tool_result_status")
-  let exit_reason = get_string_value(line, "exit_reason")
+  let tool_result_status = json_opt_string(obj, "tool_result_status")
+  let exit_reason = json_opt_string(obj, "exit_reason")
   Some({
     event,
     session_id,
@@ -210,27 +190,16 @@ pub fn HookEvent::script_name(self : HookEvent) -> String {
 
 ///|
 pub fn HookResponse::from_json_string(line : String) -> HookResponse? {
-  let continue_str = match get_string_value(line, "continue") {
-    Some(v) => v
-    None => {
-      // Try boolean without quotes
-      let key_pattern = "\"continue\":"
-      let i = match line.find(key_pattern) {
-        Some(idx) => idx
-        None => return None
-      }
-      let start = i + key_pattern.length()
-      let rest = line[start:].to_string()
-      if rest.has_prefix("true") {
-        "true"
-      } else if rest.has_prefix("false") {
-        "false"
-      } else {
-        return None
-      }
-    }
+  let obj = match parse_json_object(line) {
+    Some(o) => o
+    None => return None
   }
-  let continue_ = continue_str == "true"
-  let message = get_string_value(line, "message")
+  let continue_ = match obj.get("continue") {
+    Some(True) => true
+    Some(False) => false
+    Some(String(v)) => v == "true"
+    _ => return None
+  }
+  let message = json_opt_string(obj, "message")
   Some({ continue_, message })
 }
