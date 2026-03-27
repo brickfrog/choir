@@ -66,13 +66,17 @@ async fn emit_span(
     None => ()
   }
   if agent_id_str != "" {
-    let data = "{\"tool\":\"" +
-      @types.escape_for_json(req.name) +
-      "\",\"status\":\"" +
-      resp.status_tag() +
-      "\"}"
+    let data : Map[String, Json] = {
+      "tool": req.name.to_json(),
+      "status": resp.status_tag().to_json(),
+    }
     ignore(
-      append_event(state.config.project_dir, agent_id_str, "tools.call", data),
+      append_event(
+        state.config.project_dir,
+        agent_id_str,
+        "tools.call",
+        data.to_json(),
+      ),
     )
   }
 }

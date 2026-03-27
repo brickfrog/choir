@@ -7,20 +7,18 @@ fn build_lifecycle_transition_jsonl_line(
   to_state : String,
   trigger : String,
 ) -> String {
-  let data = "{\"from\":\"" +
-    @types.escape_for_json(from_state) +
-    "\",\"to\":\"" +
-    @types.escape_for_json(to_state) +
-    "\",\"trigger\":\"" +
-    @types.escape_for_json(trigger) +
-    "\"}"
-  "{\"ts\":" +
-  ts.to_string() +
-  ",\"type\":\"lifecycle.transition\",\"agent_id\":\"" +
-  @types.escape_for_json(agent_id) +
-  "\",\"data\":" +
-  data +
-  "}\n"
+  let data : Map[String, Json] = {
+    "from": from_state.to_json(),
+    "to": to_state.to_json(),
+    "trigger": trigger.to_json(),
+  }
+  let obj : Map[String, Json] = {
+    "ts": ts.to_int().to_json(),
+    "type": "lifecycle.transition".to_json(),
+    "agent_id": agent_id.to_json(),
+    "data": data.to_json(),
+  }
+  obj.to_json().stringify() + "\n"
 }
 
 ///|
@@ -50,17 +48,17 @@ pub fn append_lifecycle_event(
 ///|
 test "lifecycle transition jsonl line escapes and parses" {
   let line = build_lifecycle_transition_jsonl_line(
-    99, "a\"b\\c", "from\"x", "to\"y", "tr\"g",
+    99L, "a\"b\\c", "from\"x", "to\"y", "tr\"g",
   )
   let parsed : Json = @json.parse(line.trim()) catch {
     _ => {
       fail("expected valid json")
-      panic()
+      return
     }
   }
   guard parsed is Object(root) else {
     fail("expected object")
-    panic()
+    return
   }
   match root.get("ts") {
     Some(Number(n, ..)) => assert_eq(n.to_int(), 99)
@@ -76,7 +74,7 @@ test "lifecycle transition jsonl line escapes and parses" {
   }
   guard root.get("data") is Some(Object(d)) else {
     fail("data object")
-    panic()
+    return
   }
   match d.get("from") {
     Some(String(s)) => assert_eq(s, "from\"x")
