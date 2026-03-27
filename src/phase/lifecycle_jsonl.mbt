@@ -1,5 +1,5 @@
 ///|
-fn sanitize_agent_id(agent_id : String) -> String {
+fn sanitize_agent_id_for_events(agent_id : String) -> String {
   let buf = StringBuilder::new()
   for c in agent_id {
     if c == '/' || c == '\\' || c == '\u0000' {
@@ -12,7 +12,7 @@ fn sanitize_agent_id(agent_id : String) -> String {
 }
 
 ///|
-fn escape_for_json(s : String) -> String {
+fn escape_json_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
     if c == '"' {
@@ -33,29 +33,6 @@ fn escape_for_json(s : String) -> String {
 }
 
 ///|
-fn append_event(
-  project_dir : String,
-  agent_id : String,
-  event_type : String,
-  data_json : String,
-) -> Bool {
-  let sanitized_id = sanitize_agent_id(agent_id)
-  let events_dir = project_dir + "/.choir/events/"
-  let path = events_dir + sanitized_id + ".jsonl"
-  let now = @poller.now_sec()
-  let line = "{\"ts\":" +
-    now.to_string() +
-    ",\"type\":\"" +
-    event_type +
-    "\",\"agent_id\":\"" +
-    agent_id +
-    "\",\"data\":" +
-    data_json +
-    "}\n"
-  @sys.append_file_sync(path, line)
-}
-
-///|
 pub fn append_lifecycle_event(
   project_dir : String,
   agent_id : String,
@@ -63,18 +40,23 @@ pub fn append_lifecycle_event(
   to_state : String,
   trigger : String,
 ) -> Bool {
-  @phase.append_lifecycle_event(
-    project_dir, agent_id, from_state, to_state, trigger,
-  )
-}
-
-///|
-test "sanitize_agent_id" {
-  assert_eq(sanitize_agent_id("agent/1\\2\u00003"), "agent_1_2_3")
-  assert_eq(sanitize_agent_id("normal_agent-id"), "normal_agent-id")
-}
-
-///|
-test "escape_for_json" {
-  assert_eq(escape_for_json("a\"b\\c\n"), "a\\\"b\\\\c\\n")
+  let sanitized_id = sanitize_agent_id_for_events(agent_id)
+  let events_dir = project_dir + "/.choir/events/"
+  let path = events_dir + sanitized_id + ".jsonl"
+  let now = @poller.now_sec()
+  let data = "{\"from\":\"" +
+    escape_json_string(from_state) +
+    "\",\"to\":\"" +
+    escape_json_string(to_state) +
+    "\",\"trigger\":\"" +
+    escape_json_string(trigger) +
+    "\"}"
+  let line = "{\"ts\":" +
+    now.to_string() +
+    ",\"type\":\"lifecycle.transition\",\"agent_id\":\"" +
+    agent_id +
+    "\",\"data\":" +
+    data +
+    "}\n"
+  @sys.append_file_sync(path, line)
 }

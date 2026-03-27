@@ -1467,6 +1467,32 @@ fn legacy_dev_phase_from_lifecycle(
 }
 
 ///|
+fn tl_event_trigger(event : @phase.TLEvent) -> String {
+  match event {
+    @phase.TLEvent::ChildSpawned(_) => "ChildSpawned"
+    @phase.TLEvent::ChildCompleted(_) => "ChildCompleted"
+    @phase.TLEvent::ChildFailed(_, ..) => "ChildFailed"
+    @phase.TLEvent::PRMerged(..) => "PRMerged"
+    @phase.TLEvent::AllChildrenDone => "AllChildrenDone"
+    @phase.TLEvent::OwnPRFiled(..) => "OwnPRFiled"
+  }
+}
+
+///|
+fn dev_event_trigger(event : @phase.DevEvent) -> String {
+  match event {
+    @phase.DevEvent::PRCreated(..) => "PRCreated"
+    @phase.DevEvent::NotifyParentSuccess(..) => "NotifyParentSuccess"
+    @phase.DevEvent::NotifyParentFailure(..) => "NotifyParentFailure"
+    @phase.DevEvent::ExitRequested => "ExitRequested"
+    @phase.DevEvent::MergeObserved(_) => "MergeObserved"
+    @phase.DevEvent::ReviewReceivedEv(..) => "ReviewReceived"
+    @phase.DevEvent::ReviewApprovedEv(_) => "ReviewApproved"
+    @phase.DevEvent::FixesPushedEv(..) => "FixesPushed"
+  }
+}
+
+///|
 pub fn apply_tl_event(
   project_dir : String,
   scope : String,
@@ -1554,13 +1580,23 @@ pub fn apply_tl_event(
     _ => InvalidTransition("unsupported tl event")
   }
   match transitioned {
-    Transitioned(new_supervisor) =>
-      ignore(
-        @phase.write_lifecycle(project_dir, {
-          ..lifecycle,
-          workflow: @phase.WorkflowState::Supervisor(new_supervisor),
-        }),
-      )
+    Transitioned(new_supervisor) => {
+      let next_lc = {
+        ..lifecycle,
+        workflow: @phase.WorkflowState::Supervisor(new_supervisor),
+      }
+      if @phase.write_lifecycle(project_dir, next_lc) {
+        ignore(
+          @phase.append_lifecycle_event(
+            project_dir,
+            scope,
+            @phase.lifecycle_to_json(lifecycle),
+            @phase.lifecycle_to_json(next_lc),
+            tl_event_trigger(event),
+          ),
+        )
+      }
+    }
     InvalidTransition(_) => ()
   }
 }
@@ -1612,12 +1648,18 @@ pub fn apply_dev_event_checked(
       let failed = @phase.DevLifecycle::Failed(
         reason=@phase.classify_failure(message),
       )
-      ignore(
-        @phase.write_lifecycle(project_dir, {
-          ..lifecycle,
-          workflow: @phase.WorkflowState::Dev(failed),
-        }),
-      )
+      let next_lc = { ..lifecycle, workflow: @phase.WorkflowState::Dev(failed) }
+      if @phase.write_lifecycle(project_dir, next_lc) {
+        ignore(
+          @phase.append_lifecycle_event(
+            project_dir,
+            scope,
+            @phase.lifecycle_to_json(lifecycle),
+            @phase.lifecycle_to_json(next_lc),
+            dev_event_trigger(event),
+          ),
+        )
+      }
       Ok(legacy_dev_phase_from_lifecycle(failed))
     }
     _ => {
@@ -1640,12 +1682,21 @@ pub fn apply_dev_event_checked(
         Some(dev_event) =>
           match @phase.dev_lifecycle_transition(dev, dev_event) {
             Transitioned(new_dev) => {
-              ignore(
-                @phase.write_lifecycle(project_dir, {
-                  ..lifecycle,
-                  workflow: @phase.WorkflowState::Dev(new_dev),
-                }),
-              )
+              let next_lc = {
+                ..lifecycle,
+                workflow: @phase.WorkflowState::Dev(new_dev),
+              }
+              if @phase.write_lifecycle(project_dir, next_lc) {
+                ignore(
+                  @phase.append_lifecycle_event(
+                    project_dir,
+                    scope,
+                    @phase.lifecycle_to_json(lifecycle),
+                    @phase.lifecycle_to_json(next_lc),
+                    dev_event_trigger(event),
+                  ),
+                )
+              }
               Ok(legacy_dev_phase_from_lifecycle(new_dev))
             }
             InvalidTransition(message) => Err(message)
