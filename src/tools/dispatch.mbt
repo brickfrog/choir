@@ -797,8 +797,35 @@ pub async fn dispatch(
           }
         None => @types.Response::Err("no agent registry available")
       }
-    ToolRequest::AgentList(_) =>
-      @types.Response::Err("agent_list: not implemented")
+    ToolRequest::AgentList(args) =>
+      match registry {
+        Some(reg) => {
+          let agents = match args.parent_id {
+            Some(id) => reg.children(id)
+            None => reg.list()
+          }
+          let agents_json : Array[Json] = []
+          for agent in agents {
+            agents_json.push(
+              {
+                "agent_id": agent.agent_id.0.to_json(),
+                "role": @config.role_to_string(agent.role).to_json(),
+                "agent_type": @config.agent_type_to_string(agent.agent_type).to_json(),
+                "state": agent.state.to_string().to_json(),
+                "parent": agent.parent.to_json(),
+                "branch": agent.branch.to_json(),
+                "workspace": agent.workspace.to_json(),
+                "spawn_depth": agent.spawn_depth.to_json(),
+              }.to_json(),
+            )
+          }
+          @types.Response::ok_values({
+            "status": "ok".to_json(),
+            "agents": agents_json.to_json(),
+          })
+        }
+        None => @types.Response::Err("no agent registry available")
+      }
     ToolRequest::CancelWave(cancel_args) =>
       match registry {
         Some(reg) => {
