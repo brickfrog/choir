@@ -551,3 +551,111 @@ async test "register accepts whitespace-trimmed spawn_depth" {
     Err(_) => fail("expected registered agent")
   }
 }
+
+///|
+async test "dispatch agent_list returns all agents when parent_id is None" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "agent-1",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/tmp/w1",
+      branch: "branch-1",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    reg.upsert({
+      agent_id: "agent-2",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::CursorAgent,
+      parent: Some("agent-1"),
+      workspace: "/tmp/w2",
+      branch: "branch-2",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{ role: @types.Role::TL, name: "agent_list", args: {} }
+  let res = @tools.dispatch_call(call, registry=Some(reg))
+  match res {
+    Ok(map) => {
+      assert_eq(map.get("status"), Some("ok"))
+      match map.get_json("agents") {
+        Some(Array(arr)) => assert_eq(arr.length(), 2)
+        _ => fail("expected agents array")
+      }
+    }
+    Err(e) => fail("agent_list failed: " + e)
+  }
+}
+
+///|
+async test "dispatch agent_list filters by parent_id" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "parent",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/tmp/w",
+      branch: "branch-p",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    reg.upsert({
+      agent_id: "child-1",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::CursorAgent,
+      parent: Some("parent"),
+      workspace: "/tmp/w1",
+      branch: "branch-c1",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    reg.upsert({
+      agent_id: "child-2",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Gemini,
+      parent: Some("parent"),
+      workspace: "/tmp/w2",
+      branch: "branch-c2",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "agent_list",
+    args: { "parent_id": "parent" },
+  }
+  let res = @tools.dispatch_call(call, registry=Some(reg))
+  match res {
+    Ok(map) => {
+      assert_eq(map.get("status"), Some("ok"))
+      match map.get_json("agents") {
+        Some(Array(arr)) => assert_eq(arr.length(), 2)
+        _ => fail("expected agents array")
+      }
+    }
+    Err(e) => fail("agent_list failed: " + e)
+  }
+}
