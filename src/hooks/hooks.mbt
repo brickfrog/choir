@@ -109,6 +109,9 @@ pub fn HookResponse::block(message : String) -> HookResponse {
 }
 
 ///|
+/// Semantically distinct from allow() — used when hook execution itself fails
+/// (missing WASM, parse error). Same result today; separated for future
+/// differentiation (e.g., logging fail-open events differently).
 pub fn HookResponse::fail_open() -> HookResponse {
   { continue_: true, message: None }
 }

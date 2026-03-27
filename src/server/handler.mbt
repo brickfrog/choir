@@ -300,11 +300,8 @@ fn synthesized_parent_terminal_target(
 }
 
 ///|
-fn synthesized_parent_agent_type(role : @types.Role) -> @types.AgentType {
-  match role {
-    @types.Role::Worker => @types.AgentType::Claude
-    _ => @types.AgentType::Claude
-  }
+fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
+  @types.AgentType::Claude
 }
 
 ///|
