@@ -785,9 +785,9 @@ fn mcp_run() -> Unit {
   }
 
   let mut uds_fd = @uds.client_connect(config.listen_uds)
-  // If socket not ready yet (server still starting), wait up to 30s
   if uds_fd < 0 {
-    if @sys.wait_for_socket(config.listen_uds, 30) {
+    // Server may still be starting — wait for the UDS socket
+    if @sys.wait_for_socket(config.listen_uds, 60) {
       uds_fd = @uds.client_connect(config.listen_uds)
     }
   }
