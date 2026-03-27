@@ -317,6 +317,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
       terminal_target: Some(tl_target),
       host: @types.Host::Local,
       state: @types.AgentState::Active,
+      spawn_depth: 0,
     }),
   )
   ignore(
@@ -330,6 +331,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
       terminal_target: None,
       host: @types.Host::Local,
       state: @types.AgentState::Active,
+      spawn_depth: 1,
     }),
   )
   let call = ToolCall::{
@@ -381,6 +383,7 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
       terminal_target: None,
       host: @types.Host::Local,
       state: @types.AgentState::Active,
+      spawn_depth: 0,
     }),
   )
   let call = ToolCall::{

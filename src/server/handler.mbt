@@ -810,6 +810,114 @@ async fn deliver_pending_poll_events(
 }
 
 ///|
+fn append_poller_delivery_line(line : String) -> Unit {
+  ignore(
+    @sys.append_file_sync(".choir/delivery.log", "[poller] " + line + "\n"),
+  )
+}
+
+///|
+fn poller_sanitize_event_for_log(raw : String) -> String {
+  let buf = StringBuilder::new()
+  for c in raw {
+    if c == '\n' {
+      buf.write_string("\\n")
+    } else if c == '\r' {
+      buf.write_string("\\r")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  let escaped = buf.to_string()
+  let max_len = 200
+  if escaped.length() <= max_len {
+    escaped
+  } else {
+    escaped[0:max_len].to_string() + "..."
+  }
+}
+
+///|
+fn poll_events_delivery_summary(events : Array[@poller.PollEvent]) -> String {
+  if events.length() == 0 {
+    return "no change"
+  }
+  let parts : Array[String] = []
+  for e in events {
+    parts.push(poller_sanitize_event_for_log(e.to_string()))
+  }
+  parts.join("; ")
+}
+
+///|
+fn log_poller_pr_tick(log : @poller.PollerPrTickLog) -> Unit {
+  let action = if log.skipped_backoff {
+    "skipped_backoff"
+  } else if log.untracked_closed {
+    "untracked_closed"
+  } else if log.polled_network && not(log.poll_succeeded) {
+    "poll_failed"
+  } else {
+    "polled"
+  }
+  let events_summary = poll_events_delivery_summary(log.events)
+  let skip_reason = if log.skipped_backoff {
+    "backoff_until=" + log.backoff_until.to_string()
+  } else {
+    ""
+  }
+  @moontrace.info(
+    "poller pr",
+    fields=@moontrace.fields([
+      ("pr", log.pr_number.to_json()),
+      ("agent", log.agent_id.to_json()),
+      ("action", action.to_json()),
+      ("skip_reason", skip_reason.to_json()),
+      ("prior_review", log.prior_review_state.to_string().to_json()),
+      ("detected_review", log.detected_review_state.to_string().to_json()),
+      ("events", events_summary.to_json()),
+      ("failures", log.consecutive_failures.to_json()),
+      ("prev_failures", log.previous_consecutive_failures.to_json()),
+    ]),
+  )
+  let line = "pr=" +
+    log.pr_number.to_string() +
+    " agent=" +
+    log.agent_id +
+    " action=" +
+    action +
+    (if skip_reason != "" { " " + skip_reason } else { "" }) +
+    " prior=" +
+    log.prior_review_state.to_string() +
+    " detected=" +
+    log.detected_review_state.to_string() +
+    " events=" +
+    events_summary +
+    " failures=" +
+    log.consecutive_failures.to_string()
+  append_poller_delivery_line(line)
+  if log.consecutive_failures > log.previous_consecutive_failures {
+    @moontrace.info(
+      "poller backoff",
+      fields=@moontrace.fields([
+        ("pr", log.pr_number.to_json()),
+        ("agent", log.agent_id.to_json()),
+        ("consecutive_failures", log.consecutive_failures.to_json()),
+        ("backoff_until", log.backoff_until.to_json()),
+      ]),
+    )
+    append_poller_delivery_line(
+      "backoff pr=" +
+      log.pr_number.to_string() +
+      " consecutive_failures=" +
+      log.consecutive_failures.to_string() +
+      " backoff_until=" +
+      log.backoff_until.to_string(),
+    )
+  }
+}
+
+///|
 pub async fn ServerState::process_poller_tick_with(
   self : ServerState,
   now : Int64,
@@ -819,10 +927,16 @@ pub async fn ServerState::process_poller_tick_with(
 ) -> Unit {
   let pending_events = []
   let pending_agent_ids = []
-  self.poller.tick_with(now, timeout, poll, fn(event, agent_id) {
-    pending_events.push(event)
-    pending_agent_ids.push(agent_id)
-  })
+  self.poller.tick_with(
+    now,
+    timeout,
+    poll,
+    fn(event, agent_id) {
+      pending_events.push(event)
+      pending_agent_ids.push(agent_id)
+    },
+    fn(_) { () },
+  )
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
@@ -834,41 +948,44 @@ pub async fn ServerState::process_poller_tick(
   timeout : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
-  let n_before = self.poller.tracked.length()
+  let tracked_before = self.poller.tracked.length()
   let pending_events = []
   let pending_agent_ids = []
-  self.poller.tick(now, timeout, fn(event, agent_id) {
-    pending_events.push(event)
-    pending_agent_ids.push(agent_id)
-  })
-  let n_after = self.poller.tracked.length()
-  if pending_events.length() > 0 || n_before != n_after {
-    @moontrace.info(
-      "poller tick",
-      fields=@moontrace.fields([
-        ("prs", n_before.to_json()),
-        ("events", pending_events.length().to_json()),
-      ]),
-    )
-    for i = 0; i < pending_events.length(); i = i + 1 {
-      @moontrace.info(
-        "poller event",
-        fields=@moontrace.fields([
-          ("event", pending_events[i].to_string().to_json()),
-          ("agent", pending_agent_ids[i].to_json()),
-        ]),
-      )
-    }
-    if n_before != n_after {
-      @moontrace.info(
-        "poller tracking changed",
-        fields=@moontrace.fields([
-          ("before", n_before.to_json()),
-          ("after", n_after.to_json()),
-        ]),
-      )
-    }
-  }
+  let mut tick_event_total = 0
+  @moontrace.info(
+    "poller tick start",
+    fields=@moontrace.fields([("tracked_prs", tracked_before.to_json())]),
+  )
+  append_poller_delivery_line(
+    "tick_start tracked_prs=" + tracked_before.to_string(),
+  )
+  self.poller.tick_with(
+    now,
+    timeout,
+    @poller.gh_poll_pr,
+    fn(event, agent_id) {
+      pending_events.push(event)
+      pending_agent_ids.push(agent_id)
+    },
+    fn(log) {
+      tick_event_total = tick_event_total + log.events.length()
+      log_poller_pr_tick(log)
+    },
+  )
+  let tracked_after = self.poller.tracked.length()
+  @moontrace.info(
+    "poller tick end",
+    fields=@moontrace.fields([
+      ("events_generated", tick_event_total.to_json()),
+      ("tracked_after", tracked_after.to_json()),
+    ]),
+  )
+  append_poller_delivery_line(
+    "tick_end events_generated=" +
+    tick_event_total.to_string() +
+    " tracked_after=" +
+    tracked_after.to_string(),
+  )
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
@@ -1765,6 +1882,16 @@ test "merged_pr_parent_message uses unknown when branch or parent_branch missing
 }
 
 ///|
+test "poll_events_delivery_summary escapes newlines and truncates long events" {
+  let tail = "b".repeat(220)
+  let ev = @poller.PollEvent::ReviewReceived(3, "alpha\nbeta\n" + tail)
+  let s = poll_events_delivery_summary([ev])
+  assert_false(s.contains("\n"))
+  assert_true(s.contains("\\n"))
+  assert_eq(s.length(), 203)
+}
+
+///|
 test "parent_poll_event_message PR READY stresses not merged" {
   let tracked : @poller.TrackedPR = {
     pr_number: 7,
@@ -1774,13 +1901,13 @@ test "parent_poll_event_message PR READY stresses not merged" {
     pr_url: "https://ex/pr/7",
     first_seen: 0,
     consecutive_failures: 0,
-    backoff_until: 0,
+    backoff_until: 0L,
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "",
     notified_parent: false,
     last_ci_failed: false,
-    last_timeout_at: 0,
+    last_timeout_at: 0L,
   }
   match parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7)) {
     Some((message, status)) => {
@@ -1804,13 +1931,13 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     pr_url: "",
     first_seen: 0,
     consecutive_failures: 0,
-    backoff_until: 0,
+    backoff_until: 0L,
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "abc",
     notified_parent: false,
     last_ci_failed: false,
-    last_timeout_at: 0,
+    last_timeout_at: 0L,
   }
   match parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8)) {
     Some((message, status)) => {

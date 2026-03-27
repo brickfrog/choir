@@ -1016,7 +1016,7 @@ fn leaf_tool_request_args(
       if not(flags.contains("branch")) {
         if used_legacy_branch {
           flags.set("branch", positionals[0])
-        } else {
+        } else if positionals.length() == 0 {
           match @sys.getenv("CHOIR_BRANCH") {
             Some(branch) => if branch != "" { flags.set("branch", branch) }
             None => ()
@@ -1031,7 +1031,7 @@ fn leaf_tool_request_args(
             looks_like_branch_token(positionals[1]) {
             flags.set("parent_branch", positionals[1])
           }
-        } else {
+        } else if positionals.length() == 0 {
           match @sys.getenv("CHOIR_PARENT_BRANCH") {
             Some(parent_branch) =>
               if parent_branch != "" {
