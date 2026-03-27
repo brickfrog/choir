@@ -203,27 +203,7 @@ pub async fn dispatch(
       } else {
         caller_spawn_depth_resolved.unwrap_or(0)
       }
-      // Scaffold gate: require clean, pushed working tree before forking.
-      // Children fork from the TL's current HEAD — uncommitted or unpushed
-      // work would be invisible to them.
-      let status_out = git_capture("git", [
-        "-C", project_dir, "status", "--porcelain",
-      ])
-      if status_out.trim().to_string() != "" {
-        return @types.Response::Err(
-          "Working tree has uncommitted changes. Commit and push your scaffold work first, then call fork_wave.\n" +
-          status_out.trim().to_string(),
-        )
-      }
-      let unpushed_out = git_capture("git", [
-        "-C", project_dir, "log", "--oneline", "@{u}..HEAD",
-      ])
-      if unpushed_out.trim().to_string() != "" {
-        return @types.Response::Err(
-          "Unpushed commits exist. Run 'git push' first, then call fork_wave.\n" +
-          unpushed_out.trim().to_string(),
-        )
-      }
+      // Pure phase: build slugs and spawn commands without any IO.
       let agent_ids = StringBuilder::new()
       let skipped_ids = StringBuilder::new()
       let cmds : Array[@workspace.Command] = []
@@ -237,7 +217,6 @@ pub async fn dispatch(
         } else {
           fork_wave_args.slug_prefix + "-" + i.to_string()
         }
-        // Disambiguate duplicate slugs by appending index
         let slug = match seen_slugs.get(raw_slug) {
           Some(count) => {
             seen_slugs.set(raw_slug, count + 1)
@@ -249,7 +228,6 @@ pub async fn dispatch(
           }
         }
         let agent_id = fork_wave_args.parent_branch + "." + slug
-        // Idempotency: skip if agent is already alive in registry
         let already_alive = match registry {
           Some(reg) =>
             match reg.get(agent_id) {
@@ -305,68 +283,57 @@ pub async fn dispatch(
           cmds.push(cmd)
         }
       }
-      if spawned_count == 0 && skipped_count > 0 {
-        return @types.Response::ok_values({
-          "status": String::to_json("already_running"),
-          "count": Int::to_json(0),
-          "skipped_ids": String::to_json(skipped_ids.to_string()),
-        })
-      }
-      match run_strict(runner, cmds) {
-        Ok(_) => {
-          // Register spawned agents as synthetic team members (best-effort)
-          let resolved_pane_ids : Array[(String, String)] = []
-          for slug in spawned_slugs {
-            let _ = @workspace.register_team_member_native(
-              fork_wave_args.caller_id,
-              slug,
-              @config.agent_type_to_string(fork_wave_args.agent_type),
-            )
-            apply_tl_event(
-              project_dir,
-              fork_wave_args.caller_id,
-              @phase.TLEvent::ChildSpawned(child_id=slug),
-              registry~,
-            )
-            // Resolve zellij pane ID for faster delivery (best-effort)
-            let agent_id = @workspace.branch_name(
-              fork_wave_args.parent_branch,
-              slug,
-            )
-            match resolve_zellij_pane_id(session, slug, runner) {
-              Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
-              None => ()
-            }
-          }
-          // Update registry with resolved pane IDs
-          match registry {
-            Some(reg) =>
-              for pair in resolved_pane_ids {
-                let (agent_id, pane_id) = pair
-                match reg.get(agent_id) {
-                  Ok(agent) => {
-                    let target = @workspace.zellij_pane_target(session, pane_id)
-                    ignore(
-                      reg.upsert({ ..agent, terminal_target: Some(target) }),
-                    )
-                  }
-                  Err(_) => ()
-                }
-              }
+      // Effect phase: scaffold gate + spawn, described as a pure Eff tree,
+      // executed by the interpreter. Zero IO happens before this line.
+      let plan = fork_wave_plan(
+        project_dir,
+        cmds,
+        spawned_count,
+        skipped_count,
+        agent_ids.to_string(),
+        skipped_ids.to_string(),
+      )
+      let resp = interpret(plan, git_capture~, runner~)
+      // Post-spawn side effects: only run if spawn succeeded.
+      if resp.is_ok() && spawned_count > 0 {
+        let resolved_pane_ids : Array[(String, String)] = []
+        for slug in spawned_slugs {
+          let _ = @workspace.register_team_member_native(
+            fork_wave_args.caller_id,
+            slug,
+            @config.agent_type_to_string(fork_wave_args.agent_type),
+          )
+          apply_tl_event(
+            project_dir,
+            fork_wave_args.caller_id,
+            @phase.TLEvent::ChildSpawned(child_id=slug),
+            registry~,
+          )
+          let agent_id = @workspace.branch_name(
+            fork_wave_args.parent_branch,
+            slug,
+          )
+          match resolve_zellij_pane_id(session, slug, runner) {
+            Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
             None => ()
           }
-          let result : Map[String, Json] = {
-            "status": String::to_json("spawned"),
-            "count": Int::to_json(spawned_count),
-            "agent_ids": String::to_json(agent_ids.to_string()),
-          }
-          if skipped_count > 0 {
-            result.set("skipped_ids", String::to_json(skipped_ids.to_string()))
-          }
-          @types.Response::ok_values(result)
         }
-        Err(e) => @types.Response::Err(e)
+        match registry {
+          Some(reg) =>
+            for pair in resolved_pane_ids {
+              let (agent_id, pane_id) = pair
+              match reg.get(agent_id) {
+                Ok(agent) => {
+                  let target = @workspace.zellij_pane_target(session, pane_id)
+                  ignore(reg.upsert({ ..agent, terminal_target: Some(target) }))
+                }
+                Err(_) => ()
+              }
+            }
+          None => ()
+        }
       }
+      resp
     }
     ToolRequest::ForkSession(session_args) => {
       let session_dir = project_dir + "/.choir/sessions/" + session_args.name
