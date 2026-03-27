@@ -22,15 +22,15 @@ pub fn describe_stop_result(r : StopCheckResult) -> String {
 
 ///|
 pub fn sanitize_branch(branch : String) -> String {
-  let mut res = ""
+  let sb = StringBuilder::new()
   for c in branch {
     if c == '.' {
-      res = res + "--"
+      sb.write_string("--")
     } else {
-      res = res + c.to_string()
+      sb.write_char(c)
     }
   }
-  res
+  sb.to_string()
 }
 
 ///|

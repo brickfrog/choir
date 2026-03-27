@@ -28,9 +28,7 @@ fn queue_contains(queue : Array[String], agent_id : String) -> Bool {
 
 ///|
 fn clear_queue(queue : Array[String]) -> Unit {
-  while queue.length() > 0 {
-    ignore(queue.remove(0))
-  }
+  queue.clear()
 }
 
 ///|
