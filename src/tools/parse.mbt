@@ -629,7 +629,7 @@ fn parse_register_args(
       if t == "" {
         0
       } else {
-        match tool_args_get_int(args, "spawn_depth") {
+        match parse_int(t) {
           Some(d) =>
             if d < 0 || d > 1 {
               return Err("spawn_depth must be 0 or 1")

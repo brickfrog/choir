@@ -189,21 +189,30 @@ pub async fn dispatch(
           @types.Response::ok_values({ "status": String::to_json("registered") })
       }
     ToolRequest::ForkWave(fork_wave_args) => {
-      let caller_spawn_depth = match registry {
+      let caller_spawn_depth_resolved = match registry {
         Some(reg) =>
           match reg.get(fork_wave_args.caller_id) {
-            Ok(agent) => agent.spawn_depth
-            Err(_) => 0
+            Ok(agent) => Some(agent.spawn_depth)
+            Err(_) => None
           }
-        None => 0
-      }
-      if fork_wave_args.child_role == @types.Role::TL && caller_spawn_depth >= 1 {
-        return @types.Response::Err("sub-TL nesting limited to depth 1")
+        None => None
       }
       let child_spawn_depth = if fork_wave_args.child_role == @types.Role::TL {
-        caller_spawn_depth + 1
+        let caller_depth = match caller_spawn_depth_resolved {
+          Some(d) => d
+          None =>
+            return @types.Response::Err(
+              "fork_wave role=tl requires an agent registry and a registered caller_id matching caller_id (got: " +
+              fork_wave_args.caller_id +
+              ")",
+            )
+        }
+        if caller_depth >= 1 {
+          return @types.Response::Err("sub-TL nesting limited to depth 1")
+        }
+        caller_depth + 1
       } else {
-        caller_spawn_depth
+        caller_spawn_depth_resolved.unwrap_or(0)
       }
       let agent_ids = StringBuilder::new()
       let skipped_ids = StringBuilder::new()

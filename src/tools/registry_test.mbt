@@ -316,6 +316,75 @@ test "tool registry lookup fork_session allowed for TL" {
 }
 
 ///|
+async test "fork_wave role tl requires agent registry" {
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: {
+      "caller_id": "main.tl",
+      "count": "1",
+      "task": "subtree",
+      "parent_branch": "main",
+      "role": "tl",
+    },
+  }
+  let res = @tools.dispatch_call(call, runner=mock_registry_runner)
+  match res {
+    Ok(_) => fail("expected fork_wave role=tl to fail without registry")
+    Err(msg) => assert_true(msg.contains("fork_wave role=tl requires"))
+  }
+}
+
+///|
+async test "fork_wave role tl requires registered caller_id" {
+  let reg = @registry.AgentRegistry::new()
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: {
+      "caller_id": "main.unknown-tl",
+      "count": "1",
+      "task": "subtree",
+      "parent_branch": "main",
+      "role": "tl",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    runner=mock_registry_runner,
+    registry=Some(reg),
+  )
+  match res {
+    Ok(_) => fail("expected fork_wave role=tl to fail for unregistered caller")
+    Err(msg) => assert_true(msg.contains("fork_wave role=tl requires"))
+  }
+}
+
+///|
+async test "register accepts whitespace-trimmed spawn_depth" {
+  let reg = @registry.AgentRegistry::new()
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "register",
+    args: {
+      "agent_id": "main.depth-trim",
+      "spawn_depth": " 1",
+      "workspace": "/tmp/w",
+      "branch": "main.depth-trim",
+    },
+  }
+  let res = @tools.dispatch_call(call, registry=Some(reg))
+  match res {
+    Ok(_) => ()
+    Err(e) => fail("register failed: " + e)
+  }
+  match reg.get("main.depth-trim") {
+    Ok(agent) => assert_eq(agent.spawn_depth, 1)
+    Err(_) => fail("expected registered agent")
+  }
+}
+
+///|
 async test "fork_wave role tl rejected when caller spawn_depth is 1" {
   let reg = @registry.AgentRegistry::new()
   ignore(
