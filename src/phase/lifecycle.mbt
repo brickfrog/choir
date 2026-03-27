@@ -1082,7 +1082,7 @@ pub fn write_lifecycle(
   project_dir : String,
   lifecycle : AgentLifecycle,
 ) -> Bool {
-  @sys.write_file_sync(
+  @sys.write_file_atomic(
     lifecycle_path(project_dir, lifecycle.agent_id),
     lifecycle_to_json(lifecycle),
   )
