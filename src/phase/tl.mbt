@@ -198,6 +198,24 @@ pub fn tl_phase_to_json(phase : TLPhase) -> String {
 }
 
 ///|
+pub impl StateMachine for TLPhase with machine_name(_) -> String {
+  "tl"
+}
+
+///|
+pub impl StateMachine for TLPhase with can_exit(self) -> StopCheckResult {
+  tl_can_exit(self)
+}
+
+///|
+pub fn TLPhase::transition(
+  self : TLPhase,
+  event : TLEvent,
+) -> TransitionResult[TLPhase] {
+  tl_transition(self, event)
+}
+
+///|
 pub fn tl_phase_from_json(json_str : String) -> TLPhase? {
   let json = @json.parse(json_str) catch { _ => return None }
   guard json is Object(obj) else { return None }

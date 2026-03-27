@@ -270,6 +270,34 @@ test "tl phase json round-trip all variants" {
 }
 
 ///|
+test "state_machine supervisor machine_name and transition" {
+  let sm : SupervisorLifecycle = Planning
+  assert_eq(StateMachine::machine_name(sm), "supervisor")
+  let child : ChildLifecycle = {
+    child_id: "c1",
+    slug: "leaf-c1",
+    branch: "main.leaf-c1",
+    agent_type: "gemini",
+    summary: ChildLifecycleSummary::Working,
+  }
+  match sm.transition(SupervisorEvent::ChildSpawned(child~)) {
+    Transitioned(Supervising(children~, wave=1)) =>
+      assert_eq(children.length(), 1)
+    _ => fail("expected Supervising after ChildSpawned")
+  }
+}
+
+///|
+test "state_machine tl machine_name and transition" {
+  let sm : TLPhase = Planning
+  assert_eq(StateMachine::machine_name(sm), "tl")
+  match sm.transition(TLEvent::ChildSpawned(child_id="c1")) {
+    Transitioned(Waiting(count=1, wave=1)) => ()
+    _ => fail("expected Waiting after ChildSpawned")
+  }
+}
+
+///|
 test "dev phase json round-trip all variants" {
   let phases : Array[DevPhase] = [
     Spawned,
