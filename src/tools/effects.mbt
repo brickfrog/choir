@@ -1,4 +1,32 @@
 ///|
+/// Typed errors for the fork_wave execution path.
+/// Variants carry structured data — callers match on the constructor,
+/// not on substrings of a message.
+pub(all) enum ForkWaveError {
+  /// Working tree has uncommitted or staged changes.
+  /// `output` is the raw `git status --porcelain` output.
+  UncommittedChanges(output~ : String)
+  /// Local commits exist that haven't been pushed.
+  /// `output` is the raw `git log @{u}..HEAD` output.
+  UnpushedCommits(output~ : String)
+  /// A spawn command exited with a non-zero status.
+  CommandFailed(status~ : Int)
+} derive(Show, Eq)
+
+///|
+pub fn ForkWaveError::message(self : ForkWaveError) -> String {
+  match self {
+    UncommittedChanges(output~) =>
+      "Working tree has uncommitted changes. Commit and push your scaffold work first, then call fork_wave.\n" +
+      output.trim().to_string()
+    UnpushedCommits(output~) =>
+      "Unpushed commits exist. Run 'git push' first, then call fork_wave.\n" +
+      output.trim().to_string()
+    CommandFailed(status~) => "command failed with status " + status.to_string()
+  }
+}
+
+///|
 /// A description of side-effectful operations, parameterized by result type A.
 ///
 /// Values of this type are pure data — no I/O occurs until fed to `interpret`.
@@ -60,36 +88,28 @@ pub fn fork_wave_plan(
   skipped_count : Int,
   agent_ids : String,
   skipped_ids : String,
-) -> Eff[@types.Response] {
+) -> Eff[Result[@types.Response, ForkWaveError]] {
   GitCapture(program="git", args=["-C", project_dir, "status", "--porcelain"], cont=fn(
     status_out,
   ) {
     if status_out.trim().to_string() != "" {
-      Pure(
-        @types.Response::Err(
-          "Working tree has uncommitted changes. Commit and push your scaffold work first, then call fork_wave.\n" +
-          status_out.trim().to_string(),
-        ),
-      )
+      Pure(Err(UncommittedChanges(output=status_out.trim().to_string())))
     } else {
       GitCapture(
         program="git",
         args=["-C", project_dir, "log", "--oneline", "@{u}..HEAD"],
         cont=fn(unpushed_out) {
           if unpushed_out.trim().to_string() != "" {
-            Pure(
-              @types.Response::Err(
-                "Unpushed commits exist. Run 'git push' first, then call fork_wave.\n" +
-                unpushed_out.trim().to_string(),
-              ),
-            )
+            Pure(Err(UnpushedCommits(output=unpushed_out.trim().to_string())))
           } else if spawned_count == 0 && skipped_count > 0 {
             Pure(
-              @types.Response::ok_values({
-                "status": String::to_json("already_running"),
-                "count": Int::to_json(0),
-                "skipped_ids": String::to_json(skipped_ids),
-              }),
+              Ok(
+                @types.Response::ok_values({
+                  "status": String::to_json("already_running"),
+                  "count": Int::to_json(0),
+                  "skipped_ids": String::to_json(skipped_ids),
+                }),
+              ),
             )
           } else {
             RunCommands(cmds~, cont=fn(exit_codes) {
@@ -99,11 +119,7 @@ pub fn fork_wave_plan(
                 0
               }
               if last != 0 {
-                Pure(
-                  @types.Response::Err(
-                    "command failed with status " + last.to_string(),
-                  ),
-                )
+                Pure(Err(CommandFailed(status=last)))
               } else {
                 let result : Map[String, Json] = {
                   "status": String::to_json("spawned"),
@@ -113,7 +129,7 @@ pub fn fork_wave_plan(
                 if skipped_count > 0 {
                   result.set("skipped_ids", String::to_json(skipped_ids))
                 }
-                Pure(@types.Response::ok_values(result))
+                Pure(Ok(@types.Response::ok_values(result)))
               }
             })
           }

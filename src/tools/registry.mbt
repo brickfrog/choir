@@ -153,14 +153,14 @@ pub fn ToolRegistry::lookup(
   self : ToolRegistry,
   role : @types.Role,
   name : String,
-) -> Result[@types.ToolDef, @types.ExoError] {
+) -> Result[@types.ToolDef, @types.ChoirError] {
   match self.tools.get(name) {
-    None => Err(@types.ExoError::ToolNotFound(name))
+    None => Err(@types.ChoirError::ToolNotFound(name))
     Some(def) =>
       if def.is_role_allowed(role) {
         Ok(def)
       } else {
-        Err(@types.ExoError::PermissionDenied(role.to_string(), name))
+        Err(@types.ChoirError::PermissionDenied(role.to_string(), name))
       }
   }
 }

@@ -21,16 +21,16 @@ test "plan first step is always a git status capture" {
 }
 
 ///|
-test "dirty working tree yields Done(Err) after status capture" {
+test "dirty working tree yields UncommittedChanges after status capture" {
   let plan = @tools.fork_wave_plan(".", [], 1, 0, "main.leaf", "")
   let after_status = match plan {
     GitCapture(cont~, ..) => cont(" M src/foo.mbt\n")
     _ => fail("expected GitCapture as first step")
   }
   match after_status {
-    Pure(@types.Response::Err(msg)) =>
-      assert_true(msg.contains("uncommitted changes"))
-    _ => fail("expected Pure(Err) for dirty tree")
+    Pure(Err(@tools.ForkWaveError::UncommittedChanges(output~))) =>
+      assert_true(output.length() > 0)
+    _ => fail("expected Pure(Err(UncommittedChanges))")
   }
 }
 
@@ -50,7 +50,7 @@ test "clean status proceeds to unpushed check" {
 }
 
 ///|
-test "unpushed commits yields Done(Err) after log capture" {
+test "unpushed commits yields UnpushedCommits after log capture" {
   let plan = @tools.fork_wave_plan(".", [], 1, 0, "main.leaf", "")
   let after_log = match plan {
     GitCapture(cont~, ..) =>
@@ -61,9 +61,9 @@ test "unpushed commits yields Done(Err) after log capture" {
     _ => fail("expected two GitCaptures")
   }
   match after_log {
-    Pure(@types.Response::Err(msg)) =>
-      assert_true(msg.contains("Unpushed commits"))
-    _ => fail("expected Pure(Err) for unpushed commits")
+    Pure(Err(@tools.ForkWaveError::UnpushedCommits(output~))) =>
+      assert_true(output.contains("scaffold"))
+    _ => fail("expected Pure(Err(UnpushedCommits))")
   }
 }
 
@@ -79,13 +79,9 @@ test "all skipped with no spawned yields already_running" {
     _ => fail("expected two GitCaptures")
   }
   match after_both_checks {
-    Pure(resp) =>
-      match resp {
-        @types.Response::Ok(vals) =>
-          assert_eq(vals.get("status"), Some("already_running"))
-        _ => fail("expected Ok response")
-      }
-    _ => fail("expected Pure after clean checks with no-spawn")
+    Pure(Ok(@types.Response::Ok(vals))) =>
+      assert_eq(vals.get("status"), Some("already_running"))
+    _ => fail("expected Pure(Ok(already_running))")
   }
 }
 
@@ -134,7 +130,7 @@ test "successful commands yield spawned response" {
     _ => fail("expected GitCapture → GitCapture → RunCommands")
   }
   match after_run {
-    Pure(@types.Response::Ok(vals)) => {
+    Pure(Ok(@types.Response::Ok(vals))) => {
       assert_eq(vals.get("status"), Some("spawned"))
       assert_eq(vals.get("count"), Some("1"))
     }
@@ -143,7 +139,7 @@ test "successful commands yield spawned response" {
 }
 
 ///|
-test "failed command yields Err response" {
+test "failed command yields CommandFailed(status=1)" {
   let fail_cmd = @workspace.Command::{
     program: "false",
     args: [],
@@ -163,8 +159,8 @@ test "failed command yields Err response" {
     _ => fail("expected GitCapture → GitCapture → RunCommands")
   }
   match after_run {
-    Pure(@types.Response::Err(msg)) =>
-      assert_true(msg.contains("command failed"))
-    _ => fail("expected Pure(Err) for failed command")
+    Pure(Err(@tools.ForkWaveError::CommandFailed(status~))) =>
+      assert_eq(status, 1)
+    _ => fail("expected Pure(Err(CommandFailed(1)))")
   }
 }

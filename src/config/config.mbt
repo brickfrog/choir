@@ -1,19 +1,19 @@
 ///|
 /// Parse a role string into a Role enum.
-pub fn parse_role(s : String) -> Result[@types.Role, @types.ExoError] {
+pub fn parse_role(s : String) -> Result[@types.Role, @types.ChoirError] {
   match s {
     "root" => Ok(@types.Role::Root)
     "tl" => Ok(@types.Role::TL)
     "dev" => Ok(@types.Role::Dev)
     "worker" => Ok(@types.Role::Worker)
-    _ => Err(@types.ExoError::ConfigError("unknown role: " + s))
+    _ => Err(@types.ChoirError::ConfigError("unknown role: " + s))
   }
 }
 
 ///|
 pub fn parse_agent_type(
   s : String,
-) -> Result[@types.AgentType, @types.ExoError] {
+) -> Result[@types.AgentType, @types.ChoirError] {
   match s {
     "claude" => Ok(@types.AgentType::Claude)
     "gemini" => Ok(@types.AgentType::Gemini)
@@ -22,7 +22,7 @@ pub fn parse_agent_type(
     "codex" => Ok(@types.AgentType::Codex)
     "cursor_agent" => Ok(@types.AgentType::CursorAgent)
     "cursoragent" => Ok(@types.AgentType::CursorAgent)
-    _ => Err(@types.ExoError::ConfigError("unknown agent_type: " + s))
+    _ => Err(@types.ChoirError::ConfigError("unknown agent_type: " + s))
   }
 }
 
@@ -101,7 +101,9 @@ pub fn hook_command_path(content : String, hook_key : String) -> String? {
 
 ///|
 /// Parses project config.toml
-pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] {
+pub fn parse_config(
+  content : String,
+) -> Result[@types.Config, @types.ChoirError] {
   let doc = parse_toml_doc(content)
   let default_cfg = @types.Config::default()
 
@@ -170,21 +172,21 @@ pub fn parse_config(content : String) -> Result[@types.Config, @types.ExoError] 
 }
 
 ///|
-fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ExoError] {
+fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ChoirError] {
   let s = raw.trim().to_string()
   if s == "" {
-    return Err(@types.ExoError::ConfigError("spawn_depth cannot be empty"))
+    return Err(@types.ChoirError::ConfigError("spawn_depth cannot be empty"))
   }
   let mut n = 0
   for c in s {
     if c >= '0' && c <= '9' {
       n = n * 10 + (c.to_int() - '0'.to_int())
     } else {
-      return Err(@types.ExoError::ConfigError("invalid spawn_depth: " + raw))
+      return Err(@types.ChoirError::ConfigError("invalid spawn_depth: " + raw))
     }
   }
   if n > 1 {
-    return Err(@types.ExoError::ConfigError("spawn_depth must be 0 or 1"))
+    return Err(@types.ChoirError::ConfigError("spawn_depth must be 0 or 1"))
   }
   Ok(n)
 }
@@ -193,7 +195,7 @@ fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ExoError] {
 /// Parses config.local.toml into the local spawn/session metadata.
 pub fn parse_local_config(
   content : String,
-) -> Result[@types.LocalConfig, @types.ExoError] {
+) -> Result[@types.LocalConfig, @types.ChoirError] {
   let doc = parse_toml_doc(content)
   let role = match doc.get("role") {
     Some(r) =>
@@ -245,14 +247,14 @@ pub fn parse_local_config(
 /// Parses config.local.toml for role-only compatibility.
 pub fn parse_config_local(
   content : String,
-) -> Result[@types.Role, @types.ExoError] {
+) -> Result[@types.Role, @types.ChoirError] {
   let local_cfg = match parse_local_config(content) {
     Ok(local_cfg) => local_cfg
     Err(e) => return Err(e)
   }
   match local_cfg.role {
     Some(r) => Ok(r)
-    None => Err(@types.ExoError::ConfigError("missing role in local config"))
+    None => Err(@types.ChoirError::ConfigError("missing role in local config"))
   }
 }
 

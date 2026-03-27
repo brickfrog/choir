@@ -258,7 +258,7 @@ pub async fn ServerState::handle_with_runner(
 pub fn ServerState::register_agent(
   self : ServerState,
   agent : @types.Agent,
-) -> Result[Unit, @types.ExoError] {
+) -> Result[Unit, @types.ChoirError] {
   self.clear_pending_disconnect(agent.agent_id.to_string())
   let agent_id = agent.agent_id.to_string()
   let lifecycle = match
@@ -283,7 +283,7 @@ pub fn ServerState::notify_parent(
   caller_id : String,
   message : String,
   status : String,
-) -> Result[@message.DeliveryMethod, @types.ExoError] {
+) -> Result[@message.DeliveryMethod, @types.ChoirError] {
   match self.resolve_parent_for_delivery(caller_id) {
     Ok(parent) => Ok(@message.plan_delivery(parent, caller_id, message, status))
     Err(e) => Err(e)
@@ -312,7 +312,7 @@ fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
 fn ServerState::resolve_parent_by_id(
   self : ServerState,
   parent_id : String,
-) -> Result[@types.Agent, @types.ExoError] {
+) -> Result[@types.Agent, @types.ChoirError] {
   match self.registry.get(parent_id) {
     Ok(parent) => Ok(parent)
     Err(_) =>
@@ -336,7 +336,7 @@ fn ServerState::resolve_parent_by_id(
             state: lifecycle.to_agent_state(),
             spawn_depth: 0,
           })
-        None => Err(@types.ExoError::AgentNotFound(parent_id))
+        None => Err(@types.ChoirError::AgentNotFound(parent_id))
       }
   }
 }
@@ -345,13 +345,13 @@ fn ServerState::resolve_parent_by_id(
 fn ServerState::resolve_parent_for_delivery(
   self : ServerState,
   caller_id : String,
-) -> Result[@types.Agent, @types.ExoError] {
+) -> Result[@types.Agent, @types.ChoirError] {
   match self.registry.get(caller_id) {
     Ok(agent) =>
       match agent.parent {
         Some(parent_id) => self.resolve_parent_by_id(parent_id)
         None =>
-          Err(@types.ExoError::AgentNotFound("no parent for " + caller_id))
+          Err(@types.ChoirError::AgentNotFound("no parent for " + caller_id))
       }
     Err(e) => Err(e)
   }
@@ -1260,7 +1260,7 @@ pub fn ServerState::transfer_leaf_ownership(
   self : ServerState,
   from_agent_id : String,
   to_agent_id : String,
-) -> Result[Int, @types.ExoError] {
+) -> Result[Int, @types.ChoirError] {
   if from_agent_id == to_agent_id {
     return Ok(0)
   }
@@ -1274,14 +1274,14 @@ pub fn ServerState::transfer_leaf_ownership(
   }
   if from_agent.parent != to_agent.parent {
     return Err(
-      @types.ExoError::ValidationError(
+      @types.ChoirError::ValidationError(
         "cannot transfer ownership across different parents",
       ),
     )
   }
   if from_agent.role != to_agent.role {
     return Err(
-      @types.ExoError::ValidationError(
+      @types.ChoirError::ValidationError(
         "cannot transfer ownership across different roles",
       ),
     )
@@ -1290,7 +1290,7 @@ pub fn ServerState::transfer_leaf_ownership(
     @types.Role::Dev | @types.Role::Worker => ()
     _ =>
       return Err(
-        @types.ExoError::ValidationError(
+        @types.ChoirError::ValidationError(
           "ownership transfer only supports leaf roles",
         ),
       )
@@ -1706,7 +1706,7 @@ pub fn ServerState::list_agents(self : ServerState) -> Array[@types.Agent] {
 pub fn ServerState::get_agent(
   self : ServerState,
   agent_id : String,
-) -> Result[@types.Agent, @types.ExoError] {
+) -> Result[@types.Agent, @types.ChoirError] {
   self.registry.get(agent_id)
 }
 

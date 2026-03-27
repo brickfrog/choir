@@ -16,10 +16,10 @@ pub fn AgentRegistry::new() -> AgentRegistry {
 pub fn AgentRegistry::insert(
   self : AgentRegistry,
   agent : @types.Agent,
-) -> Result[Unit, @types.ExoError] {
+) -> Result[Unit, @types.ChoirError] {
   let id = agent.agent_id.to_string()
   if self.agents.contains(id) {
-    Err(@types.ExoError::ValidationError("agent already exists: " + id))
+    Err(@types.ChoirError::ValidationError("agent already exists: " + id))
   } else {
     self.agents.set(id, agent)
     self.alive.set(id, true)
@@ -45,10 +45,10 @@ pub fn AgentRegistry::upsert(
 pub fn AgentRegistry::get(
   self : AgentRegistry,
   agent_id : String,
-) -> Result[@types.Agent, @types.ExoError] {
+) -> Result[@types.Agent, @types.ChoirError] {
   match self.agents.get(agent_id) {
     Some(agent) => Ok(agent)
-    None => Err(@types.ExoError::AgentNotFound(agent_id))
+    None => Err(@types.ChoirError::AgentNotFound(agent_id))
   }
 }
 
@@ -57,13 +57,14 @@ pub fn AgentRegistry::get(
 pub fn AgentRegistry::get_parent(
   self : AgentRegistry,
   agent_id : String,
-) -> Result[@types.Agent, @types.ExoError] {
+) -> Result[@types.Agent, @types.ChoirError] {
   match self.get(agent_id) {
     Err(e) => Err(e)
     Ok(agent) =>
       match agent.parent {
         Some(parent_id) => self.get(parent_id)
-        None => Err(@types.ExoError::AgentNotFound("no parent for " + agent_id))
+        None =>
+          Err(@types.ChoirError::AgentNotFound("no parent for " + agent_id))
       }
   }
 }
@@ -73,14 +74,14 @@ pub fn AgentRegistry::get_parent(
 pub fn AgentRegistry::remove(
   self : AgentRegistry,
   agent_id : String,
-) -> Result[@types.Agent, @types.ExoError] {
+) -> Result[@types.Agent, @types.ChoirError] {
   match self.agents.get(agent_id) {
     Some(agent) => {
       self.agents.remove(agent_id)
       self.alive.remove(agent_id)
       Ok(agent)
     }
-    None => Err(@types.ExoError::AgentNotFound(agent_id))
+    None => Err(@types.ChoirError::AgentNotFound(agent_id))
   }
 }
 
@@ -107,7 +108,7 @@ pub fn AgentRegistry::set_state(
   self : AgentRegistry,
   agent_id : String,
   new_state : @types.AgentState,
-) -> Result[Unit, @types.ExoError] {
+) -> Result[Unit, @types.ChoirError] {
   match self.agents.get(agent_id) {
     Some(agent) => {
       let valid = match (agent.state, new_state) {
@@ -124,7 +125,7 @@ pub fn AgentRegistry::set_state(
         Ok(())
       } else {
         Err(
-          @types.ExoError::ValidationError(
+          @types.ChoirError::ValidationError(
             "invalid state transition: " +
             agent.state.to_string() +
             " -> " +
@@ -133,7 +134,7 @@ pub fn AgentRegistry::set_state(
         )
       }
     }
-    None => Err(@types.ExoError::AgentNotFound(agent_id))
+    None => Err(@types.ChoirError::AgentNotFound(agent_id))
   }
 }
 
@@ -143,13 +144,13 @@ pub fn AgentRegistry::set_alive(
   self : AgentRegistry,
   agent_id : String,
   alive : Bool,
-) -> Result[Unit, @types.ExoError] {
+) -> Result[Unit, @types.ChoirError] {
   match self.agents.get(agent_id) {
     Some(_) => {
       self.alive.set(agent_id, alive)
       Ok(())
     }
-    None => Err(@types.ExoError::AgentNotFound(agent_id))
+    None => Err(@types.ChoirError::AgentNotFound(agent_id))
   }
 }
 

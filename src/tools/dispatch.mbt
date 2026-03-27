@@ -83,7 +83,7 @@ fn resolve_parent_for_notify(
   session : String,
   reg : @registry.AgentRegistry,
   caller_id : String,
-) -> Result[@types.Agent, @types.ExoError] {
+) -> Result[@types.Agent, @types.ChoirError] {
   match reg.get(caller_id) {
     Ok(agent) =>
       match agent.parent {
@@ -111,11 +111,11 @@ fn resolve_parent_for_notify(
                     state: lifecycle.to_agent_state(),
                     spawn_depth: 0,
                   })
-                None => Err(@types.ExoError::AgentNotFound(parent_id))
+                None => Err(@types.ChoirError::AgentNotFound(parent_id))
               }
           }
         None =>
-          Err(@types.ExoError::AgentNotFound("no parent for " + caller_id))
+          Err(@types.ChoirError::AgentNotFound("no parent for " + caller_id))
       }
     Err(e) => Err(e)
   }
@@ -293,7 +293,10 @@ pub async fn dispatch(
         agent_ids.to_string(),
         skipped_ids.to_string(),
       )
-      let resp = interpret(plan, git_capture~, runner~)
+      let resp = match interpret(plan, git_capture~, runner~) {
+        Ok(r) => r
+        Err(e) => @types.Response::Err(e.message())
+      }
       // Post-spawn side effects: only run if spawn succeeded.
       if resp.is_ok() && spawned_count > 0 {
         let resolved_pane_ids : Array[(String, String)] = []
@@ -1234,7 +1237,7 @@ pub async fn handle_request(
   match registry.lookup(req.role, req.name) {
     Err(e) =>
       match e {
-        @types.ExoError::ToolNotFound(_) =>
+        @types.ChoirError::ToolNotFound(_) =>
           dispatch_to_plugin(req, plugins_json, runner)
         _ => @types.Response::Err(e.message())
       }

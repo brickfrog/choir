@@ -1,6 +1,6 @@
 ///|
 /// Orchestrator error types.
-pub(all) enum ExoError {
+pub(all) enum ChoirError {
   AgentNotFound(String)
   ToolNotFound(String)
   PermissionDenied(String, String)
@@ -12,7 +12,7 @@ pub(all) enum ExoError {
 } derive(Show, Eq)
 
 ///|
-pub fn ExoError::message(self : ExoError) -> String {
+pub fn ChoirError::message(self : ChoirError) -> String {
   match self {
     AgentNotFound(id) => "agent not found: " + id
     ToolNotFound(name) => "tool not found: " + name

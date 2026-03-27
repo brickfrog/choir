@@ -31,10 +31,10 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 
 ///|
 fn persist_run_id(project_dir : String, run_id : String) -> Unit {
-  let exo_dir = project_dir + "/.choir"
-  let path = exo_dir + "/run_id"
+  let choir_dir = project_dir + "/.choir"
+  let path = choir_dir + "/run_id"
   let script = "mkdir -p " +
-    @exec.quote(exo_dir) +
+    @exec.quote(choir_dir) +
     " && printf '%s' " +
     @exec.quote(run_id) +
     " > " +
