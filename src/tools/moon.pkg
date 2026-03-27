@@ -15,6 +15,7 @@ import {
   "moonbitlang/async",
   "moonbitlang/async/process",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
   "brickfrog/moontrace",
 }
 

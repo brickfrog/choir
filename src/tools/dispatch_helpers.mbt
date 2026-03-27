@@ -209,6 +209,7 @@ pub async fn verify_teams_delivery(
 pub async fn execute_delivery(
   delivery : @message.DeliveryMethod,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, String] {
   fn ensure_success(statuses : Array[Int]) -> Result[Unit, String] {
     if statuses.length() == 0 || statuses[0] == 0 {
@@ -229,6 +230,91 @@ pub async fn execute_delivery(
       ],
       workdir: Some("."),
     }
+  }
+  fn delivery_timestamp() -> String {
+    @env.now().reinterpret_as_int64().to_string()
+  }
+  fn normalize_log_error(error : String) -> String {
+    let buf = StringBuilder::new()
+    for c in error {
+      if c == '\n' || c == '\r' {
+        buf.write_char(' ')
+      } else {
+        buf.write_char(c)
+      }
+    }
+    buf.to_string()
+  }
+  fn log_delivery_retry(
+    target : String,
+    attempt : Int,
+    delay_ms : Int,
+    error : String,
+  ) -> Unit {
+    ignore(
+      @sys.append_file_sync(
+        ".choir/delivery.log",
+        "[delivery-retry] ts_ms=" +
+        delivery_timestamp() +
+        " target=" +
+        target +
+        " attempt=" +
+        attempt.to_string() +
+        " delay_ms=" +
+        delay_ms.to_string() +
+        " error=" +
+        normalize_log_error(error) +
+        "\n",
+      ),
+    )
+  }
+  fn log_delivery_failure(target : String, error : String) -> Unit {
+    ignore(
+      @sys.append_file_sync(
+        ".choir/delivery.log",
+        "[delivery-failed] ts_ms=" +
+        delivery_timestamp() +
+        " target=" +
+        target +
+        " error=" +
+        normalize_log_error(error) +
+        "\n",
+      ),
+    )
+  }
+  async fn run_with_retries(
+    cmd : @workspace.Command,
+    target : String,
+  ) -> Result[Unit, String] {
+    let backoff_ms = [1000, 2000, 4000]
+    let mut last_error = "unknown delivery error"
+    for attempt = 0; attempt < 4; attempt = attempt + 1 {
+      let mut run_threw = false
+      let statuses = runner([cmd]) catch {
+        e => {
+          last_error = e.to_string()
+          run_threw = true
+          []
+        }
+      }
+      let attempt_result = if run_threw {
+        Err(last_error)
+      } else {
+        ensure_success(statuses)
+      }
+      match attempt_result {
+        Ok(_) => return Ok(())
+        Err(e) => last_error = e
+      }
+      if attempt < backoff_ms.length() {
+        let retry_attempt = attempt + 1
+        let delay = backoff_ms[attempt]
+        log_delivery_retry(target, retry_attempt, delay, last_error)
+        sleep_fn(delay)
+      }
+    }
+    log_delivery_failure(target, last_error)
+    Err(last_error)
   }
   match delivery {
     @message.DeliveryMethod::TeamsInbox(path, json, fallback_target~) => {
@@ -255,14 +341,13 @@ pub async fn execute_delivery(
           "\n",
         ),
       )
-      let statuses = runner([cmd]) catch { e => return Err(e.to_string()) }
       ignore(
         @sys.append_file_sync(
           ".choir/delivery.log",
-          "[delivery] exit=" + statuses[0].to_string() + "\n",
+          "[delivery] dispatch-with-retry target=" + target.to_string() + "\n",
         ),
       )
-      ensure_success(statuses)
+      run_with_retries(cmd, target.to_string())
     }
     @message.DeliveryMethod::TcpPush(_, _) => Ok(()) // Phase 2
     @message.DeliveryMethod::UdsHttp(sock_path, body) => {
