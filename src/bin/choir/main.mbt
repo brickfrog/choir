@@ -599,7 +599,9 @@ fn mcp_cli_override_agent_id(args : Array[String]) -> String? {
 
 ///|
 fn mcp_response_line(resp : @mcp.JsonRpcResponse) -> String {
-  resp.to_json_string() + "\n"
+  let body = resp.to_json_string() + "\n"
+  let body_len = @utf8.encode(body).length()
+  "Content-Length: " + body_len.to_string() + "\r\n\r\n" + body
 }
 
 ///|
@@ -655,7 +657,16 @@ fn mcp_run_request_loop(
 ) -> McpUdsLoopExit {
   for ;; {
     let line = match read_input() {
-      Some(line) => line
+      Some(line) => {
+        let trimmed = line.trim().to_string()
+        // Skip MCP Content-Length headers and blank lines
+        if trimmed.length() == 0 ||
+          trimmed.has_prefix("Content-Length") ||
+          trimmed.has_prefix("content-length") {
+          continue
+        }
+        trimmed
+      }
       None => break
     }
     match @mcp.parse_jsonrpc_request(line) {
@@ -831,7 +842,16 @@ fn mcp_run() -> Unit {
 
       for ;; {
         let line = match @sys.read_stdin_line(8192) {
-          Some(line) => line
+          Some(line) => {
+            let trimmed = line.trim().to_string()
+            // Skip MCP Content-Length headers and blank lines
+            if trimmed.length() == 0 ||
+              trimmed.has_prefix("Content-Length") ||
+              trimmed.has_prefix("content-length") {
+              continue
+            }
+            trimmed
+          }
           None => break
         }
         match @mcp.parse_jsonrpc_request(line) {

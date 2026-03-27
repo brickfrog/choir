@@ -159,7 +159,7 @@ test "read_line_from_bytes with multiple lines returns first" {
 }
 
 ///|
-test "response_to_bytes produces valid result" {
+test "response_to_bytes produces Content-Length framed result" {
   let resp : JsonRpcResponse = {
     jsonrpc: "2.0",
     id: Number(1),
@@ -167,11 +167,9 @@ test "response_to_bytes produces valid result" {
     error: None,
   }
   let bytes = response_to_bytes(resp)
-  match read_line_from_bytes(bytes, 0) {
-    Some((line, _)) =>
-      assert_eq(
-        line, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"status\":\"ok\"}}",
-      )
-    None => fail("should have read line")
-  }
+  let s = @utf8.decode_lossy(bytes)
+  assert_true(s.has_prefix("Content-Length: "))
+  assert_true(
+    s.contains("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"status\":\"ok\"}}"),
+  )
 }

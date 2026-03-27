@@ -23,6 +23,8 @@ pub fn read_line_from_bytes(buf : Bytes, offset : Int) -> (String, Int)? {
 
 ///|
 pub fn response_to_bytes(resp : JsonRpcResponse) -> Bytes {
-  let s = resp.to_json_string() + "\n"
-  @utf8.encode(s)
+  let body = resp.to_json_string() + "\n"
+  let body_len = @utf8.encode(body).length()
+  let framed = "Content-Length: " + body_len.to_string() + "\r\n\r\n" + body
+  @utf8.encode(framed)
 }
