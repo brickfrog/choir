@@ -438,6 +438,12 @@ fn clamp_consecutive_failures(consecutive_failures : Int) -> Int {
 }
 
 ///|
+/// Same backoff delays as after a failed GH poll (for tests and tooling).
+pub fn poller_backoff_delay_after_failure(consecutive_failures : Int) -> Int64 {
+  backoff_delay_seconds(consecutive_failures)
+}
+
+///|
 /// Check if an agent has any tracked PRs.
 pub fn PollerState::has_tracked_pr(
   self : PollerState,
@@ -481,6 +487,7 @@ pub async fn PollerState::tick_with(
   timeout : Int64,
   poll : async (Int) -> (Bool, ReviewState, String, Bool, String, Bool),
   on_event : (PollEvent, String) -> Unit,
+  log_pr : (PollerPrTickLog) -> Unit,
 ) -> Unit {
   let pr_numbers = []
   for tracked in self.tracked.values() {
@@ -491,47 +498,92 @@ pub async fn PollerState::tick_with(
       Some(value) => value
       None => continue
     }
+    let agent_id = tracked.agent_id
+    let prev_failures = tracked.consecutive_failures
+    let prior_state = tracked.last_review_state
     if now < tracked.backoff_until {
+      log_pr({
+        pr_number,
+        agent_id,
+        skipped_backoff: true,
+        polled_network: false,
+        poll_succeeded: false,
+        untracked_closed: false,
+        backoff_until: tracked.backoff_until,
+        prior_review_state: prior_state,
+        detected_review_state: prior_state,
+        events: [],
+        consecutive_failures: prev_failures,
+        previous_consecutive_failures: prev_failures,
+      })
       continue
     }
     let (poll_ok, review, sha, ci_failed, review_bodies, is_open) = poll(
       pr_number,
     )
-    if not(is_open) {
-      self.tracked.remove(pr_number)
-      continue
-    }
     if not(poll_ok) {
       let failures = clamp_consecutive_failures(
         tracked.consecutive_failures + 1,
       )
       let delay = backoff_delay_seconds(failures)
+      let until = now + delay
       self.tracked.set(pr_number, {
         ..tracked,
         consecutive_failures: failures,
-        backoff_until: now + delay,
+        backoff_until: until,
+      })
+      log_pr({
+        pr_number,
+        agent_id,
+        skipped_backoff: false,
+        polled_network: true,
+        poll_succeeded: false,
+        untracked_closed: false,
+        backoff_until: until,
+        prior_review_state: prior_state,
+        detected_review_state: prior_state,
+        events: [],
+        consecutive_failures: failures,
+        previous_consecutive_failures: prev_failures,
       })
       continue
     }
+    let tracked_ok = { ..tracked, consecutive_failures: 0, backoff_until: 0L }
+    if not(is_open) {
+      log_pr({
+        pr_number,
+        agent_id,
+        skipped_backoff: false,
+        polled_network: true,
+        poll_succeeded: true,
+        untracked_closed: true,
+        backoff_until: 0L,
+        prior_review_state: prior_state,
+        detected_review_state: review,
+        events: [],
+        consecutive_failures: 0,
+        previous_consecutive_failures: prev_failures,
+      })
+      self.tracked.remove(pr_number)
+      continue
+    }
     let events = detect_events(
-      tracked, review, sha, ci_failed, review_bodies, now, timeout,
+      tracked_ok, review, sha, ci_failed, review_bodies, now, timeout,
     )
-    let mut timeout_at = tracked.last_timeout_at
+    let mut timeout_at = tracked_ok.last_timeout_at
     for event in events {
-      on_event(event, tracked.agent_id)
+      on_event(event, tracked_ok.agent_id)
       match event {
         ReviewTimeout(_) => timeout_at = now
         _ => ()
       }
     }
     let notified_parent = next_notified_parent(
-      tracked, review, review_bodies, sha,
+      tracked_ok, review, review_bodies, sha,
     )
     let updated = if sha == "" {
       {
-        ..tracked,
-        consecutive_failures: 0,
-        backoff_until: 0L,
+        ..tracked_ok,
         last_review_state: review,
         last_review_bodies: review_bodies,
         notified_parent,
@@ -540,9 +592,7 @@ pub async fn PollerState::tick_with(
       }
     } else {
       {
-        ..tracked,
-        consecutive_failures: 0,
-        backoff_until: 0L,
+        ..tracked_ok,
         last_review_state: review,
         last_review_bodies: review_bodies,
         last_sha: sha,
@@ -552,6 +602,20 @@ pub async fn PollerState::tick_with(
       }
     }
     self.tracked.set(pr_number, updated)
+    log_pr({
+      pr_number,
+      agent_id,
+      skipped_backoff: false,
+      polled_network: true,
+      poll_succeeded: true,
+      untracked_closed: false,
+      backoff_until: 0L,
+      prior_review_state: prior_state,
+      detected_review_state: review,
+      events,
+      consecutive_failures: 0,
+      previous_consecutive_failures: prev_failures,
+    })
   }
 }
 
@@ -562,5 +626,5 @@ pub async fn PollerState::tick(
   timeout : Int64,
   on_event : (PollEvent, String) -> Unit,
 ) -> Unit {
-  self.tick_with(now, timeout, gh_poll_pr, on_event)
+  self.tick_with(now, timeout, gh_poll_pr, on_event, fn(_) { () })
 }

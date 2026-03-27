@@ -218,7 +218,11 @@ pub async fn gh_poll_pr(
   // Fetch inline code review comments (separate API)
   let inline_output = fetch_inline_comments(pr_number)
   let merged = merge_inline_comments(output, inline_output)
-  parse_gh_pr_view_output(merged)
+  let exit_ok = exit_code == 0 && total > 0
+  let (json_ok, review, sha, ci_failed, review_bodies, is_open) = parse_gh_pr_view_output(
+    merged,
+  )
+  (exit_ok && json_ok, review, sha, ci_failed, review_bodies, is_open)
 }
 
 ///|

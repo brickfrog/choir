@@ -27,6 +27,23 @@ pub(all) struct TrackedPR {
 } derive(Show, Eq)
 
 ///|
+/// Per-PR outcome of one poller tick (for tracing and delivery logs).
+pub(all) struct PollerPrTickLog {
+  pr_number : Int
+  agent_id : String
+  skipped_backoff : Bool
+  polled_network : Bool
+  poll_succeeded : Bool
+  untracked_closed : Bool
+  backoff_until : Int64
+  prior_review_state : ReviewState
+  detected_review_state : ReviewState
+  events : Array[PollEvent]
+  consecutive_failures : Int
+  previous_consecutive_failures : Int
+}
+
+///|
 /// Events emitted by the poller on each tick.
 pub(all) enum PollEvent {
   ReviewReceived(Int, String)
