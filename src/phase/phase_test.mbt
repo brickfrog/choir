@@ -2,20 +2,20 @@
 test "tl_transition" {
   let mut p = TLPhase::Planning
   match tl_transition(p, ChildSpawned(child_id="c1")) {
-    Transitioned(Waiting(count=1)) => p = Waiting(count=1)
+    Transitioned(Waiting(count=1, wave=1)) => p = Waiting(count=1, wave=1)
     _ => fail("expected Waiting(1)")
   }
   match tl_transition(p, ChildSpawned(child_id="c2")) {
-    Transitioned(Waiting(count=2)) => p = Waiting(count=2)
+    Transitioned(Waiting(count=2, wave=1)) => p = Waiting(count=2, wave=1)
     _ => fail("expected Waiting(2)")
   }
   match tl_transition(p, ChildCompleted(child_id="c1")) {
-    Transitioned(Waiting(count=1)) => p = Waiting(count=1)
+    Transitioned(Waiting(count=1, wave=1)) => p = Waiting(count=1, wave=1)
     _ => fail("expected Waiting(1)")
   }
   match tl_transition(p, PRMerged(number=1, url="url")) {
-    Transitioned(AllMerged) => p = AllMerged
-    _ => fail("expected AllMerged")
+    Transitioned(WaveComplete(wave=1)) => p = WaveComplete(wave=1)
+    _ => fail("expected WaveComplete(1)")
   }
 }
 
@@ -70,7 +70,7 @@ test "dev_transition" {
 test "tl_can_exit" {
   assert_eq(tl_can_exit(Planning), Clean)
   assert_eq(
-    tl_can_exit(Waiting(count=1)),
+    tl_can_exit(Waiting(count=1, wave=1)),
     ShouldNudge("Waiting for 1 children"),
   )
   assert_eq(
@@ -185,22 +185,28 @@ test "lifecycle json round-trip covers supervisor children" {
     role: @types.Role::TL,
     process: Connected,
     workflow: Supervisor(
-      Supervising(children=[
-        {
-          child_id: "main.leaf-a",
-          slug: "leaf-a",
-          branch: "main.leaf-a",
-          agent_type: "gemini",
-          summary: ReviewOwned(pr_number=7, state=FixesAwaitingReview(round=2)),
-        },
-        {
-          child_id: "main.leaf-b",
-          slug: "leaf-b",
-          branch: "main.leaf-b",
-          agent_type: "gemini",
-          summary: Failed(reason=ChildFailure(message="ci failed")),
-        },
-      ]),
+      Supervising(
+        children=[
+          {
+            child_id: "main.leaf-a",
+            slug: "leaf-a",
+            branch: "main.leaf-a",
+            agent_type: "gemini",
+            summary: ReviewOwned(
+              pr_number=7,
+              state=FixesAwaitingReview(round=2),
+            ),
+          },
+          {
+            child_id: "main.leaf-b",
+            slug: "leaf-b",
+            branch: "main.leaf-b",
+            agent_type: "gemini",
+            summary: Failed(reason=ChildFailure(message="ci failed")),
+          },
+        ],
+        wave=1,
+      ),
     ),
   }
   match lifecycle_from_json(lifecycle_to_json(lifecycle)) {
@@ -238,7 +244,8 @@ test "tl phase json round-trip all variants" {
   let phases : Array[TLPhase] = [
     Planning,
     Dispatching,
-    Waiting(count=3),
+    Waiting(count=3, wave=1),
+    WaveComplete(wave=1),
     Merging(count=2),
     AllMerged,
     PRFiled(number=42, url="https://github.com/org/repo/pull/42"),

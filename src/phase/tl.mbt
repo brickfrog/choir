@@ -87,7 +87,8 @@ pub fn ChildTracker::from_json(json_str : String) -> ChildTracker {
 pub(all) enum TLPhase {
   Planning
   Dispatching
-  Waiting(count~ : Int)
+  Waiting(count~ : Int, wave~ : Int)
+  WaveComplete(wave~ : Int)
   Merging(count~ : Int)
   AllMerged
   PRFiled(number~ : Int, url~ : String)
@@ -111,30 +112,41 @@ pub fn tl_transition(
   event : TLEvent,
 ) -> TransitionResult[TLPhase] {
   match (phase, event) {
-    (Planning, ChildSpawned(_)) => Transitioned(Waiting(count=1))
-    (Dispatching, ChildSpawned(_)) => Transitioned(Waiting(count=1))
-    (Waiting(count=n), ChildSpawned(_)) => Transitioned(Waiting(count=n + 1))
-    (Waiting(count=n), ChildCompleted(_)) => {
+    (Planning, ChildSpawned(_)) => Transitioned(Waiting(count=1, wave=1))
+    (Dispatching, ChildSpawned(_)) => Transitioned(Waiting(count=1, wave=1))
+    (WaveComplete(wave~), ChildSpawned(_)) =>
+      Transitioned(Waiting(count=1, wave=wave + 1))
+    (Waiting(count=n, wave~), ChildSpawned(_)) =>
+      Transitioned(Waiting(count=n + 1, wave~))
+    (Waiting(count=n, wave~), ChildCompleted(_)) => {
       let next = n - 1
       if next <= 0 {
-        Transitioned(AllMerged)
+        Transitioned(WaveComplete(wave~))
       } else {
-        Transitioned(Waiting(count=next))
+        Transitioned(Waiting(count=next, wave~))
       }
     }
-    (Waiting(_), ChildFailed(reason~, ..)) => Transitioned(Failed(reason~))
-    (Waiting(count=n), PRMerged(..)) => {
+    (Waiting(..), ChildFailed(reason~, ..)) => Transitioned(Failed(reason~))
+    (Waiting(count=n, wave~), PRMerged(..)) => {
       let next = n - 1
       if next <= 0 {
-        Transitioned(AllMerged)
+        Transitioned(WaveComplete(wave~))
       } else {
-        Transitioned(Waiting(count=next))
+        Transitioned(Waiting(count=next, wave~))
       }
     }
-    (Waiting(_), OwnPRFiled(number~, url~, ..)) =>
+    (Waiting(..), OwnPRFiled(number~, url~, ..)) =>
+      Transitioned(PRFiled(number~, url~))
+    (WaveComplete(..), OwnPRFiled(number~, url~, ..)) =>
       Transitioned(PRFiled(number~, url~))
     (AllMerged, OwnPRFiled(number~, url~, ..)) =>
       Transitioned(PRFiled(number~, url~))
+    (Waiting(count=n, wave~), AllChildrenDone) =>
+      if n <= 0 {
+        Transitioned(WaveComplete(wave~))
+      } else {
+        InvalidTransition("children still active")
+      }
     (_, _) => InvalidTransition("Invalid transition for TLPhase")
   }
 }
@@ -144,8 +156,9 @@ pub fn tl_can_exit(phase : TLPhase) -> StopCheckResult {
   match phase {
     Planning => Clean
     Dispatching => ShouldNudge("Still dispatching children")
-    Waiting(count~) =>
+    Waiting(count~, ..) =>
       ShouldNudge("Waiting for " + count.to_string() + " children")
+    WaveComplete(wave~) => ShouldNudge("Wave " + wave.to_string() + " complete")
     Merging(count~) => ShouldNudge("Merging " + count.to_string() + " children")
     AllMerged => Clean
     PRFiled(number~, url~) =>
@@ -160,8 +173,14 @@ pub fn tl_phase_to_json(phase : TLPhase) -> String {
   let json : Json = match phase {
     Planning => { "phase": "Planning".to_json() }.to_json()
     Dispatching => { "phase": "Dispatching".to_json() }.to_json()
-    Waiting(count~) =>
-      { "phase": "Waiting".to_json(), "count": count.to_json() }.to_json()
+    Waiting(count~, wave~) =>
+      {
+        "phase": "Waiting".to_json(),
+        "count": count.to_json(),
+        "wave": wave.to_json(),
+      }.to_json()
+    WaveComplete(wave~) =>
+      { "phase": "WaveComplete".to_json(), "wave": wave.to_json() }.to_json()
     Merging(count~) =>
       { "phase": "Merging".to_json(), "count": count.to_json() }.to_json()
     AllMerged => { "phase": "AllMerged".to_json() }.to_json()
@@ -187,7 +206,15 @@ pub fn tl_phase_from_json(json_str : String) -> TLPhase? {
     Some(String("Dispatching")) => Some(Dispatching)
     Some(String("Waiting")) => {
       guard obj.get("count") is Some(Number(n, ..)) else { return None }
-      Some(Waiting(count=n.to_int()))
+      let wave = match obj.get("wave") {
+        Some(Number(w, ..)) => w.to_int()
+        _ => 1
+      }
+      Some(Waiting(count=n.to_int(), wave~))
+    }
+    Some(String("WaveComplete")) => {
+      guard obj.get("wave") is Some(Number(w, ..)) else { return None }
+      Some(WaveComplete(wave=w.to_int()))
     }
     Some(String("Merging")) => {
       guard obj.get("count") is Some(Number(n, ..)) else { return None }

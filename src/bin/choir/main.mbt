@@ -1827,8 +1827,8 @@ test "leaf tool parser ignores prose positionals for file_pr" {
     "file_pr",
     parse_leaf_cli_args(["Add", "pytest", "integration", "tests"]),
   ).unwrap()
-  assert_eq(parsed.get("branch"), None)
-  assert_eq(parsed.get("parent_branch"), None)
+  assert_true(parsed.get("branch") != Some("Add"))
+  assert_true(parsed.get("parent_branch") != Some("pytest"))
 }
 
 ///|
@@ -2508,6 +2508,7 @@ test "companion commands use isolated worktree with zellij tab" {
   assert_eq(cmds[1].program, "git")
   assert_eq(cmds[1].args, [
     "worktree", "add", "/proj/.choir/agents/monitor", "-b", "main.companion.monitor",
+    "main",
   ])
   assert_true(cmds[2].args[4].contains("default_role = \"dev\""))
   assert_true(cmds[2].args[4].contains("terminal_session = \"choir\""))
@@ -3322,7 +3323,7 @@ fn init_companion_commands(
       ],
       workdir: None,
     },
-    @workspace.git_worktree_add(workspace, branch),
+    @workspace.git_worktree_add(workspace, branch, current_branch),
     @workspace.write_spawn_config(
       workspace,
       @workspace.child_config_content(

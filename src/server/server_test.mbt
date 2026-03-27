@@ -263,7 +263,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
     Some(plc) =>
       match plc.workflow {
         @phase.WorkflowState::Supervisor(
-          @phase.SupervisorLifecycle::Supervising(children~)
+          @phase.SupervisorLifecycle::Supervising(children~, ..)
         ) => {
           assert_eq(children.length(), 1)
           assert_eq(children[0].child_id, new_id)
