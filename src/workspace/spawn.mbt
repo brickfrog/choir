@@ -172,12 +172,8 @@ pub fn spawn_commands(
           git_fetch_origin_branch_best_effort(root_project, spec.parent_branch),
         )
         cmds.push(
-          git_merge_ff_origin_branch_best_effort(
-            root_project,
-            spec.parent_branch,
-          ),
+          git_worktree_add(workspace, branch, "origin/" + spec.parent_branch),
         )
-        cmds.push(git_worktree_add(workspace, branch, spec.parent_branch))
       }
       cmds.push(
         write_spawn_config(
