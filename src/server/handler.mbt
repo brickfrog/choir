@@ -567,6 +567,20 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
 }
 
 ///|
+/// Cap API review bodies for terminal injection (Copilot/GitHub can return full PR markdown).
+let review_summary_pane_max_chars : Int = 2500
+
+///|
+fn clamp_review_summary_for_pane(body : String) -> String {
+  let suffix = "\n... [truncated; open PR on GitHub for full review text]"
+  if body.length() <= review_summary_pane_max_chars {
+    body
+  } else {
+    body[0:review_summary_pane_max_chars].to_string() + suffix
+  }
+}
+
+///|
 /// Direct review/CI injection for the owning leaf pane (`plan_delivery` adds `[from: …]`).
 /// Parent still receives `parent_poll_event_message` for triage/merge except
 /// `ReviewCommented` (non-blocking thread goes to the leaf only).
@@ -580,7 +594,10 @@ fn leaf_poll_review_injection_message(
           if body == "" {
             "[REVIEW] PR #" + n.to_string() + ": changes requested"
           } else {
-            "[REVIEW] PR #" + n.to_string() + ": " + body
+            "[REVIEW] PR #" +
+            n.to_string() +
+            ": " +
+            clamp_review_summary_for_pane(body)
           },
           "info",
         ),
@@ -591,7 +608,10 @@ fn leaf_poll_review_injection_message(
           if body == "" {
             "[REVIEW] PR #" + n.to_string() + ": non-blocking review comments"
           } else {
-            "[REVIEW] PR #" + n.to_string() + ": " + body
+            "[REVIEW] PR #" +
+            n.to_string() +
+            ": " +
+            clamp_review_summary_for_pane(body)
           },
           "info",
         ),
@@ -1731,4 +1751,18 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     }
     None => fail("expected FixesPushed message")
   }
+}
+
+///|
+test "clamp_review_summary_for_pane leaves short text unchanged" {
+  let s = "fix the typo in handler"
+  assert_eq(clamp_review_summary_for_pane(s), s)
+}
+
+///|
+test "clamp_review_summary_for_pane truncates long Copilot-style bodies" {
+  let long = "x".repeat(review_summary_pane_max_chars + 500)
+  let out = clamp_review_summary_for_pane(long)
+  assert_true(out.contains("[truncated"))
+  assert_true(out.length() < long.length())
 }
