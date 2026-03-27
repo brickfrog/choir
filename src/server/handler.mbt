@@ -567,48 +567,66 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
 }
 
 ///|
-fn owner_poll_event_message(event : @poller.PollEvent) -> (String, String)? {
+/// Cap API review bodies for terminal injection (Copilot/GitHub can return full PR markdown).
+let review_summary_pane_max_chars : Int = 2500
+
+///|
+fn clamp_review_summary_for_pane(body : String) -> String {
+  let suffix = "\n... [truncated; open PR on GitHub for full review text]"
+  if body.length() <= review_summary_pane_max_chars {
+    body
+  } else {
+    body[0:review_summary_pane_max_chars].to_string() + suffix
+  }
+}
+
+///|
+/// Direct review/CI injection for the owning leaf pane (`plan_delivery` adds `[from: …]`).
+/// Parent still receives `parent_poll_event_message` for triage/merge except
+/// `ReviewCommented` (non-blocking thread goes to the leaf only).
+fn leaf_poll_review_injection_message(
+  event : @poller.PollEvent,
+) -> (String, String)? {
   match event {
-    ReviewReceived(n, comments) =>
-      if comments == "" {
-        Some(("[REVIEW] PR #" + n.to_string() + " has review comments", "info"))
-      } else {
-        Some(
-          (
-            "[REVIEW] PR #" +
-            n.to_string() +
-            " has review comments:\n" +
-            comments,
-            "info",
-          ),
-        )
-      }
-    ReviewCommented(n, comments) =>
-      if comments == "" {
-        Some(
-          (
-            "[REVIEW] PR #" +
-            n.to_string() +
-            " has non-blocking review comments",
-            "info",
-          ),
-        )
-      } else {
-        Some(
-          (
-            "[REVIEW] PR #" +
-            n.to_string() +
-            " has non-blocking review comments:\n" +
-            comments,
-            "info",
-          ),
-        )
-      }
-    CIFailed(n) =>
+    ReviewReceived(n, body) =>
       Some(
-        ("[CI FAILED] PR #" + n.to_string() + " CI checks failing", "failure"),
+        (
+          if body == "" {
+            "[REVIEW] PR #" + n.to_string() + ": changes requested"
+          } else {
+            "[REVIEW] PR #" +
+            n.to_string() +
+            ": " +
+            clamp_review_summary_for_pane(body)
+          },
+          "info",
+        ),
       )
-    PRReady(_) => None
+    ReviewCommented(n, body) =>
+      Some(
+        (
+          if body == "" {
+            "[REVIEW] PR #" + n.to_string() + ": non-blocking review comments"
+          } else {
+            "[REVIEW] PR #" +
+            n.to_string() +
+            ": " +
+            clamp_review_summary_for_pane(body)
+          },
+          "info",
+        ),
+      )
+    CIFailed(n) =>
+      Some(("[REVIEW] PR #" + n.to_string() + ": CI checks failing", "failure"))
+    PRReady(n) =>
+      Some(
+        (
+          "[REVIEW] PR #" +
+          n.to_string() +
+          ": approved (not merged until merge_pr succeeds)",
+          "success",
+        ),
+      )
     FixesPushed(_) => None
     ReviewTimeout(_) => None
   }
@@ -621,78 +639,91 @@ pub fn ServerState::plan_poll_event_deliveries(
   agent_id : String,
 ) -> Array[@message.DeliveryMethod] {
   let deliveries : Array[@message.DeliveryMethod] = []
-  let owner = match self.registry.get(agent_id) {
+  let tracked = self.poller.get(poll_event_pr_number(event))
+  let leaf_agent_id = match tracked {
+    Some(pr) => pr.agent_id
+    None => agent_id
+  }
+  let leaf_owner = match self.registry.get(leaf_agent_id) {
     Ok(agent) => Some(agent)
     Err(_) => None
   }
-  let tracked = self.poller.get(poll_event_pr_number(event))
   match (tracked, event) {
     (Some(_), ReviewReceived(n, body)) =>
       @tools.apply_dev_event(
         self.config.project_dir,
-        agent_id,
+        leaf_agent_id,
         @phase.DevEvent::ReviewReceivedEv(pr_number=n, body~),
       )
     (Some(_), ReviewCommented(_, _)) => ()
     (Some(_), PRReady(n)) =>
       @tools.apply_dev_event(
         self.config.project_dir,
-        agent_id,
+        leaf_agent_id,
         @phase.DevEvent::ReviewApprovedEv(pr_number=n),
       )
     (Some(pr), FixesPushed(n)) =>
       @tools.apply_dev_event(
         self.config.project_dir,
-        agent_id,
+        leaf_agent_id,
         @phase.DevEvent::FixesPushedEv(pr_number=n, sha=pr.last_sha),
       )
     _ => ()
   }
-  self.sync_parent_child_lifecycle(agent_id, self.current_lifecycle(agent_id))
-  // Parent notification — all event types
+  self.sync_parent_child_lifecycle(
+    leaf_agent_id,
+    self.current_lifecycle(leaf_agent_id),
+  )
+  // Parent notification — TL triage / merge signals (comment-only reviews: leaf only)
   match tracked {
     Some(pr) =>
       match parent_poll_event_message(pr, event) {
         Some((message, status)) =>
-          match self.resolve_parent_for_delivery(agent_id) {
-            Ok(parent) => {
-              ignore(
-                @sys.append_file_sync(
-                  ".choir/delivery.log",
-                  "[poller-parent] agent=" +
-                  agent_id +
-                  " parent=" +
-                  parent.agent_id.to_string() +
-                  " terminal_target=" +
-                  parent.terminal_target
-                  .map(@types.LocalTarget::to_string)
-                  .unwrap_or("NONE") +
-                  "\n",
-                ),
-              )
-              deliveries.push(
-                @message.plan_delivery(parent, agent_id, message, status),
-              )
-            }
-            Err(_) => ()
+          match event {
+            ReviewCommented(_, _) => () // comment-only: owning leaf pane only
+            _ =>
+              match self.resolve_parent_for_delivery(leaf_agent_id) {
+                Ok(parent) => {
+                  ignore(
+                    @sys.append_file_sync(
+                      ".choir/delivery.log",
+                      "[poller-parent] agent=" +
+                      leaf_agent_id +
+                      " parent=" +
+                      parent.agent_id.to_string() +
+                      " terminal_target=" +
+                      parent.terminal_target
+                      .map(@types.LocalTarget::to_string)
+                      .unwrap_or("NONE") +
+                      "\n",
+                    ),
+                  )
+                  deliveries.push(
+                    @message.plan_delivery(
+                      parent, leaf_agent_id, message, status,
+                    ),
+                  )
+                }
+                Err(_) => ()
+              }
           }
         None => ()
       }
     None => ()
   }
-  // Owner notification — review details, CI status — only if agent is alive
-  match owner {
+  // Owning leaf — direct `[REVIEW] PR #n: …` injection (terminal_target in registry)
+  match leaf_owner {
     Some(agent) =>
       match agent.state {
         @types.AgentState::Active | @types.AgentState::Completing =>
-          match owner_poll_event_message(event) {
+          match leaf_poll_review_injection_message(event) {
             Some((message, status)) =>
               deliveries.push(
                 @message.plan_delivery(agent, "poller", message, status),
               )
             None => ()
           }
-        _ => () // Done/Failed/Spawning — skip owner delivery
+        _ => () // Done/Failed/Spawning — skip leaf delivery
       }
     None => ()
   }
@@ -721,7 +752,7 @@ fn pr_comment_body(
           n,
           "**Choir:** comment-only review received — routed to `" +
           agent_id +
-          "` and parent for awareness.",
+          "` (leaf pane).",
         ),
       )
     PRReady(n) =>
@@ -1720,4 +1751,18 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     }
     None => fail("expected FixesPushed message")
   }
+}
+
+///|
+test "clamp_review_summary_for_pane leaves short text unchanged" {
+  let s = "fix the typo in handler"
+  assert_eq(clamp_review_summary_for_pane(s), s)
+}
+
+///|
+test "clamp_review_summary_for_pane truncates long Copilot-style bodies" {
+  let long = "x".repeat(review_summary_pane_max_chars + 500)
+  let out = clamp_review_summary_for_pane(long)
+  assert_true(out.contains("[truncated"))
+  assert_true(out.length() < long.length())
 }
