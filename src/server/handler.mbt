@@ -1829,41 +1829,74 @@ pub async fn ServerState::handle_disconnect_with_runner(
                 remove_worktree=false,
               )
             @phase.LifecycleDisconnectPolicy::Ignore => ()
-            @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
-              let snapshot_path = "/tmp/choir-viewport-" + agent_id + ".json"
-              let snapshot = @sys.read_file(snapshot_path)
-              let screen = extract_viewport_text(snapshot)
-              let (reason, msg) = if screen != "" {
-                let classified = @phase.classify_failure(screen)
-                match classified {
-                  @phase.FailureReason::ChildFailure(_) =>
+            @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) =>
+              // Before failing: check if the agent filed a PR via raw `gh pr create`
+              // (bypassing file_pr). If so, retroactively apply PRCreated so the agent
+              // transitions to ReviewOwned and is preserved rather than failed.
+              match find_pr_for_branch(agent.branch, self.config.project_dir) {
+                Some((pr_number, pr_url)) => {
+                  let parent_branch = match
+                    @workspace.parent_branch(agent.branch) {
+                    Some(pb) => pb
+                    None => "main"
+                  }
+                  @tools.apply_dev_event(
+                    self.config.project_dir,
+                    agent.branch,
+                    @phase.DevEvent::PRCreated(
+                      pr_number~,
+                      url=pr_url,
+                      branch=agent.branch,
+                    ),
+                  )
+                  self.poller.ensure_tracked(
+                    pr_number,
+                    agent_id,
+                    agent.branch,
+                    parent_branch,
+                    pr_url,
+                    @poller.now_sec(),
+                  )
+                  ignore(self.poller.write_state_file(self.config.project_dir))
+                }
+                None => {
+                  let snapshot_path = "/tmp/choir-viewport-" +
+                    agent_id +
+                    ".json"
+                  let snapshot = @sys.read_file(snapshot_path)
+                  let screen = extract_viewport_text(snapshot)
+                  let (reason, msg) = if screen != "" {
+                    let classified = @phase.classify_failure(screen)
+                    match classified {
+                      @phase.FailureReason::ChildFailure(_) =>
+                        (
+                          default_reason,
+                          "[FAILED: " +
+                          agent_id +
+                          "] disconnected unexpectedly - agent may have crashed or run out of context",
+                        )
+                      _ =>
+                        (
+                          classified,
+                          "[FAILED: " +
+                          agent_id +
+                          "] " +
+                          @phase.failure_reason_message(classified),
+                        )
+                    }
+                  } else {
                     (
                       default_reason,
                       "[FAILED: " +
                       agent_id +
                       "] disconnected unexpectedly - agent may have crashed or run out of context",
                     )
-                  _ =>
-                    (
-                      classified,
-                      "[FAILED: " +
-                      agent_id +
-                      "] " +
-                      @phase.failure_reason_message(classified),
-                    )
+                  }
+                  self.fail_agent_with_runner(
+                    agent_id, reason, msg, "disconnect", runner,
+                  )
                 }
-              } else {
-                (
-                  default_reason,
-                  "[FAILED: " +
-                  agent_id +
-                  "] disconnected unexpectedly - agent may have crashed or run out of context",
-                )
               }
-              self.fail_agent_with_runner(
-                agent_id, reason, msg, "disconnect", runner,
-              )
-            }
           }
       }
   }

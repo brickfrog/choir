@@ -66,6 +66,29 @@ fn parse_open_prs(output : String) -> Array[OpenPR] {
 }
 
 ///|
+/// Query GitHub for an open PR whose head branch matches `branch`.
+/// Returns (pr_number, pr_url) if found, None otherwise.
+/// Used by the disconnect handler to recover agents that bypassed file_pr.
+async fn find_pr_for_branch(
+  branch : String,
+  project_dir : String,
+) -> (Int, String)? {
+  let output = capture_stdout(
+    "gh",
+    [
+      "pr", "list", "--head", branch, "--state", "open", "--json", "number,headRefName,baseRefName,url,createdAt",
+    ],
+    cwd=Some(project_dir),
+  )
+  let prs = parse_open_prs(output)
+  if prs.length() > 0 {
+    Some((prs[0].pr_number, prs[0].url))
+  } else {
+    None
+  }
+}
+
+///|
 async fn capture_stdout(
   program : String,
   args : Array[String],
