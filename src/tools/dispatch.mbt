@@ -753,6 +753,21 @@ pub async fn dispatch(
               )
             _ => ()
           }
+          // Clean up worktree on happy-path exit
+          match registry {
+            Some(reg) =>
+              match reg.get(caller_id) {
+                Ok(agent) =>
+                  if agent.workspace.contains(".choir/worktrees/") {
+                    let _ = runner([
+                      @workspace.git_worktree_remove(agent.workspace),
+                    ])
+                    ()
+                  }
+                Err(_) => ()
+              }
+            None => ()
+          }
           @types.Response::ok_values({ "status": String::to_json("shutdown") })
         }
       }
