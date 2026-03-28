@@ -9,7 +9,7 @@ priv struct OpenPR {
 
 ///|
 fn parse_github_time_utc_sec(s : String) -> Int64? {
-  Some(@src.DateTime::parse(s).to_unix_seconds()) catch {
+  Some(@tempo.DateTime::parse(s).to_unix_seconds()) catch {
     _ => None
   }
 }

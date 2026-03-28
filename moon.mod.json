@@ -4,7 +4,7 @@
   "deps": {
     "moonbitlang/async": "0.16.8",
     "brickfrog/moontrace": "0.5.1",
-    "brickfrog/tempo": "0.2.0"
+    "brickfrog/tempo": "0.2.1"
   },
   "readme": "README.md",
   "license": "MIT"
