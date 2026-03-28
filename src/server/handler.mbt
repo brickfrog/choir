@@ -1672,11 +1672,16 @@ fn extract_viewport_text(json_str : String) -> String {
 
 ///|
 fn simple_hash(s : String) -> Int {
-  let mut h = 0
+  let mut h = 5381
   for c in s {
-    h = h * 31 + c.to_int()
+    h = (h * 31 + c.to_int()) % 1_000_000_007
   }
-  h
+  // Reserve 0 as sentinel for "no snapshot yet"
+  if h == 0 {
+    1
+  } else {
+    h
+  }
 }
 
 ///|
@@ -1721,6 +1726,10 @@ pub async fn ServerState::check_idle_agents(
     // Read viewport snapshot written by the zellij subscribe process
     let snapshot_path = "/tmp/choir-viewport-" + agent_id + ".json"
     let snapshot = @sys.read_file(snapshot_path)
+    // Skip idle check until zellij has written at least one snapshot
+    if snapshot.trim().to_string() == "" {
+      continue
+    }
     // Extract viewport lines from JSON: {"viewport":["line1","line2",...]}
     let screen = extract_viewport_text(snapshot)
     let hash = simple_hash(screen)
