@@ -3288,31 +3288,13 @@ fn init_companion_local_config_content(
   terminal_target : @types.LocalTarget,
   agent_type? : @types.AgentType? = None,
 ) -> String {
-  let buf = StringBuilder::new()
-  buf.write_string("role = \"")
-  buf.write_string(@config.role_to_string(role))
-  buf.write_string("\"\nagent_id = \"")
-  buf.write_string(agent_id)
-  buf.write_string("\"\nparent_id = \"")
-  buf.write_string(parent_id)
-  buf.write_string("\"\nbranch = \"")
-  buf.write_string(branch)
-  buf.write_string("\"\nparent_branch = \"")
-  buf.write_string(parent_branch)
-  buf.write_string("\"\nworkspace = \"")
-  buf.write_string(workspace)
-  buf.write_string("\"\nterminal_target = \"")
-  buf.write_string(terminal_target.to_string())
-  buf.write_string("\"\nspawn_depth = 0\n")
-  match agent_type {
-    Some(kind) => {
-      buf.write_string("agent_type = \"")
-      buf.write_string(@config.agent_type_to_string(kind))
-      buf.write_string("\"\n")
-    }
-    None => ()
+  let role_str = @config.role_to_string(role)
+  let target_str = terminal_target.to_string()
+  let agent_type_line = match agent_type {
+    Some(kind) => "agent_type = \"\{@config.agent_type_to_string(kind)}\"\n"
+    None => ""
   }
-  buf.to_string()
+  "role = \"\{role_str}\"\nagent_id = \"\{agent_id}\"\nparent_id = \"\{parent_id}\"\nbranch = \"\{branch}\"\nparent_branch = \"\{parent_branch}\"\nworkspace = \"\{workspace}\"\nterminal_target = \"\{target_str}\"\nspawn_depth = 0\n\{agent_type_line}"
 }
 
 ///|
