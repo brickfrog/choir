@@ -18,6 +18,7 @@ import {
   "moonbitlang/core/json",
   "brickfrog/moontrace",
   "brickfrog/moontrace/otlp",
+  "brickfrog/tempo/src",
 }
 
 options(
