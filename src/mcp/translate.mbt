@@ -158,7 +158,25 @@ fn choir_mcp_instructions() -> String {
     "Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). ",
   )
   buf.write_string(
-    "The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.",
+    "The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal. ",
+  )
+  buf.write_string(
+    "When given an implementation task, before calling any tools, reason through: ",
+  )
+  buf.write_string(
+    "1. Size — single leaf (self-contained, one area) or wave (2+ independent subtasks)? Sequential waves needed? ",
+  )
+  buf.write_string(
+    "2. Agent types — gemini (default, bulk implementation), cursor_agent (refactor/file navigation), codex (isolated logic), claude (complex reasoning/architecture), spawn_worker (research or review only, no branch). ",
+  )
+  buf.write_string(
+    "3. Scaffold — any shared types, interfaces, or test infra that must land on the parent branch before forking? If so, commit it first. ",
+  )
+  buf.write_string(
+    "4. Waves — wave 1 is all independent tasks in parallel; wave 2+ for tasks that depend on wave 1 output. ",
+  )
+  buf.write_string(
+    "After reasoning, state your plan in 2-4 lines then execute immediately. Do not ask for approval unless the task is genuinely ambiguous.",
   )
   buf.to_string()
 }
