@@ -399,8 +399,11 @@ pub async fn execute_delivery(
 
 ///|
 /// Fetch inline code review comments for a PR at merge time.
-/// Returns a formatted string of comments (empty if none).
-fn fetch_inline_comments_sync(pr_number : Int, project_dir : String) -> String {
+/// Returns (count, formatted_text).
+fn fetch_inline_comments_sync(
+  pr_number : Int,
+  project_dir : String,
+) -> (Int, String) {
   let tmp = "/tmp/choir-merge-comments-" + @sys.get_pid().to_string() + ".tmp"
   let cmd = "gh api repos/{owner}/{repo}/pulls/" +
     pr_number.to_string() +
@@ -410,18 +413,18 @@ fn fetch_inline_comments_sync(pr_number : Int, project_dir : String) -> String {
   let exit = @sys.system("cd " + project_dir + " && " + cmd)
   if exit != 0 {
     ignore(@sys.delete_file_sync(tmp))
-    return ""
+    return (0, "")
   }
   let output = @sys.read_file(tmp)
   ignore(@sys.delete_file_sync(tmp))
   let trimmed = output.trim().to_string()
   if trimmed == "" || trimmed == "[]" {
-    return ""
+    return (0, "")
   }
-  let json = @json.parse(trimmed) catch { _ => return "" }
+  let json = @json.parse(trimmed) catch { _ => return (0, "") }
   let arr = match json {
     Array(items) => items
-    _ => return ""
+    _ => return (0, "")
   }
   let parts = StringBuilder::new()
   let mut count = 0
@@ -452,7 +455,7 @@ fn fetch_inline_comments_sync(pr_number : Int, project_dir : String) -> String {
       _ => ()
     }
   }
-  parts.to_string()
+  (count, parts.to_string())
 }
 
 ///|

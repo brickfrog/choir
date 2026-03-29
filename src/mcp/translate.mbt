@@ -291,6 +291,7 @@ fn tool_defs() -> Array[CatalogTool] {
       props: [
         { name: "pr_number", desc: "Pull request number to merge" },
         { name: "parent_branch", desc: "Branch to merge into" },
+        { name: "force", desc: "Skip review comment checks (default false)" },
       ],
       required: ["pr_number", "parent_branch"],
     },
