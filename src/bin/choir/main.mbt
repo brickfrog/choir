@@ -4230,9 +4230,10 @@ fn main {
     "smoke" => smoke_run()
     "watch" => watch_run()
     "statusline" => statusline_run()
+    "dashboard" => dashboard_run()
     _ => {
       @sys.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini|cursor_agent]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini|cursor_agent]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline|dashboard [--port N]>\n",
       )
       @sys.exit(1)
     }
