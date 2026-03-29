@@ -244,12 +244,13 @@ fn serve_run() -> Unit {
   @moontrace.set_min_level(@moontrace.Level::Debug)
   @sys.write_pid_file(".choir/server.pid")
   @sys.register_cleanup(
-    "rm -f .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id 2>/dev/null",
+    "for w in .choir/worktrees/*/; do git worktree remove --force \"$w\" 2>/dev/null; done; rm -rf .choir/worktrees/* .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id 2>/dev/null",
   )
-  // Clean stale state from previous session (signal handler may not have fired)
+  // Clean stale state from previous session (signal handler may not have fired).
+  // Worktrees must be removed first — recovery resurrects lifecycle files from them.
   ignore(
     @sys.system(
-      "rm -f .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/tasks/*.json 2>/dev/null; true",
+      "for w in .choir/worktrees/*/; do git worktree remove --force \"$w\" 2>/dev/null; done; rm -rf .choir/worktrees/* .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/tasks/*.json 2>/dev/null; true",
     ),
   )
   let state = @server.ServerState::new(config)
@@ -2797,7 +2798,7 @@ fn init_cleanup_server_artifacts_command() -> @workspace.Command {
   {
     program: "sh",
     args: [
-      "-c", "rm -f .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id",
+      "-c", "for w in .choir/worktrees/*/; do git worktree remove --force \"$w\" 2>/dev/null; done; rm -rf .choir/worktrees/* .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id",
     ],
     workdir: None,
   }
