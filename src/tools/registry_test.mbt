@@ -197,6 +197,7 @@ async test "handle_request with valid tool returns Ok" {
   let res = handle_request(
     reg,
     req,
+    project_dir="/tmp/choir-test-noop",
     runner=mock_registry_runner,
     git_capture=mock_clean_git,
   )
@@ -231,6 +232,11 @@ async test "handle_request with unknown tool returns Err" {
 
 ///|
 async test "dispatch returns correct stub for each tool name" {
+  let project_dir = "/tmp/choir-dispatch-stub-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
   let cases = [
     ("fork_wave", "spawned", { "count": "1" }),
     ("fork_session", "ok", { "name": "nested-team" }),
@@ -251,6 +257,7 @@ async test "dispatch returns correct stub for each tool name" {
     let call = ToolCall::{ role: @types.Role::Dev, name, args }
     let res = @tools.dispatch_call(
       call,
+      project_dir~,
       runner=mock_registry_runner,
       git_capture=mock_clean_git,
       ensure_branch_ready=mock_registry_branch_ready,
@@ -285,6 +292,11 @@ async test "dispatch returns correct stub for each tool name" {
 
 ///|
 async test "dispatch file_pr uses registered agent workspace for git and gh operations" {
+  let project_dir = "/tmp/choir-file-pr-workdir-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -311,7 +323,7 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
   }
   let res = @tools.dispatch_call(
     call,
-    project_dir="/mnt/data/Code/choir",
+    project_dir~,
     runner=mock_registry_runner_capture_workdir,
     ensure_branch_ready=mock_registry_branch_ready_capture,
     ensure_pr=mock_registry_ensure_pr_capture,
@@ -496,6 +508,7 @@ async test "fork_wave scaffold gate blocks dirty working tree" {
   }
   let res = @tools.dispatch_call(
     call,
+    project_dir="/tmp/choir-test-noop",
     runner=mock_registry_runner,
     git_capture=mock_dirty_git,
   )
@@ -519,6 +532,7 @@ async test "fork_wave scaffold gate blocks unpushed commits" {
   }
   let res = @tools.dispatch_call(
     call,
+    project_dir="/tmp/choir-test-noop",
     runner=mock_registry_runner,
     git_capture=mock_unpushed_git,
   )
@@ -541,7 +555,11 @@ async test "register accepts whitespace-trimmed spawn_depth" {
       "branch": "main.depth-trim",
     },
   }
-  let res = @tools.dispatch_call(call, registry=Some(reg))
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/tmp/choir-test-noop",
+    registry=Some(reg),
+  )
   match res {
     Ok(_) => ()
     Err(e) => fail("register failed: " + e)
@@ -584,7 +602,11 @@ async test "dispatch agent_list returns all agents when parent_id is None" {
     }),
   )
   let call = ToolCall::{ role: @types.Role::TL, name: "agent_list", args: {} }
-  let res = @tools.dispatch_call(call, registry=Some(reg))
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/tmp/choir-test-noop",
+    registry=Some(reg),
+  )
   match res {
     Ok(map) => {
       assert_eq(map.get("status"), Some("ok"))
@@ -647,7 +669,11 @@ async test "dispatch agent_list filters by parent_id" {
     name: "agent_list",
     args: { "parent_id": "parent" },
   }
-  let res = @tools.dispatch_call(call, registry=Some(reg))
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/tmp/choir-test-noop",
+    registry=Some(reg),
+  )
   match res {
     Ok(map) => {
       assert_eq(map.get("status"), Some("ok"))
