@@ -355,7 +355,7 @@ pub async fn execute_delivery(
       if result == 0 {
         Ok(())
       } else {
-        Ok(())
+        Err("UDS HTTP post failed with code " + result.to_string())
       }
     }
   }
