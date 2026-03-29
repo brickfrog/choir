@@ -4050,7 +4050,7 @@ fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
     if idx < 0 {
       continue
     }
-    let agent_id = path.substring(start=idx)
+    let agent_id = path[idx:].to_string()
     // If children files exist, only count tracked agents
     if child_ids.length() > 0 && not(child_ids.contains(agent_id)) {
       continue
