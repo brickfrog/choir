@@ -62,12 +62,17 @@ let dashboard_page : String =
   #|function tag(cls){return '<span class="tag t-'+cls+'">'+cls+'</span>'}
   #|
   #|function renderBadges(d){
-  #|  document.getElementById('badges').innerHTML=
+  #|  var status=d.server_alive?'':'<span class="badge b-failed">server stopped</span> ';
+  #|  document.getElementById('badges').innerHTML=status+
   #|    badge('b-working',d.working,'working')+
   #|    badge('b-review',d.review,'review')+
   #|    badge('b-changes',d.changes,'fixes')+
   #|    badge('b-failed',d.failed,'failed')+
   #|    badge('b-done',d.done,'done');
+  #|  if(!d.server_alive){
+  #|    document.getElementById('agents').innerHTML='<div class="empty">Server stopped</div>';
+  #|    document.getElementById('prs').innerHTML='<div class="empty">Server stopped</div>';
+  #|  }
   #|}
   #|
   #|function agentCard(a){
@@ -254,7 +259,11 @@ fn dashboard_summary_json(project_dir : String) -> String {
   let (working, review, changes, failed, done) = statusline_count_agents(
     project_dir,
   )
-  "{\"working\":\{working},\"review\":\{review},\"changes\":\{changes},\"failed\":\{failed},\"done\":\{done}}"
+  let pid = @sys.read_file(project_dir + "/.choir/server.pid")
+    .trim()
+    .to_string()
+  let alive = if pid != "" { "true" } else { "false" }
+  "{\"working\":\{working},\"review\":\{review},\"changes\":\{changes},\"failed\":\{failed},\"done\":\{done},\"server_alive\":\{alive}}"
 }
 
 ///|

@@ -2788,7 +2788,9 @@ fn init_kill_server_pid_command(pid_str : String) -> @workspace.Command {
 fn init_cleanup_server_artifacts_command() -> @workspace.Command {
   {
     program: "sh",
-    args: ["-c", "rm -f .choir/server.pid .choir/server.sock"],
+    args: [
+      "-c", "rm -f .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id",
+    ],
     workdir: None,
   }
 }
