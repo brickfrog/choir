@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +7,22 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+static char choir_cleanup_cmd[4096] = {0};
+
+static void choir_sigterm_handler(int sig) {
+    (void)sig;
+    if (choir_cleanup_cmd[0] != '\0') {
+        system(choir_cleanup_cmd);
+    }
+    _exit(0);
+}
+
+void choir_register_cleanup(const char* cmd) {
+    snprintf(choir_cleanup_cmd, sizeof(choir_cleanup_cmd), "%s", cmd);
+    signal(SIGTERM, choir_sigterm_handler);
+    signal(SIGINT, choir_sigterm_handler);
+}
 
 int choir_get_file_size(const char* path) {
     FILE* f = fopen(path, "rb");

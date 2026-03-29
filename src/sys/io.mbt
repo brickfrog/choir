@@ -245,8 +245,18 @@ extern "C" fn c_append_file_sync(
 extern "C" fn c_create_dir_all(path : Bytes) -> Int = "choir_create_dir_all"
 
 ///|
+#borrow(cmd)
+extern "C" fn c_register_cleanup(cmd : Bytes) = "choir_register_cleanup"
+
+///|
 pub fn create_dir_all(path : String) -> Bool {
   c_create_dir_all(string_to_null_terminated_bytes(path)) == 0
+}
+
+///|
+/// Register a shell command to run on SIGTERM/SIGINT before exit.
+pub fn register_cleanup(cmd : String) -> Unit {
+  c_register_cleanup(string_to_null_terminated_bytes(cmd))
 }
 
 ///|

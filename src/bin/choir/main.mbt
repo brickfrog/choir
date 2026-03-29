@@ -243,6 +243,9 @@ fn serve_run() -> Unit {
   @moontrace.set_subscriber(fn(event) { println(event.format(color=true)) })
   @moontrace.set_min_level(@moontrace.Level::Debug)
   @sys.write_pid_file(".choir/server.pid")
+  @sys.register_cleanup(
+    "rm -f .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id 2>/dev/null",
+  )
   ignore(@sys.system("rm -f .choir/tasks/*.json 2>/dev/null; true"))
   let state = @server.ServerState::new(config)
   @moontrace.set_global_field("service", "choir".to_json())

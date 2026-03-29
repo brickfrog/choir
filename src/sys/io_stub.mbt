@@ -87,3 +87,8 @@ pub fn append_file_sync(_path : String, _content : String) -> Bool {
 pub fn delete_file_sync(_path : String) -> Bool {
   false
 }
+
+///|
+pub fn register_cleanup(_cmd : String) -> Unit {
+
+}
