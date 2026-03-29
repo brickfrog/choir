@@ -4,13 +4,49 @@ async fn run_strict(
   cmds : Array[@workspace.Command],
 ) -> Result[Unit, String] {
   let statuses = runner(cmds) catch { e => return Err(e.to_string()) }
-  if statuses.length() > 0 {
-    let last = statuses[statuses.length() - 1]
-    if last != 0 {
-      return Err("command failed with status " + last.to_string())
+  for i = 0; i < statuses.length(); i = i + 1 {
+    let status = statuses[i]
+    if status != 0 {
+      return Err(
+        "command at index " +
+        i.to_string() +
+        " failed with status " +
+        status.to_string(),
+      )
     }
   }
   Ok(())
+}
+
+///|
+async fn runner_run_strict_first_failure(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for i = 0; i < cmds.length(); i = i + 1 {
+    statuses.push(
+      match i {
+        0 => 0
+        1 => 7
+        _ => 3
+      },
+    )
+  }
+  statuses
+}
+
+///|
+async test "run_strict returns first failing command index and status" {
+  let result = run_strict(runner_run_strict_first_failure, [
+    { program: "true", args: [], workdir: None },
+    { program: "false", args: [], workdir: None },
+    { program: "false", args: [], workdir: None },
+  ])
+  match result {
+    Ok(_) => fail("expected run_strict failure")
+    Err(e) => assert_eq(e, "command at index 1 failed with status 7")
+  }
 }
 
 ///|
