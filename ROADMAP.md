@@ -1,76 +1,76 @@
 # Choir Roadmap
 
-## Current State (2026-03-25)
+## Current State (2026-03-29)
 
-Choir's local UDS workflow is usable and releaseable. The north-star loop (spawn -> edit -> commit -> PR -> review -> fix -> merge) works end-to-end with Claude, Gemini, and Moon Pilot as leaf agents. moontrace provides structured colored logging and OTLP span export.
+Choir's local UDS workflow is stable. The north-star loop (spawn -> edit -> commit -> PR -> review -> fix -> merge) works end-to-end with Claude, Gemini, Codex, Cursor Agent, and Moon Pilot as leaf agents. moontrace provides structured colored logging and OTLP span export. brickfrog/tempo handles datetime parsing.
 
-## Near-Term: Zellij Integration Depth
+Recent additions:
+- **Disconnect recovery** — agents that bypass `file_pr` get retroactively recovered via GitHub PR detection instead of being falsely failed
+- **WASM hook system** — extism/moonbit-pdk plugins for PII rewriting and tool guards (BeforeModel/AfterModel/PreToolUse)
+- **Typed lifecycle state machine** — labeled enum fields, AgentId newtype, LocalTarget type, ChildTracker
+- **Idle watchdog** — dump-screen hash comparison with overflow-safe hashing and empty snapshot guards
+- **Claude Code statusline** — `choir statusline` subcommand shows weekly rate limit bar + agent state counts
+- **Task decomposition protocol** — TL MCP instructions include 4-step reasoning before spawning
 
-### Watchdog: `zellij subscribe` replaces `dump-screen` polling
+## Near-Term: Operational Hardening
 
-**Problem:** The current watchdog polls `dump-screen` every 30s and hashes the output to detect idle agents. This is slow (30s granularity), can be fooled by retry spam that changes screen content without meaningful progress (Moon Pilot 429 loop), and shells out to zellij on every tick.
+### Disconnect / reconnect resilience
 
-**Solution:** `zellij subscribe` streams pane viewport updates as JSON. Choir can subscribe to each agent's pane and get notified immediately when output changes or stops. Filter out noise like retry lines by tracking meaningful content changes rather than raw screen hashes.
+The disconnect recovery fix catches agents that bypassed `file_pr`, but the broader problem remains: transient MCP disconnects (shell command connections closing) trigger `schedule_disconnect` which can cascade into false failures. The 60-second grace period helps but isn't sufficient for all cases.
 
-**Scope:** Replace `check_idle_agents` in `src/server/handler.mbt`. The subscribe process runs as a background task per agent, parsing JSON update events from zellij's stdout.
-
-### Message Delivery: Bracketed paste is a workaround, not a fix
-
-**Problem:** Review feedback and other messages are injected via `write-chars` with bracketed paste escape sequences. This works but it's still terminal injection — fragile, depends on the agent's CLI supporting paste mode, and there's no acknowledgment that the message was received.
-
-**Current state:** Bracketed paste (`ESC[200~...ESC[201~`) was just added to fix Moon Pilot treating newlines as Enter. Claude Code and Gemini already handle paste. This is good enough for now.
-
-**Future:** A zellij plugin or the pipe system could provide structured message delivery with acknowledgment. See "Zellij Plugin" below.
-
-## Medium-Term: Operational Hardening
-
-### `kill_agent` was just added — but reactive, not proactive
-
-The TL can now kill stuck agents. But ideally agents that hit terminal states (rate limit death spirals, context exhaustion) would be detected and killed automatically. The `zellij subscribe` watchdog improvement would help here — pattern-match on known failure signatures in the pane output (e.g., repeated "429" lines, "context window exceeded").
-
-### Spawn verification with `--block-until-exit-success`
-
-`zellij run --block-until-exit-success` could replace the current fire-and-hope spawn flow for verification steps. Run `moon test` in the worktree, block until it exits, check the code. If it fails, the spawn can be retried or the TL notified before the agent starts working on broken code.
+**Next steps:** Consider a heartbeat or liveness check before declaring an agent failed — query the zellij pane for activity before firing the fail path.
 
 ### Multi-leaf merge conflicts
 
-When multiple leaves edit overlapping files and file PRs against main, merge conflicts happen. Currently the TL handles these manually. Choir could detect conflicts at `merge_pr` time (the `gh pr merge` will fail) and either rebase automatically or notify the TL with the conflict details.
+When multiple leaves edit overlapping files and file PRs against main, merge conflicts happen. Currently the TL handles these manually. Choir could detect conflicts at `merge_pr` time and either rebase automatically or notify the TL with conflict details.
+
+### Message delivery beyond bracketed paste
+
+Review feedback and messages are injected via `write-chars` with bracketed paste escape sequences. This works but it's terminal injection — fragile, depends on the agent's CLI supporting paste mode, no acknowledgment. A zellij plugin or pipe system could provide structured delivery.
+
+## Medium-Term: WASM Targets
+
+MoonBit compiles to both native and WASM. Choir currently only targets native for the main binary and WASM for the extism hook plugin. There's untapped potential here.
+
+### Portable leaf tooling
+
+`file_pr`, `notify_parent`, `shutdown` as a single WASM binary that any agent runtime can call without needing the full native choir binary on PATH. Ship one `.wasm`, run it anywhere with wasmtime/wasmer. Removes the hard dependency on having choir's native binary installed for leaf agents.
+
+### Browser dashboard
+
+WASM target could power a web UI that reads `.choir/kv/` state files (via WASI filesystem) and renders agent status, PR tracking, lifecycle graphs. Real-time choir monitoring without a separate server.
+
+### Plugin system without extism
+
+Instead of shelling out to `extism call`, load WASM plugins directly using the WASM component model. Cut the extism CLI dependency (which has version-specific issues — v1.6.3 segfaults).
+
+### Cross-platform statusline
+
+The statusline subcommand uses C FFI (`read_stdin`, `system`, etc.) which locks it to native. A WASM build with WASI would work on any platform without recompilation.
 
 ## Longer-Term: Zellij Plugin
 
-A small WASM plugin (Rust, compiled for wasmi — zellij's WASM runtime) that acts as choir's in-process agent monitor:
+A WASM plugin (Rust, compiled for wasmi — zellij's runtime) that acts as choir's in-process agent monitor:
 
-**Subscribes to:**
-- `PaneUpdate` — pane state changes
-- `PaneClosed` — immediate notification when an agent crashes or exits
-- `PaneRenderReport` — real-time pane output for smart idle detection
-
-**Receives messages via `zellij pipe`:**
-- Choir server sends structured messages (review feedback, parent notifications) through the pipe system instead of `write-chars`
-- The plugin delivers them to the target pane's stdin with proper framing
-- Acknowledgment flows back via `cli_pipe_output`
-
-**Reports back to choir:**
-- Agent activity status (active / idle / stuck pattern detected)
-- Pane close events with exit codes
+- **Subscribes to:** `PaneUpdate`, `PaneClosed`, `PaneRenderReport` for real-time pane monitoring
+- **Receives messages via `zellij pipe`:** structured delivery with acknowledgment, replacing `write-chars`
+- **Reports back:** agent activity status, pane close events with exit codes
 - Could replace the entire watchdog + `dump-screen` + `list-panes` polling layer
 
-**Build:** Rust → WASM (wasmi target). This is a separate build from choir's MoonBit native binary and the extism hooks WASM plugin. Three artifacts: `choir` (native), `hook.wasm` (extism/moonbit), `choir-monitor.wasm` (wasmi/rust).
-
-**Why not now:** It's a nontrivial amount of work, requires Rust tooling for the plugin, and the current approach (shell out to zellij CLI) works. The plugin is the right architecture for v2 but not blocking for the current release.
+**Why not now:** Requires Rust tooling for the plugin, and the current approach works. Right architecture for v2.
 
 ## Transport & Remote
 
 ### TCP transport hardening
 
-TCP transport is implemented but less proven than UDS. Needs live smoke coverage and testing under real concurrent multi-client use.
+TCP transport is implemented but less proven than UDS. Needs live smoke coverage under real concurrent multi-client use.
 
 ### Remote agents via zellij HTTPS
 
-Zellij 0.44 added remote session attach over HTTPS. This could replace or complement the current TCP transport for remote agents — instead of choir running its own TCP server, remote agents could attach to the zellij session over HTTPS and communicate through the same pane-based delivery path as local agents.
+Zellij 0.44 added remote session attach over HTTPS. Could replace or complement TCP transport — remote agents attach to the zellij session over HTTPS and communicate through the same pane-based delivery path as local agents.
 
 ## Not Planned
 
 - **tmux support** — dropped, zellij-only (completed 2026-03-24)
-- **Embedding extism in the choir binary via C FFI** — wrong architecture, extism CLI is the host runtime
+- **Embedding extism in choir binary via C FFI** — extism CLI is the host runtime
 - **Intelligence in the server** — choir is a tool executor, all decisions come from agents
