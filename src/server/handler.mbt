@@ -719,33 +719,27 @@ pub fn ServerState::plan_poll_event_deliveries(
     Some(pr) =>
       match parent_poll_event_message(pr, event) {
         Some((message, status)) =>
-          match event {
-            ReviewCommented(_, _) => () // comment-only: owning leaf pane only
-            _ =>
-              match self.resolve_parent_for_delivery(leaf_agent_id) {
-                Ok(parent) => {
-                  ignore(
-                    @sys.append_file_sync(
-                      ".choir/delivery.log",
-                      "[poller-parent] agent=" +
-                      leaf_agent_id +
-                      " parent=" +
-                      parent.agent_id.to_string() +
-                      " terminal_target=" +
-                      parent.terminal_target
-                      .map(@types.LocalTarget::to_string)
-                      .unwrap_or("NONE") +
-                      "\n",
-                    ),
-                  )
-                  deliveries.push(
-                    @message.plan_delivery(
-                      parent, leaf_agent_id, message, status,
-                    ),
-                  )
-                }
-                Err(_) => ()
-              }
+          match self.resolve_parent_for_delivery(leaf_agent_id) {
+            Ok(parent) => {
+              ignore(
+                @sys.append_file_sync(
+                  ".choir/delivery.log",
+                  "[poller-parent] agent=" +
+                  leaf_agent_id +
+                  " parent=" +
+                  parent.agent_id.to_string() +
+                  " terminal_target=" +
+                  parent.terminal_target
+                  .map(@types.LocalTarget::to_string)
+                  .unwrap_or("NONE") +
+                  "\n",
+                ),
+              )
+              deliveries.push(
+                @message.plan_delivery(parent, leaf_agent_id, message, status),
+              )
+            }
+            Err(_) => ()
           }
         None => ()
       }
