@@ -1595,7 +1595,7 @@ async fn ServerState::fail_agent_with_runner(
   }
   self.sync_parent_child_lifecycle(agent_id, failed)
   match agent.parent {
-    Some(parent_id) => {
+    Some(parent_id) =>
       match self.resolve_parent_by_id(parent_id) {
         Ok(parent) => {
           let delivery = @message.plan_delivery(
@@ -1606,35 +1606,41 @@ async fn ServerState::fail_agent_with_runner(
               _ => Ok(())
             },
           )
+          // Only inject a second failure notice to the parent terminal when
+          // plan_delivery used a non-terminal channel (e.g. TeamsInbox/TcpPush).
+          // Otherwise the parent sees two [FAILED] lines for the same event.
+          let already_terminal = match delivery {
+            @message.DeliveryMethod::LocalTerminalInput(_, _) => true
+            _ => false
+          }
+          let is_self_reported = match reason {
+            @phase.FailureReason::ChildFailure(_) => true
+            _ => false
+          }
+          if not(is_self_reported) && not(already_terminal) {
+            match self.registry.get(parent_id) {
+              Ok(parent_agent) =>
+                match parent_agent.terminal_target {
+                  Some(target) => {
+                    let reason_str = reason.to_string()
+                    let msg = @message.format_failure(agent_id, reason_str)
+                    ignore(
+                      @tools.execute_delivery(
+                        @message.DeliveryMethod::LocalTerminalInput(target, msg),
+                        runner,
+                      ) catch {
+                        _ => Ok(())
+                      },
+                    )
+                  }
+                  None => ()
+                }
+              Err(_) => ()
+            }
+          }
         }
         Err(_) => ()
       }
-      let is_self_reported = match reason {
-        @phase.FailureReason::ChildFailure(_) => true
-        _ => false
-      }
-      if not(is_self_reported) {
-        match self.registry.get(parent_id) {
-          Ok(parent_agent) =>
-            match parent_agent.terminal_target {
-              Some(target) => {
-                let reason_str = reason.to_string()
-                let msg = @message.format_failure(agent_id, reason_str)
-                ignore(
-                  @tools.execute_delivery(
-                    @message.DeliveryMethod::LocalTerminalInput(target, msg),
-                    runner,
-                  ) catch {
-                    _ => Ok(())
-                  },
-                )
-              }
-              None => ()
-            }
-          Err(_) => ()
-        }
-      }
-    }
     None => ()
   }
   self.clear_agent_runtime_tracking(agent_id)
@@ -2137,8 +2143,8 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
         cmd.args.contains("zellij-action") &&
         cmd.args.contains("send") {
         let text = cmd.args[cmd.args.length() - 1]
-        if text.contains("[FAILED: " + caller_id + "]") &&
-          text.contains("WatchdogTimeout") {
+        if text.contains("[from: " + caller_id + "]") &&
+          text.contains("watchdog timeout") {
           injected_failure_msg = true
         }
       }
