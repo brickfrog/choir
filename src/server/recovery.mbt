@@ -89,6 +89,43 @@ async fn find_pr_for_branch(
 }
 
 ///|
+/// Scan lifecycle files for an agent whose DevLifecycle is ReviewOwned for
+/// the given PR number. Used as a fallback when the poller doesn't track
+/// the PR (e.g. after server restart).
+fn find_agent_for_pr(project_dir : String, pr_number : Int) -> String? {
+  let tmp = "/tmp/choir-find-pr-" + @sys.get_pid().to_string() + ".tmp"
+  let cmd = "ls " +
+    project_dir +
+    "/.choir/kv/lifecycle--* 2>/dev/null > " +
+    tmp +
+    " 2>/dev/null"
+  ignore(@sys.system(cmd))
+  let output = @sys.read_file(tmp)
+  ignore(@sys.delete_file_sync(tmp))
+  let needle = "\"pr_number\":" + pr_number.to_string()
+  for line in output.split("\n") {
+    let path = line.trim().to_string()
+    if path == "" {
+      continue
+    }
+    let content = @sys.read_file(path)
+    if content == "" || not(content.contains(needle)) {
+      continue
+    }
+    let json = @json.parse(content) catch { _ => continue }
+    let obj = match json {
+      Object(m) => m
+      _ => continue
+    }
+    match obj.get("agent_id") {
+      Some(String(id)) => return Some(id)
+      _ => ()
+    }
+  }
+  None
+}
+
+///|
 async fn capture_stdout(
   program : String,
   args : Array[String],

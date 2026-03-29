@@ -101,7 +101,11 @@ pub async fn ServerState::handle_with_runner(
       Some(pr_number) =>
         match self.poller.get(pr_number) {
           Some(tracked) => Some(tracked.agent_id)
-          None => None
+          None =>
+            // Poller doesn't have this PR (server restart, file_pr bypassed).
+            // Fall back to scanning the registry for an agent in ReviewOwned
+            // for this PR number.
+            find_agent_for_pr(self.config.project_dir, pr_number)
         }
       None => None
     }

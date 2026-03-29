@@ -560,23 +560,31 @@ pub async fn dispatch(
       }
       match poller_state {
         Some(ps) => {
-          match ps.get(merge_args.pr_number) {
-            Some(tracked) =>
-              apply_tl_event(
-                project_dir,
-                merge_args.caller_id,
-                @phase.TLEvent::PRMerged(
-                  number=merge_args.pr_number,
-                  url=@phase.extract_slug(tracked.branch),
-                ),
-                registry~,
-              )
-            None => ()
+          let slug = match ps.get(merge_args.pr_number) {
+            Some(tracked) => @phase.extract_slug(tracked.branch)
+            None => "PR-" + merge_args.pr_number.to_string()
           }
+          apply_tl_event(
+            project_dir,
+            merge_args.caller_id,
+            @phase.TLEvent::PRMerged(number=merge_args.pr_number, url=slug),
+            registry~,
+          )
           ps.untrack(merge_args.pr_number)
           ignore(ps.write_state_file(project_dir))
         }
-        None => ()
+        None =>
+          // No poller state available — still apply TL event so supervisor
+          // lifecycle tracks the merge.
+          apply_tl_event(
+            project_dir,
+            merge_args.caller_id,
+            @phase.TLEvent::PRMerged(
+              number=merge_args.pr_number,
+              url="PR-" + merge_args.pr_number.to_string(),
+            ),
+            registry~,
+          )
       }
       @types.Response::ok_values({ "status": String::to_json("merged") })
     }
