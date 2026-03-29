@@ -4131,22 +4131,13 @@ fn statusline_run() -> Unit {
   let model = statusline_json_string(model_obj, "display_name")
   let ctx_obj = statusline_json_object(root, "context_window")
   let ctx_pct = statusline_json_number(ctx_obj, "used_percentage").to_int()
-  let cost_obj = statusline_json_object(root, "cost")
-  let cost = statusline_json_number(cost_obj, "total_cost_usd")
   let cwd = match root.get("cwd") {
     Some(String(s)) => s
     _ => "."
   }
   let project_dir = cwd
   let has_choir = @sys.read_file(project_dir + "/.choir/config.toml") != ""
-  let cost_str = if cost < 0.01 {
-    "$0"
-  } else if cost < 1.0 {
-    "$" + ((cost * 100.0).to_int().to_double() / 100.0).to_string()
-  } else {
-    "$" + ((cost * 100.0).to_int().to_double() / 100.0).to_string()
-  }
-  let line1 = "\u001b[36m\{model}\u001b[0m  ctx \{ctx_pct}%  \{cost_str}"
+  let line1 = "\u001b[36m\{model}\u001b[0m  ctx \{ctx_pct}%"
   if not(has_choir) {
     @sys.write_stdout(line1)
     return
