@@ -507,6 +507,23 @@ pub async fn dispatch(
             }
           None => ()
         }
+        // Live check for inline code review comments at merge time.
+        // Blocks merge if any exist — TL must read and address them first.
+        let inline = fetch_inline_comments_sync(
+          merge_args.pr_number,
+          project_dir,
+        )
+        if inline.length() > 0 {
+          return @types.Response::Err(
+            "PR #" +
+            merge_args.pr_number.to_string() +
+            " has " +
+            inline.length().to_string() +
+            " inline review comment(s) that must be addressed before merging:\n" +
+            inline +
+            "\nPass force=true to override.",
+          )
+        }
       }
       let mutex_name = "branch:" + merge_args.parent_branch
       match mutex_registry {
