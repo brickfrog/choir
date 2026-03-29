@@ -4127,8 +4127,6 @@ fn statusline_run() -> Unit {
     Object(m) => m
     _ => return
   }
-  let model_obj = statusline_json_object(root, "model")
-  let model = statusline_json_string(model_obj, "display_name")
   let ctx_obj = statusline_json_object(root, "context_window")
   let ctx_pct = statusline_json_number(ctx_obj, "used_percentage").to_int()
   let cwd = match root.get("cwd") {
@@ -4137,65 +4135,81 @@ fn statusline_run() -> Unit {
   }
   let project_dir = cwd
   let has_choir = @sys.read_file(project_dir + "/.choir/config.toml") != ""
-  let line1 = "\u001b[36m\{model}\u001b[0m  ctx \{ctx_pct}%"
+  // Context bar: [||||      ] 42%
+  let filled = ctx_pct / 5
+  let bar = StringBuilder::new()
+  for i = 0; i < 20; i = i + 1 {
+    if i < filled {
+      bar.write_string("|")
+    } else {
+      bar.write_string(" ")
+    }
+  }
+  let bar_color = if ctx_pct >= 80 {
+    "\u001b[31m"
+  } else if ctx_pct >= 50 {
+    "\u001b[33m"
+  } else {
+    "\u001b[32m"
+  }
+  let out = StringBuilder::new()
+  out.write_string(bar_color)
+  out.write_string("[")
+  out.write_string(bar.to_string())
+  out.write_string("]")
+  out.write_string("\u001b[0m ")
+  out.write_string(ctx_pct.to_string())
+  out.write_string("%")
   if not(has_choir) {
-    @sys.write_stdout(line1)
+    @sys.write_stdout(out.to_string())
     return
   }
-  let (working, review, changes, failed, done) = statusline_count_agents(
+  let (working, review, changes, failed, _done) = statusline_count_agents(
     project_dir,
   )
-  let total = working + review + changes + failed + done
-  let agent_parts = StringBuilder::new()
-  let mut has_part = false
-  if working > 0 {
-    agent_parts.write_string("\u001b[33m\{working} working\u001b[0m")
-    has_part = true
-  }
-  if review > 0 {
-    if has_part {
-      agent_parts.write_string(" ")
+  let total = working + review + changes + failed
+  if total > 0 {
+    out.write_string("  ")
+    let mut need_sep = false
+    if working > 0 {
+      out.write_string("\u001b[33m")
+      out.write_string(working.to_string())
+      out.write_string("\u001b[2m wip\u001b[0m")
+      need_sep = true
     }
-    agent_parts.write_string("\u001b[32m\{review} review\u001b[0m")
-    has_part = true
-  }
-  if changes > 0 {
-    if has_part {
-      agent_parts.write_string(" ")
+    if review > 0 {
+      if need_sep {
+        out.write_string("\u001b[2m/\u001b[0m")
+      }
+      out.write_string("\u001b[32m")
+      out.write_string(review.to_string())
+      out.write_string("\u001b[2m pr\u001b[0m")
+      need_sep = true
     }
-    agent_parts.write_string("\u001b[35m\{changes} fixes\u001b[0m")
-    has_part = true
-  }
-  if failed > 0 {
-    if has_part {
-      agent_parts.write_string(" ")
+    if changes > 0 {
+      if need_sep {
+        out.write_string("\u001b[2m/\u001b[0m")
+      }
+      out.write_string("\u001b[35m")
+      out.write_string(changes.to_string())
+      out.write_string("\u001b[2m fix\u001b[0m")
+      need_sep = true
     }
-    agent_parts.write_string("\u001b[31m\{failed} failed\u001b[0m")
-    has_part = true
-  }
-  if done > 0 {
-    if has_part {
-      agent_parts.write_string(" ")
+    if failed > 0 {
+      if need_sep {
+        out.write_string("\u001b[2m/\u001b[0m")
+      }
+      out.write_string("\u001b[31m")
+      out.write_string(failed.to_string())
+      out.write_string("\u001b[2m err\u001b[0m")
     }
-    agent_parts.write_string("\{done} done")
-    has_part = true
   }
   let pr_summary = statusline_pr_summary(project_dir)
-  @sys.write_stdout(line1)
-  if total > 0 || pr_summary != "" {
-    let line2 = StringBuilder::new()
-    if total > 0 {
-      line2.write_string(agent_parts.to_string())
-    }
-    if pr_summary != "" {
-      if total > 0 {
-        line2.write_string("  ")
-      }
-      line2.write_string("PR ")
-      line2.write_string(pr_summary)
-    }
-    @sys.write_stdout("\n" + line2.to_string())
+  if pr_summary != "" {
+    out.write_string("  ")
+    out.write_string(pr_summary)
   }
+  @sys.write_stdout(out.to_string())
 }
 
 ///|
