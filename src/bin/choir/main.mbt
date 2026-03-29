@@ -3593,6 +3593,18 @@ fn init_run() -> Unit {
         ],
         workdir: None,
       })
+      // Set up Claude Code statusline if .claude/settings.json doesn't exist
+      ignore(
+        @exec.run({
+          program: "sh",
+          args: [
+            "-c", "mkdir -p .claude && test -f .claude/settings.json || printf '%s' '{\"statusLine\":{\"type\":\"command\",\"command\":\"choir statusline\"}}' > .claude/settings.json",
+          ],
+          workdir: None,
+        }) catch {
+          _ => 0
+        },
+      )
       let maybe_patch_config = @sys.read_file(".choir/config.toml")
       if maybe_patch_config != "" &&
         not(init_config_has_terminal_session(maybe_patch_config)) {
@@ -3906,6 +3918,296 @@ fn watch_run() -> Unit {
 }
 
 ///|
+
+///|
+fn statusline_read_all_stdin() -> String {
+  let buf = StringBuilder::new()
+  for ;; {
+    match @sys.read_stdin_line(65536) {
+      Some(line) => {
+        buf.write_string(line)
+        buf.write_string("\n")
+      }
+      None => break
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn statusline_json_string(obj : Map[String, Json], key : String) -> String {
+  match obj.get(key) {
+    Some(String(s)) => s
+    _ => ""
+  }
+}
+
+///|
+fn statusline_json_number(obj : Map[String, Json], key : String) -> Double {
+  match obj.get(key) {
+    Some(Number(n, ..)) => n
+    _ => 0.0
+  }
+}
+
+///|
+fn statusline_json_object(
+  obj : Map[String, Json],
+  key : String,
+) -> Map[String, Json] {
+  match obj.get(key) {
+    Some(Object(m)) => m
+    _ => {}
+  }
+}
+
+///|
+fn statusline_list_lifecycle_files(project_dir : String) -> Array[String] {
+  let tmp = "/tmp/choir-statusline-" + @sys.get_pid().to_string() + ".tmp"
+  let cmd = "ls " +
+    project_dir +
+    "/.choir/kv/lifecycle--* 2>/dev/null > " +
+    tmp +
+    " 2>/dev/null"
+  ignore(@sys.system(cmd))
+  let output = @sys.read_file(tmp)
+  ignore(@sys.delete_file_sync(tmp))
+  let files = []
+  for line in output.split("\n") {
+    let trimmed = line.trim().to_string()
+    if trimmed != "" {
+      files.push(trimmed)
+    }
+  }
+  files
+}
+
+///|
+fn statusline_collect_child_ids(project_dir : String) -> Map[String, Bool] {
+  let tmp = "/tmp/choir-statusline-ch-" + @sys.get_pid().to_string() + ".tmp"
+  let cmd = "ls " +
+    project_dir +
+    "/.choir/kv/children--* 2>/dev/null > " +
+    tmp +
+    " 2>/dev/null"
+  ignore(@sys.system(cmd))
+  let output = @sys.read_file(tmp)
+  ignore(@sys.delete_file_sync(tmp))
+  let ids : Map[String, Bool] = {}
+  for line in output.split("\n") {
+    let path = line.trim().to_string()
+    if path == "" {
+      continue
+    }
+    let content = @sys.read_file(path)
+    if content == "" {
+      continue
+    }
+    let json = @json.parse(content) catch { _ => continue }
+    let arr = match json {
+      Array(items) => items
+      _ => continue
+    }
+    for item in arr {
+      match item {
+        Object(child) =>
+          match child.get("id") {
+            Some(String(id)) => ids.set(id, true)
+            _ => ()
+          }
+        _ => ()
+      }
+    }
+  }
+  ids
+}
+
+///|
+fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
+  let child_ids = statusline_collect_child_ids(project_dir)
+  let files = statusline_list_lifecycle_files(project_dir)
+  let mut working = 0
+  let mut review = 0
+  let mut changes = 0
+  let mut failed = 0
+  let mut done = 0
+  for path in files {
+    // Extract agent_id from path: .../lifecycle--<agent_id>
+    let prefix = "/lifecycle--"
+    let mut idx = -1
+    for i = 0; i < path.length() - prefix.length(); i = i + 1 {
+      let mut match_ = true
+      for j = 0; j < prefix.length(); j = j + 1 {
+        if path[i + j] != prefix[j] {
+          match_ = false
+          break
+        }
+      }
+      if match_ {
+        idx = i + prefix.length()
+      }
+    }
+    if idx < 0 {
+      continue
+    }
+    let agent_id = path.substring(start=idx)
+    // If children files exist, only count tracked agents
+    if child_ids.length() > 0 && not(child_ids.contains(agent_id)) {
+      continue
+    }
+    let content = @sys.read_file(path)
+    if content == "" {
+      continue
+    }
+    let json = @json.parse(content) catch { _ => continue }
+    let obj = match json {
+      Object(m) => m
+      _ => continue
+    }
+    let workflow = statusline_json_object(obj, "workflow")
+    let state = statusline_json_object(workflow, "state")
+    let tag = statusline_json_string(state, "tag")
+    match tag {
+      "Working" => working = working + 1
+      "ReviewOwned" | "ExitRequestedDeferred" => review = review + 1
+      "ChangesRequested" => changes = changes + 1
+      "Failed" => failed = failed + 1
+      "Done" => done = done + 1
+      _ => ()
+    }
+  }
+  (working, review, changes, failed, done)
+}
+
+///|
+fn statusline_pr_summary(project_dir : String) -> String {
+  let content = @sys.read_file(project_dir + "/.choir/poller_state.json")
+  if content.trim().to_string() == "" || content.trim().to_string() == "[]" {
+    return ""
+  }
+  let json = @json.parse(content) catch { _ => return "" }
+  let arr = match json {
+    Array(items) => items
+    _ => return ""
+  }
+  if arr.length() == 0 {
+    return ""
+  }
+  let parts = StringBuilder::new()
+  let mut first = true
+  for item in arr {
+    match item {
+      Object(pr) => {
+        let number = statusline_json_number(pr, "pr_number").to_int()
+        let review = statusline_json_string(pr, "last_review_state")
+        if not(first) {
+          parts.write_string(" ")
+        }
+        first = false
+        match review {
+          "Approved" => parts.write_string("\u001b[32m#\{number}\u001b[0m")
+          "ChangesRequested" =>
+            parts.write_string("\u001b[35m#\{number}\u001b[0m")
+          _ => parts.write_string("#\{number}")
+        }
+      }
+      _ => ()
+    }
+  }
+  parts.to_string()
+}
+
+///|
+fn statusline_run() -> Unit {
+  let input = statusline_read_all_stdin()
+  let json = @json.parse(input) catch {
+    _ => @json.parse("{}") catch { _ => return }
+  }
+  let root = match json {
+    Object(m) => m
+    _ => return
+  }
+  let model_obj = statusline_json_object(root, "model")
+  let model = statusline_json_string(model_obj, "display_name")
+  let ctx_obj = statusline_json_object(root, "context_window")
+  let ctx_pct = statusline_json_number(ctx_obj, "used_percentage").to_int()
+  let cost_obj = statusline_json_object(root, "cost")
+  let cost = statusline_json_number(cost_obj, "total_cost_usd")
+  let cwd = match root.get("cwd") {
+    Some(String(s)) => s
+    _ => "."
+  }
+  let project_dir = cwd
+  let has_choir = @sys.read_file(project_dir + "/.choir/config.toml") != ""
+  let cost_str = if cost < 0.01 {
+    "$0"
+  } else if cost < 1.0 {
+    "$" + ((cost * 100.0).to_int().to_double() / 100.0).to_string()
+  } else {
+    "$" + ((cost * 100.0).to_int().to_double() / 100.0).to_string()
+  }
+  let line1 = "\u001b[36m\{model}\u001b[0m  ctx \{ctx_pct}%  \{cost_str}"
+  if not(has_choir) {
+    @sys.write_stdout(line1)
+    return
+  }
+  let (working, review, changes, failed, done) = statusline_count_agents(
+    project_dir,
+  )
+  let total = working + review + changes + failed + done
+  let agent_parts = StringBuilder::new()
+  let mut has_part = false
+  if working > 0 {
+    agent_parts.write_string("\u001b[33m\{working} working\u001b[0m")
+    has_part = true
+  }
+  if review > 0 {
+    if has_part {
+      agent_parts.write_string(" ")
+    }
+    agent_parts.write_string("\u001b[32m\{review} review\u001b[0m")
+    has_part = true
+  }
+  if changes > 0 {
+    if has_part {
+      agent_parts.write_string(" ")
+    }
+    agent_parts.write_string("\u001b[35m\{changes} fixes\u001b[0m")
+    has_part = true
+  }
+  if failed > 0 {
+    if has_part {
+      agent_parts.write_string(" ")
+    }
+    agent_parts.write_string("\u001b[31m\{failed} failed\u001b[0m")
+    has_part = true
+  }
+  if done > 0 {
+    if has_part {
+      agent_parts.write_string(" ")
+    }
+    agent_parts.write_string("\{done} done")
+    has_part = true
+  }
+  let pr_summary = statusline_pr_summary(project_dir)
+  @sys.write_stdout(line1)
+  if total > 0 || pr_summary != "" {
+    let line2 = StringBuilder::new()
+    if total > 0 {
+      line2.write_string(agent_parts.to_string())
+    }
+    if pr_summary != "" {
+      if total > 0 {
+        line2.write_string("  ")
+      }
+      line2.write_string("PR ")
+      line2.write_string(pr_summary)
+    }
+    @sys.write_stdout("\n" + line2.to_string())
+  }
+}
+
+///|
 fn main {
   let args = @env.args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
@@ -3922,9 +4224,10 @@ fn main {
     "reply" => reply_run()
     "smoke" => smoke_run()
     "watch" => watch_run()
+    "statusline" => statusline_run()
     _ => {
       @sys.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini|cursor_agent]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch>\n",
+        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini|cursor_agent]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline>\n",
       )
       @sys.exit(1)
     }
