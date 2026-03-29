@@ -4127,49 +4127,21 @@ fn statusline_run() -> Unit {
     Object(m) => m
     _ => return
   }
-  let ctx_obj = statusline_json_object(root, "context_window")
-  let ctx_pct = statusline_json_number(ctx_obj, "used_percentage").to_int()
   let cwd = match root.get("cwd") {
     Some(String(s)) => s
     _ => "."
   }
   let project_dir = cwd
   let has_choir = @sys.read_file(project_dir + "/.choir/config.toml") != ""
-  // Context bar: [||||      ] 42%
-  let filled = ctx_pct / 5
-  let bar = StringBuilder::new()
-  for i = 0; i < 20; i = i + 1 {
-    if i < filled {
-      bar.write_string("|")
-    } else {
-      bar.write_string(" ")
-    }
-  }
-  let bar_color = if ctx_pct >= 80 {
-    "\u001b[31m"
-  } else if ctx_pct >= 50 {
-    "\u001b[33m"
-  } else {
-    "\u001b[32m"
-  }
-  let out = StringBuilder::new()
-  out.write_string(bar_color)
-  out.write_string("[")
-  out.write_string(bar.to_string())
-  out.write_string("]")
-  out.write_string("\u001b[0m ")
-  out.write_string(ctx_pct.to_string())
-  out.write_string("%")
   if not(has_choir) {
-    @sys.write_stdout(out.to_string())
     return
   }
+  let out = StringBuilder::new()
   let (working, review, changes, failed, _done) = statusline_count_agents(
     project_dir,
   )
   let total = working + review + changes + failed
   if total > 0 {
-    out.write_string("  ")
     let mut need_sep = false
     if working > 0 {
       out.write_string("\u001b[33m")
@@ -4206,10 +4178,15 @@ fn statusline_run() -> Unit {
   }
   let pr_summary = statusline_pr_summary(project_dir)
   if pr_summary != "" {
-    out.write_string("  ")
+    if total > 0 {
+      out.write_string("  ")
+    }
     out.write_string(pr_summary)
   }
-  @sys.write_stdout(out.to_string())
+  let result = out.to_string()
+  if result != "" {
+    @sys.write_stdout(result)
+  }
 }
 
 ///|
