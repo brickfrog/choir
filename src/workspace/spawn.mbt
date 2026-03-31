@@ -163,7 +163,7 @@ pub fn spawn_commands(
         cmds.push({
           program: "sh",
           args: [
-            "-c", "git worktree remove --force \"$1\" 2>/dev/null || true; rm -rf \"$1\"; git branch -D \"$2\" 2>/dev/null || true",
+            "-c", "git worktree prune 2>/dev/null || true; git worktree remove --force \"$1\" 2>/dev/null || true; rm -rf \"$1\"; git branch -D \"$2\" 2>/dev/null || true",
             "sh", workspace, branch,
           ],
           workdir: None,

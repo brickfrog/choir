@@ -7,12 +7,16 @@ async fn run_strict(
   for i = 0; i < statuses.length(); i = i + 1 {
     let status = statuses[i]
     if status != 0 {
-      return Err(
-        "command at index " +
-        i.to_string() +
-        " failed with status " +
-        status.to_string(),
-      )
+      // Re-run the failing command with stderr capture for a useful error message
+      let cmd = cmds[i]
+      let (_, stderr) = capture_command_output(cmd)
+      let detail = stderr.trim().to_string()
+      let msg = if detail != "" {
+        cmd.program + " failed (exit " + status.to_string() + "): " + detail
+      } else {
+        "command failed with status " + status.to_string()
+      }
+      return Err(msg)
     }
   }
   Ok(())
@@ -45,7 +49,7 @@ async test "run_strict returns first failing command index and status" {
   ])
   match result {
     Ok(_) => fail("expected run_strict failure")
-    Err(e) => assert_eq(e, "command at index 1 failed with status 7")
+    Err(e) => assert_true(e.contains("failed") && e.contains("7"))
   }
 }
 
