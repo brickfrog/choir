@@ -10,7 +10,7 @@ pub(all) enum ForkWaveError {
   /// `output` is the raw `git log @{u}..HEAD` output.
   UnpushedCommits(output~ : String)
   /// A spawn command exited with a non-zero status.
-  CommandFailed(status~ : Int)
+  CommandFailed(status~ : Int, failing_cmd~ : @workspace.Command?)
 } derive(Show, Eq)
 
 ///|
@@ -22,7 +22,8 @@ pub fn ForkWaveError::message(self : ForkWaveError) -> String {
     UnpushedCommits(output~) =>
       "Unpushed commits exist. Run 'git push' first, then call fork_wave.\n" +
       output.trim().to_string()
-    CommandFailed(status~) => "command failed with status " + status.to_string()
+    CommandFailed(status~, ..) =>
+      "command failed with status " + status.to_string()
   }
 }
 
@@ -113,13 +114,24 @@ pub fn fork_wave_plan(
             )
           } else {
             RunCommands(cmds~, cont=fn(exit_codes) {
-              let last = if exit_codes.length() > 0 {
-                exit_codes[exit_codes.length() - 1]
-              } else {
-                0
+              let mut failed_idx = -1
+              let mut failed_status = 0
+              for i = 0; i < exit_codes.length(); i = i + 1 {
+                if exit_codes[i] != 0 {
+                  failed_idx = i
+                  failed_status = exit_codes[i]
+                  break
+                }
               }
-              if last != 0 {
-                Pure(Err(CommandFailed(status=last)))
+              if failed_idx >= 0 {
+                let failing = if failed_idx < cmds.length() {
+                  Some(cmds[failed_idx])
+                } else {
+                  None
+                }
+                Pure(
+                  Err(CommandFailed(status=failed_status, failing_cmd=failing)),
+                )
               } else {
                 let result : Map[String, Json] = {
                   "status": String::to_json("spawned"),

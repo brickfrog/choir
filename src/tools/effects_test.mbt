@@ -159,7 +159,7 @@ test "failed command yields CommandFailed(status=1)" {
     _ => fail("expected GitCapture → GitCapture → RunCommands")
   }
   match after_run {
-    Pure(Err(@tools.ForkWaveError::CommandFailed(status~))) =>
+    Pure(Err(@tools.ForkWaveError::CommandFailed(status~, ..))) =>
       assert_eq(status, 1)
     _ => fail("expected Pure(Err(CommandFailed(1)))")
   }

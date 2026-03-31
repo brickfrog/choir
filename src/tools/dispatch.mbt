@@ -296,6 +296,24 @@ pub async fn dispatch(
       )
       let resp = match interpret(plan, git_capture~, runner~) {
         Ok(r) => r
+        Err(CommandFailed(status~, failing_cmd~)) => {
+          let detail = match failing_cmd {
+            Some(cmd) => {
+              let (_, output) = capture_command_output(cmd)
+              output.trim().to_string()
+            }
+            None => ""
+          }
+          if detail != "" {
+            @types.Response::Err(
+              "spawn failed (exit " + status.to_string() + "): " + detail,
+            )
+          } else {
+            @types.Response::Err(
+              "command failed with status " + status.to_string(),
+            )
+          }
+        }
         Err(e) => @types.Response::Err(e.message())
       }
       // Post-spawn side effects: only run if spawn succeeded.
