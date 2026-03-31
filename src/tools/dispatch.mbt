@@ -191,6 +191,13 @@ pub async fn dispatch(
           @types.Response::ok_values({ "status": String::to_json("registered") })
       }
     ToolRequest::ForkWave(fork_wave_args) => {
+      // Detect the actual default branch if "main" was defaulted but doesn't exist
+      let resolved_parent = if fork_wave_args.parent_branch == "main" {
+        detect_default_branch(project_dir)
+      } else {
+        fork_wave_args.parent_branch
+      }
+      let fork_wave_args = { ..fork_wave_args, parent_branch: resolved_parent }
       let caller_spawn_depth_resolved = match registry {
         Some(reg) =>
           match reg.get(fork_wave_args.caller_id) {
