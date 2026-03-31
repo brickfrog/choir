@@ -228,7 +228,7 @@ pub async fn verify_teams_delivery(
   for i = 0; i < 3; i = i + 1 {
     @async.sleep(interval_ms)
     let content = @sys.read_file(path)
-    if not(content.contains(message_json)) {
+    if !content.contains(message_json) {
       return
     }
   }

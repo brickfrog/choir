@@ -159,7 +159,7 @@ pub fn spawn_commands(
   match spec.isolation {
     Worktree => {
       let cmds : Array[Command] = []
-      if not(spec.reuse_workspace) {
+      if !spec.reuse_workspace {
         cmds.push({
           program: "sh",
           args: [

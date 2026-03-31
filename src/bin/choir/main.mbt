@@ -71,7 +71,7 @@ async fn serve_handle_connection(
         }
         read_pos = remaining
         i = 0
-        if not(authenticated) {
+        if !authenticated {
           match state.config.tcp_auth_token {
             Some(token) =>
               if line == token {
@@ -625,15 +625,15 @@ fn mcp_response_wire(resp : @mcp.JsonRpcResponse, raw_stdio : Bool) -> String {
 ///|
 fn mcp_parse_content_length(line : String) -> Int? {
   let trimmed = line.trim().to_string()
-  if not(trimmed.has_prefix("Content-Length:")) &&
-    not(trimmed.has_prefix("content-length:")) {
+  if !trimmed.has_prefix("Content-Length:") &&
+    !trimmed.has_prefix("content-length:") {
     return None
   }
   let mut value = 0
   let mut saw_digit = false
   let mut saw_colon = false
   for c in trimmed {
-    if not(saw_colon) {
+    if !saw_colon {
       if c == ':' {
         saw_colon = true
       }
@@ -665,7 +665,7 @@ fn mcp_read_next_message(
     }
     let trimmed = line.trim().to_string()
     if trimmed == "" {
-      if not(saw_headers) {
+      if !saw_headers {
         continue
       }
       match content_length {
@@ -797,7 +797,7 @@ fn mcp_run_request_loop(
               let wire_req = mcp_build_wire_request(
                 internal_req, role, config, local_cfg,
               )
-              if not(send_wire_request(wire_req)) {
+              if !send_wire_request(wire_req) {
                 write_output(
                   mcp_response_wire(
                     @mcp.error_response(
@@ -854,7 +854,7 @@ fn mcp_run_uds_loop(
 ) -> McpUdsLoopExit {
   let reader = UDSLineReader::new(uds_fd)
   let reg_msg = mcp_build_registration_message(role, config, local_cfg)
-  if not(mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg))) {
+  if !mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg)) {
     return Reconnect
   }
 
@@ -918,10 +918,10 @@ fn mcp_run() -> Unit {
         uds_fd, raw_stdio, role, config, local_cfg,
       )
       @uds.close(uds_fd)
-      if not(mcp_should_reconnect_after_uds_loop(exit_reason)) {
+      if !mcp_should_reconnect_after_uds_loop(exit_reason) {
         break
       }
-      if not(@sys.wait_for_socket(config.listen_uds, 60)) {
+      if !@sys.wait_for_socket(config.listen_uds, 60) {
         break
       }
       uds_fd = @uds.client_connect(config.listen_uds)
@@ -1066,7 +1066,7 @@ fn parse_leaf_cli_args(args : Array[String]) -> LeafCliArgs {
         i = i + 1
       } else {
         let key = normalize_cli_key(arg[2:arg.length()].to_string())
-        if i + 1 < args.length() && not(args[i + 1].has_prefix("--")) {
+        if i + 1 < args.length() && !args[i + 1].has_prefix("--") {
           flags.set(key, args[i + 1])
           i = i + 2
         } else {
@@ -1116,15 +1116,13 @@ fn looks_like_branch_token(s : String) -> Bool {
     return false
   }
   for c in trimmed {
-    if not(
-        (c >= 'a' && c <= 'z') ||
-        (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') ||
-        c == '-' ||
-        c == '_' ||
-        c == '/' ||
-        c == '.',
-      ) {
+    if !((c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      c == '-' ||
+      c == '_' ||
+      c == '/' ||
+      c == '.') {
       return false
     }
   }
@@ -1146,16 +1144,16 @@ fn leaf_tool_request_args(
   let positionals = cli_args.positionals
   match tool {
     "file_pr" => {
-      if not(flags.contains("caller_id")) {
+      if !flags.contains("caller_id") {
         match @sys.getenv("CHOIR_AGENT_ID") {
           Some(id) => if id != "" { flags.set("caller_id", id) }
           None => ()
         }
       }
-      let used_legacy_branch = not(flags.contains("branch")) &&
+      let used_legacy_branch = !flags.contains("branch") &&
         positionals.length() > 0 &&
         looks_like_legacy_branch_arg(positionals[0])
-      if not(flags.contains("branch")) {
+      if !flags.contains("branch") {
         if used_legacy_branch {
           flags.set("branch", positionals[0])
         } else if positionals.length() == 0 {
@@ -1165,7 +1163,7 @@ fn leaf_tool_request_args(
           }
         }
       }
-      if not(flags.contains("parent_branch")) {
+      if !flags.contains("parent_branch") {
         if used_legacy_branch {
           if positionals.length() > 2 && looks_like_branch_token(positionals[2]) {
             flags.set("parent_branch", positionals[2])
@@ -1186,18 +1184,18 @@ fn leaf_tool_request_args(
       Ok(flags)
     }
     "notify_parent" => {
-      if not(flags.contains("caller_id")) {
+      if !flags.contains("caller_id") {
         match @sys.getenv("CHOIR_AGENT_ID") {
           Some(id) => if id != "" { flags.set("caller_id", id) }
           None => ()
         }
       }
-      if not(flags.contains("status")) &&
+      if !flags.contains("status") &&
         positionals.length() > 0 &&
         is_status_word(positionals[0]) {
         flags.set("status", positionals[0].trim().to_lower().to_string())
       }
-      if not(flags.contains("message")) {
+      if !flags.contains("message") {
         let message_start = if flags.contains("status") &&
           positionals.length() > 0 &&
           is_status_word(positionals[0]) {
@@ -1223,7 +1221,7 @@ fn leaf_tool_request_args(
       }
     }
     "shutdown" => {
-      if not(flags.contains("caller_id")) {
+      if !flags.contains("caller_id") {
         match @sys.getenv("CHOIR_AGENT_ID") {
           Some(id) => if id != "" { flags.set("caller_id", id) }
           None => ()
@@ -1249,10 +1247,10 @@ fn leaf_tool_request_args(
           }
       }
     "task_create" => {
-      if not(flags.contains("id")) && positionals.length() > 0 {
+      if !flags.contains("id") && positionals.length() > 0 {
         flags.set("id", positionals[0])
       }
-      if not(flags.contains("title")) && positionals.length() > 1 {
+      if !flags.contains("title") && positionals.length() > 1 {
         flags.set("title", join_positionals(positionals, 1))
       }
       match (flags.get("id"), flags.get("title")) {
@@ -1266,7 +1264,7 @@ fn leaf_tool_request_args(
       }
     }
     "task_update" => {
-      if not(flags.contains("id")) && positionals.length() > 0 {
+      if !flags.contains("id") && positionals.length() > 0 {
         flags.set("id", positionals[0])
       }
       match flags.get("id") {
@@ -1345,7 +1343,7 @@ fn leaf_tool_register_if_needed(
   local_cfg : @types.LocalConfig,
 ) -> Result[Unit, String] {
   let reg_msg = mcp_build_registration_message(role, config, local_cfg)
-  if not(mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg))) {
+  if !mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg)) {
     return Err("failed to write registration request")
   }
   let reg_resp_line = reader.read_line()
@@ -1422,7 +1420,7 @@ fn leaf_tool_run() -> Unit {
     args: @types.RequestArgs::new(req_args),
   }
   let wire_req = mcp_build_wire_request(req, role, config, local_cfg)
-  if not(mcp_write_all_uds(uds_fd, @utf8.encode(wire_req))) {
+  if !mcp_write_all_uds(uds_fd, @utf8.encode(wire_req)) {
     @uds.close(uds_fd)
     leaf_tool_emit(@types.Response::Err("failed to write tool request"))
     return
@@ -1552,7 +1550,7 @@ fn zellij_target_pane_id(
     if pane.is_plugin {
       continue
     }
-    if not(want_exited) && pane.exited {
+    if !want_exited && pane.exited {
       continue
     }
     match target.kind {
@@ -2062,7 +2060,7 @@ fn smoke_e2e_enabled(args : Array[String]) -> Bool {
 ///|
 fn smoke_self_exe(args : Array[String]) -> String {
   let argv0 = if args.length() > 0 { args[0] } else { "choir" }
-  if argv0.has_prefix("/") || not(argv0.contains("/")) {
+  if argv0.has_prefix("/") || !argv0.contains("/") {
     argv0
   } else {
     @env.current_dir().unwrap_or(".") + "/" + argv0
@@ -3618,7 +3616,7 @@ fn init_run() -> Unit {
       )
       let maybe_patch_config = @sys.read_file(".choir/config.toml")
       if maybe_patch_config != "" &&
-        not(init_config_has_terminal_session(maybe_patch_config)) {
+        !init_config_has_terminal_session(maybe_patch_config) {
         let separator = if maybe_patch_config.has_suffix("\n") {
           ""
         } else {
@@ -3745,7 +3743,7 @@ fn init_run() -> Unit {
       }
 
       @sys.write_stdout("Waiting for server socket...\n")
-      if not(@sys.wait_for_socket(config.listen_uds, 60)) {
+      if !@sys.wait_for_socket(config.listen_uds, 60) {
         @sys.write_stdout("Warning: server socket not ready after 30s\n")
       } else {
         @sys.write_stdout("Server ready.\n")
@@ -4063,7 +4061,7 @@ fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
     }
     let agent_id = path[idx:].to_string()
     // If children files exist, only count tracked agents
-    if child_ids.length() > 0 && not(child_ids.contains(agent_id)) {
+    if child_ids.length() > 0 && !child_ids.contains(agent_id) {
       continue
     }
     let content = @sys.read_file(path)
@@ -4111,7 +4109,7 @@ fn statusline_pr_summary(project_dir : String) -> String {
       Object(pr) => {
         let number = statusline_json_number(pr, "pr_number").to_int()
         let review = statusline_json_string(pr, "last_review_state")
-        if not(first) {
+        if !first {
           parts.write_string(" ")
         }
         first = false
@@ -4171,7 +4169,7 @@ fn statusline_run() -> Unit {
   out.write_string("\u001b[0m ")
   out.write_string(week_pct.to_string())
   out.write_string("% 7d")
-  if not(has_choir) {
+  if !has_choir {
     @sys.write_stdout(out.to_string())
     return
   }

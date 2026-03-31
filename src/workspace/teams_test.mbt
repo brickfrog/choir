@@ -57,7 +57,7 @@ fn remove_team_member_string(content : String, member_name : String) -> String {
           kept.push(entry)
         }
       }
-      if not(changed) {
+      if !changed {
         return content
       }
       obj.set("members", kept.to_json())
@@ -96,7 +96,7 @@ test "register_team_member existing members" {
 test "remove_team_member" {
   let json = "{\"members\": [{\"name\":\"m1\",\"color\":\"red\"},{\"name\":\"m2\",\"color\":\"green\"}]}"
   let res = remove_team_member_string(json, "m1")
-  assert_true(not(res.contains("m1")))
+  assert_true(!res.contains("m1"))
   assert_true(res.contains("m2"))
   assert_true(res.contains("green"))
 }

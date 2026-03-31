@@ -92,20 +92,20 @@ pub fn format_augmented_request(
 ) -> String {
   let args : Map[String, String] = {}
   req.args.each(fn(k, v) { args.set(k, v) })
-  if not(args.contains("caller_id")) {
+  if !args.contains("caller_id") {
     args.set("caller_id", agent_id)
   }
-  if req.name == "send_message" && not(args.contains("sender_id")) {
+  if req.name == "send_message" && !args.contains("sender_id") {
     args.set("sender_id", agent_id)
   }
   if req.name == "file_pr" {
-    if not(args.contains("branch")) {
+    if !args.contains("branch") {
       match local_cfg.branch {
         Some(v) => args.set("branch", v)
         None => ()
       }
     }
-    if not(args.contains("parent_branch")) {
+    if !args.contains("parent_branch") {
       match local_cfg.parent_branch {
         Some(v) => args.set("parent_branch", v)
         None => ()

@@ -71,7 +71,7 @@ pub fn remove_team_member_native(
           kept.push(entry)
         }
       }
-      if not(changed) {
+      if !changed {
         return true
       }
       obj.set("members", kept.to_json())

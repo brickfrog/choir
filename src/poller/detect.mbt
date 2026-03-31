@@ -61,7 +61,7 @@ pub fn detect_events(
     tracked.last_review_bodies != ""
   if now - tracked.first_seen > timeout &&
     tracked.last_review_state == None_ &&
-    not(has_any_review_content) {
+    !has_any_review_content {
     let since_last = if tracked.last_timeout_at == 0L {
       now - tracked.first_seen
     } else {
@@ -73,7 +73,7 @@ pub fn detect_events(
   }
 
   // CI failure — only fire once per failure episode
-  if ci_failed && not(tracked.last_ci_failed) {
+  if ci_failed && !tracked.last_ci_failed {
     events.push(PollEvent::CIFailed(tracked.pr_number))
   }
   events

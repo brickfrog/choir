@@ -142,7 +142,7 @@ async test "cancel_wave force=false blocked by PR" {
 
   match resp {
     @types.Response::Err(msg) =>
-      if not(msg.contains("blocked by PR #123")) {
+      if !msg.contains("blocked by PR #123") {
         fail("expected blocked error message, got: " + msg)
       }
     _ => fail("expected response: Err")

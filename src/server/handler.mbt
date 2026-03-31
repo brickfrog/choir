@@ -890,7 +890,7 @@ fn log_poller_pr_tick(log : @poller.PollerPrTickLog) -> Unit {
     "skipped_backoff"
   } else if log.untracked_closed {
     "untracked_closed"
-  } else if log.polled_network && not(log.poll_succeeded) {
+  } else if log.polled_network && !log.poll_succeeded {
     "poll_failed"
   } else {
     "polled"
@@ -1615,7 +1615,7 @@ async fn ServerState::fail_agent_with_runner(
             @phase.FailureReason::ChildFailure(_) => true
             _ => false
           }
-          if not(is_self_reported) && not(already_terminal) {
+          if !is_self_reported && !already_terminal {
             match self.registry.get(parent_id) {
               Ok(parent_agent) =>
                 match parent_agent.terminal_target {

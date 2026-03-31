@@ -34,7 +34,7 @@ fn split_nonempty_lines(s : String) -> Array[String] {
 
 ///|
 fn push_unique(items : Array[String], value : String) -> Unit {
-  if value != "" && not(items.contains(value)) {
+  if value != "" && !items.contains(value) {
     items.push(value)
   }
 }
@@ -225,7 +225,7 @@ fn line_mentions_worker_forbidden_action(line : String) -> Bool {
 fn sanitize_worker_lines(lines : Array[String]) -> Array[String] {
   let filtered : Array[String] = []
   for line in lines {
-    if not(line_mentions_worker_forbidden_action(line)) {
+    if !line_mentions_worker_forbidden_action(line) {
       filtered.push(line)
     }
   }

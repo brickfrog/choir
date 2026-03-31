@@ -68,43 +68,21 @@ pub fn LocalTarget::to_string(self : LocalTarget) -> String {
 }
 
 ///|
-fn lt_prefix_after(s : String, prefix : String) -> String? {
-  if not(s.has_prefix(prefix)) {
-    return None
-  }
-  Some(s[prefix.length():].to_string())
-}
-
-///|
-fn lt_split_once(s : String, ch : Char) -> (String, String)? {
-  let needle = ch.to_int().to_uint16()
-  for i = 0; i < s.length(); i = i + 1 {
-    if s[i] == needle {
-      return Some((s[:i].to_string(), s[i + 1:s.length()].to_string()))
+pub fn LocalTarget::parse(target : String) -> LocalTarget? {
+  let try_parse = fn(prefix : String, kind : TargetKind) -> LocalTarget? {
+    match target.strip_prefix(prefix) {
+      None => None
+      Some(rest) =>
+        match rest.split_once(":") {
+          Some((session, name)) if session != "" && name != "" =>
+            Some({ kind, session: session.to_string(), name: name.to_string() })
+          _ => None
+        }
     }
   }
-  None
-}
-
-///|
-pub fn LocalTarget::parse(target : String) -> LocalTarget? {
-  match lt_prefix_after(target, "zellij-tab:") {
-    Some(rest) =>
-      match lt_split_once(rest, ':') {
-        Some((session, name)) if session != "" && name != "" =>
-          Some({ kind: ZellijTab, session, name })
-        _ => None
-      }
-    None =>
-      match lt_prefix_after(target, "zellij-pane:") {
-        Some(rest) =>
-          match lt_split_once(rest, ':') {
-            Some((session, name)) if session != "" && name != "" =>
-              Some({ kind: ZellijPane, session, name })
-            _ => None
-          }
-        None => None
-      }
+  match try_parse("zellij-tab:", ZellijTab) {
+    Some(lt) => Some(lt)
+    None => try_parse("zellij-pane:", ZellijPane)
   }
 }
 

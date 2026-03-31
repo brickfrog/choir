@@ -31,7 +31,7 @@ pub fn append_lifecycle_event(
 ) -> Bool {
   let sanitized_id = @types.sanitize_agent_id(agent_id)
   let events_dir = project_dir + "/.choir/events/"
-  if not(@sys.create_dir_all(events_dir)) {
+  if !@sys.create_dir_all(events_dir) {
     return false
   }
   let path = events_dir + sanitized_id + ".jsonl"

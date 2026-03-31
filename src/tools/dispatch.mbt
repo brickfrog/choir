@@ -514,7 +514,7 @@ pub async fn dispatch(
       }
     }
     ToolRequest::MergePr(merge_args) => {
-      if not(merge_args.force) {
+      if !merge_args.force {
         match poller_state {
           Some(ps) =>
             match ps.get(merge_args.pr_number) {
@@ -559,7 +559,7 @@ pub async fn dispatch(
             120L,
             now,
           )
-          if not(acquired) {
+          if !acquired {
             ignore(reg.release(mutex_name, merge_args.caller_id))
             return @types.Response::Err(
               "merge serialization lock held by another agent, retry shortly",
@@ -902,7 +902,7 @@ pub async fn dispatch(
             agent.state == @types.AgentState::Spawning ||
             agent.state == @types.AgentState::Active
           })
-          if not(cancel_args.force) {
+          if !cancel_args.force {
             match poller_state {
               Some(ps) =>
                 for agent in non_terminal {
@@ -1162,7 +1162,7 @@ pub async fn dispatch(
         None =>
           return @types.Response::Err("salvaged leaf has no parent in registry")
       }
-      if not(from_agent.workspace.contains(".choir/worktrees/")) {
+      if !from_agent.workspace.contains(".choir/worktrees/") {
         return @types.Response::Err(
           "salvaged leaf has no choir worktree path to reuse",
         )
@@ -1229,12 +1229,10 @@ pub async fn dispatch(
       }
       ignore(ps.transfer_owner(from_agent_id, to_id, git_branch, ""))
       ignore(ps.write_state_file(project_dir))
-      if not(
-          @phase.mark_agent_rescued_superseded(
-            project_dir,
-            from_agent_id,
-            @types.Role::Dev,
-          ),
+      if !@phase.mark_agent_rescued_superseded(
+          project_dir,
+          from_agent_id,
+          @types.Role::Dev,
         ) {
         return @types.Response::Err(
           "failed to persist superseded lifecycle for " + from_agent_id,
@@ -1443,7 +1441,7 @@ pub async fn handle_request(
           let output_json = @sys.read_file(output_path)
           match @hooks.HookResponse::from_json_string(output_json) {
             Some(res) =>
-              if not(res.continue_) {
+              if !res.continue_ {
                 let msg = match res.message {
                   Some(v) => v
                   None => "hook blocked request"
@@ -1603,7 +1601,7 @@ fn child_summary_terminal(summary : @phase.ChildLifecycleSummary) -> Bool {
 ///|
 fn all_children_terminal(children : Array[@phase.ChildLifecycle]) -> Bool {
   for child in children {
-    if not(child_summary_terminal(child.summary)) {
+    if !child_summary_terminal(child.summary) {
       return false
     }
   }

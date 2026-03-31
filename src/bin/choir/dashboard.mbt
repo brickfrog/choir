@@ -211,7 +211,7 @@ fn dashboard_agents_json(project_dir : String) -> String {
       continue
     }
     let agent_id = path[idx:].to_string()
-    if child_ids.length() > 0 && not(child_ids.contains(agent_id)) {
+    if child_ids.length() > 0 && !child_ids.contains(agent_id) {
       continue
     }
     let content = @sys.read_file(path)

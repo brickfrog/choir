@@ -60,7 +60,7 @@ pub fn spawn_workspace_dir_slug(spec : @types.SpawnSpec) -> String {
 pub fn validate_reuse_spawn_spec(
   spec : @types.SpawnSpec,
 ) -> Result[Unit, String] {
-  if not(spec.reuse_workspace) {
+  if !spec.reuse_workspace {
     return Ok(())
   }
   match spec.workspace_slug {

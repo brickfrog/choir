@@ -113,7 +113,7 @@ pub fn read_stdin_line(max_size : Int) -> String? {
     }
     line.write_string(@utf8.decode_lossy(buf[:len]))
     saw_data = true
-    if not(has_more) {
+    if !has_more {
       return Some(line.to_string())
     }
   }
@@ -220,7 +220,7 @@ pub fn write_file_sync(path : String, content : String) -> Bool {
 ///|
 pub fn write_file_atomic(path : String, content : String) -> Bool {
   let tmp_path = path + ".tmp." + c_getpid().to_string()
-  if not(write_file_sync(tmp_path, content)) {
+  if !write_file_sync(tmp_path, content) {
     return false
   }
   let from_bytes = string_to_null_terminated_bytes(tmp_path)

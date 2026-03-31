@@ -180,7 +180,7 @@ pub fn resolve_context_paths(
   let paths : Array[String] = []
   for name in ["common", role] {
     match resolve_named_context_path(project_dir, name) {
-      Some(path) => if not(paths.contains(path)) { paths.push(path) }
+      Some(path) => if !paths.contains(path) { paths.push(path) }
       None => ()
     }
   }

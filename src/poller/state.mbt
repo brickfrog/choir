@@ -466,7 +466,7 @@ pub fn PollerState::critical_phase_pr_number(
   for tracked in self.tracked.values() {
     if tracked.agent_id == agent_id &&
       tracked.last_review_state == ChangesRequested &&
-      not(tracked.notified_parent) {
+      !tracked.notified_parent {
       return Some(tracked.pr_number)
     }
   }
@@ -531,7 +531,7 @@ pub async fn PollerState::tick_with(
     let (poll_ok, review, sha, ci_failed, review_bodies, is_open) = poll(
       pr_number,
     )
-    if not(poll_ok) {
+    if !poll_ok {
       let failures = clamp_consecutive_failures(
         tracked.consecutive_failures + 1,
       )
@@ -559,7 +559,7 @@ pub async fn PollerState::tick_with(
       continue
     }
     let tracked_ok = { ..tracked, consecutive_failures: 0, backoff_until: 0L }
-    if not(is_open) {
+    if !is_open {
       on_event(PRMerged(pr_number), tracked_ok.agent_id)
       log_pr({
         pr_number,

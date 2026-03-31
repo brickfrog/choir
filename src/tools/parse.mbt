@@ -67,7 +67,7 @@ fn lookup_parent_session_id(project_dir : String, args : ToolArgs) -> String? {
     Some(v) => if v.trim() != "" { return Some(v.trim().to_string()) }
     None => ()
   }
-  if not(tool_args_get_bool(args, "fork_session")) {
+  if !tool_args_get_bool(args, "fork_session") {
     return None
   }
   let caller_id = tool_args_get(args, "caller_id").unwrap_or("")
@@ -101,7 +101,7 @@ fn validate_slug(s : String) -> Result[Unit, String] {
     return Err("slug cannot be empty")
   }
   for c in s {
-    if not(is_alphanumeric_or_dash(c)) {
+    if !is_alphanumeric_or_dash(c) {
       return Err("invalid character in slug: " + c.to_string())
     }
   }
@@ -114,7 +114,7 @@ fn validate_branch(s : String) -> Result[Unit, String] {
     return Err("branch cannot be empty")
   }
   for c in s {
-    if not(is_alphanumeric_or_dash(c)) && c != '.' {
+    if !is_alphanumeric_or_dash(c) && c != '.' {
       return Err("invalid character in branch: " + c.to_string())
     }
   }
@@ -136,15 +136,13 @@ fn validate_kv_key(s : String) -> Result[Unit, String] {
     return Err("key cannot start with '/'")
   }
   for c in s {
-    if not(
-        (c >= 'a' && c <= 'z') ||
-        (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') ||
-        c == '-' ||
-        c == '_' ||
-        c == '/' ||
-        c == '.',
-      ) {
+    if !((c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      c == '-' ||
+      c == '_' ||
+      c == '/' ||
+      c == '.') {
       return Err("invalid character in key: " + c.to_string())
     }
   }
@@ -766,7 +764,7 @@ fn parse_mutex_acquire_args(
   }
   let ttl_str = tool_args_get(args, "ttl_sec").unwrap_or("300")
   let ttl_sec = if ttl_str == "" ||
-    (ttl_str == "300" && not(args.values.contains("ttl_sec"))) {
+    (ttl_str == "300" && !args.values.contains("ttl_sec")) {
     300L
   } else {
     match tool_args_get_int(args, "ttl_sec") {

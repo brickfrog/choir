@@ -109,7 +109,7 @@ fn find_agent_for_pr(project_dir : String, pr_number : Int) -> String? {
       continue
     }
     let content = @sys.read_file(path)
-    if content == "" || not(content.contains(needle)) {
+    if content == "" || !content.contains(needle) {
       continue
     }
     let json = @json.parse(content) catch { _ => continue }
@@ -193,7 +193,7 @@ fn json_value_string(value : Json?) -> String {
 
 ///|
 fn push_unique(values : Array[String], value : String) -> Unit {
-  if value != "" && not(values.contains(value)) {
+  if value != "" && !values.contains(value) {
     values.push(value)
   }
 }
@@ -311,12 +311,10 @@ async fn recover_local_agents(
       Some(agent) =>
         match state.register_agent(agent) {
           Ok(_) =>
-            if not(
-                is_local_target_alive(
-                  agent.terminal_target,
-                  session,
-                  zellij_live,
-                ),
+            if !is_local_target_alive(
+                agent.terminal_target,
+                session,
+                zellij_live,
               ) {
               ignore(
                 state.registry.set_alive(agent.agent_id.to_string(), false),
