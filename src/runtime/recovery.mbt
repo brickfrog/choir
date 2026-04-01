@@ -454,6 +454,7 @@ pub fn make_shell_recovery_provider(
       @poller.parse_tracked_prs_json(content)
     },
     write_poller_state: async fn(project_dir, tracked) {
+      @async.sleep(0)
       let buf = StringBuilder::new()
       buf.write_char('[')
       let entries = []
@@ -463,14 +464,13 @@ pub fn make_shell_recovery_provider(
       buf.write_string(entries.join(","))
       buf.write_char(']')
       let content = buf.to_string()
-      let path = project_dir + "/.choir/poller_state.json"
-      let script = "mkdir -p \"$(dirname " +
-        @exec.quote(path) +
-        ")\" && printf '%s' " +
-        @exec.quote(content) +
-        " > " +
-        @exec.quote(path)
-      ignore(@sys.system("sh -c " + @exec.quote(script)))
+      ignore(@sys.create_dir_all(project_dir + "/.choir"))
+      ignore(
+        @sys.write_file_atomic(
+          project_dir + "/.choir/poller_state.json",
+          content,
+        ),
+      )
     },
     gh_poll_pr: @poller.gh_poll_pr,
   }

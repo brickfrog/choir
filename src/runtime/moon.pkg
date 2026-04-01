@@ -4,7 +4,6 @@ import {
   "choir/src/config",
   "choir/src/phase",
   "choir/src/poller",
-  "choir/src/exec",
   "moonbitlang/core/json",
   "brickfrog/tempo",
   "moonbitlang/core/env",
