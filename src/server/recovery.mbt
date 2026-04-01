@@ -596,9 +596,11 @@ pub async fn recover_state(
 async test "discover_recovery_snapshot with mock provider" {
   let mock_provider : @runtime.RecoveryProvider = {
     zellij_live: async fn(_dir, _session) {
+      @async.sleep(0)
       @runtime.ZellijLiveTargets::{ tabs: ["tab1"], panes: ["pane1"] }
     },
     open_prs: async fn(_dir) {
+      @async.sleep(0)
       [
         @runtime.OpenPR::{
           pr_number: 123,
@@ -610,6 +612,7 @@ async test "discover_recovery_snapshot with mock provider" {
       ]
     },
     list_local_agents: async fn(_dir, dir_name) {
+      @async.sleep(0)
       if dir_name == "worktrees" {
         ["slug1"]
       } else {
