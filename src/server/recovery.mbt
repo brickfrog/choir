@@ -1,6 +1,41 @@
 ///|
 
 ///|
+pub fn make_recovery_provider() -> @runtime.RecoveryProvider {
+  {
+    zellij_live: async fn(project_dir, session) {
+      @runtime.parse_zellij_live_targets(
+        capture_stdout(
+          "zellij",
+          [
+            "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
+          ],
+          cwd=Some(project_dir),
+        ),
+      )
+    },
+    open_prs: async fn(project_dir) {
+      let open_pr_output = capture_stdout(
+        "sh",
+        [
+          "-c", "gh pr list --json number,headRefName,baseRefName,url,createdAt --state open 2>/dev/null",
+        ],
+        cwd=Some(project_dir),
+      )
+      @runtime.parse_open_prs(open_pr_output)
+    },
+    list_local_agents: async fn(project_dir, dir_name) {
+      let output = capture_stdout(
+        "sh",
+        ["-c", "ls .choir/" + dir_name + "/ 2>/dev/null"],
+        cwd=Some(project_dir),
+      )
+      split_lines(output)
+    },
+  }
+}
+
+///|
 /// Query GitHub for an open PR whose head branch matches `branch`.
 /// Returns (pr_number, pr_url) if found, None otherwise.
 /// Used by the disconnect handler to recover agents that bypassed file_pr.
@@ -207,19 +242,15 @@ fn finalize_recovered_offline_agent(
 }
 
 ///|
-async fn recover_local_agents(
+fn recover_local_agents(
   state : ServerState,
   session : String,
   zellij_live : @runtime.ZellijLiveTargets,
   dir_name : String,
+  slugs : Array[String],
 ) -> Unit {
   let project_dir = state.config.project_dir
-  let output = capture_stdout(
-    "sh",
-    ["-c", "ls .choir/" + dir_name + "/ 2>/dev/null"],
-    cwd=Some(project_dir),
-  )
-  for slug in split_lines(output) {
+  for slug in slugs {
     let rel_workspace = ".choir/" + dir_name + "/" + slug
     match
       recover_agent_from_local_config(
@@ -501,25 +532,23 @@ async fn recover_open_pr_tracking_with(
 
 ///|
 pub async fn discover_recovery_snapshot(
+  provider : @runtime.RecoveryProvider,
   project_dir : String,
   session : String,
 ) -> @runtime.RecoverySnapshot {
-  let zellij_live = @runtime.parse_zellij_live_targets(
-    capture_stdout(
-      "zellij",
-      ["--session", session, "action", "list-panes", "--json", "-a", "-t", "-s"],
-      cwd=Some(project_dir),
-    ),
-  )
-  let open_pr_output = capture_stdout(
-    "sh",
-    [
-      "-c", "gh pr list --json number,headRefName,baseRefName,url,createdAt --state open 2>/dev/null",
-    ],
-    cwd=Some(project_dir),
-  )
-  let open_prs = @runtime.parse_open_prs(open_pr_output)
-  { zellij_live, open_prs, recovered_at: @poller.now_sec() }
+  let zellij_live = (provider.zellij_live)(project_dir, session)
+  let open_prs = (provider.open_prs)(project_dir)
+  let worktrees = (provider.list_local_agents)(project_dir, "worktrees")
+  let agents = (provider.list_local_agents)(project_dir, "agents")
+  let inline = (provider.list_local_agents)(project_dir, "inline")
+  {
+    zellij_live,
+    open_prs,
+    worktrees,
+    agents,
+    inline,
+    recovered_at: @poller.now_sec(),
+  }
 }
 
 ///|
@@ -529,9 +558,27 @@ pub async fn recover_state(
   snapshot : @runtime.RecoverySnapshot,
 ) -> Unit {
   let project_dir = state.config.project_dir
-  recover_local_agents(state, session, snapshot.zellij_live, "worktrees")
-  recover_local_agents(state, session, snapshot.zellij_live, "agents")
-  recover_local_agents(state, session, snapshot.zellij_live, "inline")
+  recover_local_agents(
+    state,
+    session,
+    snapshot.zellij_live,
+    "worktrees",
+    snapshot.worktrees,
+  )
+  recover_local_agents(
+    state,
+    session,
+    snapshot.zellij_live,
+    "agents",
+    snapshot.agents,
+  )
+  recover_local_agents(
+    state,
+    session,
+    snapshot.zellij_live,
+    "inline",
+    snapshot.inline,
+  )
 
   recover_open_pr_tracking_with(
     state,
@@ -544,6 +591,41 @@ pub async fn recover_state(
 }
 
 ///|
+
+///|
+async test "discover_recovery_snapshot with mock provider" {
+  let mock_provider : @runtime.RecoveryProvider = {
+    zellij_live: async fn(_dir, _session) {
+      @runtime.ZellijLiveTargets::{ tabs: ["tab1"], panes: ["pane1"] }
+    },
+    open_prs: async fn(_dir) {
+      [
+        @runtime.OpenPR::{
+          pr_number: 123,
+          branch: "feat/x",
+          base: "main",
+          url: "https://gh.test/123",
+          created_sec: Some(1000L),
+        },
+      ]
+    },
+    list_local_agents: async fn(_dir, dir_name) {
+      if dir_name == "worktrees" {
+        ["slug1"]
+      } else {
+        []
+      }
+    },
+  }
+  let snapshot = discover_recovery_snapshot(mock_provider, "/tmp", "session")
+  assert_eq(snapshot.zellij_live.tabs, ["tab1"])
+  assert_eq(snapshot.zellij_live.panes, ["pane1"])
+  assert_eq(snapshot.open_prs.length(), 1)
+  assert_eq(snapshot.open_prs[0].pr_number, 123)
+  assert_eq(snapshot.worktrees, ["slug1"])
+  assert_eq(snapshot.agents, [])
+  assert_eq(snapshot.inline, [])
+}
 
 ///|
 test "recover_agent_from_local_config preserves pi agent type" {
@@ -921,7 +1003,9 @@ async test "recover_local_agents keeps offline review-owned agent mergeable but 
     project_dir,
     terminal_session: "choir",
   })
-  recover_local_agents(state, "choir", { tabs: [], panes: [] }, "worktrees")
+  recover_local_agents(state, "choir", { tabs: [], panes: [] }, "worktrees", [
+    "pi-review-leaf",
+  ])
   match state.registry.get(child_id) {
     Ok(agent) => assert_eq(agent.state, @types.AgentState::Done)
     Err(e) => fail("expected recovered agent in registry: " + e.message())
