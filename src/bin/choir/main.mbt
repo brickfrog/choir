@@ -4020,13 +4020,12 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
 
 ///|
 fn init_prepare_pi_runtime(project_dir : String) -> Unit {
-  ignore(project_dir)
   let runtime_root = ".choir/pi"
-  let mkdir_code = @sys.system(
-    "mkdir -p .choir/pi .choir/pi/agent .choir/pi/sessions",
+  let mkdir_code = @workspace.run_native_pi_runtime_dirs_command(
+    @workspace.write_pi_runtime_dirs(runtime_root),
   )
   if mkdir_code != 0 {
-    @sys.exit(mkdir_code)
+    @sys.exit(1)
   }
   if !@sys.write_file_sync(
       runtime_root + "/choir-extension.ts",
@@ -4038,12 +4037,8 @@ fn init_prepare_pi_runtime(project_dir : String) -> Unit {
     @sys.exit(1)
   }
   ignore(
-    @sys.system(
-      "if [ -n \"$HOME\" ] && [ -f \"$HOME/.pi/agent/auth.json\" ] && [ ! -f \"" +
-      runtime_root +
-      "/agent/auth.json\" ]; then cp \"$HOME/.pi/agent/auth.json\" \"" +
-      runtime_root +
-      "/agent/auth.json\"; fi",
+    @workspace.run_native_pi_seed_auth_command(
+      @workspace.seed_pi_auth(runtime_root, project_dir),
     ),
   )
 }
