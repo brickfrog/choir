@@ -29,8 +29,21 @@ fn parse_head_ref_oid(json : Json) -> String {
 }
 
 ///|
+fn review_body_noise_subject(body : String) -> String {
+  let trimmed = body.trim().to_string()
+  if trimmed.has_prefix("[") {
+    match trimmed.find("]") {
+      Some(idx) => trimmed[idx + 1:].trim().to_string()
+      None => trimmed
+    }
+  } else {
+    trimmed
+  }
+}
+
+///|
 fn review_body_is_noise(body : String) -> Bool {
-  let normalized = body.trim().to_lower()
+  let normalized = review_body_noise_subject(body).to_lower()
   normalized.has_prefix("pull request overview")
 }
 

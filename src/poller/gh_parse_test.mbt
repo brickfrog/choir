@@ -105,3 +105,23 @@ test "parse_gh_pr_view_output dedupes repeated review bodies" {
   assert_eq(bodies, "Please change the heading.")
   assert_true(open)
 }
+
+///|
+test "parse_gh_pr_view_output filters pull request overview inline noise with path prefix" {
+  let json =
+    #|{"reviews":[{"state":"COMMENTED","body":"Looks good overall."}],
+    #|"inline_comments":[
+    #|  {"path":"src/foo.mbt","body":"Pull request overview\n\nAdds a smoke test file."},
+    #|  {"path":"src/bar.mbt","body":"Please tighten this branch condition."}
+    #|],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN"}
+  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(review, Commented)
+  assert_eq(
+    bodies, "Looks good overall.\n---\n[src/bar.mbt] Please tighten this branch condition.",
+  )
+  assert_true(open)
+}
