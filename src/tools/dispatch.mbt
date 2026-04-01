@@ -1533,7 +1533,7 @@ pub async fn handle_request(
     Err(e) =>
       match e {
         @types.ChoirError::ToolNotFound(_) =>
-          dispatch_to_plugin(req, plugins_json, runner)
+          dispatch_to_plugin(req, plugins_json)
         _ => @types.Response::Err(e.message())
       }
     Ok(_) => {
