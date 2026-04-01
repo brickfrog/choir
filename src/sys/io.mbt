@@ -32,6 +32,12 @@ extern "C" fn c_getpid() -> Int = "choir_getpid"
 extern "C" fn c_kill_pid(pid : Int) -> Int = "choir_kill_pid"
 
 ///|
+extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_server_pid_sequence"
+
+///|
+extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
+
+///|
 #borrow(exe)
 extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
 
@@ -175,6 +181,18 @@ pub fn get_pid() -> Int {
 /// like `kill ... || true` (ignored).
 pub fn kill_pid_best_effort(pid : Int) -> Unit {
   ignore(c_kill_pid(pid))
+}
+
+///|
+/// `SIGTERM`, ~300ms pause, then `SIGKILL` (init/stop server PID path; best-effort).
+pub fn kill_server_pid_sequence_best_effort(pid : Int) -> Unit {
+  c_init_kill_server_pid_sequence(pid)
+}
+
+///|
+/// True when `kill(pid, 0)` succeeds (process exists for signaling).
+pub fn pid_is_alive(pid : Int) -> Bool {
+  c_pid_is_alive(pid) != 0
 }
 
 ///|

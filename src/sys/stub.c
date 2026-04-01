@@ -97,6 +97,33 @@ int choir_kill_pid(int pid) {
     return -1;
 }
 
+/**
+ * Init-time server shutdown: SIGTERM, brief delay, then SIGKILL. Ignores ESRCH (matches former
+ * `kill ... 2>/dev/null` best-effort semantics).
+ */
+void choir_init_kill_server_pid_sequence(int pid) {
+    if (pid <= 0) {
+        return;
+    }
+    if (kill((pid_t)pid, SIGTERM) < 0 && errno != ESRCH) {
+        /* best-effort */
+    }
+    usleep(300000);
+    if (kill((pid_t)pid, SIGKILL) < 0 && errno != ESRCH) {
+        /* best-effort */
+    }
+}
+
+/**
+ * Returns 1 if `kill(pid, 0)` succeeds (process exists and we can signal it), else 0.
+ */
+int choir_pid_is_alive(int pid) {
+    if (pid <= 0) {
+        return 0;
+    }
+    return kill((pid_t)pid, 0) == 0 ? 1 : 0;
+}
+
 int choir_spawn_serve(const char* exe, int exe_len) {
     char cmd[4096];
     (void)exe_len;

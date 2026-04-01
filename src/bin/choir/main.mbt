@@ -3267,25 +3267,37 @@ async fn init_tab_exists(session : String, tab_name : String) -> Bool {
 }
 
 ///|
-fn init_kill_server_pid_command(pid_str : String) -> @workspace.Command {
-  {
-    program: "sh",
-    args: [
-      "-c", "kill -TERM \"$1\" 2>/dev/null; sleep 0.3; kill -KILL \"$1\" 2>/dev/null; true",
-      "sh", pid_str,
-    ],
-    workdir: None,
+fn init_parse_server_pid_line(s : String) -> Int? {
+  let t = s.trim().to_string()
+  if t == "" {
+    return None
+  }
+  let mut n = 0
+  for c in t {
+    if c < '0' || c > '9' {
+      return None
+    }
+    n = n * 10 + (c.to_int() - '0'.to_int())
+  }
+  Some(n)
+}
+
+///|
+fn init_kill_server_pid_string(pid_str : String) -> Unit {
+  match init_parse_server_pid_line(pid_str) {
+    Some(pid) => @sys.kill_server_pid_sequence_best_effort(pid)
+    None => ()
   }
 }
 
 ///|
-fn init_server_running_command() -> @workspace.Command {
-  {
-    program: "sh",
-    args: [
-      "-c", "pid=$(tr -d '\\r\\n' < .choir/server.pid 2>/dev/null || true); [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null",
-    ],
-    workdir: None,
+/// Exit code compatible with former `sh -c '...kill -0...'`: 0 when `.choir/server.pid` parses to a
+/// live PID, else non-zero.
+fn init_server_running_exit_code() -> Int {
+  let raw = @sys.read_file(".choir/server.pid")
+  match init_parse_server_pid_line(raw) {
+    Some(pid) => if @sys.pid_is_alive(pid) { 0 } else { 1 }
+    None => 1
   }
 }
 
@@ -3342,13 +3354,11 @@ test "cleanup shells separate runtime restart from purge" {
 
 ///|
 test "init server cleanup commands separate runtime restart from purge" {
-  let kill_cmd = init_kill_server_pid_command("123")
-  assert_eq(kill_cmd.program, "sh")
-  assert_eq(kill_cmd.args[3], "123")
-  let running_cmd = init_server_running_command()
-  assert_eq(running_cmd.program, "sh")
-  assert_true(running_cmd.args[1].contains(".choir/server.pid"))
-  assert_true(running_cmd.args[1].contains("kill -0"))
+  assert_eq(init_parse_server_pid_line("123"), Some(123))
+  assert_eq(init_parse_server_pid_line(" 42 \n"), Some(42))
+  assert_eq(init_parse_server_pid_line(""), None)
+  assert_eq(init_parse_server_pid_line("12a"), None)
+  assert_true(@sys.pid_is_alive(@sys.get_pid()))
   assert_true(init_should_launch_server_tab(false))
   assert_false(init_should_launch_server_tab(true))
   let runtime_cleanup = init_cleanup_runtime_artifacts_command()
@@ -4113,11 +4123,7 @@ fn init_run() -> Unit {
         let pid_str = @sys.read_file(".choir/server.pid")
         if pid_str != "" {
           @sys.write_stdout("Stopping server (PID \{pid_str})...\n")
-          ignore(
-            @exec.run(init_kill_server_pid_command(pid_str)) catch {
-              _ => 0
-            },
-          )
+          init_kill_server_pid_string(pid_str)
           ignore(
             @exec.run(
               if purge {
@@ -4150,9 +4156,7 @@ fn init_run() -> Unit {
       } catch {
         _ => 1
       }
-      let server_alive = @exec.run(init_server_running_command()) catch {
-        _ => 1
-      }
+      let server_alive = init_server_running_exit_code()
       if session_alive == 0 {
         if no_attach {
           @sys.write_stdout("Session \{session} already exists.\n")
@@ -4281,11 +4285,7 @@ fn stop_run() -> Unit {
 
       if pid_str != "" {
         @sys.write_stdout("Stopping server (PID \{pid_str})...\n")
-        ignore(
-          @exec.run(init_kill_server_pid_command(pid_str)) catch {
-            _ => 0
-          },
-        )
+        init_kill_server_pid_string(pid_str)
       }
 
       @sys.write_stdout("Killing session \{session}...\n")
