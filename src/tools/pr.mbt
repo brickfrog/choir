@@ -295,23 +295,16 @@ async fn rev_list_left_right_counts_with_capture(
 }
 
 ///|
-async fn rev_list_left_right_counts(
-  parent_branch : String,
-  branch : String,
-  project_dir : String,
-) -> Result[(Int, Int), FilePrPreflightError] {
-  rev_list_left_right_counts_with_capture(
-    parent_branch, branch, project_dir, capture_command_output,
-  )
-}
-
-///|
-pub async fn ensure_branch_has_unique_commits(
+pub async fn ensure_branch_has_unique_commits_with_capture(
   branch : String,
   parent_branch : String,
   project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[Unit, String] {
-  match rev_list_left_right_counts(parent_branch, branch, project_dir) {
+  match
+    rev_list_left_right_counts_with_capture(
+      parent_branch, branch, project_dir, capture,
+    ) {
     Ok((_, ahead)) =>
       if ahead > 0 {
         Ok(())
@@ -322,6 +315,17 @@ pub async fn ensure_branch_has_unique_commits(
       }
     Err(e) => Err(e.to_user_message())
   }
+}
+
+///|
+pub async fn ensure_branch_has_unique_commits(
+  branch : String,
+  parent_branch : String,
+  project_dir : String,
+) -> Result[Unit, String] {
+  ensure_branch_has_unique_commits_with_capture(
+    branch, parent_branch, project_dir, capture_command_output,
+  )
 }
 
 ///|
@@ -494,15 +498,29 @@ pub async fn file_pr_preflight(
 
 ///|
 /// `Result` form used as the default `ensure_branch_ready` hook for `file_pr`.
+pub async fn ensure_branch_ready_for_file_pr_with_capture(
+  branch : String,
+  parent_branch : String,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[Unit, String] {
+  match
+    file_pr_preflight_with_capture(branch, parent_branch, project_dir, capture) {
+    Ok(_) => Ok(())
+    Err(e) => Err(e.to_user_message())
+  }
+}
+
+///|
+/// `Result` form used as the default `ensure_branch_ready` hook for `file_pr`.
 pub async fn ensure_branch_ready_for_file_pr(
   branch : String,
   parent_branch : String,
   project_dir : String,
 ) -> Result[Unit, String] {
-  match file_pr_preflight(branch, parent_branch, project_dir) {
-    Ok(_) => Ok(())
-    Err(e) => Err(e.to_user_message())
-  }
+  ensure_branch_ready_for_file_pr_with_capture(
+    branch, parent_branch, project_dir, capture_command_output,
+  )
 }
 
 ///|
