@@ -25,15 +25,11 @@ pub async fn PaneWatcher::watch_pane(
 ) -> Unit {
   self.last_change_at.set(agent_id, now)
   let snapshot_path = pane_snapshot_path(agent_id)
-  // Pipe: zellij subscribe streams JSON, shell overwrites snapshot on each line
-  let cmd = "zellij --session " +
-    @sys.shell_quote(target.session) +
-    " subscribe pane-viewport --pane-id " +
-    @sys.shell_quote(target.name) +
-    " --format json 2>/dev/null | while IFS= read -r line; do printf '%s' \"$line\" > " +
-    @sys.shell_quote(snapshot_path) +
-    "; done"
-  let pid = @process.spawn_orphan("sh", ["-c", cmd]) catch { _ => return }
+  let pid = @sys.spawn_zellij_pane_viewport_subscribe(
+    target.session,
+    target.name,
+    snapshot_path,
+  )
   if pid > 0 {
     self.subscribe_pids.set(agent_id, pid)
   }

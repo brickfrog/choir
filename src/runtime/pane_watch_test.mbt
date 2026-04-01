@@ -15,3 +15,9 @@ test "PaneWatcher::new" {
   let pw = PaneWatcher::new()
   assert_eq(pw.subscribe_pids.length(), 0)
 }
+
+///|
+test "extract_viewport_text parses viewport array" {
+  let j = "{\"event\":\"pane_update\",\"viewport\":[\"line one\",\"line two\"]}"
+  assert_eq(extract_viewport_text(j), "line one\nline two\n")
+}

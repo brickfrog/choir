@@ -89,6 +89,15 @@ pub fn delete_file_sync(_path : String) -> Bool {
 }
 
 ///|
+pub fn spawn_zellij_pane_viewport_subscribe(
+  _session : String,
+  _pane_id : String,
+  _snapshot_path : String,
+) -> Int {
+  -1
+}
+
+///|
 pub fn register_cleanup(_cmd : String) -> Unit {
 
 }
