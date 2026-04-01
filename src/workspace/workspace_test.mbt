@@ -107,13 +107,40 @@ test "zellij_new_tab args" {
 }
 
 ///|
-test "zellij_session_exists matches exact session names" {
-  let cmd = @workspace.zellij_session_exists("choir")
-  assert_eq(cmd.program, "sh")
-  assert_true(cmd.args[1].contains("sed -E"))
-  assert_true(cmd.args[1].contains("awk -v target=\"$1\""))
-  assert_true(cmd.args[1].contains("$0 !~ /\\(EXITED/"))
-  assert_eq(cmd.args[3], "choir")
+test "zellij_list_sessions_command uses env argv without shell" {
+  let cmd = @workspace.zellij_list_sessions_command()
+  assert_eq(cmd.program, "env")
+  assert_eq(cmd.args, ["NO_COLOR=1", "zellij", "list-sessions"])
+}
+
+///|
+test "zellij_session_exists_in_list_output matches active session first field" {
+  assert_true(
+    @workspace.zellij_session_exists_in_list_output(
+      "choir (attached)\n", "choir",
+    ),
+  )
+  assert_false(
+    @workspace.zellij_session_exists_in_list_output("choir (EXITED)\n", "choir"),
+  )
+  assert_false(
+    @workspace.zellij_session_exists_in_list_output(
+      "choir-extra (attached)\n", "choir",
+    ),
+  )
+  assert_true(
+    @workspace.zellij_session_exists_in_list_output(
+      "other\nchoir (attached)\n", "choir",
+    ),
+  )
+}
+
+///|
+test "zellij_session_exists_in_list_output strips ansi" {
+  let esc = "\u{1b}[32m"
+  let reset = "\u{1b}[0m"
+  let line = esc + "choir" + reset + " (attached)\n"
+  assert_true(@workspace.zellij_session_exists_in_list_output(line, "choir"))
 }
 
 ///|

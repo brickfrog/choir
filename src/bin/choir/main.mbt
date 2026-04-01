@@ -3246,11 +3246,6 @@ test "init config content includes derived terminal session" {
 }
 
 ///|
-fn init_session_exists_command(session : String) -> @workspace.Command {
-  @workspace.zellij_session_exists(session)
-}
-
-///|
 fn init_kill_session_command(session : String) -> @workspace.Command {
   @workspace.zellij_kill_session(session)
 }
@@ -3320,9 +3315,9 @@ fn init_cleanup_server_artifacts_command() -> @workspace.Command {
 
 ///|
 test "init session lifecycle commands use zellij" {
-  let exists = init_session_exists_command("choir")
-  assert_eq(exists.program, "sh")
-  assert_true(exists.args[1].contains("zellij list-sessions"))
+  let list_cmd = @workspace.zellij_list_sessions_command()
+  assert_eq(list_cmd.program, "env")
+  assert_eq(list_cmd.args, ["NO_COLOR=1", "zellij", "list-sessions"])
 
   let tab_exists = init_tab_exists_command("choir", "TL")
   assert_eq(tab_exists.program, "sh")
@@ -4138,7 +4133,20 @@ fn init_run() -> Unit {
         ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })
       }
 
-      let session_alive = @exec.run(init_session_exists_command(session)) catch {
+      let session_alive = try {
+        let (code, output) = @exec.capture_command_merged(
+          @workspace.zellij_list_sessions_command(),
+        )
+        if code != 0 {
+          1
+        } else if @workspace.zellij_session_exists_in_list_output(
+            output, session,
+          ) {
+          0
+        } else {
+          1
+        }
+      } catch {
         _ => 1
       }
       let server_alive = @exec.run(init_server_running_command()) catch {

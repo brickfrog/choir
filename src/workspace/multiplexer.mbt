@@ -24,19 +24,76 @@ pub fn local_target_for(
 }
 
 ///|
-pub fn zellij_session_exists(session : String) -> Command {
+/// Strip CSI SGR sequences (`ESC [ ... letter`) matching the prior `sed -E` pipeline.
+fn strip_ansi_csi_sgr(s : String) -> String {
+  let buf = StringBuilder::new()
+  let mut i = 0
+  let n = s.length()
+  while i < n {
+    if i + 1 < n && s[i] == '\u{1b}' && s[i + 1] == '[' {
+      let mut j = i + 2
+      while j < n && ((s[j] >= '0' && s[j] <= '9') || s[j] == ';') {
+        j = j + 1
+      }
+      if j < n {
+        let cj = s[j]
+        if (cj >= 'a' && cj <= 'z') || (cj >= 'A' && cj <= 'Z') {
+          i = j + 1
+          continue
+        }
+      }
+    }
+    buf.write_char(Int::unsafe_to_char(s[i].to_int()))
+    i = i + 1
+  }
+  buf.to_string()
+}
+
+///|
+/// First whitespace-delimited field after trim (awk `$1` on default FS).
+fn zellij_list_first_field(line : String) -> String {
+  let t = line.trim().to_string()
+  let len = t.length()
+  let mut end = len
+  for k = 0; k < len; k = k + 1 {
+    let ck = t[k].to_int()
+    if ck == 0x20 || ck == 0x09 {
+      end = k
+      break
+    }
+  }
+  t[:end].to_string()
+}
+
+///|
+/// `NO_COLOR=1 zellij list-sessions` via `env` argv (no shell pipeline). Parse output with
+/// [`zellij_session_exists_in_list_output`].
+pub fn zellij_list_sessions_command() -> Command {
   {
-    program: "sh",
-    args: [
-      "-c",
-      "NO_COLOR=1 zellij list-sessions | " +
-      "sed -E 's/\\x1B\\[[0-9;]*[[:alpha:]]//g' | " +
-      "awk -v target=\"$1\" '$1 == target && $0 !~ /\\(EXITED/ { found=1 } END { exit(found ? 0 : 1) }'",
-      "sh",
-      session,
-    ],
+    program: "env",
+    args: ["NO_COLOR=1", "zellij", "list-sessions"],
     workdir: None,
   }
+}
+
+///|
+/// True if `session` appears as the first column on some line and that line is not an `(EXITED ...)`
+/// row, matching the previous `awk`/`sed` pipeline.
+pub fn zellij_session_exists_in_list_output(
+  output : String,
+  session : String,
+) -> Bool {
+  let text = strip_ansi_csi_sgr(output)
+  for raw in text.split("\n") {
+    let line = raw.to_string()
+    if line.contains("(EXITED") {
+      continue
+    }
+    if zellij_list_first_field(line) == session {
+      return true
+    }
+  }
+  false
 }
 
 ///|
