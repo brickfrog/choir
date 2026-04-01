@@ -541,7 +541,10 @@ pub async fn ensure_pull_request_with_capture(
         return Err("failed to parse gh pr view output for branch: " + branch)
     }
   }
-  match ensure_branch_has_unique_commits(branch, parent_branch, project_dir) {
+  match
+    ensure_branch_has_unique_commits_with_capture(
+      branch, parent_branch, project_dir, capture,
+    ) {
     Ok(_) => ()
     Err(e) => return Err(e)
   }
