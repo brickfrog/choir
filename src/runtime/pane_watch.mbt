@@ -1,4 +1,16 @@
 ///|
+/// Path for the zellij pane-viewport JSON snapshot for `agent_id` (under `/tmp`).
+pub fn pane_snapshot_path(agent_id : String) -> String {
+  "/tmp/choir-viewport-" + agent_id + ".json"
+}
+
+///|
+/// Path for the background subscribe pipeline pidfile for `agent_id` (under `/tmp`).
+pub fn pane_subscribe_pid_path(agent_id : String) -> String {
+  "/tmp/choir-subscribe-" + agent_id + ".pid"
+}
+
+///|
 pub struct PaneWatcher {
   subscribe_pids : Map[String, Int]
   last_change_at : Map[String, Int64]
@@ -18,7 +30,7 @@ pub fn PaneWatcher::watch_pane(
   now : Int64,
 ) -> Unit {
   self.last_change_at.set(agent_id, now)
-  let snapshot_path = "/tmp/choir-viewport-" + agent_id + ".json"
+  let snapshot_path = pane_snapshot_path(agent_id)
   // Pipe: zellij subscribe streams JSON, shell overwrites snapshot on each line
   let cmd = "zellij --session " +
     @sys.shell_quote(target.session) +
@@ -28,7 +40,7 @@ pub fn PaneWatcher::watch_pane(
     @sys.shell_quote(snapshot_path) +
     "; done"
   // Background the subscribe pipeline; store its PID via a pidfile
-  let pid_path = "/tmp/choir-subscribe-" + agent_id + ".pid"
+  let pid_path = pane_subscribe_pid_path(agent_id)
   let bg_cmd = cmd + " & echo $! > " + @sys.shell_quote(pid_path)
   ignore(@sys.system(bg_cmd))
   let pid_str = @sys.read_file(pid_path).trim().to_string()
@@ -47,19 +59,13 @@ pub fn PaneWatcher::stop_subscribe(
   self.last_hashes.remove(agent_id)
   match self.subscribe_pids.get(agent_id) {
     Some(pid) => {
-      ignore(@sys.system("kill " + pid.to_string() + " 2>/dev/null || true"))
+      @sys.kill_pid_best_effort(pid)
       self.subscribe_pids.remove(agent_id)
     }
     None => ()
   }
-  ignore(
-    @sys.system(
-      "rm -f " +
-      @sys.shell_quote("/tmp/choir-viewport-" + agent_id + ".json") +
-      " " +
-      @sys.shell_quote("/tmp/choir-subscribe-" + agent_id + ".pid"),
-    ),
-  )
+  ignore(@sys.delete_file_sync(pane_snapshot_path(agent_id)))
+  ignore(@sys.delete_file_sync(pane_subscribe_pid_path(agent_id)))
 }
 
 ///|
@@ -68,7 +74,7 @@ pub fn PaneWatcher::read_viewport(
   agent_id : String,
 ) -> String {
   ignore(self)
-  let snapshot_path = "/tmp/choir-viewport-" + agent_id + ".json"
+  let snapshot_path = pane_snapshot_path(agent_id)
   @sys.read_file(snapshot_path)
 }
 
