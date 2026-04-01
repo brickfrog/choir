@@ -42,11 +42,23 @@ pub fn git_fetch_origin_branch_best_effort(
   branch : String,
 ) -> Command {
   {
-    program: "sh",
-    args: [
-      "-c", "if ! cd \"$1\"; then printf '%s\\n' \"choir: warning: could not cd to project directory $1\" >&2; exit 0; fi; { git fetch origin \"$2\" || { printf '%s\\n' \"choir: warning: git fetch origin $2 failed\" >&2; true; }; }",
-      "sh", project_dir, branch,
-    ],
+    program: native_git_fetch_origin_branch_best_effort_program,
+    args: [project_dir, branch],
+    workdir: None,
+  }
+}
+
+///|
+/// Best-effort cleanup of an existing worktree directory and branch before `git worktree add`.
+/// Always exits 0 when executed via `exec.run` so spawn sequences continue.
+pub fn git_worktree_bootstrap_cleanup_best_effort(
+  project_dir : String,
+  workspace : String,
+  branch : String,
+) -> Command {
+  {
+    program: native_worktree_bootstrap_cleanup_program,
+    args: [project_dir, workspace, branch],
     workdir: None,
   }
 }

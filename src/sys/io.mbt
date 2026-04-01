@@ -339,6 +339,40 @@ pub fn spawn_zellij_pane_viewport_subscribe(
 }
 
 ///|
+#borrow(pd, ws, br)
+extern "C" fn c_worktree_bootstrap_cleanup(pd : Bytes, ws : Bytes, br : Bytes) = "choir_worktree_bootstrap_cleanup"
+
+///|
+#borrow(pd, br)
+extern "C" fn c_git_fetch_origin_branch_best_effort(pd : Bytes, br : Bytes) = "choir_git_fetch_origin_branch_best_effort"
+
+///|
+/// Best-effort worktree cleanup before spawn (`git -C` / `rm` via `execvp`, stderr discarded).
+pub fn worktree_bootstrap_cleanup_native(
+  project_dir : String,
+  workspace : String,
+  branch : String,
+) -> Unit {
+  c_worktree_bootstrap_cleanup(
+    string_to_null_terminated_bytes(project_dir),
+    string_to_null_terminated_bytes(workspace),
+    string_to_null_terminated_bytes(branch),
+  )
+}
+
+///|
+/// Best-effort `git fetch origin <branch>` with the same stderr warnings as the former `sh -c` helper.
+pub fn git_fetch_origin_branch_best_effort_native(
+  project_dir : String,
+  branch : String,
+) -> Unit {
+  c_git_fetch_origin_branch_best_effort(
+    string_to_null_terminated_bytes(project_dir),
+    string_to_null_terminated_bytes(branch),
+  )
+}
+
+///|
 /// POSIX single-quote style for embedding in `sh -c` (same as exec.quote).
 pub fn shell_quote(s : String) -> String {
   let buf = StringBuilder::new()

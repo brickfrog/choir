@@ -330,3 +330,51 @@ int choir_spawn_zellij_pane_viewport_subscribe(
     waitpid(zj, NULL, 0);
     _exit(0);
 }
+
+static int choir_spawn_wait_stderr_null(char **argv) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        int dn = open("/dev/null", O_WRONLY);
+        if (dn >= 0) {
+            dup2(dn, STDERR_FILENO);
+            close(dn);
+        }
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    int st = 0;
+    if (waitpid(pid, &st, 0) < 0) {
+        return -1;
+    }
+    if (WIFEXITED(st)) {
+        return WEXITSTATUS(st);
+    }
+    return -1;
+}
+
+void choir_worktree_bootstrap_cleanup(const char *project_dir, const char *workspace, const char *branch) {
+    char *argv_prune[] = {"git", "-C", (char *)project_dir, "worktree", "prune", NULL};
+    choir_spawn_wait_stderr_null(argv_prune);
+    char *argv_rmwt[] = {"git", "-C", (char *)project_dir, "worktree", "remove", "--force", (char *)workspace, NULL};
+    choir_spawn_wait_stderr_null(argv_rmwt);
+    char *argv_rm[] = {"rm", "-rf", (char *)workspace, NULL};
+    choir_spawn_wait_stderr_null(argv_rm);
+    char *argv_bd[] = {"git", "-C", (char *)project_dir, "branch", "-D", (char *)branch, NULL};
+    choir_spawn_wait_stderr_null(argv_bd);
+}
+
+void choir_git_fetch_origin_branch_best_effort(const char *project_dir, const char *branch) {
+    struct stat st;
+    if (stat(project_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        fprintf(stderr, "choir: warning: could not cd to project directory %s\n", project_dir);
+        return;
+    }
+    char *argv[] = {"git", "-C", (char *)project_dir, "fetch", "origin", (char *)branch, NULL};
+    int code = choir_spawn_wait_stderr_null(argv);
+    if (code != 0) {
+        fprintf(stderr, "choir: warning: git fetch origin %s failed\n", branch);
+    }
+}

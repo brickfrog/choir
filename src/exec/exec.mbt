@@ -262,6 +262,18 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   if native_leaf_helpers >= 0 {
     return native_leaf_helpers
   }
+  let native_wt_cleanup = @workspace.run_native_worktree_bootstrap_cleanup_command(
+    cmd,
+  )
+  if native_wt_cleanup >= 0 {
+    return native_wt_cleanup
+  }
+  let native_fetch = @workspace.run_native_git_fetch_origin_branch_best_effort_command(
+    cmd,
+  )
+  if native_fetch >= 0 {
+    return native_fetch
+  }
   let prog = cmd.program
   let args = cmd.args[:]
   match cmd.workdir {

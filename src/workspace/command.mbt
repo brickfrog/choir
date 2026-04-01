@@ -27,6 +27,16 @@ pub let native_pi_seed_auth_program : String = "__choir_native_pi_seed_auth__"
 pub let native_leaf_helpers_program : String = "__choir_native_leaf_helpers__"
 
 ///|
+/// Args: `[project_dir, workspace, branch]` — best-effort prune/remove worktree path, `rm -rf`,
+/// and delete branch; always returns `0` from the runner.
+pub let native_worktree_bootstrap_cleanup_program : String = "__choir_native_worktree_bootstrap_cleanup__"
+
+///|
+/// Args: `[project_dir, branch]` — best-effort `git fetch origin <branch>` with stderr warnings;
+/// always returns `0` from the runner.
+pub let native_git_fetch_origin_branch_best_effort_program : String = "__choir_native_git_fetch_origin_branch_best_effort__"
+
+///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
@@ -240,6 +250,37 @@ pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
       return 1
     }
   }
+  0
+}
+
+///|
+/// Best-effort worktree cleanup before a fresh `git worktree add`. Implemented in `stub.c` (direct
+/// `git`/`rm` argv, no shell).
+/// Returns `0` on success, `1` on bad args, `-1` if `cmd` is not this native command.
+pub fn run_native_worktree_bootstrap_cleanup_command(cmd : Command) -> Int {
+  if cmd.program != native_worktree_bootstrap_cleanup_program {
+    return -1
+  }
+  if cmd.args.length() != 3 {
+    return 1
+  }
+  @sys.worktree_bootstrap_cleanup_native(cmd.args[0], cmd.args[1], cmd.args[2])
+  0
+}
+
+///|
+/// Best-effort `git fetch origin <branch>` in `project_dir`. Returns `0` on success, `1` on bad args,
+/// `-1` if `cmd` is not this native command.
+pub fn run_native_git_fetch_origin_branch_best_effort_command(
+  cmd : Command,
+) -> Int {
+  if cmd.program != native_git_fetch_origin_branch_best_effort_program {
+    return -1
+  }
+  if cmd.args.length() != 2 {
+    return 1
+  }
+  @sys.git_fetch_origin_branch_best_effort_native(cmd.args[0], cmd.args[1])
   0
 }
 

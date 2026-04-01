@@ -167,14 +167,11 @@ pub fn spawn_commands(
     Worktree => {
       let cmds : Array[Command] = []
       if !spec.reuse_workspace {
-        cmds.push({
-          program: "sh",
-          args: [
-            "-c", "git worktree prune 2>/dev/null || true; git worktree remove --force \"$1\" 2>/dev/null || true; rm -rf \"$1\"; git branch -D \"$2\" 2>/dev/null || true",
-            "sh", workspace, branch,
-          ],
-          workdir: None,
-        })
+        cmds.push(
+          git_worktree_bootstrap_cleanup_best_effort(
+            root_project, workspace, branch,
+          ),
+        )
         cmds.push(
           git_fetch_origin_branch_best_effort(root_project, spec.parent_branch),
         )
