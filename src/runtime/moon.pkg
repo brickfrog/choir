@@ -1,0 +1,8 @@
+import {
+  "choir/src/sys",
+  "choir/src/types",
+}
+
+options(
+  "is-main": false,
+)
