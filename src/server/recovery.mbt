@@ -79,17 +79,9 @@ pub async fn recover_state(
   for action in plan.actions {
     match action {
       @runtime.RecoveryAction::RegisterAgent(agent, alive) =>
-        match state.register_agent(agent) {
-          Ok(_) =>
-            if !alive {
-              ignore(
-                state.registry.set_alive(agent.agent_id.to_string(), false),
-              )
-            }
-          Err(_) => ()
-        }
+        state.apply_recovered_agent(agent, alive)
       @runtime.RecoveryAction::RestorePRTracking(tracked) =>
-        state.poller.restore(tracked)
+        state.restore_recovered_pr_tracking(tracked)
       @runtime.RecoveryAction::TrackNewPR(
         pr_number~,
         agent_id~,
@@ -102,7 +94,7 @@ pub async fn recover_state(
         ci_failed~,
         created_at~
       ) =>
-        state.poller.track_recovered(
+        state.track_recovered_pr(
           pr_number, agent_id, branch, parent_branch, pr_url, created_at, review,
           review_bodies, sha, ci_failed,
         )

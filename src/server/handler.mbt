@@ -204,6 +204,49 @@ pub fn ServerState::register_agent(
 }
 
 ///|
+pub fn ServerState::apply_recovered_agent(
+  self : ServerState,
+  agent : @types.Agent,
+  alive : Bool,
+) -> Unit {
+  match self.register_agent(agent) {
+    Ok(_) =>
+      if !alive {
+        ignore(self.registry.set_alive(agent.agent_id.to_string(), false))
+      }
+    Err(_) => ()
+  }
+}
+
+///|
+pub fn ServerState::restore_recovered_pr_tracking(
+  self : ServerState,
+  tracked : @poller.TrackedPR,
+) -> Unit {
+  self.poller.restore(tracked)
+}
+
+///|
+pub fn ServerState::track_recovered_pr(
+  self : ServerState,
+  pr_number : Int,
+  agent_id : String,
+  branch : String,
+  parent_branch : String,
+  pr_url : String,
+  first_seen : Int64,
+  review : @poller.ReviewState,
+  review_bodies : String,
+  sha : String,
+  ci_failed : Bool,
+) -> Unit {
+  self.poller.track_recovered(
+    pr_number, agent_id, branch, parent_branch, pr_url, first_seen, review, review_bodies,
+    sha, ci_failed,
+  )
+}
+
+///|
 pub fn ServerState::notify_parent(
   self : ServerState,
   caller_id : String,
