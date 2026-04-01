@@ -67,11 +67,11 @@ test "git_worktree_add args" {
 ///|
 test "git_fetch_origin_branch_best_effort runs fetch in project dir" {
   let cmd = @workspace.git_fetch_origin_branch_best_effort("/repo", "main")
-  assert_eq(cmd.program, "sh")
-  assert_eq(cmd.args[3], "/repo")
-  assert_eq(cmd.args[4], "main")
-  assert_true(cmd.args[1].contains("if ! cd \"$1\""))
-  assert_true(cmd.args[1].contains("git fetch origin \"$2\""))
+  assert_eq(
+    cmd.program,
+    @workspace.native_git_fetch_origin_branch_best_effort_program,
+  )
+  assert_eq(cmd.args, ["/repo", "main"])
 }
 
 ///|
@@ -376,10 +376,18 @@ test "spawn_commands for worktree mode returns zellij tab" {
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
   // cleanup, fetch parent, git worktree add from origin/<parent>, configs, helpers, zellij
   assert_eq(cmds.length(), 7)
-  assert_eq(cmds[0].program, "sh")
-  assert_true(cmds[0].args[1].contains("git worktree remove --force"))
-  assert_eq(cmds[1].program, "sh")
-  assert_true(cmds[1].args[1].contains("git fetch origin"))
+  assert_eq(
+    cmds[0].program,
+    @workspace.native_worktree_bootstrap_cleanup_program,
+  )
+  assert_eq(cmds[0].args, [
+    "/project", "/project/.choir/worktrees/test-slug", "main.test-slug",
+  ])
+  assert_eq(
+    cmds[1].program,
+    @workspace.native_git_fetch_origin_branch_best_effort_program,
+  )
+  assert_eq(cmds[1].args, ["/project", "main"])
   assert_eq(cmds[2].program, "git")
   assert_eq(cmds[2].args, [
     "worktree", "add", "/project/.choir/worktrees/test-slug", "-b", "main.test-slug",

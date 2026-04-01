@@ -101,3 +101,20 @@ pub fn spawn_zellij_pane_viewport_subscribe(
 pub fn register_cleanup(_cmd : String) -> Unit {
 
 }
+
+///|
+pub fn worktree_bootstrap_cleanup_native(
+  _project_dir : String,
+  _workspace : String,
+  _branch : String,
+) -> Unit {
+
+}
+
+///|
+pub fn git_fetch_origin_branch_best_effort_native(
+  _project_dir : String,
+  _branch : String,
+) -> Unit {
+
+}
