@@ -246,6 +246,10 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   if native >= 0 {
     return native
   }
+  let native_rel = @workspace.run_native_workspace_rel_file_command(cmd)
+  if native_rel >= 0 {
+    return native_rel
+  }
   let prog = cmd.program
   let args = cmd.args[:]
   match cmd.workdir {

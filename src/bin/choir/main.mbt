@@ -3186,8 +3186,9 @@ test "companion pi commands prepare isolated runtime and launch pi" {
   )
   assert_eq(cmds[7].program, "sh")
   assert_true(cmds[7].args[1].contains("$HOME/.pi/agent/auth.json"))
-  assert_eq(cmds[8].program, "sh")
-  assert_true(cmds[8].args[1].contains("choir-extension.ts"))
+  assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(cmds[8].args[1], ".choir/pi/choir-extension.ts")
+  assert_true(cmds[8].args[2].contains("registerTool"))
   assert_eq(cmds[9].program, "zellij")
   assert_true(
     cmds[9].args[11].contains(
@@ -3945,7 +3946,7 @@ fn init_companion_commands(
     )
     cmds.push(@workspace.write_pi_runtime_dirs(runtime_root))
     cmds.push(@workspace.seed_pi_auth(runtime_root, project_dir))
-    cmds.push(@workspace.write_pi_extension(runtime_root))
+    cmds.push(@workspace.write_pi_extension(workspace, runtime_root))
   }
   if agent_type == @types.AgentType::Gemini {
     cmds.push(@workspace.trust_gemini_folder(workspace))

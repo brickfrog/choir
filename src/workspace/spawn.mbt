@@ -210,7 +210,7 @@ pub fn spawn_commands(
         )
         cmds.push(write_pi_runtime_dirs(runtime_root))
         cmds.push(seed_pi_auth(runtime_root, root_project))
-        cmds.push(write_pi_extension(runtime_root))
+        cmds.push(write_pi_extension(workspace, runtime_root))
       }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
@@ -271,7 +271,7 @@ pub fn spawn_commands(
         )
         cmds.push(write_pi_runtime_dirs(runtime_root))
         cmds.push(seed_pi_auth(runtime_root, root_project))
-        cmds.push(write_pi_extension(runtime_root))
+        cmds.push(write_pi_extension(workspace, runtime_root))
       }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
@@ -320,7 +320,7 @@ pub fn spawn_commands(
         )
         cmds.push(write_pi_runtime_dirs(runtime_root))
         cmds.push(seed_pi_auth(runtime_root, root_project))
-        cmds.push(write_pi_extension(runtime_root))
+        cmds.push(write_pi_extension(workspace, runtime_root))
       }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
