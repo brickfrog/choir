@@ -349,7 +349,7 @@ pub async fn dispatch(
             fork_wave_args.parent_branch,
             slug,
           )
-          match resolve_zellij_pane_id(session, slug, runner) {
+          match resolve_zellij_pane_id(session, slug) {
             Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
             None => ()
           }
@@ -1270,7 +1270,7 @@ pub async fn dispatch(
         registry~,
       )
       let resolved_pane_ids : Array[(String, String)] = []
-      match resolve_zellij_pane_id(session, rescue_args.new_slug, runner) {
+      match resolve_zellij_pane_id(session, rescue_args.new_slug) {
         Some(pane_id) => resolved_pane_ids.push((to_id, pane_id))
         None => ()
       }

@@ -145,38 +145,9 @@ async fn dispatch_to_plugin(
 ///|
 
 ///|
-/// Resolve the zellij pane ID for a named tab by running list-panes.
-/// Returns Some("terminal_N") if found, None otherwise.
-pub async fn resolve_zellij_pane_id(
-  session : String,
-  tab_name : String,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
-) -> String? {
-  let manifest = "/tmp/choir-pane-resolve-" + tab_name + ".json"
-  let cmd = @workspace.Command::{
-    program: "sh",
-    args: [
-      "-c", "zellij --session \"$1\" action list-panes --json -a -t -s > \"$2\" 2>/dev/null",
-      "sh", session, manifest,
-    ],
-    workdir: None,
-  }
-  let statuses = runner([cmd]) catch { _ => return None }
-  if statuses.length() > 0 && statuses[0] != 0 {
-    return None
-  }
-  let content = @sys.read_file(manifest)
-  ignore(
-    runner([
-      {
-        program: "sh",
-        args: ["-c", "rm -f \"$1\"", "sh", manifest],
-        workdir: None,
-      },
-    ]) catch {
-      _ => []
-    },
-  )
+/// Parse JSON from `zellij action list-panes --json -a -t -s` and return the first non-plugin
+/// pane ID for `tab_name` as `terminal_N`, or None.
+fn parse_zellij_list_panes_json(content : String, tab_name : String) -> String? {
   if content == "" {
     return None
   }
@@ -205,6 +176,28 @@ pub async fn resolve_zellij_pane_id(
     return Some("terminal_" + pane_id.to_string())
   }
   None
+}
+
+///|
+/// Resolve the zellij pane ID for a named tab by running list-panes.
+/// Returns Some("terminal_N") if found, None otherwise.
+pub async fn resolve_zellij_pane_id(
+  session : String,
+  tab_name : String,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+) -> String? {
+  let cmd : @workspace.Command = {
+    program: "zellij",
+    args: [
+      "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
+    ],
+    workdir: None,
+  }
+  let (exit_code, content) = capture(cmd)
+  if exit_code != 0 {
+    return None
+  }
+  parse_zellij_list_panes_json(content, tab_name)
 }
 
 ///|
@@ -855,6 +848,68 @@ async fn handle_kv_list(
     "status": "ok".to_json(),
     "keys": keys.to_json(),
   })
+}
+
+///|
+test "parse_zellij_list_panes_json matches tab and returns terminal id" {
+  let json =
+    #|[{"id":3,"tab_name":"leaf-1","is_plugin":false},{"id":9,"tab_name":"other","is_plugin":false}]
+  match parse_zellij_list_panes_json(json, "leaf-1") {
+    Some(s) => assert_eq(s, "terminal_3")
+    None => fail("expected pane")
+  }
+}
+
+///|
+test "parse_zellij_list_panes_json skips plugin panes" {
+  let json =
+    #|[{"id":1,"tab_name":"leaf-1","is_plugin":true},{"id":2,"tab_name":"leaf-1","is_plugin":false}]
+  match parse_zellij_list_panes_json(json, "leaf-1") {
+    Some(s) => assert_eq(s, "terminal_2")
+    None => fail("expected non-plugin pane")
+  }
+}
+
+///|
+test "parse_zellij_list_panes_json returns None when tab missing" {
+  assert_eq(
+    parse_zellij_list_panes_json(
+      "[{\"id\":1,\"tab_name\":\"x\",\"is_plugin\":false}]", "missing",
+    ),
+    None,
+  )
+}
+
+///|
+async fn mock_zellij_pane_ok(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program != "zellij" {
+    return (-1, "")
+  }
+  assert_eq(cmd.args[1], "choir")
+  (0, "[{\"id\":7,\"tab_name\":\"slug-a\",\"is_plugin\":false}]")
+}
+
+///|
+async test "resolve_zellij_pane_id uses zellij argv and capture" {
+  match resolve_zellij_pane_id("choir", "slug-a", capture=mock_zellij_pane_ok) {
+    Some(s) => assert_eq(s, "terminal_7")
+    None => fail("expected pane id")
+  }
+}
+
+///|
+async fn mock_zellij_nonzero(_cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  (1, "[{\"id\":1,\"tab_name\":\"x\",\"is_plugin\":false}]")
+}
+
+///|
+async test "resolve_zellij_pane_id returns None when zellij exits non-zero" {
+  assert_eq(
+    resolve_zellij_pane_id("choir", "x", capture=mock_zellij_nonzero),
+    None,
+  )
 }
 
 ///|
