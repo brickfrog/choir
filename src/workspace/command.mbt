@@ -392,8 +392,8 @@ pub fn pi_extension_content() -> String {
     #|}
     #|
     #|function extensionToolNamesForRole(role: ChoirRole): string[] {
-    #|  if (role === "root" || role === "tl") return ["fork_wave", "spawn_worker", "merge_pr", "agent_list", "cancel_wave"];
-    #|  if (role === "dev") return ["file_pr", "notify_parent", "shutdown", "task_list", "task_get", "task_update"];
+    #|  if (role === "root" || role === "tl") return ["fork_wave", "spawn_worker", "merge_pr", "resolve_review_thread", "agent_list", "cancel_wave"];
+    #|  if (role === "dev") return ["file_pr", "resolve_review_thread", "notify_parent", "shutdown", "task_list", "task_get", "task_update"];
     #|  return ["notify_parent", "shutdown", "task_list", "task_get"];
     #|}
     #|
@@ -478,6 +478,20 @@ pub fn pi_extension_content() -> String {
     #|      },
     #|    });
     #|    pi.registerTool({
+    #|      name: "resolve_review_thread",
+    #|      label: "resolve_review_thread",
+    #|      description: "Resolve a GitHub pull request review thread by thread id.",
+    #|      parameters: Type.Object({
+    #|        thread_id: Type.String(),
+    #|        caller_id: Type.Optional(Type.String()),
+    #|      }),
+    #|      async execute(_toolCallId, params, signal, onUpdate) {
+    #|        onUpdate?.({ content: [{ type: "text", text: "Running choir tool resolve_review_thread..." }] });
+    #|        const result = await runChoirTool(pi, "resolve_review_thread", params as Record<string, unknown>, signal);
+    #|        return { content: [{ type: "text", text: JSON.stringify(result ?? {}, null, 2) }], details: result ?? {} };
+    #|      },
+    #|    });
+    #|    pi.registerTool({
     #|      name: "agent_list",
     #|      label: "agent_list",
     #|      description: "List active agents known to the Choir registry by default.",
@@ -505,6 +519,20 @@ pub fn pi_extension_content() -> String {
     #|  }
     #|
     #|  if (role === "dev") {
+    #|    pi.registerTool({
+    #|      name: "resolve_review_thread",
+    #|      label: "resolve_review_thread",
+    #|      description: "Resolve a GitHub pull request review thread by thread id.",
+    #|      parameters: Type.Object({
+    #|        thread_id: Type.String(),
+    #|        caller_id: Type.Optional(Type.String()),
+    #|      }),
+    #|      async execute(_toolCallId, params, signal, onUpdate) {
+    #|        onUpdate?.({ content: [{ type: "text", text: "Running choir tool resolve_review_thread..." }] });
+    #|        const result = await runChoirTool(pi, "resolve_review_thread", params as Record<string, unknown>, signal);
+    #|        return { content: [{ type: "text", text: JSON.stringify(result ?? {}, null, 2) }], details: result ?? {} };
+    #|      },
+    #|    });
     #|    pi.registerTool({
     #|      name: "file_pr",
     #|      label: "file_pr",

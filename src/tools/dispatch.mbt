@@ -571,20 +571,20 @@ pub async fn dispatch(
             }
           None => ()
         }
-        // Live check for inline code review comments at merge time.
-        let (inline_count, inline_text) = fetch_inline_comments_sync(
+        // Live check for unresolved review threads at merge time.
+        let (thread_count, thread_text) = fetch_unresolved_review_threads(
           merge_args.pr_number,
           project_dir,
         )
-        if inline_count > 0 {
+        if thread_count > 0 {
           return @types.Response::Err(
             "PR #" +
             merge_args.pr_number.to_string() +
             " has " +
-            inline_count.to_string() +
-            " inline review comment(s) that must be addressed before merging:\n" +
-            inline_text +
-            "\nPass force=true to override.",
+            thread_count.to_string() +
+            " unresolved review thread(s). Address or resolve them before merging:\n" +
+            thread_text +
+            "\nUse resolve_review_thread to mark threads resolved, or pass force=true to override.",
           )
         }
       }
@@ -1447,6 +1447,95 @@ pub async fn dispatch(
       } else {
         @types.Response::Err("failed to write reply: " + id)
       }
+    }
+    ToolRequest::ResolveReviewThread(resolve_args) => {
+      // Pass threadId as a GraphQL variable to avoid embedding it in the
+      // mutation body. Also check exit code AND parse the JSON response for
+      // GraphQL-level errors (gh returns exit 0 on HTTP 200 even when the
+      // response body contains an `errors` array).
+      let mutation = "mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } } }"
+      let cmd : @workspace.Command = {
+        program: "gh",
+        args: [
+          "api",
+          "graphql",
+          "-f",
+          "query=" + mutation,
+          "-F",
+          "threadId=" + resolve_args.thread_id,
+        ],
+        workdir: Some(project_dir),
+      }
+      let (exit_code, output) = capture_command_output(cmd)
+      if exit_code != 0 {
+        let trimmed = output.trim().to_string()
+        return @types.Response::Err(
+          if trimmed != "" {
+            "resolve_review_thread failed: " + trimmed
+          } else {
+            "resolve_review_thread failed (exit " + exit_code.to_string() + ")"
+          },
+        )
+      }
+      if output.trim().to_string() == "" {
+        return @types.Response::Err(
+          "resolve_review_thread failed: empty response from gh",
+        )
+      }
+      let json = @json.parse(output) catch {
+        _ =>
+          return @types.Response::Err(
+            "resolve_review_thread: invalid JSON in gh response",
+          )
+      }
+      guard json is Object(root) else {
+        return @types.Response::Err(
+          "resolve_review_thread: unexpected response shape",
+        )
+      }
+      // Surface GraphQL-level errors returned in 200/exit-0 responses
+      match root.get("errors") {
+        Some(Array(errs)) =>
+          if errs.length() > 0 {
+            let msg = match errs[0] {
+              Object(e) =>
+                match e.get("message") {
+                  Some(String(v)) => v
+                  _ => "GraphQL error"
+                }
+              _ => "GraphQL error"
+            }
+            return @types.Response::Err("resolve_review_thread failed: " + msg)
+          }
+        _ => ()
+      }
+      // Verify the thread was actually marked resolved
+      let is_resolved = match root.get("data") {
+        Some(Object(data)) =>
+          match data.get("resolveReviewThread") {
+            Some(Object(rt)) =>
+              match rt.get("thread") {
+                Some(Object(thread)) =>
+                  match thread.get("isResolved") {
+                    Some(True) => true
+                    _ => false
+                  }
+                _ => false
+              }
+            _ => false
+          }
+        _ => false
+      }
+      if !is_resolved {
+        return @types.Response::Err(
+          "resolve_review_thread: thread was not marked resolved (check permissions)",
+        )
+      }
+      @types.Response::ok_values({
+        "status": String::to_json("ok"),
+        "thread_id": String::to_json(resolve_args.thread_id),
+        "resolved": Bool::to_json(true),
+      })
     }
   }
 }

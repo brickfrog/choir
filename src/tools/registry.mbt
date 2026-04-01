@@ -150,6 +150,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       description: "Kill all active children of the calling agent and clean up their lifecycle/PR tracking; optional force=true to cancel even mid-review children",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
+    {
+      name: "resolve_review_thread",
+      description: "Resolve a GitHub pull request review thread by its thread ID; thread IDs are included in merge_pr unresolved-thread error messages",
+      allowed_roles: [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
+    },
   ]
   for def in defs {
     tools.set(def.name, def)

@@ -126,6 +126,16 @@ const toolSpecs: ChoirToolSpec[] = [
 		}),
 	},
 	{
+		name: "resolve_review_thread",
+		label: "resolve_review_thread",
+		description: "Resolve a GitHub pull request review thread by thread id.",
+		roles: [...TL_ROLES, ...DEV_ROLES],
+		parameters: Type.Object({
+			thread_id: Type.String({ description: "GitHub review thread id, e.g. PRT_kwDO..." }),
+			caller_id: Type.Optional(Type.String({ description: "Caller id override." })),
+		}),
+	},
+	{
 		name: "agent_list",
 		label: "agent_list",
 		description: "List active agents known to the Choir registry by default.",
