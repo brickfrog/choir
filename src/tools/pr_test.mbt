@@ -375,11 +375,16 @@ async test "file_pr_preflight_with_capture fails on gh auth" {
 }
 
 ///|
+fn is_symbolic_ref_command(cmd : @workspace.Command) -> Bool {
+  cmd.program == "git" &&
+  cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] &&
+  cmd.workdir == Some("/repo")
+}
+
+///|
 async fn mock_detect_origin_main(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "git" &&
-    cmd.args.length() >= 1 &&
-    cmd.args[0] == "symbolic-ref" {
+  if is_symbolic_ref_command(cmd) {
     (0, "origin/main\n")
   } else {
     (-1, "")
@@ -397,9 +402,7 @@ async test "detect_default_branch_with_capture strips origin/ prefix" {
 ///|
 async fn mock_detect_origin_master(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "git" &&
-    cmd.args.length() >= 1 &&
-    cmd.args[0] == "symbolic-ref" {
+  if is_symbolic_ref_command(cmd) {
     (0, "origin/master\n")
   } else {
     (-1, "")
@@ -415,9 +418,13 @@ async test "detect_default_branch_with_capture handles master" {
 }
 
 ///|
-async fn mock_detect_failure(_cmd : @workspace.Command) -> (Int, String) {
+async fn mock_detect_failure(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  (1, "error: not a git repo\n")
+  if is_symbolic_ref_command(cmd) {
+    (1, "error: not a git repo\n")
+  } else {
+    (-1, "")
+  }
 }
 
 ///|

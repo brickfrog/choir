@@ -577,7 +577,7 @@ pub async fn detect_default_branch_with_capture(
 ) -> String {
   let cmd : @workspace.Command = {
     program: "git",
-    args: ["symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
+    args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
     workdir: Some(project_dir),
   }
   let (exit_code, output) = capture(cmd)
