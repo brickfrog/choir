@@ -3246,6 +3246,8 @@ test "init config content includes derived terminal session" {
 }
 
 ///|
+
+///|
 fn init_kill_session_command(session : String) -> @workspace.Command {
   @workspace.zellij_kill_session(session)
 }
@@ -4069,36 +4071,14 @@ fn init_run() -> Unit {
         })
       }
 
-      init_run_or_exit({
-        program: "sh",
-        args: ["-c", "mkdir -p .choir"],
-        workdir: None,
-      })
-      init_run_or_exit({
-        program: "sh",
-        args: [
-          "-c",
-          "test -f .choir/config.toml || printf '%s' \"$1\" > .choir/config.toml",
-          "sh",
-          init_config_toml_content(default_session),
-        ],
-        workdir: None,
-      })
+      init_bootstrap_ensure_choir_dir_and_config_if_absent(
+        init_config_toml_content(default_session),
+      )
       if tl_type == "pi" {
         init_prepare_pi_runtime(project_dir)
       }
       // Set up Claude Code statusline if .claude/settings.json doesn't exist
-      ignore(
-        @exec.run({
-          program: "sh",
-          args: [
-            "-c", "mkdir -p .claude && test -f .claude/settings.json || printf '%s' '{\"statusLine\":{\"type\":\"command\",\"command\":\"choir statusline\"}}' > .claude/settings.json",
-          ],
-          workdir: None,
-        }) catch {
-          _ => 0
-        },
-      )
+      init_bootstrap_seed_claude_settings_best_effort()
       let maybe_patch_config = @sys.read_file(".choir/config.toml")
       if maybe_patch_config != "" &&
         !init_config_has_terminal_session(maybe_patch_config) {
