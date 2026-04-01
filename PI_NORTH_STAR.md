@@ -1,6 +1,6 @@
 # Choir × Pi North Star Spec
 
-**Status:** Active guiding document; core Choir × Pi shift implemented and live-validated, with remaining work now focused on optional hardening, UX policy refinement, and future transport/runtime exploration  
+**Status:** Active guiding document; core Choir × Pi shift implemented and live-validated, but the exomonad-style hard effect boundary is still incomplete and now tracked explicitly as follow-on architecture work  
 **Last updated:** 2026-04-01
 
 ## One-sentence north star
@@ -85,6 +85,364 @@ A few implementation details intentionally differ slightly from the early exampl
 - the concrete CLI flag is `--caller-role` rather than `--role` for `choir tool`, to avoid collisions with real tool parameters named `role`
 - generated Pi runtime files currently center on extension/system-prompt/runtime directories rather than a fixed skill/settings file set
 - inline-agent recovery metadata now also lives under `.choir/inline/` in addition to `.choir/pi/` / worktree-local runtime state
+
+---
+
+## Architecture boundary audit (2026-04-01)
+
+This section records the current architectural gap plainly: Choir now proves the workflow and control-plane semantics, but it does **not** yet satisfy the harder exomonad-style invariant that orchestration logic should make decisions and drive state transitions without ambient I/O power.
+
+### Current verdict
+
+- Choir already contains real pure-core pieces:
+  - `src/tools/effects.mbt` (`Eff`, `interpret`, `fork_wave_plan`)
+  - `src/phase/tl.mbt`
+  - `src/phase/dev.mbt`
+  - `src/poller/state.mbt`
+  - `src/message/message.mbt`
+  - `src/transport/transport.mbt`
+- Choir also has acceptable host/effect-adapter layers:
+  - `src/sys/**`
+  - `src/exec/**`
+  - `src/uds/**`
+  - `src/workspace/**`
+  - `src/poller/gh.mbt`
+  - `src/server/log.mbt`
+  - `src/bin/choir/main.mbt`
+  - `scripts/pi/choir-extension.ts`
+- But the main execution path still mixes orchestration and effects in multiple places.
+- The strongest honest summary is:
+  - **Choir has a valid pure-core direction, but only one major tool path (`fork_wave`) actually follows it; the rest of orchestration is still directly effectful.**
+
+### Highest-priority architectural blockers
+
+1. `src/tools/dispatch.mbt`
+   - tool routing, orchestration decisions, lifecycle transitions, registry mutation, poller mutation, delivery planning/execution, cleanup, and persistence are fused in one dispatcher
+   - highest-risk arms:
+     - `FilePr`
+     - `MergePr`
+     - `NotifyParent`
+     - `Shutdown`
+     - `CancelWave`
+     - `RescueLeaf`
+     - `SpawnWorker`
+     - `SpawnRemote`
+   - `apply_tl_event` and `apply_dev_event_checked` also mix transition logic with lifecycle persistence
+2. `src/server/handler.mbt::handle_with_runner`
+   - request routing is fused with post-tool orchestration:
+     - post-`shutdown` finalization
+     - post-`merge_pr` ownership lookup + parent delivery + finalize
+     - post-`kill_agent` failure handling
+     - pane watcher registration after spawn/rescue
+     - pre-merge ownership fallback lookup
+3. `src/server/handler.mbt::watch_pane` / `stop_subscribe`
+   - raw shell command assembly, `c_system`, zellij subscribe process management, and `/tmp` pidfile cleanup live inside server state rather than a host adapter
+4. `src/tools/dispatch_helpers.mbt::fetch_inline_comments_sync`
+   - uses `@sys.system("cd " + project_dir + " && " + cmd)` directly, bypassing injected `runner` / capture seams entirely
+5. `src/server/recovery.mbt::recover_state`
+   - external discovery (`zellij`, `gh`, `sh`) is inlined with recovery orchestration rather than injected as snapshots
+6. `src/server/handler.mbt::finalize_agent_with_runner`
+   - lifecycle transition, persistence, hook firing, worktree cleanup, pane close, parent delivery, and runtime tracking cleanup are fused in one teardown path
+7. `src/server/handler.mbt::fail_agent_with_runner`
+   - failure transition, persistence, hook firing, delivery, optional second terminal injection, and runtime tracking cleanup are fused in one path
+8. `src/tools/dispatch.mbt::apply_tl_event` / `apply_dev_event_checked`
+   - event application still performs direct lifecycle file reads/writes and lifecycle JSONL append
+9. `src/tools/pr.mbt::ensure_pull_request` / `detect_default_branch`
+   - both still call `capture_command_output` directly rather than using injectable capture seams
+10. `src/phase/machine.mbt` + `src/phase/lifecycle.mbt`
+    - state-machine logic and persistence live in the same package boundary
+
+### Full finding log
+
+#### Runtime / orchestration boundary findings
+
+1. **HIGH** — `src/server/handler.mbt:111` `ServerState::handle_with_runner`
+   - mixes routing, lifecycle, delivery, poller ownership lookup, and pane-monitor registration in one function
+2. **HIGH** — `src/server/handler.mbt:1020–1089` `watch_pane` / `stop_subscribe`
+   - embeds raw C FFI shell construction, zellij subscribe process management, and `/tmp` pidfile handling inside server state
+3. **MEDIUM-HIGH** — `src/server/recovery.mbt:610` `recover_state`
+   - inlines external process I/O (`zellij`, `gh`, `sh`) with recovery orchestration
+4. **MEDIUM** — `src/tools/dispatch.mbt:154+` `dispatch`
+   - embeds delivery side effects inside tool implementations and duplicates parent-resolution policy that also exists in `src/server/handler.mbt`
+5. **MEDIUM** — `src/server/handler.mbt:1368` `finalize_agent_with_runner`
+   - lifecycle + I/O + delivery + bookkeeping fused; cleanup/delivery failures are mostly swallowed
+6. **MEDIUM** — `src/server/handler.mbt:1515` `fail_agent_with_runner`
+   - failure transition + delivery + terminal injection + cleanup fused in one function
+7. **MEDIUM** — `src/server/state.mbt:33` `persist_run_id`
+   - shell execution happens during `ServerState::new`
+8. **LOW-MEDIUM** — `src/server/handler.mbt:334` and `src/tools/dispatch.mbt:89`
+   - synthetic parent fallback hardcodes `AgentType::Claude`
+9. **LOW** — `src/phase/tl.mbt`, `src/phase/dev.mbt`, `src/phase/lifecycle.mbt`
+   - dual lifecycle/state-machine representations remain bridged rather than unified (`TLPhase` vs `SupervisorLifecycle`, `DevPhase` vs `DevLifecycle`)
+
+#### Tool-layer boundary findings
+
+10. **HIGH** — `src/tools/dispatch_helpers.mbt:407` `fetch_inline_comments_sync`
+    - raw `@sys.system()` with string-built shell command bypasses runner injection entirely
+11. **MEDIUM** — `src/tools/dispatch_helpers.mbt:296–323` `execute_delivery`
+    - log closures write to hardcoded relative `.choir/delivery.log` instead of `project_dir + "/.choir/delivery.log"`
+12. **MEDIUM** — `src/tools/dispatch.mbt:748` `SendMessage`
+    - appends to hardcoded relative `.choir/delivery.log`
+13. **MEDIUM** — `src/tools/dispatch.mbt:406–425` `ForkSession`
+    - direct `@sys.write_file_sync()` and inline time acquisition rather than atomic/injectable write path
+14. **MEDIUM** — `src/tools/pr.mbt:509–555` `ensure_pull_request`
+    - `capture_command_output` is hard-wired rather than injected
+15. **LOW-MEDIUM** — `src/tools/pr.mbt:560–581` `detect_default_branch`
+    - `capture_command_output` is hard-wired rather than injected
+16. **LOW** — `src/tools/dispatch_helpers.mbt:111` `dispatch_to_plugin`
+    - `/tmp/choir-plugin-{name}-{agent_id}.json` collision risk under concurrent dispatch
+17. **LOW** — `src/tools/dispatch_helpers.mbt:152` `resolve_zellij_pane_id`
+    - `/tmp/choir-pane-resolve-{tab_name}.json` collision risk under concurrent use
+
+#### Host-adapter / init-path drift findings
+
+18. **P0 / CRITICAL** — `src/bin/choir/main.mbt:3678–3853` `init_pi_tl_extension_content()`
+    - dead code is tested but never deployed; runtime writes `@workspace.pi_extension_content()` instead
+19. **P1 / HIGH** — `src/bin/choir/main.mbt:3620–3644` vs `src/workspace/launch.mbt:30–54`
+    - `init_codex_mcp_override_args` duplicates `codex_mcp_override_args`
+20. **P1 / HIGH** — `src/bin/choir/main.mbt:4152–4218` vs `src/workspace/spawn.mbt:62–120`
+    - `init_companion_launch_prefix` reimplements `launch_env_prefix`
+    - includes duplicate env assignments
+    - omits `CHOIR_AGENT_TYPE` unless explicitly provided
+21. **P2 / MEDIUM** — `src/bin/choir/main.mbt:4132–4149` vs `src/workspace/workspace.mbt:160–188`
+    - `init_companion_local_config_content` reimplements `config_local_content` without TOML escaping
+22. **P2 / MEDIUM** — `src/workspace/spawn.mbt:372–446` `remote_spawn_commands`
+    - hand-rolls a merged config schema and currently omits fields such as `terminal_target` / `spawn_depth`
+23. **P3 / LOW** — Pi extension divergence
+    - `scripts/pi/choir-extension.ts`
+    - `src/workspace/command.mbt::pi_extension_content()`
+    - dead `src/bin/choir/main.mbt::init_pi_tl_extension_content()`
+    - these three variants differ in capability; the deployed embedded version is leaner than the manual prototype
+24. **P3 / LOW** — `src/workspace/command.mbt:641–670` `register_team_member`
+    - legacy shell/Python Teams config mutation path still exists beside the native implementation in `src/workspace/teams.mbt`
+
+### Explicitly tracked follow-on architecture work
+
+These are now recorded as real architecture items, not vague future polish:
+
+- split `src/tools/dispatch.mbt` into:
+  - pure tool-core planning / decision logic
+  - typed effect requests
+  - host interpreters / effect handlers
+- extract post-tool orchestration from `ServerState::handle_with_runner`
+- move pane subscription process management behind a dedicated host adapter
+- make recovery consume injected snapshots instead of shelling out inline
+- separate lifecycle transition logic from lifecycle persistence
+- unify parent-resolution policy into one canonical service
+- finish the injectable-capture pattern in `src/tools/pr.mbt`
+- remove dead/duplicate `init` helper implementations and delegate to workspace helpers
+- converge on one Pi extension source of truth
+- remove or quarantine legacy shell paths that duplicate native helpers
+
+### Concrete migration plan
+
+The goal of this plan is not cosmetic refactoring. The goal is to move Choir from a mixed in-process orchestrator toward a structure where:
+
+- orchestration logic is expressed as pure planning / transition code
+- effects are emitted as typed requests
+- host adapters interpret those requests
+- process edges (CLI / MCP / Pi extension / UDS) remain thin shells over the same core
+
+#### Phase 0 — Freeze the target invariants
+
+Before more feature work, the architecture target should be treated as explicit repo policy:
+
+1. orchestration logic must not directly perform filesystem, process, terminal, git, network, or shell I/O
+2. orchestration logic may only emit typed effect requests
+3. host adapters may perform I/O, but should not own workflow policy
+4. process entrypoints (`tool`, `leaf-tool`, `mcp-stdio`, Pi extension) remain adapters, not orchestration implementations
+5. lifecycle transitions and delivery policy must be testable without real process execution
+
+This phase is documentation + review policy only, but it is required so later refactors have a stable bar.
+
+#### Phase 1 — Finish the easy seam work first
+
+This phase does not yet redesign the whole runtime. It removes the most obvious places where core code bypasses existing seams.
+
+1. **finish injectable capture / runner plumbing**
+   - migrate `src/tools/pr.mbt::ensure_pull_request` to accept injected capture
+   - migrate `src/tools/pr.mbt::detect_default_branch` to accept injected capture
+   - replace `src/tools/dispatch_helpers.mbt::fetch_inline_comments_sync` with a runner/capture-driven helper
+2. **fix project-root-relative side effects**
+   - thread `project_dir` into delivery logging in:
+     - `src/tools/dispatch_helpers.mbt`
+     - `src/tools/dispatch.mbt`
+     - `src/server/handler.mbt`
+3. **establish one canonical parent-resolution helper**
+   - replace duplicated fallback logic in:
+     - `src/tools/dispatch.mbt::resolve_parent_for_notify`
+     - `src/server/handler.mbt::resolve_parent_by_id`
+4. **remove obvious dead / duplicate init paths**
+   - delete or replace dead `init_pi_tl_extension_content()`
+   - make `init` code call workspace helpers rather than reimplementing them
+
+**Success condition:** no direct `@sys.system()` remains in orchestration-heavy paths; all known capture points are injectable; dead init/test drift is removed.
+
+#### Phase 2 — Split lifecycle core from lifecycle persistence
+
+Today lifecycle logic is split across `src/phase/**`, `src/tools/dispatch.mbt`, and `src/server/handler.mbt`. The next architectural seam should be:
+
+- `phase/core`
+  - pure lifecycle/domain types
+  - pure transitions
+  - pure policy helpers
+- `phase/store`
+  - read/write lifecycle files
+  - append jsonl events
+  - map storage formats to domain values
+- `phase/services`
+  - high-level orchestration helpers that combine core + store through explicit interfaces
+
+Concrete targets:
+- move persistence out of:
+  - `src/phase/machine.mbt`
+  - `src/phase/lifecycle.mbt`
+  - `src/phase/lifecycle_jsonl.mbt`
+- replace direct write paths in:
+  - `src/tools/dispatch.mbt::apply_tl_event`
+  - `src/tools/dispatch.mbt::apply_dev_event_checked`
+with explicit lifecycle store/service calls
+- unify the dual machine representations where possible:
+  - `TLPhase` vs `SupervisorLifecycle`
+  - `DevPhase` vs `DevLifecycle`
+
+**Success condition:** lifecycle transitions can be executed and tested without touching the filesystem; storage becomes an interpreter/service concern.
+
+#### Phase 3 — Break `src/tools/dispatch.mbt` into tool core + effect interpreters
+
+This is the main event. `fork_wave` already demonstrates the direction via `Eff[A]`. The rest of the tool system should converge toward the same pattern.
+
+Target shape:
+
+```text
+tool request
+  -> parse to typed args
+  -> pure tool-core plan
+  -> typed effect tree / effect request list
+  -> interpreter executes effects
+  -> typed result
+  -> response formatting
+```
+
+Recommended migration order:
+
+1. **`notify_parent` / `send_message`**
+   - smallest useful delivery-only tools
+   - already have pure `message.plan_delivery` available
+2. **`file_pr`**
+   - currently mixes preflight, git push, PR ensure, lifecycle update, poller update, parent delivery
+   - good candidate for a plan/interpreter split
+3. **`merge_pr`**
+   - currently mixes merge policy, mutex policy, inline comment fetch, merge execution, poller/lifecycle updates
+4. **`spawn_worker`**
+   - smaller spawn path than full `fork_wave`, can reuse spawn planning concepts
+5. **`cancel_wave` / `shutdown` / `kill_agent`**
+   - teardown-oriented tools; good once cleanup effects are typed
+6. **`rescue_leaf`**
+   - highest-complexity migration after the architecture is proven
+
+Recommended file split:
+- `src/tools/core/*.mbt`
+  - pure plan builders per tool
+- `src/tools/effects.mbt`
+  - shared effect ADTs (likely expanded beyond current `Eff`)
+- `src/tools/interpreter.mbt`
+  - host interpreter for command/process/file/network effects
+- `src/tools/dispatch.mbt`
+  - thin request → plan → interpret → response adapter
+
+**Success condition:** `dispatch.mbt` becomes mostly routing glue; tool-specific business logic lives in pure planners.
+
+#### Phase 4 — Extract server post-tool orchestration into explicit post-actions
+
+Once tool plans are explicit, `ServerState::handle_with_runner` should stop being a second orchestration brain.
+
+Target shape:
+- tool execution returns:
+  - result payload
+  - optional post-actions / runtime actions
+- server handler:
+  - routes request
+  - invokes tool executor
+  - invokes a dedicated post-action interpreter
+
+This should absorb:
+- post-`shutdown` finalization
+- post-`merge_pr` finalization and parent notification
+- post-`kill_agent` fail path
+- spawn/rescue pane-watcher registration
+
+Concrete splits:
+- extract `post_tool_effects(...)` from `ServerState::handle_with_runner`
+- decompose:
+  - `finalize_agent_with_runner` into transition / cleanup / notify / bookkeeping
+  - `fail_agent_with_runner` into failure transition / notify / bookkeeping
+
+**Success condition:** request routing and post-tool runtime side effects are separate modules with explicit contracts.
+
+#### Phase 5 — Move pane watching and recovery behind adapters
+
+This phase turns the remaining server-heavy I/O into explicit adapter boundaries.
+
+1. **pane watcher adapter**
+   - extract `watch_pane` / `stop_subscribe` into a dedicated host adapter
+   - `ServerState` should track logical watch handles, not shell commands / pidfiles
+2. **recovery snapshot adapter**
+   - replace inline shelling in `recover_state` with injected snapshots:
+     - live terminal snapshot
+     - open PR snapshot
+     - lifecycle file listing snapshot
+   - keep `recover_open_pr_tracking_with(...)` as the model for recovery reconciliation APIs
+
+Suggested module direction:
+- `src/runtime/pane_watch.mbt` or `src/transport/pane_watch.mbt`
+- `src/runtime/recovery_snapshot.mbt`
+- `src/server/recovery.mbt` reduced to reconciliation logic over supplied snapshots
+
+**Success condition:** recovery and pane monitoring can be tested against synthetic inputs without real `zellij`, `gh`, or shell calls.
+
+#### Phase 6 — Converge init/runtime asset generation on one source of truth
+
+This is lower priority than the core boundary work, but it should happen before more runtime proliferation:
+
+- one Pi extension source of truth
+- one Codex MCP override builder
+- one companion launch env builder
+- one local config TOML writer
+- no dead test-only deployment path
+
+Concrete targets:
+- remove `init_pi_tl_extension_content()` or make runtime generation use it directly (prefer removal in favor of one canonical generator)
+- replace `init_companion_launch_prefix` with delegated workspace logic
+- replace `init_companion_local_config_content` with delegated workspace logic
+- converge `scripts/pi/choir-extension.ts` and `pi_extension_content()` semantics or make one generate the other
+
+**Success condition:** `choir init`, `fork_wave`, and manually tested runtime assets all come from the same underlying generators.
+
+### Recommended first three concrete migrations
+
+If this starts immediately, the most leverage comes from doing these in order:
+
+1. **Migration 1: eliminate raw boundary escapes and finish injectability**
+   - `fetch_inline_comments_sync`
+   - `ensure_pull_request`
+   - `detect_default_branch`
+   - delivery log path fixes
+2. **Migration 2: split lifecycle persistence from lifecycle transitions**
+   - refactor `apply_tl_event` / `apply_dev_event_checked` first
+3. **Migration 3: convert `file_pr` to a pure plan + interpreter path**
+   - because it touches git, PR creation, lifecycle, poller, and parent notification all at once
+   - success here proves the architecture on a representative non-spawn tool
+
+### Things explicitly deferred until after the boundary work
+
+These should not jump ahead of the migration plan above:
+
+- more registry UX polish
+- durable inbox redesign
+- active-only/GC variants beyond what is already landed
+- RPC/SDK packaging work
+- broader frontend polish not required to support the new boundary
 
 ---
 
