@@ -227,19 +227,7 @@ fn preflight_is_runner_failure(exit_code : Int) -> Bool {
 
 ///|
 async fn capture_command_output(cmd : @workspace.Command) -> (Int, String) {
-  let (reader, writer) = @process.read_from_process() catch {
-    _ => return (-1, "")
-  }
-  let shell_cmd = @exec.command_to_shell_string(cmd) + " 2>&1"
-  let pid = @process.spawn_orphan("sh", ["-c", shell_cmd], stdout=writer) catch {
-    _ => {
-      reader.close()
-      return (-1, "")
-    }
-  }
-  let (output, _) = @exec.drain_process_stdout(reader, 65536)
-  let exit_code = @process.wait_pid(pid) catch { _ => -1 }
-  (exit_code, output)
+  @exec.capture_command_merged(cmd)
 }
 
 ///|

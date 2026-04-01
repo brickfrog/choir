@@ -229,7 +229,7 @@ These are now recorded as real architecture items, not vague future polish:
 - make recovery consume injected snapshots instead of shelling out inline
 - separate lifecycle transition logic from lifecycle persistence
 - [x] unify parent-resolution policy into one canonical service
-- finish the injectable-capture pattern in `src/tools/pr.mbt`
+- finish the injectable-capture pattern in `src/tools/pr.mbt` (default `capture_command_output` now uses `exec::capture_command_merged` / direct argv, not `sh -c`)
 - remove dead/duplicate `init` helper implementations and delegate to workspace helpers
 - converge on one Pi extension source of truth
 - remove or quarantine legacy shell paths that duplicate native helpers
