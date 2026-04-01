@@ -306,6 +306,169 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
 }
 
 ///|
+async test "merge_pr after restart finalizes offline recovered owner and updates parent summary" {
+  let project_dir = "/tmp/choir-merge-restart-offline-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config)
+  let parent_id = "main.tl"
+  let child_id = "main.pi-leaf"
+  let pr_number = 88
+  let parent_target = match
+    @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":TL") {
+    Some(t) => t
+    None => fail("expected parseable parent target")
+  }
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: parent_id,
+      terminal_target: Some(parent_target),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let parent_child : @phase.ChildLifecycle = {
+    child_id,
+    slug: @phase.extract_slug(child_id),
+    branch: child_id,
+    agent_type: "pi",
+    summary: @phase.ChildLifecycleSummary::ReviewOwned(
+      pr_number~,
+      state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+    ),
+  }
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
+      ),
+    }),
+  )
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Finalized(
+        reason=@phase.FinalizeReason::RecoveredDone,
+      ),
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        ),
+      ),
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Pi,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/pi-leaf",
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Done,
+    }),
+  )
+  state.poller.track_recovered(
+    pr_number,
+    child_id,
+    child_id,
+    "main",
+    "https://example.test/pr/88",
+    100L,
+    @poller.ReviewState::Approved,
+    "",
+    "deadbeef",
+    false,
+  )
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::new({
+      "pr_number": pr_number.to_string(),
+      "caller_id": parent_id,
+      "parent_branch": "main",
+    }),
+  }
+  let resp = state.handle_with_runner(req, runner=async fn(
+    cmds : Array[@workspace.Command],
+  ) {
+    @async.sleep(0)
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  })
+  assert_true(resp.is_ok())
+  assert_eq(resp.ok_field("status"), Some("merged"))
+  assert_true(state.poller.get(pr_number) == None)
+  match @phase.read_lifecycle(project_dir, child_id) {
+    Some(lifecycle) => {
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+      )
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(@phase.DevLifecycle::Done(reason~)) =>
+          assert_eq(reason, @phase.FinalizeReason::Merged)
+        other =>
+          fail(
+            "expected merged child lifecycle to be done, got: " +
+            other.to_string(),
+          )
+      }
+    }
+    None => fail("expected merged child lifecycle")
+  }
+  match @phase.read_lifecycle(project_dir, parent_id) {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~, ..)
+        )
+        | @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::WaveComplete(children~, ..)
+        ) => {
+          assert_eq(children.length(), 1)
+          match children[0].summary {
+            @phase.ChildLifecycleSummary::Done => ()
+            other =>
+              fail(
+                "expected parent summary to mark merged child done, got: " +
+                other.to_string(),
+              )
+          }
+        }
+        other =>
+          fail(
+            "expected supervising or wave-complete parent lifecycle after merge, got: " +
+            other.to_string(),
+          )
+      }
+    None => fail("expected parent lifecycle after merge")
+  }
+}
+
+///|
 test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
   let project_dir = "/tmp/choir-rescue-refuse-" +
     @sys.get_pid().to_string() +

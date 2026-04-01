@@ -15,6 +15,24 @@ fn request_agent_id(req : @types.Request) -> String? {
 }
 
 ///|
+fn request_int_arg(req : @types.Request, key : String) -> Int? {
+  match req.args.get_int(key) {
+    Some(value) => Some(value)
+    None =>
+      match req.args.get(key) {
+        Some(value) => {
+          let parsed = @json.parse(value) catch { _ => return None }
+          match parsed {
+            Number(n, ..) => Some(n.to_int())
+            _ => None
+          }
+        }
+        None => None
+      }
+  }
+}
+
+///|
 fn request_span_name(req : @types.Request) -> String {
   if req.req_method == "tools/list" {
     "tools/list"
@@ -97,7 +115,7 @@ pub async fn ServerState::handle_with_runner(
 ) -> @types.Response {
   let start_ms = @env.now()
   let merged_agent_id = if req.name == "merge_pr" {
-    match req.args.get_int("pr_number") {
+    match request_int_arg(req, "pr_number") {
       Some(pr_number) =>
         match self.poller.get(pr_number) {
           Some(tracked) => Some(tracked.agent_id)
@@ -149,7 +167,7 @@ pub async fn ServerState::handle_with_runner(
     }
   }
   if req.name == "merge_pr" && resp.is_ok() {
-    match (req.args.get_int("pr_number"), merged_agent_id) {
+    match (request_int_arg(req, "pr_number"), merged_agent_id) {
       (Some(pr_number), Some(agent_id)) => {
         ignore(
           @tools.apply_dev_event_checked(
@@ -508,37 +526,7 @@ fn parent_poll_event_message(
           ),
         )
       }
-    ReviewCommented(n, comments) =>
-      if comments == "" {
-        Some(
-          (
-            "[REVIEW] " +
-            agent_id +
-            " PR #" +
-            n.to_string() +
-            " has non-blocking review comments\n" +
-            "branch: " +
-            branch +
-            "\n" +
-            "parent_branch: " +
-            parent_branch.unwrap_or("<unknown>") +
-            pr_url,
-            "info",
-          ),
-        )
-      } else {
-        Some(
-          (
-            "[REVIEW] " +
-            agent_id +
-            " PR #" +
-            n.to_string() +
-            " has non-blocking review comments:\n" +
-            comments,
-            "info",
-          ),
-        )
-      }
+    ReviewCommented(_, _) => None
     CIFailed(n) =>
       Some(
         (
@@ -1395,11 +1383,21 @@ async fn ServerState::finalize_agent_with_runner(
   }
   let finalize_reason = finalize_reason_for_exit(exit_reason)
   let lifecycle = self.current_lifecycle(agent_id)
+  let allow_merge_refinalize = exit_reason == "merged"
   match lifecycle.process {
-    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => {
+    @phase.ProcessState::Failed(..) => {
       self.clear_agent_runtime_tracking(agent_id)
       return
     }
+    @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged) => {
+      self.clear_agent_runtime_tracking(agent_id)
+      return
+    }
+    @phase.ProcessState::Finalized(..) =>
+      if !allow_merge_refinalize {
+        self.clear_agent_runtime_tracking(agent_id)
+        return
+      }
     _ => {
       let with_finalizing = {
         ..lifecycle,
@@ -1789,6 +1787,11 @@ pub fn ServerState::get_agent(
 ///|
 /// Called when a connection closes. Detects unexpected agent death and notifies parent.
 /// Review-owned agents are preserved; agent-owned disconnects fail.
+fn disconnect_pr_recovery_candidate(agent : @types.Agent) -> Bool {
+  agent.role == @types.Role::Dev && agent.branch.trim() != ""
+}
+
+///|
 pub async fn ServerState::handle_disconnect_with_runner(
   self : ServerState,
   agent_id : String,
@@ -1833,11 +1836,16 @@ pub async fn ServerState::handle_disconnect_with_runner(
                 remove_worktree=false,
               )
             @phase.LifecycleDisconnectPolicy::Ignore => ()
-            @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) =>
-              // Before failing: check if the agent filed a PR via raw `gh pr create`
-              // (bypassing file_pr). If so, retroactively apply PRCreated so the agent
-              // transitions to ReviewOwned and is preserved rather than failed.
-              match find_pr_for_branch(agent.branch, self.config.project_dir) {
+            @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
+              // Before failing: check if a dev leaf filed a PR via raw `gh pr create`
+              // (bypassing file_pr). Restrict this to branch-owning dev agents so
+              // top-level TLs/workers with empty branches cannot steal tracked PR ownership.
+              let recovered_pr = if disconnect_pr_recovery_candidate(agent) {
+                find_pr_for_branch(agent.branch, self.config.project_dir)
+              } else {
+                None
+              }
+              match recovered_pr {
                 Some((pr_number, pr_url)) => {
                   let parent_branch = match
                     @workspace.parent_branch(agent.branch) {
@@ -1901,6 +1909,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
                   )
                 }
               }
+            }
           }
       }
   }
@@ -2061,6 +2070,33 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
 }
 
 ///|
+test "parent_poll_event_message suppresses non-blocking review comments" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 9,
+    agent_id: "main.dev-c",
+    branch: "work/c",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/9",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Commented,
+    last_review_bodies: "note",
+    last_sha: "abc",
+    notified_parent: false,
+    last_ci_failed: false,
+    last_timeout_at: 0L,
+  }
+  assert_eq(
+    parent_poll_event_message(
+      tracked,
+      @poller.PollEvent::ReviewCommented(9, "minor suggestion"),
+    ),
+    None,
+  )
+}
+
+///|
 test "clamp_review_summary_for_pane leaves short text unchanged" {
   let s = "fix the typo in handler"
   assert_eq(clamp_review_summary_for_pane(s), s)
@@ -2072,6 +2108,32 @@ test "clamp_review_summary_for_pane truncates long Copilot-style bodies" {
   let out = clamp_review_summary_for_pane(long)
   assert_true(out.contains("[truncated"))
   assert_true(out.length() < long.length())
+}
+
+///|
+test "disconnect PR recovery only applies to branch-owning dev agents" {
+  let mk = fn(role : @types.Role, branch : String) {
+    @types.Agent::{
+      agent_id: "agent",
+      role,
+      agent_type: @types.AgentType::Pi,
+      parent: Some("root"),
+      workspace: "/proj",
+      branch,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }
+  }
+  assert_true(
+    disconnect_pr_recovery_candidate(mk(@types.Role::Dev, "main.leaf")),
+  )
+  assert_false(disconnect_pr_recovery_candidate(mk(@types.Role::Dev, "")))
+  assert_false(
+    disconnect_pr_recovery_candidate(mk(@types.Role::Worker, "main.worker")),
+  )
+  assert_false(disconnect_pr_recovery_candidate(mk(@types.Role::TL, "main")))
 }
 
 ///|

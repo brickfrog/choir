@@ -26,6 +26,8 @@ pub fn sanitize_branch(branch : String) -> String {
   for c in branch {
     if c == '.' {
       sb.write_string("--")
+    } else if c == '/' || c == '\\' || c == '\u0000' {
+      sb.write_char('_')
     } else {
       sb.write_char(c)
     }
@@ -91,4 +93,11 @@ pub fn apply_event(
   } else {
     Some(current)
   }
+}
+
+///|
+test "sanitize_branch escapes dots and path separators" {
+  assert_eq(sanitize_branch("main.leaf"), "main--leaf")
+  assert_eq(sanitize_branch("feature/x.leaf"), "feature_x--leaf")
+  assert_eq(sanitize_branch("feature\\x.leaf"), "feature_x--leaf")
 }

@@ -243,16 +243,10 @@ fn serve_run() -> Unit {
   @moontrace.set_subscriber(fn(event) { println(event.format(color=true)) })
   @moontrace.set_min_level(@moontrace.Level::Debug)
   @sys.write_pid_file(".choir/server.pid")
-  @sys.register_cleanup(
-    "for w in .choir/worktrees/*/; do git worktree remove --force \"$w\" 2>/dev/null; done; rm -rf .choir/worktrees/* .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id 2>/dev/null",
-  )
-  // Clean stale state from previous session (signal handler may not have fired).
-  // Worktrees must be removed first — recovery resurrects lifecycle files from them.
-  ignore(
-    @sys.system(
-      "for w in .choir/worktrees/*/; do git worktree remove --force \"$w\" 2>/dev/null; done; rm -rf .choir/worktrees/* .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/tasks/*.json 2>/dev/null; true",
-    ),
-  )
+  @sys.register_cleanup(runtime_cleanup_shell() + " 2>/dev/null")
+  // Clean stale runtime markers from previous sessions, but preserve recoverable
+  // worktrees/lifecycle/poller state so restart recovery can rehydrate agents.
+  ignore(@sys.system(runtime_cleanup_shell() + " 2>/dev/null; true"))
   let state = @server.ServerState::new(config)
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
@@ -4497,6 +4491,7 @@ fn init_run() -> Unit {
     @async.with_task_group(async fn(_root) {
       let args = @env.args()
       let recreate = args.contains("--recreate")
+      let purge = args.contains("--purge")
       let no_attach = init_no_attach(args)
       let tl_type = init_parse_tl_type(args)
       let project_dir = @env.current_dir().unwrap_or(".")
@@ -4585,7 +4580,13 @@ fn init_run() -> Unit {
             },
           )
           ignore(
-            @exec.run(init_cleanup_server_artifacts_command()) catch {
+            @exec.run(
+              if purge {
+                init_cleanup_server_artifacts_command()
+              } else {
+                init_cleanup_runtime_artifacts_command()
+              },
+            ) catch {
               _ => 0
             },
           )
@@ -4727,6 +4728,7 @@ fn stop_run() -> Unit {
         Err(_) => @types.Config::default()
       }
       let session = config.terminal_session
+      let purge = @env.args().contains("--purge")
       let pid_str = @sys.read_file(".choir/server.pid").trim().to_string()
 
       if pid_str != "" {
@@ -4742,7 +4744,13 @@ fn stop_run() -> Unit {
       ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })
 
       ignore(
-        @exec.run(init_cleanup_server_artifacts_command()) catch {
+        @exec.run(
+          if purge {
+            init_cleanup_server_artifacts_command()
+          } else {
+            init_cleanup_runtime_artifacts_command()
+          },
+        ) catch {
           _ => 0
         },
       )
@@ -4995,29 +5003,6 @@ fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
   let mut failed = 0
   let mut done = 0
   for path in files {
-    // Extract agent_id from path: .../lifecycle--<agent_id>
-    let prefix = "/lifecycle--"
-    let mut idx = -1
-    for i = 0; i < path.length() - prefix.length(); i = i + 1 {
-      let mut match_ = true
-      for j = 0; j < prefix.length(); j = j + 1 {
-        if path[i + j] != prefix[j] {
-          match_ = false
-          break
-        }
-      }
-      if match_ {
-        idx = i + prefix.length()
-      }
-    }
-    if idx < 0 {
-      continue
-    }
-    let agent_id = path[idx:].to_string()
-    // If children files exist, only count tracked agents
-    if child_ids.length() > 0 && !child_ids.contains(agent_id) {
-      continue
-    }
     let content = @sys.read_file(path)
     if content == "" {
       continue
@@ -5026,6 +5011,11 @@ fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
     let obj = match json {
       Object(m) => m
       _ => continue
+    }
+    let agent_id = statusline_json_string(obj, "agent_id")
+    // If children files exist, only count tracked agents
+    if child_ids.length() > 0 && agent_id != "" && !child_ids.contains(agent_id) {
+      continue
     }
     let workflow = statusline_json_object(obj, "workflow")
     let state = statusline_json_object(workflow, "state")
@@ -5040,6 +5030,32 @@ fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
     }
   }
   (working, review, changes, failed, done)
+}
+
+///|
+test "statusline_count_agents matches child ids using lifecycle content agent_id" {
+  let project_dir = "/tmp/choir-statusline-agent-id-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/lifecycle--main--leaf",
+      "{\"agent_id\":\"main.leaf\",\"workflow\":{\"state\":{\"tag\":\"Working\"}}}",
+    ),
+  )
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/children--root",
+      "[{\"id\":\"main.leaf\"}]",
+    ),
+  )
+  let (working, review, changes, failed, done) = statusline_count_agents(
+    project_dir,
+  )
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  assert_eq((working, review, changes, failed, done), (1, 0, 0, 0, 0))
 }
 
 ///|

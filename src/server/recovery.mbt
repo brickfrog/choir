@@ -73,6 +73,9 @@ async fn find_pr_for_branch(
   branch : String,
   project_dir : String,
 ) -> (Int, String)? {
+  if branch.trim() == "" {
+    return None
+  }
   let output = capture_stdout(
     "gh",
     [
@@ -290,6 +293,27 @@ fn recover_agent_from_local_config(
 }
 
 ///|
+fn finalize_recovered_offline_agent(
+  state : ServerState,
+  agent_id : String,
+) -> Unit {
+  let lifecycle = state.current_lifecycle(agent_id)
+  match lifecycle.process {
+    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => ()
+    _ => {
+      let finalized = {
+        ..lifecycle,
+        process: @phase.ProcessState::Finalized(
+          reason=@phase.FinalizeReason::RecoveredDone,
+        ),
+      }
+      ignore(state.persist_lifecycle(finalized))
+      state.sync_parent_child_lifecycle(agent_id, finalized)
+    }
+  }
+}
+
+///|
 async fn recover_local_agents(
   state : ServerState,
   session : String,
@@ -308,20 +332,26 @@ async fn recover_local_agents(
       recover_agent_from_local_config(
         project_dir, rel_workspace, slug, session, zellij_live,
       ) {
-      Some(agent) =>
+      Some(agent) => {
+        let alive = is_local_target_alive(
+          agent.terminal_target,
+          session,
+          zellij_live,
+        )
         match state.register_agent(agent) {
           Ok(_) =>
-            if !is_local_target_alive(
-                agent.terminal_target,
-                session,
-                zellij_live,
-              ) {
+            if !alive {
               ignore(
                 state.registry.set_alive(agent.agent_id.to_string(), false),
+              )
+              finalize_recovered_offline_agent(
+                state,
+                agent.agent_id.to_string(),
               )
             }
           Err(_) => ()
         }
+      }
       None => ()
     }
   }
@@ -458,7 +488,11 @@ fn sync_recovered_pr_lifecycle(
   let recovered = {
     ..lifecycle,
     workflow,
-    process: @phase.ProcessState::Connected,
+    process: if agent.terminal_target is Some(_) {
+      @phase.ProcessState::Connected
+    } else {
+      lifecycle.process
+    },
   }
   ignore(state.persist_lifecycle(recovered))
   state.sync_parent_child_lifecycle(agent.agent_id.to_string(), recovered)
@@ -479,6 +513,33 @@ fn find_persisted_tracked_pr(
 }
 
 ///|
+fn find_registered_agent_for_branch(
+  state : ServerState,
+  branch : String,
+  preferred_agent_id? : String? = None,
+) -> @types.Agent? {
+  match preferred_agent_id {
+    Some(agent_id) =>
+      match state.registry.get(agent_id) {
+        Ok(agent) => return Some(agent)
+        Err(_) => ()
+      }
+    None => ()
+  }
+  match state.registry.get(branch) {
+    Ok(agent) => Some(agent)
+    Err(_) => {
+      for agent in state.registry.list() {
+        if agent.branch == branch {
+          return Some(agent)
+        }
+      }
+      None
+    }
+  }
+}
+
+///|
 async fn recover_open_pr_tracking_with(
   state : ServerState,
   open_prs : Array[OpenPR],
@@ -494,13 +555,14 @@ async fn recover_open_pr_tracking_with(
   ),
 ) -> Unit {
   for pr in open_prs {
-    match state.registry.get(pr.branch) {
-      Ok(agent) => {
-        let restored = find_persisted_tracked_pr(
-          persisted,
-          pr.pr_number,
-          pr.branch,
-        )
+    let restored = find_persisted_tracked_pr(persisted, pr.pr_number, pr.branch)
+    match
+      find_registered_agent_for_branch(
+        state,
+        pr.branch,
+        preferred_agent_id=restored.map(fn(tracked) { tracked.agent_id }),
+      ) {
+      Some(agent) =>
         match restored {
           Some(existing) => {
             state.poller.restore({
@@ -539,8 +601,7 @@ async fn recover_open_pr_tracking_with(
             sync_recovered_pr_lifecycle(state, agent, pr, review)
           }
         }
-      }
-      Err(_) => ()
+      None => ()
     }
   }
 }
@@ -557,6 +618,7 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
   )
   recover_local_agents(state, session, zellij_live, "worktrees")
   recover_local_agents(state, session, zellij_live, "agents")
+  recover_local_agents(state, session, zellij_live, "inline")
 
   let open_pr_output = capture_stdout(
     "sh",
@@ -629,4 +691,444 @@ test "parse_github_time_utc_sec handles valid and invalid timestamps" {
   )
   assert_eq(parse_github_time_utc_sec("2026-02-30T01:02:03Z"), None)
   assert_eq(parse_github_time_utc_sec("2026-03-20 01:02:03Z"), None)
+}
+
+///|
+test "recover_agent_from_local_config preserves pi agent type" {
+  let root = "/tmp/choir-recovery-pi-" + @sys.get_pid().to_string()
+  let workspace = "agent"
+  ignore(@sys.system("rm -rf \"" + root + "\""))
+  ignore(@sys.system("mkdir -p \"" + root + "/" + workspace + "/.choir\""))
+  let content =
+    #|role = "dev"
+    #|agent_id = "main.pi-leaf"
+    #|parent_id = "root"
+    #|branch = "main.pi-leaf"
+    #|parent_branch = "main"
+    #|workspace = "/tmp/workspace"
+    #|terminal_target = "zellij-tab:choir:pi-leaf"
+    #|agent_type = "pi"
+  ignore(
+    @sys.write_file_sync(
+      root + "/" + workspace + "/.choir/config.local.toml",
+      content,
+    ),
+  )
+  let agent = recover_agent_from_local_config(
+    root,
+    workspace,
+    "fallback",
+    "choir",
+    { tabs: [], panes: [] },
+  )
+  ignore(@sys.system("rm -rf \"" + root + "\""))
+  match agent {
+    Some(recovered) => {
+      assert_eq(recovered.agent_id, "main.pi-leaf")
+      assert_eq(recovered.agent_type, @types.AgentType::Pi)
+      assert_eq(recovered.state, @types.AgentState::Done)
+    }
+    None => fail("expected recovered agent")
+  }
+}
+
+///|
+test "recover_agent_from_local_config supports inline metadata directories" {
+  let root = "/tmp/choir-recovery-inline-" + @sys.get_pid().to_string()
+  let rel_workspace = ".choir/inline/feature_x.worker"
+  ignore(@sys.system("rm -rf \"" + root + "\""))
+  ignore(@sys.system("mkdir -p \"" + root + "/" + rel_workspace + "/.choir\""))
+  let content =
+    #|role = "worker"
+    #|agent_id = "feature/x.worker"
+    #|parent_id = "root"
+    #|branch = "feature/x.worker"
+    #|parent_branch = "feature/x"
+    #|workspace = "/repo"
+    #|terminal_target = "zellij-pane:choir:worker"
+    #|agent_type = "pi"
+  ignore(
+    @sys.write_file_sync(
+      root + "/" + rel_workspace + "/.choir/config.local.toml",
+      content,
+    ),
+  )
+  let agent = recover_agent_from_local_config(
+    root,
+    rel_workspace,
+    "fallback",
+    "choir",
+    { tabs: [], panes: [] },
+  )
+  ignore(@sys.system("rm -rf \"" + root + "\""))
+  match agent {
+    Some(recovered) => {
+      assert_eq(recovered.agent_id, "feature/x.worker")
+      assert_eq(recovered.role, @types.Role::Worker)
+      assert_eq(recovered.parent, Some("root"))
+      assert_eq(recovered.branch, "feature/x.worker")
+    }
+    None => fail("expected recovered inline agent")
+  }
+}
+
+///|
+async test "recover_open_pr_tracking_with restores ownership using persisted agent id" {
+  let project_dir = "/tmp/choir-recovery-pr-owner-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let state = ServerState::new({
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "choir",
+  })
+  ignore(
+    state.register_agent({
+      agent_id: "main.topic-v1",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Pi,
+      parent: Some("root"),
+      workspace: project_dir + "/.choir/worktrees/topic-leaf",
+      branch: "main.topic-leaf",
+      terminal_target: @types.LocalTarget::parse("zellij-tab:choir:topic-leaf"),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let persisted = [
+    @poller.TrackedPR::{
+      pr_number: 55,
+      agent_id: "main.topic-v1",
+      branch: "main.topic-leaf",
+      parent_branch: "main",
+      pr_url: "https://example.test/pr/55",
+      first_seen: 100L,
+      consecutive_failures: 0,
+      backoff_until: 0L,
+      last_review_state: @poller.ReviewState::Commented,
+      last_review_bodies: "needs follow-up",
+      last_sha: "abc",
+      notified_parent: false,
+      last_ci_failed: false,
+      last_timeout_at: 0L,
+    },
+  ]
+  recover_open_pr_tracking_with(
+    state,
+    [
+      {
+        pr_number: 55,
+        branch: "main.topic-leaf",
+        base: "main",
+        url: "https://example.test/pr/55",
+        created_sec: Some(100L),
+      },
+    ],
+    persisted,
+    200L,
+    async fn(_pr_number) {
+      @async.sleep(0)
+      (true, @poller.ReviewState::None_, "", false, "", true)
+    },
+  )
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  match state.poller.get(55) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "main.topic-v1")
+      assert_eq(tracked.branch, "main.topic-leaf")
+    }
+    None => fail("expected recovered tracked PR")
+  }
+}
+
+///|
+async test "recover_open_pr_tracking_with preserves fixes awaiting review and parent summary" {
+  let project_dir = "/tmp/choir-recovery-review-owned-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let state = ServerState::new({
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "choir",
+  })
+  let parent_id = "main.pi-tl"
+  let child_id = "main.pi-review-leaf"
+  let branch = "main.pi-review-leaf"
+  let parent_child : @phase.ChildLifecycle = {
+    child_id,
+    slug: @phase.extract_slug(child_id),
+    branch,
+    agent_type: "pi",
+    summary: @phase.ChildLifecycleSummary::Working,
+  }
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
+      ),
+    }),
+  )
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=61,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round=2),
+        ),
+      ),
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Pi,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/pi-review-leaf",
+      branch,
+      terminal_target: @types.LocalTarget::parse(
+        "zellij-tab:choir:pi-review-leaf",
+      ),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let persisted = [
+    @poller.TrackedPR::{
+      pr_number: 61,
+      agent_id: child_id,
+      branch,
+      parent_branch: "main",
+      pr_url: "https://example.test/pr/61",
+      first_seen: 100L,
+      consecutive_failures: 0,
+      backoff_until: 0L,
+      last_review_state: @poller.ReviewState::Commented,
+      last_review_bodies: "follow up comments",
+      last_sha: "def",
+      notified_parent: false,
+      last_ci_failed: false,
+      last_timeout_at: 0L,
+    },
+  ]
+  recover_open_pr_tracking_with(
+    state,
+    [
+      {
+        pr_number: 61,
+        branch,
+        base: "main",
+        url: "https://example.test/pr/61",
+        created_sec: Some(100L),
+      },
+    ],
+    persisted,
+    200L,
+    async fn(_pr_number) {
+      @async.sleep(0)
+      (true, @poller.ReviewState::None_, "", false, "", true)
+    },
+  )
+  match @phase.read_lifecycle(project_dir, child_id) {
+    Some(lifecycle) => {
+      assert_eq(lifecycle.process, @phase.ProcessState::Connected)
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+          )
+        ) => {
+          assert_eq(pr_number, 61)
+          assert_eq(round, 2)
+        }
+        other =>
+          fail(
+            "expected recovered review-owned lifecycle with pending fixes, got: " +
+            other.to_string(),
+          )
+      }
+    }
+    None => fail("expected recovered child lifecycle")
+  }
+  match @phase.read_lifecycle(project_dir, parent_id) {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~, ..)
+        ) => {
+          assert_eq(children.length(), 1)
+          match children[0].summary {
+            @phase.ChildLifecycleSummary::ReviewOwned(
+              pr_number~,
+              state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+            ) => {
+              assert_eq(pr_number, 61)
+              assert_eq(round, 2)
+            }
+            other =>
+              fail(
+                "expected parent to see recovered review-owned child summary, got: " +
+                other.to_string(),
+              )
+          }
+        }
+        other =>
+          fail(
+            "expected supervising parent lifecycle, got: " + other.to_string(),
+          )
+      }
+    None => fail("expected recovered parent lifecycle")
+  }
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+}
+
+///|
+async test "recover_local_agents keeps offline review-owned agent mergeable but not active" {
+  let project_dir = "/tmp/choir-recovery-offline-review-owned-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let rel_workspace = ".choir/worktrees/pi-review-leaf"
+  let parent_id = "main.pi-tl"
+  let child_id = "main.pi-review-leaf"
+  let branch = "main.pi-review-leaf"
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(
+    @sys.system(
+      "mkdir -p \"" +
+      project_dir +
+      "/.choir/kv\" \"" +
+      project_dir +
+      "/" +
+      rel_workspace +
+      "/.choir\"",
+    ),
+  )
+  let content =
+    #|role = "dev"
+    #|agent_id = "main.pi-review-leaf"
+    #|parent_id = "main.pi-tl"
+    #|branch = "main.pi-review-leaf"
+    #|parent_branch = "main"
+    #|workspace = "/tmp/repo/.choir/worktrees/pi-review-leaf"
+    #|terminal_target = "zellij-tab:choir:pi-review-leaf"
+    #|agent_type = "pi"
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/" + rel_workspace + "/.choir/config.local.toml",
+      content,
+    ),
+  )
+  let parent_child : @phase.ChildLifecycle = {
+    child_id,
+    slug: @phase.extract_slug(child_id),
+    branch,
+    agent_type: "pi",
+    summary: @phase.ChildLifecycleSummary::Working,
+  }
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
+      ),
+    }),
+  )
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=72,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round=3),
+        ),
+      ),
+    }),
+  )
+  let state = ServerState::new({
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "choir",
+  })
+  recover_local_agents(state, "choir", { tabs: [], panes: [] }, "worktrees")
+  match state.registry.get(child_id) {
+    Ok(agent) => assert_eq(agent.state, @types.AgentState::Done)
+    Err(e) => fail("expected recovered agent in registry: " + e.message())
+  }
+  match @phase.read_lifecycle(project_dir, child_id) {
+    Some(lifecycle) => {
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Finalized(
+          reason=@phase.FinalizeReason::RecoveredDone,
+        ),
+      )
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+          )
+        ) => {
+          assert_eq(pr_number, 72)
+          assert_eq(round, 3)
+        }
+        other =>
+          fail(
+            "expected offline recovered child to preserve review-owned workflow, got: " +
+            other.to_string(),
+          )
+      }
+    }
+    None => fail("expected offline recovered child lifecycle")
+  }
+  match @phase.read_lifecycle(project_dir, parent_id) {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~, ..)
+        ) => {
+          assert_eq(children.length(), 1)
+          match children[0].summary {
+            @phase.ChildLifecycleSummary::ReviewOwned(
+              pr_number~,
+              state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+            ) => {
+              assert_eq(pr_number, 72)
+              assert_eq(round, 3)
+            }
+            other =>
+              fail(
+                "expected parent to retain offline review-owned child summary, got: " +
+                other.to_string(),
+              )
+          }
+        }
+        other =>
+          fail(
+            "expected supervising parent lifecycle, got: " + other.to_string(),
+          )
+      }
+    None => fail("expected offline recovered parent lifecycle")
+  }
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
 }
