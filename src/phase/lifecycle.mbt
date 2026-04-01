@@ -175,11 +175,6 @@ pub fn lifecycle_key(agent_id : String) -> String {
 }
 
 ///|
-fn lifecycle_path(project_dir : String, agent_id : String) -> String {
-  project_dir + "/.choir/kv/" + lifecycle_key(agent_id)
-}
-
-///|
 pub fn default_workflow_state(role : @types.Role) -> WorkflowState {
   match role {
     @types.Role::Root => Supervisor(Planning)
@@ -1153,42 +1148,6 @@ pub fn lifecycle_from_json(json_str : String) -> AgentLifecycle? {
     (Some(process), Some(workflow)) =>
       Some({ agent_id, role, process, workflow })
     _ => None
-  }
-}
-
-///|
-pub fn read_lifecycle(
-  project_dir : String,
-  agent_id : String,
-) -> AgentLifecycle? {
-  let content = @sys.read_file(lifecycle_path(project_dir, agent_id))
-  if content == "" {
-    None
-  } else {
-    lifecycle_from_json(content)
-  }
-}
-
-///|
-pub fn write_lifecycle(
-  project_dir : String,
-  lifecycle : AgentLifecycle,
-) -> Bool {
-  @sys.write_file_atomic(
-    lifecycle_path(project_dir, lifecycle.agent_id),
-    lifecycle_to_json(lifecycle),
-  )
-}
-
-///|
-pub fn read_or_default_lifecycle(
-  project_dir : String,
-  agent_id : String,
-  role : @types.Role,
-) -> AgentLifecycle {
-  match read_lifecycle(project_dir, agent_id) {
-    Some(lifecycle) => lifecycle
-    None => lifecycle_for_role(agent_id, role)
   }
 }
 

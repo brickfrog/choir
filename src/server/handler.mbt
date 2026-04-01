@@ -170,7 +170,7 @@ pub async fn ServerState::handle_with_runner(
     match (request_int_arg(req, "pr_number"), merged_agent_id) {
       (Some(pr_number), Some(agent_id)) => {
         ignore(
-          @tools.apply_dev_event_checked(
+          @phase.apply_dev_event_checked(
             self.config.project_dir,
             agent_id,
             @phase.DevEvent::MergeObserved(pr_number~),
@@ -690,7 +690,7 @@ pub fn ServerState::plan_poll_event_deliveries(
       )
     (Some(_), PRMerged(n)) =>
       ignore(
-        @tools.apply_dev_event_checked(
+        @phase.apply_dev_event_checked(
           self.config.project_dir,
           leaf_agent_id,
           @phase.DevEvent::MergeObserved(pr_number=n),
