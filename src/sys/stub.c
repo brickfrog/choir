@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,6 +80,19 @@ int choir_stdin_read(char *buf, int max_size) {
 
 int choir_getpid(void) {
     return (int)getpid();
+}
+
+int choir_kill_pid(int pid) {
+    if (pid <= 0) {
+        return 0;
+    }
+    if (kill((pid_t)pid, SIGTERM) == 0) {
+        return 0;
+    }
+    if (errno == ESRCH) {
+        return 0;
+    }
+    return -1;
 }
 
 int choir_spawn_serve(const char* exe, int exe_len) {

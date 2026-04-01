@@ -29,6 +29,9 @@ extern "C" fn c_exit(code : Int) = "choir_exit"
 extern "C" fn c_getpid() -> Int = "choir_getpid"
 
 ///|
+extern "C" fn c_kill_pid(pid : Int) -> Int = "choir_kill_pid"
+
+///|
 #borrow(exe)
 extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
 
@@ -157,6 +160,13 @@ pub fn exit(code : Int) -> Unit {
 ///|
 pub fn get_pid() -> Int {
   c_getpid()
+}
+
+///|
+/// Send `SIGTERM` to `pid` via `kill(2)`. No-op for non-positive `pid`. Treats "no such process"
+/// like `kill ... || true` (ignored).
+pub fn kill_pid_best_effort(pid : Int) -> Unit {
+  ignore(c_kill_pid(pid))
 }
 
 ///|
