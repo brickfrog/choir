@@ -57,8 +57,54 @@ pub(all) struct RecoveryPlan {
 pub(all) struct RecoveryProvider {
   zellij_live : async (String, String) -> ZellijLiveTargets
   open_prs : async (String) -> Array[OpenPR]
+  find_prs_by_head : async (String, String) -> Array[OpenPR]
   list_local_agents : async (String, String) -> Array[String]
   read_local_config : async (String, String, String) -> String
+  list_lifecycle_files : async (String) -> Array[String]
+  read_lifecycle_file : async (String) -> String
+}
+
+///|
+pub async fn find_pr_for_branch_in_provider(
+  provider : RecoveryProvider,
+  project_dir : String,
+  branch : String,
+) -> (Int, String)? {
+  if branch.trim() == "" {
+    return None
+  }
+  let prs = (provider.find_prs_by_head)(project_dir, branch)
+  if prs.length() > 0 {
+    Some((prs[0].pr_number, prs[0].url))
+  } else {
+    None
+  }
+}
+
+///|
+pub async fn find_agent_for_pr_in_lifecycle(
+  provider : RecoveryProvider,
+  project_dir : String,
+  pr_number : Int,
+) -> String? {
+  let files = (provider.list_lifecycle_files)(project_dir)
+  let needle = "\"pr_number\":" + pr_number.to_string()
+  for path in files {
+    let content = (provider.read_lifecycle_file)(path)
+    if content == "" || !content.contains(needle) {
+      continue
+    }
+    let json = @json.parse(content) catch { _ => continue }
+    let obj = match json {
+      Object(m) => m
+      _ => continue
+    }
+    match obj.get("agent_id") {
+      Some(String(id)) => return Some(id)
+      _ => ()
+    }
+  }
+  None
 }
 
 ///|

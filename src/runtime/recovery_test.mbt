@@ -40,6 +40,98 @@ test "parse_open_prs ignores malformed entries" {
 }
 
 ///|
+async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
+  let mock_provider : RecoveryProvider = {
+    zellij_live: async fn(_dir, _session) {
+      @async.sleep(0)
+      { tabs: [], panes: [] }
+    },
+    open_prs: async fn(_dir) {
+      @async.sleep(0)
+      []
+    },
+    find_prs_by_head: async fn(_dir, _branch) {
+      @async.sleep(0)
+      []
+    },
+    list_local_agents: async fn(_dir, _dir_name) {
+      @async.sleep(0)
+      []
+    },
+    read_local_config: async fn(_dir, _dir_name, _slug) {
+      @async.sleep(0)
+      ""
+    },
+    list_lifecycle_files: async fn(_dir) {
+      @async.sleep(0)
+      ["file1", "file2"]
+    },
+    read_lifecycle_file: async fn(path) {
+      @async.sleep(0)
+      if path == "file1" {
+        "{\"agent_id\":\"agent1\",\"pr_number\":123}"
+      } else {
+        "{\"agent_id\":\"agent2\",\"pr_number\":456}"
+      }
+    },
+  }
+  let agent_id = find_agent_for_pr_in_lifecycle(mock_provider, "/tmp", 123)
+  assert_eq(agent_id, Some("agent1"))
+  let agent_id_none = find_agent_for_pr_in_lifecycle(mock_provider, "/tmp", 999)
+  assert_eq(agent_id_none, None)
+}
+
+///|
+async test "find_pr_for_branch_in_provider finds PR by head branch" {
+  let mock_provider : RecoveryProvider = {
+    zellij_live: async fn(_dir, _session) {
+      @async.sleep(0)
+      { tabs: [], panes: [] }
+    },
+    open_prs: async fn(_dir) {
+      @async.sleep(0)
+      []
+    },
+    find_prs_by_head: async fn(_dir, branch) {
+      @async.sleep(0)
+      if branch == "feat/x" {
+        [
+          {
+            pr_number: 123,
+            branch: "feat/x",
+            base: "main",
+            url: "https://gh.test/123",
+            created_sec: Some(1000L),
+          },
+        ]
+      } else {
+        []
+      }
+    },
+    list_local_agents: async fn(_dir, _dir_name) {
+      @async.sleep(0)
+      []
+    },
+    read_local_config: async fn(_dir, _dir_name, _slug) {
+      @async.sleep(0)
+      ""
+    },
+    list_lifecycle_files: async fn(_dir) {
+      @async.sleep(0)
+      []
+    },
+    read_lifecycle_file: async fn(_path) {
+      @async.sleep(0)
+      ""
+    },
+  }
+  let res = find_pr_for_branch_in_provider(mock_provider, "/tmp", "feat/x")
+  assert_eq(res, Some((123, "https://gh.test/123")))
+  let res_none = find_pr_for_branch_in_provider(mock_provider, "/tmp", "feat/y")
+  assert_eq(res_none, None)
+}
+
+///|
 test "parse_github_time_utc_sec handles valid and invalid timestamps" {
   assert_eq(
     parse_github_time_utc_sec("2026-03-20T01:02:03Z"),

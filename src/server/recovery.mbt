@@ -22,6 +22,16 @@ pub fn make_recovery_provider() -> @runtime.RecoveryProvider {
       )
       @runtime.parse_open_prs(open_pr_output)
     },
+    find_prs_by_head: async fn(project_dir, branch) {
+      let output = capture_stdout(
+        "gh",
+        [
+          "pr", "list", "--head", branch, "--state", "open", "--json", "number,headRefName,baseRefName,url,createdAt",
+        ],
+        cwd=Some(project_dir),
+      )
+      @runtime.parse_open_prs(output)
+    },
     list_local_agents: async fn(project_dir, dir_name) {
       let output = capture_stdout(
         "sh",
@@ -44,70 +54,15 @@ pub fn make_recovery_provider() -> @runtime.RecoveryProvider {
         cwd=Some(project_dir),
       )
     },
+    list_lifecycle_files: async fn(project_dir) {
+      let output = capture_stdout("sh", [
+        "-c",
+        "ls " + project_dir + "/.choir/kv/lifecycle--* 2>/dev/null",
+      ])
+      split_lines(output)
+    },
+    read_lifecycle_file: fn(path) { @sys.read_file(path) },
   }
-}
-
-///|
-/// Query GitHub for an open PR whose head branch matches `branch`.
-/// Returns (pr_number, pr_url) if found, None otherwise.
-/// Used by the disconnect handler to recover agents that bypassed file_pr.
-async fn find_pr_for_branch(
-  branch : String,
-  project_dir : String,
-) -> (Int, String)? {
-  if branch.trim() == "" {
-    return None
-  }
-  let output = capture_stdout(
-    "gh",
-    [
-      "pr", "list", "--head", branch, "--state", "open", "--json", "number,headRefName,baseRefName,url,createdAt",
-    ],
-    cwd=Some(project_dir),
-  )
-  let prs = @runtime.parse_open_prs(output)
-  if prs.length() > 0 {
-    Some((prs[0].pr_number, prs[0].url))
-  } else {
-    None
-  }
-}
-
-///|
-/// Scan lifecycle files for an agent whose DevLifecycle is ReviewOwned for
-/// the given PR number. Used as a fallback when the poller doesn't track
-/// the PR (e.g. after server restart).
-fn find_agent_for_pr(project_dir : String, pr_number : Int) -> String? {
-  let tmp = "/tmp/choir-find-pr-" + @sys.get_pid().to_string() + ".tmp"
-  let cmd = "ls " +
-    project_dir +
-    "/.choir/kv/lifecycle--* 2>/dev/null > " +
-    tmp +
-    " 2>/dev/null"
-  ignore(@sys.system(cmd))
-  let output = @sys.read_file(tmp)
-  ignore(@sys.delete_file_sync(tmp))
-  let needle = "\"pr_number\":" + pr_number.to_string()
-  for line in output.split("\n") {
-    let path = line.trim().to_string()
-    if path == "" {
-      continue
-    }
-    let content = @sys.read_file(path)
-    if content == "" || !content.contains(needle) {
-      continue
-    }
-    let json = @json.parse(content) catch { _ => continue }
-    let obj = match json {
-      Object(m) => m
-      _ => continue
-    }
-    match obj.get("agent_id") {
-      Some(String(id)) => return Some(id)
-      _ => ()
-    }
-  }
-  None
 }
 
 ///|
@@ -456,6 +411,18 @@ async test "discover_recovery_snapshot with mock provider" {
         },
       ]
     },
+    find_prs_by_head: async fn(_dir, _branch) {
+      @async.sleep(0)
+      [
+        @runtime.OpenPR::{
+          pr_number: 123,
+          branch: "feat/x",
+          base: "main",
+          url: "https://gh.test/123",
+          created_sec: Some(1000L),
+        },
+      ]
+    },
     list_local_agents: async fn(_dir, dir_name) {
       @async.sleep(0)
       if dir_name == "worktrees" {
@@ -471,6 +438,14 @@ async test "discover_recovery_snapshot with mock provider" {
         #|agent_id = "slug1"
         #|branch = "feat/x"
       content
+    },
+    list_lifecycle_files: async fn(_dir) {
+      @async.sleep(0)
+      []
+    },
+    read_lifecycle_file: async fn(_path) {
+      @async.sleep(0)
+      ""
     },
   }
   let snapshot = discover_recovery_snapshot(mock_provider, "/tmp", "session")

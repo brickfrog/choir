@@ -9,7 +9,7 @@ test "notify_parent uses live registry parent when present" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config)
+  let state = ServerState::new(config, make_recovery_provider())
 
   let parent_id = "main.parent"
   let live_target = match
@@ -72,7 +72,7 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config)
+  let state = ServerState::new(config, make_recovery_provider())
 
   let parent_id = "main.parent"
   // Persisted lifecycle exists on disk, but the parent agent is intentionally not inserted into the live registry.
@@ -127,7 +127,7 @@ test "notify_parent returns clear error when parent cannot be resolved" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config)
+  let state = ServerState::new(config, make_recovery_provider())
 
   let parent_id = "main.parent"
   let caller_id = "main.child"
@@ -168,7 +168,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config)
+  let state = ServerState::new(config, make_recovery_provider())
   let parent_target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":tl") {
     Some(t) => t
@@ -314,7 +314,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config)
+  let state = ServerState::new(config, make_recovery_provider())
   let parent_id = "main.tl"
   let child_id = "main.pi-leaf"
   let pr_number = 88
@@ -480,7 +480,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
     project_dir,
     terminal_session: "s",
   }
-  let state = ServerState::new(config)
+  let state = ServerState::new(config, make_recovery_provider())
   let tl_a = "main.tl-a"
   let tl_b = "main.tl-b"
   ignore(

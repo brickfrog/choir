@@ -123,7 +123,11 @@ pub async fn ServerState::handle_with_runner(
             // Poller doesn't have this PR (server restart, file_pr bypassed).
             // Fall back to scanning the registry for an agent in ReviewOwned
             // for this PR number.
-            find_agent_for_pr(self.config.project_dir, pr_number)
+            @runtime.find_agent_for_pr_in_lifecycle(
+              self.recovery_provider,
+              self.config.project_dir,
+              pr_number,
+            )
         }
       None => None
     }
@@ -1762,7 +1766,11 @@ pub async fn ServerState::handle_disconnect_with_runner(
               // (bypassing file_pr). Restrict this to branch-owning dev agents so
               // top-level TLs/workers with empty branches cannot steal tracked PR ownership.
               let recovered_pr = if disconnect_pr_recovery_candidate(agent) {
-                find_pr_for_branch(agent.branch, self.config.project_dir)
+                @runtime.find_pr_for_branch_in_provider(
+                  self.recovery_provider,
+                  self.config.project_dir,
+                  agent.branch,
+                )
               } else {
                 None
               }
@@ -2040,7 +2048,7 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config)
+  let state = ServerState::new(config, make_recovery_provider())
 
   let parent_id = "main.parent"
   let live_target = match
