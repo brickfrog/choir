@@ -43,6 +43,8 @@ const workerAgentTypeEnum = Type.Union([
 	Type.Literal("gemini"),
 	Type.Literal("claude"),
 	Type.Literal("moon_pilot"),
+	Type.Literal("codex"),
+	Type.Literal("cursor_agent"),
 	Type.Literal("pi"),
 ]);
 
@@ -139,7 +141,7 @@ const toolSpecs: ChoirToolSpec[] = [
 		name: "agent_list",
 		label: "agent_list",
 		description: "List active agents known to the Choir registry by default.",
-		roles: TL_ROLES,
+		roles: [...TL_ROLES, ...DEV_ROLES, ...WORKER_ROLES],
 		parameters: Type.Object({
 			parent_id: Type.Optional(Type.String({ description: "Optional parent id filter." })),
 			include_inactive: Type.Optional(Type.Boolean({ description: "Show inactive/done agents too." })),
@@ -158,7 +160,7 @@ const toolSpecs: ChoirToolSpec[] = [
 		name: "file_pr",
 		label: "file_pr",
 		description: "Create or update a PR for the current branch through Choir.",
-		roles: DEV_ROLES,
+		roles: [...DEV_ROLES, ...TL_ROLES],
 		promptSnippet: "Use this instead of raw `gh pr create` when operating as a Choir leaf.",
 		parameters: Type.Object({
 			caller_id: Type.Optional(Type.String({ description: "Caller id override." })),
@@ -172,7 +174,7 @@ const toolSpecs: ChoirToolSpec[] = [
 		name: "notify_parent",
 		label: "notify_parent",
 		description: "Send a status message to the current parent agent.",
-		roles: [...DEV_ROLES, ...WORKER_ROLES],
+		roles: [...DEV_ROLES, ...WORKER_ROLES, ...TL_ROLES],
 		promptSnippet: "Use this to report blockers, findings, PR readiness, or completion back to the parent.",
 		parameters: Type.Object({
 			caller_id: Type.Optional(Type.String({ description: "Caller id override." })),
@@ -184,7 +186,7 @@ const toolSpecs: ChoirToolSpec[] = [
 		name: "shutdown",
 		label: "shutdown",
 		description: "Tell Choir this agent is done and request pane shutdown.",
-		roles: [...DEV_ROLES, ...WORKER_ROLES],
+		roles: [...DEV_ROLES, ...WORKER_ROLES, ...TL_ROLES],
 		parameters: Type.Object({
 			caller_id: Type.Optional(Type.String({ description: "Caller id override." })),
 		}),
@@ -193,14 +195,14 @@ const toolSpecs: ChoirToolSpec[] = [
 		name: "task_list",
 		label: "task_list",
 		description: "List Choir tasks.",
-		roles: [...DEV_ROLES, ...WORKER_ROLES],
+		roles: [...DEV_ROLES, ...WORKER_ROLES, ...TL_ROLES],
 		parameters: Type.Object({}),
 	},
 	{
 		name: "task_get",
 		label: "task_get",
 		description: "Get a Choir task by id.",
-		roles: [...DEV_ROLES, ...WORKER_ROLES],
+		roles: [...DEV_ROLES, ...WORKER_ROLES, ...TL_ROLES],
 		parameters: Type.Object({
 			id: Type.String({ description: "Task id." }),
 		}),
@@ -209,7 +211,7 @@ const toolSpecs: ChoirToolSpec[] = [
 		name: "task_update",
 		label: "task_update",
 		description: "Update Choir task state/notes.",
-		roles: DEV_ROLES,
+		roles: [...DEV_ROLES, ...WORKER_ROLES, ...TL_ROLES],
 		parameters: Type.Object({
 			id: Type.String({ description: "Task id." }),
 			status: Type.Optional(Type.String({ description: "New task status." })),
