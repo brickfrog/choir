@@ -1,5 +1,5 @@
 ///|
-pub fn register_team_member_native(
+pub fn register_team_member(
   parent_agent_id : String,
   member_name : String,
   agent_type : String,
@@ -37,7 +37,7 @@ pub fn register_team_member_native(
 }
 
 ///|
-pub fn remove_team_member_native(
+pub fn remove_team_member(
   parent_agent_id : String,
   member_name : String,
 ) -> Bool {

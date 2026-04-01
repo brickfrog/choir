@@ -366,7 +366,7 @@ pub async fn dispatch(
           None => ()
         }
         for slug in spawned_slugs {
-          let _ = @workspace.register_team_member_native(
+          let _ = @workspace.register_team_member(
             fork_wave_args.caller_id,
             slug,
             @config.agent_type_to_string(fork_wave_args.agent_type),
@@ -1289,7 +1289,7 @@ pub async fn dispatch(
           salvage_slug,
         )
       }
-      let _ = @workspace.register_team_member_native(
+      let _ = @workspace.register_team_member(
         rescue_args.caller_id,
         rescue_args.new_slug,
         @config.agent_type_to_string(rescue_args.agent_type),
