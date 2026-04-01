@@ -243,10 +243,10 @@ fn serve_run() -> Unit {
   @moontrace.set_subscriber(fn(event) { println(event.format(color=true)) })
   @moontrace.set_min_level(@moontrace.Level::Debug)
   @sys.write_pid_file(".choir/server.pid")
-  @sys.register_cleanup(runtime_cleanup_shell() + " 2>/dev/null")
+  @sys.register_cleanup_runtime_artifacts()
   // Clean stale runtime markers from previous sessions, but preserve recoverable
   // worktrees/lifecycle/poller state so restart recovery can rehydrate agents.
-  ignore(@sys.system(runtime_cleanup_shell() + " 2>/dev/null; true"))
+  @sys.init_cleanup_runtime_artifacts_native()
   let provider = @server.make_recovery_provider()
   let state = @server.ServerState::new(config, provider)
   @moontrace.set_global_field("service", "choir".to_json())
@@ -3307,23 +3307,18 @@ fn init_should_launch_server_tab(server_alive : Bool) -> Bool {
 }
 
 ///|
-fn runtime_cleanup_shell() -> String {
-  "rm -f .choir/server.pid .choir/server.sock .choir/run_id"
+/// Relative paths removed by runtime-only cleanup (mirrors native `choir_init_cleanup_runtime_artifacts`).
+fn init_runtime_cleanup_paths() -> Array[String] {
+  [".choir/server.pid", ".choir/server.sock", ".choir/run_id"]
 }
 
 ///|
-fn purge_cleanup_shell() -> String {
-  "for w in .choir/worktrees/*/; do git worktree remove --force \"$w\" 2>/dev/null; done; rm -rf .choir/worktrees/* .choir/inline/* .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id"
-}
-
-///|
-fn init_cleanup_runtime_artifacts_command() -> @workspace.Command {
-  { program: "sh", args: ["-c", runtime_cleanup_shell()], workdir: None }
-}
-
-///|
-fn init_cleanup_server_artifacts_command() -> @workspace.Command {
-  { program: "sh", args: ["-c", purge_cleanup_shell()], workdir: None }
+/// Markers for purge-only cleanup (mirrors native `choir_init_cleanup_purge_artifacts`).
+fn init_purge_cleanup_marker_substrings() -> Array[String] {
+  [
+    ".choir/worktrees", ".choir/inline", ".choir/poller_state.json", "lifecycle--",
+    "children--", "phase-dev--", "phase-tl--",
+  ]
 }
 
 ///|
@@ -3343,13 +3338,28 @@ test "init session lifecycle commands use zellij" {
 }
 
 ///|
-test "cleanup shells separate runtime restart from purge" {
-  assert_true(runtime_cleanup_shell().contains(".choir/server.pid"))
-  assert_true(runtime_cleanup_shell().contains(".choir/server.sock"))
-  assert_false(runtime_cleanup_shell().contains(".choir/worktrees/*"))
-  assert_false(runtime_cleanup_shell().contains(".choir/poller_state.json"))
-  assert_true(purge_cleanup_shell().contains(".choir/worktrees/*"))
-  assert_true(purge_cleanup_shell().contains(".choir/poller_state.json"))
+test "cleanup paths separate runtime restart from purge" {
+  let rt = init_runtime_cleanup_paths()
+  assert_eq(rt.length(), 3)
+  for p in rt {
+    assert_false(p.contains("worktrees"))
+    assert_false(p.contains("poller"))
+    assert_false(p.contains("inline"))
+  }
+  let purge = init_purge_cleanup_marker_substrings()
+  assert_true(purge.length() >= 4)
+  let mut has_wt = false
+  let mut has_poller = false
+  for m in purge {
+    if m == ".choir/worktrees" {
+      has_wt = true
+    }
+    if m == ".choir/poller_state.json" {
+      has_poller = true
+    }
+  }
+  assert_true(has_wt)
+  assert_true(has_poller)
 }
 
 ///|
@@ -3361,18 +3371,20 @@ test "init server cleanup commands separate runtime restart from purge" {
   assert_true(@sys.pid_is_alive(@sys.get_pid()))
   assert_true(init_should_launch_server_tab(false))
   assert_false(init_should_launch_server_tab(true))
-  let runtime_cleanup = init_cleanup_runtime_artifacts_command()
-  assert_eq(runtime_cleanup.program, "sh")
-  assert_true(runtime_cleanup.args[1].contains(".choir/server.pid"))
-  assert_true(runtime_cleanup.args[1].contains(".choir/server.sock"))
-  assert_false(runtime_cleanup.args[1].contains(".choir/worktrees/*"))
-  assert_false(runtime_cleanup.args[1].contains(".choir/poller_state.json"))
-  let purge_cleanup = init_cleanup_server_artifacts_command()
-  assert_eq(purge_cleanup.program, "sh")
-  assert_true(purge_cleanup.args[1].contains(".choir/server.pid"))
-  assert_true(purge_cleanup.args[1].contains(".choir/server.sock"))
-  assert_true(purge_cleanup.args[1].contains(".choir/inline/*"))
-  assert_true(purge_cleanup.args[1].contains(".choir/poller_state.json"))
+  let rt = init_runtime_cleanup_paths()
+  assert_eq(rt.length(), 3)
+  for p in rt {
+    assert_false(p.contains("worktrees"))
+    assert_false(p.contains("poller"))
+  }
+  let purge = init_purge_cleanup_marker_substrings()
+  let mut has_inline = false
+  for m in purge {
+    if m == ".choir/inline" {
+      has_inline = true
+    }
+  }
+  assert_true(has_inline)
 }
 
 ///|
@@ -4124,17 +4136,11 @@ fn init_run() -> Unit {
         if pid_str != "" {
           @sys.write_stdout("Stopping server (PID \{pid_str})...\n")
           init_kill_server_pid_string(pid_str)
-          ignore(
-            @exec.run(
-              if purge {
-                init_cleanup_server_artifacts_command()
-              } else {
-                init_cleanup_runtime_artifacts_command()
-              },
-            ) catch {
-              _ => 0
-            },
-          )
+          if purge {
+            @sys.init_cleanup_purge_artifacts_native()
+          } else {
+            @sys.init_cleanup_runtime_artifacts_native()
+          }
         }
         @sys.write_stdout("Killing session \{session}...\n")
         ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })
@@ -4291,17 +4297,11 @@ fn stop_run() -> Unit {
       @sys.write_stdout("Killing session \{session}...\n")
       ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })
 
-      ignore(
-        @exec.run(
-          if purge {
-            init_cleanup_server_artifacts_command()
-          } else {
-            init_cleanup_runtime_artifacts_command()
-          },
-        ) catch {
-          _ => 0
-        },
-      )
+      if purge {
+        @sys.init_cleanup_purge_artifacts_native()
+      } else {
+        @sys.init_cleanup_runtime_artifacts_native()
+      }
       @sys.write_stdout("Choir stopped.\n")
     })
   })

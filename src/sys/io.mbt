@@ -361,6 +361,15 @@ pub fn spawn_zellij_pane_viewport_subscribe(
 extern "C" fn c_worktree_bootstrap_cleanup(pd : Bytes, ws : Bytes, br : Bytes) = "choir_worktree_bootstrap_cleanup"
 
 ///|
+extern "C" fn c_init_cleanup_runtime_artifacts() = "choir_init_cleanup_runtime_artifacts"
+
+///|
+extern "C" fn c_init_cleanup_purge_artifacts() = "choir_init_cleanup_purge_artifacts"
+
+///|
+extern "C" fn c_register_cleanup_runtime_artifacts() = "choir_register_cleanup_runtime_artifacts"
+
+///|
 #borrow(pd, br)
 extern "C" fn c_git_fetch_origin_branch_best_effort(pd : Bytes, br : Bytes) = "choir_git_fetch_origin_branch_best_effort"
 
@@ -388,6 +397,24 @@ pub fn git_fetch_origin_branch_best_effort_native(
     string_to_null_terminated_bytes(project_dir),
     string_to_null_terminated_bytes(branch),
   )
+}
+
+///|
+/// Unlink runtime-only markers (restart recovery state preserved). No shell.
+pub fn init_cleanup_runtime_artifacts_native() -> Unit {
+  c_init_cleanup_runtime_artifacts()
+}
+
+///|
+/// Broader destructive cleanup: worktrees, inline, kv prefixes, poller state. No `sh -c`.
+pub fn init_cleanup_purge_artifacts_native() -> Unit {
+  c_init_cleanup_purge_artifacts()
+}
+
+///|
+/// Register SIGTERM/SIGINT cleanup that unlinks runtime markers only (no shell command).
+pub fn register_cleanup_runtime_artifacts() -> Unit {
+  c_register_cleanup_runtime_artifacts()
 }
 
 ///|

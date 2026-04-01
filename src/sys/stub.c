@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -12,19 +13,39 @@
 #include <unistd.h>
 
 static char choir_cleanup_cmd[4096] = {0};
+/** When non-zero, SIGTERM/SIGINT unlink runtime markers only (no shell). */
+static int choir_cleanup_runtime_native = 0;
 
 static void choir_sigterm_handler(int sig) {
     (void)sig;
-    if (choir_cleanup_cmd[0] != '\0') {
+    if (choir_cleanup_runtime_native) {
+        unlink(".choir/server.pid");
+        unlink(".choir/server.sock");
+        unlink(".choir/run_id");
+    } else if (choir_cleanup_cmd[0] != '\0') {
         system(choir_cleanup_cmd);
     }
     _exit(0);
 }
 
 void choir_register_cleanup(const char* cmd) {
+    choir_cleanup_runtime_native = 0;
     snprintf(choir_cleanup_cmd, sizeof(choir_cleanup_cmd), "%s", cmd);
     signal(SIGTERM, choir_sigterm_handler);
     signal(SIGINT, choir_sigterm_handler);
+}
+
+void choir_register_cleanup_runtime_artifacts(void) {
+    choir_cleanup_runtime_native = 1;
+    choir_cleanup_cmd[0] = '\0';
+    signal(SIGTERM, choir_sigterm_handler);
+    signal(SIGINT, choir_sigterm_handler);
+}
+
+void choir_init_cleanup_runtime_artifacts(void) {
+    unlink(".choir/server.pid");
+    unlink(".choir/server.sock");
+    unlink(".choir/run_id");
 }
 
 int choir_get_file_size(const char* path) {
@@ -380,6 +401,58 @@ static int choir_spawn_wait_stderr_null(char **argv) {
         return WEXITSTATUS(st);
     }
     return -1;
+}
+
+static void choir_rm_rf_best_effort(const char *path) {
+    char *argv[] = {"rm", "-rf", (char *)path, NULL};
+    choir_spawn_wait_stderr_null(argv);
+}
+
+void choir_init_cleanup_purge_artifacts(void) {
+    DIR *wt = opendir(".choir/worktrees");
+    if (wt) {
+        struct dirent *ent;
+        char path[4096];
+        while ((ent = readdir(wt)) != NULL) {
+            if (ent->d_name[0] == '.') {
+                continue;
+            }
+            snprintf(path, sizeof(path), ".choir/worktrees/%s", ent->d_name);
+            struct stat st;
+            if (stat(path, &st) != 0) {
+                continue;
+            }
+            if (S_ISDIR(st.st_mode)) {
+                char *argv[] = {"git", "worktree", "remove", "--force", path, NULL};
+                choir_spawn_wait_stderr_null(argv);
+            }
+        }
+        closedir(wt);
+    }
+    choir_rm_rf_best_effort(".choir/worktrees");
+    choir_rm_rf_best_effort(".choir/inline");
+    unlink(".choir/server.pid");
+    unlink(".choir/server.sock");
+    unlink(".choir/poller_state.json");
+    unlink(".choir/run_id");
+    DIR *kv = opendir(".choir/kv");
+    if (kv) {
+        struct dirent *ent;
+        char kp[4096];
+        while ((ent = readdir(kv)) != NULL) {
+            if (ent->d_name[0] == '.') {
+                continue;
+            }
+            const char *n = ent->d_name;
+            if (strncmp(n, "lifecycle--", 11) != 0 && strncmp(n, "children--", 10) != 0 &&
+                strncmp(n, "phase-dev--", 11) != 0 && strncmp(n, "phase-tl--", 10) != 0) {
+                continue;
+            }
+            snprintf(kp, sizeof(kp), ".choir/kv/%s", n);
+            unlink(kp);
+        }
+        closedir(kv);
+    }
 }
 
 void choir_worktree_bootstrap_cleanup(const char *project_dir, const char *workspace, const char *branch) {

@@ -118,3 +118,18 @@ pub fn git_fetch_origin_branch_best_effort_native(
 ) -> Unit {
 
 }
+
+///|
+pub fn init_cleanup_runtime_artifacts_native() -> Unit {
+
+}
+
+///|
+pub fn init_cleanup_purge_artifacts_native() -> Unit {
+
+}
+
+///|
+pub fn register_cleanup_runtime_artifacts() -> Unit {
+
+}
