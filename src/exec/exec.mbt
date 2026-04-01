@@ -102,6 +102,52 @@ pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+/// Run `plugin_command` as `sh -c` under `timeout` (seconds), write `request_line` plus newline on
+/// stdin, capture up to 64KiB of stdout (stderr discarded). Replaces the previous shell pipeline
+/// that wrote stdout to a `/tmp/choir-plugin-*.json` file.
+pub async fn capture_plugin_shell_command(
+  plugin_command : String,
+  request_line : String,
+  timeout_sec : Int,
+) -> (Int, String) {
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ => return (-1, "")
+  }
+  let (stdout_read, stdout_write) = @process.read_from_process() catch {
+    _ => {
+      stdin_write.close()
+      return (-1, "")
+    }
+  }
+  let stderr_dest = @process.redirect_to_file("/dev/null") catch {
+    _ => {
+      stdin_write.close()
+      stdout_read.close()
+      return (-1, "")
+    }
+  }
+  let pid = @process.spawn_orphan(
+    "timeout",
+    [timeout_sec.to_string(), "sh", "-c", plugin_command],
+    stdin=stdin_read,
+    stdout=stdout_write,
+    stderr=stderr_dest,
+  ) catch {
+    _ => {
+      stdin_write.close()
+      stdout_read.close()
+      return (-1, "")
+    }
+  }
+  let line = request_line + "\n"
+  ignore(stdin_write.write(line) catch { _ => () })
+  stdin_write.close()
+  let (output, _) = drain_process_stdout(stdout_read, 65536)
+  let exit_code = @process.wait_pid(pid) catch { _ => -1 }
+  (exit_code, output)
+}
+
+///|
 /// Spawn `program` with `args`, capture stdout (up to 64KiB), wait for exit, return decoded output.
 pub async fn capture_stdout(program : String, args : Array[String]) -> String {
   capture_stdout_with_cwd(program, args, None)

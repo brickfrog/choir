@@ -57,24 +57,6 @@ async test "run_strict returns first failing command index and status" {
 }
 
 ///|
-fn sanitize_plugin_path_component(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    if is_alphanumeric_or_dash(c) || c == '.' {
-      buf.write_char(c)
-    } else {
-      buf.write_char('_')
-    }
-  }
-  let result = buf.to_string()
-  if result == "" {
-    "unknown"
-  } else {
-    result
-  }
-}
-
-///|
 fn plugin_request_agent_id(req : @types.Request) -> String {
   match req.args.get("agent_id") {
     Some(agent_id) => agent_id
@@ -94,7 +76,6 @@ fn plugin_request_agent_id(req : @types.Request) -> String {
 async fn dispatch_to_plugin(
   req : @types.Request,
   plugins_json : String?,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> @types.Response {
   let json = match plugins_json {
     Some(value) => value
@@ -111,29 +92,11 @@ async fn dispatch_to_plugin(
         agent_id,
         role: req.role.to_string(),
       })
-      let resp_path = "/tmp/choir-plugin-" +
-        sanitize_plugin_path_component(req.name) +
-        "-" +
-        sanitize_plugin_path_component(agent_id) +
-        ".json"
-      let cmd = @workspace.Command::{
-        program: "sh",
-        args: [
-          "-c",
-          "rm -f \"$3\" && printf '%s\\n' \"$2\" | timeout 10 sh -c \"$1\" > \"$3\" 2>/dev/null || true",
-          "sh",
-          plugin.command,
-          request_json,
-          resp_path,
-        ],
-        workdir: None,
-      }
-      ignore(
-        runner([cmd]) catch {
-          e => return @types.Response::Err(e.to_string())
-        },
+      let (_exit, resp_str) = @exec.capture_plugin_shell_command(
+        plugin.command,
+        request_json,
+        10,
       )
-      let resp_str = @sys.read_file(resp_path)
       match @plugin.parse_response(resp_str) {
         Ok(result) => result
         Err(e) => @types.Response::Err("plugin error: " + e)
@@ -1032,6 +995,15 @@ test "parse_gh_repo_view_output extracts owner and repo" {
 ///|
 test "parse_gh_repo_view_output returns None on malformed json" {
   assert_eq(parse_gh_repo_view_output("{\"owner\":{},\"name\":1}"), None)
+}
+
+///|
+async test "capture_plugin_shell_command pipes stdin through sh -c cat" {
+  let (exit_code, out) = @exec.capture_plugin_shell_command(
+    "cat", "{\"ok\":true}", 10,
+  )
+  assert_eq(exit_code, 0)
+  assert_eq(out.trim(), "{\"ok\":true}")
 }
 
 ///|
