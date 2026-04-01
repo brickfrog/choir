@@ -150,128 +150,20 @@ pub async fn ServerState::handle_with_runner(
       plugins_json=self.config.plugins_json,
     )
   }
-  if req.name == "shutdown" && resp.is_ok() {
-    match request_agent_id(req) {
-      Some(agent_id) =>
-        match resp.ok_field("status") {
-          Some("shutdown") =>
-            self.finalize_agent_with_runner(
-              agent_id,
-              "shutdown",
-              runner,
-              notify_parent=true,
-            )
-          _ => ()
-        }
-      None => ()
-    }
-  }
-  if req.name == "merge_pr" && resp.is_ok() {
-    match (request_int_arg(req, "pr_number"), merged_agent_id) {
-      (Some(pr_number), Some(agent_id)) => {
-        ignore(
-          @phase.apply_dev_event_checked(
-            self.config.project_dir,
-            agent_id,
-            @phase.DevEvent::MergeObserved(pr_number~),
-          ),
-        )
-        match self.registry.get(agent_id) {
-          Ok(leaf) =>
-            match leaf.parent {
-              Some(parent_id) =>
-                match self.resolve_parent_by_id(parent_id) {
-                  Ok(parent) => {
-                    let (branch, parent_branch_str, url) = match
-                      self.poller.get(pr_number) {
-                      Some(t) => (t.branch, t.parent_branch, t.pr_url)
-                      None => (leaf.branch, "", "")
-                    }
-                    let body = merged_pr_parent_message(
-                      pr_number, agent_id, branch, parent_branch_str, url,
-                    )
-                    let delivery = @message.plan_delivery(
-                      parent, agent_id, body, "success",
-                    )
-                    ignore(
-                      @tools.execute_delivery(delivery, runner) catch {
-                        _ => Ok(())
-                      },
-                    )
-                  }
-                  Err(_) => ()
-                }
-              None => ()
-            }
-          Err(_) => ()
-        }
-        self.finalize_agent_with_runner(
-          agent_id,
-          "merged",
-          runner,
-          notify_parent=false,
-        )
-      }
-      _ => ()
-    }
-  }
-  if req.name == "kill_agent" && resp.is_ok() {
-    match req.args.get("agent_id") {
-      Some(agent_id) =>
-        self.fail_agent_with_runner(
-          agent_id,
-          @phase.FailureReason::ParentKilled,
-          "agent killed by parent",
-          "killed",
-          runner,
-          close_target=false,
-        )
-      _ => ()
-    }
-  }
+
+  // Extracted orchestration planning and interpretation
+  let actions = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id~,
+    self.poller,
+    self.registry,
+  )
+  self.interpret_post_tool_actions(actions, runner)
+
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp) catch {
     _ => ()
-  }
-  // Start pane watchers for newly spawned agents
-  if (
-      req.name == "fork_wave" ||
-      req.name == "spawn_worker" ||
-      req.name == "rescue_leaf"
-    ) &&
-    resp.is_ok() {
-    let watch_ids : Array[String] = []
-    match resp.ok_field("agent_ids") {
-      Some(ids) =>
-        for part in ids.split(",") {
-          let agent_id = part.to_string().trim().to_string()
-          if agent_id != "" {
-            watch_ids.push(agent_id)
-          }
-        }
-      None => ()
-    }
-    if req.name == "rescue_leaf" {
-      match resp.ok_field("agent_id") {
-        Some(agent_id) => {
-          let aid = agent_id.trim().to_string()
-          if aid != "" {
-            watch_ids.push(aid)
-          }
-        }
-        None => ()
-      }
-    }
-    for agent_id in watch_ids {
-      match self.registry.get(agent_id) {
-        Ok(agent) =>
-          match agent.terminal_target {
-            Some(_) => self.watch_pane(agent_id)
-            None => ()
-          }
-        Err(_) => ()
-      }
-    }
   }
   resp
 }
@@ -380,32 +272,79 @@ fn ServerState::resolve_parent_for_delivery(
 }
 
 ///|
-/// Parent-facing text after `merge_pr` tool succeeds — distinct from poller pre-merge signals.
-fn merged_pr_parent_message(
-  pr_number : Int,
-  leaf_agent_id : String,
-  branch : String,
-  parent_branch : String,
-  pr_url : String,
-) -> String {
-  let branch_disp = if branch == "" { "<unknown>" } else { branch }
-  let parent_disp = if parent_branch == "" {
-    "<unknown>"
-  } else {
-    parent_branch
+async fn ServerState::interpret_post_tool_actions(
+  self : ServerState,
+  actions : Array[PostToolAction],
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  for action in actions {
+    match action {
+      FinalizeAgent(agent_id~, exit_reason~, notify_parent~) =>
+        self.finalize_agent_with_runner(
+          agent_id,
+          exit_reason,
+          runner,
+          notify_parent~,
+        )
+      FailAgent(
+        agent_id~,
+        reason~,
+        parent_message~,
+        exit_reason~,
+        close_target~
+      ) =>
+        self.fail_agent_with_runner(
+          agent_id,
+          reason,
+          parent_message,
+          exit_reason,
+          runner,
+          close_target~,
+        )
+      WatchPane(agent_id~) =>
+        match self.registry.get(agent_id) {
+          Ok(agent) =>
+            match agent.terminal_target {
+              Some(_) => self.watch_pane(agent_id)
+              None => ()
+            }
+          Err(_) => ()
+        }
+      UpdateDevLifecycle(agent_id~, event~) =>
+        ignore(
+          @phase.apply_dev_event_checked(
+            self.config.project_dir,
+            agent_id,
+            event,
+          ),
+        )
+      DeliverToParentMerged(leaf_id~, pr_number~, branch~, parent_branch~, url~) =>
+        match self.registry.get(leaf_id) {
+          Ok(leaf) =>
+            match leaf.parent {
+              Some(parent_id) =>
+                match self.resolve_parent_by_id(parent_id) {
+                  Ok(parent) => {
+                    let body = merged_pr_parent_message(
+                      pr_number, leaf_id, branch, parent_branch, url,
+                    )
+                    let delivery = @message.plan_delivery(
+                      parent, leaf_id, body, "success",
+                    )
+                    ignore(
+                      @tools.execute_delivery(delivery, runner) catch {
+                        _ => Ok(())
+                      },
+                    )
+                  }
+                  Err(_) => ()
+                }
+              None => ()
+            }
+          Err(_) => ()
+        }
+    }
   }
-  let url_line = if pr_url == "" { "" } else { "\npr_url: " + pr_url }
-  "[PR MERGED] merge_pr succeeded — PR #" +
-  pr_number.to_string() +
-  " is merged on the remote." +
-  "\nleaf_agent: " +
-  leaf_agent_id +
-  "\nbranch: " +
-  branch_disp +
-  "\nparent_branch: " +
-  parent_disp +
-  url_line +
-  "\nAuthoritative merge signal: do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
 }
 
 ///|
@@ -1984,30 +1923,6 @@ pub async fn ServerState::process_pending_disconnects(
     grace_seconds,
     runner=@exec.run_sequence,
   )
-}
-
-///|
-test "merged_pr_parent_message is distinct from pre-merge signals" {
-  let msg = merged_pr_parent_message(
-    42, "main.leaf-z", "feat/z", "main", "https://github.com/o/r/pull/42",
-  )
-  assert_true(msg.contains("[PR MERGED]"))
-  assert_true(msg.contains("merge_pr succeeded"))
-  assert_true(msg.contains("PR #42"))
-  assert_true(msg.contains("main.leaf-z"))
-  assert_true(msg.contains("feat/z"))
-  assert_true(msg.contains("parent_branch: main"))
-  assert_true(msg.contains("pr_url: https://github.com/o/r/pull/42"))
-  assert_true(msg.contains("[PR READY]"))
-  assert_true(msg.contains("[FIXES PUSHED]"))
-}
-
-///|
-test "merged_pr_parent_message uses unknown when branch or parent_branch missing" {
-  let msg = merged_pr_parent_message(3, "leaf", "", "", "")
-  assert_true(msg.contains("branch: <unknown>"))
-  assert_true(msg.contains("parent_branch: <unknown>"))
-  assert_false(msg.contains("pr_url:"))
 }
 
 ///|
