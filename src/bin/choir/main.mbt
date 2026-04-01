@@ -3116,14 +3116,15 @@ test "companion commands use isolated worktree with zellij tab" {
     "worktree", "add", "/proj/.choir/agents/monitor", "-b", "main.companion.monitor",
     "main",
   ])
-  assert_true(cmds[2].args[4].contains("default_role = \"dev\""))
-  assert_true(cmds[2].args[4].contains("terminal_session = \"choir\""))
-  assert_true(cmds[3].args[4].contains("agent_id = \"main.companion.monitor\""))
-  assert_true(cmds[3].args[4].contains("parent_branch = \"main\""))
+  assert_eq(cmds[2].program, @workspace.native_write_choir_file_program)
+  assert_true(cmds[2].args[2].contains("default_role = \"dev\""))
+  assert_true(cmds[2].args[2].contains("terminal_session = \"choir\""))
+  assert_true(cmds[3].args[2].contains("agent_id = \"main.companion.monitor\""))
+  assert_true(cmds[3].args[2].contains("parent_branch = \"main\""))
   assert_true(
-    cmds[3].args[4].contains("terminal_target = \"zellij-tab:choir:monitor\""),
+    cmds[3].args[2].contains("terminal_target = \"zellij-tab:choir:monitor\""),
   )
-  assert_true(cmds[3].args[4].contains("agent_type = \"claude\""))
+  assert_true(cmds[3].args[2].contains("agent_type = \"claude\""))
   assert_true(cmds[6].args[11].contains("claude"))
   assert_true(cmds[6].args[11].contains("\"mcpServers\""))
   assert_true(cmds[6].args[11].contains("main.companion.monitor"))
