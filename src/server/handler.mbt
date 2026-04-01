@@ -247,6 +247,75 @@ pub fn ServerState::track_recovered_pr(
 }
 
 ///|
+pub fn ServerState::sync_recovered_pr_lifecycle(
+  self : ServerState,
+  agent_id : String,
+  pr : @runtime.OpenPR,
+  review : @poller.ReviewState,
+) -> Unit {
+  let agent_opt = self.registry.get(agent_id).to_option()
+  let lifecycle = self.current_lifecycle(agent_id)
+  let workflow = match lifecycle.workflow {
+    @phase.WorkflowState::Dev(dev) =>
+      @phase.WorkflowState::Dev(
+        @runtime.recover_dev_lifecycle_for_pr(dev, pr.pr_number, pr.url, review),
+      )
+    other => other
+  }
+  let recovered = {
+    ..lifecycle,
+    workflow,
+    process: match agent_opt {
+      Some(agent) if agent.terminal_target is Some(_) =>
+        @phase.ProcessState::Connected
+      _ => lifecycle.process
+    },
+  }
+  @phase.apply_recovered_lifecycle(
+    self.config.project_dir,
+    self.config.terminal_session,
+    self.registry,
+    agent_id,
+    recovered,
+  )
+}
+
+///|
+pub fn ServerState::finalize_recovered_offline_agent(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  let lifecycle = self.current_lifecycle(agent_id)
+  match lifecycle.process {
+    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => ()
+    _ => {
+      let finalized = {
+        ..lifecycle,
+        process: @phase.ProcessState::Finalized(
+          reason=@phase.FinalizeReason::RecoveredDone,
+        ),
+      }
+      @phase.apply_recovered_lifecycle(
+        self.config.project_dir,
+        self.config.terminal_session,
+        self.registry,
+        agent_id,
+        finalized,
+      )
+    }
+  }
+}
+
+///|
+pub async fn ServerState::persist_recovered_poller_state(
+  self : ServerState,
+) -> Unit {
+  let tracked = []
+  self.poller.tracked.each(fn(_k, v) { tracked.push(v) })
+  (self.recovery_provider.write_poller_state)(self.config.project_dir, tracked)
+}
+
+///|
 pub fn ServerState::notify_parent(
   self : ServerState,
   caller_id : String,
