@@ -1775,11 +1775,7 @@ fn trust_gemini_folder_run() -> Unit {
   }
   let gemini_dir = home + "/.gemini"
   let trusted_path = gemini_dir + "/trustedFolders.json"
-  ignore(
-    @sys.system(
-      "mkdir -p '" + init_escape_shell_single_quoted(gemini_dir) + "'",
-    ),
-  )
+  ignore(@sys.create_dir_all(gemini_dir))
   let content = @sys.read_file(trusted_path)
   let updated = trusted_folders_json(content, args[2])
   if @sys.write_file_sync(trusted_path, updated) {
