@@ -250,6 +250,14 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   if native_rel >= 0 {
     return native_rel
   }
+  let native_pi_dirs = @workspace.run_native_pi_runtime_dirs_command(cmd)
+  if native_pi_dirs >= 0 {
+    return native_pi_dirs
+  }
+  let native_pi_auth = @workspace.run_native_pi_seed_auth_command(cmd)
+  if native_pi_auth >= 0 {
+    return native_pi_auth
+  }
   let prog = cmd.program
   let args = cmd.args[:]
   match cmd.workdir {

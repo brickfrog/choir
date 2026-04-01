@@ -64,6 +64,14 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 }
 
 ///|
+/// True when `path` can be opened for reading as a regular file (`fopen` succeeds).
+/// Directories and missing paths yield false.
+pub fn path_exists(path : String) -> Bool {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  c_get_file_size(path_bytes) >= 0
+}
+
+///|
 pub fn read_file(path : String) -> String {
   let path_bytes = string_to_null_terminated_bytes(path)
   let size = c_get_file_size(path_bytes)
