@@ -711,7 +711,7 @@ pub fn ServerState::plan_poll_event_deliveries(
             Ok(parent) => {
               ignore(
                 @sys.append_file_sync(
-                  ".choir/delivery.log",
+                  self.config.project_dir + "/.choir/delivery.log",
                   "[poller-parent] agent=" +
                   leaf_agent_id +
                   " parent=" +
@@ -833,9 +833,12 @@ async fn deliver_pending_poll_events(
 }
 
 ///|
-fn append_poller_delivery_line(line : String) -> Unit {
+fn append_poller_delivery_line(project_dir : String, line : String) -> Unit {
   ignore(
-    @sys.append_file_sync(".choir/delivery.log", "[poller] " + line + "\n"),
+    @sys.append_file_sync(
+      project_dir + "/.choir/delivery.log",
+      "[poller] " + line + "\n",
+    ),
   )
 }
 
@@ -873,7 +876,10 @@ fn poll_events_delivery_summary(events : Array[@poller.PollEvent]) -> String {
 }
 
 ///|
-fn log_poller_pr_tick(log : @poller.PollerPrTickLog) -> Unit {
+fn log_poller_pr_tick(
+  project_dir : String,
+  log : @poller.PollerPrTickLog,
+) -> Unit {
   let action = if log.skipped_backoff {
     "skipped_backoff"
   } else if log.untracked_closed {
@@ -918,7 +924,7 @@ fn log_poller_pr_tick(log : @poller.PollerPrTickLog) -> Unit {
     events_summary +
     " failures=" +
     log.consecutive_failures.to_string()
-  append_poller_delivery_line(line)
+  append_poller_delivery_line(project_dir, line)
   if log.consecutive_failures > log.previous_consecutive_failures {
     @moontrace.info(
       "poller backoff",
@@ -930,6 +936,7 @@ fn log_poller_pr_tick(log : @poller.PollerPrTickLog) -> Unit {
       ]),
     )
     append_poller_delivery_line(
+      project_dir,
       "backoff pr=" +
       log.pr_number.to_string() +
       " consecutive_failures=" +
@@ -979,7 +986,9 @@ pub async fn ServerState::process_poller_tick(
     "poller tick start",
     fields=@moontrace.fields([("tracked_prs", tracked_before.to_json())]),
   )
+  let project_dir = self.config.project_dir
   append_poller_delivery_line(
+    project_dir,
     "tick_start tracked_prs=" + tracked_before.to_string(),
   )
   self.poller.tick_with(
@@ -992,7 +1001,7 @@ pub async fn ServerState::process_poller_tick(
     },
     fn(log) {
       tick_event_total = tick_event_total + log.events.length()
-      log_poller_pr_tick(log)
+      log_poller_pr_tick(project_dir, log)
     },
   )
   let tracked_after = self.poller.tracked.length()
@@ -1004,6 +1013,7 @@ pub async fn ServerState::process_poller_tick(
     ]),
   )
   append_poller_delivery_line(
+    project_dir,
     "tick_end events_generated=" +
     tick_event_total.to_string() +
     " tracked_after=" +

@@ -506,15 +506,16 @@ pub async fn ensure_branch_ready_for_file_pr(
 }
 
 ///|
-pub async fn ensure_pull_request(
+pub async fn ensure_pull_request_with_capture(
   branch : String,
   parent_branch : String,
   project_dir : String,
   title : String?,
   body : String?,
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[PullRequestInfo, String] {
   let view_cmd = { ..gh_pr_view_command(branch), workdir: Some(project_dir) }
-  let (view_exit, view_output) = capture_command_output(view_cmd)
+  let (view_exit, view_output) = capture(view_cmd)
   if view_exit == 0 {
     match parse_pull_request_info(view_output) {
       Some(pr) => if pr.state == "OPEN" { return Ok(pr) }
@@ -531,7 +532,7 @@ pub async fn ensure_pull_request(
     ..gh_pr_create_command(branch, parent_branch, title~, body~),
     workdir: Some(project_dir),
   }
-  let (create_exit, create_output) = capture_command_output(create_cmd)
+  let (create_exit, create_output) = capture(create_cmd)
   if create_exit != 0 {
     let message = create_output.trim().to_string()
     if message != "" {
@@ -541,7 +542,7 @@ pub async fn ensure_pull_request(
     }
   }
 
-  let (post_view_exit, post_view_output) = capture_command_output(view_cmd)
+  let (post_view_exit, post_view_output) = capture(view_cmd)
   if post_view_exit != 0 {
     return Err("gh pr view failed after create for branch: " + branch)
   }
@@ -555,15 +556,31 @@ pub async fn ensure_pull_request(
 }
 
 ///|
-/// Detect the repo's default branch via git symbolic-ref.
+pub async fn ensure_pull_request(
+  branch : String,
+  parent_branch : String,
+  project_dir : String,
+  title : String?,
+  body : String?,
+) -> Result[PullRequestInfo, String] {
+  ensure_pull_request_with_capture(
+    branch, parent_branch, project_dir, title, body, capture_command_output,
+  )
+}
+
+///|
+/// Detect the repo's default branch via git symbolic-ref (injectable capture).
 /// Falls back to "main" if detection fails.
-pub async fn detect_default_branch(project_dir : String) -> String {
+pub async fn detect_default_branch_with_capture(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String {
   let cmd : @workspace.Command = {
     program: "git",
-    args: ["symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
+    args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
     workdir: Some(project_dir),
   }
-  let (exit_code, output) = capture_command_output(cmd)
+  let (exit_code, output) = capture(cmd)
   if exit_code == 0 {
     let trimmed = output.trim().to_string()
     // Output is "origin/main" or "origin/master" — strip the "origin/" prefix
@@ -578,6 +595,13 @@ pub async fn detect_default_branch(project_dir : String) -> String {
   } else {
     "main"
   }
+}
+
+///|
+/// Detect the repo's default branch via git symbolic-ref.
+/// Falls back to "main" if detection fails.
+pub async fn detect_default_branch(project_dir : String) -> String {
+  detect_default_branch_with_capture(project_dir, capture_command_output)
 }
 
 ///|

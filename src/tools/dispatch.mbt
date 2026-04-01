@@ -502,7 +502,8 @@ pub async fn dispatch(
                               "\n",
                             ),
                           )
-                          match execute_delivery(delivery, runner) {
+                          match
+                            execute_delivery(delivery, runner, project_dir~) {
                             Ok(_) => ()
                             Err(e) => {
                               @moontrace.error(
@@ -575,6 +576,7 @@ pub async fn dispatch(
         let (thread_count, thread_text) = fetch_unresolved_review_threads(
           merge_args.pr_number,
           project_dir,
+          capture_command_output,
         )
         if thread_count > 0 {
           return @types.Response::Err(
@@ -706,7 +708,7 @@ pub async fn dispatch(
                 notify_args.message,
                 notify_args.status,
               )
-              match execute_delivery(delivery, runner) {
+              match execute_delivery(delivery, runner, project_dir~) {
                 Ok(_) => {
                   apply_dev_event(
                     project_dir,
@@ -746,7 +748,7 @@ pub async fn dispatch(
               )
               ignore(
                 @sys.append_file_sync(
-                  ".choir/delivery.log",
+                  project_dir + "/.choir/delivery.log",
                   "[send_message] target=" +
                   send_args.target_id +
                   " terminal_target=" +
@@ -758,7 +760,7 @@ pub async fn dispatch(
                   "\n",
                 ),
               )
-              match execute_delivery(delivery, runner) {
+              match execute_delivery(delivery, runner, project_dir~) {
                 Ok(_) =>
                   @types.Response::ok_values({
                     "status": String::to_json("sent"),

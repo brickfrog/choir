@@ -249,6 +249,7 @@ pub async fn verify_teams_delivery(
 pub async fn execute_delivery(
   delivery : @message.DeliveryMethod,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  project_dir? : String = ".",
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, String] {
   fn ensure_success(statuses : Array[Int]) -> Result[Unit, String] {
@@ -285,6 +286,7 @@ pub async fn execute_delivery(
     }
     buf.to_string()
   }
+  let log_path = project_dir + "/.choir/delivery.log"
   fn log_delivery_retry(
     target : String,
     attempt : Int,
@@ -293,7 +295,7 @@ pub async fn execute_delivery(
   ) -> Unit {
     ignore(
       @sys.append_file_sync(
-        ".choir/delivery.log",
+        log_path,
         "[delivery-retry] ts_ms=" +
         delivery_timestamp() +
         " target=" +
@@ -311,7 +313,7 @@ pub async fn execute_delivery(
   fn log_delivery_failure(target : String, error : String) -> Unit {
     ignore(
       @sys.append_file_sync(
-        ".choir/delivery.log",
+        log_path,
         "[delivery-failed] ts_ms=" +
         delivery_timestamp() +
         " target=" +
@@ -373,7 +375,7 @@ pub async fn execute_delivery(
       let cmd = @workspace.local_send_text(target, text)
       ignore(
         @sys.append_file_sync(
-          ".choir/delivery.log",
+          log_path,
           "[delivery] target=" +
           target.to_string() +
           " cmd=" +
@@ -383,7 +385,7 @@ pub async fn execute_delivery(
       )
       ignore(
         @sys.append_file_sync(
-          ".choir/delivery.log",
+          log_path,
           "[delivery] dispatch-with-retry target=" + target.to_string() + "\n",
         ),
       )
@@ -400,6 +402,8 @@ pub async fn execute_delivery(
     }
   }
 }
+
+///|
 
 ///|
 /// Parse the JSON response from `gh api graphql` for unresolved review threads.
@@ -506,13 +510,16 @@ pub fn parse_gh_repo_view_output(json_str : String) -> (String, String)? {
 }
 
 ///|
-async fn fetch_gh_repo_owner_name(project_dir : String) -> (String, String)? {
+async fn fetch_gh_repo_owner_name(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> (String, String)? {
   let cmd : @workspace.Command = {
     program: "gh",
     args: ["repo", "view", "--json", "owner,name"],
     workdir: Some(project_dir),
   }
-  let (exit_code, output) = capture_command_output(cmd)
+  let (exit_code, output) = capture(cmd)
   if exit_code != 0 || output.trim().to_string() == "" {
     return None
   }
@@ -528,8 +535,9 @@ async fn fetch_gh_repo_owner_name(project_dir : String) -> (String, String)? {
 async fn fetch_unresolved_review_threads(
   pr_number : Int,
   project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> (Int, String) {
-  let (owner, repo) = match fetch_gh_repo_owner_name(project_dir) {
+  let (owner, repo) = match fetch_gh_repo_owner_name(project_dir, capture) {
     Some(pair) => pair
     None => return (0, "")
   }
@@ -550,7 +558,7 @@ async fn fetch_unresolved_review_threads(
     ],
     workdir: Some(project_dir),
   }
-  let (exit_code, output) = capture_command_output(cmd)
+  let (exit_code, output) = capture(cmd)
   if exit_code != 0 || output.trim().to_string() == "" {
     return (0, "")
   }

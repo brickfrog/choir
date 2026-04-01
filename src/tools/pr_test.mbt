@@ -373,3 +373,96 @@ async test "file_pr_preflight_with_capture fails on gh auth" {
     _ => fail("expected GhAuthFailed")
   }
 }
+
+///|
+fn is_symbolic_ref_command(cmd : @workspace.Command) -> Bool {
+  cmd.program == "git" &&
+  cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] &&
+  cmd.workdir == Some("/repo")
+}
+
+///|
+async fn mock_detect_origin_main(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if is_symbolic_ref_command(cmd) {
+    (0, "origin/main\n")
+  } else {
+    (-1, "")
+  }
+}
+
+///|
+async test "detect_default_branch_with_capture strips origin/ prefix" {
+  let branch = detect_default_branch_with_capture(
+    "/repo", mock_detect_origin_main,
+  )
+  assert_eq(branch, "main")
+}
+
+///|
+async fn mock_detect_origin_master(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if is_symbolic_ref_command(cmd) {
+    (0, "origin/master\n")
+  } else {
+    (-1, "")
+  }
+}
+
+///|
+async test "detect_default_branch_with_capture handles master" {
+  let branch = detect_default_branch_with_capture(
+    "/repo", mock_detect_origin_master,
+  )
+  assert_eq(branch, "master")
+}
+
+///|
+async fn mock_detect_failure(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if is_symbolic_ref_command(cmd) {
+    (1, "error: not a git repo\n")
+  } else {
+    (-1, "")
+  }
+}
+
+///|
+async test "detect_default_branch_with_capture falls back to main on failure" {
+  let branch = detect_default_branch_with_capture("/repo", mock_detect_failure)
+  assert_eq(branch, "main")
+}
+
+///|
+async fn mock_ensure_pr_exists(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" &&
+    cmd.args.length() >= 2 &&
+    cmd.args[0] == "pr" &&
+    cmd.args[1] == "view" {
+    (
+      0, "{\"number\":42,\"url\":\"https://github.com/x/y/pull/42\",\"state\":\"OPEN\"}",
+    )
+  } else {
+    (-1, "")
+  }
+}
+
+///|
+async test "ensure_pull_request_with_capture returns existing open PR" {
+  let got = ensure_pull_request_with_capture(
+    "t.leaf",
+    "main",
+    "/repo",
+    None,
+    None,
+    mock_ensure_pr_exists,
+  )
+  match got {
+    Ok(pr) => {
+      assert_eq(pr.number, 42)
+      assert_eq(pr.state, "OPEN")
+    }
+    Err(e) => fail("expected Ok: " + e)
+  }
+}
