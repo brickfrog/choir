@@ -72,6 +72,64 @@ pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+/// Run `hook_path` as an executable (e.g. `*.sh` with shebang) with `stdin_body` written to stdin
+/// (no trailing newline added; matches `printf '%s'` feeding a pipe). Stderr is merged into the
+/// capture stream like shell `2>&1`. Returns `(exit_code, merged_output)`; negative `exit_code`
+/// means spawn/pipe/wait failure.
+pub async fn capture_hook_script_merged(
+  hook_path : String,
+  stdin_body : String,
+  cwd : String?,
+) -> (Int, String) {
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ => return (-1, "")
+  }
+  let (stdout_read, stdout_write) = @process.read_from_process() catch {
+    _ => {
+      stdin_write.close()
+      return (-1, "")
+    }
+  }
+  let argv : Array[String] = []
+  let pid = match cwd {
+    Some(dir) =>
+      @process.spawn_orphan(
+        hook_path,
+        argv,
+        stdin=stdin_read,
+        stdout=stdout_write,
+        stderr=stdout_write,
+        cwd=dir,
+      ) catch {
+        _ => {
+          stdin_write.close()
+          stdout_read.close()
+          return (-1, "")
+        }
+      }
+    None =>
+      @process.spawn_orphan(
+        hook_path,
+        argv,
+        stdin=stdin_read,
+        stdout=stdout_write,
+        stderr=stdout_write,
+      ) catch {
+        _ => {
+          stdin_write.close()
+          stdout_read.close()
+          return (-1, "")
+        }
+      }
+  }
+  ignore(stdin_write.write(stdin_body) catch { _ => () })
+  stdin_write.close()
+  let (output, _) = drain_process_stdout(stdout_read, 65536)
+  let exit_code = @process.wait_pid(pid) catch { _ => -1 }
+  (exit_code, output)
+}
+
+///|
 /// Like [`capture_command_merged`], but only stdout is captured (stderr is not redirected to the
 /// pipe). Matches shell `cmd >capture` without `2>&1` for JSON and other stdout-only protocols.
 pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {

@@ -1551,20 +1551,15 @@ pub async fn handle_request(
           exit_reason: None,
         }
         let input_json = input.to_json_string()
-        let output_path = project_dir + "/.choir/hooks/pre_tool_use.out"
-        let hook_cmd = @workspace.Command::{
-          program: "sh",
-          args: [
-            "-c", "printf '%s' \"$1\" | \"$2\" > \"$3\" 2>&1", "sh", input_json,
-            hook_path, output_path,
-          ],
-          workdir: Some(project_dir),
+        let (hook_status, output_json) = @exec.capture_hook_script_merged(
+          hook_path,
+          input_json,
+          Some(project_dir),
+        )
+        if hook_status < 0 {
+          return @types.Response::Err("hook execution failed")
         }
-        let codes = runner([hook_cmd]) catch {
-          _ => return @types.Response::Err("hook execution failed")
-        }
-        if codes.length() > 0 && codes[0] == 0 {
-          let output_json = @sys.read_file(output_path)
+        if hook_status == 0 {
           match @hooks.HookResponse::from_json_string(output_json) {
             Some(res) =>
               if !res.continue_ {
@@ -1617,7 +1612,6 @@ pub async fn handle_request(
           exit_reason: None,
         },
         project_dir,
-        runner,
       )
       resp
     }
@@ -1629,26 +1623,15 @@ pub async fn fire_hook_async(
   event : @hooks.HookEvent,
   input : @hooks.HookInput,
   project_dir : String,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
   let hook_path = project_dir + "/.choir/hooks/" + event.script_name() + ".sh"
   if @sys.read_file(hook_path) == "" {
     return
   }
   let input_json = input.to_json_string()
-  let output_path = project_dir +
-    "/.choir/hooks/" +
-    event.script_name() +
-    ".out"
-  let cmd = @workspace.Command::{
-    program: "sh",
-    args: [
-      "-c", "printf '%s' \"$1\" | \"$2\" > \"$3\" 2>&1", "sh", input_json, hook_path,
-      output_path,
-    ],
-    workdir: Some(project_dir),
-  }
-  ignore(runner([cmd]) catch { _ => [] })
+  ignore(
+    @exec.capture_hook_script_merged(hook_path, input_json, Some(project_dir)),
+  )
 }
 
 ///|
