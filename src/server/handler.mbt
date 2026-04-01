@@ -1052,7 +1052,10 @@ pub async fn ServerState::process_poller_tick(
 /// Register a pane for idle watchdog monitoring.
 /// Starts a `zellij subscribe` process that streams pane viewport updates
 /// to a snapshot file, replacing the old dump-screen polling approach.
-pub fn ServerState::watch_pane(self : ServerState, agent_id : String) -> Unit {
+pub async fn ServerState::watch_pane(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
   let agent = match self.registry.get(agent_id) {
     Ok(a) => a
     Err(_) => return
