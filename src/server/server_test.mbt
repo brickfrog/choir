@@ -62,6 +62,42 @@ test "notify_parent uses live registry parent when present" {
 }
 
 ///|
+test "init_run_id reuses existing run_id file" {
+  let project_dir = "/tmp/choir-run-id-test-existing-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let run_id_path = project_dir + "/.choir/run_id"
+  assert_true(@sys.write_file_sync(run_id_path, "stable-run-id\n"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "s",
+  }
+  let state = ServerState::new(config, make_recovery_provider())
+  assert_eq(state.run_id, "stable-run-id")
+}
+
+///|
+test "init_run_id persists generated run_id via native write" {
+  let project_dir = "/tmp/choir-run-id-test-fresh-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "s",
+  }
+  let state = ServerState::new(config, make_recovery_provider())
+  let on_disk = @sys.read_file(project_dir + "/.choir/run_id")
+  assert_eq(state.run_id, on_disk)
+  assert_true(state.run_id.length() > 0)
+}
+
+///|
 test "notify_parent falls back to persisted lifecycle when parent missing from registry" {
   let project_dir = "/tmp/choir-notify-parent-test-" +
     "fallback-lifecycle-" +

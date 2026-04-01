@@ -16,13 +16,8 @@ pub struct ServerState {
 fn persist_run_id(project_dir : String, run_id : String) -> Unit {
   let choir_dir = project_dir + "/.choir"
   let path = choir_dir + "/run_id"
-  let script = "mkdir -p " +
-    @exec.quote(choir_dir) +
-    " && printf '%s' " +
-    @exec.quote(run_id) +
-    " > " +
-    @exec.quote(path)
-  ignore(@sys.system("sh -c " + @exec.quote(script)))
+  ignore(@sys.create_dir_all(choir_dir))
+  ignore(@sys.write_file_sync(path, run_id))
 }
 
 ///|
