@@ -30,3 +30,17 @@ test "command_to_shell_string quotes" {
     "'echo' 'it'\\''s fine' 'quoted \"arg\"'",
   )
 }
+
+///|
+test "resolve_executable_in_path_from_path_var misses when absent" {
+  let got = resolve_executable_in_path_from_path_var(
+    "___choir_test_nonexistent_tool___", "/__nope_choir__/bin:/__also_bad_choir__",
+  )
+  assert_eq(got, None)
+}
+
+///|
+test "resolve_executable_in_path_from_path_var finds sh under /bin when present" {
+  let got = resolve_executable_in_path_from_path_var("sh", "/bin")
+  assert_eq(got, Some("/bin/sh"))
+}
