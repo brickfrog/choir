@@ -379,34 +379,26 @@ pub fn remote_spawn_commands(
 ) -> Array[Command] {
   let branch = canonical_agent_id(spec)
   let workspace = "$HOME/exo-workspaces/" + branch
-  let config_toml = "default_role = \"" +
-    @config.role_to_string(spec.role) +
-    "\"\nlisten_tcp = \"" +
-    tcp_addr +
-    "\"\nagent_id = \"" +
-    branch +
-    "\"\nparent_id = \"" +
-    spec.parent_id +
-    "\"\nbranch = \"" +
-    branch +
-    "\"\nparent_branch = \"" +
-    spec.parent_branch +
-    "\"\nworkspace = \"" +
-    workspace +
-    "\"\nagent_type = \"" +
-    @config.agent_type_to_string(spec.agent_type) +
-    "\"\n"
+  let terminal_target = @types.LocalTarget::{
+    kind: ZellijPane,
+    session: "remote",
+    name: spec.slug,
+  }
+  let config_toml = child_config_content(
+    spec.role,
+    "remote",
+    workspace,
+    ".choir/server.sock",
+    listen_tcp=Some(tcp_addr),
+  )
+  let local_config_toml = config_local_content(spec, workspace, terminal_target)
   let launch_cmd = agent_launch_command(
     spec,
     workspace,
     parent_session_id~,
     extra_mcp_servers_json~,
   )
-  let agent_cmd = launch_env_prefix(spec, "remote", workspace, @types.LocalTarget::{
-      kind: ZellijPane,
-      session: "remote",
-      name: spec.slug,
-    }) +
+  let agent_cmd = launch_env_prefix(spec, "remote", workspace, terminal_target) +
     command_text_for_launch(launch_cmd)
   [
     ssh_cmd(
@@ -430,7 +422,11 @@ pub fn remote_spawn_commands(
       @sys.shell_quote(config_toml) +
       " > " +
       workspace +
-      "/.choir/config.toml",
+      "/.choir/config.toml && printf '%s' " +
+      @sys.shell_quote(local_config_toml) +
+      " > " +
+      workspace +
+      "/.choir/config.local.toml",
     ),
     ssh_cmd(
       ssh_target,

@@ -720,7 +720,7 @@ test "mcp_json_content merges extra servers" {
 }
 
 ///|
-test "remote_spawn_commands produces 4 ssh commands" {
+test "remote_spawn_commands produces 3 ssh commands and includes spawn_depth" {
   let spec = @types.SpawnSpec::{
     slug: "remote-worker",
     role: @types.Role::Dev,
@@ -732,7 +732,7 @@ test "remote_spawn_commands produces 4 ssh commands" {
     reuse_workspace: false,
     workspace_slug: None,
     reuse_git_branch: None,
-    spawn_depth: 0,
+    spawn_depth: 1,
   }
   let cmds = @workspace.remote_spawn_commands(
     spec, "user@remote-host", "git@github.com:org/repo.git", "10.0.0.1:9100",
@@ -747,8 +747,20 @@ test "remote_spawn_commands produces 4 ssh commands" {
   }
   assert_true(cmds[0].args[3].contains("git clone"))
   assert_true(cmds[0].args[3].contains("main.remote-worker"))
-  assert_true(cmds[1].args[3].contains("config.toml"))
-  assert_true(cmds[1].args[3].contains("10.0.0.1:9100"))
+
+  // config write command
+  let config_cmd = cmds[1].args[3]
+  assert_true(config_cmd.contains("config.toml"))
+  assert_true(config_cmd.contains("config.local.toml"))
+  assert_true(config_cmd.contains("10.0.0.1:9100"))
+  assert_true(config_cmd.contains("spawn_depth = 1"))
+  assert_true(
+    config_cmd.contains(
+      "terminal_target = \"zellij-pane:remote:remote-worker\"",
+    ),
+  )
+
+  // launch command
   assert_true(cmds[2].args[3].contains("claude"))
   assert_true(cmds[2].args[3].contains("CHOIR_AGENT_ID='main.remote-worker'"))
   assert_true(cmds[2].args[3].contains("CHOIR_PARENT_AGENT='root'"))
