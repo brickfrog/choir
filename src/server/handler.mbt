@@ -234,14 +234,14 @@ pub fn ServerState::track_recovered_pr(
   branch : String,
   parent_branch : String,
   pr_url : String,
-  first_seen : Int64,
+  created_at : Int64,
   review : @poller.ReviewState,
   review_bodies : String,
   sha : String,
   ci_failed : Bool,
 ) -> Unit {
   self.poller.track_recovered(
-    pr_number, agent_id, branch, parent_branch, pr_url, first_seen, review, review_bodies,
+    pr_number, agent_id, branch, parent_branch, pr_url, created_at, review, review_bodies,
     sha, ci_failed,
   )
 }
