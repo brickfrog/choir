@@ -1,42 +1,6 @@
 ///|
 pub fn make_recovery_provider() -> @runtime.RecoveryProvider {
-  @runtime.make_shell_recovery_provider(async fn(program, args, cwd) {
-    capture_stdout(program, args, cwd~)
-  })
-}
-
-///|
-async fn capture_stdout(
-  program : String,
-  args : Array[String],
-  cwd? : String? = None,
-) -> String {
-  let tmp = "/tmp/choir-recovery-" +
-    @env.now().reinterpret_as_int64().to_string() +
-    ".tmp"
-  let shell_args = StringBuilder::new()
-  shell_args.write_string(program)
-  for arg in args {
-    shell_args.write_string(" '")
-    shell_args.write_string(arg)
-    shell_args.write_string("'")
-  }
-  shell_args.write_string(" > '")
-  shell_args.write_string(tmp)
-  shell_args.write_string("' 2>/dev/null")
-  let shell_cmd = shell_args.to_string()
-  ignore(
-    match cwd {
-      Some(dir) =>
-        @process.run("sh", ["-c", shell_cmd], cwd=dir) catch {
-          _ => -1
-        }
-      None => @process.run("sh", ["-c", shell_cmd]) catch { _ => -1 }
-    },
-  )
-  let result = @sys.read_file(tmp)
-  ignore(@process.run("rm", ["-f", tmp]) catch { _ => -1 })
-  result
+  @runtime.make_shell_recovery_provider(@exec.capture_stdout_with_cwd)
 }
 
 ///|

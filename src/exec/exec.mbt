@@ -43,12 +43,32 @@ pub async fn drain_process_stdout(
 ///|
 /// Spawn `program` with `args`, capture stdout (up to 64KiB), wait for exit, return decoded output.
 pub async fn capture_stdout(program : String, args : Array[String]) -> String {
+  capture_stdout_with_cwd(program, args, None)
+}
+
+///|
+/// Spawn `program` with `args` in `cwd`, capture stdout (up to 64KiB), wait for exit, return decoded output.
+pub async fn capture_stdout_with_cwd(
+  program : String,
+  args : Array[String],
+  cwd : String?,
+) -> String {
   let (reader, writer) = @process.read_from_process() catch { _ => return "" }
-  let pid = @process.spawn_orphan(program, args[:], stdout=writer) catch {
-    _ => {
-      reader.close()
-      return ""
-    }
+  let pid = match cwd {
+    Some(dir) =>
+      @process.spawn_orphan(program, args[:], stdout=writer, cwd=dir) catch {
+        _ => {
+          reader.close()
+          return ""
+        }
+      }
+    None =>
+      @process.spawn_orphan(program, args[:], stdout=writer) catch {
+        _ => {
+          reader.close()
+          return ""
+        }
+      }
   }
   let (output, _) = drain_process_stdout(reader, 65536)
   ignore(@process.wait_pid(pid) catch { _ => -1 })
