@@ -11,6 +11,10 @@ pub(all) struct Command {
 pub let native_write_choir_file_program : String = "__choir_native_write_choir_file__"
 
 ///|
+/// Marker for `run_native_workspace_rel_file_command`: args `[workspace_root, relative_path, file_body]`.
+pub let native_write_workspace_rel_file_program : String = "__choir_native_write_workspace_rel_file__"
+
+///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
@@ -54,6 +58,75 @@ pub fn run_native_choir_file_command(cmd : Command) -> Int {
     return 1
   }
   0
+}
+
+///|
+fn validate_workspace_rel_path(rel : String) -> Bool {
+  if rel == "" || rel.has_prefix("/") {
+    return false
+  }
+  if rel.contains("..") {
+    return false
+  }
+  true
+}
+
+///|
+fn parent_dir_for_file(full_path : String) -> String {
+  let mut last_slash = -1
+  for i = 0; i < full_path.length(); i = i + 1 {
+    if full_path[i] == '/' {
+      last_slash = i
+    }
+  }
+  if last_slash <= 0 {
+    return "."
+  }
+  full_path[0:last_slash].to_string()
+}
+
+///|
+/// Ensure `workspace_root/relative_path` exists (parent dirs) and write `content`.
+/// Returns `0` on success, `1` on failure, `-1` if `cmd` is not this native write.
+pub fn run_native_workspace_rel_file_command(cmd : Command) -> Int {
+  if cmd.program != native_write_workspace_rel_file_program {
+    return -1
+  }
+  if cmd.args.length() != 3 {
+    return 1
+  }
+  let root = cmd.args[0]
+  let rel = cmd.args[1]
+  let content = cmd.args[2]
+  if !validate_workspace_rel_path(rel) {
+    return 1
+  }
+  let full = root + "/" + rel
+  if !full.has_prefix(root + "/") && full != root {
+    return 1
+  }
+  let parent = parent_dir_for_file(full)
+  if !@sys.create_dir_all(parent) {
+    return 1
+  }
+  if !@sys.write_file_sync(full, content) {
+    return 1
+  }
+  0
+}
+
+///|
+/// Write `workspace_root/relative_path` with native file I/O (via `exec.run` sentinel).
+pub fn workspace_relative_file_command(
+  workspace_root : String,
+  relative_path : String,
+  content : String,
+) -> Command {
+  {
+    program: native_write_workspace_rel_file_program,
+    args: [workspace_root, relative_path, content],
+    workdir: None,
+  }
 }
 
 ///|
@@ -226,11 +299,8 @@ pub fn write_gemini_settings(
     wasm_hooks_path~,
   )
   {
-    program: "sh",
-    args: [
-      "-c", "mkdir -p \"$1/.choir\" && printf '%s' \"$2\" > \"$1/.choir/gemini-settings.json\"",
-      "sh", worktree_path, content,
-    ],
+    program: native_write_choir_file_program,
+    args: [worktree_path, "gemini-settings.json", content],
     workdir: None,
   }
 }
@@ -257,14 +327,7 @@ pub fn write_cursor_mcp_json(
   role : String,
 ) -> Command {
   let content = cursor_mcp_json(agent_name, role)
-  {
-    program: "sh",
-    args: [
-      "-c", "mkdir -p \"$1/.cursor\" && printf '%s' \"$2\" > \"$1/.cursor/mcp.json\"",
-      "sh", worktree_path, content,
-    ],
-    workdir: None,
-  }
+  workspace_relative_file_command(worktree_path, ".cursor/mcp.json", content)
 }
 
 ///|
@@ -693,16 +756,29 @@ pub fn write_pi_runtime_dirs(runtime_root : String) -> Command {
 }
 
 ///|
-pub fn write_pi_extension(runtime_root : String) -> Command {
+pub fn write_pi_extension(
+  workspace_path : String,
+  runtime_root : String,
+) -> Command {
   let content = pi_extension_content()
-  {
-    program: "sh",
-    args: [
-      "-c", "mkdir -p \"$1\" && printf '%s' \"$2\" > \"$1/choir-extension.ts\"",
-      "sh", runtime_root, content,
-    ],
-    workdir: None,
+  let pi_base = workspace_path + "/.choir/pi"
+  let rel_path = if runtime_root == pi_base {
+    ".choir/pi/choir-extension.ts"
+  } else {
+    let inline_prefix = pi_base + "/"
+    if runtime_root.has_prefix(inline_prefix) {
+      let tail = runtime_root[inline_prefix.length():].to_string()
+      ".choir/pi/" + tail + "/choir-extension.ts"
+    } else {
+      let ws_prefix = workspace_path + "/"
+      if runtime_root.has_prefix(ws_prefix) {
+        runtime_root[ws_prefix.length():].to_string() + "/choir-extension.ts"
+      } else {
+        ".choir/pi/choir-extension.ts"
+      }
+    }
   }
+  workspace_relative_file_command(workspace_path, rel_path, content)
 }
 
 ///|

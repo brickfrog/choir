@@ -445,7 +445,8 @@ test "spawn_commands gemini worktree adds trust and settings" {
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
   assert_eq(cmds.length(), 9)
   assert_eq(cmds[6].program, "choir")
-  assert_eq(cmds[7].program, "sh")
+  assert_eq(cmds[7].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[7].args[1], "gemini-settings.json")
   assert_eq(cmds[8].program, "zellij")
   assert_eq(cmds[8].args[3], "new-tab")
   assert_true(
@@ -509,10 +510,10 @@ test "spawn_commands adds Gemini trust bootstrap" {
   assert_eq(cmds[6].args, [
     "trust-gemini-folder", "/project/.choir/worktrees/gemini-slug",
   ])
-  assert_eq(cmds[7].program, "sh")
-  assert_true(cmds[7].args[1].contains(".choir/gemini-settings.json"))
-  assert_true(cmds[7].args[4].contains("mcpServers"))
-  assert_true(cmds[7].args[4].contains("main.gemini-slug"))
+  assert_eq(cmds[7].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[7].args[1], "gemini-settings.json")
+  assert_true(cmds[7].args[2].contains("mcpServers"))
+  assert_true(cmds[7].args[2].contains("main.gemini-slug"))
 }
 
 ///|
@@ -533,10 +534,10 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
   // cleanup, fetch parent, worktree add from origin/<parent>, configs, helpers, mcp json, zellij
   assert_eq(cmds.length(), 8)
-  assert_eq(cmds[6].program, "sh")
-  assert_true(cmds[6].args[1].contains(".cursor"))
-  assert_true(cmds[6].args[4].contains("mcpServers"))
-  assert_true(cmds[6].args[4].contains("main.feature-c"))
+  assert_eq(cmds[6].program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(cmds[6].args[1], ".cursor/mcp.json")
+  assert_true(cmds[6].args[2].contains("mcpServers"))
+  assert_true(cmds[6].args[2].contains("main.feature-c"))
   assert_eq(cmds[7].program, "zellij")
   assert_eq(cmds[7].args[3], "new-tab")
 }
@@ -563,8 +564,9 @@ test "spawn_commands pi worktree writes isolated runtime and launches pi" {
   assert_eq(cmds[7].program, "sh")
   assert_true(cmds[7].args[1].contains("$HOME/.pi/agent/auth.json"))
   assert_true(cmds[7].args[4].contains("/proj"))
-  assert_eq(cmds[8].program, "sh")
-  assert_true(cmds[8].args[1].contains("choir-extension.ts"))
+  assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(cmds[8].args[1], ".choir/pi/choir-extension.ts")
+  assert_true(cmds[8].args[2].contains("registerTool"))
   let launch = cmds[9].args[cmds[9].args.length() - 1]
   assert_true(
     launch.contains(
@@ -682,6 +684,26 @@ test "write_spawn_config and write_local_config use native choir file commands" 
   assert_eq(spawn_cmd.args, ["/wt", "config.toml", "a=toml"])
   assert_eq(local_cmd.program, @workspace.native_write_choir_file_program)
   assert_eq(local_cmd.args, ["/wt", "config.local.toml", "b=toml"])
+}
+
+///|
+test "gemini settings, cursor mcp json, and pi extension use native file commands" {
+  let gem = @workspace.write_gemini_settings("/wt", "main.leaf", "dev")
+  assert_eq(gem.program, @workspace.native_write_choir_file_program)
+  assert_eq(gem.args[1], "gemini-settings.json")
+  assert_true(gem.args[2].contains("mcpServers"))
+  let cur = @workspace.write_cursor_mcp_json("/wt", "main.leaf", "dev")
+  assert_eq(cur.program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(cur.args[1], ".cursor/mcp.json")
+  assert_true(cur.args[2].contains("\"choir\""))
+  let pi = @workspace.write_pi_extension("/proj", "/proj/.choir/pi")
+  assert_eq(pi.program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(pi.args[1], ".choir/pi/choir-extension.ts")
+  assert_true(pi.args[2].contains("registerTool"))
+  let pi_inline = @workspace.write_pi_extension(
+    "/proj", "/proj/.choir/pi/main.worker",
+  )
+  assert_eq(pi_inline.args[1], ".choir/pi/main.worker/choir-extension.ts")
 }
 
 ///|
