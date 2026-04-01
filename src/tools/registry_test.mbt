@@ -31,26 +31,136 @@ async fn mock_registry_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
 }
 
 ///|
-async fn mock_clean_git(_program : String, _args : Array[String]) -> String {
+async fn mock_clean_git(program : String, args : Array[String]) -> String {
   @async.sleep(0)
-  ""
-}
-
-///|
-async fn mock_dirty_git(_program : String, args : Array[String]) -> String {
-  @async.sleep(0)
-  if args.contains("status") {
-    " M src/foo.mbt\n"
+  if args.contains("rev-parse") {
+    if args.contains("--abbrev-ref") {
+      for i = 0; i < args.length() - 1; i = i + 1 {
+        if args[i] == "-C" {
+          let dir = args[i + 1]
+          if dir.contains("task-leaf") {
+            return "main.task-leaf\n"
+          }
+          if dir.contains("auto-notify-leaf") {
+            return "main.auto-notify-leaf\n"
+          }
+          if dir.contains("auto-notify-orphan") {
+            return "main.auto-notify-orphan\n"
+          }
+          if dir.contains("auto-notify") {
+            // This covers the generic auto-notify test which uses main.auto-notify-leaf
+            return "main.auto-notify-leaf\n"
+          }
+        }
+      }
+      return "test\n"
+    }
+    return "hash\n"
+  } else if program == "gh" && args.contains("view") {
+    let mut pr_number = 1
+    for i = 0; i < args.length() - 1; i = i + 1 {
+      if args[i] == "-C" {
+        let dir = args[i + 1]
+        if dir.contains("auto-notify") {
+          pr_number = 99
+        }
+      }
+    }
+    let mut url = "http://github.com/pr/" + pr_number.to_string()
+    for i = 0; i < args.length() - 1; i = i + 1 {
+      if args[i] == "-C" {
+        let dir = args[i + 1]
+        if dir.contains("auto-notify") {
+          pr_number = 99
+          url = "https://auto.test/pr"
+        }
+      }
+    }
+    "{\"number\": " +
+    pr_number.to_string() +
+    ", \"url\": \"" +
+    url +
+    "\", \"state\": \"OPEN\"}\n"
   } else {
     ""
   }
 }
 
 ///|
-async fn mock_unpushed_git(_program : String, args : Array[String]) -> String {
+async fn mock_dirty_git(program : String, args : Array[String]) -> String {
+  @async.sleep(0)
+  if args.contains("status") {
+    " M src/foo.mbt\n"
+  } else if args.contains("rev-parse") {
+    if args.contains("--abbrev-ref") {
+      return "test\n"
+    }
+    "hash\n"
+  } else if program == "gh" && args.contains("view") {
+    let mut pr_number = 1
+    for i = 0; i < args.length() - 1; i = i + 1 {
+      if args[i] == "-C" {
+        let dir = args[i + 1]
+        if dir.contains("auto-notify") {
+          pr_number = 99
+        }
+      }
+    }
+    let mut url = "http://github.com/pr/" + pr_number.to_string()
+    for i = 0; i < args.length() - 1; i = i + 1 {
+      if args[i] == "-C" {
+        let dir = args[i + 1]
+        if dir.contains("auto-notify") {
+          pr_number = 99
+          url = "https://auto.test/pr"
+        }
+      }
+    }
+    "{\"number\": " +
+    pr_number.to_string() +
+    ", \"url\": \"" +
+    url +
+    "\", \"state\": \"OPEN\"}\n"
+  } else {
+    ""
+  }
+}
+
+///|
+async fn mock_unpushed_git(program : String, args : Array[String]) -> String {
   @async.sleep(0)
   if args.contains("log") {
-    "abc1234 scaffold: add types\n"
+    "hash commit title\n"
+  } else if args.contains("rev-parse") {
+    if args.contains("--abbrev-ref") {
+      return "test\n"
+    }
+    "hash\n"
+  } else if program == "gh" && args.contains("view") {
+    let mut pr_number = 1
+    for i = 0; i < args.length() - 1; i = i + 1 {
+      if args[i] == "-C" {
+        let dir = args[i + 1]
+        if dir.contains("auto-notify") {
+          pr_number = 99
+        }
+      }
+    }
+    let mut url = "http://github.com/pr/" + pr_number.to_string()
+    for i = 0; i < args.length() - 1; i = i + 1 {
+      if args[i] == "-C" {
+        let dir = args[i + 1]
+        if dir.contains("auto-notify") {
+          pr_number = 99
+          url = "https://auto.test/pr"
+        }
+      }
+    }
+    "{\"number\": " +
+    pr_number.to_string() +
+    ", \"url\": \"" +
+    url +
+    "\", \"state\": \"OPEN\"}\n"
   } else {
     ""
   }
@@ -447,6 +557,7 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
     call,
     project_dir~,
     runner=mock_registry_runner_capture_workdir,
+    git_capture=mock_clean_git,
     ensure_branch_ready=mock_registry_branch_ready_capture,
     ensure_pr=mock_registry_ensure_pr_capture,
     registry=Some(reg),
@@ -513,6 +624,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
     call,
     project_dir~,
     runner=mock_registry_runner,
+    git_capture=mock_clean_git,
     ensure_branch_ready=mock_registry_branch_ready,
     ensure_pr=mock_auto_notify_ensure_pr,
     registry=Some(reg),
@@ -565,6 +677,7 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
     call,
     project_dir~,
     runner=mock_registry_runner,
+    git_capture=mock_clean_git,
     ensure_branch_ready=mock_registry_branch_ready,
     ensure_pr=mock_auto_notify_ensure_pr,
     registry=Some(reg),

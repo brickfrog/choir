@@ -450,31 +450,29 @@ pub async fn dispatch(
                 ) {
                 Err(e) => @types.Response::Err(e)
                 Ok(pr) => {
-                  let mut tracked = false
-                  match poller_state {
-                    Some(ps) => {
-                      ps.ensure_tracked(
-                        pr.number,
-                        tracked_agent_id,
-                        branch,
-                        parent_branch,
-                        pr.url,
-                        @poller.now_sec(),
-                      )
-                      ignore(ps.write_state_file(project_dir))
-                      tracked = true
-                    }
+                  let tracked = poller_state is Some(_)
+                  let plan = file_pr_plan(
+                    file_pr_args, parent_branch, pr, tracked,
+                  )
+                  match plan.tracked_pr {
+                    Some(tracked_pr) =>
+                      match poller_state {
+                        Some(ps) => {
+                          ps.ensure_tracked(
+                            tracked_pr.pr_number,
+                            tracked_pr.agent_id,
+                            tracked_pr.branch,
+                            tracked_pr.parent_branch,
+                            tracked_pr.pr_url,
+                            @poller.now_sec(),
+                          )
+                          ignore(ps.write_state_file(project_dir))
+                        }
+                        None => ()
+                      }
                     None => ()
                   }
-                  apply_dev_event(
-                    project_dir,
-                    branch,
-                    @phase.DevEvent::PRCreated(
-                      pr_number=pr.number,
-                      url=pr.url,
-                      branch~,
-                    ),
-                  )
+                  apply_dev_event(project_dir, branch, plan.dev_event)
                   let delivery_log_path = project_dir + "/.choir/delivery.log"
                   match registry {
                     Some(reg) =>
@@ -483,12 +481,11 @@ pub async fn dispatch(
                           project_dir, session, reg, tracked_agent_id,
                         ) {
                         Ok(parent) => {
-                          let notify_msg = "[PR READY] PR #" +
-                            pr.number.to_string() +
-                            " filed: " +
-                            pr.url
                           let delivery = @message.plan_delivery(
-                            parent, tracked_agent_id, notify_msg, "success",
+                            parent,
+                            tracked_agent_id,
+                            plan.notify_message,
+                            "success",
                           )
                           ignore(
                             @sys.append_file_sync(
@@ -542,12 +539,7 @@ pub async fn dispatch(
                       }
                     None => ()
                   }
-                  @types.Response::ok_values({
-                    "status": String::to_json("pr_created"),
-                    "pr_number": Int::to_json(pr.number),
-                    "pr_url": String::to_json(pr.url),
-                    "tracked": Bool::to_json(tracked),
-                  })
+                  plan.response
                 }
               }
           }
