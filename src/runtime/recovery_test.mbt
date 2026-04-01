@@ -42,33 +42,16 @@ test "parse_open_prs ignores malformed entries" {
 ///|
 async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
   let mock_provider : RecoveryProvider = {
-    zellij_live: async fn(_dir, _session) {
-      @async.sleep(0)
-      { tabs: [], panes: [] }
-    },
-    open_prs: async fn(_dir) {
-      @async.sleep(0)
-      []
-    },
-    find_prs_by_head: async fn(_dir, _branch) {
-      @async.sleep(0)
-      []
-    },
-    list_local_agents: async fn(_dir, _dir_name) {
-      @async.sleep(0)
-      []
-    },
-    read_local_config: async fn(_dir, _dir_name, _slug) {
-      @async.sleep(0)
-      ""
-    },
-    list_lifecycle_files: async fn(_dir) {
-      @async.sleep(0)
-      ["file1", "file2"]
-    },
-    read_lifecycle_file: async fn(path) {
-      @async.sleep(0)
-      if path == "file1" {
+    zellij_live: fn(_dir, _session) { { tabs: [], panes: [] } },
+    open_prs: fn(_dir) { [] },
+    find_prs_by_head: fn(_dir, _branch) { [] },
+    list_agent_containers: fn(_dir) { [] },
+    list_agents_in_container: fn(_dir, _container) { [] },
+    read_agent_config: fn(_dir, _container, _slug) { "" },
+    get_agent_relative_workspace: fn(_container, _slug) { "" },
+    list_lifecycle_ids: fn(_dir) { ["file1", "file2"] },
+    read_lifecycle_content: fn(_dir, id) {
+      if id == "file1" {
         "{\"agent_id\":\"agent1\",\"pr_number\":123}"
       } else {
         "{\"agent_id\":\"agent2\",\"pr_number\":456}"
@@ -84,16 +67,9 @@ async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
 ///|
 async test "find_pr_for_branch_in_provider finds PR by head branch" {
   let mock_provider : RecoveryProvider = {
-    zellij_live: async fn(_dir, _session) {
-      @async.sleep(0)
-      { tabs: [], panes: [] }
-    },
-    open_prs: async fn(_dir) {
-      @async.sleep(0)
-      []
-    },
-    find_prs_by_head: async fn(_dir, branch) {
-      @async.sleep(0)
+    zellij_live: fn(_dir, _session) { { tabs: [], panes: [] } },
+    open_prs: fn(_dir) { [] },
+    find_prs_by_head: fn(_dir, branch) {
       if branch == "feat/x" {
         [
           {
@@ -108,22 +84,12 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
         []
       }
     },
-    list_local_agents: async fn(_dir, _dir_name) {
-      @async.sleep(0)
-      []
-    },
-    read_local_config: async fn(_dir, _dir_name, _slug) {
-      @async.sleep(0)
-      ""
-    },
-    list_lifecycle_files: async fn(_dir) {
-      @async.sleep(0)
-      []
-    },
-    read_lifecycle_file: async fn(_path) {
-      @async.sleep(0)
-      ""
-    },
+    list_agent_containers: fn(_dir) { [] },
+    list_agents_in_container: fn(_dir, _container) { [] },
+    read_agent_config: fn(_dir, _container, _slug) { "" },
+    get_agent_relative_workspace: fn(_container, _slug) { "" },
+    list_lifecycle_ids: fn(_dir) { [] },
+    read_lifecycle_content: fn(_dir, _id) { "" },
   }
   let res = find_pr_for_branch_in_provider(mock_provider, "/tmp", "feat/x")
   assert_eq(res, Some((123, "https://gh.test/123")))

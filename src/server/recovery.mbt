@@ -112,12 +112,10 @@ pub async fn recover_state(
 ///|
 async test "discover_recovery_snapshot with mock provider" {
   let mock_provider : @runtime.RecoveryProvider = {
-    zellij_live: async fn(_dir, _session) {
-      @async.sleep(0)
+    zellij_live: fn(_dir, _session) {
       @runtime.ZellijLiveTargets::{ tabs: ["tab1"], panes: ["pane1"] }
     },
-    open_prs: async fn(_dir) {
-      @async.sleep(0)
+    open_prs: fn(_dir) {
       [
         @runtime.OpenPR::{
           pr_number: 123,
@@ -128,8 +126,7 @@ async test "discover_recovery_snapshot with mock provider" {
         },
       ]
     },
-    find_prs_by_head: async fn(_dir, _branch) {
-      @async.sleep(0)
+    find_prs_by_head: fn(_dir, _branch) {
       [
         @runtime.OpenPR::{
           pr_number: 123,
@@ -140,30 +137,26 @@ async test "discover_recovery_snapshot with mock provider" {
         },
       ]
     },
-    list_local_agents: async fn(_dir, dir_name) {
-      @async.sleep(0)
-      if dir_name == "worktrees" {
+    list_agent_containers: fn(_dir) { ["worktrees"] },
+    list_agents_in_container: fn(_dir, container) {
+      if container == "worktrees" {
         ["slug1"]
       } else {
         []
       }
     },
-    read_local_config: async fn(_dir, _dir_name, _slug) {
-      @async.sleep(0)
+    read_agent_config: fn(_dir, _container, _slug) {
       let content =
         #|role = "dev"
         #|agent_id = "slug1"
         #|branch = "feat/x"
       content
     },
-    list_lifecycle_files: async fn(_dir) {
-      @async.sleep(0)
-      []
+    get_agent_relative_workspace: fn(container, slug) {
+      ".choir/" + container + "/" + slug
     },
-    read_lifecycle_file: async fn(_path) {
-      @async.sleep(0)
-      ""
-    },
+    list_lifecycle_ids: fn(_dir) { [] },
+    read_lifecycle_content: fn(_dir, _id) { "" },
   }
   let snapshot = @runtime.discover_recovery_snapshot(
     mock_provider, "/tmp", "session",
