@@ -692,13 +692,9 @@ fn kv_file_path(project_dir : String, key : String) -> String {
 }
 
 ///|
-fn task_list_manifest_path(project_dir : String) -> String {
-  project_dir + "/.choir/.task-list.paths"
-}
-
-///|
-fn kv_list_manifest_path(project_dir : String) -> String {
-  project_dir + "/.choir/.kv-list.paths"
+/// Lexicographic sort (stable; matches GNU `sort` for typical ASCII paths).
+fn sort_strings_lex(paths : Array[String]) -> Unit {
+  paths.mut_view().stable_sort()
 }
 
 ///|
@@ -723,53 +719,44 @@ fn read_task_file(
 ///|
 async fn list_task_files(
   project_dir : String,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[Array[String], String] {
-  let manifest_path = task_list_manifest_path(project_dir)
-  let list_cmd = @workspace.Command::{
-    program: "sh",
-    args: [
-      "-c", "[ -d \"$1/.choir/tasks\" ] || exit 3; find \"$1/.choir/tasks\" -maxdepth 1 -type f -name '*.json' | sort > \"$2\"",
-      "sh", project_dir, manifest_path,
-    ],
+  let tasks_dir = project_dir + "/.choir/tasks"
+  let test_cmd : @workspace.Command = {
+    program: "test",
+    args: ["-d", tasks_dir],
     workdir: None,
   }
-  let statuses = runner([list_cmd]) catch { e => return Err(e.to_string()) }
-  if statuses.length() > 0 {
-    let status = statuses[statuses.length() - 1]
-    if status == 3 {
-      return Ok([])
-    }
-    if status != 0 {
-      return Err("command failed with status " + status.to_string())
-    }
+  let (test_status, _) = capture(test_cmd)
+  if test_status != 0 {
+    return Ok([])
   }
-  let content = @sys.read_file(manifest_path)
-  let cleanup_cmd = @workspace.Command::{
-    program: "sh",
-    args: ["-c", "rm -f \"$1\"", "sh", manifest_path],
+  let find_cmd : @workspace.Command = {
+    program: "find",
+    args: [tasks_dir, "-maxdepth", "1", "-type", "f", "-name", "*.json"],
     workdir: None,
   }
-  ignore(runner([cleanup_cmd]) catch { _ => [] })
+  let (find_status, output) = capture(find_cmd)
+  if find_status != 0 {
+    return Err("command failed with status " + find_status.to_string())
+  }
   let paths = []
-  if content == "" {
-    return Ok(paths)
-  }
-  for line in content.split("\n") {
+  for line in output.split("\n") {
     let path = line.to_string().trim().to_string()
     if path != "" {
       paths.push(path)
     }
   }
+  sort_strings_lex(paths)
   Ok(paths)
 }
 
 ///|
 async fn handle_task_list(
   project_dir : String,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> @types.Response {
-  let task_paths = match list_task_files(project_dir, runner) {
+  let task_paths = match list_task_files(project_dir, capture) {
     Ok(paths) => paths
     Err(e) => return @types.Response::Err(e)
   }
@@ -795,48 +782,44 @@ async fn handle_task_list(
 ///|
 async fn handle_kv_list(
   project_dir : String,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> @types.Response {
-  let manifest_path = kv_list_manifest_path(project_dir)
-  let list_cmd = @workspace.Command::{
-    program: "sh",
-    args: [
-      "-c", "[ -d \"$1/.choir/kv\" ] || exit 3; find \"$1/.choir/kv\" -type f | sort > \"$2\"",
-      "sh", project_dir, manifest_path,
-    ],
+  let kv_dir = project_dir + "/.choir/kv"
+  let test_cmd : @workspace.Command = {
+    program: "test",
+    args: ["-d", kv_dir],
     workdir: None,
   }
-  let statuses = runner([list_cmd]) catch {
-    e => return @types.Response::Err(e.to_string())
+  let (test_status, _) = capture(test_cmd)
+  if test_status != 0 {
+    return @types.Response::ok_values({
+      "status": "ok".to_json(),
+      "keys": ([] : Array[Json]).to_json(),
+    })
   }
-  if statuses.length() > 0 {
-    let status = statuses[statuses.length() - 1]
-    if status == 3 {
-      return @types.Response::ok_values({
-        "status": "ok".to_json(),
-        "keys": ([] : Array[Json]).to_json(),
-      })
-    }
-    if status != 0 {
-      return @types.Response::Err(
-        "command failed with status " + status.to_string(),
-      )
-    }
-  }
-  let content = @sys.read_file(manifest_path)
-  let cleanup_cmd = @workspace.Command::{
-    program: "sh",
-    args: ["-c", "rm -f \"$1\"", "sh", manifest_path],
+  let find_cmd : @workspace.Command = {
+    program: "find",
+    args: [kv_dir, "-type", "f"],
     workdir: None,
   }
-  ignore(runner([cleanup_cmd]) catch { _ => [] })
+  let (find_status, output) = capture(find_cmd)
+  if find_status != 0 {
+    return @types.Response::Err(
+      "command failed with status " + find_status.to_string(),
+    )
+  }
   let prefix = project_dir + "/.choir/kv/"
-  let keys : Array[Json] = []
-  for line in content.split("\n") {
+  let paths : Array[String] = []
+  for line in output.split("\n") {
     let path = line.to_string().trim().to_string()
     if path == "" {
       continue
     }
+    paths.push(path)
+  }
+  sort_strings_lex(paths)
+  let keys : Array[Json] = []
+  for path in paths {
     let actual_prefix = path[:prefix.length()].to_string()
     if actual_prefix != prefix {
       return @types.Response::Err("invalid kv file path: " + path)
@@ -910,6 +893,98 @@ async test "resolve_zellij_pane_id returns None when zellij exits non-zero" {
     resolve_zellij_pane_id("choir", "x", capture=mock_zellij_nonzero),
     None,
   )
+}
+
+///|
+test "sort_strings_lex orders paths lexicographically" {
+  let paths = ["b", "a", "c"]
+  sort_strings_lex(paths)
+  assert_eq(paths.length(), 3)
+  assert_eq(paths[0], "a")
+  assert_eq(paths[1], "b")
+  assert_eq(paths[2], "c")
+}
+
+///|
+async fn mock_list_task_capture_ordered(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "test" {
+    assert_eq(cmd.args, ["-d", "/proj/.choir/tasks"])
+    return (0, "")
+  }
+  if cmd.program == "find" {
+    assert_eq(cmd.args, [
+      "/proj/.choir/tasks", "-maxdepth", "1", "-type", "f", "-name", "*.json",
+    ])
+    return (0, "/proj/.choir/tasks/two.json\n/proj/.choir/tasks/one.json\n")
+  }
+  (-1, "")
+}
+
+///|
+async test "list_task_files runs test and find argv and sorts paths" {
+  match list_task_files("/proj", mock_list_task_capture_ordered) {
+    Ok(paths) => {
+      assert_eq(paths.length(), 2)
+      assert_eq(paths[0], "/proj/.choir/tasks/one.json")
+      assert_eq(paths[1], "/proj/.choir/tasks/two.json")
+    }
+    Err(e) => fail(e)
+  }
+}
+
+///|
+async fn mock_test_only_missing_dir(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "test" {
+    return (1, "")
+  }
+  (-1, "")
+}
+
+///|
+async test "list_task_files returns empty when test -d fails" {
+  match list_task_files("/proj", mock_test_only_missing_dir) {
+    Ok(paths) => assert_eq(paths.length(), 0)
+    Err(e) => fail(e)
+  }
+}
+
+///|
+async fn mock_kv_list_capture(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "test" {
+    assert_eq(cmd.args, ["-d", "/p/.choir/kv"])
+    return (0, "")
+  }
+  if cmd.program == "find" {
+    assert_eq(cmd.args, ["/p/.choir/kv", "-type", "f"])
+    return (0, "/p/.choir/kv/b\n/p/.choir/kv/a\n")
+  }
+  (-1, "")
+}
+
+///|
+async test "handle_kv_list uses test and find argv and sorts keys" {
+  match handle_kv_list("/p", capture=mock_kv_list_capture) {
+    @types.Response::Ok(fields) =>
+      match fields.get_json("keys") {
+        Some(Array(ks)) => {
+          assert_eq(ks.length(), 2)
+          match (ks[0], ks[1]) {
+            (String(a), String(b)) => {
+              assert_eq(a, "a")
+              assert_eq(b, "b")
+            }
+            _ => fail("expected string keys")
+          }
+        }
+        _ => fail("expected keys array")
+      }
+    @types.Response::Err(e) => fail(e)
+  }
 }
 
 ///|
