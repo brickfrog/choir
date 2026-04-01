@@ -16,6 +16,36 @@ pub fn command_to_shell_string(cmd : @workspace.Command) -> String {
 }
 
 ///|
+/// Scan `path_var` as a POSIX `PATH` (colon-separated dirs) and return the first
+/// `dir/name` that exists as a readable file path (`path_exists`).
+pub fn resolve_executable_in_path_from_path_var(
+  name : String,
+  path_var : String,
+) -> String? {
+  for raw in path_var.split(":") {
+    let dir = raw.trim().to_string()
+    if dir == "" {
+      continue
+    }
+    let joined = dir + "/" + name
+    if @sys.path_exists(joined) {
+      return Some(joined)
+    }
+  }
+  None
+}
+
+///|
+/// Resolve `name` using the process `PATH` (or a common default when unset).
+pub fn resolve_executable_in_path(name : String) -> String? {
+  let path_var = match @sys.getenv("PATH") {
+    Some(p) => p
+    None => "/usr/local/bin:/usr/bin:/bin"
+  }
+  resolve_executable_in_path_from_path_var(name, path_var)
+}
+
+///|
 /// Read up to `max_bytes` from a pipe wired to process stdout (or stderr), close the reader,
 /// and return the captured output as lossy UTF-8 plus the number of bytes read.
 pub async fn drain_process_stdout(

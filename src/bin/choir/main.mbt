@@ -4274,14 +4274,55 @@ fn stop_run() -> Unit {
 
 ///|
 fn dev_run() -> Unit {
-  let cmd = "command -v watchexec > /dev/null 2>&1 && " +
-    "exec watchexec -e mbt,toml -r --shell=none -- sh -c 'moon build --target native --release && exec choir serve'; " +
-    "command -v entr > /dev/null 2>&1 && " +
-    "exec sh -c '(find src -name \"*.mbt\"; find . -maxdepth 2 -name \"*.toml\") | entr -r sh -c \"moon build --target native --release && exec choir serve\"'; " +
-    "echo 'choir dev: watchexec and entr not found, running without hot reload'; " +
-    "moon build --target native --release && exec choir serve"
-  let code = @sys.system(cmd)
-  @sys.exit(code)
+  @async.run_async_main(async fn() {
+    let hook = "moon build --target native --release && exec choir serve"
+    match @exec.resolve_executable_in_path("watchexec") {
+      Some(wx_path) => {
+        let code = @exec.run(@workspace.Command::{
+          program: wx_path,
+          args: ["-e", "mbt,toml", "-r", "--shell=none", "--", "sh", "-c", hook],
+          workdir: None,
+        }) catch {
+          _ => -1
+        }
+        @sys.exit(code)
+      }
+      None =>
+        match @exec.resolve_executable_in_path("entr") {
+          Some(entr_path) => {
+            let inner = "(find src -name \"*.mbt\"; find . -maxdepth 2 -name \"*.toml\") | " +
+              @sys.shell_quote(entr_path) +
+              " -r sh -c " +
+              @sys.shell_quote(hook)
+            let code = @sys.system("exec sh -c " + @sys.shell_quote(inner))
+            @sys.exit(code)
+          }
+          None => {
+            @sys.write_stdout(
+              "choir dev: watchexec and entr not found, running without hot reload\n",
+            )
+            let st = @exec.run(@workspace.Command::{
+              program: "moon",
+              args: ["build", "--target", "native", "--release"],
+              workdir: None,
+            }) catch {
+              _ => -1
+            }
+            if st != 0 {
+              @sys.exit(st)
+            }
+            let st2 = @exec.run(@workspace.Command::{
+              program: "choir",
+              args: ["serve"],
+              workdir: None,
+            }) catch {
+              _ => -1
+            }
+            @sys.exit(st2)
+          }
+        }
+    }
+  })
 }
 
 ///|
