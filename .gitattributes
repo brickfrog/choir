@@ -1,2 +1,0 @@
-# MoonBit uses .mbt; map to Rust for linguist/Copilot so PR review can classify diffs.
-*.mbt linguist-language=Rust
