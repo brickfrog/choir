@@ -249,6 +249,7 @@ pub async fn verify_teams_delivery(
 pub async fn execute_delivery(
   delivery : @message.DeliveryMethod,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  project_dir? : String = ".",
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, String] {
   fn ensure_success(statuses : Array[Int]) -> Result[Unit, String] {
@@ -285,6 +286,7 @@ pub async fn execute_delivery(
     }
     buf.to_string()
   }
+  let log_path = project_dir + "/.choir/delivery.log"
   fn log_delivery_retry(
     target : String,
     attempt : Int,
@@ -293,7 +295,7 @@ pub async fn execute_delivery(
   ) -> Unit {
     ignore(
       @sys.append_file_sync(
-        ".choir/delivery.log",
+        log_path,
         "[delivery-retry] ts_ms=" +
         delivery_timestamp() +
         " target=" +
@@ -311,7 +313,7 @@ pub async fn execute_delivery(
   fn log_delivery_failure(target : String, error : String) -> Unit {
     ignore(
       @sys.append_file_sync(
-        ".choir/delivery.log",
+        log_path,
         "[delivery-failed] ts_ms=" +
         delivery_timestamp() +
         " target=" +
@@ -373,7 +375,7 @@ pub async fn execute_delivery(
       let cmd = @workspace.local_send_text(target, text)
       ignore(
         @sys.append_file_sync(
-          ".choir/delivery.log",
+          log_path,
           "[delivery] target=" +
           target.to_string() +
           " cmd=" +
@@ -383,7 +385,7 @@ pub async fn execute_delivery(
       )
       ignore(
         @sys.append_file_sync(
-          ".choir/delivery.log",
+          log_path,
           "[delivery] dispatch-with-retry target=" + target.to_string() + "\n",
         ),
       )
@@ -404,23 +406,25 @@ pub async fn execute_delivery(
 ///|
 /// Fetch inline code review comments for a PR at merge time.
 /// Returns (count, formatted_text).
-fn fetch_inline_comments_sync(
+async fn fetch_inline_comments(
   pr_number : Int,
   project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> (Int, String) {
-  let tmp = "/tmp/choir-merge-comments-" + @sys.get_pid().to_string() + ".tmp"
-  let cmd = "gh api repos/{owner}/{repo}/pulls/" +
-    pr_number.to_string() +
-    "/comments --jq '[.[] | {path, body}]' > " +
-    tmp +
-    " 2>/dev/null"
-  let exit = @sys.system("cd " + project_dir + " && " + cmd)
-  if exit != 0 {
-    ignore(@sys.delete_file_sync(tmp))
+  let cmd : @workspace.Command = {
+    program: "gh",
+    args: [
+      "api",
+      "repos/{owner}/{repo}/pulls/" + pr_number.to_string() + "/comments",
+      "--jq",
+      "[.[] | {path, body}]",
+    ],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 {
     return (0, "")
   }
-  let output = @sys.read_file(tmp)
-  ignore(@sys.delete_file_sync(tmp))
   let trimmed = output.trim().to_string()
   if trimmed == "" || trimmed == "[]" {
     return (0, "")
@@ -460,6 +464,60 @@ fn fetch_inline_comments_sync(
     }
   }
   (count, parts.to_string())
+}
+
+///|
+async fn mock_inline_comments_two_items(
+  _cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  (
+    0, "[{\"path\":\"src/foo.mbt\",\"body\":\"please fix\"},{\"path\":\"\",\"body\":\"general comment\"}]",
+  )
+}
+
+///|
+async test "fetch_inline_comments parses two comments" {
+  let (count, text) = fetch_inline_comments(
+    7, "/repo", mock_inline_comments_two_items,
+  )
+  assert_eq(count, 2)
+  assert_true(text.contains("please fix"))
+  assert_true(text.contains("general comment"))
+  assert_true(text.contains("[src/foo.mbt]"))
+}
+
+///|
+async fn mock_inline_comments_empty_arr(
+  _cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  (0, "[]")
+}
+
+///|
+async test "fetch_inline_comments returns zero for empty array" {
+  let (count, text) = fetch_inline_comments(
+    1, "/repo", mock_inline_comments_empty_arr,
+  )
+  assert_eq(count, 0)
+  assert_eq(text, "")
+}
+
+///|
+async fn mock_inline_comments_gh_failure(
+  _cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  (1, "gh: error fetching")
+}
+
+///|
+async test "fetch_inline_comments returns zero on non-zero exit" {
+  let (count, _) = fetch_inline_comments(
+    99, "/repo", mock_inline_comments_gh_failure,
+  )
+  assert_eq(count, 0)
 }
 
 ///|
