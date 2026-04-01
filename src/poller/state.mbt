@@ -25,22 +25,22 @@ fn parse_review_state_name(s : String) -> ReviewState? {
 }
 
 ///|
-fn tracked_pr_json(tracked : TrackedPR) -> String {
+pub fn TrackedPR::to_json(self : TrackedPR) -> String {
   {
-    "pr_number": tracked.pr_number.to_json(),
-    "agent_id": tracked.agent_id.to_json(),
-    "branch": tracked.branch.to_json(),
-    "parent_branch": tracked.parent_branch.to_json(),
-    "pr_url": tracked.pr_url.to_json(),
-    "first_seen": tracked.first_seen.to_json(),
-    "consecutive_failures": tracked.consecutive_failures.to_json(),
-    "backoff_until": tracked.backoff_until.to_json(),
-    "last_review_state": review_state_name(tracked.last_review_state).to_json(),
-    "last_review_bodies": tracked.last_review_bodies.to_json(),
-    "last_sha": tracked.last_sha.to_json(),
-    "notified_parent": tracked.notified_parent.to_json(),
-    "last_ci_failed": tracked.last_ci_failed.to_json(),
-    "last_timeout_at": tracked.last_timeout_at.to_json(),
+    "pr_number": self.pr_number.to_json(),
+    "agent_id": self.agent_id.to_json(),
+    "branch": self.branch.to_json(),
+    "parent_branch": self.parent_branch.to_json(),
+    "pr_url": self.pr_url.to_json(),
+    "first_seen": self.first_seen.to_json(),
+    "consecutive_failures": self.consecutive_failures.to_json(),
+    "backoff_until": self.backoff_until.to_json(),
+    "last_review_state": review_state_name(self.last_review_state).to_json(),
+    "last_review_bodies": self.last_review_bodies.to_json(),
+    "last_sha": self.last_sha.to_json(),
+    "notified_parent": self.notified_parent.to_json(),
+    "last_ci_failed": self.last_ci_failed.to_json(),
+    "last_timeout_at": self.last_timeout_at.to_json(),
   }
   .to_json()
   .stringify()
@@ -316,7 +316,7 @@ pub fn PollerState::to_json(self : PollerState) -> String {
   buf.write_char('[')
   let entries = []
   for tracked in self.tracked.values() {
-    entries.push(tracked_pr_json(tracked))
+    entries.push(tracked.to_json())
   }
   buf.write_string(entries.join(","))
   buf.write_char(']')

@@ -57,6 +57,11 @@ async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
         "{\"agent_id\":\"agent2\",\"pr_number\":456}"
       }
     },
+    read_poller_state: fn(_dir) { [] },
+    write_poller_state: fn(_dir, _tracked) { () },
+    gh_poll_pr: fn(_num) {
+      (true, @poller.ReviewState::Approved, "sha1", false, "", true)
+    },
   }
   let agent_id = find_agent_for_pr_in_lifecycle(mock_provider, "/tmp", 123)
   assert_eq(agent_id, Some("agent1"))
@@ -90,6 +95,11 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
     get_agent_relative_workspace: fn(_container, _slug) { "" },
     list_lifecycle_ids: fn(_dir) { [] },
     read_lifecycle_content: fn(_dir, _id) { "" },
+    read_poller_state: fn(_dir) { [] },
+    write_poller_state: fn(_dir, _tracked) { () },
+    gh_poll_pr: fn(_num) {
+      (true, @poller.ReviewState::Approved, "sha1", false, "", true)
+    },
   }
   let res = find_pr_for_branch_in_provider(mock_provider, "/tmp", "feat/x")
   assert_eq(res, Some((123, "https://gh.test/123")))
