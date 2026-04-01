@@ -258,6 +258,10 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   if native_pi_auth >= 0 {
     return native_pi_auth
   }
+  let native_leaf_helpers = @workspace.run_native_leaf_helpers_command(cmd)
+  if native_leaf_helpers >= 0 {
+    return native_leaf_helpers
+  }
   let prog = cmd.program
   let args = cmd.args[:]
   match cmd.workdir {
