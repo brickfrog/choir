@@ -17,7 +17,7 @@ pub fn PaneWatcher::new() -> PaneWatcher {
 }
 
 ///|
-pub async fn PaneWatcher::watch_pane(
+pub fn PaneWatcher::watch_pane(
   self : PaneWatcher,
   agent_id : String,
   target : @types.LocalTarget,
