@@ -1,6 +1,6 @@
 # Choir × Pi North Star Spec
 
-**Status:** Active guiding document; core M0–M4 path implemented and live-validated, M5 hardening substantially advanced with restart recovery now live-validated  
+**Status:** Active guiding document; core Choir × Pi shift implemented and live-validated, with remaining work now focused on optional hardening, UX policy refinement, and future transport/runtime exploration  
 **Last updated:** 2026-04-01
 
 ## One-sentence north star
@@ -74,7 +74,11 @@ The implementation now substantially matches the north-star design:
 - Pi TL -> worker -> `notify_parent`, Pi TL -> dev leaf -> `file_pr` / review follow-up, and Pi TL -> `merge_pr` have all been manually validated.
 - Restart recovery for an offline PR-owning Pi leaf has now also been live-validated: after `choir stop` + `choir init --recreate --tl pi`, the recovered offline leaf reappears in `agent_list`, the restarted Pi TL can still `merge_pr` on the open PR, and the authoritative `[PR MERGED]` parent notification still arrives.
 - `choir stop` and `choir init --recreate` now preserve recoverable state by default; destructive cleanup is explicit via `--purge`.
-- Hardening is now mostly about longer-term persistence strategy, delivery sufficiency, dedupe, and production-credibility rather than first-pass viability.
+- Recovery-preserving restart is now the intended policy, not just an implementation accident: restart means Choir should be able to rehydrate offline agents, PR ownership, and lifecycle context unless the operator explicitly asks to purge them.
+- `agent_list` currently reflects the known session registry, not just live processes; recovered offline agents may remain visible as terminal `Done` entries, and that is intentional for restart visibility/debugging.
+- The core Choir × Pi shift is now considered successful: the primary implementation path is in place and live-validated.
+- Remaining work is mostly about longer-term persistence strategy, delivery sufficiency, dedupe, and production-credibility rather than first-pass viability.
+- `choir tool` is now considered sufficient for the current Pi integration phase; additional CLI/JSON fields or refinements should be driven by concrete operator/runtime needs rather than speculative polish.
 
 A few implementation details intentionally differ slightly from the early examples in this spec:
 
@@ -688,6 +692,13 @@ These are important, but they should not derail the initial control-plane work.
 
 Probably worth exploring later, but not required to validate the model.
 
+Current decided posture on delivery/runtime interaction:
+
+- interactive Pi pane delivery is sufficient for now
+- this matches the level of practicality that earlier pane-driven TL setups (for example, Claude Code with a TeamInbox-style fallback) were able to reach without making durable delivery the first problem to solve
+- a more explicit durable delivery path remains an interesting future option, but not a current blocker
+- Pi RPC / SDK-hosted runtime work is explicitly deferred as a future project, not part of closing out the current Pi shift
+
 ### Q2. Should TL scaffold edits be disallowed or merely discouraged?
 
 Initial recommendation: discouraged by default, explicit opt-in later if needed.
@@ -698,11 +709,29 @@ Initial recommendation: generated under `.choir/pi/`. Packaging/distribution can
 
 ### Q4. How much Pi session state should Choir recover?
 
-This was partially pulled forward by implementation reality: inline-agent recovery metadata and Pi runtime recovery support landed earlier than originally planned, and restart recovery for an offline PR-owning Pi leaf has now been live-validated. The remaining question is less basic viability and more where the long-term persistence boundary should stop.
+This was partially pulled forward by implementation reality: inline-agent recovery metadata and Pi runtime recovery support landed earlier than originally planned, and restart recovery for an offline PR-owning Pi leaf has now been live-validated.
+
+Current decided policy:
+
+- `choir stop` preserves recoverable state by default
+- `choir init --recreate` preserves recoverable state by default
+- destructive cleanup is explicit via `--purge`
+- `agent_list` is currently a session-registry view, so recovered offline agents may remain visible as terminal `Done` entries
+- interactive pane delivery remains acceptable even though a more explicit inbox/durable-delivery design could be explored later
+
+The remaining question is less basic viability and more where the long-term persistence boundary should stop. Current policy favors recovery-preserving retention over aggressive automatic GC: runtime metadata, lifecycle state, and recovery artifacts are preserved across restart unless explicitly purged or already cleaned up by normal workflow finalization. If registry noise or storage churn becomes a problem later, active-only filtering and/or targeted GC can be added as explicit UX/maintenance improvements rather than changing current semantics silently.
 
 ### Q5. Should the Pi extension live in-repo, generated at runtime, or as a separate package?
 
-Initial recommendation: start with in-repo/generated runtime assets, optimize packaging later.
+Initial recommendation: start with in-repo/generated runtime assets, optimize packaging later. Packaging can be revisited later as a separate project once the current interactive/runtime model has settled.
+
+### Q6. How much more CLI/JSON control-plane polish is required now?
+
+Current decided posture:
+
+- the `choir tool` control plane is sufficient for the current Pi integration phase
+- additional response fields, flags, or exit-code refinements should be driven by concrete operator/runtime needs
+- speculative CLI polish is not currently a blocker for the Pi shift
 
 ---
 

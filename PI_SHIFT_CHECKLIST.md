@@ -213,9 +213,26 @@
   - recovered leaf appears in `agent_list` after `choir stop` + `choir init --recreate --tl pi`
   - restarted Pi TL can `merge_pr` for the recovered open PR
   - authoritative `[PR MERGED]` parent notification still arrives
-- [~] Decide whether Pi runtime needs additional recovery/persistence handling beyond the current restart-recovery path
-- [ ] Decide whether interactive Pi pane delivery is sufficient long-term
-- [ ] Tighten any CLI/JSON fields discovered during earlier milestones
+- [x] Decide default restart policy:
+  - `choir stop` preserves recoverable state by default
+  - `choir init --recreate` preserves recoverable state by default
+  - destructive cleanup is explicit via `--purge`
+- [x] Decide current registry-visibility policy:
+  - `agent_list` shows known session agents, not only live processes
+  - recovered offline agents may remain visible as terminal `Done` entries
+  - if this becomes noisy later, add active-only filtering as a follow-up UX improvement
+- [x] Decide current persistence boundary:
+  - preserve runtime metadata, lifecycle state, and recovery artifacts across restart by default
+  - rely on explicit `--purge` and existing normal finalization cleanup rather than aggressive automatic GC
+  - leave targeted GC / pruning as a possible later UX-maintenance follow-up if noise or storage churn becomes a real problem
+- [ ] Decide whether Pi runtime needs additional recovery/persistence handling beyond the current restart-recovery path
+- [x] Decide current delivery posture:
+  - interactive Pi pane delivery is sufficient for now
+  - a more explicit inbox / durable-delivery model remains a possible later improvement, not a current blocker
+- [x] Decide current CLI/JSON posture:
+  - `choir tool` is sufficient for the current Pi integration phase
+  - additional fields / flags / exit-code refinements should be driven by concrete operator needs
+  - speculative CLI polish is not a current blocker
 
 ### Documentation
 
@@ -226,9 +243,9 @@
 
 ### Future options (not required for first success)
 
-- [ ] Evaluate Pi RPC mode as a future runtime option
-- [ ] Evaluate Pi SDK embedding as a future runtime option
-- [ ] Evaluate whether some Pi assets should later become a package
+- [ ] Evaluate Pi RPC mode as a future runtime option (explicitly deferred)
+- [ ] Evaluate Pi SDK embedding as a future runtime option (explicitly deferred)
+- [ ] Evaluate whether some Pi assets should later become a package (explicitly deferred)
 
 ---
 
@@ -266,7 +283,7 @@
 
 ## Working definition of success
 
-We are on track if all of the following become true in order:
+The core Choir × Pi shift is now considered achieved. The following success conditions are met:
 
 - [x] `choir tool` is real and useful
 - [x] Pi can drive Choir manually without MCP
@@ -274,3 +291,5 @@ We are on track if all of the following become true in order:
 - [x] `choir init --tl pi` works
 - [x] Pi leaves/workers work inside the normal Choir lifecycle
 - [x] Choir remains the single typed orchestration authority throughout
+
+What remains is optional hardening, UX policy refinement, and future transport/runtime exploration rather than unfinished core viability work.
