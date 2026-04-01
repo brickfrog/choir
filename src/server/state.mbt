@@ -11,6 +11,7 @@ pub struct ServerState {
   pane_watchers : Map[String, Int64] // agent_id -> last_change_at (unix sec)
   pane_hashes : Map[String, Int] // agent_id -> hash of last screen dump
   pane_watcher : @runtime.PaneWatcher
+  recovery_provider : @runtime.RecoveryProvider
 }
 
 ///|
@@ -51,7 +52,10 @@ fn init_run_id(project_dir : String) -> String {
 
 ///|
 /// Create initial server state from config.
-pub fn ServerState::new(config : @types.Config) -> ServerState {
+pub fn ServerState::new(
+  config : @types.Config,
+  recovery_provider : @runtime.RecoveryProvider,
+) -> ServerState {
   let run_id = init_run_id(config.project_dir)
   {
     config,
@@ -64,5 +68,6 @@ pub fn ServerState::new(config : @types.Config) -> ServerState {
     pane_watchers: {},
     pane_hashes: {},
     pane_watcher: @runtime.PaneWatcher::new(),
+    recovery_provider,
   }
 }

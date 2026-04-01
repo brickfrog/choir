@@ -247,12 +247,12 @@ fn serve_run() -> Unit {
   // Clean stale runtime markers from previous sessions, but preserve recoverable
   // worktrees/lifecycle/poller state so restart recovery can rehydrate agents.
   ignore(@sys.system(runtime_cleanup_shell() + " 2>/dev/null; true"))
-  let state = @server.ServerState::new(config)
+  let provider = @server.make_recovery_provider()
+  let state = @server.ServerState::new(config, provider)
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(root) {
-      let provider = @server.make_recovery_provider()
       let snapshot = @server.discover_recovery_snapshot(
         provider,
         config.project_dir,
