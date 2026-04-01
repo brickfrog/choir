@@ -14,20 +14,51 @@ pub(all) struct OpenPR {
 } derive(Show, Eq)
 
 ///|
+pub(all) struct LocalAgentSnapshot {
+  slug : String
+  dir_name : String
+  agent : @types.Agent?
+} derive(Show)
+
+///|
 pub(all) struct RecoverySnapshot {
   zellij_live : ZellijLiveTargets
   open_prs : Array[OpenPR]
-  worktrees : Array[String]
-  agents : Array[String]
-  inline : Array[String]
+  local_agents : Array[LocalAgentSnapshot]
   recovered_at : Int64
-} derive(Show, Eq)
+} derive(Show)
+
+///|
+pub(all) enum RecoveryAction {
+  RegisterAgent(@types.Agent, Bool)
+  RestorePRTracking(@poller.TrackedPR)
+  TrackNewPR(
+    pr_number~ : Int,
+    agent_id~ : String,
+    branch~ : String,
+    parent_branch~ : String,
+    pr_url~ : String,
+    review~ : @poller.ReviewState,
+    review_bodies~ : String,
+    sha~ : String,
+    ci_failed~ : Bool,
+    created_at~ : Int64
+  )
+  SyncLifecycle(agent_id~ : String, pr~ : OpenPR, review~ : @poller.ReviewState)
+  FinalizeOfflineAgent(agent_id~ : String)
+} derive(Show)
+
+///|
+pub(all) struct RecoveryPlan {
+  actions : Array[RecoveryAction]
+} derive(Show)
 
 ///|
 pub(all) struct RecoveryProvider {
   zellij_live : async (String, String) -> ZellijLiveTargets
   open_prs : async (String) -> Array[OpenPR]
   list_local_agents : async (String, String) -> Array[String]
+  read_local_config : async (String, String, String) -> String
 }
 
 ///|
@@ -96,6 +127,177 @@ fn json_value_string(value : Json?) -> String {
 fn push_unique(values : Array[String], value : String) -> Unit {
   if value != "" && !values.contains(value) {
     values.push(value)
+  }
+}
+
+///|
+pub fn default_agent_type(role : @types.Role) -> @types.AgentType {
+  match role {
+    @types.Role::Root => @types.AgentType::Claude
+    @types.Role::TL => @types.AgentType::Claude
+    @types.Role::Dev => @types.AgentType::Gemini
+    @types.Role::Worker => @types.AgentType::Gemini
+  }
+}
+
+///|
+pub fn parse_agent_from_config(
+  content : String,
+  rel_workspace : String,
+  fallback_slug : String,
+) -> @types.Agent? {
+  if content == "" {
+    return None
+  }
+  let local_cfg = match @config.parse_local_config(content) {
+    Ok(cfg) => cfg
+    Err(_) => return None
+  }
+  let role = local_cfg.role.unwrap_or(@types.Role::TL)
+  let agent_id = local_cfg.agent_id.unwrap_or(fallback_slug)
+  let branch = local_cfg.branch.unwrap_or(agent_id)
+  let workspace = local_cfg.workspace.unwrap_or(rel_workspace)
+  Some({
+    agent_id: @types.AgentId(agent_id),
+    role,
+    agent_type: local_cfg.agent_type.unwrap_or(default_agent_type(role)),
+    state: @types.AgentState::Done, // Initial assumption; caller reconciles with zellij
+    parent: local_cfg.parent_id,
+    terminal_target: local_cfg.terminal_target,
+    host: @types.Host::Local,
+    workspace,
+    branch,
+    spawn_depth: local_cfg.spawn_depth.unwrap_or(0),
+  })
+}
+
+///|
+pub fn is_local_target_alive(
+  target : @types.LocalTarget?,
+  session : String,
+  zellij_live : ZellijLiveTargets,
+) -> Bool {
+  match target {
+    Some({ kind: @types.TargetKind::ZellijTab, session: s, name }) =>
+      s == session && zellij_live.tabs.contains(name)
+    Some({ kind: @types.TargetKind::ZellijPane, session: s, name }) =>
+      s == session && zellij_live.panes.contains(name)
+    None => false
+  }
+}
+
+///|
+pub fn inferred_next_round_from_lifecycle(
+  lifecycle : @phase.DevLifecycle,
+) -> Int {
+  match lifecycle {
+    @phase.DevLifecycle::ReviewOwned(
+      state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+      ..
+    ) => round + 1
+    @phase.DevLifecycle::ChangesRequested(next_round~, ..) => next_round
+    @phase.DevLifecycle::ExitRequestedDeferred(
+      state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+      ..
+    ) => round + 1
+    _ => 1
+  }
+}
+
+///|
+pub fn recover_dev_lifecycle_for_pr(
+  current : @phase.DevLifecycle,
+  pr_number : Int,
+  pr_url : String,
+  review : @poller.ReviewState,
+) -> @phase.DevLifecycle {
+  let preserve_exit = match current {
+    @phase.DevLifecycle::ExitRequestedDeferred(..) => true
+    _ => false
+  }
+  match review {
+    @poller.ReviewState::Approved =>
+      if preserve_exit {
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        )
+      } else {
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        )
+      }
+    @poller.ReviewState::ChangesRequested =>
+      @phase.DevLifecycle::ChangesRequested(
+        pr_number~,
+        next_round=inferred_next_round_from_lifecycle(current),
+      )
+    @poller.ReviewState::Commented =>
+      match current {
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=n,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+        ) if n == pr_number =>
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+          )
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number=n,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+        ) if n == pr_number =>
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+          )
+        @phase.DevLifecycle::ExitRequestedDeferred(..) =>
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number~,
+            state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+          )
+        _ =>
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+          )
+      }
+    @poller.ReviewState::None_ =>
+      match current {
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=n,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+        ) if n == pr_number =>
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+          )
+        @phase.DevLifecycle::ExitRequestedDeferred(
+          pr_number=n,
+          state=@phase.ReviewOwnership::FixesAwaitingReview(round~)
+        ) if n == pr_number =>
+          @phase.DevLifecycle::ExitRequestedDeferred(
+            pr_number~,
+            state=@phase.ReviewOwnership::FixesAwaitingReview(round~),
+          )
+        @phase.DevLifecycle::ExitRequestedDeferred(pr_number=n, ..) =>
+          if n == pr_number {
+            @phase.DevLifecycle::ExitRequestedDeferred(
+              pr_number~,
+              state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+            )
+          } else {
+            @phase.DevLifecycle::ReviewOwned(
+              pr_number~,
+              state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+            )
+          }
+        _ =>
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number~,
+            state=@phase.ReviewOwnership::OpenUnreviewed(url=pr_url),
+          )
+      }
   }
 }
 
