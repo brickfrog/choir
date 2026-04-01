@@ -325,3 +325,119 @@ test "dev phase json round-trip all variants" {
     }
   }
 }
+
+///|
+test "resolve_agent_with_fallback - in registry" {
+  let project_dir = "test_project"
+  let session = "test_session"
+  let reg = @registry.AgentRegistry::new()
+  let agent_id = "agent1"
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent1"),
+    workspace: "ws1",
+    branch: "branch1",
+    terminal_target: Some({ kind: ZellijTab, session: "s1", name: "n1" }),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(reg.upsert(agent))
+  let resolved = resolve_agent_with_fallback(
+    project_dir, session, reg, agent_id,
+  )
+  match resolved {
+    Ok(a) => {
+      assert_eq(a.agent_id.to_string(), agent_id)
+      assert_eq(a.role, @types.Role::Dev)
+      assert_eq(a.agent_type, @types.AgentType::Gemini)
+    }
+    Err(e) => fail("should have resolved from registry: " + e.to_string())
+  }
+}
+
+///|
+test "resolve_agent_with_fallback - fallback to lifecycle" {
+  let project_dir = "test_project_fallback"
+  let session = "test_session_fallback"
+  let reg = @registry.AgentRegistry::new()
+  let agent_id = "parent1"
+
+  // Create lifecycle using the store/write_lifecycle
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let lifecycle = lifecycle_for_role(agent_id, @types.Role::TL)
+  ignore(write_lifecycle(project_dir, lifecycle))
+
+  let resolved = resolve_agent_with_fallback(
+    project_dir, session, reg, agent_id,
+  )
+  match resolved {
+    Ok(a) => {
+      assert_eq(a.agent_id.to_string(), agent_id)
+      assert_eq(a.role, @types.Role::TL)
+      assert_eq(a.agent_type, @types.AgentType::Claude)
+      assert_eq(a.workspace, project_dir)
+      assert_eq(a.branch, agent_id)
+      match a.terminal_target {
+        Some(target) => {
+          assert_eq(target.session, session)
+          assert_eq(target.name, "TL")
+        }
+        None => fail("should have terminal target")
+      }
+    }
+    Err(e) =>
+      fail("should have resolved from lifecycle fallback: " + e.to_string())
+  }
+
+  // Cleanup
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
+test "resolve_parent_with_fallback - parent in registry" {
+  let project_dir = "test_project_parent"
+  let session = "test_session_parent"
+  let reg = @registry.AgentRegistry::new()
+  let caller_id = "agent1"
+  let parent_id = "parent1"
+
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId(caller_id),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Gemini,
+      parent: Some(parent_id),
+      workspace: "ws1",
+      branch: "branch1",
+      terminal_target: None,
+      host: @types.Host::Local,
+      state: @types.AgentState::Active,
+      spawn_depth: 1,
+    }),
+  )
+
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId(parent_id),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: "ws_parent",
+    branch: "branch_parent",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(reg.upsert(parent))
+
+  let resolved = resolve_parent_with_fallback(
+    project_dir, session, reg, caller_id,
+  )
+  match resolved {
+    Ok(a) => assert_eq(a.agent_id.to_string(), parent_id)
+    Err(e) => fail("should have resolved parent: " + e.to_string())
+  }
+}

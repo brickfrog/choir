@@ -228,7 +228,7 @@ These are now recorded as real architecture items, not vague future polish:
 - move pane subscription process management behind a dedicated host adapter
 - make recovery consume injected snapshots instead of shelling out inline
 - separate lifecycle transition logic from lifecycle persistence
-- unify parent-resolution policy into one canonical service
+- [x] unify parent-resolution policy into one canonical service
 - finish the injectable-capture pattern in `src/tools/pr.mbt`
 - remove dead/duplicate `init` helper implementations and delegate to workspace helpers
 - converge on one Pi extension source of truth
@@ -268,10 +268,10 @@ This phase does not yet redesign the whole runtime. It removes the most obvious 
      - `src/tools/dispatch_helpers.mbt`
      - `src/tools/dispatch.mbt`
      - `src/server/handler.mbt`
-3. **establish one canonical parent-resolution helper**
+3. **[x] establish one canonical parent-resolution helper**
    - replace duplicated fallback logic in:
-     - `src/tools/dispatch.mbt::resolve_parent_for_notify`
-     - `src/server/handler.mbt::resolve_parent_by_id`
+     - [x] `src/tools/dispatch.mbt::resolve_parent_for_notify`
+     - [x] `src/server/handler.mbt::resolve_parent_by_id`
 4. **remove obvious dead / duplicate init paths**
    - delete or replace dead `init_pi_tl_extension_content()`
    - make `init` code call workspace helpers rather than reimplementing them

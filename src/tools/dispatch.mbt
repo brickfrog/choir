@@ -73,60 +73,13 @@ fn agent_list_includes_by_default(agent : @types.Agent) -> Bool {
 }
 
 ///|
-fn synthesized_notify_parent_target(
-  session : String,
-  parent_id : String,
-  role : @types.Role,
-) -> @types.LocalTarget {
-  let slug = match role {
-    @types.Role::Root | @types.Role::TL => "TL"
-    _ => @phase.extract_slug(parent_id)
-  }
-  @workspace.local_target_for(session, slug, @types.IsolationMode::Worktree)
-}
-
-///|
 fn resolve_parent_for_notify(
   project_dir : String,
   session : String,
   reg : @registry.AgentRegistry,
   caller_id : String,
 ) -> Result[@types.Agent, @types.ChoirError] {
-  match reg.get(caller_id) {
-    Ok(agent) =>
-      match agent.parent {
-        Some(parent_id) =>
-          match reg.get(parent_id) {
-            Ok(parent) => Ok(parent)
-            Err(_) =>
-              match @phase.read_lifecycle(project_dir, parent_id) {
-                Some(lifecycle) =>
-                  Ok({
-                    agent_id: parent_id,
-                    role: lifecycle.role,
-                    agent_type: @types.AgentType::Claude,
-                    parent: None,
-                    workspace: project_dir,
-                    branch: parent_id,
-                    terminal_target: Some(
-                      synthesized_notify_parent_target(
-                        session,
-                        parent_id,
-                        lifecycle.role,
-                      ),
-                    ),
-                    host: @types.Host::Local,
-                    state: lifecycle.to_agent_state(),
-                    spawn_depth: 0,
-                  })
-                None => Err(@types.ChoirError::AgentNotFound(parent_id))
-              }
-          }
-        None =>
-          Err(@types.ChoirError::AgentNotFound("no parent for " + caller_id))
-      }
-    Err(e) => Err(e)
-  }
+  @phase.resolve_parent_with_fallback(project_dir, session, reg, caller_id)
 }
 
 ///|
