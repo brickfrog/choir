@@ -1053,7 +1053,6 @@ pub async fn ServerState::process_poller_tick(
 /// Starts a `zellij subscribe` process that streams pane viewport updates
 /// to a snapshot file, replacing the old dump-screen polling approach.
 pub fn ServerState::watch_pane(self : ServerState, agent_id : String) -> Unit {
-  self.pane_watchers.set(agent_id, @poller.now_sec())
   let agent = match self.registry.get(agent_id) {
     Ok(a) => a
     Err(_) => return
@@ -1062,7 +1061,7 @@ pub fn ServerState::watch_pane(self : ServerState, agent_id : String) -> Unit {
     Some(t) => t
     None => return
   }
-  self.pane_watcher.watch_pane(agent_id, target)
+  self.pane_watcher.watch_pane(agent_id, target, @poller.now_sec())
 }
 
 ///|
@@ -1180,8 +1179,6 @@ fn ServerState::clear_agent_runtime_tracking(
   agent_id : String,
 ) -> Unit {
   self.stop_subscribe(agent_id)
-  self.pane_watchers.remove(agent_id)
-  self.pane_hashes.remove(agent_id)
   self.pending_disconnects.remove(agent_id)
 }
 
@@ -1549,50 +1546,6 @@ async fn ServerState::interpret_teardown_effects(
 }
 
 ///|
-/// Extract viewport text from a zellij subscribe JSON snapshot.
-/// Format: {"event":"pane_update","viewport":["line1","line2",...]}
-fn extract_viewport_text(json_str : String) -> String {
-  if json_str == "" {
-    return ""
-  }
-  let parsed : Json = @json.parse(json_str) catch { _ => return json_str }
-  match parsed {
-    Object(obj) =>
-      match obj.get("viewport") {
-        Some(Array(lines)) => {
-          let buf = StringBuilder::new()
-          for line in lines {
-            match line {
-              String(s) => {
-                buf.write_string(s)
-                buf.write_char('\n')
-              }
-              _ => ()
-            }
-          }
-          buf.to_string()
-        }
-        _ => json_str
-      }
-    _ => json_str
-  }
-}
-
-///|
-fn simple_hash(s : String) -> Int {
-  let mut h = 5381
-  for c in s {
-    h = (h * 31 + c.to_int()) % 1_000_000_007
-  }
-  // Reserve 0 as sentinel for "no snapshot yet"
-  if h == 0 {
-    1
-  } else {
-    h
-  }
-}
-
-///|
 /// Check for idle agents by dumping pane screens and comparing hashes.
 /// If a pane's screen hasn't changed for `timeout` seconds, kill the agent.
 pub async fn ServerState::check_idle_agents(
@@ -1601,22 +1554,17 @@ pub async fn ServerState::check_idle_agents(
   timeout : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
-  let agent_ids = []
-  self.pane_watchers.each(fn(agent_id, _) { agent_ids.push(agent_id) })
+  let agent_ids = self.pane_watcher.watched_agents()
   for agent_id in agent_ids {
     let agent = match self.registry.get(agent_id) {
       Ok(a) => a
       Err(_) => {
         self.stop_subscribe(agent_id)
-        self.pane_watchers.remove(agent_id)
-        self.pane_hashes.remove(agent_id)
         continue
       }
     }
     if agent.state != @types.AgentState::Active {
       self.stop_subscribe(agent_id)
-      self.pane_watchers.remove(agent_id)
-      self.pane_hashes.remove(agent_id)
       continue
     }
     if agent.role == @types.Role::Root || agent.role == @types.Role::TL {
@@ -1631,48 +1579,35 @@ pub async fn ServerState::check_idle_agents(
       Some(_) => ()
       None => continue
     }
-    // Read viewport snapshot written by the zellij subscribe process
-    let snapshot = self.pane_watcher.read_viewport(agent_id)
-    // Skip idle check until zellij has written at least one snapshot
-    if snapshot.trim().to_string() == "" {
-      continue
+
+    // Check if idle too long
+    match self.pane_watcher.check_idle(agent_id, now, timeout) {
+      Some(screen) => {
+        ignore(screen) // We could extract failure reason from screen if desired, but watchdog just kills it
+        // Kill the agent
+        @moontrace.warn(
+          "watchdog killing idle agent",
+          fields=@moontrace.fields([
+            ("agent", agent_id.to_json()),
+            ("idle_sec", timeout.to_json()),
+          ]),
+        )
+        let message = "[WATCHDOG] agent " +
+          agent_id +
+          " killed after " +
+          timeout.to_string() +
+          "s idle (no pane output change)"
+        self.fail_agent_with_runner(
+          agent_id,
+          @phase.FailureReason::WatchdogTimeout,
+          message,
+          "watchdog",
+          runner,
+          close_target=true,
+        )
+      }
+      None => continue
     }
-    // Extract viewport lines from JSON: {"viewport":["line1","line2",...]}
-    let screen = extract_viewport_text(snapshot)
-    let hash = simple_hash(screen)
-    let prev_hash = self.pane_hashes.get(agent_id).unwrap_or(0)
-    if hash != prev_hash {
-      self.pane_watchers.set(agent_id, now)
-      self.pane_hashes.set(agent_id, hash)
-      continue
-    }
-    // Screen unchanged — check if idle too long
-    let last_change = self.pane_watchers.get(agent_id).unwrap_or(now)
-    let elapsed = now - last_change
-    if elapsed < timeout {
-      continue
-    }
-    // Kill the agent
-    @moontrace.warn(
-      "watchdog killing idle agent",
-      fields=@moontrace.fields([
-        ("agent", agent_id.to_json()),
-        ("idle_sec", elapsed.to_json()),
-      ]),
-    )
-    let message = "[WATCHDOG] agent " +
-      agent_id +
-      " killed after " +
-      elapsed.to_string() +
-      "s idle (no pane output change)"
-    self.fail_agent_with_runner(
-      agent_id,
-      @phase.FailureReason::WatchdogTimeout,
-      message,
-      "watchdog",
-      runner,
-      close_target=true,
-    )
   }
 }
 
@@ -1782,7 +1717,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
                 }
                 None => {
                   let snapshot = self.pane_watcher.read_viewport(agent_id)
-                  let screen = extract_viewport_text(snapshot)
+                  let screen = @runtime.extract_viewport_text(snapshot)
                   let (reason, msg) = if screen != "" {
                     let classified = @phase.classify_failure(screen)
                     match classified {
