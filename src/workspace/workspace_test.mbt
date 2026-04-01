@@ -767,6 +767,33 @@ test "remote_spawn_commands produces 3 ssh commands and includes spawn_depth" {
 }
 
 ///|
+test "remote_spawn_commands passes extra MCP servers into launch command" {
+  let spec = @types.SpawnSpec::{
+    slug: "remote-worker",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "implement feature Y",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+  }
+  let cmds = @workspace.remote_spawn_commands(
+    spec,
+    "user@remote-host",
+    "git@github.com:org/repo.git",
+    "10.0.0.1:9100",
+    extra_mcp_servers_json=Some(
+      "{\"notebook\":{\"type\":\"stdio\",\"command\":\"node\"}}",
+    ),
+  )
+  assert_true(cmds[2].args[3].contains("\"notebook\""))
+}
+
+///|
 test "validate_reuse_spawn_spec rejects missing reuse_git_branch" {
   let spec = @types.SpawnSpec::{
     slug: "n",
