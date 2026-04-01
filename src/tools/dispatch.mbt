@@ -65,6 +65,14 @@ fn tool_args_get_bool(args : ToolArgs, key : String) -> Bool {
 }
 
 ///|
+fn agent_list_includes_by_default(agent : @types.Agent) -> Bool {
+  match agent.state {
+    @types.AgentState::Done | @types.AgentState::Failed => false
+    _ => true
+  }
+}
+
+///|
 fn synthesized_notify_parent_target(
   session : String,
   parent_id : String,
@@ -895,10 +903,12 @@ pub async fn dispatch(
     ToolRequest::AgentList(args) =>
       match registry {
         Some(reg) => {
-          let agents = match args.parent_id {
+          let agents = (match args.parent_id {
             Some(id) => reg.children(id)
             None => reg.list()
-          }
+          }).filter(fn(agent) {
+            args.include_inactive || agent_list_includes_by_default(agent)
+          })
           let agents_json : Array[Json] = []
           for agent in agents {
             agents_json.push(

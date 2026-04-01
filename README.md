@@ -175,6 +175,7 @@ This is useful for shell automation and non-MCP integrations.
 
 ```bash
 choir tool agent_list
+choir tool agent_list --include_inactive true
 choir tool mutex_status --name review-lock
 choir tool fork_wave --caller-role tl --json '{"caller_id":"root","tasks":["task A","task B"],"agent_type":"gemini","parent_branch":"main"}'
 ```

@@ -693,7 +693,7 @@ async test "register accepts whitespace-trimmed spawn_depth" {
 }
 
 ///|
-async test "dispatch agent_list returns all agents when parent_id is None" {
+async test "dispatch agent_list defaults to active agents only" {
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -720,10 +720,66 @@ async test "dispatch agent_list returns all agents when parent_id is None" {
       terminal_target: None,
       host: @types.Host::Local,
       spawn_depth: 1,
-      state: @types.AgentState::Active,
+      state: @types.AgentState::Done,
     }),
   )
   let call = ToolCall::{ role: @types.Role::TL, name: "agent_list", args: {} }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/tmp/choir-test-noop",
+    registry=Some(reg),
+  )
+  match res {
+    Ok(map) => {
+      assert_eq(map.get("status"), Some("ok"))
+      match map.get_json("agents") {
+        Some(Array(arr)) => {
+          assert_eq(arr.length(), 1)
+          assert_true(arr[0].stringify().contains("\"agent_id\":\"agent-1\""))
+        }
+        _ => fail("expected agents array")
+      }
+    }
+    Err(e) => fail("agent_list failed: " + e)
+  }
+}
+
+///|
+async test "dispatch agent_list include_inactive returns full registry view" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "agent-1",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/tmp/w1",
+      branch: "branch-1",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    reg.upsert({
+      agent_id: "agent-2",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::CursorAgent,
+      parent: Some("agent-1"),
+      workspace: "/tmp/w2",
+      branch: "branch-2",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Done,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "agent_list",
+    args: { "include_inactive": "true" },
+  }
   let res = @tools.dispatch_call(
     call,
     project_dir="/tmp/choir-test-noop",
@@ -742,7 +798,7 @@ async test "dispatch agent_list returns all agents when parent_id is None" {
 }
 
 ///|
-async test "dispatch agent_list filters by parent_id" {
+async test "dispatch agent_list filters by parent_id before include_inactive handling" {
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -783,7 +839,7 @@ async test "dispatch agent_list filters by parent_id" {
       terminal_target: None,
       host: @types.Host::Local,
       spawn_depth: 1,
-      state: @types.AgentState::Active,
+      state: @types.AgentState::Done,
     }),
   )
   let call = ToolCall::{
@@ -800,7 +856,10 @@ async test "dispatch agent_list filters by parent_id" {
     Ok(map) => {
       assert_eq(map.get("status"), Some("ok"))
       match map.get_json("agents") {
-        Some(Array(arr)) => assert_eq(arr.length(), 2)
+        Some(Array(arr)) => {
+          assert_eq(arr.length(), 1)
+          assert_true(arr[0].stringify().contains("\"agent_id\":\"child-1\""))
+        }
         _ => fail("expected agents array")
       }
     }

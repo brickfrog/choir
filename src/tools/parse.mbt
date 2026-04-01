@@ -1032,7 +1032,8 @@ fn parse_tool_request(
           }
         None => None
       }
-      Ok(ToolRequest::AgentList({ parent_id, }))
+      let include_inactive = tool_args_get_bool(args, "include_inactive")
+      Ok(ToolRequest::AgentList({ parent_id, include_inactive }))
     }
     "cancel_wave" => {
       let force = tool_args_get_bool(args, "force")

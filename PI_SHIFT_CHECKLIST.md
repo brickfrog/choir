@@ -217,10 +217,10 @@
   - `choir stop` preserves recoverable state by default
   - `choir init --recreate` preserves recoverable state by default
   - destructive cleanup is explicit via `--purge`
-- [x] Decide current registry-visibility policy:
-  - `agent_list` shows known session agents, not only live processes
-  - recovered offline agents may remain visible as terminal `Done` entries
-  - if this becomes noisy later, add active-only filtering as a follow-up UX improvement
+- [x] Refine registry visibility UX:
+  - `agent_list` now defaults to active/non-terminal agents
+  - recovered offline / terminal `Done` entries remain available via `include_inactive=true`
+  - restart visibility/debugging is still preserved when explicitly requested
 - [x] Decide current persistence boundary:
   - preserve runtime metadata, lifecycle state, and recovery artifacts across restart by default
   - rely on explicit `--purge` and existing normal finalization cleanup rather than aggressive automatic GC

@@ -181,6 +181,7 @@ struct KillAgentArgs {
 ///|
 pub(all) struct AgentListArgs {
   parent_id : String?
+  include_inactive : Bool
 } derive(Show, Eq)
 
 ///|

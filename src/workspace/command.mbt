@@ -480,8 +480,11 @@ pub fn pi_extension_content() -> String {
     #|    pi.registerTool({
     #|      name: "agent_list",
     #|      label: "agent_list",
-    #|      description: "List agents known to the Choir registry.",
-    #|      parameters: Type.Object({ parent_id: Type.Optional(Type.String()) }),
+    #|      description: "List active agents known to the Choir registry by default.",
+    #|      parameters: Type.Object({
+    #|        parent_id: Type.Optional(Type.String()),
+    #|        include_inactive: Type.Optional(Type.Boolean()),
+    #|      }),
     #|      async execute(_toolCallId, params, signal, onUpdate) {
     #|        onUpdate?.({ content: [{ type: "text", text: "Running choir tool agent_list..." }] });
     #|        const result = await runChoirTool(pi, "agent_list", params as Record<string, unknown>, signal);

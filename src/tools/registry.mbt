@@ -142,7 +142,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "agent_list",
-      description: "List agents in the registry; optional parent_id to filter to direct children",
+      description: "List active agents in the registry by default; optional parent_id filters to direct children and include_inactive=true shows the full registry view",
       allowed_roles: all_roles,
     },
     {

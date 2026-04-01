@@ -128,10 +128,11 @@ const toolSpecs: ChoirToolSpec[] = [
 	{
 		name: "agent_list",
 		label: "agent_list",
-		description: "List agents known to the Choir registry.",
+		description: "List active agents known to the Choir registry by default.",
 		roles: TL_ROLES,
 		parameters: Type.Object({
 			parent_id: Type.Optional(Type.String({ description: "Optional parent id filter." })),
+			include_inactive: Type.Optional(Type.Boolean({ description: "Show inactive/done agents too." })),
 		}),
 	},
 	{

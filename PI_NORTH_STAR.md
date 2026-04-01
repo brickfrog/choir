@@ -75,7 +75,7 @@ The implementation now substantially matches the north-star design:
 - Restart recovery for an offline PR-owning Pi leaf has now also been live-validated: after `choir stop` + `choir init --recreate --tl pi`, the recovered offline leaf reappears in `agent_list`, the restarted Pi TL can still `merge_pr` on the open PR, and the authoritative `[PR MERGED]` parent notification still arrives.
 - `choir stop` and `choir init --recreate` now preserve recoverable state by default; destructive cleanup is explicit via `--purge`.
 - Recovery-preserving restart is now the intended policy, not just an implementation accident: restart means Choir should be able to rehydrate offline agents, PR ownership, and lifecycle context unless the operator explicitly asks to purge them.
-- `agent_list` currently reflects the known session registry, not just live processes; recovered offline agents may remain visible as terminal `Done` entries, and that is intentional for restart visibility/debugging.
+- `agent_list` now defaults to active/non-terminal agents for day-to-day UX, while `include_inactive=true` still exposes the full known session registry for restart visibility/debugging.
 - The core Choir × Pi shift is now considered successful: the primary implementation path is in place and live-validated.
 - Remaining work is mostly about longer-term persistence strategy, delivery sufficiency, dedupe, and production-credibility rather than first-pass viability.
 - `choir tool` is now considered sufficient for the current Pi integration phase; additional CLI/JSON fields or refinements should be driven by concrete operator/runtime needs rather than speculative polish.
@@ -716,10 +716,10 @@ Current decided policy:
 - `choir stop` preserves recoverable state by default
 - `choir init --recreate` preserves recoverable state by default
 - destructive cleanup is explicit via `--purge`
-- `agent_list` is currently a session-registry view, so recovered offline agents may remain visible as terminal `Done` entries
+- `agent_list` is now active-focused by default, with `include_inactive=true` available when the full session registry is needed
 - interactive pane delivery remains acceptable even though a more explicit inbox/durable-delivery design could be explored later
 
-The remaining question is less basic viability and more where the long-term persistence boundary should stop. Current policy favors recovery-preserving retention over aggressive automatic GC: runtime metadata, lifecycle state, and recovery artifacts are preserved across restart unless explicitly purged or already cleaned up by normal workflow finalization. If registry noise or storage churn becomes a problem later, active-only filtering and/or targeted GC can be added as explicit UX/maintenance improvements rather than changing current semantics silently.
+The remaining question is less basic viability and more where the long-term persistence boundary should stop. Current policy favors recovery-preserving retention over aggressive automatic GC: runtime metadata, lifecycle state, and recovery artifacts are preserved across restart unless explicitly purged or already cleaned up by normal workflow finalization. The active-focused `agent_list` default now reduces day-to-day noise, and targeted GC can still be added later as an explicit UX/maintenance improvement rather than changing current semantics silently.
 
 ### Q5. Should the Pi extension live in-repo, generated at runtime, or as a separate package?
 

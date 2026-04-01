@@ -3809,9 +3809,10 @@ fn init_pi_tl_extension_content() -> String {
     #|  {
     #|    name: "agent_list",
     #|    label: "agent_list",
-    #|    description: "List agents known to the Choir registry.",
+    #|    description: "List active agents known to the Choir registry by default.",
     #|    parameters: Type.Object({
     #|      parent_id: Type.Optional(Type.String()),
+    #|      include_inactive: Type.Optional(Type.Boolean()),
     #|    }),
     #|  },
     #|  {
