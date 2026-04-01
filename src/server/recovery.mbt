@@ -18,8 +18,13 @@ fn finalize_recovered_offline_agent(
           reason=@phase.FinalizeReason::RecoveredDone,
         ),
       }
-      ignore(state.persist_lifecycle(finalized))
-      state.sync_parent_child_lifecycle(agent_id, finalized)
+      @phase.apply_recovered_lifecycle(
+        state.config.project_dir,
+        state.config.terminal_session,
+        state.registry,
+        agent_id,
+        finalized,
+      )
     }
   }
 }
@@ -49,8 +54,13 @@ fn sync_recovered_pr_lifecycle(
       _ => lifecycle.process
     },
   }
-  ignore(state.persist_lifecycle(recovered))
-  state.sync_parent_child_lifecycle(agent_id, recovered)
+  @phase.apply_recovered_lifecycle(
+    state.config.project_dir,
+    state.config.terminal_session,
+    state.registry,
+    agent_id,
+    recovered,
+  )
 }
 
 ///|

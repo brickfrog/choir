@@ -404,3 +404,183 @@ pub fn resolve_parent_with_fallback(
     Err(e) => Err(e)
   }
 }
+
+///|
+pub fn persist_lifecycle(
+  project_dir : String,
+  registry : @registry.AgentRegistry,
+  lifecycle : AgentLifecycle,
+) -> Bool {
+  let ok = write_lifecycle(project_dir, lifecycle)
+  match registry.get(lifecycle.agent_id) {
+    Ok(agent) =>
+      ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+    Err(_) => ()
+  }
+  ok
+}
+
+///|
+fn child_exists(children : Array[ChildLifecycle], child_id : String) -> Bool {
+  for child in children {
+    if child.child_id == child_id {
+      return true
+    }
+  }
+  false
+}
+
+///|
+pub fn sync_parent_child_lifecycle(
+  project_dir : String,
+  session : String,
+  registry : @registry.AgentRegistry,
+  agent_id : String,
+  lifecycle : AgentLifecycle,
+) -> Unit {
+  let agent = match registry.get(agent_id) {
+    Ok(agent) => agent
+    Err(_) => return
+  }
+  let parent_id = match agent.parent {
+    Some(parent_id) => parent_id
+    None => return
+  }
+  let parent = match
+    resolve_agent_with_fallback(project_dir, session, registry, parent_id) {
+    Ok(parent) => parent
+    Err(_) => return
+  }
+  let child : ChildLifecycle = {
+    child_id: agent_id,
+    slug: extract_slug(agent_id),
+    branch: agent.branch,
+    agent_type: agent.agent_type.to_string(),
+    summary: child_summary_from_lifecycle(lifecycle),
+  }
+  let parent_lifecycle = read_or_default_lifecycle(
+    project_dir,
+    parent_id,
+    parent.role,
+  )
+  let supervisor = match parent_lifecycle.workflow {
+    WorkflowState::Supervisor(supervisor) => supervisor
+    _ => SupervisorLifecycle::Planning
+  }
+  let (transitioned, supervisor_trigger) = match supervisor {
+    SupervisorLifecycle::Supervising(children~, ..)
+    | SupervisorLifecycle::WaveComplete(children~, ..) =>
+      if child_exists(children, agent_id) {
+        (
+          supervisor_transition(
+            supervisor,
+            SupervisorEvent::ChildUpdated(
+              child_id=agent_id,
+              summary=child.summary,
+            ),
+          ),
+          "ChildUpdated",
+        )
+      } else {
+        (
+          supervisor_transition(
+            supervisor,
+            SupervisorEvent::ChildSpawned(child~),
+          ),
+          "ChildSpawned",
+        )
+      }
+    _ =>
+      (
+        supervisor_transition(supervisor, SupervisorEvent::ChildSpawned(child~)),
+        "ChildSpawned",
+      )
+  }
+  match transitioned {
+    Transitioned(new_supervisor) => {
+      let next_parent = {
+        ..parent_lifecycle,
+        workflow: WorkflowState::Supervisor(new_supervisor),
+      }
+      if persist_lifecycle(project_dir, registry, next_parent) {
+        ignore(
+          append_lifecycle_event(
+            project_dir,
+            parent_id,
+            lifecycle_to_json(parent_lifecycle),
+            lifecycle_to_json(next_parent),
+            supervisor_trigger,
+          ),
+        )
+      }
+    }
+    InvalidTransition(_) => ()
+  }
+}
+
+///|
+pub fn remove_parent_child_lifecycle(
+  project_dir : String,
+  registry : @registry.AgentRegistry,
+  agent_id : String,
+) -> Unit {
+  let agent = match registry.get(agent_id) {
+    Ok(agent) => agent
+    Err(_) => return
+  }
+  let parent_id = match agent.parent {
+    Some(parent_id) => parent_id
+    None => return
+  }
+  let parent = match registry.get(parent_id) {
+    Ok(parent) => parent
+    Err(_) => return
+  }
+  let parent_lifecycle = read_or_default_lifecycle(
+    project_dir,
+    parent_id,
+    parent.role,
+  )
+  let supervisor = match parent_lifecycle.workflow {
+    WorkflowState::Supervisor(supervisor) => supervisor
+    _ => SupervisorLifecycle::Planning
+  }
+  match
+    supervisor_transition(
+      supervisor,
+      SupervisorEvent::ChildRemoved(child_id=agent_id),
+    ) {
+    Transitioned(new_supervisor) => {
+      let next_parent = {
+        ..parent_lifecycle,
+        workflow: WorkflowState::Supervisor(new_supervisor),
+      }
+      if persist_lifecycle(project_dir, registry, next_parent) {
+        ignore(
+          append_lifecycle_event(
+            project_dir,
+            parent_id,
+            lifecycle_to_json(parent_lifecycle),
+            lifecycle_to_json(next_parent),
+            "ChildRemoved",
+          ),
+        )
+      }
+    }
+    InvalidTransition(_) => ()
+  }
+}
+
+///|
+pub fn apply_recovered_lifecycle(
+  project_dir : String,
+  session : String,
+  registry : @registry.AgentRegistry,
+  agent_id : String,
+  lifecycle : AgentLifecycle,
+) -> Unit {
+  ignore(persist_lifecycle(project_dir, registry, lifecycle))
+  sync_parent_child_lifecycle(
+    project_dir, session, registry, agent_id, lifecycle,
+  )
+}

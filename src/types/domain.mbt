@@ -19,6 +19,18 @@ pub(all) enum AgentType {
 } derive(Show, Eq)
 
 ///|
+pub fn AgentType::to_string(self : AgentType) -> String {
+  match self {
+    Claude => "claude"
+    Gemini => "gemini"
+    MoonPilot => "moon_pilot"
+    Codex => "codex"
+    CursorAgent => "cursor_agent"
+    Pi => "pi"
+  }
+}
+
+///|
 /// Where an agent runs.
 pub(all) enum Host {
   Local
