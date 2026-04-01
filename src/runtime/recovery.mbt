@@ -17,8 +17,18 @@ pub(all) struct OpenPR {
 pub(all) struct RecoverySnapshot {
   zellij_live : ZellijLiveTargets
   open_prs : Array[OpenPR]
+  worktrees : Array[String]
+  agents : Array[String]
+  inline : Array[String]
   recovered_at : Int64
 } derive(Show, Eq)
+
+///|
+pub(all) struct RecoveryProvider {
+  zellij_live : async (String, String) -> ZellijLiveTargets
+  open_prs : async (String) -> Array[OpenPR]
+  list_local_agents : async (String, String) -> Array[String]
+}
 
 ///|
 pub fn parse_github_time_utc_sec(s : String) -> Int64? {
