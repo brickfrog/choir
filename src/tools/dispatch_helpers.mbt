@@ -530,6 +530,80 @@ async fn fetch_gh_repo_owner_name(
 }
 
 ///|
+/// Fetch inline code review comments for a PR.
+/// Returns (count, formatted_text).
+/// Resolves owner/repo explicitly via gh repo view.
+pub async fn fetch_inline_comments(
+  pr_number : Int,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> (Int, String) {
+  let (owner, repo) = match fetch_gh_repo_owner_name(project_dir, capture) {
+    Some(pair) => pair
+    None => return (0, "")
+  }
+  let cmd : @workspace.Command = {
+    program: "gh",
+    args: [
+      "api",
+      "repos/" +
+      owner +
+      "/" +
+      repo +
+      "/pulls/" +
+      pr_number.to_string() +
+      "/comments",
+      "--jq",
+      "[.[] | {path, body}]",
+    ],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 {
+    return (0, "")
+  }
+  let trimmed = output.trim().to_string()
+  if trimmed == "" || trimmed == "[]" {
+    return (0, "")
+  }
+  let json = @json.parse(trimmed) catch { _ => return (0, "") }
+  let arr = match json {
+    Array(items) => items
+    _ => return (0, "")
+  }
+  let parts = StringBuilder::new()
+  let mut count = 0
+  for item in arr {
+    match item {
+      Object(c) => {
+        let path = match c.get("path") {
+          Some(String(v)) => v
+          _ => ""
+        }
+        let body = match c.get("body") {
+          Some(String(v)) => v
+          _ => ""
+        }
+        if body != "" {
+          if count > 0 {
+            parts.write_string("\n---\n")
+          }
+          if path != "" {
+            parts.write_string("[")
+            parts.write_string(path)
+            parts.write_string("] ")
+          }
+          parts.write_string(body)
+          count = count + 1
+        }
+      }
+      _ => ()
+    }
+  }
+  (count, parts.to_string())
+}
+
+///|
 /// Fetch unresolved review threads for a PR via GitHub GraphQL.
 /// Returns (count, formatted_text_with_thread_ids).
 /// Fails gracefully: returns (0, "") if gh is unavailable or the call fails.
@@ -828,4 +902,67 @@ test "parse_gh_repo_view_output extracts owner and repo" {
 ///|
 test "parse_gh_repo_view_output returns None on malformed json" {
   assert_eq(parse_gh_repo_view_output("{\"owner\":{},\"name\":1}"), None)
+}
+
+///|
+async fn mock_inline_comments_two_items(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" && cmd.args.contains("repo") {
+    return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+  }
+  (
+    0, "[{\"path\":\"src/foo.mbt\",\"body\":\"please fix\"},{\"path\":\"\",\"body\":\"general comment\"}]",
+  )
+}
+
+///|
+async test "fetch_inline_comments parses two comments" {
+  let (count, text) = fetch_inline_comments(
+    7, "/repo", mock_inline_comments_two_items,
+  )
+  assert_eq(count, 2)
+  assert_true(text.contains("please fix"))
+  assert_true(text.contains("general comment"))
+  assert_true(text.contains("[src/foo.mbt]"))
+}
+
+///|
+async fn mock_inline_comments_empty_arr(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" && cmd.args.contains("repo") {
+    return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+  }
+  (0, "[]")
+}
+
+///|
+async test "fetch_inline_comments returns zero for empty array" {
+  let (count, text) = fetch_inline_comments(
+    1, "/repo", mock_inline_comments_empty_arr,
+  )
+  assert_eq(count, 0)
+  assert_eq(text, "")
+}
+
+///|
+async fn mock_inline_comments_gh_failure(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" && cmd.args.contains("repo") {
+    return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+  }
+  (1, "gh: error fetching")
+}
+
+///|
+async test "fetch_inline_comments returns zero on non-zero exit" {
+  let (count, _) = fetch_inline_comments(
+    99, "/repo", mock_inline_comments_gh_failure,
+  )
+  assert_eq(count, 0)
 }

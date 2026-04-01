@@ -472,6 +472,57 @@ async test "ensure_branch_has_unique_commits_with_capture fails when not ahead" 
 }
 
 ///|
+
+///|
+async fn mock_ensure_pr_create_uses_capture(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" &&
+    cmd.args.length() >= 2 &&
+    cmd.args[0] == "pr" &&
+    cmd.args[1] == "view" {
+    if cmd.workdir == Some("/repo") {
+      (
+        0, "{\"number\":42,\"url\":\"https://github.com/x/y/pull/42\",\"state\":\"CLOSED\"}",
+      )
+    } else {
+      (-1, "unexpected gh pr view workdir")
+    }
+  } else if cmd.program == "git" &&
+    cmd.args.length() >= 1 &&
+    cmd.args[0] == "rev-list" {
+    (0, "0\t1\n")
+  } else if cmd.program == "gh" &&
+    cmd.args.length() >= 2 &&
+    cmd.args[0] == "pr" &&
+    cmd.args[1] == "create" {
+    (0, "")
+  } else {
+    (-1, "unhandled command")
+  }
+}
+
+///|
+async test "ensure_pull_request_with_capture uses injected capture for unique commit check" {
+  let got = ensure_pull_request_with_capture(
+    "t.leaf",
+    "main",
+    "/repo",
+    None,
+    None,
+    mock_ensure_pr_create_uses_capture,
+  )
+  match got {
+    Ok(pr) => {
+      assert_eq(pr.number, 42)
+      assert_eq(pr.state, "CLOSED")
+    }
+    Err(e) => fail("expected Ok: " + e)
+  }
+}
+
+///|
 async test "ensure_pull_request_with_capture returns existing open PR" {
   let got = ensure_pull_request_with_capture(
     "t.leaf",
