@@ -1449,6 +1449,10 @@ pub async fn dispatch(
       }
     }
     ToolRequest::ResolveReviewThread(resolve_args) => {
+      // Pass threadId as a GraphQL variable to avoid embedding it in the
+      // mutation body. Also check exit code AND parse the JSON response for
+      // GraphQL-level errors (gh returns exit 0 on HTTP 200 even when the
+      // response body contains an `errors` array).
       let mutation = "mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } } }"
       let cmd : @workspace.Command = {
         program: "gh",
@@ -1471,6 +1475,60 @@ pub async fn dispatch(
           } else {
             "resolve_review_thread failed (exit " + exit_code.to_string() + ")"
           },
+        )
+      }
+      if output.trim().to_string() == "" {
+        return @types.Response::Err(
+          "resolve_review_thread failed: empty response from gh",
+        )
+      }
+      let json = @json.parse(output) catch {
+        _ =>
+          return @types.Response::Err(
+            "resolve_review_thread: invalid JSON in gh response",
+          )
+      }
+      guard json is Object(root) else {
+        return @types.Response::Err(
+          "resolve_review_thread: unexpected response shape",
+        )
+      }
+      // Surface GraphQL-level errors returned in 200/exit-0 responses
+      match root.get("errors") {
+        Some(Array(errs)) =>
+          if errs.length() > 0 {
+            let msg = match errs[0] {
+              Object(e) =>
+                match e.get("message") {
+                  Some(String(v)) => v
+                  _ => "GraphQL error"
+                }
+              _ => "GraphQL error"
+            }
+            return @types.Response::Err("resolve_review_thread failed: " + msg)
+          }
+        _ => ()
+      }
+      // Verify the thread was actually marked resolved
+      let is_resolved = match root.get("data") {
+        Some(Object(data)) =>
+          match data.get("resolveReviewThread") {
+            Some(Object(rt)) =>
+              match rt.get("thread") {
+                Some(Object(thread)) =>
+                  match thread.get("isResolved") {
+                    Some(True) => true
+                    _ => false
+                  }
+                _ => false
+              }
+            _ => false
+          }
+        _ => false
+      }
+      if !is_resolved {
+        return @types.Response::Err(
+          "resolve_review_thread: thread was not marked resolved (check permissions)",
         )
       }
       @types.Response::ok_values({

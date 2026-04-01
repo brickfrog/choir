@@ -523,6 +523,8 @@ async fn fetch_gh_repo_owner_name(project_dir : String) -> (String, String)? {
 /// Fetch unresolved review threads for a PR via GitHub GraphQL.
 /// Returns (count, formatted_text_with_thread_ids).
 /// Fails gracefully: returns (0, "") if gh is unavailable or the call fails.
+/// Owner/repo are resolved explicitly via gh repo view to avoid relying on
+/// {owner}/{repo} substitution inside the GraphQL query body.
 async fn fetch_unresolved_review_threads(
   pr_number : Int,
   project_dir : String,
