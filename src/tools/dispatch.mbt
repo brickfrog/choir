@@ -992,7 +992,7 @@ pub async fn dispatch(
       ignore(@sys.delete_file_sync(path))
       @types.Response::ok({ "status": "ok" })
     }
-    ToolRequest::KvList => handle_kv_list(project_dir, runner)
+    ToolRequest::KvList => handle_kv_list(project_dir, capture~)
     ToolRequest::MutexAcquire(mutex_args) =>
       match mutex_registry {
         Some(reg) => {
@@ -1034,7 +1034,7 @@ pub async fn dispatch(
         }
         None => @types.Response::Err("mutex registry unavailable")
       }
-    ToolRequest::TaskList => handle_task_list(project_dir, runner)
+    ToolRequest::TaskList => handle_task_list(project_dir, capture~)
     ToolRequest::TaskGet(id_args) =>
       match read_task_file(project_dir, id_args.id) {
         Ok(task) =>
