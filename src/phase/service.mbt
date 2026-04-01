@@ -332,3 +332,75 @@ pub fn current_dev_phase(project_dir : String, scope : String) -> DevPhase {
     _ => DevPhase::Working
   }
 }
+
+///|
+pub fn synthesized_parent_terminal_target(
+  session : String,
+  parent_id : String,
+  role : @types.Role,
+) -> @types.LocalTarget {
+  let slug = match role {
+    @types.Role::Root | @types.Role::TL => "TL"
+    _ => extract_slug(parent_id)
+  }
+  @workspace.local_target_for(session, slug, @types.IsolationMode::Worktree)
+}
+
+///|
+pub fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
+  @types.AgentType::Claude
+}
+
+///|
+pub fn resolve_agent_with_fallback(
+  project_dir : String,
+  session : String,
+  reg : @registry.AgentRegistry,
+  agent_id : String,
+) -> Result[@types.Agent, @types.ChoirError] {
+  match reg.get(agent_id) {
+    Ok(agent) => Ok(agent)
+    Err(_) =>
+      match read_lifecycle(project_dir, agent_id) {
+        Some(lifecycle) =>
+          Ok({
+            agent_id,
+            role: lifecycle.role,
+            agent_type: synthesized_parent_agent_type(lifecycle.role),
+            parent: None,
+            workspace: project_dir,
+            branch: agent_id,
+            terminal_target: Some(
+              synthesized_parent_terminal_target(
+                session,
+                agent_id,
+                lifecycle.role,
+              ),
+            ),
+            host: @types.Host::Local,
+            state: lifecycle.to_agent_state(),
+            spawn_depth: 0,
+          })
+        None => Err(@types.ChoirError::AgentNotFound(agent_id))
+      }
+  }
+}
+
+///|
+pub fn resolve_parent_with_fallback(
+  project_dir : String,
+  session : String,
+  reg : @registry.AgentRegistry,
+  caller_id : String,
+) -> Result[@types.Agent, @types.ChoirError] {
+  match reg.get(caller_id) {
+    Ok(agent) =>
+      match agent.parent {
+        Some(parent_id) =>
+          resolve_agent_with_fallback(project_dir, session, reg, parent_id)
+        None =>
+          Err(@types.ChoirError::AgentNotFound("no parent for " + caller_id))
+      }
+    Err(e) => Err(e)
+  }
+}

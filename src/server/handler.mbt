@@ -205,54 +205,16 @@ pub fn ServerState::notify_parent(
 }
 
 ///|
-fn synthesized_parent_terminal_target(
-  session : String,
-  parent_id : String,
-  role : @types.Role,
-) -> @types.LocalTarget {
-  let slug = match role {
-    @types.Role::Root | @types.Role::TL => "TL"
-    _ => @phase.extract_slug(parent_id)
-  }
-  @workspace.local_target_for(session, slug, @types.IsolationMode::Worktree)
-}
-
-///|
-fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
-  @types.AgentType::Claude
-}
-
-///|
 fn ServerState::resolve_parent_by_id(
   self : ServerState,
   parent_id : String,
 ) -> Result[@types.Agent, @types.ChoirError] {
-  match self.registry.get(parent_id) {
-    Ok(parent) => Ok(parent)
-    Err(_) =>
-      match @phase.read_lifecycle(self.config.project_dir, parent_id) {
-        Some(lifecycle) =>
-          Ok({
-            agent_id: parent_id,
-            role: lifecycle.role,
-            agent_type: synthesized_parent_agent_type(lifecycle.role),
-            parent: None,
-            workspace: self.config.project_dir,
-            branch: parent_id,
-            terminal_target: Some(
-              synthesized_parent_terminal_target(
-                self.config.terminal_session,
-                parent_id,
-                lifecycle.role,
-              ),
-            ),
-            host: @types.Host::Local,
-            state: lifecycle.to_agent_state(),
-            spawn_depth: 0,
-          })
-        None => Err(@types.ChoirError::AgentNotFound(parent_id))
-      }
-  }
+  @phase.resolve_agent_with_fallback(
+    self.config.project_dir,
+    self.config.terminal_session,
+    self.registry,
+    parent_id,
+  )
 }
 
 ///|
@@ -260,15 +222,12 @@ fn ServerState::resolve_parent_for_delivery(
   self : ServerState,
   caller_id : String,
 ) -> Result[@types.Agent, @types.ChoirError] {
-  match self.registry.get(caller_id) {
-    Ok(agent) =>
-      match agent.parent {
-        Some(parent_id) => self.resolve_parent_by_id(parent_id)
-        None =>
-          Err(@types.ChoirError::AgentNotFound("no parent for " + caller_id))
-      }
-    Err(e) => Err(e)
-  }
+  @phase.resolve_parent_with_fallback(
+    self.config.project_dir,
+    self.config.terminal_session,
+    self.registry,
+    caller_id,
+  )
 }
 
 ///|

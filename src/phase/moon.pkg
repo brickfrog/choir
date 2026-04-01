@@ -3,5 +3,6 @@ import {
   "choir/src/types",
   "choir/src/poller",
   "choir/src/registry",
+  "choir/src/workspace",
   "moonbitlang/core/json",
 }
