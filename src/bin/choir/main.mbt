@@ -4152,16 +4152,11 @@ fn init_run() -> Unit {
         return
       }
 
-      ignore(
-        @exec.run({
-          program: "sh",
-          args: [
-            "-c", "mkdir -p .choir/agents/root && git branch --show-current > .choir/agents/root/.birth_branch 2>/dev/null || true",
-          ],
-          workdir: None,
-        }) catch {
-          _ => 0
-        },
+      let birth_branch_stdout = @exec.capture_stdout("git", [
+        "branch", "--show-current",
+      ])
+      init_bootstrap_write_root_birth_branch_best_effort(
+        project_dir, birth_branch_stdout,
       )
 
       @sys.write_stdout("Creating session \{session}...\n")
