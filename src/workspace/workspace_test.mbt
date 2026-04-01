@@ -234,13 +234,18 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_codex.args[0], "--dangerously-bypass-approvals-and-sandbox")
   assert_eq(cmd_codex.args[1], "--no-alt-screen")
   assert_eq(cmd_codex.args[2], "-c")
-  assert_true(cmd_codex.args[3].contains("mcp_servers.choir.command"))
+  assert_true(cmd_codex.args[3].contains("mcp_servers.choir.command=\"choir\""))
   assert_eq(cmd_codex.args[4], "-c")
-  assert_true(
-    cmd_codex.args[5].contains(
-      "mcp-stdio --role dev --raw-stdio --name 'main.test-slug'",
-    ),
-  )
+  assert_true(cmd_codex.args[5].contains("\"mcp-stdio\""))
+  assert_true(cmd_codex.args[5].contains("\"--raw-stdio\""))
+  assert_true(cmd_codex.args[5].contains("\"--role\""))
+  assert_true(cmd_codex.args[5].contains("\"dev\""))
+  assert_true(cmd_codex.args[5].contains("\"--name\""))
+  assert_true(cmd_codex.args[5].contains("\"main.test-slug\""))
+  assert_true(cmd_codex.args[5].contains("\"--wait-socket-tries\""))
+  assert_true(cmd_codex.args[5].contains("\"300\""))
+  assert_true(cmd_codex.args[5].contains("\"--stderr-append-log\""))
+  assert_false(cmd_codex.args[5].contains("-lc"))
   assert_eq(cmd_codex.args[6], "-c")
   assert_true(cmd_codex.args[7].contains("mcp_servers.choir.cwd=\"/path\""))
   assert_eq(cmd_codex.args[8], "-C")
@@ -328,6 +333,19 @@ test "agent_launch_command no wrap when shell_command is None" {
   assert_true(cmd.args[2].contains("\"mcpServers\""))
   assert_eq(cmd.args[3], "--strict-mcp-config")
   assert_eq(cmd.args[4], "fix bugs")
+}
+
+///|
+test "codex_mcp_override_args is argv-shaped Toml without sh" {
+  let args = @workspace.codex_mcp_override_args(
+    @types.Role::TL,
+    "root",
+    "/proj",
+  )
+  assert_true(args[1].contains("command=\"choir\""))
+  assert_true(args[3].contains("\"mcp-stdio\""))
+  assert_false(args[3].contains("\"sh\""))
+  assert_false(args[3].contains("-lc"))
 }
 
 ///|

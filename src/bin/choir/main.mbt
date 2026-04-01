@@ -741,6 +741,60 @@ fn mcp_cli_raw_stdio(args : Array[String]) -> Bool {
 }
 
 ///|
+fn mcp_parse_decimal_u32(s : String) -> Int? {
+  if s == "" {
+    return None
+  }
+  let mut n = 0
+  for c in s {
+    if c < '0' || c > '9' {
+      return None
+    }
+    n = n * 10 + (c.to_int() - '0'.to_int())
+  }
+  if n == 0 {
+    return None
+  }
+  Some(n)
+}
+
+///|
+fn mcp_cli_positive_int_arg(args : Array[String], flag : String) -> Int? {
+  let mut i = 0
+  while i < args.length() {
+    if args[i] == flag && i + 1 < args.length() {
+      return mcp_parse_decimal_u32(args[i + 1])
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+fn mcp_cli_wait_socket_tries(args : Array[String]) -> Int {
+  match mcp_cli_positive_int_arg(args, "--wait-socket-tries") {
+    Some(n) => n
+    None => 60
+  }
+}
+
+///|
+fn mcp_cli_stderr_append_log(args : Array[String]) -> String? {
+  let mut i = 0
+  while i < args.length() {
+    if args[i] == "--stderr-append-log" && i + 1 < args.length() {
+      let p = args[i + 1]
+      if p != "" && !p.has_prefix("--") {
+        return Some(p)
+      }
+      return None
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
 priv enum McpUdsLoopExit {
   InputClosed
   Reconnect
@@ -882,6 +936,11 @@ fn mcp_run_uds_loop(
 ///|
 fn mcp_run() -> Unit {
   let args = @env.args()
+  match mcp_cli_stderr_append_log(args) {
+    Some(path) => ignore(@sys.redirect_stderr_append(path))
+    None => ()
+  }
+  let wait_tries = mcp_cli_wait_socket_tries(args)
   let config_content = @sys.read_file(".choir/config.toml")
   let base_config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
@@ -909,7 +968,7 @@ fn mcp_run() -> Unit {
   let mut uds_fd = @uds.client_connect(config.listen_uds)
   if uds_fd < 0 {
     // Server may still be starting - wait for the UDS socket
-    if @sys.wait_for_socket(config.listen_uds, 60) {
+    if @sys.wait_for_socket(config.listen_uds, wait_tries) {
       uds_fd = @uds.client_connect(config.listen_uds)
     }
   }
@@ -923,7 +982,7 @@ fn mcp_run() -> Unit {
       if !mcp_should_reconnect_after_uds_loop(exit_reason) {
         break
       }
-      if !@sys.wait_for_socket(config.listen_uds, 60) {
+      if !@sys.wait_for_socket(config.listen_uds, wait_tries) {
         break
       }
       uds_fd = @uds.client_connect(config.listen_uds)
@@ -3761,8 +3820,10 @@ test "init TL launch command supports codex" {
   assert_true(cmd.contains("'codex'"))
   assert_true(cmd.contains("'--dangerously-bypass-approvals-and-sandbox'"))
   assert_true(cmd.contains("'--no-alt-screen'"))
-  assert_true(cmd.contains("'mcp_servers.choir.command=\"sh\"'"))
-  assert_true(cmd.contains("mcp-stdio --raw-stdio --name"))
+  assert_true(cmd.contains("'mcp_servers.choir.command=\"choir\"'"))
+  assert_true(cmd.contains("\"mcp-stdio\""))
+  assert_true(cmd.contains("\"--raw-stdio\""))
+  assert_true(cmd.contains("\"--name\""))
   assert_true(cmd.contains("'mcp_servers.choir.cwd=\"/tmp/choir repo\"'"))
   assert_true(cmd.contains("'-C' '/tmp/choir repo'"))
   assert_false(cmd.contains("--mcp-config"))

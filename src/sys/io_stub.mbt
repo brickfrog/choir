@@ -69,6 +69,11 @@ pub fn wait_for_socket(_path : String, _max_tries : Int) -> Bool {
 }
 
 ///|
+pub fn redirect_stderr_append(_path : String) -> Bool {
+  false
+}
+
+///|
 pub fn write_file_sync(_path : String, _content : String) -> Bool {
   false
 }
