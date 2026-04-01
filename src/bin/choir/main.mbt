@@ -4487,43 +4487,46 @@ fn statusline_json_object(
 }
 
 ///|
-fn statusline_list_lifecycle_files(project_dir : String) -> Array[String] {
-  let tmp = "/tmp/choir-statusline-" + @sys.get_pid().to_string() + ".tmp"
-  let cmd = "ls " +
-    project_dir +
-    "/.choir/kv/lifecycle--* 2>/dev/null > " +
-    tmp +
-    " 2>/dev/null"
-  ignore(@sys.system(cmd))
-  let output = @sys.read_file(tmp)
-  ignore(@sys.delete_file_sync(tmp))
-  let files = []
-  for line in output.split("\n") {
-    let trimmed = line.trim().to_string()
-    if trimmed != "" {
-      files.push(trimmed)
+/// List regular files in `.choir/kv` whose basename matches `name_glob` (`find -name` pattern).
+async fn statusline_kv_files_matching_glob(
+  project_dir : String,
+  name_glob : String,
+) -> Array[String] {
+  let kv_dir = project_dir + "/.choir/kv"
+  try {
+    let (code, output) = @exec.capture_command_stdout({
+      program: "find",
+      args: [kv_dir, "-maxdepth", "1", "-type", "f", "-name", name_glob],
+      workdir: None,
+    })
+    if code != 0 {
+      return []
     }
+    let files = []
+    for line in output.split("\n") {
+      let trimmed = line.trim().to_string()
+      if trimmed != "" {
+        files.push(trimmed)
+      }
+    }
+    files
+  } catch {
+    _ => []
   }
-  files
 }
 
 ///|
-fn statusline_collect_child_ids(project_dir : String) -> Map[String, Bool] {
-  let tmp = "/tmp/choir-statusline-ch-" + @sys.get_pid().to_string() + ".tmp"
-  let cmd = "ls " +
-    project_dir +
-    "/.choir/kv/children--* 2>/dev/null > " +
-    tmp +
-    " 2>/dev/null"
-  ignore(@sys.system(cmd))
-  let output = @sys.read_file(tmp)
-  ignore(@sys.delete_file_sync(tmp))
+async fn statusline_list_lifecycle_files(project_dir : String) -> Array[String] {
+  statusline_kv_files_matching_glob(project_dir, "lifecycle--*")
+}
+
+///|
+async fn statusline_collect_child_ids(
+  project_dir : String,
+) -> Map[String, Bool] {
+  let paths = statusline_kv_files_matching_glob(project_dir, "children--*")
   let ids : Map[String, Bool] = {}
-  for line in output.split("\n") {
-    let path = line.trim().to_string()
-    if path == "" {
-      continue
-    }
+  for path in paths {
     let content = @sys.read_file(path)
     if content == "" {
       continue
@@ -4548,7 +4551,9 @@ fn statusline_collect_child_ids(project_dir : String) -> Map[String, Bool] {
 }
 
 ///|
-fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
+async fn statusline_count_agents(
+  project_dir : String,
+) -> (Int, Int, Int, Int, Int) {
   let child_ids = statusline_collect_child_ids(project_dir)
   let files = statusline_list_lifecycle_files(project_dir)
   let mut working = 0
@@ -4587,7 +4592,7 @@ fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
 }
 
 ///|
-test "statusline_count_agents matches child ids using lifecycle content agent_id" {
+async test "statusline_count_agents matches child ids using lifecycle content agent_id" {
   let project_dir = "/tmp/choir-statusline-agent-id-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -4607,7 +4612,9 @@ test "statusline_count_agents matches child ids using lifecycle content agent_id
   )
   let (working, review, changes, failed, done) = statusline_count_agents(
     project_dir,
-  )
+  ) catch {
+    _ => (0, 0, 0, 0, 0)
+  }
   ignore(@sys.system("rm -rf \"" + project_dir + "\""))
   assert_eq((working, review, changes, failed, done), (1, 0, 0, 0, 0))
 }
@@ -4697,52 +4704,56 @@ fn statusline_run() -> Unit {
     @sys.write_stdout(out.to_string())
     return
   }
-  let (working, review, changes, failed, _done) = statusline_count_agents(
-    project_dir,
-  )
-  let total = working + review + changes + failed
-  if total > 0 {
-    out.write_string("  ")
-    let mut need_sep = false
-    if working > 0 {
-      out.write_string("\u001b[33m")
-      out.write_string(working.to_string())
-      out.write_string("\u001b[2m wip\u001b[0m")
-      need_sep = true
+  @async.run_async_main(async fn() {
+    let (working, review, changes, failed, _done) = statusline_count_agents(
+      project_dir,
+    ) catch {
+      _ => (0, 0, 0, 0, 0)
     }
-    if review > 0 {
-      if need_sep {
-        out.write_string("\u001b[2m/\u001b[0m")
+    let total = working + review + changes + failed
+    if total > 0 {
+      out.write_string("  ")
+      let mut need_sep = false
+      if working > 0 {
+        out.write_string("\u001b[33m")
+        out.write_string(working.to_string())
+        out.write_string("\u001b[2m wip\u001b[0m")
+        need_sep = true
       }
-      out.write_string("\u001b[32m")
-      out.write_string(review.to_string())
-      out.write_string("\u001b[2m pr\u001b[0m")
-      need_sep = true
-    }
-    if changes > 0 {
-      if need_sep {
-        out.write_string("\u001b[2m/\u001b[0m")
+      if review > 0 {
+        if need_sep {
+          out.write_string("\u001b[2m/\u001b[0m")
+        }
+        out.write_string("\u001b[32m")
+        out.write_string(review.to_string())
+        out.write_string("\u001b[2m pr\u001b[0m")
+        need_sep = true
       }
-      out.write_string("\u001b[35m")
-      out.write_string(changes.to_string())
-      out.write_string("\u001b[2m fix\u001b[0m")
-      need_sep = true
-    }
-    if failed > 0 {
-      if need_sep {
-        out.write_string("\u001b[2m/\u001b[0m")
+      if changes > 0 {
+        if need_sep {
+          out.write_string("\u001b[2m/\u001b[0m")
+        }
+        out.write_string("\u001b[35m")
+        out.write_string(changes.to_string())
+        out.write_string("\u001b[2m fix\u001b[0m")
+        need_sep = true
       }
-      out.write_string("\u001b[31m")
-      out.write_string(failed.to_string())
-      out.write_string("\u001b[2m err\u001b[0m")
+      if failed > 0 {
+        if need_sep {
+          out.write_string("\u001b[2m/\u001b[0m")
+        }
+        out.write_string("\u001b[31m")
+        out.write_string(failed.to_string())
+        out.write_string("\u001b[2m err\u001b[0m")
+      }
     }
-  }
-  let pr_summary = statusline_pr_summary(project_dir)
-  if pr_summary != "" {
-    out.write_string("  ")
-    out.write_string(pr_summary)
-  }
-  @sys.write_stdout(out.to_string())
+    let pr_summary = statusline_pr_summary(project_dir)
+    if pr_summary != "" {
+      out.write_string("  ")
+      out.write_string(pr_summary)
+    }
+    @sys.write_stdout(out.to_string())
+  })
 }
 
 ///|
