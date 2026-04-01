@@ -8,7 +8,7 @@ struct TaskFile {
 } derive(Show, Eq)
 
 ///|
-struct FilePrArgs {
+pub(all) struct FilePrArgs {
   branch : String
   parent_branch : String?
   tracked_agent_id : String
