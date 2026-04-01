@@ -3246,12 +3246,6 @@ test "init config content includes derived terminal session" {
 }
 
 ///|
-test "init default claude settings json matches seeded statusline hook" {
-  assert_eq(
-    init_default_claude_settings_json(),
-    "{\"statusLine\":{\"type\":\"command\",\"command\":\"choir statusline\"}}",
-  )
-}
 
 ///|
 fn init_kill_session_command(session : String) -> @workspace.Command {
@@ -4025,29 +4019,6 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
 }
 
 ///|
-/// Default Claude Code `settings.json` body when none exists (statusline hook).
-fn init_default_claude_settings_json() -> String {
-  "{\"statusLine\":{\"type\":\"command\",\"command\":\"choir statusline\"}}"
-}
-
-///|
-/// Create `.claude` and seed `settings.json` only when absent; errors ignored (matches former `sh -c`).
-fn init_seed_claude_settings_best_effort() -> Unit {
-  if !@sys.create_dir_all(".claude") {
-    return
-  }
-  if @sys.path_exists(".claude/settings.json") {
-    return
-  }
-  ignore(
-    @sys.write_file_sync(
-      ".claude/settings.json",
-      init_default_claude_settings_json(),
-    ),
-  )
-}
-
-///|
 fn init_prepare_pi_runtime(project_dir : String) -> Unit {
   ignore(project_dir)
   let runtime_root = ".choir/pi"
@@ -4100,24 +4071,14 @@ fn init_run() -> Unit {
         })
       }
 
-      if !@sys.create_dir_all(".choir") {
-        @sys.write_stderr("error: failed to create .choir directory\n")
-        @sys.exit(1)
-      }
-      if !@sys.path_exists(".choir/config.toml") {
-        if !@sys.write_file_sync(
-            ".choir/config.toml",
-            init_config_toml_content(default_session),
-          ) {
-          @sys.write_stderr("error: failed to write .choir/config.toml\n")
-          @sys.exit(1)
-        }
-      }
+      init_bootstrap_ensure_choir_dir_and_config_if_absent(
+        init_config_toml_content(default_session),
+      )
       if tl_type == "pi" {
         init_prepare_pi_runtime(project_dir)
       }
       // Set up Claude Code statusline if .claude/settings.json doesn't exist
-      init_seed_claude_settings_best_effort()
+      init_bootstrap_seed_claude_settings_best_effort()
       let maybe_patch_config = @sys.read_file(".choir/config.toml")
       if maybe_patch_config != "" &&
         !init_config_has_terminal_session(maybe_patch_config) {
