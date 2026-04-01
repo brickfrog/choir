@@ -580,9 +580,10 @@ pub async fn ensure_pull_request(
   project_dir : String,
   title : String?,
   body : String?,
+  capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
 ) -> Result[PullRequestInfo, String] {
   ensure_pull_request_with_capture(
-    branch, parent_branch, project_dir, title, body, capture_command_output,
+    branch, parent_branch, project_dir, title, body, capture,
   )
 }
 
@@ -618,8 +619,11 @@ pub async fn detect_default_branch_with_capture(
 ///|
 /// Detect the repo's default branch via git symbolic-ref.
 /// Falls back to "main" if detection fails.
-pub async fn detect_default_branch(project_dir : String) -> String {
-  detect_default_branch_with_capture(project_dir, capture_command_output)
+pub async fn detect_default_branch(
+  project_dir : String,
+  capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+) -> String {
+  detect_default_branch_with_capture(project_dir, capture)
 }
 
 ///|
