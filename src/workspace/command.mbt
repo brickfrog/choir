@@ -6,6 +6,11 @@ pub(all) struct Command {
 } derive(Show, Eq)
 
 ///|
+/// Marker `Command.program` for `run_native_choir_file_command` / `exec.run`.
+/// Args: `[worktree_path, basename_under_.choir, file_body]`.
+pub let native_write_choir_file_program : String = "__choir_native_write_choir_file__"
+
+///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
@@ -28,15 +33,36 @@ pub fn Command::to_string(self : Command) -> String {
 }
 
 ///|
+/// Ensure `.choir/` exists and write `basename` (e.g. `config.toml`) under it.
+/// Returns `0` on success, `1` on failure, `-1` if `cmd` is not a native choir-file write.
+pub fn run_native_choir_file_command(cmd : Command) -> Int {
+  if cmd.program != native_write_choir_file_program {
+    return -1
+  }
+  if cmd.args.length() != 3 {
+    return 1
+  }
+  let worktree_path = cmd.args[0]
+  let basename = cmd.args[1]
+  let content = cmd.args[2]
+  let choir_dir = worktree_path + "/.choir"
+  if !@sys.create_dir_all(choir_dir) {
+    return 1
+  }
+  let path = choir_dir + "/" + basename
+  if !@sys.write_file_sync(path, content) {
+    return 1
+  }
+  0
+}
+
+///|
 /// Write .choir/config.local.toml into worktree with role override.
-/// Uses positional shell args to safely handle paths with spaces.
+/// Executed as a native file write by `exec.run`, not an inline shell snippet.
 pub fn write_local_config(worktree_path : String, content : String) -> Command {
   {
-    program: "sh",
-    args: [
-      "-c", "mkdir -p \"$1/.choir\" && printf '%s' \"$2\" > \"$1/.choir/config.local.toml\"",
-      "sh", worktree_path, content,
-    ],
+    program: native_write_choir_file_program,
+    args: [worktree_path, "config.local.toml", content],
     workdir: None,
   }
 }
@@ -45,11 +71,8 @@ pub fn write_local_config(worktree_path : String, content : String) -> Command {
 /// Write .choir/config.toml into worktree with client connection settings.
 pub fn write_spawn_config(worktree_path : String, content : String) -> Command {
   {
-    program: "sh",
-    args: [
-      "-c", "mkdir -p \"$1/.choir\" && printf '%s' \"$2\" > \"$1/.choir/config.toml\"",
-      "sh", worktree_path, content,
-    ],
+    program: native_write_choir_file_program,
+    args: [worktree_path, "config.toml", content],
     workdir: None,
   }
 }

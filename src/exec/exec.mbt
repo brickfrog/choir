@@ -242,6 +242,10 @@ pub async fn capture_stdout_with_cwd(
 
 ///|
 pub async fn run(cmd : @workspace.Command) -> Int {
+  let native = @workspace.run_native_choir_file_command(cmd)
+  if native >= 0 {
+    return native
+  }
   let prog = cmd.program
   let args = cmd.args[:]
   match cmd.workdir {

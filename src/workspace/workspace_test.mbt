@@ -408,18 +408,20 @@ test "spawn_commands worktree config write content" {
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
   assert_eq(cmds.length(), 7)
-  assert_eq(cmds[3].program, "sh")
-  assert_true(cmds[3].args[3].contains("feature-a"))
-  assert_true(cmds[3].args[4].contains("default_role = \"dev\""))
+  assert_eq(cmds[3].program, @workspace.native_write_choir_file_program)
+  assert_true(cmds[3].args[0].contains("feature-a"))
+  assert_eq(cmds[3].args[1], "config.toml")
+  assert_true(cmds[3].args[2].contains("default_role = \"dev\""))
   assert_true(
-    cmds[3].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
+    cmds[3].args[2].contains("listen_uds = \"/proj/.choir/server.sock\""),
   )
-  assert_true(cmds[3].args[4].contains("terminal_session = \"exo\""))
-  assert_eq(cmds[4].program, "sh")
-  assert_true(cmds[4].args[4].contains("agent_id = \"main.feature-a\""))
-  assert_true(cmds[4].args[4].contains("parent_id = \"root\""))
+  assert_true(cmds[3].args[2].contains("terminal_session = \"exo\""))
+  assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[4].args[1], "config.local.toml")
+  assert_true(cmds[4].args[2].contains("agent_id = \"main.feature-a\""))
+  assert_true(cmds[4].args[2].contains("parent_id = \"root\""))
   assert_true(
-    cmds[4].args[4].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
+    cmds[4].args[2].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
   )
   assert_eq(cmds[5].program, "sh")
   assert_eq(cmds[6].program, "zellij")
@@ -447,7 +449,7 @@ test "spawn_commands gemini worktree adds trust and settings" {
   assert_eq(cmds[8].program, "zellij")
   assert_eq(cmds[8].args[3], "new-tab")
   assert_true(
-    cmds[4].args[4].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
+    cmds[4].args[2].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
   )
 }
 
@@ -470,12 +472,15 @@ test "spawn_commands standalone includes config writes" {
   // git init, config.toml, config.local.toml, helpers, zellij new-tab
   assert_eq(cmds.length(), 5)
   assert_eq(cmds[0].program, "git")
-  assert_eq(cmds[1].program, "sh")
+  assert_eq(cmds[1].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[1].args[1], "config.toml")
   assert_true(
-    cmds[1].args[4].contains("listen_uds = \"/proj/.choir/server.sock\""),
+    cmds[1].args[2].contains("listen_uds = \"/proj/.choir/server.sock\""),
   )
+  assert_eq(cmds[2].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[2].args[1], "config.local.toml")
   assert_true(
-    cmds[2].args[4].contains(
+    cmds[2].args[2].contains(
       "workspace = \"/proj/.choir/agents/standalone-task\"",
     ),
   )
@@ -591,9 +596,9 @@ test "spawn_commands for inline mode writes metadata and uses zellij run" {
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
   assert_eq(cmds.length(), 2)
-  assert_eq(cmds[0].program, "sh")
-  assert_true(cmds[0].args[3].contains("/project/.choir/inline/main.worker-a"))
-  assert_true(cmds[0].args[4].contains("agent_id = \"main.worker-a\""))
+  assert_eq(cmds[0].program, @workspace.native_write_choir_file_program)
+  assert_true(cmds[0].args[0].contains("/project/.choir/inline/main.worker-a"))
+  assert_true(cmds[0].args[2].contains("agent_id = \"main.worker-a\""))
   assert_eq(cmds[1].program, "zellij")
   assert_eq(cmds[1].args[0], "--session")
   assert_eq(cmds[1].args[1], "howdy")
@@ -623,7 +628,7 @@ test "spawn_commands pi inline runtime root is agent-specific" {
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
   assert_eq(cmds.length(), 5)
-  assert_true(cmds[0].args[3].contains("/project/.choir/inline/main.pi-worker"))
+  assert_true(cmds[0].args[0].contains("/project/.choir/inline/main.pi-worker"))
   assert_true(cmds[1].args[3].contains("/project/.choir/pi/main.pi-worker"))
   let launch = cmds[4].args[10]
   assert_true(
@@ -667,6 +672,16 @@ test "spawn_commands launch text contains env vars" {
       "GEMINI_CLI_SYSTEM_SETTINGS_PATH='/proj/.choir/worktrees/feature-a/.choir/gemini-settings.json'",
     ),
   )
+}
+
+///|
+test "write_spawn_config and write_local_config use native choir file commands" {
+  let spawn_cmd = @workspace.write_spawn_config("/wt", "a=toml")
+  let local_cmd = @workspace.write_local_config("/wt", "b=toml")
+  assert_eq(spawn_cmd.program, @workspace.native_write_choir_file_program)
+  assert_eq(spawn_cmd.args, ["/wt", "config.toml", "a=toml"])
+  assert_eq(local_cmd.program, @workspace.native_write_choir_file_program)
+  assert_eq(local_cmd.args, ["/wt", "config.local.toml", "b=toml"])
 }
 
 ///|
@@ -831,8 +846,8 @@ test "spawn_commands worktree reuse skips destructive bootstrap" {
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
   assert_eq(cmds.length(), 5)
-  assert_eq(cmds[0].program, "sh")
-  assert_false(cmds[0].args[1].contains("git worktree remove"))
+  assert_eq(cmds[0].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[0].args[1], "config.toml")
 }
 
 ///|
