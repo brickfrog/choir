@@ -1,40 +1,4 @@
 ///|
-fn write_prompt_file(
-  project_dir : String,
-  slug : String,
-  prompt : String,
-) -> String {
-  let ts = @env.now().reinterpret_as_int64()
-  let path = project_dir +
-    "/.choir/tmp/prompt-" +
-    ts.to_string() +
-    "-" +
-    slug +
-    ".txt"
-  ignore(@sys.write_file_sync(path, prompt))
-  if path.has_prefix("/") {
-    path
-  } else {
-    @env.current_dir().unwrap_or(".") + "/" + path
-  }
-}
-
-///|
-fn replace_placeholder(
-  s : String,
-  placeholder : String,
-  replacement : String,
-) -> String {
-  let idx = match s.find(placeholder) {
-    Some(i) => i
-    None => return s
-  }
-  let before = s[:idx].to_string()
-  let after = s[idx + placeholder.length():].to_string()
-  before + replacement + after
-}
-
-///|
 fn command_text_for_launch(cmd : Command) -> String {
   { ..cmd, workdir: None }.to_string()
 }
@@ -47,6 +11,20 @@ fn env_assignment(key : String, value : String) -> String {
 ///|
 fn path_assignment(prefix : String) -> String {
   "PATH=" + @sys.shell_quote(prefix) + ":$PATH"
+}
+
+///|
+fn path_env_merged_for_argv(bin_prefix : String) -> String {
+  let tail = match @sys.getenv("PATH") {
+    Some(p) => p
+    None => "/usr/local/bin:/usr/bin:/bin"
+  }
+  "PATH=" + bin_prefix + ":" + tail
+}
+
+///|
+fn env_pair_raw(key : String, value : String) -> String {
+  key + "=" + value
 }
 
 ///|
@@ -120,6 +98,63 @@ pub fn launch_env_prefix(
 }
 
 ///|
+/// Environment assignments for [`@workspace.launch_commands`] / zellij `env` argv. PATH is merged in
+/// process here (same effect as `PATH=prefix:$PATH` under a login shell).
+pub fn launch_env_assignments(
+  spec : @types.SpawnSpec,
+  session : String,
+  workspace : String,
+  terminal_target : @types.LocalTarget,
+) -> Array[String] {
+  let role = @config.role_to_string(spec.role)
+  let agent_id = canonical_agent_id(spec)
+  let git_branch = spawn_git_branch(spec)
+  let agent_type = @config.agent_type_to_string(spec.agent_type)
+  let assignments : Array[String] = [
+    path_env_merged_for_argv(workspace + "/.choir/bin"),
+    env_pair_raw("CHOIR_AGENT_ID", agent_id),
+    env_pair_raw("CHOIR_PARENT_ID", spec.parent_id),
+    env_pair_raw("CHOIR_BRANCH", git_branch),
+    env_pair_raw("CHOIR_PARENT_BRANCH", spec.parent_branch),
+    env_pair_raw("CHOIR_WORKSPACE", workspace),
+    env_pair_raw("CHOIR_ROLE", role),
+    env_pair_raw("CHOIR_AGENT_TYPE", agent_type),
+    env_pair_raw("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
+    env_pair_raw("CHOIR_TERMINAL_SESSION", session),
+    env_pair_raw("CHOIR_SESSION_ID", agent_id),
+    env_pair_raw("CHOIR_PARENT_AGENT", spec.parent_id),
+  ]
+  if spec.agent_type == @types.AgentType::Gemini {
+    assignments.push(
+      env_pair_raw(
+        "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
+        workspace + "/.choir/gemini-settings.json",
+      ),
+    )
+  }
+  if spec.agent_type == @types.AgentType::Pi {
+    let runtime_root = pi_runtime_root(workspace, agent_id, spec.isolation)
+    assignments.push(
+      env_pair_raw("PI_CODING_AGENT_DIR", pi_agent_dir(runtime_root)),
+    )
+    assignments.push(env_pair_raw("PI_SKIP_VERSION_CHECK", "1"))
+  }
+  match @sys.getenv("TRACEPARENT") {
+    Some(value) =>
+      if value != "" {
+        assignments.push(env_pair_raw("TRACEPARENT", value))
+      }
+    None => ()
+  }
+  assignments
+}
+
+///|
+fn zellij_launch_inner_command(cmd : Command) -> Command {
+  { ..cmd, workdir: None }
+}
+
+///|
 fn ssh_cmd(target : String, remote_shell : String) -> Command {
   {
     program: "ssh",
@@ -147,22 +182,19 @@ pub fn spawn_commands(
     Inline => root_project
     Standalone => root_project + "/.choir/agents/" + spec.slug
   }
-  let prompt_path = write_prompt_file(root_project, spec.slug, spec.task)
-  let launch_cmd = agent_launch_command(
-    { ..spec, task: "__PROMPT_PLACEHOLDER__" },
-    workspace,
-    parent_session_id~,
-    shell_command~,
-    extra_mcp_servers_json~,
+  let launch_cmd = zellij_launch_inner_command(
+    agent_launch_command(
+      spec,
+      workspace,
+      parent_session_id~,
+      shell_command~,
+      extra_mcp_servers_json~,
+    ),
   )
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
-  let prompt_ref = "\"$(cat " + @sys.shell_quote(prompt_path) + ")\""
-  let raw_launch = command_text_for_launch(launch_cmd)
-  let launch_with_prompt = replace_placeholder(
-    raw_launch, "'__PROMPT_PLACEHOLDER__'", prompt_ref,
+  let env_for_zellij = launch_env_assignments(
+    spec, session, workspace, terminal_target,
   )
-  let launch_str = launch_env_prefix(spec, session, workspace, terminal_target) +
-    launch_with_prompt
   match spec.isolation {
     Worktree => {
       let cmds : Array[Command] = []
@@ -245,7 +277,8 @@ pub fn spawn_commands(
           session,
           spec.slug,
           workspace,
-          launch_str,
+          env_for_zellij,
+          launch_cmd,
           spec.isolation,
         ) {
         cmds.push(cmd)
@@ -278,7 +311,8 @@ pub fn spawn_commands(
           session,
           spec.slug,
           workspace,
-          launch_str,
+          env_for_zellij,
+          launch_cmd,
           spec.isolation,
         ) {
         cmds.push(cmd)
@@ -355,7 +389,8 @@ pub fn spawn_commands(
           session,
           spec.slug,
           workspace,
-          launch_str,
+          env_for_zellij,
+          launch_cmd,
           spec.isolation,
         ) {
         cmds.push(cmd)

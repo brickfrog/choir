@@ -3129,10 +3129,15 @@ test "companion commands use isolated worktree with zellij tab" {
   assert_eq(cmds[5].args, [
     "/proj/.choir/agents/monitor", ".birth_branch", "main.companion.monitor",
   ])
-  assert_true(cmds[6].args[11].contains("claude"))
-  assert_true(cmds[6].args[11].contains("\"mcpServers\""))
-  assert_true(cmds[6].args[11].contains("main.companion.monitor"))
-  assert_true(cmds[6].args[11].contains("\"extra\":{\"type\":\"stdio\"}"))
+  let z6 = cmds[6].args
+  let mut blob6 = ""
+  for i = 0; i < z6.length(); i = i + 1 {
+    blob6 = blob6 + z6[i]
+  }
+  assert_true(blob6.contains("claude"))
+  assert_true(blob6.contains("\"mcpServers\""))
+  assert_true(blob6.contains("main.companion.monitor"))
+  assert_true(blob6.contains("\"extra\":{\"type\":\"stdio\"}"))
   assert_eq(cmds[6].program, "zellij")
   assert_eq(cmds[6].args[3], "new-tab")
 }
@@ -3162,10 +3167,13 @@ test "companion gemini commands trust workspace and use zellij tab cwd" {
   assert_eq(cmds[7].args[2], "action")
   assert_eq(cmds[7].args[3], "new-tab")
   assert_eq(cmds[7].args[7], "/proj/.choir/agents/gem-helper")
+  let z7 = cmds[7].args
+  let mut blob7 = ""
+  for i = 0; i < z7.length(); i = i + 1 {
+    blob7 = blob7 + z7[i]
+  }
   assert_true(
-    cmds[7].args[11].contains(
-      "CHOIR_TERMINAL_TARGET='zellij-tab:howdy:gem-helper'",
-    ),
+    blob7.contains("CHOIR_TERMINAL_TARGET=zellij-tab:howdy:gem-helper"),
   )
 }
 
@@ -3193,15 +3201,18 @@ test "companion pi commands prepare isolated runtime and launch pi" {
   assert_eq(cmds[8].args[1], ".choir/pi/choir-extension.ts")
   assert_true(cmds[8].args[2].contains("registerTool"))
   assert_eq(cmds[9].program, "zellij")
+  let z9 = cmds[9].args
+  let mut blob9 = ""
+  for i = 0; i < z9.length(); i = i + 1 {
+    blob9 = blob9 + z9[i]
+  }
   assert_true(
-    cmds[9].args[11].contains(
-      "PI_CODING_AGENT_DIR='/proj/.choir/agents/pi-helper/.choir/pi/agent'",
+    blob9.contains(
+      "PI_CODING_AGENT_DIR=/proj/.choir/agents/pi-helper/.choir/pi/agent",
     ),
   )
   assert_true(
-    cmds[9].args[11].contains(
-      "/proj/.choir/agents/pi-helper/.choir/pi/choir-extension.ts",
-    ),
+    blob9.contains("/proj/.choir/agents/pi-helper/.choir/pi/choir-extension.ts"),
   )
 }
 
@@ -3918,15 +3929,18 @@ fn init_companion_commands(
     reuse_git_branch: Some(branch),
     spawn_depth: 0,
   }
-  let launch_str = @workspace.launch_env_prefix(
-      spec, session, workspace, terminal_target,
-    ) +
-    @workspace.agent_launch_command(
+  let env_z = @workspace.launch_env_assignments(
+    spec, session, workspace, terminal_target,
+  )
+  let inner = {
+    let c = @workspace.agent_launch_command(
       spec,
       workspace,
       command_override=Some(companion.command),
       extra_mcp_servers_json=config.extra_mcp_servers_json,
-    ).to_string()
+    )
+    { ..c, workdir: None }
+  }
   let cmds : Array[@workspace.Command] = [
     @workspace.git_worktree_bootstrap_cleanup_best_effort(
       project_dir, workspace, branch,
@@ -3975,7 +3989,7 @@ fn init_companion_commands(
     )
   }
   cmds.push(
-    @workspace.zellij_new_tab(session, companion.name, workspace, launch_str),
+    @workspace.zellij_new_tab(session, companion.name, workspace, env_z, inner),
   )
   cmds
 }
@@ -4050,7 +4064,6 @@ fn init_run() -> Unit {
       let project_dir = @env.current_dir().unwrap_or(".")
       let default_session = init_default_terminal_session(project_dir)
       let use_dev = init_is_choir_source_tree(project_dir)
-      let server_cmd = init_server_command(use_dev)
 
       if use_dev {
         // Rebuild binary before doing anything else so the new server uses fresh code
@@ -4162,9 +4175,11 @@ fn init_run() -> Unit {
       if !server_tab_exists {
         if init_should_launch_server_tab(server_alive == 0) {
           init_run_or_exit(
-            @workspace.zellij_new_tab(
-              session, "Server", project_dir, server_cmd,
-            ),
+            @workspace.zellij_new_tab(session, "Server", project_dir, [], {
+              program: "choir",
+              args: ["serve"],
+              workdir: None,
+            }),
           )
         } else {
           @sys.write_stdout("Reusing existing server process.\n")
@@ -4175,7 +4190,7 @@ fn init_run() -> Unit {
       let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
       if !tl_tab_exists {
         init_run_or_exit(
-          @workspace.zellij_new_tab(
+          @workspace.zellij_new_tab_shell(
             session,
             "TL",
             project_dir,
