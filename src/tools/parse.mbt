@@ -819,6 +819,45 @@ fn parse_mutex_release_args(
 }
 
 ///|
+fn validate_thread_id(s : String) -> Result[Unit, String] {
+  if s == "" {
+    return Err("thread_id cannot be empty")
+  }
+  for c in s {
+    let ok = (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      c == '_' ||
+      c == '-' ||
+      c == '='
+    if !ok {
+      return Err("invalid character in thread_id: " + c.to_string())
+    }
+  }
+  Ok(())
+}
+
+///|
+fn parse_resolve_review_thread_args(
+  args : ToolArgs,
+) -> Result[ResolveReviewThreadArgs, ParseError] {
+  let thread_id = tool_args_get(args, "thread_id").unwrap_or("")
+  if thread_id == "" {
+    return Err(ParseError::MissingField(field="thread_id"))
+  }
+  match validate_thread_id(thread_id) {
+    Ok(_) => ()
+    Err(e) =>
+      return Err(ParseError::InvalidFormat(field="thread_id", message=e))
+  }
+  let caller_id = match tool_args_get(args, "caller_id") {
+    Some(v) => if v == "" { "server" } else { v }
+    None => "server"
+  }
+  Ok({ thread_id, caller_id })
+}
+
+///|
 fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
   let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
   if pr_str == "" {
@@ -1039,6 +1078,10 @@ fn parse_tool_request(
       let force = tool_args_get_bool(args, "force")
       Ok(ToolRequest::CancelWave({ force, }))
     }
+    "resolve_review_thread" =>
+      parse_resolve_review_thread_args(args).map(fn(a) {
+        ToolRequest::ResolveReviewThread(a)
+      })
     _ => Err(ParseError::UnknownTool(name~))
   }
 }
@@ -1088,4 +1131,40 @@ test "parse_worker_spawn_args only injects existing context paths" {
   ignore(@sys.system("rm -rf \"" + project_dir + "\""))
   assert_true(parsed.task.contains("/.choir/context/common.md"))
   assert_false(parsed.task.contains("/.choir/context/worker.md"))
+}
+
+///|
+test "parse_resolve_review_thread_args requires thread_id" {
+  match parse_resolve_review_thread_args(tool_args_from_map({})) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "thread_id")
+    _ => fail("expected MissingField(thread_id)")
+  }
+}
+
+///|
+test "parse_resolve_review_thread_args rejects double-quote in thread_id" {
+  match
+    parse_resolve_review_thread_args(
+      tool_args_from_map({ "thread_id": "abc\"def" }),
+    ) {
+    Err(ParseError::InvalidFormat(field~, ..)) => assert_eq(field, "thread_id")
+    _ => fail("expected InvalidFormat(thread_id)")
+  }
+}
+
+///|
+test "parse_resolve_review_thread_args accepts valid thread_id" {
+  match
+    parse_resolve_review_thread_args(
+      tool_args_from_map({
+        "thread_id": "PRRT_kwDOABcdef",
+        "caller_id": "agent-1",
+      }),
+    ) {
+    Ok(args) => {
+      assert_eq(args.thread_id, "PRRT_kwDOABcdef")
+      assert_eq(args.caller_id, "agent-1")
+    }
+    Err(e) => fail("unexpected error: " + e.message())
+  }
 }

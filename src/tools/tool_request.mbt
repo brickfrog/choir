@@ -28,6 +28,7 @@ pub(all) enum ToolRequest {
   KillAgent(KillAgentArgs)
   AgentList(AgentListArgs)
   CancelWave(CancelWaveArgs)
+  ResolveReviewThread(ResolveReviewThreadArgs)
 } derive(Show, Eq)
 
 ///|
@@ -61,5 +62,6 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     KillAgent(_) => "kill_agent"
     AgentList(_) => "agent_list"
     CancelWave(_) => "cancel_wave"
+    ResolveReviewThread(_) => "resolve_review_thread"
   }
 }
