@@ -385,8 +385,8 @@ test "spawn_commands for worktree mode returns zellij tab" {
     "worktree", "add", "/project/.choir/worktrees/test-slug", "-b", "main.test-slug",
     "origin/main",
   ])
-  assert_eq(cmds[5].program, "sh")
-  assert_true(cmds[5].args[1].contains("choir leaf-tool"))
+  assert_eq(cmds[5].program, @workspace.native_leaf_helpers_program)
+  assert_eq(cmds[5].args, ["/project/.choir/worktrees/test-slug"])
   assert_eq(cmds[6].program, "zellij")
   assert_eq(cmds[6].args[3], "new-tab")
 }
@@ -423,7 +423,7 @@ test "spawn_commands worktree config write content" {
   assert_true(
     cmds[4].args[2].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
   )
-  assert_eq(cmds[5].program, "sh")
+  assert_eq(cmds[5].program, @workspace.native_leaf_helpers_program)
   assert_eq(cmds[6].program, "zellij")
 }
 
@@ -485,8 +485,8 @@ test "spawn_commands standalone includes config writes" {
       "workspace = \"/proj/.choir/agents/standalone-task\"",
     ),
   )
-  assert_eq(cmds[3].program, "sh")
-  assert_true(cmds[3].args[1].contains("task_create"))
+  assert_eq(cmds[3].program, @workspace.native_leaf_helpers_program)
+  assert_eq(cmds[3].args, ["/proj/.choir/agents/standalone-task"])
 }
 
 ///|
@@ -685,6 +685,25 @@ test "write_spawn_config and write_local_config use native choir file commands" 
   assert_eq(spawn_cmd.args, ["/wt", "config.toml", "a=toml"])
   assert_eq(local_cmd.program, @workspace.native_write_choir_file_program)
   assert_eq(local_cmd.args, ["/wt", "config.local.toml", "b=toml"])
+}
+
+///|
+test "write_leaf_helper_scripts uses native leaf helper install command" {
+  let cmd = @workspace.write_leaf_helper_scripts("/tmp/wt")
+  assert_eq(cmd.program, @workspace.native_leaf_helpers_program)
+  assert_eq(cmd.args, ["/tmp/wt"])
+}
+
+///|
+test "run_native_leaf_helpers_command ignores foreign programs" {
+  assert_eq(
+    @workspace.run_native_leaf_helpers_command({
+      program: "sh",
+      args: ["/tmp"],
+      workdir: None,
+    }),
+    -1,
+  )
 }
 
 ///|

@@ -213,6 +213,15 @@ int choir_delete_file_sync(const char* path) {
     return remove(path);
 }
 
+int choir_chmod_mode(const char* path, int mode) {
+    return chmod(path, (mode_t)mode);
+}
+
+int choir_symlink_force(const char* target, const char* linkpath) {
+    (void)unlink(linkpath);
+    return symlink(target, linkpath);
+}
+
 static volatile pid_t choir_zellij_subscribe_child = 0;
 
 static void choir_zellij_subscribe_on_term(int sig) {

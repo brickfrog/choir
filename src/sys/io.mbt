@@ -229,6 +229,14 @@ extern "C" fn c_rename_file_sync(from_path : Bytes, to_path : Bytes) -> Int = "c
 extern "C" fn c_delete_file_sync(path : Bytes) -> Int = "choir_delete_file_sync"
 
 ///|
+#borrow(path)
+extern "C" fn c_chmod_mode(path : Bytes, mode : Int) -> Int = "choir_chmod_mode"
+
+///|
+#borrow(target, linkpath)
+extern "C" fn c_symlink_force(target : Bytes, linkpath : Bytes) -> Int = "choir_symlink_force"
+
+///|
 #borrow(session, pane_id, snapshot_path)
 extern "C" fn c_spawn_zellij_pane_viewport_subscribe(
   session : Bytes,
@@ -296,6 +304,22 @@ pub fn append_file_sync(path : String, content : String) -> Bool {
 pub fn delete_file_sync(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_delete_file_sync(path_bytes) == 0
+}
+
+///|
+/// Set `path` mode bits (`chmod(2)`). Returns false on failure.
+pub fn chmod_mode(path : String, mode : Int) -> Bool {
+  c_chmod_mode(string_to_null_terminated_bytes(path), mode) == 0
+}
+
+///|
+/// Replace `linkpath` with a symlink to `target` (`unlink` then `symlink(2)`).
+pub fn symlink_force(target : String, linkpath : String) -> Bool {
+  c_symlink_force(
+    string_to_null_terminated_bytes(target),
+    string_to_null_terminated_bytes(linkpath),
+  ) ==
+  0
 }
 
 ///|

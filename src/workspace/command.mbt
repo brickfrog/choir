@@ -23,6 +23,10 @@ pub let native_pi_runtime_dirs_program : String = "__choir_native_pi_runtime_dir
 pub let native_pi_seed_auth_program : String = "__choir_native_pi_seed_auth__"
 
 ///|
+/// Args: `[worktree_path]` — install `.choir/bin/choir-leaf-tool` and tool symlinks.
+pub let native_leaf_helpers_program : String = "__choir_native_leaf_helpers__"
+
+///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
@@ -193,6 +197,53 @@ pub fn run_native_pi_seed_auth_command(cmd : Command) -> Int {
 }
 
 ///|
+fn leaf_helper_script_body() -> String {
+  (
+    #|#!/bin/sh
+    #|tool="${0##*/}"
+    #|exec choir leaf-tool "$tool" "$@"
+  )
+}
+
+///|
+/// Install leaf helper scripts under `worktree_path/.choir/bin` without shell heredocs.
+/// Returns `0` on success, `1` on failure, `-1` if `cmd` is not this native command.
+pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
+  if cmd.program != native_leaf_helpers_program {
+    return -1
+  }
+  if cmd.args.length() != 1 {
+    return 1
+  }
+  let worktree_path = cmd.args[0]
+  if worktree_path == "" {
+    return 1
+  }
+  let bin_dir = worktree_path + "/.choir/bin"
+  if !@sys.create_dir_all(bin_dir) {
+    return 1
+  }
+  let script_path = bin_dir + "/choir-leaf-tool"
+  if !@sys.write_file_sync(script_path, leaf_helper_script_body()) {
+    return 1
+  }
+  if !@sys.chmod_mode(script_path, 0o755) {
+    return 1
+  }
+  let names = [
+    "file_pr", "notify_parent", "shutdown", "task_list", "task_get", "task_create",
+    "task_update",
+  ]
+  for name in names {
+    let link_path = bin_dir + "/" + name
+    if !@sys.symlink_force("choir-leaf-tool", link_path) {
+      return 1
+    }
+  }
+  0
+}
+
+///|
 /// Write `workspace_root/relative_path` with native file I/O (via `exec.run` sentinel).
 pub fn workspace_relative_file_command(
   workspace_root : String,
@@ -230,25 +281,7 @@ pub fn write_spawn_config(worktree_path : String, content : String) -> Command {
 ///|
 /// Install shell helpers for CLIs that do not load MCP tools directly.
 pub fn write_leaf_helper_scripts(worktree_path : String) -> Command {
-  {
-    program: "sh",
-    args: [
-      "-c",
-      "mkdir -p \"$1/.choir/bin\" && " +
-      "cat > \"$1/.choir/bin/choir-leaf-tool\" <<'EOF'\n" +
-      "#!/bin/sh\n" +
-      "tool=\"${0##*/}\"\n" +
-      "exec choir leaf-tool \"$tool\" \"$@\"\n" +
-      "EOF\n" +
-      "chmod +x \"$1/.choir/bin/choir-leaf-tool\" && " +
-      "for name in file_pr notify_parent shutdown task_list task_get task_create task_update; do " +
-      "ln -sf choir-leaf-tool \"$1/.choir/bin/$name\"; " +
-      "done",
-      "sh",
-      worktree_path,
-    ],
-    workdir: None,
-  }
+  { program: native_leaf_helpers_program, args: [worktree_path], workdir: None }
 }
 
 ///|
