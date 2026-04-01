@@ -30,8 +30,10 @@ choir init
 
 ```bash
 choir init              # bring up server + TL session
-choir stop              # shut down server
+choir stop              # shut down server, preserving recoverable state
+choir stop --purge      # shut down server and remove recoverable state/worktrees
 choir serve             # run server directly
+choir tool agent_list   # call a Choir tool directly (JSON response)
 choir mcp-stdio         # MCP JSON-RPC bridge (one per agent)
 choir smoke             # MCP bridge smoke test
 choir smoke --leafs     # live spawn/PR smoke
@@ -112,6 +114,77 @@ This brings up:
 - one TL client session
 - local state under `.choir/`
 
+`choir init --recreate` recreates the server/TL session while preserving recoverable agent state by default. Add `--purge` for a clean teardown that removes worktrees, inline metadata, lifecycles, and poller state.
+
+Useful split:
+
+```bash
+choir stop                 # stop, keep recovery state
+choir init --recreate      # restart, keep recovery state
+choir stop --purge         # stop and remove recovery state
+choir init --recreate --purge  # restart from a clean slate
+```
+
+### Pi Team Lead
+
+```bash
+choir init --tl pi
+```
+
+This launches Pi as the TL using Choir-managed runtime assets under `.choir/pi/`.
+Choir keeps Pi state local to the repo and seeds `.choir/pi/agent/auth.json` from `~/.pi/agent/auth.json` if present. If no auth snapshot is available, log in inside the spawned Pi session.
+
+This path is now live-validated for:
+- Pi TL spawning Pi workers via `spawn_worker`
+- Pi TL spawning Pi dev leafs via `fork_wave`
+- Pi worker `notify_parent`
+- Pi dev leaf PR open / review-followup loop
+- Pi TL merging a child PR via `merge_pr`
+- restart recovery of an offline PR-owning Pi leaf, including post-restart `agent_list` visibility and `merge_pr`
+
+Remaining polish is mostly around longer-term persistence policy / delivery tradeoffs, not basic end-to-end viability.
+
+#### Pi smoke matrix
+
+| Flow | Status |
+| --- | --- |
+| `choir init --tl pi` | validated |
+| Pi TL → `spawn_worker(agent_type=pi)` | validated |
+| Pi worker → `notify_parent` | validated |
+| Pi TL → `fork_wave(agent_type=pi)` | validated |
+| Pi dev leaf → `file_pr` | validated |
+| Pi dev leaf → review-followup loop | validated |
+| Pi TL → `merge_pr` | validated |
+| Immediate `agent_list` child visibility after spawn | hardened |
+| Offline Pi leaf visible after `choir stop` + `choir init --recreate --tl pi` | validated |
+| Restarted Pi TL → `merge_pr` for recovered offline leaf PR | validated |
+
+### Pi leafs and workers
+
+Pi is also available as an agent type for spawned children:
+
+- `fork_wave(..., agent_type=pi)`
+- `spawn_worker(..., agent_type=pi)`
+
+This path is still experimental, but the local runtime assets and launch wiring are now in place under Choir-owned `.choir/pi/` state, and live smoke validation has confirmed end-to-end worker and dev-leaf flows.
+
+## CLI Tool Access
+
+Choir's server tools can also be called directly over the local control plane.
+This is useful for shell automation and non-MCP integrations.
+
+```bash
+choir tool agent_list
+choir tool mutex_status --name review-lock
+choir tool fork_wave --caller-role tl --json '{"caller_id":"root","tasks":["task A","task B"],"agent_type":"gemini","parent_branch":"main"}'
+```
+
+Responses are JSON using Choir's normal internal envelope:
+
+```json
+{"ok":true,"result":{...}}
+```
+
 ## Smoke Tests
 
 ```bash
@@ -187,6 +260,7 @@ flowchart TD
 .choir/tasks/             task files
 .choir/kv/                key-value store
 .choir/worktrees/         spawned worktrees
+.choir/inline/            recovery metadata for inline agents
 .choir/hooks/hook.wasm    optional WASM hook plugin
 .choir/rewrite_rules.json optional PII rewrite rules
 .choir/context/common.md  shared Choir guidance
