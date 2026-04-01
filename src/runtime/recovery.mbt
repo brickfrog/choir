@@ -348,6 +348,264 @@ pub fn recover_dev_lifecycle_for_pr(
 }
 
 ///|
+pub fn make_shell_recovery_provider(
+  capture : async (String, Array[String], String?) -> String,
+) -> RecoveryProvider {
+  {
+    zellij_live: async fn(project_dir, session) {
+      parse_zellij_live_targets(
+        capture(
+          "zellij",
+          [
+            "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
+          ],
+          Some(project_dir),
+        ),
+      )
+    },
+    open_prs: async fn(project_dir) {
+      let open_pr_output = capture(
+        "sh",
+        [
+          "-c", "gh pr list --json number,headRefName,baseRefName,url,createdAt --state open 2>/dev/null",
+        ],
+        Some(project_dir),
+      )
+      parse_open_prs(open_pr_output)
+    },
+    find_prs_by_head: async fn(project_dir, branch) {
+      let output = capture(
+        "gh",
+        [
+          "pr", "list", "--head", branch, "--state", "open", "--json", "number,headRefName,baseRefName,url,createdAt",
+        ],
+        Some(project_dir),
+      )
+      parse_open_prs(output)
+    },
+    list_local_agents: async fn(project_dir, dir_name) {
+      let output = capture(
+        "sh",
+        ["-c", "ls .choir/" + dir_name + "/ 2>/dev/null"],
+        Some(project_dir),
+      )
+      split_lines(output)
+    },
+    read_local_config: async fn(project_dir, dir_name, slug) {
+      capture(
+        "sh",
+        [
+          "-c",
+          "cat .choir/" +
+          dir_name +
+          "/" +
+          slug +
+          "/.choir/config.local.toml 2>/dev/null",
+        ],
+        Some(project_dir),
+      )
+    },
+    list_lifecycle_files: async fn(project_dir) {
+      let output = capture(
+        "sh",
+        ["-c", "ls " + project_dir + "/.choir/kv/lifecycle--* 2>/dev/null"],
+        None,
+      )
+      split_lines(output)
+    },
+    read_lifecycle_file: fn(path) { @sys.read_file(path) },
+  }
+}
+
+///|
+fn find_persisted_tracked_pr(
+  persisted : Array[@poller.TrackedPR],
+  pr_number : Int,
+  branch : String,
+) -> @poller.TrackedPR? {
+  for tracked in persisted {
+    if tracked.pr_number == pr_number && tracked.branch == branch {
+      return Some(tracked)
+    }
+  }
+  None
+}
+
+///|
+fn find_registered_agent_for_branch_in_list(
+  agents : Array[@types.Agent],
+  branch : String,
+  preferred_agent_id? : String? = None,
+) -> @types.Agent? {
+  match preferred_agent_id {
+    Some(agent_id) =>
+      for agent in agents {
+        if agent.agent_id.to_string() == agent_id {
+          return Some(agent)
+        }
+      }
+    None => ()
+  }
+  for agent in agents {
+    if agent.branch == branch || agent.agent_id.to_string() == branch {
+      return Some(agent)
+    }
+  }
+  None
+}
+
+///|
+pub async fn plan_recovery(
+  session : String,
+  snapshot : RecoverySnapshot,
+  persisted_tracked_prs : Array[@poller.TrackedPR],
+  gh_poll : async (Int) -> (
+    Bool,
+    @poller.ReviewState,
+    String,
+    Bool,
+    String,
+    Bool,
+  ),
+) -> RecoveryPlan {
+  let actions = []
+  let recovered_agents = []
+
+  // 1. Local agents
+  for local_agent in snapshot.local_agents {
+    match local_agent.agent {
+      Some(agent) => {
+        let alive = is_local_target_alive(
+          agent.terminal_target,
+          session,
+          snapshot.zellij_live,
+        )
+        let recovered = if alive {
+          agent
+        } else {
+          { ..agent, state: @types.AgentState::Done, terminal_target: None }
+        }
+        recovered_agents.push(recovered)
+        actions.push(RecoveryAction::RegisterAgent(recovered, alive))
+        if !alive {
+          actions.push(
+            RecoveryAction::FinalizeOfflineAgent(
+              agent_id=agent.agent_id.to_string(),
+            ),
+          )
+        }
+      }
+      None => ()
+    }
+  }
+
+  // 2. Open PRs
+  for pr in snapshot.open_prs {
+    let restored = find_persisted_tracked_pr(
+      persisted_tracked_prs,
+      pr.pr_number,
+      pr.branch,
+    )
+    match
+      find_registered_agent_for_branch_in_list(
+        recovered_agents,
+        pr.branch,
+        preferred_agent_id=restored.map(fn(tracked) { tracked.agent_id }),
+      ) {
+      Some(agent) =>
+        match restored {
+          Some(existing) => {
+            actions.push(
+              RecoveryAction::RestorePRTracking({
+                ..existing,
+                agent_id: agent.agent_id.to_string(),
+                branch: pr.branch,
+                parent_branch: pr.base,
+                pr_url: pr.url,
+              }),
+            )
+            actions.push(
+              RecoveryAction::SyncLifecycle(
+                agent_id=agent.agent_id.to_string(),
+                pr~,
+                review=existing.last_review_state,
+              ),
+            )
+          }
+          None => {
+            let (_, review, sha, ci_failed, review_bodies, _) = gh_poll(
+              pr.pr_number,
+            )
+            actions.push(
+              RecoveryAction::TrackNewPR(
+                pr_number=pr.pr_number,
+                agent_id=agent.agent_id.to_string(),
+                branch=pr.branch,
+                parent_branch=pr.base,
+                pr_url=pr.url,
+                review~,
+                review_bodies~,
+                sha~,
+                ci_failed~,
+                created_at=match pr.created_sec {
+                  Some(created_sec) => created_sec
+                  None => snapshot.recovered_at
+                },
+              ),
+            )
+            actions.push(
+              RecoveryAction::SyncLifecycle(
+                agent_id=agent.agent_id.to_string(),
+                pr~,
+                review~,
+              ),
+            )
+          }
+        }
+      None => ()
+    }
+  }
+
+  { actions, }
+}
+
+///|
+pub async fn discover_recovery_snapshot(
+  provider : RecoveryProvider,
+  project_dir : String,
+  session : String,
+) -> RecoverySnapshot {
+  let zellij_live = (provider.zellij_live)(project_dir, session)
+  let open_prs = (provider.open_prs)(project_dir)
+  let local_agents = []
+  for dir_name in ["worktrees", "agents", "inline"] {
+    let slugs = (provider.list_local_agents)(project_dir, dir_name)
+    for slug in slugs {
+      let content = (provider.read_local_config)(project_dir, dir_name, slug)
+      let agent = parse_agent_from_config(
+        content,
+        ".choir/" + dir_name + "/" + slug,
+        slug,
+      )
+      local_agents.push(LocalAgentSnapshot::{ slug, dir_name, agent })
+    }
+  }
+  { zellij_live, open_prs, local_agents, recovered_at: @poller.now_sec() }
+}
+
+///|
+pub fn split_lines(output : String) -> Array[String] {
+  let lines = []
+  for raw in output.split("\n") {
+    let line = raw.to_string().trim().to_string()
+    if line != "" {
+      lines.push(line)
+    }
+  }
+  lines
+}
+
+///|
 pub fn parse_zellij_live_targets(output : String) -> ZellijLiveTargets {
   let tabs = []
   let panes = []
