@@ -71,3 +71,37 @@ test "parse_gh_pr_view_output invalid json returns parse failure sentinel" {
   assert_eq(bodies, "")
   assert_true(open)
 }
+
+///|
+test "parse_gh_pr_view_output filters pull request overview review noise" {
+  let json =
+    #|{"reviews":[
+    #|  {"state":"COMMENTED","body":"Please change the heading."},
+    #|  {"state":"COMMENTED","body":"Pull request overview\n\nAdds a smoke test file."}
+    #|],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN"}
+  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(review, Commented)
+  assert_eq(bodies, "Please change the heading.")
+  assert_true(open)
+}
+
+///|
+test "parse_gh_pr_view_output dedupes repeated review bodies" {
+  let json =
+    #|{"reviews":[
+    #|  {"state":"COMMENTED","body":"Please change the heading."},
+    #|  {"state":"COMMENTED","body":"Please change the heading."}
+    #|],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN"}
+  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(review, Commented)
+  assert_eq(bodies, "Please change the heading.")
+  assert_true(open)
+}

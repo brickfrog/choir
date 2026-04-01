@@ -29,6 +29,21 @@ fn parse_head_ref_oid(json : Json) -> String {
 }
 
 ///|
+fn review_body_is_noise(body : String) -> Bool {
+  let normalized = body.trim().to_lower()
+  normalized.has_prefix("pull request overview")
+}
+
+///|
+fn push_review_body(bodies : Array[String], body : String) -> Unit {
+  let trimmed = body.trim().to_string()
+  if trimmed == "" || review_body_is_noise(trimmed) || bodies.contains(trimmed) {
+    return
+  }
+  bodies.push(trimmed)
+}
+
+///|
 fn parse_review_bodies(json : Json) -> String {
   let bodies : Array[String] = []
   guard json is Object(obj) else { return "" }
@@ -37,7 +52,7 @@ fn parse_review_bodies(json : Json) -> String {
       for r in reviews {
         guard r is Object(rev) else { continue }
         match rev.get("body") {
-          Some(String(v)) => if v != "" { bodies.push(v) }
+          Some(String(v)) => push_review_body(bodies, v)
           _ => ()
         }
       }
@@ -58,9 +73,9 @@ fn parse_review_bodies(json : Json) -> String {
         }
         if body != "" {
           if path != "" {
-            bodies.push("[" + path + "] " + body)
+            push_review_body(bodies, "[" + path + "] " + body)
           } else {
-            bodies.push(body)
+            push_review_body(bodies, body)
           }
         }
       }

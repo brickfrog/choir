@@ -282,18 +282,36 @@ fn render_common_prompt(
 }
 
 ///|
+pub fn render_leaf_spawn_prompt_with_defaults(
+  spec : PromptSpec,
+  default_read_first : Array[String],
+) -> String {
+  render_common_prompt(spec, leaf_profile_text(), default_read_first)
+}
+
+///|
 pub fn render_leaf_spawn_prompt(spec : PromptSpec) -> String {
-  render_common_prompt(spec, leaf_profile_text(), [
+  render_leaf_spawn_prompt_with_defaults(spec, [
     ".choir/context/common.md", ".choir/context/dev.md",
   ])
 }
 
 ///|
-pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
+pub fn render_worker_spawn_prompt_with_defaults(
+  spec : PromptSpec,
+  default_read_first : Array[String],
+) -> String {
   render_common_prompt(
     spec,
     worker_profile_text(spec.worker_type),
-    [".choir/context/common.md", ".choir/context/worker.md"],
+    default_read_first,
     sanitize_worker=true,
   )
+}
+
+///|
+pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
+  render_worker_spawn_prompt_with_defaults(spec, [
+    ".choir/context/common.md", ".choir/context/worker.md",
+  ])
 }
