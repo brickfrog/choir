@@ -144,6 +144,35 @@ test "zellij_session_exists_in_list_output strips ansi" {
 }
 
 ///|
+test "zellij_query_tab_names_command uses env argv without shell" {
+  let cmd = @workspace.zellij_query_tab_names_command("my-session")
+  assert_eq(cmd.program, "env")
+  assert_eq(cmd.args, [
+    "NO_COLOR=1", "zellij", "--session", "my-session", "action", "query-tab-names",
+  ])
+}
+
+///|
+test "zellij_tab_name_exists_in_query_output matches exact line only" {
+  assert_true(@workspace.zellij_tab_name_exists_in_query_output("TL\n", "TL"))
+  assert_true(
+    @workspace.zellij_tab_name_exists_in_query_output("Server\nTL\n", "TL"),
+  )
+  assert_false(
+    @workspace.zellij_tab_name_exists_in_query_output("TL-2\n", "TL"),
+  )
+  assert_false(@workspace.zellij_tab_name_exists_in_query_output("", "TL"))
+}
+
+///|
+test "zellij_tab_name_exists_in_query_output strips ansi" {
+  let esc = "\u{1b}[32m"
+  let reset = "\u{1b}[0m"
+  let out = "Server\n" + esc + "TL" + reset + "\n"
+  assert_true(@workspace.zellij_tab_name_exists_in_query_output(out, "TL"))
+}
+
+///|
 test "agent_launch_command for each AgentType" {
   let spec_claude = @types.SpawnSpec::{
     slug: "test-slug",
