@@ -1565,7 +1565,7 @@ async fn ServerState::interpret_teardown_effects(
           Err(_) => ()
         }
       RemoveTeamMember(parent_id~, slug~) =>
-        ignore(@workspace.remove_team_member_native(parent_id, slug))
+        ignore(@workspace.remove_team_member(parent_id, slug))
       FireHook(agent_id~, role~, exit_reason~) =>
         @tools.fire_hook_async(
           @hooks.HookEvent::AgentExit,
