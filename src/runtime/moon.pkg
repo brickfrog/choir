@@ -8,7 +8,6 @@ import {
   "brickfrog/tempo",
   "moonbitlang/core/env",
   "moonbitlang/async",
-  "moonbitlang/async/process",
 }
 
 options(

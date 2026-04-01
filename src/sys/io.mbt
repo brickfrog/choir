@@ -221,6 +221,14 @@ extern "C" fn c_rename_file_sync(from_path : Bytes, to_path : Bytes) -> Int = "c
 extern "C" fn c_delete_file_sync(path : Bytes) -> Int = "choir_delete_file_sync"
 
 ///|
+#borrow(session, pane_id, snapshot_path)
+extern "C" fn c_spawn_zellij_pane_viewport_subscribe(
+  session : Bytes,
+  pane_id : Bytes,
+  snapshot_path : Bytes,
+) -> Int = "choir_spawn_zellij_pane_viewport_subscribe"
+
+///|
 pub fn write_file_sync(path : String, content : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   let content_bytes = @utf8.encode(content)
@@ -280,6 +288,22 @@ pub fn append_file_sync(path : String, content : String) -> Bool {
 pub fn delete_file_sync(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_delete_file_sync(path_bytes) == 0
+}
+
+///|
+/// Fork a supervisor that runs `zellij subscribe pane-viewport --format json`, mirrors each stdout
+/// line into `snapshot_path`, and returns the supervisor PID for `kill_pid_best_effort`, or a
+/// non-positive value on failure.
+pub fn spawn_zellij_pane_viewport_subscribe(
+  session : String,
+  pane_id : String,
+  snapshot_path : String,
+) -> Int {
+  c_spawn_zellij_pane_viewport_subscribe(
+    string_to_null_terminated_bytes(session),
+    string_to_null_terminated_bytes(pane_id),
+    string_to_null_terminated_bytes(snapshot_path),
+  )
 }
 
 ///|

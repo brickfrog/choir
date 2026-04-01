@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +8,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static char choir_cleanup_cmd[4096] = {0};
@@ -209,4 +211,113 @@ int choir_append_file_sync(const char* path, const char* content, int content_le
 
 int choir_delete_file_sync(const char* path) {
     return remove(path);
+}
+
+static volatile pid_t choir_zellij_subscribe_child = 0;
+
+static void choir_zellij_subscribe_on_term(int sig) {
+    (void)sig;
+    pid_t z = choir_zellij_subscribe_child;
+    if (z > 0) {
+        kill(z, SIGTERM);
+    }
+    _exit(0);
+}
+
+/**
+ * Fork a supervisor that runs `zellij --session ... subscribe pane-viewport --pane-id ... --format json`,
+ * discards stderr, and overwrites snapshot_path with each complete line read from zellij stdout.
+ * Returns the supervisor PID for best-effort teardown via kill_pid_best_effort, or -1 on failure.
+ */
+int choir_spawn_zellij_pane_viewport_subscribe(
+    const char* session,
+    const char* pane_id,
+    const char* snapshot_path) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        return -1;
+    }
+    pid_t sup = fork();
+    if (sup < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+    if (sup > 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return (int)sup;
+    }
+
+    /* Supervisor: read zellij stdout and mirror each line to snapshot_path. */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = choir_zellij_subscribe_on_term;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+
+    pid_t zj = fork();
+    if (zj < 0) {
+        close(pipefd[0]);
+        _exit(1);
+    }
+    if (zj == 0) {
+        close(pipefd[0]);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        execlp(
+            "zellij",
+            "zellij",
+            "--session",
+            session,
+            "subscribe",
+            "pane-viewport",
+            "--pane-id",
+            pane_id,
+            "--format",
+            "json",
+            (char*)NULL);
+        _exit(127);
+    }
+
+    choir_zellij_subscribe_child = zj;
+    close(pipefd[1]);
+
+    FILE* in = fdopen(pipefd[0], "r");
+    if (!in) {
+        kill(zj, SIGTERM);
+        waitpid(zj, NULL, 0);
+        _exit(1);
+    }
+
+    char* line = NULL;
+    size_t linecap = 0;
+    for (;;) {
+        errno = 0;
+        ssize_t n = getline(&line, &linecap, in);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (n > 0 && line[n - 1] == '\n') {
+            line[n - 1] = '\0';
+            n--;
+        }
+        choir_write_file_sync(snapshot_path, line, (int)n);
+    }
+
+    free(line);
+    fclose(in);
+    kill(zj, SIGTERM);
+    waitpid(zj, NULL, 0);
+    _exit(0);
 }
