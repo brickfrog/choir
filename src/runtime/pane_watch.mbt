@@ -5,12 +5,6 @@ pub fn pane_snapshot_path(agent_id : String) -> String {
 }
 
 ///|
-/// Path for the background subscribe pipeline pidfile for `agent_id` (under `/tmp`).
-pub fn pane_subscribe_pid_path(agent_id : String) -> String {
-  "/tmp/choir-subscribe-" + agent_id + ".pid"
-}
-
-///|
 pub struct PaneWatcher {
   subscribe_pids : Map[String, Int]
   last_change_at : Map[String, Int64]
@@ -23,7 +17,7 @@ pub fn PaneWatcher::new() -> PaneWatcher {
 }
 
 ///|
-pub fn PaneWatcher::watch_pane(
+pub async fn PaneWatcher::watch_pane(
   self : PaneWatcher,
   agent_id : String,
   target : @types.LocalTarget,
@@ -39,12 +33,7 @@ pub fn PaneWatcher::watch_pane(
     " --format json 2>/dev/null | while IFS= read -r line; do printf '%s' \"$line\" > " +
     @sys.shell_quote(snapshot_path) +
     "; done"
-  // Background the subscribe pipeline; store its PID via a pidfile
-  let pid_path = pane_subscribe_pid_path(agent_id)
-  let bg_cmd = cmd + " & echo $! > " + @sys.shell_quote(pid_path)
-  ignore(@sys.system(bg_cmd))
-  let pid_str = @sys.read_file(pid_path).trim().to_string()
-  let pid = parse_int_simple(pid_str)
+  let pid = @process.spawn_orphan("sh", ["-c", cmd]) catch { _ => return }
   if pid > 0 {
     self.subscribe_pids.set(agent_id, pid)
   }
@@ -65,7 +54,6 @@ pub fn PaneWatcher::stop_subscribe(
     None => ()
   }
   ignore(@sys.delete_file_sync(pane_snapshot_path(agent_id)))
-  ignore(@sys.delete_file_sync(pane_subscribe_pid_path(agent_id)))
 }
 
 ///|
