@@ -7,7 +7,11 @@ pub fn worktree_path(project_dir : String, slug : String) -> String {
 ///|
 /// Construct the branch name from parent branch and slug.
 pub fn branch_name(parent_branch : String, slug : String) -> String {
-  parent_branch + "." + slug
+  if parent_branch == "" {
+    slug
+  } else {
+    parent_branch + "." + slug
+  }
 }
 
 ///|
@@ -167,21 +171,21 @@ pub fn config_local_content(
   let agent_id = canonical_agent_id(spec)
   let git_branch = spawn_git_branch(spec)
   "role = \"" +
-  role_str +
+  escape_toml_string(role_str) +
   "\"\nagent_id = \"" +
-  agent_id +
+  escape_toml_string(agent_id) +
   "\"\nparent_id = \"" +
-  spec.parent_id +
+  escape_toml_string(spec.parent_id) +
   "\"\nbranch = \"" +
-  git_branch +
+  escape_toml_string(git_branch) +
   "\"\nparent_branch = \"" +
-  spec.parent_branch +
+  escape_toml_string(spec.parent_branch) +
   "\"\nworkspace = \"" +
-  workspace +
+  escape_toml_string(workspace) +
   "\"\nagent_type = \"" +
-  agent_type_str +
+  escape_toml_string(agent_type_str) +
   "\"\nterminal_target = \"" +
-  terminal_target.to_string() +
+  escape_toml_string(terminal_target.to_string()) +
   "\"\nspawn_depth = " +
   spec.spawn_depth.to_string() +
   "\n"

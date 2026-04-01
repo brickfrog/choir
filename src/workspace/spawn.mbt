@@ -59,7 +59,7 @@ fn resolved_project_dir(project_dir : String) -> String {
 }
 
 ///|
-fn launch_env_prefix(
+pub fn launch_env_prefix(
   spec : @types.SpawnSpec,
   session : String,
   workspace : String,

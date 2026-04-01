@@ -27,7 +27,7 @@ fn wrap_with_shell(cmd : Command, shell : String) -> Command {
 }
 
 ///|
-fn codex_mcp_override_args(
+pub fn codex_mcp_override_args(
   role : @types.Role,
   agent_id : String,
   workspace_path : String,
@@ -67,25 +67,58 @@ fn claude_mcp_args(
 }
 
 ///|
+fn split_words(s : String) -> Array[String] {
+  let parts : Array[String] = []
+  let trimmed = s.trim().to_string()
+  let mut start = 0
+  for i = 0; i <= trimmed.length(); i = i + 1 {
+    if i == trimmed.length() || trimmed[i] == ' ' {
+      if i > start {
+        parts.push(trimmed[start:i].to_string())
+      }
+      start = i + 1
+    }
+  }
+  parts
+}
+
+///|
 pub fn agent_launch_command(
   spec : @types.SpawnSpec,
   workspace_path : String,
   parent_session_id? : String? = None,
   shell_command? : String? = None,
+  command_override? : String? = None,
   extra_mcp_servers_json? : String? = None,
 ) -> Command {
+  let parts = match command_override {
+    Some(cmd) => split_words(cmd)
+    None => []
+  }
+  let cmd_program = if parts.is_empty() { None } else { Some(parts[0]) }
+  let cmd_extra_args = if parts.length() > 1 {
+    let tail = []
+    for i = 1; i < parts.length(); i = i + 1 {
+      tail.push(parts[i])
+    }
+    tail
+  } else {
+    []
+  }
   let claude_mcp = claude_mcp_args(
     spec.role,
     canonical_agent_id(spec),
     extra_mcp_servers_json~,
   )
   let cmd = match spec.agent_type {
-    Claude =>
+    Claude => {
+      let program = cmd_program.unwrap_or("claude")
       match parent_session_id {
         Some(session_id) =>
           {
-            program: "claude",
+            program,
             args: [
+              ..cmd_extra_args,
               "--dangerously-skip-permissions",
               ..claude_mcp,
               "--resume",
@@ -97,27 +130,34 @@ pub fn agent_launch_command(
           }
         None =>
           {
-            program: "claude",
-            args: ["--dangerously-skip-permissions", ..claude_mcp, spec.task],
+            program,
+            args: [
+              ..cmd_extra_args,
+              "--dangerously-skip-permissions",
+              ..claude_mcp,
+              spec.task,
+            ],
             workdir: Some(workspace_path),
           }
       }
+    }
     Gemini =>
       {
-        program: "gemini",
-        args: ["--yolo", "--prompt-interactive", spec.task],
+        program: cmd_program.unwrap_or("gemini"),
+        args: [..cmd_extra_args, "--yolo", "--prompt-interactive", spec.task],
         workdir: Some(workspace_path),
       }
     MoonPilot =>
       {
-        program: "moon",
-        args: ["pilot", spec.task],
+        program: cmd_program.unwrap_or("moon"),
+        args: [..cmd_extra_args, "pilot", spec.task],
         workdir: Some(workspace_path),
       }
     Codex =>
       {
-        program: "codex",
+        program: cmd_program.unwrap_or("codex"),
         args: [
+          ..cmd_extra_args,
           "--dangerously-bypass-approvals-and-sandbox",
           "--no-alt-screen",
           ..codex_mcp_override_args(
@@ -133,8 +173,9 @@ pub fn agent_launch_command(
       }
     CursorAgent =>
       {
-        program: "agent",
+        program: cmd_program.unwrap_or("agent"),
         args: [
+          ..cmd_extra_args,
           "--yolo",
           "--approve-mcps",
           "--workspace",
@@ -151,8 +192,9 @@ pub fn agent_launch_command(
       )
       let role_str = @config.role_to_string(spec.role)
       {
-        program: "pi",
+        program: cmd_program.unwrap_or("pi"),
         args: [
+          ..cmd_extra_args,
           "--no-extensions",
           "-e",
           pi_extension_path(runtime_root),
