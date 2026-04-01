@@ -10,23 +10,7 @@ pub struct ServerState {
   pending_disconnects : Map[String, Int64]
   pane_watchers : Map[String, Int64] // agent_id -> last_change_at (unix sec)
   pane_hashes : Map[String, Int] // agent_id -> hash of last screen dump
-  subscribe_pids : Map[String, Int] // agent_id -> PID of zellij subscribe process
-}
-
-///|
-#borrow(cmd)
-extern "C" fn c_system(cmd : Bytes) -> Int = "system"
-
-///|
-fn string_to_null_terminated_bytes(s : String) -> Bytes {
-  let b = @utf8.encode(s)
-  let len = b.length()
-  let result = FixedArray::make(len + 1, (0 : Byte))
-  for i = 0; i < len; i = i + 1 {
-    result[i] = b[i]
-  }
-  result[len] = (0 : Byte)
-  result.unsafe_reinterpret_as_bytes()
+  pane_watcher : @runtime.PaneWatcher
 }
 
 ///|
@@ -39,9 +23,7 @@ fn persist_run_id(project_dir : String, run_id : String) -> Unit {
     @exec.quote(run_id) +
     " > " +
     @exec.quote(path)
-  ignore(
-    c_system(string_to_null_terminated_bytes("sh -c " + @exec.quote(script))),
-  )
+  ignore(@sys.system("sh -c " + @exec.quote(script)))
 }
 
 ///|
@@ -81,6 +63,6 @@ pub fn ServerState::new(config : @types.Config) -> ServerState {
     pending_disconnects: {},
     pane_watchers: {},
     pane_hashes: {},
-    subscribe_pids: {},
+    pane_watcher: @runtime.PaneWatcher::new(),
   }
 }
