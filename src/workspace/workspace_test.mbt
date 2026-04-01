@@ -261,6 +261,33 @@ test "agent_launch_command no wrap when shell_command is None" {
 }
 
 ///|
+test "agent_launch_command supports command_override" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Pi,
+    task: "do work",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+  }
+  let cmd = @workspace.agent_launch_command(
+    spec,
+    "/path",
+    command_override=Some("my-pi --flag"),
+  )
+  assert_eq(cmd.program, "my-pi")
+  assert_eq(cmd.args[0], "--flag")
+  assert_eq(cmd.args[1], "--no-extensions")
+  assert_eq(cmd.args[15], "do work")
+  assert_eq(cmd.workdir, Some("/path"))
+}
+
+///|
 test "agent_launch_command supports Claude fork_session" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",

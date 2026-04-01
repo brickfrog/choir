@@ -3628,25 +3628,7 @@ fn init_codex_mcp_override_args(
   agent_id : String,
   project_dir : String,
 ) -> Array[String] {
-  let role_args = match role {
-    @types.Role::TL => ""
-    _ => " --role " + @config.role_to_string(role)
-  }
-  let cmd = "i=0; while [ ! -S .choir/server.sock ] && [ \"$i\" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; " +
-    "exec choir mcp-stdio" +
-    role_args +
-    " --raw-stdio" +
-    " --name " +
-    init_shell_quote(agent_id) +
-    " 2>> .choir/mcp-stdio.stderr.log"
-  [
-    "-c",
-    "mcp_servers.choir.command=\"sh\"",
-    "-c",
-    "mcp_servers.choir.args=[\"-lc\", \"" + init_escape_toml_string(cmd) + "\"]",
-    "-c",
-    "mcp_servers.choir.cwd=\"" + init_escape_toml_string(project_dir) + "\"",
-  ]
+  @workspace.codex_mcp_override_args(role, agent_id, project_dir)
 }
 
 ///|
@@ -3655,74 +3637,32 @@ fn init_claude_mcp_config_json() -> String {
 }
 
 ///|
-fn init_pi_agent_dir(project_dir : String) -> String {
-  project_dir + "/.choir/pi/agent"
-}
-
-///|
-fn init_pi_session_dir(project_dir : String) -> String {
-  project_dir + "/.choir/pi/sessions"
-}
-
-///|
-fn init_pi_extension_path(project_dir : String) -> String {
-  project_dir + "/.choir/pi/choir-extension.ts"
-}
-
-///|
 fn init_pi_tl_append_system_prompt() -> String {
-  (
-    #|You are the Choir Team Lead running inside Pi.
-    #|Prefer delegation over direct implementation. Use `fork_wave` for branch-owning work and `spawn_worker` for research/review.
-    #|After spawning children, stop and wait for `notify_parent` and review updates instead of polling reflexively.
-    #|Use `merge_pr` to merge through Choir. Do not claim a PR is merged until `merge_pr` succeeds in this session.
-    #|If the task truly requires shared scaffold before delegation, keep it minimal and explicit.
-  )
+  @workspace.pi_append_system_prompt(@types.Role::TL)
 }
 
 ///|
 fn init_pi_tl_launch_command(project_dir : String, session : String) -> String {
-  let prefix = init_env_assignment(
-      "PI_CODING_AGENT_DIR",
-      init_pi_agent_dir(project_dir),
-    ) +
-    " " +
-    init_env_assignment("PI_SKIP_VERSION_CHECK", "1") +
-    " " +
-    init_env_assignment("CHOIR_AGENT_ID", "root") +
-    " " +
-    init_env_assignment("CHOIR_ROLE", "tl") +
-    " " +
-    init_env_assignment("CHOIR_AGENT_TYPE", "pi") +
-    " " +
-    init_env_assignment("CHOIR_WORKSPACE", project_dir) +
-    " " +
-    init_env_assignment("CHOIR_TERMINAL_SESSION", session) +
-    " " +
-    init_env_assignment(
-      "CHOIR_TERMINAL_TARGET",
-      @workspace.local_target_for(session, "TL", @types.IsolationMode::Worktree).to_string(),
-    ) +
-    " " +
-    init_env_assignment("CHOIR_SESSION_ID", "root")
-  let cmd = init_join_shell_words([
-    "pi",
-    "--no-extensions",
-    "-e",
-    init_pi_extension_path(project_dir),
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--session-dir",
-    init_pi_session_dir(project_dir),
-    "--tools",
-    @workspace.pi_default_builtin_tools("tl"),
-    "--thinking",
-    @workspace.pi_default_thinking_level("tl"),
-    "--append-system-prompt",
-    init_pi_tl_append_system_prompt(),
-  ])
-  prefix + " " + cmd
+  let spec : @types.SpawnSpec = {
+    slug: "root",
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Pi,
+    task: "",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "",
+    reuse_workspace: true,
+    workspace_slug: Some("root"),
+    reuse_git_branch: Some("root"),
+    spawn_depth: 0,
+  }
+  let terminal_target = @workspace.local_target_for(
+    session,
+    "TL",
+    @types.IsolationMode::Worktree,
+  )
+  @workspace.launch_env_prefix(spec, session, project_dir, terminal_target) +
+  @workspace.agent_launch_command(spec, project_dir).to_string()
 }
 
 ///|
@@ -3816,7 +3756,7 @@ test "init TL launch command supports pi" {
   assert_true(cmd.contains("CHOIR_SESSION_ID='root'"))
   assert_true(
     cmd.contains(
-      "'pi' '--no-extensions' '-e' '/tmp/choir repo/.choir/pi/choir-extension.ts'",
+      "pi '--no-extensions' '-e' '/tmp/choir repo/.choir/pi/choir-extension.ts'",
     ),
   )
   assert_true(
@@ -3846,24 +3786,6 @@ test "init parse_tl_type extracts --tl flag" {
 }
 
 ///|
-fn init_escape_toml_string(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    match c {
-      '"' => buf.write_string("\\\"")
-      '\\' => buf.write_string("\\\\")
-      '\n' => buf.write_string("\\n")
-      '\r' => buf.write_string("\\r")
-      '\t' => buf.write_string("\\t")
-      _ => buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
-
-///|
 fn init_escape_shell_single_quoted(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -3879,11 +3801,6 @@ fn init_escape_shell_single_quoted(s : String) -> String {
 ///|
 fn init_shell_quote(s : String) -> String {
   "'" + init_escape_shell_single_quoted(s) + "'"
-}
-
-///|
-fn init_env_assignment(key : String, value : String) -> String {
-  key + "=" + init_shell_quote(value)
 }
 
 ///|
@@ -3946,194 +3863,6 @@ fn init_companion_agent_type(command : String) -> @types.AgentType? {
 }
 
 ///|
-fn init_companion_local_config_content(
-  role : @types.Role,
-  agent_id : String,
-  parent_id : String,
-  branch : String,
-  parent_branch : String,
-  workspace : String,
-  terminal_target : @types.LocalTarget,
-  agent_type? : @types.AgentType? = None,
-) -> String {
-  let role_str = @config.role_to_string(role)
-  let target_str = terminal_target.to_string()
-  let agent_type_line = match agent_type {
-    Some(kind) => "agent_type = \"\{@config.agent_type_to_string(kind)}\"\n"
-    None => ""
-  }
-  "role = \"\{role_str}\"\nagent_id = \"\{agent_id}\"\nparent_id = \"\{parent_id}\"\nbranch = \"\{branch}\"\nparent_branch = \"\{parent_branch}\"\nworkspace = \"\{workspace}\"\nterminal_target = \"\{target_str}\"\nspawn_depth = 0\n\{agent_type_line}"
-}
-
-///|
-fn init_companion_launch_prefix(
-  role : @types.Role,
-  agent_id : String,
-  parent_id : String,
-  branch : String,
-  parent_branch : String,
-  workspace : String,
-  terminal_target : @types.LocalTarget,
-  session : String,
-  agent_type? : @types.AgentType? = None,
-) -> String {
-  let assignments : Array[String] = [
-    "PATH=" + init_shell_quote(workspace + "/.choir/bin") + ":$PATH",
-    init_env_assignment("CHOIR_AGENT_ID", agent_id),
-    init_env_assignment("CHOIR_PARENT_ID", parent_id),
-    init_env_assignment("CHOIR_BRANCH", branch),
-    init_env_assignment("CHOIR_PARENT_BRANCH", parent_branch),
-    init_env_assignment("CHOIR_WORKSPACE", workspace),
-    init_env_assignment("CHOIR_ROLE", @config.role_to_string(role)),
-    init_env_assignment("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
-    init_env_assignment("CHOIR_TERMINAL_SESSION", session),
-    init_env_assignment("CHOIR_AGENT_ID", agent_id),
-    init_env_assignment("CHOIR_SESSION_ID", agent_id),
-    init_env_assignment("CHOIR_ROLE", @config.role_to_string(role)),
-    init_env_assignment("CHOIR_PARENT_AGENT", parent_id),
-  ]
-  match agent_type {
-    Some(kind) => {
-      assignments.push(
-        init_env_assignment(
-          "CHOIR_AGENT_TYPE",
-          @config.agent_type_to_string(kind),
-        ),
-      )
-      if kind == @types.AgentType::Pi {
-        let runtime_root = @workspace.pi_runtime_root(
-          workspace,
-          agent_id,
-          @types.IsolationMode::Worktree,
-        )
-        assignments.push(
-          init_env_assignment(
-            "PI_CODING_AGENT_DIR",
-            @workspace.pi_agent_dir(runtime_root),
-          ),
-        )
-        assignments.push(init_env_assignment("PI_SKIP_VERSION_CHECK", "1"))
-      }
-    }
-    None => ()
-  }
-  match @sys.getenv("TRACEPARENT") {
-    Some(value) =>
-      if value != "" {
-        assignments.push(init_env_assignment("TRACEPARENT", value))
-      }
-    None => ()
-  }
-  let buf = StringBuilder::new()
-  for i = 0; i < assignments.length(); i = i + 1 {
-    if i > 0 {
-      buf.write_char(' ')
-    }
-    buf.write_string(assignments[i])
-  }
-  buf.to_string() + " "
-}
-
-///|
-fn init_join_shell_words(parts : Array[String]) -> String {
-  let buf = StringBuilder::new()
-  for i = 0; i < parts.length(); i = i + 1 {
-    if i > 0 {
-      buf.write_char(' ')
-    }
-    buf.write_string(init_shell_quote(parts[i]))
-  }
-  buf.to_string()
-}
-
-///|
-fn init_companion_launch_command(
-  role : @types.Role,
-  branch : String,
-  workspace : String,
-  command : String,
-  task : String,
-  extra_mcp_servers_json? : String? = None,
-) -> String {
-  let parts = init_split_words(command)
-  if parts.is_empty() {
-    return init_shell_quote(task)
-  }
-  let program = parts[0]
-  let extra_args : Array[String] = []
-  for i = 1; i < parts.length(); i = i + 1 {
-    extra_args.push(parts[i])
-  }
-  match init_companion_agent_type(command) {
-    Some(@types.AgentType::Claude) =>
-      init_join_shell_words(
-        [
-          program,
-          ..extra_args,
-          "--dangerously-skip-permissions",
-          "--mcp-config",
-          @workspace.mcp_json_content(role, branch, extra_mcp_servers_json~),
-          "--strict-mcp-config",
-          task,
-        ],
-      )
-    Some(@types.AgentType::Gemini) =>
-      init_join_shell_words([program, ..extra_args, task])
-    Some(@types.AgentType::MoonPilot) =>
-      init_join_shell_words([program, ..extra_args, task])
-    Some(@types.AgentType::Codex) =>
-      init_join_shell_words(
-        [
-          program,
-          ..extra_args,
-          "--dangerously-bypass-approvals-and-sandbox",
-          "--no-alt-screen",
-          ..init_codex_mcp_override_args(role, branch, workspace),
-          "-C",
-          workspace,
-          task,
-        ],
-      )
-    Some(@types.AgentType::CursorAgent) =>
-      init_join_shell_words(
-        [
-          program, ..extra_args, "--yolo", "--approve-mcps", "--workspace", workspace,
-          task,
-        ],
-      )
-    Some(@types.AgentType::Pi) => {
-      let runtime_root = @workspace.pi_runtime_root(
-        workspace,
-        branch,
-        @types.IsolationMode::Worktree,
-      )
-      init_join_shell_words(
-        [
-          program,
-          ..extra_args,
-          "--no-extensions",
-          "-e",
-          @workspace.pi_extension_path(runtime_root),
-          "--no-skills",
-          "--no-prompt-templates",
-          "--no-themes",
-          "--session-dir",
-          @workspace.pi_session_dir(runtime_root),
-          "--tools",
-          @workspace.pi_default_builtin_tools(@config.role_to_string(role)),
-          "--thinking",
-          @workspace.pi_default_thinking_level(@config.role_to_string(role)),
-          "--append-system-prompt",
-          @workspace.pi_append_system_prompt(role),
-          task,
-        ],
-      )
-    }
-    None => command + " '" + init_escape_shell_single_quoted(task) + "'"
-  }
-}
-
-///|
 fn init_companion_commands(
   project_dir : String,
   session : String,
@@ -4149,26 +3878,30 @@ fn init_companion_commands(
     companion.name,
     @types.IsolationMode::Worktree,
   )
-  let agent_type = init_companion_agent_type(companion.command)
-  let launch_str = init_companion_launch_prefix(
-      role,
-      branch,
-      "root",
-      branch,
-      current_branch,
-      workspace,
-      terminal_target,
-      session,
-      agent_type~,
+  let agent_type_opt = init_companion_agent_type(companion.command)
+  let agent_type = agent_type_opt.unwrap_or(@types.AgentType::Gemini)
+  let spec : @types.SpawnSpec = {
+    slug: "companion." + companion.name,
+    role,
+    agent_type,
+    task: companion.task,
+    isolation: @types.IsolationMode::Standalone,
+    parent_id: "root",
+    parent_branch: current_branch,
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: Some(branch),
+    spawn_depth: 0,
+  }
+  let launch_str = @workspace.launch_env_prefix(
+      spec, session, workspace, terminal_target,
     ) +
-    init_companion_launch_command(
-      role,
-      branch,
+    @workspace.agent_launch_command(
+      spec,
       workspace,
-      companion.command,
-      companion.task,
+      command_override=Some(companion.command),
       extra_mcp_servers_json=config.extra_mcp_servers_json,
-    )
+    ).to_string()
   let cmds : Array[@workspace.Command] = [
     {
       program: "sh",
@@ -4192,16 +3925,7 @@ fn init_companion_commands(
     ),
     @workspace.write_local_config(
       workspace,
-      init_companion_local_config_content(
-        role,
-        branch,
-        "root",
-        branch,
-        current_branch,
-        workspace,
-        terminal_target,
-        agent_type~,
-      ),
+      @workspace.config_local_content(spec, workspace, terminal_target),
     ),
     @workspace.write_leaf_helper_scripts(workspace),
     {
@@ -4212,7 +3936,7 @@ fn init_companion_commands(
       workdir: None,
     },
   ]
-  if agent_type == Some(@types.AgentType::Pi) {
+  if agent_type == @types.AgentType::Pi {
     let runtime_root = @workspace.pi_runtime_root(
       workspace,
       branch,
@@ -4222,10 +3946,10 @@ fn init_companion_commands(
     cmds.push(@workspace.seed_pi_auth(runtime_root, project_dir))
     cmds.push(@workspace.write_pi_extension(runtime_root))
   }
-  if agent_type == Some(@types.AgentType::Gemini) {
+  if agent_type == @types.AgentType::Gemini {
     cmds.push(@workspace.trust_gemini_folder(workspace))
   }
-  if agent_type == Some(@types.AgentType::CursorAgent) {
+  if agent_type == @types.AgentType::CursorAgent {
     cmds.push(
       @workspace.write_cursor_mcp_json(
         workspace,
