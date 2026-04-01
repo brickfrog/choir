@@ -1,95 +1,72 @@
 ///|
-async test "file_pr_plan produces correct effects and result" {
+test "file_pr_plan builds tracked result when tracking enabled" {
   let args : FilePrArgs = {
-    branch: "feat-a",
+    branch: "main.task-leaf",
     parent_branch: Some("main"),
-    tracked_agent_id: "agent-1",
+    tracked_agent_id: "main.task-leaf",
     title: None,
     body: None,
   }
-  let ctx = FilePrPlanContext::{
-    project_dir: ".",
-    session: "choir",
-    registry: None,
-    poller_state: None,
+  let pr : PullRequestInfo = {
+    number: 7,
+    url: "https://example.test/pr/7",
+    state: "OPEN",
   }
-
-  let plan = file_pr_plan(args, ctx)
-
-  let git_capture = async fn(program : String, args : Array[String]) -> String {
-    if program == "git" && args.contains("rev-parse") {
-      if args.contains("--abbrev-ref") {
-        return "feat-a\n"
-      }
-      return "hash\n"
+  let plan = file_pr_plan(args, "main", pr, true)
+  match plan.tracked_pr {
+    Some(tracked) => {
+      assert_eq(tracked.pr_number, 7)
+      assert_eq(tracked.agent_id, "main.task-leaf")
+      assert_eq(tracked.branch, "main.task-leaf")
+      assert_eq(tracked.parent_branch, "main")
+      assert_eq(tracked.pr_url, "https://example.test/pr/7")
     }
-    if program == "gh" && args.contains("view") {
-      return "{\"number\": 1, \"url\": \"http://github.com/pr/1\", \"state\": \"OPEN\"}\n"
-    }
-    ""
+    None => fail("expected tracked PR")
   }
-
-  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
-    let res = []
-    for _ in cmds {
-      res.push(0)
+  match plan.dev_event {
+    @phase.DevEvent::PRCreated(pr_number~, url~, branch~) => {
+      assert_eq(pr_number, 7)
+      assert_eq(url, "https://example.test/pr/7")
+      assert_eq(branch, "main.task-leaf")
     }
-    res
+    _ => fail("expected PRCreated")
   }
-
-  let result = interpret(plan, git_capture~, runner~)
-  match result {
-    Ok(res) => {
-      assert_eq(res.tracked_pr.unwrap().pr_number, 1)
-      assert_eq(res.tracked_pr.unwrap().pr_url, "http://github.com/pr/1")
-      match res.dev_event {
-        Some(@phase.DevEvent::PRCreated(pr_number~, ..)) =>
-          assert_eq(pr_number, 1)
-        _ => fail("expected PRCreated event")
-      }
+  assert_eq(
+    plan.notify_message,
+    "[PR READY] PR #7 filed: https://example.test/pr/7",
+  )
+  match plan.response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("pr_created")))
+      assert_eq(map.get("tracked"), Some(Bool::to_json(true)))
     }
-    Err(e) => fail("expected success, got " + e)
+    _ => fail("expected OK response")
   }
 }
 
 ///|
-async test "file_pr_plan handles missing branch" {
+test "file_pr_plan omits tracked PR when tracking disabled" {
   let args : FilePrArgs = {
-    branch: "missing",
+    branch: "leaf",
     parent_branch: Some("main"),
-    tracked_agent_id: "agent-1",
+    tracked_agent_id: "leaf",
     title: None,
     body: None,
   }
-  let ctx = FilePrPlanContext::{
-    project_dir: ".",
-    session: "choir",
-    registry: None,
-    poller_state: None,
+  let pr : PullRequestInfo = {
+    number: 9,
+    url: "https://example.test/pr/9",
+    state: "OPEN",
   }
-
-  let plan = file_pr_plan(args, ctx)
-
-  let git_capture = async fn(program : String, args : Array[String]) -> String {
-    if program == "git" &&
-      args.contains("rev-parse") &&
-      args.contains("refs/heads/missing") {
-      return "" // Branch missing
+  let plan = file_pr_plan(args, "main", pr, false)
+  assert_eq(plan.tracked_pr, None)
+  match plan.response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("tracked"), Some(Bool::to_json(false)))
+      assert_eq(map.get("pr_number"), Some(Int::to_json(9)))
     }
-    if program == "git" && args.contains("rev-parse") {
-      if args.contains("--abbrev-ref") {
-        return "missing\n"
-      }
-      return "hash\n"
-    }
-    ""
-  }
-
-  let runner = async fn(_ : Array[@workspace.Command]) -> Array[Int] { [] }
-
-  let result = interpret(plan, git_capture~, runner~)
-  match result {
-    Err(e) => assert_true(e.contains("missing"))
-    Ok(_) => fail("expected error")
+    _ => fail("expected OK response")
   }
 }

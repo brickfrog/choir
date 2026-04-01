@@ -424,96 +424,125 @@ pub async fn dispatch(
       }
     }
     ToolRequest::FilePr(file_pr_args) => {
-      let ctx = FilePrPlanContext::{
-        project_dir,
-        session,
-        registry,
-        poller_state,
+      let branch = file_pr_args.branch
+      let parent_branch = match file_pr_args.parent_branch {
+        Some(pb) => pb
+        None => detect_default_branch(project_dir)
       }
-      let plan = file_pr_plan(file_pr_args, ctx)
-      let plan_res = interpret(plan, git_capture~, runner~)
-      match plan_res {
+      let tracked_agent_id = file_pr_args.tracked_agent_id
+      let file_pr_dir = file_pr_workdir(project_dir, tracked_agent_id, registry)
+      match ensure_branch_ready(branch, parent_branch, file_pr_dir) {
         Err(e) => @types.Response::Err(e)
-        Ok(res) => {
-          match res.tracked_pr {
-            Some(tracked) =>
-              match poller_state {
-                Some(ps) => {
-                  ps.ensure_tracked(
-                    tracked.pr_number,
-                    tracked.agent_id,
-                    tracked.branch,
-                    tracked.parent_branch,
-                    tracked.pr_url,
-                    @poller.now_sec(),
+        Ok(_) =>
+          match
+            run_strict(runner, [
+              { ..@workspace.git_push(branch), workdir: Some(file_pr_dir) },
+            ]) {
+            Err(e) => @types.Response::Err(e)
+            Ok(_) =>
+              match
+                ensure_pr(
+                  branch,
+                  parent_branch,
+                  file_pr_dir,
+                  file_pr_args.title,
+                  file_pr_args.body,
+                ) {
+                Err(e) => @types.Response::Err(e)
+                Ok(pr) => {
+                  let tracked = poller_state is Some(_)
+                  let plan = file_pr_plan(
+                    file_pr_args, parent_branch, pr, tracked,
                   )
-                  ignore(ps.write_state_file(project_dir))
-                }
-                None => ()
-              }
-            None => ()
-          }
-          match res.dev_event {
-            Some(event) =>
-              apply_dev_event(project_dir, file_pr_args.branch, event)
-            None => ()
-          }
-          match res.notification {
-            Some(delivery) => {
-              let delivery_log_path = project_dir + "/.choir/delivery.log"
-              let parent_part = match res.notification_parent_id {
-                Some(id) => " parent=" + id
-                None => ""
-              }
-              ignore(
-                @sys.append_file_sync(
-                  delivery_log_path,
-                  "[auto-notify] caller=" +
-                  file_pr_args.tracked_agent_id +
-                  parent_part +
-                  " delivery=" +
-                  delivery.to_string() +
-                  "\n",
-                ),
-              )
-              match execute_delivery(delivery, runner, project_dir~) {
-                Ok(_) => ()
-                Err(e) => {
-                  @moontrace.error(
-                    "file_pr auto-notify delivery failed",
-                    fields=@moontrace.fields([("error", e.to_json())]),
-                  )
-                  ignore(
-                    @sys.append_file_sync(
-                      delivery_log_path,
-                      "[auto-notify] delivery failed error=" + e + "\n",
-                    ),
-                  )
-                }
-              }
-            }
-            None =>
-              match res.notification_error {
-                Some(e) => {
+                  match plan.tracked_pr {
+                    Some(tracked_pr) =>
+                      match poller_state {
+                        Some(ps) => {
+                          ps.ensure_tracked(
+                            tracked_pr.pr_number,
+                            tracked_pr.agent_id,
+                            tracked_pr.branch,
+                            tracked_pr.parent_branch,
+                            tracked_pr.pr_url,
+                            @poller.now_sec(),
+                          )
+                          ignore(ps.write_state_file(project_dir))
+                        }
+                        None => ()
+                      }
+                    None => ()
+                  }
+                  apply_dev_event(project_dir, branch, plan.dev_event)
                   let delivery_log_path = project_dir + "/.choir/delivery.log"
-                  @moontrace.error(
-                    "file_pr auto-notify parent resolution failed",
-                    fields=@moontrace.fields([("error", e.to_json())]),
-                  )
-                  ignore(
-                    @sys.append_file_sync(
-                      delivery_log_path,
-                      "[auto-notify] resolve_parent_for_notify failed error=" +
-                      e +
-                      "\n",
-                    ),
-                  )
+                  match registry {
+                    Some(reg) =>
+                      match
+                        resolve_parent_for_notify(
+                          project_dir, session, reg, tracked_agent_id,
+                        ) {
+                        Ok(parent) => {
+                          let delivery = @message.plan_delivery(
+                            parent,
+                            tracked_agent_id,
+                            plan.notify_message,
+                            "success",
+                          )
+                          ignore(
+                            @sys.append_file_sync(
+                              delivery_log_path,
+                              "[auto-notify] caller=" +
+                              tracked_agent_id +
+                              " parent=" +
+                              parent.agent_id.to_string() +
+                              " delivery=" +
+                              delivery.to_string() +
+                              "\n",
+                            ),
+                          )
+                          match
+                            execute_delivery(delivery, runner, project_dir~) {
+                            Ok(_) => ()
+                            Err(e) => {
+                              @moontrace.error(
+                                "file_pr auto-notify delivery failed",
+                                fields=@moontrace.fields([
+                                  ("error", e.to_json()),
+                                ]),
+                              )
+                              ignore(
+                                @sys.append_file_sync(
+                                  delivery_log_path,
+                                  "[auto-notify] delivery failed error=" +
+                                  e +
+                                  "\n",
+                                ),
+                              )
+                            }
+                          }
+                        }
+                        Err(e) => {
+                          @moontrace.error(
+                            "file_pr auto-notify parent resolution failed",
+                            fields=@moontrace.fields([
+                              ("error", e.message().to_json()),
+                            ]),
+                          )
+                          ignore(
+                            @sys.append_file_sync(
+                              delivery_log_path,
+                              "[auto-notify] resolve_parent_for_notify failed error=" +
+                              e.message() +
+                              "\n",
+                            ),
+                          )
+                        }
+                      }
+                    None => ()
+                  }
+                  plan.response
                 }
-                None => ()
               }
           }
-          res.response
-        }
       }
     }
     ToolRequest::MergePr(merge_args) => {
