@@ -25,6 +25,7 @@ pub(all) struct RecoverySnapshot {
   zellij_live : ZellijLiveTargets
   open_prs : Array[OpenPR]
   local_agents : Array[LocalAgentSnapshot]
+  persisted_tracked_prs : Array[@poller.TrackedPR]
   recovered_at : Int64
 } derive(Show)
 
@@ -64,6 +65,16 @@ pub(all) struct RecoveryProvider {
   get_agent_relative_workspace : (String, String) -> String
   list_lifecycle_ids : async (String) -> Array[String]
   read_lifecycle_content : async (String, String) -> String
+  read_poller_state : async (String) -> Array[@poller.TrackedPR]
+  write_poller_state : async (String, Array[@poller.TrackedPR]) -> Unit
+  gh_poll_pr : async (Int) -> (
+    Bool,
+    @poller.ReviewState,
+    String,
+    Bool,
+    String,
+    Bool,
+  )
 }
 
 ///|
@@ -434,6 +445,34 @@ pub fn make_shell_recovery_provider(
     read_lifecycle_content: async fn(project_dir, id) {
       capture("cat", [".choir/kv/lifecycle--" + id], Some(project_dir))
     },
+    read_poller_state: async fn(project_dir) {
+      let content = capture(
+        "cat",
+        [".choir/poller_state.json"],
+        Some(project_dir),
+      )
+      @poller.parse_tracked_prs_json(content)
+    },
+    write_poller_state: async fn(project_dir, tracked) {
+      let buf = StringBuilder::new()
+      buf.write_char('[')
+      let entries = []
+      for t in tracked {
+        entries.push(t.to_json())
+      }
+      buf.write_string(entries.join(","))
+      buf.write_char(']')
+      let content = buf.to_string()
+      let path = project_dir + "/.choir/poller_state.json"
+      let script = "mkdir -p \"$(dirname " +
+        @exec.quote(path) +
+        ")\" && printf '%s' " +
+        @exec.quote(content) +
+        " > " +
+        @exec.quote(path)
+      ignore(@sys.system("sh -c " + @exec.quote(script)))
+    },
+    gh_poll_pr: @poller.gh_poll_pr,
   }
 }
 
@@ -478,7 +517,6 @@ fn find_registered_agent_for_branch_in_list(
 pub async fn plan_recovery(
   session : String,
   snapshot : RecoverySnapshot,
-  persisted_tracked_prs : Array[@poller.TrackedPR],
   gh_poll : async (Int) -> (
     Bool,
     @poller.ReviewState,
@@ -522,7 +560,7 @@ pub async fn plan_recovery(
   // 2. Open PRs
   for pr in snapshot.open_prs {
     let restored = find_persisted_tracked_pr(
-      persisted_tracked_prs,
+      snapshot.persisted_tracked_prs,
       pr.pr_number,
       pr.branch,
     )
@@ -597,6 +635,7 @@ pub async fn discover_recovery_snapshot(
 ) -> RecoverySnapshot {
   let zellij_live = (provider.zellij_live)(project_dir, session)
   let open_prs = (provider.open_prs)(project_dir)
+  let persisted_tracked_prs = (provider.read_poller_state)(project_dir)
   let local_agents = []
   for dir_name in (provider.list_agent_containers)(project_dir) {
     let slugs = (provider.list_agents_in_container)(project_dir, dir_name)
@@ -610,7 +649,13 @@ pub async fn discover_recovery_snapshot(
       local_agents.push(LocalAgentSnapshot::{ slug, dir_name, agent })
     }
   }
-  { zellij_live, open_prs, local_agents, recovered_at: @poller.now_sec() }
+  {
+    zellij_live,
+    open_prs,
+    local_agents,
+    persisted_tracked_prs,
+    recovered_at: @poller.now_sec(),
+  }
 }
 
 ///|

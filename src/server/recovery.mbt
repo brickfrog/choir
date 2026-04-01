@@ -63,8 +63,7 @@ pub async fn recover_state(
   let plan = @runtime.plan_recovery(
     session,
     snapshot,
-    @poller.read_state_file(project_dir),
-    @poller.gh_poll_pr,
+    state.recovery_provider.gh_poll_pr,
   )
 
   for action in plan.actions {
@@ -104,7 +103,9 @@ pub async fn recover_state(
     }
   }
 
-  ignore(state.poller.write_state_file(project_dir))
+  let tracked = []
+  state.poller.tracked.each(fn(_k, v) { tracked.push(v) })
+  (state.recovery_provider.write_poller_state)(project_dir, tracked)
 }
 
 ///|
@@ -157,6 +158,11 @@ async test "discover_recovery_snapshot with mock provider" {
     },
     list_lifecycle_ids: fn(_dir) { [] },
     read_lifecycle_content: fn(_dir, _id) { "" },
+    read_poller_state: fn(_dir) { [] },
+    write_poller_state: fn(_dir, _tracked) { () },
+    gh_poll_pr: fn(_num) {
+      (true, @poller.ReviewState::Approved, "sha1", false, "", true)
+    },
   }
   let snapshot = @runtime.discover_recovery_snapshot(
     mock_provider, "/tmp", "session",
@@ -204,12 +210,11 @@ async test "plan_recovery reconciles local agents and open PRs" {
         }),
       },
     ],
+    persisted_tracked_prs: [],
     recovered_at: 2000L,
   }
 
-  let plan = @runtime.plan_recovery("session", snapshot, [], async fn(
-    _pr_number,
-  ) {
+  let plan = @runtime.plan_recovery("session", snapshot, async fn(_pr_number) {
     @async.sleep(0)
     (true, @poller.ReviewState::Approved, "sha1", false, "", true)
   })
@@ -281,31 +286,28 @@ async test "plan_recovery handles offline agent and persisted PR" {
         }),
       },
     ],
+    persisted_tracked_prs: [
+      @poller.TrackedPR::{
+        pr_number: 456,
+        agent_id: "slug-off",
+        branch: "feat/offline",
+        parent_branch: "main",
+        pr_url: "https://gh.test/456",
+        first_seen: 3000L,
+        consecutive_failures: 0,
+        backoff_until: 0L,
+        last_review_state: @poller.ReviewState::Commented,
+        last_review_bodies: "some comments",
+        last_sha: "sha-off",
+        notified_parent: false,
+        last_ci_failed: false,
+        last_timeout_at: 0L,
+      },
+    ],
     recovered_at: 4000L,
   }
 
-  let persisted = [
-    @poller.TrackedPR::{
-      pr_number: 456,
-      agent_id: "slug-off",
-      branch: "feat/offline",
-      parent_branch: "main",
-      pr_url: "https://gh.test/456",
-      first_seen: 3000L,
-      consecutive_failures: 0,
-      backoff_until: 0L,
-      last_review_state: @poller.ReviewState::Commented,
-      last_review_bodies: "some comments",
-      last_sha: "sha-off",
-      notified_parent: false,
-      last_ci_failed: false,
-      last_timeout_at: 0L,
-    },
-  ]
-
-  let plan = @runtime.plan_recovery("session", snapshot, persisted, async fn(
-    _pr_number,
-  ) {
+  let plan = @runtime.plan_recovery("session", snapshot, async fn(_pr_number) {
     @async.sleep(0)
     (true, @poller.ReviewState::None_, "", false, "", true)
   })
