@@ -163,20 +163,59 @@ pub fn zellij_rename_tab(
 }
 
 ///|
+/// Run `inner` in a new zellij tab with `env` argv (no `sh -lc`). `workdir` is applied by zellij
+/// (`--cwd`); `inner.workdir` should be [`None`] so the child does not add a redundant `cd`.
+fn zellij_new_tab_argv(
+  session : String,
+  name : String,
+  workdir : String,
+  env_assignments : Array[String],
+  inner : Command,
+) -> Command {
+  let args : Array[String] = [
+    "--session", session, "action", "new-tab", "--name", name, "--cwd", workdir,
+    "--", "env",
+  ]
+  for a in env_assignments {
+    args.push(a)
+  }
+  args.push(inner.program)
+  for arg in inner.args {
+    args.push(arg)
+  }
+  { program: "zellij", args, workdir: None }
+}
+
+///|
+fn zellij_run_pane_argv(
+  session : String,
+  name : String,
+  workdir : String,
+  env_assignments : Array[String],
+  inner : Command,
+) -> Command {
+  let args : Array[String] = [
+    "--session", session, "run", "--name", name, "--cwd", workdir, "--", "env",
+  ]
+  for a in env_assignments {
+    args.push(a)
+  }
+  args.push(inner.program)
+  for arg in inner.args {
+    args.push(arg)
+  }
+  { program: "zellij", args, workdir: None }
+}
+
+///|
 pub fn zellij_new_tab(
   session : String,
   name : String,
   workdir : String,
-  command : String,
+  env_assignments : Array[String],
+  inner : Command,
 ) -> Command {
-  {
-    program: "zellij",
-    args: [
-      "--session", session, "action", "new-tab", "--name", name, "--cwd", workdir,
-      "--", "sh", "-lc", command,
-    ],
-    workdir: None,
-  }
+  zellij_new_tab_argv(session, name, workdir, env_assignments, inner)
 }
 
 ///|
@@ -184,13 +223,26 @@ pub fn zellij_run_pane(
   session : String,
   name : String,
   workdir : String,
-  command : String,
+  env_assignments : Array[String],
+  inner : Command,
+) -> Command {
+  zellij_run_pane_argv(session, name, workdir, env_assignments, inner)
+}
+
+///|
+/// New zellij tab running `script` under `/bin/sh -lc` (shell metacharacters, `;`, pipelines).
+/// Prefer [`zellij_new_tab`] with `env` + argv when the launch is a normal command.
+pub fn zellij_new_tab_shell(
+  session : String,
+  name : String,
+  workdir : String,
+  script : String,
 ) -> Command {
   {
     program: "zellij",
     args: [
-      "--session", session, "run", "--name", name, "--cwd", workdir, "--", "sh",
-      "-lc", command,
+      "--session", session, "action", "new-tab", "--name", name, "--cwd", workdir,
+      "--", "sh", "-lc", script,
     ],
     workdir: None,
   }
@@ -201,13 +253,14 @@ pub fn launch_commands(
   session : String,
   slug : String,
   workdir : String,
-  launch_str : String,
+  env_assignments : Array[String],
+  inner : Command,
   isolation : @types.IsolationMode,
 ) -> Array[Command] {
   match isolation {
     @types.IsolationMode::Inline =>
-      [zellij_run_pane(session, slug, workdir, launch_str)]
-    _ => [zellij_new_tab(session, slug, workdir, launch_str)]
+      [zellij_run_pane(session, slug, workdir, env_assignments, inner)]
+    _ => [zellij_new_tab(session, slug, workdir, env_assignments, inner)]
   }
 }
 

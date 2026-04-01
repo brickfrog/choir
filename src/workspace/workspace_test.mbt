@@ -95,15 +95,29 @@ test "parse_local_target supports zellij targets" {
 }
 
 ///|
-test "zellij_new_tab args" {
+test "zellij_new_tab uses env argv without sh -lc" {
   let cmd = @workspace.zellij_new_tab(
-    "howdy", "leaf-a", "/path/to/worktree", "echo READY",
+    "howdy",
+    "leaf-a",
+    "/path/to/worktree",
+    [],
+    { program: "echo", args: ["READY"], workdir: None },
   )
   assert_eq(cmd.program, "zellij")
   assert_eq(cmd.args, [
     "--session", "howdy", "action", "new-tab", "--name", "leaf-a", "--cwd", "/path/to/worktree",
-    "--", "sh", "-lc", "echo READY",
+    "--", "env", "echo", "READY",
   ])
+}
+
+///|
+test "zellij_new_tab_shell keeps sh -lc for script launches" {
+  let cmd = @workspace.zellij_new_tab_shell(
+    "howdy", "TL", "/proj", "claude; echo done",
+  )
+  assert_eq(cmd.args[9], "sh")
+  assert_eq(cmd.args[10], "-lc")
+  assert_eq(cmd.args[11], "claude; echo done")
 }
 
 ///|
@@ -631,17 +645,20 @@ test "spawn_commands pi worktree writes isolated runtime and launches pi" {
   assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
   assert_eq(cmds[8].args[1], ".choir/pi/choir-extension.ts")
   assert_true(cmds[8].args[2].contains("registerTool"))
-  let launch = cmds[9].args[cmds[9].args.length() - 1]
+  let zargs = cmds[9].args
+  let mut blob = ""
+  for i = 0; i < zargs.length(); i = i + 1 {
+    blob = blob + zargs[i]
+  }
   assert_true(
-    launch.contains(
-      "PI_CODING_AGENT_DIR='/proj/.choir/worktrees/pi-leaf/.choir/pi/agent'",
+    blob.contains(
+      "PI_CODING_AGENT_DIR=/proj/.choir/worktrees/pi-leaf/.choir/pi/agent",
     ),
   )
-  assert_true(launch.contains("PI_SKIP_VERSION_CHECK='1'"))
+  assert_true(blob.contains("PI_SKIP_VERSION_CHECK=1"))
+  assert_true(blob.contains("pi"))
   assert_true(
-    launch.contains(
-      "pi '--no-extensions' '-e' '/proj/.choir/worktrees/pi-leaf/.choir/pi/choir-extension.ts'",
-    ),
+    blob.contains("/proj/.choir/worktrees/pi-leaf/.choir/pi/choir-extension.ts"),
   )
 }
 
@@ -670,11 +687,16 @@ test "spawn_commands for inline mode writes metadata and uses zellij run" {
   assert_eq(cmds[1].args[1], "howdy")
   assert_eq(cmds[1].args[2], "run")
   assert_eq(cmds[1].args[4], "worker-a")
-  assert_true(
-    cmds[1].args[10].contains(
-      "CHOIR_TERMINAL_TARGET='zellij-pane:howdy:worker-a'",
-    ),
-  )
+  let zargs = cmds[1].args
+  let mut found_terminal = false
+  for i = 0; i < zargs.length(); i = i + 1 {
+    if zargs[i].contains("CHOIR_TERMINAL_TARGET=") &&
+      zargs[i].contains("zellij-pane:howdy:worker-a") {
+      found_terminal = true
+      break
+    }
+  }
+  assert_true(found_terminal)
 }
 
 ///|
@@ -697,15 +719,24 @@ test "spawn_commands pi inline runtime root is agent-specific" {
   assert_true(cmds[0].args[0].contains("/project/.choir/inline/main.pi-worker"))
   assert_eq(cmds[1].program, @workspace.native_pi_runtime_dirs_program)
   assert_eq(cmds[1].args[0], "/project/.choir/pi/main.pi-worker")
-  let launch = cmds[4].args[10]
-  assert_true(
-    launch.contains(
-      "PI_CODING_AGENT_DIR='/project/.choir/pi/main.pi-worker/agent'",
-    ),
-  )
-  assert_true(
-    launch.contains("'/project/.choir/pi/main.pi-worker/choir-extension.ts'"),
-  )
+  let zargs = cmds[4].args
+  let mut found_pi = false
+  for i = 0; i < zargs.length(); i = i + 1 {
+    if zargs[i].contains("PI_CODING_AGENT_DIR=") &&
+      zargs[i].contains("/project/.choir/pi/main.pi-worker/agent") {
+      found_pi = true
+      break
+    }
+  }
+  assert_true(found_pi)
+  let mut found_ext = false
+  for i = 0; i < zargs.length(); i = i + 1 {
+    if zargs[i].contains("/project/.choir/pi/main.pi-worker/choir-extension.ts") {
+      found_ext = true
+      break
+    }
+  }
+  assert_true(found_ext)
 }
 
 ///|
@@ -724,19 +755,22 @@ test "spawn_commands launch text contains env vars" {
     spawn_depth: 0,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  // Last command is zellij new-tab, launch string is in the sh -lc arg
+  // Last command is zellij new-tab; env + argv follow `-- env`
   let last = cmds[cmds.length() - 1]
   assert_eq(last.program, "zellij")
   assert_eq(last.args[3], "new-tab")
-  let launch_str = last.args[last.args.length() - 1]
-  assert_true(launch_str.contains("CHOIR_AGENT_ID='main.feature-a'"))
+  assert_eq(last.args[8], "--")
+  assert_eq(last.args[9], "env")
+  let mut joined = ""
+  for i = 10; i < last.args.length(); i = i + 1 {
+    joined = joined + last.args[i]
+  }
+  assert_true(joined.contains("CHOIR_AGENT_ID=main.feature-a"))
+  assert_true(joined.contains("CHOIR_TERMINAL_TARGET=zellij-tab:exo:feature-a"))
+  assert_true(joined.contains("CHOIR_PARENT_AGENT=root"))
   assert_true(
-    launch_str.contains("CHOIR_TERMINAL_TARGET='zellij-tab:exo:feature-a'"),
-  )
-  assert_true(launch_str.contains("CHOIR_PARENT_AGENT='root'"))
-  assert_true(
-    launch_str.contains(
-      "GEMINI_CLI_SYSTEM_SETTINGS_PATH='/proj/.choir/worktrees/feature-a/.choir/gemini-settings.json'",
+    joined.contains(
+      "GEMINI_CLI_SYSTEM_SETTINGS_PATH=/proj/.choir/worktrees/feature-a/.choir/gemini-settings.json",
     ),
   )
 }
