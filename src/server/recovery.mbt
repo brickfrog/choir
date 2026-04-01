@@ -4,72 +4,11 @@ pub fn make_recovery_provider() -> @runtime.RecoveryProvider {
 }
 
 ///|
-fn finalize_recovered_offline_agent(
-  state : ServerState,
-  agent_id : String,
-) -> Unit {
-  let lifecycle = state.current_lifecycle(agent_id)
-  match lifecycle.process {
-    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => ()
-    _ => {
-      let finalized = {
-        ..lifecycle,
-        process: @phase.ProcessState::Finalized(
-          reason=@phase.FinalizeReason::RecoveredDone,
-        ),
-      }
-      @phase.apply_recovered_lifecycle(
-        state.config.project_dir,
-        state.config.terminal_session,
-        state.registry,
-        agent_id,
-        finalized,
-      )
-    }
-  }
-}
-
-///|
-fn sync_recovered_pr_lifecycle(
-  state : ServerState,
-  agent_id : String,
-  pr : @runtime.OpenPR,
-  review : @poller.ReviewState,
-) -> Unit {
-  let agent_opt = state.registry.get(agent_id).to_option()
-  let lifecycle = state.current_lifecycle(agent_id)
-  let workflow = match lifecycle.workflow {
-    @phase.WorkflowState::Dev(dev) =>
-      @phase.WorkflowState::Dev(
-        @runtime.recover_dev_lifecycle_for_pr(dev, pr.pr_number, pr.url, review),
-      )
-    other => other
-  }
-  let recovered = {
-    ..lifecycle,
-    workflow,
-    process: match agent_opt {
-      Some(agent) if agent.terminal_target is Some(_) =>
-        @phase.ProcessState::Connected
-      _ => lifecycle.process
-    },
-  }
-  @phase.apply_recovered_lifecycle(
-    state.config.project_dir,
-    state.config.terminal_session,
-    state.registry,
-    agent_id,
-    recovered,
-  )
-}
-
-///|
 pub async fn recover_state(
   state : ServerState,
   session : String,
   snapshot : @runtime.RecoverySnapshot,
 ) -> Unit {
-  let project_dir = state.config.project_dir
   let plan = @runtime.plan_recovery(
     session,
     snapshot,
@@ -99,15 +38,13 @@ pub async fn recover_state(
           review_bodies, sha, ci_failed,
         )
       @runtime.RecoveryAction::SyncLifecycle(agent_id~, pr~, review~) =>
-        sync_recovered_pr_lifecycle(state, agent_id, pr, review)
+        state.sync_recovered_pr_lifecycle(agent_id, pr, review)
       @runtime.RecoveryAction::FinalizeOfflineAgent(agent_id~) =>
-        finalize_recovered_offline_agent(state, agent_id)
+        state.finalize_recovered_offline_agent(agent_id)
     }
   }
 
-  let tracked = []
-  state.poller.tracked.each(fn(_k, v) { tracked.push(v) })
-  (state.recovery_provider.write_poller_state)(project_dir, tracked)
+  state.persist_recovered_poller_state()
 }
 
 ///|

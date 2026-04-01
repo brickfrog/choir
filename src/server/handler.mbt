@@ -234,16 +234,85 @@ pub fn ServerState::track_recovered_pr(
   branch : String,
   parent_branch : String,
   pr_url : String,
-  first_seen : Int64,
+  created_at : Int64,
   review : @poller.ReviewState,
   review_bodies : String,
   sha : String,
   ci_failed : Bool,
 ) -> Unit {
   self.poller.track_recovered(
-    pr_number, agent_id, branch, parent_branch, pr_url, first_seen, review, review_bodies,
+    pr_number, agent_id, branch, parent_branch, pr_url, created_at, review, review_bodies,
     sha, ci_failed,
   )
+}
+
+///|
+pub fn ServerState::sync_recovered_pr_lifecycle(
+  self : ServerState,
+  agent_id : String,
+  pr : @runtime.OpenPR,
+  review : @poller.ReviewState,
+) -> Unit {
+  let agent_opt = self.registry.get(agent_id).to_option()
+  let lifecycle = self.current_lifecycle(agent_id)
+  let workflow = match lifecycle.workflow {
+    @phase.WorkflowState::Dev(dev) =>
+      @phase.WorkflowState::Dev(
+        @runtime.recover_dev_lifecycle_for_pr(dev, pr.pr_number, pr.url, review),
+      )
+    other => other
+  }
+  let recovered = {
+    ..lifecycle,
+    workflow,
+    process: match agent_opt {
+      Some(agent) if agent.terminal_target is Some(_) =>
+        @phase.ProcessState::Connected
+      _ => lifecycle.process
+    },
+  }
+  @phase.apply_recovered_lifecycle(
+    self.config.project_dir,
+    self.config.terminal_session,
+    self.registry,
+    agent_id,
+    recovered,
+  )
+}
+
+///|
+pub fn ServerState::finalize_recovered_offline_agent(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  let lifecycle = self.current_lifecycle(agent_id)
+  match lifecycle.process {
+    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => ()
+    _ => {
+      let finalized = {
+        ..lifecycle,
+        process: @phase.ProcessState::Finalized(
+          reason=@phase.FinalizeReason::RecoveredDone,
+        ),
+      }
+      @phase.apply_recovered_lifecycle(
+        self.config.project_dir,
+        self.config.terminal_session,
+        self.registry,
+        agent_id,
+        finalized,
+      )
+    }
+  }
+}
+
+///|
+pub async fn ServerState::persist_recovered_poller_state(
+  self : ServerState,
+) -> Unit {
+  let tracked = []
+  self.poller.tracked.each(fn(_k, v) { tracked.push(v) })
+  (self.recovery_provider.write_poller_state)(self.config.project_dir, tracked)
 }
 
 ///|
