@@ -1520,7 +1520,6 @@ async fn ServerState::interpret_teardown_effects(
             exit_reason: Some(exit_reason),
           },
           self.config.project_dir,
-          runner,
         )
       RemoveWorktree(path) =>
         ignore(runner([@workspace.git_worktree_remove(path)]) catch { _ => [] })

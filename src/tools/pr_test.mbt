@@ -22,6 +22,29 @@ async test "capture_command_merged merges stderr into captured output" {
 }
 
 ///|
+async test "capture_hook_script_merged writes stdin without newline and captures merged output" {
+  let dir = "/tmp/choir-hook-capture-" + @sys.get_pid().to_string()
+  ignore(@sys.system("mkdir -p \"" + dir + "\""))
+  let script = dir + "/hook.sh"
+  let script_body = "#!/bin/sh\n" +
+    "body=$(cat)\n" +
+    "if [ \"$body\" != '{\"event\":\"PreToolUse\"}' ]; then exit 2; fi\n" +
+    "echo '{\"continue\":true}'\n"
+  if !@sys.write_file_sync(script, script_body) {
+    fail("write hook script")
+  }
+  ignore(@sys.system("chmod +x \"" + script + "\""))
+  let stdin_json = "{\"event\":\"PreToolUse\"}"
+  let (code, out) = @exec.capture_hook_script_merged(
+    script,
+    stdin_json,
+    Some(dir),
+  )
+  assert_eq(code, 0)
+  assert_true(out.contains("continue"))
+}
+
+///|
 test "parse_left_right_counts parses tab separated counts" {
   match parse_left_right_counts("2\t5\n") {
     Some((left, right)) => {
