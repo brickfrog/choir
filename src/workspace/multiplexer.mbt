@@ -97,6 +97,36 @@ pub fn zellij_session_exists_in_list_output(
 }
 
 ///|
+/// `NO_COLOR=1 zellij --session <session> action query-tab-names` via `env` argv (no shell pipeline).
+/// Parse output with [`zellij_tab_name_exists_in_query_output`].
+pub fn zellij_query_tab_names_command(session : String) -> Command {
+  {
+    program: "env",
+    args: [
+      "NO_COLOR=1", "zellij", "--session", session, "action", "query-tab-names",
+    ],
+    workdir: None,
+  }
+}
+
+///|
+/// True if some output line equals `tab_name` exactly (prior `awk '$0 == target'`), after stripping
+/// ANSI SGR sequences like [`strip_ansi_csi_sgr`].
+pub fn zellij_tab_name_exists_in_query_output(
+  output : String,
+  tab_name : String,
+) -> Bool {
+  let text = strip_ansi_csi_sgr(output)
+  for raw in text.split("\n") {
+    let line = raw.to_string()
+    if line == tab_name {
+      return true
+    }
+  }
+  false
+}
+
+///|
 pub fn zellij_create_background_session(session : String) -> Command {
   {
     program: "zellij",

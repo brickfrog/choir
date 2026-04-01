@@ -3251,17 +3251,18 @@ fn init_kill_session_command(session : String) -> @workspace.Command {
 }
 
 ///|
-fn init_tab_exists_command(
-  session : String,
-  tab_name : String,
-) -> @workspace.Command {
-  {
-    program: "sh",
-    args: [
-      "-c", "NO_COLOR=1 zellij --session \"$1\" action query-tab-names | awk -v target=\"$2\" '$0 == target { found=1 } END { exit(found ? 0 : 1) }'",
-      "sh", session, tab_name,
-    ],
-    workdir: None,
+async fn init_tab_exists(session : String, tab_name : String) -> Bool {
+  try {
+    let (code, output) = @exec.capture_command_merged(
+      @workspace.zellij_query_tab_names_command(session),
+    )
+    if code != 0 {
+      false
+    } else {
+      @workspace.zellij_tab_name_exists_in_query_output(output, tab_name)
+    }
+  } catch {
+    _ => false
   }
 }
 
@@ -3319,11 +3320,11 @@ test "init session lifecycle commands use zellij" {
   assert_eq(list_cmd.program, "env")
   assert_eq(list_cmd.args, ["NO_COLOR=1", "zellij", "list-sessions"])
 
-  let tab_exists = init_tab_exists_command("choir", "TL")
-  assert_eq(tab_exists.program, "sh")
-  assert_true(tab_exists.args[1].contains("query-tab-names"))
-  assert_eq(tab_exists.args[3], "choir")
-  assert_eq(tab_exists.args[4], "TL")
+  let tab_q = @workspace.zellij_query_tab_names_command("choir")
+  assert_eq(tab_q.program, "env")
+  assert_eq(tab_q.args, [
+    "NO_COLOR=1", "zellij", "--session", "choir", "action", "query-tab-names",
+  ])
 
   let kill = init_kill_session_command("choir")
   assert_eq(kill.args, ["delete-session", "--force", "choir"])
@@ -4180,12 +4181,10 @@ fn init_run() -> Unit {
 
       @sys.write_stdout("Creating session \{session}...\n")
       init_run_or_exit(@workspace.zellij_create_background_session(session))
-      let server_tab_exists = @exec.run(
-        init_tab_exists_command(session, "Server"),
-      ) catch {
-        _ => 1
+      let server_tab_exists = init_tab_exists(session, "Server") catch {
+        _ => false
       }
-      if server_tab_exists != 0 {
+      if !server_tab_exists {
         if init_should_launch_server_tab(server_alive == 0) {
           init_run_or_exit(
             @workspace.zellij_new_tab(
@@ -4198,10 +4197,8 @@ fn init_run() -> Unit {
       } else {
         @sys.write_stdout("Reusing existing Server tab.\n")
       }
-      let tl_tab_exists = @exec.run(init_tab_exists_command(session, "TL")) catch {
-        _ => 1
-      }
-      if tl_tab_exists != 0 {
+      let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
+      if !tl_tab_exists {
         init_run_or_exit(
           @workspace.zellij_new_tab(
             session,
