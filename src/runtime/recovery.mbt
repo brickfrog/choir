@@ -58,10 +58,12 @@ pub(all) struct RecoveryProvider {
   zellij_live : async (String, String) -> ZellijLiveTargets
   open_prs : async (String) -> Array[OpenPR]
   find_prs_by_head : async (String, String) -> Array[OpenPR]
-  list_local_agents : async (String, String) -> Array[String]
-  read_local_config : async (String, String, String) -> String
-  list_lifecycle_files : async (String) -> Array[String]
-  read_lifecycle_file : async (String) -> String
+  list_agent_containers : async (String) -> Array[String]
+  list_agents_in_container : async (String, String) -> Array[String]
+  read_agent_config : async (String, String, String) -> String
+  get_agent_relative_workspace : (String, String) -> String
+  list_lifecycle_ids : async (String) -> Array[String]
+  read_lifecycle_content : async (String, String) -> String
 }
 
 ///|
@@ -87,10 +89,10 @@ pub async fn find_agent_for_pr_in_lifecycle(
   project_dir : String,
   pr_number : Int,
 ) -> String? {
-  let files = (provider.list_lifecycle_files)(project_dir)
+  let ids = (provider.list_lifecycle_ids)(project_dir)
   let needle = "\"pr_number\":" + pr_number.to_string()
-  for path in files {
-    let content = (provider.read_lifecycle_file)(path)
+  for id in ids {
+    let content = (provider.read_lifecycle_content)(project_dir, id)
     if content == "" || !content.contains(needle) {
       continue
     }
@@ -383,21 +385,24 @@ pub fn make_shell_recovery_provider(
       )
       parse_open_prs(output)
     },
-    list_local_agents: async fn(project_dir, dir_name) {
+    list_agent_containers: fn(_project_dir) {
+      ["worktrees", "agents", "inline"]
+    },
+    list_agents_in_container: async fn(project_dir, container) {
       let output = capture(
         "sh",
-        ["-c", "ls .choir/" + dir_name + "/ 2>/dev/null"],
+        ["-c", "ls .choir/" + container + "/ 2>/dev/null"],
         Some(project_dir),
       )
       split_lines(output)
     },
-    read_local_config: async fn(project_dir, dir_name, slug) {
+    read_agent_config: async fn(project_dir, container, slug) {
       capture(
         "sh",
         [
           "-c",
           "cat .choir/" +
-          dir_name +
+          container +
           "/" +
           slug +
           "/.choir/config.local.toml 2>/dev/null",
@@ -405,15 +410,32 @@ pub fn make_shell_recovery_provider(
         Some(project_dir),
       )
     },
-    list_lifecycle_files: async fn(project_dir) {
+    get_agent_relative_workspace: fn(container, slug) {
+      ".choir/" + container + "/" + slug
+    },
+    list_lifecycle_ids: async fn(project_dir) {
       let output = capture(
         "sh",
         ["-c", "ls " + project_dir + "/.choir/kv/lifecycle--* 2>/dev/null"],
         None,
       )
-      split_lines(output)
+      let paths = split_lines(output)
+      let ids = []
+      for p in paths {
+        let parts = p.split("--")
+        let part_list = []
+        for part in parts {
+          part_list.push(part)
+        }
+        if part_list.length() > 1 {
+          ids.push(part_list[part_list.length() - 1].to_string())
+        }
+      }
+      ids
     },
-    read_lifecycle_file: fn(path) { @sys.read_file(path) },
+    read_lifecycle_content: async fn(project_dir, id) {
+      capture("cat", [project_dir + "/.choir/kv/lifecycle--" + id], None)
+    },
   }
 }
 
@@ -578,13 +600,13 @@ pub async fn discover_recovery_snapshot(
   let zellij_live = (provider.zellij_live)(project_dir, session)
   let open_prs = (provider.open_prs)(project_dir)
   let local_agents = []
-  for dir_name in ["worktrees", "agents", "inline"] {
-    let slugs = (provider.list_local_agents)(project_dir, dir_name)
+  for dir_name in (provider.list_agent_containers)(project_dir) {
+    let slugs = (provider.list_agents_in_container)(project_dir, dir_name)
     for slug in slugs {
-      let content = (provider.read_local_config)(project_dir, dir_name, slug)
+      let content = (provider.read_agent_config)(project_dir, dir_name, slug)
       let agent = parse_agent_from_config(
         content,
-        ".choir/" + dir_name + "/" + slug,
+        (provider.get_agent_relative_workspace)(dir_name, slug),
         slug,
       )
       local_agents.push(LocalAgentSnapshot::{ slug, dir_name, agent })
