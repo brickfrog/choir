@@ -537,6 +537,7 @@ async test "plan_recovery reconciles local agents and open PRs" {
     RegisterAgent(agent, alive) => {
       assert_eq(agent.agent_id.to_string(), "slug1")
       assert_true(alive)
+      assert_eq(agent.state, @types.AgentState::Active)
     }
     _ => fail("expected RegisterAgent")
   }

@@ -161,7 +161,7 @@ pub fn parse_agent_from_config(
     agent_id: @types.AgentId(agent_id),
     role,
     agent_type: local_cfg.agent_type.unwrap_or(default_agent_type(role)),
-    state: @types.AgentState::Done, // Initial assumption; caller reconciles with zellij
+    state: @types.AgentState::Active, // Initial assumption; caller reconciles with zellij
     parent: local_cfg.parent_id,
     terminal_target: local_cfg.terminal_target,
     host: @types.Host::Local,
