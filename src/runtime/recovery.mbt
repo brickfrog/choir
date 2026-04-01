@@ -390,23 +390,16 @@ pub fn make_shell_recovery_provider(
     },
     list_agents_in_container: async fn(project_dir, container) {
       let output = capture(
-        "sh",
-        ["-c", "ls .choir/" + container + "/ 2>/dev/null"],
+        "ls",
+        ["-1", ".choir/" + container],
         Some(project_dir),
       )
       split_lines(output)
     },
     read_agent_config: async fn(project_dir, container, slug) {
       capture(
-        "sh",
-        [
-          "-c",
-          "cat .choir/" +
-          container +
-          "/" +
-          slug +
-          "/.choir/config.local.toml 2>/dev/null",
-        ],
+        "cat",
+        [".choir/" + container + "/" + slug + "/.choir/config.local.toml"],
         Some(project_dir),
       )
     },
@@ -415,26 +408,31 @@ pub fn make_shell_recovery_provider(
     },
     list_lifecycle_ids: async fn(project_dir) {
       let output = capture(
-        "sh",
-        ["-c", "ls " + project_dir + "/.choir/kv/lifecycle--* 2>/dev/null"],
-        None,
+        "find",
+        [".choir/kv", "-maxdepth", "1", "-type", "f", "-name", "lifecycle--*"],
+        Some(project_dir),
       )
       let paths = split_lines(output)
       let ids = []
-      for p in paths {
-        let parts = p.split("--")
-        let part_list = []
+      let prefix = "lifecycle--"
+      for path in paths {
+        let parts = path.split("/")
+        let filenames = []
         for part in parts {
-          part_list.push(part)
+          filenames.push(part)
         }
-        if part_list.length() > 1 {
-          ids.push(part_list[part_list.length() - 1].to_string())
+        if filenames.length() == 0 {
+          continue
+        }
+        let filename = filenames[filenames.length() - 1].to_string()
+        if filename.has_prefix(prefix) && filename.length() > prefix.length() {
+          ids.push(filename[prefix.length():].to_string())
         }
       }
       ids
     },
     read_lifecycle_content: async fn(project_dir, id) {
-      capture("cat", [project_dir + "/.choir/kv/lifecycle--" + id], None)
+      capture("cat", [".choir/kv/lifecycle--" + id], Some(project_dir))
     },
   }
 }
