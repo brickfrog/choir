@@ -1,4 +1,27 @@
 ///|
+async test "capture_command_merged runs argv without shell and captures stdout" {
+  let (code, out) = @exec.capture_command_merged({
+    program: "echo",
+    args: ["hello-capture"],
+    workdir: None,
+  })
+  assert_eq(code, 0)
+  assert_eq(out.trim(), "hello-capture")
+}
+
+///|
+async test "capture_command_merged merges stderr into captured output" {
+  let (code, out) = @exec.capture_command_merged({
+    program: "/bin/sh",
+    args: ["-c", "echo stdout_line; echo stderr_line >&2"],
+    workdir: None,
+  })
+  assert_eq(code, 0)
+  assert_true(out.contains("stdout_line"))
+  assert_true(out.contains("stderr_line"))
+}
+
+///|
 test "parse_left_right_counts parses tab separated counts" {
   match parse_left_right_counts("2\t5\n") {
     Some((left, right)) => {
