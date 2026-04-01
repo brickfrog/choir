@@ -8,8 +8,6 @@ pub struct ServerState {
   poller : @poller.PollerState
   run_id : String
   pending_disconnects : Map[String, Int64]
-  pane_watchers : Map[String, Int64] // agent_id -> last_change_at (unix sec)
-  pane_hashes : Map[String, Int] // agent_id -> hash of last screen dump
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
 }
@@ -65,8 +63,6 @@ pub fn ServerState::new(
     poller: @poller.PollerState::new(),
     run_id,
     pending_disconnects: {},
-    pane_watchers: {},
-    pane_hashes: {},
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
   }
