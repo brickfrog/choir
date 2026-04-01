@@ -3108,9 +3108,13 @@ test "companion commands use isolated worktree with zellij tab" {
     task: "watch tests",
   })
   assert_eq(cmds.length(), 7)
-  assert_eq(cmds[0].program, "sh")
-  assert_true(cmds[0].args[3].contains("/proj/.choir/agents/monitor"))
-  assert_true(cmds[0].args[4].contains("main.companion.monitor"))
+  assert_eq(
+    cmds[0].program,
+    @workspace.native_worktree_bootstrap_cleanup_program,
+  )
+  assert_eq(cmds[0].args, [
+    "/proj", "/proj/.choir/agents/monitor", "main.companion.monitor",
+  ])
   assert_eq(cmds[1].program, "git")
   assert_eq(cmds[1].args, [
     "worktree", "add", "/proj/.choir/agents/monitor", "-b", "main.companion.monitor",
@@ -3125,6 +3129,10 @@ test "companion commands use isolated worktree with zellij tab" {
     cmds[3].args[2].contains("terminal_target = \"zellij-tab:choir:monitor\""),
   )
   assert_true(cmds[3].args[2].contains("agent_type = \"claude\""))
+  assert_eq(cmds[5].program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(cmds[5].args, [
+    "/proj/.choir/agents/monitor", ".birth_branch", "main.companion.monitor",
+  ])
   assert_true(cmds[6].args[11].contains("claude"))
   assert_true(cmds[6].args[11].contains("\"mcpServers\""))
   assert_true(cmds[6].args[11].contains("main.companion.monitor"))
@@ -3924,14 +3932,9 @@ fn init_companion_commands(
       extra_mcp_servers_json=config.extra_mcp_servers_json,
     ).to_string()
   let cmds : Array[@workspace.Command] = [
-    {
-      program: "sh",
-      args: [
-        "-c", "git worktree remove --force \"$1\" 2>/dev/null || true; rm -rf \"$1\"; git branch -D \"$2\" 2>/dev/null || true",
-        "sh", workspace, branch,
-      ],
-      workdir: None,
-    },
+    @workspace.git_worktree_bootstrap_cleanup_best_effort(
+      project_dir, workspace, branch,
+    ),
     @workspace.git_worktree_add(workspace, branch, current_branch),
     @workspace.write_spawn_config(
       workspace,
@@ -3949,13 +3952,9 @@ fn init_companion_commands(
       @workspace.config_local_content(spec, workspace, terminal_target),
     ),
     @workspace.write_leaf_helper_scripts(workspace),
-    {
-      program: "sh",
-      args: [
-        "-c", "printf '%s' \"$2\" > \"$1/.birth_branch\"", "sh", workspace, branch,
-      ],
-      workdir: None,
-    },
+    @workspace.workspace_relative_file_command(
+      workspace, ".birth_branch", branch,
+    ),
   ]
   if agent_type == @types.AgentType::Pi {
     let runtime_root = @workspace.pi_runtime_root(
