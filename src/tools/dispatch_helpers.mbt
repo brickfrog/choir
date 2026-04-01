@@ -487,6 +487,39 @@ pub fn parse_unresolved_threads_response(json_str : String) -> (Int, String) {
 }
 
 ///|
+pub fn parse_gh_repo_view_output(json_str : String) -> (String, String)? {
+  let json = @json.parse(json_str) catch { _ => return None }
+  guard json is Object(root) else { return None }
+  let owner = match root.get("owner") {
+    Some(Object(owner_obj)) =>
+      match owner_obj.get("login") {
+        Some(String(v)) => v
+        _ => return None
+      }
+    _ => return None
+  }
+  let repo = match root.get("name") {
+    Some(String(v)) => v
+    _ => return None
+  }
+  Some((owner, repo))
+}
+
+///|
+async fn fetch_gh_repo_owner_name(project_dir : String) -> (String, String)? {
+  let cmd : @workspace.Command = {
+    program: "gh",
+    args: ["repo", "view", "--json", "owner,name"],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture_command_output(cmd)
+  if exit_code != 0 || output.trim().to_string() == "" {
+    return None
+  }
+  parse_gh_repo_view_output(output)
+}
+
+///|
 /// Fetch unresolved review threads for a PR via GitHub GraphQL.
 /// Returns (count, formatted_text_with_thread_ids).
 /// Fails gracefully: returns (0, "") if gh is unavailable or the call fails.
@@ -494,12 +527,25 @@ async fn fetch_unresolved_review_threads(
   pr_number : Int,
   project_dir : String,
 ) -> (Int, String) {
-  let query = "{ repository(owner: \"{owner}\", name: \"{repo}\") { pullRequest(number: " +
-    pr_number.to_string() +
-    ") { reviewThreads(first: 100) { nodes { id isResolved path comments(first: 1) { nodes { body } } } } } } }"
+  let (owner, repo) = match fetch_gh_repo_owner_name(project_dir) {
+    Some(pair) => pair
+    None => return (0, "")
+  }
+  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved path comments(first: 1) { nodes { body } } } } } } }"
   let cmd : @workspace.Command = {
     program: "gh",
-    args: ["api", "graphql", "-f", "query=" + query],
+    args: [
+      "api",
+      "graphql",
+      "-f",
+      "query=" + query,
+      "-F",
+      "owner=" + owner,
+      "-F",
+      "repo=" + repo,
+      "-F",
+      "pr=" + pr_number.to_string(),
+    ],
     workdir: Some(project_dir),
   }
   let (exit_code, output) = capture_command_output(cmd)
@@ -750,4 +796,23 @@ test "parse_unresolved_threads_response empty on parse error" {
   let (count, text) = parse_unresolved_threads_response("not json")
   assert_eq(count, 0)
   assert_eq(text, "")
+}
+
+///|
+test "parse_gh_repo_view_output extracts owner and repo" {
+  match
+    parse_gh_repo_view_output(
+      "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}",
+    ) {
+    Some((owner, repo)) => {
+      assert_eq(owner, "brickfrog")
+      assert_eq(repo, "choir")
+    }
+    None => fail("expected owner/repo")
+  }
+}
+
+///|
+test "parse_gh_repo_view_output returns None on malformed json" {
+  assert_eq(parse_gh_repo_view_output("{\"owner\":{},\"name\":1}"), None)
 }

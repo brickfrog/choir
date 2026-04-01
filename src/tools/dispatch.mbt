@@ -1449,12 +1449,17 @@ pub async fn dispatch(
       }
     }
     ToolRequest::ResolveReviewThread(resolve_args) => {
-      let mutation = "mutation { resolveReviewThread(input: { threadId: \"" +
-        resolve_args.thread_id +
-        "\" }) { thread { isResolved } } }"
+      let mutation = "mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } } }"
       let cmd : @workspace.Command = {
         program: "gh",
-        args: ["api", "graphql", "-f", "query=" + mutation],
+        args: [
+          "api",
+          "graphql",
+          "-f",
+          "query=" + mutation,
+          "-F",
+          "threadId=" + resolve_args.thread_id,
+        ],
         workdir: Some(project_dir),
       }
       let (exit_code, output) = capture_command_output(cmd)
