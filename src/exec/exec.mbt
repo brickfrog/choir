@@ -72,6 +72,36 @@ pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+/// Like [`capture_command_merged`], but only stdout is captured (stderr is not redirected to the
+/// pipe). Matches shell `cmd >capture` without `2>&1` for JSON and other stdout-only protocols.
+pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
+  let (reader, writer) = @process.read_from_process() catch {
+    _ => return (-1, "")
+  }
+  let prog = cmd.program
+  let args = cmd.args[:]
+  let pid = match cmd.workdir {
+    Some(dir) =>
+      @process.spawn_orphan(prog, args, stdout=writer, cwd=dir) catch {
+        _ => {
+          reader.close()
+          return (-1, "")
+        }
+      }
+    None =>
+      @process.spawn_orphan(prog, args, stdout=writer) catch {
+        _ => {
+          reader.close()
+          return (-1, "")
+        }
+      }
+  }
+  let (output, _) = drain_process_stdout(reader, 65536)
+  let exit_code = @process.wait_pid(pid) catch { _ => -1 }
+  (exit_code, output)
+}
+
+///|
 /// Spawn `program` with `args`, capture stdout (up to 64KiB), wait for exit, return decoded output.
 pub async fn capture_stdout(program : String, args : Array[String]) -> String {
   capture_stdout_with_cwd(program, args, None)
