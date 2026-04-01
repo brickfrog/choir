@@ -24,6 +24,28 @@ pub(all) enum PostToolAction {
 } derive(Show, Eq)
 
 ///|
+pub(all) enum TeardownEffect {
+  PersistLifecycle(
+    agent_id~ : String,
+    lifecycle~ : @phase.AgentLifecycle,
+    trigger~ : String
+  )
+  SyncParentLifecycle(agent_id~ : String, lifecycle~ : @phase.AgentLifecycle)
+  NotifyParent(
+    parent_id~ : String,
+    agent_id~ : String,
+    message~ : String,
+    status~ : String
+  )
+  RemoveTeamMember(parent_id~ : String, slug~ : String)
+  FireHook(agent_id~ : String, role~ : @types.Role, exit_reason~ : String)
+  RemoveWorktree(String)
+  CloseTerminal(@types.LocalTarget)
+  InjectTerminalMessage(@types.LocalTarget, String)
+  ClearRuntimeTracking(String)
+} derive(Show, Eq)
+
+///|
 pub fn plan_post_tool_actions(
   req : @types.Request,
   resp : @types.Response,
