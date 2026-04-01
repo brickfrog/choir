@@ -15,6 +15,14 @@ pub let native_write_choir_file_program : String = "__choir_native_write_choir_f
 pub let native_write_workspace_rel_file_program : String = "__choir_native_write_workspace_rel_file__"
 
 ///|
+/// Args: `[runtime_root]` — create `agent/` and `sessions/` under the Pi runtime root.
+pub let native_pi_runtime_dirs_program : String = "__choir_native_pi_runtime_dirs__"
+
+///|
+/// Args: `[runtime_root, root_project]` — best-effort seed `agent/auth.json` for isolated Pi home.
+pub let native_pi_seed_auth_program : String = "__choir_native_pi_seed_auth__"
+
+///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
@@ -113,6 +121,75 @@ pub fn run_native_workspace_rel_file_command(cmd : Command) -> Int {
     return 1
   }
   0
+}
+
+///|
+/// Create Pi runtime layout: `runtime_root/agent` and `runtime_root/sessions`.
+/// Returns `0` on success, `1` on failure, `-1` if `cmd` is not this native command.
+pub fn run_native_pi_runtime_dirs_command(cmd : Command) -> Int {
+  if cmd.program != native_pi_runtime_dirs_program {
+    return -1
+  }
+  if cmd.args.length() != 1 {
+    return 1
+  }
+  let runtime_root = cmd.args[0]
+  let agent = pi_agent_dir(runtime_root)
+  let sessions = pi_session_dir(runtime_root)
+  if !@sys.create_dir_all(agent) {
+    return 1
+  }
+  if !@sys.create_dir_all(sessions) {
+    return 1
+  }
+  0
+}
+
+///|
+/// Best-effort: copy `root_project/.choir/pi/agent/auth.json` or `$HOME/.pi/agent/auth.json`
+/// into `runtime_root/agent/auth.json` when the destination file does not exist.
+/// Returns `0` on success (including no-op), `1` on failure, `-1` if `cmd` is not this native command.
+pub fn run_native_pi_seed_auth_command(cmd : Command) -> Int {
+  if cmd.program != native_pi_seed_auth_program {
+    return -1
+  }
+  if cmd.args.length() != 2 {
+    return 1
+  }
+  let runtime_root = cmd.args[0]
+  let root_project = cmd.args[1]
+  let agent_dir = pi_agent_dir(runtime_root)
+  if !@sys.create_dir_all(agent_dir) {
+    return 1
+  }
+  let dest = agent_dir + "/auth.json"
+  if @sys.path_exists(dest) {
+    return 0
+  }
+  let project_auth = root_project + "/.choir/pi/agent/auth.json"
+  if @sys.path_exists(project_auth) {
+    let body = @sys.read_file(project_auth)
+    if !@sys.write_file_sync(dest, body) {
+      return 1
+    }
+    return 0
+  }
+  match @sys.getenv("HOME") {
+    None => 0
+    Some(home) =>
+      if home == "" {
+        0
+      } else {
+        let home_auth = home + "/.pi/agent/auth.json"
+        if @sys.path_exists(home_auth) {
+          let body = @sys.read_file(home_auth)
+          if !@sys.write_file_sync(dest, body) {
+            return 1
+          }
+        }
+        0
+      }
+  }
 }
 
 ///|
@@ -749,8 +826,8 @@ pub fn pi_extension_content() -> String {
 ///|
 pub fn write_pi_runtime_dirs(runtime_root : String) -> Command {
   {
-    program: "sh",
-    args: ["-c", "mkdir -p \"$1/agent\" \"$1/sessions\"", "sh", runtime_root],
+    program: native_pi_runtime_dirs_program,
+    args: [runtime_root],
     workdir: None,
   }
 }
@@ -784,11 +861,8 @@ pub fn write_pi_extension(
 ///|
 pub fn seed_pi_auth(runtime_root : String, root_project : String) -> Command {
   {
-    program: "sh",
-    args: [
-      "-c", "mkdir -p \"$1/agent\" && if [ -f \"$2/.choir/pi/agent/auth.json\" ] && [ ! -f \"$1/agent/auth.json\" ]; then cp \"$2/.choir/pi/agent/auth.json\" \"$1/agent/auth.json\"; elif [ -n \"$HOME\" ] && [ -f \"$HOME/.pi/agent/auth.json\" ] && [ ! -f \"$1/agent/auth.json\" ]; then cp \"$HOME/.pi/agent/auth.json\" \"$1/agent/auth.json\"; fi",
-      "sh", runtime_root, root_project,
-    ],
+    program: native_pi_seed_auth_program,
+    args: [runtime_root, root_project],
     workdir: None,
   }
 }

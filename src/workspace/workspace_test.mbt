@@ -559,11 +559,11 @@ test "spawn_commands pi worktree writes isolated runtime and launches pi" {
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
   assert_eq(cmds.length(), 10)
-  assert_eq(cmds[6].program, "sh")
-  assert_true(cmds[6].args[1].contains("mkdir -p \"$1/agent\" \"$1/sessions\""))
-  assert_eq(cmds[7].program, "sh")
-  assert_true(cmds[7].args[1].contains("$HOME/.pi/agent/auth.json"))
-  assert_true(cmds[7].args[4].contains("/proj"))
+  assert_eq(cmds[6].program, @workspace.native_pi_runtime_dirs_program)
+  assert_eq(cmds[6].args[0], "/proj/.choir/worktrees/pi-leaf/.choir/pi")
+  assert_eq(cmds[7].program, @workspace.native_pi_seed_auth_program)
+  assert_eq(cmds[7].args[0], "/proj/.choir/worktrees/pi-leaf/.choir/pi")
+  assert_eq(cmds[7].args[1], "/proj")
   assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
   assert_eq(cmds[8].args[1], ".choir/pi/choir-extension.ts")
   assert_true(cmds[8].args[2].contains("registerTool"))
@@ -631,7 +631,8 @@ test "spawn_commands pi inline runtime root is agent-specific" {
   let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
   assert_eq(cmds.length(), 5)
   assert_true(cmds[0].args[0].contains("/project/.choir/inline/main.pi-worker"))
-  assert_true(cmds[1].args[3].contains("/project/.choir/pi/main.pi-worker"))
+  assert_eq(cmds[1].program, @workspace.native_pi_runtime_dirs_program)
+  assert_eq(cmds[1].args[0], "/project/.choir/pi/main.pi-worker")
   let launch = cmds[4].args[10]
   assert_true(
     launch.contains(
@@ -704,6 +705,12 @@ test "gemini settings, cursor mcp json, and pi extension use native file command
     "/proj", "/proj/.choir/pi/main.worker",
   )
   assert_eq(pi_inline.args[1], ".choir/pi/main.worker/choir-extension.ts")
+  let pi_dirs = @workspace.write_pi_runtime_dirs("/tmp/pi-rt")
+  assert_eq(pi_dirs.program, @workspace.native_pi_runtime_dirs_program)
+  assert_eq(pi_dirs.args, ["/tmp/pi-rt"])
+  let pi_seed = @workspace.seed_pi_auth("/tmp/pi-rt", "/repo/root")
+  assert_eq(pi_seed.program, @workspace.native_pi_seed_auth_program)
+  assert_eq(pi_seed.args, ["/tmp/pi-rt", "/repo/root"])
 }
 
 ///|

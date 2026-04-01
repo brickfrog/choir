@@ -3180,12 +3180,11 @@ test "companion pi commands prepare isolated runtime and launch pi" {
     },
   )
   assert_eq(cmds.length(), 10)
-  assert_eq(cmds[6].program, "sh")
-  assert_true(
-    cmds[6].args[3].contains("/proj/.choir/agents/pi-helper/.choir/pi"),
-  )
-  assert_eq(cmds[7].program, "sh")
-  assert_true(cmds[7].args[1].contains("$HOME/.pi/agent/auth.json"))
+  assert_eq(cmds[6].program, @workspace.native_pi_runtime_dirs_program)
+  assert_eq(cmds[6].args[0], "/proj/.choir/agents/pi-helper/.choir/pi")
+  assert_eq(cmds[7].program, @workspace.native_pi_seed_auth_program)
+  assert_eq(cmds[7].args[0], "/proj/.choir/agents/pi-helper/.choir/pi")
+  assert_eq(cmds[7].args[1], "/proj")
   assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
   assert_eq(cmds[8].args[1], ".choir/pi/choir-extension.ts")
   assert_true(cmds[8].args[2].contains("registerTool"))
