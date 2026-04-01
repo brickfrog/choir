@@ -1,68 +1,8 @@
 ///|
 pub fn make_recovery_provider() -> @runtime.RecoveryProvider {
-  {
-    zellij_live: async fn(project_dir, session) {
-      @runtime.parse_zellij_live_targets(
-        capture_stdout(
-          "zellij",
-          [
-            "--session", session, "action", "list-panes", "--json", "-a", "-t", "-s",
-          ],
-          cwd=Some(project_dir),
-        ),
-      )
-    },
-    open_prs: async fn(project_dir) {
-      let open_pr_output = capture_stdout(
-        "sh",
-        [
-          "-c", "gh pr list --json number,headRefName,baseRefName,url,createdAt --state open 2>/dev/null",
-        ],
-        cwd=Some(project_dir),
-      )
-      @runtime.parse_open_prs(open_pr_output)
-    },
-    find_prs_by_head: async fn(project_dir, branch) {
-      let output = capture_stdout(
-        "gh",
-        [
-          "pr", "list", "--head", branch, "--state", "open", "--json", "number,headRefName,baseRefName,url,createdAt",
-        ],
-        cwd=Some(project_dir),
-      )
-      @runtime.parse_open_prs(output)
-    },
-    list_local_agents: async fn(project_dir, dir_name) {
-      let output = capture_stdout(
-        "sh",
-        ["-c", "ls .choir/" + dir_name + "/ 2>/dev/null"],
-        cwd=Some(project_dir),
-      )
-      split_lines(output)
-    },
-    read_local_config: async fn(project_dir, dir_name, slug) {
-      capture_stdout(
-        "sh",
-        [
-          "-c",
-          "cat .choir/" +
-          dir_name +
-          "/" +
-          slug +
-          "/.choir/config.local.toml 2>/dev/null",
-        ],
-        cwd=Some(project_dir),
-      )
-    },
-    list_lifecycle_files: async fn(project_dir) {
-      let output = capture_stdout("sh", [
-        "-c",
-        "ls " + project_dir + "/.choir/kv/lifecycle--* 2>/dev/null",
-      ])
-      split_lines(output)
-    },
-    read_lifecycle_file: fn(path) { @sys.read_file(path) },
-  }
+  @runtime.make_shell_recovery_provider(async fn(program, args, cwd) {
+    capture_stdout(program, args, cwd~)
+  })
 }
 
 ///|
@@ -97,194 +37,6 @@ async fn capture_stdout(
   let result = @sys.read_file(tmp)
   ignore(@process.run("rm", ["-f", tmp]) catch { _ => -1 })
   result
-}
-
-///|
-fn split_lines(output : String) -> Array[String] {
-  let lines = []
-  for raw in output.split("\n") {
-    let line = raw.to_string().trim().to_string()
-    if line != "" {
-      lines.push(line)
-    }
-  }
-  lines
-}
-
-///|
-pub async fn discover_recovery_snapshot(
-  provider : @runtime.RecoveryProvider,
-  project_dir : String,
-  session : String,
-) -> @runtime.RecoverySnapshot {
-  let zellij_live = (provider.zellij_live)(project_dir, session)
-  let open_prs = (provider.open_prs)(project_dir)
-  let local_agents = []
-  for dir_name in ["worktrees", "agents", "inline"] {
-    let slugs = (provider.list_local_agents)(project_dir, dir_name)
-    for slug in slugs {
-      let content = (provider.read_local_config)(project_dir, dir_name, slug)
-      let agent = @runtime.parse_agent_from_config(
-        content,
-        ".choir/" + dir_name + "/" + slug,
-        slug,
-      )
-      local_agents.push(@runtime.LocalAgentSnapshot::{ slug, dir_name, agent })
-    }
-  }
-  { zellij_live, open_prs, local_agents, recovered_at: @poller.now_sec() }
-}
-
-///|
-fn find_persisted_tracked_pr(
-  persisted : Array[@poller.TrackedPR],
-  pr_number : Int,
-  branch : String,
-) -> @poller.TrackedPR? {
-  for tracked in persisted {
-    if tracked.pr_number == pr_number && tracked.branch == branch {
-      return Some(tracked)
-    }
-  }
-  None
-}
-
-///|
-fn find_registered_agent_for_branch_in_list(
-  agents : Array[@types.Agent],
-  branch : String,
-  preferred_agent_id? : String? = None,
-) -> @types.Agent? {
-  match preferred_agent_id {
-    Some(agent_id) =>
-      for agent in agents {
-        if agent.agent_id.to_string() == agent_id {
-          return Some(agent)
-        }
-      }
-    None => ()
-  }
-  for agent in agents {
-    if agent.branch == branch || agent.agent_id.to_string() == branch {
-      return Some(agent)
-    }
-  }
-  None
-}
-
-///|
-pub async fn plan_recovery(
-  session : String,
-  snapshot : @runtime.RecoverySnapshot,
-  persisted_tracked_prs : Array[@poller.TrackedPR],
-  gh_poll : async (Int) -> (
-    Bool,
-    @poller.ReviewState,
-    String,
-    Bool,
-    String,
-    Bool,
-  ),
-) -> @runtime.RecoveryPlan {
-  let actions = []
-  let recovered_agents = []
-
-  // 1. Local agents
-  for local_agent in snapshot.local_agents {
-    match local_agent.agent {
-      Some(agent) => {
-        let alive = @runtime.is_local_target_alive(
-          agent.terminal_target,
-          session,
-          snapshot.zellij_live,
-        )
-        let recovered = if alive {
-          agent
-        } else {
-          { ..agent, state: @types.AgentState::Done, terminal_target: None }
-        }
-        recovered_agents.push(recovered)
-        actions.push(@runtime.RecoveryAction::RegisterAgent(recovered, alive))
-        if !alive {
-          actions.push(
-            @runtime.RecoveryAction::FinalizeOfflineAgent(
-              agent_id=agent.agent_id.to_string(),
-            ),
-          )
-        }
-      }
-      None => ()
-    }
-  }
-
-  // 2. Open PRs
-  for pr in snapshot.open_prs {
-    let restored = find_persisted_tracked_pr(
-      persisted_tracked_prs,
-      pr.pr_number,
-      pr.branch,
-    )
-    match
-      find_registered_agent_for_branch_in_list(
-        recovered_agents,
-        pr.branch,
-        preferred_agent_id=restored.map(fn(tracked) { tracked.agent_id }),
-      ) {
-      Some(agent) =>
-        match restored {
-          Some(existing) => {
-            actions.push(
-              @runtime.RecoveryAction::RestorePRTracking({
-                ..existing,
-                agent_id: agent.agent_id.to_string(),
-                branch: pr.branch,
-                parent_branch: pr.base,
-                pr_url: pr.url,
-              }),
-            )
-            actions.push(
-              @runtime.RecoveryAction::SyncLifecycle(
-                agent_id=agent.agent_id.to_string(),
-                pr~,
-                review=existing.last_review_state,
-              ),
-            )
-          }
-          None => {
-            let (_, review, sha, ci_failed, review_bodies, _) = gh_poll(
-              pr.pr_number,
-            )
-            actions.push(
-              @runtime.RecoveryAction::TrackNewPR(
-                pr_number=pr.pr_number,
-                agent_id=agent.agent_id.to_string(),
-                branch=pr.branch,
-                parent_branch=pr.base,
-                pr_url=pr.url,
-                review~,
-                review_bodies~,
-                sha~,
-                ci_failed~,
-                created_at=match pr.created_sec {
-                  Some(created_sec) => created_sec
-                  None => snapshot.recovered_at
-                },
-              ),
-            )
-            actions.push(
-              @runtime.RecoveryAction::SyncLifecycle(
-                agent_id=agent.agent_id.to_string(),
-                pr~,
-                review~,
-              ),
-            )
-          }
-        }
-      None => ()
-    }
-  }
-
-  { actions, }
 }
 
 ///|
@@ -344,7 +96,7 @@ pub async fn recover_state(
   snapshot : @runtime.RecoverySnapshot,
 ) -> Unit {
   let project_dir = state.config.project_dir
-  let plan = plan_recovery(
+  let plan = @runtime.plan_recovery(
     session,
     snapshot,
     @poller.read_state_file(project_dir),
@@ -353,7 +105,7 @@ pub async fn recover_state(
 
   for action in plan.actions {
     match action {
-      RegisterAgent(agent, alive) =>
+      @runtime.RecoveryAction::RegisterAgent(agent, alive) =>
         match state.register_agent(agent) {
           Ok(_) =>
             if !alive {
@@ -363,8 +115,9 @@ pub async fn recover_state(
             }
           Err(_) => ()
         }
-      RestorePRTracking(tracked) => state.poller.restore(tracked)
-      TrackNewPR(
+      @runtime.RecoveryAction::RestorePRTracking(tracked) =>
+        state.poller.restore(tracked)
+      @runtime.RecoveryAction::TrackNewPR(
         pr_number~,
         agent_id~,
         branch~,
@@ -380,9 +133,9 @@ pub async fn recover_state(
           pr_number, agent_id, branch, parent_branch, pr_url, created_at, review,
           review_bodies, sha, ci_failed,
         )
-      SyncLifecycle(agent_id~, pr~, review~) =>
+      @runtime.RecoveryAction::SyncLifecycle(agent_id~, pr~, review~) =>
         sync_recovered_pr_lifecycle(state, agent_id, pr, review)
-      FinalizeOfflineAgent(agent_id~) =>
+      @runtime.RecoveryAction::FinalizeOfflineAgent(agent_id~) =>
         finalize_recovered_offline_agent(state, agent_id)
     }
   }
@@ -448,7 +201,9 @@ async test "discover_recovery_snapshot with mock provider" {
       ""
     },
   }
-  let snapshot = discover_recovery_snapshot(mock_provider, "/tmp", "session")
+  let snapshot = @runtime.discover_recovery_snapshot(
+    mock_provider, "/tmp", "session",
+  )
   assert_eq(snapshot.zellij_live.tabs, ["tab1"])
   assert_eq(snapshot.zellij_live.panes, ["pane1"])
   assert_eq(snapshot.open_prs.length(), 1)
@@ -495,7 +250,9 @@ async test "plan_recovery reconciles local agents and open PRs" {
     recovered_at: 2000L,
   }
 
-  let plan = plan_recovery("session", snapshot, [], async fn(_pr_number) {
+  let plan = @runtime.plan_recovery("session", snapshot, [], async fn(
+    _pr_number,
+  ) {
     @async.sleep(0)
     (true, @poller.ReviewState::Approved, "sha1", false, "", true)
   })
@@ -509,7 +266,7 @@ async test "plan_recovery reconciles local agents and open PRs" {
   assert_eq(actions.length(), 3)
 
   match actions[0] {
-    RegisterAgent(agent, alive) => {
+    @runtime.RecoveryAction::RegisterAgent(agent, alive) => {
       assert_eq(agent.agent_id.to_string(), "slug1")
       assert_true(alive)
       assert_eq(agent.state, @types.AgentState::Active)
@@ -518,7 +275,7 @@ async test "plan_recovery reconciles local agents and open PRs" {
   }
 
   match actions[1] {
-    TrackNewPR(pr_number~, agent_id~, ..) => {
+    @runtime.RecoveryAction::TrackNewPR(pr_number~, agent_id~, ..) => {
       assert_eq(pr_number, 123)
       assert_eq(agent_id, "slug1")
     }
@@ -526,7 +283,8 @@ async test "plan_recovery reconciles local agents and open PRs" {
   }
 
   match actions[2] {
-    SyncLifecycle(agent_id~, ..) => assert_eq(agent_id, "slug1")
+    @runtime.RecoveryAction::SyncLifecycle(agent_id~, ..) =>
+      assert_eq(agent_id, "slug1")
     _ => fail("expected SyncLifecycle")
   }
 }
@@ -588,7 +346,7 @@ async test "plan_recovery handles offline agent and persisted PR" {
     },
   ]
 
-  let plan = plan_recovery("session", snapshot, persisted, async fn(
+  let plan = @runtime.plan_recovery("session", snapshot, persisted, async fn(
     _pr_number,
   ) {
     @async.sleep(0)
@@ -605,7 +363,7 @@ async test "plan_recovery handles offline agent and persisted PR" {
   assert_eq(actions.length(), 4)
 
   match actions[0] {
-    RegisterAgent(agent, alive) => {
+    @runtime.RecoveryAction::RegisterAgent(agent, alive) => {
       assert_eq(agent.agent_id.to_string(), "slug-off")
       assert_false(alive)
       assert_eq(agent.state, @types.AgentState::Done)
@@ -614,12 +372,13 @@ async test "plan_recovery handles offline agent and persisted PR" {
   }
 
   match actions[1] {
-    FinalizeOfflineAgent(agent_id~) => assert_eq(agent_id, "slug-off")
+    @runtime.RecoveryAction::FinalizeOfflineAgent(agent_id~) =>
+      assert_eq(agent_id, "slug-off")
     _ => fail("expected FinalizeOfflineAgent")
   }
 
   match actions[2] {
-    RestorePRTracking(tracked) => {
+    @runtime.RecoveryAction::RestorePRTracking(tracked) => {
       assert_eq(tracked.pr_number, 456)
       assert_eq(tracked.agent_id, "slug-off")
     }
@@ -627,7 +386,7 @@ async test "plan_recovery handles offline agent and persisted PR" {
   }
 
   match actions[3] {
-    SyncLifecycle(agent_id~, pr~, ..) => {
+    @runtime.RecoveryAction::SyncLifecycle(agent_id~, pr~, ..) => {
       assert_eq(agent_id, "slug-off")
       assert_eq(pr.pr_number, 456)
     }
