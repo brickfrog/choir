@@ -110,11 +110,12 @@ pub async fn dispatch(
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
-  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
-  ensure_pr? : async (String, String, String, String?, String?) -> Result[
+  capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  ensure_branch_ready? : (async (String, String, String) -> Result[Unit, String])? = None,
+  ensure_pr? : (async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,
-  ] = ensure_pull_request,
+  ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -125,6 +126,20 @@ pub async fn dispatch(
   poller_state? : @poller.PollerState? = None,
   caller_id? : String? = None,
 ) -> @types.Response {
+  let ensure_branch_ready = match ensure_branch_ready {
+    Some(f) => f
+    None =>
+      (b, pb, pd) => {
+        ensure_branch_ready_for_file_pr_with_capture(b, pb, pd, capture)
+      }
+  }
+  let ensure_pr = match ensure_pr {
+    Some(f) => f
+    None =>
+      (b, pb, pd, t, bo) => {
+        ensure_pull_request_with_capture(b, pb, pd, t, bo, capture)
+      }
+  }
   match req {
     ToolRequest::Register(register_args) =>
       match registry {
@@ -154,7 +169,7 @@ pub async fn dispatch(
     ToolRequest::ForkWave(fork_wave_args) => {
       // Detect the actual default branch if "main" was defaulted but doesn't exist
       let resolved_parent = if fork_wave_args.parent_branch == "main" {
-        detect_default_branch(project_dir)
+        detect_default_branch_with_capture(project_dir, capture)
       } else {
         fork_wave_args.parent_branch
       }
@@ -269,7 +284,7 @@ pub async fn dispatch(
         Err(CommandFailed(status~, failing_cmd~)) => {
           let detail = match failing_cmd {
             Some(cmd) => {
-              let (_, output) = capture_command_output(cmd)
+              let (_, output) = capture(cmd)
               output.trim().to_string()
             }
             None => ""
@@ -380,17 +395,20 @@ pub async fn dispatch(
       let branch = file_pr_args.branch
       let parent_branch = match file_pr_args.parent_branch {
         Some(pb) => pb
-        None => detect_default_branch(project_dir)
+        None => detect_default_branch_with_capture(project_dir, capture)
       }
       let tracked_agent_id = file_pr_args.tracked_agent_id
       let file_pr_dir = file_pr_workdir(project_dir, tracked_agent_id, registry)
+      // Pass capture seam through to preflight and PR creation
       match ensure_branch_ready(branch, parent_branch, file_pr_dir) {
         Err(e) => @types.Response::Err(e)
         Ok(_) =>
           match
-            run_strict(runner, [
-              { ..@workspace.git_push(branch), workdir: Some(file_pr_dir) },
-            ]) {
+            run_strict(
+              runner,
+              [{ ..@workspace.git_push(branch), workdir: Some(file_pr_dir) }],
+              capture~,
+            ) {
             Err(e) => @types.Response::Err(e)
             Ok(_) =>
               match
@@ -521,7 +539,7 @@ pub async fn dispatch(
         let (thread_count, thread_text) = fetch_unresolved_review_threads(
           merge_args.pr_number,
           project_dir,
-          capture_command_output,
+          capture,
         )
         if thread_count > 0 {
           return @types.Response::Err(
@@ -555,7 +573,7 @@ pub async fn dispatch(
         None => ()
       }
       let cmds = merge_pr_commands(merge_args.pr_number)
-      let merge_result = run_strict(runner, cmds)
+      let merge_result = run_strict(runner, cmds, capture~)
       match mutex_registry {
         Some(reg) => ignore(reg.release(mutex_name, merge_args.caller_id))
         None => ()
@@ -563,9 +581,7 @@ pub async fn dispatch(
       match merge_result {
         Err(_) => {
           // Re-run merge command with output capture for detailed error
-          let (_, output) = capture_command_output(
-            merge_pr_command(merge_args.pr_number),
-          )
+          let (_, output) = capture(merge_pr_command(merge_args.pr_number))
           let trimmed = output.trim().to_string()
           let msg = if trimmed.to_lower().contains("conflict") ||
             trimmed.to_lower().contains("not mergeable") {
@@ -1107,7 +1123,7 @@ pub async fn dispatch(
         listen_tcp~,
         tcp_auth_token~,
       )
-      match run_strict(runner, cmds) {
+      match run_strict(runner, cmds, capture~) {
         Ok(_) =>
           @types.Response::ok_values({
             "status": String::to_json("spawned"),
@@ -1197,7 +1213,7 @@ pub async fn dispatch(
         listen_tcp~,
         tcp_auth_token~,
       )
-      match run_strict(runner, cmds) {
+      match run_strict(runner, cmds, capture~) {
         Err(e) => return @types.Response::Err(e)
         Ok(_) => ()
       }
@@ -1301,7 +1317,7 @@ pub async fn dispatch(
         parent_session_id=spawn_args.parent_session_id,
         extra_mcp_servers_json~,
       )
-      match run_strict(runner, cmds) {
+      match run_strict(runner, cmds, capture~) {
         Ok(_) =>
           @types.Response::ok_values({
             "status": String::to_json("spawned"),
@@ -1315,7 +1331,9 @@ pub async fn dispatch(
       }
     }
     ToolRequest::SpawnWorker(worker_args) => {
-      let resolved_parent_branch = detect_default_branch(project_dir)
+      let resolved_parent_branch = detect_default_branch_with_capture(
+        project_dir, capture,
+      )
       let spec = @types.SpawnSpec::{
         slug: worker_args.slug,
         role: @types.Role::Worker,
@@ -1346,7 +1364,7 @@ pub async fn dispatch(
         listen_tcp~,
         tcp_auth_token~,
       )
-      match run_strict(runner, cmds) {
+      match run_strict(runner, cmds, capture~) {
         Ok(_) => {
           match registry {
             Some(reg) =>
@@ -1413,7 +1431,7 @@ pub async fn dispatch(
         ],
         workdir: Some(project_dir),
       }
-      let (exit_code, output) = capture_command_output(cmd)
+      let (exit_code, output) = capture(cmd)
       if exit_code != 0 {
         let trimmed = output.trim().to_string()
         return @types.Response::Err(
@@ -1495,11 +1513,12 @@ pub async fn handle_request(
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
-  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
-  ensure_pr? : async (String, String, String, String?, String?) -> Result[
+  capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  ensure_branch_ready? : (async (String, String, String) -> Result[Unit, String])? = None,
+  ensure_pr? : (async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,
-  ] = ensure_pull_request,
+  ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -1569,6 +1588,7 @@ pub async fn handle_request(
             session~,
             runner~,
             git_capture~,
+            capture~,
             ensure_branch_ready~,
             ensure_pr~,
             extra_mcp_servers_json~,
@@ -1638,11 +1658,12 @@ pub async fn dispatch_call(
   session? : String = "choir",
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
-  ensure_branch_ready? : async (String, String, String) -> Result[Unit, String] = ensure_branch_ready_for_file_pr,
-  ensure_pr? : async (String, String, String, String?, String?) -> Result[
+  capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  ensure_branch_ready? : (async (String, String, String) -> Result[Unit, String])? = None,
+  ensure_pr? : (async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
     String,
-  ] = ensure_pull_request,
+  ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -1662,6 +1683,7 @@ pub async fn dispatch_call(
         session~,
         runner~,
         git_capture~,
+        capture~,
         ensure_branch_ready~,
         ensure_pr~,
         extra_mcp_servers_json~,

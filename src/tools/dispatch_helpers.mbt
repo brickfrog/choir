@@ -1,7 +1,10 @@
 ///|
+
+///|
 async fn run_strict(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   cmds : Array[@workspace.Command],
+  capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
 ) -> Result[Unit, String] {
   let statuses = runner(cmds) catch { e => return Err(e.to_string()) }
   for i = 0; i < statuses.length(); i = i + 1 {
@@ -9,7 +12,7 @@ async fn run_strict(
     if status != 0 {
       // Re-run the failing command with stderr capture for a useful error message
       let cmd = cmds[i]
-      let (_, stderr) = capture_command_output(cmd)
+      let (_, stderr) = capture(cmd)
       let detail = stderr.trim().to_string()
       let msg = if detail != "" {
         cmd.program + " failed (exit " + status.to_string() + "): " + detail

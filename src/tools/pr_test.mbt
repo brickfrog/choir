@@ -449,6 +449,29 @@ async fn mock_ensure_pr_exists(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+async test "ensure_branch_has_unique_commits_with_capture succeeds when ahead" {
+  let got = ensure_branch_has_unique_commits_with_capture(
+    "t.leaf", "main", "/repo", mock_preflight_all_ok,
+  )
+  assert_true(got is Ok(_))
+}
+
+///|
+async test "ensure_branch_has_unique_commits_with_capture fails when not ahead" {
+  let got = ensure_branch_has_unique_commits_with_capture(
+    "t.leaf", "main", "/repo", mock_preflight_not_ahead,
+  )
+  match got {
+    Err(msg) => {
+      assert_true(msg.contains("t.leaf"))
+      assert_true(msg.contains("main"))
+      assert_true(msg.contains("no commits ahead"))
+    }
+    Ok(_) => fail("expected error")
+  }
+}
+
+///|
 async test "ensure_pull_request_with_capture returns existing open PR" {
   let got = ensure_pull_request_with_capture(
     "t.leaf",
