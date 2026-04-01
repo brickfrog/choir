@@ -215,6 +215,7 @@ pub async fn dispatch(
       let agent_ids = StringBuilder::new()
       let skipped_ids = StringBuilder::new()
       let cmds : Array[@workspace.Command] = []
+      let spawned_specs : Array[@types.SpawnSpec] = []
       let spawned_slugs : Array[String] = []
       let mut spawned_count = 0
       let mut skipped_count = 0
@@ -276,6 +277,7 @@ pub async fn dispatch(
           reuse_git_branch: None,
           spawn_depth: child_spawn_depth,
         }
+        spawned_specs.push(spec)
         for
           cmd in @workspace.spawn_commands(
             spec,
@@ -326,6 +328,35 @@ pub async fn dispatch(
       // Post-spawn side effects: only run if spawn succeeded.
       if resp.is_ok() && spawned_count > 0 {
         let resolved_pane_ids : Array[(String, String)] = []
+        match registry {
+          Some(reg) =>
+            for spec in spawned_specs {
+              let agent_id = @workspace.canonical_agent_id(spec)
+              let terminal_target = @workspace.local_target_for(
+                session,
+                spec.slug,
+                spec.isolation,
+              )
+              ignore(
+                reg.upsert({
+                  agent_id,
+                  role: spec.role,
+                  agent_type: spec.agent_type,
+                  state: @types.AgentState::Spawning,
+                  parent: Some(spec.parent_id),
+                  terminal_target: Some(terminal_target),
+                  host: @types.Host::Local,
+                  workspace: @workspace.worktree_path(
+                    project_dir,
+                    @workspace.spawn_workspace_dir_slug(spec),
+                  ),
+                  branch: @workspace.spawn_git_branch(spec),
+                  spawn_depth: spec.spawn_depth,
+                }),
+              )
+            }
+          None => ()
+        }
         for slug in spawned_slugs {
           let _ = @workspace.register_team_member_native(
             fork_wave_args.caller_id,
@@ -1327,6 +1358,7 @@ pub async fn dispatch(
       }
     }
     ToolRequest::SpawnWorker(worker_args) => {
+      let resolved_parent_branch = detect_default_branch(project_dir)
       let spec = @types.SpawnSpec::{
         slug: worker_args.slug,
         role: @types.Role::Worker,
@@ -1334,12 +1366,18 @@ pub async fn dispatch(
         task: worker_args.task,
         isolation: @types.IsolationMode::Inline,
         parent_id: worker_args.caller_id,
-        parent_branch: "main",
+        parent_branch: resolved_parent_branch,
         reuse_workspace: false,
         workspace_slug: None,
         reuse_git_branch: None,
         spawn_depth: 0,
       }
+      let agent_id = @workspace.canonical_agent_id(spec)
+      let terminal_target = @workspace.local_target_for(
+        session,
+        spec.slug,
+        spec.isolation,
+      )
       let cmds = @workspace.spawn_commands(
         spec,
         project_dir,
@@ -1352,8 +1390,31 @@ pub async fn dispatch(
         tcp_auth_token~,
       )
       match run_strict(runner, cmds) {
-        Ok(_) =>
-          @types.Response::ok_values({ "status": String::to_json("spawned") })
+        Ok(_) => {
+          match registry {
+            Some(reg) =>
+              ignore(
+                reg.upsert({
+                  agent_id,
+                  role: @types.Role::Worker,
+                  agent_type: worker_args.agent_type,
+                  state: @types.AgentState::Active,
+                  parent: Some(worker_args.caller_id),
+                  terminal_target: Some(terminal_target),
+                  host: @types.Host::Local,
+                  workspace: project_dir,
+                  branch: agent_id,
+                  spawn_depth: 0,
+                }),
+              )
+            None => ()
+          }
+          @types.Response::ok_values({
+            "status": String::to_json("spawned"),
+            "agent_id": String::to_json(agent_id),
+            "agent_ids": String::to_json(agent_id),
+          })
+        }
         Err(e) => @types.Response::Err(e)
       }
     }

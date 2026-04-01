@@ -11,6 +11,15 @@ pub fn branch_name(parent_branch : String, slug : String) -> String {
 }
 
 ///|
+/// Construct the metadata directory for an inline agent.
+pub fn inline_agent_metadata_dir(
+  project_dir : String,
+  agent_id : String,
+) -> String {
+  project_dir + "/.choir/inline/" + @types.sanitize_agent_id(agent_id)
+}
+
+///|
 pub fn parent_branch(branch : String) -> String? {
   let mut last_dot = -1
   for i = 0; i < branch.length(); i = i + 1 {

@@ -163,6 +163,14 @@ test "parse_local_config - metadata" {
 }
 
 ///|
+test "parse_local_config supports pi agent type" {
+  let local_cfg = parse_local_config(
+    "role = \"dev\"\nagent_id = \"main.pi\"\nagent_type = \"pi\"\n",
+  ).unwrap()
+  assert_eq(local_cfg.agent_type, Some(@types.AgentType::Pi))
+}
+
+///|
 test "parse_local_config spawn_depth" {
   let with_depth =
     #|role = "tl"

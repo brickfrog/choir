@@ -15,6 +15,7 @@ pub(all) enum AgentType {
   MoonPilot
   Codex
   CursorAgent
+  Pi
 } derive(Show, Eq)
 
 ///|

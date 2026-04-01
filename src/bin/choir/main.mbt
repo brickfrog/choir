@@ -893,10 +893,12 @@ fn mcp_run() -> Unit {
   }
 
   let local_content = @sys.read_file(".choir/config.local.toml")
-  let local_cfg = match @config.parse_local_config(local_content) {
-    Ok(cfg) => cfg
-    Err(_) => @types.LocalConfig::default()
-  }
+  let local_cfg = tool_local_cfg_with_env_fallback(
+    match @config.parse_local_config(local_content) {
+      Ok(cfg) => cfg
+      Err(_) => @types.LocalConfig::default()
+    },
+  )
   let config = mcp_config_with_cli_overrides(base_config, local_cfg, args)
   let raw_stdio = mcp_cli_raw_stdio(args)
   let role = match mcp_cli_override_role(args) {
@@ -906,7 +908,7 @@ fn mcp_run() -> Unit {
 
   let mut uds_fd = @uds.client_connect(config.listen_uds)
   if uds_fd < 0 {
-    // Server may still be starting — wait for the UDS socket
+    // Server may still be starting - wait for the UDS socket
     if @sys.wait_for_socket(config.listen_uds, 60) {
       uds_fd = @uds.client_connect(config.listen_uds)
     }
@@ -1300,8 +1302,19 @@ fn leaf_tool_usage(tool : String) -> String {
 }
 
 ///|
-fn leaf_tool_response_json(resp : @types.Response) -> String {
+fn client_response_json(resp : @types.Response) -> String {
   @transport.format_response(resp) + "\n"
+}
+
+///|
+fn client_emit(resp : @types.Response) -> Unit {
+  @sys.write_stdout(client_response_json(resp))
+  @sys.exit(if resp.is_ok() { 0 } else { 1 })
+}
+
+///|
+fn leaf_tool_response_json(resp : @types.Response) -> String {
+  client_response_json(resp)
 }
 
 ///|
@@ -1311,15 +1324,14 @@ fn leaf_tool_emit(resp : @types.Response) -> Unit {
 }
 
 ///|
-fn leaf_tool_load_config() -> Result[
-  (@types.Role, @types.Config, @types.LocalConfig),
-  String,
-] {
+fn leaf_tool_load_config(
+  args : Array[String],
+) -> Result[(@types.Role, @types.Config, @types.LocalConfig), String] {
   let config_content = @sys.read_file(".choir/config.toml")
   if config_content == "" {
     return Err("missing .choir/config.toml")
   }
-  let config = match @config.parse_config(config_content) {
+  let base_config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
     Err(e) => return Err(e.message())
   }
@@ -1331,11 +1343,183 @@ fn leaf_tool_load_config() -> Result[
     Ok(cfg) => cfg
     Err(e) => return Err(e.message())
   }
-  Ok((@config.resolve_role(local_cfg.role, config), config, local_cfg))
+  let config = mcp_config_with_cli_overrides(base_config, local_cfg, args)
+  let role = match mcp_cli_override_role(args) {
+    Some(role) => role
+    None => @config.resolve_role(local_cfg.role, config)
+  }
+  Ok((role, config, local_cfg))
 }
 
 ///|
-fn leaf_tool_register_if_needed(
+fn tool_cli_override_role(
+  cli_args : LeafCliArgs,
+) -> Result[@types.Role?, String] {
+  match cli_args.flags.get("caller_role") {
+    Some(role_raw) =>
+      match @config.parse_role(role_raw) {
+        Ok(role) => Ok(Some(role))
+        Err(e) => Err(e.message())
+      }
+    None => Ok(None)
+  }
+}
+
+///|
+fn local_cfg_has_registration_identity(local_cfg : @types.LocalConfig) -> Bool {
+  match local_cfg.role {
+    Some(_) => true
+    None =>
+      match local_cfg.agent_id {
+        Some(_) => true
+        None =>
+          match local_cfg.parent_id {
+            Some(_) => true
+            None =>
+              match local_cfg.branch {
+                Some(_) => true
+                None =>
+                  match local_cfg.parent_branch {
+                    Some(_) => true
+                    None =>
+                      match local_cfg.workspace {
+                        Some(_) => true
+                        None =>
+                          match local_cfg.terminal_target {
+                            Some(_) => true
+                            None =>
+                              match local_cfg.agent_type {
+                                Some(_) => true
+                                None => local_cfg.spawn_depth is Some(_)
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+      }
+  }
+}
+
+///|
+fn tool_effective_config(
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> @types.Config {
+  if local_cfg_has_registration_identity(local_cfg) {
+    config
+  } else {
+    match config.agent_id {
+      Some(_) => config
+      None => { ..config, agent_id: Some("root") }
+    }
+  }
+}
+
+///|
+fn tool_should_register(local_cfg : @types.LocalConfig) -> Bool {
+  local_cfg_has_registration_identity(local_cfg)
+}
+
+///|
+fn local_cfg_env_value(getenv : (String) -> String?, key : String) -> String? {
+  match getenv(key) {
+    Some(value) => {
+      let trimmed = value.trim().to_string()
+      if trimmed == "" {
+        None
+      } else {
+        Some(trimmed)
+      }
+    }
+    None => None
+  }
+}
+
+///|
+fn local_cfg_from_env_lookup(
+  getenv : (String) -> String?,
+) -> @types.LocalConfig {
+  let role = match local_cfg_env_value(getenv, "CHOIR_ROLE") {
+    Some(raw) =>
+      match @config.parse_role(raw) {
+        Ok(value) => Some(value)
+        Err(_) => None
+      }
+    None => None
+  }
+  let terminal_target = match
+    local_cfg_env_value(getenv, "CHOIR_TERMINAL_TARGET") {
+    Some(raw) => @types.LocalTarget::parse(raw)
+    None => None
+  }
+  let agent_type = match local_cfg_env_value(getenv, "CHOIR_AGENT_TYPE") {
+    Some(raw) =>
+      match @config.parse_agent_type(raw) {
+        Ok(value) => Some(value)
+        Err(_) => None
+      }
+    None => None
+  }
+  {
+    role,
+    agent_id: local_cfg_env_value(getenv, "CHOIR_AGENT_ID"),
+    parent_id: local_cfg_env_value(getenv, "CHOIR_PARENT_ID"),
+    branch: local_cfg_env_value(getenv, "CHOIR_BRANCH"),
+    parent_branch: local_cfg_env_value(getenv, "CHOIR_PARENT_BRANCH"),
+    workspace: local_cfg_env_value(getenv, "CHOIR_WORKSPACE"),
+    terminal_target,
+    agent_type,
+    spawn_depth: None,
+  }
+}
+
+///|
+fn local_cfg_from_env() -> @types.LocalConfig {
+  local_cfg_from_env_lookup(fn(key) { @sys.getenv(key) })
+}
+
+///|
+fn tool_local_cfg_with_env_fallback(
+  local_cfg : @types.LocalConfig,
+) -> @types.LocalConfig {
+  if local_cfg_has_registration_identity(local_cfg) {
+    local_cfg
+  } else {
+    local_cfg_from_env()
+  }
+}
+
+///|
+fn tool_load_config(
+  cli_args : LeafCliArgs,
+) -> Result[(@types.Role, @types.Config, @types.LocalConfig), String] {
+  let config_content = @sys.read_file(".choir/config.toml")
+  if config_content == "" {
+    return Err("missing .choir/config.toml")
+  }
+  let base_config = match @config.parse_config(config_content) {
+    Ok(cfg) => cfg
+    Err(e) => return Err(e.message())
+  }
+  let local_content = @sys.read_file(".choir/config.local.toml")
+  let local_cfg = tool_local_cfg_with_env_fallback(
+    match @config.parse_local_config(local_content) {
+      Ok(cfg) => cfg
+      Err(_) => @types.LocalConfig::default()
+    },
+  )
+  let config = tool_effective_config(base_config, local_cfg)
+  let role = match tool_cli_override_role(cli_args) {
+    Ok(Some(role)) => role
+    Ok(None) => @config.resolve_role(local_cfg.role, config)
+    Err(err) => return Err(err)
+  }
+  Ok((role, config, local_cfg))
+}
+
+///|
+fn client_register_if_needed(
   uds_fd : Int,
   reader : UDSLineReader,
   role : @types.Role,
@@ -1367,6 +1551,152 @@ fn leaf_tool_register_if_needed(
 }
 
 ///|
+fn client_connect_uds(config : @types.Config) -> Int {
+  let mut uds_fd = @uds.client_connect(config.listen_uds)
+  if uds_fd < 0 {
+    if @sys.wait_for_socket(config.listen_uds, 60) {
+      uds_fd = @uds.client_connect(config.listen_uds)
+    }
+  }
+  uds_fd
+}
+
+///|
+fn client_call_uds(
+  role : @types.Role,
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+  req : @types.Request,
+  register_if_needed? : Bool = true,
+) -> Result[@types.Response, String] {
+  let uds_fd = client_connect_uds(config)
+  if uds_fd < 0 {
+    return Err("cannot connect to server at " + config.listen_uds)
+  }
+  let reader = UDSLineReader::new(uds_fd)
+  if register_if_needed {
+    match client_register_if_needed(uds_fd, reader, role, config, local_cfg) {
+      Ok(_) => ()
+      Err(err) => {
+        @uds.close(uds_fd)
+        return Err(err)
+      }
+    }
+  }
+  let wire_req = mcp_build_wire_request(req, role, config, local_cfg)
+  if !mcp_write_all_uds(uds_fd, @utf8.encode(wire_req)) {
+    @uds.close(uds_fd)
+    return Err("failed to write tool request")
+  }
+  let resp_line = reader.read_line()
+  @uds.close(uds_fd)
+  if resp_line == "" {
+    return Err("server connection closed")
+  }
+  match @transport.parse_response(resp_line) {
+    Ok(resp) => Ok(resp)
+    Err(err) => Err("failed to parse response: " + err)
+  }
+}
+
+///|
+fn tool_reserved_cli_key(key : String) -> Bool {
+  key == "help" || key == "json" || key == "caller_role"
+}
+
+///|
+fn parse_tool_json_args(raw : String) -> Result[Map[String, Json], String] {
+  let json = @json.parse(raw) catch {
+    _ => return Err("invalid --json: expected JSON object")
+  }
+  guard json is Object(obj) else {
+    return Err("invalid --json: expected JSON object")
+  }
+  Ok(obj)
+}
+
+///|
+fn tool_request_args(
+  cli_args : LeafCliArgs,
+) -> Result[Map[String, Json], String] {
+  if cli_args.positionals.length() > 0 {
+    return Err(
+      "choir tool does not accept positional arguments after the tool name; use --json or --key value flags",
+    )
+  }
+  let values : Map[String, Json] = match cli_args.flags.get("json") {
+    Some(raw) =>
+      match parse_tool_json_args(raw) {
+        Ok(parsed) => parsed
+        Err(err) => return Err(err)
+      }
+    None => {}
+  }
+  cli_args.flags.each(fn(k, v) {
+    if !tool_reserved_cli_key(k) {
+      values.set(k, v.to_json())
+    }
+  })
+  Ok(values)
+}
+
+///|
+fn tool_usage(tool : String) -> String {
+  let command = if tool == "" { "<tool>" } else { tool }
+  "usage: choir tool " +
+  command +
+  " [--caller-role <root|tl|dev|worker>] [--json <json-object>] [--key <value> ...]"
+}
+
+///|
+fn tool_run() -> Unit {
+  let args = @env.args()
+  if args.length() < 3 {
+    client_emit(@types.Response::Err(tool_usage("")))
+    return
+  }
+  let tool = args[2]
+  let cli_args = parse_leaf_cli_args(args_tail(args, 3))
+  if cli_args.flags.contains("help") {
+    client_emit(
+      @types.Response::ok_values({ "usage": tool_usage(tool).to_json() }),
+    )
+    return
+  }
+  let req_args = match tool_request_args(cli_args) {
+    Ok(parsed) => parsed
+    Err(err) => {
+      client_emit(@types.Response::Err(err))
+      return
+    }
+  }
+  let (role, config, local_cfg) = match tool_load_config(cli_args) {
+    Ok(loaded) => loaded
+    Err(err) => {
+      client_emit(@types.Response::Err(err))
+      return
+    }
+  }
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role,
+    name: tool,
+    args: @types.RequestArgs::from_values(req_args),
+  }
+  match
+    client_call_uds(
+      role,
+      config,
+      local_cfg,
+      req,
+      register_if_needed=tool_should_register(local_cfg),
+    ) {
+    Ok(resp) => client_emit(resp)
+    Err(err) => client_emit(@types.Response::Err(err))
+  }
+}
+
+///|
 fn leaf_tool_run() -> Unit {
   let args = @env.args()
   if args.length() < 3 {
@@ -1390,25 +1720,9 @@ fn leaf_tool_run() -> Unit {
       return
     }
   }
-  let (role, config, local_cfg) = match leaf_tool_load_config() {
+  let (role, config, local_cfg) = match leaf_tool_load_config(args) {
     Ok(loaded) => loaded
     Err(err) => {
-      leaf_tool_emit(@types.Response::Err(err))
-      return
-    }
-  }
-  let uds_fd = @uds.client_connect(config.listen_uds)
-  if uds_fd < 0 {
-    leaf_tool_emit(
-      @types.Response::Err("cannot connect to server at " + config.listen_uds),
-    )
-    return
-  }
-  let reader = UDSLineReader::new(uds_fd)
-  match leaf_tool_register_if_needed(uds_fd, reader, role, config, local_cfg) {
-    Ok(_) => ()
-    Err(err) => {
-      @uds.close(uds_fd)
       leaf_tool_emit(@types.Response::Err(err))
       return
     }
@@ -1419,22 +1733,9 @@ fn leaf_tool_run() -> Unit {
     name: tool,
     args: @types.RequestArgs::new(req_args),
   }
-  let wire_req = mcp_build_wire_request(req, role, config, local_cfg)
-  if !mcp_write_all_uds(uds_fd, @utf8.encode(wire_req)) {
-    @uds.close(uds_fd)
-    leaf_tool_emit(@types.Response::Err("failed to write tool request"))
-    return
-  }
-  let resp_line = reader.read_line()
-  @uds.close(uds_fd)
-  if resp_line == "" {
-    leaf_tool_emit(@types.Response::Err("server connection closed"))
-    return
-  }
-  match @transport.parse_response(resp_line) {
+  match client_call_uds(role, config, local_cfg, req) {
     Ok(resp) => leaf_tool_emit(resp)
-    Err(err) =>
-      leaf_tool_emit(@types.Response::Err("failed to parse response: " + err))
+    Err(err) => leaf_tool_emit(@types.Response::Err(err))
   }
 }
 
@@ -2007,6 +2308,27 @@ test "leaf tool usage includes file_pr args" {
 }
 
 ///|
+test "client response helpers preserve Choir JSON envelope and newline" {
+  let ok_json = client_response_json(
+    @types.Response::ok_values({ "status": "ok".to_json() }),
+  )
+  assert_true(ok_json.contains("\"ok\":true"))
+  assert_true(ok_json.contains("\"status\":\"ok\""))
+  assert_true(ok_json.has_suffix("\n"))
+
+  let err_json = leaf_tool_response_json(@types.Response::Err("boom"))
+  assert_eq(err_json, "{\"ok\":false,\"error\":\"boom\"}\n")
+}
+
+///|
+test "tool usage documents caller role and json entrypoints" {
+  let usage = tool_usage("agent_list")
+  assert_true(usage.contains("choir tool agent_list"))
+  assert_true(usage.contains("--caller-role <root|tl|dev|worker>"))
+  assert_true(usage.contains("--json <json-object>"))
+}
+
+///|
 test "leaf tool parser supports task_create positionals" {
   let parsed = leaf_tool_request_args(
     "task_create",
@@ -2014,6 +2336,123 @@ test "leaf tool parser supports task_create positionals" {
   ).unwrap()
   assert_eq(parsed.get("id"), Some("task-1"))
   assert_eq(parsed.get("title"), Some("Write better tests"))
+}
+
+///|
+test "tool request args preserve name as a tool field" {
+  let parsed = tool_request_args(parse_leaf_cli_args(["--name", "lock-a"])).unwrap()
+  assert_eq(parsed.get("name"), Some("lock-a".to_json()))
+}
+
+///|
+test "tool request args merge json payload with flags" {
+  let parsed = tool_request_args(
+    parse_leaf_cli_args([
+      "--json", "{\"tasks\":[\"a\",\"b\"],\"force\":false,\"count\":2}", "--force",
+      "--caller-id", "root",
+    ]),
+  ).unwrap()
+  match parsed.get("tasks") {
+    Some(json) => assert_eq(json.stringify(), "[\"a\",\"b\"]")
+    None => fail("expected tasks field")
+  }
+  match parsed.get("count") {
+    Some(json) => assert_eq(json.stringify(), "2")
+    None => fail("expected count field")
+  }
+  assert_eq(parsed.get("force"), Some("true".to_json()))
+  assert_eq(parsed.get("caller_id"), Some("root".to_json()))
+}
+
+///|
+test "tool request args reject positional arguments" {
+  match tool_request_args(parse_leaf_cli_args(["extra-arg"])) {
+    Ok(_) => fail("expected positional argument error")
+    Err(err) =>
+      assert_true(err.contains("does not accept positional arguments"))
+  }
+}
+
+///|
+test "tool caller role rejects invalid role" {
+  match tool_cli_override_role(parse_leaf_cli_args(["--caller-role", "boss"])) {
+    Ok(_) => fail("expected invalid caller role")
+    Err(err) => assert_true(err.contains("unknown role: boss"))
+  }
+}
+
+///|
+test "tool root control plane uses stable root caller without registration" {
+  let local_cfg = @types.LocalConfig::default()
+  let config = tool_effective_config(@types.Config::default(), local_cfg)
+  assert_false(tool_should_register(local_cfg))
+  assert_eq(config.agent_id, Some("root"))
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "agent_list",
+    args: @types.RequestArgs::from_values({}),
+  }
+  let wire_req = mcp_build_wire_request(req, @types.Role::TL, config, local_cfg)
+  assert_true(wire_req.contains("\"caller_id\":\"root\""))
+}
+
+///|
+test "tool local agent context keeps registration path" {
+  let local_cfg = {
+    ..@types.LocalConfig::default(),
+    role: Some(@types.Role::Dev),
+    agent_id: Some("main.child"),
+    parent_id: Some("root"),
+    workspace: Some("/tmp/worktree"),
+  }
+  let config = tool_effective_config(@types.Config::default(), local_cfg)
+  assert_true(tool_should_register(local_cfg))
+  assert_eq(config.agent_id, None)
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "task_list",
+    args: @types.RequestArgs::from_values({}),
+  }
+  let wire_req = mcp_build_wire_request(
+    req,
+    @types.Role::Dev,
+    config,
+    local_cfg,
+  )
+  assert_true(wire_req.contains("\"caller_id\":\"main.child\""))
+}
+
+///|
+test "tool env fallback synthesizes inline worker identity" {
+  let env : Map[String, String] = {
+    "CHOIR_ROLE": "worker",
+    "CHOIR_AGENT_ID": "main.pi-worker",
+    "CHOIR_PARENT_ID": "root",
+    "CHOIR_BRANCH": "main.pi-worker",
+    "CHOIR_PARENT_BRANCH": "main",
+    "CHOIR_WORKSPACE": "/proj",
+    "CHOIR_TERMINAL_TARGET": "zellij-pane:choir:pi-worker",
+    "CHOIR_AGENT_TYPE": "pi",
+  }
+  let local_cfg = local_cfg_from_env_lookup(fn(key) { env.get(key) })
+  assert_eq(local_cfg.role, Some(@types.Role::Worker))
+  assert_eq(local_cfg.agent_id, Some("main.pi-worker"))
+  assert_eq(local_cfg.parent_id, Some("root"))
+  assert_eq(local_cfg.branch, Some("main.pi-worker"))
+  assert_eq(local_cfg.parent_branch, Some("main"))
+  assert_eq(local_cfg.workspace, Some("/proj"))
+  assert_eq(local_cfg.agent_type, Some(@types.AgentType::Pi))
+  assert_true(tool_should_register(local_cfg))
+}
+
+///|
+test "tool env fallback preserves root control plane when env is empty" {
+  let local_cfg = local_cfg_from_env_lookup(fn(_) { None })
+  let config = tool_effective_config(@types.Config::default(), local_cfg)
+  assert_false(tool_should_register(local_cfg))
+  assert_eq(config.agent_id, Some("root"))
 }
 
 ///|
@@ -2726,6 +3165,42 @@ test "companion gemini commands trust workspace and use zellij tab cwd" {
 }
 
 ///|
+test "companion pi commands prepare isolated runtime and launch pi" {
+  let cmds = init_companion_commands(
+    "/proj",
+    "howdy",
+    @types.Config::default(),
+    "main",
+    {
+      name: "pi-helper",
+      role: "worker",
+      command: "pi",
+      task: "report findings",
+    },
+  )
+  assert_eq(cmds.length(), 10)
+  assert_eq(cmds[6].program, "sh")
+  assert_true(
+    cmds[6].args[3].contains("/proj/.choir/agents/pi-helper/.choir/pi"),
+  )
+  assert_eq(cmds[7].program, "sh")
+  assert_true(cmds[7].args[1].contains("$HOME/.pi/agent/auth.json"))
+  assert_eq(cmds[8].program, "sh")
+  assert_true(cmds[8].args[1].contains("choir-extension.ts"))
+  assert_eq(cmds[9].program, "zellij")
+  assert_true(
+    cmds[9].args[11].contains(
+      "PI_CODING_AGENT_DIR='/proj/.choir/agents/pi-helper/.choir/pi/agent'",
+    ),
+  )
+  assert_true(
+    cmds[9].args[11].contains(
+      "/proj/.choir/agents/pi-helper/.choir/pi/choir-extension.ts",
+    ),
+  )
+}
+
+///|
 test "init choir source tree detection only matches choir source markers" {
   assert_true(
     init_is_choir_source_files(
@@ -2741,8 +3216,8 @@ test "init choir source tree detection only matches choir source markers" {
 }
 
 ///|
-test "init server command switches between dev and serve" {
-  assert_eq(init_server_command(true), "choir dev")
+test "init server command always uses serve" {
+  assert_eq(init_server_command(true), "choir serve")
   assert_eq(init_server_command(false), "choir serve")
 }
 
@@ -2780,6 +3255,21 @@ fn init_kill_session_command(session : String) -> @workspace.Command {
 }
 
 ///|
+fn init_tab_exists_command(
+  session : String,
+  tab_name : String,
+) -> @workspace.Command {
+  {
+    program: "sh",
+    args: [
+      "-c", "NO_COLOR=1 zellij --session \"$1\" action query-tab-names | awk -v target=\"$2\" '$0 == target { found=1 } END { exit(found ? 0 : 1) }'",
+      "sh", session, tab_name,
+    ],
+    workdir: None,
+  }
+}
+
+///|
 fn init_kill_server_pid_command(pid_str : String) -> @workspace.Command {
   {
     program: "sh",
@@ -2792,14 +3282,39 @@ fn init_kill_server_pid_command(pid_str : String) -> @workspace.Command {
 }
 
 ///|
-fn init_cleanup_server_artifacts_command() -> @workspace.Command {
+fn init_server_running_command() -> @workspace.Command {
   {
     program: "sh",
     args: [
-      "-c", "for w in .choir/worktrees/*/; do git worktree remove --force \"$w\" 2>/dev/null; done; rm -rf .choir/worktrees/* .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id",
+      "-c", "pid=$(tr -d '\\r\\n' < .choir/server.pid 2>/dev/null || true); [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null",
     ],
     workdir: None,
   }
+}
+
+///|
+fn init_should_launch_server_tab(server_alive : Bool) -> Bool {
+  !server_alive
+}
+
+///|
+fn runtime_cleanup_shell() -> String {
+  "rm -f .choir/server.pid .choir/server.sock .choir/run_id"
+}
+
+///|
+fn purge_cleanup_shell() -> String {
+  "for w in .choir/worktrees/*/; do git worktree remove --force \"$w\" 2>/dev/null; done; rm -rf .choir/worktrees/* .choir/inline/* .choir/server.pid .choir/server.sock .choir/kv/lifecycle--* .choir/kv/children--* .choir/kv/phase-dev--* .choir/kv/phase-tl--* .choir/poller_state.json .choir/run_id"
+}
+
+///|
+fn init_cleanup_runtime_artifacts_command() -> @workspace.Command {
+  { program: "sh", args: ["-c", runtime_cleanup_shell()], workdir: None }
+}
+
+///|
+fn init_cleanup_server_artifacts_command() -> @workspace.Command {
+  { program: "sh", args: ["-c", purge_cleanup_shell()], workdir: None }
 }
 
 ///|
@@ -2808,19 +3323,49 @@ test "init session lifecycle commands use zellij" {
   assert_eq(exists.program, "sh")
   assert_true(exists.args[1].contains("zellij list-sessions"))
 
+  let tab_exists = init_tab_exists_command("choir", "TL")
+  assert_eq(tab_exists.program, "sh")
+  assert_true(tab_exists.args[1].contains("query-tab-names"))
+  assert_eq(tab_exists.args[3], "choir")
+  assert_eq(tab_exists.args[4], "TL")
+
   let kill = init_kill_session_command("choir")
   assert_eq(kill.args, ["delete-session", "--force", "choir"])
 }
 
 ///|
-test "init server cleanup commands cover pid and socket teardown" {
+test "cleanup shells separate runtime restart from purge" {
+  assert_true(runtime_cleanup_shell().contains(".choir/server.pid"))
+  assert_true(runtime_cleanup_shell().contains(".choir/server.sock"))
+  assert_false(runtime_cleanup_shell().contains(".choir/worktrees/*"))
+  assert_false(runtime_cleanup_shell().contains(".choir/poller_state.json"))
+  assert_true(purge_cleanup_shell().contains(".choir/worktrees/*"))
+  assert_true(purge_cleanup_shell().contains(".choir/poller_state.json"))
+}
+
+///|
+test "init server cleanup commands separate runtime restart from purge" {
   let kill_cmd = init_kill_server_pid_command("123")
   assert_eq(kill_cmd.program, "sh")
   assert_eq(kill_cmd.args[3], "123")
-  let cleanup_cmd = init_cleanup_server_artifacts_command()
-  assert_eq(cleanup_cmd.program, "sh")
-  assert_true(cleanup_cmd.args[1].contains(".choir/server.pid"))
-  assert_true(cleanup_cmd.args[1].contains(".choir/server.sock"))
+  let running_cmd = init_server_running_command()
+  assert_eq(running_cmd.program, "sh")
+  assert_true(running_cmd.args[1].contains(".choir/server.pid"))
+  assert_true(running_cmd.args[1].contains("kill -0"))
+  assert_true(init_should_launch_server_tab(false))
+  assert_false(init_should_launch_server_tab(true))
+  let runtime_cleanup = init_cleanup_runtime_artifacts_command()
+  assert_eq(runtime_cleanup.program, "sh")
+  assert_true(runtime_cleanup.args[1].contains(".choir/server.pid"))
+  assert_true(runtime_cleanup.args[1].contains(".choir/server.sock"))
+  assert_false(runtime_cleanup.args[1].contains(".choir/worktrees/*"))
+  assert_false(runtime_cleanup.args[1].contains(".choir/poller_state.json"))
+  let purge_cleanup = init_cleanup_server_artifacts_command()
+  assert_eq(purge_cleanup.program, "sh")
+  assert_true(purge_cleanup.args[1].contains(".choir/server.pid"))
+  assert_true(purge_cleanup.args[1].contains(".choir/server.sock"))
+  assert_true(purge_cleanup.args[1].contains(".choir/inline/*"))
+  assert_true(purge_cleanup.args[1].contains(".choir/poller_state.json"))
 }
 
 ///|
@@ -3110,7 +3655,259 @@ fn init_claude_mcp_config_json() -> String {
 }
 
 ///|
-fn init_tl_launch_command(tl_type : String, project_dir : String) -> String {
+fn init_pi_agent_dir(project_dir : String) -> String {
+  project_dir + "/.choir/pi/agent"
+}
+
+///|
+fn init_pi_session_dir(project_dir : String) -> String {
+  project_dir + "/.choir/pi/sessions"
+}
+
+///|
+fn init_pi_extension_path(project_dir : String) -> String {
+  project_dir + "/.choir/pi/choir-extension.ts"
+}
+
+///|
+fn init_pi_tl_append_system_prompt() -> String {
+  (
+    #|You are the Choir Team Lead running inside Pi.
+    #|Prefer delegation over direct implementation. Use `fork_wave` for branch-owning work and `spawn_worker` for research/review.
+    #|After spawning children, stop and wait for `notify_parent` and review updates instead of polling reflexively.
+    #|Use `merge_pr` to merge through Choir. Do not claim a PR is merged until `merge_pr` succeeds in this session.
+    #|If the task truly requires shared scaffold before delegation, keep it minimal and explicit.
+  )
+}
+
+///|
+fn init_pi_tl_extension_content() -> String {
+  (
+    #|import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+    #|import { Type } from "@sinclair/typebox";
+    #|
+    #|const callerRole = process.env.CHOIR_ROLE === "root" ? "root" : "tl";
+    #|const multilineKeys = ["read_first", "steps", "verify", "done_criteria", "boundary", "constraints", "key_decisions", "non_goals"];
+    #|
+    #|const childRoleEnum = Type.Union([Type.Literal("dev"), Type.Literal("tl")]);
+    #|const allAgentTypeEnum = Type.Union([
+    #|  Type.Literal("gemini"),
+    #|  Type.Literal("claude"),
+    #|  Type.Literal("moon_pilot"),
+    #|  Type.Literal("codex"),
+    #|  Type.Literal("cursor_agent"),
+    #|  Type.Literal("pi"),
+    #|]);
+    #|const workerAgentTypeEnum = Type.Union([
+    #|  Type.Literal("gemini"),
+    #|  Type.Literal("claude"),
+    #|  Type.Literal("moon_pilot"),
+    #|  Type.Literal("pi"),
+    #|]);
+    #|
+    #|function currentAgentId(): string | undefined {
+    #|  const value = process.env.CHOIR_AGENT_ID?.trim();
+    #|  return value ? value : undefined;
+    #|}
+    #|
+    #|function normalizeParams(toolName: string, params: Record<string, unknown>) {
+    #|  const normalized: Record<string, unknown> = { ...params };
+    #|  for (const key of multilineKeys) {
+    #|    const value = normalized[key];
+    #|    if (Array.isArray(value)) normalized[key] = value.join("\n");
+    #|  }
+    #|  if ((toolName === "fork_wave" || toolName === "spawn_worker" || toolName === "merge_pr") && !normalized.caller_id) {
+    #|    const agentId = currentAgentId();
+    #|    if (agentId) normalized.caller_id = agentId;
+    #|  }
+    #|  return normalized;
+    #|}
+    #|
+    #|async function runChoirTool(pi: ExtensionAPI, toolName: string, params: Record<string, unknown>, signal: AbortSignal) {
+    #|  const execResult = await pi.exec(
+    #|    "choir",
+    #|    ["tool", toolName, "--caller-role", callerRole, "--json", JSON.stringify(normalizeParams(toolName, params))],
+    #|    { signal, timeout: 600000 },
+    #|  );
+    #|  const stdout = execResult.stdout.trim();
+    #|  const stderr = execResult.stderr.trim();
+    #|  if (stdout) {
+    #|    let parsed: any;
+    #|    try {
+    #|      parsed = JSON.parse(stdout);
+    #|    } catch {
+    #|      throw new Error("invalid JSON from choir tool " + toolName + ": " + stdout + (stderr ? " stderr: " + stderr : ""));
+    #|    }
+    #|    if (parsed && typeof parsed === "object" && typeof parsed.ok === "boolean") {
+    #|      if (parsed.ok) return parsed.result ?? {};
+    #|      throw new Error(parsed.error || ("choir tool " + toolName + " failed"));
+    #|    }
+    #|  }
+    #|  const suffix = [stderr, stdout].filter(Boolean).join(" | ");
+    #|  throw new Error("choir tool " + toolName + " failed" + (suffix ? ": " + suffix : ""));
+    #|}
+    #|
+    #|const toolSpecs = [
+    #|  {
+    #|    name: "fork_wave",
+    #|    label: "fork_wave",
+    #|    description: "Spawn one or more Choir child agents in worktrees.",
+    #|    promptSnippet: "Use this to delegate implementation or sub-TL work through Choir.",
+    #|    promptGuidelines: [
+    #|      "Prefer `tasks` for distinct parallel subtasks and `task + count` for identical best-of-N work.",
+    #|      "Use `role: \"tl\"` only when you intend to spawn a sub-team-lead.",
+    #|    ],
+    #|    parameters: Type.Object({
+    #|      caller_id: Type.Optional(Type.String()),
+    #|      task: Type.Optional(Type.String()),
+    #|      tasks: Type.Optional(Type.Array(Type.String())),
+    #|      agent_type: Type.Optional(allAgentTypeEnum),
+    #|      role: Type.Optional(childRoleEnum),
+    #|      parent_branch: Type.Optional(Type.String()),
+    #|      count: Type.Optional(Type.Number()),
+    #|      slug_prefix: Type.Optional(Type.String()),
+    #|      read_first: Type.Optional(Type.Array(Type.String())),
+    #|      steps: Type.Optional(Type.Array(Type.String())),
+    #|      verify: Type.Optional(Type.Array(Type.String())),
+    #|      done_criteria: Type.Optional(Type.Array(Type.String())),
+    #|      boundary: Type.Optional(Type.Array(Type.String())),
+    #|      constraints: Type.Optional(Type.Array(Type.String())),
+    #|      context: Type.Optional(Type.String()),
+    #|      key_decisions: Type.Optional(Type.Array(Type.String())),
+    #|      non_goals: Type.Optional(Type.Array(Type.String())),
+    #|    }),
+    #|  },
+    #|  {
+    #|    name: "spawn_worker",
+    #|    label: "spawn_worker",
+    #|    description: "Spawn a non-branch-owning Choir worker for research or review.",
+    #|    promptSnippet: "Use this for research/review tasks that should not own a branch or PR.",
+    #|    parameters: Type.Object({
+    #|      caller_id: Type.Optional(Type.String()),
+    #|      task: Type.String(),
+    #|      prompt: Type.Optional(Type.String()),
+    #|      slug: Type.Optional(Type.String()),
+    #|      agent_type: Type.Optional(workerAgentTypeEnum),
+    #|      type: Type.Optional(Type.String()),
+    #|      read_first: Type.Optional(Type.Array(Type.String())),
+    #|      steps: Type.Optional(Type.Array(Type.String())),
+    #|      verify: Type.Optional(Type.Array(Type.String())),
+    #|      done_criteria: Type.Optional(Type.Array(Type.String())),
+    #|      boundary: Type.Optional(Type.Array(Type.String())),
+    #|      constraints: Type.Optional(Type.Array(Type.String())),
+    #|      context: Type.Optional(Type.String()),
+    #|      key_decisions: Type.Optional(Type.Array(Type.String())),
+    #|      non_goals: Type.Optional(Type.Array(Type.String())),
+    #|    }),
+    #|  },
+    #|  {
+    #|    name: "merge_pr",
+    #|    label: "merge_pr",
+    #|    description: "Merge a tracked Choir PR after review is clean.",
+    #|    promptSnippet: "Use this to merge a child PR through Choir's tracked merge flow.",
+    #|    parameters: Type.Object({
+    #|      pr_number: Type.Number(),
+    #|      parent_branch: Type.Optional(Type.String()),
+    #|      caller_id: Type.Optional(Type.String()),
+    #|      force: Type.Optional(Type.Boolean()),
+    #|    }),
+    #|  },
+    #|  {
+    #|    name: "agent_list",
+    #|    label: "agent_list",
+    #|    description: "List agents known to the Choir registry.",
+    #|    parameters: Type.Object({
+    #|      parent_id: Type.Optional(Type.String()),
+    #|    }),
+    #|  },
+    #|  {
+    #|    name: "cancel_wave",
+    #|    label: "cancel_wave",
+    #|    description: "Cancel active children of the current caller.",
+    #|    parameters: Type.Object({
+    #|      force: Type.Optional(Type.Boolean()),
+    #|    }),
+    #|  },
+    #|];
+    #|
+    #|export default function choirTlExtension(pi: ExtensionAPI) {
+    #|  for (const spec of toolSpecs) {
+    #|    pi.registerTool({
+    #|      name: spec.name,
+    #|      label: spec.label,
+    #|      description: spec.description,
+    #|      promptSnippet: spec.promptSnippet,
+    #|      promptGuidelines: spec.promptGuidelines,
+    #|      parameters: spec.parameters,
+    #|      async execute(_toolCallId, params, signal, onUpdate) {
+    #|        onUpdate?.({ content: [{ type: "text", text: "Running choir tool " + spec.name + "..." }] });
+    #|        const result = await runChoirTool(pi, spec.name, params as Record<string, unknown>, signal);
+    #|        return {
+    #|          content: [{ type: "text", text: JSON.stringify(result ?? {}, null, 2) }],
+    #|          details: result ?? {},
+    #|        };
+    #|      },
+    #|    });
+    #|  }
+    #|  pi.on("session_start", async () => {
+    #|    pi.setActiveTools(["read", "bash", "grep", "find", "ls", ...toolSpecs.map((spec) => spec.name)]);
+    #|    pi.setThinkingLevel("high");
+    #|  });
+    #|}
+  )
+}
+
+///|
+fn init_pi_tl_launch_command(project_dir : String, session : String) -> String {
+  let prefix = init_env_assignment(
+      "PI_CODING_AGENT_DIR",
+      init_pi_agent_dir(project_dir),
+    ) +
+    " " +
+    init_env_assignment("PI_SKIP_VERSION_CHECK", "1") +
+    " " +
+    init_env_assignment("CHOIR_AGENT_ID", "root") +
+    " " +
+    init_env_assignment("CHOIR_ROLE", "tl") +
+    " " +
+    init_env_assignment("CHOIR_AGENT_TYPE", "pi") +
+    " " +
+    init_env_assignment("CHOIR_WORKSPACE", project_dir) +
+    " " +
+    init_env_assignment("CHOIR_TERMINAL_SESSION", session) +
+    " " +
+    init_env_assignment(
+      "CHOIR_TERMINAL_TARGET",
+      @workspace.local_target_for(session, "TL", @types.IsolationMode::Worktree).to_string(),
+    ) +
+    " " +
+    init_env_assignment("CHOIR_SESSION_ID", "root")
+  let cmd = init_join_shell_words([
+    "pi",
+    "--no-extensions",
+    "-e",
+    init_pi_extension_path(project_dir),
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--session-dir",
+    init_pi_session_dir(project_dir),
+    "--tools",
+    @workspace.pi_default_builtin_tools("tl"),
+    "--thinking",
+    @workspace.pi_default_thinking_level("tl"),
+    "--append-system-prompt",
+    init_pi_tl_append_system_prompt(),
+  ])
+  prefix + " " + cmd
+}
+
+///|
+fn init_tl_launch_command(
+  tl_type : String,
+  project_dir : String,
+  session : String,
+) -> String {
   let cmd = match tl_type {
     "codex" => {
       let parts : Array[String] = [
@@ -3133,6 +3930,7 @@ fn init_tl_launch_command(tl_type : String, project_dir : String) -> String {
     "gemini" => "gemini --yolo --prompt-interactive"
     "cursor_agent" =>
       "agent --yolo --approve-mcps --workspace " + init_shell_quote(project_dir)
+    "pi" => init_pi_tl_launch_command(project_dir, session)
     _ =>
       "claude --dangerously-skip-permissions --mcp-config " +
       init_shell_quote(init_claude_mcp_config_json()) +
@@ -3153,14 +3951,14 @@ fn init_parse_tl_type(args : Array[String]) -> String {
 
 ///|
 test "init TL launch command defaults to claude" {
-  let cmd = init_tl_launch_command("claude", ".")
+  let cmd = init_tl_launch_command("claude", ".", "choir")
   assert_true(cmd.contains("claude --dangerously-skip-permissions"))
   assert_true(cmd.contains("--mcp-config '{\"mcpServers\""))
 }
 
 ///|
 test "init TL launch command supports codex" {
-  let cmd = init_tl_launch_command("codex", "/tmp/choir repo")
+  let cmd = init_tl_launch_command("codex", "/tmp/choir repo", "choir")
   assert_true(cmd.contains("'codex'"))
   assert_true(cmd.contains("'--dangerously-bypass-approvals-and-sandbox'"))
   assert_true(cmd.contains("'--no-alt-screen'"))
@@ -3173,10 +3971,55 @@ test "init TL launch command supports codex" {
 
 ///|
 test "init TL launch command supports cursor_agent" {
-  let cmd = init_tl_launch_command("cursor_agent", "/tmp/choir repo")
+  let cmd = init_tl_launch_command("cursor_agent", "/tmp/choir repo", "choir")
   assert_true(cmd.contains("agent --yolo --approve-mcps --workspace"))
   assert_true(cmd.contains("'/tmp/choir repo'"))
   assert_false(cmd.contains("--mcp-config"))
+}
+
+///|
+test "init TL launch command supports pi" {
+  let cmd = init_tl_launch_command("pi", "/tmp/choir repo", "choir-demo")
+  assert_true(
+    cmd.contains("PI_CODING_AGENT_DIR='/tmp/choir repo/.choir/pi/agent'"),
+  )
+  assert_true(cmd.contains("PI_SKIP_VERSION_CHECK='1'"))
+  assert_true(cmd.contains("CHOIR_AGENT_ID='root'"))
+  assert_true(cmd.contains("CHOIR_ROLE='tl'"))
+  assert_true(cmd.contains("CHOIR_AGENT_TYPE='pi'"))
+  assert_true(cmd.contains("CHOIR_WORKSPACE='/tmp/choir repo'"))
+  assert_true(cmd.contains("CHOIR_TERMINAL_SESSION='choir-demo'"))
+  assert_true(cmd.contains("CHOIR_TERMINAL_TARGET='zellij-tab:choir-demo:TL'"))
+  assert_true(cmd.contains("CHOIR_SESSION_ID='root'"))
+  assert_true(
+    cmd.contains(
+      "'pi' '--no-extensions' '-e' '/tmp/choir repo/.choir/pi/choir-extension.ts'",
+    ),
+  )
+  assert_true(
+    cmd.contains("'--session-dir' '/tmp/choir repo/.choir/pi/sessions'"),
+  )
+  assert_true(cmd.contains("'--tools' 'read,bash,grep,find,ls'"))
+  assert_true(cmd.contains("'--thinking' 'high'"))
+}
+
+///|
+test "init pi TL extension content includes core choir tools" {
+  let content = init_pi_tl_extension_content()
+  assert_true(content.contains("\"fork_wave\""))
+  assert_true(content.contains("\"spawn_worker\""))
+  assert_true(content.contains("\"merge_pr\""))
+  assert_true(content.contains("\"agent_list\""))
+  assert_true(content.contains("\"cancel_wave\""))
+  assert_false(content.contains("PI_CODING_AGENT_DIR"))
+}
+
+///|
+test "init pi TL system prompt reinforces delegation" {
+  let prompt = init_pi_tl_append_system_prompt()
+  assert_true(prompt.contains("Team Lead"))
+  assert_true(prompt.contains("fork_wave"))
+  assert_true(prompt.contains("merge_pr"))
 }
 
 ///|
@@ -3187,6 +4030,7 @@ test "init parse_tl_type extracts --tl flag" {
     init_parse_tl_type(["choir", "init", "--recreate", "--tl", "gemini"]),
     "gemini",
   )
+  assert_eq(init_parse_tl_type(["choir", "init", "--tl", "pi"]), "pi")
 }
 
 ///|
@@ -3283,6 +4127,9 @@ fn init_companion_agent_type(command : String) -> @types.AgentType? {
   if first == "agent" || first.has_suffix("/agent") {
     return Some(@types.AgentType::CursorAgent)
   }
+  if first == "pi" || first.has_suffix("/pi") {
+    return Some(@types.AgentType::Pi)
+  }
   None
 }
 
@@ -3334,13 +4181,28 @@ fn init_companion_launch_prefix(
     init_env_assignment("CHOIR_PARENT_AGENT", parent_id),
   ]
   match agent_type {
-    Some(kind) =>
+    Some(kind) => {
       assignments.push(
         init_env_assignment(
           "CHOIR_AGENT_TYPE",
           @config.agent_type_to_string(kind),
         ),
       )
+      if kind == @types.AgentType::Pi {
+        let runtime_root = @workspace.pi_runtime_root(
+          workspace,
+          agent_id,
+          @types.IsolationMode::Worktree,
+        )
+        assignments.push(
+          init_env_assignment(
+            "PI_CODING_AGENT_DIR",
+            @workspace.pi_agent_dir(runtime_root),
+          ),
+        )
+        assignments.push(init_env_assignment("PI_SKIP_VERSION_CHECK", "1"))
+      }
+    }
     None => ()
   }
   match @sys.getenv("TRACEPARENT") {
@@ -3427,6 +4289,34 @@ fn init_companion_launch_command(
           task,
         ],
       )
+    Some(@types.AgentType::Pi) => {
+      let runtime_root = @workspace.pi_runtime_root(
+        workspace,
+        branch,
+        @types.IsolationMode::Worktree,
+      )
+      init_join_shell_words(
+        [
+          program,
+          ..extra_args,
+          "--no-extensions",
+          "-e",
+          @workspace.pi_extension_path(runtime_root),
+          "--no-skills",
+          "--no-prompt-templates",
+          "--no-themes",
+          "--session-dir",
+          @workspace.pi_session_dir(runtime_root),
+          "--tools",
+          @workspace.pi_default_builtin_tools(@config.role_to_string(role)),
+          "--thinking",
+          @workspace.pi_default_thinking_level(@config.role_to_string(role)),
+          "--append-system-prompt",
+          @workspace.pi_append_system_prompt(role),
+          task,
+        ],
+      )
+    }
     None => command + " '" + init_escape_shell_single_quoted(task) + "'"
   }
 }
@@ -3510,6 +4400,16 @@ fn init_companion_commands(
       workdir: None,
     },
   ]
+  if agent_type == Some(@types.AgentType::Pi) {
+    let runtime_root = @workspace.pi_runtime_root(
+      workspace,
+      branch,
+      @types.IsolationMode::Worktree,
+    )
+    cmds.push(@workspace.write_pi_runtime_dirs(runtime_root))
+    cmds.push(@workspace.seed_pi_auth(runtime_root, project_dir))
+    cmds.push(@workspace.write_pi_extension(runtime_root))
+  }
   if agent_type == Some(@types.AgentType::Gemini) {
     cmds.push(@workspace.trust_gemini_folder(workspace))
   }
@@ -3549,12 +4449,8 @@ fn init_is_choir_source_tree(project_dir : String) -> Bool {
 }
 
 ///|
-fn init_server_command(use_dev : Bool) -> String {
-  if use_dev {
-    "choir dev"
-  } else {
-    "choir serve"
-  }
+fn init_server_command(_use_dev : Bool) -> String {
+  "choir serve"
 }
 
 ///|
@@ -3563,6 +4459,36 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
   if exit_code != 0 {
     @sys.exit(exit_code)
   }
+}
+
+///|
+fn init_prepare_pi_runtime(project_dir : String) -> Unit {
+  ignore(project_dir)
+  let runtime_root = ".choir/pi"
+  let mkdir_code = @sys.system(
+    "mkdir -p .choir/pi .choir/pi/agent .choir/pi/sessions",
+  )
+  if mkdir_code != 0 {
+    @sys.exit(mkdir_code)
+  }
+  if !@sys.write_file_sync(
+      runtime_root + "/choir-extension.ts",
+      @workspace.pi_extension_content(),
+    ) {
+    @sys.write_stdout(
+      "error: failed to write " + runtime_root + "/choir-extension.ts\n",
+    )
+    @sys.exit(1)
+  }
+  ignore(
+    @sys.system(
+      "if [ -n \"$HOME\" ] && [ -f \"$HOME/.pi/agent/auth.json\" ] && [ ! -f \"" +
+      runtime_root +
+      "/agent/auth.json\" ]; then cp \"$HOME/.pi/agent/auth.json\" \"" +
+      runtime_root +
+      "/agent/auth.json\"; fi",
+    ),
+  )
 }
 
 ///|
@@ -3602,6 +4528,9 @@ fn init_run() -> Unit {
         ],
         workdir: None,
       })
+      if tl_type == "pi" {
+        init_prepare_pi_runtime(project_dir)
+      }
       // Set up Claude Code statusline if .claude/settings.json doesn't exist
       ignore(
         @exec.run({
@@ -3668,6 +4597,9 @@ fn init_run() -> Unit {
       let session_alive = @exec.run(init_session_exists_command(session)) catch {
         _ => 1
       }
+      let server_alive = @exec.run(init_server_running_command()) catch {
+        _ => 1
+      }
       if session_alive == 0 {
         if no_attach {
           @sys.write_stdout("Session \{session} already exists.\n")
@@ -3696,17 +4628,39 @@ fn init_run() -> Unit {
 
       @sys.write_stdout("Creating session \{session}...\n")
       init_run_or_exit(@workspace.zellij_create_background_session(session))
-      init_run_or_exit(
-        @workspace.zellij_new_tab(session, "Server", project_dir, server_cmd),
-      )
-      init_run_or_exit(
-        @workspace.zellij_new_tab(
-          session,
-          "TL",
-          project_dir,
-          init_tl_launch_command(tl_type, project_dir),
-        ),
-      )
+      let server_tab_exists = @exec.run(
+        init_tab_exists_command(session, "Server"),
+      ) catch {
+        _ => 1
+      }
+      if server_tab_exists != 0 {
+        if init_should_launch_server_tab(server_alive == 0) {
+          init_run_or_exit(
+            @workspace.zellij_new_tab(
+              session, "Server", project_dir, server_cmd,
+            ),
+          )
+        } else {
+          @sys.write_stdout("Reusing existing server process.\n")
+        }
+      } else {
+        @sys.write_stdout("Reusing existing Server tab.\n")
+      }
+      let tl_tab_exists = @exec.run(init_tab_exists_command(session, "TL")) catch {
+        _ => 1
+      }
+      if tl_tab_exists != 0 {
+        init_run_or_exit(
+          @workspace.zellij_new_tab(
+            session,
+            "TL",
+            project_dir,
+            init_tl_launch_command(tl_type, project_dir, session),
+          ),
+        )
+      } else {
+        @sys.write_stdout("Reusing existing TL tab.\n")
+      }
       ignore(
         @exec.run({
           program: "zellij",
@@ -4228,6 +5182,7 @@ fn main {
   match subcmd {
     "serve" => serve_run()
     "dev" => dev_run()
+    "tool" => tool_run()
     "leaf-tool" => leaf_tool_run()
     "mcp-stdio" => mcp_run()
     "trust-gemini-folder" => trust_gemini_folder_run()
@@ -4242,7 +5197,7 @@ fn main {
     "dashboard" => dashboard_run()
     _ => {
       @sys.write_stdout(
-        "usage: choir <serve|dev|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--tl claude|codex|gemini|cursor_agent]|stop|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline|dashboard [--port N]>\n",
+        "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|pi]|stop [--purge]|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline|dashboard [--port N]>\n",
       )
       @sys.exit(1)
     }

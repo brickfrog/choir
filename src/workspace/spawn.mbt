@@ -91,6 +91,13 @@ fn launch_env_prefix(
       ),
     )
   }
+  if spec.agent_type == @types.AgentType::Pi {
+    let runtime_root = pi_runtime_root(workspace, agent_id, spec.isolation)
+    assignments.push(
+      env_assignment("PI_CODING_AGENT_DIR", pi_agent_dir(runtime_root)),
+    )
+    assignments.push(env_assignment("PI_SKIP_VERSION_CHECK", "1"))
+  }
   match @sys.getenv("TRACEPARENT") {
     Some(value) =>
       if value != "" {
@@ -195,6 +202,16 @@ pub fn spawn_commands(
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
+      if spec.agent_type == Pi {
+        let runtime_root = pi_runtime_root(
+          workspace,
+          canonical_agent_id(spec),
+          spec.isolation,
+        )
+        cmds.push(write_pi_runtime_dirs(runtime_root))
+        cmds.push(seed_pi_auth(runtime_root, root_project))
+        cmds.push(write_pi_extension(runtime_root))
+      }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
         let ctx_paths = resolve_context_paths(
@@ -240,6 +257,22 @@ pub fn spawn_commands(
     }
     Inline => {
       let cmds : Array[Command] = []
+      cmds.push(
+        write_local_config(
+          inline_agent_metadata_dir(root_project, canonical_agent_id(spec)),
+          config_local_content(spec, workspace, terminal_target),
+        ),
+      )
+      if spec.agent_type == Pi {
+        let runtime_root = pi_runtime_root(
+          workspace,
+          canonical_agent_id(spec),
+          spec.isolation,
+        )
+        cmds.push(write_pi_runtime_dirs(runtime_root))
+        cmds.push(seed_pi_auth(runtime_root, root_project))
+        cmds.push(write_pi_extension(runtime_root))
+      }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
       }
@@ -279,6 +312,16 @@ pub fn spawn_commands(
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
+      if spec.agent_type == Pi {
+        let runtime_root = pi_runtime_root(
+          workspace,
+          canonical_agent_id(spec),
+          spec.isolation,
+        )
+        cmds.push(write_pi_runtime_dirs(runtime_root))
+        cmds.push(seed_pi_auth(runtime_root, root_project))
+        cmds.push(write_pi_extension(runtime_root))
+      }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
         let ctx_paths = resolve_context_paths(

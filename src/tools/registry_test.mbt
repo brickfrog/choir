@@ -291,6 +291,128 @@ async test "dispatch returns correct stub for each tool name" {
 }
 
 ///|
+async test "dispatch spawn_worker registers inline worker with stable agent id" {
+  let project_dir = "/tmp/choir-spawn-worker-reg-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let agent_reg = @registry.AgentRegistry::new()
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "spawn_worker",
+    args: {
+      "caller_id": "root",
+      "slug": "pi-worker",
+      "agent_type": "pi",
+      "task": "report findings",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    session="choir",
+    runner=mock_registry_runner,
+    git_capture=mock_clean_git,
+    ensure_branch_ready=mock_registry_branch_ready,
+    ensure_pr=mock_registry_ensure_pr,
+    registry=Some(agent_reg),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Ok(map) => {
+      assert_eq(map.get("status"), Some("spawned"))
+      assert_eq(map.get("agent_id"), Some("main.pi-worker"))
+      assert_eq(map.get("agent_ids"), Some("main.pi-worker"))
+    }
+    Err(msg) => fail("spawn_worker failed: " + msg)
+  }
+  match agent_reg.get("main.pi-worker") {
+    Ok(agent) => {
+      assert_eq(agent.role, @types.Role::Worker)
+      assert_eq(agent.agent_type, @types.AgentType::Pi)
+      assert_eq(agent.parent, Some("root"))
+      assert_eq(agent.workspace, project_dir)
+      assert_eq(
+        agent.terminal_target,
+        @types.LocalTarget::parse("zellij-pane:choir:pi-worker"),
+      )
+    }
+    Err(e) => fail("missing worker registration: " + e.message())
+  }
+}
+
+///|
+async test "dispatch fork_wave preregisters spawned child for immediate agent_list visibility" {
+  let project_dir = "/tmp/choir-fork-wave-reg-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let agent_reg = @registry.AgentRegistry::new()
+  ignore(
+    agent_reg.upsert({
+      agent_id: "root",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Pi,
+      parent: None,
+      workspace: project_dir,
+      branch: "",
+      terminal_target: @types.LocalTarget::parse("zellij-tab:choir:TL"),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: {
+      "caller_id": "root",
+      "parent_branch": "master",
+      "slug_prefix": "pi-smoke-leaf",
+      "count": "1",
+      "agent_type": "pi",
+      "task": "open a PR",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    session="choir",
+    runner=mock_registry_runner,
+    git_capture=mock_clean_git,
+    ensure_branch_ready=mock_registry_branch_ready,
+    ensure_pr=mock_registry_ensure_pr,
+    registry=Some(agent_reg),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Ok(map) => {
+      assert_eq(map.get("status"), Some("spawned"))
+      assert_eq(map.get("agent_ids"), Some("master.pi-smoke-leaf-0"))
+    }
+    Err(msg) => fail("fork_wave failed: " + msg)
+  }
+  match agent_reg.get("master.pi-smoke-leaf-0") {
+    Ok(agent) => {
+      assert_eq(agent.role, @types.Role::Dev)
+      assert_eq(agent.agent_type, @types.AgentType::Pi)
+      assert_eq(agent.parent, Some("root"))
+      assert_eq(agent.state, @types.AgentState::Spawning)
+      assert_true(agent.workspace.contains("/.choir/worktrees/pi-smoke-leaf-0"))
+      assert_eq(
+        agent.terminal_target,
+        @types.LocalTarget::parse("zellij-tab:choir:pi-smoke-leaf-0"),
+      )
+    }
+    Err(e) => fail("missing child registration: " + e.message())
+  }
+}
+
+///|
 async test "dispatch file_pr uses registered agent workspace for git and gh operations" {
   let project_dir = "/tmp/choir-file-pr-workdir-" +
     @sys.get_pid().to_string() +

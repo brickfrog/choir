@@ -22,6 +22,7 @@ pub fn parse_agent_type(
     "codex" => Ok(@types.AgentType::Codex)
     "cursor_agent" => Ok(@types.AgentType::CursorAgent)
     "cursoragent" => Ok(@types.AgentType::CursorAgent)
+    "pi" => Ok(@types.AgentType::Pi)
     _ => Err(@types.ChoirError::ConfigError("unknown agent_type: " + s))
   }
 }
@@ -45,6 +46,7 @@ pub fn agent_type_to_string(agent_type : @types.AgentType) -> String {
     @types.AgentType::MoonPilot => "moon_pilot"
     @types.AgentType::Codex => "codex"
     @types.AgentType::CursorAgent => "cursor_agent"
+    @types.AgentType::Pi => "pi"
   }
 }
 

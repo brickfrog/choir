@@ -143,6 +143,35 @@ pub fn agent_launch_command(
         ],
         workdir: Some(workspace_path),
       }
+    Pi => {
+      let runtime_root = pi_runtime_root(
+        workspace_path,
+        canonical_agent_id(spec),
+        spec.isolation,
+      )
+      let role_str = @config.role_to_string(spec.role)
+      {
+        program: "pi",
+        args: [
+          "--no-extensions",
+          "-e",
+          pi_extension_path(runtime_root),
+          "--no-skills",
+          "--no-prompt-templates",
+          "--no-themes",
+          "--session-dir",
+          pi_session_dir(runtime_root),
+          "--tools",
+          pi_default_builtin_tools(role_str),
+          "--thinking",
+          pi_default_thinking_level(role_str),
+          "--append-system-prompt",
+          pi_append_system_prompt(spec.role),
+          spec.task,
+        ],
+        workdir: Some(workspace_path),
+      }
+    }
   }
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)

@@ -437,17 +437,26 @@ pub fn parse_fork_wave_args(
         )
     }
   }
+  let default_read_first = @workspace.resolve_context_paths(project_dir, "dev")
   let tasks = if per_leaf_tasks.length() > 0 {
     // Render each per-leaf task through the prompt builder
     let rendered : Array[String] = []
     for task in per_leaf_tasks {
       let spec = prompt_spec_from_tool_args(args)
-      rendered.push(render_leaf_spawn_prompt({ ..spec, task, }))
+      rendered.push(
+        render_leaf_spawn_prompt_with_defaults(
+          { ..spec, task, },
+          default_read_first,
+        ),
+      )
     }
     rendered
   } else {
     // Shared task — same prompt for all leaves
-    let shared = render_leaf_spawn_prompt(prompt_spec_from_tool_args(args))
+    let shared = render_leaf_spawn_prompt_with_defaults(
+      prompt_spec_from_tool_args(args),
+      default_read_first,
+    )
     let arr : Array[String] = []
     for i = 0; i < count; i = i + 1 {
       arr.push(shared)
@@ -504,6 +513,7 @@ pub fn parse_fork_wave_args(
 
 ///|
 fn parse_leaf_spawn_args(
+  project_dir : String,
   args : ToolArgs,
   default_slug : String,
 ) -> Result[LeafSpawnArgs, ParseError] {
@@ -521,7 +531,10 @@ fn parse_leaf_spawn_args(
       return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
   }
   Ok({
-    task: render_leaf_spawn_prompt(prompt_spec_from_tool_args(args)),
+    task: render_leaf_spawn_prompt_with_defaults(
+      prompt_spec_from_tool_args(args),
+      @workspace.resolve_context_paths(project_dir, "dev"),
+    ),
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     parent_branch,
@@ -530,6 +543,7 @@ fn parse_leaf_spawn_args(
 
 ///|
 fn parse_worker_spawn_args(
+  project_dir : String,
   args : ToolArgs,
 ) -> Result[WorkerSpawnArgs, ParseError] {
   let prompt_spec = prompt_spec_from_tool_args(args)
@@ -560,7 +574,10 @@ fn parse_worker_spawn_args(
     Err(e) => return Err(e)
   }
   Ok({
-    task: render_worker_spawn_prompt(prompt_spec),
+    task: render_worker_spawn_prompt_with_defaults(
+      prompt_spec,
+      @workspace.resolve_context_paths(project_dir, "worker"),
+    ),
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     agent_type,
@@ -572,7 +589,8 @@ fn parse_remote_spawn_args(
   project_dir : String,
   args : ToolArgs,
 ) -> Result[RemoteSpawnArgs, ParseError] {
-  let leaf_args = match parse_leaf_spawn_args(args, "remote-leaf") {
+  let leaf_args = match
+    parse_leaf_spawn_args(project_dir, args, "remote-leaf") {
     Ok(value) => value
     Err(e) => return Err(e)
   }
@@ -916,6 +934,7 @@ fn parse_agent_type(s : String) -> Result[@types.AgentType, ParseError] {
     "codex" => Ok(@types.AgentType::Codex)
     "cursor_agent" => Ok(@types.AgentType::CursorAgent)
     "cursoragent" => Ok(@types.AgentType::CursorAgent)
+    "pi" => Ok(@types.AgentType::Pi)
     _ => Err(ParseError::UnknownAgentType(value=s))
   }
 }
@@ -991,7 +1010,9 @@ fn parse_tool_request(
         ToolRequest::SpawnRemote(a)
       })
     "spawn_worker" =>
-      parse_worker_spawn_args(args).map(fn(a) { ToolRequest::SpawnWorker(a) })
+      parse_worker_spawn_args(_project_dir, args).map(fn(a) {
+        ToolRequest::SpawnWorker(a)
+      })
     "kill_agent" => {
       let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
       if agent_id == "" {
@@ -1019,4 +1040,51 @@ fn parse_tool_request(
     }
     _ => Err(ParseError::UnknownTool(name~))
   }
+}
+
+///|
+test "parse_leaf_spawn_args only injects existing context paths" {
+  let project_dir = "/tmp/choir-parse-leaf-context-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/context\""))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/context/common.md",
+      "# common\n",
+    ),
+  )
+  let parsed = parse_leaf_spawn_args(
+    project_dir,
+    tool_args_from_map({ "task": "ship it", "caller_id": "root" }),
+    "leaf-a",
+  ).unwrap()
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  assert_true(parsed.task.contains("/.choir/context/common.md"))
+  assert_false(parsed.task.contains("/.choir/context/dev.md"))
+}
+
+///|
+test "parse_worker_spawn_args only injects existing context paths" {
+  let project_dir = "/tmp/choir-parse-worker-context-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/context\""))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/context/common.md",
+      "# common\n",
+    ),
+  )
+  let parsed = parse_worker_spawn_args(
+    project_dir,
+    tool_args_from_map({ "task": "report findings", "caller_id": "root" }),
+  ).unwrap()
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  assert_true(parsed.task.contains("/.choir/context/common.md"))
+  assert_false(parsed.task.contains("/.choir/context/worker.md"))
 }

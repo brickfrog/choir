@@ -17,6 +17,12 @@ test "nested branch name" {
 }
 
 ///|
+test "inline agent metadata dir sanitizes agent id" {
+  let path = @workspace.inline_agent_metadata_dir("/repo", "feature/x.worker")
+  assert_eq(path, "/repo/.choir/inline/feature_x.worker")
+}
+
+///|
 test "parent branch extracts from nested branch" {
   assert_eq(
     @workspace.parent_branch("main.subtl.leaf-task"),
@@ -128,11 +134,13 @@ test "agent_launch_command for each AgentType" {
   let spec_gemini = { ..spec_claude, agent_type: @types.AgentType::Gemini }
   let spec_moon = { ..spec_claude, agent_type: @types.AgentType::MoonPilot }
   let spec_codex = { ..spec_claude, agent_type: @types.AgentType::Codex }
+  let spec_pi = { ..spec_claude, agent_type: @types.AgentType::Pi }
 
   let cmd_claude = @workspace.agent_launch_command(spec_claude, "/path")
   let cmd_gemini = @workspace.agent_launch_command(spec_gemini, "/path")
   let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
   let cmd_codex = @workspace.agent_launch_command(spec_codex, "/path")
+  let cmd_pi = @workspace.agent_launch_command(spec_pi, "/path")
 
   assert_eq(cmd_claude.program, "claude")
   assert_eq(cmd_claude.args[0], "--dangerously-skip-permissions")
@@ -179,6 +187,21 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_cursor.args[3], "/path")
   assert_eq(cmd_cursor.args[4], "fix bugs")
   assert_eq(cmd_cursor.workdir, Some("/path"))
+
+  assert_eq(cmd_pi.program, "pi")
+  assert_eq(cmd_pi.args[0], "--no-extensions")
+  assert_eq(cmd_pi.args[1], "-e")
+  assert_eq(cmd_pi.args[2], "/path/.choir/pi/choir-extension.ts")
+  assert_eq(cmd_pi.args[3], "--no-skills")
+  assert_eq(cmd_pi.args[5], "--no-themes")
+  assert_eq(cmd_pi.args[6], "--session-dir")
+  assert_eq(cmd_pi.args[7], "/path/.choir/pi/sessions")
+  assert_eq(cmd_pi.args[8], "--tools")
+  assert_eq(cmd_pi.args[9], "read,bash,edit,write,grep,find,ls")
+  assert_eq(cmd_pi.args[10], "--thinking")
+  assert_eq(cmd_pi.args[11], "medium")
+  assert_eq(cmd_pi.args[14], "fix bugs")
+  assert_eq(cmd_pi.workdir, Some("/path"))
 }
 
 ///|
@@ -487,7 +510,45 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
 }
 
 ///|
-test "spawn_commands for inline mode uses zellij run" {
+test "spawn_commands pi worktree writes isolated runtime and launches pi" {
+  let spec = @types.SpawnSpec::{
+    slug: "pi-leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Pi,
+    task: "implement feature",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+  }
+  let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
+  assert_eq(cmds.length(), 10)
+  assert_eq(cmds[6].program, "sh")
+  assert_true(cmds[6].args[1].contains("mkdir -p \"$1/agent\" \"$1/sessions\""))
+  assert_eq(cmds[7].program, "sh")
+  assert_true(cmds[7].args[1].contains("$HOME/.pi/agent/auth.json"))
+  assert_true(cmds[7].args[4].contains("/proj"))
+  assert_eq(cmds[8].program, "sh")
+  assert_true(cmds[8].args[1].contains("choir-extension.ts"))
+  let launch = cmds[9].args[cmds[9].args.length() - 1]
+  assert_true(
+    launch.contains(
+      "PI_CODING_AGENT_DIR='/proj/.choir/worktrees/pi-leaf/.choir/pi/agent'",
+    ),
+  )
+  assert_true(launch.contains("PI_SKIP_VERSION_CHECK='1'"))
+  assert_true(
+    launch.contains(
+      "pi '--no-extensions' '-e' '/proj/.choir/worktrees/pi-leaf/.choir/pi/choir-extension.ts'",
+    ),
+  )
+}
+
+///|
+test "spawn_commands for inline mode writes metadata and uses zellij run" {
   let spec = @types.SpawnSpec::{
     slug: "worker-a",
     role: @types.Role::Worker,
@@ -502,16 +563,49 @@ test "spawn_commands for inline mode uses zellij run" {
     spawn_depth: 0,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
-  assert_eq(cmds.length(), 1)
-  assert_eq(cmds[0].program, "zellij")
-  assert_eq(cmds[0].args[0], "--session")
-  assert_eq(cmds[0].args[1], "howdy")
-  assert_eq(cmds[0].args[2], "run")
-  assert_eq(cmds[0].args[4], "worker-a")
+  assert_eq(cmds.length(), 2)
+  assert_eq(cmds[0].program, "sh")
+  assert_true(cmds[0].args[3].contains("/project/.choir/inline/main.worker-a"))
+  assert_true(cmds[0].args[4].contains("agent_id = \"main.worker-a\""))
+  assert_eq(cmds[1].program, "zellij")
+  assert_eq(cmds[1].args[0], "--session")
+  assert_eq(cmds[1].args[1], "howdy")
+  assert_eq(cmds[1].args[2], "run")
+  assert_eq(cmds[1].args[4], "worker-a")
   assert_true(
-    cmds[0].args[10].contains(
+    cmds[1].args[10].contains(
       "CHOIR_TERMINAL_TARGET='zellij-pane:howdy:worker-a'",
     ),
+  )
+}
+
+///|
+test "spawn_commands pi inline runtime root is agent-specific" {
+  let spec = @types.SpawnSpec::{
+    slug: "pi-worker",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Pi,
+    task: "report findings",
+    isolation: @types.IsolationMode::Inline,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+  }
+  let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
+  assert_eq(cmds.length(), 5)
+  assert_true(cmds[0].args[3].contains("/project/.choir/inline/main.pi-worker"))
+  assert_true(cmds[1].args[3].contains("/project/.choir/pi/main.pi-worker"))
+  let launch = cmds[4].args[10]
+  assert_true(
+    launch.contains(
+      "PI_CODING_AGENT_DIR='/project/.choir/pi/main.pi-worker/agent'",
+    ),
+  )
+  assert_true(
+    launch.contains("'/project/.choir/pi/main.pi-worker/choir-extension.ts'"),
   )
 }
 
