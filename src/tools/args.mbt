@@ -153,6 +153,12 @@ struct MergePrArgs {
 } derive(Show, Eq)
 
 ///|
+struct ResolveReviewThreadArgs {
+  thread_id : String
+  caller_id : String
+} derive(Show, Eq)
+
+///|
 struct CallerMessageArgs {
   caller_id : String
   message : String

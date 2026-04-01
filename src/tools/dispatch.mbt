@@ -571,20 +571,20 @@ pub async fn dispatch(
             }
           None => ()
         }
-        // Live check for inline code review comments at merge time.
-        let (inline_count, inline_text) = fetch_inline_comments_sync(
+        // Live check for unresolved review threads at merge time.
+        let (thread_count, thread_text) = fetch_unresolved_review_threads(
           merge_args.pr_number,
           project_dir,
         )
-        if inline_count > 0 {
+        if thread_count > 0 {
           return @types.Response::Err(
             "PR #" +
             merge_args.pr_number.to_string() +
             " has " +
-            inline_count.to_string() +
-            " inline review comment(s) that must be addressed before merging:\n" +
-            inline_text +
-            "\nPass force=true to override.",
+            thread_count.to_string() +
+            " unresolved review thread(s). Address or resolve them before merging:\n" +
+            thread_text +
+            "\nUse resolve_review_thread to mark threads resolved, or pass force=true to override.",
           )
         }
       }
@@ -1447,6 +1447,32 @@ pub async fn dispatch(
       } else {
         @types.Response::Err("failed to write reply: " + id)
       }
+    }
+    ToolRequest::ResolveReviewThread(resolve_args) => {
+      let mutation = "mutation { resolveReviewThread(input: { threadId: \"" +
+        resolve_args.thread_id +
+        "\" }) { thread { isResolved } } }"
+      let cmd : @workspace.Command = {
+        program: "gh",
+        args: ["api", "graphql", "-f", "query=" + mutation],
+        workdir: Some(project_dir),
+      }
+      let (exit_code, output) = capture_command_output(cmd)
+      if exit_code != 0 {
+        let trimmed = output.trim().to_string()
+        return @types.Response::Err(
+          if trimmed != "" {
+            "resolve_review_thread failed: " + trimmed
+          } else {
+            "resolve_review_thread failed (exit " + exit_code.to_string() + ")"
+          },
+        )
+      }
+      @types.Response::ok_values({
+        "status": String::to_json("ok"),
+        "thread_id": String::to_json(resolve_args.thread_id),
+        "resolved": Bool::to_json(true),
+      })
     }
   }
 }

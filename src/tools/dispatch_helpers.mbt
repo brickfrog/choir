@@ -402,64 +402,111 @@ pub async fn execute_delivery(
 }
 
 ///|
-/// Fetch inline code review comments for a PR at merge time.
-/// Returns (count, formatted_text).
-fn fetch_inline_comments_sync(
-  pr_number : Int,
-  project_dir : String,
-) -> (Int, String) {
-  let tmp = "/tmp/choir-merge-comments-" + @sys.get_pid().to_string() + ".tmp"
-  let cmd = "gh api repos/{owner}/{repo}/pulls/" +
-    pr_number.to_string() +
-    "/comments --jq '[.[] | {path, body}]' > " +
-    tmp +
-    " 2>/dev/null"
-  let exit = @sys.system("cd " + project_dir + " && " + cmd)
-  if exit != 0 {
-    ignore(@sys.delete_file_sync(tmp))
-    return (0, "")
-  }
-  let output = @sys.read_file(tmp)
-  ignore(@sys.delete_file_sync(tmp))
-  let trimmed = output.trim().to_string()
-  if trimmed == "" || trimmed == "[]" {
-    return (0, "")
-  }
-  let json = @json.parse(trimmed) catch { _ => return (0, "") }
-  let arr = match json {
-    Array(items) => items
+/// Parse the JSON response from `gh api graphql` for unresolved review threads.
+/// Returns (count, formatted_text). Each entry includes the thread ID so agents
+/// can call resolve_review_thread to resolve specific threads.
+pub fn parse_unresolved_threads_response(json_str : String) -> (Int, String) {
+  let json = @json.parse(json_str) catch { _ => return (0, "") }
+  guard json is Object(root) else { return (0, "") }
+  let nodes = match root.get("data") {
+    Some(Object(data)) =>
+      match data.get("repository") {
+        Some(Object(repo)) =>
+          match repo.get("pullRequest") {
+            Some(Object(pr)) =>
+              match pr.get("reviewThreads") {
+                Some(Object(rt)) =>
+                  match rt.get("nodes") {
+                    Some(Array(ns)) => ns
+                    _ => return (0, "")
+                  }
+                _ => return (0, "")
+              }
+            _ => return (0, "")
+          }
+        _ => return (0, "")
+      }
     _ => return (0, "")
   }
   let parts = StringBuilder::new()
   let mut count = 0
-  for item in arr {
-    match item {
-      Object(c) => {
-        let path = match c.get("path") {
-          Some(String(v)) => v
-          _ => ""
-        }
-        let body = match c.get("body") {
-          Some(String(v)) => v
-          _ => ""
-        }
-        if body != "" {
-          if count > 0 {
-            parts.write_string("\n---\n")
-          }
-          if path != "" {
-            parts.write_string("[")
-            parts.write_string(path)
-            parts.write_string("] ")
-          }
-          parts.write_string(body)
-          count = count + 1
-        }
-      }
-      _ => ()
+  for node in nodes {
+    guard node is Object(thread) else { continue }
+    let is_resolved = match thread.get("isResolved") {
+      Some(True) => true
+      _ => false
     }
+    if is_resolved {
+      continue
+    }
+    let thread_id = match thread.get("id") {
+      Some(String(v)) => v
+      _ => ""
+    }
+    let path = match thread.get("path") {
+      Some(String(v)) => v
+      _ => ""
+    }
+    let body = match thread.get("comments") {
+      Some(Object(comments)) =>
+        match comments.get("nodes") {
+          Some(Array(comment_nodes)) =>
+            if comment_nodes.length() > 0 {
+              match comment_nodes[0] {
+                Object(c) =>
+                  match c.get("body") {
+                    Some(String(v)) => v
+                    _ => ""
+                  }
+                _ => ""
+              }
+            } else {
+              ""
+            }
+          _ => ""
+        }
+      _ => ""
+    }
+    if count > 0 {
+      parts.write_string("\n---\n")
+    }
+    if thread_id != "" {
+      parts.write_string("[thread:" + thread_id + "] ")
+    }
+    if path != "" {
+      parts.write_string("[" + path + "] ")
+    }
+    if body != "" {
+      parts.write_string(body)
+    } else {
+      parts.write_string("(no body)")
+    }
+    count = count + 1
   }
   (count, parts.to_string())
+}
+
+///|
+/// Fetch unresolved review threads for a PR via GitHub GraphQL.
+/// Returns (count, formatted_text_with_thread_ids).
+/// Fails gracefully: returns (0, "") if gh is unavailable or the call fails.
+async fn fetch_unresolved_review_threads(
+  pr_number : Int,
+  project_dir : String,
+) -> (Int, String) {
+  let query = "{ repository(owner: \"{owner}\", name: \"{repo}\") { pullRequest(number: " +
+    pr_number.to_string() +
+    ") { reviewThreads(first: 100) { nodes { id isResolved path comments(first: 1) { nodes { body } } } } } } }"
+  let cmd : @workspace.Command = {
+    program: "gh",
+    args: ["api", "graphql", "-f", "query=" + query],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture_command_output(cmd)
+  if exit_code != 0 || output.trim().to_string() == "" {
+    return (0, "")
+  }
+  parse_unresolved_threads_response(output)
 }
 
 ///|
@@ -675,4 +722,32 @@ async fn handle_kv_list(
     "status": "ok".to_json(),
     "keys": keys.to_json(),
   })
+}
+
+///|
+test "parse_unresolved_threads_response returns only unresolved threads" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_abc","isResolved":false,"path":"src/foo.mbt","comments":{"nodes":[{"body":"fix this"}]}},{"id":"PRRT_def","isResolved":true,"path":"src/bar.mbt","comments":{"nodes":[{"body":"already fixed"}]}}]}}}}}
+  let (count, text) = parse_unresolved_threads_response(json)
+  assert_eq(count, 1)
+  assert_true(text.contains("PRRT_abc"))
+  assert_true(text.contains("fix this"))
+  assert_false(text.contains("already fixed"))
+  assert_false(text.contains("PRRT_def"))
+}
+
+///|
+test "parse_unresolved_threads_response empty on all resolved" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_xyz","isResolved":true,"path":"src/foo.mbt","comments":{"nodes":[{"body":"done"}]}}]}}}}}
+  let (count, text) = parse_unresolved_threads_response(json)
+  assert_eq(count, 0)
+  assert_eq(text, "")
+}
+
+///|
+test "parse_unresolved_threads_response empty on parse error" {
+  let (count, text) = parse_unresolved_threads_response("not json")
+  assert_eq(count, 0)
+  assert_eq(text, "")
 }
