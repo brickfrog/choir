@@ -176,6 +176,53 @@ fn resolve_home_path(path : String) -> String {
 }
 
 ///|
+/// Parent directory of `path` (POSIX `dirname` semantics for typical paths).
+fn path_dirname(path : String) -> String {
+  if path.length() == 0 {
+    return "."
+  }
+  let mut end = path.length()
+  while end > 1 && path[end - 1] == '/' {
+    end = end - 1
+  }
+  let trimmed = path[:end].to_string()
+  if trimmed == "/" {
+    return "/"
+  }
+  let mut last_slash = -1
+  for i = 0; i < trimmed.length(); i = i + 1 {
+    if trimmed[i] == '/' {
+      last_slash = i
+    }
+  }
+  if last_slash < 0 {
+    return "."
+  }
+  if last_slash == 0 {
+    return "/"
+  }
+  let mut d_end = last_slash
+  while d_end > 1 && trimmed[d_end - 1] == '/' {
+    d_end = d_end - 1
+  }
+  trimmed[:d_end].to_string()
+}
+
+///|
+fn teams_inbox_write(path : String, json : String) -> Result[Unit, String] {
+  let resolved = resolve_home_path(path)
+  let dir = path_dirname(resolved)
+  if !@sys.create_dir_all(dir) {
+    return Err("failed to create teams inbox directory: " + dir)
+  }
+  let line = json + "\n"
+  if !@sys.append_file_sync(resolved, line) {
+    return Err("failed to append to teams inbox file: " + resolved)
+  }
+  Ok(())
+}
+
+///|
 pub async fn verify_teams_delivery(
   inbox_path : String,
   message_json : String,
@@ -216,19 +263,6 @@ pub async fn execute_delivery(
       Ok(())
     } else {
       Err("delivery command failed with exit code " + statuses[0].to_string())
-    }
-  }
-  fn teams_inbox_command(path : String, json : String) -> @workspace.Command {
-    {
-      program: "sh",
-      args: [
-        "-c",
-        "mkdir -p \"$(dirname \"$2\")\" && printf '%s\\n' \"$1\" >> \"$2\"",
-        "sh",
-        json,
-        resolve_home_path(path),
-      ],
-      workdir: Some("."),
     }
   }
   fn delivery_timestamp() -> String {
@@ -318,18 +352,14 @@ pub async fn execute_delivery(
     Err(last_error)
   }
   match delivery {
-    @message.DeliveryMethod::TeamsInbox(path, json, fallback_target~) => {
-      let statuses = runner([teams_inbox_command(path, json)]) catch {
-        e => return Err(e.to_string())
-      }
-      match ensure_success(statuses) {
+    @message.DeliveryMethod::TeamsInbox(path, json, fallback_target~) =>
+      match teams_inbox_write(path, json) {
         Ok(_) => {
           ignore(verify_teams_delivery(path, json, fallback_target, runner))
           Ok(())
         }
         Err(e) => Err(e)
       }
-    }
     @message.DeliveryMethod::LocalTerminalInput(target, text) => {
       let cmd = @workspace.local_send_text(target, text)
       ignore(
@@ -856,6 +886,34 @@ async test "resolve_zellij_pane_id returns None when zellij exits non-zero" {
     resolve_zellij_pane_id("choir", "x", capture=mock_zellij_nonzero),
     None,
   )
+}
+
+///|
+test "path_dirname matches posix dirname" {
+  assert_eq(path_dirname("/a/b/c"), "/a/b")
+  assert_eq(path_dirname("/a/b"), "/a")
+  assert_eq(path_dirname("/a"), "/")
+  assert_eq(path_dirname("a/b/c"), "a/b")
+  assert_eq(path_dirname("a/b"), "a")
+  assert_eq(path_dirname("a"), ".")
+  assert_eq(path_dirname("/"), "/")
+}
+
+///|
+test "teams_inbox_write creates parent and appends json line" {
+  let base = "/tmp/choir-teams-inbox-native-" +
+    @sys.get_pid().to_string() +
+    "/agent"
+  let path = base + "/inboxes/default.json"
+  let json = "{\"from\":\"x\",\"content\":\"y\",\"status\":\"z\"}"
+  match teams_inbox_write(path, json) {
+    Ok(_) => ()
+    Err(e) => fail(e)
+  }
+  let got = @sys.read_file(path)
+  assert_true(got.contains(json))
+  assert_true(got.has_suffix("\n"))
+  ignore(@sys.delete_file_sync(path))
 }
 
 ///|
