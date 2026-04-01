@@ -401,6 +401,75 @@ pub fn spawn_commands(
 }
 
 ///|
+/// Remote `ssh ... <shell>` clone + branch checkout. `workspace` is left unquoted so a path
+/// like `$HOME/exo-workspaces/...` expands on the remote shell.
+fn remote_ssh_git_clone_checkout_script(
+  parent_branch : String,
+  repo_url : String,
+  workspace : String,
+  agent_branch : String,
+) -> String {
+  "git clone -b " +
+  @sys.shell_quote(parent_branch) +
+  " " +
+  @sys.shell_quote(repo_url) +
+  " " +
+  workspace +
+  " && cd " +
+  workspace +
+  " && git checkout -b " +
+  @sys.shell_quote(agent_branch)
+}
+
+///|
+/// Write merged Choir config files under `workspace/.choir/` on the remote host.
+fn remote_ssh_write_choir_config_files_script(
+  workspace : String,
+  config_toml : String,
+  local_config_toml : String,
+) -> String {
+  "mkdir -p " +
+  workspace +
+  "/.choir && printf '%s' " +
+  @sys.shell_quote(config_toml) +
+  " > " +
+  workspace +
+  "/.choir/config.toml && printf '%s' " +
+  @sys.shell_quote(local_config_toml) +
+  " > " +
+  workspace +
+  "/.choir/config.local.toml"
+}
+
+///|
+/// `nohup` agent process with merged stdout/stderr to `/tmp/<slug>.log` (background).
+fn remote_ssh_nohup_agent_script(
+  workspace : String,
+  agent_cmd : String,
+  slug : String,
+) -> String {
+  "cd " +
+  workspace +
+  " && nohup " +
+  agent_cmd +
+  " > /tmp/" +
+  @sys.shell_quote(slug) +
+  ".log 2>&1 &"
+}
+
+///|
+/// Build the foreground agent command line (env prefix + quoted argv) for remote `nohup`.
+fn remote_ssh_agent_cmd_line(
+  spec : @types.SpawnSpec,
+  workspace : String,
+  terminal_target : @types.LocalTarget,
+  launch_cmd : Command,
+) -> String {
+  launch_env_prefix(spec, "remote", workspace, terminal_target) +
+  command_text_for_launch(launch_cmd)
+}
+
+///|
 pub fn remote_spawn_commands(
   spec : @types.SpawnSpec,
   ssh_target : String,
@@ -430,45 +499,28 @@ pub fn remote_spawn_commands(
     parent_session_id~,
     extra_mcp_servers_json~,
   )
-  let agent_cmd = launch_env_prefix(spec, "remote", workspace, terminal_target) +
-    command_text_for_launch(launch_cmd)
+  let agent_cmd = remote_ssh_agent_cmd_line(
+    spec, workspace, terminal_target, launch_cmd,
+  )
   [
     ssh_cmd(
       ssh_target,
-      "git clone -b " +
-      @sys.shell_quote(spec.parent_branch) +
-      " " +
-      @sys.shell_quote(repo_url) +
-      " " +
-      workspace +
-      " && cd " +
-      workspace +
-      " && git checkout -b " +
-      @sys.shell_quote(branch),
+      remote_ssh_git_clone_checkout_script(
+        spec.parent_branch,
+        repo_url,
+        workspace,
+        branch,
+      ),
     ),
     ssh_cmd(
       ssh_target,
-      "mkdir -p " +
-      workspace +
-      "/.choir && printf '%s' " +
-      @sys.shell_quote(config_toml) +
-      " > " +
-      workspace +
-      "/.choir/config.toml && printf '%s' " +
-      @sys.shell_quote(local_config_toml) +
-      " > " +
-      workspace +
-      "/.choir/config.local.toml",
+      remote_ssh_write_choir_config_files_script(
+        workspace, config_toml, local_config_toml,
+      ),
     ),
     ssh_cmd(
       ssh_target,
-      "cd " +
-      workspace +
-      " && nohup " +
-      agent_cmd +
-      " > /tmp/" +
-      @sys.shell_quote(spec.slug) +
-      ".log 2>&1 &",
+      remote_ssh_nohup_agent_script(workspace, agent_cmd, spec.slug),
     ),
   ]
 }
