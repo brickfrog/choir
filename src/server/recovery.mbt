@@ -1,69 +1,4 @@
 ///|
-priv struct OpenPR {
-  pr_number : Int
-  branch : String
-  base : String
-  url : String
-  created_sec : Int64?
-}
-
-///|
-fn parse_github_time_utc_sec(s : String) -> Int64? {
-  Some(@tempo.DateTime::parse(s).to_unix_seconds()) catch {
-    _ => None
-  }
-}
-
-///|
-fn split_lines(output : String) -> Array[String] {
-  let lines = []
-  for raw in output.split("\n") {
-    let line = raw.to_string().trim().to_string()
-    if line != "" {
-      lines.push(line)
-    }
-  }
-  lines
-}
-
-///|
-fn parse_open_prs(output : String) -> Array[OpenPR] {
-  let prs = []
-  let json = @json.parse(output) catch { _ => return prs }
-  let arr = match json {
-    Json::Array(items) => items
-    _ => return prs
-  }
-  for item in arr {
-    match item {
-      Json::Object(fields) => {
-        let number = match fields.get("number") {
-          Some(Number(n, ..)) => n.to_int()
-          _ => continue
-        }
-        let branch = match fields.get("headRefName") {
-          Some(String(v)) => v
-          _ => continue
-        }
-        let base = match fields.get("baseRefName") {
-          Some(String(v)) => v
-          _ => continue
-        }
-        let url = match fields.get("url") {
-          Some(String(v)) => v
-          _ => continue
-        }
-        let created_sec = match fields.get("createdAt") {
-          Some(String(v)) => parse_github_time_utc_sec(v)
-          _ => None
-        }
-        prs.push({ pr_number: number, branch, base, url, created_sec })
-      }
-      _ => ()
-    }
-  }
-  prs
-}
 
 ///|
 /// Query GitHub for an open PR whose head branch matches `branch`.
@@ -83,7 +18,7 @@ async fn find_pr_for_branch(
     ],
     cwd=Some(project_dir),
   )
-  let prs = parse_open_prs(output)
+  let prs = @runtime.parse_open_prs(output)
   if prs.length() > 0 {
     Some((prs[0].pr_number, prs[0].url))
   } else {
@@ -163,6 +98,18 @@ async fn capture_stdout(
 }
 
 ///|
+fn split_lines(output : String) -> Array[String] {
+  let lines = []
+  for raw in output.split("\n") {
+    let line = raw.to_string().trim().to_string()
+    if line != "" {
+      lines.push(line)
+    }
+  }
+  lines
+}
+
+///|
 fn default_agent_type(role : @types.Role) -> @types.AgentType {
   match role {
     @types.Role::Root => @types.AgentType::Claude
@@ -173,64 +120,10 @@ fn default_agent_type(role : @types.Role) -> @types.AgentType {
 }
 
 ///|
-priv struct ZellijLiveTargets {
-  tabs : Array[String]
-  panes : Array[String]
-}
-
-///|
-fn json_value_bool(value : Json?) -> Bool {
-  match value {
-    Some(True) => true
-    _ => false
-  }
-}
-
-///|
-fn json_value_string(value : Json?) -> String {
-  match value {
-    Some(String(v)) => v
-    _ => ""
-  }
-}
-
-///|
-fn push_unique(values : Array[String], value : String) -> Unit {
-  if value != "" && !values.contains(value) {
-    values.push(value)
-  }
-}
-
-///|
-fn parse_zellij_live_targets(output : String) -> ZellijLiveTargets {
-  let tabs = []
-  let panes = []
-  let json = @json.parse(output) catch { _ => return { tabs, panes } }
-  let arr = match json {
-    Json::Array(items) => items
-    _ => return { tabs, panes }
-  }
-  for item in arr {
-    match item {
-      Json::Object(fields) => {
-        if json_value_bool(fields.get("is_plugin")) ||
-          json_value_bool(fields.get("exited")) {
-          continue
-        }
-        push_unique(tabs, json_value_string(fields.get("tab_name")))
-        push_unique(panes, json_value_string(fields.get("title")))
-      }
-      _ => ()
-    }
-  }
-  { tabs, panes }
-}
-
-///|
 fn is_local_target_alive(
   target : @types.LocalTarget?,
   session : String,
-  zellij_live : ZellijLiveTargets,
+  zellij_live : @runtime.ZellijLiveTargets,
 ) -> Bool {
   match target {
     Some({ kind: @types.TargetKind::ZellijTab, session: s, name }) =>
@@ -247,7 +140,7 @@ fn recover_agent_from_local_config(
   rel_workspace : String,
   fallback_slug : String,
   session : String,
-  zellij_live : ZellijLiveTargets,
+  zellij_live : @runtime.ZellijLiveTargets,
 ) -> @types.Agent? {
   let config_path = project_dir +
     "/" +
@@ -271,7 +164,7 @@ fn recover_agent_from_local_config(
     zellij_live,
   )
   Some({
-    agent_id,
+    agent_id: @types.AgentId(agent_id),
     role,
     agent_type: local_cfg.agent_type.unwrap_or(default_agent_type(role)),
     state: if alive {
@@ -317,7 +210,7 @@ fn finalize_recovered_offline_agent(
 async fn recover_local_agents(
   state : ServerState,
   session : String,
-  zellij_live : ZellijLiveTargets,
+  zellij_live : @runtime.ZellijLiveTargets,
   dir_name : String,
 ) -> Unit {
   let project_dir = state.config.project_dir
@@ -474,7 +367,7 @@ fn recover_dev_lifecycle_for_pr(
 fn sync_recovered_pr_lifecycle(
   state : ServerState,
   agent : @types.Agent,
-  pr : OpenPR,
+  pr : @runtime.OpenPR,
   review : @poller.ReviewState,
 ) -> Unit {
   let lifecycle = state.current_lifecycle(agent.agent_id.to_string())
@@ -542,7 +435,7 @@ fn find_registered_agent_for_branch(
 ///|
 async fn recover_open_pr_tracking_with(
   state : ServerState,
-  open_prs : Array[OpenPR],
+  open_prs : Array[@runtime.OpenPR],
   persisted : Array[@poller.TrackedPR],
   recovered_at : Int64,
   snapshot : async (Int) -> (
@@ -607,19 +500,17 @@ async fn recover_open_pr_tracking_with(
 }
 
 ///|
-pub async fn recover_state(state : ServerState, session : String) -> Unit {
-  let project_dir = state.config.project_dir
-  let zellij_live = parse_zellij_live_targets(
+pub async fn discover_recovery_snapshot(
+  project_dir : String,
+  session : String,
+) -> @runtime.RecoverySnapshot {
+  let zellij_live = @runtime.parse_zellij_live_targets(
     capture_stdout(
       "zellij",
       ["--session", session, "action", "list-panes", "--json", "-a", "-t", "-s"],
       cwd=Some(project_dir),
     ),
   )
-  recover_local_agents(state, session, zellij_live, "worktrees")
-  recover_local_agents(state, session, zellij_live, "agents")
-  recover_local_agents(state, session, zellij_live, "inline")
-
   let open_pr_output = capture_stdout(
     "sh",
     [
@@ -627,71 +518,32 @@ pub async fn recover_state(state : ServerState, session : String) -> Unit {
     ],
     cwd=Some(project_dir),
   )
-  let now = @poller.now_sec()
+  let open_prs = @runtime.parse_open_prs(open_pr_output)
+  { zellij_live, open_prs, recovered_at: @poller.now_sec() }
+}
+
+///|
+pub async fn recover_state(
+  state : ServerState,
+  session : String,
+  snapshot : @runtime.RecoverySnapshot,
+) -> Unit {
+  let project_dir = state.config.project_dir
+  recover_local_agents(state, session, snapshot.zellij_live, "worktrees")
+  recover_local_agents(state, session, snapshot.zellij_live, "agents")
+  recover_local_agents(state, session, snapshot.zellij_live, "inline")
+
   recover_open_pr_tracking_with(
     state,
-    parse_open_prs(open_pr_output),
+    snapshot.open_prs,
     @poller.read_state_file(project_dir),
-    now,
+    snapshot.recovered_at,
     @poller.gh_poll_pr,
   )
   ignore(state.poller.write_state_file(project_dir))
 }
 
 ///|
-test "parse_open_prs extracts branch base and url" {
-  let prs = parse_open_prs(
-    "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/12\",\"createdAt\":\"2026-03-20T01:02:03Z\"},{\"number\":13,\"headRefName\":\"main.subtl.leaf-b\",\"baseRefName\":\"main.subtl\",\"url\":\"https://example.test/pr/13\",\"createdAt\":\"2026-03-21T00:00:00Z\"}]",
-  )
-  assert_eq(prs.length(), 2)
-  assert_eq(prs[0].pr_number, 12)
-  assert_eq(prs[0].branch, "main.leaf-a")
-  assert_eq(prs[0].base, "main")
-  assert_eq(prs[0].url, "https://example.test/pr/12")
-  assert_eq(prs[0].created_sec, Some(1773968523L))
-  assert_eq(prs[1].pr_number, 13)
-  assert_eq(prs[1].branch, "main.subtl.leaf-b")
-  assert_eq(prs[1].base, "main.subtl")
-  assert_eq(prs[1].url, "https://example.test/pr/13")
-  assert_eq(prs[1].created_sec, Some(1774051200L))
-}
-
-///|
-test "parse_zellij_live_targets collects live tab and pane names" {
-  let live = parse_zellij_live_targets(
-    (
-      #|[
-      #|  {"id":7,"tab_id":1,"tab_name":"leaf-a","title":"zellij:tab-bar","is_plugin":true,"exited":false},
-      #|  {"id":8,"tab_id":1,"tab_name":"leaf-a","title":"gemini --prompt-interactive","is_plugin":false,"exited":false},
-      #|  {"id":9,"tab_id":2,"tab_name":"worker-a","title":"worker-a","is_plugin":false,"exited":true}
-      #|]
-    ),
-  )
-  assert_eq(live.tabs, ["leaf-a"])
-  assert_eq(live.panes, ["gemini --prompt-interactive"])
-}
-
-///|
-test "parse_open_prs ignores malformed entries" {
-  let prs = parse_open_prs(
-    "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\"},{\"number\":\"oops\",\"headRefName\":\"main.leaf-b\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/13\"}]",
-  )
-  assert_eq(prs.length(), 0)
-}
-
-///|
-test "parse_github_time_utc_sec handles valid and invalid timestamps" {
-  assert_eq(
-    parse_github_time_utc_sec("2026-03-20T01:02:03Z"),
-    Some(1773968523L),
-  )
-  assert_eq(
-    parse_github_time_utc_sec("2026-03-20T01:02:03.456Z"),
-    Some(1773968523L),
-  )
-  assert_eq(parse_github_time_utc_sec("2026-02-30T01:02:03Z"), None)
-  assert_eq(parse_github_time_utc_sec("2026-03-20 01:02:03Z"), None)
-}
 
 ///|
 test "recover_agent_from_local_config preserves pi agent type" {
@@ -724,7 +576,7 @@ test "recover_agent_from_local_config preserves pi agent type" {
   ignore(@sys.system("rm -rf \"" + root + "\""))
   match agent {
     Some(recovered) => {
-      assert_eq(recovered.agent_id, "main.pi-leaf")
+      assert_eq(recovered.agent_id.to_string(), "main.pi-leaf")
       assert_eq(recovered.agent_type, @types.AgentType::Pi)
       assert_eq(recovered.state, @types.AgentState::Done)
     }
@@ -763,7 +615,7 @@ test "recover_agent_from_local_config supports inline metadata directories" {
   ignore(@sys.system("rm -rf \"" + root + "\""))
   match agent {
     Some(recovered) => {
-      assert_eq(recovered.agent_id, "feature/x.worker")
+      assert_eq(recovered.agent_id.to_string(), "feature/x.worker")
       assert_eq(recovered.role, @types.Role::Worker)
       assert_eq(recovered.parent, Some("root"))
       assert_eq(recovered.branch, "feature/x.worker")
@@ -787,7 +639,7 @@ async test "recover_open_pr_tracking_with restores ownership using persisted age
   })
   ignore(
     state.register_agent({
-      agent_id: "main.topic-v1",
+      agent_id: @types.AgentId("main.topic-v1"),
       role: @types.Role::Dev,
       agent_type: @types.AgentType::Pi,
       parent: Some("root"),
@@ -893,7 +745,7 @@ async test "recover_open_pr_tracking_with preserves fixes awaiting review and pa
   )
   ignore(
     state.register_agent({
-      agent_id: child_id,
+      agent_id: @types.AgentId(child_id),
       role: @types.Role::Dev,
       agent_type: @types.AgentType::Pi,
       parent: Some(parent_id),

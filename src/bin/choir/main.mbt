@@ -252,7 +252,11 @@ fn serve_run() -> Unit {
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(root) {
-      @server.recover_state(state, config.terminal_session)
+      let snapshot = @server.discover_recovery_snapshot(
+        config.project_dir,
+        config.terminal_session,
+      )
+      @server.recover_state(state, config.terminal_session, snapshot)
       root.spawn_bg(async fn() {
         let timeout_sec = 900L
         let disconnect_grace_sec = 60L
