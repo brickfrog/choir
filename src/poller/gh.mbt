@@ -44,7 +44,14 @@ fn review_body_noise_subject(body : String) -> String {
 ///|
 fn review_body_is_noise(body : String) -> Bool {
   let normalized = review_body_noise_subject(body).to_lower()
-  normalized.has_prefix("pull request overview")
+  if normalized.has_prefix("pull request overview") {
+    return true
+  }
+  // Copilot template uses "## Pull request overview" (markdown H2); plain-text prefix check misses it.
+  if normalized.contains("## pull request overview") {
+    return true
+  }
+  false
 }
 
 ///|
