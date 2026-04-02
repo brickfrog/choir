@@ -224,6 +224,7 @@ fn gh_login_is_copilot_issue_comment_author(login : String) -> Bool {
   let l = login.to_lower()
   l == "copilot-pull-request-reviewer" ||
   l == "github-copilot[bot]" ||
+  l == "copilot-swe-agent" ||
   l == "copilot-swe-agent[bot]"
 }
 
