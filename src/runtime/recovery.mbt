@@ -717,6 +717,8 @@ pub async fn discover_recovery_input(
   project_dir : String,
   session : String,
 ) -> RecoveryReconcileInput {
+  // Recovery snapshot start (before any zellij/gh/fs polling); used as `created_at` fallback in `plan_recovery`.
+  let recovered_at = @poller.now_sec()
   let live = (provider.zellij_live)(project_dir, session)
   let open_prs = (provider.open_prs)(project_dir)
   let persisted_tracked_prs = (provider.read_poller_state)(project_dir)
@@ -739,8 +741,6 @@ pub async fn discover_recovery_input(
     recovered_agents: prebuilt.0,
     agent_stage_actions: prebuilt.1,
   }
-  // Snapshot time before `gh_poll_pr` network calls (used as `created_at` fallback).
-  let recovered_at = @poller.now_sec()
   let polls : Map[Int, RecoveryPrPollRow] = Map::new()
   for pr in open_prs {
     match
