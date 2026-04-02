@@ -549,39 +549,35 @@ pub async fn dispatch(
         }
         Ok(_) => ()
       }
-      match poller_state {
-        Some(ps) => {
-          let tracked_branch = match ps.get(merge_args.pr_number) {
+      let tracked_branch = match poller_state {
+        Some(ps) =>
+          match ps.get(merge_args.pr_number) {
             Some(tracked) => Some(tracked.branch)
             None => None
           }
-          let slug = merge_pr_pr_merged_event_url_slug(
-            merge_args.pr_number,
-            tracked_branch,
-          )
-          @phase.apply_tl_event(
-            project_dir,
-            merge_args.caller_id,
-            @phase.TLEvent::PRMerged(number=merge_args.pr_number, url=slug),
-            registry~,
-          )
-          ps.untrack(merge_args.pr_number)
-          ignore(ps.write_state_file(project_dir))
-        }
-        None => {
-          let slug = merge_pr_pr_merged_event_url_slug(
-            merge_args.pr_number,
-            None,
-          )
-          @phase.apply_tl_event(
-            project_dir,
-            merge_args.caller_id,
-            @phase.TLEvent::PRMerged(number=merge_args.pr_number, url=slug),
-            registry~,
-          )
+        None => None
+      }
+      let plan = merge_pr_post_success_plan(
+        merge_args.pr_number,
+        poller_state is Some(_),
+        tracked_branch,
+      )
+      @phase.apply_tl_event(
+        project_dir,
+        merge_args.caller_id,
+        plan.tl_event,
+        registry~,
+      )
+      if plan.poller_untrack_and_write_state {
+        match poller_state {
+          Some(ps) => {
+            ps.untrack(merge_args.pr_number)
+            ignore(ps.write_state_file(project_dir))
+          }
+          None => ()
         }
       }
-      @types.Response::ok_values({ "status": String::to_json("merged") })
+      plan.response
     }
     ToolRequest::TrackPr(track_pr_args) =>
       match poller_state {

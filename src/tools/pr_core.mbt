@@ -285,3 +285,29 @@ pub fn merge_pr_pr_merged_event_url_slug(
     None => "PR-" + pr_number.to_string()
   }
 }
+
+///|
+/// Pure plan for `merge_pr` after the merge command succeeds: `TLEvent::PRMerged`
+/// payload (url slug from tracked branch when poller is available), whether to
+/// untrack the PR and persist poller state, and the tool success response.
+pub(all) struct MergePrPostSuccessPlan {
+  tl_event : @phase.TLEvent
+  poller_untrack_and_write_state : Bool
+  response : @types.Response
+}
+
+///|
+pub fn merge_pr_post_success_plan(
+  pr_number : Int,
+  poller_available : Bool,
+  tracked_branch : String?,
+) -> MergePrPostSuccessPlan {
+  let branch_for_slug = if poller_available { tracked_branch } else { None }
+  let slug = merge_pr_pr_merged_event_url_slug(pr_number, branch_for_slug)
+  let tl_event = @phase.TLEvent::PRMerged(number=pr_number, url=slug)
+  {
+    tl_event,
+    poller_untrack_and_write_state: poller_available,
+    response: @types.Response::ok_values({ "status": String::to_json("merged") }),
+  }
+}
