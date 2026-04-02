@@ -387,6 +387,109 @@ async test "interpret_send_message registry lookup failed returns err" {
 }
 
 ///|
+fn send_message_interpret_test_project_dir() -> String {
+  "/tmp/choir-send-msg-interpret-" + @sys.get_pid().to_string()
+}
+
+///|
+async fn sleep_zero_for_send_msg(_ms : Int) -> Unit {
+  @async.sleep(0)
+}
+
+///|
+async fn runner_send_msg_always_fail(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for _ in cmds {
+    statuses.push(1)
+  }
+  statuses
+}
+
+///|
+async test "interpret_send_message deliver tcp success appends send_message log" {
+  let project_dir = send_message_interpret_test_project_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let log_path = project_dir + "/.choir/delivery.log"
+  ignore(@sys.delete_file_sync(log_path))
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.rleaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main"),
+    workspace: "/tmp",
+    branch: "main.rleaf",
+    terminal_target: None,
+    host: @types.Host::Remote("127.0.0.1"),
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let plan = send_message_plan(
+    "main.rleaf",
+    "main.tl",
+    "text",
+    "success",
+    Some(Ok(agent)),
+  )
+  let got = interpret_send_message(plan, project_dir, mock_runner_all_ok)
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("sent")))
+    }
+    _ => fail("expected ok")
+  }
+  let delivery = @message.plan_delivery(agent, "main.tl", "text", "success")
+  let expected_log = send_message_delivery_log_append(
+    "main.rleaf", agent, delivery,
+  )
+  assert_eq(@sys.read_file(log_path), expected_log)
+}
+
+///|
+async test "interpret_send_message deliver local terminal failure returns err and keeps send_message log" {
+  let project_dir = send_message_interpret_test_project_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let log_path = project_dir + "/.choir/delivery.log"
+  ignore(@sys.delete_file_sync(log_path))
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main"),
+    workspace: "/tmp",
+    branch: "main.leaf",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf"),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let plan = send_message_plan(
+    "main.leaf",
+    "main.tl",
+    "x",
+    "info",
+    Some(Ok(agent)),
+  )
+  let got = interpret_send_message(
+    plan,
+    project_dir,
+    runner_send_msg_always_fail,
+    sleep_fn=sleep_zero_for_send_msg,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("delivery command failed"))
+    _ => fail("expected err from execute_delivery")
+  }
+  let delivery = @message.plan_delivery(agent, "main.tl", "x", "info")
+  let send_line = send_message_delivery_log_append("main.leaf", agent, delivery)
+  assert_true(@sys.read_file(log_path).contains(send_line))
+}
+
+///|
 test "file_pr_preflight_create_inputs copies branch paths and title/body" {
   let args : FilePrArgs = {
     branch: "main.leaf",

@@ -257,6 +257,7 @@ pub async fn interpret_send_message(
   plan : SendMessagePlan,
   project_dir : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   match plan {
     SendMessagePlan::NoRegistry(response~) => response
@@ -269,7 +270,7 @@ pub async fn interpret_send_message(
           delivery_log_append,
         ),
       )
-      match execute_delivery(delivery, runner, project_dir~) {
+      match execute_delivery(delivery, runner, project_dir~, sleep_fn~) {
         Ok(_) => response_ok
         Err(e) => {
           @moontrace.error(
