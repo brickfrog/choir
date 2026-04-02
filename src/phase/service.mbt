@@ -140,22 +140,12 @@ fn dev_event_trigger(event : DevEvent) -> String {
 }
 
 ///|
-pub fn apply_tl_event(
-  project_dir : String,
-  scope : String,
+/// Pure planning: current persisted lifecycle snapshot plus a TL event to
+/// lifecycle effects (no file or registry I/O).
+pub fn plan_tl_lifecycle_effects(
+  lifecycle : AgentLifecycle,
   event : TLEvent,
-  registry? : @registry.AgentRegistry? = None,
-) -> Unit {
-  let store = LifecycleStore::new(project_dir)
-  let default_role = match registry {
-    Some(reg) =>
-      match reg.get(scope) {
-        Ok(agent) => agent.role
-        Err(_) => supervisor_role_for_scope(scope)
-      }
-    None => supervisor_role_for_scope(scope)
-  }
-  let lifecycle = store.read_or_default(scope, default_role)
+) -> Array[LifecycleEffect] {
   let supervisor = match lifecycle.workflow {
     WorkflowState::Supervisor(supervisor) => supervisor
     _ => SupervisorLifecycle::Planning
@@ -231,45 +221,118 @@ pub fn apply_tl_event(
         ..lifecycle,
         workflow: WorkflowState::Supervisor(new_supervisor),
       }
-      if store.write(next_lc) {
-        ignore(
-          store.append_event(scope, lifecycle, next_lc, tl_event_trigger(event)),
-        )
-      }
+      [
+        PersistLifecycle(lifecycle=next_lc),
+        AppendLifecycleEvent(
+          agent_id=lifecycle.agent_id,
+          from_lc=lifecycle,
+          to_lc=next_lc,
+          trigger=tl_event_trigger(event),
+        ),
+      ]
     }
-    InvalidTransition(_) => ()
+    InvalidTransition(_) => []
   }
 }
 
 ///|
-pub fn apply_dev_event_checked(
+/// Load lifecycle for `scope`, then plan TL effects (read I/O only).
+pub fn apply_tl_event(
   project_dir : String,
   scope : String,
-  event : DevEvent,
-) -> Result[DevPhase, String] {
+  event : TLEvent,
+  registry? : @registry.AgentRegistry? = None,
+) -> Array[LifecycleEffect] {
   let store = LifecycleStore::new(project_dir)
-  let lifecycle = store.read_or_default(scope, @types.Role::Dev)
+  let default_role = match registry {
+    Some(reg) =>
+      match reg.get(scope) {
+        Ok(agent) => agent.role
+        Err(_) => supervisor_role_for_scope(scope)
+      }
+    None => supervisor_role_for_scope(scope)
+  }
+  let lifecycle = store.read_or_default(scope, default_role)
+  plan_tl_lifecycle_effects(lifecycle, event)
+}
+
+///|
+pub fn interpret_lifecycle_effects(
+  project_dir : String,
+  effects : Array[LifecycleEffect],
+  registry? : @registry.AgentRegistry? = None,
+) -> Unit {
+  let mut last_persisted : AgentLifecycle? = None
+  for effect in effects {
+    match effect {
+      PersistLifecycle(lifecycle~) =>
+        if write_lifecycle(project_dir, lifecycle) {
+          last_persisted = Some(lifecycle)
+        } else {
+          last_persisted = None
+        }
+      AppendLifecycleEvent(agent_id~, from_lc~, to_lc~, trigger~) =>
+        match last_persisted {
+          Some(lc) =>
+            if lc.agent_id == agent_id {
+              ignore(
+                append_lifecycle_event(
+                  project_dir,
+                  agent_id,
+                  lifecycle_to_json(from_lc),
+                  lifecycle_to_json(to_lc),
+                  trigger,
+                ),
+              )
+            }
+          None => ()
+        }
+      SyncRegistryState(agent_id~, lifecycle~) =>
+        match registry {
+          Some(reg) =>
+            match reg.get(agent_id) {
+              Ok(agent) =>
+                ignore(
+                  reg.upsert({ ..agent, state: lifecycle.to_agent_state() }),
+                )
+              Err(_) => ()
+            }
+          None => ()
+        }
+    }
+  }
+}
+
+///|
+/// Pure planning for dev lifecycle updates (no persistence).
+pub fn plan_dev_event_checked(
+  lifecycle : AgentLifecycle,
+  event : DevEvent,
+) -> Result[(DevPhase, Array[LifecycleEffect]), String] {
   let dev = match lifecycle.workflow {
     WorkflowState::Dev(dev) => dev
     _ => DevLifecycle::Working
   }
   match event {
     DevEvent::NotifyParentSuccess(..) =>
-      Ok(legacy_dev_phase_from_lifecycle(dev))
+      Ok((legacy_dev_phase_from_lifecycle(dev), []))
     DevEvent::NotifyParentFailure(message~) => {
       let failed = DevLifecycle::Failed(reason=classify_failure(message))
       let next_lc = { ..lifecycle, workflow: WorkflowState::Dev(failed) }
-      if store.write(next_lc) {
-        ignore(
-          store.append_event(
-            scope,
-            lifecycle,
-            next_lc,
-            dev_event_trigger(event),
-          ),
-        )
-      }
-      Ok(legacy_dev_phase_from_lifecycle(failed))
+      Ok(
+        (
+          legacy_dev_phase_from_lifecycle(failed),
+          [
+            PersistLifecycle(lifecycle=next_lc),
+            AppendLifecycleEvent(
+              agent_id=lifecycle.agent_id,
+              from_lc=lifecycle,
+              to_lc=next_lc,
+              trigger=dev_event_trigger(event),
+            ),
+          ],
+        ),
+      )
     }
     _ => {
       let lifecycle_event = match event {
@@ -294,17 +357,20 @@ pub fn apply_dev_event_checked(
                 ..lifecycle,
                 workflow: WorkflowState::Dev(new_dev),
               }
-              if store.write(next_lc) {
-                ignore(
-                  store.append_event(
-                    scope,
-                    lifecycle,
-                    next_lc,
-                    dev_event_trigger(event),
-                  ),
-                )
-              }
-              Ok(legacy_dev_phase_from_lifecycle(new_dev))
+              Ok(
+                (
+                  legacy_dev_phase_from_lifecycle(new_dev),
+                  [
+                    PersistLifecycle(lifecycle=next_lc),
+                    AppendLifecycleEvent(
+                      agent_id=lifecycle.agent_id,
+                      from_lc=lifecycle,
+                      to_lc=next_lc,
+                      trigger=dev_event_trigger(event),
+                    ),
+                  ],
+                ),
+              )
             }
             InvalidTransition(message) => Err(message)
           }
@@ -315,12 +381,28 @@ pub fn apply_dev_event_checked(
 }
 
 ///|
+pub fn apply_dev_event_checked(
+  project_dir : String,
+  scope : String,
+  event : DevEvent,
+) -> Result[(DevPhase, Array[LifecycleEffect]), String] {
+  let store = LifecycleStore::new(project_dir)
+  let lifecycle = store.read_or_default(scope, @types.Role::Dev)
+  plan_dev_event_checked(lifecycle, event)
+}
+
+///|
 pub fn apply_dev_event(
   project_dir : String,
   scope : String,
   event : DevEvent,
+  registry? : @registry.AgentRegistry? = None,
 ) -> Unit {
-  ignore(apply_dev_event_checked(project_dir, scope, event))
+  match apply_dev_event_checked(project_dir, scope, event) {
+    Ok((_, effects)) =>
+      interpret_lifecycle_effects(project_dir, effects, registry~)
+    Err(_) => ()
+  }
 }
 
 ///|

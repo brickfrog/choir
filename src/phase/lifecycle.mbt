@@ -108,6 +108,20 @@ pub(all) struct AgentLifecycle {
 } derive(Show, Eq)
 
 ///|
+/// Side effects produced by lifecycle orchestration; interpreted by the host
+/// (`interpret_lifecycle_effects`) to perform persistence and registry updates.
+pub(all) enum LifecycleEffect {
+  PersistLifecycle(lifecycle~ : AgentLifecycle)
+  AppendLifecycleEvent(
+    agent_id~ : String,
+    from_lc~ : AgentLifecycle,
+    to_lc~ : AgentLifecycle,
+    trigger~ : String
+  )
+  SyncRegistryState(agent_id~ : String, lifecycle~ : AgentLifecycle)
+} derive(Show, Eq)
+
+///|
 pub(all) enum LifecycleExitPolicy {
   Blocked(reason~ : ExitBlockReason)
   Deferred(message~ : String)
