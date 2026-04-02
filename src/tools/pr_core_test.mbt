@@ -1209,6 +1209,15 @@ async fn mock_capture_origin_topic(_cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+async fn mock_git_capture_fork_wave_clean(
+  _program : String,
+  _args : Array[String],
+) -> String {
+  @async.sleep(0)
+  ""
+}
+
+///|
 async test "fork_wave_resolve_args_parent_branch resolves main via detect" {
   let args = fork_wave_args_base()
   let got = fork_wave_resolve_args_parent_branch(
@@ -1217,6 +1226,51 @@ async test "fork_wave_resolve_args_parent_branch resolves main via detect" {
     mock_capture_origin_topic,
   )
   assert_eq(got.parent_branch, "topic")
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase resolves parent branch and returns spawned response" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/proj",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 2,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let args = fork_wave_args_base()
+  let (resp, resolved_args, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    { ..args, parent_branch: "main" },
+    "/proj",
+    "choir",
+    Some(reg),
+    mock_capture_origin_topic,
+    mock_git_capture_fork_wave_clean,
+    mock_runner_all_ok,
+  )
+  assert_eq(resolved_args.parent_branch, "topic")
+  assert_eq(spawn_plan.spawned_count, 2)
+  assert_eq(spawn_plan.spawned_specs[0].spawn_depth, 2)
+  assert_eq(spawn_plan.spawned_specs[1].spawn_depth, 2)
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      assert_eq(map.get("count"), Some(Int::to_json(2)))
+      assert_eq(
+        map.get("agent_ids"),
+        Some(String::to_json("topic.wave-0,topic.wave-1")),
+      )
+    }
+    _ => fail("expected spawned ok response")
+  }
 }
 
 ///|
