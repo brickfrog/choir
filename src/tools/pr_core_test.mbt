@@ -1123,7 +1123,7 @@ async test "interpret_file_pr_post_success requests copilot reviewer when pr_rev
 
 ///|
 async test "interpret_file_pr_post_success posts copilot review comment then requests reviewer" {
-  let call_seq : Array[Int] = [0]
+  let file_pr_copilot_runner_seq : Array[Int] = [0]
   let project_dir = "/tmp/rc-fpr"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let args : FilePrArgs = {
@@ -1155,8 +1155,8 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
     async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
       @async.sleep(0)
       assert_eq(cmds.length(), 1)
-      let n = call_seq[0]
-      call_seq[0] = n + 1
+      let n = file_pr_copilot_runner_seq[0]
+      file_pr_copilot_runner_seq[0] = n + 1
       assert_eq(cmds[0].program, "gh")
       if n == 0 {
         assert_eq(cmds[0].args[0], "pr")
@@ -1180,35 +1180,12 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
     @types.Response::Ok(_) => ()
     _ => fail("expected ok")
   }
-  assert_eq(call_seq[0], 2)
-}
-
-///|
-async fn mock_runner_file_pr_copilot_comment_fails_reviewer_runs(
-  cmds : Array[@workspace.Command],
-) -> Array[Int] {
-  @async.sleep(0)
-  assert_eq(cmds.length(), 1)
-  let n = file_pr_copilot_runner_seq[0]
-  file_pr_copilot_runner_seq[0] = n + 1
-  if n == 0 {
-    // comment step — return failure
-    assert_eq(cmds[0].args[1], "comment")
-    [1]
-  } else if n == 1 {
-    // reviewer step should still run despite prior comment failure
-    assert_eq(cmds[0].args[0], "pr")
-    assert_eq(cmds[0].args[1], "edit")
-    [0]
-  } else {
-    fail("unexpected extra runner invocation")
-    []
-  }
+  assert_eq(file_pr_copilot_runner_seq[0], 2)
 }
 
 ///|
 async test "interpret_file_pr_post_success copilot review comment failure is best-effort" {
-  file_pr_copilot_runner_seq[0] = 0
+  let file_pr_copilot_runner_seq : Array[Int] = [0]
   let project_dir = "/tmp/rc-fpr-comment-fail"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let log_path = project_dir + "/.choir/delivery.log"
@@ -1239,7 +1216,23 @@ async test "interpret_file_pr_post_success copilot review comment failure is bes
     effects,
     None,
     None,
-    mock_runner_file_pr_copilot_comment_fails_reviewer_runs,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      assert_eq(cmds.length(), 1)
+      let n = file_pr_copilot_runner_seq[0]
+      file_pr_copilot_runner_seq[0] = n + 1
+      if n == 0 {
+        assert_eq(cmds[0].args[1], "comment")
+        [1]
+      } else if n == 1 {
+        assert_eq(cmds[0].args[0], "pr")
+        assert_eq(cmds[0].args[1], "edit")
+        [0]
+      } else {
+        fail("unexpected extra runner invocation")
+        []
+      }
+    },
   )
   match got {
     @types.Response::Ok(_) => ()
