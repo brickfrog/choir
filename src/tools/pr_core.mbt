@@ -1159,3 +1159,62 @@ pub async fn interpret_spawn_worker(
     Err(e) => @types.Response::Err(e)
   }
 }
+
+///|
+/// Pure plan for `spawn_remote`: fixed Dev/Claude worktree spec and success JSON
+/// (agent id, slug, ssh host). The interpreter runs `remote_spawn_commands` then
+/// `run_strict`.
+pub(all) struct SpawnRemotePlan {
+  spec : @types.SpawnSpec
+  ok_response : @types.Response
+} derive(Show)
+
+///|
+pub fn spawn_remote_plan(args : RemoteSpawnArgs) -> SpawnRemotePlan {
+  let spec = @types.SpawnSpec::{
+    slug: args.slug,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: args.task,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: args.caller_id,
+    parent_branch: args.parent_branch,
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+  }
+  let ok_response = @types.Response::ok_values({
+    "status": String::to_json("spawned"),
+    "agent_id": String::to_json(
+      @workspace.branch_name(args.parent_branch, args.slug),
+    ),
+    "slug": String::to_json(args.slug),
+    "host": String::to_json(args.ssh_target),
+  })
+  { spec, ok_response }
+}
+
+///|
+/// Remote spawn path: plan, `remote_spawn_commands`, `run_strict`. Preserves
+/// `ToolRequest::SpawnRemote` control flow while keeping `dispatch` thin.
+pub async fn interpret_spawn_remote(
+  spawn_args : RemoteSpawnArgs,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+  extra_mcp_servers_json? : String? = None,
+) -> @types.Response {
+  let plan = spawn_remote_plan(spawn_args)
+  let cmds = @workspace.remote_spawn_commands(
+    plan.spec,
+    spawn_args.ssh_target,
+    spawn_args.repo_url,
+    spawn_args.tcp_addr,
+    parent_session_id=spawn_args.parent_session_id,
+    extra_mcp_servers_json~,
+  )
+  match run_strict(runner, cmds, capture~) {
+    Ok(_) => plan.ok_response
+    Err(e) => @types.Response::Err(e)
+  }
+}

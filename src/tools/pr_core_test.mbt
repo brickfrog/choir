@@ -1719,3 +1719,88 @@ async test "interpret_spawn_worker registers agent on success" {
     Err(_) => fail("expected worker in registry")
   }
 }
+
+///|
+test "spawn_remote_plan builds dev claude worktree spec and spawned response" {
+  let spawn_args : RemoteSpawnArgs = {
+    task: "remote-task",
+    caller_id: "main.tl",
+    slug: "leaf-a",
+    parent_branch: "main",
+    ssh_target: "user@remote.example",
+    repo_url: "https://github.com/o/r.git",
+    tcp_addr: "192.168.1.10:7777",
+    parent_session_id: Some("sess-1"),
+  }
+  let plan = spawn_remote_plan(spawn_args)
+  assert_eq(plan.spec.slug, "leaf-a")
+  assert_eq(plan.spec.role, @types.Role::Dev)
+  assert_eq(plan.spec.agent_type, @types.AgentType::Claude)
+  assert_eq(plan.spec.task, "remote-task")
+  assert_eq(plan.spec.isolation, @types.IsolationMode::Worktree)
+  assert_eq(plan.spec.parent_id, "main.tl")
+  assert_eq(plan.spec.parent_branch, "main")
+  assert_eq(plan.spec.reuse_workspace, false)
+  assert_eq(plan.spec.workspace_slug, None)
+  assert_eq(plan.spec.reuse_git_branch, None)
+  assert_eq(plan.spec.spawn_depth, 0)
+  match plan.ok_response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      assert_eq(map.get("agent_id"), Some(String::to_json("main.leaf-a")))
+      assert_eq(map.get("slug"), Some(String::to_json("leaf-a")))
+      assert_eq(map.get("host"), Some(String::to_json("user@remote.example")))
+    }
+    _ => fail("expected ok response")
+  }
+}
+
+///|
+async test "interpret_spawn_remote returns plan ok when runner succeeds" {
+  let spawn_args : RemoteSpawnArgs = {
+    task: "t",
+    caller_id: "pb.caller",
+    slug: "s1",
+    parent_branch: "pb",
+    ssh_target: "h",
+    repo_url: "u",
+    tcp_addr: "a",
+    parent_session_id: None,
+  }
+  let got = interpret_spawn_remote(
+    spawn_args, mock_runner_all_ok, mock_capture_empty,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      assert_eq(map.get("agent_id"), Some(String::to_json("pb.s1")))
+      assert_eq(map.get("slug"), Some(String::to_json("s1")))
+      assert_eq(map.get("host"), Some(String::to_json("h")))
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
+async test "interpret_spawn_remote returns err when run_strict fails" {
+  let spawn_args : RemoteSpawnArgs = {
+    task: "t",
+    caller_id: "x",
+    slug: "y",
+    parent_branch: "main",
+    ssh_target: "h",
+    repo_url: "u",
+    tcp_addr: "a",
+    parent_session_id: None,
+  }
+  let got = interpret_spawn_remote(
+    spawn_args, mock_runner_first_fails, mock_capture_empty,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("failed") || msg.contains("status"))
+    _ => fail("expected err from run_strict")
+  }
+}

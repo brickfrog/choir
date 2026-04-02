@@ -965,41 +965,13 @@ pub async fn dispatch(
         "slug": String::to_json(rescue_args.new_slug),
       })
     }
-    ToolRequest::SpawnRemote(spawn_args) => {
-      let spec = @types.SpawnSpec::{
-        slug: spawn_args.slug,
-        role: @types.Role::Dev,
-        agent_type: @types.AgentType::Claude,
-        task: spawn_args.task,
-        isolation: @types.IsolationMode::Worktree,
-        parent_id: spawn_args.caller_id,
-        parent_branch: spawn_args.parent_branch,
-        reuse_workspace: false,
-        workspace_slug: None,
-        reuse_git_branch: None,
-        spawn_depth: 0,
-      }
-      let cmds = @workspace.remote_spawn_commands(
-        spec,
-        spawn_args.ssh_target,
-        spawn_args.repo_url,
-        spawn_args.tcp_addr,
-        parent_session_id=spawn_args.parent_session_id,
+    ToolRequest::SpawnRemote(spawn_args) =>
+      interpret_spawn_remote(
+        spawn_args,
+        runner,
+        capture,
         extra_mcp_servers_json~,
       )
-      match run_strict(runner, cmds, capture~) {
-        Ok(_) =>
-          @types.Response::ok_values({
-            "status": String::to_json("spawned"),
-            "agent_id": String::to_json(
-              @workspace.branch_name(spawn_args.parent_branch, spawn_args.slug),
-            ),
-            "slug": String::to_json(spawn_args.slug),
-            "host": String::to_json(spawn_args.ssh_target),
-          })
-        Err(e) => @types.Response::Err(e)
-      }
-    }
     ToolRequest::SpawnWorker(worker_args) =>
       interpret_spawn_worker(
         worker_args,
