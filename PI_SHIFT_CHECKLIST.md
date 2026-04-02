@@ -163,7 +163,7 @@
 - [x] TL can inspect code without editing by default
 - [x] TL can call `fork_wave`
 - [x] TL can receive child notifications
-- [x] TL can wait for review notifications
+- [x] TL can wait for review notifications (poller-driven; Copilot/issue-comment signals are best-effort — see root `README.md`)
 - [x] TL can call `merge_pr`
 
 ### Exit criteria
