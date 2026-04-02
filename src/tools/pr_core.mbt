@@ -672,18 +672,19 @@ pub fn fork_wave_child_spawn_depth(
 
 ///|
 /// Map `interpret fork_wave_plan` result to the tool response. On
-/// [`ForkWaveError::CommandFailed`], re-captures stderr for the failing command.
+/// [`ForkWaveError::CommandFailed`], re-runs capture on the failing command
+/// (typically merged stdout/stderr via `capture_command_output`, not stderr-only).
 /// Preserves exact `ToolRequest::ForkWave` strings.
 pub async fn fork_wave_response_from_interpret_result(
   interpret_result : Result[@types.Response, ForkWaveError],
-  capture : async (@workspace.Command) -> (Int, String),
+  capture_output : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
   match interpret_result {
     Ok(r) => r
     Err(CommandFailed(status~, failing_cmd~)) => {
       let detail = match failing_cmd {
         Some(cmd) => {
-          let (_, output) = capture(cmd)
+          let (_, output) = capture_output(cmd)
           output.trim().to_string()
         }
         None => ""
@@ -701,9 +702,11 @@ pub async fn fork_wave_response_from_interpret_result(
 }
 
 ///|
-/// Pre-spawn orchestration for `fork_wave`: parent-branch defaulting, caller
-/// spawn-depth resolution, spawn plan, scaffold gate + spawn via `interpret`,
-/// and spawn failure response mapping. Post-spawn is [`interpret_fork_wave_post_spawn`].
+/// Single entry point (from dispatch) for `fork_wave` pre-spawn / effect-phase
+/// wiring: parent-branch defaulting, caller spawn-depth resolution, spawn plan,
+/// scaffold gate + spawn via `interpret`, and spawn failure response mapping.
+/// The `capture` injectable is shared for default-branch detection and for
+/// re-capture on spawn failure. Post-spawn is [`interpret_fork_wave_post_spawn`].
 pub async fn interpret_fork_wave_spawn_effect_phase(
   fork_wave_args : ForkWaveArgs,
   project_dir : String,
