@@ -5,9 +5,15 @@ English | [简体中文](README.zh.md)
 A local agent orchestrator built in MoonBit. Use your expensive subscription
 to think (Claude as team lead), and cheaper or specialized subscriptions to
 implement (Gemini, Codex, Moon Pilot, Cursor Agent as leaf agents). Each leaf works in its
-own git worktree, files a PR targeting the TL's branch when done, and receives
-GitHub Copilot review feedback automatically via a built-in poller. The TL
-merges approved PRs and can fork further waves — or file its own PR upward.
+own git worktree and files a PR targeting the TL's branch when done. A built-in
+poller tracks the PR on GitHub: it posts `@copilot review` as an issue comment
+to request Copilot review, watches for **Copilot issue comments** and review/CI state, and
+notifies the TL and leaf with actionable summaries. Copilot is **not** a
+guaranteed signal: comment-triggered review can flake, so after a review-wait
+timeout Choir may escalate when its snapshot still shows no PR review, and the TL
+may need to use GitHub **Request review** or inspect the PR manually. The TL
+merges when policy and snapshot gates align — or forks further waves / files its
+own PR upward.
 
 ```
 choir init
@@ -17,8 +23,8 @@ choir init
       │  2. fork_wave ──▶ Leaf A ──file_pr──▶ PR → TL branch
       │              ──▶ Leaf B ──file_pr──▶ PR → TL branch
       │                     │
-      │        Poller ◀─ Copilot review ──▶ Leaf (fix)
-      │        Poller ──▶ TL (merge when approved)
+      │        Poller ◀─ review/CI/issue comments ──▶ Leaf (fix)
+      │        Poller ──▶ TL (merge per policy + snapshot)
       │  3. WaveComplete → fork_wave again (wave 2) or file own PR up
       │
       └── optional: fork_wave(role=tl) ──▶ Sub-TL
@@ -228,9 +234,9 @@ flowchart TD
   L1 -->|"file_pr → TL branch"| GH
   L2 -->|"file_pr → TL branch"| GH
 
-  GH -->|Copilot review| Poller
-  Poller -->|"CHANGES_REQUESTED\n→ leaf + TL"| L1
-  Poller -->|"APPROVED\n→ TL"| TL
+  GH -->|PR state, reviews, Copilot issue comments| Poller
+  Poller -->|"changes / actionable TLDecision\n→ leaf + TL"| L1
+  Poller -->|"merge gate + policy\n→ TL"| TL
 
   L1 -->|"notify_parent (auto)"| TL
   TL -->|merge_pr| GH
@@ -345,7 +351,7 @@ gate checks + spawn commands) interpreted by an async trampoline. The plan
 is pure data; no IO runs until `interpret` is called. Tests walk the tree
 directly without mocks or async infrastructure.
 
-Extending that pattern across the rest of dispatch, server handling, and recovery (a hard effect boundary between pure orchestration and host I/O) is **still in progress**; see the Architecture boundary audit in `PI_NORTH_STAR.md`.
+Extending that pattern across remaining dispatch arms, server handling, and recovery (a hard effect boundary between pure orchestration and host I/O) is **still in progress**; several workflow paths now use shared planning (for example TL decision summaries in the poller). See the Architecture boundary audit in `PI_NORTH_STAR.md`.
 
 ## Status
 
