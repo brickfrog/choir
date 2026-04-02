@@ -17,6 +17,26 @@ test "PaneWatcher::new" {
 }
 
 ///|
+test "PaneWatcher::with_host routes subscribe and cleanup through injected host" {
+  let host : PaneWatchHost = {
+    spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 99 },
+    kill_pid_best_effort: fn(_pid) { () },
+    delete_file_sync: fn(_path) { () },
+    read_file: fn(_path) { "{\"event\":\"pane_update\",\"viewport\":[\"hi\"]}" },
+  }
+  let pw = PaneWatcher::with_host(host)
+  let target = @types.LocalTarget::{
+    kind: @types.TargetKind::ZellijTab,
+    session: "sess",
+    name: "tab1",
+  }
+  pw.watch_pane("agent-x", target, 0L)
+  assert_eq(pw.subscribe_pids.get("agent-x"), Some(99))
+  pw.stop_subscribe("agent-x")
+  assert_eq(pw.subscribe_pids.get("agent-x"), None)
+}
+
+///|
 test "extract_viewport_text parses viewport array" {
   let j = "{\"event\":\"pane_update\",\"viewport\":[\"line one\",\"line two\"]}"
   assert_eq(extract_viewport_text(j), "line one\nline two\n")

@@ -21,13 +21,42 @@ pub(all) struct LocalAgentSnapshot {
 } derive(Show)
 
 ///|
-pub(all) struct RecoverySnapshot {
-  zellij_live : ZellijLiveTargets
+/// Live zellij tab/pane names used to decide whether agent terminal targets are still attached.
+pub(all) struct RecoveryPanesSnapshot {
+  live : ZellijLiveTargets
+} derive(Show)
+
+///|
+/// GitHub review/CI row for a PR, collected by the host before reconciliation (replaces inline `gh_poll` in planning).
+pub(all) struct RecoveryPrPollRow {
+  review : @poller.ReviewState
+  sha : String
+  ci_rollup : @poller.CiRollupStatus
+  review_bodies : String
+  copilot_issue_comment_seen : Bool
+} derive(Show, Eq)
+
+///|
+pub(all) struct RecoveryPrsSnapshot {
   open_prs : Array[OpenPR]
+  /// Entries for open PRs that need fresh GitHub state (no matching persisted track row, and a reconcilable local agent).
+  polls : Map[Int, RecoveryPrPollRow]
+}
+
+///|
+pub(all) struct RecoveryFilesSnapshot {
   local_agents : Array[LocalAgentSnapshot]
   persisted_tracked_prs : Array[@poller.TrackedPR]
-  recovered_at : Int64
 } derive(Show)
+
+///|
+/// Fully materialized recovery input: host adapters populate each snapshot; `plan_recovery` stays pure.
+pub(all) struct RecoveryReconcileInput {
+  panes : RecoveryPanesSnapshot
+  prs : RecoveryPrsSnapshot
+  files : RecoveryFilesSnapshot
+  recovered_at : Int64
+}
 
 ///|
 pub(all) enum RecoveryAction {
@@ -516,31 +545,17 @@ fn find_registered_agent_for_branch_in_list(
 }
 
 ///|
-pub async fn plan_recovery(
+fn build_agent_recovery_actions(
   session : String,
-  snapshot : RecoverySnapshot,
-  gh_poll : async (Int, Bool) -> (
-    Bool,
-    @poller.ReviewState,
-    String,
-    @poller.CiRollupStatus,
-    String,
-    Bool,
-    Bool,
-  ),
-) -> RecoveryPlan {
+  live : ZellijLiveTargets,
+  local_agents : Array[LocalAgentSnapshot],
+) -> (Array[@types.Agent], Array[RecoveryAction]) {
   let actions = []
   let recovered_agents = []
-
-  // 1. Local agents
-  for local_agent in snapshot.local_agents {
+  for local_agent in local_agents {
     match local_agent.agent {
       Some(agent) => {
-        let alive = is_local_target_alive(
-          agent.terminal_target,
-          session,
-          snapshot.zellij_live,
-        )
+        let alive = is_local_target_alive(agent.terminal_target, session, live)
         let recovered = if alive {
           agent
         } else {
@@ -559,11 +574,24 @@ pub async fn plan_recovery(
       None => ()
     }
   }
+  (recovered_agents, actions)
+}
+
+///|
+pub fn plan_recovery(
+  session : String,
+  input : RecoveryReconcileInput,
+) -> RecoveryPlan {
+  let (recovered_agents, actions) = build_agent_recovery_actions(
+    session,
+    input.panes.live,
+    input.files.local_agents,
+  )
 
   // 2. Open PRs
-  for pr in snapshot.open_prs {
+  for pr in input.prs.open_prs {
     let restored = find_persisted_tracked_pr(
-      snapshot.persisted_tracked_prs,
+      input.files.persisted_tracked_prs,
       pr.pr_number,
       pr.branch,
     )
@@ -593,37 +621,37 @@ pub async fn plan_recovery(
               ),
             )
           }
-          None => {
-            let (_, review, sha, ci_rollup, review_bodies, _, copilot_seen) = gh_poll(
-              pr.pr_number,
-              false,
-            )
-            actions.push(
-              RecoveryAction::TrackNewPR(
-                pr_number=pr.pr_number,
-                agent_id=agent.agent_id.to_string(),
-                branch=pr.branch,
-                parent_branch=pr.base,
-                pr_url=pr.url,
-                review~,
-                review_bodies~,
-                sha~,
-                ci_rollup~,
-                copilot_issue_comment_seen=copilot_seen,
-                created_at=match pr.created_sec {
-                  Some(created_sec) => created_sec
-                  None => snapshot.recovered_at
-                },
-              ),
-            )
-            actions.push(
-              RecoveryAction::SyncLifecycle(
-                agent_id=agent.agent_id.to_string(),
-                pr~,
-                review~,
-              ),
-            )
-          }
+          None =>
+            match input.prs.polls.get(pr.pr_number) {
+              Some(row) => {
+                actions.push(
+                  RecoveryAction::TrackNewPR(
+                    pr_number=pr.pr_number,
+                    agent_id=agent.agent_id.to_string(),
+                    branch=pr.branch,
+                    parent_branch=pr.base,
+                    pr_url=pr.url,
+                    review=row.review,
+                    review_bodies=row.review_bodies,
+                    sha=row.sha,
+                    ci_rollup=row.ci_rollup,
+                    copilot_issue_comment_seen=row.copilot_issue_comment_seen,
+                    created_at=match pr.created_sec {
+                      Some(created_sec) => created_sec
+                      None => input.recovered_at
+                    },
+                  ),
+                )
+                actions.push(
+                  RecoveryAction::SyncLifecycle(
+                    agent_id=agent.agent_id.to_string(),
+                    pr~,
+                    review=row.review,
+                  ),
+                )
+              }
+              None => ()
+            }
         }
       None => ()
     }
@@ -633,12 +661,12 @@ pub async fn plan_recovery(
 }
 
 ///|
-pub async fn discover_recovery_snapshot(
+pub async fn discover_recovery_input(
   provider : RecoveryProvider,
   project_dir : String,
   session : String,
-) -> RecoverySnapshot {
-  let zellij_live = (provider.zellij_live)(project_dir, session)
+) -> RecoveryReconcileInput {
+  let live = (provider.zellij_live)(project_dir, session)
   let open_prs = (provider.open_prs)(project_dir)
   let persisted_tracked_prs = (provider.read_poller_state)(project_dir)
   let local_agents = []
@@ -654,12 +682,44 @@ pub async fn discover_recovery_snapshot(
       local_agents.push(LocalAgentSnapshot::{ slug, dir_name, agent })
     }
   }
+  let (recovered_preview, _) = build_agent_recovery_actions(
+    session, live, local_agents,
+  )
+  let polls : Map[Int, RecoveryPrPollRow] = Map::new()
+  for pr in open_prs {
+    match
+      find_persisted_tracked_pr(persisted_tracked_prs, pr.pr_number, pr.branch) {
+      Some(_) => ()
+      None =>
+        match
+          find_registered_agent_for_branch_in_list(
+            recovered_preview,
+            pr.branch,
+            preferred_agent_id=None,
+          ) {
+          Some(_) => {
+            let (_, review, sha, ci_rollup, review_bodies, _, copilot_seen) = (provider.gh_poll_pr)(
+              pr.pr_number,
+              false,
+            )
+            polls.set(pr.pr_number, {
+              review,
+              sha,
+              ci_rollup,
+              review_bodies,
+              copilot_issue_comment_seen: copilot_seen,
+            })
+          }
+          None => ()
+        }
+    }
+  }
+  let recovered_at = @poller.now_sec()
   {
-    zellij_live,
-    open_prs,
-    local_agents,
-    persisted_tracked_prs,
-    recovered_at: @poller.now_sec(),
+    panes: { live, },
+    prs: { open_prs, polls },
+    files: { local_agents, persisted_tracked_prs },
+    recovered_at,
   }
 }
 
