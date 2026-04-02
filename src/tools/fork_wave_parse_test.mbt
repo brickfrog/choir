@@ -38,3 +38,18 @@ test "parse_fork_wave_args rejects invalid role" {
   })
   assert_true(@tools.parse_fork_wave_args(".", args) is Err(_))
 }
+
+///|
+test "parse_fork_wave_args captures review_context" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "review_context": " plan/interpret split ",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.review_context, Some("plan/interpret split"))
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}

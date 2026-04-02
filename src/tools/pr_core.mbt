@@ -4,6 +4,7 @@ pub(all) struct FilePrPlanResult {
   tracked_pr : @poller.TrackedPR?
   dev_event : @phase.DevEvent
   notify_message : String
+  review_context : String?
 }
 
 ///|
@@ -16,6 +17,7 @@ pub(all) struct FilePrPostSuccessEffects {
   dev_event : @phase.DevEvent
   notify_message_for_parent : String?
   response : @types.Response
+  review_context : String?
 }
 
 ///|
@@ -38,6 +40,7 @@ pub fn file_pr_post_success_effects(
     dev_event: plan.dev_event,
     notify_message_for_parent,
     response: plan.response,
+    review_context: plan.review_context,
   }
 }
 
@@ -84,7 +87,13 @@ pub fn file_pr_plan(
     "pr_url": String::to_json(pr.url),
     "tracked": Bool::to_json(tracked),
   })
-  { response, tracked_pr, dev_event, notify_message }
+  {
+    response,
+    tracked_pr,
+    dev_event,
+    notify_message,
+    review_context: args.review_context,
+  }
 }
 
 ///|
@@ -140,6 +149,32 @@ pub fn file_pr_auto_notify_delivery_failed_log_append(error : String) -> String 
 /// GitHub Copilot reviewer handle for `gh pr edit --add-reviewer` (CLI resolves to
 /// `copilot-pull-request-reviewer[bot]`).
 pub let file_pr_copilot_reviewer_handle : String = "@copilot"
+
+///|
+/// Prefix for the PR issue comment that nudges Copilot review with caller-supplied context.
+pub let file_pr_copilot_review_comment_prefix : String = "@copilot review: "
+
+///|
+pub fn file_pr_copilot_review_comment_body(
+  review_context_trimmed : String,
+) -> String {
+  file_pr_copilot_review_comment_prefix + review_context_trimmed
+}
+
+///|
+/// `gh pr comment` body for Copilot review context ([`interpret_file_pr_post_success`] when
+/// `pr_review` and non-empty [`FilePrPostSuccessEffects::review_context`]).
+pub fn file_pr_copilot_review_comment_gh_command(
+  pr_number : Int,
+  review_context_trimmed : String,
+  gh_workdir : String,
+) -> @workspace.Command {
+  @workspace.gh_pr_comment(
+    pr_number,
+    file_pr_copilot_review_comment_body(review_context_trimmed),
+    gh_workdir,
+  )
+}
 
 ///|
 /// `gh pr edit --add-reviewer @copilot` when [`interpret_file_pr_post_success`] runs with
@@ -237,6 +272,58 @@ pub async fn interpret_file_pr_post_success(
     _ => ()
   }
   if pr_review {
+    match effects.review_context {
+      Some(ctx) => {
+        let comment_cmd = file_pr_copilot_review_comment_gh_command(
+          pr_number, ctx, file_pr_workdir,
+        )
+        let mut spawn_err_comment : String? = None
+        let codes_comment = runner([comment_cmd]) catch {
+          e => {
+            spawn_err_comment = Some(e.to_string())
+            []
+          }
+        }
+        let ok_comment = spawn_err_comment is None &&
+          codes_comment.length() > 0 &&
+          codes_comment[0] == 0
+        if !ok_comment {
+          let exit_json_c = if codes_comment.length() > 0 {
+            codes_comment[0].to_json()
+          } else {
+            "none".to_json()
+          }
+          let fields = match spawn_err_comment {
+            Some(err) =>
+              @moontrace.fields([
+                ("pr_number", pr_number.to_json()),
+                ("exit", exit_json_c),
+                ("error", err.to_json()),
+              ])
+            None =>
+              @moontrace.fields([
+                ("pr_number", pr_number.to_json()),
+                ("exit", exit_json_c),
+              ])
+          }
+          @moontrace.warn("file_pr copilot review comment failed", fields~)
+          let err_part_c = match spawn_err_comment {
+            Some(err) => " error=" + err
+            None => ""
+          }
+          ignore(
+            @sys.append_file_sync(
+              delivery_log_path,
+              "[file_pr] copilot_review_comment failed pr=" +
+              pr_number.to_string() +
+              err_part_c +
+              "\n",
+            ),
+          )
+        }
+      }
+      None => ()
+    }
     let cmd = file_pr_copilot_reviewer_gh_command(pr_number, file_pr_workdir)
     let mut spawn_err : String? = None
     let codes = runner([cmd]) catch {
@@ -586,6 +673,25 @@ pub(all) struct ForkWaveSpawnPlan {
 }
 
 ///|
+/// When `fork_wave` passes `review_context`, append a stable section so leaves can reuse it for `file_pr`.
+pub fn fork_wave_leaf_task_with_review_context(
+  base_task : String,
+  review_context : String?,
+) -> String {
+  match review_context {
+    None => base_task
+    Some(rc) => {
+      let t = rc.trim().to_string()
+      if t == "" {
+        base_task
+      } else {
+        base_task + "\n\n## CHOIR_REVIEW_CONTEXT\n" + t + "\n"
+      }
+    }
+  }
+}
+
+///|
 /// Build [`ForkWaveSpawnPlan`] from resolved tool args and `child_spawn_depth`.
 /// Uses `slugify_task` for per-leaf slugs; behavior matches the historical
 /// `ToolRequest::ForkWave` inline loop in `dispatch`.
@@ -652,11 +758,15 @@ pub fn fork_wave_spawn_plan(
     agent_ids.write_string(agent_id)
     spawned_count = spawned_count + 1
     spawned_slugs.push(slug)
+    let leaf_task = fork_wave_leaf_task_with_review_context(
+      fork_wave_args.tasks[i],
+      fork_wave_args.review_context,
+    )
     let spec = @types.SpawnSpec::{
       slug,
       role: fork_wave_args.child_role,
       agent_type: fork_wave_args.agent_type,
-      task: fork_wave_args.tasks[i],
+      task: leaf_task,
       isolation: @types.IsolationMode::Worktree,
       parent_id: fork_wave_args.caller_id,
       parent_branch: fork_wave_args.parent_branch,
