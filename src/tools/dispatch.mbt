@@ -513,40 +513,17 @@ pub async fn dispatch(
           None => ()
         }
       }
-      let mutex_name = "branch:" + merge_args.parent_branch
-      match mutex_registry {
-        Some(reg) => {
-          let now = @poller.now_sec()
-          let (acquired, _) = reg.acquire(
-            mutex_name,
-            merge_args.caller_id,
-            120L,
-            now,
-          )
-          if !acquired {
-            ignore(reg.release(mutex_name, merge_args.caller_id))
-            return @types.Response::Err(
-              "merge serialization lock held by another agent, retry shortly",
-            )
-          }
-        }
-        None => ()
-      }
-      let cmds = merge_pr_commands(merge_args.pr_number)
-      let merge_result = run_strict(runner, cmds, capture~)
-      match mutex_registry {
-        Some(reg) => ignore(reg.release(mutex_name, merge_args.caller_id))
-        None => ()
-      }
-      match merge_result {
-        Err(_) => {
-          // Re-run merge command with output capture for detailed error
-          let (_, output) = capture(merge_pr_command(merge_args.pr_number))
-          let trimmed = output.trim().to_string()
-          return @types.Response::Err(
-            merge_pr_merge_failure_message(merge_args.pr_number, trimmed),
-          )
-        }
+      match
+        interpret_merge_pr_merge_host(
+          merge_args.parent_branch,
+          merge_args.pr_number,
+          merge_args.caller_id,
+          mutex_registry,
+          @poller.now_sec(),
+          runner,
+          capture,
+        ) {
+        Err(e) => return @types.Response::Err(e)
         Ok(_) => ()
       }
       let tracked_branch = match poller_state {

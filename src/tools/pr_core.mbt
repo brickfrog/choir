@@ -311,3 +311,75 @@ pub fn merge_pr_post_success_plan(
     response: @types.Response::ok_values({ "status": String::to_json("merged") }),
   }
 }
+
+///|
+/// Mutex key for per-parent-branch merge serialization (matches prior inline
+/// `merge_pr` behavior).
+pub fn merge_pr_mutex_name(parent_branch : String) -> String {
+  "branch:" + parent_branch
+}
+
+///|
+/// TTL passed to `MutexRegistry::acquire` for merge serialization.
+pub let merge_pr_mutex_ttl_sec : Int64 = 120L
+
+///|
+pub fn merge_pr_serialization_busy_message() -> String {
+  "merge serialization lock held by another agent, retry shortly"
+}
+
+///|
+/// Ordered host steps for `merge_pr` after preflight: `gh pr merge` then
+/// `git fetch` (see `merge_pr_commands` in `pr.mbt`).
+pub(all) enum MergePrHostStep {
+  GhPrMerge
+  GitFetch
+} derive(Eq, Show)
+
+///|
+pub fn merge_pr_host_step_sequence() -> Array[MergePrHostStep] {
+  [MergePrHostStep::GhPrMerge, MergePrHostStep::GitFetch]
+}
+
+///|
+/// Mutex bracket + strict command run + failure capture/mapping. Preserves the
+/// historical sequence: acquire (optional) → `run_strict(merge_pr_commands)` →
+/// release → on `run_strict` failure, ignore its string and derive the user
+/// error from a fresh `capture(merge_pr_command)` only.
+pub async fn interpret_merge_pr_merge_host(
+  parent_branch : String,
+  pr_number : Int,
+  caller_id : String,
+  mutex_registry : @registry.MutexRegistry?,
+  now_sec : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[Unit, String] {
+  let mutex_name = merge_pr_mutex_name(parent_branch)
+  match mutex_registry {
+    Some(reg) => {
+      let (acquired, _) = reg.acquire(
+        mutex_name, caller_id, merge_pr_mutex_ttl_sec, now_sec,
+      )
+      if !acquired {
+        ignore(reg.release(mutex_name, caller_id))
+        return Err(merge_pr_serialization_busy_message())
+      }
+    }
+    None => ()
+  }
+  let cmds = merge_pr_commands(pr_number)
+  let merge_result = run_strict(runner, cmds, capture~)
+  match mutex_registry {
+    Some(reg) => ignore(reg.release(mutex_name, caller_id))
+    None => ()
+  }
+  match merge_result {
+    Err(_) => {
+      let (_, output) = capture(merge_pr_command(pr_number))
+      let trimmed = output.trim().to_string()
+      Err(merge_pr_merge_failure_message(pr_number, trimmed))
+    }
+    Ok(_) => Ok(())
+  }
+}
