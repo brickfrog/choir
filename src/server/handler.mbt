@@ -457,11 +457,16 @@ fn parent_poll_tl_decision_suffix(
   event : @poller.PollEvent,
   unresolved_threads_for_recheck : Int?,
 ) -> String {
-  let plan = @poller.plan_tl_poll_event_parent(
-    event, tracked, unresolved_threads_for_recheck,
-  )
-  "\nTLDecision: " +
-  @poller.tl_tracked_pr_workflow_category_sentence(plan.category)
+  match event {
+    PRMerged(_) => ""
+    _ =>
+      "\nTLDecision: " +
+      @poller.tl_tracked_pr_workflow_category_sentence(
+        @poller.plan_tl_poll_event_parent(
+          event, tracked, unresolved_threads_for_recheck,
+        ),
+      )
+  }
 }
 
 ///|
@@ -1988,11 +1993,11 @@ test "parent_poll_event_message PR READY stresses not merged" {
     last_review_bodies: "",
     last_sha: "",
     notified_parent: false,
-    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
   }
   match
-    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), Some(0)) {
+    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), None) {
     Some((message, status)) => {
       assert_eq(status, "success")
       assert_true(message.contains("[PR READY]"))
@@ -2000,9 +2005,38 @@ test "parent_poll_event_message PR READY stresses not merged" {
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("[PR MERGED]"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Merge gate open on Choir snapshot"))
+      assert_true(message.contains("Waiting on approving review"))
     }
     None => fail("expected PRReady message")
+  }
+}
+
+///|
+test "parent_poll_event_message PR READY shows merge gate when snapshot allows" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 70,
+    agent_id: "main.dev-a",
+    branch: "work/a",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/70",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(70), Some(0)) {
+    Some((message, status)) => {
+      assert_eq(status, "success")
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Merge gate open on Choir snapshot"))
+    }
+    None => fail("expected merge-gate-open PRReady message")
   }
 }
 
@@ -2074,7 +2108,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
       assert_true(message.contains("changes_requested"))
       assert_true(message.contains("GitHub review requests changes"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("TL re-check required"))
+      assert_true(message.contains("Blocked on review changes"))
     }
     None => fail("expected CIFailureCleared message")
   }
@@ -2144,6 +2178,8 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
       assert_true(message.contains("success"))
       assert_true(message.contains("no tracked blockers"))
       assert_true(message.contains("Does not merge"))
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Merge gate open on Choir snapshot"))
     }
     None => fail("expected CILatestHeadRollupSucceeded message")
   }
@@ -2334,4 +2370,95 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
   )
 
   assert_true(injected_failure_msg)
+}
+
+///|
+test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 61,
+    agent_id: "main.dev-timeout",
+    branch: "work/timeout",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/61",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      @poller.PollEvent::ReviewTimeout(61),
+      None,
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, "failure")
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Attention required: review timed out"))
+    }
+    None => fail("expected ReviewTimeout message")
+  }
+}
+
+///|
+test "parent_poll_event_message CI FAILED uses attention-required decision" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 62,
+    agent_id: "main.dev-ci",
+    branch: "work/ci",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/62",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Failure,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::CIFailed(62), None) {
+    Some((message, status)) => {
+      assert_eq(status, "failure")
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Attention required: CI is failing"))
+    }
+    None => fail("expected CIFailed message")
+  }
+}
+
+///|
+test "parent_poll_event_message PRMerged does not append TLDecision suffix" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 63,
+    agent_id: "main.dev-merged",
+    branch: "work/merged",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/63",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::PRMerged(63), Some(0)) {
+    Some((message, status)) => {
+      assert_eq(status, "success")
+      assert_false(message.contains("TLDecision:"))
+      assert_true(message.contains("leaf will shut down automatically"))
+    }
+    None => fail("expected PRMerged message")
+  }
 }

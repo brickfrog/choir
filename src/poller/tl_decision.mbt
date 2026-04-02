@@ -3,6 +3,8 @@
 /// poller snapshot (and optional unresolved thread count when fetched).
 pub(all) enum TlTrackedPrWorkflowCategory {
   BlockedOnChanges
+  AttentionRequiredReviewTimeout
+  AttentionRequiredCIFailed
   WaitingOnReviewOrCI
   ReadyForTLRecheck
   MergeGateOpenPendingPolicyConfirmation
@@ -30,6 +32,20 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
 }
 
 ///|
+fn tl_snapshot_workflow_category(
+  tracked : TrackedPR,
+  merge_ready : Bool,
+) -> TlTrackedPrWorkflowCategory {
+  if tracked.last_review_state == ChangesRequested {
+    return BlockedOnChanges
+  }
+  if merge_ready {
+    return MergeGateOpenPendingPolicyConfirmation
+  }
+  WaitingOnReviewOrCI
+}
+
+///|
 /// Classify the snapshot when no specific poll event lens applies (e.g. generic
 /// triage). `ChangesRequested` is always blocked; a satisfied merge gate is a
 /// distinct category; otherwise wait on review/CI/thread data.
@@ -37,13 +53,10 @@ pub fn tl_classify_tracked_pr_workflow(
   tracked : TrackedPR,
   unresolved_threads : Int?,
 ) -> TlTrackedPrWorkflowCategory {
-  if tracked.last_review_state == ChangesRequested {
-    return BlockedOnChanges
-  }
-  if tl_tracked_pr_merge_gate_snapshot_ready(tracked, unresolved_threads) {
-    return MergeGateOpenPendingPolicyConfirmation
-  }
-  WaitingOnReviewOrCI
+  let merge_ready = tl_tracked_pr_merge_gate_snapshot_ready(
+    tracked, unresolved_threads,
+  )
+  tl_snapshot_workflow_category(tracked, merge_ready)
 }
 
 ///|
@@ -54,6 +67,10 @@ pub fn tl_tracked_pr_workflow_category_sentence(
   match cat {
     BlockedOnChanges =>
       "Blocked on review changes — leaf owns follow-up before merge."
+    AttentionRequiredReviewTimeout =>
+      "Attention required: review timed out — inspect the PR or retrigger review before merge decisions."
+    AttentionRequiredCIFailed =>
+      "Attention required: CI is failing on the latest head — do not merge until the failure is understood or fixed."
     WaitingOnReviewOrCI =>
       "Waiting on approving review, CI, or unresolved threads — do not infer merge from partial snapshot."
     ReadyForTLRecheck =>
@@ -66,14 +83,6 @@ pub fn tl_tracked_pr_workflow_category_sentence(
 }
 
 ///|
-/// Plan for a single parent-facing poller notification: canonical category plus
-/// whether the merge gate is open on snapshot (for next-action hints).
-pub(all) struct TlPollEventParentPlan {
-  category : TlTrackedPrWorkflowCategory
-  merge_gate_snapshot_ready : Bool
-} derive(Show, Eq)
-
-///|
 /// Map a poll event and the current tracked snapshot to the TL decision model.
 /// `unresolved_threads` is the GraphQL unresolved count when fetched for this
 /// delivery (CI re-check events), else `None`.
@@ -81,40 +90,31 @@ pub fn plan_tl_poll_event_parent(
   event : PollEvent,
   tracked : TrackedPR,
   unresolved_threads : Int?,
-) -> TlPollEventParentPlan {
+) -> TlTrackedPrWorkflowCategory {
   let merge_ready = tl_tracked_pr_merge_gate_snapshot_ready(
     tracked, unresolved_threads,
   )
   match event {
-    PRMerged(_) =>
-      { category: ObservedMergedExternal, merge_gate_snapshot_ready: false }
+    PRMerged(_) => ObservedMergedExternal
+    ReviewTimeout(_) => AttentionRequiredReviewTimeout
+    CIFailed(_) => AttentionRequiredCIFailed
     CIFailureCleared(_) | CILatestHeadRollupSucceeded(_) =>
-      { category: ReadyForTLRecheck, merge_gate_snapshot_ready: merge_ready }
-    PRReady(_) =>
       if merge_ready {
-        {
-          category: MergeGateOpenPendingPolicyConfirmation,
-          merge_gate_snapshot_ready: true,
-        }
+        MergeGateOpenPendingPolicyConfirmation
+      } else if tracked.last_review_state == ChangesRequested {
+        BlockedOnChanges
       } else {
-        {
-          category: tl_classify_tracked_pr_workflow(tracked, unresolved_threads),
-          merge_gate_snapshot_ready: false,
-        }
+        ReadyForTLRecheck
       }
-    FixesPushed(_) | ReviewTimeout(_) | CIFailed(_) =>
-      { category: WaitingOnReviewOrCI, merge_gate_snapshot_ready: merge_ready }
+    PRReady(_) => tl_snapshot_workflow_category(tracked, merge_ready)
+    FixesPushed(_) => WaitingOnReviewOrCI
     ReviewReceived(_, _) =>
       if tracked.last_review_state == ChangesRequested {
-        { category: BlockedOnChanges, merge_gate_snapshot_ready: merge_ready }
+        BlockedOnChanges
       } else {
-        {
-          category: WaitingOnReviewOrCI,
-          merge_gate_snapshot_ready: merge_ready,
-        }
+        WaitingOnReviewOrCI
       }
-    ReviewCommented(_, _) =>
-      { category: WaitingOnReviewOrCI, merge_gate_snapshot_ready: merge_ready }
+    ReviewCommented(_, _) => WaitingOnReviewOrCI
   }
 }
 
