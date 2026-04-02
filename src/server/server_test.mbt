@@ -327,6 +327,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
   let deliveries = state.plan_poll_event_deliveries(
     @poller.PollEvent::ReviewReceived(55, "need fix"),
     new_id,
+    None,
   )
   let mut parent_review_mentions_replacement = false
   for d in deliveries {
