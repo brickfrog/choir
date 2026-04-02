@@ -10,6 +10,16 @@ pub async fn recover_state(
   input : @runtime.RecoveryReconcileInput,
 ) -> Unit {
   let plan = @runtime.plan_recovery(session, input)
+  if plan.missing_pr_poll_rows.length() > 0 {
+    let parts : Array[String] = []
+    for n in plan.missing_pr_poll_rows {
+      parts.push(n.to_string())
+    }
+    @moontrace.warn(
+      "recovery reconcile skipped TrackNewPR: missing gh poll snapshot rows",
+      fields=@moontrace.fields([("pr_numbers", parts.join(",").to_json())]),
+    )
+  }
 
   for action in plan.actions {
     match action {
@@ -122,6 +132,10 @@ async test "discover_recovery_input with mock provider" {
     }
     None => fail("expected PR poll row for open PR without persisted tracking")
   }
+  match input.prebuilt_agent_phase {
+    Some(_) => ()
+    None => fail("discover_recovery_input should include prebuilt agent phase")
+  }
 }
 
 ///|
@@ -174,6 +188,7 @@ test "plan_recovery reconciles local agents and open PRs" {
       persisted_tracked_prs: [],
     },
     recovered_at: 2000L,
+    prebuilt_agent_phase: None,
   }
 
   let plan = @runtime.plan_recovery("session", input)
@@ -183,6 +198,7 @@ test "plan_recovery reconciles local agents and open PRs" {
   // 2. TrackNewPR(123, slug1, ...)
   // 3. SyncLifecycle(slug1, ...)
 
+  assert_eq(plan.missing_pr_poll_rows.length(), 0)
   let actions = plan.actions
   assert_eq(actions.length(), 3)
 
@@ -207,6 +223,60 @@ test "plan_recovery reconciles local agents and open PRs" {
     @runtime.RecoveryAction::SyncLifecycle(agent_id~, ..) =>
       assert_eq(agent_id, "slug1")
     _ => fail("expected SyncLifecycle")
+  }
+}
+
+///|
+test "plan_recovery records missing PR poll rows when TrackNewPR snapshot is absent" {
+  let input : @runtime.RecoveryReconcileInput = {
+    panes: { live: { tabs: ["tab1"], panes: [] } },
+    prs: {
+      open_prs: [
+        {
+          pr_number: 123,
+          branch: "feat/x",
+          base: "main",
+          url: "https://gh.test/123",
+          created_sec: Some(1000L),
+        },
+      ],
+      polls: Map::new(),
+    },
+    files: {
+      local_agents: [
+        {
+          slug: "slug1",
+          dir_name: "worktrees",
+          agent: Some({
+            agent_id: @types.AgentId("slug1"),
+            role: @types.Role::Dev,
+            agent_type: @types.AgentType::Pi,
+            parent: None,
+            workspace: "/tmp/w",
+            branch: "feat/x",
+            terminal_target: Some({
+              kind: @types.TargetKind::ZellijTab,
+              session: "session",
+              name: "tab1",
+            }),
+            host: @types.Host::Local,
+            spawn_depth: 0,
+            state: @types.AgentState::Active,
+          }),
+        },
+      ],
+      persisted_tracked_prs: [],
+    },
+    recovered_at: 2000L,
+    prebuilt_agent_phase: None,
+  }
+  let plan = @runtime.plan_recovery("session", input)
+  assert_eq(plan.actions.length(), 1)
+  assert_eq(plan.missing_pr_poll_rows.length(), 1)
+  assert_eq(plan.missing_pr_poll_rows[0], 123)
+  match plan.actions[0] {
+    @runtime.RecoveryAction::RegisterAgent(_, _) => ()
+    _ => fail("expected only RegisterAgent when poll row missing")
   }
 }
 
@@ -270,6 +340,7 @@ test "plan_recovery handles offline agent and persisted PR" {
       ],
     },
     recovered_at: 4000L,
+    prebuilt_agent_phase: None,
   }
 
   let plan = @runtime.plan_recovery("session", input)
@@ -280,6 +351,7 @@ test "plan_recovery handles offline agent and persisted PR" {
   // 3. RestorePRTracking(456, slug-off, ...)
   // 4. SyncLifecycle(slug-off, ...)
 
+  assert_eq(plan.missing_pr_poll_rows.length(), 0)
   let actions = plan.actions
   assert_eq(actions.length(), 4)
 

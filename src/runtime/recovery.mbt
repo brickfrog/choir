@@ -50,15 +50,6 @@ pub(all) struct RecoveryFilesSnapshot {
 } derive(Show)
 
 ///|
-/// Fully materialized recovery input: host adapters populate each snapshot; `plan_recovery` stays pure.
-pub(all) struct RecoveryReconcileInput {
-  panes : RecoveryPanesSnapshot
-  prs : RecoveryPrsSnapshot
-  files : RecoveryFilesSnapshot
-  recovered_at : Int64
-} derive(Show)
-
-///|
 pub(all) enum RecoveryAction {
   RegisterAgent(@types.Agent, Bool)
   RestorePRTracking(@poller.TrackedPR)
@@ -80,8 +71,28 @@ pub(all) enum RecoveryAction {
 } derive(Show)
 
 ///|
+/// Result of one [`build_agent_recovery_actions`] pass; [`discover_recovery_input`] stores it so [`plan_recovery`] does not repeat that work.
+pub(all) struct PrebuiltAgentPhase {
+  recovered_agents : Array[@types.Agent]
+  agent_stage_actions : Array[RecoveryAction]
+} derive(Show)
+
+///|
+/// Fully materialized recovery input: host adapters populate each snapshot; `plan_recovery` stays pure.
+pub(all) struct RecoveryReconcileInput {
+  panes : RecoveryPanesSnapshot
+  prs : RecoveryPrsSnapshot
+  files : RecoveryFilesSnapshot
+  recovered_at : Int64
+  /// `Some` when built by [`discover_recovery_input`] (reuses agent phase in [`plan_recovery`]).
+  prebuilt_agent_phase : PrebuiltAgentPhase?
+} derive(Show)
+
+///|
 pub(all) struct RecoveryPlan {
   actions : Array[RecoveryAction]
+  /// Open PRs that matched a local agent, had no persisted track row, but `prs.polls` lacked an entry for `TrackNewPR`.
+  missing_pr_poll_rows : Array[Int]
 } derive(Show)
 
 ///|
@@ -578,15 +589,46 @@ fn build_agent_recovery_actions(
 }
 
 ///|
+/// Maps [`RecoveryProvider::gh_poll_pr`] output into [`RecoveryPrPollRow`].
+/// Ignores `poll_ok` (gh parse / exit quality) and `pr_is_open` (used in full poller, not recovery planning).
+fn recovery_pr_poll_row_from_gh_tuple(
+  tuple : (
+    Bool,
+    @poller.ReviewState,
+    String,
+    @poller.CiRollupStatus,
+    String,
+    Bool,
+    Bool,
+  ),
+) -> RecoveryPrPollRow {
+  let (poll_ok, review, sha, ci_rollup, review_bodies, pr_is_open, copilot_seen) = tuple
+  ignore(poll_ok)
+  ignore(pr_is_open)
+  {
+    review,
+    sha,
+    ci_rollup,
+    review_bodies,
+    copilot_issue_comment_seen: copilot_seen,
+  }
+}
+
+///|
 pub fn plan_recovery(
   session : String,
   input : RecoveryReconcileInput,
 ) -> RecoveryPlan {
-  let (recovered_agents, actions) = build_agent_recovery_actions(
-    session,
-    input.panes.live,
-    input.files.local_agents,
-  )
+  let (recovered_agents, actions) = match input.prebuilt_agent_phase {
+    Some(phase) => (phase.recovered_agents, phase.agent_stage_actions)
+    None =>
+      build_agent_recovery_actions(
+        session,
+        input.panes.live,
+        input.files.local_agents,
+      )
+  }
+  let missing_pr_poll_rows = []
 
   // 2. Open PRs
   for pr in input.prs.open_prs {
@@ -650,20 +692,14 @@ pub fn plan_recovery(
                   ),
                 )
               }
-              // `discover_recovery_input` pre-fetches polls for exactly the set of PRs
-              // where (persisted=None AND agent found). Since `plan_recovery` uses the
-              // same pure `build_agent_recovery_actions` on the same snapshot data, the
-              // agent-lookup result is identical, so this branch is unreachable when
-              // input was built by `discover_recovery_input`. It can occur in tests that
-              // construct `RecoveryReconcileInput` manually with an incomplete polls map.
-              None => ()
+              None => missing_pr_poll_rows.push(pr.pr_number)
             }
         }
       None => ()
     }
   }
 
-  { actions, }
+  { actions, missing_pr_poll_rows }
 }
 
 ///|
@@ -688,9 +724,12 @@ pub async fn discover_recovery_input(
       local_agents.push(LocalAgentSnapshot::{ slug, dir_name, agent })
     }
   }
-  let (recovered_preview, _) = build_agent_recovery_actions(
-    session, live, local_agents,
-  )
+  let prebuilt = build_agent_recovery_actions(session, live, local_agents)
+  let recovered_preview = prebuilt.0
+  let prebuilt_phase : PrebuiltAgentPhase = {
+    recovered_agents: prebuilt.0,
+    agent_stage_actions: prebuilt.1,
+  }
   let polls : Map[Int, RecoveryPrPollRow] = Map::new()
   for pr in open_prs {
     match
@@ -704,18 +743,11 @@ pub async fn discover_recovery_input(
             preferred_agent_id=None,
           ) {
           Some(_) => {
-            // gh_poll_pr returns (poll_ok, review, sha, ci_rollup, review_bodies, is_open, copilot_seen)
-            let (_, review, sha, ci_rollup, review_bodies, _, copilot_seen) = (provider.gh_poll_pr)(
+            let poll_tuple = (provider.gh_poll_pr)(pr.pr_number, false)
+            polls.set(
               pr.pr_number,
-              false,
+              recovery_pr_poll_row_from_gh_tuple(poll_tuple),
             )
-            polls.set(pr.pr_number, {
-              review,
-              sha,
-              ci_rollup,
-              review_bodies,
-              copilot_issue_comment_seen: copilot_seen,
-            })
           }
           None => ()
         }
@@ -727,6 +759,7 @@ pub async fn discover_recovery_input(
     prs: { open_prs, polls },
     files: { local_agents, persisted_tracked_prs },
     recovered_at,
+    prebuilt_agent_phase: Some(prebuilt_phase),
   }
 }
 
