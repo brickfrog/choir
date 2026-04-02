@@ -734,8 +734,10 @@ fn clamp_review_summary_for_pane(body : String) -> String {
 /// Direct review/CI injection for the owning leaf pane (`plan_delivery` adds `[from: …]`).
 /// Parent still receives `parent_poll_event_message` for triage/merge except
 /// `ReviewCommented` (non-blocking thread goes to the leaf only).
+/// `tracked` supplies poller snapshot for CI lines when review-wait timeout escalation applies.
 fn leaf_poll_review_injection_message(
   event : @poller.PollEvent,
+  tracked : @poller.TrackedPR?,
 ) -> (String, String)? {
   match event {
     ReviewReceived(n, body) =>
@@ -768,24 +770,40 @@ fn leaf_poll_review_injection_message(
       )
     CIFailed(n) =>
       Some(("[REVIEW] PR #" + n.to_string() + ": CI checks failing", "failure"))
-    CIFailureCleared(n) =>
-      Some(
-        (
-          "[REVIEW] PR #" +
-          n.to_string() +
-          ": CI no longer reports failure on latest head — verify full status on GitHub (not merge or approval)",
-          "info",
-        ),
-      )
-    CILatestHeadRollupSucceeded(n) =>
-      Some(
-        (
-          "[REVIEW] PR #" +
-          n.to_string() +
-          ": Actions rollup: all checks successful on latest head — re-check review thread and policy (not merge or approval by itself)",
-          "info",
-        ),
-      )
+    CIFailureCleared(n) => {
+      let base = "[REVIEW] PR #" +
+        n.to_string() +
+        ": CI no longer reports failure on latest head — verify full status on GitHub (not merge or approval)"
+      let msg = match tracked {
+        Some(pr) =>
+          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
+            "[REVIEW] PR #" +
+            n.to_string() +
+            ": CI no longer reports failure on latest head — review wait already timed out with no review in snapshot; Copilot comment trigger may be unreliable. Verify GitHub and use Request review if needed (not merge or approval)"
+          } else {
+            base
+          }
+        None => base
+      }
+      Some((msg, "info"))
+    }
+    CILatestHeadRollupSucceeded(n) => {
+      let base = "[REVIEW] PR #" +
+        n.to_string() +
+        ": Actions rollup: all checks successful on latest head — re-check review thread and policy (not merge or approval by itself)"
+      let msg = match tracked {
+        Some(pr) =>
+          if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
+            "[REVIEW] PR #" +
+            n.to_string() +
+            ": Actions rollup all-success on latest head — review wait already timed out with no review in snapshot; Copilot comment may not deliver. Use GitHub Request review or inspect the PR (not merge or approval by itself)"
+          } else {
+            base
+          }
+        None => base
+      }
+      Some((msg, "info"))
+    }
     PRReady(n) =>
       Some(
         (
@@ -898,7 +916,7 @@ pub fn ServerState::plan_poll_event_deliveries(
     Some(agent) =>
       match agent.state {
         @types.AgentState::Active | @types.AgentState::Completing =>
-          match leaf_poll_review_injection_message(event) {
+          match leaf_poll_review_injection_message(event, tracked) {
             Some((message, status)) =>
               deliveries.push(
                 @message.plan_delivery(agent, "poller", message, status),
@@ -2134,7 +2152,10 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
 ///|
 test "leaf_poll_review_injection_message CIFailureCleared is honest about scope" {
   match
-    leaf_poll_review_injection_message(@poller.PollEvent::CIFailureCleared(44)) {
+    leaf_poll_review_injection_message(
+      @poller.PollEvent::CIFailureCleared(44),
+      None,
+    ) {
     Some((message, status)) => {
       assert_eq(status, "info")
       assert_true(message.contains("no longer reports failure"))
@@ -2207,6 +2228,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" 
   match
     leaf_poll_review_injection_message(
       @poller.PollEvent::CILatestHeadRollupSucceeded(171),
+      None,
     ) {
     Some((message, status)) => {
       assert_eq(status, "info")
@@ -2214,6 +2236,40 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" 
       assert_true(message.contains("not merge"))
     }
     None => fail("expected leaf CILatestHeadRollupSucceeded injection")
+  }
+}
+
+///|
+test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates when review timed out with no snapshot review" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 178,
+    agent_id: "main.dev-leaf",
+    branch: "work/leaf",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/178",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::None_,
+    last_review_bodies: "",
+    last_sha: "abc",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 100L,
+  }
+  match
+    leaf_poll_review_injection_message(
+      @poller.PollEvent::CILatestHeadRollupSucceeded(178),
+      Some(tracked),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(message.contains("timed out"))
+      assert_true(message.contains("Copilot"))
+      assert_true(message.contains("Request review"))
+      assert_false(message.contains("re-check review thread and policy"))
+    }
+    None => fail("expected leaf CI escalation injection")
   }
 }
 
