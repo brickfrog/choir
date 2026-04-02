@@ -567,6 +567,25 @@ fn parent_poll_event_message(
           "failure",
         ),
       )
+    CIFailureCleared(n) =>
+      Some(
+        (
+          "[CI FAILURE CLEARED] " +
+          agent_id +
+          " PR #" +
+          n.to_string() +
+          " latest head: rollup no longer reports FAILURE/ERROR (may still be pending or incomplete; not a merge/review verdict)\n" +
+          "branch: " +
+          branch +
+          "\n" +
+          "parent_branch: " +
+          parent_branch.unwrap_or("<unknown>") +
+          pr_url +
+          "\n" +
+          "Next action: re-check the PR thread and full CI status on GitHub before merging or requesting review.",
+          "info",
+        ),
+      )
     PRMerged(n) =>
       Some(
         (
@@ -598,6 +617,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     FixesPushed(n) => n
     ReviewTimeout(n) => n
     CIFailed(n) => n
+    CIFailureCleared(n) => n
     PRMerged(n) => n
   }
 }
@@ -654,6 +674,15 @@ fn leaf_poll_review_injection_message(
       )
     CIFailed(n) =>
       Some(("[REVIEW] PR #" + n.to_string() + ": CI checks failing", "failure"))
+    CIFailureCleared(n) =>
+      Some(
+        (
+          "[REVIEW] PR #" +
+          n.to_string() +
+          ": CI no longer reports failure on latest head — verify full status on GitHub (not merge or approval)",
+          "info",
+        ),
+      )
     PRReady(n) =>
       Some(
         (
@@ -816,6 +845,12 @@ fn pr_comment_body(
           "**Choir:** CI checks failing — routed to `" +
           agent_id +
           "` for fixes.",
+        ),
+      )
+    CIFailureCleared(n) =>
+      Some(
+        (
+          n, "**Choir:** CI rollup no longer shows FAILURE/ERROR on the latest head (may still be pending) — re-check the PR on GitHub (not a merge signal).",
         ),
       )
     FixesPushed(n) =>
@@ -1883,6 +1918,68 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("Pre-merge:"))
     }
     None => fail("expected FixesPushed message")
+  }
+}
+
+///|
+test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 10,
+    agent_id: "main.dev-x",
+    branch: "work/x",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/10",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::ChangesRequested,
+    last_review_bodies: "",
+    last_sha: "abc",
+    notified_parent: false,
+    last_ci_failed: false,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::CIFailureCleared(10)) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(message.contains("[CI FAILURE CLEARED]"))
+      assert_true(message.contains("not a merge/review verdict"))
+      assert_true(message.contains("pending"))
+      assert_true(message.contains("re-check"))
+      assert_false(message.contains("CI PASSED"))
+      assert_false(message.to_lower().contains("green"))
+    }
+    None => fail("expected CIFailureCleared message")
+  }
+}
+
+///|
+test "leaf_poll_review_injection_message CIFailureCleared is honest about scope" {
+  match
+    leaf_poll_review_injection_message(@poller.PollEvent::CIFailureCleared(44)) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(message.contains("no longer reports failure"))
+      assert_true(message.contains("GitHub"))
+      assert_true(message.contains("not merge"))
+      assert_false(message.to_lower().contains("green"))
+    }
+    None => fail("expected leaf CIFailureCleared injection")
+  }
+}
+
+///|
+test "pr_comment_body CIFailureCleared contains pending caveat and no merge signal" {
+  match pr_comment_body(@poller.PollEvent::CIFailureCleared(55), "main.dev-x") {
+    Some((pr_number, body)) => {
+      assert_eq(pr_number, 55)
+      assert_true(body.contains("pending"))
+      assert_true(body.contains("not a merge signal"))
+      assert_false(body.to_lower().contains("passed"))
+      assert_false(body.to_lower().contains("green"))
+    }
+    None => fail("expected pr_comment_body for CIFailureCleared")
   }
 }
 
