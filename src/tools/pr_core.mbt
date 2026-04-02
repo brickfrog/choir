@@ -783,6 +783,52 @@ pub fn interpret_merge_pr_post_success(
 }
 
 ///|
+/// End-to-end `merge_pr`: preflight, mutex-bracketed merge host, then
+/// post-success TL lifecycle and poller untrack. Dispatcher delegates here;
+/// behavior matches the prior `ToolRequest::MergePr` inline arm.
+pub async fn interpret_merge_pr(
+  merge_args : MergePrArgs,
+  project_dir : String,
+  poller_state : @poller.PollerState?,
+  mutex_registry : @registry.MutexRegistry?,
+  registry : @registry.AgentRegistry?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @types.Response {
+  match
+    interpret_merge_pr_preflight(
+      merge_args.force,
+      merge_args.pr_number,
+      poller_state,
+      project_dir,
+      capture,
+    ) {
+    Err(e) => @types.Response::Err(e)
+    Ok(_) =>
+      match
+        interpret_merge_pr_merge_host(
+          merge_args.parent_branch,
+          merge_args.pr_number,
+          merge_args.caller_id,
+          mutex_registry,
+          @poller.now_sec(),
+          runner,
+          capture,
+        ) {
+        Err(e) => @types.Response::Err(e)
+        Ok(_) =>
+          interpret_merge_pr_post_success(
+            project_dir,
+            merge_args.caller_id,
+            merge_args.pr_number,
+            poller_state,
+            registry,
+          )
+      }
+  }
+}
+
+///|
 /// GraphQL mutation body for `resolve_review_thread` (thread id is passed as a
 /// variable; matches historical `ToolRequest::ResolveReviewThread` dispatch).
 pub fn resolve_review_thread_graphql_mutation() -> String {
