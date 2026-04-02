@@ -174,7 +174,7 @@ struct SendMessageArgs {
 } derive(Show, Eq)
 
 ///|
-struct ShutdownArgs {
+pub(all) struct ShutdownArgs {
   caller_id : String?
 } derive(Show, Eq)
 

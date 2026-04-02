@@ -597,3 +597,105 @@ pub fn shutdown_exit_plan(
       }
   }
 }
+
+///|
+/// Adapter-side ordering for `shutdown`: poller gate, registry role, lifecycle
+/// read, optional dev exit event, optional worktree removal (matches dispatch).
+pub(all) enum ShutdownAdapterHostStep {
+  PollerCriticalPhaseRead
+  RegistryRoleLookup
+  LifecycleRead
+  DevExitEventApply
+  WorktreeCleanupAttempt
+} derive(Eq, Show)
+
+///|
+pub fn shutdown_adapter_host_steps() -> Array[ShutdownAdapterHostStep] {
+  [
+    ShutdownAdapterHostStep::PollerCriticalPhaseRead,
+    ShutdownAdapterHostStep::RegistryRoleLookup,
+    ShutdownAdapterHostStep::LifecycleRead,
+    ShutdownAdapterHostStep::DevExitEventApply,
+    ShutdownAdapterHostStep::WorktreeCleanupAttempt,
+  ]
+}
+
+///|
+/// When the poller is present and reports a critical-phase PR for this agent,
+/// returns that PR number so the host can block shutdown (same read as inline
+/// `critical_phase_pr_number` in dispatch).
+pub fn shutdown_poller_block_pr_number(
+  poller_state : @poller.PollerState?,
+  caller_id : String,
+) -> Int? {
+  match poller_state {
+    Some(ps) => ps.critical_phase_pr_number(caller_id)
+    None => None
+  }
+}
+
+///|
+/// Registry-backed role for shutdown lifecycle reads: missing registry or agent
+/// falls back to `Dev` (matches dispatch).
+pub fn shutdown_registry_role_for_caller(
+  registry : @registry.AgentRegistry?,
+  caller_id : String,
+) -> @types.Role {
+  match registry {
+    Some(reg) =>
+      match reg.get(caller_id) {
+        Ok(agent) => agent.role
+        Err(_) => @types.Role::Dev
+      }
+    None => @types.Role::Dev
+  }
+}
+
+///|
+/// Effectful shutdown adapter: poller gate, lifecycle + `shutdown_exit_plan`,
+/// dev exit event, worktree cleanup. Preserves the historical `ToolRequest::Shutdown`
+/// control flow while keeping `dispatch` as a thin caller.
+pub async fn interpret_shutdown(
+  args : ShutdownArgs,
+  project_dir : String,
+  poller_state : @poller.PollerState?,
+  registry : @registry.AgentRegistry?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> @types.Response {
+  let caller_id = match args.caller_id {
+    Some(v) => v
+    None => return shutdown_missing_caller_response()
+  }
+  match shutdown_poller_block_pr_number(poller_state, caller_id) {
+    Some(pr_number) =>
+      return @types.Response::Err(shutdown_poller_block_message(pr_number))
+    None => ()
+  }
+  let role = shutdown_registry_role_for_caller(registry, caller_id)
+  let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
+  let plan = shutdown_exit_plan(lifecycle)
+  if plan.apply_dev_exit_requested {
+    ignore(
+      @phase.apply_dev_event_checked(
+        project_dir,
+        caller_id,
+        @phase.DevEvent::ExitRequested,
+      ),
+    )
+  }
+  if plan.attempt_worktree_cleanup {
+    match registry {
+      Some(reg) =>
+        match reg.get(caller_id) {
+          Ok(agent) =>
+            if shutdown_intent_remove_choir_worktree(agent.workspace) {
+              let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
+              ()
+            }
+          Err(_) => ()
+        }
+      None => ()
+    }
+  }
+  plan.response
+}
