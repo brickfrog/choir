@@ -31,43 +31,106 @@ test "tl_tracked_pr_merge_gate_snapshot_ready requires threads when approved and
 }
 
 ///|
-test "plan_tl_poll_event_parent CI events are ReadyForTLRecheck" {
-  let t = sample_tracked(ChangesRequested, Unknown, 9)
-  let p1 = plan_tl_poll_event_parent(CIFailureCleared(9), t, Some(0))
-  assert_eq(p1.category, ReadyForTLRecheck)
-  let p2 = plan_tl_poll_event_parent(
-    CILatestHeadRollupSucceeded(9),
-    { ..t, last_review_state: Approved, last_ci_rollup: Success },
-    Some(0),
+test "tl_classify_tracked_pr_workflow distinguishes blocked, waiting, and merge-gate-open" {
+  assert_eq(
+    tl_classify_tracked_pr_workflow(
+      sample_tracked(ChangesRequested, Success, 2),
+      Some(0),
+    ),
+    BlockedOnChanges,
   )
-  assert_eq(p2.category, ReadyForTLRecheck)
+  assert_eq(
+    tl_classify_tracked_pr_workflow(
+      sample_tracked(Approved, InProgress, 3),
+      None,
+    ),
+    WaitingOnReviewOrCI,
+  )
+  assert_eq(
+    tl_classify_tracked_pr_workflow(
+      sample_tracked(Approved, Success, 4),
+      Some(0),
+    ),
+    MergeGateOpenPendingPolicyConfirmation,
+  )
+}
+
+///|
+test "tl_tracked_pr_workflow_category_sentence covers alert categories" {
+  assert_true(
+    tl_tracked_pr_workflow_category_sentence(AttentionRequiredReviewTimeout).contains(
+      "review timed out",
+    ),
+  )
+  assert_true(
+    tl_tracked_pr_workflow_category_sentence(AttentionRequiredCIFailed).contains(
+      "CI is failing",
+    ),
+  )
+  assert_true(
+    tl_tracked_pr_workflow_category_sentence(ObservedMergedExternal).contains(
+      "merged or closed externally",
+    ),
+  )
+}
+
+///|
+test "plan_tl_poll_event_parent PRReady waits when snapshot is not merge-ready" {
+  let t = sample_tracked(Approved, InProgress, 5)
+  let cat = plan_tl_poll_event_parent(PRReady(5), t, None)
+  assert_eq(cat, WaitingOnReviewOrCI)
 }
 
 ///|
 test "plan_tl_poll_event_parent PRReady uses merge gate category when snapshot allows" {
-  let t = sample_tracked(Approved, Success, 3)
-  let p = plan_tl_poll_event_parent(PRReady(3), t, Some(0))
-  assert_eq(p.category, MergeGateOpenPendingPolicyConfirmation)
-  assert_true(p.merge_gate_snapshot_ready)
+  let t = sample_tracked(Approved, Success, 6)
+  let cat = plan_tl_poll_event_parent(PRReady(6), t, Some(0))
+  assert_eq(cat, MergeGateOpenPendingPolicyConfirmation)
 }
 
 ///|
-test "plan_tl_poll_event_parent FixesPushed is waiting" {
-  let t = sample_tracked(Approved, InProgress, 4)
-  let p = plan_tl_poll_event_parent(FixesPushed(4), t, None)
-  assert_eq(p.category, WaitingOnReviewOrCI)
+test "plan_tl_poll_event_parent CI actionable events can open merge gate" {
+  let t = sample_tracked(Approved, Success, 7)
+  let cat = plan_tl_poll_event_parent(
+    CILatestHeadRollupSucceeded(7),
+    t,
+    Some(0),
+  )
+  assert_eq(cat, MergeGateOpenPendingPolicyConfirmation)
 }
 
 ///|
-test "plan_tl_poll_event_parent ReviewReceived changes requested is blocked" {
-  let t = sample_tracked(ChangesRequested, Success, 5)
-  let p = plan_tl_poll_event_parent(ReviewReceived(5, "fix it"), t, Some(0))
-  assert_eq(p.category, BlockedOnChanges)
+test "plan_tl_poll_event_parent CI actionable events stay blocked on changes" {
+  let t = sample_tracked(ChangesRequested, Success, 8)
+  let cat = plan_tl_poll_event_parent(CIFailureCleared(8), t, Some(0))
+  assert_eq(cat, BlockedOnChanges)
+}
+
+///|
+test "plan_tl_poll_event_parent timeout and CI failure are attention states" {
+  let t = sample_tracked(Approved, Failure, 9)
+  assert_eq(
+    plan_tl_poll_event_parent(ReviewTimeout(9), t, None),
+    AttentionRequiredReviewTimeout,
+  )
+  assert_eq(
+    plan_tl_poll_event_parent(CIFailed(9), t, None),
+    AttentionRequiredCIFailed,
+  )
+}
+
+///|
+test "plan_tl_poll_event_parent observed merged external" {
+  let t = sample_tracked(Approved, Success, 10)
+  assert_eq(
+    plan_tl_poll_event_parent(PRMerged(10), t, Some(0)),
+    ObservedMergedExternal,
+  )
 }
 
 ///|
 test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
-  let t = sample_tracked(Approved, Success, 6)
+  let t = sample_tracked(Approved, Success, 11)
   let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
   assert_true(line.contains("no tracked blockers"))
   assert_true(line.contains("Does not merge"))
