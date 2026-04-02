@@ -83,27 +83,6 @@ fn resolve_parent_for_notify(
 }
 
 ///|
-fn file_pr_workdir(
-  root_project_dir : String,
-  tracked_agent_id : String,
-  reg : @registry.AgentRegistry?,
-) -> String {
-  match reg {
-    Some(agent_reg) =>
-      match agent_reg.get(tracked_agent_id) {
-        Ok(agent) =>
-          if agent.workspace != "" {
-            agent.workspace
-          } else {
-            root_project_dir
-          }
-        Err(_) => root_project_dir
-      }
-    None => root_project_dir
-  }
-}
-
-///|
 pub async fn dispatch(
   req : ToolRequest,
   project_dir? : String = ".",
@@ -391,37 +370,11 @@ pub async fn dispatch(
         @types.Response::Err("failed to create session: " + session_args.name)
       }
     }
-    ToolRequest::FilePr(file_pr_args) => {
-      let branch = file_pr_args.branch
-      let parent_branch = match file_pr_args.parent_branch {
-        Some(pb) => pb
-        None => detect_default_branch_with_capture(project_dir, capture)
-      }
-      let tracked_agent_id = file_pr_args.tracked_agent_id
-      let file_pr_dir = file_pr_workdir(project_dir, tracked_agent_id, registry)
-      let preflight_inputs = file_pr_preflight_create_inputs(
-        file_pr_args, parent_branch, file_pr_dir,
+    ToolRequest::FilePr(file_pr_args) =>
+      interpret_file_pr(
+        file_pr_args, project_dir, session, poller_state, registry, ensure_branch_ready,
+        runner, capture, ensure_pr,
       )
-      match
-        interpret_file_pr_preflight_create(
-          preflight_inputs, ensure_branch_ready, runner, capture, ensure_pr,
-        ) {
-        Err(e) => @types.Response::Err(e)
-        Ok(pr) => {
-          let tracked = poller_state is Some(_)
-          let plan = file_pr_plan(file_pr_args, parent_branch, pr, tracked)
-          let effects = file_pr_post_success_effects(
-            plan,
-            poller_state is Some(_),
-            registry is Some(_),
-          )
-          interpret_file_pr_post_success(
-            project_dir, session, branch, tracked_agent_id, effects, poller_state,
-            registry, runner,
-          )
-        }
-      }
-    }
     ToolRequest::MergePr(merge_args) => {
       match
         interpret_merge_pr_preflight(
