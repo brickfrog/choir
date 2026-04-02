@@ -23,6 +23,7 @@ fn detect_test_tracked(
     notified_parent: false,
     last_ci_rollup,
     last_timeout_at,
+    copilot_issue_comment_seen: false,
   }
 }
 
@@ -37,6 +38,7 @@ test "detect_events ReviewReceived when transitioning None_ to ChangesRequested 
     "please address",
     100L,
     900L,
+    false,
   )
   assert_eq(ev.length(), 1)
   match ev[0] {
@@ -51,7 +53,7 @@ test "detect_events ReviewReceived when transitioning None_ to ChangesRequested 
 ///|
 test "detect_events PRReady when transitioning None_ to Approved" {
   let tracked = detect_test_tracked(7, 0L, None_, "", "abc", Success, 0L)
-  let ev = detect_events(tracked, Approved, "abc", Success, "", 1L, 900L)
+  let ev = detect_events(tracked, Approved, "abc", Success, "", 1L, 900L, false)
   assert_eq(ev.length(), 1)
   match ev[0] {
     PRReady(n) => assert_eq(n, 7)
@@ -78,6 +80,7 @@ test "detect_events FixesPushed when SHA changes after ChangesRequested" {
     "",
     10L,
     900L,
+    false,
   )
   assert_eq(ev.length(), 1)
   match ev[0] {
@@ -89,7 +92,7 @@ test "detect_events FixesPushed when SHA changes after ChangesRequested" {
 ///|
 test "detect_events CIFailed when CI flips from non-failure to failure" {
   let tracked = detect_test_tracked(9, 0L, Approved, "", "sha", Success, 0L)
-  let ev = detect_events(tracked, Approved, "sha", Failure, "", 5L, 900L)
+  let ev = detect_events(tracked, Approved, "sha", Failure, "", 5L, 900L, false)
   assert_eq(ev.length(), 1)
   match ev[0] {
     CIFailed(n) => assert_eq(n, 9)
@@ -116,6 +119,7 @@ test "detect_events CIFailureCleared when CI recovers on same head after failure
     "",
     10L,
     900L,
+    false,
   )
   assert_eq(ev.length(), 1)
   match ev[0] {
@@ -143,6 +147,7 @@ test "detect_events suppresses CIFailureCleared when head just changed (FixesPus
     "",
     10L,
     900L,
+    false,
   )
   assert_eq(ev.length(), 1)
   match ev[0] {
@@ -156,7 +161,16 @@ test "detect_events suppresses CIFailureCleared when SHA changes regardless of r
   // Approved state: FixesPushed does not fire, but CIFailureCleared must also
   // be suppressed because the new head may still have pending CI.
   let tracked = detect_test_tracked(13, 0L, Approved, "", "oldsha", Failure, 0L)
-  let ev = detect_events(tracked, Approved, "newsha", Success, "", 10L, 900L)
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "newsha",
+    Success,
+    "",
+    10L,
+    900L,
+    false,
+  )
   assert_eq(ev.length(), 0)
 }
 
@@ -164,7 +178,16 @@ test "detect_events suppresses CIFailureCleared when SHA changes regardless of r
 test "detect_events no CIFailureCleared when CI stays failed across SHA change" {
   // Even if SHA changes, CIFailureCleared cannot fire when rollup remains failure.
   let tracked = detect_test_tracked(14, 0L, Approved, "", "oldsha", Failure, 0L)
-  let ev = detect_events(tracked, Approved, "newsha", Failure, "", 10L, 900L)
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "newsha",
+    Failure,
+    "",
+    10L,
+    900L,
+    false,
+  )
   assert_eq(ev.length(), 0)
 }
 
@@ -179,7 +202,16 @@ test "detect_events CILatestHeadRollupSucceeded when InProgress becomes Success 
     InProgress,
     0L,
   )
-  let ev = detect_events(tracked, Approved, "sha-ci", Success, "", 10L, 900L)
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "sha-ci",
+    Success,
+    "",
+    10L,
+    900L,
+    false,
+  )
   assert_eq(ev.length(), 1)
   match ev[0] {
     CILatestHeadRollupSucceeded(n) => assert_eq(n, 20)
@@ -190,7 +222,16 @@ test "detect_events CILatestHeadRollupSucceeded when InProgress becomes Success 
 ///|
 test "detect_events CILatestHeadRollupSucceeded when Unknown becomes Success on same head" {
   let tracked = detect_test_tracked(21, 0L, Approved, "", "sha-u", Unknown, 0L)
-  let ev = detect_events(tracked, Approved, "sha-u", Success, "", 11L, 900L)
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "sha-u",
+    Success,
+    "",
+    11L,
+    900L,
+    false,
+  )
   assert_eq(ev.length(), 1)
   match ev[0] {
     CILatestHeadRollupSucceeded(n) => assert_eq(n, 21)
@@ -201,7 +242,16 @@ test "detect_events CILatestHeadRollupSucceeded when Unknown becomes Success on 
 ///|
 test "detect_events no duplicate rollup success when already Success on same head" {
   let tracked = detect_test_tracked(22, 0L, Approved, "", "sha-s", Success, 0L)
-  let ev = detect_events(tracked, Approved, "sha-s", Success, "", 12L, 900L)
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "sha-s",
+    Success,
+    "",
+    12L,
+    900L,
+    false,
+  )
   assert_eq(ev.length(), 0)
 }
 
@@ -210,7 +260,16 @@ test "detect_events ReviewTimeout when idle past timeout with no review content"
   let tracked = detect_test_tracked(2, 0L, None_, "", "sha", Success, 0L)
   let timeout = 100L
   let now = 250L
-  let ev = detect_events(tracked, None_, "sha", Success, "", now, timeout)
+  let ev = detect_events(
+    tracked,
+    None_,
+    "sha",
+    Success,
+    "",
+    now,
+    timeout,
+    false,
+  )
   assert_eq(ev.length(), 1)
   match ev[0] {
     ReviewTimeout(n) => assert_eq(n, 2)
@@ -237,6 +296,16 @@ test "detect_events emits nothing when state SHA and CI unchanged" {
     "same body",
     50L,
     900L,
+    false,
   )
+  assert_eq(ev.length(), 0)
+}
+
+///|
+test "detect_events suppresses ReviewTimeout when Copilot issue comment effective without review bodies" {
+  let tracked = detect_test_tracked(30, 0L, None_, "", "sha", Success, 0L)
+  let timeout = 100L
+  let now = 250L
+  let ev = detect_events(tracked, None_, "sha", Success, "", now, timeout, true)
   assert_eq(ev.length(), 0)
 }

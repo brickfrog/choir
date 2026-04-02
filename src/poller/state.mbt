@@ -62,6 +62,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "notified_parent": self.notified_parent.to_json(),
     "last_ci_rollup": ci_rollup_name(self.last_ci_rollup).to_json(),
     "last_timeout_at": self.last_timeout_at.to_json(),
+    "copilot_issue_comment_seen": self.copilot_issue_comment_seen.to_json(),
   }
   .to_json()
   .stringify()
@@ -183,6 +184,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => 0L
   }
+  let copilot_issue_comment_seen = match
+    json_field_bool(fields, "copilot_issue_comment_seen") {
+    Some(value) => value
+    None => false
+  }
   Some({
     pr_number,
     agent_id,
@@ -198,6 +204,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     notified_parent,
     last_ci_rollup,
     last_timeout_at,
+    copilot_issue_comment_seen,
   })
 }
 
@@ -231,6 +238,7 @@ pub fn PollerState::track(
     notified_parent: false,
     last_ci_rollup: Unknown,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   self.tracked.set(pr_number, pr)
 }
@@ -316,6 +324,7 @@ pub fn PollerState::track_recovered(
   review_bodies : String,
   sha : String,
   ci_rollup : CiRollupStatus,
+  copilot_issue_comment_seen : Bool,
 ) -> Unit {
   let pr = {
     pr_number,
@@ -332,6 +341,7 @@ pub fn PollerState::track_recovered(
     notified_parent: recovered_notified_parent(review),
     last_ci_rollup: ci_rollup,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen,
   }
   self.tracked.set(pr_number, pr)
 }
@@ -526,12 +536,13 @@ pub async fn PollerState::tick_with(
   self : PollerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (
+  poll : async (Int, Bool) -> (
     Bool,
     ReviewState,
     String,
     CiRollupStatus,
     String,
+    Bool,
     Bool,
   ),
   on_event : (PollEvent, String) -> Unit,
@@ -566,8 +577,9 @@ pub async fn PollerState::tick_with(
       })
       continue
     }
-    let (poll_ok, review, sha, ci_rollup, review_bodies, is_open) = poll(
+    let (poll_ok, review, sha, ci_rollup, review_bodies, is_open, copilot_now) = poll(
       pr_number,
+      tracked.copilot_issue_comment_seen,
     )
     if !poll_ok {
       let failures = clamp_consecutive_failures(
@@ -616,9 +628,20 @@ pub async fn PollerState::tick_with(
       self.tracked.remove(pr_number)
       continue
     }
-    let events = detect_events(
-      tracked_ok, review, sha, ci_rollup, review_bodies, now, timeout,
+    let copilot_effective = tracked_ok.copilot_issue_comment_seen || copilot_now
+    let base_events = detect_events(
+      tracked_ok, review, sha, ci_rollup, review_bodies, now, timeout, copilot_effective,
     )
+    let events = if !tracked_ok.copilot_issue_comment_seen && copilot_now {
+      let merged : Array[PollEvent] = []
+      for e in base_events {
+        merged.push(e)
+      }
+      merged.push(PollEvent::CopilotIssueCommentSeen(pr_number))
+      merged
+    } else {
+      base_events
+    }
     let mut timeout_at = tracked_ok.last_timeout_at
     for event in events {
       on_event(event, tracked_ok.agent_id)
@@ -630,6 +653,7 @@ pub async fn PollerState::tick_with(
     let notified_parent = next_notified_parent(
       tracked_ok, review, review_bodies, sha,
     )
+    let copilot_sticky = tracked_ok.copilot_issue_comment_seen || copilot_now
     let updated = if sha == "" {
       {
         ..tracked_ok,
@@ -638,6 +662,7 @@ pub async fn PollerState::tick_with(
         notified_parent,
         last_ci_rollup: ci_rollup,
         last_timeout_at: timeout_at,
+        copilot_issue_comment_seen: copilot_sticky,
       }
     } else {
       {
@@ -648,6 +673,7 @@ pub async fn PollerState::tick_with(
         notified_parent,
         last_ci_rollup: ci_rollup,
         last_timeout_at: timeout_at,
+        copilot_issue_comment_seen: copilot_sticky,
       }
     }
     self.tracked.set(pr_number, updated)
@@ -681,17 +707,19 @@ pub async fn PollerState::tick(
 ///|
 async fn state_tick_backoff_mock_failure(
   _pr_number : Int,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
+  _skip_issue : Bool,
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
   @async.sleep(0)
-  (false, None_, "", Unknown, "", true)
+  (false, None_, "", Unknown, "", true, false)
 }
 
 ///|
 async fn state_tick_backoff_mock_success(
   _pr_number : Int,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
+  _skip_issue : Bool,
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
   @async.sleep(0)
-  (true, Commented, "sha-1", Success, "body", true)
+  (true, Commented, "sha-1", Success, "body", true, false)
 }
 
 ///|

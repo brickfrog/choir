@@ -19,6 +19,7 @@ fn sample_tracked(
     notified_parent: false,
     last_ci_rollup: ci,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
 }
 
@@ -44,14 +45,14 @@ test "tl_classify_tracked_pr_workflow distinguishes blocked, waiting, and merge-
       sample_tracked(Approved, InProgress, 3),
       None,
     ),
-    WaitingOnReviewOrCI,
+    WaitingOnCopilotIssueComment,
   )
   assert_eq(
     tl_classify_tracked_pr_workflow(
       sample_tracked(Approved, Success, 4),
       Some(0),
     ),
-    MergeGateOpenPendingPolicyConfirmation,
+    MergeSnapshotReadyCopilotIssueCommentMissing,
   )
 }
 
@@ -78,14 +79,26 @@ test "tl_tracked_pr_workflow_category_sentence covers alert categories" {
 test "plan_tl_poll_event_parent PRReady waits when snapshot is not merge-ready" {
   let t = sample_tracked(Approved, InProgress, 5)
   let cat = plan_tl_poll_event_parent(PRReady(5), t, None)
-  assert_eq(cat, WaitingOnReviewOrCI)
+  assert_eq(cat, WaitingOnCopilotIssueComment)
 }
 
 ///|
 test "plan_tl_poll_event_parent PRReady uses merge gate category when snapshot allows" {
   let t = sample_tracked(Approved, Success, 6)
   let cat = plan_tl_poll_event_parent(PRReady(6), t, Some(0))
-  assert_eq(cat, MergeGateOpenPendingPolicyConfirmation)
+  assert_eq(cat, MergeSnapshotReadyCopilotIssueCommentMissing)
+}
+
+///|
+test "plan_tl_poll_event_parent PRReady merge-ready with Copilot issue comment seen" {
+  let t = {
+    ..sample_tracked(Approved, Success, 61),
+    copilot_issue_comment_seen: true,
+  }
+  assert_eq(
+    plan_tl_poll_event_parent(PRReady(61), t, Some(0)),
+    MergeGateOpenPendingPolicyConfirmation,
+  )
 }
 
 ///|
@@ -93,6 +106,20 @@ test "plan_tl_poll_event_parent CI actionable events can open merge gate" {
   let t = sample_tracked(Approved, Success, 7)
   let cat = plan_tl_poll_event_parent(
     CILatestHeadRollupSucceeded(7),
+    t,
+    Some(0),
+  )
+  assert_eq(cat, MergeSnapshotReadyCopilotIssueCommentMissing)
+}
+
+///|
+test "plan_tl_poll_event_parent CI actionable events merge gate when Copilot seen" {
+  let t = {
+    ..sample_tracked(Approved, Success, 71),
+    copilot_issue_comment_seen: true,
+  }
+  let cat = plan_tl_poll_event_parent(
+    CILatestHeadRollupSucceeded(71),
     t,
     Some(0),
   )
@@ -134,4 +161,27 @@ test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
   let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
   assert_true(line.contains("no tracked blockers"))
   assert_true(line.contains("Does not merge"))
+  assert_true(line.contains("no Copilot issue comment observed"))
+}
+
+///|
+test "plan_tl_poll_event_parent CopilotIssueCommentSeen uses post-detection snapshot" {
+  let t = {
+    ..sample_tracked(Approved, Success, 99),
+    copilot_issue_comment_seen: true,
+  }
+  assert_eq(
+    plan_tl_poll_event_parent(CopilotIssueCommentSeen(99), t, Some(0)),
+    MergeGateOpenPendingPolicyConfirmation,
+  )
+}
+
+///|
+test "tl_tracked_pr_recheck_gate_line merge-ready snapshot notes Copilot when seen" {
+  let t = {
+    ..sample_tracked(Approved, Success, 12),
+    copilot_issue_comment_seen: true,
+  }
+  let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
+  assert_true(line.contains("Copilot issue comment observed"))
 }

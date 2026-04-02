@@ -212,6 +212,37 @@ fn parse_pr_is_open(json : Json) -> Bool {
 }
 
 ///|
+/// Recognize GitHub Copilot bots that post on the PR issue thread (issue comments).
+fn gh_login_is_copilot_issue_comment_author(login : String) -> Bool {
+  let l = login.to_lower()
+  l == "copilot-pull-request-reviewer" ||
+  l == "github-copilot[bot]" ||
+  l == "copilot-swe-agent[bot]"
+}
+
+///|
+/// Parse `gh api ... --jq "[.[] | .user.login]"` output; true if any login is Copilot.
+pub fn parse_issue_comment_logins_for_copilot_present(
+  json_text : String,
+) -> Bool {
+  if json_text.trim() == "" {
+    return false
+  }
+  let json = @json.parse(json_text) catch { _ => return false }
+  guard json is Array(logins) else { return false }
+  for l in logins {
+    match l {
+      String(s) =>
+        if gh_login_is_copilot_issue_comment_author(s) {
+          return true
+        }
+      _ => ()
+    }
+  }
+  false
+}
+
+///|
 pub fn parse_gh_pr_view_output(
   data : String,
 ) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
@@ -229,9 +260,12 @@ pub fn parse_gh_pr_view_output(
 }
 
 ///|
+/// When `skip_issue_comment_fetch` is true (Copilot already seen on this PR), skips the extra
+/// `gh api .../issues/{n}/comments` call to reduce rate-limit load.
 pub async fn gh_poll_pr(
   pr_number : Int,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
+  skip_issue_comment_fetch : Bool,
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
   let (reader, writer) = @process.read_from_process() catch {
     e => {
       @sys.write_stderr(
@@ -241,11 +275,11 @@ pub async fn gh_poll_pr(
         e.to_string() +
         "\n",
       )
-      return (false, None_, "", Unknown, "", true)
+      return (false, None_, "", Unknown, "", true, false)
     }
   }
   let (err_reader, err_writer) = @process.read_from_process() catch {
-    _ => return (false, None_, "", Unknown, "", true)
+    _ => return (false, None_, "", Unknown, "", true, false)
   }
   let pid = @process.spawn_orphan(
     "gh",
@@ -268,7 +302,7 @@ pub async fn gh_poll_pr(
         "\n",
       )
       reader.close()
-      return (false, None_, "", Unknown, "", true)
+      return (false, None_, "", Unknown, "", true, false)
     }
   }
   let (output, total) = @exec.drain_process_stdout(reader, 65536)
@@ -288,7 +322,7 @@ pub async fn gh_poll_pr(
       "\n",
     )
     if total == 0 {
-      return (false, None_, "", Unknown, "", true)
+      return (false, None_, "", Unknown, "", true, false)
     }
   }
   // Fetch inline code review comments (separate API)
@@ -298,7 +332,30 @@ pub async fn gh_poll_pr(
   let (json_ok, review, sha, ci_rollup, review_bodies, is_open) = parse_gh_pr_view_output(
     merged,
   )
-  (exit_ok && json_ok, review, sha, ci_rollup, review_bodies, is_open)
+  let copilot_issue_comment_seen = if skip_issue_comment_fetch {
+    false
+  } else {
+    let (issue_exit, issue_logins_json) = fetch_issue_comment_logins(pr_number)
+    if issue_exit != 0 {
+      @sys.write_stderr(
+        "[poller] gh api issue-comments exit=" +
+        issue_exit.to_string() +
+        " for PR #" +
+        pr_number.to_string() +
+        " — Copilot issue-comment presence unknown this tick\n",
+      )
+    }
+    parse_issue_comment_logins_for_copilot_present(issue_logins_json)
+  }
+  (
+    exit_ok && json_ok,
+    review,
+    sha,
+    ci_rollup,
+    review_bodies,
+    is_open,
+    copilot_issue_comment_seen,
+  )
 }
 
 ///|
@@ -309,6 +366,32 @@ async fn fetch_inline_comments(pr_number : Int) -> String {
     "--jq",
     "[.[] | {path, body}]",
   ])
+}
+
+///|
+/// Returns `(exit_code, stdout)` so callers can log non-success without treating as definitive false.
+async fn fetch_issue_comment_logins(pr_number : Int) -> (Int, String) {
+  let (reader, writer) = @process.read_from_process() catch {
+    _ => return (-1, "")
+  }
+  let pid = @process.spawn_orphan(
+    "gh",
+    [
+      "api",
+      "repos/{owner}/{repo}/issues/" + pr_number.to_string() + "/comments",
+      "--jq",
+      "[.[] | .user.login]",
+    ],
+    stdout=writer,
+  ) catch {
+    _ => {
+      reader.close()
+      return (-1, "")
+    }
+  }
+  let (output, _total) = @exec.drain_process_stdout(reader, 65536)
+  let exit_code = @process.wait_pid(pid) catch { _ => -1 }
+  (exit_code, output)
 }
 
 ///|
