@@ -630,19 +630,14 @@ pub async fn dispatch(
     ToolRequest::Shutdown(shutdown_args) => {
       let caller_id = match shutdown_args.caller_id {
         Some(v) => v
-        None =>
-          return @types.Response::ok_values({
-            "status": String::to_json("shutdown"),
-          }) // best-effort
+        None => return shutdown_missing_caller_response()
       }
       match poller_state {
         Some(ps) =>
           match ps.critical_phase_pr_number(caller_id) {
             Some(pr_number) =>
               return @types.Response::Err(
-                "cannot shutdown: PR #" +
-                pr_number.to_string() +
-                " has changes requested — push fixes first",
+                shutdown_poller_block_message(pr_number),
               )
             None => ()
           }
@@ -659,56 +654,33 @@ pub async fn dispatch(
       let lifecycle = @phase.read_or_default_lifecycle(
         project_dir, caller_id, role,
       )
-      match @phase.lifecycle_exit_policy(lifecycle) {
-        @phase.LifecycleExitPolicy::Blocked(reason~) =>
-          @types.Response::Err(@phase.exit_block_reason_message(reason))
-        @phase.LifecycleExitPolicy::Deferred(message~) => {
-          match lifecycle.workflow {
-            @phase.WorkflowState::Dev(_) =>
-              ignore(
-                apply_dev_event_checked(
-                  project_dir,
-                  caller_id,
-                  @phase.DevEvent::ExitRequested,
-                ),
-              )
-            _ => ()
-          }
-          @types.Response::ok_values({
-            "status": String::to_json("deferred"),
-            "warning": String::to_json(message),
-          })
-        }
-        @phase.LifecycleExitPolicy::Allowed => {
-          match lifecycle.workflow {
-            @phase.WorkflowState::Dev(_) =>
-              ignore(
-                apply_dev_event_checked(
-                  project_dir,
-                  caller_id,
-                  @phase.DevEvent::ExitRequested,
-                ),
-              )
-            _ => ()
-          }
-          // Clean up worktree on happy-path exit
-          match registry {
-            Some(reg) =>
-              match reg.get(caller_id) {
-                Ok(agent) =>
-                  if agent.workspace.contains(".choir/worktrees/") {
-                    let _ = runner([
-                      @workspace.git_worktree_remove(agent.workspace),
-                    ])
-                    ()
-                  }
-                Err(_) => ()
-              }
-            None => ()
-          }
-          @types.Response::ok_values({ "status": String::to_json("shutdown") })
+      let plan = shutdown_exit_plan(lifecycle)
+      if plan.apply_dev_exit_requested {
+        ignore(
+          apply_dev_event_checked(
+            project_dir,
+            caller_id,
+            @phase.DevEvent::ExitRequested,
+          ),
+        )
+      }
+      if plan.attempt_worktree_cleanup {
+        match registry {
+          Some(reg) =>
+            match reg.get(caller_id) {
+              Ok(agent) =>
+                if shutdown_intent_remove_choir_worktree(agent.workspace) {
+                  let _ = runner([
+                    @workspace.git_worktree_remove(agent.workspace),
+                  ])
+                  ()
+                }
+              Err(_) => ()
+            }
+          None => ()
         }
       }
+      plan.response
     }
     ToolRequest::KillAgent(kill_args) =>
       match registry {

@@ -809,3 +809,121 @@ test "merge_pr_tracked_branch_for_post_success returns branch when tracked" {
     Some("main.topic"),
   )
 }
+
+///|
+test "shutdown_missing_caller_response is best-effort ok" {
+  let r = shutdown_missing_caller_response()
+  match r {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
+test "shutdown_poller_block_message matches dispatch wording" {
+  assert_eq(
+    shutdown_poller_block_message(42),
+    "cannot shutdown: PR #42 has changes requested — push fixes first",
+  )
+}
+
+///|
+test "shutdown_intent_remove_choir_worktree matches choir worktree paths" {
+  assert_true(
+    shutdown_intent_remove_choir_worktree("/repo/.choir/worktrees/foo"),
+  )
+  assert_false(shutdown_intent_remove_choir_worktree("/repo"))
+}
+
+///|
+test "shutdown_exit_plan blocked dev changes requested" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.l",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ChangesRequested(pr_number=3, next_round=1),
+    ),
+  }
+  let plan = shutdown_exit_plan(lifecycle)
+  assert_false(plan.apply_dev_exit_requested)
+  assert_false(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Err(msg) => assert_eq(msg, "Changes requested")
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "shutdown_exit_plan deferred dev applies exit and skips cleanup" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.l",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=7,
+        state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/7"),
+      ),
+    ),
+  }
+  let plan = shutdown_exit_plan(lifecycle)
+  assert_true(plan.apply_dev_exit_requested)
+  assert_false(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("deferred")))
+      assert_eq(
+        map.get("warning"),
+        Some("PR filed (7) at https://ex/7".to_json()),
+      )
+    }
+    _ => fail("expected deferred ok")
+  }
+}
+
+///|
+test "shutdown_exit_plan allowed dev allows cleanup and exit" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.l",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+  }
+  let plan = shutdown_exit_plan(lifecycle)
+  assert_true(plan.apply_dev_exit_requested)
+  assert_true(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected shutdown ok")
+  }
+}
+
+///|
+test "shutdown_exit_plan allowed tl skips dev exit but may cleanup worktree" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.tl",
+    role: @types.Role::TL,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Supervisor(
+      @phase.SupervisorLifecycle::Planning,
+    ),
+  }
+  let plan = shutdown_exit_plan(lifecycle)
+  assert_false(plan.apply_dev_exit_requested)
+  assert_true(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected shutdown ok")
+  }
+}
