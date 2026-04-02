@@ -14,7 +14,7 @@ Recent workflow hardening (post-#174, landed as **#175–#178**):
 - **Actionable CI / re-check TL summaries** — poller-driven parent notifications include an honest gate paragraph (approved, CI, threads, Copilot issue comment state) so the TL can re-check before `merge_pr`.
 - **Canonical TL decision planner** — `tl_decision.mbt` centralizes workflow categories and stable sentences for `TLDecision:` lines (no duplicated ad hoc copy in tools).
 - **Copilot issue-comment signal** — Choir tracks whether a Copilot **issue** comment was observed (REST), separate from review rollups alone.
-- **Copilot-silent timeout escalation** — if review wait times out and Choir’s snapshot still shows no PR review, the TL is warned about comment-trigger flakiness and manual follow-up (for example Request review).
+- **Copilot-silent timeout escalation** — if review wait times out and Choir’s snapshot still shows `None` review state (no approval or changes-requested yet), the TL is warned about comment-trigger flakiness and prompted for manual follow-up (for example Request review).
 
 Recent additions (still accurate):
 - **Disconnect recovery** — agents that bypass `file_pr` get retroactively recovered via GitHub PR detection instead of being falsely failed

@@ -6,8 +6,8 @@ A local agent orchestrator built in MoonBit. Use your expensive subscription
 to think (Claude as team lead), and cheaper or specialized subscriptions to
 implement (Gemini, Codex, Moon Pilot, Cursor Agent as leaf agents). Each leaf works in its
 own git worktree and files a PR targeting the TL's branch when done. A built-in
-poller tracks the PR on GitHub: it requests Copilot review (for example via
-`@copilot`), watches for **Copilot issue comments** and review/CI state, and
+poller tracks the PR on GitHub: it posts `@copilot review` as an issue comment
+to request Copilot review, watches for **Copilot issue comments** and review/CI state, and
 notifies the TL and leaf with actionable summaries. Copilot is **not** a
 guaranteed signal: comment-triggered review can flake, so after a review-wait
 timeout Choir may escalate when its snapshot still shows no PR review, and the TL
