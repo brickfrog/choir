@@ -263,16 +263,17 @@ pub async fn interpret_file_pr_post_success(
           ])
       }
       @moontrace.warn("file_pr copilot review request failed", fields=fields)
-      let log_suffix = match spawn_err {
-        Some(err) => " error=" + err + "\n"
-        None => "\n"
+      let err_part = match spawn_err {
+        Some(err) => " error=" + err
+        None => ""
       }
       ignore(
         @sys.append_file_sync(
           delivery_log_path,
           "[file_pr] copilot_review_request failed pr=" +
           pr_number.to_string() +
-          log_suffix,
+          err_part +
+          "\n",
         ),
       )
     }
