@@ -241,8 +241,9 @@ pub fn init_tl_claude_mcp_config_json() -> String {
 }
 
 ///|
-/// Inner TL agent command for the init zellij tab (no post-exit `exec bash -l` trailer). Non-Pi kinds
-/// omit Choir env in the shell script; Pi moves env to zellij `env` argv via [`init_tl_zellij_tab_command`].
+/// Inner TL agent command for the init zellij tab (no post-exit trailer; that lives only in
+/// [`init_tl_zellij_tab_command`]). Non-Pi kinds omit Choir env in the shell script; Pi moves env to
+/// zellij `env` argv there while the agent line still comes from [`Command::to_string`].
 pub fn init_tl_agent_command(tl_type : String, project_dir : String) -> Command {
   match tl_type {
     "codex" => {
