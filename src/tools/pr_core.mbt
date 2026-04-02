@@ -7,6 +7,41 @@ pub(all) struct FilePrPlanResult {
 }
 
 ///|
+/// Pure interpreter-facing plan for side effects after `ensure_pull_request`
+/// succeeds: poller registration, dev lifecycle append, and optional parent
+/// auto-notify. Capability flags mirror host availability (`poller_state` /
+/// `registry` injected into dispatch).
+pub(all) struct FilePrPostSuccessEffects {
+  poller_track : @poller.TrackedPR?
+  dev_event : @phase.DevEvent
+  notify_message_for_parent : String?
+  response : @types.Response
+}
+
+///|
+pub fn file_pr_post_success_effects(
+  plan : FilePrPlanResult,
+  poller_available : Bool,
+  registry_available : Bool,
+) -> FilePrPostSuccessEffects {
+  let poller_track = match plan.tracked_pr {
+    Some(tracked) => if poller_available { Some(tracked) } else { None }
+    None => None
+  }
+  let notify_message_for_parent = if registry_available {
+    Some(plan.notify_message)
+  } else {
+    None
+  }
+  {
+    poller_track,
+    dev_event: plan.dev_event,
+    notify_message_for_parent,
+    response: plan.response,
+  }
+}
+
+///|
 pub fn file_pr_plan(
   args : FilePrArgs,
   parent_branch : String,
