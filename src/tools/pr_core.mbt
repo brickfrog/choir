@@ -274,55 +274,52 @@ pub async fn interpret_file_pr_post_success(
   if pr_review {
     match effects.review_context {
       Some(ctx) => {
-        let trimmed = ctx.trim().to_string()
-        if trimmed != "" {
-          let comment_cmd = file_pr_copilot_review_comment_gh_command(
-            pr_number, trimmed, file_pr_workdir,
+        let comment_cmd = file_pr_copilot_review_comment_gh_command(
+          pr_number, ctx, file_pr_workdir,
+        )
+        let mut spawn_err_comment : String? = None
+        let codes_comment = runner([comment_cmd]) catch {
+          e => {
+            spawn_err_comment = Some(e.to_string())
+            []
+          }
+        }
+        let ok_comment = spawn_err_comment is None &&
+          codes_comment.length() > 0 &&
+          codes_comment[0] == 0
+        if !ok_comment {
+          let exit_json_c = if codes_comment.length() > 0 {
+            codes_comment[0].to_json()
+          } else {
+            "none".to_json()
+          }
+          let fields = match spawn_err_comment {
+            Some(err) =>
+              @moontrace.fields([
+                ("pr_number", pr_number.to_json()),
+                ("exit", exit_json_c),
+                ("error", err.to_json()),
+              ])
+            None =>
+              @moontrace.fields([
+                ("pr_number", pr_number.to_json()),
+                ("exit", exit_json_c),
+              ])
+          }
+          @moontrace.warn("file_pr copilot review comment failed", fields~)
+          let err_part_c = match spawn_err_comment {
+            Some(err) => " error=" + err
+            None => ""
+          }
+          ignore(
+            @sys.append_file_sync(
+              delivery_log_path,
+              "[file_pr] copilot_review_comment failed pr=" +
+              pr_number.to_string() +
+              err_part_c +
+              "\n",
+            ),
           )
-          let mut spawn_err_comment : String? = None
-          let codes_comment = runner([comment_cmd]) catch {
-            e => {
-              spawn_err_comment = Some(e.to_string())
-              []
-            }
-          }
-          let ok_comment = spawn_err_comment is None &&
-            codes_comment.length() > 0 &&
-            codes_comment[0] == 0
-          if !ok_comment {
-            let exit_json_c = if codes_comment.length() > 0 {
-              codes_comment[0].to_json()
-            } else {
-              "none".to_json()
-            }
-            let fields = match spawn_err_comment {
-              Some(err) =>
-                @moontrace.fields([
-                  ("pr_number", pr_number.to_json()),
-                  ("exit", exit_json_c),
-                  ("error", err.to_json()),
-                ])
-              None =>
-                @moontrace.fields([
-                  ("pr_number", pr_number.to_json()),
-                  ("exit", exit_json_c),
-                ])
-            }
-            @moontrace.warn("file_pr copilot review comment failed", fields~)
-            let err_part_c = match spawn_err_comment {
-              Some(err) => " error=" + err
-              None => ""
-            }
-            ignore(
-              @sys.append_file_sync(
-                delivery_log_path,
-                "[file_pr] copilot_review_comment failed pr=" +
-                pr_number.to_string() +
-                err_part_c +
-                "\n",
-              ),
-            )
-          }
         }
       }
       None => ()
@@ -677,7 +674,7 @@ pub(all) struct ForkWaveSpawnPlan {
 
 ///|
 /// When `fork_wave` passes `review_context`, append a stable section so leaves can reuse it for `file_pr`.
-pub fn fork_wave_leaf_task_with_review_context(
+fn fork_wave_leaf_task_with_review_context(
   base_task : String,
   review_context : String?,
 ) -> String {
