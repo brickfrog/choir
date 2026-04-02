@@ -2029,3 +2029,43 @@ test "rescue_leaf_ok_response matches spawned envelope" {
     _ => fail("expected ok")
   }
 }
+
+///|
+test "rescue_leaf_handoff_failure_message matches dispatch wording" {
+  assert_eq(
+    rescue_leaf_handoff_failure_message("e"),
+    "rescue_leaf: replacement spawned but lifecycle handoff failed — manual repair may be needed: e",
+  )
+}
+
+///|
+test "rescue_leaf_superseded_persist_failure_message matches dispatch wording" {
+  assert_eq(
+    rescue_leaf_superseded_persist_failure_message("main.old"),
+    "failed to persist superseded lifecycle for main.old",
+  )
+}
+
+///|
+test "rescue_leaf_post_spawn_host_steps ordering" {
+  let steps = rescue_leaf_post_spawn_host_steps()
+  assert_eq(steps.length(), 9)
+  assert_eq(steps[0], RescueLeafPostSpawnHostStep::LifecycleHandoff)
+  assert_eq(
+    steps[1],
+    RescueLeafPostSpawnHostStep::PollerTransferOwnerAndWriteState,
+  )
+  assert_eq(steps[2], RescueLeafPostSpawnHostStep::MarkSuperseded)
+  assert_eq(steps[3], RescueLeafPostSpawnHostStep::RegistryRemoveOld)
+  assert_eq(
+    steps[4],
+    RescueLeafPostSpawnHostStep::SupervisorRemoveChildFromAgent,
+  )
+  assert_eq(
+    steps[5],
+    RescueLeafPostSpawnHostStep::SupervisorRemoveChildAliasIfNeeded,
+  )
+  assert_eq(steps[6], RescueLeafPostSpawnHostStep::TeamRegisterMember)
+  assert_eq(steps[7], RescueLeafPostSpawnHostStep::TlEventChildSpawned)
+  assert_eq(steps[8], RescueLeafPostSpawnHostStep::PaneResolveAndUpsertTerminal)
+}

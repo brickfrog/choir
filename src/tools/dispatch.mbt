@@ -817,86 +817,8 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err(e)
         Ok(_) => ()
       }
-      match
-        @phase.handoff_dev_workflow_to_new_agent(
-          project_dir,
-          plan.from_agent_id,
-          plan.to_id,
-          @types.Role::Dev,
-        ) {
-        Err(e) =>
-          return @types.Response::Err(
-            "rescue_leaf: replacement spawned but lifecycle handoff failed — manual repair may be needed: " +
-            e,
-          )
-        Ok(_) => ()
-      }
-      ignore(
-        ps.transfer_owner(plan.from_agent_id, plan.to_id, plan.git_branch, ""),
-      )
-      ignore(ps.write_state_file(project_dir))
-      if !@phase.mark_agent_rescued_superseded(
-          project_dir,
-          plan.from_agent_id,
-          @types.Role::Dev,
-        ) {
-        return @types.Response::Err(
-          "failed to persist superseded lifecycle for " + plan.from_agent_id,
-        )
-      }
-      match reg.remove(plan.from_agent_id) {
-        Ok(_) => ()
-        Err(e) => return @types.Response::Err(e.message())
-      }
-      @phase.remove_child_from_supervisor_lifecycle(
-        project_dir,
-        rescue_args.caller_id,
-        plan.from_agent_id,
-      )
-      if rescue_leaf_remove_supervisor_alias(
-          plan.salvage_slug,
-          plan.from_agent_id,
-        ) {
-        @phase.remove_child_from_supervisor_lifecycle(
-          project_dir,
-          rescue_args.caller_id,
-          plan.salvage_slug,
-        )
-      }
-      let _ = @workspace.register_team_member(
-        rescue_args.caller_id,
-        rescue_args.new_slug,
-        @config.agent_type_to_string(rescue_args.agent_type),
-      )
-      @phase.apply_tl_event(
-        project_dir,
-        rescue_args.caller_id,
-        @phase.TLEvent::ChildSpawned(child_id=rescue_args.new_slug),
-        registry~,
-      )
-      let resolved_pane_ids : Array[(String, String)] = []
-      match resolve_zellij_pane_id(session, rescue_args.new_slug) {
-        Some(pane_id) => resolved_pane_ids.push((plan.to_id, pane_id))
-        None => ()
-      }
-      match registry {
-        Some(r2) =>
-          for pair in resolved_pane_ids {
-            let (agent_id, pane_id) = pair
-            match r2.get(agent_id) {
-              Ok(agent) => {
-                let target = @workspace.zellij_pane_target(session, pane_id)
-                ignore(r2.upsert({ ..agent, terminal_target: Some(target) }))
-              }
-              Err(_) => ()
-            }
-          }
-        None => ()
-      }
-      rescue_leaf_ok_response(
-        plan.to_id,
-        plan.from_agent_id,
-        rescue_args.new_slug,
+      interpret_rescue_leaf_post_spawn(
+        rescue_args, plan, project_dir, session, reg, ps, registry,
       )
     }
     ToolRequest::SpawnRemote(spawn_args) =>
