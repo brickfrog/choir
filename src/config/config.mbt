@@ -102,6 +102,23 @@ pub fn hook_command_path(content : String, hook_key : String) -> String? {
 }
 
 ///|
+fn parse_optional_bool_toml(raw : String?, default : Bool) -> Bool {
+  match raw {
+    None => default
+    Some(s) => {
+      let v = s.trim().to_lower()
+      if v == "true" || v == "1" || v == "yes" {
+        true
+      } else if v == "false" || v == "0" || v == "no" {
+        false
+      } else {
+        default
+      }
+    }
+  }
+}
+
+///|
 /// Parses project config.toml
 pub fn parse_config(
   content : String,
@@ -156,6 +173,10 @@ pub fn parse_config(
     Some(value) => value
     None => default_cfg.terminal_session
   }
+  let pr_review = parse_optional_bool_toml(
+    doc.get("pr_review"),
+    default_cfg.pr_review,
+  )
 
   Ok({
     default_role,
@@ -170,6 +191,7 @@ pub fn parse_config(
     companions_json,
     plugins_json,
     terminal_session,
+    pr_review,
   })
 }
 

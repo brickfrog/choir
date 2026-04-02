@@ -47,6 +47,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.project_dir, ".")
   assert_eq(cfg.shell_command, None)
   assert_eq(cfg.terminal_session, "choir")
+  assert_eq(cfg.pr_review, true)
 }
 
 ///|
@@ -99,6 +100,19 @@ test "parse_config - agent_id defaults to None" {
   assert_eq(cfg.extra_mcp_servers_json, None)
   assert_eq(cfg.companions_json, None)
   assert_eq(cfg.plugins_json, None)
+  assert_eq(cfg.pr_review, true)
+}
+
+///|
+test "parse_config pr_review explicit false" {
+  let cfg = parse_config("pr_review = false").unwrap()
+  assert_eq(cfg.pr_review, false)
+}
+
+///|
+test "parse_config pr_review explicit true" {
+  let cfg = parse_config("pr_review = true").unwrap()
+  assert_eq(cfg.pr_review, true)
 }
 
 ///|
