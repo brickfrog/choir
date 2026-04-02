@@ -14,6 +14,8 @@ pub(all) struct FilePrArgs {
   tracked_agent_id : String
   title : String?
   body : String?
+  /// Optional context posted as `@copilot review: …` on the PR when review is requested.
+  review_context : String?
 } derive(Show, Eq)
 
 ///|
@@ -37,6 +39,8 @@ pub(all) struct ForkWaveArgs {
   /// Spawned child role: Dev (default) or TL (sub-team-lead).
   child_role : @types.Role
   parent_session_id : String?
+  /// Appended to each leaf task so children can pass it to `file_pr` / Copilot review.
+  review_context : String?
 } derive(Show, Eq)
 
 ///|

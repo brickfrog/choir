@@ -150,7 +150,7 @@ fn validate_kv_key(s : String) -> Result[Unit, String] {
 }
 
 ///|
-fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
+pub fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
   let branch = get_arg_or_alias(args, "branch", "agent_id", "")
   if branch == "" {
     return Err(ParseError::MissingField(field="branch"))
@@ -182,12 +182,24 @@ fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
     Some(v) => if v == "" { None } else { Some(v) }
     None => None
   }
+  let review_context = match tool_args_get(args, "review_context") {
+    Some(v) => {
+      let t = v.trim().to_string()
+      if t == "" {
+        None
+      } else {
+        Some(t)
+      }
+    }
+    None => None
+  }
   Ok({
     branch,
     parent_branch,
     tracked_agent_id: get_arg_or_alias(args, "agent_id", "caller_id", branch),
     title,
     body,
+    review_context,
   })
 }
 
@@ -498,6 +510,17 @@ pub fn parse_fork_wave_args(
     "tl" => @types.Role::TL
     _ => return Err(ParseError::UnknownRole(value=role_raw))
   }
+  let review_context = match tool_args_get(args, "review_context") {
+    Some(v) => {
+      let t = v.trim().to_string()
+      if t == "" {
+        None
+      } else {
+        Some(t)
+      }
+    }
+    None => None
+  }
   Ok({
     count,
     tasks,
@@ -508,6 +531,7 @@ pub fn parse_fork_wave_args(
     agent_type,
     child_role,
     parent_session_id: lookup_parent_session_id(project_dir, args),
+    review_context,
   })
 }
 
