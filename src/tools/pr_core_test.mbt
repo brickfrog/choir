@@ -1,4 +1,8 @@
 ///|
+/// Phase counter for sequential `file_pr` Copilot GH mocks (comment then reviewer).
+let file_pr_copilot_runner_seq : Array[Int] = [0]
+
+///|
 test "file_pr_plan builds tracked result when tracking enabled" {
   let args : FilePrArgs = {
     branch: "main.task-leaf",
@@ -6,6 +10,7 @@ test "file_pr_plan builds tracked result when tracking enabled" {
     tracked_agent_id: "main.task-leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 7,
@@ -53,6 +58,7 @@ test "file_pr_plan omits tracked PR when tracking disabled" {
     tracked_agent_id: "leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 9,
@@ -79,6 +85,7 @@ test "file_pr_post_success_effects gates poller track and parent notify on capab
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 3,
@@ -182,6 +189,7 @@ async test "interpret_file_pr_post_success returns plan ok without poller or reg
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 21,
@@ -223,6 +231,7 @@ async test "interpret_file_pr_post_success registers poller when tracked" {
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 55,
@@ -298,6 +307,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 88,
@@ -362,6 +372,7 @@ async test "interpret_file_pr_post_success parent missing appends resolve failur
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 3,
@@ -726,6 +737,7 @@ test "file_pr_preflight_create_inputs copies branch paths and title/body" {
     tracked_agent_id: "main.leaf",
     title: Some("title"),
     body: Some("body"),
+    review_context: None,
   }
   let ins = file_pr_preflight_create_inputs(args, "main", "/tmp/wt")
   assert_eq(ins.branch, "main.leaf")
@@ -951,6 +963,7 @@ async test "interpret_file_pr returns preflight error without post-success" {
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let got = interpret_file_pr(
     args,
@@ -980,6 +993,7 @@ async test "interpret_file_pr ok response matches full pipeline" {
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let got = interpret_file_pr(
     args,
@@ -1022,6 +1036,44 @@ test "file_pr_copilot_reviewer_gh_command requests @copilot reviewer" {
 }
 
 ///|
+test "file_pr_copilot_review_comment_body uses @copilot review prefix" {
+  assert_eq(
+    file_pr_copilot_review_comment_body("plan vs interpret"),
+    "@copilot review: plan vs interpret",
+  )
+}
+
+///|
+test "fork_wave_leaf_task_with_review_context leaves task unchanged when absent" {
+  assert_eq(fork_wave_leaf_task_with_review_context("do work", None), "do work")
+  assert_eq(
+    fork_wave_leaf_task_with_review_context("do work", Some("   ")),
+    "do work",
+  )
+}
+
+///|
+test "fork_wave_leaf_task_with_review_context appends CHOIR_REVIEW_CONTEXT section" {
+  let got = fork_wave_leaf_task_with_review_context(
+    "base",
+    Some("keep plan/interpret split"),
+  )
+  assert_true(got.contains("## CHOIR_REVIEW_CONTEXT"))
+  assert_true(got.contains("keep plan/interpret split"))
+  assert_true(got.has_prefix("base"))
+}
+
+///|
+test "fork_wave_spawn_plan embeds review_context in each leaf task" {
+  let args = { ..fork_wave_args_base(), review_context: Some("arch: foo") }
+  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir")
+  assert_eq(plan.spawned_count, 2)
+  assert_true(plan.spawned_specs[0].task.contains("## CHOIR_REVIEW_CONTEXT"))
+  assert_true(plan.spawned_specs[0].task.contains("arch: foo"))
+  assert_true(plan.spawned_specs[1].task.contains("arch: foo"))
+}
+
+///|
 async fn mock_runner_expect_copilot_reviewer_only(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
@@ -1045,6 +1097,7 @@ async test "interpret_file_pr_post_success requests copilot reviewer when pr_rev
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 21,
@@ -1073,6 +1126,74 @@ async test "interpret_file_pr_post_success requests copilot reviewer when pr_rev
 }
 
 ///|
+async fn mock_runner_file_pr_copilot_comment_then_reviewer(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  assert_eq(cmds.length(), 1)
+  let n = file_pr_copilot_runner_seq[0]
+  file_pr_copilot_runner_seq[0] = n + 1
+  let wd = "/tmp/rc-fpr"
+  assert_eq(cmds[0].program, "gh")
+  if n == 0 {
+    assert_eq(cmds[0].args[0], "pr")
+    assert_eq(cmds[0].args[1], "comment")
+    assert_eq(cmds[0].args[2], "55")
+    assert_eq(cmds[0].args[3], "--body")
+    assert_eq(
+      cmds[0].args[4],
+      file_pr_copilot_review_comment_body("plan/interpret split"),
+    )
+    assert_eq(cmds[0].workdir, Some(wd))
+  } else if n == 1 {
+    assert_eq(cmds[0], file_pr_copilot_reviewer_gh_command(55, wd))
+  } else {
+    fail("unexpected extra runner invocation for file_pr copilot")
+  }
+  [0]
+}
+
+///|
+async test "interpret_file_pr_post_success posts copilot review comment then requests reviewer" {
+  file_pr_copilot_runner_seq[0] = 0
+  let project_dir = "/tmp/rc-fpr"
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+    review_context: Some("plan/interpret split"),
+  }
+  let pr : PullRequestInfo = {
+    number: 55,
+    url: "https://example.test/pr/55",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  let effects = file_pr_post_success_effects(plan, false, false)
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    true,
+    effects,
+    None,
+    None,
+    mock_runner_file_pr_copilot_comment_then_reviewer,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  assert_eq(file_pr_copilot_runner_seq[0], 2)
+}
+
+///|
 async fn mock_runner_copilot_uses_worktree_path(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
@@ -1094,6 +1215,7 @@ async test "interpret_file_pr_post_success copilot gh uses file_pr_workdir" {
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 99,
@@ -1146,6 +1268,7 @@ async test "interpret_file_pr_post_success skips copilot when pr_review false" {
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 21,
@@ -1195,6 +1318,7 @@ async test "interpret_file_pr_post_success copilot reviewer failure is best-effo
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
+    review_context: None,
   }
   let pr : PullRequestInfo = {
     number: 33,
@@ -1237,6 +1361,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     agent_type: @types.AgentType::Claude,
     child_role: @types.Role::Dev,
     parent_session_id: None,
+    review_context: None,
   }
 }
 
@@ -1270,6 +1395,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     agent_type: @types.AgentType::MoonPilot,
     child_role: @types.Role::Dev,
     parent_session_id: None,
+    review_context: None,
   }
   let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
   assert_eq(plan.spawned_count, 2)

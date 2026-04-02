@@ -602,6 +602,7 @@ pub fn pi_extension_content() -> String {
     #|  "constraints",
     #|  "key_decisions",
     #|  "non_goals",
+    #|  "review_context",
     #|]);
     #|
     #|const toolSpecs: ChoirToolSpec[] = [
@@ -631,6 +632,7 @@ pub fn pi_extension_content() -> String {
     #|      boundary: Type.Optional(Type.Array(Type.String(), { description: "Things children must not do." })),
     #|      constraints: Type.Optional(Type.Array(Type.String(), { description: "Extra constraints." })),
     #|      context: Type.Optional(Type.String({ description: "Additional wave context." })),
+    #|      review_context: Type.Optional(Type.String({ description: "Appended to each leaf prompt for file_pr / Copilot review context." })),
     #|      key_decisions: Type.Optional(Type.Array(Type.String(), { description: "Already-fixed decisions." })),
     #|      non_goals: Type.Optional(Type.Array(Type.String(), { description: "Explicit non-goals." })),
     #|    }),
@@ -713,6 +715,7 @@ pub fn pi_extension_content() -> String {
     #|      parent_branch: Type.Optional(Type.String({ description: "Parent branch (defaults from Choir config when available)." })),
     #|      title: Type.Optional(Type.String({ description: "PR title override." })),
     #|      body: Type.Optional(Type.String({ description: "PR body override." })),
+    #|      review_context: Type.Optional(Type.String({ description: "Posted as @copilot review comment when Copilot review is requested." })),
     #|    }),
     #|  },
     #|  {
