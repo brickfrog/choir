@@ -674,7 +674,7 @@ pub(all) struct ForkWaveSpawnPlan {
 
 ///|
 /// When `fork_wave` passes `review_context`, append a stable section so leaves can reuse it for `file_pr`.
-fn fork_wave_leaf_task_with_review_context(
+pub fn fork_wave_leaf_task_with_review_context(
   base_task : String,
   review_context : String?,
 ) -> String {
