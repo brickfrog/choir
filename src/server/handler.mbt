@@ -156,15 +156,21 @@ pub async fn ServerState::handle_with_runner(
     )
   }
 
-  // Extracted orchestration planning and interpretation
-  let actions = plan_post_tool_actions(
+  let effects = plan_post_tool_actions(
     req,
     resp,
     merged_agent_id~,
     self.poller,
     self.registry,
+    self.config.project_dir,
+    self.config.terminal_session,
   )
-  self.interpret_post_tool_actions(actions, runner)
+  // Yield like the legacy `fail_agent_with_runner` path so other fibers can observe registry
+  // updates before teardown side effects run (kill_agent is entirely effect-driven now).
+  if req.name == "kill_agent" {
+    @async.sleep(0)
+  }
+  self.interpret_teardown_effects(effects, runner)
 
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp) catch {
@@ -357,82 +363,6 @@ fn ServerState::resolve_parent_for_delivery(
 }
 
 ///|
-async fn ServerState::interpret_post_tool_actions(
-  self : ServerState,
-  actions : Array[PostToolAction],
-  runner : async (Array[@workspace.Command]) -> Array[Int],
-) -> Unit {
-  for action in actions {
-    match action {
-      FinalizeAgent(agent_id~, exit_reason~, notify_parent~) =>
-        self.finalize_agent_with_runner(
-          agent_id,
-          exit_reason,
-          runner,
-          notify_parent~,
-        )
-      FailAgent(
-        agent_id~,
-        reason~,
-        parent_message~,
-        exit_reason~,
-        close_target~
-      ) =>
-        self.fail_agent_with_runner(
-          agent_id,
-          reason,
-          parent_message,
-          exit_reason,
-          runner,
-          close_target~,
-        )
-      WatchPane(agent_id~) =>
-        match self.registry.get(agent_id) {
-          Ok(agent) =>
-            match agent.terminal_target {
-              Some(_) => self.watch_pane(agent_id)
-              None => ()
-            }
-          Err(_) => ()
-        }
-      UpdateDevLifecycle(agent_id~, event~) =>
-        ignore(
-          @phase.apply_dev_event_checked(
-            self.config.project_dir,
-            agent_id,
-            event,
-          ),
-        )
-      DeliverToParentMerged(leaf_id~, pr_number~, branch~, parent_branch~, url~) =>
-        match self.registry.get(leaf_id) {
-          Ok(leaf) =>
-            match leaf.parent {
-              Some(parent_id) =>
-                match self.resolve_parent_by_id(parent_id) {
-                  Ok(parent) => {
-                    let body = merged_pr_parent_message(
-                      pr_number, leaf_id, branch, parent_branch, url,
-                    )
-                    let delivery = @message.plan_delivery(
-                      parent, leaf_id, body, "success",
-                    )
-                    ignore(
-                      @tools.execute_delivery(delivery, runner) catch {
-                        _ => Ok(())
-                      },
-                    )
-                  }
-                  Err(_) => ()
-                }
-              None => ()
-            }
-          Err(_) => ()
-        }
-    }
-  }
-}
-
-///|
 fn render_parent_next_action(
   pr_number : Int,
   parent_branch : String?,
@@ -450,8 +380,6 @@ fn render_parent_next_action(
       " once the parent branch is confirmed."
   }
 }
-
-///|
 
 ///|
 /// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
@@ -1414,216 +1342,6 @@ fn ServerState::clear_agent_runtime_tracking(
 }
 
 ///|
-
-///|
-fn finalize_reason_for_exit(exit_reason : String) -> @phase.FinalizeReason {
-  match exit_reason {
-    "merged" => @phase.FinalizeReason::Merged
-    "disconnect" => @phase.FinalizeReason::DisconnectFinalized
-    _ => @phase.FinalizeReason::Shutdown
-  }
-}
-
-///|
-pub fn plan_finalize(
-  agent : @types.Agent,
-  lifecycle : @phase.AgentLifecycle,
-  exit_reason : String,
-  notify_parent? : Bool = false,
-  close_target? : Bool = true,
-  remove_worktree? : Bool = true,
-) -> Array[TeardownEffect] {
-  let agent_id = agent.agent_id.to_string()
-  let effects : Array[TeardownEffect] = []
-  let finalize_reason = finalize_reason_for_exit(exit_reason)
-  let allow_merge_refinalize = exit_reason == "merged"
-
-  match lifecycle.process {
-    @phase.ProcessState::Failed(..) => {
-      effects.push(ClearRuntimeTracking(agent_id))
-      return effects
-    }
-    @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged) => {
-      effects.push(ClearRuntimeTracking(agent_id))
-      return effects
-    }
-    @phase.ProcessState::Finalized(..) =>
-      if !allow_merge_refinalize {
-        effects.push(ClearRuntimeTracking(agent_id))
-        return effects
-      }
-    _ => ()
-  }
-
-  // State Transition to Finalizing
-  let with_finalizing = {
-    ..lifecycle,
-    process: @phase.ProcessState::Finalizing(reason=finalize_reason),
-  }
-  effects.push(
-    PersistLifecycle(agent_id~, lifecycle=with_finalizing, trigger=exit_reason),
-  )
-
-  // Notify Parent
-  if notify_parent {
-    match agent.parent {
-      Some(parent_id) => {
-        effects.push(
-          RemoveTeamMember(parent_id~, slug=@phase.extract_slug(agent_id)),
-        )
-        effects.push(
-          NotifyParent(
-            parent_id~,
-            agent_id~,
-            message="agent shutdown",
-            status="success",
-          ),
-        )
-      }
-      None => ()
-    }
-  }
-
-  // Hook
-  effects.push(FireHook(agent_id~, role=agent.role, exit_reason~))
-
-  // Cleanup
-  if remove_worktree && agent.workspace.contains(".choir/worktrees/") {
-    effects.push(RemoveWorktree(agent.workspace))
-  }
-  if close_target {
-    match agent.terminal_target {
-      Some(target) => effects.push(CloseTerminal(target))
-      None => ()
-    }
-  }
-
-  // Final Transition to Finalized
-  let finalized_workflow = match lifecycle.workflow {
-    @phase.WorkflowState::Dev(_) =>
-      @phase.WorkflowState::Dev(
-        @phase.DevLifecycle::Done(reason=finalize_reason),
-      )
-    @phase.WorkflowState::Worker(_) =>
-      @phase.WorkflowState::Worker(
-        @phase.WorkerLifecycle::Done(reason=finalize_reason),
-      )
-    @phase.WorkflowState::Supervisor(_) =>
-      @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Done)
-  }
-  let finalized = {
-    ..lifecycle,
-    process: @phase.ProcessState::Finalized(reason=finalize_reason),
-    workflow: finalized_workflow,
-  }
-  effects.push(
-    PersistLifecycle(agent_id~, lifecycle=finalized, trigger="FinalizeComplete"),
-  )
-  effects.push(SyncParentLifecycle(agent_id~, lifecycle=finalized))
-  effects.push(ClearRuntimeTracking(agent_id))
-
-  effects
-}
-
-///|
-pub fn plan_fail(
-  agent : @types.Agent,
-  lifecycle : @phase.AgentLifecycle,
-  reason : @phase.FailureReason,
-  parent_message : String,
-  exit_reason : String,
-  parent : @types.Agent?,
-  close_target? : Bool = false,
-) -> Array[TeardownEffect] {
-  let agent_id = agent.agent_id.to_string()
-  let effects : Array[TeardownEffect] = []
-
-  match lifecycle.process {
-    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => {
-      effects.push(ClearRuntimeTracking(agent_id))
-      return effects
-    }
-    _ => ()
-  }
-
-  // Hook
-  effects.push(FireHook(agent_id~, role=agent.role, exit_reason~))
-
-  // Cleanup
-  if close_target {
-    match agent.terminal_target {
-      Some(target) => effects.push(CloseTerminal(target))
-      None => ()
-    }
-  }
-
-  // Transition to Failed
-  let failed_workflow = match lifecycle.workflow {
-    @phase.WorkflowState::Dev(_) =>
-      @phase.WorkflowState::Dev(@phase.DevLifecycle::Failed(reason~))
-    @phase.WorkflowState::Worker(_) =>
-      @phase.WorkflowState::Worker(@phase.WorkerLifecycle::Failed(reason~))
-    @phase.WorkflowState::Supervisor(_) =>
-      @phase.WorkflowState::Supervisor(
-        @phase.SupervisorLifecycle::Failed(reason~),
-      )
-  }
-  let failed = {
-    ..lifecycle,
-    process: @phase.ProcessState::Failed(reason~),
-    workflow: failed_workflow,
-  }
-  effects.push(
-    PersistLifecycle(agent_id~, lifecycle=failed, trigger=exit_reason),
-  )
-  effects.push(SyncParentLifecycle(agent_id~, lifecycle=failed))
-
-  // Notify Parent
-  match parent {
-    Some(p) => {
-      let parent_id = p.agent_id.to_string()
-      effects.push(
-        NotifyParent(
-          parent_id~,
-          agent_id~,
-          message=parent_message,
-          status="failure",
-        ),
-      )
-
-      // Only inject a second failure notice to the parent terminal when
-      // plan_delivery used a non-terminal channel (e.g. TeamsInbox/TcpPush).
-      let delivery = @message.plan_delivery(
-        p, agent_id, parent_message, "failure",
-      )
-      let already_terminal = match delivery {
-        @message.DeliveryMethod::LocalTerminalInput(_, _) => true
-        _ => false
-      }
-      let is_self_reported = match reason {
-        @phase.FailureReason::ChildFailure(_) => true
-        _ => false
-      }
-      if !is_self_reported && !already_terminal {
-        match p.terminal_target {
-          Some(target) => {
-            let reason_str = reason.to_string()
-            let msg = @message.format_failure(agent_id, reason_str)
-            effects.push(InjectTerminalMessage(target, msg))
-          }
-          None => ()
-        }
-      }
-    }
-    None => ()
-  }
-
-  effects.push(ClearRuntimeTracking(agent_id))
-
-  effects
-}
-
-///|
 async fn ServerState::finalize_agent_with_runner(
   self : ServerState,
   agent_id : String,
@@ -1771,6 +1489,90 @@ async fn ServerState::interpret_teardown_effects(
         )
       ClearRuntimeTracking(agent_id) =>
         self.clear_agent_runtime_tracking(agent_id)
+      WatchPane(agent_id~) =>
+        match self.registry.get(agent_id) {
+          Ok(agent) =>
+            match agent.terminal_target {
+              Some(_) => self.watch_pane(agent_id)
+              None => ()
+            }
+          Err(_) => ()
+        }
+      UpdateDevLifecycle(agent_id~, event~) =>
+        ignore(
+          @phase.apply_dev_event_checked(
+            self.config.project_dir,
+            agent_id,
+            event,
+          ),
+        )
+      DeliverToParentMerged(
+        leaf_id~,
+        pr_number~,
+        branch~,
+        parent_branch~,
+        url~,
+        parent_id~
+      ) =>
+        match parent_id {
+          Some(pid) =>
+            match self.resolve_parent_by_id(pid) {
+              Ok(parent) => {
+                let body = merged_pr_parent_message(
+                  pr_number, leaf_id, branch, parent_branch, url,
+                )
+                let delivery = @message.plan_delivery(
+                  parent, leaf_id, body, "success",
+                )
+                ignore(
+                  @tools.execute_delivery(delivery, runner) catch {
+                    _ => Ok(())
+                  },
+                )
+              }
+              Err(_) => ()
+            }
+          None => ()
+        }
+      ParentFailureTerminalEchoIfNeeded(
+        parent_id~,
+        agent_id~,
+        parent_message~,
+        reason~
+      ) =>
+        match self.resolve_parent_by_id(parent_id) {
+          Ok(p) => {
+            let delivery = @message.plan_delivery(
+              p, agent_id, parent_message, "failure",
+            )
+            let already_terminal = match delivery {
+              @message.DeliveryMethod::LocalTerminalInput(_, _) => true
+              _ => false
+            }
+            let is_self_reported = match reason {
+              @phase.FailureReason::ChildFailure(_) => true
+              _ => false
+            }
+            if !is_self_reported && !already_terminal {
+              match p.terminal_target {
+                Some(target) => {
+                  let reason_str = reason.to_string()
+                  let msg = @message.format_failure(agent_id, reason_str)
+                  ignore(
+                    @tools.execute_delivery(
+                      @message.DeliveryMethod::LocalTerminalInput(target, msg),
+                      runner,
+                    ) catch {
+                      _ => Ok(())
+                    },
+                  )
+                }
+                None => ()
+              }
+            }
+          }
+          Err(_) => ()
+        }
     }
   }
 }
