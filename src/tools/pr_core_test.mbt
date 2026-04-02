@@ -168,6 +168,223 @@ test "file_pr_auto_notify_delivery_failed_log_append normalizes one line" {
 }
 
 ///|
+fn file_pr_post_success_test_dir() -> String {
+  "/tmp/choir-fpr-post-" + @sys.get_pid().to_string()
+}
+
+///|
+async test "interpret_file_pr_post_success returns plan ok without poller or registry notify" {
+  let project_dir = file_pr_post_success_test_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 21,
+    url: "https://example.test/pr/21",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, true)
+  let effects = file_pr_post_success_effects(plan, false, false)
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    effects,
+    None,
+    None,
+    mock_runner_all_ok,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("pr_created")))
+      assert_eq(map.get("pr_number"), Some(Int::to_json(21)))
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
+async test "interpret_file_pr_post_success registers poller when tracked" {
+  let project_dir = file_pr_post_success_test_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let args : FilePrArgs = {
+    branch: "main.topic",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 55,
+    url: "https://example.test/pr/55",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, true)
+  let effects = file_pr_post_success_effects(plan, true, false)
+  let ps = @poller.PollerState::new()
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    effects,
+    Some(ps),
+    None,
+    mock_runner_all_ok,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  match ps.get(55) {
+    Some(t) => {
+      assert_eq(t.agent_id, "main.leaf")
+      assert_eq(t.branch, "main.topic")
+      assert_eq(t.pr_url, "https://example.test/pr/55")
+    }
+    None => fail("expected tracked PR")
+  }
+}
+
+///|
+async test "interpret_file_pr_post_success auto-notify tcp appends delivery log" {
+  let project_dir = file_pr_post_success_test_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let log_path = project_dir + "/.choir/delivery.log"
+  ignore(@sys.delete_file_sync(log_path))
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("main.tl"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: "/tmp",
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Remote("127.0.0.1"),
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let leaf : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main.tl"),
+    workspace: "/tmp",
+    branch: "main.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let reg = @registry.AgentRegistry::new()
+  ignore(reg.upsert(parent))
+  ignore(reg.upsert(leaf))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 88,
+    url: "https://example.test/pr/88",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  let effects = file_pr_post_success_effects(plan, false, true)
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    effects,
+    None,
+    Some(reg),
+    mock_runner_all_ok,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("pr_number"), Some(Int::to_json(88)))
+    }
+    _ => fail("expected ok")
+  }
+  let msg = "[PR READY] PR #88 filed: https://example.test/pr/88"
+  let expected_delivery = @message.plan_delivery(
+    parent, "main.leaf", msg, "success",
+  )
+  let expected_log = "[auto-notify] caller=main.leaf parent=main.tl delivery=" +
+    expected_delivery.to_string() +
+    "\n"
+  assert_eq(@sys.read_file(log_path), expected_log)
+}
+
+///|
+async test "interpret_file_pr_post_success parent missing appends resolve failure log" {
+  let project_dir = file_pr_post_success_test_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let log_path = project_dir + "/.choir/delivery.log"
+  ignore(@sys.delete_file_sync(log_path))
+  let leaf : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main.tl"),
+    workspace: "/tmp",
+    branch: "main.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let reg = @registry.AgentRegistry::new()
+  ignore(reg.upsert(leaf))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 3,
+    url: "https://example.test/pr/3",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  let effects = file_pr_post_success_effects(plan, false, true)
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    effects,
+    None,
+    Some(reg),
+    mock_runner_all_ok,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("pr_number"), Some(Int::to_json(3)))
+    }
+    _ => fail("expected ok")
+  }
+  let log = @sys.read_file(log_path)
+  assert_true(
+    log.contains("[auto-notify] resolve_parent_for_notify failed error="),
+  )
+}
+
+///|
 test "notify_parent_plan no registry records success event and ok response" {
   let args : CallerMessageArgs = {
     caller_id: "main.leaf",
