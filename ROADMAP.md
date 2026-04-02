@@ -6,9 +6,15 @@ Choir's local UDS workflow is stable. The north-star loop (spawn -> edit -> comm
 
 **Choir × Pi (product/runtime)** — The integration described in `PI_NORTH_STAR.md` is **substantially achieved and live-validated**: `choir tool` is the non-MCP control plane; `choir init --tl pi`, Pi TL/dev/worker paths, and restart recovery (including offline PR-owning leaves) are validated. Further work is mostly persistence policy, delivery tradeoffs, and **architecture** (below), not first-pass viability.
 
-**Effect architecture (exomonad-style hard boundary)** — **In progress.** Orchestration is still fused with I/O in large parts of `dispatch`, server `handler`, and recovery; only the `fork_wave` path fully follows the pure `Eff` pattern today. The audit and phased plan live in `PI_NORTH_STAR.md` (Architecture boundary audit). This is ongoing refactor work, not a future wishlist.
+**Effect architecture (exomonad-style hard boundary)** — **In progress.** Orchestration is still fused with I/O in parts of `dispatch`, server `handler`, recovery, and lifecycle persistence—but several areas now follow a clearer pure-data direction (`fork_wave` via `Eff`, canonical TL workflow classification and re-check copy in `src/poller/tl_decision.mbt`, and related poller plumbing). The densest remaining hotspots are often **server post-tool orchestration**, **poller↔registry integration and TL-facing notifications**, **lifecycle/service convergence**, and **recovery seams**, not only raw dispatch line count. The audit and phased plan live in `PI_NORTH_STAR.md` (Architecture boundary audit). This is ongoing refactor work, not a future wishlist.
 
 **Shell/process edges** — Broad ambient-shell orchestration debt is largely **closed**; remaining production shell uses are **intentional and localized** (TL init tab trailer, plugin capture fallback, remote SSH semantics, smoke scripts). See `PI_NORTH_STAR.md` (Remaining intentional production shell boundaries).
+
+Recent workflow hardening (post-#174, landed as **#175–#178**):
+- **Actionable CI / re-check TL summaries** — poller-driven parent notifications include an honest gate paragraph (approved, CI, threads, Copilot issue comment state) so the TL can re-check before `merge_pr`.
+- **Canonical TL decision planner** — `tl_decision.mbt` centralizes workflow categories and stable sentences for `TLDecision:` lines (no duplicated ad hoc copy in tools).
+- **Copilot issue-comment signal** — Choir tracks whether a Copilot **issue** comment was observed (REST), separate from review rollups alone.
+- **Copilot-silent timeout escalation** — if review wait times out and Choir’s snapshot still shows `None` review state (no approval or changes-requested yet), the TL is warned about comment-trigger flakiness and prompted for manual follow-up (for example Request review).
 
 Recent additions (still accurate):
 - **Disconnect recovery** — agents that bypass `file_pr` get retroactively recovered via GitHub PR detection instead of being falsely failed
