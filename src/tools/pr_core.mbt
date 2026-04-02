@@ -587,6 +587,65 @@ pub fn kill_agent_ok_response(agent_id : String) -> @types.Response {
 }
 
 ///|
+/// Adapter-side ordering for `kill_agent`: pane close attempt, then worktree
+/// remove attempt (each may be skipped when the corresponding command is absent).
+pub(all) enum KillAgentAdapterHostStep {
+  PaneClose
+  WorktreeRemove
+} derive(Eq, Show)
+
+///|
+pub fn kill_agent_adapter_host_steps() -> Array[KillAgentAdapterHostStep] {
+  [
+    KillAgentAdapterHostStep::PaneClose,
+    KillAgentAdapterHostStep::WorktreeRemove,
+  ]
+}
+
+///|
+/// Effectful `kill_agent` adapter: optional pane close, optional worktree remove,
+/// registry failed state, warning log, success response. Preserves historical
+/// `ToolRequest::KillAgent` control flow while keeping `dispatch` as a thin caller.
+pub async fn interpret_kill_agent(
+  args : KillAgentArgs,
+  registry : @registry.AgentRegistry?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> @types.Response {
+  match registry {
+    None => @types.Response::Err("no agent registry available")
+    Some(reg) =>
+      match reg.get(args.agent_id) {
+        Ok(agent) => {
+          match kill_agent_pane_close_command(agent) {
+            Some(cmd) => {
+              let _ = runner([cmd])
+              ()
+            }
+            None => ()
+          }
+          match kill_agent_worktree_remove_command(agent) {
+            Some(cmd) => {
+              let _ = runner([cmd])
+              ()
+            }
+            None => ()
+          }
+          let _ = reg.set_state(args.agent_id, @types.AgentState::Failed)
+          @moontrace.warn(
+            "agent killed",
+            fields=@moontrace.fields([
+              ("agent_id", args.agent_id.to_json()),
+              ("reason", args.reason.to_json()),
+            ]),
+          )
+          kill_agent_ok_response(args.agent_id)
+        }
+        Err(_) => @types.Response::Err("agent not found: " + args.agent_id)
+      }
+  }
+}
+
+///|
 /// Pure post-lifecycle plan for `shutdown`: maps `lifecycle_exit_policy` and
 /// Dev-vs-non-Dev workflow to the tool response, whether to append `ExitRequested`,
 /// and whether the interpreter may attempt `git worktree remove` for choir paths.

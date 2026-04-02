@@ -632,42 +632,7 @@ pub async fn dispatch(
         shutdown_args, project_dir, poller_state, registry, runner,
       )
     ToolRequest::KillAgent(kill_args) =>
-      match registry {
-        Some(reg) =>
-          match reg.get(kill_args.agent_id) {
-            Ok(agent) => {
-              match kill_agent_pane_close_command(agent) {
-                Some(cmd) => {
-                  let _ = runner([cmd])
-                  ()
-                }
-                None => ()
-              }
-              match kill_agent_worktree_remove_command(agent) {
-                Some(cmd) => {
-                  let _ = runner([cmd])
-                  ()
-                }
-                None => ()
-              }
-              let _ = reg.set_state(
-                kill_args.agent_id,
-                @types.AgentState::Failed,
-              )
-              @moontrace.warn(
-                "agent killed",
-                fields=@moontrace.fields([
-                  ("agent_id", kill_args.agent_id.to_json()),
-                  ("reason", kill_args.reason.to_json()),
-                ]),
-              )
-              kill_agent_ok_response(kill_args.agent_id)
-            }
-            Err(_) =>
-              @types.Response::Err("agent not found: " + kill_args.agent_id)
-          }
-        None => @types.Response::Err("no agent registry available")
-      }
+      interpret_kill_agent(kill_args, registry, runner)
     ToolRequest::AgentList(args) =>
       match registry {
         Some(reg) => {

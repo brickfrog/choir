@@ -179,7 +179,7 @@ pub(all) struct ShutdownArgs {
 } derive(Show, Eq)
 
 ///|
-struct KillAgentArgs {
+pub(all) struct KillAgentArgs {
   agent_id : String
   reason : String
 } derive(Show, Eq)
