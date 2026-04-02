@@ -1362,6 +1362,103 @@ async test "interpret_merge_pr_merge_host returns busy when mutex held" {
 }
 
 ///|
+async fn mock_runner_merge_pr_must_not_run(
+  _cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  fail("merge host should not run after preflight Err")
+  []
+}
+
+///|
+async test "interpret_merge_pr returns preflight err without merge host" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    9,
+    "main.leaf",
+    "main.topic",
+    "main",
+    "https://ex/9",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "",
+    "",
+    false,
+  )
+  let args : MergePrArgs = {
+    pr_number: 9,
+    parent_branch: "main",
+    caller_id: "main.tl",
+    force: false,
+  }
+  let got = interpret_merge_pr(
+    args,
+    "/repo",
+    Some(ps),
+    None,
+    None,
+    mock_runner_merge_pr_must_not_run,
+    mock_preflight_capture_no_unresolved_threads,
+  )
+  match got {
+    @types.Response::Err(msg) => assert_true(msg.contains("ChangesRequested"))
+    _ => fail("expected preflight Err")
+  }
+}
+
+///|
+async test "interpret_merge_pr returns merge host err after force preflight" {
+  let args : MergePrArgs = {
+    pr_number: 4,
+    parent_branch: "main",
+    caller_id: "main.tl",
+    force: true,
+  }
+  let got = interpret_merge_pr(
+    args,
+    "/repo",
+    None,
+    None,
+    None,
+    mock_merge_host_runner_gh_fails,
+    mock_merge_host_capture_for_merge,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, merge_pr_merge_failure_message(4, "permission denied"))
+    _ => fail("expected merge host Err")
+  }
+}
+
+///|
+async test "interpret_merge_pr ok response matches merged envelope" {
+  let project_dir = "/tmp/choir-mpr-interpret-" + @sys.get_pid().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let args : MergePrArgs = {
+    pr_number: 77,
+    parent_branch: "main",
+    caller_id: "main.tl",
+    force: true,
+  }
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    None,
+    None,
+    None,
+    mock_merge_host_runner_ok,
+    mock_capture_empty,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("merged")))
+    }
+    _ => fail("expected ok merged")
+  }
+}
+
+///|
 test "merge_pr_tracked_branch_for_post_success is None without poller" {
   assert_eq(merge_pr_tracked_branch_for_post_success(None, 1), None)
 }

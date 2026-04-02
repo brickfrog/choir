@@ -145,7 +145,7 @@ struct MutexReleaseArgs {
 } derive(Show, Eq)
 
 ///|
-struct MergePrArgs {
+pub(all) struct MergePrArgs {
   pr_number : Int
   parent_branch : String
   caller_id : String

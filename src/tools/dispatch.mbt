@@ -375,39 +375,11 @@ pub async fn dispatch(
         file_pr_args, project_dir, session, poller_state, registry, ensure_branch_ready,
         runner, capture, ensure_pr,
       )
-    ToolRequest::MergePr(merge_args) => {
-      match
-        interpret_merge_pr_preflight(
-          merge_args.force,
-          merge_args.pr_number,
-          poller_state,
-          project_dir,
-          capture,
-        ) {
-        Err(e) => return @types.Response::Err(e)
-        Ok(_) => ()
-      }
-      match
-        interpret_merge_pr_merge_host(
-          merge_args.parent_branch,
-          merge_args.pr_number,
-          merge_args.caller_id,
-          mutex_registry,
-          @poller.now_sec(),
-          runner,
-          capture,
-        ) {
-        Err(e) => return @types.Response::Err(e)
-        Ok(_) => ()
-      }
-      interpret_merge_pr_post_success(
-        project_dir,
-        merge_args.caller_id,
-        merge_args.pr_number,
-        poller_state,
-        registry,
+    ToolRequest::MergePr(merge_args) =>
+      interpret_merge_pr(
+        merge_args, project_dir, poller_state, mutex_registry, registry, runner,
+        capture,
       )
-    }
     ToolRequest::TrackPr(track_pr_args) =>
       match poller_state {
         Some(ps) => {
