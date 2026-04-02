@@ -233,3 +233,66 @@ pub fn agent_launch_command(
     _ => cmd
   }
 }
+
+///|
+/// MCP JSON for TL init Claude only; matches legacy `choir init` (`mcp-stdio` + `--name root`, no `--role`).
+pub fn init_tl_claude_mcp_config_json() -> String {
+  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\"]}}}"
+}
+
+///|
+/// Inner TL agent command for the init zellij tab (no post-exit `exec bash -l` trailer). Non-Pi kinds
+/// omit Choir env in the shell script; Pi moves env to zellij `env` argv via [`init_tl_zellij_tab_command`].
+pub fn init_tl_agent_command(tl_type : String, project_dir : String) -> Command {
+  match tl_type {
+    "codex" => {
+      let args : Array[String] = [
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--no-alt-screen",
+        ..codex_mcp_override_args(@types.Role::TL, "root", project_dir),
+        "-C",
+        project_dir,
+      ]
+      { program: "codex", args, workdir: None }
+    }
+    "gemini" =>
+      {
+        program: "gemini",
+        args: ["--yolo", "--prompt-interactive"],
+        workdir: None,
+      }
+    "cursor_agent" =>
+      {
+        program: "agent",
+        args: ["--yolo", "--approve-mcps", "--workspace", project_dir],
+        workdir: None,
+      }
+    "pi" => {
+      let spec : @types.SpawnSpec = {
+        slug: "root",
+        role: @types.Role::TL,
+        agent_type: @types.AgentType::Pi,
+        task: "",
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: "root",
+        parent_branch: "",
+        reuse_workspace: true,
+        workspace_slug: Some("root"),
+        reuse_git_branch: Some("root"),
+        spawn_depth: 0,
+      }
+      agent_launch_command(spec, project_dir)
+    }
+    _ =>
+      {
+        program: "claude",
+        args: [
+          "--dangerously-skip-permissions",
+          "--mcp-config",
+          init_tl_claude_mcp_config_json(),
+          "--strict-mcp-config",
+        ],
+        workdir: None,
+      }
+  }
+}

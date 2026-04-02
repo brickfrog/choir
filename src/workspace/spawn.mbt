@@ -150,7 +150,8 @@ pub fn launch_env_assignments(
 }
 
 ///|
-fn zellij_launch_inner_command(cmd : Command) -> Command {
+/// Strip `workdir` so zellij `--cwd` is the sole working-directory seam (matches spawn launch).
+pub fn zellij_launch_inner_command(cmd : Command) -> Command {
   { ..cmd, workdir: None }
 }
 
@@ -523,4 +524,46 @@ pub fn remote_spawn_commands(
       remote_ssh_nohup_agent_script(workspace, agent_cmd, spec.slug),
     ),
   ]
+}
+
+///|
+const INIT_TL_POST_EXIT_SHELL_SUFFIX : String = "; echo; echo '[TL exited]'; exec bash -l"
+
+///|
+/// TL init zellij tab: Pi injects Choir env via `env` argv (same as [`launch_env_assignments`]); other
+/// TL kinds keep legacy no-env shell body. A single `sh -lc` remains only for the agent sequence plus
+/// post-exit interactive shell.
+pub fn init_tl_zellij_tab_command(
+  session : String,
+  project_dir : String,
+  tl_type : String,
+) -> Command {
+  let inner = zellij_launch_inner_command(
+    init_tl_agent_command(tl_type, project_dir),
+  )
+  let script = inner.to_string() + INIT_TL_POST_EXIT_SHELL_SUFFIX
+  let env_assignments = if tl_type == "pi" {
+    let spec : @types.SpawnSpec = {
+      slug: "root",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Pi,
+      task: "",
+      isolation: Worktree,
+      parent_id: "root",
+      parent_branch: "",
+      reuse_workspace: true,
+      workspace_slug: Some("root"),
+      reuse_git_branch: Some("root"),
+      spawn_depth: 0,
+    }
+    let terminal_target = local_target_for(session, "TL", Worktree)
+    launch_env_assignments(spec, session, project_dir, terminal_target)
+  } else {
+    []
+  }
+  zellij_new_tab(session, "TL", project_dir, env_assignments, {
+    program: "sh",
+    args: ["-lc", script],
+    workdir: None,
+  })
 }

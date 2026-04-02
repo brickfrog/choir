@@ -121,6 +121,20 @@ test "zellij_new_tab_shell keeps sh -lc for script launches" {
 }
 
 ///|
+test "init_tl_zellij_tab_command claude uses env argv and single sh -lc trailer" {
+  let cmd = @workspace.init_tl_zellij_tab_command("howdy", "/proj", "claude")
+  assert_eq(cmd.program, "zellij")
+  assert_eq(cmd.args[9], "env")
+  let n = cmd.args.length()
+  assert_eq(cmd.args[n - 3], "sh")
+  assert_eq(cmd.args[n - 2], "-lc")
+  let script = cmd.args[n - 1]
+  assert_true(script.contains("claude"))
+  assert_true(script.contains("[TL exited]"))
+  assert_true(script.contains("exec bash -l"))
+}
+
+///|
 test "zellij_list_sessions_command uses env argv without shell" {
   let cmd = @workspace.zellij_list_sessions_command()
   assert_eq(cmd.program, "env")

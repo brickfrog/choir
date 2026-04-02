@@ -3718,83 +3718,8 @@ fn init_config_has_terminal_session(content : String) -> Bool {
 }
 
 ///|
-fn init_codex_mcp_override_args(
-  role : @types.Role,
-  agent_id : String,
-  project_dir : String,
-) -> Array[String] {
-  @workspace.codex_mcp_override_args(role, agent_id, project_dir)
-}
-
-///|
-fn init_claude_mcp_config_json() -> String {
-  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\"]}}}"
-}
-
-///|
 fn init_pi_tl_append_system_prompt() -> String {
   @workspace.pi_append_system_prompt(@types.Role::TL)
-}
-
-///|
-fn init_pi_tl_launch_command(project_dir : String, session : String) -> String {
-  let spec : @types.SpawnSpec = {
-    slug: "root",
-    role: @types.Role::TL,
-    agent_type: @types.AgentType::Pi,
-    task: "",
-    isolation: @types.IsolationMode::Worktree,
-    parent_id: "root",
-    parent_branch: "",
-    reuse_workspace: true,
-    workspace_slug: Some("root"),
-    reuse_git_branch: Some("root"),
-    spawn_depth: 0,
-  }
-  let terminal_target = @workspace.local_target_for(
-    session,
-    "TL",
-    @types.IsolationMode::Worktree,
-  )
-  @workspace.launch_env_prefix(spec, session, project_dir, terminal_target) +
-  @workspace.agent_launch_command(spec, project_dir).to_string()
-}
-
-///|
-fn init_tl_launch_command(
-  tl_type : String,
-  project_dir : String,
-  session : String,
-) -> String {
-  let cmd = match tl_type {
-    "codex" => {
-      let parts : Array[String] = [
-        "codex",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--no-alt-screen",
-        ..init_codex_mcp_override_args(@types.Role::TL, "root", project_dir),
-        "-C",
-        project_dir,
-      ]
-      let buf = StringBuilder::new()
-      for i = 0; i < parts.length(); i = i + 1 {
-        if i > 0 {
-          buf.write_char(' ')
-        }
-        buf.write_string(init_shell_quote(parts[i]))
-      }
-      buf.to_string()
-    }
-    "gemini" => "gemini --yolo --prompt-interactive"
-    "cursor_agent" =>
-      "agent --yolo --approve-mcps --workspace " + init_shell_quote(project_dir)
-    "pi" => init_pi_tl_launch_command(project_dir, session)
-    _ =>
-      "claude --dangerously-skip-permissions --mcp-config " +
-      init_shell_quote(init_claude_mcp_config_json()) +
-      " --strict-mcp-config"
-  }
-  cmd + "; echo; echo '[TL exited]'; exec bash -l"
 }
 
 ///|
@@ -3809,58 +3734,110 @@ fn init_parse_tl_type(args : Array[String]) -> String {
 
 ///|
 test "init TL launch command defaults to claude" {
-  let cmd = init_tl_launch_command("claude", ".", "choir")
-  assert_true(cmd.contains("claude --dangerously-skip-permissions"))
-  assert_true(cmd.contains("--mcp-config '{\"mcpServers\""))
+  let cmd = @workspace.init_tl_agent_command("claude", ".")
+  let s = cmd.to_string()
+  assert_true(s.contains("claude"))
+  assert_true(s.contains("--dangerously-skip-permissions"))
+  assert_true(s.contains("--mcp-config"))
+  assert_true(s.contains("mcp-stdio"))
+  assert_true(s.contains("--name"))
+  assert_true(s.contains("root"))
 }
 
 ///|
 test "init TL launch command supports codex" {
-  let cmd = init_tl_launch_command("codex", "/tmp/choir repo", "choir")
-  assert_true(cmd.contains("'codex'"))
-  assert_true(cmd.contains("'--dangerously-bypass-approvals-and-sandbox'"))
-  assert_true(cmd.contains("'--no-alt-screen'"))
-  assert_true(cmd.contains("'mcp_servers.choir.command=\"choir\"'"))
-  assert_true(cmd.contains("\"mcp-stdio\""))
-  assert_true(cmd.contains("\"--raw-stdio\""))
-  assert_true(cmd.contains("\"--name\""))
-  assert_true(cmd.contains("'mcp_servers.choir.cwd=\"/tmp/choir repo\"'"))
-  assert_true(cmd.contains("'-C' '/tmp/choir repo'"))
-  assert_false(cmd.contains("--mcp-config"))
+  let cmd = @workspace.init_tl_agent_command("codex", "/tmp/choir repo")
+  let s = cmd.to_string()
+  assert_true(s.contains("codex"))
+  assert_true(s.contains("--dangerously-bypass-approvals-and-sandbox"))
+  assert_true(s.contains("--no-alt-screen"))
+  assert_true(s.contains("mcp_servers.choir.command=\"choir\""))
+  assert_true(s.contains("mcp-stdio"))
+  assert_true(s.contains("--raw-stdio"))
+  assert_true(s.contains("--name"))
+  assert_true(s.contains("mcp_servers.choir.cwd=\"/tmp/choir repo\""))
+  assert_true(s.contains("-C"))
+  assert_true(s.contains("/tmp/choir repo"))
+  assert_false(s.contains("--mcp-config"))
 }
 
 ///|
 test "init TL launch command supports cursor_agent" {
-  let cmd = init_tl_launch_command("cursor_agent", "/tmp/choir repo", "choir")
-  assert_true(cmd.contains("agent --yolo --approve-mcps --workspace"))
-  assert_true(cmd.contains("'/tmp/choir repo'"))
-  assert_false(cmd.contains("--mcp-config"))
+  let cmd = @workspace.init_tl_agent_command("cursor_agent", "/tmp/choir repo")
+  let s = cmd.to_string()
+  assert_true(s.contains("agent"))
+  assert_true(s.contains("--yolo"))
+  assert_true(s.contains("--approve-mcps"))
+  assert_true(s.contains("--workspace"))
+  assert_true(s.contains("/tmp/choir repo"))
+  assert_false(s.contains("--mcp-config"))
 }
 
 ///|
 test "init TL launch command supports pi" {
-  let cmd = init_tl_launch_command("pi", "/tmp/choir repo", "choir-demo")
-  assert_true(
-    cmd.contains("PI_CODING_AGENT_DIR='/tmp/choir repo/.choir/pi/agent'"),
+  let tab = @workspace.init_tl_zellij_tab_command(
+    "choir-demo", "/tmp/choir repo", "pi",
   )
-  assert_true(cmd.contains("PI_SKIP_VERSION_CHECK='1'"))
-  assert_true(cmd.contains("CHOIR_AGENT_ID='root'"))
-  assert_true(cmd.contains("CHOIR_ROLE='tl'"))
-  assert_true(cmd.contains("CHOIR_AGENT_TYPE='pi'"))
-  assert_true(cmd.contains("CHOIR_WORKSPACE='/tmp/choir repo'"))
-  assert_true(cmd.contains("CHOIR_TERMINAL_SESSION='choir-demo'"))
-  assert_true(cmd.contains("CHOIR_TERMINAL_TARGET='zellij-tab:choir-demo:TL'"))
-  assert_true(cmd.contains("CHOIR_SESSION_ID='root'"))
-  assert_true(
-    cmd.contains(
-      "pi '--no-extensions' '-e' '/tmp/choir repo/.choir/pi/choir-extension.ts'",
-    ),
-  )
-  assert_true(
-    cmd.contains("'--session-dir' '/tmp/choir repo/.choir/pi/sessions'"),
-  )
-  assert_true(cmd.contains("'--tools' 'read,bash,grep,find,ls'"))
-  assert_true(cmd.contains("'--thinking' 'high'"))
+  assert_eq(tab.program, "zellij")
+  let mut saw_pi_env = false
+  let mut saw_skip = false
+  let mut saw_agent = false
+  let mut saw_role = false
+  let mut saw_type = false
+  let mut saw_ws = false
+  let mut saw_sess = false
+  let mut saw_target = false
+  let mut saw_session_id = false
+  for a in tab.args {
+    if a.contains("PI_CODING_AGENT_DIR") && a.contains(".choir/pi/agent") {
+      saw_pi_env = true
+    }
+    if a == "PI_SKIP_VERSION_CHECK=1" {
+      saw_skip = true
+    }
+    if a == "CHOIR_AGENT_ID=root" {
+      saw_agent = true
+    }
+    if a == "CHOIR_ROLE=tl" {
+      saw_role = true
+    }
+    if a == "CHOIR_AGENT_TYPE=pi" {
+      saw_type = true
+    }
+    if a == "CHOIR_WORKSPACE=/tmp/choir repo" {
+      saw_ws = true
+    }
+    if a == "CHOIR_TERMINAL_SESSION=choir-demo" {
+      saw_sess = true
+    }
+    if a == "CHOIR_TERMINAL_TARGET=zellij-tab:choir-demo:TL" {
+      saw_target = true
+    }
+    if a == "CHOIR_SESSION_ID=root" {
+      saw_session_id = true
+    }
+  }
+  assert_true(saw_pi_env)
+  assert_true(saw_skip)
+  assert_true(saw_agent)
+  assert_true(saw_role)
+  assert_true(saw_type)
+  assert_true(saw_ws)
+  assert_true(saw_sess)
+  assert_true(saw_target)
+  assert_true(saw_session_id)
+  let script = tab.args[tab.args.length() - 1]
+  assert_false(script.contains("PI_CODING_AGENT_DIR"))
+  assert_true(script.contains("pi"))
+  assert_true(script.contains("--no-extensions"))
+  assert_true(script.contains("/tmp/choir repo/.choir/pi/choir-extension.ts"))
+  assert_true(script.contains("--session-dir"))
+  assert_true(script.contains("/tmp/choir repo/.choir/pi/sessions"))
+  assert_true(script.contains("--tools"))
+  assert_true(script.contains("read,bash,grep,find,ls"))
+  assert_true(script.contains("--thinking"))
+  assert_true(script.contains("high"))
+  assert_true(script.contains("[TL exited]"))
 }
 
 ///|
@@ -3880,24 +3857,6 @@ test "init parse_tl_type extracts --tl flag" {
     "gemini",
   )
   assert_eq(init_parse_tl_type(["choir", "init", "--tl", "pi"]), "pi")
-}
-
-///|
-fn init_escape_shell_single_quoted(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    if c == '\'' {
-      buf.write_string("'\\''")
-    } else {
-      buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
-fn init_shell_quote(s : String) -> String {
-  "'" + init_escape_shell_single_quoted(s) + "'"
 }
 
 ///|
@@ -4251,12 +4210,7 @@ fn init_run() -> Unit {
       let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
       if !tl_tab_exists {
         init_run_or_exit(
-          @workspace.zellij_new_tab_shell(
-            session,
-            "TL",
-            project_dir,
-            init_tl_launch_command(tl_type, project_dir, session),
-          ),
+          @workspace.init_tl_zellij_tab_command(session, project_dir, tl_type),
         )
       } else {
         @sys.write_stdout("Reusing existing TL tab.\n")
