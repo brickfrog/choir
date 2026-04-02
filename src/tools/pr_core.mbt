@@ -136,6 +136,87 @@ pub fn file_pr_auto_notify_delivery_failed_log_append(error : String) -> String 
 }
 
 ///|
+/// Post-`ensure_pull_request` host path: poller ensure/write, dev lifecycle
+/// event, optional parent auto-notify (delivery log + `execute_delivery` +
+/// moontrace), then the planned tool response. Preserves `ToolRequest::FilePr`
+/// ordering and strings from the prior dispatch arm.
+pub async fn interpret_file_pr_post_success(
+  project_dir : String,
+  session : String,
+  branch : String,
+  tracked_agent_id : String,
+  effects : FilePrPostSuccessEffects,
+  poller_state : @poller.PollerState?,
+  registry : @registry.AgentRegistry?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
+) -> @types.Response {
+  match effects.poller_track {
+    Some(tracked_pr) =>
+      match poller_state {
+        Some(ps) => {
+          ps.ensure_tracked(
+            tracked_pr.pr_number,
+            tracked_pr.agent_id,
+            tracked_pr.branch,
+            tracked_pr.parent_branch,
+            tracked_pr.pr_url,
+            @poller.now_sec(),
+          )
+          ignore(ps.write_state_file(project_dir))
+        }
+        None => ()
+      }
+    None => ()
+  }
+  @phase.apply_dev_event(project_dir, branch, effects.dev_event)
+  let delivery_log_path = project_dir + "/.choir/delivery.log"
+  match (effects.notify_message_for_parent, registry) {
+    (Some(notify_message), Some(reg)) => {
+      let plan = file_pr_auto_notify_plan(
+        @phase.resolve_parent_with_fallback(
+          project_dir, session, reg, tracked_agent_id,
+        ),
+        tracked_agent_id,
+        notify_message,
+      )
+      match plan {
+        FilePrAutoNotifyPlan::Deliver(delivery~, delivery_log_append~) => {
+          ignore(@sys.append_file_sync(delivery_log_path, delivery_log_append))
+          match execute_delivery(delivery, runner, project_dir~, sleep_fn~) {
+            Ok(_) => ()
+            Err(e) => {
+              @moontrace.error(
+                "file_pr auto-notify delivery failed",
+                fields=@moontrace.fields([("error", e.to_json())]),
+              )
+              ignore(
+                @sys.append_file_sync(
+                  delivery_log_path,
+                  file_pr_auto_notify_delivery_failed_log_append(e),
+                ),
+              )
+            }
+          }
+        }
+        FilePrAutoNotifyPlan::ParentResolutionFailed(
+          delivery_log_append~,
+          parent_resolve_error~
+        ) => {
+          @moontrace.error(
+            "file_pr auto-notify parent resolution failed",
+            fields=@moontrace.fields([("error", parent_resolve_error.to_json())]),
+          )
+          ignore(@sys.append_file_sync(delivery_log_path, delivery_log_append))
+        }
+      }
+    }
+    _ => ()
+  }
+  effects.response
+}
+
+///|
 /// Pure plan for `notify_parent`: optional parent resolution (when the registry
 /// is present) maps to delivery + success lifecycle, a resolve error, or the
 /// no-registry best-effort path. The dispatcher runs `execute_delivery` and
