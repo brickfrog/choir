@@ -91,8 +91,6 @@ pub(all) struct RecoveryReconcileInput {
 ///|
 pub(all) struct RecoveryPlan {
   actions : Array[RecoveryAction]
-  /// Open PRs that matched a local agent, had no persisted track row, but `prs.polls` lacked an entry for `TrackNewPR`.
-  missing_pr_poll_rows : Array[Int]
 } derive(Show)
 
 ///|
@@ -615,6 +613,18 @@ fn recovery_pr_poll_row_from_gh_tuple(
 }
 
 ///|
+/// When `prs.polls` has no row (caller omission or discover gap), still emit TrackNewPR using conservative defaults so reconciliation does not drop the PR.
+fn recovery_pr_poll_row_fallback() -> RecoveryPrPollRow {
+  {
+    review: @poller.ReviewState::None_,
+    sha: "",
+    ci_rollup: @poller.CiRollupStatus::Unknown,
+    review_bodies: "",
+    copilot_issue_comment_seen: false,
+  }
+}
+
+///|
 pub fn plan_recovery(
   session : String,
   input : RecoveryReconcileInput,
@@ -628,7 +638,6 @@ pub fn plan_recovery(
         input.files.local_agents,
       )
   }
-  let missing_pr_poll_rows = []
 
   // 2. Open PRs
   for pr in input.prs.open_prs {
@@ -663,43 +672,43 @@ pub fn plan_recovery(
               ),
             )
           }
-          None =>
-            match input.prs.polls.get(pr.pr_number) {
-              Some(row) => {
-                actions.push(
-                  RecoveryAction::TrackNewPR(
-                    pr_number=pr.pr_number,
-                    agent_id=agent.agent_id.to_string(),
-                    branch=pr.branch,
-                    parent_branch=pr.base,
-                    pr_url=pr.url,
-                    review=row.review,
-                    review_bodies=row.review_bodies,
-                    sha=row.sha,
-                    ci_rollup=row.ci_rollup,
-                    copilot_issue_comment_seen=row.copilot_issue_comment_seen,
-                    created_at=match pr.created_sec {
-                      Some(created_sec) => created_sec
-                      None => input.recovered_at
-                    },
-                  ),
-                )
-                actions.push(
-                  RecoveryAction::SyncLifecycle(
-                    agent_id=agent.agent_id.to_string(),
-                    pr~,
-                    review=row.review,
-                  ),
-                )
-              }
-              None => missing_pr_poll_rows.push(pr.pr_number)
+          None => {
+            let row = match input.prs.polls.get(pr.pr_number) {
+              Some(r) => r
+              None => recovery_pr_poll_row_fallback()
             }
+            actions.push(
+              RecoveryAction::TrackNewPR(
+                pr_number=pr.pr_number,
+                agent_id=agent.agent_id.to_string(),
+                branch=pr.branch,
+                parent_branch=pr.base,
+                pr_url=pr.url,
+                review=row.review,
+                review_bodies=row.review_bodies,
+                sha=row.sha,
+                ci_rollup=row.ci_rollup,
+                copilot_issue_comment_seen=row.copilot_issue_comment_seen,
+                created_at=match pr.created_sec {
+                  Some(created_sec) => created_sec
+                  None => input.recovered_at
+                },
+              ),
+            )
+            actions.push(
+              RecoveryAction::SyncLifecycle(
+                agent_id=agent.agent_id.to_string(),
+                pr~,
+                review=row.review,
+              ),
+            )
+          }
         }
       None => ()
     }
   }
 
-  { actions, missing_pr_poll_rows }
+  { actions, }
 }
 
 ///|
@@ -730,6 +739,8 @@ pub async fn discover_recovery_input(
     recovered_agents: prebuilt.0,
     agent_stage_actions: prebuilt.1,
   }
+  // Snapshot time before `gh_poll_pr` network calls (used as `created_at` fallback).
+  let recovered_at = @poller.now_sec()
   let polls : Map[Int, RecoveryPrPollRow] = Map::new()
   for pr in open_prs {
     match
@@ -753,7 +764,6 @@ pub async fn discover_recovery_input(
         }
     }
   }
-  let recovered_at = @poller.now_sec()
   {
     panes: { live, },
     prs: { open_prs, polls },
