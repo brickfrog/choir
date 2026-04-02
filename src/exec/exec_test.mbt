@@ -61,23 +61,24 @@ test "dev_watchexec_command uses argv hook without sh -c" {
 }
 
 ///|
-test "dev_entr_watcher_shell_pipeline runs entr with choir argv not sh -c hook" {
-  let s = dev_entr_watcher_shell_pipeline("/usr/bin/entr", "/tmp/choir")
-  assert_false(s.contains("sh -c"))
-  assert_true(s.contains(DEV_RELOAD_SUBCOMMAND))
-  assert_true(s.contains("/usr/bin/entr"))
-  assert_true(s.contains("/tmp/choir"))
+test "dev_entr_find_src_mbt_command matches former pipeline first find" {
+  let c = dev_entr_find_src_mbt_command()
+  assert_eq(c.program, "find")
+  assert_eq(c.args, ["src", "-name", "*.mbt"])
+  assert_eq(c.workdir, None)
 }
 
 ///|
-test "dev_entr_watcher_shell_command uses argv sh -c without system wrapper" {
-  let cmd = dev_entr_watcher_shell_command("/usr/bin/entr", "/tmp/choir")
-  assert_eq(cmd.program, "/bin/sh")
-  assert_eq(cmd.args.length(), 2)
-  assert_eq(cmd.args[0], "-c")
-  let inner = cmd.args[1]
-  assert_eq(
-    inner,
-    dev_entr_watcher_shell_pipeline("/usr/bin/entr", "/tmp/choir"),
-  )
+test "dev_entr_find_toml_command matches former pipeline second find" {
+  let c = dev_entr_find_toml_command()
+  assert_eq(c.program, "find")
+  assert_eq(c.args, [".", "-maxdepth", "2", "-name", "*.toml"])
+}
+
+///|
+test "dev_entr_entr_command is argv entr without sh" {
+  let c = dev_entr_entr_command("/usr/bin/entr", "/tmp/choir")
+  assert_eq(c.program, "/usr/bin/entr")
+  assert_eq(c.args, ["-r", "/tmp/choir", DEV_RELOAD_SUBCOMMAND])
+  assert_false(c.program.contains("/bin/sh"))
 }
