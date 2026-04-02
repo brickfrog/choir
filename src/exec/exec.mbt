@@ -43,6 +43,16 @@ pub fn dev_entr_watcher_shell_pipeline(
 }
 
 ///|
+/// `choir dev` entr watcher: one `/bin/sh -c` process with the pipeline script as argv (no `system(3)`, no `exec sh -c` wrapper).
+pub fn dev_entr_watcher_shell_command(
+  entr_path : String,
+  choir_exe : String,
+) -> @workspace.Command {
+  let inner = dev_entr_watcher_shell_pipeline(entr_path, choir_exe)
+  { program: "/bin/sh", args: ["-c", inner], workdir: None }
+}
+
+///|
 pub fn command_to_shell_string(cmd : @workspace.Command) -> String {
   let mut shell_cmd = quote(cmd.program)
   for arg in cmd.args {

@@ -4338,10 +4338,11 @@ fn dev_run() -> Unit {
       None =>
         match @exec.resolve_executable_in_path("entr") {
           Some(entr_path) => {
-            let inner = @exec.dev_entr_watcher_shell_pipeline(
-              entr_path, choir_exe,
-            )
-            let code = @sys.system("exec sh -c " + @sys.shell_quote(inner))
+            let code = @exec.run(
+              @exec.dev_entr_watcher_shell_command(entr_path, choir_exe),
+            ) catch {
+              _ => -1
+            }
             @sys.exit(code)
           }
           None => {
