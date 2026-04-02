@@ -1392,6 +1392,61 @@ pub fn rescue_leaf_superseded_persist_failure_message(
 }
 
 ///|
+/// Registry/poller guards, load salvaged agent, `rescue_leaf_spawn_plan`,
+/// `spawn_commands`, `run_strict`, then the existing post-spawn interpreter.
+/// Preserves historical `ToolRequest::RescueLeaf` ordering and error strings.
+pub async fn interpret_rescue_leaf(
+  rescue_args : RescueLeafArgs,
+  project_dir : String,
+  session : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+  registry : @registry.AgentRegistry?,
+  poller_state : @poller.PollerState?,
+  extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
+  listen_uds? : String = ".choir/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
+) -> @types.Response {
+  let reg = match registry {
+    Some(r) => r
+    None =>
+      return @types.Response::Err("agent registry unavailable for rescue_leaf")
+  }
+  let ps = match poller_state {
+    Some(p) => p
+    None => return @types.Response::Err("poller unavailable for rescue_leaf")
+  }
+  let from_agent = match reg.get(rescue_args.from_agent_id) {
+    Ok(a) => a
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  let plan = match rescue_leaf_spawn_plan(rescue_args, from_agent) {
+    Err(e) => return @types.Response::Err(e)
+    Ok(p) => p
+  }
+  let cmds = @workspace.spawn_commands(
+    plan.spec,
+    project_dir,
+    session,
+    parent_session_id=rescue_args.parent_session_id,
+    extra_mcp_servers_json~,
+    shell_command~,
+    listen_uds~,
+    listen_tcp~,
+    tcp_auth_token~,
+  )
+  match run_strict(runner, cmds, capture~) {
+    Err(e) => return @types.Response::Err(e)
+    Ok(_) => ()
+  }
+  interpret_rescue_leaf_post_spawn(
+    rescue_args, plan, project_dir, session, reg, ps, registry,
+  )
+}
+
+///|
 /// Ordered host-side steps for `rescue_leaf` after `run_strict` succeeds. The
 /// interpreter runs this sequence; `SupervisorRemoveChildAliasIfNeeded` may
 /// no-op when `rescue_leaf_remove_supervisor_alias` is false.
