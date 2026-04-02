@@ -128,7 +128,7 @@ async test "cancel_wave force=false blocked by PR" {
     ChangesRequested,
     "body",
     "sha",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
 
   let req = ToolRequest::CancelWave({ force: false })
@@ -183,7 +183,7 @@ async test "cancel_wave force=true overrides PR block" {
     ChangesRequested,
     "body",
     "sha",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
 
   let req = ToolRequest::CancelWave({ force: true })
