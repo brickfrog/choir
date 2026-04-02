@@ -378,9 +378,9 @@ pub fn make_shell_recovery_provider(
     },
     open_prs: async fn(project_dir) {
       let open_pr_output = capture(
-        "sh",
+        "gh",
         [
-          "-c", "gh pr list --json number,headRefName,baseRefName,url,createdAt --state open 2>/dev/null",
+          "pr", "list", "--state", "open", "--json", "number,headRefName,baseRefName,url,createdAt",
         ],
         Some(project_dir),
       )
