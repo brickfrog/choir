@@ -88,9 +88,26 @@ A few implementation details intentionally differ slightly from the early exampl
 
 ---
 
+## Remaining intentional production shell boundaries (2026-04-01)
+
+After the shell-edge containment work through PRs **#138–#140**, core paths no longer depend on **ambient** `sh -c` orchestration for normal control flow. What remains on `main` are **explicit, localized** process edges (each documented at the callsite):
+
+| Boundary | Location (concept) | Why it remains |
+|----------|-------------------|----------------|
+| **TL init tab trailer** | `init_tl_zellij_tab_command` in `src/workspace/spawn.mbt` | The TL pane runs as `sh -lc` over a composed script: the agent launch line from [`Command::to_string`] (shell-shaped text) plus a fixed suffix that prints `[TL exited]` and runs `exec bash -l`. Zellij has no “on agent exit, run …” hook; chaining with `;` / `exec` requires a shell. Pi TL still injects env via zellij `env` argv where applicable. |
+| **Plugin capture fallback** | `capture_plugin_shell_command` / `plugin_capture_uses_shell` in `src/exec/exec.mbt` | When a plugin command cannot be treated as a plain argv list (shell operators, globs, `$` / `` ` ``, env-prefix lines, or parse failure), execution uses `timeout … sh -c <plugin_command>`. Simple one-line argv shapes run as `timeout … <argv…>` with **no** shell. |
+| **Remote SSH transport** | `remote_spawn_commands` / `ssh_cmd` in `src/workspace/spawn.mbt` | Local Choir invokes `ssh` with **direct argv**. OpenSSH still executes the remote command string through the **remote** user’s default shell, so `&&`, `cd`, `nohup`, and `$HOME` expansion are remote-shell semantics unless the transport changes (e.g. non-shell RPC). |
+| **Smoke script execution** | `smoke_shell_launch_command` in `src/bin/choir/smoke_launch.mbt` | Embedded smoke bodies are written to a temp `*.sh` file and run as `sh /path/to/script <argv…>` (positional `$1`–`$3`), avoiding `sh -c` for the embedded script while still using a POSIX shell to execute the file. |
+
+This list is about **shell-shaped process edges**, not the broader pure-core / dispatcher layering work in the audit below. Further reduction at this layer is optional transport or UX work, not an open-ended “remove all shell” backlog.
+
+---
+
 ## Architecture boundary audit (2026-04-01)
 
 This section records the current architectural gap plainly: Choir now proves the workflow and control-plane semantics, but it does **not** yet satisfy the harder exomonad-style invariant that orchestration logic should make decisions and drive state transitions without ambient I/O power.
+
+Shell-specific residual edges are enumerated in **Remaining intentional production shell boundaries** above; the findings below concern effect layering, injectability, and fusion in orchestration paths—not undifferentiated ambient shell orchestration.
 
 ### Current verdict
 
