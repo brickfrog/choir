@@ -545,50 +545,44 @@ pub async fn dispatch(
         }
         None => @types.Response::Err("poller unavailable")
       }
-    ToolRequest::NotifyParent(notify_args) =>
-      match registry {
+    ToolRequest::NotifyParent(notify_args) => {
+      let parent_resolution = match registry {
         Some(reg) =>
-          match
+          Some(
             resolve_parent_for_notify(
               project_dir,
               session,
               reg,
               notify_args.caller_id,
-            ) {
-            Ok(parent) => {
-              let delivery = @message.plan_delivery(
-                parent,
-                notify_args.caller_id,
-                notify_args.message,
-                notify_args.status,
-              )
-              match execute_delivery(delivery, runner, project_dir~) {
-                Ok(_) => {
-                  apply_dev_event(
-                    project_dir,
-                    notify_args.caller_id,
-                    @phase.DevEvent::NotifyParentSuccess(
-                      message=notify_args.message,
-                    ),
-                  )
-                  @types.Response::ok_values({
-                    "status": String::to_json("notified"),
-                  })
-                }
-                Err(e) => @types.Response::Err(e)
-              }
-            }
-            Err(e) => @types.Response::Err(e.message())
-          }
-        None => {
-          apply_dev_event(
-            project_dir,
-            notify_args.caller_id,
-            @phase.DevEvent::NotifyParentSuccess(message=notify_args.message),
+            ),
           )
-          @types.Response::ok_values({ "status": String::to_json("notified") })
-        }
+        None => None
       }
+      match notify_parent_plan(notify_args, parent_resolution) {
+        NotifyParentPlan::NoRegistry(dev_event~, response~) => {
+          apply_dev_event(project_dir, notify_args.caller_id, dev_event)
+          response
+        }
+        NotifyParentPlan::ParentResolveFailed(error_message~) =>
+          @types.Response::Err(error_message)
+        NotifyParentPlan::Deliver(
+          delivery~,
+          dev_event_on_success~,
+          response_ok~
+        ) =>
+          match execute_delivery(delivery, runner, project_dir~) {
+            Ok(_) => {
+              apply_dev_event(
+                project_dir,
+                notify_args.caller_id,
+                dev_event_on_success,
+              )
+              response_ok
+            }
+            Err(e) => @types.Response::Err(e)
+          }
+      }
+    }
     ToolRequest::SendMessage(send_args) =>
       match registry {
         Some(reg) =>

@@ -168,6 +168,84 @@ test "file_pr_auto_notify_delivery_failed_log_append normalizes one line" {
 }
 
 ///|
+test "notify_parent_plan no registry records success event and ok response" {
+  let args : CallerMessageArgs = {
+    caller_id: "main.leaf",
+    message: "done",
+    status: "success",
+  }
+  match notify_parent_plan(args, None) {
+    NotifyParentPlan::NoRegistry(dev_event~, response~) => {
+      assert_eq(dev_event, @phase.DevEvent::NotifyParentSuccess(message="done"))
+      match response {
+        @types.Response::Ok(fields) => {
+          let map = fields.to_json_map()
+          assert_eq(map.get("status"), Some(String::to_json("notified")))
+        }
+        _ => fail("expected ok response")
+      }
+    }
+    _ => fail("expected NoRegistry")
+  }
+}
+
+///|
+test "notify_parent_plan maps parent resolve error to ParentResolveFailed" {
+  let args : CallerMessageArgs = {
+    caller_id: "main.leaf",
+    message: "x",
+    status: "info",
+  }
+  let err = @types.ChoirError::AgentNotFound("main.tl")
+  match notify_parent_plan(args, Some(Err(err))) {
+    NotifyParentPlan::ParentResolveFailed(error_message~) =>
+      assert_eq(error_message, err.message())
+    _ => fail("expected ParentResolveFailed")
+  }
+}
+
+///|
+test "notify_parent_plan deliver matches plan_delivery and success response" {
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("main.tl"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: "/tmp",
+    branch: "main",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:tl"),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let args : CallerMessageArgs = {
+    caller_id: "main.leaf",
+    message: "hello",
+    status: "failure",
+  }
+  let expected_delivery = @message.plan_delivery(
+    parent, "main.leaf", "hello", "failure",
+  )
+  match notify_parent_plan(args, Some(Ok(parent))) {
+    NotifyParentPlan::Deliver(delivery~, dev_event_on_success~, response_ok~) => {
+      assert_eq(delivery, expected_delivery)
+      assert_eq(
+        dev_event_on_success,
+        @phase.DevEvent::NotifyParentSuccess(message="hello"),
+      )
+      match response_ok {
+        @types.Response::Ok(fields) => {
+          let map = fields.to_json_map()
+          assert_eq(map.get("status"), Some(String::to_json("notified")))
+        }
+        _ => fail("expected ok response")
+      }
+    }
+    _ => fail("expected Deliver")
+  }
+}
+
+///|
 test "file_pr_preflight_create_inputs copies branch paths and title/body" {
   let args : FilePrArgs = {
     branch: "main.leaf",
