@@ -166,3 +166,180 @@ test "file_pr_auto_notify_delivery_failed_log_append normalizes one line" {
     "[auto-notify] delivery failed error=oops\n",
   )
 }
+
+///|
+test "file_pr_preflight_create_inputs copies branch paths and title/body" {
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("ignored"),
+    tracked_agent_id: "main.leaf",
+    title: Some("title"),
+    body: Some("body"),
+  }
+  let ins = file_pr_preflight_create_inputs(args, "main", "/tmp/wt")
+  assert_eq(ins.branch, "main.leaf")
+  assert_eq(ins.parent_branch, "main")
+  assert_eq(ins.file_pr_dir, "/tmp/wt")
+  assert_eq(ins.title, Some("title"))
+  assert_eq(ins.body, Some("body"))
+}
+
+///|
+test "file_pr_preflight_host_steps is preflight then push then ensure_pr" {
+  let steps = file_pr_preflight_host_steps()
+  assert_eq(steps.length(), 3)
+  assert_eq(steps[0], FilePrPreflightHostStep::EnsureBranchReady)
+  assert_eq(steps[1], FilePrPreflightHostStep::GitPush)
+  assert_eq(steps[2], FilePrPreflightHostStep::EnsurePullRequest)
+}
+
+///|
+async fn mock_preflight_err(
+  _branch : String,
+  _parent_branch : String,
+  _dir : String,
+) -> Result[Unit, String] {
+  @async.sleep(0)
+  Err("cannot file PR: branch 'x' is missing locally.")
+}
+
+///|
+async fn mock_preflight_ok(
+  _branch : String,
+  _parent_branch : String,
+  _dir : String,
+) -> Result[Unit, String] {
+  @async.sleep(0)
+  Ok(())
+}
+
+///|
+async fn mock_runner_all_ok(cmds : Array[@workspace.Command]) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for _ in cmds {
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+async fn mock_runner_first_fails(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for i = 0; i < cmds.length(); i = i + 1 {
+    statuses.push(if i == 0 { 3 } else { 0 })
+  }
+  statuses
+}
+
+///|
+async fn mock_capture_empty(_cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  (0, "")
+}
+
+///|
+async fn mock_ensure_pr_ok(
+  _branch : String,
+  _parent_branch : String,
+  _dir : String,
+  _title : String?,
+  _body : String?,
+) -> Result[PullRequestInfo, String] {
+  @async.sleep(0)
+  Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+}
+
+///|
+async fn mock_ensure_pr_err(
+  _branch : String,
+  _parent_branch : String,
+  _dir : String,
+  _title : String?,
+  _body : String?,
+) -> Result[PullRequestInfo, String] {
+  @async.sleep(0)
+  Err("gh pr create failed for branch: main.leaf")
+}
+
+///|
+async test "interpret_file_pr_preflight_create returns preflight error and skips push" {
+  let inputs : FilePrPreflightCreateInputs = {
+    branch: "main.leaf",
+    parent_branch: "main",
+    file_pr_dir: "/wt",
+    title: None,
+    body: None,
+  }
+  let got = interpret_file_pr_preflight_create(
+    inputs, mock_preflight_err, mock_runner_all_ok, mock_capture_empty, mock_ensure_pr_ok,
+  )
+  match got {
+    Err(msg) => assert_true(msg.contains("missing locally"))
+    Ok(_) => fail("expected Err from preflight")
+  }
+}
+
+///|
+async test "interpret_file_pr_preflight_create returns push failure detail" {
+  let inputs : FilePrPreflightCreateInputs = {
+    branch: "main.leaf",
+    parent_branch: "main",
+    file_pr_dir: "/wt",
+    title: None,
+    body: None,
+  }
+  let got = interpret_file_pr_preflight_create(
+    inputs, mock_preflight_ok, mock_runner_first_fails, mock_capture_empty, mock_ensure_pr_ok,
+  )
+  match got {
+    Err(msg) =>
+      // `run_strict` uses either `git failed (exit …)` with stderr detail or
+      // `command failed with status …` when capture returned empty output.
+      assert_true(msg.contains("3") && msg.contains("failed"))
+    Ok(_) => fail("expected Err from push")
+  }
+}
+
+///|
+async test "interpret_file_pr_preflight_create returns ensure_pr error after push" {
+  let inputs : FilePrPreflightCreateInputs = {
+    branch: "main.leaf",
+    parent_branch: "main",
+    file_pr_dir: "/wt",
+    title: None,
+    body: None,
+  }
+  let got = interpret_file_pr_preflight_create(
+    inputs, mock_preflight_ok, mock_runner_all_ok, mock_capture_empty, mock_ensure_pr_err,
+  )
+  match got {
+    Err(msg) => assert_eq(msg, "gh pr create failed for branch: main.leaf")
+    Ok(_) => fail("expected Err from ensure_pr")
+  }
+}
+
+///|
+async test "interpret_file_pr_preflight_create yields PR on happy path" {
+  let inputs : FilePrPreflightCreateInputs = {
+    branch: "main.leaf",
+    parent_branch: "main",
+    file_pr_dir: "/wt",
+    title: Some("t"),
+    body: Some("b"),
+  }
+  let got = interpret_file_pr_preflight_create(
+    inputs, mock_preflight_ok, mock_runner_all_ok, mock_capture_empty, mock_ensure_pr_ok,
+  )
+  match got {
+    Ok(pr) => {
+      assert_eq(pr.number, 42)
+      assert_eq(pr.url, "https://example.test/pr/42")
+      assert_eq(pr.state, "OPEN")
+    }
+    Err(_) => fail("expected Ok")
+  }
+}
