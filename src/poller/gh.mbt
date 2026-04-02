@@ -98,23 +98,107 @@ fn parse_review_bodies(json : Json) -> String {
 }
 
 ///|
-fn parse_ci_failed(json : Json) -> Bool {
-  guard json is Object(obj) else { return false }
-  guard obj.get("statusCheckRollup") is Some(Array(checks)) else {
-    return false
+fn json_str_upper(v : Json) -> String {
+  match v {
+    String(s) => s.to_upper()
+    _ => ""
   }
+}
+
+///|
+fn rollup_conclusion_failure(s : String) -> Bool {
+  s == "FAILURE" || s == "ERROR" || s == "TIMED_OUT"
+}
+
+///|
+fn rollup_state_pending(s : String) -> Bool {
+  s == "PENDING" ||
+  s == "IN_PROGRESS" ||
+  s == "EXPECTED" ||
+  s == "QUEUED" ||
+  s == "WAITING" ||
+  s == "REQUESTED"
+}
+
+///|
+fn rollup_conclusion_success(s : String) -> Bool {
+  s == "SUCCESS" || s == "SKIPPED" || s == "NEUTRAL"
+}
+
+///|
+/// Aggregate GitHub `statusCheckRollup` into a coarse status for the PR head.
+fn parse_ci_rollup(json : Json) -> CiRollupStatus {
+  guard json is Object(obj) else { return Unknown }
+  guard obj.get("statusCheckRollup") is Some(Array(checks)) else {
+    return Unknown
+  }
+  if checks.length() == 0 {
+    return Unknown
+  }
+  let mut any_failure = false
+  let mut any_pending = false
+  let mut all_have_success = true
+  let mut saw_check = false
   for check in checks {
     guard check is Object(c) else { continue }
-    match c.get("conclusion") {
-      Some(String("FAILURE")) | Some(String("ERROR")) => return true
-      _ => ()
+    saw_check = true
+    let conclusion = match c.get("conclusion") {
+      Some(v) => json_str_upper(v)
+      None => ""
     }
-    match c.get("state") {
-      Some(String("FAILURE")) | Some(String("ERROR")) => return true
-      _ => ()
+    let state = match c.get("state") {
+      Some(v) => json_str_upper(v)
+      None => ""
     }
+    let status = match c.get("status") {
+      Some(v) => json_str_upper(v)
+      None => ""
+    }
+    if rollup_conclusion_failure(conclusion) || rollup_state_failure(state) {
+      any_failure = true
+      all_have_success = false
+      continue
+    }
+    if conclusion == "" {
+      if rollup_state_pending(state) || rollup_status_incomplete(status) {
+        any_pending = true
+      }
+      all_have_success = false
+      continue
+    }
+    if rollup_conclusion_success(conclusion) {
+      continue
+    }
+    all_have_success = false
   }
-  false
+  if !saw_check {
+    return Unknown
+  }
+  if any_failure {
+    return Failure
+  }
+  if any_pending {
+    return InProgress
+  }
+  if all_have_success {
+    Success
+  } else {
+    Unknown
+  }
+}
+
+///|
+fn rollup_state_failure(s : String) -> Bool {
+  s == "FAILURE" || s == "ERROR"
+}
+
+///|
+fn rollup_status_incomplete(s : String) -> Bool {
+  s == "IN_PROGRESS" ||
+  s == "QUEUED" ||
+  s == "PENDING" ||
+  s == "WAITING" ||
+  s == "REQUESTED"
 }
 
 ///|
@@ -130,15 +214,15 @@ fn parse_pr_is_open(json : Json) -> Bool {
 ///|
 pub fn parse_gh_pr_view_output(
   data : String,
-) -> (Bool, ReviewState, String, Bool, String, Bool) {
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
   let json = @json.parse(data) catch {
-    _ => return (false, None_, "", false, "", true)
+    _ => return (false, None_, "", Unknown, "", true)
   }
   (
     true,
     parse_review_state(json),
     parse_head_ref_oid(json),
-    parse_ci_failed(json),
+    parse_ci_rollup(json),
     parse_review_bodies(json),
     parse_pr_is_open(json),
   )
@@ -147,7 +231,7 @@ pub fn parse_gh_pr_view_output(
 ///|
 pub async fn gh_poll_pr(
   pr_number : Int,
-) -> (Bool, ReviewState, String, Bool, String, Bool) {
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
   let (reader, writer) = @process.read_from_process() catch {
     e => {
       @sys.write_stderr(
@@ -157,11 +241,11 @@ pub async fn gh_poll_pr(
         e.to_string() +
         "\n",
       )
-      return (false, None_, "", false, "", true)
+      return (false, None_, "", Unknown, "", true)
     }
   }
   let (err_reader, err_writer) = @process.read_from_process() catch {
-    _ => return (false, None_, "", false, "", true)
+    _ => return (false, None_, "", Unknown, "", true)
   }
   let pid = @process.spawn_orphan(
     "gh",
@@ -184,7 +268,7 @@ pub async fn gh_poll_pr(
         "\n",
       )
       reader.close()
-      return (false, None_, "", false, "", true)
+      return (false, None_, "", Unknown, "", true)
     }
   }
   let (output, total) = @exec.drain_process_stdout(reader, 65536)
@@ -204,17 +288,17 @@ pub async fn gh_poll_pr(
       "\n",
     )
     if total == 0 {
-      return (false, None_, "", false, "", true)
+      return (false, None_, "", Unknown, "", true)
     }
   }
   // Fetch inline code review comments (separate API)
   let inline_output = fetch_inline_comments(pr_number)
   let merged = merge_inline_comments(output, inline_output)
   let exit_ok = exit_code == 0 && total > 0
-  let (json_ok, review, sha, ci_failed, review_bodies, is_open) = parse_gh_pr_view_output(
+  let (json_ok, review, sha, ci_rollup, review_bodies, is_open) = parse_gh_pr_view_output(
     merged,
   )
-  (exit_ok && json_ok, review, sha, ci_failed, review_bodies, is_open)
+  (exit_ok && json_ok, review, sha, ci_rollup, review_bodies, is_open)
 }
 
 ///|

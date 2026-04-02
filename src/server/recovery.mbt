@@ -30,12 +30,12 @@ pub async fn recover_state(
         review~,
         review_bodies~,
         sha~,
-        ci_failed~,
+        ci_rollup~,
         created_at~
       ) =>
         state.track_recovered_pr(
           pr_number, agent_id, branch, parent_branch, pr_url, created_at, review,
-          review_bodies, sha, ci_failed,
+          review_bodies, sha, ci_rollup,
         )
       @runtime.RecoveryAction::SyncLifecycle(agent_id~, pr~, review~) =>
         state.sync_recovered_pr_lifecycle(agent_id, pr, review)
@@ -100,7 +100,14 @@ async test "discover_recovery_snapshot with mock provider" {
     read_poller_state: fn(_dir) { [] },
     write_poller_state: fn(_dir, _tracked) { () },
     gh_poll_pr: fn(_num) {
-      (true, @poller.ReviewState::Approved, "sha1", false, "", true)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha1",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+      )
     },
   }
   let snapshot = @runtime.discover_recovery_snapshot(
@@ -155,7 +162,14 @@ async test "plan_recovery reconciles local agents and open PRs" {
 
   let plan = @runtime.plan_recovery("session", snapshot, async fn(_pr_number) {
     @async.sleep(0)
-    (true, @poller.ReviewState::Approved, "sha1", false, "", true)
+    (
+      true,
+      @poller.ReviewState::Approved,
+      "sha1",
+      @poller.CiRollupStatus::Success,
+      "",
+      true,
+    )
   })
 
   // Expect:
@@ -239,7 +253,7 @@ async test "plan_recovery handles offline agent and persisted PR" {
         last_review_bodies: "some comments",
         last_sha: "sha-off",
         notified_parent: false,
-        last_ci_failed: false,
+        last_ci_rollup: @poller.CiRollupStatus::Unknown,
         last_timeout_at: 0L,
       },
     ],
@@ -248,7 +262,14 @@ async test "plan_recovery handles offline agent and persisted PR" {
 
   let plan = @runtime.plan_recovery("session", snapshot, async fn(_pr_number) {
     @async.sleep(0)
-    (true, @poller.ReviewState::None_, "", false, "", true)
+    (
+      true,
+      @poller.ReviewState::None_,
+      "",
+      @poller.CiRollupStatus::Unknown,
+      "",
+      true,
+    )
   })
 
   // Expect:
