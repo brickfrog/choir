@@ -4338,9 +4338,7 @@ fn dev_run() -> Unit {
       None =>
         match @exec.resolve_executable_in_path("entr") {
           Some(entr_path) => {
-            let code = @exec.run(
-              @exec.dev_entr_watcher_shell_command(entr_path, choir_exe),
-            ) catch {
+            let code = @exec.run_dev_entr_watcher(entr_path, choir_exe) catch {
               _ => -1
             }
             @sys.exit(code)

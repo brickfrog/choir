@@ -29,27 +29,62 @@ pub fn dev_watchexec_command(
 }
 
 ///|
-/// Inner `sh -c` body for the `entr` fallback: `find … | entr -r <choir> __dev_reload` (one shell layer for the pipeline only).
-pub fn dev_entr_watcher_shell_pipeline(
-  entr_path : String,
-  choir_exe : String,
-) -> String {
-  "(find src -name \"*.mbt\"; find . -maxdepth 2 -name \"*.toml\") | " +
-  quote(entr_path) +
-  " -r " +
-  quote(choir_exe) +
-  " " +
-  DEV_RELOAD_SUBCOMMAND
+/// First `find` in the former `entr` pipeline: `find src -name '*.mbt'`.
+pub fn dev_entr_find_src_mbt_command() -> @workspace.Command {
+  { program: "find", args: ["src", "-name", "*.mbt"], workdir: None }
 }
 
 ///|
-/// `choir dev` entr watcher: one `/bin/sh -c` process with the pipeline script as argv (no `system(3)`, no `exec sh -c` wrapper).
-pub fn dev_entr_watcher_shell_command(
+/// Second `find` in the former `entr` pipeline: `find . -maxdepth 2 -name '*.toml'`.
+pub fn dev_entr_find_toml_command() -> @workspace.Command {
+  {
+    program: "find",
+    args: [".", "-maxdepth", "2", "-name", "*.toml"],
+    workdir: None,
+  }
+}
+
+///|
+/// `entr` argv for `choir dev` hot-reload (stdin is the concatenated `find` outputs).
+pub fn dev_entr_entr_command(
   entr_path : String,
   choir_exe : String,
 ) -> @workspace.Command {
-  let inner = dev_entr_watcher_shell_pipeline(entr_path, choir_exe)
-  { program: "/bin/sh", args: ["-c", inner], workdir: None }
+  {
+    program: entr_path,
+    args: ["-r", choir_exe, DEV_RELOAD_SUBCOMMAND],
+    workdir: None,
+  }
+}
+
+///|
+/// Run the `entr` fallback for `choir dev` without `/bin/sh -c`: two native `find` invocations
+/// (same argv as the former `(find …; find …) | entr …` pipeline), merged stdout fed to `entr` stdin;
+/// `entr` inherits the caller's stdout/stderr.
+pub async fn run_dev_entr_watcher(
+  entr_path : String,
+  choir_exe : String,
+) -> Int {
+  let c1 = dev_entr_find_src_mbt_command()
+  let c2 = dev_entr_find_toml_command()
+  let out1 = capture_stdout_with_cwd(c1.program, c1.args, c1.workdir)
+  let out2 = capture_stdout_with_cwd(c2.program, c2.args, c2.workdir)
+  let stdin_body = out1 + out2
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ => return -1
+  }
+  let entr = dev_entr_entr_command(entr_path, choir_exe)
+  let pid = @process.spawn_orphan(entr.program, entr.args[:], stdin=stdin_read) catch {
+    _ => {
+      stdin_write.close()
+      return -1
+    }
+  }
+  ignore(stdin_write.write(stdin_body) catch { _ => () })
+  stdin_write.close()
+  @process.wait_pid(pid) catch {
+    _ => -1
+  }
 }
 
 ///|
