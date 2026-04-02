@@ -41,7 +41,7 @@ pub(all) struct RecoveryPrsSnapshot {
   open_prs : Array[OpenPR]
   /// Entries for open PRs that need fresh GitHub state (no matching persisted track row, and a reconcilable local agent).
   polls : Map[Int, RecoveryPrPollRow]
-}
+} derive(Show)
 
 ///|
 pub(all) struct RecoveryFilesSnapshot {
@@ -56,7 +56,7 @@ pub(all) struct RecoveryReconcileInput {
   prs : RecoveryPrsSnapshot
   files : RecoveryFilesSnapshot
   recovered_at : Int64
-}
+} derive(Show)
 
 ///|
 pub(all) enum RecoveryAction {
@@ -650,6 +650,12 @@ pub fn plan_recovery(
                   ),
                 )
               }
+              // `discover_recovery_input` pre-fetches polls for exactly the set of PRs
+              // where (persisted=None AND agent found). Since `plan_recovery` uses the
+              // same pure `build_agent_recovery_actions` on the same snapshot data, the
+              // agent-lookup result is identical, so this branch is unreachable when
+              // input was built by `discover_recovery_input`. It can occur in tests that
+              // construct `RecoveryReconcileInput` manually with an incomplete polls map.
               None => ()
             }
         }
@@ -698,6 +704,7 @@ pub async fn discover_recovery_input(
             preferred_agent_id=None,
           ) {
           Some(_) => {
+            // gh_poll_pr returns (poll_ok, review, sha, ci_rollup, review_bodies, is_open, copilot_seen)
             let (_, review, sha, ci_rollup, review_bodies, _, copilot_seen) = (provider.gh_poll_pr)(
               pr.pr_number,
               false,

@@ -18,10 +18,12 @@ test "PaneWatcher::new" {
 
 ///|
 test "PaneWatcher::with_host routes subscribe and cleanup through injected host" {
+  let killed_pids : Array[Int] = []
+  let deleted_paths : Array[String] = []
   let host : PaneWatchHost = {
     spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 99 },
-    kill_pid_best_effort: fn(_pid) { () },
-    delete_file_sync: fn(_path) { () },
+    kill_pid_best_effort: fn(pid) { killed_pids.push(pid) },
+    delete_file_sync: fn(path) { deleted_paths.push(path) },
     read_file: fn(_path) { "{\"event\":\"pane_update\",\"viewport\":[\"hi\"]}" },
   }
   let pw = PaneWatcher::with_host(host)
@@ -32,8 +34,16 @@ test "PaneWatcher::with_host routes subscribe and cleanup through injected host"
   }
   pw.watch_pane("agent-x", target, 0L)
   assert_eq(pw.subscribe_pids.get("agent-x"), Some(99))
+  // read_viewport routes through the injected host
+  assert_eq(
+    pw.read_viewport("agent-x"),
+    "{\"event\":\"pane_update\",\"viewport\":[\"hi\"]}",
+  )
   pw.stop_subscribe("agent-x")
   assert_eq(pw.subscribe_pids.get("agent-x"), None)
+  // kill and delete were dispatched through the host
+  assert_eq(killed_pids, [99])
+  assert_eq(deleted_paths, [pane_snapshot_path("agent-x")])
 }
 
 ///|
