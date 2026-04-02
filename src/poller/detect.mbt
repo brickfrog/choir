@@ -3,11 +3,12 @@ pub fn detect_events(
   tracked : TrackedPR,
   current_review : ReviewState,
   current_sha : String,
-  ci_failed : Bool,
+  ci_rollup : CiRollupStatus,
   review_bodies : String,
   now : Int64,
   timeout : Int64,
 ) -> Array[PollEvent] {
+  let ci_failed = ci_rollup == Failure
   let events = []
   let has_new_review_bodies = review_bodies != "" &&
     review_bodies != tracked.last_review_bodies
@@ -73,15 +74,24 @@ pub fn detect_events(
   }
 
   // CI failure — only fire once per failure episode
-  if ci_failed && !tracked.last_ci_failed {
+  if ci_failed && tracked.last_ci_rollup != Failure {
     events.push(PollEvent::CIFailed(tracked.pr_number))
   }
   // CI recovered on the same head — do not fire when SHA just changed (new head may still be pending).
   if !ci_failed &&
-    tracked.last_ci_failed &&
+    tracked.last_ci_rollup == Failure &&
     current_sha != "" &&
     current_sha == tracked.last_sha {
     events.push(PollEvent::CIFailureCleared(tracked.pr_number))
+  }
+  // Rollup reports all checks successful after a prior non-success on the same head (e.g. CI finished green).
+  // Excludes Failure→Success (handled by CIFailureCleared). Not a merge/review verdict.
+  if ci_rollup == Success &&
+    tracked.last_ci_rollup != Success &&
+    tracked.last_ci_rollup != Failure &&
+    current_sha != "" &&
+    current_sha == tracked.last_sha {
+    events.push(PollEvent::CILatestHeadRollupSucceeded(tracked.pr_number))
   }
   events
 }

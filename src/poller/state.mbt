@@ -14,6 +14,27 @@ fn review_state_name(review : ReviewState) -> String {
 }
 
 ///|
+fn ci_rollup_name(rollup : CiRollupStatus) -> String {
+  match rollup {
+    Unknown => "unknown"
+    InProgress => "in_progress"
+    Success => "success"
+    Failure => "failure"
+  }
+}
+
+///|
+fn parse_ci_rollup_name(s : String) -> CiRollupStatus? {
+  match s {
+    "unknown" => Some(Unknown)
+    "in_progress" => Some(InProgress)
+    "success" => Some(Success)
+    "failure" => Some(Failure)
+    _ => None
+  }
+}
+
+///|
 fn parse_review_state_name(s : String) -> ReviewState? {
   match s {
     "none" => Some(None_)
@@ -39,7 +60,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "last_review_bodies": self.last_review_bodies.to_json(),
     "last_sha": self.last_sha.to_json(),
     "notified_parent": self.notified_parent.to_json(),
-    "last_ci_failed": self.last_ci_failed.to_json(),
+    "last_ci_rollup": ci_rollup_name(self.last_ci_rollup).to_json(),
     "last_timeout_at": self.last_timeout_at.to_json(),
   }
   .to_json()
@@ -144,9 +165,19 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => return None
   }
-  let last_ci_failed = match json_field_bool(fields, "last_ci_failed") {
-    Some(value) => value
-    None => return None
+  let last_ci_rollup = match
+    @types.json_field_string(fields, "last_ci_rollup") {
+    Some(value) =>
+      match parse_ci_rollup_name(value) {
+        Some(parsed) => parsed
+        None => return None
+      }
+    None =>
+      match json_field_bool(fields, "last_ci_failed") {
+        Some(true) => Failure
+        Some(false) => Unknown
+        None => return None
+      }
   }
   let last_timeout_at = match json_field_int64(fields, "last_timeout_at") {
     Some(value) => value
@@ -165,7 +196,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     last_review_bodies,
     last_sha,
     notified_parent,
-    last_ci_failed,
+    last_ci_rollup,
     last_timeout_at,
   })
 }
@@ -198,7 +229,7 @@ pub fn PollerState::track(
     last_review_bodies: "",
     last_sha: "",
     notified_parent: false,
-    last_ci_failed: false,
+    last_ci_rollup: Unknown,
     last_timeout_at: 0L,
   }
   self.tracked.set(pr_number, pr)
@@ -284,7 +315,7 @@ pub fn PollerState::track_recovered(
   review : ReviewState,
   review_bodies : String,
   sha : String,
-  ci_failed : Bool,
+  ci_rollup : CiRollupStatus,
 ) -> Unit {
   let pr = {
     pr_number,
@@ -299,7 +330,7 @@ pub fn PollerState::track_recovered(
     last_review_bodies: review_bodies,
     last_sha: sha,
     notified_parent: recovered_notified_parent(review),
-    last_ci_failed: ci_failed,
+    last_ci_rollup: ci_rollup,
     last_timeout_at: 0L,
   }
   self.tracked.set(pr_number, pr)
@@ -495,7 +526,14 @@ pub async fn PollerState::tick_with(
   self : PollerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (Bool, ReviewState, String, Bool, String, Bool),
+  poll : async (Int) -> (
+    Bool,
+    ReviewState,
+    String,
+    CiRollupStatus,
+    String,
+    Bool,
+  ),
   on_event : (PollEvent, String) -> Unit,
   log_pr : (PollerPrTickLog) -> Unit,
 ) -> Unit {
@@ -528,7 +566,7 @@ pub async fn PollerState::tick_with(
       })
       continue
     }
-    let (poll_ok, review, sha, ci_failed, review_bodies, is_open) = poll(
+    let (poll_ok, review, sha, ci_rollup, review_bodies, is_open) = poll(
       pr_number,
     )
     if !poll_ok {
@@ -579,7 +617,7 @@ pub async fn PollerState::tick_with(
       continue
     }
     let events = detect_events(
-      tracked_ok, review, sha, ci_failed, review_bodies, now, timeout,
+      tracked_ok, review, sha, ci_rollup, review_bodies, now, timeout,
     )
     let mut timeout_at = tracked_ok.last_timeout_at
     for event in events {
@@ -598,7 +636,7 @@ pub async fn PollerState::tick_with(
         last_review_state: review,
         last_review_bodies: review_bodies,
         notified_parent,
-        last_ci_failed: ci_failed,
+        last_ci_rollup: ci_rollup,
         last_timeout_at: timeout_at,
       }
     } else {
@@ -608,7 +646,7 @@ pub async fn PollerState::tick_with(
         last_review_bodies: review_bodies,
         last_sha: sha,
         notified_parent,
-        last_ci_failed: ci_failed,
+        last_ci_rollup: ci_rollup,
         last_timeout_at: timeout_at,
       }
     }
@@ -643,17 +681,17 @@ pub async fn PollerState::tick(
 ///|
 async fn state_tick_backoff_mock_failure(
   _pr_number : Int,
-) -> (Bool, ReviewState, String, Bool, String, Bool) {
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
   @async.sleep(0)
-  (false, None_, "", false, "", true)
+  (false, None_, "", Unknown, "", true)
 }
 
 ///|
 async fn state_tick_backoff_mock_success(
   _pr_number : Int,
-) -> (Bool, ReviewState, String, Bool, String, Bool) {
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
   @async.sleep(0)
-  (true, Commented, "sha-1", false, "body", true)
+  (true, Commented, "sha-1", Success, "body", true)
 }
 
 ///|

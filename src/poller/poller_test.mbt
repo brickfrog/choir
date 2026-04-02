@@ -82,7 +82,7 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
     #|    "last_review_bodies": "",
     #|    "last_sha": "",
     #|    "notified_parent": false,
-    #|    "last_ci_failed": false,
+    #|    "last_ci_rollup": "unknown",
     #|    "last_timeout_at": 0
     #|  }
     #|]
@@ -91,4 +91,28 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   let t = parsed[0]
   assert_eq(t.consecutive_failures, 0)
   assert_eq(t.backoff_until, 0L)
+}
+
+///|
+test "parse_tracked_prs_json maps legacy last_ci_failed to CiRollupStatus" {
+  let json_legacy_failure =
+    #|[
+    #|  {
+    #|    "pr_number": 2,
+    #|    "agent_id": "a",
+    #|    "branch": "b",
+    #|    "parent_branch": "main",
+    #|    "pr_url": "u",
+    #|    "first_seen": 1,
+    #|    "last_review_state": "none",
+    #|    "last_review_bodies": "",
+    #|    "last_sha": "",
+    #|    "notified_parent": false,
+    #|    "last_ci_failed": true,
+    #|    "last_timeout_at": 0
+    #|  }
+    #|]
+  let parsed = @poller.parse_tracked_prs_json(json_legacy_failure)
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].last_ci_rollup, Failure)
 }

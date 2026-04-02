@@ -1,17 +1,31 @@
 ///|
 async fn mock_poll_failure_sentinel(
   _pr_number : Int,
-) -> (Bool, @poller.ReviewState, String, Bool, String, Bool) {
+) -> (Bool, @poller.ReviewState, String, @poller.CiRollupStatus, String, Bool) {
   @async.sleep(0)
-  (false, @poller.ReviewState::None_, "", false, "", true)
+  (
+    false,
+    @poller.ReviewState::None_,
+    "",
+    @poller.CiRollupStatus::Unknown,
+    "",
+    true,
+  )
 }
 
 ///|
 async fn mock_poll_success_open(
   _pr_number : Int,
-) -> (Bool, @poller.ReviewState, String, Bool, String, Bool) {
+) -> (Bool, @poller.ReviewState, String, @poller.CiRollupStatus, String, Bool) {
   @async.sleep(0)
-  (true, @poller.ReviewState::Commented, "sha-1", false, "body", true)
+  (
+    true,
+    @poller.ReviewState::Commented,
+    "sha-1",
+    @poller.CiRollupStatus::Success,
+    "body",
+    true,
+  )
 }
 
 ///|

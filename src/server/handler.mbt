@@ -239,11 +239,11 @@ pub fn ServerState::track_recovered_pr(
   review : @poller.ReviewState,
   review_bodies : String,
   sha : String,
-  ci_failed : Bool,
+  ci_rollup : @poller.CiRollupStatus,
 ) -> Unit {
   self.poller.track_recovered(
     pr_number, agent_id, branch, parent_branch, pr_url, created_at, review, review_bodies,
-    sha, ci_failed,
+    sha, ci_rollup,
   )
 }
 
@@ -586,6 +586,25 @@ fn parent_poll_event_message(
           "info",
         ),
       )
+    CILatestHeadRollupSucceeded(n) =>
+      Some(
+        (
+          "[CI LATEST HEAD] " +
+          agent_id +
+          " PR #" +
+          n.to_string() +
+          " GitHub Actions rollup reports all checks successful on the current head (not merge approval, mergeability, or review verdict).\n" +
+          "branch: " +
+          branch +
+          "\n" +
+          "parent_branch: " +
+          parent_branch.unwrap_or("<unknown>") +
+          pr_url +
+          "\n" +
+          "Next action: re-check Copilot/review thread and branch policy, then merge_pr only if appropriate.",
+          "info",
+        ),
+      )
     PRMerged(n) =>
       Some(
         (
@@ -618,6 +637,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     ReviewTimeout(n) => n
     CIFailed(n) => n
     CIFailureCleared(n) => n
+    CILatestHeadRollupSucceeded(n) => n
     PRMerged(n) => n
   }
 }
@@ -680,6 +700,15 @@ fn leaf_poll_review_injection_message(
           "[REVIEW] PR #" +
           n.to_string() +
           ": CI no longer reports failure on latest head — verify full status on GitHub (not merge or approval)",
+          "info",
+        ),
+      )
+    CILatestHeadRollupSucceeded(n) =>
+      Some(
+        (
+          "[REVIEW] PR #" +
+          n.to_string() +
+          ": Actions rollup is green on latest head — re-check review thread and policy (not merge or approval by itself)",
           "info",
         ),
       )
@@ -853,6 +882,12 @@ fn pr_comment_body(
           n, "**Choir:** CI rollup no longer shows FAILURE/ERROR on the latest head (may still be pending) — re-check the PR on GitHub (not a merge signal).",
         ),
       )
+    CILatestHeadRollupSucceeded(n) =>
+      Some(
+        (
+          n, "**Choir:** GitHub Actions rollup reports all checks successful on the latest head — re-check review/merge policy on GitHub (not an approval or merge signal by itself).",
+        ),
+      )
     FixesPushed(n) =>
       Some(
         (
@@ -1013,7 +1048,14 @@ pub async fn ServerState::process_poller_tick_with(
   self : ServerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (Bool, @poller.ReviewState, String, Bool, String, Bool),
+  poll : async (Int) -> (
+    Bool,
+    @poller.ReviewState,
+    String,
+    @poller.CiRollupStatus,
+    String,
+    Bool,
+  ),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
   let pending_events = []
@@ -1877,7 +1919,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
     last_review_bodies: "",
     last_sha: "",
     notified_parent: false,
-    last_ci_failed: false,
+    last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
   }
   match parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7)) {
@@ -1907,7 +1949,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     last_review_bodies: "",
     last_sha: "abc",
     notified_parent: false,
-    last_ci_failed: false,
+    last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
   }
   match parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8)) {
@@ -1936,7 +1978,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     last_review_bodies: "",
     last_sha: "abc",
     notified_parent: false,
-    last_ci_failed: false,
+    last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
   }
   match
@@ -1984,6 +2026,72 @@ test "pr_comment_body CIFailureCleared contains pending caveat and no merge sign
 }
 
 ///|
+test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge or approval" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 171,
+    agent_id: "main.dev-z",
+    branch: "work/z",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/171",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "abc",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::InProgress,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      @poller.PollEvent::CILatestHeadRollupSucceeded(171),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(message.contains("[CI LATEST HEAD]"))
+      assert_true(message.contains("not merge approval"))
+      assert_true(message.contains("re-check"))
+      assert_false(message.to_lower().contains("mergeable"))
+    }
+    None => fail("expected CILatestHeadRollupSucceeded message")
+  }
+}
+
+///|
+test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" {
+  match
+    leaf_poll_review_injection_message(
+      @poller.PollEvent::CILatestHeadRollupSucceeded(171),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(message.contains("rollup is green"))
+      assert_true(message.contains("not merge"))
+    }
+    None => fail("expected leaf CILatestHeadRollupSucceeded injection")
+  }
+}
+
+///|
+test "pr_comment_body CILatestHeadRollupSucceeded avoids approval language" {
+  match
+    pr_comment_body(
+      @poller.PollEvent::CILatestHeadRollupSucceeded(60),
+      "main.dev-z",
+    ) {
+    Some((pr_number, body)) => {
+      assert_eq(pr_number, 60)
+      assert_true(body.contains("successful"))
+      assert_true(body.contains("not an approval"))
+      assert_false(body.to_lower().contains("approved"))
+    }
+    None => fail("expected pr_comment_body for CILatestHeadRollupSucceeded")
+  }
+}
+
+///|
 test "parent_poll_event_message suppresses non-blocking review comments" {
   let tracked : @poller.TrackedPR = {
     pr_number: 9,
@@ -1998,7 +2106,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     last_review_bodies: "note",
     last_sha: "abc",
     notified_parent: false,
-    last_ci_failed: false,
+    last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
   }
   assert_eq(
