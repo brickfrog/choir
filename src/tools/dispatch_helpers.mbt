@@ -1056,7 +1056,7 @@ test "parse_gh_repo_view_output returns None on malformed json" {
 }
 
 ///|
-async test "capture_plugin_shell_command pipes stdin through sh -c cat" {
+async test "capture_plugin_shell_command pipes stdin to argv plugin (no sh -c for simple argv)" {
   let (exit_code, out) = @exec.capture_plugin_shell_command(
     "cat", "{\"ok\":true}", 10,
   )
