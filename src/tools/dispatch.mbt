@@ -212,71 +212,9 @@ pub async fn dispatch(
       }
       // Post-spawn side effects: only run if spawn succeeded.
       if resp.is_ok() && spawn_plan.spawned_count > 0 {
-        let resolved_pane_ids : Array[(String, String)] = []
-        match registry {
-          Some(reg) =>
-            for spec in spawn_plan.spawned_specs {
-              let agent_id = @workspace.canonical_agent_id(spec)
-              let terminal_target = @workspace.local_target_for(
-                session,
-                spec.slug,
-                spec.isolation,
-              )
-              ignore(
-                reg.upsert({
-                  agent_id,
-                  role: spec.role,
-                  agent_type: spec.agent_type,
-                  state: @types.AgentState::Spawning,
-                  parent: Some(spec.parent_id),
-                  terminal_target: Some(terminal_target),
-                  host: @types.Host::Local,
-                  workspace: @workspace.worktree_path(
-                    project_dir,
-                    @workspace.spawn_workspace_dir_slug(spec),
-                  ),
-                  branch: @workspace.spawn_git_branch(spec),
-                  spawn_depth: spec.spawn_depth,
-                }),
-              )
-            }
-          None => ()
-        }
-        for slug in spawn_plan.spawned_slugs {
-          let _ = @workspace.register_team_member(
-            fork_wave_args.caller_id,
-            slug,
-            @config.agent_type_to_string(fork_wave_args.agent_type),
-          )
-          @phase.apply_tl_event(
-            project_dir,
-            fork_wave_args.caller_id,
-            @phase.TLEvent::ChildSpawned(child_id=slug),
-            registry~,
-          )
-          let agent_id = @workspace.branch_name(
-            fork_wave_args.parent_branch,
-            slug,
-          )
-          match resolve_zellij_pane_id(session, slug) {
-            Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
-            None => ()
-          }
-        }
-        match registry {
-          Some(reg) =>
-            for pair in resolved_pane_ids {
-              let (agent_id, pane_id) = pair
-              match reg.get(agent_id) {
-                Ok(agent) => {
-                  let target = @workspace.zellij_pane_target(session, pane_id)
-                  ignore(reg.upsert({ ..agent, terminal_target: Some(target) }))
-                }
-                Err(_) => ()
-              }
-            }
-          None => ()
-        }
+        interpret_fork_wave_post_spawn(
+          fork_wave_args, spawn_plan, project_dir, session, registry,
+        )
       }
       resp
     }

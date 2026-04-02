@@ -625,6 +625,115 @@ pub fn fork_wave_spawn_plan(
 }
 
 ///|
+/// Registry row for a spawned leaf after `fork_wave` host spawn succeeds (before
+/// pane resolution overwrites `terminal_target`). Pure; matches the prior inline
+/// `ToolRequest::ForkWave` upsert shape.
+pub fn fork_wave_spawned_registry_agent(
+  spec : @types.SpawnSpec,
+  project_dir : String,
+  session : String,
+) -> @types.Agent {
+  let agent_id = @workspace.canonical_agent_id(spec)
+  let terminal_target = @workspace.local_target_for(
+    session,
+    spec.slug,
+    spec.isolation,
+  )
+  {
+    agent_id,
+    role: spec.role,
+    agent_type: spec.agent_type,
+    state: @types.AgentState::Spawning,
+    parent: Some(spec.parent_id),
+    terminal_target: Some(terminal_target),
+    host: @types.Host::Local,
+    workspace: @workspace.worktree_path(
+      project_dir,
+      @workspace.spawn_workspace_dir_slug(spec),
+    ),
+    branch: @workspace.spawn_git_branch(spec),
+    spawn_depth: spec.spawn_depth,
+  }
+}
+
+///|
+/// Ordered host-side phases for `fork_wave` after `interpret` succeeds with
+/// `spawned_count > 0`. The interpreter runs this sequence.
+pub(all) enum ForkWavePostSpawnHostStep {
+  RegistryUpsertSpawnedSpecs
+  PerSlugTeamRegisterAndTlEventAndPaneResolve
+  RegistryTerminalTargetUpsertFromPanes
+} derive(Eq, Show)
+
+///|
+pub fn fork_wave_post_spawn_host_steps() -> Array[ForkWavePostSpawnHostStep] {
+  [
+    ForkWavePostSpawnHostStep::RegistryUpsertSpawnedSpecs,
+    ForkWavePostSpawnHostStep::PerSlugTeamRegisterAndTlEventAndPaneResolve,
+    ForkWavePostSpawnHostStep::RegistryTerminalTargetUpsertFromPanes,
+  ]
+}
+
+///|
+/// Post-spawn registry/team/TL/pane/terminal sequence for `fork_wave` when the
+/// spawn effect phase returned ok and at least one leaf was spawned. Preserves
+/// ordering and defaults (including `resolve_zellij_pane_id` capture) from the
+/// prior inline `ToolRequest::ForkWave` arm.
+pub async fn interpret_fork_wave_post_spawn(
+  fork_wave_args : ForkWaveArgs,
+  spawn_plan : ForkWaveSpawnPlan,
+  project_dir : String,
+  session : String,
+  registry : @registry.AgentRegistry?,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+) -> Unit {
+  let resolved_pane_ids : Array[(String, String)] = []
+  match registry {
+    Some(reg) =>
+      for spec in spawn_plan.spawned_specs {
+        ignore(
+          reg.upsert(
+            fork_wave_spawned_registry_agent(spec, project_dir, session),
+          ),
+        )
+      }
+    None => ()
+  }
+  for slug in spawn_plan.spawned_slugs {
+    let _ = @workspace.register_team_member(
+      fork_wave_args.caller_id,
+      slug,
+      @config.agent_type_to_string(fork_wave_args.agent_type),
+    )
+    @phase.apply_tl_event(
+      project_dir,
+      fork_wave_args.caller_id,
+      @phase.TLEvent::ChildSpawned(child_id=slug),
+      registry~,
+    )
+    let agent_id = @workspace.branch_name(fork_wave_args.parent_branch, slug)
+    match resolve_zellij_pane_id(session, slug, capture~) {
+      Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
+      None => ()
+    }
+  }
+  match registry {
+    Some(reg) =>
+      for pair in resolved_pane_ids {
+        let (agent_id, pane_id) = pair
+        match reg.get(agent_id) {
+          Ok(agent) => {
+            let target = @workspace.zellij_pane_target(session, pane_id)
+            ignore(reg.upsert({ ..agent, terminal_target: Some(target) }))
+          }
+          Err(_) => ()
+        }
+      }
+    None => ()
+  }
+}
+
+///|
 /// End-to-end `file_pr`: parent-branch defaulting, tracked workdir, preflight
 /// create, then post-success poller/lifecycle/notify. Dispatcher delegates
 /// here; behavior matches the prior `ToolRequest::FilePr` inline arm.
