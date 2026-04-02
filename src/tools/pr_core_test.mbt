@@ -1105,6 +1105,44 @@ test "fork_wave_spawn_plan passes child_spawn_depth into specs" {
 }
 
 ///|
+test "fork_wave_spawned_registry_agent matches fork_wave spawn upsert shape" {
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir")
+  let spec = plan.spawned_specs[0]
+  let agent = fork_wave_spawned_registry_agent(spec, "/proj", "choir")
+  assert_eq(agent.agent_id, "main.wave-0")
+  assert_eq(agent.role, @types.Role::Dev)
+  assert_eq(agent.agent_type, @types.AgentType::Claude)
+  assert_eq(agent.state, @types.AgentState::Spawning)
+  assert_eq(agent.parent, Some("main.tl"))
+  assert_eq(agent.host, @types.Host::Local)
+  assert_eq(agent.spawn_depth, 0)
+  assert_eq(agent.branch, "main.wave-0")
+  assert_eq(agent.workspace, "/proj/.choir/worktrees/wave-0")
+  let expected_tt = @workspace.local_target_for(
+    "choir",
+    "wave-0",
+    @types.IsolationMode::Worktree,
+  )
+  assert_eq(agent.terminal_target, Some(expected_tt))
+}
+
+///|
+test "fork_wave_post_spawn_host_steps ordering" {
+  let steps = fork_wave_post_spawn_host_steps()
+  assert_eq(steps.length(), 3)
+  assert_eq(steps[0], ForkWavePostSpawnHostStep::RegistryUpsertSpawnedSpecs)
+  assert_eq(
+    steps[1],
+    ForkWavePostSpawnHostStep::PerSlugTeamRegisterAndTlEventAndPaneResolve,
+  )
+  assert_eq(
+    steps[2],
+    ForkWavePostSpawnHostStep::RegistryTerminalTargetUpsertFromPanes,
+  )
+}
+
+///|
 test "interpret_track_pr returns poller unavailable without poller_state" {
   let args : TrackPrArgs = {
     pr_number: 42,
