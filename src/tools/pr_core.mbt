@@ -630,6 +630,130 @@ pub fn interpret_merge_pr_post_success(
 }
 
 ///|
+/// GraphQL mutation body for `resolve_review_thread` (thread id is passed as a
+/// variable; matches historical `ToolRequest::ResolveReviewThread` dispatch).
+pub fn resolve_review_thread_graphql_mutation() -> String {
+  "mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } } }"
+}
+
+///|
+/// `gh api graphql` command for resolving a review thread (routing-only callers
+/// supply `project_dir` and `capture`).
+pub fn resolve_review_thread_gh_command(
+  project_dir : String,
+  thread_id : String,
+) -> @workspace.Command {
+  {
+    program: "gh",
+    args: [
+      "api",
+      "graphql",
+      "-f",
+      "query=" + resolve_review_thread_graphql_mutation(),
+      "-F",
+      "threadId=" + thread_id,
+    ],
+    workdir: Some(project_dir),
+  }
+}
+
+///|
+/// Interpret `gh` exit code and JSON body for `resolve_review_thread`. Preserves
+/// exact user-facing strings from the prior inline dispatch arm.
+pub fn interpret_resolve_review_thread_result(
+  exit_code : Int,
+  output : String,
+  thread_id : String,
+) -> @types.Response {
+  if exit_code != 0 {
+    let trimmed = output.trim().to_string()
+    return @types.Response::Err(
+      if trimmed != "" {
+        "resolve_review_thread failed: " + trimmed
+      } else {
+        "resolve_review_thread failed (exit " + exit_code.to_string() + ")"
+      },
+    )
+  }
+  if output.trim().to_string() == "" {
+    return @types.Response::Err(
+      "resolve_review_thread failed: empty response from gh",
+    )
+  }
+  let json = @json.parse(output) catch {
+    _ =>
+      return @types.Response::Err(
+        "resolve_review_thread: invalid JSON in gh response",
+      )
+  }
+  guard json is Object(root) else {
+    return @types.Response::Err(
+      "resolve_review_thread: unexpected response shape",
+    )
+  }
+  match root.get("errors") {
+    Some(Array(errs)) =>
+      if errs.length() > 0 {
+        let msg = match errs[0] {
+          Object(e) =>
+            match e.get("message") {
+              Some(String(v)) => v
+              _ => "GraphQL error"
+            }
+          _ => "GraphQL error"
+        }
+        return @types.Response::Err("resolve_review_thread failed: " + msg)
+      }
+    _ => ()
+  }
+  let is_resolved = match root.get("data") {
+    Some(Object(data)) =>
+      match data.get("resolveReviewThread") {
+        Some(Object(rt)) =>
+          match rt.get("thread") {
+            Some(Object(thread)) =>
+              match thread.get("isResolved") {
+                Some(True) => true
+                _ => false
+              }
+            _ => false
+          }
+        _ => false
+      }
+    _ => false
+  }
+  if !is_resolved {
+    return @types.Response::Err(
+      "resolve_review_thread: thread was not marked resolved (check permissions)",
+    )
+  }
+  @types.Response::ok_values({
+    "status": String::to_json("ok"),
+    "thread_id": String::to_json(thread_id),
+    "resolved": Bool::to_json(true),
+  })
+}
+
+///|
+/// `resolve_review_thread`: capture GraphQL result and map to the tool response.
+pub async fn interpret_resolve_review_thread(
+  resolve_args : ResolveReviewThreadArgs,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @types.Response {
+  let cmd = resolve_review_thread_gh_command(
+    project_dir,
+    resolve_args.thread_id,
+  )
+  let (exit_code, output) = capture(cmd)
+  interpret_resolve_review_thread_result(
+    exit_code,
+    output,
+    resolve_args.thread_id,
+  )
+}
+
+///|
 /// Pure `ToolRequest::Shutdown` response when `caller_id` is absent (best-effort ok).
 pub fn shutdown_missing_caller_response() -> @types.Response {
   @types.Response::ok_values({ "status": String::to_json("shutdown") })

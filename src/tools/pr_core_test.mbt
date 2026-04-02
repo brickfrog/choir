@@ -1055,6 +1055,121 @@ test "merge_pr_tracked_branch_for_post_success returns branch when tracked" {
 }
 
 ///|
+test "resolve_review_thread_gh_command matches graphql argv and workdir" {
+  let cmd = resolve_review_thread_gh_command("/repo/root", "PRRT_kwDOabc")
+  assert_eq(cmd.program, "gh")
+  assert_eq(cmd.workdir, Some("/repo/root"))
+  assert_eq(cmd.args, [
+    "api",
+    "graphql",
+    "-f",
+    "query=" + resolve_review_thread_graphql_mutation(),
+    "-F",
+    "threadId=PRRT_kwDOabc",
+  ])
+}
+
+///|
+test "interpret_resolve_review_thread_result maps non-zero exit with stderr" {
+  let r = interpret_resolve_review_thread_result(1, "permission denied\n", "T1")
+  match r {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "resolve_review_thread failed: permission denied")
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "interpret_resolve_review_thread_result maps non-zero exit without output" {
+  let r = interpret_resolve_review_thread_result(2, "   \n", "T1")
+  match r {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "resolve_review_thread failed (exit 2)")
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "interpret_resolve_review_thread_result empty body on success exit" {
+  let r = interpret_resolve_review_thread_result(0, "", "T1")
+  match r {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "resolve_review_thread failed: empty response from gh")
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "interpret_resolve_review_thread_result invalid json" {
+  let r = interpret_resolve_review_thread_result(0, "not json", "T1")
+  match r {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "resolve_review_thread: invalid JSON in gh response")
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "interpret_resolve_review_thread_result unexpected top-level shape" {
+  let r = interpret_resolve_review_thread_result(0, "[]", "T1")
+  match r {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "resolve_review_thread: unexpected response shape")
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "interpret_resolve_review_thread_result graphql errors array first message" {
+  let body = "{\"errors\":[{\"message\":\"Thread not found\"}],\"data\":null}"
+  let r = interpret_resolve_review_thread_result(0, body, "T1")
+  match r {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "resolve_review_thread failed: Thread not found")
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "interpret_resolve_review_thread_result graphql error without message field" {
+  let body = "{\"errors\":[{}]}"
+  let r = interpret_resolve_review_thread_result(0, body, "T1")
+  match r {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "resolve_review_thread failed: GraphQL error")
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "interpret_resolve_review_thread_result not resolved path" {
+  let body = "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":false}}}}"
+  let r = interpret_resolve_review_thread_result(0, body, "PRRT_x")
+  match r {
+    @types.Response::Err(msg) =>
+      assert_eq(
+        msg, "resolve_review_thread: thread was not marked resolved (check permissions)",
+      )
+    _ => fail("expected Err")
+  }
+}
+
+///|
+test "interpret_resolve_review_thread_result success envelope" {
+  let body = "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}"
+  let r = interpret_resolve_review_thread_result(0, body, "PRRT_ok")
+  match r {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("ok")))
+      assert_eq(map.get("thread_id"), Some(String::to_json("PRRT_ok")))
+      assert_eq(map.get("resolved"), Some(Bool::to_json(true)))
+    }
+    _ => fail("expected Ok")
+  }
+}
+
+///|
 test "shutdown_missing_caller_response is best-effort ok" {
   let r = shutdown_missing_caller_response()
   match r {
