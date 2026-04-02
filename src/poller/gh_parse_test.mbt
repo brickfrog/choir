@@ -184,6 +184,22 @@ test "parse_issue_comment_logins_for_copilot_present detects copilot-pull-reques
 }
 
 ///|
+test "parse_issue_comment_logins_for_copilot_present detects copilot-swe-agent without bot suffix" {
+  assert_true(
+    parse_issue_comment_logins_for_copilot_present("[\"copilot-swe-agent\"]"),
+  )
+}
+
+///|
+test "parse_issue_comment_logins_for_copilot_present detects copilot-swe-agent bot suffix" {
+  assert_true(
+    parse_issue_comment_logins_for_copilot_present(
+      "[\"copilot-swe-agent[bot]\"]",
+    ),
+  )
+}
+
+///|
 test "parse_issue_comment_logins_for_copilot_present false for human login" {
   assert_false(parse_issue_comment_logins_for_copilot_present("[\"octocat\"]"))
 }
