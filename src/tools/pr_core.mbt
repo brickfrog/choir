@@ -392,6 +392,29 @@ pub fn file_pr_preflight_create_inputs(
 }
 
 ///|
+/// Tracked-agent workspace for `file_pr` git/push operations: use the agent's
+/// `workspace` when present in the registry, else the project root.
+pub fn file_pr_workdir(
+  root_project_dir : String,
+  tracked_agent_id : String,
+  reg : @registry.AgentRegistry?,
+) -> String {
+  match reg {
+    Some(agent_reg) =>
+      match agent_reg.get(tracked_agent_id) {
+        Ok(agent) =>
+          if agent.workspace != "" {
+            agent.workspace
+          } else {
+            root_project_dir
+          }
+        Err(_) => root_project_dir
+      }
+    None => root_project_dir
+  }
+}
+
+///|
 /// Ordered host steps for `file_pr` before post-success effects. The
 /// interpreter runs this exact sequence; kept as data for tests and docs.
 pub(all) enum FilePrPreflightHostStep {
@@ -447,6 +470,55 @@ pub async fn interpret_file_pr_preflight_create(
             inputs.body,
           )
       }
+  }
+}
+
+///|
+/// End-to-end `file_pr`: parent-branch defaulting, tracked workdir, preflight
+/// create, then post-success poller/lifecycle/notify. Dispatcher delegates
+/// here; behavior matches the prior `ToolRequest::FilePr` inline arm.
+pub async fn interpret_file_pr(
+  file_pr_args : FilePrArgs,
+  project_dir : String,
+  session : String,
+  poller_state : @poller.PollerState?,
+  registry : @registry.AgentRegistry?,
+  ensure_branch_ready : async (String, String, String) -> Result[Unit, String],
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+  ensure_pr : async (String, String, String, String?, String?) -> Result[
+    PullRequestInfo,
+    String,
+  ],
+) -> @types.Response {
+  let branch = file_pr_args.branch
+  let parent_branch = match file_pr_args.parent_branch {
+    Some(pb) => pb
+    None => detect_default_branch_with_capture(project_dir, capture)
+  }
+  let tracked_agent_id = file_pr_args.tracked_agent_id
+  let file_pr_dir = file_pr_workdir(project_dir, tracked_agent_id, registry)
+  let preflight_inputs = file_pr_preflight_create_inputs(
+    file_pr_args, parent_branch, file_pr_dir,
+  )
+  match
+    interpret_file_pr_preflight_create(
+      preflight_inputs, ensure_branch_ready, runner, capture, ensure_pr,
+    ) {
+    Err(e) => @types.Response::Err(e)
+    Ok(pr) => {
+      let tracked = poller_state is Some(_)
+      let plan = file_pr_plan(file_pr_args, parent_branch, pr, tracked)
+      let effects = file_pr_post_success_effects(
+        plan,
+        poller_state is Some(_),
+        registry is Some(_),
+      )
+      interpret_file_pr_post_success(
+        project_dir, session, branch, tracked_agent_id, effects, poller_state, registry,
+        runner,
+      )
+    }
   }
 }
 

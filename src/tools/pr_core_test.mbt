@@ -724,6 +724,54 @@ test "file_pr_preflight_create_inputs copies branch paths and title/body" {
 }
 
 ///|
+test "file_pr_workdir uses registry workspace when set" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.leaf",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main"),
+      workspace: "/proj/.choir/worktrees/leaf-0",
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  assert_eq(
+    file_pr_workdir("/repo/root", "main.leaf", Some(reg)),
+    "/proj/.choir/worktrees/leaf-0",
+  )
+}
+
+///|
+test "file_pr_workdir falls back to root when workspace empty or agent missing" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.leaf",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main"),
+      workspace: "",
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  assert_eq(file_pr_workdir("/repo/root", "main.leaf", Some(reg)), "/repo/root")
+  assert_eq(
+    file_pr_workdir("/repo/root", "main.missing", Some(reg)),
+    "/repo/root",
+  )
+  assert_eq(file_pr_workdir("/repo/root", "main.leaf", None), "/repo/root")
+}
+
+///|
 test "file_pr_preflight_host_steps is preflight then push then ensure_pr" {
   let steps = file_pr_preflight_host_steps()
   assert_eq(steps.length(), 3)
@@ -880,6 +928,69 @@ async test "interpret_file_pr_preflight_create yields PR on happy path" {
       assert_eq(pr.state, "OPEN")
     }
     Err(_) => fail("expected Ok")
+  }
+}
+
+///|
+async test "interpret_file_pr returns preflight error without post-success" {
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let got = interpret_file_pr(
+    args,
+    "/proj",
+    "choir",
+    None,
+    None,
+    mock_preflight_err,
+    mock_runner_all_ok,
+    mock_capture_empty,
+    mock_ensure_pr_ok,
+  )
+  match got {
+    @types.Response::Err(msg) => assert_true(msg.contains("missing locally"))
+    _ => fail("expected Err")
+  }
+}
+
+///|
+async test "interpret_file_pr ok response matches full pipeline" {
+  let project_dir = "/tmp/choir-fpr-interpret-" + @sys.get_pid().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let got = interpret_file_pr(
+    args,
+    project_dir,
+    "choir",
+    None,
+    None,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    mock_capture_empty,
+    mock_ensure_pr_ok,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("pr_created")))
+      assert_eq(map.get("pr_number"), Some(Int::to_json(42)))
+      assert_eq(
+        map.get("pr_url"),
+        Some(String::to_json("https://example.test/pr/42")),
+      )
+      assert_eq(map.get("tracked"), Some(Bool::to_json(false)))
+    }
+    _ => fail("expected ok")
   }
 }
 
