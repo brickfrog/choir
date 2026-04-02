@@ -536,7 +536,7 @@ pub async fn PollerState::tick_with(
   self : PollerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (
+  poll : async (Int, Bool) -> (
     Bool,
     ReviewState,
     String,
@@ -579,6 +579,7 @@ pub async fn PollerState::tick_with(
     }
     let (poll_ok, review, sha, ci_rollup, review_bodies, is_open, copilot_now) = poll(
       pr_number,
+      tracked.copilot_issue_comment_seen,
     )
     if !poll_ok {
       let failures = clamp_consecutive_failures(
@@ -628,9 +629,19 @@ pub async fn PollerState::tick_with(
       continue
     }
     let copilot_effective = tracked_ok.copilot_issue_comment_seen || copilot_now
-    let events = detect_events(
+    let base_events = detect_events(
       tracked_ok, review, sha, ci_rollup, review_bodies, now, timeout, copilot_effective,
     )
+    let events = if !tracked_ok.copilot_issue_comment_seen && copilot_now {
+      let merged : Array[PollEvent] = []
+      for e in base_events {
+        merged.push(e)
+      }
+      merged.push(PollEvent::CopilotIssueCommentSeen(pr_number))
+      merged
+    } else {
+      base_events
+    }
     let mut timeout_at = tracked_ok.last_timeout_at
     for event in events {
       on_event(event, tracked_ok.agent_id)
@@ -696,6 +707,7 @@ pub async fn PollerState::tick(
 ///|
 async fn state_tick_backoff_mock_failure(
   _pr_number : Int,
+  _skip_issue : Bool,
 ) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
   @async.sleep(0)
   (false, None_, "", Unknown, "", true, false)
@@ -704,6 +716,7 @@ async fn state_tick_backoff_mock_failure(
 ///|
 async fn state_tick_backoff_mock_success(
   _pr_number : Int,
+  _skip_issue : Bool,
 ) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
   @async.sleep(0)
   (true, Commented, "sha-1", Success, "body", true, false)

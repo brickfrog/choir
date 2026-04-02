@@ -1,6 +1,7 @@
 ///|
 async fn mock_poll_failure_sentinel(
   _pr_number : Int,
+  _skip_issue : Bool,
 ) -> (
   Bool,
   @poller.ReviewState,
@@ -25,6 +26,7 @@ async fn mock_poll_failure_sentinel(
 ///|
 async fn mock_poll_success_open(
   _pr_number : Int,
+  _skip_issue : Bool,
 ) -> (
   Bool,
   @poller.ReviewState,

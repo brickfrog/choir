@@ -151,6 +151,8 @@ pub fn plan_tl_poll_event_parent(
       } else {
         WaitingOnReviewOrCI
       }
+    CopilotIssueCommentSeen(_) =>
+      tl_snapshot_workflow_category(tracked, merge_ready)
   }
 }
 

@@ -100,7 +100,7 @@ async test "discover_recovery_snapshot with mock provider" {
     read_lifecycle_content: fn(_dir, _id) { "" },
     read_poller_state: fn(_dir) { [] },
     write_poller_state: fn(_dir, _tracked) { () },
-    gh_poll_pr: fn(_num) {
+    gh_poll_pr: fn(_num, _skip) {
       (
         true,
         @poller.ReviewState::Approved,
@@ -162,7 +162,10 @@ async test "plan_recovery reconciles local agents and open PRs" {
     recovered_at: 2000L,
   }
 
-  let plan = @runtime.plan_recovery("session", snapshot, async fn(_pr_number) {
+  let plan = @runtime.plan_recovery("session", snapshot, async fn(
+    _pr_number,
+    _skip,
+  ) {
     @async.sleep(0)
     (
       true,
@@ -264,7 +267,10 @@ async test "plan_recovery handles offline agent and persisted PR" {
     recovered_at: 4000L,
   }
 
-  let plan = @runtime.plan_recovery("session", snapshot, async fn(_pr_number) {
+  let plan = @runtime.plan_recovery("session", snapshot, async fn(
+    _pr_number,
+    _skip,
+  ) {
     @async.sleep(0)
     (
       true,
