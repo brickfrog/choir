@@ -152,6 +152,7 @@ pub async fn ServerState::handle_with_runner(
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
       plugins_json=self.config.plugins_json,
+      pr_review=self.config.pr_review,
     )
   }
 
