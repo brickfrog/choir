@@ -343,3 +343,102 @@ async test "interpret_file_pr_preflight_create yields PR on happy path" {
     Err(_) => fail("expected Ok")
   }
 }
+
+///|
+fn merge_pr_test_tracked(
+  review : @poller.ReviewState,
+  branch : String,
+) -> @poller.TrackedPR {
+  {
+    pr_number: 9,
+    agent_id: "main.leaf",
+    branch,
+    parent_branch: "main",
+    pr_url: "https://example.test/pr/9",
+    first_seen: 0L,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: review,
+    last_review_bodies: "",
+    last_sha: "",
+    notified_parent: false,
+    last_ci_failed: false,
+    last_timeout_at: 0L,
+  }
+}
+
+///|
+test "merge_pr_preflight_block_message prefers ChangesRequested over thread gate" {
+  let t = merge_pr_test_tracked(
+    @poller.ReviewState::ChangesRequested,
+    "main.leaf",
+  )
+  match merge_pr_preflight_block_message(9, Some(t), 2, "threads") {
+    Some(msg) => {
+      assert_true(msg.contains("ChangesRequested"))
+      assert_false(msg.contains("unresolved review thread"))
+    }
+    None => fail("expected block")
+  }
+}
+
+///|
+test "merge_pr_preflight_block_message blocks on unresolved threads" {
+  match merge_pr_preflight_block_message(3, None, 1, "body") {
+    Some(msg) => {
+      assert_true(msg.contains("PR #3"))
+      assert_true(msg.contains("1 unresolved review thread"))
+      assert_true(msg.contains("body"))
+      assert_true(msg.contains("resolve_review_thread"))
+    }
+    None => fail("expected block")
+  }
+}
+
+///|
+test "merge_pr_preflight_block_message allows Approved with no threads" {
+  let t = merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf")
+  assert_eq(merge_pr_preflight_block_message(9, Some(t), 0, ""), None)
+}
+
+///|
+test "merge_pr_merge_failure_message classifies conflict output" {
+  assert_eq(
+    merge_pr_merge_failure_message(7, "Merge conflict: foo"),
+    "merge conflict on PR #7: Merge conflict: foo",
+  )
+}
+
+///|
+test "merge_pr_merge_failure_message classifies not mergeable" {
+  assert_eq(
+    merge_pr_merge_failure_message(2, "NOT MERGEABLE because"),
+    "merge conflict on PR #2: NOT MERGEABLE because",
+  )
+}
+
+///|
+test "merge_pr_merge_failure_message uses generic when non-empty" {
+  assert_eq(
+    merge_pr_merge_failure_message(4, "permission denied"),
+    "merge failed for PR #4: permission denied",
+  )
+}
+
+///|
+test "merge_pr_merge_failure_message empty stderr" {
+  assert_eq(merge_pr_merge_failure_message(5, ""), "merge failed for PR #5")
+}
+
+///|
+test "merge_pr_pr_merged_event_url_slug uses extract_slug from branch" {
+  assert_eq(
+    merge_pr_pr_merged_event_url_slug(1, Some("main.my-slug")),
+    "my-slug",
+  )
+}
+
+///|
+test "merge_pr_pr_merged_event_url_slug fallback without branch" {
+  assert_eq(merge_pr_pr_merged_event_url_slug(42, None), "PR-42")
+}
