@@ -68,3 +68,16 @@ test "dev_entr_watcher_shell_pipeline runs entr with choir argv not sh -c hook" 
   assert_true(s.contains("/usr/bin/entr"))
   assert_true(s.contains("/tmp/choir"))
 }
+
+///|
+test "dev_entr_watcher_shell_command uses argv sh -c without system wrapper" {
+  let cmd = dev_entr_watcher_shell_command("/usr/bin/entr", "/tmp/choir")
+  assert_eq(cmd.program, "/bin/sh")
+  assert_eq(cmd.args.length(), 2)
+  assert_eq(cmd.args[0], "-c")
+  let inner = cmd.args[1]
+  assert_eq(
+    inner,
+    dev_entr_watcher_shell_pipeline("/usr/bin/entr", "/tmp/choir"),
+  )
+}
