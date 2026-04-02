@@ -987,6 +987,35 @@ test "remote_spawn_commands passes extra MCP servers into launch command" {
 }
 
 ///|
+test "remote_spawn_commands local side is direct ssh argv (no local shell wrapper)" {
+  let spec = @types.SpawnSpec::{
+    slug: "remote-worker",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    task: "t",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+  }
+  let cmds = @workspace.remote_spawn_commands(
+    spec, "user@host", "git@github.com:org/r.git", "127.0.0.1:9",
+  )
+  assert_eq(cmds.length(), 3)
+  for cmd in cmds {
+    assert_eq(cmd.program, "ssh")
+    assert_eq(cmd.workdir, None)
+    assert_eq(cmd.args.length(), 4)
+    assert_eq(cmd.args[0], "-o")
+    assert_eq(cmd.args[1], "StrictHostKeyChecking=no")
+    assert_eq(cmd.args[2], "user@host")
+  }
+}
+
+///|
 test "validate_reuse_spawn_spec rejects missing reuse_git_branch" {
   let spec = @types.SpawnSpec::{
     slug: "n",

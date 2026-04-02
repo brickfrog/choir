@@ -156,6 +156,12 @@ pub fn zellij_launch_inner_command(cmd : Command) -> Command {
 }
 
 ///|
+/// Local `ssh` child: **direct argv** (`ssh`, `-o`, …, `target`, `remote_command`) with no Choir-side
+/// `sh -c` wrapper. OpenSSH still delivers `remote_command` as a string executed by the **remote**
+/// user's default shell, so `&&`, `cd`, `nohup`, and `$HOME` are remote-shell semantics. That layer
+/// is intrinsic to `ssh host <command>` unless the transport changes (e.g. multiple sessions, SFTP,
+/// or a non-shell RPC). Untrusted fragments use [`@sys.shell_quote`]; workspace paths under
+/// `$HOME/exo-workspaces/` stay unquoted so remote expansion behaves as today.
 fn ssh_cmd(target : String, remote_shell : String) -> Command {
   {
     program: "ssh",
@@ -471,6 +477,8 @@ fn remote_ssh_agent_cmd_line(
 }
 
 ///|
+/// Three sequential [`ssh_cmd`] invocations (clone/checkout, write config, background agent). See
+/// [`ssh_cmd`] for the remote-shell boundary.
 pub fn remote_spawn_commands(
   spec : @types.SpawnSpec,
   ssh_target : String,
