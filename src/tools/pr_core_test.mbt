@@ -246,6 +246,147 @@ test "notify_parent_plan deliver matches plan_delivery and success response" {
 }
 
 ///|
+test "send_message_delivery_log_append matches dispatch log shape" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main"),
+    workspace: "/tmp",
+    branch: "main.leaf",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf"),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let delivery = @message.plan_delivery(agent, "main.tl", "hi", "success")
+  assert_eq(
+    send_message_delivery_log_append("main.leaf", agent, delivery),
+    "[send_message] target=main.leaf terminal_target=zellij-tab:choir:leaf delivery=" +
+    delivery.to_string() +
+    "\n",
+  )
+}
+
+///|
+test "send_message_delivery_log_append uses NONE without terminal_target" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main"),
+    workspace: "/tmp",
+    branch: "main.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let delivery = @message.plan_delivery(agent, "main.tl", "hi", "success")
+  assert_true(
+    send_message_delivery_log_append("main.leaf", agent, delivery).contains(
+      "terminal_target=NONE",
+    ),
+  )
+}
+
+///|
+test "send_message_plan no registry returns best-effort sent" {
+  match send_message_plan("main.x", "a", "m", "success", None) {
+    SendMessagePlan::NoRegistry(response~) =>
+      match response {
+        @types.Response::Ok(fields) => {
+          let map = fields.to_json_map()
+          assert_eq(map.get("status"), Some(String::to_json("sent")))
+        }
+        _ => fail("expected ok")
+      }
+    _ => fail("expected NoRegistry")
+  }
+}
+
+///|
+test "send_message_plan maps registry lookup error" {
+  let err = @types.ChoirError::AgentNotFound("main.missing")
+  match send_message_plan("main.missing", "a", "m", "info", Some(Err(err))) {
+    SendMessagePlan::RegistryLookupFailed(error_message~) =>
+      assert_eq(error_message, err.message())
+    _ => fail("expected RegistryLookupFailed")
+  }
+}
+
+///|
+test "send_message_plan deliver matches plan_delivery and log append" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main"),
+    workspace: "/tmp",
+    branch: "main.leaf",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf"),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let expected_delivery = @message.plan_delivery(
+    agent, "main.tl", "hello", "failure",
+  )
+  match
+    send_message_plan(
+      "main.leaf",
+      "main.tl",
+      "hello",
+      "failure",
+      Some(Ok(agent)),
+    ) {
+    SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
+      assert_eq(delivery, expected_delivery)
+      assert_eq(
+        delivery_log_append,
+        send_message_delivery_log_append("main.leaf", agent, expected_delivery),
+      )
+      match response_ok {
+        @types.Response::Ok(fields) => {
+          let map = fields.to_json_map()
+          assert_eq(map.get("status"), Some(String::to_json("sent")))
+        }
+        _ => fail("expected ok")
+      }
+    }
+    _ => fail("expected Deliver")
+  }
+}
+
+///|
+async test "interpret_send_message no registry skips delivery" {
+  let plan = send_message_plan("t", "s", "m", "ok", None)
+  let got = interpret_send_message(
+    plan, "/tmp/choir-send-msg-test", mock_runner_all_ok,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("sent")))
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
+async test "interpret_send_message registry lookup failed returns err" {
+  let err = @types.ChoirError::AgentNotFound("x")
+  let plan = send_message_plan("x", "s", "m", "ok", Some(Err(err)))
+  let got = interpret_send_message(
+    plan, "/tmp/choir-send-msg-test", mock_runner_all_ok,
+  )
+  match got {
+    @types.Response::Err(msg) => assert_eq(msg, err.message())
+    _ => fail("expected err")
+  }
+}
+
+///|
 test "file_pr_preflight_create_inputs copies branch paths and title/body" {
   let args : FilePrArgs = {
     branch: "main.leaf",
