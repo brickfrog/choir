@@ -3721,11 +3721,6 @@ fn init_config_has_terminal_session(content : String) -> Bool {
 }
 
 ///|
-fn init_pi_tl_append_system_prompt() -> String {
-  @workspace.pi_append_system_prompt(@types.Role::TL)
-}
-
-///|
 fn init_parse_tl_type(args : Array[String]) -> String {
   for i = 0; i < args.length() - 1; i = i + 1 {
     if args[i] == "--tl" {
@@ -3845,7 +3840,7 @@ test "init TL launch command supports pi" {
 
 ///|
 test "init pi TL system prompt reinforces delegation" {
-  let prompt = init_pi_tl_append_system_prompt()
+  let prompt = @workspace.pi_append_system_prompt(@types.Role::TL)
   assert_true(prompt.contains("Team Lead"))
   assert_true(prompt.contains("fork_wave"))
   assert_true(prompt.contains("merge_pr"))
@@ -3992,8 +3987,8 @@ fn init_companion_commands(
   if agent_type == @types.AgentType::Pi {
     let runtime_root = @workspace.pi_runtime_root(
       workspace,
-      branch,
-      @types.IsolationMode::Worktree,
+      @workspace.canonical_agent_id(spec),
+      spec.isolation,
     )
     cmds.push(@workspace.write_pi_runtime_dirs(runtime_root))
     cmds.push(@workspace.seed_pi_auth(runtime_root, project_dir))
@@ -4052,19 +4047,22 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
 
 ///|
 fn init_prepare_pi_runtime(project_dir : String) -> Unit {
-  let runtime_root = ".choir/pi"
+  let runtime_root = project_dir + "/.choir/pi"
   let mkdir_code = @workspace.run_native_pi_runtime_dirs_command(
     @workspace.write_pi_runtime_dirs(runtime_root),
   )
   if mkdir_code != 0 {
     @sys.exit(1)
   }
-  if !@sys.write_file_sync(
-      runtime_root + "/choir-extension.ts",
-      @workspace.pi_extension_content(),
-    ) {
+  let ext_cmd = @workspace.write_pi_extension(project_dir, runtime_root)
+  let ext_code = @workspace.run_native_workspace_rel_file_command(ext_cmd)
+  if ext_code != 0 {
     @sys.write_stdout(
-      "error: failed to write " + runtime_root + "/choir-extension.ts\n",
+      "error: failed to write " +
+      ext_cmd.args[1] +
+      " under " +
+      project_dir +
+      "\n",
     )
     @sys.exit(1)
   }
