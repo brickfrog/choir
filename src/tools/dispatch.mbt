@@ -166,97 +166,27 @@ pub async fn dispatch(
       } else {
         caller_spawn_depth_resolved.unwrap_or(0)
       }
-      // Pure phase: build slugs and spawn commands without any IO.
-      let agent_ids = StringBuilder::new()
-      let skipped_ids = StringBuilder::new()
-      let cmds : Array[@workspace.Command] = []
-      let spawned_specs : Array[@types.SpawnSpec] = []
-      let spawned_slugs : Array[String] = []
-      let mut spawned_count = 0
-      let mut skipped_count = 0
-      let seen_slugs : Map[String, Int] = {}
-      for i = 0; i < fork_wave_args.count; i = i + 1 {
-        let raw_slug = if fork_wave_args.has_per_leaf_tasks {
-          slugify_task(fork_wave_args.tasks[i], i)
-        } else {
-          fork_wave_args.slug_prefix + "-" + i.to_string()
-        }
-        let slug = match seen_slugs.get(raw_slug) {
-          Some(count) => {
-            seen_slugs.set(raw_slug, count + 1)
-            raw_slug + "-" + i.to_string()
-          }
-          None => {
-            seen_slugs.set(raw_slug, 1)
-            raw_slug
-          }
-        }
-        let agent_id = fork_wave_args.parent_branch + "." + slug
-        let already_alive = match registry {
-          Some(reg) =>
-            match reg.get(agent_id) {
-              Ok(agent) =>
-                match agent.state {
-                  @types.AgentState::Active | @types.AgentState::Completing =>
-                    true
-                  _ => false
-                }
-              Err(_) => false
-            }
-          None => false
-        }
-        if already_alive {
-          if skipped_count > 0 {
-            skipped_ids.write_string(",")
-          }
-          skipped_ids.write_string(agent_id)
-          skipped_count = skipped_count + 1
-          continue
-        }
-        if spawned_count > 0 {
-          agent_ids.write_string(",")
-        }
-        agent_ids.write_string(agent_id)
-        spawned_count = spawned_count + 1
-        spawned_slugs.push(slug)
-        let spec = @types.SpawnSpec::{
-          slug,
-          role: fork_wave_args.child_role,
-          agent_type: fork_wave_args.agent_type,
-          task: fork_wave_args.tasks[i],
-          isolation: @types.IsolationMode::Worktree,
-          parent_id: fork_wave_args.caller_id,
-          parent_branch: fork_wave_args.parent_branch,
-          reuse_workspace: false,
-          workspace_slug: None,
-          reuse_git_branch: None,
-          spawn_depth: child_spawn_depth,
-        }
-        spawned_specs.push(spec)
-        for
-          cmd in @workspace.spawn_commands(
-            spec,
-            project_dir,
-            session,
-            parent_session_id=fork_wave_args.parent_session_id,
-            extra_mcp_servers_json~,
-            shell_command~,
-            listen_uds~,
-            listen_tcp~,
-            tcp_auth_token~,
-          ) {
-          cmds.push(cmd)
-        }
-      }
+      let spawn_plan = fork_wave_spawn_plan(
+        fork_wave_args,
+        child_spawn_depth,
+        registry,
+        project_dir,
+        session,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
+      )
       // Effect phase: scaffold gate + spawn, described as a pure Eff tree,
       // executed by the interpreter. Zero IO happens before this line.
       let plan = fork_wave_plan(
         project_dir,
-        cmds,
-        spawned_count,
-        skipped_count,
-        agent_ids.to_string(),
-        skipped_ids.to_string(),
+        spawn_plan.cmds,
+        spawn_plan.spawned_count,
+        spawn_plan.skipped_count,
+        spawn_plan.agent_ids,
+        spawn_plan.skipped_ids,
       )
       let resp = match interpret(plan, git_capture~, runner~) {
         Ok(r) => r
@@ -281,11 +211,11 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e.message())
       }
       // Post-spawn side effects: only run if spawn succeeded.
-      if resp.is_ok() && spawned_count > 0 {
+      if resp.is_ok() && spawn_plan.spawned_count > 0 {
         let resolved_pane_ids : Array[(String, String)] = []
         match registry {
           Some(reg) =>
-            for spec in spawned_specs {
+            for spec in spawn_plan.spawned_specs {
               let agent_id = @workspace.canonical_agent_id(spec)
               let terminal_target = @workspace.local_target_for(
                 session,
@@ -312,7 +242,7 @@ pub async fn dispatch(
             }
           None => ()
         }
-        for slug in spawned_slugs {
+        for slug in spawn_plan.spawned_slugs {
           let _ = @workspace.register_team_member(
             fork_wave_args.caller_id,
             slug,

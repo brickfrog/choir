@@ -995,6 +995,116 @@ async test "interpret_file_pr ok response matches full pipeline" {
 }
 
 ///|
+fn fork_wave_args_base() -> ForkWaveArgs {
+  {
+    count: 2,
+    tasks: ["shared task", "shared task"],
+    has_per_leaf_tasks: false,
+    parent_branch: "main",
+    caller_id: "main.tl",
+    slug_prefix: "wave",
+    agent_type: @types.AgentType::Claude,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+  }
+}
+
+///|
+test "fork_wave_spawn_plan builds specs and agent_ids for shared-task wave" {
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 0, None, "/proj", "choir")
+  assert_eq(plan.spawned_count, 2)
+  assert_eq(plan.skipped_count, 0)
+  assert_eq(plan.agent_ids, "main.wave-0,main.wave-1")
+  assert_eq(plan.skipped_ids, "")
+  assert_eq(plan.spawned_slugs.length(), 2)
+  assert_eq(plan.spawned_slugs[0], "wave-0")
+  assert_eq(plan.spawned_slugs[1], "wave-1")
+  assert_eq(plan.spawned_specs.length(), 2)
+  assert_eq(plan.spawned_specs[0].spawn_depth, 0)
+  assert_eq(plan.spawned_specs[0].task, "shared task")
+  assert_eq(plan.spawned_specs[1].task, "shared task")
+  assert_true(plan.cmds.length() > 0)
+}
+
+///|
+test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
+  let args : ForkWaveArgs = {
+    count: 2,
+    tasks: ["alpha beta", "alpha beta"],
+    has_per_leaf_tasks: true,
+    parent_branch: "pb",
+    caller_id: "pb.tl",
+    slug_prefix: "wave",
+    agent_type: @types.AgentType::MoonPilot,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+  }
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  assert_eq(plan.spawned_count, 2)
+  assert_eq(plan.spawned_slugs[0], "alpha-beta")
+  assert_eq(plan.spawned_slugs[1], "alpha-beta-1")
+  assert_eq(plan.agent_ids, "pb.alpha-beta,pb.alpha-beta-1")
+}
+
+///|
+test "fork_wave_spawn_plan skips active agents and records skipped_ids" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.wave-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/w",
+      branch: "main.wave-0",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
+  assert_eq(plan.spawned_count, 1)
+  assert_eq(plan.skipped_count, 1)
+  assert_eq(plan.skipped_ids, "main.wave-0")
+  assert_eq(plan.agent_ids, "main.wave-1")
+  assert_eq(plan.spawned_slugs, ["wave-1"])
+}
+
+///|
+test "fork_wave_spawn_plan skips completing agents" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.wave-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/w",
+      branch: "main.wave-0",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Completing,
+    }),
+  )
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
+  assert_eq(plan.skipped_count, 1)
+  assert_eq(plan.spawned_count, 1)
+}
+
+///|
+test "fork_wave_spawn_plan passes child_spawn_depth into specs" {
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 3, None, "/proj", "choir")
+  assert_eq(plan.spawned_specs[0].spawn_depth, 3)
+  assert_eq(plan.spawned_specs[1].spawn_depth, 3)
+}
+
+///|
 test "interpret_track_pr returns poller unavailable without poller_state" {
   let args : TrackPrArgs = {
     pr_number: 42,
