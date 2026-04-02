@@ -235,27 +235,44 @@ pub async fn interpret_file_pr_post_success(
   }
   if pr_review {
     let cmd = file_pr_copilot_review_gh_command(pr_number, file_pr_workdir)
-    let codes = runner([cmd]) catch { _ => [] }
-    let ok = if codes.length() == 0 { false } else { codes[0] == 0 }
+    let mut spawn_err : String? = None
+    let codes = runner([cmd]) catch {
+      e => {
+        spawn_err = Some(e.to_string())
+        []
+      }
+    }
+    let ok = spawn_err is None && codes.length() > 0 && codes[0] == 0
     if !ok {
       let exit_json = if codes.length() > 0 {
         codes[0].to_json()
       } else {
         "none".to_json()
       }
-      @moontrace.warn(
-        "file_pr copilot review request failed",
-        fields=@moontrace.fields([
-          ("pr_number", pr_number.to_json()),
-          ("exit", exit_json),
-        ]),
-      )
+      let fields = match spawn_err {
+        Some(err) =>
+          @moontrace.fields([
+            ("pr_number", pr_number.to_json()),
+            ("exit", exit_json),
+            ("error", err.to_json()),
+          ])
+        None =>
+          @moontrace.fields([
+            ("pr_number", pr_number.to_json()),
+            ("exit", exit_json),
+          ])
+      }
+      @moontrace.warn("file_pr copilot review request failed", fields=fields)
+      let log_suffix = match spawn_err {
+        Some(err) => " error=" + err + "\n"
+        None => "\n"
+      }
       ignore(
         @sys.append_file_sync(
           delivery_log_path,
           "[file_pr] copilot_review_request failed pr=" +
           pr_number.to_string() +
-          "\n",
+          log_suffix,
         ),
       )
     }
