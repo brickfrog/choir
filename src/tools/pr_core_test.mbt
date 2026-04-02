@@ -442,3 +442,31 @@ test "merge_pr_pr_merged_event_url_slug uses extract_slug from branch" {
 test "merge_pr_pr_merged_event_url_slug fallback without branch" {
   assert_eq(merge_pr_pr_merged_event_url_slug(42, None), "PR-42")
 }
+
+///|
+test "merge_pr_post_success_plan uses tracked branch slug when poller available" {
+  let plan = merge_pr_post_success_plan(5, true, Some("main.leaf-slug"))
+  assert_eq(plan.poller_untrack_and_write_state, true)
+  assert_eq(plan.tl_event, @phase.TLEvent::PRMerged(number=5, url="leaf-slug"))
+  match plan.response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("merged")))
+    }
+    _ => fail("expected OK merged response")
+  }
+}
+
+///|
+test "merge_pr_post_success_plan untrack intent when poller on but PR not tracked" {
+  let plan = merge_pr_post_success_plan(9, true, None)
+  assert_eq(plan.poller_untrack_and_write_state, true)
+  assert_eq(plan.tl_event, @phase.TLEvent::PRMerged(number=9, url="PR-9"))
+}
+
+///|
+test "merge_pr_post_success_plan ignores branch when poller unavailable" {
+  let plan = merge_pr_post_success_plan(3, false, Some("main.ignored"))
+  assert_eq(plan.poller_untrack_and_write_state, false)
+  assert_eq(plan.tl_event, @phase.TLEvent::PRMerged(number=3, url="PR-3"))
+}
