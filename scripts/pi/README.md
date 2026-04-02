@@ -46,6 +46,7 @@ So it depends on the new non-MCP Choir control plane.
 
 ## Notes
 
+- PR review handling in Choir is **poller-driven** and Copilot/GitHub signals can be flaky; the Pi TL path should follow the same honest expectations as other TLs (root `README.md`, `ROADMAP.md`).
 - Prefer **`choir init --tl pi`** for the supported path: runtime assets under `.choir/pi/` and isolated `PI_CODING_AGENT_DIR`.
 - This `scripts/pi/` copy is for manual `pi -e ...` runs and for keeping the extension readable in source control.
 - The default Choir-managed Pi path avoids mutating `~/.pi/agent` or repo `.pi/` and seeds local auth from `~/.pi/agent/auth.json` when present.

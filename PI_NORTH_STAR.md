@@ -115,6 +115,7 @@ Shell-specific residual edges are enumerated in **Remaining intentional producti
   - `src/phase/tl.mbt`
   - `src/phase/dev.mbt`
   - `src/poller/state.mbt`
+  - `src/poller/tl_decision.mbt` (canonical TL workflow categories, stable `TLDecision:` sentences, shared re-check gate copy)
   - `src/message/message.mbt`
   - `src/transport/transport.mbt`
 - Choir also has acceptable host/effect-adapter layers:
@@ -126,31 +127,20 @@ Shell-specific residual edges are enumerated in **Remaining intentional producti
   - `src/server/log.mbt`
   - `src/bin/choir/main.mbt`
   - `scripts/pi/choir-extension.ts`
-- But the main execution path still mixes orchestration and effects in multiple places.
-- The strongest honest summary is:
-  - **Choir has a valid pure-core direction, but only one major tool path (`fork_wave`) actually follows it; the rest of orchestration is still directly effectful.**
+- The main execution path still mixes orchestration and effects in multiple places, but **the picture is no longer “only `fork_wave` is pure-adjacent.”** TL-facing review/CI workflow classification and notification copy are centralized in `tl_decision.mbt`; several `dispatch` paths are thinner than in the original audit because shared helpers and delegated seams exist.
+- The strongest honest summary today:
+  - **Pure planning exists in more than one subsystem** (`Eff` for spawn, TL decision model for poller), but **tool execution, server post-actions, recovery, and lifecycle persistence** are still the dominant fusion risk—not an undifferentiated “all of dispatch equally bad” story.
 
-### Highest-priority architectural blockers
+### Highest-priority architectural hotspots (live main)
 
-1. `src/tools/dispatch.mbt`
-   - tool routing, orchestration decisions, lifecycle transitions, registry mutation, poller mutation, delivery planning/execution, cleanup, and persistence are fused in one dispatcher
-   - highest-risk arms:
-     - `FilePr`
-     - `MergePr`
-     - `NotifyParent`
-     - `Shutdown`
-     - `CancelWave`
-     - `RescueLeaf`
-     - `SpawnWorker`
-     - `SpawnRemote`
-   - `apply_tl_event` and `apply_dev_event_checked` also mix transition logic with lifecycle persistence
-2. `src/server/handler.mbt::handle_with_runner`
+1. `src/server/handler.mbt::handle_with_runner`
    - request routing is fused with post-tool orchestration:
      - post-`shutdown` finalization
      - post-`merge_pr` ownership lookup + parent delivery + finalize
      - post-`kill_agent` failure handling
      - pane watcher registration after spawn/rescue
      - pre-merge ownership fallback lookup
+2. **Poller ↔ TL notification pipeline** — `tl_decision.mbt` is pure classification, but poll loops, `TrackedPR` updates, review-timeout escalation, and parent/leaf delivery still cross `src/poller/**`, tool helpers, and server-adjacent paths.
 3. `src/server/handler.mbt::watch_pane` / `stop_subscribe`
    - raw shell command assembly, `c_system`, zellij subscribe process management, and `/tmp` pidfile cleanup live inside server state rather than a host adapter
 4. `src/tools/dispatch_helpers.mbt::fetch_inline_comments_sync`
@@ -163,9 +153,11 @@ Shell-specific residual edges are enumerated in **Remaining intentional producti
    - failure transition, persistence, hook firing, delivery, optional second terminal injection, and runtime tracking cleanup are fused in one path
 8. `src/tools/dispatch.mbt::apply_tl_event` / `apply_dev_event_checked`
    - event application still performs direct lifecycle file reads/writes and lifecycle JSONL append
-9. `src/tools/pr.mbt::ensure_pull_request` / `detect_default_branch`
-   - both still call `capture_command_output` directly rather than using injectable capture seams
-10. `src/phase/machine.mbt` + `src/phase/lifecycle.mbt`
+9. `src/tools/dispatch.mbt` (remaining heavy arms)
+   - still the main tool router; high-impact paths (`file_pr`, `merge_pr`, spawn/teardown tools) remain effect-dense even where shared helpers and parent-resolution consolidation exist
+10. `src/tools/pr.mbt::ensure_pull_request` / `detect_default_branch`
+    - both still call `capture_command_output` directly rather than using injectable capture seams
+11. `src/phase/machine.mbt` + `src/phase/lifecycle.mbt`
     - state-machine logic and persistence live in the same package boundary
 
 ### Full finding log
