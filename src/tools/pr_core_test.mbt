@@ -584,3 +584,24 @@ async test "interpret_merge_pr_merge_host returns busy when mutex held" {
     Ok(_) => fail("expected busy Err")
   }
 }
+
+///|
+test "merge_pr_tracked_branch_for_post_success is None without poller" {
+  assert_eq(merge_pr_tracked_branch_for_post_success(None, 1), None)
+}
+
+///|
+test "merge_pr_tracked_branch_for_post_success is None when PR not tracked" {
+  let ps = @poller.PollerState::new()
+  assert_eq(merge_pr_tracked_branch_for_post_success(Some(ps), 7), None)
+}
+
+///|
+test "merge_pr_tracked_branch_for_post_success returns branch when tracked" {
+  let ps = @poller.PollerState::new()
+  ps.track(4, "main.leaf", "main.topic", "main", "https://ex/4", 0L)
+  assert_eq(
+    merge_pr_tracked_branch_for_post_success(Some(ps), 4),
+    Some("main.topic"),
+  )
+}

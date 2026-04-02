@@ -383,3 +383,52 @@ pub async fn interpret_merge_pr_merge_host(
     Ok(_) => Ok(())
   }
 }
+
+///|
+/// Tracked branch string for `merge_pr_post_success_plan` when the poller is
+/// present and lists this PR; `None` when the poller is absent or has no entry.
+pub fn merge_pr_tracked_branch_for_post_success(
+  poller_state : @poller.PollerState?,
+  pr_number : Int,
+) -> String? {
+  match poller_state {
+    Some(ps) =>
+      match ps.get(pr_number) {
+        Some(tracked) => Some(tracked.branch)
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
+/// After `interpret_merge_pr_merge_host` succeeds: resolve tracked branch,
+/// build `merge_pr_post_success_plan`, apply the TL lifecycle event, optionally
+/// untrack and persist poller state, return the tool response.
+pub fn interpret_merge_pr_post_success(
+  project_dir : String,
+  caller_id : String,
+  pr_number : Int,
+  poller_state : @poller.PollerState?,
+  registry : @registry.AgentRegistry?,
+) -> @types.Response {
+  let tracked_branch = merge_pr_tracked_branch_for_post_success(
+    poller_state, pr_number,
+  )
+  let plan = merge_pr_post_success_plan(
+    pr_number,
+    poller_state is Some(_),
+    tracked_branch,
+  )
+  @phase.apply_tl_event(project_dir, caller_id, plan.tl_event, registry~)
+  if plan.poller_untrack_and_write_state {
+    match poller_state {
+      Some(ps) => {
+        ps.untrack(pr_number)
+        ignore(ps.write_state_file(project_dir))
+      }
+      None => ()
+    }
+  }
+  plan.response
+}
