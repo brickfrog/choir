@@ -4,5 +4,6 @@ import {
   "choir/src/poller",
   "choir/src/registry",
   "choir/src/workspace",
+  "moonbitlang/core/env",
   "moonbitlang/core/json",
 }

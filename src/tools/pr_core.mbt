@@ -906,7 +906,7 @@ pub async fn interpret_fork_wave_post_spawn(
       slug,
       @config.agent_type_to_string(fork_wave_args.agent_type),
     )
-    let tl_effects = @phase.apply_tl_event(
+    let tl_effects = @phase.plan_tl_event_for_scope(
       project_dir,
       fork_wave_args.caller_id,
       @phase.TLEvent::ChildSpawned(child_id=slug),
@@ -1291,7 +1291,7 @@ pub fn interpret_merge_pr_post_success(
     poller_state is Some(_),
     tracked_branch,
   )
-  let tl_effects = @phase.apply_tl_event(
+  let tl_effects = @phase.plan_tl_event_for_scope(
     project_dir,
     caller_id,
     plan.tl_event,
@@ -1715,16 +1715,14 @@ pub async fn interpret_shutdown(
   let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
   let plan = shutdown_exit_plan(lifecycle)
   if plan.apply_dev_exit_requested {
-    match
-      @phase.apply_dev_event_checked(
+    ignore(
+      apply_dev_event_checked(
         project_dir,
         caller_id,
         @phase.DevEvent::ExitRequested,
-      ) {
-      Ok((_, dev_effects)) =>
-        @phase.interpret_lifecycle_effects(project_dir, dev_effects, registry~)
-      Err(_) => ()
-    }
+        registry~,
+      ),
+    )
   }
   if plan.attempt_worktree_cleanup {
     match registry {
@@ -2390,7 +2388,7 @@ pub async fn interpret_rescue_leaf_post_spawn(
     rescue_args.new_slug,
     @config.agent_type_to_string(rescue_args.agent_type),
   )
-  let rescue_tl_effects = @phase.apply_tl_event(
+  let rescue_tl_effects = @phase.plan_tl_event_for_scope(
     project_dir,
     rescue_args.caller_id,
     @phase.TLEvent::ChildSpawned(child_id=rescue_args.new_slug),

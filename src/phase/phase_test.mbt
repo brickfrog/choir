@@ -538,3 +538,187 @@ test "plan_dev_event_checked NotifyParentSuccess has empty effects" {
     Err(msg) => fail("unexpected err: " + msg)
   }
 }
+
+// --- interpret_lifecycle_effects (service.mbt) regression tests ---
+// Covers: successful persist + append, failed persist suppresses append,
+// registry sync after persist, append requires matching last-persist agent_id,
+// latch clears after each Append effect (no stale pairing).
+
+///|
+test "interpret_lifecycle_effects no-op on empty effect list" {
+  let project_dir = "/tmp/choir-interp-empty-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  interpret_lifecycle_effects(project_dir, [], registry=None)
+}
+
+///|
+test "interpret_lifecycle_effects writes lifecycle and event log" {
+  let project_dir = "/tmp/choir-interp-ok-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let from_lc = lifecycle_for_role("leaf.z", @types.Role::Dev)
+  let to_lc = {
+    ..from_lc,
+    workflow: Dev(
+      ReviewOwned(pr_number=3, state=OpenUnreviewed(url="https://ex/3")),
+    ),
+  }
+  let effects : Array[LifecycleEffect] = [
+    PersistLifecycle(lifecycle=to_lc),
+    AppendLifecycleEvent(
+      agent_id=from_lc.agent_id,
+      from_lc~,
+      to_lc~,
+      trigger="test",
+    ),
+  ]
+  interpret_lifecycle_effects(project_dir, effects, registry=None)
+  match read_lifecycle(project_dir, "leaf.z") {
+    Some(lc) => assert_eq(lc, to_lc)
+    None => fail("expected persisted lifecycle")
+  }
+  let ev_path = project_dir +
+    "/.choir/events/" +
+    @types.sanitize_agent_id("leaf.z") +
+    ".jsonl"
+  let log = @sys.read_file(ev_path)
+  assert_true(log.contains("lifecycle.transition"))
+  assert_true(log.contains("test"))
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
+test "interpret_lifecycle_effects skips append when persist fails" {
+  let project_dir = "/tmp/choir-interp-badkv-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir"))
+  ignore(@sys.write_file_sync(project_dir + "/.choir/kv", "not-a-directory"))
+  let lc = lifecycle_for_role("u1", @types.Role::Dev)
+  let effects : Array[LifecycleEffect] = [
+    PersistLifecycle(lifecycle=lc),
+    AppendLifecycleEvent(
+      agent_id=lc.agent_id,
+      from_lc=lc,
+      to_lc=lc,
+      trigger="t",
+    ),
+  ]
+  interpret_lifecycle_effects(project_dir, effects, registry=None)
+  let ev_path = project_dir +
+    "/.choir/events/" +
+    @types.sanitize_agent_id("u1") +
+    ".jsonl"
+  assert_eq(@sys.read_file(ev_path), "")
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
+test "interpret_lifecycle_effects updates registry after successful persist" {
+  let project_dir = "/tmp/choir-interp-reg-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let reg = @registry.AgentRegistry::new()
+  let agent_id = "p.reg"
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId(agent_id),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      state: @types.AgentState::Active,
+      spawn_depth: 0,
+    }),
+  )
+  let base = lifecycle_for_role(agent_id, @types.Role::Dev)
+  let next = { ..base, process: Finalizing(reason=Shutdown) }
+  interpret_lifecycle_effects(
+    project_dir,
+    [PersistLifecycle(lifecycle=next)],
+    registry=Some(reg),
+  )
+  match reg.get(agent_id) {
+    Ok(a) => assert_eq(a.state, @types.AgentState::Completing)
+    Err(_) => fail("expected agent in registry")
+  }
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
+test "interpret_lifecycle_effects append ignored when last persist is another agent" {
+  let project_dir = "/tmp/choir-interp-pair-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let lc_a = lifecycle_for_role("a.only", @types.Role::Dev)
+  let lc_b = lifecycle_for_role("b.only", @types.Role::Dev)
+  let effects : Array[LifecycleEffect] = [
+    PersistLifecycle(lifecycle=lc_a),
+    PersistLifecycle(lifecycle=lc_b),
+    AppendLifecycleEvent(
+      agent_id=lc_a.agent_id,
+      from_lc=lc_a,
+      to_lc=lc_a,
+      trigger="orphan-append",
+    ),
+  ]
+  interpret_lifecycle_effects(project_dir, effects, registry=None)
+  let ev_path = project_dir +
+    "/.choir/events/" +
+    @types.sanitize_agent_id("a.only") +
+    ".jsonl"
+  assert_eq(@sys.read_file(ev_path), "")
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
+test "interpret_lifecycle_effects second append without new persist is ignored" {
+  let project_dir = "/tmp/choir-interp-2append-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let from_lc = lifecycle_for_role("leaf.2a", @types.Role::Dev)
+  let to_lc = {
+    ..from_lc,
+    workflow: Dev(
+      ReviewOwned(pr_number=2, state=OpenUnreviewed(url="https://ex/2")),
+    ),
+  }
+  let effects : Array[LifecycleEffect] = [
+    PersistLifecycle(lifecycle=to_lc),
+    AppendLifecycleEvent(
+      agent_id=from_lc.agent_id,
+      from_lc~,
+      to_lc~,
+      trigger="first",
+    ),
+    AppendLifecycleEvent(
+      agent_id=from_lc.agent_id,
+      from_lc~,
+      to_lc~,
+      trigger="second",
+    ),
+  ]
+  interpret_lifecycle_effects(project_dir, effects, registry=None)
+  let ev_path = project_dir +
+    "/.choir/events/" +
+    @types.sanitize_agent_id("leaf.2a") +
+    ".jsonl"
+  let log = @sys.read_file(ev_path)
+  assert_true(log.contains("first"))
+  assert_false(log.contains("second"))
+  ignore(@sys.system("rm -rf " + project_dir))
+}

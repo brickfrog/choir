@@ -109,7 +109,9 @@ pub(all) struct AgentLifecycle {
 
 ///|
 /// Side effects produced by lifecycle orchestration; interpreted by the host
-/// (`interpret_lifecycle_effects`) to perform persistence and registry updates.
+/// (`interpret_lifecycle_effects`) to perform persistence. When `registry` is
+/// provided to the interpreter, a successful `PersistLifecycle` also updates
+/// that agent's row if it is already registered (same idea as `persist_lifecycle`).
 pub(all) enum LifecycleEffect {
   PersistLifecycle(lifecycle~ : AgentLifecycle)
   AppendLifecycleEvent(
@@ -118,7 +120,6 @@ pub(all) enum LifecycleEffect {
     to_lc~ : AgentLifecycle,
     trigger~ : String
   )
-  SyncRegistryState(agent_id~ : String, lifecycle~ : AgentLifecycle)
 } derive(Show, Eq)
 
 ///|
