@@ -98,7 +98,7 @@ test "detect_events CIFailed when CI flips from false to true" {
 }
 
 ///|
-test "detect_events CIPassed when CI recovers on same head after failure" {
+test "detect_events CIFailureCleared when CI recovers on same head after failure" {
   let tracked = detect_test_tracked(
     11,
     0L,
@@ -119,13 +119,13 @@ test "detect_events CIPassed when CI recovers on same head after failure" {
   )
   assert_eq(ev.length(), 1)
   match ev[0] {
-    CIPassed(n) => assert_eq(n, 11)
-    _ => fail("expected CIPassed")
+    CIFailureCleared(n) => assert_eq(n, 11)
+    _ => fail("expected CIFailureCleared")
   }
 }
 
 ///|
-test "detect_events suppresses CIPassed when head just changed (FixesPushed tick)" {
+test "detect_events suppresses CIFailureCleared when head just changed (FixesPushed tick)" {
   let tracked = detect_test_tracked(
     12,
     0L,
