@@ -67,6 +67,7 @@ async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
         @poller.CiRollupStatus::Success,
         "",
         true,
+        false,
       )
     },
   }
@@ -112,6 +113,7 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
         @poller.CiRollupStatus::Success,
         "",
         true,
+        false,
       )
     },
   }

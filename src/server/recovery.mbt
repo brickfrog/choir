@@ -31,11 +31,12 @@ pub async fn recover_state(
         review_bodies~,
         sha~,
         ci_rollup~,
+        copilot_issue_comment_seen~,
         created_at~
       ) =>
         state.track_recovered_pr(
           pr_number, agent_id, branch, parent_branch, pr_url, created_at, review,
-          review_bodies, sha, ci_rollup,
+          review_bodies, sha, ci_rollup, copilot_issue_comment_seen,
         )
       @runtime.RecoveryAction::SyncLifecycle(agent_id~, pr~, review~) =>
         state.sync_recovered_pr_lifecycle(agent_id, pr, review)
@@ -107,6 +108,7 @@ async test "discover_recovery_snapshot with mock provider" {
         @poller.CiRollupStatus::Success,
         "",
         true,
+        false,
       )
     },
   }
@@ -169,6 +171,7 @@ async test "plan_recovery reconciles local agents and open PRs" {
       @poller.CiRollupStatus::Success,
       "",
       true,
+      false,
     )
   })
 
@@ -255,6 +258,7 @@ async test "plan_recovery handles offline agent and persisted PR" {
         notified_parent: false,
         last_ci_rollup: @poller.CiRollupStatus::Unknown,
         last_timeout_at: 0L,
+        copilot_issue_comment_seen: false,
       },
     ],
     recovered_at: 4000L,
@@ -269,6 +273,7 @@ async test "plan_recovery handles offline agent and persisted PR" {
       @poller.CiRollupStatus::Unknown,
       "",
       true,
+      false,
     )
   })
 

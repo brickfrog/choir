@@ -43,6 +43,7 @@ pub(all) enum RecoveryAction {
     review_bodies~ : String,
     sha~ : String,
     ci_rollup~ : @poller.CiRollupStatus,
+    copilot_issue_comment_seen~ : Bool,
     created_at~ : Int64
   )
   SyncLifecycle(agent_id~ : String, pr~ : OpenPR, review~ : @poller.ReviewState)
@@ -73,6 +74,7 @@ pub(all) struct RecoveryProvider {
     String,
     @poller.CiRollupStatus,
     String,
+    Bool,
     Bool,
   )
 }
@@ -524,6 +526,7 @@ pub async fn plan_recovery(
     @poller.CiRollupStatus,
     String,
     Bool,
+    Bool,
   ),
 ) -> RecoveryPlan {
   let actions = []
@@ -591,7 +594,7 @@ pub async fn plan_recovery(
             )
           }
           None => {
-            let (_, review, sha, ci_rollup, review_bodies, _) = gh_poll(
+            let (_, review, sha, ci_rollup, review_bodies, _, copilot_seen) = gh_poll(
               pr.pr_number,
             )
             actions.push(
@@ -605,6 +608,7 @@ pub async fn plan_recovery(
                 review_bodies~,
                 sha~,
                 ci_rollup~,
+                copilot_issue_comment_seen=copilot_seen,
                 created_at=match pr.created_sec {
                   Some(created_sec) => created_sec
                   None => snapshot.recovered_at
