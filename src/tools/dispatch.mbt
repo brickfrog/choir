@@ -665,82 +665,9 @@ pub async fn dispatch(
         None => @types.Response::Err("no agent registry available")
       }
     ToolRequest::CancelWave(cancel_args) =>
-      match registry {
-        Some(reg) => {
-          let caller_id = match caller_id {
-            Some(v) => v
-            None => "main"
-          }
-          let children = reg.children(caller_id)
-          let non_terminal = children.filter(fn(agent) {
-            agent.state == @types.AgentState::Spawning ||
-            agent.state == @types.AgentState::Active
-          })
-          if !cancel_args.force {
-            match poller_state {
-              Some(ps) =>
-                for agent in non_terminal {
-                  let agent_id_str = agent.agent_id.to_string()
-                  match ps.critical_phase_pr_number(agent_id_str) {
-                    Some(pr_number) =>
-                      return @types.Response::Err(
-                        "cancel_wave: agent " +
-                        agent_id_str +
-                        " is blocked by PR #" +
-                        pr_number.to_string() +
-                        " with changes requested -- use force=true to override",
-                      )
-                    None => ()
-                  }
-                }
-              None => ()
-            }
-          }
-          let mut cancelled = 0
-          let mut poller_changed = false
-          for agent in non_terminal {
-            let agent_id_str = agent.agent_id.to_string()
-            // 1. Close terminal pane
-            match agent.terminal_target {
-              Some(t) => {
-                let kill_cmd = @workspace.local_close_target(t)
-                let _ = runner([kill_cmd])
-                ()
-              }
-              None => ()
-            }
-            // 2. Remove worktree
-            if agent.workspace.contains(".choir/worktrees/") {
-              let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
-              ()
-            }
-            // 3. Mark failed in registry
-            let _ = reg.set_state(agent_id_str, @types.AgentState::Failed)
-            // 4. Untrack PRs
-            match poller_state {
-              Some(ps) => {
-                let untracked = ps.untrack_by_agent_id(agent_id_str)
-                if untracked > 0 {
-                  poller_changed = true
-                }
-              }
-              None => ()
-            }
-            cancelled += 1
-          }
-          if poller_changed {
-            match poller_state {
-              Some(ps) => ignore(ps.write_state_file(project_dir))
-              None => ()
-            }
-          }
-          @types.Response::ok_values({
-            "status": String::to_json("ok"),
-            "cancelled": Int::to_json(cancelled),
-          })
-        }
-        None => @types.Response::Err("no agent registry available")
-      }
+      interpret_cancel_wave(
+        cancel_args, caller_id, project_dir, poller_state, registry, runner,
+      )
     ToolRequest::KvGet(key_args) => {
       let value = @sys.read_file(kv_file_path(project_dir, key_args.key))
       if value == "" {
