@@ -1,10 +1,16 @@
 # Choir Roadmap
 
-## Current State (2026-03-29)
+## Current State (2026-04-02)
 
-Choir's local UDS workflow is stable. The north-star loop (spawn -> edit -> commit -> PR -> review -> fix -> merge) works end-to-end with Claude, Gemini, Codex, Cursor Agent, and Moon Pilot as leaf agents. moontrace provides structured colored logging and OTLP span export. brickfrog/tempo handles datetime parsing.
+Choir's local UDS workflow is stable. The north-star loop (spawn -> edit -> commit -> PR -> review -> fix -> merge) works end-to-end with Claude, Gemini, Codex, Cursor Agent, Moon Pilot, and **Pi** as leaf agents. moontrace provides structured colored logging and OTLP span export. brickfrog/tempo handles datetime parsing.
 
-Recent additions:
+**Choir × Pi (product/runtime)** — The integration described in `PI_NORTH_STAR.md` is **substantially achieved and live-validated**: `choir tool` is the non-MCP control plane; `choir init --tl pi`, Pi TL/dev/worker paths, and restart recovery (including offline PR-owning leaves) are validated. Further work is mostly persistence policy, delivery tradeoffs, and **architecture** (below), not first-pass viability.
+
+**Effect architecture (exomonad-style hard boundary)** — **In progress.** Orchestration is still fused with I/O in large parts of `dispatch`, server `handler`, and recovery; only the `fork_wave` path fully follows the pure `Eff` pattern today. The audit and phased plan live in `PI_NORTH_STAR.md` (Architecture boundary audit). This is ongoing refactor work, not a future wishlist.
+
+**Shell/process edges** — Broad ambient-shell orchestration debt is largely **closed**; remaining production shell uses are **intentional and localized** (TL init tab trailer, plugin capture fallback, remote SSH semantics, smoke scripts). See `PI_NORTH_STAR.md` (Remaining intentional production shell boundaries).
+
+Recent additions (still accurate):
 - **Disconnect recovery** — agents that bypass `file_pr` get retroactively recovered via GitHub PR detection instead of being falsely failed
 - **WASM hook system** — extism/moonbit-pdk plugins for PII rewriting and tool guards (BeforeModel/AfterModel/PreToolUse)
 - **Typed lifecycle state machine** — labeled enum fields, AgentId newtype, LocalTarget type, ChildTracker
@@ -36,9 +42,9 @@ MoonBit compiles to both native and WASM. Choir currently only targets native fo
 
 `file_pr`, `notify_parent`, `shutdown` as a single WASM binary that any agent runtime can call without needing the full native choir binary on PATH. Ship one `.wasm`, run it anywhere with wasmtime/wasmer. Removes the hard dependency on having choir's native binary installed for leaf agents.
 
-### Browser dashboard
+### In-repo web dashboard
 
-WASM target could power a web UI that reads `.choir/kv/` state files (via WASI filesystem) and renders agent status, PR tracking, lifecycle graphs. Real-time choir monitoring without a separate server.
+**Not pursued.** There is no Choir webapp in the repo; status and orchestration remain CLI, `choir tool`, MCP, and on-disk state under `.choir/`. A hypothetical WASM-hosted UI remains speculative and is not on the active roadmap.
 
 ### Plugin system without extism
 

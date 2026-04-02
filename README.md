@@ -166,7 +166,7 @@ Pi is also available as an agent type for spawned children:
 - `fork_wave(..., agent_type=pi)`
 - `spawn_worker(..., agent_type=pi)`
 
-This path is still experimental, but the local runtime assets and launch wiring are now in place under Choir-owned `.choir/pi/` state, and live smoke validation has confirmed end-to-end worker and dev-leaf flows.
+The same flows are live-validated; remaining gaps are longer-term persistence and architecture work (see `PI_NORTH_STAR.md`), not basic wiring.
 
 ## CLI Tool Access
 
@@ -345,11 +345,14 @@ gate checks + spawn commands) interpreted by an async trampoline. The plan
 is pure data; no IO runs until `interpret` is called. Tests walk the tree
 directly without mocks or async infrastructure.
 
+Extending that pattern across the rest of dispatch, server handling, and recovery (a hard effect boundary between pure orchestration and host I/O) is **still in progress**; see the Architecture boundary audit in `PI_NORTH_STAR.md`.
+
 ## Status
 
 - local UDS workflow: proven
 - zellij backend (0.44+): proven
-- leaf agents: Claude, Gemini, Moon Pilot, Codex, Cursor Agent
+- leaf agents: Claude, Gemini, Moon Pilot, Codex, Cursor Agent, Pi
+- Choir × Pi TL/dev/worker path: live-validated (`PI_NORTH_STAR.md`); hard effect-boundary refactor ongoing
 - structured logging: [moontrace](https://github.com/brickfrog/moontrace) with colored output and OTLP span export
 - multi-wave lifecycle (WaveComplete): implemented
 - sub-TL nesting (role=tl): implemented, unbounded depth

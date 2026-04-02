@@ -92,11 +92,11 @@
 
 ---
 
-## M2. Pi extension prototype
+## M2. Pi extension (shipped)
 
 ### Extension basics
 
-- [x] Create a Pi extension prototype that wraps `choir tool`
+- [x] Create a Pi extension that wraps `choir tool` (reference copy in `scripts/pi/`; Choir-managed runtime under `.choir/pi/`)
 - [x] Register Choir operations as native Pi tools via `pi.registerTool()`
 - [x] Parse `choir tool` JSON responses into Pi tool results
 - [x] Surface Choir failures as tool failures, not prose-only fallbacks
@@ -116,7 +116,7 @@
 - [x] Worker default active built-ins are read/report oriented
 - [x] Set or suggest role-appropriate thinking defaults
 
-### Tool coverage for prototype
+### Tool coverage
 
 - [x] TL: `fork_wave`
 - [x] TL: `spawn_worker`
@@ -249,25 +249,9 @@
 
 ---
 
-## Concrete file targets for the first implementation slice
+## Concrete file targets (historical; M0–M4 landed)
 
-### Likely first files to touch
-
-- [ ] `src/bin/choir/main.mbt`
-- [ ] `src/transport/transport.mbt` (reuse / verify response formatting only if needed)
-- [ ] `src/tools/parse.mbt` (only if the new CLI path needs shared parsing helpers)
-- [ ] `src/tools/tool_request.mbt` (reference only unless new shared helpers are needed)
-- [ ] tests in existing MoonBit test locations for CLI parsing / command behavior
-
-### Likely later files for Pi runtime support
-
-- [ ] `src/types/domain.mbt`
-- [ ] `src/config/config.mbt`
-- [ ] `src/tools/parse.mbt`
-- [ ] `src/workspace/launch.mbt`
-- [ ] `src/workspace/spawn.mbt`
-- [ ] `src/server/recovery.mbt`
-- [ ] `src/bin/choir/main.mbt`
+The first slice touched `src/bin/choir/main.mbt`, transport, parse, and tests as planned. Pi runtime support landed across `domain`, `config`, `launch`, `spawn`, `recovery`, and related paths. Use git history for detail; this list is no longer a planning checklist.
 
 ---
 
@@ -292,4 +276,4 @@ The core Choir × Pi shift is now considered achieved. The following success con
 - [x] Pi leaves/workers work inside the normal Choir lifecycle
 - [x] Choir remains the single typed orchestration authority throughout
 
-What remains is optional hardening, UX policy refinement, and future transport/runtime exploration rather than unfinished core viability work.
+What remains is **not** a single “polish backlog”: longer-term persistence and delivery choices, optional transport/runtime exploration, and the **hard effect-boundary refactor** called out in `PI_NORTH_STAR.md` (dispatcher / server / lifecycle decomposition). Core Choir × Pi viability is done; that architecture work is explicitly **not** done.
