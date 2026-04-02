@@ -451,6 +451,20 @@ fn render_parent_next_action(
 }
 
 ///|
+/// Canonical TL decision line for parent delivery (see `@poller.plan_tl_poll_event_parent`).
+fn parent_poll_tl_decision_suffix(
+  tracked : @poller.TrackedPR,
+  event : @poller.PollEvent,
+  unresolved_threads_for_recheck : Int?,
+) -> String {
+  let plan = @poller.plan_tl_poll_event_parent(
+    event, tracked, unresolved_threads_for_recheck,
+  )
+  "\nTLDecision: " +
+  @poller.tl_tracked_pr_workflow_category_sentence(plan.category)
+}
+
+///|
 fn parent_poll_event_message(
   tracked : @poller.TrackedPR,
   event : @poller.PollEvent,
@@ -483,7 +497,10 @@ fn parent_poll_event_message(
         pr_url +
         "\n" +
         "Pre-merge: wait for [PR MERGED] after merge_pr succeeds (or verify merged on GitHub) before claiming merged.\n" +
-        render_parent_next_action(n, parent_branch)
+        render_parent_next_action(n, parent_branch) +
+        parent_poll_tl_decision_suffix(
+          tracked, event, unresolved_threads_for_recheck,
+        )
       Some((message, "success"))
     }
     FixesPushed(n) => {
@@ -500,7 +517,10 @@ fn parent_poll_event_message(
         pr_url +
         "\n" +
         "Pre-merge: re-check the PR; merge only after review is clear and merge_pr succeeds.\n" +
-        "Next action: re-check the PR and merge when ready."
+        "Next action: re-check the PR and merge when ready." +
+        parent_poll_tl_decision_suffix(
+          tracked, event, unresolved_threads_for_recheck,
+        )
       Some((message, "info"))
     }
     ReviewTimeout(n) => {
@@ -516,7 +536,10 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "Next action: inspect the PR or retrigger review."
+        "Next action: inspect the PR or retrigger review." +
+        parent_poll_tl_decision_suffix(
+          tracked, event, unresolved_threads_for_recheck,
+        )
       Some((message, "failure"))
     }
     ReviewReceived(n, comments) =>
@@ -533,7 +556,10 @@ fn parent_poll_event_message(
             "\n" +
             "parent_branch: " +
             parent_branch.unwrap_or("<unknown>") +
-            pr_url,
+            pr_url +
+            parent_poll_tl_decision_suffix(
+              tracked, event, unresolved_threads_for_recheck,
+            ),
             "info",
           ),
         )
@@ -545,7 +571,10 @@ fn parent_poll_event_message(
             " PR #" +
             n.to_string() +
             " has review comments:\n" +
-            comments,
+            comments +
+            parent_poll_tl_decision_suffix(
+              tracked, event, unresolved_threads_for_recheck,
+            ),
             "info",
           ),
         )
@@ -564,7 +593,10 @@ fn parent_poll_event_message(
           "\n" +
           "parent_branch: " +
           parent_branch.unwrap_or("<unknown>") +
-          pr_url,
+          pr_url +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
           "failure",
         ),
       )
@@ -587,7 +619,10 @@ fn parent_poll_event_message(
           pr_url +
           "\n" +
           "Next action: re-check the PR thread and full CI status on GitHub before merging or requesting review.\n\n" +
-          summary,
+          summary +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
           "info",
         ),
       )
@@ -611,7 +646,10 @@ fn parent_poll_event_message(
           pr_url +
           "\n" +
           "Next action: re-check Copilot/review thread and branch policy, then merge_pr only if appropriate.\n\n" +
-          summary,
+          summary +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
           "info",
         ),
       )
@@ -631,7 +669,10 @@ fn parent_poll_event_message(
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
           "\n" +
-          "Next action: the leaf will shut down automatically.",
+          "Next action: the leaf will shut down automatically." +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
           "success",
         ),
       )
@@ -1947,17 +1988,19 @@ test "parent_poll_event_message PR READY stresses not merged" {
     last_review_bodies: "",
     last_sha: "",
     notified_parent: false,
-    last_ci_rollup: @poller.CiRollupStatus::Unknown,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
   }
   match
-    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), None) {
+    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), Some(0)) {
     Some((message, status)) => {
       assert_eq(status, "success")
       assert_true(message.contains("[PR READY]"))
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("[PR MERGED]"))
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Merge gate open on Choir snapshot"))
     }
     None => fail("expected PRReady message")
   }
@@ -1988,6 +2031,8 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("[FIXES PUSHED]"))
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Waiting on approving review"))
     }
     None => fail("expected FixesPushed message")
   }
@@ -2028,6 +2073,8 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
       assert_true(message.contains("PR re-check summary"))
       assert_true(message.contains("changes_requested"))
       assert_true(message.contains("GitHub review requests changes"))
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("TL re-check required"))
     }
     None => fail("expected CIFailureCleared message")
   }
