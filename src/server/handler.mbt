@@ -567,6 +567,25 @@ fn parent_poll_event_message(
           "failure",
         ),
       )
+    CIPassed(n) =>
+      Some(
+        (
+          "[CI PASSED] " +
+          agent_id +
+          " PR #" +
+          n.to_string() +
+          " latest head: status checks no longer report failure (not a merge/review verdict)\n" +
+          "branch: " +
+          branch +
+          "\n" +
+          "parent_branch: " +
+          parent_branch.unwrap_or("<unknown>") +
+          pr_url +
+          "\n" +
+          "Next action: re-check the PR thread and CI on GitHub before merging or requesting review.",
+          "info",
+        ),
+      )
     PRMerged(n) =>
       Some(
         (
@@ -598,6 +617,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     FixesPushed(n) => n
     ReviewTimeout(n) => n
     CIFailed(n) => n
+    CIPassed(n) => n
     PRMerged(n) => n
   }
 }
@@ -654,6 +674,15 @@ fn leaf_poll_review_injection_message(
       )
     CIFailed(n) =>
       Some(("[REVIEW] PR #" + n.to_string() + ": CI checks failing", "failure"))
+    CIPassed(n) =>
+      Some(
+        (
+          "[REVIEW] PR #" +
+          n.to_string() +
+          ": latest head CI green (re-check PR; not merge or approval)",
+          "info",
+        ),
+      )
     PRReady(n) =>
       Some(
         (
@@ -816,6 +845,12 @@ fn pr_comment_body(
           "**Choir:** CI checks failing — routed to `" +
           agent_id +
           "` for fixes.",
+        ),
+      )
+    CIPassed(n) =>
+      Some(
+        (
+          n, "**Choir:** CI no longer reports failure on the latest head — parent and leaf notified to re-check the PR (not a merge signal).",
         ),
       )
     FixesPushed(n) =>
@@ -1883,6 +1918,48 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("Pre-merge:"))
     }
     None => fail("expected FixesPushed message")
+  }
+}
+
+///|
+test "parent_poll_event_message CIPassed stresses re-check not merge" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 10,
+    agent_id: "main.dev-x",
+    branch: "work/x",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/10",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::ChangesRequested,
+    last_review_bodies: "",
+    last_sha: "abc",
+    notified_parent: false,
+    last_ci_failed: false,
+    last_timeout_at: 0L,
+  }
+  match parent_poll_event_message(tracked, @poller.PollEvent::CIPassed(10)) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(message.contains("[CI PASSED]"))
+      assert_true(message.contains("not a merge/review verdict"))
+      assert_true(message.contains("re-check"))
+    }
+    None => fail("expected CIPassed message")
+  }
+}
+
+///|
+test "leaf_poll_review_injection_message CIPassed is honest about scope" {
+  match leaf_poll_review_injection_message(@poller.PollEvent::CIPassed(44)) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(message.contains("CI green"))
+      assert_true(message.contains("re-check"))
+      assert_true(message.contains("not merge"))
+    }
+    None => fail("expected leaf CIPassed injection")
   }
 }
 

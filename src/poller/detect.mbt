@@ -76,5 +76,12 @@ pub fn detect_events(
   if ci_failed && !tracked.last_ci_failed {
     events.push(PollEvent::CIFailed(tracked.pr_number))
   }
+  // CI recovered on the same head — do not fire when SHA just changed (new head may still be pending).
+  if !ci_failed &&
+    tracked.last_ci_failed &&
+    current_sha != "" &&
+    current_sha == tracked.last_sha {
+    events.push(PollEvent::CIPassed(tracked.pr_number))
+  }
   events
 }
