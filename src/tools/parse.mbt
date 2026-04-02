@@ -288,7 +288,7 @@ fn parse_tasks_array(raw : String) -> Array[String] {
 
 ///|
 /// Generate a slug from task text: first few words, lowercased, hyphenated.
-fn slugify_task(task : String, index : Int) -> String {
+pub fn slugify_task(task : String, index : Int) -> String {
   let buf = StringBuilder::new()
   let mut word_count = 0
   let mut in_word = false

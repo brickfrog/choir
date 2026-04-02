@@ -505,6 +505,126 @@ pub fn interpret_track_pr(
 }
 
 ///|
+/// Pure spawn-loop planning for `fork_wave`: slug collision handling, alive-skip
+/// bookkeeping, [`SpawnSpec`] rows, and accumulated `spawn_commands` — no host I/O.
+pub(all) struct ForkWaveSpawnPlan {
+  cmds : Array[@workspace.Command]
+  spawned_specs : Array[@types.SpawnSpec]
+  spawned_slugs : Array[String]
+  spawned_count : Int
+  skipped_count : Int
+  agent_ids : String
+  skipped_ids : String
+}
+
+///|
+/// Build [`ForkWaveSpawnPlan`] from resolved tool args and `child_spawn_depth`.
+/// Uses `slugify_task` for per-leaf slugs; behavior matches the historical
+/// `ToolRequest::ForkWave` inline loop in `dispatch`.
+pub fn fork_wave_spawn_plan(
+  fork_wave_args : ForkWaveArgs,
+  child_spawn_depth : Int,
+  registry : @registry.AgentRegistry?,
+  project_dir : String,
+  session : String,
+  extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
+  listen_uds? : String = ".choir/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
+) -> ForkWaveSpawnPlan {
+  let agent_ids = StringBuilder::new()
+  let skipped_ids = StringBuilder::new()
+  let cmds : Array[@workspace.Command] = []
+  let spawned_specs : Array[@types.SpawnSpec] = []
+  let spawned_slugs : Array[String] = []
+  let mut spawned_count = 0
+  let mut skipped_count = 0
+  let seen_slugs : Map[String, Int] = {}
+  for i = 0; i < fork_wave_args.count; i = i + 1 {
+    let raw_slug = if fork_wave_args.has_per_leaf_tasks {
+      slugify_task(fork_wave_args.tasks[i], i)
+    } else {
+      fork_wave_args.slug_prefix + "-" + i.to_string()
+    }
+    let slug = match seen_slugs.get(raw_slug) {
+      Some(count) => {
+        seen_slugs.set(raw_slug, count + 1)
+        raw_slug + "-" + i.to_string()
+      }
+      None => {
+        seen_slugs.set(raw_slug, 1)
+        raw_slug
+      }
+    }
+    let agent_id = fork_wave_args.parent_branch + "." + slug
+    let already_alive = match registry {
+      Some(reg) =>
+        match reg.get(agent_id) {
+          Ok(agent) =>
+            match agent.state {
+              @types.AgentState::Active | @types.AgentState::Completing => true
+              _ => false
+            }
+          Err(_) => false
+        }
+      None => false
+    }
+    if already_alive {
+      if skipped_count > 0 {
+        skipped_ids.write_string(",")
+      }
+      skipped_ids.write_string(agent_id)
+      skipped_count = skipped_count + 1
+      continue
+    }
+    if spawned_count > 0 {
+      agent_ids.write_string(",")
+    }
+    agent_ids.write_string(agent_id)
+    spawned_count = spawned_count + 1
+    spawned_slugs.push(slug)
+    let spec = @types.SpawnSpec::{
+      slug,
+      role: fork_wave_args.child_role,
+      agent_type: fork_wave_args.agent_type,
+      task: fork_wave_args.tasks[i],
+      isolation: @types.IsolationMode::Worktree,
+      parent_id: fork_wave_args.caller_id,
+      parent_branch: fork_wave_args.parent_branch,
+      reuse_workspace: false,
+      workspace_slug: None,
+      reuse_git_branch: None,
+      spawn_depth: child_spawn_depth,
+    }
+    spawned_specs.push(spec)
+    for
+      cmd in @workspace.spawn_commands(
+        spec,
+        project_dir,
+        session,
+        parent_session_id=fork_wave_args.parent_session_id,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
+      ) {
+      cmds.push(cmd)
+    }
+  }
+  {
+    cmds,
+    spawned_specs,
+    spawned_slugs,
+    spawned_count,
+    skipped_count,
+    agent_ids: agent_ids.to_string(),
+    skipped_ids: skipped_ids.to_string(),
+  }
+}
+
+///|
 /// End-to-end `file_pr`: parent-branch defaulting, tracked workdir, preflight
 /// create, then post-success poller/lifecycle/notify. Dispatcher delegates
 /// here; behavior matches the prior `ToolRequest::FilePr` inline arm.
