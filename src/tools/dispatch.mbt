@@ -221,7 +221,12 @@ pub async fn dispatch(
       }
       match notify_parent_plan(notify_args, parent_resolution) {
         NotifyParentPlan::NoRegistry(dev_event~, response~) => {
-          apply_dev_event(project_dir, notify_args.caller_id, dev_event)
+          apply_dev_event(
+            project_dir,
+            notify_args.caller_id,
+            dev_event,
+            registry=None,
+          )
           response
         }
         NotifyParentPlan::ParentResolveFailed(error_message~) =>
@@ -237,6 +242,7 @@ pub async fn dispatch(
                 project_dir,
                 notify_args.caller_id,
                 dev_event_on_success,
+                registry~,
               )
               response_ok
             }
@@ -685,22 +691,34 @@ pub async fn dispatch_call(
 }
 
 ///|
+/// End-to-end TL lifecycle update: `@phase.plan_tl_event_for_scope` (read +
+/// plan), then `interpret_lifecycle_effects` (persist, JSONL append when
+/// applicable, optional registry sync).
 pub fn apply_tl_event(
   project_dir : String,
   scope : String,
   event : @phase.TLEvent,
   registry? : @registry.AgentRegistry? = None,
 ) -> Unit {
-  @phase.apply_tl_event(project_dir, scope, event, registry~)
+  let effects = @phase.plan_tl_event_for_scope(
+    project_dir,
+    scope,
+    event,
+    registry~,
+  )
+  @phase.interpret_lifecycle_effects(project_dir, effects, registry~)
 }
 
 ///|
+/// Ignores `Result` errors; on success runs the same interpret path as
+/// `apply_dev_event_checked`.
 pub fn apply_dev_event(
   project_dir : String,
   scope : String,
   event : @phase.DevEvent,
+  registry? : @registry.AgentRegistry? = None,
 ) -> Unit {
-  @phase.apply_dev_event(project_dir, scope, event)
+  @phase.apply_dev_event(project_dir, scope, event, registry~)
 }
 
 ///|
@@ -712,10 +730,21 @@ pub fn current_dev_phase(
 }
 
 ///|
+/// Plans via `@phase.plan_dev_event_for_scope` (read + pure plan), then always
+/// runs `interpret_lifecycle_effects` on success so lifecycle files and JSONL
+/// match `apply_dev_event`. Pass `registry` when the agent may be registered so
+/// a successful persist can refresh in-memory `Agent.state`.
 pub fn apply_dev_event_checked(
   project_dir : String,
   scope : String,
   event : @phase.DevEvent,
+  registry? : @registry.AgentRegistry? = None,
 ) -> Result[@phase.DevPhase, String] {
-  @phase.apply_dev_event_checked(project_dir, scope, event)
+  match @phase.plan_dev_event_for_scope(project_dir, scope, event) {
+    Ok((phase, effects)) => {
+      @phase.interpret_lifecycle_effects(project_dir, effects, registry~)
+      Ok(phase)
+    }
+    Err(e) => Err(e)
+  }
 }

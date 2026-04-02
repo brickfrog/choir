@@ -108,6 +108,21 @@ pub(all) struct AgentLifecycle {
 } derive(Show, Eq)
 
 ///|
+/// Side effects produced by lifecycle orchestration; interpreted by the host
+/// (`interpret_lifecycle_effects`) to perform persistence. When `registry` is
+/// provided to the interpreter, a successful `PersistLifecycle` also updates
+/// that agent's row if it is already registered (same idea as `persist_lifecycle`).
+pub(all) enum LifecycleEffect {
+  PersistLifecycle(lifecycle~ : AgentLifecycle)
+  AppendLifecycleEvent(
+    agent_id~ : String,
+    from_lc~ : AgentLifecycle,
+    to_lc~ : AgentLifecycle,
+    trigger~ : String
+  )
+} derive(Show, Eq)
+
+///|
 pub(all) enum LifecycleExitPolicy {
   Blocked(reason~ : ExitBlockReason)
   Deferred(message~ : String)

@@ -813,6 +813,7 @@ pub fn ServerState::plan_poll_event_deliveries(
         self.config.project_dir,
         leaf_agent_id,
         @phase.DevEvent::ReviewReceivedEv(pr_number=n, body~),
+        registry=Some(self.registry),
       )
     (Some(_), ReviewCommented(_, _)) => ()
     (Some(_), PRReady(n)) =>
@@ -820,19 +821,22 @@ pub fn ServerState::plan_poll_event_deliveries(
         self.config.project_dir,
         leaf_agent_id,
         @phase.DevEvent::ReviewApprovedEv(pr_number=n),
+        registry=Some(self.registry),
       )
     (Some(pr), FixesPushed(n)) =>
       @tools.apply_dev_event(
         self.config.project_dir,
         leaf_agent_id,
         @phase.DevEvent::FixesPushedEv(pr_number=n, sha=pr.last_sha),
+        registry=Some(self.registry),
       )
     (Some(_), PRMerged(n)) =>
       ignore(
-        @phase.apply_dev_event_checked(
+        @tools.apply_dev_event_checked(
           self.config.project_dir,
           leaf_agent_id,
           @phase.DevEvent::MergeObserved(pr_number=n),
+          registry=Some(self.registry),
         ),
       )
     _ => ()
@@ -1500,10 +1504,11 @@ async fn ServerState::interpret_teardown_effects(
         }
       UpdateDevLifecycle(agent_id~, event~) =>
         ignore(
-          @phase.apply_dev_event_checked(
+          @tools.apply_dev_event_checked(
             self.config.project_dir,
             agent_id,
             event,
+            registry=Some(self.registry),
           ),
         )
       DeliverToParentMerged(
@@ -1736,6 +1741,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
                       url=pr_url,
                       branch=agent.branch,
                     ),
+                    registry=Some(self.registry),
                   )
                   self.poller.ensure_tracked(
                     pr_number,
