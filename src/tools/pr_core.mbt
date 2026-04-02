@@ -219,3 +219,69 @@ pub async fn interpret_file_pr_preflight_create(
       }
   }
 }
+
+///|
+/// Pre-merge gating for `merge_pr` when `force` is false: poller review state
+/// is checked first, then unresolved GraphQL review threads. Returns `Some(err)`
+/// when the merge must not proceed; `None` when checks pass.
+pub fn merge_pr_preflight_block_message(
+  pr_number : Int,
+  poller_tracked : @poller.TrackedPR?,
+  unresolved_thread_count : Int,
+  unresolved_thread_text : String,
+) -> String? {
+  match poller_tracked {
+    Some(tracked) =>
+      if tracked.last_review_state == @poller.ReviewState::ChangesRequested {
+        return Some(
+          "PR #" +
+          pr_number.to_string() +
+          " has unresolved review comments (ChangesRequested). " +
+          "Wait for the owning agent to push fixes, or pass force=true to override.",
+        )
+      }
+    None => ()
+  }
+  if unresolved_thread_count > 0 {
+    return Some(
+      "PR #" +
+      pr_number.to_string() +
+      " has " +
+      unresolved_thread_count.to_string() +
+      " unresolved review thread(s). Address or resolve them before merging:\n" +
+      unresolved_thread_text +
+      "\nUse resolve_review_thread to mark threads resolved, or pass force=true to override.",
+    )
+  }
+  None
+}
+
+///|
+/// Map `gh pr merge` stderr (or log) captured after a failed merge attempt into
+/// the user-facing error string. Pure policy: conflict/not-mergeable vs other.
+pub fn merge_pr_merge_failure_message(
+  pr_number : Int,
+  gh_stderr_trimmed : String,
+) -> String {
+  let lower = gh_stderr_trimmed.to_lower()
+  if lower.contains("conflict") || lower.contains("not mergeable") {
+    "merge conflict on PR #" + pr_number.to_string() + ": " + gh_stderr_trimmed
+  } else if gh_stderr_trimmed.length() > 0 {
+    "merge failed for PR #" + pr_number.to_string() + ": " + gh_stderr_trimmed
+  } else {
+    "merge failed for PR #" + pr_number.to_string()
+  }
+}
+
+///|
+/// `TLEvent::PRMerged` `url` field: slug from tracked branch when known, else
+/// a stable `PR-{n}` placeholder (matches prior dispatch behavior).
+pub fn merge_pr_pr_merged_event_url_slug(
+  pr_number : Int,
+  tracked_branch : String?,
+) -> String {
+  match tracked_branch {
+    Some(branch) => @phase.extract_slug(branch)
+    None => "PR-" + pr_number.to_string()
+  }
+}

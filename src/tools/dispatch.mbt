@@ -493,39 +493,24 @@ pub async fn dispatch(
     }
     ToolRequest::MergePr(merge_args) => {
       if !merge_args.force {
-        match poller_state {
-          Some(ps) =>
-            match ps.get(merge_args.pr_number) {
-              Some(tracked) =>
-                if tracked.last_review_state ==
-                  @poller.ReviewState::ChangesRequested {
-                  return @types.Response::Err(
-                    "PR #" +
-                    merge_args.pr_number.to_string() +
-                    " has unresolved review comments (ChangesRequested). " +
-                    "Wait for the owning agent to push fixes, or pass force=true to override.",
-                  )
-                }
-              None => ()
-            }
-          None => ()
+        let poller_tracked = match poller_state {
+          Some(ps) => ps.get(merge_args.pr_number)
+          None => None
         }
-        // Live check for unresolved review threads at merge time.
         let (thread_count, thread_text) = fetch_unresolved_review_threads(
           merge_args.pr_number,
           project_dir,
           capture,
         )
-        if thread_count > 0 {
-          return @types.Response::Err(
-            "PR #" +
-            merge_args.pr_number.to_string() +
-            " has " +
-            thread_count.to_string() +
-            " unresolved review thread(s). Address or resolve them before merging:\n" +
-            thread_text +
-            "\nUse resolve_review_thread to mark threads resolved, or pass force=true to override.",
-          )
+        match
+          merge_pr_preflight_block_message(
+            merge_args.pr_number,
+            poller_tracked,
+            thread_count,
+            thread_text,
+          ) {
+          Some(msg) => return @types.Response::Err(msg)
+          None => ()
         }
       }
       let mutex_name = "branch:" + merge_args.parent_branch
@@ -558,30 +543,22 @@ pub async fn dispatch(
           // Re-run merge command with output capture for detailed error
           let (_, output) = capture(merge_pr_command(merge_args.pr_number))
           let trimmed = output.trim().to_string()
-          let msg = if trimmed.to_lower().contains("conflict") ||
-            trimmed.to_lower().contains("not mergeable") {
-            "merge conflict on PR #" +
-            merge_args.pr_number.to_string() +
-            ": " +
-            trimmed
-          } else if trimmed.length() > 0 {
-            "merge failed for PR #" +
-            merge_args.pr_number.to_string() +
-            ": " +
-            trimmed
-          } else {
-            "merge failed for PR #" + merge_args.pr_number.to_string()
-          }
-          return @types.Response::Err(msg)
+          return @types.Response::Err(
+            merge_pr_merge_failure_message(merge_args.pr_number, trimmed),
+          )
         }
         Ok(_) => ()
       }
       match poller_state {
         Some(ps) => {
-          let slug = match ps.get(merge_args.pr_number) {
-            Some(tracked) => @phase.extract_slug(tracked.branch)
-            None => "PR-" + merge_args.pr_number.to_string()
+          let tracked_branch = match ps.get(merge_args.pr_number) {
+            Some(tracked) => Some(tracked.branch)
+            None => None
           }
+          let slug = merge_pr_pr_merged_event_url_slug(
+            merge_args.pr_number,
+            tracked_branch,
+          )
           @phase.apply_tl_event(
             project_dir,
             merge_args.caller_id,
@@ -591,18 +568,18 @@ pub async fn dispatch(
           ps.untrack(merge_args.pr_number)
           ignore(ps.write_state_file(project_dir))
         }
-        None =>
-          // No poller state available — still apply TL event so supervisor
-          // lifecycle tracks the merge.
+        None => {
+          let slug = merge_pr_pr_merged_event_url_slug(
+            merge_args.pr_number,
+            None,
+          )
           @phase.apply_tl_event(
             project_dir,
             merge_args.caller_id,
-            @phase.TLEvent::PRMerged(
-              number=merge_args.pr_number,
-              url="PR-" + merge_args.pr_number.to_string(),
-            ),
+            @phase.TLEvent::PRMerged(number=merge_args.pr_number, url=slug),
             registry~,
           )
+        }
       }
       @types.Response::ok_values({ "status": String::to_json("merged") })
     }
