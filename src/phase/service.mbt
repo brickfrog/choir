@@ -236,8 +236,10 @@ pub fn plan_tl_lifecycle_effects(
 }
 
 ///|
-/// Load lifecycle for `scope`, then plan TL effects (read I/O only).
-pub fn apply_tl_event(
+/// Read the current lifecycle for `scope`, then plan TL effects (read I/O
+/// only; no persistence). Callers run `interpret_lifecycle_effects` to execute
+/// the returned plan.
+pub fn plan_tl_event_for_scope(
   project_dir : String,
   scope : String,
   event : TLEvent,
@@ -257,6 +259,29 @@ pub fn apply_tl_event(
 }
 
 ///|
+fn sync_registry_after_persist(
+  registry : @registry.AgentRegistry,
+  lifecycle : AgentLifecycle,
+) -> Unit {
+  match registry.get(lifecycle.agent_id) {
+    Ok(agent) =>
+      ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+    Err(_) => ()
+  }
+}
+
+///|
+/// Execute lifecycle effects: atomic lifecycle writes, optional JSONL history,
+/// and optional in-memory registry coherence after a successful write.
+///
+/// **Append / persist pairing (fragile):** `AppendLifecycleEvent` runs only when
+/// the *immediately preceding* effect was a successful `PersistLifecycle` for
+/// the *same* `agent_id` as in the append. This mirrors the historical
+/// `if write(...) { append(...) }` coupling. Plans should emit
+/// `[PersistLifecycle(...), AppendLifecycleEvent(agent_id=that.agent, ...)]`
+/// per logical transition. After each append effect is processed, the latch is
+/// cleared so a later append cannot bind to an older persist without another
+/// successful `PersistLifecycle` in between.
 pub fn interpret_lifecycle_effects(
   project_dir : String,
   effects : Array[LifecycleEffect],
@@ -268,10 +293,14 @@ pub fn interpret_lifecycle_effects(
       PersistLifecycle(lifecycle~) =>
         if write_lifecycle(project_dir, lifecycle) {
           last_persisted = Some(lifecycle)
+          match registry {
+            Some(reg) => sync_registry_after_persist(reg, lifecycle)
+            None => ()
+          }
         } else {
           last_persisted = None
         }
-      AppendLifecycleEvent(agent_id~, from_lc~, to_lc~, trigger~) =>
+      AppendLifecycleEvent(agent_id~, from_lc~, to_lc~, trigger~) => {
         match last_persisted {
           Some(lc) =>
             if lc.agent_id == agent_id {
@@ -287,18 +316,8 @@ pub fn interpret_lifecycle_effects(
             }
           None => ()
         }
-      SyncRegistryState(agent_id~, lifecycle~) =>
-        match registry {
-          Some(reg) =>
-            match reg.get(agent_id) {
-              Ok(agent) =>
-                ignore(
-                  reg.upsert({ ..agent, state: lifecycle.to_agent_state() }),
-                )
-              Err(_) => ()
-            }
-          None => ()
-        }
+        last_persisted = None
+      }
     }
   }
 }
@@ -381,7 +400,11 @@ pub fn plan_dev_event_checked(
 }
 
 ///|
-pub fn apply_dev_event_checked(
+/// Read lifecycle for `scope`, then pure-plan (`plan_dev_event_checked`). Does
+/// **not** write files, append JSONL, or touch the registry — callers must run
+/// `interpret_lifecycle_effects` (or use `@tools.apply_dev_event` /
+/// `@tools.apply_dev_event_checked`, which interpret after planning).
+pub fn plan_dev_event_for_scope(
   project_dir : String,
   scope : String,
   event : DevEvent,
@@ -398,7 +421,7 @@ pub fn apply_dev_event(
   event : DevEvent,
   registry? : @registry.AgentRegistry? = None,
 ) -> Unit {
-  match apply_dev_event_checked(project_dir, scope, event) {
+  match plan_dev_event_for_scope(project_dir, scope, event) {
     Ok((_, effects)) =>
       interpret_lifecycle_effects(project_dir, effects, registry~)
     Err(_) => ()

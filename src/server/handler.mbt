@@ -831,20 +831,14 @@ pub fn ServerState::plan_poll_event_deliveries(
         registry=Some(self.registry),
       )
     (Some(_), PRMerged(n)) =>
-      match
-        @phase.apply_dev_event_checked(
+      ignore(
+        @tools.apply_dev_event_checked(
           self.config.project_dir,
           leaf_agent_id,
           @phase.DevEvent::MergeObserved(pr_number=n),
-        ) {
-        Ok((_, effects)) =>
-          @phase.interpret_lifecycle_effects(
-            self.config.project_dir,
-            effects,
-            registry=Some(self.registry),
-          )
-        Err(_) => ()
-      }
+          registry=Some(self.registry),
+        ),
+      )
     _ => ()
   }
   @phase.sync_parent_child_lifecycle(
@@ -1509,20 +1503,14 @@ async fn ServerState::interpret_teardown_effects(
           Err(_) => ()
         }
       UpdateDevLifecycle(agent_id~, event~) =>
-        match
-          @phase.apply_dev_event_checked(
+        ignore(
+          @tools.apply_dev_event_checked(
             self.config.project_dir,
             agent_id,
             event,
-          ) {
-          Ok((_, effects)) =>
-            @phase.interpret_lifecycle_effects(
-              self.config.project_dir,
-              effects,
-              registry=Some(self.registry),
-            )
-          Err(_) => ()
-        }
+            registry=Some(self.registry),
+          ),
+        )
       DeliverToParentMerged(
         leaf_id~,
         pr_number~,
