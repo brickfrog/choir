@@ -22,7 +22,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn one or more agents in worktrees; optional agent_type (gemini|claude|moon_pilot|codex|cursor_agent|pi, default gemini); optional role (dev|tl, default dev) for sub-TL children",
+      description: "Spawn one or more agents in worktrees; optional agent_type (gemini|claude|moon_pilot|codex|cursor_agent|pi, default gemini); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -52,7 +52,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "file_pr",
-      description: "Create or update PR for current branch",
+      description: "Create or update PR for current branch; optional review_context posts an @copilot review comment when PR review is requested",
       allowed_roles: [@types.Role::TL, @types.Role::Dev],
     },
     {
