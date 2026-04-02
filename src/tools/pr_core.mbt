@@ -1098,43 +1098,9 @@ pub fn format_tl_pr_recheck_summary(
     Some(n) => "Unresolved inline review threads (GraphQL): " + n.to_string()
     None => "Unresolved inline review threads (GraphQL): not fetched"
   }
-  let threads_ok_for_ready = match unresolved_thread_count {
-    Some(n) => n == 0
-    None => false
-  }
-  let snapshot_ready = tracked.last_review_state ==
-    @poller.ReviewState::Approved &&
-    tracked.last_ci_rollup == @poller.CiRollupStatus::Success &&
-    threads_ok_for_ready
-  let gate = if snapshot_ready {
-    "Choir snapshot: no tracked blockers (approved, CI success, zero unresolved threads). Confirm repo policy, then merge_pr if appropriate. Does not merge."
-  } else {
-    let parts : Array[String] = []
-    if tracked.last_review_state == @poller.ReviewState::ChangesRequested {
-      parts.push("GitHub review requests changes")
-    }
-    if tracked.last_review_state == @poller.ReviewState::None_ {
-      parts.push("no approving review in GitHub snapshot")
-    }
-    if tracked.last_review_state == @poller.ReviewState::Commented {
-      parts.push("latest review is comment-only (not an approval)")
-    }
-    match unresolved_thread_count {
-      Some(n) =>
-        if n > 0 {
-          parts.push(n.to_string() + " unresolved inline thread(s) remain")
-        }
-      None => ()
-    }
-    if tracked.last_ci_rollup != @poller.CiRollupStatus::Success {
-      parts.push("latest head CI rollup is not all-success")
-    }
-    if parts.length() == 0 {
-      "TL re-check still needed before merge_pr (policy and GitHub state can differ from this snapshot)."
-    } else {
-      "TL re-check needed: " + parts.join("; ") + "."
-    }
-  }
+  let gate = @poller.tl_tracked_pr_recheck_gate_line(
+    tracked, unresolved_thread_count,
+  )
   "PR re-check summary (Choir snapshot; not merge approval):\n" +
   "- GitHub review rollup: " +
   review +
