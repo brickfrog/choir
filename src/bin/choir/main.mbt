@@ -4349,16 +4349,31 @@ fn stop_run() -> Unit {
 }
 
 ///|
+/// Build release native, then start the UDS server — used only as the `watchexec`/`entr` child (see `dev_run`).
+fn dev_reload_run() -> Unit {
+  @async.run_async_main(async fn() {
+    let st = @exec.run(@workspace.Command::{
+      program: "moon",
+      args: ["build", "--target", "native", "--release"],
+      workdir: None,
+    }) catch {
+      _ => -1
+    }
+    if st != 0 {
+      @sys.exit(st)
+    }
+  })
+  serve_run()
+}
+
+///|
 fn dev_run() -> Unit {
   @async.run_async_main(async fn() {
-    let hook = "moon build --target native --release && exec choir serve"
+    let args = @env.args()
+    let choir_exe = if args.length() >= 1 { args[0] } else { "choir" }
     match @exec.resolve_executable_in_path("watchexec") {
       Some(wx_path) => {
-        let code = @exec.run(@workspace.Command::{
-          program: wx_path,
-          args: ["-e", "mbt,toml", "-r", "--shell=none", "--", "sh", "-c", hook],
-          workdir: None,
-        }) catch {
+        let code = @exec.run(@exec.dev_watchexec_command(wx_path, choir_exe)) catch {
           _ => -1
         }
         @sys.exit(code)
@@ -4366,10 +4381,9 @@ fn dev_run() -> Unit {
       None =>
         match @exec.resolve_executable_in_path("entr") {
           Some(entr_path) => {
-            let inner = "(find src -name \"*.mbt\"; find . -maxdepth 2 -name \"*.toml\") | " +
-              @sys.shell_quote(entr_path) +
-              " -r sh -c " +
-              @sys.shell_quote(hook)
+            let inner = @exec.dev_entr_watcher_shell_pipeline(
+              entr_path, choir_exe,
+            )
             let code = @sys.system("exec sh -c " + @sys.shell_quote(inner))
             @sys.exit(code)
           }
@@ -4836,26 +4850,30 @@ fn statusline_run() -> Unit {
 fn main {
   let args = @env.args()
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
-  match subcmd {
-    "serve" => serve_run()
-    "dev" => dev_run()
-    "tool" => tool_run()
-    "leaf-tool" => leaf_tool_run()
-    "mcp-stdio" => mcp_run()
-    "trust-gemini-folder" => trust_gemini_folder_run()
-    "zellij-action" => zellij_action_run()
-    "hook" => hook_run()
-    "init" => init_run()
-    "stop" => stop_run()
-    "reply" => reply_run()
-    "smoke" => smoke_run()
-    "watch" => watch_run()
-    "statusline" => statusline_run()
-    _ => {
-      @sys.write_stdout(
-        "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|pi]|stop [--purge]|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline>\n",
-      )
-      @sys.exit(1)
+  if subcmd == @exec.DEV_RELOAD_SUBCOMMAND {
+    dev_reload_run()
+  } else {
+    match subcmd {
+      "serve" => serve_run()
+      "dev" => dev_run()
+      "tool" => tool_run()
+      "leaf-tool" => leaf_tool_run()
+      "mcp-stdio" => mcp_run()
+      "trust-gemini-folder" => trust_gemini_folder_run()
+      "zellij-action" => zellij_action_run()
+      "hook" => hook_run()
+      "init" => init_run()
+      "stop" => stop_run()
+      "reply" => reply_run()
+      "smoke" => smoke_run()
+      "watch" => watch_run()
+      "statusline" => statusline_run()
+      _ => {
+        @sys.write_stdout(
+          "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|pi]|stop [--purge]|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline>\n",
+        )
+        @sys.exit(1)
+      }
     }
   }
 }
