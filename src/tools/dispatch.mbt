@@ -425,7 +425,12 @@ pub async fn dispatch(
                   let plan = file_pr_plan(
                     file_pr_args, parent_branch, pr, tracked,
                   )
-                  match plan.tracked_pr {
+                  let effects = file_pr_post_success_effects(
+                    plan,
+                    poller_state is Some(_),
+                    registry is Some(_),
+                  )
+                  match effects.poller_track {
                     Some(tracked_pr) =>
                       match poller_state {
                         Some(ps) => {
@@ -443,74 +448,75 @@ pub async fn dispatch(
                       }
                     None => ()
                   }
-                  apply_dev_event(project_dir, branch, plan.dev_event)
+                  apply_dev_event(project_dir, branch, effects.dev_event)
                   let delivery_log_path = project_dir + "/.choir/delivery.log"
-                  match registry {
-                    Some(reg) =>
-                      match
-                        resolve_parent_for_notify(
-                          project_dir, session, reg, tracked_agent_id,
-                        ) {
-                        Ok(parent) => {
-                          let delivery = @message.plan_delivery(
-                            parent,
-                            tracked_agent_id,
-                            plan.notify_message,
-                            "success",
-                          )
-                          ignore(
-                            @sys.append_file_sync(
-                              delivery_log_path,
-                              "[auto-notify] caller=" +
-                              tracked_agent_id +
-                              " parent=" +
-                              parent.agent_id.to_string() +
-                              " delivery=" +
-                              delivery.to_string() +
-                              "\n",
-                            ),
-                          )
+                  match effects.notify_message_for_parent {
+                    Some(notify_message) =>
+                      match registry {
+                        Some(reg) =>
                           match
-                            execute_delivery(delivery, runner, project_dir~) {
-                            Ok(_) => ()
+                            resolve_parent_for_notify(
+                              project_dir, session, reg, tracked_agent_id,
+                            ) {
+                            Ok(parent) => {
+                              let delivery = @message.plan_delivery(
+                                parent, tracked_agent_id, notify_message, "success",
+                              )
+                              ignore(
+                                @sys.append_file_sync(
+                                  delivery_log_path,
+                                  "[auto-notify] caller=" +
+                                  tracked_agent_id +
+                                  " parent=" +
+                                  parent.agent_id.to_string() +
+                                  " delivery=" +
+                                  delivery.to_string() +
+                                  "\n",
+                                ),
+                              )
+                              match
+                                execute_delivery(delivery, runner, project_dir~) {
+                                Ok(_) => ()
+                                Err(e) => {
+                                  @moontrace.error(
+                                    "file_pr auto-notify delivery failed",
+                                    fields=@moontrace.fields([
+                                      ("error", e.to_json()),
+                                    ]),
+                                  )
+                                  ignore(
+                                    @sys.append_file_sync(
+                                      delivery_log_path,
+                                      "[auto-notify] delivery failed error=" +
+                                      e +
+                                      "\n",
+                                    ),
+                                  )
+                                }
+                              }
+                            }
                             Err(e) => {
                               @moontrace.error(
-                                "file_pr auto-notify delivery failed",
+                                "file_pr auto-notify parent resolution failed",
                                 fields=@moontrace.fields([
-                                  ("error", e.to_json()),
+                                  ("error", e.message().to_json()),
                                 ]),
                               )
                               ignore(
                                 @sys.append_file_sync(
                                   delivery_log_path,
-                                  "[auto-notify] delivery failed error=" +
-                                  e +
+                                  "[auto-notify] resolve_parent_for_notify failed error=" +
+                                  e.message() +
                                   "\n",
                                 ),
                               )
                             }
                           }
-                        }
-                        Err(e) => {
-                          @moontrace.error(
-                            "file_pr auto-notify parent resolution failed",
-                            fields=@moontrace.fields([
-                              ("error", e.message().to_json()),
-                            ]),
-                          )
-                          ignore(
-                            @sys.append_file_sync(
-                              delivery_log_path,
-                              "[auto-notify] resolve_parent_for_notify failed error=" +
-                              e.message() +
-                              "\n",
-                            ),
-                          )
-                        }
+                        None => ()
                       }
                     None => ()
                   }
-                  plan.response
+                  effects.response
                 }
               }
           }

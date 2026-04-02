@@ -70,3 +70,35 @@ test "file_pr_plan omits tracked PR when tracking disabled" {
     _ => fail("expected OK response")
   }
 }
+
+///|
+test "file_pr_post_success_effects gates poller track and parent notify on capabilities" {
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 3,
+    url: "https://example.test/pr/3",
+    state: "OPEN",
+  }
+  let plan_full = file_pr_plan(args, "main", pr, true)
+  let full = file_pr_post_success_effects(plan_full, true, true)
+  match full.poller_track {
+    Some(t) => assert_eq(t.pr_number, 3)
+    None => fail("expected poller track when poller available")
+  }
+  match full.notify_message_for_parent {
+    Some(m) => assert_eq(m, "[PR READY] PR #3 filed: https://example.test/pr/3")
+    None => fail("expected notify message when registry available")
+  }
+  let plan_no_poller = file_pr_plan(args, "main", pr, true)
+  let no_poller = file_pr_post_success_effects(plan_no_poller, false, true)
+  assert_eq(no_poller.poller_track, None)
+  let plan_no_reg = file_pr_plan(args, "main", pr, true)
+  let no_registry = file_pr_post_success_effects(plan_no_reg, true, false)
+  assert_eq(no_registry.notify_message_for_parent, None)
+}
