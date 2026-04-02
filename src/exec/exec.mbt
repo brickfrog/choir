@@ -190,9 +190,177 @@ pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
-/// Run `plugin_command` as `sh -c` under `timeout` (seconds), write `request_line` plus newline on
-/// stdin, capture up to 64KiB of stdout (stderr discarded). Replaces the previous shell pipeline
-/// that wrote stdout to a `/tmp/choir-plugin-*.json` file.
+fn is_space_plugin_cu(c : UInt16) -> Bool {
+  c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+///|
+fn is_valid_shell_var_name(name : String) -> Bool {
+  if name.length() == 0 {
+    return false
+  }
+  let c0 = name[0]
+  if c0 != '_' && (c0 < 'a' || c0 > 'z') && (c0 < 'A' || c0 > 'Z') {
+    return false
+  }
+  for i = 1; i < name.length(); i = i + 1 {
+    let c = name[i]
+    if c != '_' &&
+      (c < 'a' || c > 'z') &&
+      (c < 'A' || c > 'Z') &&
+      (c < '0' || c > '9') {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// True when the first token looks like a POSIX `NAME=value` prefix (handled by a shell, not plain
+/// `execve` of argv[0]).
+fn first_token_is_env_assignment(argv0 : String) -> Bool {
+  let mut eq = -1
+  for i = 0; i < argv0.length(); i = i + 1 {
+    if argv0[i] == '=' {
+      eq = i
+      break
+    }
+  }
+  if eq <= 0 {
+    return false
+  }
+  let name = argv0[:eq].to_string()
+  is_valid_shell_var_name(name)
+}
+
+///|
+/// Shell-only syntax: pipelines, redirections, expansion, globs, compound commands, etc.
+fn plugin_command_requires_shell_interpreter(raw : String) -> Bool {
+  let s = raw.trim()
+  if s == "" {
+    return true
+  }
+  if s.contains("&&") {
+    return true
+  }
+  if s.contains("||") {
+    return true
+  }
+  if s.contains(";") {
+    return true
+  }
+  if s.contains("|") {
+    return true
+  }
+  if s.contains("\n") {
+    return true
+  }
+  if s.contains(">") {
+    return true
+  }
+  if s.contains("<") {
+    return true
+  }
+  if s.contains("$") {
+    return true
+  }
+  if s.contains("`") {
+    return true
+  }
+  if s.contains("*") {
+    return true
+  }
+  if s.contains("?") {
+    return true
+  }
+  if s.contains("(") {
+    return true
+  }
+  if s.contains(")") {
+    return true
+  }
+  false
+}
+
+///|
+/// Parse a single-line plugin command into argv words (POSIX-like single/double quotes). Returns
+/// `None` when quotes are unbalanced or a quote appears mid-token in a way this subset does not
+/// model (caller should fall back to `sh -c`).
+fn parse_plugin_argv_line(raw : String) -> Array[String]? {
+  let s = raw.trim()
+  if s == "" {
+    return Some([])
+  }
+  let out : Array[String] = []
+  let mut i = 0
+  let n = s.length()
+  while i < n {
+    while i < n && is_space_plugin_cu(s[i]) {
+      i = i + 1
+    }
+    if i >= n {
+      break
+    }
+    if s[i] == '\'' {
+      i = i + 1
+      let wstart = i
+      while i < n && s[i] != '\'' {
+        i = i + 1
+      }
+      if i >= n {
+        return None
+      }
+      out.push(s[wstart:i].to_string())
+      i = i + 1
+    } else if s[i] == '"' {
+      i = i + 1
+      let buf = StringBuilder::new()
+      let mut closed = false
+      while i < n {
+        if s[i] == '\\' && i + 1 < n {
+          let c = s[i + 1]
+          if c == '"' || c == '\\' || c == '$' || c == '`' {
+            buf.write_char(Int::unsafe_to_char(c.to_int()))
+            i = i + 2
+          } else if c == '\n' {
+            buf.write_char('\n')
+            i = i + 2
+          } else {
+            buf.write_char(Int::unsafe_to_char(c.to_int()))
+            i = i + 2
+          }
+        } else if s[i] == '"' {
+          closed = true
+          i = i + 1
+          break
+        } else {
+          buf.write_char(Int::unsafe_to_char(s[i].to_int()))
+          i = i + 1
+        }
+      }
+      if !closed {
+        return None
+      }
+      out.push(buf.to_string())
+    } else {
+      let wstart = i
+      while i < n && !is_space_plugin_cu(s[i]) {
+        if s[i] == '\'' || s[i] == '"' {
+          return None
+        }
+        i = i + 1
+      }
+      out.push(s[wstart:i].to_string())
+    }
+  }
+  Some(out)
+}
+
+///|
+/// Run `plugin_command` under `timeout` (seconds), write `request_line` plus newline on stdin,
+/// capture up to 64KiB of stdout (stderr discarded). When the command is a simple argv list
+/// (no shell-only syntax), runs `timeout <sec> <argv...>` directly; otherwise falls back to
+/// `timeout <sec> sh -c <plugin_command>`.
 pub async fn capture_plugin_shell_command(
   plugin_command : String,
   request_line : String,
@@ -214,9 +382,40 @@ pub async fn capture_plugin_shell_command(
       return (-1, "")
     }
   }
+  let parsed = parse_plugin_argv_line(plugin_command)
+  let use_shell = if plugin_command_requires_shell_interpreter(plugin_command) {
+    true
+  } else {
+    match parsed {
+      None => true
+      Some(words) =>
+        if words.length() == 0 {
+          true
+        } else if first_token_is_env_assignment(words[0]) {
+          true
+        } else {
+          false
+        }
+    }
+  }
+  let timeout_args = if use_shell {
+    [timeout_sec.to_string(), "sh", "-c", plugin_command]
+  } else {
+    match parsed {
+      Some(words) => {
+        let args : Array[String] = []
+        args.push(timeout_sec.to_string())
+        for w in words {
+          args.push(w)
+        }
+        args
+      }
+      None => [timeout_sec.to_string(), "sh", "-c", plugin_command]
+    }
+  }
   let pid = @process.spawn_orphan(
     "timeout",
-    [timeout_sec.to_string(), "sh", "-c", plugin_command],
+    timeout_args,
     stdin=stdin_read,
     stdout=stdout_write,
     stderr=stderr_dest,
@@ -323,4 +522,46 @@ pub async fn run_sequence(cmds : Array[@workspace.Command]) -> Array[Int] {
     }
   }
   results
+}
+
+///|
+test "parse_plugin_argv_line splits unquoted words" {
+  match parse_plugin_argv_line("choir tool plugin_run") {
+    Some(parts) => {
+      assert_eq(parts.length(), 3)
+      assert_eq(parts[0], "choir")
+      assert_eq(parts[1], "tool")
+      assert_eq(parts[2], "plugin_run")
+    }
+    None => fail("expected argv")
+  }
+}
+
+///|
+test "parse_plugin_argv_line respects double quotes" {
+  match parse_plugin_argv_line("\"a b\" c") {
+    Some(parts) => {
+      assert_eq(parts.length(), 2)
+      assert_eq(parts[0], "a b")
+      assert_eq(parts[1], "c")
+    }
+    None => fail("expected argv")
+  }
+}
+
+///|
+test "parse_plugin_argv_line returns None on unclosed quote" {
+  assert_eq(parse_plugin_argv_line("echo \""), None)
+}
+
+///|
+test "plugin_command_requires_shell_interpreter detects compound commands" {
+  assert_true(plugin_command_requires_shell_interpreter("a && b"))
+  assert_false(plugin_command_requires_shell_interpreter("choir tool x"))
+}
+
+///|
+test "first_token_is_env_assignment detects VAR=value prefix" {
+  assert_true(first_token_is_env_assignment("FOO=bar"))
+  assert_false(first_token_is_env_assignment("./bin=odd"))
 }
