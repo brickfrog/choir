@@ -470,3 +470,117 @@ test "merge_pr_post_success_plan ignores branch when poller unavailable" {
   assert_eq(plan.poller_untrack_and_write_state, false)
   assert_eq(plan.tl_event, @phase.TLEvent::PRMerged(number=3, url="PR-3"))
 }
+
+///|
+test "merge_pr_mutex_name prefixes branch" {
+  assert_eq(merge_pr_mutex_name("main"), "branch:main")
+}
+
+///|
+test "merge_pr_host_step_sequence is gh merge then git fetch" {
+  let steps = merge_pr_host_step_sequence()
+  assert_eq(steps.length(), 2)
+  assert_eq(steps[0], MergePrHostStep::GhPrMerge)
+  assert_eq(steps[1], MergePrHostStep::GitFetch)
+}
+
+///|
+test "merge_pr_serialization_busy_message is stable" {
+  assert_eq(
+    merge_pr_serialization_busy_message(),
+    "merge serialization lock held by another agent, retry shortly",
+  )
+}
+
+///|
+async fn mock_merge_host_runner_ok(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for _ in cmds {
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+async fn mock_merge_host_runner_gh_fails(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for i = 0; i < cmds.length(); i = i + 1 {
+    statuses.push(if i == 0 { 1 } else { 0 })
+  }
+  statuses
+}
+
+///|
+async fn mock_merge_host_capture_for_merge(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" && cmd.args.length() >= 2 && cmd.args[0] == "pr" {
+    return (1, "permission denied\n")
+  }
+  (0, "")
+}
+
+///|
+async test "interpret_merge_pr_merge_host ok without mutex" {
+  let got = interpret_merge_pr_merge_host(
+    "main",
+    42,
+    "main.tl",
+    None,
+    0L,
+    mock_merge_host_runner_ok,
+    mock_capture_empty,
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected Ok got " + e)
+  }
+}
+
+///|
+async test "interpret_merge_pr_merge_host maps merge failure via merge_pr_command capture" {
+  let got = interpret_merge_pr_merge_host(
+    "main",
+    4,
+    "main.tl",
+    None,
+    0L,
+    mock_merge_host_runner_gh_fails,
+    mock_merge_host_capture_for_merge,
+  )
+  match got {
+    Err(msg) =>
+      assert_eq(msg, merge_pr_merge_failure_message(4, "permission denied"))
+    Ok(_) => fail("expected Err")
+  }
+}
+
+///|
+async test "interpret_merge_pr_merge_host returns busy when mutex held" {
+  let reg = @registry.MutexRegistry::new()
+  let name = merge_pr_mutex_name("main")
+  let (holder_ok, _) = reg.acquire(
+    name, "other-agent", merge_pr_mutex_ttl_sec, 50L,
+  )
+  assert_true(holder_ok)
+  let got = interpret_merge_pr_merge_host(
+    "main",
+    1,
+    "waiter",
+    Some(reg),
+    50L,
+    mock_merge_host_runner_ok,
+    mock_capture_empty,
+  )
+  match got {
+    Err(msg) => assert_eq(msg, merge_pr_serialization_busy_message())
+    Ok(_) => fail("expected busy Err")
+  }
+}
