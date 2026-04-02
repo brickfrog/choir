@@ -583,50 +583,23 @@ pub async fn dispatch(
           }
       }
     }
-    ToolRequest::SendMessage(send_args) =>
-      match registry {
-        Some(reg) =>
-          match reg.get(send_args.target_id) {
-            Ok(agent) => {
-              let delivery = @message.plan_delivery(
-                agent,
-                send_args.sender_id,
-                send_args.message,
-                send_args.status,
-              )
-              ignore(
-                @sys.append_file_sync(
-                  project_dir + "/.choir/delivery.log",
-                  "[send_message] target=" +
-                  send_args.target_id +
-                  " terminal_target=" +
-                  agent.terminal_target
-                  .map(@types.LocalTarget::to_string)
-                  .unwrap_or("NONE") +
-                  " delivery=" +
-                  delivery.to_string() +
-                  "\n",
-                ),
-              )
-              match execute_delivery(delivery, runner, project_dir~) {
-                Ok(_) =>
-                  @types.Response::ok_values({
-                    "status": String::to_json("sent"),
-                  })
-                Err(e) => {
-                  @moontrace.error(
-                    "send_message delivery failed",
-                    fields=@moontrace.fields([("error", e.to_json())]),
-                  )
-                  @types.Response::Err(e)
-                }
-              }
-            }
-            Err(e) => @types.Response::Err(e.message())
-          }
-        None =>
-          @types.Response::ok_values({ "status": String::to_json("sent") })
+    ToolRequest::SendMessage(send_args) => {
+      let registry_lookup = match registry {
+        Some(reg) => Some(reg.get(send_args.target_id))
+        None => None
       }
+      interpret_send_message(
+        send_message_plan(
+          send_args.target_id,
+          send_args.sender_id,
+          send_args.message,
+          send_args.status,
+          registry_lookup,
+        ),
+        project_dir,
+        runner,
+      )
+    }
     ToolRequest::Shutdown(shutdown_args) =>
       interpret_shutdown(
         shutdown_args, project_dir, poller_state, registry, runner,
