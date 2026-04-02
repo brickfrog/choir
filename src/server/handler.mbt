@@ -451,6 +451,25 @@ fn render_parent_next_action(
 }
 
 ///|
+/// Canonical TL decision line for parent delivery (see `@poller.plan_tl_poll_event_parent`).
+fn parent_poll_tl_decision_suffix(
+  tracked : @poller.TrackedPR,
+  event : @poller.PollEvent,
+  unresolved_threads_for_recheck : Int?,
+) -> String {
+  match event {
+    PRMerged(_) => ""
+    _ =>
+      "\nTLDecision: " +
+      @poller.tl_tracked_pr_workflow_category_sentence(
+        @poller.plan_tl_poll_event_parent(
+          event, tracked, unresolved_threads_for_recheck,
+        ),
+      )
+  }
+}
+
+///|
 fn parent_poll_event_message(
   tracked : @poller.TrackedPR,
   event : @poller.PollEvent,
@@ -483,7 +502,10 @@ fn parent_poll_event_message(
         pr_url +
         "\n" +
         "Pre-merge: wait for [PR MERGED] after merge_pr succeeds (or verify merged on GitHub) before claiming merged.\n" +
-        render_parent_next_action(n, parent_branch)
+        render_parent_next_action(n, parent_branch) +
+        parent_poll_tl_decision_suffix(
+          tracked, event, unresolved_threads_for_recheck,
+        )
       Some((message, "success"))
     }
     FixesPushed(n) => {
@@ -500,7 +522,10 @@ fn parent_poll_event_message(
         pr_url +
         "\n" +
         "Pre-merge: re-check the PR; merge only after review is clear and merge_pr succeeds.\n" +
-        "Next action: re-check the PR and merge when ready."
+        "Next action: re-check the PR and merge when ready." +
+        parent_poll_tl_decision_suffix(
+          tracked, event, unresolved_threads_for_recheck,
+        )
       Some((message, "info"))
     }
     ReviewTimeout(n) => {
@@ -516,7 +541,10 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "Next action: inspect the PR or retrigger review."
+        "Next action: inspect the PR or retrigger review." +
+        parent_poll_tl_decision_suffix(
+          tracked, event, unresolved_threads_for_recheck,
+        )
       Some((message, "failure"))
     }
     ReviewReceived(n, comments) =>
@@ -533,7 +561,10 @@ fn parent_poll_event_message(
             "\n" +
             "parent_branch: " +
             parent_branch.unwrap_or("<unknown>") +
-            pr_url,
+            pr_url +
+            parent_poll_tl_decision_suffix(
+              tracked, event, unresolved_threads_for_recheck,
+            ),
             "info",
           ),
         )
@@ -545,7 +576,10 @@ fn parent_poll_event_message(
             " PR #" +
             n.to_string() +
             " has review comments:\n" +
-            comments,
+            comments +
+            parent_poll_tl_decision_suffix(
+              tracked, event, unresolved_threads_for_recheck,
+            ),
             "info",
           ),
         )
@@ -564,7 +598,10 @@ fn parent_poll_event_message(
           "\n" +
           "parent_branch: " +
           parent_branch.unwrap_or("<unknown>") +
-          pr_url,
+          pr_url +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
           "failure",
         ),
       )
@@ -587,7 +624,10 @@ fn parent_poll_event_message(
           pr_url +
           "\n" +
           "Next action: re-check the PR thread and full CI status on GitHub before merging or requesting review.\n\n" +
-          summary,
+          summary +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
           "info",
         ),
       )
@@ -611,7 +651,10 @@ fn parent_poll_event_message(
           pr_url +
           "\n" +
           "Next action: re-check Copilot/review thread and branch policy, then merge_pr only if appropriate.\n\n" +
-          summary,
+          summary +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
           "info",
         ),
       )
@@ -631,7 +674,10 @@ fn parent_poll_event_message(
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
           "\n" +
-          "Next action: the leaf will shut down automatically.",
+          "Next action: the leaf will shut down automatically." +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
           "success",
         ),
       )
@@ -719,7 +765,7 @@ fn leaf_poll_review_injection_message(
         (
           "[REVIEW] PR #" +
           n.to_string() +
-          ": Actions rollup is green on latest head — re-check review thread and policy (not merge or approval by itself)",
+          ": Actions rollup: all checks successful on latest head — re-check review thread and policy (not merge or approval by itself)",
           "info",
         ),
       )
@@ -1958,8 +2004,39 @@ test "parent_poll_event_message PR READY stresses not merged" {
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("[PR MERGED]"))
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Waiting on approving review"))
     }
     None => fail("expected PRReady message")
+  }
+}
+
+///|
+test "parent_poll_event_message PR READY shows merge gate when snapshot allows" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 70,
+    agent_id: "main.dev-a",
+    branch: "work/a",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/70",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(70), Some(0)) {
+    Some((message, status)) => {
+      assert_eq(status, "success")
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Merge gate open on Choir snapshot"))
+    }
+    None => fail("expected merge-gate-open PRReady message")
   }
 }
 
@@ -1988,6 +2065,8 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("[FIXES PUSHED]"))
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Waiting on approving review"))
     }
     None => fail("expected FixesPushed message")
   }
@@ -2028,6 +2107,8 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
       assert_true(message.contains("PR re-check summary"))
       assert_true(message.contains("changes_requested"))
       assert_true(message.contains("GitHub review requests changes"))
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Blocked on review changes"))
     }
     None => fail("expected CIFailureCleared message")
   }
@@ -2097,6 +2178,8 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
       assert_true(message.contains("success"))
       assert_true(message.contains("no tracked blockers"))
       assert_true(message.contains("Does not merge"))
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Merge gate open on Choir snapshot"))
     }
     None => fail("expected CILatestHeadRollupSucceeded message")
   }
@@ -2110,7 +2193,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" 
     ) {
     Some((message, status)) => {
       assert_eq(status, "info")
-      assert_true(message.contains("rollup is green"))
+      assert_true(message.contains("all checks successful"))
       assert_true(message.contains("not merge"))
     }
     None => fail("expected leaf CILatestHeadRollupSucceeded injection")
@@ -2287,4 +2370,95 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
   )
 
   assert_true(injected_failure_msg)
+}
+
+///|
+test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 61,
+    agent_id: "main.dev-timeout",
+    branch: "work/timeout",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/61",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      @poller.PollEvent::ReviewTimeout(61),
+      None,
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, "failure")
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Attention required: review timed out"))
+    }
+    None => fail("expected ReviewTimeout message")
+  }
+}
+
+///|
+test "parent_poll_event_message CI FAILED uses attention-required decision" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 62,
+    agent_id: "main.dev-ci",
+    branch: "work/ci",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/62",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Failure,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::CIFailed(62), None) {
+    Some((message, status)) => {
+      assert_eq(status, "failure")
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Attention required: CI is failing"))
+    }
+    None => fail("expected CIFailed message")
+  }
+}
+
+///|
+test "parent_poll_event_message PRMerged does not append TLDecision suffix" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 63,
+    agent_id: "main.dev-merged",
+    branch: "work/merged",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/63",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+  }
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::PRMerged(63), Some(0)) {
+    Some((message, status)) => {
+      assert_eq(status, "success")
+      assert_false(message.contains("TLDecision:"))
+      assert_true(message.contains("leaf will shut down automatically"))
+    }
+    None => fail("expected PRMerged message")
+  }
 }
