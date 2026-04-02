@@ -760,7 +760,7 @@ fn leaf_poll_review_injection_message(
         (
           "[REVIEW] PR #" +
           n.to_string() +
-          ": Actions rollup is green on latest head — re-check review thread and policy (not merge or approval by itself)",
+          ": Actions rollup: all checks successful on latest head — re-check review thread and policy (not merge or approval by itself)",
           "info",
         ),
       )
@@ -2157,7 +2157,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" 
     ) {
     Some((message, status)) => {
       assert_eq(status, "info")
-      assert_true(message.contains("rollup is green"))
+      assert_true(message.contains("all checks successful"))
       assert_true(message.contains("not merge"))
     }
     None => fail("expected leaf CILatestHeadRollupSucceeded injection")
