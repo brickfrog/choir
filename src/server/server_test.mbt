@@ -434,6 +434,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     "",
     "deadbeef",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   let req = @types.Request::{
     req_method: "tools/call",

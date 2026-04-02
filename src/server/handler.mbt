@@ -240,10 +240,11 @@ pub fn ServerState::track_recovered_pr(
   review_bodies : String,
   sha : String,
   ci_rollup : @poller.CiRollupStatus,
+  copilot_issue_comment_seen : Bool,
 ) -> Unit {
   self.poller.track_recovered(
     pr_number, agent_id, branch, parent_branch, pr_url, created_at, review, review_bodies,
-    sha, ci_rollup,
+    sha, ci_rollup, copilot_issue_comment_seen,
   )
 }
 
@@ -676,6 +677,32 @@ fn parent_poll_event_message(
         ),
       )
     }
+    CopilotIssueCommentSeen(n) => {
+      let summary = @tools.format_tl_pr_recheck_summary(
+        tracked, unresolved_threads_for_recheck,
+      )
+      Some(
+        (
+          "[COPILOT ISSUE COMMENT] " +
+          agent_id +
+          " PR #" +
+          n.to_string() +
+          " — GitHub Copilot issue-thread comment observed (REST). Re-check remaining review/CI/thread gates and policy.\n" +
+          "branch: " +
+          branch +
+          "\n" +
+          "parent_branch: " +
+          parent_branch.unwrap_or("<unknown>") +
+          pr_url +
+          "\n\n" +
+          summary +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
+          "info",
+        ),
+      )
+    }
     PRMerged(n) =>
       Some(
         (
@@ -712,6 +739,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     CIFailed(n) => n
     CIFailureCleared(n) => n
     CILatestHeadRollupSucceeded(n) => n
+    CopilotIssueCommentSeen(n) => n
     PRMerged(n) => n
   }
 }
@@ -804,6 +832,15 @@ fn leaf_poll_review_injection_message(
       }
       Some((msg, "info"))
     }
+    CopilotIssueCommentSeen(n) =>
+      Some(
+        (
+          "[REVIEW] PR #" +
+          n.to_string() +
+          ": GitHub Copilot issue-thread comment observed — re-check remaining gates (not merge or approval by itself)",
+          "info",
+        ),
+      )
     PRReady(n) =>
       Some(
         (
@@ -992,6 +1029,12 @@ fn pr_comment_body(
         ),
       )
     ReviewTimeout(_) => None
+    CopilotIssueCommentSeen(n) =>
+      Some(
+        (
+          n, "**Choir:** GitHub Copilot issue-thread comment observed on PR — parent notified with updated gate snapshot (not merge approval).",
+        ),
+      )
     PRMerged(_) => None
   }
 }
@@ -1157,12 +1200,13 @@ pub async fn ServerState::process_poller_tick_with(
   self : ServerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (
+  poll : async (Int, Bool) -> (
     Bool,
     @poller.ReviewState,
     String,
     @poller.CiRollupStatus,
     String,
+    Bool,
     Bool,
   ),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
@@ -2030,6 +2074,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), None) {
@@ -2040,7 +2085,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("[PR MERGED]"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Waiting on approving review"))
+      assert_true(message.contains("Waiting on a GitHub Copilot issue comment"))
     }
     None => fail("expected PRReady message")
   }
@@ -2063,13 +2108,16 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRReady(70), Some(0)) {
     Some((message, status)) => {
       assert_eq(status, "success")
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Merge gate open on Choir snapshot"))
+      assert_true(
+        message.contains("no Copilot issue comment has been observed"),
+      )
     }
     None => fail("expected merge-gate-open PRReady message")
   }
@@ -2092,6 +2140,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8), None) {
@@ -2101,7 +2150,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Waiting on approving review"))
+      assert_true(message.contains("Waiting on a GitHub Copilot issue comment"))
     }
     None => fail("expected FixesPushed message")
   }
@@ -2124,6 +2173,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(
@@ -2198,6 +2248,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(
@@ -2217,7 +2268,9 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
       assert_true(message.contains("no tracked blockers"))
       assert_true(message.contains("Does not merge"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Merge gate open on Choir snapshot"))
+      assert_true(
+        message.contains("no Copilot issue comment has been observed"),
+      )
     }
     None => fail("expected CILatestHeadRollupSucceeded message")
   }
@@ -2256,6 +2309,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 100L,
+    copilot_issue_comment_seen: false,
   }
   match
     leaf_poll_review_injection_message(
@@ -2307,6 +2361,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   assert_eq(
     parent_poll_event_message(
@@ -2462,6 +2517,7 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(
@@ -2498,6 +2554,7 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 999L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(
@@ -2534,6 +2591,7 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Failure,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::CIFailed(62), None) {
@@ -2563,6 +2621,7 @@ test "parent_poll_event_message PRMerged does not append TLDecision suffix" {
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRMerged(63), Some(0)) {

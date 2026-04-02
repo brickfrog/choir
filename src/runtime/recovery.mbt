@@ -43,6 +43,7 @@ pub(all) enum RecoveryAction {
     review_bodies~ : String,
     sha~ : String,
     ci_rollup~ : @poller.CiRollupStatus,
+    copilot_issue_comment_seen~ : Bool,
     created_at~ : Int64
   )
   SyncLifecycle(agent_id~ : String, pr~ : OpenPR, review~ : @poller.ReviewState)
@@ -67,12 +68,13 @@ pub(all) struct RecoveryProvider {
   read_lifecycle_content : async (String, String) -> String
   read_poller_state : async (String) -> Array[@poller.TrackedPR]
   write_poller_state : async (String, Array[@poller.TrackedPR]) -> Unit
-  gh_poll_pr : async (Int) -> (
+  gh_poll_pr : async (Int, Bool) -> (
     Bool,
     @poller.ReviewState,
     String,
     @poller.CiRollupStatus,
     String,
+    Bool,
     Bool,
   )
 }
@@ -517,12 +519,13 @@ fn find_registered_agent_for_branch_in_list(
 pub async fn plan_recovery(
   session : String,
   snapshot : RecoverySnapshot,
-  gh_poll : async (Int) -> (
+  gh_poll : async (Int, Bool) -> (
     Bool,
     @poller.ReviewState,
     String,
     @poller.CiRollupStatus,
     String,
+    Bool,
     Bool,
   ),
 ) -> RecoveryPlan {
@@ -591,8 +594,9 @@ pub async fn plan_recovery(
             )
           }
           None => {
-            let (_, review, sha, ci_rollup, review_bodies, _) = gh_poll(
+            let (_, review, sha, ci_rollup, review_bodies, _, copilot_seen) = gh_poll(
               pr.pr_number,
+              false,
             )
             actions.push(
               RecoveryAction::TrackNewPR(
@@ -605,6 +609,7 @@ pub async fn plan_recovery(
                 review_bodies~,
                 sha~,
                 ci_rollup~,
+                copilot_issue_comment_seen=copilot_seen,
                 created_at=match pr.created_sec {
                   Some(created_sec) => created_sec
                   None => snapshot.recovered_at

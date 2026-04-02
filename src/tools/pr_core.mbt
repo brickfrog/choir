@@ -64,6 +64,7 @@ pub fn file_pr_plan(
       notified_parent: false,
       last_ci_rollup: @poller.CiRollupStatus::Unknown,
       last_timeout_at: 0L,
+      copilot_issue_comment_seen: false,
     })
   } else {
     None
@@ -1098,6 +1099,11 @@ pub fn format_tl_pr_recheck_summary(
     Some(n) => "Unresolved inline review threads (GraphQL): " + n.to_string()
     None => "Unresolved inline review threads (GraphQL): not fetched"
   }
+  let copilot_line = if tracked.copilot_issue_comment_seen {
+    "GitHub Copilot issue comment (REST): seen"
+  } else {
+    "GitHub Copilot issue comment (REST): not seen"
+  }
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
     tracked, unresolved_thread_count,
   )
@@ -1107,6 +1113,9 @@ pub fn format_tl_pr_recheck_summary(
   "\n" +
   "- " +
   threads_line +
+  "\n" +
+  "- " +
+  copilot_line +
   "\n" +
   "- Latest head CI rollup: " +
   ci +
