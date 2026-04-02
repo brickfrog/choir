@@ -1027,69 +1027,20 @@ pub async fn dispatch(
         Err(e) => @types.Response::Err(e)
       }
     }
-    ToolRequest::SpawnWorker(worker_args) => {
-      let resolved_parent_branch = detect_default_branch_with_capture(
-        project_dir, capture,
-      )
-      let spec = @types.SpawnSpec::{
-        slug: worker_args.slug,
-        role: @types.Role::Worker,
-        agent_type: worker_args.agent_type,
-        task: worker_args.task,
-        isolation: @types.IsolationMode::Inline,
-        parent_id: worker_args.caller_id,
-        parent_branch: resolved_parent_branch,
-        reuse_workspace: false,
-        workspace_slug: None,
-        reuse_git_branch: None,
-        spawn_depth: 0,
-      }
-      let agent_id = @workspace.canonical_agent_id(spec)
-      let terminal_target = @workspace.local_target_for(
-        session,
-        spec.slug,
-        spec.isolation,
-      )
-      let cmds = @workspace.spawn_commands(
-        spec,
+    ToolRequest::SpawnWorker(worker_args) =>
+      interpret_spawn_worker(
+        worker_args,
         project_dir,
         session,
-        parent_session_id=None,
+        runner,
+        capture,
+        registry,
         extra_mcp_servers_json~,
         shell_command~,
         listen_uds~,
         listen_tcp~,
         tcp_auth_token~,
       )
-      match run_strict(runner, cmds, capture~) {
-        Ok(_) => {
-          match registry {
-            Some(reg) =>
-              ignore(
-                reg.upsert({
-                  agent_id,
-                  role: @types.Role::Worker,
-                  agent_type: worker_args.agent_type,
-                  state: @types.AgentState::Active,
-                  parent: Some(worker_args.caller_id),
-                  terminal_target: Some(terminal_target),
-                  host: @types.Host::Local,
-                  workspace: project_dir,
-                  branch: agent_id,
-                  spawn_depth: 0,
-                }),
-              )
-            None => ()
-          }
-          @types.Response::ok_values({
-            "status": String::to_json("spawned"),
-            "agent_id": String::to_json(agent_id),
-            "agent_ids": String::to_json(agent_id),
-          })
-        }
-        Err(e) => @types.Response::Err(e)
-      }
-    }
     ToolRequest::Reply(reply_args) => {
       let id = reply_args.id
       let cancel = reply_args.cancel
