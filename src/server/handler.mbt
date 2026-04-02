@@ -377,8 +377,6 @@ fn render_parent_next_action(
 }
 
 ///|
-
-///|
 /// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
 fn parent_poll_ci_escalation_prefix(tracked : @poller.TrackedPR) -> String {
   if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
@@ -1337,8 +1335,6 @@ fn ServerState::clear_agent_runtime_tracking(
   self.stop_subscribe(agent_id)
   self.pending_disconnects.remove(agent_id)
 }
-
-///|
 
 ///|
 async fn ServerState::finalize_agent_with_runner(
