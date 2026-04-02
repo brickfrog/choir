@@ -134,3 +134,88 @@ pub fn file_pr_auto_notify_plan(
 pub fn file_pr_auto_notify_delivery_failed_log_append(error : String) -> String {
   "[auto-notify] delivery failed error=" + error + "\n"
 }
+
+///|
+/// Typed inputs for the preflight → push → ensure-PR pipeline (before poller
+/// registration and other post-success effects).
+pub(all) struct FilePrPreflightCreateInputs {
+  branch : String
+  parent_branch : String
+  file_pr_dir : String
+  title : String?
+  body : String?
+}
+
+///|
+pub fn file_pr_preflight_create_inputs(
+  args : FilePrArgs,
+  parent_branch : String,
+  file_pr_dir : String,
+) -> FilePrPreflightCreateInputs {
+  {
+    branch: args.branch,
+    parent_branch,
+    file_pr_dir,
+    title: args.title,
+    body: args.body,
+  }
+}
+
+///|
+/// Ordered host steps for `file_pr` before post-success effects. The
+/// interpreter runs this exact sequence; kept as data for tests and docs.
+pub(all) enum FilePrPreflightHostStep {
+  EnsureBranchReady
+  GitPush
+  EnsurePullRequest
+} derive(Eq, Show)
+
+///|
+pub fn file_pr_preflight_host_steps() -> Array[FilePrPreflightHostStep] {
+  [
+    FilePrPreflightHostStep::EnsureBranchReady,
+    FilePrPreflightHostStep::GitPush,
+    FilePrPreflightHostStep::EnsurePullRequest,
+  ]
+}
+
+///|
+/// Preflight → `git push` → `ensure_pull_request`, matching the ordering and
+/// `Result` error strings previously inlined in `ToolRequest::FilePr`.
+pub async fn interpret_file_pr_preflight_create(
+  inputs : FilePrPreflightCreateInputs,
+  ensure_branch_ready : async (String, String, String) -> Result[Unit, String],
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+  ensure_pr : async (String, String, String, String?, String?) -> Result[
+    PullRequestInfo,
+    String,
+  ],
+) -> Result[PullRequestInfo, String] {
+  match
+    ensure_branch_ready(inputs.branch, inputs.parent_branch, inputs.file_pr_dir) {
+    Err(e) => Err(e)
+    Ok(_) =>
+      match
+        run_strict(
+          runner,
+          [
+            {
+              ..@workspace.git_push(inputs.branch),
+              workdir: Some(inputs.file_pr_dir),
+            },
+          ],
+          capture~,
+        ) {
+        Err(e) => Err(e)
+        Ok(_) =>
+          ensure_pr(
+            inputs.branch,
+            inputs.parent_branch,
+            inputs.file_pr_dir,
+            inputs.title,
+            inputs.body,
+          )
+      }
+  }
+}

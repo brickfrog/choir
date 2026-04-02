@@ -1,7 +1,7 @@
 ///|
 
 ///|
-async fn run_strict(
+pub async fn run_strict(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   cmds : Array[@workspace.Command],
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
