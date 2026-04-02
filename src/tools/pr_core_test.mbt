@@ -1383,3 +1383,95 @@ async test "interpret_cancel_wave err when no registry" {
     _ => fail("expected no-registry err")
   }
 }
+
+///|
+test "spawn_worker_ok_response matches spawned envelope" {
+  match spawn_worker_ok_response("main.w1") {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      assert_eq(map.get("agent_id"), Some(String::to_json("main.w1")))
+      assert_eq(map.get("agent_ids"), Some(String::to_json("main.w1")))
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
+test "spawn_worker_plan builds inline worker spec registry row and response" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "t",
+    caller_id: "main.tl",
+    slug: "w1",
+    agent_type: @types.AgentType::MoonPilot,
+  }
+  let plan = spawn_worker_plan(worker_args, "develop", "sess", "/proj")
+  assert_eq(plan.agent_id, "develop.w1")
+  assert_eq(plan.spec.parent_branch, "develop")
+  assert_eq(plan.spec.slug, "w1")
+  assert_eq(plan.spec.role, @types.Role::Worker)
+  assert_eq(plan.spec.isolation, @types.IsolationMode::Inline)
+  assert_eq(plan.spec.parent_id, "main.tl")
+  assert_eq(plan.spec.spawn_depth, 0)
+  let expected_tt = @workspace.local_target_for(
+    "sess",
+    "w1",
+    @types.IsolationMode::Inline,
+  )
+  assert_eq(plan.terminal_target, expected_tt)
+  assert_eq(plan.registry_agent.role, @types.Role::Worker)
+  assert_eq(plan.registry_agent.agent_type, @types.AgentType::MoonPilot)
+  assert_eq(plan.registry_agent.workspace, "/proj")
+  assert_eq(plan.registry_agent.branch, "develop.w1")
+  assert_eq(plan.registry_agent.state, @types.AgentState::Active)
+  match plan.registry_agent.parent {
+    Some(p) => assert_eq(p, "main.tl")
+    None => fail("expected parent")
+  }
+  match plan.ok_response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("agent_id"), Some(String::to_json("develop.w1")))
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
+async fn mock_capture_origin_main(_cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  (0, "origin/main\n")
+}
+
+///|
+async test "interpret_spawn_worker registers agent on success" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    caller_id: "main.tl",
+    slug: "w1",
+    agent_type: @types.AgentType::Claude,
+  }
+  let reg = @registry.AgentRegistry::new()
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_origin_main,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+    }
+    _ => fail("expected ok")
+  }
+  match reg.get("main.w1") {
+    Ok(a) => {
+      assert_eq(a.role, @types.Role::Worker)
+      assert_eq(a.workspace, "/tmp/p")
+    }
+    Err(_) => fail("expected worker in registry")
+  }
+}

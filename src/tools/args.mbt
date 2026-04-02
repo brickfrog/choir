@@ -67,7 +67,7 @@ struct LeafSpawnArgs {
 } derive(Show, Eq)
 
 ///|
-struct WorkerSpawnArgs {
+pub(all) struct WorkerSpawnArgs {
   task : String
   caller_id : String
   slug : String
