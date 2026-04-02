@@ -44,3 +44,27 @@ test "resolve_executable_in_path_from_path_var finds sh under /bin when present"
   let got = resolve_executable_in_path_from_path_var("sh", "/bin")
   assert_eq(got, Some("/bin/sh"))
 }
+
+///|
+test "dev_watchexec_command uses argv hook without sh -c" {
+  let cmd = dev_watchexec_command("/usr/bin/watchexec", "/tmp/choir")
+  assert_eq(cmd.program, "/usr/bin/watchexec")
+  assert_eq(cmd.args, [
+    "-e",
+    "mbt,toml",
+    "-r",
+    "--shell=none",
+    "--",
+    "/tmp/choir",
+    DEV_RELOAD_SUBCOMMAND,
+  ])
+}
+
+///|
+test "dev_entr_watcher_shell_pipeline runs entr with choir argv not sh -c hook" {
+  let s = dev_entr_watcher_shell_pipeline("/usr/bin/entr", "/tmp/choir")
+  assert_false(s.contains("sh -c"))
+  assert_true(s.contains(DEV_RELOAD_SUBCOMMAND))
+  assert_true(s.contains("/usr/bin/entr"))
+  assert_true(s.contains("/tmp/choir"))
+}

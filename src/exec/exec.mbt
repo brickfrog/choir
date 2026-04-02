@@ -4,6 +4,45 @@ pub fn quote(s : String) -> String {
 }
 
 ///|
+/// Subcommand used only by `choir dev` hot-reload (`watchexec` / `entr`): build native then run `serve`.
+pub const DEV_RELOAD_SUBCOMMAND : String = "__dev_reload"
+
+///|
+/// `watchexec` invocation with `--shell=none` and a native `choir` hook (no `sh -c` for the reload step).
+pub fn dev_watchexec_command(
+  wx_path : String,
+  choir_exe : String,
+) -> @workspace.Command {
+  {
+    program: wx_path,
+    args: [
+      "-e",
+      "mbt,toml",
+      "-r",
+      "--shell=none",
+      "--",
+      choir_exe,
+      DEV_RELOAD_SUBCOMMAND,
+    ],
+    workdir: None,
+  }
+}
+
+///|
+/// Inner `sh -c` body for the `entr` fallback: `find … | entr -r <choir> __dev_reload` (one shell layer for the pipeline only).
+pub fn dev_entr_watcher_shell_pipeline(
+  entr_path : String,
+  choir_exe : String,
+) -> String {
+  "(find src -name \"*.mbt\"; find . -maxdepth 2 -name \"*.toml\") | " +
+  quote(entr_path) +
+  " -r " +
+  quote(choir_exe) +
+  " " +
+  DEV_RELOAD_SUBCOMMAND
+}
+
+///|
 pub fn command_to_shell_string(cmd : @workspace.Command) -> String {
   let mut shell_cmd = quote(cmd.program)
   for arg in cmd.args {
