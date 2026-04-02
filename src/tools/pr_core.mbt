@@ -554,6 +554,39 @@ pub fn shutdown_intent_remove_choir_worktree(workspace : String) -> Bool {
 }
 
 ///|
+/// Optional pane-close command for `kill_agent` when the agent has a terminal target.
+pub fn kill_agent_pane_close_command(
+  agent : @types.Agent,
+) -> @workspace.Command? {
+  match agent.terminal_target {
+    Some(t) => Some(@workspace.local_close_target(t))
+    None => None
+  }
+}
+
+///|
+/// Optional `git worktree remove` command for `kill_agent` when the workspace path
+/// is a choir-managed worktree (same predicate as `shutdown_intent_remove_choir_worktree`).
+pub fn kill_agent_worktree_remove_command(
+  agent : @types.Agent,
+) -> @workspace.Command? {
+  if shutdown_intent_remove_choir_worktree(agent.workspace) {
+    Some(@workspace.git_worktree_remove(agent.workspace))
+  } else {
+    None
+  }
+}
+
+///|
+/// Success JSON for `kill_agent` after registry failure state is applied.
+pub fn kill_agent_ok_response(agent_id : String) -> @types.Response {
+  @types.Response::ok_values({
+    "status": String::to_json("killed"),
+    "agent_id": String::to_json(agent_id),
+  })
+}
+
+///|
 /// Pure post-lifecycle plan for `shutdown`: maps `lifecycle_exit_policy` and
 /// Dev-vs-non-Dev workflow to the tool response, whether to append `ExitRequested`,
 /// and whether the interpreter may attempt `git worktree remove` for choir paths.
