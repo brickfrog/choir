@@ -81,7 +81,7 @@ pub fn detect_events(
     tracked.last_ci_failed &&
     current_sha != "" &&
     current_sha == tracked.last_sha {
-    events.push(PollEvent::CIPassed(tracked.pr_number))
+    events.push(PollEvent::CIFailureCleared(tracked.pr_number))
   }
   events
 }
