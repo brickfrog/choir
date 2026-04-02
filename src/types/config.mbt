@@ -13,6 +13,8 @@ pub(all) struct Config {
   companions_json : String?
   plugins_json : String?
   terminal_session : String
+  /// When true, `file_pr` posts `@copilot review` on the new PR (best-effort).
+  pr_review : Bool
 } derive(Show)
 
 ///|
@@ -44,6 +46,7 @@ pub fn Config::default() -> Config {
     companions_json: None,
     plugins_json: None,
     terminal_session: "choir",
+    pr_review: true,
   }
 }
 

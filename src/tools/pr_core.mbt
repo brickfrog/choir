@@ -136,15 +136,35 @@ pub fn file_pr_auto_notify_delivery_failed_log_append(error : String) -> String 
 }
 
 ///|
+/// Body for the explicit GitHub Copilot review request on newly filed PRs.
+pub let file_pr_copilot_review_comment_body : String = "@copilot review"
+
+///|
+/// `gh pr comment` for [`file_pr_copilot_review_comment_body`] (canonical `file_pr` path).
+/// `gh_workdir` should match other `file_pr` git/gh operations (typically [`file_pr_workdir`]).
+pub fn file_pr_copilot_review_gh_command(
+  pr_number : Int,
+  gh_workdir : String,
+) -> @workspace.Command {
+  @workspace.gh_pr_comment(
+    pr_number, file_pr_copilot_review_comment_body, gh_workdir,
+  )
+}
+
+///|
 /// Post-`ensure_pull_request` host path: poller ensure/write, dev lifecycle
 /// event, optional parent auto-notify (delivery log + `execute_delivery` +
-/// moontrace), then the planned tool response. Preserves `ToolRequest::FilePr`
+/// moontrace), optional best-effort Copilot review comment, then the planned
+/// tool response. Preserves `ToolRequest::FilePr`
 /// ordering and strings from the prior dispatch arm.
 pub async fn interpret_file_pr_post_success(
   project_dir : String,
   session : String,
   branch : String,
   tracked_agent_id : String,
+  file_pr_workdir : String,
+  pr_number : Int,
+  pr_review : Bool,
   effects : FilePrPostSuccessEffects,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
@@ -212,6 +232,51 @@ pub async fn interpret_file_pr_post_success(
       }
     }
     _ => ()
+  }
+  if pr_review {
+    let cmd = file_pr_copilot_review_gh_command(pr_number, file_pr_workdir)
+    let mut spawn_err : String? = None
+    let codes = runner([cmd]) catch {
+      e => {
+        spawn_err = Some(e.to_string())
+        []
+      }
+    }
+    let ok = spawn_err is None && codes.length() > 0 && codes[0] == 0
+    if !ok {
+      let exit_json = if codes.length() > 0 {
+        codes[0].to_json()
+      } else {
+        "none".to_json()
+      }
+      let fields = match spawn_err {
+        Some(err) =>
+          @moontrace.fields([
+            ("pr_number", pr_number.to_json()),
+            ("exit", exit_json),
+            ("error", err.to_json()),
+          ])
+        None =>
+          @moontrace.fields([
+            ("pr_number", pr_number.to_json()),
+            ("exit", exit_json),
+          ])
+      }
+      @moontrace.warn("file_pr copilot review request failed", fields=fields)
+      let err_part = match spawn_err {
+        Some(err) => " error=" + err
+        None => ""
+      }
+      ignore(
+        @sys.append_file_sync(
+          delivery_log_path,
+          "[file_pr] copilot_review_request failed pr=" +
+          pr_number.to_string() +
+          err_part +
+          "\n",
+        ),
+      )
+    }
   }
   effects.response
 }
@@ -743,6 +808,7 @@ pub async fn interpret_file_pr(
   session : String,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
+  pr_review : Bool,
   ensure_branch_ready : async (String, String, String) -> Result[Unit, String],
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
@@ -775,7 +841,16 @@ pub async fn interpret_file_pr(
         registry is Some(_),
       )
       interpret_file_pr_post_success(
-        project_dir, session, branch, tracked_agent_id, effects, poller_state, registry,
+        project_dir,
+        session,
+        branch,
+        tracked_agent_id,
+        file_pr_dir,
+        pr.number,
+        pr_review,
+        effects,
+        poller_state,
+        registry,
         runner,
       )
     }

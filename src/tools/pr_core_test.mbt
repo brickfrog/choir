@@ -195,6 +195,9 @@ async test "interpret_file_pr_post_success returns plan ok without poller or reg
     "choir",
     args.branch,
     args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    false,
     effects,
     None,
     None,
@@ -234,6 +237,9 @@ async test "interpret_file_pr_post_success registers poller when tracked" {
     "choir",
     args.branch,
     args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    false,
     effects,
     Some(ps),
     None,
@@ -305,6 +311,9 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
     "choir",
     args.branch,
     args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    false,
     effects,
     None,
     Some(reg),
@@ -366,6 +375,9 @@ async test "interpret_file_pr_post_success parent missing appends resolve failur
     "choir",
     args.branch,
     args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    false,
     effects,
     None,
     Some(reg),
@@ -946,6 +958,7 @@ async test "interpret_file_pr returns preflight error without post-success" {
     "choir",
     None,
     None,
+    false,
     mock_preflight_err,
     mock_runner_all_ok,
     mock_capture_empty,
@@ -974,6 +987,7 @@ async test "interpret_file_pr ok response matches full pipeline" {
     "choir",
     None,
     None,
+    false,
     mock_preflight_ok,
     mock_runner_all_ok,
     mock_capture_empty,
@@ -992,6 +1006,220 @@ async test "interpret_file_pr ok response matches full pipeline" {
     }
     _ => fail("expected ok")
   }
+}
+
+///|
+test "file_pr_copilot_review_gh_command posts copilot review body" {
+  let cmd = file_pr_copilot_review_gh_command(44, "/wt/agent-checkout")
+  assert_eq(cmd.program, "gh")
+  assert_eq(cmd.workdir, Some("/wt/agent-checkout"))
+  assert_eq(cmd.args.length(), 5)
+  assert_eq(cmd.args[0], "pr")
+  assert_eq(cmd.args[1], "comment")
+  assert_eq(cmd.args[2], "44")
+  assert_eq(cmd.args[3], "--body")
+  assert_eq(cmd.args[4], file_pr_copilot_review_comment_body)
+}
+
+///|
+async fn mock_runner_expect_copilot_review_only(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  assert_eq(cmds.length(), 1)
+  assert_eq(cmds[0].program, "gh")
+  assert_eq(cmds[0], file_pr_copilot_review_gh_command(21, "/tmp/copilot-fpr"))
+  [0]
+}
+
+///|
+async test "interpret_file_pr_post_success runs copilot review when pr_review" {
+  let project_dir = "/tmp/copilot-fpr"
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 21,
+    url: "https://example.test/pr/21",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  let effects = file_pr_post_success_effects(plan, false, false)
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    true,
+    effects,
+    None,
+    None,
+    mock_runner_expect_copilot_review_only,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+}
+
+///|
+async fn mock_runner_copilot_uses_worktree_path(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let wt = "/tmp/pr-split-test/.choir/worktrees/agent"
+  assert_eq(cmds.length(), 1)
+  assert_eq(cmds[0], file_pr_copilot_review_gh_command(99, wt))
+  [0]
+}
+
+///|
+async test "interpret_file_pr_post_success copilot gh uses file_pr_workdir" {
+  let project_root = "/tmp/pr-split-test"
+  let worktree = "/tmp/pr-split-test/.choir/worktrees/agent"
+  assert_true(@sys.create_dir_all(project_root + "/.choir"))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 99,
+    url: "https://example.test/pr/99",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  let effects = file_pr_post_success_effects(plan, false, false)
+  let got = interpret_file_pr_post_success(
+    project_root,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    worktree,
+    pr.number,
+    true,
+    effects,
+    None,
+    None,
+    mock_runner_copilot_uses_worktree_path,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+}
+
+///|
+async fn mock_runner_reject_gh(cmds : Array[@workspace.Command]) -> Array[Int] {
+  @async.sleep(0)
+  for cmd in cmds {
+    if cmd.program == "gh" {
+      fail("unexpected gh when pr_review disabled")
+    }
+  }
+  let statuses = []
+  for _ in cmds {
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+async test "interpret_file_pr_post_success skips copilot when pr_review false" {
+  let project_dir = "/tmp/no-copilot-fpr"
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 21,
+    url: "https://example.test/pr/21",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  let effects = file_pr_post_success_effects(plan, false, false)
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    false,
+    effects,
+    None,
+    None,
+    mock_runner_reject_gh,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+}
+
+///|
+async fn mock_runner_copilot_review_gh_nonzero(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  assert_eq(cmds.length(), 1)
+  assert_eq(cmds[0].program, "gh")
+  [1]
+}
+
+///|
+async test "interpret_file_pr_post_success copilot review failure is best-effort" {
+  let project_dir = "/tmp/copilot-fail-fpr"
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let log_path = project_dir + "/.choir/delivery.log"
+  ignore(@sys.delete_file_sync(log_path))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 33,
+    url: "https://example.test/pr/33",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  let effects = file_pr_post_success_effects(plan, false, false)
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    true,
+    effects,
+    None,
+    None,
+    mock_runner_copilot_review_gh_nonzero,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok despite gh failure")
+  }
+  let log = @sys.read_file(log_path)
+  assert_true(log.contains("copilot_review_request failed"))
+  assert_true(log.contains("pr=33"))
 }
 
 ///|

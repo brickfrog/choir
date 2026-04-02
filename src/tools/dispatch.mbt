@@ -104,6 +104,7 @@ pub async fn dispatch(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   caller_id? : String? = None,
+  pr_review? : Bool = true,
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -240,7 +241,7 @@ pub async fn dispatch(
     }
     ToolRequest::FilePr(file_pr_args) =>
       interpret_file_pr(
-        file_pr_args, project_dir, session, poller_state, registry, ensure_branch_ready,
+        file_pr_args, project_dir, session, poller_state, registry, pr_review, ensure_branch_ready,
         runner, capture, ensure_pr,
       )
     ToolRequest::MergePr(merge_args) =>
@@ -575,6 +576,7 @@ pub async fn handle_request(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   plugins_json? : String? = None,
+  pr_review? : Bool = true,
 ) -> @types.Response {
   match registry.lookup(req.role, req.name) {
     Err(e) =>
@@ -642,6 +644,7 @@ pub async fn handle_request(
             mutex_registry~,
             poller_state~,
             caller_id=tool_args_get(tool_args, "caller_id"),
+            pr_review~,
           )
       }
       // Fire PostToolUse hook (fire-and-forget)
@@ -702,6 +705,7 @@ pub async fn dispatch_call(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  pr_review? : Bool = true,
 ) -> @types.Response {
   let tool_args = tool_args_from_map(call.args)
   match parse_tool_request(call.name, call.role, project_dir, tool_args) {
@@ -725,6 +729,7 @@ pub async fn dispatch_call(
         mutex_registry~,
         poller_state~,
         caller_id=tool_args_get(tool_args, "caller_id"),
+        pr_review~,
       )
   }
 }
