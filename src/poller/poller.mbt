@@ -52,5 +52,7 @@ pub(all) enum PollEvent {
   FixesPushed(Int)
   ReviewTimeout(Int)
   CIFailed(Int)
+  /// Latest head's status checks no longer report failure, after a prior CI failure on the same head.
+  CIPassed(Int)
   PRMerged(Int)
 } derive(Show, Eq)

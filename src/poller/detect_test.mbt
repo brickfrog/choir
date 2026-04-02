@@ -98,6 +98,60 @@ test "detect_events CIFailed when CI flips from false to true" {
 }
 
 ///|
+test "detect_events CIPassed when CI recovers on same head after failure" {
+  let tracked = detect_test_tracked(
+    11,
+    0L,
+    ChangesRequested,
+    "",
+    "sha1",
+    true,
+    0L,
+  )
+  let ev = detect_events(
+    tracked,
+    ChangesRequested,
+    "sha1",
+    false,
+    "",
+    10L,
+    900L,
+  )
+  assert_eq(ev.length(), 1)
+  match ev[0] {
+    CIPassed(n) => assert_eq(n, 11)
+    _ => fail("expected CIPassed")
+  }
+}
+
+///|
+test "detect_events suppresses CIPassed when head just changed (FixesPushed tick)" {
+  let tracked = detect_test_tracked(
+    12,
+    0L,
+    ChangesRequested,
+    "",
+    "oldsha",
+    true,
+    0L,
+  )
+  let ev = detect_events(
+    tracked,
+    ChangesRequested,
+    "newsha",
+    false,
+    "",
+    10L,
+    900L,
+  )
+  assert_eq(ev.length(), 1)
+  match ev[0] {
+    FixesPushed(n) => assert_eq(n, 12)
+    _ => fail("expected FixesPushed only")
+  }
+}
+
+///|
 test "detect_events ReviewTimeout when idle past timeout with no review content" {
   let tracked = detect_test_tracked(2, 0L, None_, "", "sha", false, 0L)
   let timeout = 100L
