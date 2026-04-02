@@ -1,8 +1,4 @@
 ///|
-/// Phase counter for sequential `file_pr` Copilot GH mocks (comment then reviewer).
-let file_pr_copilot_runner_seq : Array[Int] = [0]
-
-///|
 test "file_pr_plan builds tracked result when tracking enabled" {
   let args : FilePrArgs = {
     branch: "main.task-leaf",
@@ -1126,36 +1122,8 @@ async test "interpret_file_pr_post_success requests copilot reviewer when pr_rev
 }
 
 ///|
-async fn mock_runner_file_pr_copilot_comment_then_reviewer(
-  cmds : Array[@workspace.Command],
-) -> Array[Int] {
-  @async.sleep(0)
-  assert_eq(cmds.length(), 1)
-  let n = file_pr_copilot_runner_seq[0]
-  file_pr_copilot_runner_seq[0] = n + 1
-  let wd = "/tmp/rc-fpr"
-  assert_eq(cmds[0].program, "gh")
-  if n == 0 {
-    assert_eq(cmds[0].args[0], "pr")
-    assert_eq(cmds[0].args[1], "comment")
-    assert_eq(cmds[0].args[2], "55")
-    assert_eq(cmds[0].args[3], "--body")
-    assert_eq(
-      cmds[0].args[4],
-      file_pr_copilot_review_comment_body("plan/interpret split"),
-    )
-    assert_eq(cmds[0].workdir, Some(wd))
-  } else if n == 1 {
-    assert_eq(cmds[0], file_pr_copilot_reviewer_gh_command(55, wd))
-  } else {
-    fail("unexpected extra runner invocation for file_pr copilot")
-  }
-  [0]
-}
-
-///|
 async test "interpret_file_pr_post_success posts copilot review comment then requests reviewer" {
-  file_pr_copilot_runner_seq[0] = 0
+  let call_seq : Array[Int] = [0]
   let project_dir = "/tmp/rc-fpr"
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let args : FilePrArgs = {
@@ -1184,13 +1152,35 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
     effects,
     None,
     None,
-    mock_runner_file_pr_copilot_comment_then_reviewer,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      assert_eq(cmds.length(), 1)
+      let n = call_seq[0]
+      call_seq[0] = n + 1
+      assert_eq(cmds[0].program, "gh")
+      if n == 0 {
+        assert_eq(cmds[0].args[0], "pr")
+        assert_eq(cmds[0].args[1], "comment")
+        assert_eq(cmds[0].args[2], "55")
+        assert_eq(cmds[0].args[3], "--body")
+        assert_eq(
+          cmds[0].args[4],
+          file_pr_copilot_review_comment_body("plan/interpret split"),
+        )
+        assert_eq(cmds[0].workdir, Some(project_dir))
+      } else if n == 1 {
+        assert_eq(cmds[0], file_pr_copilot_reviewer_gh_command(55, project_dir))
+      } else {
+        fail("unexpected extra runner invocation for file_pr copilot")
+      }
+      [0]
+    },
   )
   match got {
     @types.Response::Ok(_) => ()
     _ => fail("expected ok")
   }
-  assert_eq(file_pr_copilot_runner_seq[0], 2)
+  assert_eq(call_seq[0], 2)
 }
 
 ///|

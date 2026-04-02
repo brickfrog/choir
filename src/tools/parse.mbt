@@ -150,7 +150,7 @@ fn validate_kv_key(s : String) -> Result[Unit, String] {
 }
 
 ///|
-fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
+pub fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
   let branch = get_arg_or_alias(args, "branch", "agent_id", "")
   if branch == "" {
     return Err(ParseError::MissingField(field="branch"))
