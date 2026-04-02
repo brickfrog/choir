@@ -59,7 +59,7 @@ async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
     },
     read_poller_state: fn(_dir) { [] },
     write_poller_state: fn(_dir, _tracked) { () },
-    gh_poll_pr: fn(_num) {
+    gh_poll_pr: fn(_num, _skip) {
       (
         true,
         @poller.ReviewState::Approved,
@@ -105,7 +105,7 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
     read_lifecycle_content: fn(_dir, _id) { "" },
     read_poller_state: fn(_dir) { [] },
     write_poller_state: fn(_dir, _tracked) { () },
-    gh_poll_pr: fn(_num) {
+    gh_poll_pr: fn(_num, _skip) {
       (
         true,
         @poller.ReviewState::Approved,

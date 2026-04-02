@@ -165,6 +165,18 @@ test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
 }
 
 ///|
+test "plan_tl_poll_event_parent CopilotIssueCommentSeen uses post-detection snapshot" {
+  let t = {
+    ..sample_tracked(Approved, Success, 99),
+    copilot_issue_comment_seen: true,
+  }
+  assert_eq(
+    plan_tl_poll_event_parent(CopilotIssueCommentSeen(99), t, Some(0)),
+    MergeGateOpenPendingPolicyConfirmation,
+  )
+}
+
+///|
 test "tl_tracked_pr_recheck_gate_line merge-ready snapshot notes Copilot when seen" {
   let t = {
     ..sample_tracked(Approved, Success, 12),

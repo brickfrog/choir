@@ -68,7 +68,7 @@ pub(all) struct RecoveryProvider {
   read_lifecycle_content : async (String, String) -> String
   read_poller_state : async (String) -> Array[@poller.TrackedPR]
   write_poller_state : async (String, Array[@poller.TrackedPR]) -> Unit
-  gh_poll_pr : async (Int) -> (
+  gh_poll_pr : async (Int, Bool) -> (
     Bool,
     @poller.ReviewState,
     String,
@@ -519,7 +519,7 @@ fn find_registered_agent_for_branch_in_list(
 pub async fn plan_recovery(
   session : String,
   snapshot : RecoverySnapshot,
-  gh_poll : async (Int) -> (
+  gh_poll : async (Int, Bool) -> (
     Bool,
     @poller.ReviewState,
     String,
@@ -596,6 +596,7 @@ pub async fn plan_recovery(
           None => {
             let (_, review, sha, ci_rollup, review_bodies, _, copilot_seen) = gh_poll(
               pr.pr_number,
+              false,
             )
             actions.push(
               RecoveryAction::TrackNewPR(

@@ -660,6 +660,32 @@ fn parent_poll_event_message(
         ),
       )
     }
+    CopilotIssueCommentSeen(n) => {
+      let summary = @tools.format_tl_pr_recheck_summary(
+        tracked, unresolved_threads_for_recheck,
+      )
+      Some(
+        (
+          "[COPILOT ISSUE COMMENT] " +
+          agent_id +
+          " PR #" +
+          n.to_string() +
+          " — GitHub Copilot issue-thread comment observed (REST). Re-check remaining review/CI/thread gates and policy.\n" +
+          "branch: " +
+          branch +
+          "\n" +
+          "parent_branch: " +
+          parent_branch.unwrap_or("<unknown>") +
+          pr_url +
+          "\n\n" +
+          summary +
+          parent_poll_tl_decision_suffix(
+            tracked, event, unresolved_threads_for_recheck,
+          ),
+          "info",
+        ),
+      )
+    }
     PRMerged(n) =>
       Some(
         (
@@ -696,6 +722,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     CIFailed(n) => n
     CIFailureCleared(n) => n
     CILatestHeadRollupSucceeded(n) => n
+    CopilotIssueCommentSeen(n) => n
     PRMerged(n) => n
   }
 }
@@ -767,6 +794,15 @@ fn leaf_poll_review_injection_message(
           "[REVIEW] PR #" +
           n.to_string() +
           ": Actions rollup: all checks successful on latest head — re-check review thread and policy (not merge or approval by itself)",
+          "info",
+        ),
+      )
+    CopilotIssueCommentSeen(n) =>
+      Some(
+        (
+          "[REVIEW] PR #" +
+          n.to_string() +
+          ": GitHub Copilot issue-thread comment observed — re-check remaining gates (not merge or approval by itself)",
           "info",
         ),
       )
@@ -958,6 +994,12 @@ fn pr_comment_body(
         ),
       )
     ReviewTimeout(_) => None
+    CopilotIssueCommentSeen(n) =>
+      Some(
+        (
+          n, "**Choir:** GitHub Copilot issue-thread comment observed on PR — parent notified with updated gate snapshot (not merge approval).",
+        ),
+      )
     PRMerged(_) => None
   }
 }
@@ -1123,7 +1165,7 @@ pub async fn ServerState::process_poller_tick_with(
   self : ServerState,
   now : Int64,
   timeout : Int64,
-  poll : async (Int) -> (
+  poll : async (Int, Bool) -> (
     Bool,
     @poller.ReviewState,
     String,
