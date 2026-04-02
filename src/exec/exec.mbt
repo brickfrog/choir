@@ -59,17 +59,14 @@ pub fn dev_entr_entr_command(
 
 ///|
 /// Run the `entr` fallback for `choir dev` without `/bin/sh -c`: two native `find` invocations
-/// (same argv as the former `(find …; find …) | entr …` pipeline), merged stdout fed to `entr` stdin;
-/// `entr` inherits the caller's stdout/stderr.
+/// (same argv as the former `(find …; find …) | entr …` pipeline), stdout streamed to `entr` stdin
+/// (unbounded, matching the shell pipe); `entr` inherits the caller's stdout/stderr.
 pub async fn run_dev_entr_watcher(
   entr_path : String,
   choir_exe : String,
 ) -> Int {
   let c1 = dev_entr_find_src_mbt_command()
   let c2 = dev_entr_find_toml_command()
-  let out1 = capture_stdout_with_cwd(c1.program, c1.args, c1.workdir)
-  let out2 = capture_stdout_with_cwd(c2.program, c2.args, c2.workdir)
-  let stdin_body = out1 + out2
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
     _ => return -1
   }
@@ -80,7 +77,8 @@ pub async fn run_dev_entr_watcher(
       return -1
     }
   }
-  ignore(stdin_write.write(stdin_body) catch { _ => () })
+  run_find_and_pump_to(c1.program, c1.args, c1.workdir, stdin_write)
+  run_find_and_pump_to(c2.program, c2.args, c2.workdir, stdin_write)
   stdin_write.close()
   @process.wait_pid(pid) catch {
     _ => -1
@@ -152,6 +150,46 @@ pub async fn drain_process_stdout(
   }
   reader.close()
   (@utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total]), total)
+}
+
+///|
+/// Stream one `find` stdout into `out` until EOF (no total size cap), then wait for the child.
+async fn run_find_and_pump_to(
+  program : String,
+  args : Array[String],
+  cwd : String?,
+  out : @process.WriteToProcess,
+) -> Unit {
+  let (reader, writer) = @process.read_from_process() catch { _ => return }
+  let pid = match cwd {
+    Some(dir) =>
+      @process.spawn_orphan(program, args[:], stdout=writer, cwd=dir) catch {
+        _ => {
+          reader.close()
+          return
+        }
+      }
+    None =>
+      @process.spawn_orphan(program, args[:], stdout=writer) catch {
+        _ => {
+          reader.close()
+          return
+        }
+      }
+  }
+  let buf = FixedArray::make(8192, (0 : Byte))
+  for ;; {
+    let n = reader.read(buf, offset=0, max_len=buf.length()) catch {
+      _ => break
+    }
+    if n == 0 {
+      break
+    }
+    let chunk = @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:n])
+    ignore(out.write(chunk) catch { _ => () })
+  }
+  reader.close()
+  ignore(@process.wait_pid(pid) catch { _ => -1 })
 }
 
 ///|
