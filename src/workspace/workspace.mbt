@@ -110,6 +110,23 @@ fn escape_toml_string(s : String) -> String {
 }
 
 ///|
+/// TOML inline array of double-quoted strings for `-c mcp_servers...` fragments.
+fn toml_string_array_literal(elems : Array[String]) -> String {
+  let buf = StringBuilder::new()
+  buf.write_char('[')
+  for i = 0; i < elems.length(); i = i + 1 {
+    if i > 0 {
+      buf.write_char(',')
+    }
+    buf.write_char('"')
+    buf.write_string(escape_toml_string(elems[i]))
+    buf.write_char('"')
+  }
+  buf.write_char(']')
+  buf.to_string()
+}
+
+///|
 fn resolve_child_path(project_dir : String, path : String) -> String {
   if path.has_prefix("/") {
     path

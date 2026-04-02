@@ -32,22 +32,35 @@ pub fn codex_mcp_override_args(
   agent_id : String,
   workspace_path : String,
 ) -> Array[String] {
-  let role_args = match role {
-    @types.Role::TL => ""
-    _ => " --role " + @config.role_to_string(role)
+  // Codex MCP stdio: direct `choir` argv (no `sh -lc`). Socket wait and stderr log
+  // are handled inside `mcp-stdio` via `--wait-socket-tries` / `--stderr-append-log`.
+  let elems : Array[String] = match role {
+    @types.Role::TL =>
+      [
+        "mcp-stdio", "--raw-stdio", "--name", agent_id, "--wait-socket-tries", "300",
+        "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
+      ]
+    _ =>
+      [
+        "mcp-stdio",
+        "--raw-stdio",
+        "--role",
+        @config.role_to_string(role),
+        "--name",
+        agent_id,
+        "--wait-socket-tries",
+        "300",
+        "--stderr-append-log",
+        ".choir/mcp-stdio.stderr.log",
+      ]
   }
-  let cmd = "i=0; while [ ! -S .choir/server.sock ] && [ \"$i\" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; " +
-    "exec choir mcp-stdio" +
-    role_args +
-    " --raw-stdio" +
-    " --name " +
-    @sys.shell_quote(agent_id) +
-    " 2>> .choir/mcp-stdio.stderr.log"
+  // ~60s max wait: native poll is 200ms/tick (see `choir_wait_for_socket`).
+  let args_lit = toml_string_array_literal(elems)
   [
     "-c",
-    "mcp_servers.choir.command=\"sh\"",
+    "mcp_servers.choir.command=\"choir\"",
     "-c",
-    "mcp_servers.choir.args=[\"-lc\", \"" + escape_toml_string(cmd) + "\"]",
+    "mcp_servers.choir.args=" + args_lit,
     "-c",
     "mcp_servers.choir.cwd=\"" + escape_toml_string(workspace_path) + "\"",
   ]

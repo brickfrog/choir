@@ -231,6 +231,16 @@ pub fn wait_for_socket(path : String, max_tries : Int) -> Bool {
 }
 
 ///|
+#borrow(path)
+extern "C" fn c_redirect_stderr_append(path : Bytes) -> Int = "choir_redirect_stderr_append"
+
+///|
+/// Redirect the process stderr to `path` (append, create if needed). Used by `mcp-stdio` Codex path.
+pub fn redirect_stderr_append(path : String) -> Bool {
+  c_redirect_stderr_append(string_to_null_terminated_bytes(path)) == 0
+}
+
+///|
 #borrow(path, content)
 extern "C" fn c_write_file_sync(
   path : Bytes,

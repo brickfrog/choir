@@ -183,6 +183,19 @@ int choir_wait_for_socket(const char* path, int max_tries) {
     return -1;
 }
 
+int choir_redirect_stderr_append(const char* path) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    if (dup2(fd, STDERR_FILENO) < 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
 int choir_system(const char* cmd) {
     return system(cmd);
 }
