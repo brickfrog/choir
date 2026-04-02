@@ -1371,6 +1371,238 @@ test "fork_wave_post_spawn_host_steps ordering" {
 }
 
 ///|
+test "fork_wave_child_spawn_depth increments for TL child role" {
+  assert_eq(fork_wave_child_spawn_depth(Some(2), @types.Role::TL), 3)
+  assert_eq(fork_wave_child_spawn_depth(None, @types.Role::TL), 1)
+}
+
+///|
+test "fork_wave_child_spawn_depth copies depth for non-TL" {
+  assert_eq(fork_wave_child_spawn_depth(Some(4), @types.Role::Dev), 4)
+  assert_eq(fork_wave_child_spawn_depth(None, @types.Role::Dev), 0)
+}
+
+///|
+test "fork_wave_caller_spawn_depth_from_registry matches dispatch lookup" {
+  assert_eq(fork_wave_caller_spawn_depth_from_registry(None, "x"), None)
+  let reg = @registry.AgentRegistry::new()
+  assert_eq(
+    fork_wave_caller_spawn_depth_from_registry(Some(reg), "missing"),
+    None,
+  )
+  ignore(
+    reg.upsert({
+      agent_id: "main.tl",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/w",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 5,
+      state: @types.AgentState::Active,
+    }),
+  )
+  assert_eq(
+    fork_wave_caller_spawn_depth_from_registry(Some(reg), "main.tl"),
+    Some(5),
+  )
+}
+
+///|
+async fn mock_capture_fork_wave_must_not_run(
+  _cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  fail("unexpected capture when parent_branch is not main")
+  (0, "")
+}
+
+///|
+async test "fork_wave_resolve_args_parent_branch skips detection when not main" {
+  let args = fork_wave_args_base()
+  let got = fork_wave_resolve_args_parent_branch(
+    { ..args, parent_branch: "develop" },
+    "/proj",
+    mock_capture_fork_wave_must_not_run,
+  )
+  assert_eq(got.parent_branch, "develop")
+}
+
+///|
+async fn mock_capture_origin_topic(_cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  (0, "origin/topic\n")
+}
+
+///|
+async fn mock_git_capture_fork_wave_clean(
+  _program : String,
+  _args : Array[String],
+) -> String {
+  @async.sleep(0)
+  ""
+}
+
+///|
+async test "fork_wave_resolve_args_parent_branch resolves main via detect" {
+  let args = fork_wave_args_base()
+  let got = fork_wave_resolve_args_parent_branch(
+    { ..args, parent_branch: "main" },
+    "/proj",
+    mock_capture_origin_topic,
+  )
+  assert_eq(got.parent_branch, "topic")
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase resolves parent branch and returns spawned response" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/proj",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 2,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let args = fork_wave_args_base()
+  let (resp, resolved_args, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    { ..args, parent_branch: "main" },
+    "/proj",
+    "choir",
+    Some(reg),
+    mock_capture_origin_topic,
+    mock_git_capture_fork_wave_clean,
+    mock_runner_all_ok,
+  )
+  assert_eq(resolved_args.parent_branch, "topic")
+  assert_eq(spawn_plan.spawned_count, 2)
+  assert_eq(spawn_plan.spawned_specs[0].spawn_depth, 2)
+  assert_eq(spawn_plan.spawned_specs[1].spawn_depth, 2)
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      assert_eq(map.get("count"), Some(Int::to_json(2)))
+      assert_eq(
+        map.get("agent_ids"),
+        Some(String::to_json("topic.wave-0,topic.wave-1")),
+      )
+    }
+    _ => fail("expected spawned ok response")
+  }
+}
+
+///|
+async test "fork_wave_response_from_interpret_result passes Ok through" {
+  let ok = @types.Response::ok_values({ "x": String::to_json("y") })
+  let got = fork_wave_response_from_interpret_result(Ok(ok), mock_capture_empty)
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("x"), Some(String::to_json("y")))
+    }
+    _ => fail("expected ok passthrough")
+  }
+}
+
+///|
+async test "fork_wave_response_from_interpret_result maps UncommittedChanges" {
+  let err = @tools.ForkWaveError::UncommittedChanges(output=" M x\n")
+  let got = fork_wave_response_from_interpret_result(
+    Err(err),
+    mock_capture_empty,
+  )
+  match got {
+    @types.Response::Err(msg) => assert_eq(msg, err.message())
+    _ => fail("expected Err from uncommitted")
+  }
+}
+
+///|
+async fn mock_capture_stderr_for_false(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "false" {
+    return (0, "boom\n")
+  }
+  (0, "")
+}
+
+///|
+async test "fork_wave_response_from_interpret_result CommandFailed with stderr" {
+  let failing : @workspace.Command = {
+    program: "false",
+    args: [],
+    workdir: None,
+  }
+  let err = @tools.ForkWaveError::CommandFailed(
+    status=9,
+    failing_cmd=Some(failing),
+  )
+  let got = fork_wave_response_from_interpret_result(
+    Err(err),
+    mock_capture_stderr_for_false,
+  )
+  match got {
+    @types.Response::Err(msg) => assert_eq(msg, "spawn failed (exit 9): boom")
+    _ => fail("expected spawn failed detail")
+  }
+}
+
+///|
+async fn mock_capture_always_empty(_cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  (0, "")
+}
+
+///|
+async test "fork_wave_response_from_interpret_result CommandFailed empty detail" {
+  let failing : @workspace.Command = {
+    program: "true",
+    args: [],
+    workdir: None,
+  }
+  let err = @tools.ForkWaveError::CommandFailed(
+    status=3,
+    failing_cmd=Some(failing),
+  )
+  let got = fork_wave_response_from_interpret_result(
+    Err(err),
+    mock_capture_always_empty,
+  )
+  match got {
+    @types.Response::Err(msg) => assert_eq(msg, "command failed with status 3")
+    _ => fail("expected generic status err")
+  }
+}
+
+///|
+async test "fork_wave_response_from_interpret_result CommandFailed no cmd" {
+  let err = @tools.ForkWaveError::CommandFailed(
+    status=2,
+    failing_cmd=(None : @workspace.Command?),
+  )
+  let got = fork_wave_response_from_interpret_result(
+    Err(err),
+    mock_capture_always_empty,
+  )
+  match got {
+    @types.Response::Err(msg) => assert_eq(msg, "command failed with status 2")
+    _ => fail("expected generic status err")
+  }
+}
+
+///|
 test "interpret_track_pr returns poller unavailable without poller_state" {
   let args : TrackPrArgs = {
     pr_number: 42,
