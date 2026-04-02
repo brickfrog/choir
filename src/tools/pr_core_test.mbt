@@ -1837,6 +1837,40 @@ test "merge_pr_preflight_block_message allows Approved with no threads" {
 }
 
 ///|
+test "format_tl_pr_recheck_summary ready snapshot when approved success zero threads" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  }
+  let s = format_tl_pr_recheck_summary(t, Some(0))
+  assert_true(s.contains("no tracked blockers"))
+  assert_true(s.contains("Does not merge"))
+  assert_true(s.contains("success"))
+}
+
+///|
+test "format_tl_pr_recheck_summary lists blockers for changes requested" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::ChangesRequested, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  }
+  let s = format_tl_pr_recheck_summary(t, Some(0))
+  assert_true(s.contains("GitHub review requests changes"))
+  assert_false(s.contains("no tracked blockers"))
+}
+
+///|
+test "format_tl_pr_recheck_summary does not claim ready when thread count not fetched" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  }
+  let s = format_tl_pr_recheck_summary(t, None)
+  assert_true(s.contains("not fetched"))
+  assert_false(s.contains("no tracked blockers"))
+}
+
+///|
 test "merge_pr_merge_failure_message classifies conflict output" {
   assert_eq(
     merge_pr_merge_failure_message(7, "Merge conflict: foo"),

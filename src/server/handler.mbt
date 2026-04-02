@@ -454,6 +454,7 @@ fn render_parent_next_action(
 fn parent_poll_event_message(
   tracked : @poller.TrackedPR,
   event : @poller.PollEvent,
+  unresolved_threads_for_recheck : Int?,
 ) -> (String, String)? {
   let agent_id = tracked.agent_id
   let branch = tracked.branch
@@ -567,7 +568,10 @@ fn parent_poll_event_message(
           "failure",
         ),
       )
-    CIFailureCleared(n) =>
+    CIFailureCleared(n) => {
+      let summary = @tools.format_tl_pr_recheck_summary(
+        tracked, unresolved_threads_for_recheck,
+      )
       Some(
         (
           "[CI FAILURE CLEARED] " +
@@ -582,11 +586,16 @@ fn parent_poll_event_message(
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
           "\n" +
-          "Next action: re-check the PR thread and full CI status on GitHub before merging or requesting review.",
+          "Next action: re-check the PR thread and full CI status on GitHub before merging or requesting review.\n\n" +
+          summary,
           "info",
         ),
       )
-    CILatestHeadRollupSucceeded(n) =>
+    }
+    CILatestHeadRollupSucceeded(n) => {
+      let summary = @tools.format_tl_pr_recheck_summary(
+        tracked, unresolved_threads_for_recheck,
+      )
       Some(
         (
           "[CI LATEST HEAD] " +
@@ -601,10 +610,12 @@ fn parent_poll_event_message(
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
           "\n" +
-          "Next action: re-check Copilot/review thread and branch policy, then merge_pr only if appropriate.",
+          "Next action: re-check Copilot/review thread and branch policy, then merge_pr only if appropriate.\n\n" +
+          summary,
           "info",
         ),
       )
+    }
     PRMerged(n) =>
       Some(
         (
@@ -738,6 +749,7 @@ pub fn ServerState::plan_poll_event_deliveries(
   self : ServerState,
   event : @poller.PollEvent,
   agent_id : String,
+  unresolved_threads_for_recheck : Int?,
 ) -> Array[@message.DeliveryMethod] {
   let deliveries : Array[@message.DeliveryMethod] = []
   let tracked = self.poller.get(poll_event_pr_number(event))
@@ -789,7 +801,8 @@ pub fn ServerState::plan_poll_event_deliveries(
   // Parent notification — TL triage / merge signals (comment-only reviews: leaf only)
   match tracked {
     Some(pr) =>
-      match parent_poll_event_message(pr, event) {
+      match
+        parent_poll_event_message(pr, event, unresolved_threads_for_recheck) {
         Some((message, status)) =>
           match self.resolve_parent_for_delivery(leaf_agent_id) {
             Ok(parent) => {
@@ -912,7 +925,22 @@ async fn deliver_pending_poll_events(
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
-    for delivery in state.plan_poll_event_deliveries(event, agent_id) {
+    let unresolved_threads : Int? = match event {
+      @poller.PollEvent::CIFailureCleared(_)
+      | @poller.PollEvent::CILatestHeadRollupSucceeded(_) => {
+        let (count, _) = @tools.fetch_unresolved_review_threads(
+          poll_event_pr_number(event),
+          state.config.project_dir,
+          @exec.capture_command_stdout,
+        )
+        Some(count)
+      }
+      _ => None
+    }
+    for
+      delivery in state.plan_poll_event_deliveries(
+        event, agent_id, unresolved_threads,
+      ) {
       ignore(@tools.execute_delivery(delivery, runner))
     }
     // Post a comment on the PR for audit trail
@@ -1922,7 +1950,8 @@ test "parent_poll_event_message PR READY stresses not merged" {
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
   }
-  match parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7)) {
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), None) {
     Some((message, status)) => {
       assert_eq(status, "success")
       assert_true(message.contains("[PR READY]"))
@@ -1952,7 +1981,8 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
   }
-  match parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8)) {
+  match
+    parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8), None) {
     Some((message, status)) => {
       assert_eq(status, "info")
       assert_true(message.contains("[FIXES PUSHED]"))
@@ -1982,7 +2012,11 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     last_timeout_at: 0L,
   }
   match
-    parent_poll_event_message(tracked, @poller.PollEvent::CIFailureCleared(10)) {
+    parent_poll_event_message(
+      tracked,
+      @poller.PollEvent::CIFailureCleared(10),
+      Some(0),
+    ) {
     Some((message, status)) => {
       assert_eq(status, "info")
       assert_true(message.contains("[CI FAILURE CLEARED]"))
@@ -1991,6 +2025,9 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
       assert_true(message.contains("re-check"))
       assert_false(message.contains("CI PASSED"))
       assert_false(message.to_lower().contains("green"))
+      assert_true(message.contains("PR re-check summary"))
+      assert_true(message.contains("changes_requested"))
+      assert_true(message.contains("GitHub review requests changes"))
     }
     None => fail("expected CIFailureCleared message")
   }
@@ -2040,13 +2077,14 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
     last_review_bodies: "",
     last_sha: "abc",
     notified_parent: false,
-    last_ci_rollup: @poller.CiRollupStatus::InProgress,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
   }
   match
     parent_poll_event_message(
       tracked,
       @poller.PollEvent::CILatestHeadRollupSucceeded(171),
+      Some(0),
     ) {
     Some((message, status)) => {
       assert_eq(status, "info")
@@ -2054,6 +2092,11 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
       assert_true(message.contains("not merge approval"))
       assert_true(message.contains("re-check"))
       assert_false(message.to_lower().contains("mergeable"))
+      assert_true(message.contains("PR re-check summary"))
+      assert_true(message.contains("approved"))
+      assert_true(message.contains("success"))
+      assert_true(message.contains("no tracked blockers"))
+      assert_true(message.contains("Does not merge"))
     }
     None => fail("expected CILatestHeadRollupSucceeded message")
   }
@@ -2113,6 +2156,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     parent_poll_event_message(
       tracked,
       @poller.PollEvent::ReviewCommented(9, "minor suggestion"),
+      None,
     ),
     None,
   )
