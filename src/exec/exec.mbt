@@ -356,31 +356,74 @@ fn first_token_is_env_assignment(argv0 : String) -> Bool {
 }
 
 ///|
-/// Shell-only syntax: pipelines, redirections, expansion, globs, compound commands, etc.
-fn plugin_command_requires_shell_interpreter(raw : String) -> Bool {
-  let s = raw.trim()
-  if s == "" {
-    return true
+/// True when `&&`, `||`, `;`, `|`, redirections (`>`, `<`), `&`, or subshell parens (`(`, `)`) appear
+/// in **unquoted** spans
+/// (POSIX-like `'...'` and `"..."` with the same backslash escapes as [`parse_plugin_argv_line`]).
+/// Metacharacters that are only **quoted** are literal and do not force `sh -c` by themselves.
+fn unquoted_shell_metachars_present(s : String) -> Bool {
+  let mut i = 0
+  let n = s.length()
+  let mut in_single = false
+  let mut in_double = false
+  while i < n {
+    let c = s[i]
+    if in_single {
+      if c == '\'' {
+        in_single = false
+      }
+      i = i + 1
+      continue
+    }
+    if in_double {
+      if c == '\\' && i + 1 < n {
+        i = i + 2
+        continue
+      }
+      if c == '"' {
+        in_double = false
+      }
+      i = i + 1
+      continue
+    }
+    if c == '\'' {
+      in_single = true
+      i = i + 1
+      continue
+    }
+    if c == '"' {
+      in_double = true
+      i = i + 1
+      continue
+    }
+    if i + 1 < n && c == '&' && s[i + 1] == '&' {
+      return true
+    }
+    if i + 1 < n && c == '|' && s[i + 1] == '|' {
+      return true
+    }
+    if c == ';' || c == '|' {
+      return true
+    }
+    if c == '>' || c == '<' {
+      return true
+    }
+    if c == '&' {
+      return true
+    }
+    if c == '(' || c == ')' {
+      return true
+    }
+    i = i + 1
   }
-  if s.contains("&&") {
-    return true
-  }
-  if s.contains("||") {
-    return true
-  }
-  if s.contains(";") {
-    return true
-  }
-  if s.contains("|") {
-    return true
-  }
+  false
+}
+
+///|
+/// Conservative shell-only signals that are not modeled by [`parse_plugin_argv_line`]: newlines,
+/// expansion (`$`, `` ` ``), glob (`*`, `?`). Parens are handled in [`unquoted_shell_metachars_present`]
+/// so literal `)` inside quotes does not force `sh -c`.
+fn plugin_shell_global_heuristic(s : String) -> Bool {
   if s.contains("\n") {
-    return true
-  }
-  if s.contains(">") {
-    return true
-  }
-  if s.contains("<") {
     return true
   }
   if s.contains("$") {
@@ -395,13 +438,42 @@ fn plugin_command_requires_shell_interpreter(raw : String) -> Bool {
   if s.contains("?") {
     return true
   }
-  if s.contains("(") {
-    return true
-  }
-  if s.contains(")") {
-    return true
-  }
   false
+}
+
+///|
+/// Returns true when [`capture_plugin_shell_command`] runs the plugin via
+/// `timeout … sh -c <plugin_command>` instead of `timeout … <argv…>`.
+///
+/// **Argv-safe** (no shell): a single-line token list that parses with [`parse_plugin_argv_line`],
+/// is non-empty, has no `VAR=value` prefix on argv0, and passes the heuristics above.
+///
+/// **Shell-required** (non-exhaustive): unquoted shell operators, redirections, subshell parens;
+/// expansion or glob characters anywhere in the string (quoted spans still count for `$` / glob —
+/// conservative); multi-line commands; unbalanced or ambiguous quotes (parse fails); leading env
+/// assignment.
+pub fn plugin_capture_uses_shell(plugin_command : String) -> Bool {
+  let s = plugin_command.trim().to_string()
+  if s == "" {
+    return true
+  }
+  if plugin_shell_global_heuristic(s) {
+    return true
+  }
+  if unquoted_shell_metachars_present(s) {
+    return true
+  }
+  match parse_plugin_argv_line(plugin_command) {
+    None => true
+    Some(words) =>
+      if words.length() == 0 {
+        true
+      } else if first_token_is_env_assignment(words[0]) {
+        true
+      } else {
+        false
+      }
+  }
 }
 
 ///|
@@ -482,7 +554,7 @@ fn parse_plugin_argv_line(raw : String) -> Array[String]? {
 /// Run `plugin_command` under `timeout` (seconds), write `request_line` plus newline on stdin,
 /// capture up to 64KiB of stdout (stderr discarded). When the command is a simple argv list
 /// (no shell-only syntax), runs `timeout <sec> <argv...>` directly; otherwise falls back to
-/// `timeout <sec> sh -c <plugin_command>`.
+/// `timeout <sec> sh -c <plugin_command>`. See [`plugin_capture_uses_shell`].
 pub async fn capture_plugin_shell_command(
   plugin_command : String,
   request_line : String,
@@ -505,21 +577,7 @@ pub async fn capture_plugin_shell_command(
     }
   }
   let parsed = parse_plugin_argv_line(plugin_command)
-  let use_shell = if plugin_command_requires_shell_interpreter(plugin_command) {
-    true
-  } else {
-    match parsed {
-      None => true
-      Some(words) =>
-        if words.length() == 0 {
-          true
-        } else if first_token_is_env_assignment(words[0]) {
-          true
-        } else {
-          false
-        }
-    }
-  }
+  let use_shell = plugin_capture_uses_shell(plugin_command)
   let timeout_args = if use_shell {
     [timeout_sec.to_string(), "sh", "-c", plugin_command]
   } else {
@@ -677,9 +735,36 @@ test "parse_plugin_argv_line returns None on unclosed quote" {
 }
 
 ///|
-test "plugin_command_requires_shell_interpreter detects compound commands" {
-  assert_true(plugin_command_requires_shell_interpreter("a && b"))
-  assert_false(plugin_command_requires_shell_interpreter("choir tool x"))
+test "plugin_capture_uses_shell detects unquoted compound commands" {
+  assert_true(plugin_capture_uses_shell("a && b"))
+  assert_false(plugin_capture_uses_shell("choir tool x"))
+}
+
+///|
+test "plugin_capture_uses_shell does not force shell for metachars only inside quotes" {
+  assert_false(plugin_capture_uses_shell("echo \"a && b\""))
+  assert_false(plugin_capture_uses_shell("python3 -c \"print(1>2)\""))
+}
+
+///|
+test "plugin_capture_uses_shell still requires shell for glob and expansion markers" {
+  assert_true(plugin_capture_uses_shell("echo *"))
+  assert_true(plugin_capture_uses_shell("echo $HOME"))
+}
+
+///|
+test "plugin_capture_uses_shell requires shell for unquoted subshell parens" {
+  assert_true(plugin_capture_uses_shell("( echo hi )"))
+}
+
+///|
+test "plugin_capture_uses_shell requires shell for env assignment prefix" {
+  assert_true(plugin_capture_uses_shell("FOO=bar choir tool x"))
+}
+
+///|
+test "plugin_capture_uses_shell requires shell when parse fails" {
+  assert_true(plugin_capture_uses_shell("echo \""))
 }
 
 ///|
