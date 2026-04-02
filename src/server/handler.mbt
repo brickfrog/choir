@@ -165,6 +165,11 @@ pub async fn ServerState::handle_with_runner(
     self.config.project_dir,
     self.config.terminal_session,
   )
+  // Yield like the legacy `fail_agent_with_runner` path so other fibers can observe registry
+  // updates before teardown side effects run (kill_agent is entirely effect-driven now).
+  if req.name == "kill_agent" {
+    @async.sleep(0)
+  }
   self.interpret_teardown_effects(effects, runner)
 
   let end_ms = @env.now()
@@ -1501,29 +1506,71 @@ async fn ServerState::interpret_teardown_effects(
             event,
           ),
         )
-      DeliverToParentMerged(leaf_id~, pr_number~, branch~, parent_branch~, url~) =>
-        match self.registry.get(leaf_id) {
-          Ok(leaf) =>
-            match leaf.parent {
-              Some(parent_id) =>
-                match self.resolve_parent_by_id(parent_id) {
-                  Ok(parent) => {
-                    let body = merged_pr_parent_message(
-                      pr_number, leaf_id, branch, parent_branch, url,
-                    )
-                    let delivery = @message.plan_delivery(
-                      parent, leaf_id, body, "success",
-                    )
-                    ignore(
-                      @tools.execute_delivery(delivery, runner) catch {
-                        _ => Ok(())
-                      },
-                    )
-                  }
-                  Err(_) => ()
-                }
-              None => ()
+      DeliverToParentMerged(
+        leaf_id~,
+        pr_number~,
+        branch~,
+        parent_branch~,
+        url~,
+        parent_id~
+      ) =>
+        match parent_id {
+          Some(pid) =>
+            match self.resolve_parent_by_id(pid) {
+              Ok(parent) => {
+                let body = merged_pr_parent_message(
+                  pr_number, leaf_id, branch, parent_branch, url,
+                )
+                let delivery = @message.plan_delivery(
+                  parent, leaf_id, body, "success",
+                )
+                ignore(
+                  @tools.execute_delivery(delivery, runner) catch {
+                    _ => Ok(())
+                  },
+                )
+              }
+              Err(_) => ()
             }
+          None => ()
+        }
+      ParentFailureTerminalEchoIfNeeded(
+        parent_id~,
+        agent_id~,
+        parent_message~,
+        reason~
+      ) =>
+        match self.resolve_parent_by_id(parent_id) {
+          Ok(p) => {
+            let delivery = @message.plan_delivery(
+              p, agent_id, parent_message, "failure",
+            )
+            let already_terminal = match delivery {
+              @message.DeliveryMethod::LocalTerminalInput(_, _) => true
+              _ => false
+            }
+            let is_self_reported = match reason {
+              @phase.FailureReason::ChildFailure(_) => true
+              _ => false
+            }
+            if !is_self_reported && !already_terminal {
+              match p.terminal_target {
+                Some(target) => {
+                  let reason_str = reason.to_string()
+                  let msg = @message.format_failure(agent_id, reason_str)
+                  ignore(
+                    @tools.execute_delivery(
+                      @message.DeliveryMethod::LocalTerminalInput(target, msg),
+                      runner,
+                    ) catch {
+                      _ => Ok(())
+                    },
+                  )
+                }
+                None => ()
+              }
+            }
+          }
           Err(_) => ()
         }
     }
