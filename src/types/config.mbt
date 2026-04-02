@@ -13,7 +13,7 @@ pub(all) struct Config {
   companions_json : String?
   plugins_json : String?
   terminal_session : String
-  /// When true, `file_pr` posts `@copilot review` on the new PR (best-effort).
+  /// When true, `file_pr` requests `@copilot` as a reviewer via `gh pr edit --add-reviewer` (best-effort).
   pr_review : Bool
 } derive(Show)
 
