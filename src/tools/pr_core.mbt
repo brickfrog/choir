@@ -1285,3 +1285,91 @@ pub async fn interpret_spawn_gemini(
     Err(e) => @types.Response::Err(e)
   }
 }
+
+///|
+/// Pure validation plus reuse [`SpawnSpec`] for `rescue_leaf` after the salvaged
+/// agent is loaded from the registry. No I/O. Error strings match historical
+/// `ToolRequest::RescueLeaf` dispatch behavior.
+pub(all) struct RescueLeafSpawnPlan {
+  from_agent_id : String
+  to_id : String
+  salvage_slug : String
+  git_branch : String
+  spec : @types.SpawnSpec
+} derive(Show)
+
+///|
+/// Second `remove_child_from_supervisor_lifecycle` call uses `salvage_slug` when
+/// it differs from the full salvaged agent id (matches inline dispatch).
+pub fn rescue_leaf_remove_supervisor_alias(
+  salvage_slug : String,
+  from_agent_id : String,
+) -> Bool {
+  salvage_slug != from_agent_id
+}
+
+///|
+pub fn rescue_leaf_spawn_plan(
+  args : RescueLeafArgs,
+  from_agent : @types.Agent,
+) -> Result[RescueLeafSpawnPlan, String] {
+  let from_agent_id = args.from_agent_id
+  if from_agent.role != @types.Role::Dev {
+    return Err("rescue_leaf only supports dev leaves")
+  }
+  match from_agent.parent {
+    Some(p) =>
+      if p != args.caller_id {
+        return Err("caller_id must match the salvaged leaf parent")
+      }
+    None => return Err("salvaged leaf has no parent in registry")
+  }
+  if !from_agent.workspace.contains(".choir/worktrees/") {
+    return Err("salvaged leaf has no choir worktree path to reuse")
+  }
+  let parent_prefix = match @workspace.parent_branch(from_agent_id) {
+    Some(pb) => pb
+    None =>
+      return Err(
+        "invalid from_agent_id (expected nested branch like parent.child)",
+      )
+  }
+  let to_id = @workspace.branch_name(parent_prefix, args.new_slug)
+  let salvage_slug = @phase.extract_slug(from_agent_id)
+  let git_branch = if from_agent.branch != "" {
+    from_agent.branch
+  } else {
+    from_agent_id
+  }
+  let spec = @types.SpawnSpec::{
+    slug: args.new_slug,
+    role: @types.Role::Dev,
+    agent_type: args.agent_type,
+    task: args.task,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: args.caller_id,
+    parent_branch: parent_prefix,
+    reuse_workspace: true,
+    workspace_slug: Some(salvage_slug),
+    reuse_git_branch: Some(git_branch),
+    spawn_depth: 0,
+  }
+  match @workspace.validate_reuse_spawn_spec(spec) {
+    Err(e) => Err(e)
+    Ok(_) => Ok({ from_agent_id, to_id, salvage_slug, git_branch, spec })
+  }
+}
+
+///|
+pub fn rescue_leaf_ok_response(
+  to_id : String,
+  from_agent_id : String,
+  new_slug : String,
+) -> @types.Response {
+  @types.Response::ok_values({
+    "status": String::to_json("spawned"),
+    "agent_id": String::to_json(to_id),
+    "from_agent_id": String::to_json(from_agent_id),
+    "slug": String::to_json(new_slug),
+  })
+}

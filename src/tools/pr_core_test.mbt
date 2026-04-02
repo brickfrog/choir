@@ -1878,3 +1878,154 @@ async test "interpret_spawn_gemini returns err when run_strict fails" {
     _ => fail("expected err from run_strict")
   }
 }
+
+///|
+fn rescue_leaf_base_args() -> RescueLeafArgs {
+  {
+    task: "continue",
+    caller_id: "main.tl",
+    from_agent_id: "main.old-leaf",
+    new_slug: "new-leaf",
+    agent_type: @types.AgentType::MoonPilot,
+    parent_session_id: None,
+  }
+}
+
+///|
+fn rescue_leaf_ok_dev(
+  from_agent_id : String,
+  workspace : String,
+  branch : String,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(from_agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("main.tl"),
+    workspace,
+    branch,
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+}
+
+///|
+test "rescue_leaf_spawn_plan builds reuse spec and ids" {
+  let args = rescue_leaf_base_args()
+  let from_agent = rescue_leaf_ok_dev(
+    "main.old-leaf", "/proj/.choir/worktrees/old-leaf-0", "main.old-leaf",
+  )
+  let got = rescue_leaf_spawn_plan(args, from_agent)
+  match got {
+    Ok(plan) => {
+      assert_eq(plan.from_agent_id, "main.old-leaf")
+      assert_eq(plan.to_id, "main.new-leaf")
+      assert_eq(plan.salvage_slug, "old-leaf")
+      assert_eq(plan.git_branch, "main.old-leaf")
+      assert_eq(plan.spec.slug, "new-leaf")
+      assert_eq(plan.spec.parent_branch, "main")
+      assert_eq(plan.spec.parent_id, "main.tl")
+      assert_eq(plan.spec.reuse_workspace, true)
+      assert_eq(plan.spec.workspace_slug, Some("old-leaf"))
+      assert_eq(plan.spec.reuse_git_branch, Some("main.old-leaf"))
+      assert_eq(plan.spec.agent_type, @types.AgentType::MoonPilot)
+      assert_eq(plan.spec.spawn_depth, 0)
+    }
+    Err(e) => fail("expected Ok got " + e)
+  }
+}
+
+///|
+test "rescue_leaf_spawn_plan uses from_agent_id when branch empty" {
+  let args = rescue_leaf_base_args()
+  let from_agent = rescue_leaf_ok_dev(
+    "main.old-leaf", "/proj/.choir/worktrees/old-leaf-0", "",
+  )
+  match rescue_leaf_spawn_plan(args, from_agent) {
+    Ok(plan) => assert_eq(plan.git_branch, "main.old-leaf")
+    Err(e) => fail(e)
+  }
+}
+
+///|
+test "rescue_leaf_spawn_plan err non-dev role" {
+  let args = rescue_leaf_base_args()
+  let dev = rescue_leaf_ok_dev("main.old-leaf", "/proj/.choir/worktrees/x", "b")
+  let non_dev = { ..dev, role: @types.Role::TL }
+  match rescue_leaf_spawn_plan(args, non_dev) {
+    Err(msg) => assert_eq(msg, "rescue_leaf only supports dev leaves")
+    Ok(_) => fail("expected Err")
+  }
+}
+
+///|
+test "rescue_leaf_spawn_plan err parent mismatch" {
+  let args = rescue_leaf_base_args()
+  let from_agent = rescue_leaf_ok_dev(
+    "main.old-leaf", "/proj/.choir/worktrees/x", "b",
+  )
+  match rescue_leaf_spawn_plan(args, { ..from_agent, parent: Some("other") }) {
+    Err(msg) => assert_eq(msg, "caller_id must match the salvaged leaf parent")
+    Ok(_) => fail("expected Err")
+  }
+}
+
+///|
+test "rescue_leaf_spawn_plan err no parent" {
+  let args = rescue_leaf_base_args()
+  let from_agent = rescue_leaf_ok_dev(
+    "main.old-leaf", "/proj/.choir/worktrees/x", "b",
+  )
+  match rescue_leaf_spawn_plan(args, { ..from_agent, parent: None }) {
+    Err(msg) => assert_eq(msg, "salvaged leaf has no parent in registry")
+    Ok(_) => fail("expected Err")
+  }
+}
+
+///|
+test "rescue_leaf_spawn_plan err no choir worktree path" {
+  let args = rescue_leaf_base_args()
+  let from_agent = rescue_leaf_ok_dev("main.old-leaf", "/proj/other", "b")
+  match rescue_leaf_spawn_plan(args, from_agent) {
+    Err(msg) =>
+      assert_eq(msg, "salvaged leaf has no choir worktree path to reuse")
+    Ok(_) => fail("expected Err")
+  }
+}
+
+///|
+test "rescue_leaf_spawn_plan err invalid from_agent_id" {
+  let args = { ..rescue_leaf_base_args(), from_agent_id: "mainleaf" }
+  let from_agent = rescue_leaf_ok_dev(
+    "mainleaf", "/proj/.choir/worktrees/x", "b",
+  )
+  match rescue_leaf_spawn_plan(args, from_agent) {
+    Err(msg) =>
+      assert_eq(
+        msg, "invalid from_agent_id (expected nested branch like parent.child)",
+      )
+    Ok(_) => fail("expected Err")
+  }
+}
+
+///|
+test "rescue_leaf_remove_supervisor_alias matches slug inequality" {
+  assert_true(rescue_leaf_remove_supervisor_alias("a", "main.a"))
+  assert_false(rescue_leaf_remove_supervisor_alias("main.leaf", "main.leaf"))
+}
+
+///|
+test "rescue_leaf_ok_response matches spawned envelope" {
+  match rescue_leaf_ok_response("main.new", "main.old", "new") {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      assert_eq(map.get("agent_id"), Some(String::to_json("main.new")))
+      assert_eq(map.get("from_agent_id"), Some(String::to_json("main.old")))
+      assert_eq(map.get("slug"), Some(String::to_json("new")))
+    }
+    _ => fail("expected ok")
+  }
+}
