@@ -927,3 +927,149 @@ test "shutdown_exit_plan allowed tl skips dev exit but may cleanup worktree" {
     _ => fail("expected shutdown ok")
   }
 }
+
+///|
+test "shutdown_adapter_host_steps lists poller through cleanup" {
+  let steps = shutdown_adapter_host_steps()
+  assert_eq(steps.length(), 5)
+  assert_eq(steps[0], ShutdownAdapterHostStep::PollerCriticalPhaseRead)
+  assert_eq(steps[1], ShutdownAdapterHostStep::RegistryRoleLookup)
+  assert_eq(steps[2], ShutdownAdapterHostStep::LifecycleRead)
+  assert_eq(steps[3], ShutdownAdapterHostStep::DevExitEventApply)
+  assert_eq(steps[4], ShutdownAdapterHostStep::WorktreeCleanupAttempt)
+}
+
+///|
+test "shutdown_poller_block_pr_number is none without poller" {
+  assert_eq(shutdown_poller_block_pr_number(None, "main.leaf"), None)
+}
+
+///|
+test "shutdown_poller_block_pr_number matches critical phase" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    77,
+    "main.leaf",
+    "main.topic",
+    "main",
+    "https://ex/77",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "",
+    "",
+    false,
+  )
+  assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), Some(77))
+}
+
+///|
+test "shutdown_poller_block_pr_number is none when agent not in critical phase" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    77,
+    "other.leaf",
+    "main.topic",
+    "main",
+    "https://ex/77",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "",
+    "",
+    false,
+  )
+  assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), None)
+}
+
+///|
+test "shutdown_registry_role_for_caller falls back to dev" {
+  assert_eq(shutdown_registry_role_for_caller(None, "main.x"), @types.Role::Dev)
+  let reg = @registry.AgentRegistry::new()
+  assert_eq(
+    shutdown_registry_role_for_caller(Some(reg), "main.x"),
+    @types.Role::Dev,
+  )
+}
+
+///|
+test "shutdown_registry_role_for_caller uses registry role" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.leaf",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/tmp",
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  assert_eq(
+    shutdown_registry_role_for_caller(Some(reg), "main.leaf"),
+    @types.Role::TL,
+  )
+}
+
+///|
+async fn mock_shutdown_runner_record_worktree(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for _ in cmds {
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+async test "interpret_shutdown blocks poller critical phase before plan" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    5,
+    "main.leaf",
+    "b",
+    "main",
+    "https://ex/5",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "",
+    "",
+    false,
+  )
+  let args : ShutdownArgs = { caller_id: Some("main.leaf") }
+  let got = interpret_shutdown(
+    args,
+    "/tmp",
+    Some(ps),
+    None,
+    mock_shutdown_runner_record_worktree,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, shutdown_poller_block_message(5))
+    _ => fail("expected poller block")
+  }
+}
+
+///|
+async test "interpret_shutdown ok when caller missing uses best-effort" {
+  let args : ShutdownArgs = { caller_id: None }
+  let got = interpret_shutdown(
+    args,
+    "/tmp",
+    None,
+    None,
+    mock_shutdown_runner_record_worktree,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected missing-caller ok")
+  }
+}

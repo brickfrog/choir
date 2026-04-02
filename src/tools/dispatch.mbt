@@ -627,61 +627,10 @@ pub async fn dispatch(
         None =>
           @types.Response::ok_values({ "status": String::to_json("sent") })
       }
-    ToolRequest::Shutdown(shutdown_args) => {
-      let caller_id = match shutdown_args.caller_id {
-        Some(v) => v
-        None => return shutdown_missing_caller_response()
-      }
-      match poller_state {
-        Some(ps) =>
-          match ps.critical_phase_pr_number(caller_id) {
-            Some(pr_number) =>
-              return @types.Response::Err(
-                shutdown_poller_block_message(pr_number),
-              )
-            None => ()
-          }
-        None => ()
-      }
-      let role = match registry {
-        Some(reg) =>
-          match reg.get(caller_id) {
-            Ok(agent) => agent.role
-            Err(_) => @types.Role::Dev
-          }
-        None => @types.Role::Dev
-      }
-      let lifecycle = @phase.read_or_default_lifecycle(
-        project_dir, caller_id, role,
+    ToolRequest::Shutdown(shutdown_args) =>
+      interpret_shutdown(
+        shutdown_args, project_dir, poller_state, registry, runner,
       )
-      let plan = shutdown_exit_plan(lifecycle)
-      if plan.apply_dev_exit_requested {
-        ignore(
-          apply_dev_event_checked(
-            project_dir,
-            caller_id,
-            @phase.DevEvent::ExitRequested,
-          ),
-        )
-      }
-      if plan.attempt_worktree_cleanup {
-        match registry {
-          Some(reg) =>
-            match reg.get(caller_id) {
-              Ok(agent) =>
-                if shutdown_intent_remove_choir_worktree(agent.workspace) {
-                  let _ = runner([
-                    @workspace.git_worktree_remove(agent.workspace),
-                  ])
-                  ()
-                }
-              Err(_) => ()
-            }
-          None => ()
-        }
-      }
-      plan.response
-    }
     ToolRequest::KillAgent(kill_args) =>
       match registry {
         Some(reg) =>
