@@ -168,6 +168,13 @@ test "parse_gh_pr_view_output rollup InProgress when one check still pending" {
 }
 
 ///|
+test "parse_issue_comment_logins_for_copilot_present detects github-copilot without bot suffix" {
+  assert_true(
+    parse_issue_comment_logins_for_copilot_present("[\"github-copilot\"]"),
+  )
+}
+
+///|
 test "parse_issue_comment_logins_for_copilot_present detects github-copilot bot" {
   assert_true(
     parse_issue_comment_logins_for_copilot_present("[\"github-copilot[bot]\"]"),
