@@ -152,3 +152,29 @@ test "parse_gh_pr_view_output rollup InProgress when one check still pending" {
   assert_true(ok)
   assert_eq(ci_rollup, InProgress)
 }
+
+///|
+test "parse_issue_comment_logins_for_copilot_present detects github-copilot bot" {
+  assert_true(
+    parse_issue_comment_logins_for_copilot_present("[\"github-copilot[bot]\"]"),
+  )
+}
+
+///|
+test "parse_issue_comment_logins_for_copilot_present detects copilot-pull-request-reviewer" {
+  assert_true(
+    parse_issue_comment_logins_for_copilot_present(
+      "[\"copilot-pull-request-reviewer\"]",
+    ),
+  )
+}
+
+///|
+test "parse_issue_comment_logins_for_copilot_present false for human login" {
+  assert_false(parse_issue_comment_logins_for_copilot_present("[\"octocat\"]"))
+}
+
+///|
+test "parse_issue_comment_logins_for_copilot_present false for empty input" {
+  assert_false(parse_issue_comment_logins_for_copilot_present(""))
+}

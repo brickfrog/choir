@@ -37,6 +37,9 @@ pub(all) struct TrackedPR {
   mut notified_parent : Bool
   mut last_ci_rollup : CiRollupStatus
   mut last_timeout_at : Int64
+  /// True once the poller has observed an issue-thread comment authored by a
+  /// GitHub Copilot bot login (REST `/issues/{n}/comments`), distinct from review objects.
+  mut copilot_issue_comment_seen : Bool
 } derive(Show, Eq)
 
 ///|
@@ -71,5 +74,7 @@ pub(all) enum PollEvent {
   /// Rollup reports all checks successful on this head after a prior non-success on the same SHA (e.g. CI finished green).
   /// Not merge approval, mergeability, or review verdict — re-check thread and policy before merge_pr.
   CILatestHeadRollupSucceeded(Int)
+  /// First poll tick where a GitHub Copilot issue-thread comment was observed (REST); sticky state updated.
+  CopilotIssueCommentSeen(Int)
   PRMerged(Int)
 } derive(Show, Eq)
