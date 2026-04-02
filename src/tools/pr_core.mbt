@@ -85,3 +85,52 @@ pub fn file_pr_plan(
   })
   { response, tracked_pr, dev_event, notify_message }
 }
+
+///|
+/// Pure plan for `file_pr` post-success auto-notify: parent resolution outcome
+/// maps to delivery intent plus exact delivery-log append text. The dispatcher
+/// interprets this (append logs, `execute_delivery`, moontrace on failures).
+pub(all) enum FilePrAutoNotifyPlan {
+  Deliver(delivery~ : @message.DeliveryMethod, delivery_log_append~ : String)
+  ParentResolutionFailed(
+    delivery_log_append~ : String,
+    parent_resolve_error~ : String
+  )
+} derive(Show, Eq)
+
+///|
+pub fn file_pr_auto_notify_plan(
+  parent_result : Result[@types.Agent, @types.ChoirError],
+  tracked_agent_id : String,
+  notify_message : String,
+) -> FilePrAutoNotifyPlan {
+  match parent_result {
+    Ok(parent) => {
+      let delivery = @message.plan_delivery(
+        parent, tracked_agent_id, notify_message, "success",
+      )
+      let delivery_log_append = "[auto-notify] caller=" +
+        tracked_agent_id +
+        " parent=" +
+        parent.agent_id.to_string() +
+        " delivery=" +
+        delivery.to_string() +
+        "\n"
+      Deliver(delivery~, delivery_log_append~)
+    }
+    Err(e) => {
+      let msg = e.message()
+      ParentResolutionFailed(
+        delivery_log_append="[auto-notify] resolve_parent_for_notify failed error=" +
+          msg +
+          "\n",
+        parent_resolve_error=msg,
+      )
+    }
+  }
+}
+
+///|
+pub fn file_pr_auto_notify_delivery_failed_log_append(error : String) -> String {
+  "[auto-notify] delivery failed error=" + error + "\n"
+}
