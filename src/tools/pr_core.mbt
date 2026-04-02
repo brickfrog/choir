@@ -136,6 +136,58 @@ pub fn file_pr_auto_notify_delivery_failed_log_append(error : String) -> String 
 }
 
 ///|
+/// Pure plan for `notify_parent`: optional parent resolution (when the registry
+/// is present) maps to delivery + success lifecycle, a resolve error, or the
+/// no-registry best-effort path. The dispatcher runs `execute_delivery` and
+/// `apply_dev_event` only for the planned variant.
+pub(all) enum NotifyParentPlan {
+  NoRegistry(dev_event~ : @phase.DevEvent, response~ : @types.Response)
+  ParentResolveFailed(error_message~ : String)
+  Deliver(
+    delivery~ : @message.DeliveryMethod,
+    dev_event_on_success~ : @phase.DevEvent,
+    response_ok~ : @types.Response
+  )
+} derive(Show)
+
+///|
+pub fn notify_parent_plan(
+  args : CallerMessageArgs,
+  parent_resolution : Result[@types.Agent, @types.ChoirError]?,
+) -> NotifyParentPlan {
+  match parent_resolution {
+    None => {
+      let dev_event = @phase.DevEvent::NotifyParentSuccess(message=args.message)
+      NoRegistry(
+        dev_event~,
+        response=@types.Response::ok_values({
+          "status": String::to_json("notified"),
+        }),
+      )
+    }
+    Some(Err(e)) => ParentResolveFailed(error_message=e.message())
+    Some(Ok(parent)) => {
+      let delivery = @message.plan_delivery(
+        parent,
+        args.caller_id,
+        args.message,
+        args.status,
+      )
+      let dev_event_on_success = @phase.DevEvent::NotifyParentSuccess(
+        message=args.message,
+      )
+      Deliver(
+        delivery~,
+        dev_event_on_success~,
+        response_ok=@types.Response::ok_values({
+          "status": String::to_json("notified"),
+        }),
+      )
+    }
+  }
+}
+
+///|
 /// Typed inputs for the preflight → push → ensure-PR pipeline (before poller
 /// registration and other post-success effects).
 pub(all) struct FilePrPreflightCreateInputs {

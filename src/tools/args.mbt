@@ -159,7 +159,7 @@ struct ResolveReviewThreadArgs {
 } derive(Show, Eq)
 
 ///|
-struct CallerMessageArgs {
+pub(all) struct CallerMessageArgs {
   caller_id : String
   message : String
   status : String
