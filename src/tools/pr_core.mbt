@@ -690,6 +690,139 @@ pub fn fork_wave_spawn_plan(
 }
 
 ///|
+/// Default parent branch when the tool passed `"main"`: detect the repository
+/// default via `detect_default_branch_with_capture`. Preserves prior dispatch
+/// behavior.
+pub async fn fork_wave_resolve_args_parent_branch(
+  fork_wave_args : ForkWaveArgs,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> ForkWaveArgs {
+  let resolved_parent = if fork_wave_args.parent_branch == "main" {
+    detect_default_branch_with_capture(project_dir, capture)
+  } else {
+    fork_wave_args.parent_branch
+  }
+  { ..fork_wave_args, parent_branch: resolved_parent }
+}
+
+///|
+/// Caller spawn_depth from the registry when present and the agent exists.
+pub fn fork_wave_caller_spawn_depth_from_registry(
+  registry : @registry.AgentRegistry?,
+  caller_id : String,
+) -> Int? {
+  match registry {
+    Some(reg) =>
+      match reg.get(caller_id) {
+        Ok(agent) => Some(agent.spawn_depth)
+        Err(_) => None
+      }
+    None => None
+  }
+}
+
+///|
+/// Child spawn depth for `fork_wave_spawn_plan` from caller depth and leaf role.
+pub fn fork_wave_child_spawn_depth(
+  caller_spawn_depth : Int?,
+  child_role : @types.Role,
+) -> Int {
+  if child_role == @types.Role::TL {
+    caller_spawn_depth.unwrap_or(0) + 1
+  } else {
+    caller_spawn_depth.unwrap_or(0)
+  }
+}
+
+///|
+/// Map `interpret fork_wave_plan` result to the tool response. On
+/// [`ForkWaveError::CommandFailed`], re-runs capture on the failing command
+/// (typically merged stdout/stderr via `capture_command_output`, not stderr-only).
+/// Preserves exact `ToolRequest::ForkWave` strings.
+pub async fn fork_wave_response_from_interpret_result(
+  interpret_result : Result[@types.Response, ForkWaveError],
+  capture_output : async (@workspace.Command) -> (Int, String),
+) -> @types.Response {
+  match interpret_result {
+    Ok(r) => r
+    Err(CommandFailed(status~, failing_cmd~)) => {
+      let detail = match failing_cmd {
+        Some(cmd) => {
+          let (_, output) = capture_output(cmd)
+          output.trim().to_string()
+        }
+        None => ""
+      }
+      if detail != "" {
+        @types.Response::Err(
+          "spawn failed (exit " + status.to_string() + "): " + detail,
+        )
+      } else {
+        @types.Response::Err("command failed with status " + status.to_string())
+      }
+    }
+    Err(e) => @types.Response::Err(e.message())
+  }
+}
+
+///|
+/// Single entry point (from dispatch) for `fork_wave` pre-spawn / effect-phase
+/// wiring: parent-branch defaulting, caller spawn-depth resolution, spawn plan,
+/// scaffold gate + spawn via `interpret`, and spawn failure response mapping.
+/// The `capture` injectable is shared for default-branch detection and for
+/// re-capture on spawn failure. Post-spawn is [`interpret_fork_wave_post_spawn`].
+pub async fn interpret_fork_wave_spawn_effect_phase(
+  fork_wave_args : ForkWaveArgs,
+  project_dir : String,
+  session : String,
+  registry : @registry.AgentRegistry?,
+  capture : async (@workspace.Command) -> (Int, String),
+  git_capture : async (String, Array[String]) -> String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
+  listen_uds? : String = ".choir/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
+) -> (@types.Response, ForkWaveArgs, ForkWaveSpawnPlan) {
+  let fork_wave_args = fork_wave_resolve_args_parent_branch(
+    fork_wave_args, project_dir, capture,
+  )
+  let caller_spawn_depth = fork_wave_caller_spawn_depth_from_registry(
+    registry,
+    fork_wave_args.caller_id,
+  )
+  let child_spawn_depth = fork_wave_child_spawn_depth(
+    caller_spawn_depth,
+    fork_wave_args.child_role,
+  )
+  let spawn_plan = fork_wave_spawn_plan(
+    fork_wave_args,
+    child_spawn_depth,
+    registry,
+    project_dir,
+    session,
+    extra_mcp_servers_json~,
+    shell_command~,
+    listen_uds~,
+    listen_tcp~,
+    tcp_auth_token~,
+  )
+  let plan = fork_wave_plan(
+    project_dir,
+    spawn_plan.cmds,
+    spawn_plan.spawned_count,
+    spawn_plan.skipped_count,
+    spawn_plan.agent_ids,
+    spawn_plan.skipped_ids,
+  )
+  let interpret_result = interpret(plan, git_capture~, runner~)
+  let resp = fork_wave_response_from_interpret_result(interpret_result, capture)
+  (resp, fork_wave_args, spawn_plan)
+}
+
+///|
 /// Registry row for a spawned leaf after `fork_wave` host spawn succeeds (before
 /// pane resolution overwrites `terminal_target`). Pure; matches the prior inline
 /// `ToolRequest::ForkWave` upsert shape.

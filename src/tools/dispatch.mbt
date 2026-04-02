@@ -147,70 +147,20 @@ pub async fn dispatch(
           @types.Response::ok_values({ "status": String::to_json("registered") })
       }
     ToolRequest::ForkWave(fork_wave_args) => {
-      // Detect the actual default branch if "main" was defaulted but doesn't exist
-      let resolved_parent = if fork_wave_args.parent_branch == "main" {
-        detect_default_branch_with_capture(project_dir, capture)
-      } else {
-        fork_wave_args.parent_branch
-      }
-      let fork_wave_args = { ..fork_wave_args, parent_branch: resolved_parent }
-      let caller_spawn_depth_resolved = match registry {
-        Some(reg) =>
-          match reg.get(fork_wave_args.caller_id) {
-            Ok(agent) => Some(agent.spawn_depth)
-            Err(_) => None
-          }
-        None => None
-      }
-      let child_spawn_depth = if fork_wave_args.child_role == @types.Role::TL {
-        caller_spawn_depth_resolved.unwrap_or(0) + 1
-      } else {
-        caller_spawn_depth_resolved.unwrap_or(0)
-      }
-      let spawn_plan = fork_wave_spawn_plan(
+      let (resp, fork_wave_args, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
         fork_wave_args,
-        child_spawn_depth,
-        registry,
         project_dir,
         session,
+        registry,
+        capture,
+        git_capture,
+        runner,
         extra_mcp_servers_json~,
         shell_command~,
         listen_uds~,
         listen_tcp~,
         tcp_auth_token~,
       )
-      // Effect phase: scaffold gate + spawn, described as a pure Eff tree,
-      // executed by the interpreter. Zero IO happens before this line.
-      let plan = fork_wave_plan(
-        project_dir,
-        spawn_plan.cmds,
-        spawn_plan.spawned_count,
-        spawn_plan.skipped_count,
-        spawn_plan.agent_ids,
-        spawn_plan.skipped_ids,
-      )
-      let resp = match interpret(plan, git_capture~, runner~) {
-        Ok(r) => r
-        Err(CommandFailed(status~, failing_cmd~)) => {
-          let detail = match failing_cmd {
-            Some(cmd) => {
-              let (_, output) = capture(cmd)
-              output.trim().to_string()
-            }
-            None => ""
-          }
-          if detail != "" {
-            @types.Response::Err(
-              "spawn failed (exit " + status.to_string() + "): " + detail,
-            )
-          } else {
-            @types.Response::Err(
-              "command failed with status " + status.to_string(),
-            )
-          }
-        }
-        Err(e) => @types.Response::Err(e.message())
-      }
       // Post-spawn side effects: only run if spawn succeeded.
       if resp.is_ok() && spawn_plan.spawned_count > 0 {
         interpret_fork_wave_post_spawn(
