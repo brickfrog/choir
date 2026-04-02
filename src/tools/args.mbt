@@ -49,7 +49,7 @@ pub(all) struct SpawnGeminiArgs {
 } derive(Show, Eq)
 
 ///|
-struct RescueLeafArgs {
+pub(all) struct RescueLeafArgs {
   task : String
   caller_id : String
   from_agent_id : String
