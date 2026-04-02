@@ -526,35 +526,13 @@ pub async fn dispatch(
         Err(e) => return @types.Response::Err(e)
         Ok(_) => ()
       }
-      let tracked_branch = match poller_state {
-        Some(ps) =>
-          match ps.get(merge_args.pr_number) {
-            Some(tracked) => Some(tracked.branch)
-            None => None
-          }
-        None => None
-      }
-      let plan = merge_pr_post_success_plan(
-        merge_args.pr_number,
-        poller_state is Some(_),
-        tracked_branch,
-      )
-      @phase.apply_tl_event(
+      interpret_merge_pr_post_success(
         project_dir,
         merge_args.caller_id,
-        plan.tl_event,
-        registry~,
+        merge_args.pr_number,
+        poller_state,
+        registry,
       )
-      if plan.poller_untrack_and_write_state {
-        match poller_state {
-          Some(ps) => {
-            ps.untrack(merge_args.pr_number)
-            ignore(ps.write_state_file(project_dir))
-          }
-          None => ()
-        }
-      }
-      plan.response
     }
     ToolRequest::TrackPr(track_pr_args) =>
       match poller_state {
