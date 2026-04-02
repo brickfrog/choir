@@ -954,3 +954,17 @@ pub fn gh_pr_comment(
     workdir: Some(project_dir),
   }
 }
+
+///|
+/// Request a PR reviewer via `gh pr edit --add-reviewer` (GitHub Reviewers API).
+pub fn gh_pr_add_reviewer(
+  pr_number : Int,
+  reviewer : String,
+  project_dir : String,
+) -> Command {
+  {
+    program: "gh",
+    args: ["pr", "edit", pr_number.to_string(), "--add-reviewer", reviewer],
+    workdir: Some(project_dir),
+  }
+}

@@ -137,26 +137,28 @@ pub fn file_pr_auto_notify_delivery_failed_log_append(error : String) -> String 
 }
 
 ///|
-/// Body for the explicit GitHub Copilot review request on newly filed PRs.
-pub let file_pr_copilot_review_comment_body : String = "@copilot review"
+/// GitHub Copilot reviewer handle for `gh pr edit --add-reviewer` (CLI resolves to
+/// `copilot-pull-request-reviewer[bot]`).
+pub let file_pr_copilot_reviewer_handle : String = "@copilot"
 
 ///|
-/// `gh pr comment` for [`file_pr_copilot_review_comment_body`] (canonical `file_pr` path).
-/// `gh_workdir` should match other `file_pr` git/gh operations (typically [`file_pr_workdir`]).
-pub fn file_pr_copilot_review_gh_command(
+/// `gh pr edit --add-reviewer @copilot` when [`interpret_file_pr_post_success`] runs with
+/// `pr_review` true. `gh_workdir` matches other `file_pr` git/gh operations ([`file_pr_workdir`]).
+pub fn file_pr_copilot_reviewer_gh_command(
   pr_number : Int,
   gh_workdir : String,
 ) -> @workspace.Command {
-  @workspace.gh_pr_comment(
-    pr_number, file_pr_copilot_review_comment_body, gh_workdir,
+  @workspace.gh_pr_add_reviewer(
+    pr_number, file_pr_copilot_reviewer_handle, gh_workdir,
   )
 }
 
 ///|
 /// Post-`ensure_pull_request` host path: poller ensure/write, dev lifecycle
 /// event, optional parent auto-notify (delivery log + `execute_delivery` +
-/// moontrace), optional best-effort Copilot review comment, then the planned
-/// tool response. Preserves `ToolRequest::FilePr`
+/// moontrace), optional best-effort Copilot reviewer request (`gh pr edit
+/// --add-reviewer @copilot` when `pr_review`), then the planned tool response.
+/// Preserves `ToolRequest::FilePr`
 /// ordering and strings from the prior dispatch arm.
 pub async fn interpret_file_pr_post_success(
   project_dir : String,
@@ -235,7 +237,7 @@ pub async fn interpret_file_pr_post_success(
     _ => ()
   }
   if pr_review {
-    let cmd = file_pr_copilot_review_gh_command(pr_number, file_pr_workdir)
+    let cmd = file_pr_copilot_reviewer_gh_command(pr_number, file_pr_workdir)
     let mut spawn_err : String? = None
     let codes = runner([cmd]) catch {
       e => {
@@ -263,7 +265,7 @@ pub async fn interpret_file_pr_post_success(
             ("exit", exit_json),
           ])
       }
-      @moontrace.warn("file_pr copilot review request failed", fields~)
+      @moontrace.warn("file_pr copilot reviewer request failed", fields~)
       let err_part = match spawn_err {
         Some(err) => " error=" + err
         None => ""
@@ -271,7 +273,7 @@ pub async fn interpret_file_pr_post_success(
       ignore(
         @sys.append_file_sync(
           delivery_log_path,
-          "[file_pr] copilot_review_request failed pr=" +
+          "[file_pr] copilot_reviewer_request failed pr=" +
           pr_number.to_string() +
           err_part +
           "\n",
