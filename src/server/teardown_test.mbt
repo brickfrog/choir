@@ -134,10 +134,10 @@ test "plan_fail - basic failure" {
   // 3. PersistLifecycle (Failed)
   // 4. SyncParentLifecycle
   // 5. NotifyParent
-  // 6. ClearRuntimeTracking
-  // (No InjectTerminalMessage because parent has terminal_target)
+  // 6. ParentFailureTerminalEchoIfNeeded (no extra inject: primary delivery is terminal)
+  // 7. ClearRuntimeTracking
 
-  assert_eq(effects.length(), 6)
+  assert_eq(effects.length(), 7)
   match effects[0] {
     FireHook(agent_id="main.leaf", exit_reason="disconnect", ..) => ()
     _ => fail("expected FireHook")
@@ -164,6 +164,15 @@ test "plan_fail - basic failure" {
     _ => fail("expected NotifyParent")
   }
   match effects[5] {
+    ParentFailureTerminalEchoIfNeeded(
+      parent_id="parent",
+      agent_id="main.leaf",
+      parent_message="watchdog timeout",
+      reason=@phase.FailureReason::WatchdogTimeout
+    ) => ()
+    _ => fail("expected ParentFailureTerminalEchoIfNeeded")
+  }
+  match effects[6] {
     ClearRuntimeTracking("main.leaf") => ()
     _ => fail("expected ClearRuntimeTracking")
   }

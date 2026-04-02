@@ -25,7 +25,16 @@ pub(all) enum TeardownEffect {
     pr_number~ : Int,
     branch~ : String,
     parent_branch~ : String,
-    url~ : String
+    url~ : String,
+    parent_id~ : String?
+  )
+  /// If primary parent notification used a non-terminal channel, optionally echo failure text
+  /// to the parent's terminal. Interpretation calls `plan_delivery` (not the planner).
+  ParentFailureTerminalEchoIfNeeded(
+    parent_id~ : String,
+    agent_id~ : String,
+    parent_message~ : String,
+    reason~ : @phase.FailureReason
   )
 } derive(Show, Eq)
 
@@ -39,6 +48,8 @@ fn finalize_reason_for_exit(exit_reason : String) -> @phase.FinalizeReason {
 }
 
 ///|
+/// Builds teardown steps from in-memory `agent` and `lifecycle` values only (no registry I/O).
+/// Interpretation may re-resolve parents and persist using current server state.
 pub fn plan_finalize(
   agent : @types.Agent,
   lifecycle : @phase.AgentLifecycle,
@@ -140,6 +151,8 @@ pub fn plan_finalize(
 }
 
 ///|
+/// Side-effect free aside from constructing effects. Parent delivery edge cases that need
+/// `plan_delivery` run in `interpret_teardown_effects` via `ParentFailureTerminalEchoIfNeeded`.
 pub fn plan_fail(
   agent : @types.Agent,
   lifecycle : @phase.AgentLifecycle,
@@ -192,7 +205,8 @@ pub fn plan_fail(
   )
   effects.push(SyncParentLifecycle(agent_id~, lifecycle=failed))
 
-  // Notify Parent
+  // Notify Parent (secondary terminal echo decided at interpret time; see
+  // `ParentFailureTerminalEchoIfNeeded`.)
   match parent {
     Some(p) => {
       let parent_id = p.agent_id.to_string()
@@ -204,30 +218,14 @@ pub fn plan_fail(
           status="failure",
         ),
       )
-
-      // Only inject a second failure notice to the parent terminal when
-      // plan_delivery used a non-terminal channel (e.g. TeamsInbox/TcpPush).
-      let delivery = @message.plan_delivery(
-        p, agent_id, parent_message, "failure",
+      effects.push(
+        ParentFailureTerminalEchoIfNeeded(
+          parent_id~,
+          agent_id~,
+          parent_message~,
+          reason~,
+        ),
       )
-      let already_terminal = match delivery {
-        @message.DeliveryMethod::LocalTerminalInput(_, _) => true
-        _ => false
-      }
-      let is_self_reported = match reason {
-        @phase.FailureReason::ChildFailure(_) => true
-        _ => false
-      }
-      if !is_self_reported && !already_terminal {
-        match p.terminal_target {
-          Some(target) => {
-            let reason_str = reason.to_string()
-            let msg = @message.format_failure(agent_id, reason_str)
-            effects.push(InjectTerminalMessage(target, msg))
-          }
-          None => ()
-        }
-      }
     }
     None => ()
   }
@@ -258,6 +256,11 @@ fn resolve_parent_for_plan_fail(
 }
 
 ///|
+/// Returns effects from a consistent snapshot taken immediately before interpretation in
+/// `handle_with_runner` (same synchronous turn, no await between plan and interpret). Lifecycle
+/// rows come from disk via `read_or_default_lifecycle`; registry rows come from `registry.get`.
+/// The interpreter re-reads the registry where required (e.g. parent resolution) so delivery
+/// targets match current registration, matching the prior `PostToolAction` behavior.
 pub fn plan_post_tool_actions(
   req : @types.Request,
   resp : @types.Response,
@@ -326,6 +329,7 @@ pub fn plan_post_tool_actions(
                 branch~,
                 parent_branch~,
                 url~,
+                parent_id=leaf.parent,
               ),
             )
             let lifecycle = @phase.read_or_default_lifecycle(
