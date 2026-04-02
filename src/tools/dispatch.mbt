@@ -450,71 +450,65 @@ pub async fn dispatch(
                   }
                   apply_dev_event(project_dir, branch, effects.dev_event)
                   let delivery_log_path = project_dir + "/.choir/delivery.log"
-                  match effects.notify_message_for_parent {
-                    Some(notify_message) =>
-                      match registry {
-                        Some(reg) =>
+                  match (effects.notify_message_for_parent, registry) {
+                    (Some(notify_message), Some(reg)) => {
+                      let plan = file_pr_auto_notify_plan(
+                        resolve_parent_for_notify(
+                          project_dir, session, reg, tracked_agent_id,
+                        ),
+                        tracked_agent_id,
+                        notify_message,
+                      )
+                      match plan {
+                        FilePrAutoNotifyPlan::Deliver(
+                          delivery~,
+                          delivery_log_append~
+                        ) => {
+                          ignore(
+                            @sys.append_file_sync(
+                              delivery_log_path, delivery_log_append,
+                            ),
+                          )
                           match
-                            resolve_parent_for_notify(
-                              project_dir, session, reg, tracked_agent_id,
-                            ) {
-                            Ok(parent) => {
-                              let delivery = @message.plan_delivery(
-                                parent, tracked_agent_id, notify_message, "success",
-                              )
-                              ignore(
-                                @sys.append_file_sync(
-                                  delivery_log_path,
-                                  "[auto-notify] caller=" +
-                                  tracked_agent_id +
-                                  " parent=" +
-                                  parent.agent_id.to_string() +
-                                  " delivery=" +
-                                  delivery.to_string() +
-                                  "\n",
-                                ),
-                              )
-                              match
-                                execute_delivery(delivery, runner, project_dir~) {
-                                Ok(_) => ()
-                                Err(e) => {
-                                  @moontrace.error(
-                                    "file_pr auto-notify delivery failed",
-                                    fields=@moontrace.fields([
-                                      ("error", e.to_json()),
-                                    ]),
-                                  )
-                                  ignore(
-                                    @sys.append_file_sync(
-                                      delivery_log_path,
-                                      "[auto-notify] delivery failed error=" +
-                                      e +
-                                      "\n",
-                                    ),
-                                  )
-                                }
-                              }
-                            }
+                            execute_delivery(delivery, runner, project_dir~) {
+                            Ok(_) => ()
                             Err(e) => {
                               @moontrace.error(
-                                "file_pr auto-notify parent resolution failed",
+                                "file_pr auto-notify delivery failed",
                                 fields=@moontrace.fields([
-                                  ("error", e.message().to_json()),
+                                  ("error", e.to_json()),
                                 ]),
                               )
                               ignore(
                                 @sys.append_file_sync(
                                   delivery_log_path,
-                                  "[auto-notify] resolve_parent_for_notify failed error=" +
-                                  e.message() +
-                                  "\n",
+                                  file_pr_auto_notify_delivery_failed_log_append(
+                                    e,
+                                  ),
                                 ),
                               )
                             }
                           }
-                        None => ()
+                        }
+                        FilePrAutoNotifyPlan::ParentResolutionFailed(
+                          delivery_log_append~,
+                          parent_resolve_error~
+                        ) => {
+                          @moontrace.error(
+                            "file_pr auto-notify parent resolution failed",
+                            fields=@moontrace.fields([
+                              ("error", parent_resolve_error.to_json()),
+                            ]),
+                          )
+                          ignore(
+                            @sys.append_file_sync(
+                              delivery_log_path, delivery_log_append,
+                            ),
+                          )
+                        }
                       }
-                    None => ()
+                    }
+                    _ => ()
                   }
                   effects.response
                 }
