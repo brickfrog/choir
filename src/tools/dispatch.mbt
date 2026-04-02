@@ -636,19 +636,19 @@ pub async fn dispatch(
         Some(reg) =>
           match reg.get(kill_args.agent_id) {
             Ok(agent) => {
-              // Close the pane
-              match agent.terminal_target {
-                Some(terminal_target) => {
-                  let kill_cmd = @workspace.local_close_target(terminal_target)
-                  let _ = runner([kill_cmd])
+              match kill_agent_pane_close_command(agent) {
+                Some(cmd) => {
+                  let _ = runner([cmd])
                   ()
                 }
                 None => ()
               }
-              // Clean up worktree if applicable
-              if agent.workspace.contains(".choir/worktrees/") {
-                let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
-                ()
+              match kill_agent_worktree_remove_command(agent) {
+                Some(cmd) => {
+                  let _ = runner([cmd])
+                  ()
+                }
+                None => ()
               }
               let _ = reg.set_state(
                 kill_args.agent_id,
@@ -661,10 +661,7 @@ pub async fn dispatch(
                   ("reason", kill_args.reason.to_json()),
                 ]),
               )
-              @types.Response::ok_values({
-                "status": String::to_json("killed"),
-                "agent_id": String::to_json(kill_args.agent_id),
-              })
+              kill_agent_ok_response(kill_args.agent_id)
             }
             Err(_) =>
               @types.Response::Err("agent not found: " + kill_args.agent_id)

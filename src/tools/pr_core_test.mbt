@@ -839,6 +839,76 @@ test "shutdown_intent_remove_choir_worktree matches choir worktree paths" {
 }
 
 ///|
+fn kill_agent_test_agent(
+  terminal_target : @types.LocalTarget?,
+  workspace : String,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace,
+    branch: "main.leaf",
+    terminal_target,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+}
+
+///|
+test "kill_agent_pane_close_command is none without terminal_target" {
+  let a = kill_agent_test_agent(None, "/repo")
+  assert_eq(kill_agent_pane_close_command(a), None)
+}
+
+///|
+test "kill_agent_pane_close_command matches local_close_target" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let a = kill_agent_test_agent(Some(t), "/repo")
+  let expected = @workspace.local_close_target(t)
+  match kill_agent_pane_close_command(a) {
+    Some(cmd) => {
+      assert_eq(cmd.program, expected.program)
+      assert_eq(cmd.args, expected.args)
+    }
+    None => fail("expected close command")
+  }
+}
+
+///|
+test "kill_agent_worktree_remove_command follows choir worktree path rule" {
+  let a = kill_agent_test_agent(None, "/proj/.choir/worktrees/slug-0")
+  match kill_agent_worktree_remove_command(a) {
+    Some(cmd) => {
+      assert_eq(cmd.program, "git")
+      assert_eq(cmd.args, [
+        "worktree", "remove", "--force", "/proj/.choir/worktrees/slug-0",
+      ])
+    }
+    None => fail("expected worktree remove")
+  }
+  let no_wt = kill_agent_test_agent(None, "/proj")
+  assert_eq(kill_agent_worktree_remove_command(no_wt), None)
+}
+
+///|
+test "kill_agent_ok_response matches killed envelope" {
+  match kill_agent_ok_response("main.topic") {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("killed")))
+      assert_eq(map.get("agent_id"), Some(String::to_json("main.topic")))
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
 test "shutdown_exit_plan blocked dev changes requested" {
   let lifecycle : @phase.AgentLifecycle = {
     agent_id: "main.l",
