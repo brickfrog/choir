@@ -1,7 +1,7 @@
 # Choir × Pi North Star Spec
 
 **Status:** Active guiding document; core Choir × Pi shift implemented and live-validated, but the exomonad-style hard effect boundary is still incomplete and now tracked explicitly as follow-on architecture work  
-**Last updated:** 2026-04-01
+**Last updated:** 2026-04-02
 
 ## One-sentence north star
 
@@ -24,12 +24,11 @@ Whenever a design choice is ambiguous, prefer the option that best preserves the
 
 ## Problem statement
 
-Choir currently has:
+Choir has:
 
 - a strong typed orchestration core in MoonBit
 - a stable local server / UDS workflow
-- multiple agent runtimes wired primarily through MCP
-- a partial non-MCP shell helper path for leaf agents
+- multiple agent runtimes (MCP and non-MCP), including a first-class `choir tool` CLI/JSON path and Pi as a first-class runtime
 
 Pi deliberately does **not** center itself on MCP. Pi already provides:
 
@@ -62,7 +61,7 @@ In the target state:
 - Existing MCP-backed runtimes continue to work.
 - Choir's typed internal model remains intact and authoritative.
 
-## Implementation reality snapshot (2026-04-01)
+## Implementation reality snapshot (2026-04-02)
 
 The implementation now substantially matches the north-star design:
 
@@ -683,15 +682,13 @@ Exit code:
 - It may share logic with `leaf-tool`.
 - `leaf-tool` should become a narrow compatibility wrapper, not the preferred general interface.
 
-## D2. Do not start with `AgentType::Pi`
+## D2. Sequencing: control plane before `AgentType::Pi` (historical)
 
-The first deliverable is **not** adding Pi as a new agent type. The first deliverable is the control plane that makes that addition clean.
+The project intentionally shipped **`choir tool` first**, then Pi extension and TL/runtime work, then `AgentType::Pi`. That sequencing is **complete**: Pi is a supported agent type and runtime. The original rationale still explains why the control plane landed first:
 
-Reason:
-
-- it unlocks manual Pi integration immediately
-- it avoids a wide cross-cutting change before the boundary is stable
-- it validates the command/response contract early
+- it unlocked manual Pi integration immediately
+- it avoided a wide cross-cutting change before the CLI contract was stable
+- it validated the command/response contract early
 
 ## D3. Pi integration starts as a Pi extension
 
@@ -799,7 +796,7 @@ Preferred baseline:
 choir tool fork_wave --json '{"caller_id":"root","tasks":["a","b"]}'
 ```
 
-The concrete caller-role flag may differ from the early sketch. In the current prototype, Choir uses:
+The concrete caller-role flag may differ from the early sketch. In the current implementation, Choir uses:
 
 ```bash
 choir tool <tool> --caller-role <root|tl|dev|worker> --json '{...}'
@@ -969,15 +966,15 @@ Choir may continue to use zellij pane delivery and status observation for the fi
 - Pi can supervise a Choir session manually without MCP
 - the CLI/JSON interface is proven adequate for real orchestration use
 
-## M2. Pi extension prototype
+## M2. Pi extension (delivered)
 
-### Deliverables
+### Deliverables (met)
 
-- local Pi extension registering Choir tools
+- Pi extension registering Choir tools (in-repo reference under `scripts/pi/`; runtime copy under `.choir/pi/` when Choir-managed)
 - role-aware tool exposure
 - JSON parsing of `choir tool` results
 
-### Exit criteria
+### Exit criteria (met)
 
 - Pi can call Choir actions as native Pi tools
 - the model no longer has to invent shell commands for core Choir actions

@@ -1,10 +1,10 @@
-# Choir × Pi Prototype Assets
+# Choir × Pi extension (reference copy)
 
-This directory contains early Pi-integration artifacts that can be used for manual experiments before Choir materializes runtime assets under `.choir/pi/`.
+This directory holds the **in-repo reference** `choir-extension.ts` for manual runs and diffing. **`choir init --tl pi`** (and Pi leaf spawns) generate and use runtime assets under **`.choir/pi/`**, which should track this behavior; they may be leaner than this file in some details (see `PI_NORTH_STAR.md` host-adapter notes).
 
 ## Files
 
-- `choir-extension.ts` — Pi extension prototype that wraps `choir tool ...`
+- `choir-extension.ts` — Pi extension source that wraps `choir tool ...`
 
 ## Plain Pi + bash workflow (no extension)
 
@@ -21,7 +21,7 @@ choir tool fork_wave --caller-role tl --json '{"caller_id":"root","tasks":["task
 
 This is the M1 validation path: Pi stays a normal coding agent and Choir exposes orchestration through the CLI/JSON control plane.
 
-## Trying the extension prototype manually
+## Trying the extension manually (repo root)
 
 From the Choir repo root:
 
@@ -46,6 +46,6 @@ So it depends on the new non-MCP Choir control plane.
 
 ## Notes
 
-- This is a prototype source file in the repo, not the final runtime location.
-- Choir now has an experimental `choir init --tl pi` path that generates runtime assets under `.choir/pi/` and launches Pi with an isolated `PI_CODING_AGENT_DIR`.
+- Prefer **`choir init --tl pi`** for the supported path: runtime assets under `.choir/pi/` and isolated `PI_CODING_AGENT_DIR`.
+- This `scripts/pi/` copy is for manual `pi -e ...` runs and for keeping the extension readable in source control.
 - The default Choir-managed Pi path avoids mutating `~/.pi/agent` or repo `.pi/` and seeds local auth from `~/.pi/agent/auth.json` when present.
