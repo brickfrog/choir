@@ -184,6 +184,15 @@ test "parse_issue_comment_logins_for_copilot_present detects copilot-pull-reques
 }
 
 ///|
+test "parse_issue_comment_logins_for_copilot_present detects copilot-pull-request-reviewer bot suffix" {
+  assert_true(
+    parse_issue_comment_logins_for_copilot_present(
+      "[\"copilot-pull-request-reviewer[bot]\"]",
+    ),
+  )
+}
+
+///|
 test "parse_issue_comment_logins_for_copilot_present detects copilot-swe-agent without bot suffix" {
   assert_true(
     parse_issue_comment_logins_for_copilot_present("[\"copilot-swe-agent\"]"),
