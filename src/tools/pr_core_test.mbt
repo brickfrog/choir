@@ -909,6 +909,60 @@ test "kill_agent_ok_response matches killed envelope" {
 }
 
 ///|
+test "kill_agent_adapter_host_steps is pane close then worktree remove" {
+  let steps = kill_agent_adapter_host_steps()
+  assert_eq(steps.length(), 2)
+  assert_eq(steps[0], KillAgentAdapterHostStep::PaneClose)
+  assert_eq(steps[1], KillAgentAdapterHostStep::WorktreeRemove)
+}
+
+///|
+async test "interpret_kill_agent err when no registry" {
+  let args : KillAgentArgs = { agent_id: "main.x", reason: "r" }
+  let got = interpret_kill_agent(args, None, mock_runner_all_ok)
+  match got {
+    @types.Response::Err(msg) => assert_eq(msg, "no agent registry available")
+    _ => fail("expected no-registry err")
+  }
+}
+
+///|
+async test "interpret_kill_agent err when agent missing" {
+  let reg = @registry.AgentRegistry::new()
+  let args : KillAgentArgs = { agent_id: "main.missing", reason: "r" }
+  let got = interpret_kill_agent(args, Some(reg), mock_runner_all_ok)
+  match got {
+    @types.Response::Err(msg) => assert_eq(msg, "agent not found: main.missing")
+    _ => fail("expected not-found err")
+  }
+}
+
+///|
+async test "interpret_kill_agent closes pane, removes worktree, marks failed, returns killed" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-0")
+  ignore(reg.upsert(agent))
+  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
+  let got = interpret_kill_agent(args, Some(reg), mock_runner_all_ok)
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("killed")))
+      assert_eq(map.get("agent_id"), Some(String::to_json("main.leaf")))
+    }
+    _ => fail("expected ok")
+  }
+  match reg.get("main.leaf") {
+    Ok(a) => assert_eq(a.state, @types.AgentState::Failed)
+    Err(_) => fail("expected agent in registry")
+  }
+}
+
+///|
 test "shutdown_exit_plan blocked dev changes requested" {
   let lifecycle : @phase.AgentLifecycle = {
     agent_id: "main.l",
