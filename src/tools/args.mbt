@@ -75,7 +75,7 @@ pub(all) struct WorkerSpawnArgs {
 } derive(Show, Eq)
 
 ///|
-struct RemoteSpawnArgs {
+pub(all) struct RemoteSpawnArgs {
   task : String
   caller_id : String
   slug : String
