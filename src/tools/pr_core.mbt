@@ -474,6 +474,37 @@ pub async fn interpret_file_pr_preflight_create(
 }
 
 ///|
+/// `track_pr`: poller `ensure_tracked`, persist state file, success JSON.
+/// Preserves exact `ToolRequest::TrackPr` behavior from the prior dispatch arm.
+pub fn interpret_track_pr(
+  track_pr_args : TrackPrArgs,
+  project_dir : String,
+  poller_state : @poller.PollerState?,
+  now_sec : Int64,
+) -> @types.Response {
+  match poller_state {
+    Some(ps) => {
+      ps.ensure_tracked(
+        track_pr_args.pr_number,
+        track_pr_args.agent_id,
+        track_pr_args.branch,
+        track_pr_args.parent_branch,
+        track_pr_args.pr_url,
+        now_sec,
+      )
+      ignore(ps.write_state_file(project_dir))
+      @types.Response::ok_values({
+        "status": String::to_json("tracked"),
+        "branch": String::to_json(track_pr_args.branch),
+        "parent_branch": String::to_json(track_pr_args.parent_branch),
+        "pr_url": String::to_json(track_pr_args.pr_url),
+      })
+    }
+    None => @types.Response::Err("poller unavailable")
+  }
+}
+
+///|
 /// End-to-end `file_pr`: parent-branch defaulting, tracked workdir, preflight
 /// create, then post-success poller/lifecycle/notify. Dispatcher delegates
 /// here; behavior matches the prior `ToolRequest::FilePr` inline arm.

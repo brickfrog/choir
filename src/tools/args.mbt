@@ -17,7 +17,7 @@ pub(all) struct FilePrArgs {
 } derive(Show, Eq)
 
 ///|
-struct TrackPrArgs {
+pub(all) struct TrackPrArgs {
   pr_number : Int
   agent_id : String
   branch : String
