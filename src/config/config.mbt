@@ -102,19 +102,38 @@ pub fn hook_command_path(content : String, hook_key : String) -> String? {
 }
 
 ///|
-fn parse_optional_bool_toml(raw : String?, default : Bool) -> Bool {
-  match raw {
-    None => default
-    Some(s) => {
-      let v = s.trim().to_lower()
-      if v == "true" || v == "1" || v == "yes" {
-        true
-      } else if v == "false" || v == "0" || v == "no" {
-        false
-      } else {
-        default
-      }
+/// Drop TOML inline comments (`# ...`) when not inside single- or double-quoted spans.
+fn strip_toml_inline_comment(s : String) -> String {
+  let mut in_double = false
+  let mut in_single = false
+  let mut cut = s.length()
+  let mut i = 0
+  while i < s.length() {
+    let c = s[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+    } else if c == '#' && !in_single && !in_double {
+      cut = i
+      break
     }
+    i = i + 1
+  }
+  s[0:cut].to_string().trim().to_string()
+}
+
+///|
+fn parse_bool_config_value(raw : String) -> Result[Bool, String] {
+  let v = strip_toml_inline_comment(raw).to_lower()
+  if v == "true" || v == "1" || v == "yes" {
+    Ok(true)
+  } else if v == "false" || v == "0" || v == "no" {
+    Ok(false)
+  } else if v == "" {
+    Err("empty value")
+  } else {
+    Err("invalid boolean (expected true/false/1/0/yes/no): " + raw)
   }
 }
 
@@ -173,10 +192,15 @@ pub fn parse_config(
     Some(value) => value
     None => default_cfg.terminal_session
   }
-  let pr_review = parse_optional_bool_toml(
-    doc.get("pr_review"),
-    default_cfg.pr_review,
-  )
+  let pr_review = match doc.get("pr_review") {
+    None => default_cfg.pr_review
+    Some(raw) =>
+      match parse_bool_config_value(raw) {
+        Ok(b) => b
+        Err(msg) =>
+          return Err(@types.ChoirError::ConfigError("pr_review: " + msg))
+      }
+  }
 
   Ok({
     default_role,

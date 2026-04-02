@@ -141,12 +141,13 @@ pub let file_pr_copilot_review_comment_body : String = "@copilot review"
 
 ///|
 /// `gh pr comment` for [`file_pr_copilot_review_comment_body`] (canonical `file_pr` path).
+/// `gh_workdir` should match other `file_pr` git/gh operations (typically [`file_pr_workdir`]).
 pub fn file_pr_copilot_review_gh_command(
   pr_number : Int,
-  project_dir : String,
+  gh_workdir : String,
 ) -> @workspace.Command {
   @workspace.gh_pr_comment(
-    pr_number, file_pr_copilot_review_comment_body, project_dir,
+    pr_number, file_pr_copilot_review_comment_body, gh_workdir,
   )
 }
 
@@ -161,6 +162,7 @@ pub async fn interpret_file_pr_post_success(
   session : String,
   branch : String,
   tracked_agent_id : String,
+  file_pr_workdir : String,
   pr_number : Int,
   pr_review : Bool,
   effects : FilePrPostSuccessEffects,
@@ -232,7 +234,7 @@ pub async fn interpret_file_pr_post_success(
     _ => ()
   }
   if pr_review {
-    let cmd = file_pr_copilot_review_gh_command(pr_number, project_dir)
+    let cmd = file_pr_copilot_review_gh_command(pr_number, file_pr_workdir)
     let codes = runner([cmd]) catch { _ => [] }
     let ok = if codes.length() == 0 { false } else { codes[0] == 0 }
     if !ok {
@@ -825,6 +827,7 @@ pub async fn interpret_file_pr(
         session,
         branch,
         tracked_agent_id,
+        file_pr_dir,
         pr.number,
         pr_review,
         effects,

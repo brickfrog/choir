@@ -116,6 +116,24 @@ test "parse_config pr_review explicit true" {
 }
 
 ///|
+test "parse_config pr_review false with inline comment" {
+  let cfg = parse_config("pr_review = false # disable copilot review").unwrap()
+  assert_eq(cfg.pr_review, false)
+}
+
+///|
+test "parse_config pr_review true with inline comment" {
+  let cfg = parse_config("pr_review = true # keep reviews").unwrap()
+  assert_eq(cfg.pr_review, true)
+}
+
+///|
+test "parse_config pr_review invalid is error" {
+  let r = parse_config("pr_review = maybe")
+  assert_true(r is Err(_))
+}
+
+///|
 test "parse config with tcp_auth_token" {
   let content =
     #|default_role = "tl"
