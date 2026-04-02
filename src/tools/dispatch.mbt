@@ -781,46 +781,21 @@ pub async fn dispatch(
         listen_tcp~,
         tcp_auth_token~,
       )
-    ToolRequest::RescueLeaf(rescue_args) => {
-      let reg = match registry {
-        Some(r) => r
-        None =>
-          return @types.Response::Err(
-            "agent registry unavailable for rescue_leaf",
-          )
-      }
-      let ps = match poller_state {
-        Some(p) => p
-        None =>
-          return @types.Response::Err("poller unavailable for rescue_leaf")
-      }
-      let from_agent = match reg.get(rescue_args.from_agent_id) {
-        Ok(a) => a
-        Err(e) => return @types.Response::Err(e.message())
-      }
-      let plan = match rescue_leaf_spawn_plan(rescue_args, from_agent) {
-        Err(e) => return @types.Response::Err(e)
-        Ok(p) => p
-      }
-      let cmds = @workspace.spawn_commands(
-        plan.spec,
+    ToolRequest::RescueLeaf(rescue_args) =>
+      interpret_rescue_leaf(
+        rescue_args,
         project_dir,
         session,
-        parent_session_id=rescue_args.parent_session_id,
+        runner,
+        capture,
+        registry,
+        poller_state,
         extra_mcp_servers_json~,
         shell_command~,
         listen_uds~,
         listen_tcp~,
         tcp_auth_token~,
       )
-      match run_strict(runner, cmds, capture~) {
-        Err(e) => return @types.Response::Err(e)
-        Ok(_) => ()
-      }
-      interpret_rescue_leaf_post_spawn(
-        rescue_args, plan, project_dir, session, reg, ps, registry,
-      )
-    }
     ToolRequest::SpawnRemote(spawn_args) =>
       interpret_spawn_remote(
         spawn_args,

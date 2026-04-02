@@ -2069,3 +2069,114 @@ test "rescue_leaf_post_spawn_host_steps ordering" {
   assert_eq(steps[7], RescueLeafPostSpawnHostStep::TlEventChildSpawned)
   assert_eq(steps[8], RescueLeafPostSpawnHostStep::PaneResolveAndUpsertTerminal)
 }
+
+///|
+async test "interpret_rescue_leaf err when no registry" {
+  let args = rescue_leaf_base_args()
+  let got = interpret_rescue_leaf(
+    args,
+    "/tmp",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_empty,
+    None,
+    None,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "agent registry unavailable for rescue_leaf")
+    _ => fail("expected no-registry err")
+  }
+}
+
+///|
+async test "interpret_rescue_leaf err when no poller" {
+  let reg = @registry.AgentRegistry::new()
+  let args = rescue_leaf_base_args()
+  let got = interpret_rescue_leaf(
+    args,
+    "/tmp",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_empty,
+    Some(reg),
+    None,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "poller unavailable for rescue_leaf")
+    _ => fail("expected no-poller err")
+  }
+}
+
+///|
+async test "interpret_rescue_leaf err when from_agent missing" {
+  let reg = @registry.AgentRegistry::new()
+  let ps = @poller.PollerState::new()
+  let args = rescue_leaf_base_args()
+  let got = interpret_rescue_leaf(
+    args,
+    "/tmp",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_empty,
+    Some(reg),
+    Some(ps),
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "agent not found: main.old-leaf")
+    _ => fail("expected not-found err")
+  }
+}
+
+///|
+async test "interpret_rescue_leaf err when spawn plan rejects role" {
+  let reg = @registry.AgentRegistry::new()
+  let ps = @poller.PollerState::new()
+  let tl = {
+    ..rescue_leaf_ok_dev("main.old-leaf", "/proj/.choir/worktrees/x", "b"),
+    role: @types.Role::TL,
+  }
+  ignore(reg.upsert(tl))
+  let args = rescue_leaf_base_args()
+  let got = interpret_rescue_leaf(
+    args,
+    "/tmp",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_empty,
+    Some(reg),
+    Some(ps),
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, "rescue_leaf only supports dev leaves")
+    _ => fail("expected spawn-plan err")
+  }
+}
+
+///|
+async test "interpret_rescue_leaf err when run_strict fails" {
+  let reg = @registry.AgentRegistry::new()
+  let ps = @poller.PollerState::new()
+  let from_agent = rescue_leaf_ok_dev(
+    "main.old-leaf", "/proj/.choir/worktrees/old-leaf-0", "main.old-leaf",
+  )
+  ignore(reg.upsert(from_agent))
+  let args = rescue_leaf_base_args()
+  let got = interpret_rescue_leaf(
+    args,
+    "/tmp",
+    "choir",
+    mock_runner_first_fails,
+    mock_capture_empty,
+    Some(reg),
+    Some(ps),
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("failed") || msg.contains("status"))
+    _ => fail("expected run_strict err")
+  }
+}
