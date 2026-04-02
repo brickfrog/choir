@@ -227,7 +227,7 @@ pub async fn interpret_file_pr_post_success(
       }
     None => ()
   }
-  @phase.apply_dev_event(project_dir, branch, effects.dev_event)
+  @phase.apply_dev_event(project_dir, branch, effects.dev_event, registry~)
   let delivery_log_path = project_dir + "/.choir/delivery.log"
   match (effects.notify_message_for_parent, registry) {
     (Some(notify_message), Some(reg)) => {
@@ -1016,12 +1016,13 @@ pub async fn interpret_fork_wave_post_spawn(
       slug,
       @config.agent_type_to_string(fork_wave_args.agent_type),
     )
-    @phase.apply_tl_event(
+    let tl_effects = @phase.plan_tl_event_for_scope(
       project_dir,
       fork_wave_args.caller_id,
       @phase.TLEvent::ChildSpawned(child_id=slug),
       registry~,
     )
+    @phase.interpret_lifecycle_effects(project_dir, tl_effects, registry~)
     let agent_id = @workspace.branch_name(fork_wave_args.parent_branch, slug)
     match resolve_zellij_pane_id(session, slug, capture~) {
       Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
@@ -1400,7 +1401,13 @@ pub fn interpret_merge_pr_post_success(
     poller_state is Some(_),
     tracked_branch,
   )
-  @phase.apply_tl_event(project_dir, caller_id, plan.tl_event, registry~)
+  let tl_effects = @phase.plan_tl_event_for_scope(
+    project_dir,
+    caller_id,
+    plan.tl_event,
+    registry~,
+  )
+  @phase.interpret_lifecycle_effects(project_dir, tl_effects, registry~)
   if plan.poller_untrack_and_write_state {
     match poller_state {
       Some(ps) => {
@@ -1819,10 +1826,11 @@ pub async fn interpret_shutdown(
   let plan = shutdown_exit_plan(lifecycle)
   if plan.apply_dev_exit_requested {
     ignore(
-      @phase.apply_dev_event_checked(
+      apply_dev_event_checked(
         project_dir,
         caller_id,
         @phase.DevEvent::ExitRequested,
+        registry~,
       ),
     )
   }
@@ -2490,12 +2498,13 @@ pub async fn interpret_rescue_leaf_post_spawn(
     rescue_args.new_slug,
     @config.agent_type_to_string(rescue_args.agent_type),
   )
-  @phase.apply_tl_event(
+  let rescue_tl_effects = @phase.plan_tl_event_for_scope(
     project_dir,
     rescue_args.caller_id,
     @phase.TLEvent::ChildSpawned(child_id=rescue_args.new_slug),
     registry~,
   )
+  @phase.interpret_lifecycle_effects(project_dir, rescue_tl_effects, registry~)
   let resolved_pane_ids : Array[(String, String)] = []
   match resolve_zellij_pane_id(session, rescue_args.new_slug, capture~) {
     Some(pane_id) => resolved_pane_ids.push((plan.to_id, pane_id))
