@@ -441,3 +441,100 @@ test "resolve_parent_with_fallback - parent in registry" {
     Err(e) => fail("should have resolved parent: " + e.to_string())
   }
 }
+
+///|
+test "plan_tl_lifecycle_effects ChildSpawned emits persist then append" {
+  let lifecycle : AgentLifecycle = {
+    agent_id: "main.tl",
+    role: @types.Role::TL,
+    process: Connected,
+    workflow: Supervisor(Planning),
+  }
+  let effects = plan_tl_lifecycle_effects(
+    lifecycle,
+    TLEvent::ChildSpawned(child_id="main.leaf"),
+  )
+  assert_eq(effects.length(), 2)
+  match effects[0] {
+    PersistLifecycle(lifecycle=lc) =>
+      match lc.workflow {
+        Supervisor(Supervising(children~, wave=1)) =>
+          assert_eq(children.length(), 1)
+        _ => fail("expected Supervising wave 1")
+      }
+    _ => fail("expected PersistLifecycle first")
+  }
+  match effects[1] {
+    AppendLifecycleEvent(agent_id~, trigger~, ..) => {
+      assert_eq(agent_id, "main.tl")
+      assert_eq(trigger, "ChildSpawned")
+    }
+    _ => fail("expected AppendLifecycleEvent second")
+  }
+}
+
+///|
+test "plan_tl_lifecycle_effects unsupported event yields no effects" {
+  let lifecycle : AgentLifecycle = {
+    agent_id: "x",
+    role: @types.Role::TL,
+    process: Connected,
+    workflow: Supervisor(Planning),
+  }
+  let effects = plan_tl_lifecycle_effects(lifecycle, TLEvent::AllChildrenDone)
+  assert_eq(effects.length(), 0)
+}
+
+///|
+test "plan_dev_event_checked PRCreated emits two lifecycle effects" {
+  let lifecycle : AgentLifecycle = {
+    agent_id: "main.dev",
+    role: @types.Role::Dev,
+    process: Connected,
+    workflow: Dev(Working),
+  }
+  match
+    plan_dev_event_checked(
+      lifecycle,
+      DevEvent::PRCreated(pr_number=9, url="https://ex/pr/9", branch="b"),
+    ) {
+    Ok((phase, effects)) => {
+      match phase {
+        PROpenUnreviewed(pr_number=9, url~) => assert_eq(url, "https://ex/pr/9")
+        _ => fail("expected PROpenUnreviewed phase")
+      }
+      assert_eq(effects.length(), 2)
+      match effects[0] {
+        PersistLifecycle(lifecycle=lc) =>
+          match lc.workflow {
+            Dev(ReviewOwned(pr_number=9, ..)) => ()
+            _ => fail("expected ReviewOwned dev workflow")
+          }
+        _ => fail("expected PersistLifecycle")
+      }
+      match effects[1] {
+        AppendLifecycleEvent(trigger~, ..) => assert_eq(trigger, "PRCreated")
+        _ => fail("expected AppendLifecycleEvent")
+      }
+    }
+    Err(msg) => fail("unexpected err: " + msg)
+  }
+}
+
+///|
+test "plan_dev_event_checked NotifyParentSuccess has empty effects" {
+  let lifecycle : AgentLifecycle = {
+    agent_id: "main.dev",
+    role: @types.Role::Dev,
+    process: Connected,
+    workflow: Dev(Working),
+  }
+  match
+    plan_dev_event_checked(
+      lifecycle,
+      DevEvent::NotifyParentSuccess(message="ok"),
+    ) {
+    Ok((_, effects)) => assert_eq(effects.length(), 0)
+    Err(msg) => fail("unexpected err: " + msg)
+  }
+}

@@ -221,7 +221,12 @@ pub async fn dispatch(
       }
       match notify_parent_plan(notify_args, parent_resolution) {
         NotifyParentPlan::NoRegistry(dev_event~, response~) => {
-          apply_dev_event(project_dir, notify_args.caller_id, dev_event)
+          apply_dev_event(
+            project_dir,
+            notify_args.caller_id,
+            dev_event,
+            registry=None,
+          )
           response
         }
         NotifyParentPlan::ParentResolveFailed(error_message~) =>
@@ -237,6 +242,7 @@ pub async fn dispatch(
                 project_dir,
                 notify_args.caller_id,
                 dev_event_on_success,
+                registry~,
               )
               response_ok
             }
@@ -691,7 +697,8 @@ pub fn apply_tl_event(
   event : @phase.TLEvent,
   registry? : @registry.AgentRegistry? = None,
 ) -> Unit {
-  @phase.apply_tl_event(project_dir, scope, event, registry~)
+  let effects = @phase.apply_tl_event(project_dir, scope, event, registry~)
+  @phase.interpret_lifecycle_effects(project_dir, effects, registry~)
 }
 
 ///|
@@ -699,8 +706,9 @@ pub fn apply_dev_event(
   project_dir : String,
   scope : String,
   event : @phase.DevEvent,
+  registry? : @registry.AgentRegistry? = None,
 ) -> Unit {
-  @phase.apply_dev_event(project_dir, scope, event)
+  @phase.apply_dev_event(project_dir, scope, event, registry~)
 }
 
 ///|
@@ -717,5 +725,8 @@ pub fn apply_dev_event_checked(
   scope : String,
   event : @phase.DevEvent,
 ) -> Result[@phase.DevPhase, String] {
-  @phase.apply_dev_event_checked(project_dir, scope, event)
+  match @phase.apply_dev_event_checked(project_dir, scope, event) {
+    Ok((phase, _)) => Ok(phase)
+    Err(e) => Err(e)
+  }
 }
