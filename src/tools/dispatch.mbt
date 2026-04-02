@@ -492,26 +492,16 @@ pub async fn dispatch(
       }
     }
     ToolRequest::MergePr(merge_args) => {
-      if !merge_args.force {
-        let poller_tracked = match poller_state {
-          Some(ps) => ps.get(merge_args.pr_number)
-          None => None
-        }
-        let (thread_count, thread_text) = fetch_unresolved_review_threads(
+      match
+        interpret_merge_pr_preflight(
+          merge_args.force,
           merge_args.pr_number,
+          poller_state,
           project_dir,
           capture,
-        )
-        match
-          merge_pr_preflight_block_message(
-            merge_args.pr_number,
-            poller_tracked,
-            thread_count,
-            thread_text,
-          ) {
-          Some(msg) => return @types.Response::Err(msg)
-          None => ()
-        }
+        ) {
+        Err(e) => return @types.Response::Err(e)
+        Ok(_) => ()
       }
       match
         interpret_merge_pr_merge_host(

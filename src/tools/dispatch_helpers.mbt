@@ -595,7 +595,7 @@ pub async fn fetch_inline_comments(
 /// Fails gracefully: returns (0, "") if gh is unavailable or the call fails.
 /// Owner/repo are resolved explicitly via gh repo view to avoid relying on
 /// {owner}/{repo} substitution inside the GraphQL query body.
-async fn fetch_unresolved_review_threads(
+pub async fn fetch_unresolved_review_threads(
   pr_number : Int,
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),

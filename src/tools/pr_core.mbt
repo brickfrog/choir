@@ -221,6 +221,53 @@ pub async fn interpret_file_pr_preflight_create(
 }
 
 ///|
+/// Ordered host-side steps for `merge_pr` preflight when `force` is false
+/// (poller read is synchronous; thread fetch uses `capture`). Matches
+/// `interpret_merge_pr_preflight`.
+pub(all) enum MergePrPreflightHostStep {
+  PollerSnapshot
+  FetchUnresolvedReviewThreads
+} derive(Eq, Show)
+
+///|
+pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
+  [
+    MergePrPreflightHostStep::PollerSnapshot,
+    MergePrPreflightHostStep::FetchUnresolvedReviewThreads,
+  ]
+}
+
+///|
+/// `merge_pr` preflight when `force` is false: poller snapshot first, unresolved
+/// review-thread fetch second, then `merge_pr_preflight_block_message`. When
+/// `force` is true, skips all checks (same as the historical inline gate).
+pub async fn interpret_merge_pr_preflight(
+  force : Bool,
+  pr_number : Int,
+  poller_state : @poller.PollerState?,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[Unit, String] {
+  if force {
+    return Ok(())
+  }
+  let poller_tracked = match poller_state {
+    Some(ps) => ps.get(pr_number)
+    None => None
+  }
+  let (thread_count, thread_text) = fetch_unresolved_review_threads(
+    pr_number, project_dir, capture,
+  )
+  match
+    merge_pr_preflight_block_message(
+      pr_number, poller_tracked, thread_count, thread_text,
+    ) {
+    Some(msg) => Err(msg)
+    None => Ok(())
+  }
+}
+
+///|
 /// Pre-merge gating for `merge_pr` when `force` is false: poller review state
 /// is checked first, then unresolved GraphQL review threads. Returns `Some(err)`
 /// when the merge must not proceed; `None` when checks pass.

@@ -368,6 +368,132 @@ fn merge_pr_test_tracked(
 }
 
 ///|
+test "merge_pr_preflight_host_steps is poller snapshot then thread fetch" {
+  let steps = merge_pr_preflight_host_steps()
+  assert_eq(steps.length(), 2)
+  assert_eq(steps[0], MergePrPreflightHostStep::PollerSnapshot)
+  assert_eq(steps[1], MergePrPreflightHostStep::FetchUnresolvedReviewThreads)
+}
+
+///|
+async fn mock_preflight_capture_unreachable(
+  _cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  fail("unexpected gh capture when force=true")
+  (0, "")
+}
+
+///|
+async test "interpret_merge_pr_preflight force bypass skips capture" {
+  let got = interpret_merge_pr_preflight(
+    true,
+    1,
+    None,
+    "/repo",
+    mock_preflight_capture_unreachable,
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail(e)
+  }
+}
+
+///|
+async fn mock_preflight_capture_no_unresolved_threads(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" && cmd.args.contains("repo") {
+    return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+  }
+  if cmd.program == "gh" && cmd.args.contains("graphql") {
+    return (
+      0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+    )
+  }
+  (0, "")
+}
+
+///|
+async test "interpret_merge_pr_preflight ok when no poller block and no threads" {
+  let got = interpret_merge_pr_preflight(
+    false,
+    7,
+    None,
+    "/repo",
+    mock_preflight_capture_no_unresolved_threads,
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail(e)
+  }
+}
+
+///|
+async fn mock_preflight_capture_one_unresolved_thread(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" && cmd.args.contains("repo") {
+    return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+  }
+  if cmd.program == "gh" && cmd.args.contains("graphql") {
+    let body =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_abc","isResolved":false,"path":"src/x.mbt","comments":{"nodes":[{"body":"fix it"}]}}]}}}}}
+    return (0, body)
+  }
+  (0, "")
+}
+
+///|
+async test "interpret_merge_pr_preflight err when review threads unresolved" {
+  let got = interpret_merge_pr_preflight(
+    false,
+    3,
+    None,
+    "/repo",
+    mock_preflight_capture_one_unresolved_thread,
+  )
+  match got {
+    Err(msg) => {
+      assert_true(msg.contains("PR #3"))
+      assert_true(msg.contains("unresolved review thread"))
+      assert_true(msg.contains("fix it"))
+    }
+    Ok(_) => fail("expected Err")
+  }
+}
+
+///|
+async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    9,
+    "main.leaf",
+    "main.topic",
+    "main",
+    "https://ex/9",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "",
+    "",
+    false,
+  )
+  let got = interpret_merge_pr_preflight(
+    false,
+    9,
+    Some(ps),
+    "/repo",
+    mock_preflight_capture_no_unresolved_threads,
+  )
+  match got {
+    Err(msg) => assert_true(msg.contains("ChangesRequested"))
+    Ok(_) => fail("expected Err from poller gate")
+  }
+}
+
+///|
 test "merge_pr_preflight_block_message prefers ChangesRequested over thread gate" {
   let t = merge_pr_test_tracked(
     @poller.ReviewState::ChangesRequested,
