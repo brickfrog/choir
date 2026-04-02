@@ -3126,13 +3126,16 @@ fn smoke_run() -> Unit {
         @sys.write_stdout("Running isolated runtime smoke...\n")
         smoke_script()
       }
-      let exit_code = @exec.run({
-        program: "sh",
-        args: ["-c", script, "sh", self_exe, keep_temp, repo_dir],
-        workdir: None,
-      }) catch {
-        _ => 1
+      let wrapper_path = smoke_wrapper_script_path()
+      if !@sys.write_file_sync(wrapper_path, script) {
+        @sys.write_stderr("error: could not write smoke wrapper script\n")
+        @sys.exit(1)
       }
+      let cmd = smoke_shell_launch_command(
+        wrapper_path, self_exe, keep_temp, repo_dir,
+      )
+      let exit_code = @exec.run(cmd) catch { _ => 1 }
+      ignore(@sys.delete_file_sync(wrapper_path))
       @sys.exit(exit_code)
     })
   })
