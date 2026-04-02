@@ -26,7 +26,7 @@ pub(all) enum TlTrackedPrWorkflowCategory {
 ///|
 /// True after at least one [`PollEvent::ReviewTimeout`] has been recorded for this PR
 /// and the GitHub review rollup is still `none` in Choir's snapshot. Used to surface
-/// Copilot comment-trigger flakiness vs ordinary waiting.
+/// reviewer-request flakiness (accepted but no review posted) vs ordinary waiting.
 pub fn tl_tracked_pr_copilot_review_silent_escalation_active(
   tracked : TrackedPR,
 ) -> Bool {
@@ -96,7 +96,7 @@ pub fn tl_tracked_pr_workflow_category_sentence(
     BlockedOnChanges =>
       "Blocked on review changes — leaf owns follow-up before merge."
     AttentionRequiredCopilotSilentAfterTimeout =>
-      "Attention required: review wait timed out and Choir still sees no PR review in its snapshot; the @copilot comment trigger may not deliver — use GitHub Request review or inspect the PR before merge decisions."
+      "Attention required: review wait timed out and Choir still sees no PR review in its snapshot; the reviewer request may not have been accepted — inspect the PR on GitHub or add a reviewer manually before merge decisions."
     AttentionRequiredCIFailed =>
       "Attention required: CI is failing on the latest head — do not merge until the failure is understood or fixed."
     WaitingOnReviewOrCI =>

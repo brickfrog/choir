@@ -223,6 +223,7 @@ fn parse_pr_is_open(json : Json) -> Bool {
 fn gh_login_is_copilot_issue_comment_author(login : String) -> Bool {
   let l = login.to_lower()
   l == "copilot-pull-request-reviewer" ||
+  l == "copilot-pull-request-reviewer[bot]" ||
   l == "github-copilot[bot]" ||
   l == "copilot-swe-agent" ||
   l == "copilot-swe-agent[bot]"

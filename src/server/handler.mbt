@@ -385,7 +385,7 @@ fn render_parent_next_action(
 /// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
 fn parent_poll_ci_escalation_prefix(tracked : @poller.TrackedPR) -> String {
   if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
-    "Choir already escalated a review wait timeout for this PR (no review in snapshot; Copilot comment trigger may be unreliable).\n\n"
+    "Choir already escalated a review wait timeout for this PR (no review in snapshot; the reviewer request may not have been accepted).\n\n"
   } else {
     ""
   }
@@ -482,8 +482,8 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "The @copilot comment trigger is unreliable; use GitHub's Request review (reviewers) or inspect the PR on GitHub. Do not infer progress from CI alone while review is missing from snapshot.\n" +
-        "Next action: request review in GitHub or inspect the PR thread." +
+        "The reviewer request may not have been accepted; inspect the PR on GitHub or add a reviewer manually. Do not infer progress from CI alone while review is missing from snapshot.\n" +
+        "Next action: verify the review request on GitHub or add a reviewer manually." +
         parent_poll_tl_decision_suffix(
           tracked, event, unresolved_threads_for_recheck,
         )
@@ -735,7 +735,7 @@ fn leaf_poll_review_injection_message(
           if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
             "[REVIEW] PR #" +
             n.to_string() +
-            ": CI no longer reports failure on latest head — review wait already timed out with no review in snapshot; Copilot comment trigger may be unreliable. Verify GitHub and use Request review if needed (not merge or approval)"
+            ": CI no longer reports failure on latest head — review wait already timed out with no review in snapshot; the reviewer request may not have been accepted. Verify GitHub and add a reviewer manually if needed (not merge or approval)"
           } else {
             base
           }
@@ -752,7 +752,7 @@ fn leaf_poll_review_injection_message(
           if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
             "[REVIEW] PR #" +
             n.to_string() +
-            ": Actions rollup all-success on latest head — review wait already timed out with no review in snapshot; Copilot comment may not deliver. Use GitHub Request review or inspect the PR (not merge or approval by itself)"
+            ": Actions rollup all-success on latest head — review wait already timed out with no review in snapshot; the reviewer request may not have been accepted. Inspect the PR on GitHub or add a reviewer manually (not merge or approval by itself)"
           } else {
             base
           }
@@ -2121,8 +2121,8 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     Some((message, status)) => {
       assert_eq(status, "info")
       assert_true(message.contains("timed out"))
-      assert_true(message.contains("Copilot"))
-      assert_true(message.contains("Request review"))
+      assert_true(message.contains("reviewer request"))
+      assert_true(message.contains("reviewer manually"))
       assert_false(message.contains("re-check review thread and policy"))
     }
     None => fail("expected leaf CI escalation injection")
@@ -2331,8 +2331,8 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
       assert_eq(status, "failure")
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("Attention required: review wait timed out"))
-      assert_true(message.contains("Request review"))
-      assert_true(message.contains("@copilot"))
+      assert_true(message.contains("reviewer request"))
+      assert_true(message.contains("inspect the PR on GitHub"))
       assert_false(message.contains("15min"))
     }
     None => fail("expected ReviewTimeout message")

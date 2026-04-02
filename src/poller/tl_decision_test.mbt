@@ -78,7 +78,7 @@ test "tl_tracked_pr_workflow_category_sentence covers alert categories" {
   assert_true(
     tl_tracked_pr_workflow_category_sentence(
       AttentionRequiredCopilotSilentAfterTimeout,
-    ).contains("Request review"),
+    ).contains("reviewer request"),
   )
   assert_true(
     tl_tracked_pr_workflow_category_sentence(AttentionRequiredCIFailed).contains(
