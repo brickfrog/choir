@@ -135,6 +135,25 @@ test "init_tl_zellij_tab_command claude uses env argv and single sh -lc trailer"
 }
 
 ///|
+test "init_tl_zellij_tab_command pi keeps Choir env in argv and trailer only in shell script" {
+  let cmd = @workspace.init_tl_zellij_tab_command("howdy", "/abs/proj", "pi")
+  assert_eq(cmd.program, "zellij")
+  let mut saw_pi_dir = false
+  for a in cmd.args {
+    if a.contains("PI_CODING_AGENT_DIR") &&
+      a.contains("/abs/proj/.choir/pi/agent") {
+      saw_pi_dir = true
+    }
+  }
+  assert_true(saw_pi_dir)
+  let script = cmd.args[cmd.args.length() - 1]
+  assert_false(script.contains("PI_CODING_AGENT_DIR"))
+  assert_true(script.contains("pi"))
+  assert_true(script.contains("[TL exited]"))
+  assert_true(script.contains("exec bash -l"))
+}
+
+///|
 test "zellij_list_sessions_command uses env argv without shell" {
   let cmd = @workspace.zellij_list_sessions_command()
   assert_eq(cmd.program, "env")

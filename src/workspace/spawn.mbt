@@ -535,12 +535,25 @@ pub fn remote_spawn_commands(
 }
 
 ///|
+/// Suffix appended to the TL agent shell line for `choir init --tl …` zellij tabs.
+///
+/// After the TL agent exits, print a blank line and `[TL exited]`, then `exec bash -l` so the pane
+/// stays usable instead of closing on a dead TTY.
+///
+/// Why this stays a shell (`sh -lc` below) and is not merged into [`zellij_new_tab_argv`]:
+/// - [`Command::to_string`] emits shell-shaped text (`cd … && …`, quoted argv), not a argv array.
+/// - Chaining agent exit → echoes → interactive login shell requires shell control operators (`;`,
+///   `exec`). Zellij’s `env <prog> <argv…>` tab entry has no “on exit run …” hook.
+///
+/// A single login-shell script is the minimal wrapper; Pi TL further moves runtime env into zellij
+/// `env` argv (see body), so `PI_*` / Choir env are not duplicated inside this string.
 const INIT_TL_POST_EXIT_SHELL_SUFFIX : String = "; echo; echo '[TL exited]'; exec bash -l"
 
 ///|
 /// TL init zellij tab: Pi injects Choir env via `env` argv (same as [`launch_env_assignments`]); other
-/// TL kinds keep legacy no-env shell body. A single `sh -lc` remains only for the agent sequence plus
-/// post-exit interactive shell.
+/// TL kinds rely on the agent command string only. The child remains `sh -lc <script>` where `script`
+/// is [`Command::to_string`] for the TL agent plus [`INIT_TL_POST_EXIT_SHELL_SUFFIX`] (see comment
+/// there: intentional interactive-shell boundary).
 pub fn init_tl_zellij_tab_command(
   session : String,
   project_dir : String,
