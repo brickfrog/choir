@@ -112,7 +112,28 @@ test "parse_tracked_prs_json maps legacy last_ci_failed to CiRollupStatus" {
     #|    "last_timeout_at": 0
     #|  }
     #|]
-  let parsed = @poller.parse_tracked_prs_json(json_legacy_failure)
-  assert_eq(parsed.length(), 1)
-  assert_eq(parsed[0].last_ci_rollup, Failure)
+  let parsed_failure = @poller.parse_tracked_prs_json(json_legacy_failure)
+  assert_eq(parsed_failure.length(), 1)
+  assert_eq(parsed_failure[0].last_ci_rollup, Failure)
+
+  let json_legacy_unknown =
+    #|[
+    #|  {
+    #|    "pr_number": 3,
+    #|    "agent_id": "a",
+    #|    "branch": "b",
+    #|    "parent_branch": "main",
+    #|    "pr_url": "u",
+    #|    "first_seen": 1,
+    #|    "last_review_state": "none",
+    #|    "last_review_bodies": "",
+    #|    "last_sha": "",
+    #|    "notified_parent": false,
+    #|    "last_ci_failed": false,
+    #|    "last_timeout_at": 0
+    #|  }
+    #|]
+  let parsed_unknown = @poller.parse_tracked_prs_json(json_legacy_unknown)
+  assert_eq(parsed_unknown.length(), 1)
+  assert_eq(parsed_unknown[0].last_ci_rollup, Unknown)
 }
