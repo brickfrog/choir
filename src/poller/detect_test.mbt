@@ -152,6 +152,55 @@ test "detect_events suppresses CIFailureCleared when head just changed (FixesPus
 }
 
 ///|
+test "detect_events suppresses CIFailureCleared when SHA changes regardless of review state" {
+  // Approved state: FixesPushed does not fire, but CIFailureCleared must also
+  // be suppressed because the new head may still have pending CI.
+  let tracked = detect_test_tracked(
+    13,
+    0L,
+    Approved,
+    "",
+    "oldsha",
+    true,
+    0L,
+  )
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "newsha",
+    false,
+    "",
+    10L,
+    900L,
+  )
+  assert_eq(ev.length(), 0)
+}
+
+///|
+test "detect_events no CIFailureCleared when CI stays failed across SHA change" {
+  // Even if SHA changes, CIFailureCleared cannot fire when ci_failed remains true.
+  let tracked = detect_test_tracked(
+    14,
+    0L,
+    Approved,
+    "",
+    "oldsha",
+    true,
+    0L,
+  )
+  let ev = detect_events(
+    tracked,
+    Approved,
+    "newsha",
+    true,
+    "",
+    10L,
+    900L,
+  )
+  assert_eq(ev.length(), 0)
+}
+
+///|
 test "detect_events ReviewTimeout when idle past timeout with no review content" {
   let tracked = detect_test_tracked(2, 0L, None_, "", "sha", false, 0L)
   let timeout = 100L

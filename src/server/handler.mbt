@@ -1945,6 +1945,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
       assert_eq(status, "info")
       assert_true(message.contains("[CI FAILURE CLEARED]"))
       assert_true(message.contains("not a merge/review verdict"))
+      assert_true(message.contains("pending"))
       assert_true(message.contains("re-check"))
       assert_false(message.contains("CI PASSED"))
       assert_false(message.to_lower().contains("green"))
@@ -1965,6 +1966,20 @@ test "leaf_poll_review_injection_message CIFailureCleared is honest about scope"
       assert_false(message.to_lower().contains("green"))
     }
     None => fail("expected leaf CIFailureCleared injection")
+  }
+}
+
+///|
+test "pr_comment_body CIFailureCleared contains pending caveat and no merge signal" {
+  match pr_comment_body(@poller.PollEvent::CIFailureCleared(55), "main.dev-x") {
+    Some((pr_number, body)) => {
+      assert_eq(pr_number, 55)
+      assert_true(body.contains("pending"))
+      assert_true(body.contains("not a merge signal"))
+      assert_false(body.to_lower().contains("passed"))
+      assert_false(body.to_lower().contains("green"))
+    }
+    None => fail("expected pr_comment_body for CIFailureCleared")
   }
 }
 
