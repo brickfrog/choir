@@ -8,6 +8,19 @@ pub(all) enum ReviewState {
 } derive(Show, Eq)
 
 ///|
+/// GitHub `statusCheckRollup` aggregate for the PR head (honest, coarse).
+pub(all) enum CiRollupStatus {
+  /// No checks in the rollup or insufficient fields to classify.
+  Unknown
+  /// At least one check is pending, queued, or in progress.
+  InProgress
+  /// Rollup shows all checks completed successfully (or skipped); not a merge/review verdict.
+  Success
+  /// At least one check failed or errored.
+  Failure
+} derive(Show, Eq)
+
+///|
 /// Tracked state for a single PR in the poller.
 pub(all) struct TrackedPR {
   pr_number : Int
@@ -22,7 +35,7 @@ pub(all) struct TrackedPR {
   mut last_review_bodies : String
   mut last_sha : String
   mut notified_parent : Bool
-  mut last_ci_failed : Bool
+  mut last_ci_rollup : CiRollupStatus
   mut last_timeout_at : Int64
 } derive(Show, Eq)
 
@@ -55,5 +68,8 @@ pub(all) enum PollEvent {
   /// Rollup no longer reports FAILURE/ERROR on this head, after it did on the prior poll for the same SHA.
   /// Checks may still be pending, neutral, or absent; this is not a success or merge verdict.
   CIFailureCleared(Int)
+  /// Rollup reports all checks successful on this head after a prior non-success on the same SHA (e.g. CI finished green).
+  /// Not merge approval, mergeability, or review verdict — re-check thread and policy before merge_pr.
+  CILatestHeadRollupSucceeded(Int)
   PRMerged(Int)
 } derive(Show, Eq)

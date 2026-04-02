@@ -1671,7 +1671,7 @@ fn merge_pr_test_tracked(
     last_review_bodies: "",
     last_sha: "",
     notified_parent: false,
-    last_ci_failed: false,
+    last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
   }
 }
@@ -1787,7 +1787,7 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     @poller.ReviewState::ChangesRequested,
     "",
     "",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
   let got = interpret_merge_pr_preflight(
     false,
@@ -2042,7 +2042,7 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     @poller.ReviewState::ChangesRequested,
     "",
     "",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
   let args : MergePrArgs = {
     pr_number: 9,
@@ -2524,7 +2524,7 @@ test "shutdown_poller_block_pr_number matches critical phase" {
     @poller.ReviewState::ChangesRequested,
     "",
     "",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
   assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), Some(77))
 }
@@ -2542,7 +2542,7 @@ test "shutdown_poller_block_pr_number is none when agent not in critical phase" 
     @poller.ReviewState::ChangesRequested,
     "",
     "",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
   assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), None)
 }
@@ -2605,7 +2605,7 @@ async test "interpret_shutdown blocks poller critical phase before plan" {
     @poller.ReviewState::ChangesRequested,
     "",
     "",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
   let args : ShutdownArgs = { caller_id: Some("main.leaf") }
   let got = interpret_shutdown(
@@ -2710,7 +2710,7 @@ test "cancel_wave_preflight_block_message force skips gate" {
     @poller.ReviewState::ChangesRequested,
     "",
     "",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
   assert_eq(cancel_wave_preflight_block_message(true, [agent], Some(ps)), None)
 }
@@ -2769,7 +2769,7 @@ test "cancel_wave_preflight_block_message first agent wins" {
     @poller.ReviewState::ChangesRequested,
     "",
     "",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
   ps.track_recovered(
     2,
@@ -2781,7 +2781,7 @@ test "cancel_wave_preflight_block_message first agent wins" {
     @poller.ReviewState::ChangesRequested,
     "",
     "",
-    false,
+    @poller.CiRollupStatus::Unknown,
   )
   match cancel_wave_preflight_block_message(false, [a1, a2], Some(ps)) {
     Some(msg) => assert_true(msg.contains("main.first") && msg.contains("#1"))

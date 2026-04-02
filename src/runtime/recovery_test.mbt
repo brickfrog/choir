@@ -60,7 +60,14 @@ async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
     read_poller_state: fn(_dir) { [] },
     write_poller_state: fn(_dir, _tracked) { () },
     gh_poll_pr: fn(_num) {
-      (true, @poller.ReviewState::Approved, "sha1", false, "", true)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha1",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+      )
     },
   }
   let agent_id = find_agent_for_pr_in_lifecycle(mock_provider, "/tmp", 123)
@@ -98,7 +105,14 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
     read_poller_state: fn(_dir) { [] },
     write_poller_state: fn(_dir, _tracked) { () },
     gh_poll_pr: fn(_num) {
-      (true, @poller.ReviewState::Approved, "sha1", false, "", true)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha1",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+      )
     },
   }
   let res = find_pr_for_branch_in_provider(mock_provider, "/tmp", "feat/x")

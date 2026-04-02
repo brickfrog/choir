@@ -5,11 +5,11 @@ test "parse_gh_pr_view_output maps valid gh json to review SHA and CI" {
     #|"headRefOid":"abc123def",
     #|"statusCheckRollup":[{"conclusion":"SUCCESS"}],
     #|"state":"OPEN"}
-  let (ok, review, sha, ci_failed, bodies, open) = parse_gh_pr_view_output(json)
+  let (ok, review, sha, ci_rollup, bodies, open) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, Approved)
   assert_eq(sha, "abc123def")
-  assert_false(ci_failed)
+  assert_eq(ci_rollup, Success)
   assert_eq(bodies, "ship it")
   assert_true(open)
 }
@@ -21,11 +21,11 @@ test "parse_gh_pr_view_output empty reviews yields None_" {
     #|"headRefOid":"",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, review, sha, ci_failed, bodies, open) = parse_gh_pr_view_output(json)
+  let (ok, review, sha, ci_rollup, bodies, open) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, None_)
   assert_eq(sha, "")
-  assert_false(ci_failed)
+  assert_eq(ci_rollup, Unknown)
   assert_eq(bodies, "")
   assert_true(open)
 }
@@ -52,22 +52,22 @@ test "parse_gh_pr_view_output detects CI failure from rollup" {
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[{"conclusion":"FAILURE"}],
     #|"state":"OPEN"}
-  let (ok, _rev, _sha, ci_failed, _bodies, _open) = parse_gh_pr_view_output(
+  let (ok, _rev, _sha, ci_rollup, _bodies, _open) = parse_gh_pr_view_output(
     json,
   )
   assert_true(ok)
-  assert_true(ci_failed)
+  assert_eq(ci_rollup, Failure)
 }
 
 ///|
 test "parse_gh_pr_view_output invalid json returns parse failure sentinel" {
-  let (ok, review, sha, ci_failed, bodies, open) = parse_gh_pr_view_output(
+  let (ok, review, sha, ci_rollup, bodies, open) = parse_gh_pr_view_output(
     "not-json",
   )
   assert_false(ok)
   assert_eq(review, None_)
   assert_eq(sha, "")
-  assert_false(ci_failed)
+  assert_eq(ci_rollup, Unknown)
   assert_eq(bodies, "")
   assert_true(open)
 }
@@ -124,4 +124,31 @@ test "parse_gh_pr_view_output filters pull request overview inline noise with pa
     bodies, "Looks good overall.\n---\n[src/bar.mbt] Please tighten this branch condition.",
   )
   assert_true(open)
+}
+
+///|
+test "parse_gh_pr_view_output rollup InProgress when check is still running" {
+  let json =
+    #|{"reviews":[],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[{"state":"IN_PROGRESS","conclusion":""}],
+    #|"state":"OPEN"}
+  let (ok, _r, _sha, ci_rollup, _b, _o) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(ci_rollup, InProgress)
+}
+
+///|
+test "parse_gh_pr_view_output rollup InProgress when one check still pending" {
+  let json =
+    #|{"reviews":[],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[
+    #|  {"conclusion":"SUCCESS"},
+    #|  {"state":"PENDING","conclusion":""}
+    #|],
+    #|"state":"OPEN"}
+  let (ok, _r, _sha, ci_rollup, _b, _o) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(ci_rollup, InProgress)
 }

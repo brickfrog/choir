@@ -62,7 +62,7 @@ pub fn file_pr_plan(
       last_review_bodies: "",
       last_sha: "",
       notified_parent: false,
-      last_ci_failed: false,
+      last_ci_rollup: @poller.CiRollupStatus::Unknown,
       last_timeout_at: 0L,
     })
   } else {
@@ -262,7 +262,7 @@ pub async fn interpret_file_pr_post_success(
             ("exit", exit_json),
           ])
       }
-      @moontrace.warn("file_pr copilot review request failed", fields=fields)
+      @moontrace.warn("file_pr copilot review request failed", fields~)
       let err_part = match spawn_err {
         Some(err) => " error=" + err
         None => ""
