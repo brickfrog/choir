@@ -1673,6 +1673,7 @@ fn merge_pr_test_tracked(
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
   }
 }
 
@@ -1788,6 +1789,7 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     "",
     "",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   let got = interpret_merge_pr_preflight(
     false,
@@ -1846,6 +1848,7 @@ test "format_tl_pr_recheck_summary ready snapshot when approved success zero thr
   assert_true(s.contains("no tracked blockers"))
   assert_true(s.contains("Does not merge"))
   assert_true(s.contains("success"))
+  assert_true(s.contains("GitHub Copilot issue comment (REST): not seen"))
 }
 
 ///|
@@ -1868,6 +1871,18 @@ test "format_tl_pr_recheck_summary does not claim ready when thread count not fe
   let s = format_tl_pr_recheck_summary(t, None)
   assert_true(s.contains("not fetched"))
   assert_false(s.contains("no tracked blockers"))
+}
+
+///|
+test "format_tl_pr_recheck_summary notes Copilot issue comment when seen on merge-ready snapshot" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    copilot_issue_comment_seen: true,
+  }
+  let s = format_tl_pr_recheck_summary(t, Some(0))
+  assert_true(s.contains("GitHub Copilot issue comment (REST): seen"))
+  assert_true(s.contains("Copilot issue comment observed"))
 }
 
 ///|
@@ -2077,6 +2092,7 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     "",
     "",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   let args : MergePrArgs = {
     pr_number: 9,
@@ -2559,6 +2575,7 @@ test "shutdown_poller_block_pr_number matches critical phase" {
     "",
     "",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), Some(77))
 }
@@ -2577,6 +2594,7 @@ test "shutdown_poller_block_pr_number is none when agent not in critical phase" 
     "",
     "",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), None)
 }
@@ -2640,6 +2658,7 @@ async test "interpret_shutdown blocks poller critical phase before plan" {
     "",
     "",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   let args : ShutdownArgs = { caller_id: Some("main.leaf") }
   let got = interpret_shutdown(
@@ -2745,6 +2764,7 @@ test "cancel_wave_preflight_block_message force skips gate" {
     "",
     "",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   assert_eq(cancel_wave_preflight_block_message(true, [agent], Some(ps)), None)
 }
@@ -2804,6 +2824,7 @@ test "cancel_wave_preflight_block_message first agent wins" {
     "",
     "",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   ps.track_recovered(
     2,
@@ -2816,6 +2837,7 @@ test "cancel_wave_preflight_block_message first agent wins" {
     "",
     "",
     @poller.CiRollupStatus::Unknown,
+    false,
   )
   match cancel_wave_preflight_block_message(false, [a1, a2], Some(ps)) {
     Some(msg) => assert_true(msg.contains("main.first") && msg.contains("#1"))

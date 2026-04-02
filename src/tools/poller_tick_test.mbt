@@ -1,7 +1,15 @@
 ///|
 async fn mock_poll_failure_sentinel(
   _pr_number : Int,
-) -> (Bool, @poller.ReviewState, String, @poller.CiRollupStatus, String, Bool) {
+) -> (
+  Bool,
+  @poller.ReviewState,
+  String,
+  @poller.CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+) {
   @async.sleep(0)
   (
     false,
@@ -10,13 +18,22 @@ async fn mock_poll_failure_sentinel(
     @poller.CiRollupStatus::Unknown,
     "",
     true,
+    false,
   )
 }
 
 ///|
 async fn mock_poll_success_open(
   _pr_number : Int,
-) -> (Bool, @poller.ReviewState, String, @poller.CiRollupStatus, String, Bool) {
+) -> (
+  Bool,
+  @poller.ReviewState,
+  String,
+  @poller.CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+) {
   @async.sleep(0)
   (
     true,
@@ -25,6 +42,7 @@ async fn mock_poll_success_open(
     @poller.CiRollupStatus::Success,
     "body",
     true,
+    false,
   )
 }
 

@@ -7,6 +7,7 @@ pub fn detect_events(
   review_bodies : String,
   now : Int64,
   timeout : Int64,
+  copilot_issue_comment_effective : Bool,
 ) -> Array[PollEvent] {
   let ci_failed = ci_rollup == Failure
   let events = []
@@ -57,9 +58,11 @@ pub fn detect_events(
   }
 
   // Timeout — fire periodically (every timeout interval), not on every tick.
-  // Suppress entirely if any review content has been received.
+  // Suppress entirely if any review content has been received, including a
+  // Copilot issue comment (review objects alone may be empty).
   let has_any_review_content = review_bodies != "" ||
-    tracked.last_review_bodies != ""
+    tracked.last_review_bodies != "" ||
+    copilot_issue_comment_effective
   if now - tracked.first_seen > timeout &&
     tracked.last_review_state == None_ &&
     !has_any_review_content {

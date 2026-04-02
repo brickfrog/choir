@@ -37,6 +37,9 @@ pub(all) struct TrackedPR {
   mut notified_parent : Bool
   mut last_ci_rollup : CiRollupStatus
   mut last_timeout_at : Int64
+  /// True once the poller has observed an issue-thread comment authored by a
+  /// GitHub Copilot bot login (REST `/issues/{n}/comments`), distinct from review objects.
+  mut copilot_issue_comment_seen : Bool
 } derive(Show, Eq)
 
 ///|
