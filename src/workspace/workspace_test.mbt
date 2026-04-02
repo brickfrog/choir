@@ -714,6 +714,38 @@ test "spawn_commands pi worktree writes isolated runtime and launches pi" {
 }
 
 ///|
+test "pi extension payload is stable across workspace layouts" {
+  let body = @workspace.pi_extension_content()
+  let root_pi = @workspace.write_pi_extension("/proj", "/proj/.choir/pi")
+  let wt_pi = @workspace.write_pi_extension(
+    "/proj/.choir/worktrees/pi-leaf", "/proj/.choir/worktrees/pi-leaf/.choir/pi",
+  )
+  assert_eq(root_pi.args[2], body)
+  assert_eq(wt_pi.args[2], body)
+}
+
+///|
+test "init TL pi agent command matches agent_launch_command for root TL Pi spec" {
+  let spec = @types.SpawnSpec::{
+    slug: "root",
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Pi,
+    task: "",
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "",
+    reuse_workspace: true,
+    workspace_slug: Some("root"),
+    reuse_git_branch: Some("root"),
+    spawn_depth: 0,
+  }
+  assert_eq(
+    @workspace.init_tl_agent_command("pi", "/proj"),
+    @workspace.agent_launch_command(spec, "/proj"),
+  )
+}
+
+///|
 test "spawn_commands for inline mode writes metadata and uses zellij run" {
   let spec = @types.SpawnSpec::{
     slug: "worker-a",
