@@ -1218,3 +1218,70 @@ pub async fn interpret_spawn_remote(
     Err(e) => @types.Response::Err(e)
   }
 }
+
+///|
+/// Pure plan for `spawn_gemini`: fixed Dev/Gemini worktree spec and success JSON
+/// (`status`, `agent_id`, `slug`). The interpreter runs `spawn_commands` then
+/// `run_strict`.
+pub(all) struct SpawnGeminiPlan {
+  spec : @types.SpawnSpec
+  ok_response : @types.Response
+} derive(Show)
+
+///|
+pub fn spawn_gemini_plan(args : SpawnGeminiArgs) -> SpawnGeminiPlan {
+  let spec = @types.SpawnSpec::{
+    slug: args.slug,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    task: args.task,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: args.caller_id,
+    parent_branch: args.parent_branch,
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+  }
+  let ok_response = @types.Response::ok_values({
+    "status": String::to_json("spawned"),
+    "agent_id": String::to_json(
+      @workspace.branch_name(args.parent_branch, args.slug),
+    ),
+    "slug": String::to_json(args.slug),
+  })
+  { spec, ok_response }
+}
+
+///|
+/// Local Gemini leaf spawn: plan, `spawn_commands`, `run_strict`. Preserves
+/// `ToolRequest::SpawnGemini` control flow while keeping `dispatch` thin.
+pub async fn interpret_spawn_gemini(
+  spawn_args : SpawnGeminiArgs,
+  project_dir : String,
+  session : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+  extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
+  listen_uds? : String = ".choir/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
+) -> @types.Response {
+  let plan = spawn_gemini_plan(spawn_args)
+  let cmds = @workspace.spawn_commands(
+    plan.spec,
+    project_dir,
+    session,
+    parent_session_id=spawn_args.parent_session_id,
+    extra_mcp_servers_json~,
+    shell_command~,
+    listen_uds~,
+    listen_tcp~,
+    tcp_auth_token~,
+  )
+  match run_strict(runner, cmds, capture~) {
+    Ok(_) => plan.ok_response
+    Err(e) => @types.Response::Err(e)
+  }
+}

@@ -1804,3 +1804,77 @@ async test "interpret_spawn_remote returns err when run_strict fails" {
     _ => fail("expected err from run_strict")
   }
 }
+
+///|
+test "spawn_gemini_plan builds dev gemini worktree spec and spawned response" {
+  let spawn_args : SpawnGeminiArgs = {
+    task: "do the thing",
+    caller_id: "main.tl",
+    slug: "g1",
+    parent_branch: "main",
+    parent_session_id: Some("sess-1"),
+  }
+  let plan = spawn_gemini_plan(spawn_args)
+  assert_eq(plan.spec.slug, "g1")
+  assert_eq(plan.spec.role, @types.Role::Dev)
+  assert_eq(plan.spec.agent_type, @types.AgentType::Gemini)
+  assert_eq(plan.spec.task, "do the thing")
+  assert_eq(plan.spec.isolation, @types.IsolationMode::Worktree)
+  assert_eq(plan.spec.parent_id, "main.tl")
+  assert_eq(plan.spec.parent_branch, "main")
+  assert_eq(plan.spec.reuse_workspace, false)
+  assert_eq(plan.spec.workspace_slug, None)
+  assert_eq(plan.spec.reuse_git_branch, None)
+  assert_eq(plan.spec.spawn_depth, 0)
+  match plan.ok_response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      assert_eq(map.get("agent_id"), Some(String::to_json("main.g1")))
+      assert_eq(map.get("slug"), Some(String::to_json("g1")))
+    }
+    _ => fail("expected ok response")
+  }
+}
+
+///|
+async test "interpret_spawn_gemini returns plan ok when runner succeeds" {
+  let spawn_args : SpawnGeminiArgs = {
+    task: "t",
+    caller_id: "pb.caller",
+    slug: "gem",
+    parent_branch: "pb",
+    parent_session_id: None,
+  }
+  let got = interpret_spawn_gemini(
+    spawn_args, "/tmp/p", "choir", mock_runner_all_ok, mock_capture_empty,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      assert_eq(map.get("agent_id"), Some(String::to_json("pb.gem")))
+      assert_eq(map.get("slug"), Some(String::to_json("gem")))
+    }
+    _ => fail("expected ok")
+  }
+}
+
+///|
+async test "interpret_spawn_gemini returns err when run_strict fails" {
+  let spawn_args : SpawnGeminiArgs = {
+    task: "t",
+    caller_id: "x",
+    slug: "y",
+    parent_branch: "main",
+    parent_session_id: None,
+  }
+  let got = interpret_spawn_gemini(
+    spawn_args, "/tmp/p", "choir", mock_runner_first_fails, mock_capture_empty,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("failed") || msg.contains("status"))
+    _ => fail("expected err from run_strict")
+  }
+}
