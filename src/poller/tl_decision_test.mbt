@@ -56,11 +56,28 @@ test "tl_classify_tracked_pr_workflow distinguishes blocked, waiting, and merge-
 }
 
 ///|
+test "tl_classify_tracked_pr_workflow escalates when review timeout fired and snapshot still has no review" {
+  let t_escalated = {
+    ..sample_tracked(None_, Success, 40),
+    last_timeout_at: 1L,
+  }
+  assert_eq(
+    tl_classify_tracked_pr_workflow(t_escalated, Some(0)),
+    AttentionRequiredCopilotSilentAfterTimeout,
+  )
+}
+
+///|
 test "tl_tracked_pr_workflow_category_sentence covers alert categories" {
   assert_true(
-    tl_tracked_pr_workflow_category_sentence(AttentionRequiredReviewTimeout).contains(
-      "review timed out",
-    ),
+    tl_tracked_pr_workflow_category_sentence(
+      AttentionRequiredCopilotSilentAfterTimeout,
+    ).contains("review wait timed out"),
+  )
+  assert_true(
+    tl_tracked_pr_workflow_category_sentence(
+      AttentionRequiredCopilotSilentAfterTimeout,
+    ).contains("Request review"),
   )
   assert_true(
     tl_tracked_pr_workflow_category_sentence(AttentionRequiredCIFailed).contains(
@@ -111,11 +128,20 @@ test "plan_tl_poll_event_parent timeout and CI failure are attention states" {
   let t = sample_tracked(Approved, Failure, 9)
   assert_eq(
     plan_tl_poll_event_parent(ReviewTimeout(9), t, None),
-    AttentionRequiredReviewTimeout,
+    AttentionRequiredCopilotSilentAfterTimeout,
   )
   assert_eq(
     plan_tl_poll_event_parent(CIFailed(9), t, None),
     AttentionRequiredCIFailed,
+  )
+}
+
+///|
+test "plan_tl_poll_event_parent CI rollup success uses escalation when review timeout already fired" {
+  let t = { ..sample_tracked(None_, Success, 41), last_timeout_at: 100L }
+  assert_eq(
+    plan_tl_poll_event_parent(CILatestHeadRollupSucceeded(41), t, Some(0)),
+    AttentionRequiredCopilotSilentAfterTimeout,
   )
 }
 
@@ -134,4 +160,12 @@ test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
   let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
   assert_true(line.contains("no tracked blockers"))
   assert_true(line.contains("Does not merge"))
+}
+
+///|
+test "tl_tracked_pr_recheck_gate_line mentions escalation when copilot silent after timeout" {
+  let t = { ..sample_tracked(None_, Success, 42), last_timeout_at: 50L }
+  let line = tl_tracked_pr_recheck_gate_line(t, Some(0))
+  assert_true(line.contains("timed out"))
+  assert_true(line.contains("Copilot"))
 }

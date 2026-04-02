@@ -451,6 +451,18 @@ fn render_parent_next_action(
 }
 
 ///|
+
+///|
+/// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
+fn parent_poll_ci_escalation_prefix(tracked : @poller.TrackedPR) -> String {
+  if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+    "Choir already escalated a review wait timeout for this PR (no review in snapshot; Copilot comment trigger may be unreliable).\n\n"
+  } else {
+    ""
+  }
+}
+
+///|
 /// Canonical TL decision line for parent delivery (see `@poller.plan_tl_poll_event_parent`).
 fn parent_poll_tl_decision_suffix(
   tracked : @poller.TrackedPR,
@@ -533,7 +545,7 @@ fn parent_poll_event_message(
         agent_id +
         " PR #" +
         n.to_string() +
-        " has no review after 15min\n" +
+        " — review wait window elapsed; Choir snapshot still shows no PR review\n" +
         "branch: " +
         branch +
         "\n" +
@@ -541,7 +553,8 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "Next action: inspect the PR or retrigger review." +
+        "The @copilot comment trigger is unreliable; use GitHub's Request review (reviewers) or inspect the PR on GitHub. Do not infer progress from CI alone while review is missing from snapshot.\n" +
+        "Next action: request review in GitHub or inspect the PR thread." +
         parent_poll_tl_decision_suffix(
           tracked, event, unresolved_threads_for_recheck,
         )
@@ -609,6 +622,7 @@ fn parent_poll_event_message(
       let summary = @tools.format_tl_pr_recheck_summary(
         tracked, unresolved_threads_for_recheck,
       )
+      let prefix = parent_poll_ci_escalation_prefix(tracked)
       Some(
         (
           "[CI FAILURE CLEARED] " +
@@ -623,6 +637,7 @@ fn parent_poll_event_message(
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
           "\n" +
+          prefix +
           "Next action: re-check the PR thread and full CI status on GitHub before merging or requesting review.\n\n" +
           summary +
           parent_poll_tl_decision_suffix(
@@ -636,6 +651,7 @@ fn parent_poll_event_message(
       let summary = @tools.format_tl_pr_recheck_summary(
         tracked, unresolved_threads_for_recheck,
       )
+      let prefix = parent_poll_ci_escalation_prefix(tracked)
       Some(
         (
           "[CI LATEST HEAD] " +
@@ -650,6 +666,7 @@ fn parent_poll_event_message(
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
           "\n" +
+          prefix +
           "Next action: re-check Copilot/review thread and branch policy, then merge_pr only if appropriate.\n\n" +
           summary +
           parent_poll_tl_decision_suffix(
@@ -2399,9 +2416,48 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     Some((message, status)) => {
       assert_eq(status, "failure")
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Attention required: review timed out"))
+      assert_true(message.contains("Attention required: review wait timed out"))
+      assert_true(message.contains("Request review"))
+      assert_true(message.contains("@copilot"))
+      assert_false(message.contains("15min"))
     }
     None => fail("expected ReviewTimeout message")
+  }
+}
+
+///|
+test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeout already fired" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 171,
+    agent_id: "main.dev-z",
+    branch: "work/z",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/171",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::None_,
+    last_review_bodies: "",
+    last_sha: "abc",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 999L,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      @poller.PollEvent::CILatestHeadRollupSucceeded(171),
+      Some(0),
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, "info")
+      assert_true(
+        message.contains("Choir already escalated a review wait timeout"),
+      )
+      assert_true(message.contains("TLDecision:"))
+      assert_true(message.contains("Attention required: review wait timed out"))
+    }
+    None => fail("expected CILatestHeadRollupSucceeded escalation message")
   }
 }
 
