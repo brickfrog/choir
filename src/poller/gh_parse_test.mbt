@@ -90,6 +90,20 @@ test "parse_gh_pr_view_output filters pull request overview review noise" {
 }
 
 ///|
+test "parse_gh_pr_view_output filters Copilot markdown pull request overview" {
+  let json =
+    #|{"reviews":[{"state":"COMMENTED","body":"## Pull request overview\n\nThis PR improves things.\n\n### Reviewed changes\n\n| File | Description |\n| ---- | ----------- |\n| a.mbt | b |"}],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN"}
+  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(review, Commented)
+  assert_eq(bodies, "")
+  assert_true(open)
+}
+
+///|
 test "parse_gh_pr_view_output dedupes repeated review bodies" {
   let json =
     #|{"reviews":[

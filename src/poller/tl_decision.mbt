@@ -3,7 +3,8 @@
 /// poller snapshot (and optional unresolved thread count when fetched).
 pub(all) enum TlTrackedPrWorkflowCategory {
   BlockedOnChanges
-  AttentionRequiredReviewTimeout
+  /// Review-wait window elapsed; Choir snapshot still shows no review (comment-triggered Copilot is unreliable).
+  AttentionRequiredCopilotSilentAfterTimeout
   AttentionRequiredCIFailed
   WaitingOnReviewOrCI
   /// No Copilot issue comment observed yet on the PR issue thread (REST).
@@ -21,6 +22,18 @@ pub(all) enum TlTrackedPrWorkflowCategory {
 /// Pure merge gate: approved + CI rollup success + zero unresolved threads when
 /// the GraphQL count is available. `None` threads means the gate is not open
 /// (honest: unknown thread state).
+
+///|
+/// True after at least one [`PollEvent::ReviewTimeout`] has been recorded for this PR
+/// and the GitHub review rollup is still `none` in Choir's snapshot. Used to surface
+/// Copilot comment-trigger flakiness vs ordinary waiting.
+pub fn tl_tracked_pr_copilot_review_silent_escalation_active(
+  tracked : TrackedPR,
+) -> Bool {
+  tracked.last_timeout_at > 0L && tracked.last_review_state == None_
+}
+
+///|
 pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   tracked : TrackedPR,
   unresolved_threads : Int?,
@@ -51,6 +64,9 @@ fn tl_snapshot_workflow_category(
     }
     return MergeGateOpenPendingPolicyConfirmation
   }
+  if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+    return AttentionRequiredCopilotSilentAfterTimeout
+  }
   if !tracked.copilot_issue_comment_seen {
     return WaitingOnCopilotIssueComment
   }
@@ -79,8 +95,8 @@ pub fn tl_tracked_pr_workflow_category_sentence(
   match cat {
     BlockedOnChanges =>
       "Blocked on review changes — leaf owns follow-up before merge."
-    AttentionRequiredReviewTimeout =>
-      "Attention required: review timed out — inspect the PR or retrigger review before merge decisions."
+    AttentionRequiredCopilotSilentAfterTimeout =>
+      "Attention required: review wait timed out and Choir still sees no PR review in its snapshot; the @copilot comment trigger may not deliver — use GitHub Request review or inspect the PR before merge decisions."
     AttentionRequiredCIFailed =>
       "Attention required: CI is failing on the latest head — do not merge until the failure is understood or fixed."
     WaitingOnReviewOrCI =>
@@ -114,7 +130,7 @@ pub fn plan_tl_poll_event_parent(
   )
   match event {
     PRMerged(_) => ObservedMergedExternal
-    ReviewTimeout(_) => AttentionRequiredReviewTimeout
+    ReviewTimeout(_) => AttentionRequiredCopilotSilentAfterTimeout
     CIFailed(_) => AttentionRequiredCIFailed
     CIFailureCleared(_) | CILatestHeadRollupSucceeded(_) =>
       if merge_ready {
@@ -125,6 +141,8 @@ pub fn plan_tl_poll_event_parent(
         }
       } else if tracked.last_review_state == ChangesRequested {
         BlockedOnChanges
+      } else if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+        AttentionRequiredCopilotSilentAfterTimeout
       } else if !tracked.copilot_issue_comment_seen {
         WaitingOnCopilotIssueComment
       } else {
@@ -174,6 +192,11 @@ pub fn tl_tracked_pr_recheck_gate_line(
     }
   } else {
     let parts : Array[String] = []
+    if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
+      parts.push(
+        "review wait already timed out with no review in Choir snapshot (comment-triggered Copilot may be unreliable)",
+      )
+    }
     if !tracked.copilot_issue_comment_seen {
       parts.push(
         "no GitHub Copilot issue comment observed (REST issue comments)",
