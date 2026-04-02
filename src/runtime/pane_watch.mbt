@@ -5,15 +5,40 @@ pub fn pane_snapshot_path(agent_id : String) -> String {
 }
 
 ///|
+/// Host I/O for pane viewport subscribe: zellij child processes, pid cleanup, and snapshot files.
+pub(all) struct PaneWatchHost {
+  spawn_zellij_pane_viewport_subscribe : (String, String, String) -> Int
+  kill_pid_best_effort : (Int) -> Unit
+  delete_file_sync : (String) -> Unit
+  read_file : (String) -> String
+}
+
+///|
+pub fn PaneWatchHost::native() -> PaneWatchHost {
+  {
+    spawn_zellij_pane_viewport_subscribe: @sys.spawn_zellij_pane_viewport_subscribe,
+    kill_pid_best_effort: @sys.kill_pid_best_effort,
+    delete_file_sync: fn(path) { ignore(@sys.delete_file_sync(path)) },
+    read_file: @sys.read_file,
+  }
+}
+
+///|
 pub struct PaneWatcher {
   subscribe_pids : Map[String, Int]
   last_change_at : Map[String, Int64]
   last_hashes : Map[String, Int]
+  host : PaneWatchHost
 }
 
 ///|
 pub fn PaneWatcher::new() -> PaneWatcher {
-  { subscribe_pids: {}, last_change_at: {}, last_hashes: {} }
+  PaneWatcher::with_host(PaneWatchHost::native())
+}
+
+///|
+pub fn PaneWatcher::with_host(host : PaneWatchHost) -> PaneWatcher {
+  { subscribe_pids: {}, last_change_at: {}, last_hashes: {}, host }
 }
 
 ///|
@@ -25,7 +50,7 @@ pub fn PaneWatcher::watch_pane(
 ) -> Unit {
   self.last_change_at.set(agent_id, now)
   let snapshot_path = pane_snapshot_path(agent_id)
-  let pid = @sys.spawn_zellij_pane_viewport_subscribe(
+  let pid = (self.host.spawn_zellij_pane_viewport_subscribe)(
     target.session,
     target.name,
     snapshot_path,
@@ -44,12 +69,12 @@ pub fn PaneWatcher::stop_subscribe(
   self.last_hashes.remove(agent_id)
   match self.subscribe_pids.get(agent_id) {
     Some(pid) => {
-      @sys.kill_pid_best_effort(pid)
+      (self.host.kill_pid_best_effort)(pid)
       self.subscribe_pids.remove(agent_id)
     }
     None => ()
   }
-  ignore(@sys.delete_file_sync(pane_snapshot_path(agent_id)))
+  (self.host.delete_file_sync)(pane_snapshot_path(agent_id))
 }
 
 ///|
@@ -57,9 +82,8 @@ pub fn PaneWatcher::read_viewport(
   self : PaneWatcher,
   agent_id : String,
 ) -> String {
-  ignore(self)
   let snapshot_path = pane_snapshot_path(agent_id)
-  @sys.read_file(snapshot_path)
+  (self.host.read_file)(snapshot_path)
 }
 
 ///|
