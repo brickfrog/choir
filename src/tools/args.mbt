@@ -40,7 +40,7 @@ pub(all) struct ForkWaveArgs {
 } derive(Show, Eq)
 
 ///|
-struct SpawnGeminiArgs {
+pub(all) struct SpawnGeminiArgs {
   task : String
   caller_id : String
   slug : String

@@ -768,43 +768,19 @@ pub async fn dispatch(
         @types.Response::Err("failed to write task file: " + path)
       }
     }
-    ToolRequest::SpawnGemini(spawn_args) => {
-      let spec = @types.SpawnSpec::{
-        slug: spawn_args.slug,
-        role: @types.Role::Dev,
-        agent_type: @types.AgentType::Gemini,
-        task: spawn_args.task,
-        isolation: @types.IsolationMode::Worktree,
-        parent_id: spawn_args.caller_id,
-        parent_branch: spawn_args.parent_branch,
-        reuse_workspace: false,
-        workspace_slug: None,
-        reuse_git_branch: None,
-        spawn_depth: 0,
-      }
-      let cmds = @workspace.spawn_commands(
-        spec,
+    ToolRequest::SpawnGemini(spawn_args) =>
+      interpret_spawn_gemini(
+        spawn_args,
         project_dir,
         session,
-        parent_session_id=spawn_args.parent_session_id,
+        runner,
+        capture,
         extra_mcp_servers_json~,
         shell_command~,
         listen_uds~,
         listen_tcp~,
         tcp_auth_token~,
       )
-      match run_strict(runner, cmds, capture~) {
-        Ok(_) =>
-          @types.Response::ok_values({
-            "status": String::to_json("spawned"),
-            "agent_id": String::to_json(
-              @workspace.branch_name(spawn_args.parent_branch, spawn_args.slug),
-            ),
-            "slug": String::to_json(spawn_args.slug),
-          })
-        Err(e) => @types.Response::Err(e)
-      }
-    }
     ToolRequest::RescueLeaf(rescue_args) => {
       let reg = match registry {
         Some(r) => r
