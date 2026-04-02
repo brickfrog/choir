@@ -531,3 +531,69 @@ pub fn interpret_merge_pr_post_success(
   }
   plan.response
 }
+
+///|
+/// Pure `ToolRequest::Shutdown` response when `caller_id` is absent (best-effort ok).
+pub fn shutdown_missing_caller_response() -> @types.Response {
+  @types.Response::ok_values({ "status": String::to_json("shutdown") })
+}
+
+///|
+/// User-facing error when poller blocks shutdown during a critical PR phase.
+pub fn shutdown_poller_block_message(pr_number : Int) -> String {
+  "cannot shutdown: PR #" +
+  pr_number.to_string() +
+  " has changes requested — push fixes first"
+}
+
+///|
+/// Pure predicate: workspace path qualifies for choir-managed worktree removal on
+/// shutdown (matches `agent.workspace.contains(".choir/worktrees/")` in dispatch).
+pub fn shutdown_intent_remove_choir_worktree(workspace : String) -> Bool {
+  workspace.contains(".choir/worktrees/")
+}
+
+///|
+/// Pure post-lifecycle plan for `shutdown`: maps `lifecycle_exit_policy` and
+/// Dev-vs-non-Dev workflow to the tool response, whether to append `ExitRequested`,
+/// and whether the interpreter may attempt `git worktree remove` for choir paths.
+pub(all) struct ShutdownExitPlan {
+  response : @types.Response
+  apply_dev_exit_requested : Bool
+  attempt_worktree_cleanup : Bool
+}
+
+///|
+pub fn shutdown_exit_plan(
+  lifecycle : @phase.AgentLifecycle,
+) -> ShutdownExitPlan {
+  let dev_may_request_exit = match lifecycle.workflow {
+    @phase.WorkflowState::Dev(_) => true
+    _ => false
+  }
+  match @phase.lifecycle_exit_policy(lifecycle) {
+    @phase.LifecycleExitPolicy::Blocked(reason~) =>
+      ShutdownExitPlan::{
+        response: @types.Response::Err(@phase.exit_block_reason_message(reason)),
+        apply_dev_exit_requested: false,
+        attempt_worktree_cleanup: false,
+      }
+    @phase.LifecycleExitPolicy::Deferred(message~) =>
+      ShutdownExitPlan::{
+        response: @types.Response::ok_values({
+          "status": String::to_json("deferred"),
+          "warning": String::to_json(message),
+        }),
+        apply_dev_exit_requested: dev_may_request_exit,
+        attempt_worktree_cleanup: false,
+      }
+    @phase.LifecycleExitPolicy::Allowed =>
+      ShutdownExitPlan::{
+        response: @types.Response::ok_values({
+          "status": String::to_json("shutdown"),
+        }),
+        apply_dev_exit_requested: dev_may_request_exit,
+        attempt_worktree_cleanup: true,
+      }
+  }
+}
