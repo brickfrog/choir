@@ -10,16 +10,6 @@ pub async fn recover_state(
   input : @runtime.RecoveryReconcileInput,
 ) -> Unit {
   let plan = @runtime.plan_recovery(session, input)
-  if plan.missing_pr_poll_rows.length() > 0 {
-    let parts : Array[String] = []
-    for n in plan.missing_pr_poll_rows {
-      parts.push(n.to_string())
-    }
-    @moontrace.warn(
-      "recovery reconcile skipped TrackNewPR: missing gh poll snapshot rows",
-      fields=@moontrace.fields([("pr_numbers", parts.join(",").to_json())]),
-    )
-  }
 
   for action in plan.actions {
     match action {
@@ -198,7 +188,6 @@ test "plan_recovery reconciles local agents and open PRs" {
   // 2. TrackNewPR(123, slug1, ...)
   // 3. SyncLifecycle(slug1, ...)
 
-  assert_eq(plan.missing_pr_poll_rows.length(), 0)
   let actions = plan.actions
   assert_eq(actions.length(), 3)
 
@@ -227,7 +216,7 @@ test "plan_recovery reconciles local agents and open PRs" {
 }
 
 ///|
-test "plan_recovery records missing PR poll rows when TrackNewPR snapshot is absent" {
+test "plan_recovery uses fallback poll row when TrackNewPR snapshot map has no entry" {
   let input : @runtime.RecoveryReconcileInput = {
     panes: { live: { tabs: ["tab1"], panes: [] } },
     prs: {
@@ -271,12 +260,21 @@ test "plan_recovery records missing PR poll rows when TrackNewPR snapshot is abs
     prebuilt_agent_phase: None,
   }
   let plan = @runtime.plan_recovery("session", input)
-  assert_eq(plan.actions.length(), 1)
-  assert_eq(plan.missing_pr_poll_rows.length(), 1)
-  assert_eq(plan.missing_pr_poll_rows[0], 123)
-  match plan.actions[0] {
-    @runtime.RecoveryAction::RegisterAgent(_, _) => ()
-    _ => fail("expected only RegisterAgent when poll row missing")
+  assert_eq(plan.actions.length(), 3)
+  match plan.actions[1] {
+    @runtime.RecoveryAction::TrackNewPR(
+      pr_number~,
+      review~,
+      sha~,
+      ci_rollup~,
+      ..
+    ) => {
+      assert_eq(pr_number, 123)
+      assert_eq(review, @poller.ReviewState::None_)
+      assert_eq(sha, "")
+      assert_eq(ci_rollup, @poller.CiRollupStatus::Unknown)
+    }
+    _ => fail("expected TrackNewPR with fallback poll row")
   }
 }
 
@@ -351,7 +349,6 @@ test "plan_recovery handles offline agent and persisted PR" {
   // 3. RestorePRTracking(456, slug-off, ...)
   // 4. SyncLifecycle(slug-off, ...)
 
-  assert_eq(plan.missing_pr_poll_rows.length(), 0)
   let actions = plan.actions
   assert_eq(actions.length(), 4)
 
