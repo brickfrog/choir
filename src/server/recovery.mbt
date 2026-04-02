@@ -7,13 +7,9 @@ pub fn make_recovery_provider() -> @runtime.RecoveryProvider {
 pub async fn recover_state(
   state : ServerState,
   session : String,
-  snapshot : @runtime.RecoverySnapshot,
+  input : @runtime.RecoveryReconcileInput,
 ) -> Unit {
-  let plan = @runtime.plan_recovery(
-    session,
-    snapshot,
-    state.recovery_provider.gh_poll_pr,
-  )
+  let plan = @runtime.plan_recovery(session, input)
 
   for action in plan.actions {
     match action {
@@ -51,7 +47,7 @@ pub async fn recover_state(
 ///|
 
 ///|
-async test "discover_recovery_snapshot with mock provider" {
+async test "discover_recovery_input with mock provider" {
   let mock_provider : @runtime.RecoveryProvider = {
     zellij_live: fn(_dir, _session) {
       @runtime.ZellijLiveTargets::{ tabs: ["tab1"], panes: ["pane1"] }
@@ -112,71 +108,75 @@ async test "discover_recovery_snapshot with mock provider" {
       )
     },
   }
-  let snapshot = @runtime.discover_recovery_snapshot(
-    mock_provider, "/tmp", "session",
-  )
-  assert_eq(snapshot.zellij_live.tabs, ["tab1"])
-  assert_eq(snapshot.zellij_live.panes, ["pane1"])
-  assert_eq(snapshot.open_prs.length(), 1)
-  assert_eq(snapshot.open_prs[0].pr_number, 123)
-  assert_eq(snapshot.local_agents.length(), 1)
-  assert_eq(snapshot.local_agents[0].slug, "slug1")
+  let input = @runtime.discover_recovery_input(mock_provider, "/tmp", "session")
+  assert_eq(input.panes.live.tabs, ["tab1"])
+  assert_eq(input.panes.live.panes, ["pane1"])
+  assert_eq(input.prs.open_prs.length(), 1)
+  assert_eq(input.prs.open_prs[0].pr_number, 123)
+  assert_eq(input.files.local_agents.length(), 1)
+  assert_eq(input.files.local_agents[0].slug, "slug1")
+  match input.prs.polls.get(123) {
+    Some(row) => {
+      assert_eq(row.review, @poller.ReviewState::Approved)
+      assert_eq(row.sha, "sha1")
+    }
+    None => fail("expected PR poll row for open PR without persisted tracking")
+  }
 }
 
 ///|
-async test "plan_recovery reconciles local agents and open PRs" {
-  let snapshot : @runtime.RecoverySnapshot = {
-    zellij_live: { tabs: ["tab1"], panes: [] },
-    open_prs: [
-      {
-        pr_number: 123,
-        branch: "feat/x",
-        base: "main",
-        url: "https://gh.test/123",
-        created_sec: Some(1000L),
-      },
-    ],
-    local_agents: [
-      {
-        slug: "slug1",
-        dir_name: "worktrees",
-        agent: Some({
-          agent_id: @types.AgentId("slug1"),
-          role: @types.Role::Dev,
-          agent_type: @types.AgentType::Pi,
-          parent: None,
-          workspace: "/tmp/w",
+test "plan_recovery reconciles local agents and open PRs" {
+  let polls : Map[Int, @runtime.RecoveryPrPollRow] = Map::new()
+  polls.set(123, {
+    review: @poller.ReviewState::Approved,
+    sha: "sha1",
+    ci_rollup: @poller.CiRollupStatus::Success,
+    review_bodies: "",
+    copilot_issue_comment_seen: false,
+  })
+  let input : @runtime.RecoveryReconcileInput = {
+    panes: { live: { tabs: ["tab1"], panes: [] } },
+    prs: {
+      open_prs: [
+        {
+          pr_number: 123,
           branch: "feat/x",
-          terminal_target: Some({
-            kind: @types.TargetKind::ZellijTab,
-            session: "session",
-            name: "tab1",
+          base: "main",
+          url: "https://gh.test/123",
+          created_sec: Some(1000L),
+        },
+      ],
+      polls,
+    },
+    files: {
+      local_agents: [
+        {
+          slug: "slug1",
+          dir_name: "worktrees",
+          agent: Some({
+            agent_id: @types.AgentId("slug1"),
+            role: @types.Role::Dev,
+            agent_type: @types.AgentType::Pi,
+            parent: None,
+            workspace: "/tmp/w",
+            branch: "feat/x",
+            terminal_target: Some({
+              kind: @types.TargetKind::ZellijTab,
+              session: "session",
+              name: "tab1",
+            }),
+            host: @types.Host::Local,
+            spawn_depth: 0,
+            state: @types.AgentState::Active,
           }),
-          host: @types.Host::Local,
-          spawn_depth: 0,
-          state: @types.AgentState::Active,
-        }),
-      },
-    ],
-    persisted_tracked_prs: [],
+        },
+      ],
+      persisted_tracked_prs: [],
+    },
     recovered_at: 2000L,
   }
 
-  let plan = @runtime.plan_recovery("session", snapshot, async fn(
-    _pr_number,
-    _skip,
-  ) {
-    @async.sleep(0)
-    (
-      true,
-      @poller.ReviewState::Approved,
-      "sha1",
-      @poller.CiRollupStatus::Success,
-      "",
-      true,
-      false,
-    )
-  })
+  let plan = @runtime.plan_recovery("session", input)
 
   // Expect:
   // 1. RegisterAgent(slug1, alive=true)
@@ -211,77 +211,68 @@ async test "plan_recovery reconciles local agents and open PRs" {
 }
 
 ///|
-async test "plan_recovery handles offline agent and persisted PR" {
-  let snapshot : @runtime.RecoverySnapshot = {
-    zellij_live: { tabs: [], panes: [] },
-    open_prs: [
-      {
-        pr_number: 456,
-        branch: "feat/offline",
-        base: "main",
-        url: "https://gh.test/456",
-        created_sec: Some(3000L),
-      },
-    ],
-    local_agents: [
-      {
-        slug: "slug-off",
-        dir_name: "worktrees",
-        agent: Some({
-          agent_id: @types.AgentId("slug-off"),
-          role: @types.Role::Dev,
-          agent_type: @types.AgentType::Pi,
-          parent: None,
-          workspace: "/tmp/w-off",
+test "plan_recovery handles offline agent and persisted PR" {
+  let input : @runtime.RecoveryReconcileInput = {
+    panes: { live: { tabs: [], panes: [] } },
+    prs: {
+      open_prs: [
+        {
+          pr_number: 456,
           branch: "feat/offline",
-          terminal_target: Some({
-            kind: @types.TargetKind::ZellijTab,
-            session: "session",
-            name: "tab-off",
+          base: "main",
+          url: "https://gh.test/456",
+          created_sec: Some(3000L),
+        },
+      ],
+      polls: Map::new(),
+    },
+    files: {
+      local_agents: [
+        {
+          slug: "slug-off",
+          dir_name: "worktrees",
+          agent: Some({
+            agent_id: @types.AgentId("slug-off"),
+            role: @types.Role::Dev,
+            agent_type: @types.AgentType::Pi,
+            parent: None,
+            workspace: "/tmp/w-off",
+            branch: "feat/offline",
+            terminal_target: Some({
+              kind: @types.TargetKind::ZellijTab,
+              session: "session",
+              name: "tab-off",
+            }),
+            host: @types.Host::Local,
+            spawn_depth: 0,
+            state: @types.AgentState::Active,
           }),
-          host: @types.Host::Local,
-          spawn_depth: 0,
-          state: @types.AgentState::Active,
-        }),
-      },
-    ],
-    persisted_tracked_prs: [
-      @poller.TrackedPR::{
-        pr_number: 456,
-        agent_id: "slug-off",
-        branch: "feat/offline",
-        parent_branch: "main",
-        pr_url: "https://gh.test/456",
-        first_seen: 3000L,
-        consecutive_failures: 0,
-        backoff_until: 0L,
-        last_review_state: @poller.ReviewState::Commented,
-        last_review_bodies: "some comments",
-        last_sha: "sha-off",
-        notified_parent: false,
-        last_ci_rollup: @poller.CiRollupStatus::Unknown,
-        last_timeout_at: 0L,
-        copilot_issue_comment_seen: false,
-      },
-    ],
+        },
+      ],
+      persisted_tracked_prs: [
+        @poller.TrackedPR::{
+          pr_number: 456,
+          agent_id: "slug-off",
+          branch: "feat/offline",
+          parent_branch: "main",
+          pr_url: "https://gh.test/456",
+          first_seen: 3000L,
+          consecutive_failures: 0,
+          backoff_until: 0L,
+          last_review_state: @poller.ReviewState::Commented,
+          last_review_bodies: "some comments",
+          last_sha: "sha-off",
+          notified_parent: false,
+          last_ci_rollup: @poller.CiRollupStatus::Unknown,
+          last_timeout_at: 0L,
+          copilot_issue_comment_seen: false,
+        },
+      ],
+    },
     recovered_at: 4000L,
   }
 
-  let plan = @runtime.plan_recovery("session", snapshot, async fn(
-    _pr_number,
-    _skip,
-  ) {
-    @async.sleep(0)
-    (
-      true,
-      @poller.ReviewState::None_,
-      "",
-      @poller.CiRollupStatus::Unknown,
-      "",
-      true,
-      false,
-    )
-  })
+  let plan = @runtime.plan_recovery("session", input)
 
   // Expect:
   // 1. RegisterAgent(slug-off, alive=false)
