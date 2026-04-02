@@ -52,5 +52,8 @@ pub(all) enum PollEvent {
   FixesPushed(Int)
   ReviewTimeout(Int)
   CIFailed(Int)
+  /// Rollup no longer reports FAILURE/ERROR on this head, after it did on the prior poll for the same SHA.
+  /// Checks may still be pending, neutral, or absent; this is not a success or merge verdict.
+  CIFailureCleared(Int)
   PRMerged(Int)
 } derive(Show, Eq)
