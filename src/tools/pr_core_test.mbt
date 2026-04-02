@@ -1184,6 +1184,74 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
 }
 
 ///|
+async fn mock_runner_file_pr_copilot_comment_fails_reviewer_runs(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  assert_eq(cmds.length(), 1)
+  let n = file_pr_copilot_runner_seq[0]
+  file_pr_copilot_runner_seq[0] = n + 1
+  if n == 0 {
+    // comment step — return failure
+    assert_eq(cmds[0].args[1], "comment")
+    [1]
+  } else if n == 1 {
+    // reviewer step should still run despite prior comment failure
+    assert_eq(cmds[0].args[0], "pr")
+    assert_eq(cmds[0].args[1], "edit")
+    [0]
+  } else {
+    fail("unexpected extra runner invocation")
+    []
+  }
+}
+
+///|
+async test "interpret_file_pr_post_success copilot review comment failure is best-effort" {
+  file_pr_copilot_runner_seq[0] = 0
+  let project_dir = "/tmp/rc-fpr-comment-fail"
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let log_path = project_dir + "/.choir/delivery.log"
+  ignore(@sys.delete_file_sync(log_path))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+    review_context: Some("plan/interpret split"),
+  }
+  let pr : PullRequestInfo = {
+    number: 55,
+    url: "https://example.test/pr/55",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  let effects = file_pr_post_success_effects(plan, false, false)
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    true,
+    effects,
+    None,
+    None,
+    mock_runner_file_pr_copilot_comment_fails_reviewer_runs,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok despite comment failure")
+  }
+  assert_eq(file_pr_copilot_runner_seq[0], 2)
+  let log = @sys.read_file(log_path)
+  assert_true(log.contains("copilot_review_comment failed"))
+  assert_true(log.contains("pr=55"))
+}
+
+///|
 async fn mock_runner_copilot_uses_worktree_path(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
