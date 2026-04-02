@@ -995,6 +995,57 @@ async test "interpret_file_pr ok response matches full pipeline" {
 }
 
 ///|
+test "interpret_track_pr returns poller unavailable without poller_state" {
+  let args : TrackPrArgs = {
+    pr_number: 42,
+    agent_id: "main.leaf",
+    branch: "main.topic",
+    parent_branch: "main",
+    pr_url: "https://example.test/pr/42",
+  }
+  let got = interpret_track_pr(args, "/tmp", None, 0L)
+  match got {
+    @types.Response::Err(msg) => assert_eq(msg, "poller unavailable")
+    _ => fail("expected err")
+  }
+}
+
+///|
+test "interpret_track_pr ensure_tracked writes state and returns tracked envelope" {
+  let project_dir = "/tmp/choir-track-pr-" + @sys.get_pid().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let args : TrackPrArgs = {
+    pr_number: 99,
+    agent_id: "main.agent",
+    branch: "feat-x",
+    parent_branch: "develop",
+    pr_url: "https://gh/pr/99",
+  }
+  let ps = @poller.PollerState::new()
+  let got = interpret_track_pr(args, project_dir, Some(ps), 12345L)
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("tracked")))
+      assert_eq(map.get("branch"), Some(String::to_json("feat-x")))
+      assert_eq(map.get("parent_branch"), Some(String::to_json("develop")))
+      assert_eq(map.get("pr_url"), Some(String::to_json("https://gh/pr/99")))
+    }
+    _ => fail("expected ok")
+  }
+  match ps.get(99) {
+    Some(t) => {
+      assert_eq(t.agent_id, "main.agent")
+      assert_eq(t.branch, "feat-x")
+      assert_eq(t.parent_branch, "develop")
+      assert_eq(t.pr_url, "https://gh/pr/99")
+      assert_eq(t.first_seen, 12345L)
+    }
+    None => fail("expected tracked PR in poller state")
+  }
+}
+
+///|
 fn merge_pr_test_tracked(
   review : @poller.ReviewState,
   branch : String,

@@ -381,26 +381,12 @@ pub async fn dispatch(
         capture,
       )
     ToolRequest::TrackPr(track_pr_args) =>
-      match poller_state {
-        Some(ps) => {
-          ps.ensure_tracked(
-            track_pr_args.pr_number,
-            track_pr_args.agent_id,
-            track_pr_args.branch,
-            track_pr_args.parent_branch,
-            track_pr_args.pr_url,
-            @poller.now_sec(),
-          )
-          ignore(ps.write_state_file(project_dir))
-          @types.Response::ok_values({
-            "status": String::to_json("tracked"),
-            "branch": String::to_json(track_pr_args.branch),
-            "parent_branch": String::to_json(track_pr_args.parent_branch),
-            "pr_url": String::to_json(track_pr_args.pr_url),
-          })
-        }
-        None => @types.Response::Err("poller unavailable")
-      }
+      interpret_track_pr(
+        track_pr_args,
+        project_dir,
+        poller_state,
+        @poller.now_sec(),
+      )
     ToolRequest::NotifyParent(notify_args) => {
       let parent_resolution = match registry {
         Some(reg) =>
