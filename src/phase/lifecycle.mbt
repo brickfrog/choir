@@ -118,7 +118,7 @@ pub(all) enum LifecycleEffect {
     agent_id~ : String,
     from_lc~ : AgentLifecycle,
     to_lc~ : AgentLifecycle,
-    trigger~ : String
+    trigger~ : @types.LifecycleTrigger
   )
 } derive(Show, Eq, ToJson, FromJson)
 

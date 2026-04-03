@@ -3,7 +3,7 @@ pub(all) enum TeardownEffect {
   PersistLifecycle(
     agent_id~ : String,
     lifecycle~ : @phase.AgentLifecycle,
-    trigger~ : String
+    trigger~ : @types.LifecycleTrigger
   )
   SyncParentLifecycle(agent_id~ : String, lifecycle~ : @phase.AgentLifecycle)
   NotifyParent(
@@ -153,7 +153,11 @@ pub fn plan_finalize(
     workflow: finalized_workflow,
   }
   effects.push(
-    PersistLifecycle(agent_id~, lifecycle=finalized, trigger="FinalizeComplete"),
+    PersistLifecycle(
+      agent_id~,
+      lifecycle=finalized,
+      trigger=@types.LifecycleTrigger::FinalizeComplete,
+    ),
   )
   effects.push(SyncParentLifecycle(agent_id~, lifecycle=finalized))
   effects.push(ClearRuntimeTracking(agent_id))

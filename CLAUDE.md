@@ -25,13 +25,9 @@ Choir follows an exomonad-style architecture. Respect these invariants:
 - **Use `ChoirError` suberror, not `String`, for errors.** New error paths should return `Result[T, ChoirError]` or `raise ChoirError`, not `Result[T, String]`. The `ChoirError` type in `src/types/error.mbt` has variants for common cases.
 - **Inject I/O dependencies.** Functions that need to run commands, capture output, or read files should take the capability as an optional parameter with a default (see `dispatch()` pattern with `runner?`, `capture?`, `git_capture?`). This enables testing with mocks.
 
-### Known gaps (do not widen)
+### Do not widen
 
-These are pre-existing violations to fix, not patterns to follow:
-
-- `trigger : String` in `phase/lifecycle.mbt` lifecycle effects — should be an enum
-- `from_state`/`to_state : String` in `server/event_log.mbt` — stringified JSON instead of typed transitions
-- Direct `@exec.capture_hook_script_merged` calls in `tools/dispatch.mbt` — should use injected parameter
+The former known gaps (typed lifecycle triggers, typed lifecycle snapshots in event logging, injected hook capture in `handle_request` / `fire_hook_async`) are resolved; do not reintroduce stringly triggers, manual JSON stringification at call sites for lifecycle transitions, or direct `@exec.capture_hook_script_merged` in those paths.
 
 ## Safety
 
