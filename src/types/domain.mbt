@@ -239,3 +239,10 @@ pub(all) struct MutexLock {
   acquired : Int64
   ttl : Int64
 } derive(Show)
+
+///|
+pub(all) enum TaskStatus {
+  Todo
+  InProgress
+  Done
+} derive(Show, Eq)

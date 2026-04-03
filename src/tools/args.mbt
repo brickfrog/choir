@@ -2,7 +2,7 @@
 struct TaskFile {
   id : String
   title : String
-  status : String
+  status : @types.TaskStatus
   assignee : String
   notes : String
 } derive(Show, Eq)
@@ -94,7 +94,7 @@ pub(all) struct RemoteSpawnArgs {
 struct TaskCreateArgs {
   id : String
   title : String
-  status : String
+  status : @types.TaskStatus
   assignee : String
   notes : String
 } derive(Show, Eq)
@@ -102,7 +102,7 @@ struct TaskCreateArgs {
 ///|
 struct TaskUpdateArgs {
   id : String
-  status : String?
+  status : @types.TaskStatus?
   assignee : String?
   notes : String?
 } derive(Show, Eq)
