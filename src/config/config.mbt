@@ -1,53 +1,25 @@
 ///|
 /// Parse a role string into a Role enum.
 pub fn parse_role(s : String) -> Result[@types.Role, @types.ChoirError] {
-  match s {
-    "root" => Ok(@types.Role::Root)
-    "tl" => Ok(@types.Role::TL)
-    "dev" => Ok(@types.Role::Dev)
-    "worker" => Ok(@types.Role::Worker)
-    _ => Err(@types.ChoirError::ConfigError("unknown role: " + s))
-  }
+  try? @types.Role::parse_wire(s)
 }
 
 ///|
 pub fn parse_agent_type(
   s : String,
 ) -> Result[@types.AgentType, @types.ChoirError] {
-  match s {
-    "claude" => Ok(@types.AgentType::Claude)
-    "gemini" => Ok(@types.AgentType::Gemini)
-    "moon_pilot" => Ok(@types.AgentType::MoonPilot)
-    "moonpilot" => Ok(@types.AgentType::MoonPilot)
-    "codex" => Ok(@types.AgentType::Codex)
-    "cursor_agent" => Ok(@types.AgentType::CursorAgent)
-    "cursoragent" => Ok(@types.AgentType::CursorAgent)
-    "pi" => Ok(@types.AgentType::Pi)
-    _ => Err(@types.ChoirError::ConfigError("unknown agent_type: " + s))
-  }
+  try? @types.AgentType::parse_wire(s)
 }
 
 ///|
-/// Role to its config string representation.
+/// Role to its wire/config string representation.
 pub fn role_to_string(role : @types.Role) -> String {
-  match role {
-    @types.Role::Root => "root"
-    @types.Role::TL => "tl"
-    @types.Role::Dev => "dev"
-    @types.Role::Worker => "worker"
-  }
+  role.to_wire_string()
 }
 
 ///|
 pub fn agent_type_to_string(agent_type : @types.AgentType) -> String {
-  match agent_type {
-    @types.AgentType::Claude => "claude"
-    @types.AgentType::Gemini => "gemini"
-    @types.AgentType::MoonPilot => "moon_pilot"
-    @types.AgentType::Codex => "codex"
-    @types.AgentType::CursorAgent => "cursor_agent"
-    @types.AgentType::Pi => "pi"
-  }
+  agent_type.to_wire_string()
 }
 
 ///|
@@ -198,7 +170,7 @@ pub fn parse_config(
       match parse_bool_config_value(raw) {
         Ok(b) => b
         Err(msg) =>
-          return Err(@types.ChoirError::ConfigError("pr_review: " + msg))
+          return Err(@types.ChoirError::config_error("pr_review: " + msg))
       }
   }
 
@@ -223,18 +195,18 @@ pub fn parse_config(
 fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ChoirError] {
   let s = raw.trim().to_string()
   if s == "" {
-    return Err(@types.ChoirError::ConfigError("spawn_depth cannot be empty"))
+    return Err(@types.ChoirError::config_error("spawn_depth cannot be empty"))
   }
   let mut n = 0
   for c in s {
     if c >= '0' && c <= '9' {
       n = n * 10 + (c.to_int() - '0'.to_int())
     } else {
-      return Err(@types.ChoirError::ConfigError("invalid spawn_depth: " + raw))
+      return Err(@types.ChoirError::config_error("invalid spawn_depth: " + raw))
     }
   }
   if n > 1 {
-    return Err(@types.ChoirError::ConfigError("spawn_depth must be 0 or 1"))
+    return Err(@types.ChoirError::config_error("spawn_depth must be 0 or 1"))
   }
   Ok(n)
 }
@@ -302,7 +274,7 @@ pub fn parse_config_local(
   }
   match local_cfg.role {
     Some(r) => Ok(r)
-    None => Err(@types.ChoirError::ConfigError("missing role in local config"))
+    None => Err(@types.ChoirError::config_error("missing role in local config"))
   }
 }
 

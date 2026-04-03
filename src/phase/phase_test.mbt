@@ -502,7 +502,7 @@ test "resolve_agent_with_fallback - in registry" {
       assert_eq(a.role, @types.Role::Dev)
       assert_eq(a.agent_type, @types.AgentType::Gemini)
     }
-    Err(e) => fail("should have resolved from registry: " + e.to_string())
+    Err(e) => fail("should have resolved from registry: " + e.message())
   }
 }
 
@@ -537,7 +537,7 @@ test "resolve_agent_with_fallback - fallback to lifecycle" {
       }
     }
     Err(e) =>
-      fail("should have resolved from lifecycle fallback: " + e.to_string())
+      fail("should have resolved from lifecycle fallback: " + e.message())
   }
 
   // Cleanup
@@ -586,7 +586,7 @@ test "resolve_parent_with_fallback - parent in registry" {
   )
   match resolved {
     Ok(a) => assert_eq(a.agent_id.to_string(), parent_id)
-    Err(e) => fail("should have resolved parent: " + e.to_string())
+    Err(e) => fail("should have resolved parent: " + e.message())
   }
 }
 

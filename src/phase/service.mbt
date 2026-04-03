@@ -486,7 +486,7 @@ pub fn resolve_agent_with_fallback(
             state: lifecycle.to_agent_state(),
             spawn_depth: 0,
           })
-        None => Err(@types.ChoirError::AgentNotFound(agent_id))
+        None => Err(@types.ChoirError::agent_not_found(agent_id))
       }
   }
 }
@@ -504,7 +504,7 @@ pub fn resolve_parent_with_fallback(
         Some(parent_id) =>
           resolve_agent_with_fallback(project_dir, session, reg, parent_id)
         None =>
-          Err(@types.ChoirError::AgentNotFound("no parent for " + caller_id))
+          Err(@types.ChoirError::agent_not_found("no parent for " + caller_id))
       }
     Err(e) => Err(e)
   }
@@ -560,7 +560,7 @@ pub fn sync_parent_child_lifecycle(
     child_id: agent_id,
     slug: extract_slug(agent_id),
     branch: agent.branch,
-    agent_type: agent.agent_type.to_string(),
+    agent_type: agent.agent_type.to_wire_string(),
     summary: child_summary_from_lifecycle(lifecycle),
   }
   let parent_lifecycle = read_or_default_lifecycle(
