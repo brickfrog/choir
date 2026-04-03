@@ -1668,35 +1668,36 @@ pub async fn interpret_kill_agent(
 ) -> @types.Response {
   match registry {
     None => @types.Response::Err("no agent registry available")
-    Some(reg) =>
-      try {
-        let agent = reg.get(args.agent_id)
-        match kill_agent_pane_close_command(agent) {
-          Some(cmd) => {
-            let _ = runner([cmd])
-            ()
-          }
-          None => ()
-        }
-        match kill_agent_worktree_remove_command(agent) {
-          Some(cmd) => {
-            let _ = runner([cmd])
-            ()
-          }
-          None => ()
-        }
-        let _ = reg.set_state(args.agent_id, @types.AgentState::Failed)
-        @moontrace.warn(
-          "agent killed",
-          fields=@moontrace.fields([
-            ("agent_id", args.agent_id.to_json()),
-            ("reason", args.reason.to_json()),
-          ]),
-        )
-        kill_agent_ok_response(args.agent_id)
-      } catch {
-        _ => @types.Response::Err("agent not found: " + args.agent_id)
+    Some(reg) => {
+      let agent = reg.get(args.agent_id) catch {
+        _ => return @types.Response::Err("agent not found: " + args.agent_id)
       }
+      match kill_agent_pane_close_command(agent) {
+        Some(cmd) => {
+          let _ = runner([cmd])
+          ()
+        }
+        None => ()
+      }
+      match kill_agent_worktree_remove_command(agent) {
+        Some(cmd) => {
+          let _ = runner([cmd])
+          ()
+        }
+        None => ()
+      }
+      ignore(reg.set_state(args.agent_id, @types.AgentState::Failed)) catch {
+        _ => ()
+      }
+      @moontrace.warn(
+        "agent killed",
+        fields=@moontrace.fields([
+          ("agent_id", args.agent_id.to_json()),
+          ("reason", args.reason.to_json()),
+        ]),
+      )
+      kill_agent_ok_response(args.agent_id)
+    }
   }
 }
 
@@ -2375,7 +2376,7 @@ pub async fn interpret_rescue_leaf(
     None => return @types.Response::Err("poller unavailable for rescue_leaf")
   }
   let from_agent = try reg.get(rescue_args.from_agent_id) catch {
-    e => return @types.Response::Err(@types.choir_error_message_from_caught(e))
+    e => return tool_response_err_from_caught(e)
   } noraise {
     a => a
   }
@@ -2473,7 +2474,7 @@ pub async fn interpret_rescue_leaf_post_spawn(
     )
   }
   try reg.remove(plan.from_agent_id) catch {
-    e => return @types.Response::Err(@types.choir_error_message_from_caught(e))
+    e => return tool_response_err_from_caught(e)
   } noraise {
     _ => ()
   }
