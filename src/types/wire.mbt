@@ -9,25 +9,31 @@ fn json_to_compat_string(json : Json) -> String {
 }
 
 ///|
-/// Internal wire format request (UDS/TCP, not MCP JSON-RPC).
-pub(all) struct RequestArgs {
+/// JSON object field bag used on the internal wire (request args and ok-payload fields).
+pub(all) struct FieldMap {
   values : Map[String, Json]
 } derive(Show)
 
 ///|
-pub fn RequestArgs::new(values : Map[String, String]) -> RequestArgs {
+pub type RequestArgs = FieldMap
+
+///|
+pub type ResponseFields = FieldMap
+
+///|
+pub fn FieldMap::new(values : Map[String, String]) -> FieldMap {
   let converted : Map[String, Json] = {}
   values.each(fn(k, v) { converted.set(k, v.to_json()) })
   { values: converted }
 }
 
 ///|
-pub fn RequestArgs::from_values(values : Map[String, Json]) -> RequestArgs {
+pub fn FieldMap::from_values(values : Map[String, Json]) -> FieldMap {
   { values, }
 }
 
 ///|
-pub fn RequestArgs::get(self : RequestArgs, key : String) -> String? {
+pub fn FieldMap::get(self : FieldMap, key : String) -> String? {
   match self.values.get(key) {
     Some(value) => Some(json_to_compat_string(value))
     None => None
@@ -35,12 +41,12 @@ pub fn RequestArgs::get(self : RequestArgs, key : String) -> String? {
 }
 
 ///|
-pub fn RequestArgs::get_json(self : RequestArgs, key : String) -> Json? {
+pub fn FieldMap::get_json(self : FieldMap, key : String) -> Json? {
   self.values.get(key)
 }
 
 ///|
-pub fn RequestArgs::get_int(self : RequestArgs, key : String) -> Int? {
+pub fn FieldMap::get_int(self : FieldMap, key : String) -> Int? {
   match self.values.get(key) {
     Some(Number(n, ..)) => Some(n.to_int())
     _ => None
@@ -48,7 +54,7 @@ pub fn RequestArgs::get_int(self : RequestArgs, key : String) -> Int? {
 }
 
 ///|
-pub fn RequestArgs::get_bool(self : RequestArgs, key : String) -> Bool? {
+pub fn FieldMap::get_bool(self : FieldMap, key : String) -> Bool? {
   match self.values.get(key) {
     Some(True) => Some(true)
     Some(False) => Some(false)
@@ -57,105 +63,40 @@ pub fn RequestArgs::get_bool(self : RequestArgs, key : String) -> Bool? {
 }
 
 ///|
-pub fn RequestArgs::contains(self : RequestArgs, key : String) -> Bool {
+pub fn FieldMap::contains(self : FieldMap, key : String) -> Bool {
   self.values.contains(key)
 }
 
 ///|
-pub fn RequestArgs::each(
-  self : RequestArgs,
-  f : (String, String) -> Unit,
-) -> Unit {
+pub fn FieldMap::each(self : FieldMap, f : (String, String) -> Unit) -> Unit {
   self.values.each(fn(k, v) { f(k, json_to_compat_string(v)) })
 }
 
 ///|
-pub fn RequestArgs::each_json(
-  self : RequestArgs,
-  f : (String, Json) -> Unit,
-) -> Unit {
+pub fn FieldMap::each_json(self : FieldMap, f : (String, Json) -> Unit) -> Unit {
   self.values.each(f)
 }
 
 ///|
-pub fn RequestArgs::to_map(self : RequestArgs) -> Map[String, String] {
+pub fn FieldMap::to_map(self : FieldMap) -> Map[String, String] {
   let converted : Map[String, String] = {}
   self.values.each(fn(k, v) { converted.set(k, json_to_compat_string(v)) })
   converted
 }
 
 ///|
-pub fn RequestArgs::to_json_map(self : RequestArgs) -> Map[String, Json] {
+pub fn FieldMap::to_json_map(self : FieldMap) -> Map[String, Json] {
   self.values
 }
 
 ///|
+/// Internal wire format request (UDS/TCP, not MCP JSON-RPC).
 pub(all) struct Request {
   req_method : String
   role : Role
   name : String
   args : RequestArgs
 } derive(Show)
-
-///|
-pub(all) struct ResponseFields {
-  values : Map[String, Json]
-} derive(Show)
-
-///|
-pub fn ResponseFields::new(values : Map[String, String]) -> ResponseFields {
-  let converted : Map[String, Json] = {}
-  values.each(fn(k, v) { converted.set(k, v.to_json()) })
-  { values: converted }
-}
-
-///|
-pub fn ResponseFields::from_values(
-  values : Map[String, Json],
-) -> ResponseFields {
-  { values, }
-}
-
-///|
-pub fn ResponseFields::get(self : ResponseFields, key : String) -> String? {
-  match self.values.get(key) {
-    Some(value) => Some(json_to_compat_string(value))
-    None => None
-  }
-}
-
-///|
-pub fn ResponseFields::get_json(self : ResponseFields, key : String) -> Json? {
-  self.values.get(key)
-}
-
-///|
-pub fn ResponseFields::each(
-  self : ResponseFields,
-  f : (String, String) -> Unit,
-) -> Unit {
-  self.values.each(fn(k, v) { f(k, json_to_compat_string(v)) })
-}
-
-///|
-pub fn ResponseFields::each_json(
-  self : ResponseFields,
-  f : (String, Json) -> Unit,
-) -> Unit {
-  self.values.each(f)
-}
-
-///|
-pub fn ResponseFields::to_map(self : ResponseFields) -> Map[String, String] {
-  let converted : Map[String, String] = {}
-  self.values.each(fn(k, v) { converted.set(k, json_to_compat_string(v)) })
-  converted
-}
-
-///|
-pub fn ResponseFields::to_json_map(self : ResponseFields) -> Map[String, Json] {
-  self.values
-}
 
 ///|
 /// Internal wire format response.
@@ -166,12 +107,12 @@ pub(all) enum Response {
 
 ///|
 pub fn Response::ok(self : Map[String, String]) -> Response {
-  Ok(ResponseFields::new(self))
+  Ok(FieldMap::new(self))
 }
 
 ///|
 pub fn Response::ok_values(self : Map[String, Json]) -> Response {
-  Ok(ResponseFields::from_values(self))
+  Ok(FieldMap::from_values(self))
 }
 
 ///|

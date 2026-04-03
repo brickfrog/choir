@@ -287,8 +287,8 @@ pub async fn dispatch(
             agents_json.push(
               {
                 "agent_id": agent.agent_id.0.to_json(),
-                "role": @config.role_to_string(agent.role).to_json(),
-                "agent_type": @config.agent_type_to_string(agent.agent_type).to_json(),
+                "role": agent.role.to_wire_string().to_json(),
+                "agent_type": agent.agent_type.to_wire_string().to_json(),
                 "state": agent.state.to_string().to_json(),
                 "parent": agent.parent.to_json(),
                 "branch": agent.branch.to_json(),
@@ -536,10 +536,10 @@ pub async fn handle_request(
 ) -> @types.Response {
   match registry.lookup(req.role, req.name) {
     Err(e) =>
-      match e {
-        @types.ChoirError::ToolNotFound(_) =>
-          dispatch_to_plugin(req, plugins_json)
-        _ => @types.Response::Err(e.message())
+      if e.is_tool_not_found() {
+        dispatch_to_plugin(req, plugins_json)
+      } else {
+        @types.Response::Err(e.message())
       }
     Ok(_) => {
       let tool_args = tool_args_from_request_args(req.args)
