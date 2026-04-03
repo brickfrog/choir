@@ -49,10 +49,10 @@ pub(all) enum LifecycleTrigger {
   ChildSpawned
   ChildCompleted
   ChildFailed
-  PrMerged
+  PRMerged
   AllChildrenDone
-  OwnPrFiled
-  PrCreated
+  OwnPRFiled
+  PRCreated
   NotifyParentSuccess
   NotifyParentFailure
   ExitRequested
@@ -75,10 +75,10 @@ pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
     ChildSpawned => "ChildSpawned"
     ChildCompleted => "ChildCompleted"
     ChildFailed => "ChildFailed"
-    PrMerged => "PRMerged"
+    PRMerged => "PRMerged"
     AllChildrenDone => "AllChildrenDone"
-    OwnPrFiled => "OwnPRFiled"
-    PrCreated => "PRCreated"
+    OwnPRFiled => "OwnPRFiled"
+    PRCreated => "PRCreated"
     NotifyParentSuccess => "NotifyParentSuccess"
     NotifyParentFailure => "NotifyParentFailure"
     ExitRequested => "ExitRequested"
