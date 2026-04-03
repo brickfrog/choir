@@ -51,7 +51,7 @@ async fn emit_span(
 ) -> Unit {
   let name = request_span_name(req)
   let agent_id_str = request_agent_id(req).unwrap_or("")
-  let role_str = req.role.to_string()
+  let role_str = req.role.to_wire_string()
   let status = resp.status_tag()
   let duration_ms = end_ms - start_ms
   let fields = @moontrace.fields([

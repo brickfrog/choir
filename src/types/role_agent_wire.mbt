@@ -10,13 +10,21 @@ pub fn Role::to_wire_string(self : Role) -> String {
 }
 
 ///|
-pub fn Role::parse_wire(s : String) -> Role raise ChoirError {
+pub fn Role::try_parse_wire(s : String) -> Result[Role, ChoirError] {
   match s {
-    "root" => Root
-    "tl" => TL
-    "dev" => Dev
-    "worker" => Worker
-    _ => raise ChoirError::config_error("unknown role: " + s)
+    "root" => Ok(Root)
+    "tl" => Ok(TL)
+    "dev" => Ok(Dev)
+    "worker" => Ok(Worker)
+    _ => Err(ChoirError::config_error("unknown role: " + s))
+  }
+}
+
+///|
+pub fn Role::parse_wire(s : String) -> Role raise ChoirError {
+  match Role::try_parse_wire(s) {
+    Ok(r) => r
+    Err(e) => raise e
   }
 }
 
@@ -34,16 +42,24 @@ pub fn AgentType::to_wire_string(self : AgentType) -> String {
 }
 
 ///|
-pub fn AgentType::parse_wire(s : String) -> AgentType raise ChoirError {
+pub fn AgentType::try_parse_wire(s : String) -> Result[AgentType, ChoirError] {
   match s {
-    "claude" => Claude
-    "gemini" => Gemini
-    "moon_pilot" => MoonPilot
-    "moonpilot" => MoonPilot
-    "codex" => Codex
-    "cursor_agent" => CursorAgent
-    "cursoragent" => CursorAgent
-    "pi" => Pi
-    _ => raise ChoirError::config_error("unknown agent_type: " + s)
+    "claude" => Ok(Claude)
+    "gemini" => Ok(Gemini)
+    "moon_pilot" => Ok(MoonPilot)
+    "moonpilot" => Ok(MoonPilot)
+    "codex" => Ok(Codex)
+    "cursor_agent" => Ok(CursorAgent)
+    "cursoragent" => Ok(CursorAgent)
+    "pi" => Ok(Pi)
+    _ => Err(ChoirError::config_error("unknown agent_type: " + s))
+  }
+}
+
+///|
+pub fn AgentType::parse_wire(s : String) -> AgentType raise ChoirError {
+  match AgentType::try_parse_wire(s) {
+    Ok(t) => t
+    Err(e) => raise e
   }
 }
