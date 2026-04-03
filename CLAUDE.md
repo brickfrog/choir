@@ -29,10 +29,9 @@ Choir follows an exomonad-style architecture. Respect these invariants:
 
 These are pre-existing violations to fix, not patterns to follow:
 
-- `agent_type : String` in `phase/lifecycle.mbt` ChildLifecycle and `phase/tl.mbt` ChildHandle/ChildTrackerEntry — should be `@types.AgentType`
-- `exit_reason : String` in `server/post_tool.mbt` and `server/handler.mbt` — should be an enum
-- Direct `@sys.append_file_sync` in `server/handler.mbt` poller delivery logging — should use an adapter
-- ~37 `Result[T, String]` in `src/tools/` — should migrate to `Result[T, ChoirError]`
+- `trigger : String` in `phase/lifecycle.mbt` lifecycle effects — should be an enum
+- `from_state`/`to_state : String` in `server/event_log.mbt` — stringified JSON instead of typed transitions
+- Direct `@exec.capture_hook_script_merged` calls in `tools/dispatch.mbt` — should use injected parameter
 
 ## Safety
 
