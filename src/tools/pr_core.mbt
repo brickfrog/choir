@@ -2506,7 +2506,7 @@ pub async fn interpret_rescue_leaf_post_spawn(
     ) {
     Err(e) =>
       return @types.Response::Err(
-        rescue_leaf_handoff_failure_message(e.message()),
+        rescue_leaf_handoff_failure_message(e.validation_detail_or_message()),
       )
     Ok(_) => ()
   }
