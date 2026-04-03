@@ -191,7 +191,7 @@ pub fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
           return Err(
             ParseError::InvalidFormat(
               field="parent_branch",
-              message=e.message(),
+              message=e.validation_detail_or_message(),
             ),
           )
       }
