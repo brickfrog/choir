@@ -739,7 +739,9 @@ fn read_task_file(
   match validate_slug(id) {
     Err(e) =>
       return Err(
-        @types.ChoirError::validation_error("invalid id: " + e.message()),
+        @types.ChoirError::validation_error(
+          "invalid id: " + e.validation_detail_or_message(),
+        ),
       )
     Ok(_) => ()
   }
@@ -752,7 +754,10 @@ fn read_task_file(
     Err(e) =>
       Err(
         @types.ChoirError::validation_error(
-          "invalid task file for " + id + ": " + e.message(),
+          "invalid task file for " +
+          id +
+          ": " +
+          e.validation_detail_or_message(),
         ),
       )
   }
@@ -816,7 +821,10 @@ async fn handle_task_list(
       Ok(value) => value
       Err(e) =>
         return @types.Response::Err(
-          "invalid task file at " + path + ": " + e.message(),
+          "invalid task file at " +
+          path +
+          ": " +
+          e.validation_detail_or_message(),
         )
     }
     tasks.push(task_to_json(task))
