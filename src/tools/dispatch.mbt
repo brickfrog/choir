@@ -780,6 +780,6 @@ pub fn apply_dev_event_checked(
       @phase.interpret_lifecycle_effects(project_dir, effects, registry~)
       Ok(phase)
     }
-    Err(e) => Err(@types.ChoirError::validation_error(e))
+    Err(e) => Err(e)
   }
 }
