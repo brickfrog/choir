@@ -129,49 +129,6 @@ choir stop --purge         # stop and remove recovery state
 choir init --recreate --purge  # restart from a clean slate
 ```
 
-### Pi Team Lead
-
-```bash
-choir init --tl pi
-```
-
-This launches Pi as the TL using Choir-managed runtime assets under `.choir/pi/`.
-Choir keeps Pi state local to the repo and seeds `.choir/pi/agent/auth.json` from `~/.pi/agent/auth.json` if present. If no auth snapshot is available, log in inside the spawned Pi session.
-
-This path is now live-validated for:
-- Pi TL spawning Pi workers via `spawn_worker`
-- Pi TL spawning Pi dev leafs via `fork_wave`
-- Pi worker `notify_parent`
-- Pi dev leaf PR open / review-followup loop
-- Pi TL merging a child PR via `merge_pr`
-- restart recovery of an offline PR-owning Pi leaf, including post-restart `agent_list` visibility and `merge_pr`
-
-Remaining polish is mostly around longer-term persistence policy / delivery tradeoffs, not basic end-to-end viability.
-
-#### Pi smoke matrix
-
-| Flow | Status |
-| --- | --- |
-| `choir init --tl pi` | validated |
-| Pi TL → `spawn_worker(agent_type=pi)` | validated |
-| Pi worker → `notify_parent` | validated |
-| Pi TL → `fork_wave(agent_type=pi)` | validated |
-| Pi dev leaf → `file_pr` | validated |
-| Pi dev leaf → review-followup loop | validated |
-| Pi TL → `merge_pr` | validated |
-| Immediate `agent_list` child visibility after spawn | hardened |
-| Offline Pi leaf visible after `choir stop` + `choir init --recreate --tl pi` | validated |
-| Restarted Pi TL → `merge_pr` for recovered offline leaf PR | validated |
-
-### Pi leafs and workers
-
-Pi is also available as an agent type for spawned children:
-
-- `fork_wave(..., agent_type=pi)`
-- `spawn_worker(..., agent_type=pi)`
-
-The same flows are live-validated; remaining gaps are longer-term persistence and architecture work (see `PI_NORTH_STAR.md`), not basic wiring.
-
 ## CLI Tool Access
 
 Choir's server tools can also be called directly over the local control plane.
@@ -350,14 +307,11 @@ major orchestration loops (Lifecycles, Tools, Recovery, Post-Tool Actions) are
 implemented as pure planners that emit typed effect requests, which are then
 executed by host-specific interpreters.
 
-For the detailed architectural vision and audit, see [PI_NORTH_STAR.md](PI_NORTH_STAR.md).
-
 ## Status
 
 - local UDS workflow: proven
 - zellij backend (0.44+): proven
-- leaf agents: Claude, Gemini, Moon Pilot, Codex, Cursor Agent, Pi
-- Choir × Pi TL/dev/worker path: live-validated (`PI_NORTH_STAR.md`)
+- leaf agents: Claude, Gemini, Moon Pilot, Codex, Cursor Agent
 - effect architecture refactor (Migrations 1-6): **complete**
 - Copilot reliability & context automation: **complete**
 - structured logging: [moontrace](https://github.com/brickfrog/moontrace) with colored output and OTLP span export
