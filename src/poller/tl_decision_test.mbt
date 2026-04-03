@@ -443,3 +443,25 @@ test "format_wave_rollup matches expected header and PR lines" {
     #|  PR #45 (main.leaf-c): Blocked on review changes
   assert_eq(format_wave_rollup(rollup, 4), expected)
 }
+
+///|
+test "format_wave_rollup uses PR count as denominator when wave size unknown" {
+  let rollup : WaveRollup = {
+    parent_id: "main",
+    wave: 1,
+    entries: [
+      WaveRollupEntry::{
+        pr_number: 42,
+        agent_id: "main.leaf-a",
+        category: MergeGateOpenPendingPolicyConfirmation,
+      },
+      WaveRollupEntry::{
+        pr_number: 45,
+        agent_id: "main.leaf-c",
+        category: BlockedOnChanges,
+      },
+    ],
+  }
+  let out = format_wave_rollup(rollup, 0)
+  assert_true(out.contains("[WAVE 1] 2/2 PRs with updates:"))
+}
