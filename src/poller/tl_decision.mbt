@@ -234,3 +234,17 @@ pub fn tl_tracked_pr_recheck_gate_line(
     }
   }
 }
+
+///|
+pub fn detect_orphaned_prs(
+  tracked_with_liveness : Array[(TrackedPR, Bool)],
+) -> Array[TrackedPR] {
+  let out = []
+  for pair in tracked_with_liveness {
+    let (pr, agent_is_active) = pair
+    if !agent_is_active && !pr.orphan_notified {
+      out.push(pr)
+    }
+  }
+  out
+}

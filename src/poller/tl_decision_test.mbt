@@ -222,3 +222,31 @@ test "tl_tracked_pr_recheck_gate_line mentions escalation when copilot silent af
   assert_true(line.contains("timed out"))
   assert_true(line.contains("Copilot"))
 }
+
+///|
+test "detect_orphaned_prs returns PR when agent inactive and not yet notified" {
+  let pr = sample_tracked(None_, Unknown, 501)
+  let got = detect_orphaned_prs([(pr, false)])
+  assert_eq(got.length(), 1)
+  assert_eq(got[0].pr_number, 501)
+}
+
+///|
+test "detect_orphaned_prs skips when orphan_notified" {
+  let pr = { ..sample_tracked(None_, Unknown, 502), orphan_notified: true }
+  let got = detect_orphaned_prs([(pr, false)])
+  assert_eq(got.length(), 0)
+}
+
+///|
+test "detect_orphaned_prs skips when agent is active" {
+  let pr = sample_tracked(None_, Unknown, 503)
+  let got = detect_orphaned_prs([(pr, true)])
+  assert_eq(got.length(), 0)
+}
+
+///|
+test "detect_orphaned_prs empty input returns empty" {
+  let got : Array[(TrackedPR, Bool)] = []
+  assert_eq(detect_orphaned_prs(got).length(), 0)
+}
