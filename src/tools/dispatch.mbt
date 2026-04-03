@@ -90,10 +90,13 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  ensure_branch_ready? : (async (String, String, String) -> Result[Unit, String])? = None,
+  ensure_branch_ready? : (async (String, String, String) -> Result[
+    Unit,
+    @types.ChoirError,
+  ])? = None,
   ensure_pr? : (async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
-    String,
+    @types.ChoirError,
   ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
@@ -246,7 +249,7 @@ pub async fn dispatch(
               )
               response_ok
             }
-            Err(e) => @types.Response::Err(e)
+            Err(e) => @types.Response::Err(e.message())
           }
       }
     }
@@ -379,7 +382,7 @@ pub async fn dispatch(
             "status": String::to_json("ok"),
             "task": task_to_json(task),
           })
-        Err(e) => @types.Response::Err(e)
+        Err(e) => @types.Response::Err(e.message())
       }
     ToolRequest::TaskCreate(task_args) => {
       let existing = @sys.read_file(task_file_path(project_dir, task_args.id))
@@ -391,7 +394,7 @@ pub async fn dispatch(
               "created": Bool::to_json(false),
               "task": task_to_json(task),
             })
-          Err(e) => @types.Response::Err(e)
+          Err(e) => @types.Response::Err(e.message())
         }
       }
       let task = TaskFile::{
@@ -416,7 +419,7 @@ pub async fn dispatch(
     ToolRequest::TaskUpdate(update_args) => {
       let task = match read_task_file(project_dir, update_args.id) {
         Ok(value) => value
-        Err(e) => return @types.Response::Err(e)
+        Err(e) => return @types.Response::Err(e.message())
       }
       let updated = {
         ..task,
@@ -491,7 +494,7 @@ pub async fn dispatch(
       let value = if cancel { "cancel" } else { payload }
       let key = "reply/" + id
       match validate_kv_key(key) {
-        Err(e) => return @types.Response::Err(e)
+        Err(e) => return @types.Response::Err(e.message())
         Ok(_) => ()
       }
       let path = kv_file_path(project_dir, key)
@@ -531,10 +534,13 @@ pub async fn handle_request(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  ensure_branch_ready? : (async (String, String, String) -> Result[Unit, String])? = None,
+  ensure_branch_ready? : (async (String, String, String) -> Result[
+    Unit,
+    @types.ChoirError,
+  ])? = None,
   ensure_pr? : (async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
-    String,
+    @types.ChoirError,
   ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
@@ -669,10 +675,13 @@ pub async fn dispatch_call(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  ensure_branch_ready? : (async (String, String, String) -> Result[Unit, String])? = None,
+  ensure_branch_ready? : (async (String, String, String) -> Result[
+    Unit,
+    @types.ChoirError,
+  ])? = None,
   ensure_pr? : (async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
-    String,
+    @types.ChoirError,
   ])? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
@@ -764,12 +773,12 @@ pub fn apply_dev_event_checked(
   scope : String,
   event : @phase.DevEvent,
   registry? : @registry.AgentRegistry? = None,
-) -> Result[@phase.DevPhase, String] {
+) -> Result[@phase.DevPhase, @types.ChoirError] {
   match @phase.plan_dev_event_for_scope(project_dir, scope, event) {
     Ok((phase, effects)) => {
       @phase.interpret_lifecycle_effects(project_dir, effects, registry~)
       Ok(phase)
     }
-    Err(e) => Err(e)
+    Err(e) => Err(@types.ChoirError::validation_error(e))
   }
 }

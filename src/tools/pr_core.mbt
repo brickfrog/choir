@@ -246,12 +246,14 @@ pub async fn interpret_file_pr_post_success(
             Err(e) => {
               @moontrace.error(
                 "file_pr auto-notify delivery failed",
-                fields=@moontrace.fields([("error", e.to_json())]),
+                fields=@moontrace.fields([
+                  ("error", String::to_json(e.message())),
+                ]),
               )
               ignore(
                 @sys.append_file_sync(
                   delivery_log_path,
-                  file_pr_auto_notify_delivery_failed_log_append(e),
+                  file_pr_auto_notify_delivery_failed_log_append(e.message()),
                 ),
               )
             }
@@ -511,9 +513,9 @@ pub async fn interpret_send_message(
         Err(e) => {
           @moontrace.error(
             "send_message delivery failed",
-            fields=@moontrace.fields([("error", e.to_json())]),
+            fields=@moontrace.fields([("error", String::to_json(e.message()))]),
           )
-          @types.Response::Err(e)
+          @types.Response::Err(e.message())
         }
       }
     }
@@ -593,14 +595,17 @@ pub fn file_pr_preflight_host_steps() -> Array[FilePrPreflightHostStep] {
 /// `Result` error strings previously inlined in `ToolRequest::FilePr`.
 pub async fn interpret_file_pr_preflight_create(
   inputs : FilePrPreflightCreateInputs,
-  ensure_branch_ready : async (String, String, String) -> Result[Unit, String],
+  ensure_branch_ready : async (String, String, String) -> Result[
+    Unit,
+    @types.ChoirError,
+  ],
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
   ensure_pr : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
-    String,
+    @types.ChoirError,
   ],
-) -> Result[PullRequestInfo, String] {
+) -> Result[PullRequestInfo, @types.ChoirError] {
   match
     ensure_branch_ready(inputs.branch, inputs.parent_branch, inputs.file_pr_dir) {
     Err(e) => Err(e)
@@ -1053,12 +1058,15 @@ pub async fn interpret_file_pr(
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
   pr_review : Bool,
-  ensure_branch_ready : async (String, String, String) -> Result[Unit, String],
+  ensure_branch_ready : async (String, String, String) -> Result[
+    Unit,
+    @types.ChoirError,
+  ],
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
   ensure_pr : async (String, String, String, String?, String?) -> Result[
     PullRequestInfo,
-    String,
+    @types.ChoirError,
   ],
 ) -> @types.Response {
   let branch = file_pr_args.branch
@@ -1075,7 +1083,7 @@ pub async fn interpret_file_pr(
     interpret_file_pr_preflight_create(
       preflight_inputs, ensure_branch_ready, runner, capture, ensure_pr,
     ) {
-    Err(e) => @types.Response::Err(e)
+    Err(e) => @types.Response::Err(e.message())
     Ok(pr) => {
       let tracked = poller_state is Some(_)
       let plan = file_pr_plan(file_pr_args, parent_branch, pr, tracked)
@@ -1128,7 +1136,7 @@ pub async fn interpret_merge_pr_preflight(
   poller_state : @poller.PollerState?,
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   if force {
     return Ok(())
   }
@@ -1143,7 +1151,7 @@ pub async fn interpret_merge_pr_preflight(
     merge_pr_preflight_block_message(
       pr_number, poller_tracked, thread_count, thread_text,
     ) {
-    Some(msg) => Err(msg)
+    Some(msg) => Err(@types.ChoirError::validation_error(msg))
     None => Ok(())
   }
 }
@@ -1332,7 +1340,7 @@ pub async fn interpret_merge_pr_merge_host(
   now_sec : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   let mutex_name = merge_pr_mutex_name(parent_branch)
   match mutex_registry {
     Some(reg) => {
@@ -1341,7 +1349,11 @@ pub async fn interpret_merge_pr_merge_host(
       )
       if !acquired {
         ignore(reg.release(mutex_name, caller_id))
-        return Err(merge_pr_serialization_busy_message())
+        return Err(
+          @types.ChoirError::validation_error(
+            merge_pr_serialization_busy_message(),
+          ),
+        )
       }
     }
     None => ()
@@ -1356,7 +1368,11 @@ pub async fn interpret_merge_pr_merge_host(
     Err(_) => {
       let (_, output) = capture(merge_pr_command(pr_number))
       let trimmed = output.trim().to_string()
-      Err(merge_pr_merge_failure_message(pr_number, trimmed))
+      Err(
+        @types.ChoirError::git_error(
+          merge_pr_merge_failure_message(pr_number, trimmed),
+        ),
+      )
     }
     Ok(_) => Ok(())
   }
@@ -1438,7 +1454,7 @@ pub async fn interpret_merge_pr(
       project_dir,
       capture,
     ) {
-    Err(e) => @types.Response::Err(e)
+    Err(e) => @types.Response::Err(e.message())
     Ok(_) =>
       match
         interpret_merge_pr_merge_host(
@@ -1450,7 +1466,7 @@ pub async fn interpret_merge_pr(
           runner,
           capture,
         ) {
-        Err(e) => @types.Response::Err(e)
+        Err(e) => @types.Response::Err(e.message())
         Ok(_) =>
           interpret_merge_pr_post_success(
             project_dir,
@@ -2113,7 +2129,7 @@ pub async fn interpret_spawn_worker(
       }
       plan.ok_response
     }
-    Err(e) => @types.Response::Err(e)
+    Err(e) => @types.Response::Err(e.message())
   }
 }
 
@@ -2172,7 +2188,7 @@ pub async fn interpret_spawn_remote(
   )
   match run_strict(runner, cmds, capture~) {
     Ok(_) => plan.ok_response
-    Err(e) => @types.Response::Err(e)
+    Err(e) => @types.Response::Err(e.message())
   }
 }
 
@@ -2239,7 +2255,7 @@ pub async fn interpret_spawn_gemini(
   )
   match run_strict(runner, cmds, capture~) {
     Ok(_) => plan.ok_response
-    Err(e) => @types.Response::Err(e)
+    Err(e) => @types.Response::Err(e.message())
   }
 }
 
@@ -2269,26 +2285,45 @@ pub fn rescue_leaf_remove_supervisor_alias(
 pub fn rescue_leaf_spawn_plan(
   args : RescueLeafArgs,
   from_agent : @types.Agent,
-) -> Result[RescueLeafSpawnPlan, String] {
+) -> Result[RescueLeafSpawnPlan, @types.ChoirError] {
   let from_agent_id = args.from_agent_id
   if from_agent.role != @types.Role::Dev {
-    return Err("rescue_leaf only supports dev leaves")
+    return Err(
+      @types.ChoirError::validation_error(
+        "rescue_leaf only supports dev leaves",
+      ),
+    )
   }
   match from_agent.parent {
     Some(p) =>
       if p != args.caller_id {
-        return Err("caller_id must match the salvaged leaf parent")
+        return Err(
+          @types.ChoirError::validation_error(
+            "caller_id must match the salvaged leaf parent",
+          ),
+        )
       }
-    None => return Err("salvaged leaf has no parent in registry")
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "salvaged leaf has no parent in registry",
+        ),
+      )
   }
   if !from_agent.workspace.contains(".choir/worktrees/") {
-    return Err("salvaged leaf has no choir worktree path to reuse")
+    return Err(
+      @types.ChoirError::validation_error(
+        "salvaged leaf has no choir worktree path to reuse",
+      ),
+    )
   }
   let parent_prefix = match @workspace.parent_branch(from_agent_id) {
     Some(pb) => pb
     None =>
       return Err(
-        "invalid from_agent_id (expected nested branch like parent.child)",
+        @types.ChoirError::validation_error(
+          "invalid from_agent_id (expected nested branch like parent.child)",
+        ),
       )
   }
   let to_id = @workspace.branch_name(parent_prefix, args.new_slug)
@@ -2312,7 +2347,7 @@ pub fn rescue_leaf_spawn_plan(
     spawn_depth: 0,
   }
   match @workspace.validate_reuse_spawn_spec(spec) {
-    Err(e) => Err(e)
+    Err(e) => Err(@types.ChoirError::validation_error(e))
     Ok(_) => Ok({ from_agent_id, to_id, salvage_slug, git_branch, spec })
   }
 }
@@ -2381,7 +2416,7 @@ pub async fn interpret_rescue_leaf(
     a => a
   }
   let plan = match rescue_leaf_spawn_plan(rescue_args, from_agent) {
-    Err(e) => return @types.Response::Err(e)
+    Err(e) => return @types.Response::Err(e.message())
     Ok(p) => p
   }
   let cmds = @workspace.spawn_commands(
@@ -2396,7 +2431,7 @@ pub async fn interpret_rescue_leaf(
     tcp_auth_token~,
   )
   match run_strict(runner, cmds, capture~) {
-    Err(e) => return @types.Response::Err(e)
+    Err(e) => return @types.Response::Err(e.message())
     Ok(_) => ()
   }
   interpret_rescue_leaf_post_spawn(

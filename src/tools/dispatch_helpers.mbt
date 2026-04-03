@@ -5,8 +5,10 @@ pub async fn run_strict(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   cmds : Array[@workspace.Command],
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-) -> Result[Unit, String] {
-  let statuses = runner(cmds) catch { e => return Err(e.to_string()) }
+) -> Result[Unit, @types.ChoirError] {
+  let statuses = runner(cmds) catch {
+    e => return Err(@types.ChoirError::transport_error(e.to_string()))
+  }
   for i = 0; i < statuses.length(); i = i + 1 {
     let status = statuses[i]
     if status != 0 {
@@ -19,7 +21,7 @@ pub async fn run_strict(
       } else {
         "command failed with status " + status.to_string()
       }
-      return Err(msg)
+      return Err(@types.ChoirError::transport_error(msg))
     }
   }
   Ok(())
@@ -52,7 +54,8 @@ async test "run_strict returns first failing command index and status" {
   ])
   match result {
     Ok(_) => fail("expected run_strict failure")
-    Err(e) => assert_true(e.contains("failed") && e.contains("7"))
+    Err(e) =>
+      assert_true(e.message().contains("failed") && e.message().contains("7"))
   }
 }
 
@@ -209,15 +212,26 @@ fn path_dirname(path : String) -> String {
 }
 
 ///|
-fn teams_inbox_write(path : String, json : String) -> Result[Unit, String] {
+fn teams_inbox_write(
+  path : String,
+  json : String,
+) -> Result[Unit, @types.ChoirError] {
   let resolved = resolve_home_path(path)
   let dir = path_dirname(resolved)
   if !@sys.create_dir_all(dir) {
-    return Err("failed to create teams inbox directory: " + dir)
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to create teams inbox directory: " + dir,
+      ),
+    )
   }
   let line = json + "\n"
   if !@sys.append_file_sync(resolved, line) {
-    return Err("failed to append to teams inbox file: " + resolved)
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to append to teams inbox file: " + resolved,
+      ),
+    )
   }
   Ok(())
 }
@@ -257,12 +271,16 @@ pub async fn execute_delivery(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   project_dir? : String = ".",
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-) -> Result[Unit, String] {
-  fn ensure_success(statuses : Array[Int]) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
+  fn ensure_success(statuses : Array[Int]) -> Result[Unit, @types.ChoirError] {
     if statuses.length() == 0 || statuses[0] == 0 {
       Ok(())
     } else {
-      Err("delivery command failed with exit code " + statuses[0].to_string())
+      Err(
+        @types.ChoirError::transport_error(
+          "delivery command failed with exit code " + statuses[0].to_string(),
+        ),
+      )
     }
   }
   fn delivery_timestamp() -> String {
@@ -320,14 +338,16 @@ pub async fn execute_delivery(
   async fn run_with_retries(
     cmd : @workspace.Command,
     target : String,
-  ) -> Result[Unit, String] {
+  ) -> Result[Unit, @types.ChoirError] {
     let backoff_ms = [1000, 2000, 4000]
-    let mut last_error = "unknown delivery error"
+    let mut last_error = @types.ChoirError::transport_error(
+      "unknown delivery error",
+    )
     for attempt = 0; attempt < 4; attempt = attempt + 1 {
       let mut run_threw = false
       let statuses = runner([cmd]) catch {
         e => {
-          last_error = e.to_string()
+          last_error = @types.ChoirError::transport_error(e.to_string())
           run_threw = true
           []
         }
@@ -344,11 +364,11 @@ pub async fn execute_delivery(
       if attempt < backoff_ms.length() {
         let retry_attempt = attempt + 1
         let delay = backoff_ms[attempt]
-        log_delivery_retry(target, retry_attempt, delay, last_error)
+        log_delivery_retry(target, retry_attempt, delay, last_error.message())
         sleep_fn(delay)
       }
     }
-    log_delivery_failure(target, last_error)
+    log_delivery_failure(target, last_error.message())
     Err(last_error)
   }
   match delivery {
@@ -386,7 +406,11 @@ pub async fn execute_delivery(
       if result == 0 {
         Ok(())
       } else {
-        Err("UDS HTTP post failed with code " + result.to_string())
+        Err(
+          @types.ChoirError::transport_error(
+            "UDS HTTP post failed with code " + result.to_string(),
+          ),
+        )
       }
     }
   }
@@ -637,28 +661,45 @@ fn json_get_string(obj : Map[String, Json], key : String) -> String? {
 }
 
 ///|
-fn parse_task_file(content : String) -> Result[TaskFile, String] {
-  let json = @json.parse(content) catch { _ => return Err("invalid task json") }
-  guard json is Object(fields) else { return Err("invalid task json") }
+fn parse_task_file(content : String) -> Result[TaskFile, @types.ChoirError] {
+  let json = @json.parse(content) catch {
+    _ => return Err(@types.ChoirError::validation_error("invalid task json"))
+  }
+  guard json is Object(fields) else {
+    return Err(@types.ChoirError::validation_error("invalid task json"))
+  }
   let id = match json_get_string(fields, "id") {
     Some(v) => v
-    None => return Err("missing or invalid id")
+    None =>
+      return Err(@types.ChoirError::validation_error("missing or invalid id"))
   }
   let title = match json_get_string(fields, "title") {
     Some(v) => v
-    None => return Err("missing or invalid title")
+    None =>
+      return Err(
+        @types.ChoirError::validation_error("missing or invalid title"),
+      )
   }
   let status = match json_get_string(fields, "status") {
     Some(v) => v
-    None => return Err("missing or invalid status")
+    None =>
+      return Err(
+        @types.ChoirError::validation_error("missing or invalid status"),
+      )
   }
   let assignee = match json_get_string(fields, "assignee") {
     Some(v) => v
-    None => return Err("missing or invalid assignee")
+    None =>
+      return Err(
+        @types.ChoirError::validation_error("missing or invalid assignee"),
+      )
   }
   let notes = match json_get_string(fields, "notes") {
     Some(v) => v
-    None => return Err("missing or invalid notes")
+    None =>
+      return Err(
+        @types.ChoirError::validation_error("missing or invalid notes"),
+      )
   }
   Ok({ id, title, status, assignee, notes })
 }
@@ -694,18 +735,26 @@ fn sort_strings_lex(paths : Array[String]) -> Unit {
 fn read_task_file(
   project_dir : String,
   id : String,
-) -> Result[TaskFile, String] {
+) -> Result[TaskFile, @types.ChoirError] {
   match validate_slug(id) {
-    Err(e) => return Err("invalid id: " + e)
+    Err(e) =>
+      return Err(
+        @types.ChoirError::validation_error("invalid id: " + e.message()),
+      )
     Ok(_) => ()
   }
   let content = @sys.read_file(task_file_path(project_dir, id))
   if content == "" {
-    return Err("task not found: " + id)
+    return Err(@types.ChoirError::validation_error("task not found: " + id))
   }
   match parse_task_file(content) {
     Ok(task) => Ok(task)
-    Err(e) => Err("invalid task file for " + id + ": " + e)
+    Err(e) =>
+      Err(
+        @types.ChoirError::validation_error(
+          "invalid task file for " + id + ": " + e.message(),
+        ),
+      )
   }
 }
 
@@ -713,7 +762,7 @@ fn read_task_file(
 async fn list_task_files(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
-) -> Result[Array[String], String] {
+) -> Result[Array[String], @types.ChoirError] {
   let tasks_dir = project_dir + "/.choir/tasks"
   let test_cmd : @workspace.Command = {
     program: "test",
@@ -731,7 +780,11 @@ async fn list_task_files(
   }
   let (find_status, output) = capture(find_cmd)
   if find_status != 0 {
-    return Err("command failed with status " + find_status.to_string())
+    return Err(
+      @types.ChoirError::transport_error(
+        "command failed with status " + find_status.to_string(),
+      ),
+    )
   }
   let paths = []
   for line in output.split("\n") {
@@ -751,7 +804,7 @@ async fn handle_task_list(
 ) -> @types.Response {
   let task_paths = match list_task_files(project_dir, capture) {
     Ok(paths) => paths
-    Err(e) => return @types.Response::Err(e)
+    Err(e) => return @types.Response::Err(e.message())
   }
   let tasks : Array[Json] = []
   for path in task_paths {
@@ -762,7 +815,9 @@ async fn handle_task_list(
     let task = match parse_task_file(content) {
       Ok(value) => value
       Err(e) =>
-        return @types.Response::Err("invalid task file at " + path + ": " + e)
+        return @types.Response::Err(
+          "invalid task file at " + path + ": " + e.message(),
+        )
     }
     tasks.push(task_to_json(task))
   }
@@ -908,7 +963,7 @@ test "teams_inbox_write creates parent and appends json line" {
   let json = "{\"from\":\"x\",\"content\":\"y\",\"status\":\"z\"}"
   match teams_inbox_write(path, json) {
     Ok(_) => ()
-    Err(e) => fail(e)
+    Err(e) => fail(e.message())
   }
   let got = @sys.read_file(path)
   assert_true(got.contains(json))
@@ -952,7 +1007,7 @@ async test "list_task_files runs test and find argv and sorts paths" {
       assert_eq(paths[0], "/proj/.choir/tasks/one.json")
       assert_eq(paths[1], "/proj/.choir/tasks/two.json")
     }
-    Err(e) => fail(e)
+    Err(e) => fail(e.message())
   }
 }
 
@@ -969,7 +1024,7 @@ async fn mock_test_only_missing_dir(cmd : @workspace.Command) -> (Int, String) {
 async test "list_task_files returns empty when test -d fails" {
   match list_task_files("/proj", mock_test_only_missing_dir) {
     Ok(paths) => assert_eq(paths.length(), 0)
-    Err(e) => fail(e)
+    Err(e) => fail(e.message())
   }
 }
 

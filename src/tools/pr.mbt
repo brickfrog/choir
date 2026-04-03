@@ -288,7 +288,7 @@ pub async fn ensure_branch_has_unique_commits_with_capture(
   parent_branch : String,
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   match
     rev_list_left_right_counts_with_capture(
       parent_branch, branch, project_dir, capture,
@@ -298,10 +298,12 @@ pub async fn ensure_branch_has_unique_commits_with_capture(
         Ok(())
       } else {
         Err(
-          FilePrPreflightError::NotAheadOfParent(branch, parent_branch).to_user_message(),
+          @types.ChoirError::git_error(
+            FilePrPreflightError::NotAheadOfParent(branch, parent_branch).to_user_message(),
+          ),
         )
       }
-    Err(e) => Err(e.to_user_message())
+    Err(e) => Err(@types.ChoirError::git_error(e.to_user_message()))
   }
 }
 
@@ -310,7 +312,7 @@ pub async fn ensure_branch_has_unique_commits(
   branch : String,
   parent_branch : String,
   project_dir : String,
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   ensure_branch_has_unique_commits_with_capture(
     branch, parent_branch, project_dir, capture_command_output,
   )
@@ -491,11 +493,11 @@ pub async fn ensure_branch_ready_for_file_pr_with_capture(
   parent_branch : String,
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   match
     file_pr_preflight_with_capture(branch, parent_branch, project_dir, capture) {
     Ok(_) => Ok(())
-    Err(e) => Err(e.to_user_message())
+    Err(e) => Err(@types.ChoirError::git_error(e.to_user_message()))
   }
 }
 
@@ -505,7 +507,7 @@ pub async fn ensure_branch_ready_for_file_pr(
   branch : String,
   parent_branch : String,
   project_dir : String,
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   ensure_branch_ready_for_file_pr_with_capture(
     branch, parent_branch, project_dir, capture_command_output,
   )
@@ -519,14 +521,18 @@ pub async fn ensure_pull_request_with_capture(
   title : String?,
   body : String?,
   capture : async (@workspace.Command) -> (Int, String),
-) -> Result[PullRequestInfo, String] {
+) -> Result[PullRequestInfo, @types.ChoirError] {
   let view_cmd = { ..gh_pr_view_command(branch), workdir: Some(project_dir) }
   let (view_exit, view_output) = capture(view_cmd)
   if view_exit == 0 {
     match parse_pull_request_info(view_output) {
       Some(pr) => if pr.state == "OPEN" { return Ok(pr) }
       None =>
-        return Err("failed to parse gh pr view output for branch: " + branch)
+        return Err(
+          @types.ChoirError::validation_error(
+            "failed to parse gh pr view output for branch: " + branch,
+          ),
+        )
     }
   }
   match
@@ -545,21 +551,31 @@ pub async fn ensure_pull_request_with_capture(
   if create_exit != 0 {
     let message = create_output.trim().to_string()
     if message != "" {
-      return Err(message)
+      return Err(@types.ChoirError::git_error(message))
     } else {
-      return Err("gh pr create failed for branch: " + branch)
+      return Err(
+        @types.ChoirError::git_error(
+          "gh pr create failed for branch: " + branch,
+        ),
+      )
     }
   }
 
   let (post_view_exit, post_view_output) = capture(view_cmd)
   if post_view_exit != 0 {
-    return Err("gh pr view failed after create for branch: " + branch)
+    return Err(
+      @types.ChoirError::git_error(
+        "gh pr view failed after create for branch: " + branch,
+      ),
+    )
   }
   match parse_pull_request_info(post_view_output) {
     Some(pr) => Ok(pr)
     None =>
       Err(
-        "failed to parse gh pr view output after create for branch: " + branch,
+        @types.ChoirError::validation_error(
+          "failed to parse gh pr view output after create for branch: " + branch,
+        ),
       )
   }
 }
@@ -572,7 +588,7 @@ pub async fn ensure_pull_request(
   title : String?,
   body : String?,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-) -> Result[PullRequestInfo, String] {
+) -> Result[PullRequestInfo, @types.ChoirError] {
   ensure_pull_request_with_capture(
     branch, parent_branch, project_dir, title, body, capture,
   )
