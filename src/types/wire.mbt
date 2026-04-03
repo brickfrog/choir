@@ -156,6 +156,18 @@ pub fn Response::error_message(self : Response) -> String? {
 }
 
 ///|
+pub fn Response::with_warning(self : Response, warning : String) -> Response {
+  match self {
+    Ok(fields) => {
+      let values = fields.to_json_map()
+      values.set("warning", warning.to_json())
+      Ok(FieldMap::from_values(values))
+    }
+    Err(_) => self
+  }
+}
+
+///|
 pub fn Response::status_tag(self : Response) -> String {
   if self.is_ok() {
     "ok"
