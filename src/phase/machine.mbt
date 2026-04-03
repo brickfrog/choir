@@ -94,10 +94,3 @@ pub fn apply_event(
     Some(current)
   }
 }
-
-///|
-test "sanitize_branch escapes dots and path separators" {
-  assert_eq(sanitize_branch("main.leaf"), "main--leaf")
-  assert_eq(sanitize_branch("feature/x.leaf"), "feature_x--leaf")
-  assert_eq(sanitize_branch("feature\\x.leaf"), "feature_x--leaf")
-}

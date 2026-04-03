@@ -82,3 +82,36 @@ test "dev_entr_entr_command is argv entr without sh" {
   assert_eq(c.args, ["-r", "/tmp/choir", DEV_RELOAD_SUBCOMMAND])
   assert_false(c.program.contains("/bin/sh"))
 }
+
+///|
+test "plugin_capture_uses_shell detects unquoted compound commands" {
+  assert_true(plugin_capture_uses_shell("a && b"))
+  assert_false(plugin_capture_uses_shell("choir tool x"))
+}
+
+///|
+test "plugin_capture_uses_shell does not force shell for metachars only inside quotes" {
+  assert_false(plugin_capture_uses_shell("echo \"a && b\""))
+  assert_false(plugin_capture_uses_shell("python3 -c \"print(1>2)\""))
+}
+
+///|
+test "plugin_capture_uses_shell still requires shell for glob and expansion markers" {
+  assert_true(plugin_capture_uses_shell("echo *"))
+  assert_true(plugin_capture_uses_shell("echo $HOME"))
+}
+
+///|
+test "plugin_capture_uses_shell requires shell for unquoted subshell parens" {
+  assert_true(plugin_capture_uses_shell("( echo hi )"))
+}
+
+///|
+test "plugin_capture_uses_shell requires shell for env assignment prefix" {
+  assert_true(plugin_capture_uses_shell("FOO=bar choir tool x"))
+}
+
+///|
+test "plugin_capture_uses_shell requires shell when parse fails" {
+  assert_true(plugin_capture_uses_shell("echo \""))
+}

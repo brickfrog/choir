@@ -7,6 +7,15 @@
 - Do not add tests that depend on ambient cwd, inherited `GIT_*` environment, or other host process state.
 - If a test needs real git/process integration, keep it tightly scoped, hermetic, and isolated from the main checkout.
 
+## Test Placement
+
+MoonBit has two test modes — use the right one:
+
+- **Blackbox tests** (`_test.mbt` files): test only `pub`/`pub(all)` API. If a test only calls public functions, it goes here.
+- **Whitebox/inline tests** (`test` blocks in source `.mbt` files): test private/internal functions. Only use when the test needs private symbol access.
+
+Do not place public-API-only tests inline in source files. Do not place tests that need private symbols in `_test.mbt` files (they won't compile).
+
 ## Safety
 
 - Never let test fixtures write to the real checkout outside their dedicated temp area.

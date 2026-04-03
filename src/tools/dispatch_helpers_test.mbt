@@ -157,3 +157,50 @@ async test "execute_delivery retries and sleeps when runner throws" {
   assert_eq(read_counter(test_counter_path("throws")), 4)
   assert_eq(@sys.read_file(test_sleep_path("throws")), "1000\n2000\n4000\n")
 }
+
+///|
+test "parse_unresolved_threads_response returns only unresolved threads" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_abc","isResolved":false,"path":"src/foo.mbt","comments":{"nodes":[{"body":"fix this"}]}},{"id":"PRRT_def","isResolved":true,"path":"src/bar.mbt","comments":{"nodes":[{"body":"already fixed"}]}}]}}}}}
+  let (count, text) = parse_unresolved_threads_response(json)
+  assert_eq(count, 1)
+  assert_true(text.contains("PRRT_abc"))
+  assert_true(text.contains("fix this"))
+  assert_false(text.contains("already fixed"))
+  assert_false(text.contains("PRRT_def"))
+}
+
+///|
+test "parse_unresolved_threads_response empty on all resolved" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_xyz","isResolved":true,"path":"src/foo.mbt","comments":{"nodes":[{"body":"done"}]}}]}}}}}
+  let (count, text) = parse_unresolved_threads_response(json)
+  assert_eq(count, 0)
+  assert_eq(text, "")
+}
+
+///|
+test "parse_unresolved_threads_response empty on parse error" {
+  let (count, text) = parse_unresolved_threads_response("not json")
+  assert_eq(count, 0)
+  assert_eq(text, "")
+}
+
+///|
+test "parse_gh_repo_view_output extracts owner and repo" {
+  match
+    parse_gh_repo_view_output(
+      "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}",
+    ) {
+    Some((owner, repo)) => {
+      assert_eq(owner, "brickfrog")
+      assert_eq(repo, "choir")
+    }
+    None => fail("expected owner/repo")
+  }
+}
+
+///|
+test "parse_gh_repo_view_output returns None on malformed json" {
+  assert_eq(parse_gh_repo_view_output("{\"owner\":{},\"name\":1}"), None)
+}
