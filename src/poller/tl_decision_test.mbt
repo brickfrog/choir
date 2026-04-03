@@ -55,7 +55,7 @@ test "tl_classify_tracked_pr_workflow distinguishes blocked, waiting, and merge-
       sample_tracked(Approved, Success, 4),
       Some(0),
     ),
-    MergeSnapshotReadyCopilotIssueCommentMissing,
+    MergeGateOpenPendingPolicyConfirmation,
   )
 }
 
@@ -106,7 +106,7 @@ test "plan_tl_poll_event_parent PRReady waits when snapshot is not merge-ready" 
 test "plan_tl_poll_event_parent PRReady uses merge gate category when snapshot allows" {
   let t = sample_tracked(Approved, Success, 6)
   let cat = plan_tl_poll_event_parent(PRReady(6), t, Some(0))
-  assert_eq(cat, MergeSnapshotReadyCopilotIssueCommentMissing)
+  assert_eq(cat, MergeGateOpenPendingPolicyConfirmation)
 }
 
 ///|
