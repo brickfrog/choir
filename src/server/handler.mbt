@@ -1230,6 +1230,7 @@ pub async fn ServerState::process_poller_tick_with(
     },
     fn(_) { () },
   )
+  deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
