@@ -158,7 +158,7 @@ pub fn plan_tl_lifecycle_effects(
           child_id,
           slug: child_id,
           branch: child_id,
-          agent_type: "",
+          agent_type: @types.AgentType::Gemini,
           summary: ChildLifecycleSummary::Working,
         }),
       )
@@ -554,7 +554,7 @@ pub fn sync_parent_child_lifecycle(
     child_id: agent_id,
     slug: extract_slug(agent_id),
     branch: agent.branch,
-    agent_type: agent.agent_type.to_wire_string(),
+    agent_type: agent.agent_type,
     summary: child_summary_from_lifecycle(lifecycle),
   }
   let parent_lifecycle = read_or_default_lifecycle(

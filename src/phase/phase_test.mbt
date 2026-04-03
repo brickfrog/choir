@@ -272,7 +272,7 @@ test "lifecycle literal blob child slug branch agent_type stay JSON strings" {
 ///|
 test "lifecycle literal blob ChildFailure message stays plain JSON string" {
   let raw =
-    #|{"agent_id":"x","role":"TL","process":{"tag":"Connected"},"workflow":{"tag":"Supervisor","state":{"tag":"Supervising","wave":1,"children":[{"child_id":"x.c","slug":"c","branch":"x.c","agent_type":"g","summary":{"tag":"Failed","reason":{"tag":"ChildFailure","message":"ci failed"}}}]}}}
+    #|{"agent_id":"x","role":"TL","process":{"tag":"Connected"},"workflow":{"tag":"Supervisor","state":{"tag":"Supervising","wave":1,"children":[{"child_id":"x.c","slug":"c","branch":"x.c","agent_type":"gemini","summary":{"tag":"Failed","reason":{"tag":"ChildFailure","message":"ci failed"}}}]}}}
   match lifecycle_from_json(raw.to_string()) {
     Some(lc) => {
       let out = lifecycle_to_json(lc)
@@ -308,7 +308,7 @@ test "ChildTracker from_json all invalid rows yields empty tracker" {
 
 ///|
 test "ChildTracker from_json skips bad rows and keeps valid entries" {
-  let raw = "[{\"id\":\"a\",\"slug\":\"s\",\"branch\":\"b\",\"agent_type\":\"t\"},{\"not\":\"valid\"},{\"id\":\"c\",\"slug\":\"s2\",\"branch\":\"b2\",\"agent_type\":\"t2\"}]"
+  let raw = "[{\"id\":\"a\",\"slug\":\"s\",\"branch\":\"b\",\"agent_type\":\"gemini\"},{\"not\":\"valid\"},{\"id\":\"c\",\"slug\":\"s2\",\"branch\":\"b2\",\"agent_type\":\"claude\"}]"
   let tr = ChildTracker::from_json(raw)
   assert_eq(tr.count(), 2)
   let ids = tr.active_ids()
@@ -339,7 +339,7 @@ test "lifecycle json round-trip covers supervisor children" {
             child_id: "main.leaf-a",
             slug: "leaf-a",
             branch: "main.leaf-a",
-            agent_type: "gemini",
+            agent_type: @types.AgentType::Gemini,
             summary: ReviewOwned(
               pr_number=7,
               state=FixesAwaitingReview(round=2),
@@ -349,7 +349,7 @@ test "lifecycle json round-trip covers supervisor children" {
             child_id: "main.leaf-b",
             slug: "leaf-b",
             branch: "main.leaf-b",
-            agent_type: "gemini",
+            agent_type: @types.AgentType::Gemini,
             summary: Failed(reason=ChildFailure(message="ci failed")),
           },
         ],
@@ -425,7 +425,7 @@ test "state_machine supervisor machine_name and transition" {
     child_id: "c1",
     slug: "leaf-c1",
     branch: "main.leaf-c1",
-    agent_type: "gemini",
+    agent_type: @types.AgentType::Gemini,
     summary: ChildLifecycleSummary::Working,
   }
   match sm.transition(SupervisorEvent::ChildSpawned(child~)) {
