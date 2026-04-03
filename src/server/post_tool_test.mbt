@@ -42,7 +42,7 @@ fn count_persist_with_trigger(
 fn has_fire_hook_exit(
   effects : Array[TeardownEffect],
   agent_id : String,
-  exit_reason : String,
+  exit_reason : @types.ExitReason,
 ) -> Bool {
   for e in effects {
     match e {
@@ -129,7 +129,9 @@ test "plan_post_tool_actions - shutdown with agent yields finalize teardown shap
   assert_true(last_is_clear_runtime_for(effects, "main.leaf"))
   assert_eq(count_persist_with_trigger(effects, "shutdown"), 1)
   assert_eq(count_persist_with_trigger(effects, "FinalizeComplete"), 1)
-  assert_true(has_fire_hook_exit(effects, "main.leaf", "shutdown"))
+  assert_true(
+    has_fire_hook_exit(effects, "main.leaf", @types.ExitReason::Shutdown),
+  )
   let mut saw_remove_worktree = false
   for e in effects {
     match e {
@@ -225,7 +227,7 @@ test "plan_post_tool_actions - merge_pr effect shape and ordering" {
   }
   assert_eq(count_persist_with_trigger(effects, "merged"), 1)
   assert_eq(count_persist_with_trigger(effects, "FinalizeComplete"), 1)
-  assert_true(has_fire_hook_exit(effects, agent_id, "merged"))
+  assert_true(has_fire_hook_exit(effects, agent_id, @types.ExitReason::Merged))
 }
 
 ///|
@@ -284,8 +286,10 @@ test "plan_post_tool_actions - kill_agent failure chain" {
     terminal_session,
   )
   assert_true(last_is_clear_runtime_for(effects, "main.leaf"))
-  assert_true(has_fire_hook_exit(effects, "main.leaf", "killed"))
-  assert_eq(count_persist_with_trigger(effects, "killed"), 1)
+  assert_true(
+    has_fire_hook_exit(effects, "main.leaf", @types.ExitReason::Shutdown),
+  )
+  assert_eq(count_persist_with_trigger(effects, "shutdown"), 1)
   let mut saw_notify = false
   let mut saw_echo_slot = false
   for e in effects {
