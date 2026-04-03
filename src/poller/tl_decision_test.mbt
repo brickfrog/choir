@@ -194,6 +194,73 @@ test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
 }
 
 ///|
+test "detect_stalled_on_review fires when threshold exceeded and agent active" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 50),
+    changes_requested_since: 100L,
+    stall_notified: false,
+  }
+  let got = detect_stalled_on_review([(t, true)], 800L, 600L)
+  assert_eq(got.length(), 1)
+  assert_eq(got[0].pr_number, 50)
+}
+
+///|
+test "detect_stalled_on_review does not fire before threshold" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 51),
+    changes_requested_since: 100L,
+    stall_notified: false,
+  }
+  let got = detect_stalled_on_review([(t, true)], 500L, 600L)
+  assert_eq(got.length(), 0)
+}
+
+///|
+test "detect_stalled_on_review does not fire when agent inactive" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 52),
+    changes_requested_since: 100L,
+    stall_notified: false,
+  }
+  let got = detect_stalled_on_review([(t, false)], 800L, 600L)
+  assert_eq(got.length(), 0)
+}
+
+///|
+test "detect_stalled_on_review does not fire when stall_notified" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 53),
+    changes_requested_since: 100L,
+    stall_notified: true,
+  }
+  let got = detect_stalled_on_review([(t, true)], 800L, 600L)
+  assert_eq(got.length(), 0)
+}
+
+///|
+test "detect_stalled_on_review skips when review is not ChangesRequested" {
+  let t = {
+    ..sample_tracked(Approved, Success, 54),
+    changes_requested_since: 100L,
+    stall_notified: false,
+  }
+  let got = detect_stalled_on_review([(t, true)], 800L, 600L)
+  assert_eq(got.length(), 0)
+}
+
+///|
+test "detect_stalled_on_review skips when changes_requested_since is zero" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 55),
+    changes_requested_since: 0L,
+    stall_notified: false,
+  }
+  let got = detect_stalled_on_review([(t, true)], 800L, 600L)
+  assert_eq(got.length(), 0)
+}
+
+///|
 test "plan_tl_poll_event_parent CopilotIssueCommentSeen uses post-detection snapshot" {
   let t = {
     ..sample_tracked(Approved, Success, 99),

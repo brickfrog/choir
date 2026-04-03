@@ -679,6 +679,22 @@ pub async fn PollerState::tick_with(
       tracked_ok, review, review_bodies, sha,
     )
     let copilot_sticky = tracked_ok.copilot_issue_comment_seen || copilot_now
+    let mut crs = tracked_ok.changes_requested_since
+    let mut sn = tracked_ok.stall_notified
+    let sha_moved = tracked_ok.last_sha != "" &&
+      sha != "" &&
+      sha != tracked_ok.last_sha
+    if sha_moved {
+      crs = 0L
+      sn = false
+    }
+    if review != ChangesRequested {
+      crs = 0L
+      sn = false
+    } else if prior_state != ChangesRequested {
+      crs = now
+      sn = false
+    }
     let updated = if sha == "" {
       {
         ..tracked_ok,
@@ -688,6 +704,8 @@ pub async fn PollerState::tick_with(
         last_ci_rollup: ci_rollup,
         last_timeout_at: timeout_at,
         copilot_issue_comment_seen: copilot_sticky,
+        changes_requested_since: crs,
+        stall_notified: sn,
       }
     } else {
       {
@@ -699,6 +717,8 @@ pub async fn PollerState::tick_with(
         last_ci_rollup: ci_rollup,
         last_timeout_at: timeout_at,
         copilot_issue_comment_seen: copilot_sticky,
+        changes_requested_since: crs,
+        stall_notified: sn,
       }
     }
     self.tracked.set(pr_number, updated)
@@ -745,6 +765,33 @@ async fn state_tick_backoff_mock_success(
 ) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
   @async.sleep(0)
   (true, Commented, "sha-1", Success, "body", true, false)
+}
+
+///|
+async fn state_tick_sha_change_under_changes_requested(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+  @async.sleep(0)
+  (true, ChangesRequested, "sha-new", Success, "", true, false)
+}
+
+///|
+async fn state_tick_none_to_changes_requested(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+  @async.sleep(0)
+  (true, ChangesRequested, "head1", Success, "fix it", true, false)
+}
+
+///|
+async fn state_tick_changes_requested_to_approved(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+  @async.sleep(0)
+  (true, Approved, "head1", Success, "", true, false)
 }
 
 ///|
@@ -817,5 +864,85 @@ async test "tick_with successful poll resets consecutive_failures and backoff_un
       assert_eq(t.last_sha, "sha-1")
     }
     None => fail("expected PR 103 after success")
+  }
+}
+
+///|
+async test "tick_with resets stall fields when SHA changes under ChangesRequested" {
+  let ps = PollerState::new()
+  ps.track(201, "main.leaf", "main.leaf", "main", "u", 10L)
+  let base = match ps.get(201) {
+    Some(t) => t
+    None => fail("expected PR 201")
+  }
+  ps.restore({
+    ..base,
+    last_review_state: ChangesRequested,
+    last_sha: "sha-old",
+    changes_requested_since: 999L,
+    stall_notified: true,
+  })
+  let noop_ev = fn(_e : PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : PollerPrTickLog) -> Unit { () }
+  let _ = ps.tick_with(
+    50L, 3600L, state_tick_sha_change_under_changes_requested, noop_ev, noop_log,
+  )
+  match ps.get(201) {
+    Some(t) => {
+      assert_eq(t.changes_requested_since, 0L)
+      assert_eq(t.stall_notified, false)
+      assert_eq(t.last_sha, "sha-new")
+    }
+    None => fail("expected PR 201 after tick")
+  }
+}
+
+///|
+async test "tick_with sets changes_requested_since when entering ChangesRequested" {
+  let ps = PollerState::new()
+  ps.track(202, "main.leaf", "main.leaf", "main", "u", 1L)
+  let noop_ev = fn(_e : PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : PollerPrTickLog) -> Unit { () }
+  let now = 77L
+  let _ = ps.tick_with(
+    now, 3600L, state_tick_none_to_changes_requested, noop_ev, noop_log,
+  )
+  match ps.get(202) {
+    Some(t) => {
+      assert_eq(t.changes_requested_since, now)
+      assert_eq(t.stall_notified, false)
+      assert_eq(t.last_review_state, ChangesRequested)
+    }
+    None => fail("expected PR 202 after tick")
+  }
+}
+
+///|
+async test "tick_with clears stall fields when leaving ChangesRequested" {
+  let ps = PollerState::new()
+  ps.track(203, "main.leaf", "main.leaf", "main", "u", 1L)
+  let base = match ps.get(203) {
+    Some(t) => t
+    None => fail("expected PR 203")
+  }
+  ps.restore({
+    ..base,
+    last_review_state: ChangesRequested,
+    last_sha: "head1",
+    changes_requested_since: 500L,
+    stall_notified: true,
+  })
+  let noop_ev = fn(_e : PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : PollerPrTickLog) -> Unit { () }
+  let _ = ps.tick_with(
+    88L, 3600L, state_tick_changes_requested_to_approved, noop_ev, noop_log,
+  )
+  match ps.get(203) {
+    Some(t) => {
+      assert_eq(t.changes_requested_since, 0L)
+      assert_eq(t.stall_notified, false)
+      assert_eq(t.last_review_state, Approved)
+    }
+    None => fail("expected PR 203 after tick")
   }
 }
