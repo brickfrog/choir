@@ -321,16 +321,19 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   tracked : TrackedPR,
   unresolved_threads : Int?,
 ) -> Bool {
-  if tracked.last_review_state != Approved {
+  let threads_clear = match unresolved_threads {
+    Some(n) => n == 0
+    None => false
+  }
+  let review_ok = tracked.last_review_state == Approved ||
+    (tracked.last_review_state == Commented && threads_clear)
+  if !review_ok {
     return false
   }
   if tracked.last_ci_rollup != Success {
     return false
   }
-  match unresolved_threads {
-    Some(n) => n == 0
-    None => false
-  }
+  threads_clear
 }
 
 ///|
@@ -342,9 +345,6 @@ fn tl_snapshot_workflow_category(
     return BlockedOnChanges
   }
   if merge_ready {
-    if !tracked.copilot_issue_comment_seen {
-      return MergeSnapshotReadyCopilotIssueCommentMissing
-    }
     return MergeGateOpenPendingPolicyConfirmation
   }
   if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {

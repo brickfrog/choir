@@ -2291,9 +2291,7 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     Some((message, status)) => {
       assert_eq(status, "success")
       assert_true(message.contains("TLDecision:"))
-      assert_true(
-        message.contains("no Copilot issue comment has been observed"),
-      )
+      assert_true(message.contains("Merge gate open"))
     }
     None => fail("expected merge-gate-open PRReady message")
   }
