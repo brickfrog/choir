@@ -63,6 +63,9 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "last_ci_rollup": ci_rollup_name(self.last_ci_rollup).to_json(),
     "last_timeout_at": self.last_timeout_at.to_json(),
     "copilot_issue_comment_seen": self.copilot_issue_comment_seen.to_json(),
+    "orphan_notified": self.orphan_notified.to_json(),
+    "changes_requested_since": self.changes_requested_since.to_json(),
+    "stall_notified": self.stall_notified.to_json(),
   }
   .to_json()
   .stringify()
@@ -189,6 +192,19 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => false
   }
+  let orphan_notified = match json_field_bool(fields, "orphan_notified") {
+    Some(value) => value
+    None => false
+  }
+  let changes_requested_since = match
+    json_field_int64(fields, "changes_requested_since") {
+    Some(value) => value
+    None => 0L
+  }
+  let stall_notified = match json_field_bool(fields, "stall_notified") {
+    Some(value) => value
+    None => false
+  }
   Some({
     pr_number,
     agent_id,
@@ -205,6 +221,9 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     last_ci_rollup,
     last_timeout_at,
     copilot_issue_comment_seen,
+    orphan_notified,
+    changes_requested_since,
+    stall_notified,
   })
 }
 
@@ -239,6 +258,9 @@ pub fn PollerState::track(
     last_ci_rollup: Unknown,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   self.tracked.set(pr_number, pr)
 }
@@ -342,6 +364,9 @@ pub fn PollerState::track_recovered(
     last_ci_rollup: ci_rollup,
     last_timeout_at: 0L,
     copilot_issue_comment_seen,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   self.tracked.set(pr_number, pr)
 }

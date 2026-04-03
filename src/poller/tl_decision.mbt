@@ -16,6 +16,8 @@ pub(all) enum TlTrackedPrWorkflowCategory {
   /// Approved + CI + threads clear in snapshot, but Copilot issue comment not seen.
   MergeSnapshotReadyCopilotIssueCommentMissing
   ObservedMergedExternal
+  OrphanedPRNeedsManualAction
+  StalledOnChangesRequested
 } derive(Show, Eq)
 
 ///|
@@ -113,6 +115,10 @@ pub fn tl_tracked_pr_workflow_category_sentence(
       "Choir snapshot shows merge blockers cleared on GitHub, but no Copilot issue comment has been observed on this PR yet — confirm policy before merge_pr."
     ObservedMergedExternal =>
       "PR merged or closed externally — use lifecycle/leaf shutdown as appropriate."
+    OrphanedPRNeedsManualAction =>
+      "PR's owning agent is no longer active — merge manually via merge_pr or respawn via rescue_leaf."
+    StalledOnChangesRequested =>
+      "Changes requested but leaf has not pushed fixes — check leaf status or respawn."
   }
 }
 
