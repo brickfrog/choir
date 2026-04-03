@@ -716,7 +716,7 @@ test "plan_dev_event_checked PRCreated emits two lifecycle effects" {
       }
       match effects[1] {
         AppendLifecycleEvent(trigger~, ..) =>
-          assert_eq(trigger, @types.LifecycleTrigger::PrCreated)
+          assert_eq(trigger, @types.LifecycleTrigger::PRCreated)
         _ => fail("expected AppendLifecycleEvent")
       }
     }

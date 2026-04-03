@@ -119,16 +119,16 @@ fn tl_event_trigger(event : TLEvent) -> @types.LifecycleTrigger {
     TLEvent::ChildSpawned(_) => @types.LifecycleTrigger::ChildSpawned
     TLEvent::ChildCompleted(_) => @types.LifecycleTrigger::ChildCompleted
     TLEvent::ChildFailed(_, ..) => @types.LifecycleTrigger::ChildFailed
-    TLEvent::PRMerged(..) => @types.LifecycleTrigger::PrMerged
+    TLEvent::PRMerged(..) => @types.LifecycleTrigger::PRMerged
     TLEvent::AllChildrenDone => @types.LifecycleTrigger::AllChildrenDone
-    TLEvent::OwnPRFiled(..) => @types.LifecycleTrigger::OwnPrFiled
+    TLEvent::OwnPRFiled(..) => @types.LifecycleTrigger::OwnPRFiled
   }
 }
 
 ///|
 fn dev_event_trigger(event : DevEvent) -> @types.LifecycleTrigger {
   match event {
-    DevEvent::PRCreated(..) => @types.LifecycleTrigger::PrCreated
+    DevEvent::PRCreated(..) => @types.LifecycleTrigger::PRCreated
     DevEvent::NotifyParentSuccess(..) =>
       @types.LifecycleTrigger::NotifyParentSuccess
     DevEvent::NotifyParentFailure(..) =>
