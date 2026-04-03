@@ -101,6 +101,21 @@ test "Role parse_wire agrees with try_parse_wire on every wire string" {
 }
 
 ///|
+test "Role parse_wire raises on unknown strings matching try_parse_wire error" {
+  let unknowns = ["TL", "Worker", "", "ROOT", "unknown"]
+  for s in unknowns {
+    let parse_wire_result = try? @types.Role::parse_wire(s)
+    match (parse_wire_result, @types.Role::try_parse_wire(s)) {
+      (Err(raised), Err(expected)) =>
+        assert_eq(raised.message(), expected.message())
+      (Ok(_), _) => fail("parse_wire should have raised for: " + s)
+      (Err(_), Ok(_)) =>
+        fail("try_parse_wire returned Ok but parse_wire raised for: " + s)
+    }
+  }
+}
+
+///|
 test "AgentType to_wire_string encodes all variants" {
   assert_eq(@types.AgentType::Claude.to_wire_string(), "claude")
   assert_eq(@types.AgentType::Gemini.to_wire_string(), "gemini")
@@ -187,6 +202,21 @@ test "AgentType parse_wire agrees with try_parse_wire on canonical and alias str
     match @types.AgentType::try_parse_wire(s) {
       Ok(expected) => assert_eq(@types.AgentType::parse_wire(s), expected)
       Err(e) => fail(e.message())
+    }
+  }
+}
+
+///|
+test "AgentType parse_wire raises on unknown strings matching try_parse_wire error" {
+  let unknowns = ["Claude", "MoonPilot", "", "gpt4", "CODEX"]
+  for s in unknowns {
+    let parse_wire_result = try? @types.AgentType::parse_wire(s)
+    match (parse_wire_result, @types.AgentType::try_parse_wire(s)) {
+      (Err(raised), Err(expected)) =>
+        assert_eq(raised.message(), expected.message())
+      (Ok(_), _) => fail("parse_wire should have raised for: " + s)
+      (Err(_), Ok(_)) =>
+        fail("try_parse_wire returned Ok but parse_wire raised for: " + s)
     }
   }
 }
