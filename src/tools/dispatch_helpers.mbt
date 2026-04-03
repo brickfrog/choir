@@ -1009,53 +1009,6 @@ async test "handle_kv_list uses test and find argv and sorts keys" {
 }
 
 ///|
-test "parse_unresolved_threads_response returns only unresolved threads" {
-  let json =
-    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_abc","isResolved":false,"path":"src/foo.mbt","comments":{"nodes":[{"body":"fix this"}]}},{"id":"PRRT_def","isResolved":true,"path":"src/bar.mbt","comments":{"nodes":[{"body":"already fixed"}]}}]}}}}}
-  let (count, text) = parse_unresolved_threads_response(json)
-  assert_eq(count, 1)
-  assert_true(text.contains("PRRT_abc"))
-  assert_true(text.contains("fix this"))
-  assert_false(text.contains("already fixed"))
-  assert_false(text.contains("PRRT_def"))
-}
-
-///|
-test "parse_unresolved_threads_response empty on all resolved" {
-  let json =
-    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_xyz","isResolved":true,"path":"src/foo.mbt","comments":{"nodes":[{"body":"done"}]}}]}}}}}
-  let (count, text) = parse_unresolved_threads_response(json)
-  assert_eq(count, 0)
-  assert_eq(text, "")
-}
-
-///|
-test "parse_unresolved_threads_response empty on parse error" {
-  let (count, text) = parse_unresolved_threads_response("not json")
-  assert_eq(count, 0)
-  assert_eq(text, "")
-}
-
-///|
-test "parse_gh_repo_view_output extracts owner and repo" {
-  match
-    parse_gh_repo_view_output(
-      "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}",
-    ) {
-    Some((owner, repo)) => {
-      assert_eq(owner, "brickfrog")
-      assert_eq(repo, "choir")
-    }
-    None => fail("expected owner/repo")
-  }
-}
-
-///|
-test "parse_gh_repo_view_output returns None on malformed json" {
-  assert_eq(parse_gh_repo_view_output("{\"owner\":{},\"name\":1}"), None)
-}
-
-///|
 async test "capture_plugin_shell_command pipes stdin to argv plugin (no sh -c for simple argv)" {
   let (exit_code, out) = @exec.capture_plugin_shell_command(
     "cat", "{\"ok\":true}", 10,

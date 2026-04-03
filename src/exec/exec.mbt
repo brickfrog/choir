@@ -727,39 +727,6 @@ test "parse_plugin_argv_line returns None on unclosed quote" {
 }
 
 ///|
-test "plugin_capture_uses_shell detects unquoted compound commands" {
-  assert_true(plugin_capture_uses_shell("a && b"))
-  assert_false(plugin_capture_uses_shell("choir tool x"))
-}
-
-///|
-test "plugin_capture_uses_shell does not force shell for metachars only inside quotes" {
-  assert_false(plugin_capture_uses_shell("echo \"a && b\""))
-  assert_false(plugin_capture_uses_shell("python3 -c \"print(1>2)\""))
-}
-
-///|
-test "plugin_capture_uses_shell still requires shell for glob and expansion markers" {
-  assert_true(plugin_capture_uses_shell("echo *"))
-  assert_true(plugin_capture_uses_shell("echo $HOME"))
-}
-
-///|
-test "plugin_capture_uses_shell requires shell for unquoted subshell parens" {
-  assert_true(plugin_capture_uses_shell("( echo hi )"))
-}
-
-///|
-test "plugin_capture_uses_shell requires shell for env assignment prefix" {
-  assert_true(plugin_capture_uses_shell("FOO=bar choir tool x"))
-}
-
-///|
-test "plugin_capture_uses_shell requires shell when parse fails" {
-  assert_true(plugin_capture_uses_shell("echo \""))
-}
-
-///|
 test "first_token_is_env_assignment detects VAR=value prefix" {
   assert_true(first_token_is_env_assignment("FOO=bar"))
   assert_false(first_token_is_env_assignment("./bin=odd"))

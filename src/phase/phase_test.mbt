@@ -871,3 +871,10 @@ test "interpret_lifecycle_effects second append without new persist is ignored" 
   assert_false(log.contains("second"))
   ignore(@sys.system("rm -rf " + project_dir))
 }
+
+///|
+test "sanitize_branch escapes dots and path separators" {
+  assert_eq(sanitize_branch("main.leaf"), "main--leaf")
+  assert_eq(sanitize_branch("feature/x.leaf"), "feature_x--leaf")
+  assert_eq(sanitize_branch("feature\\x.leaf"), "feature_x--leaf")
+}
