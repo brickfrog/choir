@@ -129,7 +129,7 @@ test "plan_tl_poll_event_parent CI actionable events can open merge gate" {
     t,
     Some(0),
   )
-  assert_eq(cat, MergeSnapshotReadyCopilotIssueCommentMissing)
+  assert_eq(cat, MergeGateOpenPendingPolicyConfirmation)
 }
 
 ///|
