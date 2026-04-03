@@ -1051,6 +1051,72 @@ fn poller_sanitize_event_for_log(raw : String) -> String {
 }
 
 ///|
+async fn deliver_orphaned_pr_notifications(
+  state : ServerState,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let pairs : Array[(@poller.TrackedPR, Bool)] = []
+  state.poller.tracked.each(fn(_k, pr) {
+    let agent_opt = try state.registry.get(pr.agent_id) catch {
+      _ => None
+    } noraise {
+      a => Some(a)
+    }
+    let agent_is_active = match agent_opt {
+      Some(agent) =>
+        agent.state == @types.AgentState::Active ||
+        agent.state == @types.AgentState::Completing
+      None => false
+    }
+    pairs.push((pr, agent_is_active))
+  })
+  let orphans = @poller.detect_orphaned_prs(pairs)
+  let append_file = state.append_file
+  let project_dir = state.config.project_dir
+  for pr in orphans {
+    let message = "[ORPHANED PR] PR #" +
+      pr.pr_number.to_string() +
+      " (" +
+      pr.agent_id +
+      ") — owning agent is no longer active; merge manually via merge_pr or respawn via rescue_leaf"
+    try {
+      let parent = state.resolve_parent_for_delivery(pr.agent_id)
+      ignore(
+        append_file(
+          project_dir + "/.choir/delivery.log",
+          "[poller-parent] agent=" +
+          pr.agent_id +
+          " parent=" +
+          parent.agent_id.to_string() +
+          " terminal_target=" +
+          parent.terminal_target
+          .map(@types.LocalTarget::to_string)
+          .unwrap_or("NONE") +
+          "\n",
+        ),
+      )
+      let delivery = @message.plan_delivery(
+        parent,
+        pr.agent_id,
+        message,
+        "failure",
+      )
+      match @tools.execute_delivery(delivery, runner) {
+        Ok(_) =>
+          match state.poller.get(pr.pr_number) {
+            Some(current) =>
+              state.poller.restore({ ..current, orphan_notified: true })
+            None => ()
+          }
+        Err(_) => ()
+      }
+    } catch {
+      _ => ()
+    }
+  }
+}
+
+///|
 fn poll_events_delivery_summary(events : Array[@poller.PollEvent]) -> String {
   if events.length() == 0 {
     return "no change"
@@ -1164,6 +1230,7 @@ pub async fn ServerState::process_poller_tick_with(
     },
     fn(_) { () },
   )
+  deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
@@ -1219,6 +1286,7 @@ pub async fn ServerState::process_poller_tick(
     " tracked_after=" +
     tracked_after.to_string(),
   )
+  deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
