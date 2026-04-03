@@ -150,7 +150,11 @@ pub(all) enum DevLifecycleEvent {
 ///|
 pub(all) enum SupervisorEvent {
   ChildSpawned(child~ : ChildLifecycle)
-  ChildUpdated(child_id~ : String, summary~ : ChildLifecycleSummary)
+  ChildUpdated(
+    child_id~ : String,
+    summary~ : ChildLifecycleSummary,
+    agent_type~ : @types.AgentType?
+  )
   ChildRemoved(child_id~ : String)
   ChildFailed(child_id~ : String, reason~ : FailureReason)
   AllChildrenComplete
@@ -442,16 +446,21 @@ pub fn dev_lifecycle_transition(
 }
 
 ///|
-fn update_child_summary(
+fn update_child_row(
   children : Array[ChildLifecycle],
   child_id : String,
   summary : ChildLifecycleSummary,
+  agent_type : @types.AgentType?,
 ) -> Array[ChildLifecycle] {
   let updated = []
   let mut found = false
   for child in children {
     if child.child_id == child_id {
-      updated.push({ ..child, summary, })
+      let next_type = match agent_type {
+        Some(t) => t
+        None => child.agent_type
+      }
+      updated.push({ ..child, summary, agent_type: next_type })
       found = true
     } else {
       updated.push(child)
@@ -462,6 +471,15 @@ fn update_child_summary(
   } else {
     children
   }
+}
+
+///|
+fn update_child_summary(
+  children : Array[ChildLifecycle],
+  child_id : String,
+  summary : ChildLifecycleSummary,
+) -> Array[ChildLifecycle] {
+  update_child_row(children, child_id, summary, None)
 }
 
 ///|
@@ -515,8 +533,11 @@ pub fn supervisor_transition(
       Transitioned(OwnPRFiled(number~, url~))
     (WaveComplete(_, ..), OwnPRFiled(number~, url~)) =>
       Transitioned(OwnPRFiled(number~, url~))
-    (Supervising(children~, wave~), ChildUpdated(child_id~, summary~)) => {
-      let updated = update_child_summary(children, child_id, summary)
+    (
+      Supervising(children~, wave~),
+      ChildUpdated(child_id~, summary~, agent_type~),
+    ) => {
+      let updated = update_child_row(children, child_id, summary, agent_type)
       if children_all_terminal(updated) {
         Transitioned(WaveComplete(wave~, children=updated))
       } else {
@@ -539,8 +560,11 @@ pub fn supervisor_transition(
       Transitioned(
         Supervising(children=remove_child(children, child_id), wave~),
       )
-    (WaveComplete(wave~, children~), ChildUpdated(child_id~, summary~)) => {
-      let updated = update_child_summary(children, child_id, summary)
+    (
+      WaveComplete(wave~, children~),
+      ChildUpdated(child_id~, summary~, agent_type~),
+    ) => {
+      let updated = update_child_row(children, child_id, summary, agent_type)
       if children_all_terminal(updated) {
         Transitioned(WaveComplete(wave~, children=updated))
       } else {

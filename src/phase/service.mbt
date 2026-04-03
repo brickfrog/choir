@@ -158,7 +158,7 @@ pub fn plan_tl_lifecycle_effects(
           child_id,
           slug: child_id,
           branch: child_id,
-          agent_type: @types.AgentType::Gemini,
+          agent_type: @types.AgentType::Unknown,
           summary: ChildLifecycleSummary::Working,
         }),
       )
@@ -169,6 +169,7 @@ pub fn plan_tl_lifecycle_effects(
           SupervisorEvent::ChildUpdated(
             child_id~,
             summary=ChildLifecycleSummary::Done,
+            agent_type=None,
           ),
         ) {
         Transitioned(next) => Transitioned(promote_if_wave_complete(next))
@@ -198,6 +199,7 @@ pub fn plan_tl_lifecycle_effects(
                   SupervisorEvent::ChildUpdated(
                     child_id~,
                     summary=ChildLifecycleSummary::Done,
+                    agent_type=None,
                   ),
                 ) {
                 Transitioned(next) =>
@@ -576,6 +578,7 @@ pub fn sync_parent_child_lifecycle(
             SupervisorEvent::ChildUpdated(
               child_id=agent_id,
               summary=child.summary,
+              agent_type=Some(agent.agent_type),
             ),
           ),
           "ChildUpdated",
