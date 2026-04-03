@@ -796,11 +796,143 @@ fn leaf_poll_review_injection_message(
 }
 
 ///|
+priv struct PendingPollParentRow {
+  tracked : @poller.TrackedPR
+  leaf_agent_id : String
+  message : String
+  status : String
+  category : @poller.TlTrackedPrWorkflowCategory
+}
+
+///|
+fn supervisor_children_len_for_parent(
+  project_dir : String,
+  parent_id : String,
+) -> Int {
+  match @phase.read_lifecycle(project_dir, parent_id) {
+    Some(lc) =>
+      match lc.workflow {
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~, ..)
+        ) => children.length()
+        @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::WaveComplete(children~, ..)
+        ) => children.length()
+        _ => 0
+      }
+    None => 0
+  }
+}
+
+///|
+fn build_agent_wave_map(
+  poller : @poller.PollerState,
+  registry : @registry.AgentRegistry,
+  project_dir : String,
+) -> Map[String, (String, Int)] {
+  let m : Map[String, (String, Int)] = {}
+  for tracked in poller.tracked.values() {
+    try {
+      let parent = registry.get_parent(tracked.agent_id)
+      let parent_id = parent.agent_id.to_string()
+      match @phase.read_lifecycle(project_dir, parent_id) {
+        Some(plc) =>
+          match plc.workflow {
+            @phase.WorkflowState::Supervisor(
+              @phase.SupervisorLifecycle::Supervising(wave~, ..)
+            ) => m.set(tracked.agent_id, (parent_id, wave))
+            @phase.WorkflowState::Supervisor(
+              @phase.SupervisorLifecycle::WaveComplete(wave~, ..)
+            ) => m.set(tracked.agent_id, (parent_id, wave))
+            _ => ()
+          }
+        None => ()
+      }
+    } catch {
+      _ => ()
+    }
+  }
+  m
+}
+
+///|
+fn rollup_contains_entry(
+  rollup : @poller.WaveRollup,
+  t : @poller.WaveRollupEntry,
+) -> Bool {
+  for e in rollup.entries {
+    if e == t {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn row_in_any_multi_rollup(
+  row : PendingPollParentRow,
+  rollups : Array[@poller.WaveRollup],
+) -> Bool {
+  let t : @poller.WaveRollupEntry = {
+    pr_number: row.tracked.pr_number,
+    agent_id: row.leaf_agent_id,
+    category: row.category,
+  }
+  for r in rollups {
+    if rollup_contains_entry(r, t) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn rollup_rows_for(
+  rows : Array[PendingPollParentRow],
+  rollup : @poller.WaveRollup,
+) -> Array[PendingPollParentRow] {
+  let matched : Array[PendingPollParentRow] = []
+  for row in rows {
+    let t : @poller.WaveRollupEntry = {
+      pr_number: row.tracked.pr_number,
+      agent_id: row.leaf_agent_id,
+      category: row.category,
+    }
+    if rollup_contains_entry(rollup, t) {
+      matched.push(row)
+    }
+  }
+  matched
+}
+
+///|
+fn rollup_delivery_status(rows : Array[PendingPollParentRow]) -> String {
+  let mut has_failure = false
+  let mut has_success = false
+  for row in rows {
+    if row.status == "failure" {
+      has_failure = true
+    }
+    if row.status == "success" {
+      has_success = true
+    }
+  }
+  if has_failure {
+    "failure"
+  } else if has_success {
+    "success"
+  } else {
+    "info"
+  }
+}
+
+///|
 pub fn ServerState::plan_poll_event_deliveries(
   self : ServerState,
   event : @poller.PollEvent,
   agent_id : String,
   unresolved_threads_for_recheck : Int?,
+  skip_parent? : Bool = false,
 ) -> Array[@message.DeliveryMethod] {
   let deliveries : Array[@message.DeliveryMethod] = []
   let tracked = self.poller.get(poll_event_pr_number(event))
@@ -855,36 +987,38 @@ pub fn ServerState::plan_poll_event_deliveries(
     self.current_lifecycle(leaf_agent_id),
   )
   // Parent notification — TL triage / merge signals (comment-only reviews: leaf only)
-  match tracked {
-    Some(pr) =>
-      match
-        parent_poll_event_message(pr, event, unresolved_threads_for_recheck) {
-        Some((message, status)) =>
-          try {
-            let parent = self.resolve_parent_for_delivery(leaf_agent_id)
-            ignore(
-              (self.append_file)(
-                self.config.project_dir + "/.choir/delivery.log",
-                "[poller-parent] agent=" +
-                leaf_agent_id +
-                " parent=" +
-                parent.agent_id.to_string() +
-                " terminal_target=" +
-                parent.terminal_target
-                .map(@types.LocalTarget::to_string)
-                .unwrap_or("NONE") +
-                "\n",
-              ),
-            )
-            deliveries.push(
-              @message.plan_delivery(parent, leaf_agent_id, message, status),
-            )
-          } catch {
-            _ => ()
-          }
-        None => ()
-      }
-    None => ()
+  if !skip_parent {
+    match tracked {
+      Some(pr) =>
+        match
+          parent_poll_event_message(pr, event, unresolved_threads_for_recheck) {
+          Some((message, status)) =>
+            try {
+              let parent = self.resolve_parent_for_delivery(leaf_agent_id)
+              ignore(
+                (self.append_file)(
+                  self.config.project_dir + "/.choir/delivery.log",
+                  "[poller-parent] agent=" +
+                  leaf_agent_id +
+                  " parent=" +
+                  parent.agent_id.to_string() +
+                  " terminal_target=" +
+                  parent.terminal_target
+                  .map(@types.LocalTarget::to_string)
+                  .unwrap_or("NONE") +
+                  "\n",
+                ),
+              )
+              deliveries.push(
+                @message.plan_delivery(parent, leaf_agent_id, message, status),
+              )
+            } catch {
+              _ => ()
+            }
+          None => ()
+        }
+      None => ()
+    }
   }
   // Owning leaf — direct `[REVIEW] PR #n: …` injection (terminal_target in registry)
   match leaf_owner {
@@ -1044,6 +1178,7 @@ async fn deliver_pending_poll_events(
   pending_agent_ids : Array[String],
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
+  let pending_parent_rows : Array[PendingPollParentRow] = []
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
@@ -1061,11 +1196,32 @@ async fn deliver_pending_poll_events(
     }
     for
       delivery in state.plan_poll_event_deliveries(
-        event, agent_id, unresolved_threads,
+        event,
+        agent_id,
+        unresolved_threads,
+        skip_parent=true,
       ) {
       ignore(@tools.execute_delivery(delivery, runner))
     }
-    // Post a comment on the PR for audit trail
+    match state.poller.get(poll_event_pr_number(event)) {
+      Some(pr) =>
+        match parent_poll_event_message(pr, event, unresolved_threads) {
+          Some((message, status)) => {
+            let category = @poller.plan_tl_poll_event_parent(
+              event, pr, unresolved_threads,
+            )
+            pending_parent_rows.push({
+              tracked: pr,
+              leaf_agent_id: pr.agent_id,
+              message,
+              status,
+              category,
+            })
+          }
+          None => ()
+        }
+      None => ()
+    }
     match pr_comment_body(event, agent_id) {
       Some((pr_number, body)) =>
         ignore(
@@ -1074,6 +1230,82 @@ async fn deliver_pending_poll_events(
           ]),
         )
       None => ()
+    }
+  }
+  let rollup_entries : Array[@poller.WaveRollupEntry] = []
+  for row in pending_parent_rows {
+    rollup_entries.push({
+      pr_number: row.tracked.pr_number,
+      agent_id: row.leaf_agent_id,
+      category: row.category,
+    })
+  }
+  let wave_map = build_agent_wave_map(
+    state.poller,
+    state.registry,
+    state.config.project_dir,
+  )
+  let (rollups, _) = @poller.build_wave_rollups(rollup_entries, wave_map)
+  for rollup in rollups {
+    let total_in_wave = supervisor_children_len_for_parent(
+      state.config.project_dir,
+      rollup.parent_id,
+    )
+    let body = @poller.format_wave_rollup(rollup, total_in_wave)
+    let matched = rollup_rows_for(pending_parent_rows, rollup)
+    let status = rollup_delivery_status(matched)
+    let sender = if rollup.entries.length() > 0 {
+      rollup.entries[0].agent_id
+    } else {
+      "poller"
+    }
+    try {
+      let parent = state.resolve_parent_by_id(rollup.parent_id)
+      ignore(
+        (state.append_file)(
+          state.config.project_dir + "/.choir/delivery.log",
+          "[poller-parent-wave] parent=" +
+          rollup.parent_id +
+          " wave=" +
+          rollup.wave.to_string() +
+          "\n",
+        ),
+      )
+      let delivery = @message.plan_delivery(parent, sender, body, status)
+      ignore(@tools.execute_delivery(delivery, runner))
+    } catch {
+      _ => ()
+    }
+  }
+  for row in pending_parent_rows {
+    if row_in_any_multi_rollup(row, rollups) {
+      continue
+    }
+    try {
+      let parent = state.resolve_parent_for_delivery(row.leaf_agent_id)
+      ignore(
+        (state.append_file)(
+          state.config.project_dir + "/.choir/delivery.log",
+          "[poller-parent] agent=" +
+          row.leaf_agent_id +
+          " parent=" +
+          parent.agent_id.to_string() +
+          " terminal_target=" +
+          parent.terminal_target
+          .map(@types.LocalTarget::to_string)
+          .unwrap_or("NONE") +
+          "\n",
+        ),
+      )
+      let delivery = @message.plan_delivery(
+        parent,
+        row.leaf_agent_id,
+        row.message,
+        row.status,
+      )
+      ignore(@tools.execute_delivery(delivery, runner))
+    } catch {
+      _ => ()
     }
   }
 }
