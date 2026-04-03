@@ -270,6 +270,25 @@ test "lifecycle literal blob child slug branch agent_type stay JSON strings" {
 }
 
 ///|
+test "lifecycle literal blob empty agent_type maps to Unknown" {
+  let raw =
+    #|{"agent_id":"p","role":"TL","process":{"tag":"Connected"},"workflow":{"tag":"Supervisor","state":{"tag":"Supervising","wave":1,"children":[{"child_id":"p.c","slug":"c","branch":"p.c","agent_type":"","summary":{"tag":"Working"}}]}}}
+  match lifecycle_from_json(raw.to_string()) {
+    Some(lc) =>
+      match lc.workflow {
+        Supervisor(Supervising(children~, ..)) =>
+          if children.length() == 1 {
+            assert_eq(children[0].agent_type, @types.AgentType::Unknown)
+          } else {
+            fail("expected one child")
+          }
+        _ => fail("expected Supervisor Supervising")
+      }
+    None => fail("parse lifecycle with empty agent_type")
+  }
+}
+
+///|
 test "lifecycle literal blob ChildFailure message stays plain JSON string" {
   let raw =
     #|{"agent_id":"x","role":"TL","process":{"tag":"Connected"},"workflow":{"tag":"Supervisor","state":{"tag":"Supervising","wave":1,"children":[{"child_id":"x.c","slug":"c","branch":"x.c","agent_type":"gemini","summary":{"tag":"Failed","reason":{"tag":"ChildFailure","message":"ci failed"}}}]}}}
@@ -432,6 +451,41 @@ test "state_machine supervisor machine_name and transition" {
     Transitioned(Supervising(children~, wave=1)) =>
       assert_eq(children.length(), 1)
     _ => fail("expected Supervising after ChildSpawned")
+  }
+}
+
+///|
+test "supervisor ChildUpdated with agent_type replaces placeholder" {
+  let sm : SupervisorLifecycle = Planning
+  let child : ChildLifecycle = {
+    child_id: "c1",
+    slug: "leaf",
+    branch: "b1",
+    agent_type: @types.AgentType::Unknown,
+    summary: ChildLifecycleSummary::Working,
+  }
+  let sm2 = match sm.transition(SupervisorEvent::ChildSpawned(child~)) {
+    Transitioned(s) => s
+    _ => {
+      fail("expected ChildSpawned transition")
+      Planning
+    }
+  }
+  match
+    sm2.transition(
+      SupervisorEvent::ChildUpdated(
+        child_id="c1",
+        summary=ChildLifecycleSummary::Working,
+        agent_type=Some(@types.AgentType::MoonPilot),
+      ),
+    ) {
+    Transitioned(Supervising(children~, ..)) =>
+      if children.length() == 1 {
+        assert_eq(children[0].agent_type, @types.AgentType::MoonPilot)
+      } else {
+        fail("expected one child")
+      }
+    _ => fail("expected Supervising after ChildUpdated")
   }
 }
 

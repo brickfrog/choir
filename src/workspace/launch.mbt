@@ -197,6 +197,12 @@ pub fn agent_launch_command(
         ],
         workdir: Some(workspace_path),
       }
+    Unknown =>
+      {
+        program: cmd_program.unwrap_or("gemini"),
+        args: [..cmd_extra_args, "--yolo", "--prompt-interactive", spec.task],
+        workdir: Some(workspace_path),
+      }
   }
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)

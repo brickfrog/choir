@@ -37,12 +37,14 @@ pub fn AgentType::to_wire_string(self : AgentType) -> String {
     MoonPilot => "moon_pilot"
     Codex => "codex"
     CursorAgent => "cursor_agent"
+    Unknown => ""
   }
 }
 
 ///|
 pub fn AgentType::try_parse_wire(s : String) -> Result[AgentType, ChoirError] {
   match s {
+    "" | "unknown" => Ok(Unknown)
     "claude" => Ok(Claude)
     "gemini" => Ok(Gemini)
     "moon_pilot" => Ok(MoonPilot)
