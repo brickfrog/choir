@@ -990,13 +990,16 @@ async fn deliver_poller_stall_notifications(
     } noraise {
       agent =>
         match agent.state {
-          @types.AgentState::Done | @types.AgentState::Failed => false
-          _ => true
+          @types.AgentState::Active | @types.AgentState::Completing => true
+          _ => false
         }
     }
     pairs.push((pr, active))
   })
-  let stalled = @poller.detect_stalled_on_review(pairs, now, 600L)
+  let stall_threshold_seconds : Int64 = 600L
+  let stalled = @poller.detect_stalled_on_review(
+    pairs, now, stall_threshold_seconds,
+  )
   for pr in stalled {
     let mins = (now - pr.changes_requested_since) / 60L
     let msg = "[STALLED] PR #" +
