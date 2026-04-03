@@ -12,18 +12,17 @@ pub fn AgentRegistry::new() -> AgentRegistry {
 }
 
 ///|
-/// Register a new agent. Returns error if ID already exists.
+/// Register a new agent. Raises if ID already exists.
 pub fn AgentRegistry::insert(
   self : AgentRegistry,
   agent : @types.Agent,
-) -> Result[Unit, @types.ChoirError] {
+) -> Unit raise @types.ChoirError {
   let id = agent.agent_id.to_string()
   if self.agents.contains(id) {
-    Err(@types.ChoirError::validation_error("agent already exists: " + id))
+    raise @types.ChoirError::validation_error("agent already exists: " + id)
   } else {
     self.agents.set(id, agent)
     self.alive.set(id, true)
-    Ok(())
   }
 }
 
@@ -45,10 +44,10 @@ pub fn AgentRegistry::upsert(
 pub fn AgentRegistry::get(
   self : AgentRegistry,
   agent_id : String,
-) -> Result[@types.Agent, @types.ChoirError] {
+) -> @types.Agent raise @types.ChoirError {
   match self.agents.get(agent_id) {
-    Some(agent) => Ok(agent)
-    None => Err(@types.ChoirError::agent_not_found(agent_id))
+    Some(agent) => agent
+    None => raise @types.ChoirError::agent_not_found(agent_id)
   }
 }
 
@@ -57,15 +56,12 @@ pub fn AgentRegistry::get(
 pub fn AgentRegistry::get_parent(
   self : AgentRegistry,
   agent_id : String,
-) -> Result[@types.Agent, @types.ChoirError] {
-  match self.get(agent_id) {
-    Err(e) => Err(e)
-    Ok(agent) =>
-      match agent.parent {
-        Some(parent_id) => self.get(parent_id)
-        None =>
-          Err(@types.ChoirError::agent_not_found("no parent for " + agent_id))
-      }
+) -> @types.Agent raise @types.ChoirError {
+  let agent = self.get(agent_id)
+  match agent.parent {
+    Some(parent_id) => self.get(parent_id)
+    None =>
+      raise @types.ChoirError::agent_not_found("no parent for " + agent_id)
   }
 }
 
@@ -74,14 +70,14 @@ pub fn AgentRegistry::get_parent(
 pub fn AgentRegistry::remove(
   self : AgentRegistry,
   agent_id : String,
-) -> Result[@types.Agent, @types.ChoirError] {
+) -> @types.Agent raise @types.ChoirError {
   match self.agents.get(agent_id) {
     Some(agent) => {
       self.agents.remove(agent_id)
       self.alive.remove(agent_id)
-      Ok(agent)
+      agent
     }
-    None => Err(@types.ChoirError::agent_not_found(agent_id))
+    None => raise @types.ChoirError::agent_not_found(agent_id)
   }
 }
 
@@ -108,7 +104,7 @@ pub fn AgentRegistry::set_state(
   self : AgentRegistry,
   agent_id : String,
   new_state : @types.AgentState,
-) -> Result[Unit, @types.ChoirError] {
+) -> Unit raise @types.ChoirError {
   match self.agents.get(agent_id) {
     Some(agent) => {
       let valid = match (agent.state, new_state) {
@@ -123,19 +119,16 @@ pub fn AgentRegistry::set_state(
       if valid {
         let updated_agent = { ..agent, state: new_state }
         self.agents.set(agent_id, updated_agent)
-        Ok(())
       } else {
-        Err(
-          @types.ChoirError::validation_error(
-            "invalid state transition: " +
-            agent.state.to_string() +
-            " -> " +
-            new_state.to_string(),
-          ),
+        raise @types.ChoirError::validation_error(
+          "invalid state transition: " +
+          agent.state.to_string() +
+          " -> " +
+          new_state.to_string(),
         )
       }
     }
-    None => Err(@types.ChoirError::agent_not_found(agent_id))
+    None => raise @types.ChoirError::agent_not_found(agent_id)
   }
 }
 
@@ -145,13 +138,10 @@ pub fn AgentRegistry::set_alive(
   self : AgentRegistry,
   agent_id : String,
   alive : Bool,
-) -> Result[Unit, @types.ChoirError] {
+) -> Unit raise @types.ChoirError {
   match self.agents.get(agent_id) {
-    Some(_) => {
-      self.alive.set(agent_id, alive)
-      Ok(())
-    }
-    None => Err(@types.ChoirError::agent_not_found(agent_id))
+    Some(_) => self.alive.set(agent_id, alive)
+    None => raise @types.ChoirError::agent_not_found(agent_id)
   }
 }
 

@@ -2629,9 +2629,10 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
     }
     _ => fail("expected ok")
   }
-  match reg.get("main.leaf") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Failed)
-    Err(_) => fail("expected agent in registry")
+  try reg.get("main.leaf") catch {
+    _ => fail("expected agent in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Failed)
   }
 }
 
@@ -3146,12 +3147,13 @@ async test "interpret_spawn_worker registers agent on success" {
     }
     _ => fail("expected ok")
   }
-  match reg.get("main.w1") {
-    Ok(a) => {
+  try reg.get("main.w1") catch {
+    _ => fail("expected worker in registry")
+  } noraise {
+    a => {
       assert_eq(a.role, @types.Role::Worker)
       assert_eq(a.workspace, "/tmp/p")
     }
-    Err(_) => fail("expected worker in registry")
   }
 }
 

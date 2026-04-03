@@ -493,7 +493,7 @@ test "resolve_agent_with_fallback - in registry" {
     spawn_depth: 0,
   }
   ignore(reg.upsert(agent))
-  let resolved = resolve_agent_with_fallback(
+  let resolved = try? resolve_agent_with_fallback(
     project_dir, session, reg, agent_id,
   )
   match resolved {
@@ -518,7 +518,7 @@ test "resolve_agent_with_fallback - fallback to lifecycle" {
   let lifecycle = lifecycle_for_role(agent_id, @types.Role::TL)
   ignore(write_lifecycle(project_dir, lifecycle))
 
-  let resolved = resolve_agent_with_fallback(
+  let resolved = try? resolve_agent_with_fallback(
     project_dir, session, reg, agent_id,
   )
   match resolved {
@@ -581,7 +581,7 @@ test "resolve_parent_with_fallback - parent in registry" {
   }
   ignore(reg.upsert(parent))
 
-  let resolved = resolve_parent_with_fallback(
+  let resolved = try? resolve_parent_with_fallback(
     project_dir, session, reg, caller_id,
   )
   match resolved {
@@ -796,9 +796,10 @@ test "interpret_lifecycle_effects updates registry after successful persist" {
     [PersistLifecycle(lifecycle=next)],
     registry=Some(reg),
   )
-  match reg.get(agent_id) {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Completing)
-    Err(_) => fail("expected agent in registry")
+  try reg.get(agent_id) catch {
+    _ => fail("expected agent in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Completing)
   }
   ignore(@sys.system("rm -rf " + project_dir))
 }

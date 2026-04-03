@@ -23,7 +23,7 @@ async test "cancel_wave force=false clean" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  let _ = reg.insert(agent1)
+  ignore(try? reg.insert(agent1))
   let ps = @poller.PollerState::new()
 
   let req = ToolRequest::CancelWave({ force: false })
@@ -51,9 +51,10 @@ async test "cancel_wave force=false clean" {
   }
 
   // Verify agent state is Failed
-  match reg.get("main.leaf1") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Failed)
-    Err(_) => fail("expected agent1 in registry")
+  try reg.get("main.leaf1") catch {
+    _ => fail("expected agent1 in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Failed)
   }
 }
 
@@ -72,7 +73,7 @@ async test "cancel_wave cancels spawning agent" {
     state: @types.AgentState::Spawning,
     spawn_depth: 0,
   }
-  let _ = reg.insert(agent1)
+  ignore(try? reg.insert(agent1))
 
   let req = ToolRequest::CancelWave({ force: false })
   let resp = dispatch(
@@ -94,9 +95,10 @@ async test "cancel_wave cancels spawning agent" {
   }
 
   // Verify agent state is Failed
-  match reg.get("main.spawning1") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Failed)
-    Err(_) => fail("expected spawning1 in registry")
+  try reg.get("main.spawning1") catch {
+    _ => fail("expected spawning1 in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Failed)
   }
 }
 
@@ -115,7 +117,7 @@ async test "cancel_wave force=false blocked by PR" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  let _ = reg.insert(agent1)
+  ignore(try? reg.insert(agent1))
 
   let ps = @poller.PollerState::new()
   ps.track_recovered(
@@ -150,9 +152,10 @@ async test "cancel_wave force=false blocked by PR" {
   }
 
   // Verify agent state is still Active
-  match reg.get("main.leaf1") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Active)
-    Err(_) => fail("expected agent1 in registry")
+  try reg.get("main.leaf1") catch {
+    _ => fail("expected agent1 in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Active)
   }
 }
 
@@ -171,7 +174,7 @@ async test "cancel_wave force=true overrides PR block" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  let _ = reg.insert(agent1)
+  ignore(try? reg.insert(agent1))
 
   let ps = @poller.PollerState::new()
   ps.track_recovered(
@@ -209,9 +212,10 @@ async test "cancel_wave force=true overrides PR block" {
   }
 
   // Verify agent state is Failed
-  match reg.get("main.leaf1") {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Failed)
-    Err(_) => fail("expected agent1 in registry")
+  try reg.get("main.leaf1") catch {
+    _ => fail("expected agent1 in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Failed)
   }
 
   // Verify PR is untracked

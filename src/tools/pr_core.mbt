@@ -232,7 +232,7 @@ pub async fn interpret_file_pr_post_success(
   match (effects.notify_message_for_parent, registry) {
     (Some(notify_message), Some(reg)) => {
       let plan = file_pr_auto_notify_plan(
-        @phase.resolve_parent_with_fallback(
+        try? @phase.resolve_parent_with_fallback(
           project_dir, session, reg, tracked_agent_id,
         ),
         tracked_agent_id,
@@ -556,14 +556,15 @@ pub fn file_pr_workdir(
 ) -> String {
   match reg {
     Some(agent_reg) =>
-      match agent_reg.get(tracked_agent_id) {
-        Ok(agent) =>
-          if agent.workspace != "" {
-            agent.workspace
-          } else {
-            root_project_dir
-          }
-        Err(_) => root_project_dir
+      try {
+        let agent = agent_reg.get(tracked_agent_id)
+        if agent.workspace != "" {
+          agent.workspace
+        } else {
+          root_project_dir
+        }
+      } catch {
+        _ => root_project_dir
       }
     None => root_project_dir
   }
@@ -734,13 +735,13 @@ pub fn fork_wave_spawn_plan(
     let agent_id = fork_wave_args.parent_branch + "." + slug
     let already_alive = match registry {
       Some(reg) =>
-        match reg.get(agent_id) {
-          Ok(agent) =>
-            match agent.state {
-              @types.AgentState::Active | @types.AgentState::Completing => true
-              _ => false
-            }
-          Err(_) => false
+        try {
+          match reg.get(agent_id).state {
+            @types.AgentState::Active | @types.AgentState::Completing => true
+            _ => false
+          }
+        } catch {
+          _ => false
         }
       None => false
     }
@@ -826,11 +827,7 @@ pub fn fork_wave_caller_spawn_depth_from_registry(
   caller_id : String,
 ) -> Int? {
   match registry {
-    Some(reg) =>
-      match reg.get(caller_id) {
-        Ok(agent) => Some(agent.spawn_depth)
-        Err(_) => None
-      }
+    Some(reg) => Some(reg.get(caller_id).spawn_depth) catch { _ => None }
     None => None
   }
 }
@@ -1033,12 +1030,12 @@ pub async fn interpret_fork_wave_post_spawn(
     Some(reg) =>
       for pair in resolved_pane_ids {
         let (agent_id, pane_id) = pair
-        match reg.get(agent_id) {
-          Ok(agent) => {
-            let target = @workspace.zellij_pane_target(session, pane_id)
-            ignore(reg.upsert({ ..agent, terminal_target: Some(target) }))
-          }
-          Err(_) => ()
+        try {
+          let agent = reg.get(agent_id)
+          let target = @workspace.zellij_pane_target(session, pane_id)
+          ignore(reg.upsert({ ..agent, terminal_target: Some(target) }))
+        } catch {
+          _ => ()
         }
       }
     None => ()
@@ -1671,35 +1668,36 @@ pub async fn interpret_kill_agent(
 ) -> @types.Response {
   match registry {
     None => @types.Response::Err("no agent registry available")
-    Some(reg) =>
-      match reg.get(args.agent_id) {
-        Ok(agent) => {
-          match kill_agent_pane_close_command(agent) {
-            Some(cmd) => {
-              let _ = runner([cmd])
-              ()
-            }
-            None => ()
-          }
-          match kill_agent_worktree_remove_command(agent) {
-            Some(cmd) => {
-              let _ = runner([cmd])
-              ()
-            }
-            None => ()
-          }
-          let _ = reg.set_state(args.agent_id, @types.AgentState::Failed)
-          @moontrace.warn(
-            "agent killed",
-            fields=@moontrace.fields([
-              ("agent_id", args.agent_id.to_json()),
-              ("reason", args.reason.to_json()),
-            ]),
-          )
-          kill_agent_ok_response(args.agent_id)
-        }
-        Err(_) => @types.Response::Err("agent not found: " + args.agent_id)
+    Some(reg) => {
+      let agent = reg.get(args.agent_id) catch {
+        _ => return @types.Response::Err("agent not found: " + args.agent_id)
       }
+      match kill_agent_pane_close_command(agent) {
+        Some(cmd) => {
+          let _ = runner([cmd])
+          ()
+        }
+        None => ()
+      }
+      match kill_agent_worktree_remove_command(agent) {
+        Some(cmd) => {
+          let _ = runner([cmd])
+          ()
+        }
+        None => ()
+      }
+      ignore(reg.set_state(args.agent_id, @types.AgentState::Failed)) catch {
+        _ => ()
+      }
+      @moontrace.warn(
+        "agent killed",
+        fields=@moontrace.fields([
+          ("agent_id", args.agent_id.to_json()),
+          ("reason", args.reason.to_json()),
+        ]),
+      )
+      kill_agent_ok_response(args.agent_id)
+    }
   }
 }
 
@@ -1792,11 +1790,7 @@ pub fn shutdown_registry_role_for_caller(
   caller_id : String,
 ) -> @types.Role {
   match registry {
-    Some(reg) =>
-      match reg.get(caller_id) {
-        Ok(agent) => agent.role
-        Err(_) => @types.Role::Dev
-      }
+    Some(reg) => reg.get(caller_id).role catch { _ => @types.Role::Dev }
     None => @types.Role::Dev
   }
 }
@@ -1837,13 +1831,14 @@ pub async fn interpret_shutdown(
   if plan.attempt_worktree_cleanup {
     match registry {
       Some(reg) =>
-        match reg.get(caller_id) {
-          Ok(agent) =>
-            if shutdown_intent_remove_choir_worktree(agent.workspace) {
-              let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
-              ()
-            }
-          Err(_) => ()
+        try {
+          let agent = reg.get(caller_id)
+          if shutdown_intent_remove_choir_worktree(agent.workspace) {
+            let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
+            ()
+          }
+        } catch {
+          _ => ()
         }
       None => ()
     }
@@ -2380,9 +2375,10 @@ pub async fn interpret_rescue_leaf(
     Some(p) => p
     None => return @types.Response::Err("poller unavailable for rescue_leaf")
   }
-  let from_agent = match reg.get(rescue_args.from_agent_id) {
-    Ok(a) => a
-    Err(e) => return @types.Response::Err(e.message())
+  let from_agent = try reg.get(rescue_args.from_agent_id) catch {
+    e => return tool_response_err_from_caught(e)
+  } noraise {
+    a => a
   }
   let plan = match rescue_leaf_spawn_plan(rescue_args, from_agent) {
     Err(e) => return @types.Response::Err(e)
@@ -2477,9 +2473,10 @@ pub async fn interpret_rescue_leaf_post_spawn(
       rescue_leaf_superseded_persist_failure_message(plan.from_agent_id),
     )
   }
-  match reg.remove(plan.from_agent_id) {
-    Ok(_) => ()
-    Err(e) => return @types.Response::Err(e.message())
+  try reg.remove(plan.from_agent_id) catch {
+    e => return tool_response_err_from_caught(e)
+  } noraise {
+    _ => ()
   }
   @phase.remove_child_from_supervisor_lifecycle(
     project_dir,
@@ -2514,12 +2511,12 @@ pub async fn interpret_rescue_leaf_post_spawn(
     Some(r2) =>
       for pair in resolved_pane_ids {
         let (agent_id, pane_id) = pair
-        match r2.get(agent_id) {
-          Ok(agent) => {
-            let target = @workspace.zellij_pane_target(session, pane_id)
-            ignore(r2.upsert({ ..agent, terminal_target: Some(target) }))
-          }
-          Err(_) => ()
+        try {
+          let agent = r2.get(agent_id)
+          let target = @workspace.zellij_pane_target(session, pane_id)
+          ignore(r2.upsert({ ..agent, terminal_target: Some(target) }))
+        } catch {
+          _ => ()
         }
       }
     None => ()
