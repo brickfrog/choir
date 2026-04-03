@@ -1232,80 +1232,78 @@ async fn deliver_pending_poll_events(
       None => ()
     }
   }
-  let rollup_entries : Array[@poller.WaveRollupEntry] = []
-  for row in pending_parent_rows {
-    rollup_entries.push({
-      pr_number: row.tracked.pr_number,
-      agent_id: row.leaf_agent_id,
-      category: row.category,
-    })
-  }
-  let wave_map = build_agent_wave_map(
-    state.poller,
-    state.registry,
-    state.config.project_dir,
-  )
-  let (rollups, _) = @poller.build_wave_rollups(rollup_entries, wave_map)
-  for rollup in rollups {
-    let total_in_wave = supervisor_children_len_for_parent(
+  if pending_parent_rows.length() > 0 {
+    let rollup_entries : Array[@poller.WaveRollupEntry] = []
+    for row in pending_parent_rows {
+      rollup_entries.push({
+        pr_number: row.tracked.pr_number,
+        agent_id: row.leaf_agent_id,
+        category: row.category,
+      })
+    }
+    let wave_map = build_agent_wave_map(
+      state.poller,
+      state.registry,
       state.config.project_dir,
-      rollup.parent_id,
     )
-    let body = @poller.format_wave_rollup(rollup, total_in_wave)
-    let matched = rollup_rows_for(pending_parent_rows, rollup)
-    let status = rollup_delivery_status(matched)
-    let sender = if rollup.entries.length() > 0 {
-      rollup.entries[0].agent_id
-    } else {
-      "poller"
-    }
-    try {
-      let parent = state.resolve_parent_by_id(rollup.parent_id)
-      ignore(
-        (state.append_file)(
-          state.config.project_dir + "/.choir/delivery.log",
-          "[poller-parent-wave] parent=" +
-          rollup.parent_id +
-          " wave=" +
-          rollup.wave.to_string() +
-          "\n",
-        ),
+    let (rollups, _) = @poller.build_wave_rollups(rollup_entries, wave_map)
+    for rollup in rollups {
+      let total_in_wave = supervisor_children_len_for_parent(
+        state.config.project_dir,
+        rollup.parent_id,
       )
-      let delivery = @message.plan_delivery(parent, sender, body, status)
-      ignore(@tools.execute_delivery(delivery, runner))
-    } catch {
-      _ => ()
+      let body = @poller.format_wave_rollup(rollup, total_in_wave)
+      let matched = rollup_rows_for(pending_parent_rows, rollup)
+      let status = rollup_delivery_status(matched)
+      let sender = "poller"
+      try {
+        let parent = state.resolve_parent_by_id(rollup.parent_id)
+        ignore(
+          (state.append_file)(
+            state.config.project_dir + "/.choir/delivery.log",
+            "[poller-parent-wave] parent=" +
+            rollup.parent_id +
+            " wave=" +
+            rollup.wave.to_string() +
+            "\n",
+          ),
+        )
+        let delivery = @message.plan_delivery(parent, sender, body, status)
+        ignore(@tools.execute_delivery(delivery, runner))
+      } catch {
+        _ => ()
+      }
     }
-  }
-  for row in pending_parent_rows {
-    if row_in_any_multi_rollup(row, rollups) {
-      continue
-    }
-    try {
-      let parent = state.resolve_parent_for_delivery(row.leaf_agent_id)
-      ignore(
-        (state.append_file)(
-          state.config.project_dir + "/.choir/delivery.log",
-          "[poller-parent] agent=" +
-          row.leaf_agent_id +
-          " parent=" +
-          parent.agent_id.to_string() +
-          " terminal_target=" +
-          parent.terminal_target
-          .map(@types.LocalTarget::to_string)
-          .unwrap_or("NONE") +
-          "\n",
-        ),
-      )
-      let delivery = @message.plan_delivery(
-        parent,
-        row.leaf_agent_id,
-        row.message,
-        row.status,
-      )
-      ignore(@tools.execute_delivery(delivery, runner))
-    } catch {
-      _ => ()
+    for row in pending_parent_rows {
+      if row_in_any_multi_rollup(row, rollups) {
+        continue
+      }
+      try {
+        let parent = state.resolve_parent_for_delivery(row.leaf_agent_id)
+        ignore(
+          (state.append_file)(
+            state.config.project_dir + "/.choir/delivery.log",
+            "[poller-parent] agent=" +
+            row.leaf_agent_id +
+            " parent=" +
+            parent.agent_id.to_string() +
+            " terminal_target=" +
+            parent.terminal_target
+            .map(@types.LocalTarget::to_string)
+            .unwrap_or("NONE") +
+            "\n",
+          ),
+        )
+        let delivery = @message.plan_delivery(
+          parent,
+          row.leaf_agent_id,
+          row.message,
+          row.status,
+        )
+        ignore(@tools.execute_delivery(delivery, runner))
+      } catch {
+        _ => ()
+      }
     }
   }
 }

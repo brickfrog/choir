@@ -249,12 +249,13 @@ pub fn format_wave_rollup(rollup : WaveRollup, total_in_wave : Int) -> String {
     }
   }
   let summary = summary_parts.join(", ")
+  let wave_total = if total_in_wave > 0 { total_in_wave } else { n_pr }
   let header = "[WAVE " +
     rollup.wave.to_string() +
     "] " +
     n_pr.to_string() +
     "/" +
-    total_in_wave.to_string() +
+    wave_total.to_string() +
     " PRs with updates: " +
     summary
   let lines : Array[String] = []
