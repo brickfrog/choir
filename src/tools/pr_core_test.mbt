@@ -139,7 +139,7 @@ test "file_pr_auto_notify_plan delivers and formats delivery log append" {
 
 ///|
 test "file_pr_auto_notify_plan logs only when parent resolution fails" {
-  let err = @types.ChoirError::AgentNotFound("main.tl")
+  let err = @types.ChoirError::agent_not_found("main.tl")
   let plan = file_pr_auto_notify_plan(
     Err(err),
     "main.leaf",
@@ -432,7 +432,7 @@ test "notify_parent_plan maps parent resolve error to ParentResolveFailed" {
     message: "x",
     status: "info",
   }
-  let err = @types.ChoirError::AgentNotFound("main.tl")
+  let err = @types.ChoirError::agent_not_found("main.tl")
   match notify_parent_plan(args, Some(Err(err))) {
     NotifyParentPlan::ParentResolveFailed(error_message~) =>
       assert_eq(error_message, err.message())
@@ -543,7 +543,7 @@ test "send_message_plan no registry returns best-effort sent" {
 
 ///|
 test "send_message_plan maps registry lookup error" {
-  let err = @types.ChoirError::AgentNotFound("main.missing")
+  let err = @types.ChoirError::agent_not_found("main.missing")
   match send_message_plan("main.missing", "a", "m", "info", Some(Err(err))) {
     SendMessagePlan::RegistryLookupFailed(error_message~) =>
       assert_eq(error_message, err.message())
@@ -611,7 +611,7 @@ async test "interpret_send_message no registry skips delivery" {
 
 ///|
 async test "interpret_send_message registry lookup failed returns err" {
-  let err = @types.ChoirError::AgentNotFound("x")
+  let err = @types.ChoirError::agent_not_found("x")
   let plan = send_message_plan("x", "s", "m", "ok", Some(Err(err)))
   let got = interpret_send_message(
     plan, "/tmp/choir-send-msg-test", mock_runner_all_ok,
