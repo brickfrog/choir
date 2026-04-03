@@ -4,7 +4,7 @@ pub(all) enum DevStage {
   PRUnderReview
   FixesPushedAwaitingReview
   ApprovedAwaitingMerge
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevPhase {
@@ -24,7 +24,7 @@ pub(all) enum DevPhase {
   Exitable
   Done
   Failed(reason~ : String)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevEvent {
@@ -36,14 +36,14 @@ pub(all) enum DevEvent {
   ReviewReceivedEv(pr_number~ : Int, body~ : String)
   ReviewApprovedEv(pr_number~ : Int)
   FixesPushedEv(pr_number~ : Int, sha~ : String)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevExitDecision {
   Blocked(message~ : String)
   Deferred(message~ : String)
   ExitableNow
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevDisconnectPolicy {
@@ -51,7 +51,7 @@ pub(all) enum DevDisconnectPolicy {
   Preserve
   FinalizeDone
   Ignore
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 fn deferred_message(
@@ -345,133 +345,17 @@ pub fn dev_can_exit(phase : DevPhase) -> StopCheckResult {
 
 ///|
 pub fn dev_phase_to_json(phase : DevPhase) -> String {
-  let json : Json = match phase {
-    Spawned => { "phase": "Spawned".to_json() }.to_json()
-    Working => { "phase": "Working".to_json() }.to_json()
-    PROpenUnreviewed(pr_number~, url~) =>
-      {
-        "phase": "PROpenUnreviewed".to_json(),
-        "pr_number": pr_number.to_json(),
-        "url": url.to_json(),
-      }.to_json()
-    PRUnderReview(pr_number~, round~) =>
-      {
-        "phase": "PRUnderReview".to_json(),
-        "pr_number": pr_number.to_json(),
-        "round": round.to_json(),
-      }.to_json()
-    ChangesRequested(pr_number~) =>
-      {
-        "phase": "ChangesRequested".to_json(),
-        "pr_number": pr_number.to_json(),
-      }.to_json()
-    FixesPushedAwaitingReview(pr_number~, round~) =>
-      {
-        "phase": "FixesPushedAwaitingReview".to_json(),
-        "pr_number": pr_number.to_json(),
-        "round": round.to_json(),
-      }.to_json()
-    ApprovedAwaitingMerge(pr_number~) =>
-      {
-        "phase": "ApprovedAwaitingMerge".to_json(),
-        "pr_number": pr_number.to_json(),
-      }.to_json()
-    ExitRequestedDeferred(pr_number~, stage~, round~, url~) =>
-      {
-        "phase": "ExitRequestedDeferred".to_json(),
-        "pr_number": pr_number.to_json(),
-        "stage": stage.to_string().to_json(),
-        "round": round.to_json(),
-        "url": url.to_json(),
-      }.to_json()
-    Exitable => { "phase": "Exitable".to_json() }.to_json()
-    Done => { "phase": "Done".to_json() }.to_json()
-    Failed(reason~) =>
-      { "phase": "Failed".to_json(), "reason": reason.to_json() }.to_json()
-  }
-  json.stringify()
-}
-
-///|
-fn dev_stage_from_string(s : String) -> DevStage? {
-  match s {
-    "PROpenUnreviewed" => Some(PROpenUnreviewed)
-    "PRUnderReview" => Some(PRUnderReview)
-    "FixesPushedAwaitingReview" => Some(FixesPushedAwaitingReview)
-    "ApprovedAwaitingMerge" => Some(ApprovedAwaitingMerge)
-    _ => None
-  }
+  derived_dev_phase_json_to_legacy(phase.to_json()).stringify()
 }
 
 ///|
 pub fn dev_phase_from_json(json_str : String) -> DevPhase? {
   let json = @json.parse(json_str) catch { _ => return None }
-  guard json is Object(obj) else { return None }
-  match obj.get("phase") {
-    Some(String("Spawned")) => Some(Spawned)
-    Some(String("Working")) => Some(Working)
-    Some(String("PROpenUnreviewed")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("url") is Some(String(u)) else { return None }
-      Some(PROpenUnreviewed(pr_number=n.to_int(), url=u))
-    }
-    Some(String("PRUnderReview")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("round") is Some(Number(r, ..)) else { return None }
-      Some(PRUnderReview(pr_number=n.to_int(), round=r.to_int()))
-    }
-    Some(String("PRFiled")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("url") is Some(String(u)) else { return None }
-      Some(PROpenUnreviewed(pr_number=n.to_int(), url=u))
-    }
-    Some(String("UnderReview")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("round") is Some(Number(r, ..)) else { return None }
-      Some(PRUnderReview(pr_number=n.to_int(), round=r.to_int()))
-    }
-    Some(String("ChangesRequested")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      Some(ChangesRequested(pr_number=n.to_int()))
-    }
-    Some(String("FixesPushedAwaitingReview")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("round") is Some(Number(r, ..)) else { return None }
-      Some(FixesPushedAwaitingReview(pr_number=n.to_int(), round=r.to_int()))
-    }
-    Some(String("ApprovedAwaitingMerge")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      Some(ApprovedAwaitingMerge(pr_number=n.to_int()))
-    }
-    Some(String("Approved")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      Some(ApprovedAwaitingMerge(pr_number=n.to_int()))
-    }
-    Some(String("ExitRequestedDeferred")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("stage") is Some(String(stage_str)) else { return None }
-      guard obj.get("round") is Some(Number(r, ..)) else { return None }
-      guard obj.get("url") is Some(String(u)) else { return None }
-      match dev_stage_from_string(stage_str) {
-        Some(stage) =>
-          Some(
-            ExitRequestedDeferred(
-              pr_number=n.to_int(),
-              stage~,
-              round=r.to_int(),
-              url=u,
-            ),
-          )
-        None => None
-      }
-    }
-    Some(String("Exitable")) => Some(Exitable)
-    Some(String("Done")) => Some(Done)
-    Some(String("Failed")) =>
-      match obj.get("reason") {
-        Some(String(r)) => Some(Failed(reason=r))
-        _ => None
-      }
+  let adapted = legacy_dev_phase_json_to_derived(json)
+  try {
+    let p : DevPhase = @json.from_json(adapted)
+    Some(p)
+  } catch {
     _ => None
   }
 }

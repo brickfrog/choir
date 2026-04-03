@@ -5,7 +5,7 @@ pub(all) enum Role {
   TL
   Dev
   Worker
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 /// Types of agents the orchestrator can manage.
