@@ -154,7 +154,7 @@ pub async fn ServerState::handle_with_runner(
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
     ) catch {
-      e => @types.Response::Err(@types.choir_error_message_from_caught(e))
+      e => @tools.tool_response_err_from_caught(e)
     }
   }
 

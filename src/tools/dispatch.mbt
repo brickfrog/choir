@@ -510,6 +510,19 @@ pub async fn dispatch(
 }
 
 ///|
+/// Map a caught exception to a client-facing tool error; log details when the
+/// error is not a [`ChoirError`] variant (masked as `"internal error"`).
+pub fn tool_response_err_from_caught(e : Error) -> @types.Response {
+  if !@types.caught_error_is_choir_error(e) {
+    @moontrace.warn(
+      "choir_internal_error",
+      fields=@moontrace.fields([("details", String::to_json(e.to_string()))]),
+    )
+  }
+  @types.Response::Err(@types.choir_error_message_from_caught(e))
+}
+
+///|
 pub async fn handle_request(
   registry : ToolRegistry,
   req : @types.Request,
@@ -535,6 +548,7 @@ pub async fn handle_request(
   pr_review? : Bool = true,
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
+  let mut ran_builtin_dispatch = false
   let resp = try {
     ignore(registry.lookup(req.role, req.name))
     let hook_path = project_dir + "/.choir/hooks/pre_tool_use.sh"
@@ -577,8 +591,8 @@ pub async fn handle_request(
       None =>
         match parse_tool_request(req.name, req.role, project_dir, tool_args) {
           Err(e) => @types.Response::Err(e.message())
-          Ok(tool_req) =>
-            dispatch(
+          Ok(tool_req) => {
+            let out = dispatch(
               tool_req,
               project_dir~,
               session~,
@@ -598,6 +612,9 @@ pub async fn handle_request(
               caller_id=tool_args_get(tool_args, "caller_id"),
               pr_review~,
             )
+            ran_builtin_dispatch = true
+            out
+          }
         }
     }
   } catch {
@@ -605,24 +622,26 @@ pub async fn handle_request(
       if @types.caught_error_is_tool_not_found(e) {
         dispatch_to_plugin(req, plugins_json)
       } else {
-        @types.Response::Err(@types.choir_error_message_from_caught(e))
+        tool_response_err_from_caught(e)
       }
   }
-  let status_tag = if resp.is_ok() { "ok" } else { "error" }
-  fire_hook_async(
-    @hooks.HookEvent::PostToolUse,
-    {
-      event: @hooks.HookEvent::PostToolUse,
-      session_id: Some(session),
-      agent_id: tool_args_get(tool_args, "caller_id"),
-      role: Some(req.role),
-      tool_name: Some(req.name),
-      tool_args: None,
-      tool_result_status: Some(status_tag),
-      exit_reason: None,
-    },
-    project_dir,
-  )
+  if ran_builtin_dispatch {
+    let status_tag = if resp.is_ok() { "ok" } else { "error" }
+    fire_hook_async(
+      @hooks.HookEvent::PostToolUse,
+      {
+        event: @hooks.HookEvent::PostToolUse,
+        session_id: Some(session),
+        agent_id: tool_args_get(tool_args, "caller_id"),
+        role: Some(req.role),
+        tool_name: Some(req.name),
+        tool_args: None,
+        tool_result_status: Some(status_tag),
+        exit_reason: None,
+      },
+      project_dir,
+    )
+  }
   resp
 }
 
@@ -692,7 +711,7 @@ pub async fn dispatch_call(
         )
     }
   } catch {
-    e => @types.Response::Err(@types.choir_error_message_from_caught(e))
+    e => tool_response_err_from_caught(e)
   }
 }
 

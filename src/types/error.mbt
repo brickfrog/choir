@@ -90,7 +90,23 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
     ConfigError(msg) => ChoirError::config_error(msg).message()
-    _ => e.to_string()
+    _ => "internal error"
+  }
+}
+
+///|
+/// True when `e` is a [`ChoirError`] variant carried as [`Error`] (from `raise` / `catch`).
+pub fn caught_error_is_choir_error(e : Error) -> Bool {
+  match e {
+    AgentNotFound(_)
+    | ToolNotFound(_)
+    | PermissionDenied(_, _)
+    | ValidationError(_)
+    | WorkspaceError(_)
+    | TransportError(_)
+    | GitError(_)
+    | ConfigError(_) => true
+    _ => false
   }
 }
 
