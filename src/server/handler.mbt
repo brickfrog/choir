@@ -1272,14 +1272,14 @@ pub fn ServerState::transfer_leaf_ownership(
   }
   if from_agent.parent != to_agent.parent {
     return Err(
-      @types.ChoirError::ValidationError(
+      @types.ChoirError::validation_error(
         "cannot transfer ownership across different parents",
       ),
     )
   }
   if from_agent.role != to_agent.role {
     return Err(
-      @types.ChoirError::ValidationError(
+      @types.ChoirError::validation_error(
         "cannot transfer ownership across different roles",
       ),
     )
@@ -1288,7 +1288,7 @@ pub fn ServerState::transfer_leaf_ownership(
     @types.Role::Dev | @types.Role::Worker => ()
     _ =>
       return Err(
-        @types.ChoirError::ValidationError(
+        @types.ChoirError::validation_error(
           "ownership transfer only supports leaf roles",
         ),
       )

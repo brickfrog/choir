@@ -57,7 +57,7 @@ test "notify_parent uses live registry parent when present" {
       assert_eq(text, "[from: " + caller_id + "] " + message)
     }
     Ok(other) => fail("unexpected delivery method: " + other.to_string())
-    Err(e) => fail("expected Ok delivery, got: " + e.to_string())
+    Err(e) => fail("expected Ok delivery, got: " + e.message())
   }
 }
 
@@ -148,7 +148,7 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
       assert_eq(text, "[from: " + caller_id + "] " + message)
     }
     Ok(other) => fail("unexpected delivery method: " + other.to_string())
-    Err(e) => fail("expected Ok delivery, got: " + e.to_string())
+    Err(e) => fail("expected Ok delivery, got: " + e.message())
   }
 }
 
@@ -189,9 +189,8 @@ test "notify_parent returns clear error when parent cannot be resolved" {
   let message = "hello parent"
   let res = state.notify_parent(caller_id, message, "success")
   match res {
-    Err(@types.ChoirError::AgentNotFound(id)) => assert_eq(id, parent_id)
     Ok(_) => fail("expected Err AgentNotFound, got Ok")
-    Err(e) => fail("expected Err AgentNotFound, got: " + e.to_string())
+    Err(e) => assert_eq(e.message(), "agent not found: " + parent_id)
   }
 }
 
@@ -580,9 +579,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
     }),
   )
   match state.transfer_leaf_ownership(old_leaf, new_leaf) {
-    Err(@types.ChoirError::ValidationError(msg)) =>
-      assert_true(msg.contains("different parents"))
     Ok(_) => fail("expected validation error for mismatched parents")
-    Err(e) => fail("unexpected error: " + e.message())
+    Err(e) => assert_true(e.message().contains("different parents"))
   }
 }
