@@ -48,6 +48,16 @@ test "HookInput::from_json_string parses valid PreToolUse" {
 }
 
 ///|
+test "HookInput::from_json_string maps unknown exit_reason to Shutdown" {
+  let json = "{\"event\":\"AgentExit\",\"agent_id\":\"a1\",\"exit_reason\":\"future_reason\"}"
+  match HookInput::from_json_string(json) {
+    Some(input) =>
+      assert_eq(input.exit_reason, Some(@types.ExitReason::Shutdown))
+    None => panic()
+  }
+}
+
+///|
 test "HookInput::from_json_string fails on invalid event" {
   let json = "{\"event\":\"InvalidEvent\"}"
   match HookInput::from_json_string(json) {
