@@ -35,35 +35,6 @@ fn legacy_enum_tree_to_derived(j : Json) -> Json {
 }
 
 ///|
-fn derived_enum_tree_to_legacy_tagged(j : Json) -> Json {
-  match j {
-    String(tag) => { "tag": tag.to_json() }.to_json()
-    Array(arr) =>
-      if arr.length() == 2 {
-        match (arr[0], arr[1]) {
-          (String(tag), Object(payload)) => {
-            let m = Map::new()
-            payload.each(fn(k, v) {
-              m.set(k, derived_enum_tree_to_legacy_tagged(v))
-            })
-            m.set("tag", tag.to_json())
-            Json::object(m)
-          }
-          _ => Json::array(arr.map(derived_enum_tree_to_legacy_tagged))
-        }
-      } else {
-        Json::array(arr.map(derived_enum_tree_to_legacy_tagged))
-      }
-    Object(obj) => {
-      let out = Map::new()
-      obj.each(fn(k, v) { out.set(k, derived_enum_tree_to_legacy_tagged(v)) })
-      Json::object(out)
-    }
-    _ => j
-  }
-}
-
-///|
 fn is_wrapped_workflow(obj : Map[String, Json]) -> Bool {
   if obj.length() != 2 {
     return false
@@ -91,23 +62,240 @@ fn legacy_workflow_json_to_derived(j : Json) -> Json {
 }
 
 ///|
+/// `derive(ToJson)` uses plain JSON strings for enum payloads (e.g. URLs). Only enum
+/// positions may become `{ "tag": ... }` in persisted form — never arbitrary strings.
+fn derived_finalize_reason_to_legacy(j : Json) -> Json {
+  match j {
+    String(tag) => { "tag": tag.to_json() }.to_json()
+    _ => j
+  }
+}
+
+///|
+fn derived_failure_reason_to_legacy(j : Json) -> Json {
+  match j {
+    String(tag) => { "tag": tag.to_json() }.to_json()
+    Array(arr) if arr.length() == 2 =>
+      match (arr[0], arr[1]) {
+        (String(tag), Object(payload)) => {
+          let m = Map::new()
+          payload.each(fn(pk, pv) { m.set(pk, pv) })
+          m.set("tag", tag.to_json())
+          Json::object(m)
+        }
+        _ => j
+      }
+    _ => j
+  }
+}
+
+///|
+fn derived_review_ownership_to_legacy(j : Json) -> Json {
+  match j {
+    String(tag) => { "tag": tag.to_json() }.to_json()
+    Array(arr) if arr.length() == 2 =>
+      match (arr[0], arr[1]) {
+        (String(tag), Object(payload)) => {
+          let m = Map::new()
+          payload.each(fn(pk, pv) { m.set(pk, pv) })
+          m.set("tag", tag.to_json())
+          Json::object(m)
+        }
+        _ => j
+      }
+    _ => j
+  }
+}
+
+///|
+fn derived_child_summary_to_legacy(j : Json) -> Json {
+  match j {
+    String(tag) => { "tag": tag.to_json() }.to_json()
+    Array(arr) if arr.length() == 2 =>
+      match (arr[0], arr[1]) {
+        (String(tag), Object(payload)) => {
+          let m = Map::new()
+          payload.each(fn(pk, pv) {
+            let v2 = match (tag, pk) {
+              ("ReviewOwned" | "ExitRequestedDeferred", "state") =>
+                derived_review_ownership_to_legacy(pv)
+              ("Failed", "reason") => derived_failure_reason_to_legacy(pv)
+              _ => pv
+            }
+            m.set(pk, v2)
+          })
+          m.set("tag", tag.to_json())
+          Json::object(m)
+        }
+        _ => j
+      }
+    _ => j
+  }
+}
+
+///|
+fn derived_child_lifecycle_to_legacy(j : Json) -> Json {
+  guard j is Object(obj) else { return j }
+  let out = Map::new()
+  obj.each(fn(k, v) {
+    let w = if k == "summary" { derived_child_summary_to_legacy(v) } else { v }
+    out.set(k, w)
+  })
+  Json::object(out)
+}
+
+///|
+fn derived_supervisor_lifecycle_to_legacy(j : Json) -> Json {
+  match j {
+    String(tag) => { "tag": tag.to_json() }.to_json()
+    Array(arr) if arr.length() == 2 =>
+      match (arr[0], arr[1]) {
+        (String(tag), Object(payload)) => {
+          let m = Map::new()
+          payload.each(fn(pk, pv) {
+            let v2 = match (tag, pk) {
+              ("Supervising" | "WaveComplete", "children") =>
+                match pv {
+                  Array(ch) =>
+                    Json::array(ch.map(derived_child_lifecycle_to_legacy))
+                  _ => pv
+                }
+              ("Failed", "reason") => derived_failure_reason_to_legacy(pv)
+              _ => pv
+            }
+            m.set(pk, v2)
+          })
+          m.set("tag", tag.to_json())
+          Json::object(m)
+        }
+        _ => j
+      }
+    _ => j
+  }
+}
+
+///|
+fn derived_dev_lifecycle_to_legacy(j : Json) -> Json {
+  match j {
+    String(tag) => { "tag": tag.to_json() }.to_json()
+    Array(arr) if arr.length() == 2 =>
+      match (arr[0], arr[1]) {
+        (String(tag), Object(payload)) => {
+          let m = Map::new()
+          payload.each(fn(pk, pv) {
+            let v2 = match (tag, pk) {
+              ("ReviewOwned" | "ExitRequestedDeferred", "state") =>
+                derived_review_ownership_to_legacy(pv)
+              ("Done", "reason") => derived_finalize_reason_to_legacy(pv)
+              ("Failed", "reason") => derived_failure_reason_to_legacy(pv)
+              _ => pv
+            }
+            m.set(pk, v2)
+          })
+          m.set("tag", tag.to_json())
+          Json::object(m)
+        }
+        _ => j
+      }
+    _ => j
+  }
+}
+
+///|
+fn derived_worker_lifecycle_to_legacy(j : Json) -> Json {
+  match j {
+    String(tag) => { "tag": tag.to_json() }.to_json()
+    Array(arr) if arr.length() == 2 =>
+      match (arr[0], arr[1]) {
+        (String(tag), Object(payload)) => {
+          let m = Map::new()
+          payload.each(fn(pk, pv) {
+            let v2 = match (tag, pk) {
+              ("Done", "reason") => derived_finalize_reason_to_legacy(pv)
+              ("Failed", "reason") => derived_failure_reason_to_legacy(pv)
+              _ => pv
+            }
+            m.set(pk, v2)
+          })
+          m.set("tag", tag.to_json())
+          Json::object(m)
+        }
+        _ => j
+      }
+    _ => j
+  }
+}
+
+///|
+fn derived_process_state_to_legacy(j : Json) -> Json {
+  match j {
+    String(tag) => { "tag": tag.to_json() }.to_json()
+    Array(arr) if arr.length() == 2 =>
+      match (arr[0], arr[1]) {
+        (String(tag), Object(payload)) => {
+          let m = Map::new()
+          payload.each(fn(pk, pv) {
+            let v2 = match (tag, pk) {
+              ("Finalizing" | "Finalized", "reason") =>
+                derived_finalize_reason_to_legacy(pv)
+              ("Failed", "reason") => derived_failure_reason_to_legacy(pv)
+              _ => pv
+            }
+            m.set(pk, v2)
+          })
+          m.set("tag", tag.to_json())
+          Json::object(m)
+        }
+        _ => j
+      }
+    _ => j
+  }
+}
+
+///|
 fn derived_workflow_json_to_legacy(j : Json) -> Json {
   match j {
     Array(arr) if arr.length() == 2 =>
       match (arr[0], arr[1]) {
         (String(tag), inner) =>
-          if tag == "Supervisor" || tag == "Dev" || tag == "Worker" {
+          if tag == "Supervisor" {
             {
               "tag": tag.to_json(),
-              "state": derived_enum_tree_to_legacy_tagged(inner),
+              "state": derived_supervisor_lifecycle_to_legacy(inner),
+            }.to_json()
+          } else if tag == "Dev" {
+            {
+              "tag": tag.to_json(),
+              "state": derived_dev_lifecycle_to_legacy(inner),
+            }.to_json()
+          } else if tag == "Worker" {
+            {
+              "tag": tag.to_json(),
+              "state": derived_worker_lifecycle_to_legacy(inner),
             }.to_json()
           } else {
-            derived_enum_tree_to_legacy_tagged(j)
+            j
           }
-        _ => derived_enum_tree_to_legacy_tagged(j)
+        _ => j
       }
-    _ => derived_enum_tree_to_legacy_tagged(j)
+    _ => j
   }
+}
+
+///|
+fn derived_agent_lifecycle_json_to_legacy(j : Json) -> Json {
+  guard j is Object(root) else { return j }
+  let out = Map::new()
+  root.each(fn(k, v) {
+    let w = match k {
+      "workflow" => derived_workflow_json_to_legacy(v)
+      "process" => derived_process_state_to_legacy(v)
+      "role" | "agent_id" => v
+      _ => v
+    }
+    out.set(k, w)
+  })
+  Json::object(out)
 }
 
 ///|
@@ -120,22 +308,6 @@ fn legacy_agent_lifecycle_json_to_derived(j : Json) -> Json {
       "process" => legacy_enum_tree_to_derived(v)
       "role" | "agent_id" => v
       _ => legacy_enum_tree_to_derived(v)
-    }
-    out.set(k, w)
-  })
-  Json::object(out)
-}
-
-///|
-fn derived_agent_lifecycle_json_to_legacy(j : Json) -> Json {
-  guard j is Object(root) else { return j }
-  let out = Map::new()
-  root.each(fn(k, v) {
-    let w = match k {
-      "workflow" => derived_workflow_json_to_legacy(v)
-      "process" => derived_enum_tree_to_legacy_tagged(v)
-      "role" | "agent_id" => v
-      _ => derived_enum_tree_to_legacy_tagged(v)
     }
     out.set(k, w)
   })

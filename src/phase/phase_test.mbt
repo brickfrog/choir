@@ -179,6 +179,86 @@ test "lifecycle policy preserves deferred review ownership on disconnect" {
 }
 
 ///|
+test "lifecycle legacy JSON url stays a plain string after to_json" {
+  let raw =
+    #|{"agent_id":"a1","role":"Dev","process":{"tag":"Connected"},"workflow":{"tag":"Dev","state":{"tag":"ReviewOwned","pr_number":5,"state":{"tag":"OpenUnreviewed","url":"https://github.com/org/repo/pull/5"}}}}
+  match lifecycle_from_json(raw.to_string()) {
+    Some(lc) => {
+      let out = lifecycle_to_json(lc)
+      let j = @json.parse(out) catch {
+        _ => fail("parse lifecycle_to_json output")
+      }
+      guard j is Object(root) else { fail("root object") }
+      guard root.get("workflow") is Some(wf) else { fail("workflow") }
+      guard wf is Object(wf_o) else { fail("workflow object") }
+      guard wf_o.get("state") is Some(dev_st) else { fail("dev state") }
+      guard dev_st is Object(dev_o) else { fail("dev state object") }
+      guard dev_o.get("state") is Some(rev_st) else { fail("review state") }
+      guard rev_st is Object(rev_o) else { fail("review object") }
+      guard rev_o.get("url") is Some(String(u)) else {
+        fail("url must remain a JSON string, not a tag wrapper")
+      }
+      assert_eq(u, "https://github.com/org/repo/pull/5")
+    }
+    None => fail("expected legacy lifecycle parse")
+  }
+}
+
+///|
+test "lifecycle legacy supervising without wave defaults wave in parse" {
+  let raw =
+    #|{"agent_id":"tl","role":"TL","process":{"tag":"Connected"},"workflow":{"tag":"Supervisor","state":{"tag":"Supervising","children":[]}}}
+  match lifecycle_from_json(raw.to_string()) {
+    Some(lc) =>
+      match lc.workflow {
+        Supervisor(Supervising(wave~, ..)) => assert_eq(wave, 1)
+        _ => fail("expected Supervising with default wave")
+      }
+    None => fail("parse legacy supervising")
+  }
+}
+
+///|
+test "tl phase legacy Waiting without wave defaults to 1" {
+  let raw = "{\"phase\":\"Waiting\",\"count\":2}"
+  match tl_phase_from_json(raw) {
+    Some(Waiting(count=2, wave=1)) => ()
+    Some(p) => fail("expected Waiting(2,1), got " + p.to_string())
+    None => fail("tl phase parse failed")
+  }
+}
+
+///|
+test "dev phase legacy PRFiled alias maps to PROpenUnreviewed" {
+  let raw = "{\"phase\":\"PRFiled\",\"pr_number\":9,\"url\":\"https://github.com/org/repo/pull/9\"}"
+  match dev_phase_from_json(raw) {
+    Some(PROpenUnreviewed(pr_number=9, url=u)) =>
+      assert_eq(u, "https://github.com/org/repo/pull/9")
+    _ => fail("expected PROpenUnreviewed from PRFiled alias")
+  }
+}
+
+///|
+test "ChildTracker from_json skips bad rows and keeps valid entries" {
+  let raw = "[{\"id\":\"a\",\"slug\":\"s\",\"branch\":\"b\",\"agent_type\":\"t\"},{\"not\":\"valid\"},{\"id\":\"c\",\"slug\":\"s2\",\"branch\":\"b2\",\"agent_type\":\"t2\"}]"
+  let tr = ChildTracker::from_json(raw)
+  assert_eq(tr.count(), 2)
+  let ids = tr.active_ids()
+  let mut ok_a = false
+  let mut ok_c = false
+  for id in ids {
+    if id == "a" {
+      ok_a = true
+    }
+    if id == "c" {
+      ok_c = true
+    }
+  }
+  assert_true(ok_a)
+  assert_true(ok_c)
+}
+
+///|
 test "lifecycle json round-trip covers supervisor children" {
   let lifecycle : AgentLifecycle = {
     agent_id: "main",
