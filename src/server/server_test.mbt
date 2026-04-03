@@ -50,7 +50,7 @@ test "notify_parent uses live registry parent when present" {
   )
 
   let message = "hello parent"
-  let res = state.notify_parent(caller_id, message, "success")
+  let res = try? state.notify_parent(caller_id, message, "success")
   match res {
     Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
       assert_eq(target, live_target)
@@ -136,7 +136,7 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
   )
 
   let message = "hello parent"
-  let res = state.notify_parent(caller_id, message, "success")
+  let res = try? state.notify_parent(caller_id, message, "success")
   match res {
     Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
       let expected_target = match
@@ -187,7 +187,7 @@ test "notify_parent returns clear error when parent cannot be resolved" {
   assert_true(@phase.read_lifecycle(project_dir, parent_id) == None)
 
   let message = "hello parent"
-  let res = state.notify_parent(caller_id, message, "success")
+  let res = try? state.notify_parent(caller_id, message, "success")
   match res {
     Ok(_) => fail("expected Err AgentNotFound, got Ok")
     Err(e) => assert_eq(e.message(), "agent not found: " + parent_id)
@@ -274,7 +274,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
   state.poller.track(
     55, old_id, shared_branch, "main", "https://github.com/o/r/pull/55", now,
   )
-  match state.transfer_leaf_ownership(old_id, new_id) {
+  match (try? state.transfer_leaf_ownership(old_id, new_id)) {
     Ok(n) => assert_eq(n, 1)
     Err(e) => fail("transfer failed: " + e.message())
   }
@@ -285,7 +285,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
     }
     None => fail("PR 55 should remain tracked after rescue")
   }
-  let replacement = match state.registry.get(new_id) {
+  let replacement = match (try? state.registry.get(new_id)) {
     Ok(a) => a
     Err(e) => fail("replacement not registered: " + e.message())
   }
@@ -578,7 +578,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
       state: @types.AgentState::Active,
     }),
   )
-  match state.transfer_leaf_ownership(old_leaf, new_leaf) {
+  match (try? state.transfer_leaf_ownership(old_leaf, new_leaf)) {
     Ok(_) => fail("expected validation error for mismatched parents")
     Err(e) => assert_true(e.message().contains("different parents"))
   }

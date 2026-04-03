@@ -245,9 +245,9 @@ fn resolve_parent_for_plan_fail(
   match agent.parent {
     Some(parent_id) =>
       match
-        @phase.resolve_agent_with_fallback(
+        (try? @phase.resolve_agent_with_fallback(
           project_dir, terminal_session, registry, parent_id,
-        ) {
+        )) {
         Ok(p) => Some(p)
         Err(_) => None
       }
@@ -281,24 +281,24 @@ pub fn plan_post_tool_actions(
       Some(agent_id) =>
         match resp.ok_field("status") {
           Some("shutdown") =>
-            match registry.get(agent_id) {
-              Ok(agent) => {
-                let lifecycle = @phase.read_or_default_lifecycle(
-                  project_dir,
-                  agent_id,
-                  agent.role,
-                )
-                for
-                  e in plan_finalize(
-                    agent,
-                    lifecycle,
-                    "shutdown",
-                    notify_parent=true,
-                  ) {
-                  effects.push(e)
-                }
+            try {
+              let agent = registry.get(agent_id)
+              let lifecycle = @phase.read_or_default_lifecycle(
+                project_dir,
+                agent_id,
+                agent.role,
+              )
+              for
+                e in plan_finalize(
+                  agent,
+                  lifecycle,
+                  "shutdown",
+                  notify_parent=true,
+                ) {
+                effects.push(e)
               }
-              Err(_) => effects.push(ClearRuntimeTracking(agent_id))
+            } catch {
+              _ => effects.push(ClearRuntimeTracking(agent_id))
             }
           _ => ()
         }
@@ -316,33 +316,32 @@ pub fn plan_post_tool_actions(
             event=@phase.DevEvent::MergeObserved(pr_number~),
           ),
         )
-        match registry.get(agent_id) {
-          Ok(leaf) => {
-            let (branch, parent_branch, url) = match poller.get(pr_number) {
-              Some(t) => (t.branch, t.parent_branch, t.pr_url)
-              None => (leaf.branch, "", "")
-            }
-            effects.push(
-              DeliverToParentMerged(
-                leaf_id=agent_id,
-                pr_number~,
-                branch~,
-                parent_branch~,
-                url~,
-                parent_id=leaf.parent,
-              ),
-            )
-            let lifecycle = @phase.read_or_default_lifecycle(
-              project_dir,
-              agent_id,
-              leaf.role,
-            )
-            for
-              e in plan_finalize(leaf, lifecycle, "merged", notify_parent=false) {
-              effects.push(e)
-            }
+        try {
+          let leaf = registry.get(agent_id)
+          let (branch, parent_branch, url) = match poller.get(pr_number) {
+            Some(t) => (t.branch, t.parent_branch, t.pr_url)
+            None => (leaf.branch, "", "")
           }
-          Err(_) => effects.push(ClearRuntimeTracking(agent_id))
+          effects.push(
+            DeliverToParentMerged(
+              leaf_id=agent_id,
+              pr_number~,
+              branch~,
+              parent_branch~,
+              url~,
+              parent_id=leaf.parent,
+            ),
+          )
+          let lifecycle = @phase.read_or_default_lifecycle(
+            project_dir,
+            agent_id,
+            leaf.role,
+          )
+          for e in plan_finalize(leaf, lifecycle, "merged", notify_parent=false) {
+            effects.push(e)
+          }
+        } catch {
+          _ => effects.push(ClearRuntimeTracking(agent_id))
         }
       }
       _ => ()
@@ -353,30 +352,30 @@ pub fn plan_post_tool_actions(
   if req.name == "kill_agent" {
     match req.args.get("agent_id") {
       Some(agent_id) =>
-        match registry.get(agent_id) {
-          Ok(agent) => {
-            let lifecycle = @phase.read_or_default_lifecycle(
-              project_dir,
-              agent_id,
-              agent.role,
-            )
-            let parent = resolve_parent_for_plan_fail(
-              project_dir, terminal_session, registry, agent,
-            )
-            for
-              e in plan_fail(
-                agent,
-                lifecycle,
-                @phase.FailureReason::ParentKilled,
-                "agent killed by parent",
-                "killed",
-                parent,
-                close_target=false,
-              ) {
-              effects.push(e)
-            }
+        try {
+          let agent = registry.get(agent_id)
+          let lifecycle = @phase.read_or_default_lifecycle(
+            project_dir,
+            agent_id,
+            agent.role,
+          )
+          let parent = resolve_parent_for_plan_fail(
+            project_dir, terminal_session, registry, agent,
+          )
+          for
+            e in plan_fail(
+              agent,
+              lifecycle,
+              @phase.FailureReason::ParentKilled,
+              "agent killed by parent",
+              "killed",
+              parent,
+              close_target=false,
+            ) {
+            effects.push(e)
           }
-          Err(_) => effects.push(ClearRuntimeTracking(agent_id))
+        } catch {
+          _ => effects.push(ClearRuntimeTracking(agent_id))
         }
       None => ()
     }

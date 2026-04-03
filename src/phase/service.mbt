@@ -248,9 +248,8 @@ pub fn plan_tl_event_for_scope(
   let store = LifecycleStore::new(project_dir)
   let default_role = match registry {
     Some(reg) =>
-      match reg.get(scope) {
-        Ok(agent) => agent.role
-        Err(_) => supervisor_role_for_scope(scope)
+      reg.get(scope).role catch {
+        _ => supervisor_role_for_scope(scope)
       }
     None => supervisor_role_for_scope(scope)
   }
@@ -263,10 +262,11 @@ fn sync_registry_after_persist(
   registry : @registry.AgentRegistry,
   lifecycle : AgentLifecycle,
 ) -> Unit {
-  match registry.get(lifecycle.agent_id) {
-    Ok(agent) =>
-      ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
-    Err(_) => ()
+  try {
+    let agent = registry.get(lifecycle.agent_id)
+    ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+  } catch {
+    _ => ()
   }
 }
 
@@ -462,14 +462,13 @@ pub fn resolve_agent_with_fallback(
   session : String,
   reg : @registry.AgentRegistry,
   agent_id : String,
-) -> Result[@types.Agent, @types.ChoirError] {
-  match reg.get(agent_id) {
-    Ok(agent) => Ok(agent)
-    Err(_) =>
+) -> @types.Agent raise @types.ChoirError {
+  reg.get(agent_id) catch {
+    _ =>
       match read_lifecycle(project_dir, agent_id) {
         Some(lifecycle) =>
-          Ok({
-            agent_id,
+          {
+            agent_id: @types.AgentId(agent_id),
             role: lifecycle.role,
             agent_type: synthesized_parent_agent_type(lifecycle.role),
             parent: None,
@@ -485,8 +484,8 @@ pub fn resolve_agent_with_fallback(
             host: @types.Host::Local,
             state: lifecycle.to_agent_state(),
             spawn_depth: 0,
-          })
-        None => Err(@types.ChoirError::agent_not_found(agent_id))
+          }
+        None => raise @types.ChoirError::agent_not_found(agent_id)
       }
   }
 }
@@ -497,16 +496,13 @@ pub fn resolve_parent_with_fallback(
   session : String,
   reg : @registry.AgentRegistry,
   caller_id : String,
-) -> Result[@types.Agent, @types.ChoirError] {
-  match reg.get(caller_id) {
-    Ok(agent) =>
-      match agent.parent {
-        Some(parent_id) =>
-          resolve_agent_with_fallback(project_dir, session, reg, parent_id)
-        None =>
-          Err(@types.ChoirError::agent_not_found("no parent for " + caller_id))
-      }
-    Err(e) => Err(e)
+) -> @types.Agent raise @types.ChoirError {
+  let agent = reg.get(caller_id)
+  match agent.parent {
+    Some(parent_id) =>
+      resolve_agent_with_fallback(project_dir, session, reg, parent_id)
+    None =>
+      raise @types.ChoirError::agent_not_found("no parent for " + caller_id)
   }
 }
 
@@ -517,10 +513,11 @@ pub fn persist_lifecycle(
   lifecycle : AgentLifecycle,
 ) -> Bool {
   let ok = write_lifecycle(project_dir, lifecycle)
-  match registry.get(lifecycle.agent_id) {
-    Ok(agent) =>
-      ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
-    Err(_) => ()
+  try {
+    let agent = registry.get(lifecycle.agent_id)
+    ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+  } catch {
+    _ => ()
   }
   ok
 }
@@ -543,18 +540,15 @@ pub fn sync_parent_child_lifecycle(
   agent_id : String,
   lifecycle : AgentLifecycle,
 ) -> Unit {
-  let agent = match registry.get(agent_id) {
-    Ok(agent) => agent
-    Err(_) => return
-  }
+  let agent = registry.get(agent_id) catch { _ => return }
   let parent_id = match agent.parent {
     Some(parent_id) => parent_id
     None => return
   }
-  let parent = match
-    resolve_agent_with_fallback(project_dir, session, registry, parent_id) {
-    Ok(parent) => parent
-    Err(_) => return
+  let parent = resolve_agent_with_fallback(
+    project_dir, session, registry, parent_id,
+  ) catch {
+    _ => return
   }
   let child : ChildLifecycle = {
     child_id: agent_id,
@@ -629,18 +623,12 @@ pub fn remove_parent_child_lifecycle(
   registry : @registry.AgentRegistry,
   agent_id : String,
 ) -> Unit {
-  let agent = match registry.get(agent_id) {
-    Ok(agent) => agent
-    Err(_) => return
-  }
+  let agent = registry.get(agent_id) catch { _ => return }
   let parent_id = match agent.parent {
     Some(parent_id) => parent_id
     None => return
   }
-  let parent = match registry.get(parent_id) {
-    Ok(parent) => parent
-    Err(_) => return
-  }
+  let parent = registry.get(parent_id) catch { _ => return }
   let parent_lifecycle = read_or_default_lifecycle(
     project_dir,
     parent_id,
