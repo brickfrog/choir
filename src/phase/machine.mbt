@@ -3,7 +3,7 @@ pub(all) enum StopCheckResult {
   MustBlock(String)
   ShouldNudge(String)
   Clean
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum TransitionResult[P] {

@@ -6,7 +6,7 @@ pub(all) enum FinalizeReason {
   RecoveredDone
   /// Prior leaf finished after a rescue handoff; not a hard failure.
   RescuedByReplacement
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum FailureReason {
@@ -19,20 +19,20 @@ pub(all) enum FailureReason {
   McpInitializeFailure
   ParentKilled
   BlockedByReview
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum ExitBlockReason {
   ChangesRequested
   OwnPROpen(number~ : Int, url~ : String)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum ReviewOwnership {
   OpenUnreviewed(url~ : String)
   FixesAwaitingReview(round~ : Int)
   ApprovedAwaitingMerge
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum ChildLifecycleSummary {
@@ -43,7 +43,7 @@ pub(all) enum ChildLifecycleSummary {
   Exitable
   Done
   Failed(reason~ : FailureReason)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) struct ChildLifecycle {
@@ -52,7 +52,7 @@ pub(all) struct ChildLifecycle {
   branch : String
   agent_type : String
   summary : ChildLifecycleSummary
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum SupervisorLifecycle {
@@ -63,7 +63,7 @@ pub(all) enum SupervisorLifecycle {
   OwnPRFiled(number~ : Int, url~ : String)
   Done
   Failed(reason~ : FailureReason)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevLifecycle {
@@ -74,7 +74,7 @@ pub(all) enum DevLifecycle {
   Exitable
   Done(reason~ : FinalizeReason)
   Failed(reason~ : FailureReason)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum WorkerLifecycle {
@@ -82,14 +82,14 @@ pub(all) enum WorkerLifecycle {
   Exitable
   Done(reason~ : FinalizeReason)
   Failed(reason~ : FailureReason)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum WorkflowState {
   Supervisor(SupervisorLifecycle)
   Dev(DevLifecycle)
   Worker(WorkerLifecycle)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum ProcessState {
@@ -97,7 +97,7 @@ pub(all) enum ProcessState {
   Finalizing(reason~ : FinalizeReason)
   Finalized(reason~ : FinalizeReason)
   Failed(reason~ : FailureReason)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) struct AgentLifecycle {
@@ -105,7 +105,7 @@ pub(all) struct AgentLifecycle {
   role : @types.Role
   process : ProcessState
   workflow : WorkflowState
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 /// Side effects produced by lifecycle orchestration; interpreted by the host
@@ -120,14 +120,14 @@ pub(all) enum LifecycleEffect {
     to_lc~ : AgentLifecycle,
     trigger~ : String
   )
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum LifecycleExitPolicy {
   Blocked(reason~ : ExitBlockReason)
   Deferred(message~ : String)
   Allowed
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum LifecycleDisconnectPolicy {
@@ -135,7 +135,7 @@ pub(all) enum LifecycleDisconnectPolicy {
   Fail(reason~ : FailureReason)
   FinalizeDone(reason~ : FinalizeReason)
   Ignore
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevLifecycleEvent {
@@ -145,7 +145,7 @@ pub(all) enum DevLifecycleEvent {
   FixesPushed(pr_number~ : Int, sha~ : String)
   ExitRequested
   MergeObserved(pr_number~ : Int)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum SupervisorEvent {
@@ -155,7 +155,7 @@ pub(all) enum SupervisorEvent {
   ChildFailed(child_id~ : String, reason~ : FailureReason)
   AllChildrenComplete
   OwnPRFiled(number~ : Int, url~ : String)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 fn review_summary_message(pr_number : Int, state : ReviewOwnership) -> String {
@@ -578,50 +578,6 @@ pub fn supervisor_transition(
 }
 
 ///|
-fn finalize_reason_to_json(reason : FinalizeReason) -> Json {
-  match reason {
-    Shutdown => { "tag": "Shutdown".to_json() }.to_json()
-    Merged => { "tag": "Merged".to_json() }.to_json()
-    DisconnectFinalized => { "tag": "DisconnectFinalized".to_json() }.to_json()
-    RecoveredDone => { "tag": "RecoveredDone".to_json() }.to_json()
-    RescuedByReplacement =>
-      { "tag": "RescuedByReplacement".to_json() }.to_json()
-  }
-}
-
-///|
-fn finalize_reason_from_json(json : Json) -> FinalizeReason? {
-  guard json is Object(obj) else { return None }
-  match obj.get("tag") {
-    Some(String("Shutdown")) => Some(Shutdown)
-    Some(String("Merged")) => Some(Merged)
-    Some(String("DisconnectFinalized")) => Some(DisconnectFinalized)
-    Some(String("RecoveredDone")) => Some(RecoveredDone)
-    Some(String("RescuedByReplacement")) => Some(RescuedByReplacement)
-    _ => None
-  }
-}
-
-///|
-fn failure_reason_to_json(reason : FailureReason) -> Json {
-  match reason {
-    UnexpectedDisconnect =>
-      { "tag": "UnexpectedDisconnect".to_json() }.to_json()
-    WatchdogTimeout => { "tag": "WatchdogTimeout".to_json() }.to_json()
-    ParentFailureNotification =>
-      { "tag": "ParentFailureNotification".to_json() }.to_json()
-    ChildFailure(message~) =>
-      { "tag": "ChildFailure".to_json(), "message": message.to_json() }.to_json()
-    RecoveredFailed => { "tag": "RecoveredFailed".to_json() }.to_json()
-    ModelAtCapacity => { "tag": "ModelAtCapacity".to_json() }.to_json()
-    McpInitializeFailure =>
-      { "tag": "McpInitializeFailure".to_json() }.to_json()
-    ParentKilled => { "tag": "ParentKilled".to_json() }.to_json()
-    BlockedByReview => { "tag": "BlockedByReview".to_json() }.to_json()
-  }
-}
-
-///|
 pub fn failure_reason_message(reason : FailureReason) -> String {
   match reason {
     UnexpectedDisconnect => "unexpected disconnect"
@@ -667,27 +623,6 @@ pub fn classify_failure(message : String) -> FailureReason {
 }
 
 ///|
-fn failure_reason_from_json(json : Json) -> FailureReason? {
-  guard json is Object(obj) else { return None }
-  match obj.get("tag") {
-    Some(String("UnexpectedDisconnect")) => Some(UnexpectedDisconnect)
-    Some(String("WatchdogTimeout")) => Some(WatchdogTimeout)
-    Some(String("ParentFailureNotification")) => Some(ParentFailureNotification)
-    Some(String("ChildFailure")) =>
-      match obj.get("message") {
-        Some(String(message)) => Some(ChildFailure(message~))
-        _ => None
-      }
-    Some(String("RecoveredFailed")) => Some(RecoveredFailed)
-    Some(String("ModelAtCapacity")) => Some(ModelAtCapacity)
-    Some(String("McpInitializeFailure")) => Some(McpInitializeFailure)
-    Some(String("ParentKilled")) => Some(ParentKilled)
-    Some(String("BlockedByReview")) => Some(BlockedByReview)
-    _ => None
-  }
-}
-
-///|
 pub fn exit_block_reason_message(reason : ExitBlockReason) -> String {
   match reason {
     ChangesRequested => "Changes requested"
@@ -697,471 +632,18 @@ pub fn exit_block_reason_message(reason : ExitBlockReason) -> String {
 }
 
 ///|
-fn review_ownership_to_json(state : ReviewOwnership) -> Json {
-  match state {
-    OpenUnreviewed(url~) =>
-      { "tag": "OpenUnreviewed".to_json(), "url": url.to_json() }.to_json()
-    FixesAwaitingReview(round~) =>
-      { "tag": "FixesAwaitingReview".to_json(), "round": round.to_json() }.to_json()
-    ApprovedAwaitingMerge =>
-      { "tag": "ApprovedAwaitingMerge".to_json() }.to_json()
-  }
-}
-
-///|
-fn review_ownership_from_json(json : Json) -> ReviewOwnership? {
-  guard json is Object(obj) else { return None }
-  match obj.get("tag") {
-    Some(String("OpenUnreviewed")) =>
-      match obj.get("url") {
-        Some(String(url)) => Some(OpenUnreviewed(url~))
-        _ => None
-      }
-    Some(String("FixesAwaitingReview")) =>
-      match obj.get("round") {
-        Some(Number(round, ..)) =>
-          Some(FixesAwaitingReview(round=round.to_int()))
-        _ => None
-      }
-    Some(String("ApprovedAwaitingMerge")) => Some(ApprovedAwaitingMerge)
-    _ => None
-  }
-}
-
-///|
-fn child_summary_to_json(summary : ChildLifecycleSummary) -> Json {
-  match summary {
-    Working => { "tag": "Working".to_json() }.to_json()
-    ReviewOwned(pr_number~, state~) =>
-      {
-        "tag": "ReviewOwned".to_json(),
-        "pr_number": pr_number.to_json(),
-        "state": review_ownership_to_json(state),
-      }.to_json()
-    ChangesRequested(pr_number~, next_round~) =>
-      {
-        "tag": "ChangesRequested".to_json(),
-        "pr_number": pr_number.to_json(),
-        "next_round": next_round.to_json(),
-      }.to_json()
-    ExitRequestedDeferred(pr_number~, state~) =>
-      {
-        "tag": "ExitRequestedDeferred".to_json(),
-        "pr_number": pr_number.to_json(),
-        "state": review_ownership_to_json(state),
-      }.to_json()
-    Exitable => { "tag": "Exitable".to_json() }.to_json()
-    Done => { "tag": "Done".to_json() }.to_json()
-    Failed(reason~) =>
-      { "tag": "Failed".to_json(), "reason": failure_reason_to_json(reason) }.to_json()
-  }
-}
-
-///|
-fn child_summary_from_json(json : Json) -> ChildLifecycleSummary? {
-  guard json is Object(obj) else { return None }
-  match obj.get("tag") {
-    Some(String("Working")) => Some(Working)
-    Some(String("ReviewOwned")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("state") is Some(state) else { return None }
-      match review_ownership_from_json(state) {
-        Some(review_state) =>
-          Some(ReviewOwned(pr_number=n.to_int(), state=review_state))
-        None => None
-      }
-    }
-    Some(String("ChangesRequested")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("next_round") is Some(Number(r, ..)) else { return None }
-      Some(ChangesRequested(pr_number=n.to_int(), next_round=r.to_int()))
-    }
-    Some(String("ExitRequestedDeferred")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("state") is Some(state) else { return None }
-      match review_ownership_from_json(state) {
-        Some(review_state) =>
-          Some(ExitRequestedDeferred(pr_number=n.to_int(), state=review_state))
-        None => None
-      }
-    }
-    Some(String("Exitable")) => Some(Exitable)
-    Some(String("Done")) => Some(Done)
-    Some(String("Failed")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match failure_reason_from_json(reason) {
-            Some(parsed) => Some(Failed(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    _ => None
-  }
-}
-
-///|
-fn child_lifecycle_to_json(child : ChildLifecycle) -> Json {
-  {
-    "child_id": child.child_id.to_json(),
-    "slug": child.slug.to_json(),
-    "branch": child.branch.to_json(),
-    "agent_type": child.agent_type.to_json(),
-    "summary": child_summary_to_json(child.summary),
-  }.to_json()
-}
-
-///|
-fn child_lifecycle_from_json(json : Json) -> ChildLifecycle? {
-  guard json is Object(obj) else { return None }
-  guard obj.get("child_id") is Some(String(child_id)) else { return None }
-  guard obj.get("slug") is Some(String(slug)) else { return None }
-  guard obj.get("branch") is Some(String(branch)) else { return None }
-  guard obj.get("agent_type") is Some(String(agent_type)) else { return None }
-  guard obj.get("summary") is Some(summary) else { return None }
-  match child_summary_from_json(summary) {
-    Some(parsed_summary) =>
-      Some({ child_id, slug, branch, agent_type, summary: parsed_summary })
-    None => None
-  }
-}
-
-///|
-fn supervisor_lifecycle_to_json(state : SupervisorLifecycle) -> Json {
-  match state {
-    Planning => { "tag": "Planning".to_json() }.to_json()
-    Dispatching => { "tag": "Dispatching".to_json() }.to_json()
-    Supervising(children~, wave~) =>
-      {
-        "tag": "Supervising".to_json(),
-        "children": children.map(child_lifecycle_to_json).to_json(),
-        "wave": wave.to_json(),
-      }.to_json()
-    WaveComplete(wave~, children~) =>
-      {
-        "tag": "WaveComplete".to_json(),
-        "wave": wave.to_json(),
-        "children": children.map(child_lifecycle_to_json).to_json(),
-      }.to_json()
-    OwnPRFiled(number~, url~) =>
-      {
-        "tag": "OwnPRFiled".to_json(),
-        "number": number.to_json(),
-        "url": url.to_json(),
-      }.to_json()
-    Done => { "tag": "Done".to_json() }.to_json()
-    Failed(reason~) =>
-      { "tag": "Failed".to_json(), "reason": failure_reason_to_json(reason) }.to_json()
-  }
-}
-
-///|
-fn supervisor_lifecycle_from_json(json : Json) -> SupervisorLifecycle? {
-  guard json is Object(obj) else { return None }
-  match obj.get("tag") {
-    Some(String("Planning")) => Some(Planning)
-    Some(String("Dispatching")) => Some(Dispatching)
-    Some(String("Supervising")) =>
-      match obj.get("children") {
-        Some(Array(children_json)) => {
-          let children = []
-          for child_json in children_json {
-            match child_lifecycle_from_json(child_json) {
-              Some(child) => children.push(child)
-              None => return None
-            }
-          }
-          let wave = match obj.get("wave") {
-            Some(Number(n, ..)) => n.to_int()
-            _ => 1
-          }
-          Some(Supervising(children~, wave~))
-        }
-        _ => None
-      }
-    Some(String("WaveComplete")) => {
-      guard obj.get("wave") is Some(Number(w, ..)) else { return None }
-      match obj.get("children") {
-        Some(Array(children_json)) => {
-          let children = []
-          for child_json in children_json {
-            match child_lifecycle_from_json(child_json) {
-              Some(child) => children.push(child)
-              None => return None
-            }
-          }
-          Some(WaveComplete(wave=w.to_int(), children~))
-        }
-        _ => None
-      }
-    }
-    Some(String("OwnPRFiled")) => {
-      guard obj.get("number") is Some(Number(number, ..)) else { return None }
-      guard obj.get("url") is Some(String(url)) else { return None }
-      Some(OwnPRFiled(number=number.to_int(), url~))
-    }
-    Some(String("Done")) => Some(Done)
-    Some(String("Failed")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match failure_reason_from_json(reason) {
-            Some(parsed) => Some(Failed(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    _ => None
-  }
-}
-
-///|
-fn dev_lifecycle_to_json(state : DevLifecycle) -> Json {
-  match state {
-    Working => { "tag": "Working".to_json() }.to_json()
-    ReviewOwned(pr_number~, state~) =>
-      {
-        "tag": "ReviewOwned".to_json(),
-        "pr_number": pr_number.to_json(),
-        "state": review_ownership_to_json(state),
-      }.to_json()
-    ChangesRequested(pr_number~, next_round~) =>
-      {
-        "tag": "ChangesRequested".to_json(),
-        "pr_number": pr_number.to_json(),
-        "next_round": next_round.to_json(),
-      }.to_json()
-    ExitRequestedDeferred(pr_number~, state~) =>
-      {
-        "tag": "ExitRequestedDeferred".to_json(),
-        "pr_number": pr_number.to_json(),
-        "state": review_ownership_to_json(state),
-      }.to_json()
-    Exitable => { "tag": "Exitable".to_json() }.to_json()
-    Done(reason~) =>
-      { "tag": "Done".to_json(), "reason": finalize_reason_to_json(reason) }.to_json()
-    Failed(reason~) =>
-      { "tag": "Failed".to_json(), "reason": failure_reason_to_json(reason) }.to_json()
-  }
-}
-
-///|
-fn dev_lifecycle_from_json(json : Json) -> DevLifecycle? {
-  guard json is Object(obj) else { return None }
-  match obj.get("tag") {
-    Some(String("Working")) => Some(Working)
-    Some(String("ReviewOwned")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("state") is Some(state) else { return None }
-      match review_ownership_from_json(state) {
-        Some(parsed_state) =>
-          Some(ReviewOwned(pr_number=n.to_int(), state=parsed_state))
-        None => None
-      }
-    }
-    Some(String("ChangesRequested")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("next_round") is Some(Number(r, ..)) else { return None }
-      Some(ChangesRequested(pr_number=n.to_int(), next_round=r.to_int()))
-    }
-    Some(String("ExitRequestedDeferred")) => {
-      guard obj.get("pr_number") is Some(Number(n, ..)) else { return None }
-      guard obj.get("state") is Some(state) else { return None }
-      match review_ownership_from_json(state) {
-        Some(parsed_state) =>
-          Some(ExitRequestedDeferred(pr_number=n.to_int(), state=parsed_state))
-        None => None
-      }
-    }
-    Some(String("Exitable")) => Some(Exitable)
-    Some(String("Done")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match finalize_reason_from_json(reason) {
-            Some(parsed) => Some(Done(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    Some(String("Failed")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match failure_reason_from_json(reason) {
-            Some(parsed) => Some(Failed(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    _ => None
-  }
-}
-
-///|
-fn worker_lifecycle_to_json(state : WorkerLifecycle) -> Json {
-  match state {
-    Working => { "tag": "Working".to_json() }.to_json()
-    Exitable => { "tag": "Exitable".to_json() }.to_json()
-    Done(reason~) =>
-      { "tag": "Done".to_json(), "reason": finalize_reason_to_json(reason) }.to_json()
-    Failed(reason~) =>
-      { "tag": "Failed".to_json(), "reason": failure_reason_to_json(reason) }.to_json()
-  }
-}
-
-///|
-fn worker_lifecycle_from_json(json : Json) -> WorkerLifecycle? {
-  guard json is Object(obj) else { return None }
-  match obj.get("tag") {
-    Some(String("Working")) => Some(Working)
-    Some(String("Exitable")) => Some(Exitable)
-    Some(String("Done")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match finalize_reason_from_json(reason) {
-            Some(parsed) => Some(Done(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    Some(String("Failed")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match failure_reason_from_json(reason) {
-            Some(parsed) => Some(Failed(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    _ => None
-  }
-}
-
-///|
-fn workflow_state_to_json(state : WorkflowState) -> Json {
-  match state {
-    Supervisor(supervisor) =>
-      {
-        "tag": "Supervisor".to_json(),
-        "state": supervisor_lifecycle_to_json(supervisor),
-      }.to_json()
-    Dev(dev) =>
-      { "tag": "Dev".to_json(), "state": dev_lifecycle_to_json(dev) }.to_json()
-    Worker(worker) =>
-      { "tag": "Worker".to_json(), "state": worker_lifecycle_to_json(worker) }.to_json()
-  }
-}
-
-///|
-fn workflow_state_from_json(json : Json) -> WorkflowState? {
-  guard json is Object(obj) else { return None }
-  guard obj.get("state") is Some(state_json) else { return None }
-  match obj.get("tag") {
-    Some(String("Supervisor")) =>
-      match supervisor_lifecycle_from_json(state_json) {
-        Some(parsed) => Some(Supervisor(parsed))
-        None => None
-      }
-    Some(String("Dev")) =>
-      match dev_lifecycle_from_json(state_json) {
-        Some(parsed) => Some(Dev(parsed))
-        None => None
-      }
-    Some(String("Worker")) =>
-      match worker_lifecycle_from_json(state_json) {
-        Some(parsed) => Some(Worker(parsed))
-        None => None
-      }
-    _ => None
-  }
-}
-
-///|
-fn process_state_to_json(state : ProcessState) -> Json {
-  match state {
-    Connected => { "tag": "Connected".to_json() }.to_json()
-    Finalizing(reason~) =>
-      {
-        "tag": "Finalizing".to_json(),
-        "reason": finalize_reason_to_json(reason),
-      }.to_json()
-    Finalized(reason~) =>
-      {
-        "tag": "Finalized".to_json(),
-        "reason": finalize_reason_to_json(reason),
-      }.to_json()
-    Failed(reason~) =>
-      { "tag": "Failed".to_json(), "reason": failure_reason_to_json(reason) }.to_json()
-  }
-}
-
-///|
-fn process_state_from_json(json : Json) -> ProcessState? {
-  guard json is Object(obj) else { return None }
-  match obj.get("tag") {
-    Some(String("Connected")) => Some(Connected)
-    Some(String("Finalizing")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match finalize_reason_from_json(reason) {
-            Some(parsed) => Some(Finalizing(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    Some(String("Finalized")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match finalize_reason_from_json(reason) {
-            Some(parsed) => Some(Finalized(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    Some(String("Failed")) =>
-      match obj.get("reason") {
-        Some(reason) =>
-          match failure_reason_from_json(reason) {
-            Some(parsed) => Some(Failed(reason=parsed))
-            None => None
-          }
-        None => None
-      }
-    _ => None
-  }
-}
-
-///|
 pub fn lifecycle_to_json(lifecycle : AgentLifecycle) -> String {
-  {
-    "agent_id": lifecycle.agent_id.to_json(),
-    "role": lifecycle.role.to_string().to_json(),
-    "process": process_state_to_json(lifecycle.process),
-    "workflow": workflow_state_to_json(lifecycle.workflow),
-  }
-  .to_json()
-  .stringify()
+  derived_agent_lifecycle_json_to_legacy(lifecycle.to_json()).stringify()
 }
 
 ///|
 pub fn lifecycle_from_json(json_str : String) -> AgentLifecycle? {
   let json = @json.parse(json_str) catch { _ => return None }
-  guard json is Object(obj) else { return None }
-  guard obj.get("agent_id") is Some(String(agent_id)) else { return None }
-  let role = match obj.get("role") {
-    Some(String("Root")) => @types.Role::Root
-    Some(String("TL")) => @types.Role::TL
-    Some(String("Dev")) => @types.Role::Dev
-    Some(String("Worker")) => @types.Role::Worker
-    _ => return None
-  }
-  guard obj.get("process") is Some(process_json) else { return None }
-  guard obj.get("workflow") is Some(workflow_json) else { return None }
-  match
-    (
-      process_state_from_json(process_json),
-      workflow_state_from_json(workflow_json),
-    ) {
-    (Some(process), Some(workflow)) =>
-      Some({ agent_id, role, process, workflow })
+  let adapted = legacy_agent_lifecycle_json_to_derived(json)
+  try {
+    let lc : AgentLifecycle = @json.from_json(adapted)
+    Some(lc)
+  } catch {
     _ => None
   }
 }
