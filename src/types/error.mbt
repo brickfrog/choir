@@ -76,3 +76,44 @@ pub fn ChoirError::is_tool_not_found(self : ChoirError) -> Bool {
     _ => false
   }
 }
+
+///|
+/// Format a caught [`Error`] when it originated from [`ChoirError`] (`try` / `catch`).
+pub fn choir_error_message_from_caught(e : Error) -> String {
+  match e {
+    AgentNotFound(id) => ChoirError::agent_not_found(id).message()
+    ToolNotFound(name) => ChoirError::tool_not_found(name).message()
+    PermissionDenied(role, tool) =>
+      ChoirError::permission_denied(role, tool).message()
+    ValidationError(msg) => ChoirError::validation_error(msg).message()
+    WorkspaceError(msg) => ChoirError::workspace_error(msg).message()
+    TransportError(msg) => ChoirError::transport_error(msg).message()
+    GitError(msg) => ChoirError::git_error(msg).message()
+    ConfigError(msg) => ChoirError::config_error(msg).message()
+    _ => "internal error"
+  }
+}
+
+///|
+/// True when `e` is a [`ChoirError`] variant carried as [`Error`] (from `raise` / `catch`).
+pub fn caught_error_is_choir_error(e : Error) -> Bool {
+  match e {
+    AgentNotFound(_)
+    | ToolNotFound(_)
+    | PermissionDenied(_, _)
+    | ValidationError(_)
+    | WorkspaceError(_)
+    | TransportError(_)
+    | GitError(_)
+    | ConfigError(_) => true
+    _ => false
+  }
+}
+
+///|
+pub fn caught_error_is_tool_not_found(e : Error) -> Bool {
+  match e {
+    ToolNotFound(_) => true
+    _ => false
+  }
+}
