@@ -749,14 +749,14 @@ fn parse_task_create_args(
   }
   let status = tool_args_get(args, "status").unwrap_or("todo")
   let normalized_status = if status == "" { "todo" } else { status }
-  match validate_task_status(normalized_status) {
-    Ok(_) => ()
+  let task_status = match validate_task_status(normalized_status) {
+    Ok(s) => s
     Err(e) => return Err(e)
   }
   Ok({
     id,
     title,
-    status: normalized_status,
+    status: task_status,
     assignee: tool_args_get(args, "assignee").unwrap_or(""),
     notes: tool_args_get(args, "notes").unwrap_or(""),
   })
@@ -776,7 +776,7 @@ fn parse_task_update_args(
         None
       } else {
         match validate_task_status(v) {
-          Ok(_) => Some(v)
+          Ok(s) => Some(s)
           Err(e) => return Err(e)
         }
       }
@@ -1095,10 +1095,12 @@ fn parse_session_name_args(
 }
 
 ///|
-fn validate_task_status(status : String) -> Result[Unit, ParseError] {
-  match status {
-    "todo" | "in_progress" | "done" => Ok(())
-    _ => Err(ParseError::UnknownTaskStatus(value=status))
+fn validate_task_status(
+  status : String,
+) -> Result[@types.TaskStatus, ParseError] {
+  match @types.TaskStatus::try_parse_wire(status) {
+    Ok(s) => Ok(s)
+    Err(_) => Err(ParseError::UnknownTaskStatus(value=status))
   }
 }
 
