@@ -45,6 +45,58 @@ pub(all) enum AgentState {
 } derive(Show, Eq)
 
 ///|
+pub(all) enum LifecycleTrigger {
+  ChildSpawned
+  ChildCompleted
+  ChildFailed
+  PRMerged
+  AllChildrenDone
+  OwnPRFiled
+  PRCreated
+  NotifyParentSuccess
+  NotifyParentFailure
+  ExitRequested
+  MergeObserved
+  ReviewReceived
+  ReviewApproved
+  FixesPushed
+  ChildUpdated
+  ChildRemoved
+  ExitMerged
+  ExitDisconnected
+  ExitShutdown
+  FinalizeComplete
+  Raw(String)
+} derive(Show, Eq, ToJson, FromJson)
+
+///|
+pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
+  match self {
+    ChildSpawned => "ChildSpawned"
+    ChildCompleted => "ChildCompleted"
+    ChildFailed => "ChildFailed"
+    PRMerged => "PRMerged"
+    AllChildrenDone => "AllChildrenDone"
+    OwnPRFiled => "OwnPRFiled"
+    PRCreated => "PRCreated"
+    NotifyParentSuccess => "NotifyParentSuccess"
+    NotifyParentFailure => "NotifyParentFailure"
+    ExitRequested => "ExitRequested"
+    MergeObserved => "MergeObserved"
+    ReviewReceived => "ReviewReceived"
+    ReviewApproved => "ReviewApproved"
+    FixesPushed => "FixesPushed"
+    ChildUpdated => "ChildUpdated"
+    ChildRemoved => "ChildRemoved"
+    ExitMerged => "merged"
+    ExitDisconnected => "disconnect"
+    ExitShutdown => "shutdown"
+    FinalizeComplete => "FinalizeComplete"
+    Raw(s) => s
+  }
+}
+
+///|
 pub(all) enum ExitReason {
   Merged
   Disconnected
@@ -52,11 +104,11 @@ pub(all) enum ExitReason {
 } derive(Show, Eq)
 
 ///|
-pub fn ExitReason::lifecycle_trigger(self : ExitReason) -> String {
+pub fn ExitReason::lifecycle_trigger(self : ExitReason) -> LifecycleTrigger {
   match self {
-    Merged => "merged"
-    Disconnected => "disconnect"
-    Shutdown => "shutdown"
+    Merged => ExitMerged
+    Disconnected => ExitDisconnected
+    Shutdown => ExitShutdown
   }
 }
 

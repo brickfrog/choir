@@ -40,7 +40,11 @@ test "plan_finalize - basic success" {
 
   assert_eq(effects.length(), 9)
   match effects[0] {
-    PersistLifecycle(agent_id="main.leaf", trigger="shutdown", ..) => ()
+    PersistLifecycle(
+      agent_id="main.leaf",
+      trigger=@types.LifecycleTrigger::ExitShutdown,
+      ..
+    ) => ()
     _ => fail("expected PersistLifecycle(Finalizing)")
   }
   match effects[1] {
@@ -70,7 +74,11 @@ test "plan_finalize - basic success" {
     _ => fail("expected CloseTerminal")
   }
   match effects[6] {
-    PersistLifecycle(agent_id="main.leaf", trigger="FinalizeComplete", ..) => ()
+    PersistLifecycle(
+      agent_id="main.leaf",
+      trigger=@types.LifecycleTrigger::FinalizeComplete,
+      ..
+    ) => ()
     _ => fail("expected PersistLifecycle(Finalized)")
   }
   match effects[7] {
@@ -152,7 +160,11 @@ test "plan_fail - basic failure" {
     _ => fail("expected CloseTerminal")
   }
   match effects[2] {
-    PersistLifecycle(agent_id="main.leaf", trigger="disconnect", ..) => ()
+    PersistLifecycle(
+      agent_id="main.leaf",
+      trigger=@types.LifecycleTrigger::ExitDisconnected,
+      ..
+    ) => ()
     _ => fail("expected PersistLifecycle(Failed)")
   }
   match effects[3] {
