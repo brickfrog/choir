@@ -1,14 +1,14 @@
 ///|
 /// Parse a role string into a Role enum.
 pub fn parse_role(s : String) -> Result[@types.Role, @types.ChoirError] {
-  try? @types.Role::parse_wire(s)
+  @types.Role::try_parse_wire(s)
 }
 
 ///|
 pub fn parse_agent_type(
   s : String,
 ) -> Result[@types.AgentType, @types.ChoirError] {
-  try? @types.AgentType::parse_wire(s)
+  @types.AgentType::try_parse_wire(s)
 }
 
 ///|

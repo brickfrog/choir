@@ -238,6 +238,15 @@ test "tool registry lookup wrong role" {
 }
 
 ///|
+test "permission denied response uses Show role casing not wire lowercase" {
+  let reg = @tools.ToolRegistry::new()
+  match reg.lookup(@types.Role::Worker, "fork_wave") {
+    Err(e) => assert_eq(e.message(), "role Worker cannot call fork_wave")
+    Ok(_) => fail("expected permission denied for Worker calling fork_wave")
+  }
+}
+
+///|
 test "tool registry lookup unknown tool" {
   let reg = @tools.ToolRegistry::new()
   let result = reg.lookup(@types.Role::TL, "nonexistent")
