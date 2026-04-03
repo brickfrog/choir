@@ -2327,7 +2327,11 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Waiting on a GitHub Copilot issue comment"))
+      assert_true(
+        message.contains(
+          "Waiting on approving review, CI, or unresolved threads",
+        ),
+      )
     }
     None => fail("expected FixesPushed message")
   }
@@ -2451,9 +2455,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
       assert_true(message.contains("no tracked blockers"))
       assert_true(message.contains("Does not merge"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(
-        message.contains("no Copilot issue comment has been observed"),
-      )
+      assert_true(message.contains("Merge gate open"))
     }
     None => fail("expected CILatestHeadRollupSucceeded message")
   }

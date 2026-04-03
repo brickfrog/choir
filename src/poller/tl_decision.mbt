@@ -13,8 +13,6 @@ pub(all) enum TlTrackedPrWorkflowCategory {
   CopilotIssueCommentSeenRecheckRemainingGates
   ReadyForTLRecheck
   MergeGateOpenPendingPolicyConfirmation
-  /// Approved + CI + threads clear in snapshot, but Copilot issue comment not seen.
-  MergeSnapshotReadyCopilotIssueCommentMissing
   ObservedMergedExternal
   OrphanedPRNeedsManualAction
   StalledOnChangesRequested
@@ -168,8 +166,7 @@ fn tl_category_rollup_header_bucket(
   cat : TlTrackedPrWorkflowCategory,
 ) -> String {
   match cat {
-    MergeGateOpenPendingPolicyConfirmation
-    | MergeSnapshotReadyCopilotIssueCommentMissing => "merge-ready"
+    MergeGateOpenPendingPolicyConfirmation => "merge-ready"
     BlockedOnChanges | StalledOnChangesRequested => "blocked on changes"
     AttentionRequiredCopilotSilentAfterTimeout | AttentionRequiredCIFailed =>
       "attention required"
@@ -195,7 +192,6 @@ fn tl_category_rollup_pr_line(cat : TlTrackedPrWorkflowCategory) -> String {
       "Copilot issue comment seen; re-check gates"
     ReadyForTLRecheck => "Ready for TL re-check"
     MergeGateOpenPendingPolicyConfirmation => "Merge gate open"
-    MergeSnapshotReadyCopilotIssueCommentMissing => "Merge gate open"
     ObservedMergedExternal => "Merged externally"
     OrphanedPRNeedsManualAction => "Orphaned PR needs manual action"
     StalledOnChangesRequested => "Stalled on changes requested"
@@ -392,8 +388,6 @@ pub fn tl_tracked_pr_workflow_category_sentence(
       "TL re-check required — CI/review signal changed; verify GitHub before merge_pr."
     MergeGateOpenPendingPolicyConfirmation =>
       "Merge gate open on Choir snapshot (approved, CI success, zero unresolved threads when known); confirm policy, then merge_pr if appropriate. Does not merge automatically."
-    MergeSnapshotReadyCopilotIssueCommentMissing =>
-      "Choir snapshot shows merge blockers cleared on GitHub, but no Copilot issue comment has been observed on this PR yet — confirm policy before merge_pr."
     ObservedMergedExternal =>
       "PR merged or closed externally — use lifecycle/leaf shutdown as appropriate."
     OrphanedPRNeedsManualAction =>
@@ -421,41 +415,23 @@ pub fn plan_tl_poll_event_parent(
     CIFailed(_) => AttentionRequiredCIFailed
     CIFailureCleared(_) | CILatestHeadRollupSucceeded(_) =>
       if merge_ready {
-        if !tracked.copilot_issue_comment_seen {
-          MergeSnapshotReadyCopilotIssueCommentMissing
-        } else {
-          MergeGateOpenPendingPolicyConfirmation
-        }
+        MergeGateOpenPendingPolicyConfirmation
       } else if tracked.last_review_state == ChangesRequested {
         BlockedOnChanges
       } else if tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
         AttentionRequiredCopilotSilentAfterTimeout
-      } else if !tracked.copilot_issue_comment_seen {
-        WaitingOnCopilotIssueComment
       } else {
         ReadyForTLRecheck
       }
     PRReady(_) => tl_snapshot_workflow_category(tracked, merge_ready)
-    FixesPushed(_) =>
-      if !tracked.copilot_issue_comment_seen {
-        WaitingOnCopilotIssueComment
-      } else {
-        WaitingOnReviewOrCI
-      }
+    FixesPushed(_) => WaitingOnReviewOrCI
     ReviewReceived(_, _) =>
       if tracked.last_review_state == ChangesRequested {
         BlockedOnChanges
-      } else if !tracked.copilot_issue_comment_seen {
-        WaitingOnCopilotIssueComment
       } else {
         WaitingOnReviewOrCI
       }
-    ReviewCommented(_, _) =>
-      if !tracked.copilot_issue_comment_seen {
-        WaitingOnCopilotIssueComment
-      } else {
-        WaitingOnReviewOrCI
-      }
+    ReviewCommented(_, _) => WaitingOnReviewOrCI
     CopilotIssueCommentSeen(_) =>
       tl_snapshot_workflow_category(tracked, merge_ready)
   }
