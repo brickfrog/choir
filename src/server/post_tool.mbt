@@ -244,12 +244,14 @@ fn resolve_parent_for_plan_fail(
 ) -> @types.Agent? {
   match agent.parent {
     Some(parent_id) =>
-      match
-        (try? @phase.resolve_agent_with_fallback(
+      try
+        @phase.resolve_agent_with_fallback(
           project_dir, terminal_session, registry, parent_id,
-        )) {
-        Ok(p) => Some(p)
-        Err(_) => None
+        )
+      catch {
+        _ => None
+      } noraise {
+        p => Some(p)
       }
     None => None
   }

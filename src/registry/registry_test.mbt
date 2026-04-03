@@ -61,15 +61,16 @@ test "registry upsert refreshes existing agent metadata" {
     terminal_target: @types.LocalTarget::parse("zellij-tab:choir:refresh-b"),
   })
   assert_true(refreshed_second)
-  match (try? reg.get("main.refresh")) {
-    Ok(found) => {
+  try reg.get("main.refresh") catch {
+    _ => fail("expected refreshed agent")
+  } noraise {
+    found => {
       assert_eq(found.workspace, ".choir/worktrees/refresh-b")
       assert_eq(
         found.terminal_target,
         @types.LocalTarget::parse("zellij-tab:choir:refresh-b"),
       )
     }
-    Err(_) => fail("expected refreshed agent")
   }
 }
 
@@ -175,9 +176,10 @@ test "registry set state valid transitions" {
   // Spawning -> Active
   let res = try? reg.set_state("main.test", @types.AgentState::Active)
   assert_true(res is Ok(_))
-  match (try? reg.get("main.test")) {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Active)
-    Err(_) => fail("expected agent")
+  try reg.get("main.test") catch {
+    _ => fail("expected agent")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Active)
   }
 
   // Active -> Completing

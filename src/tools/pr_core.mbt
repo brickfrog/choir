@@ -2374,9 +2374,10 @@ pub async fn interpret_rescue_leaf(
     Some(p) => p
     None => return @types.Response::Err("poller unavailable for rescue_leaf")
   }
-  let from_agent = match (try? reg.get(rescue_args.from_agent_id)) {
-    Ok(a) => a
-    Err(e) => return @types.Response::Err(e.message())
+  let from_agent = try reg.get(rescue_args.from_agent_id) catch {
+    e => return @types.Response::Err(@types.choir_error_message_from_caught(e))
+  } noraise {
+    a => a
   }
   let plan = match rescue_leaf_spawn_plan(rescue_args, from_agent) {
     Err(e) => return @types.Response::Err(e)
@@ -2471,9 +2472,10 @@ pub async fn interpret_rescue_leaf_post_spawn(
       rescue_leaf_superseded_persist_failure_message(plan.from_agent_id),
     )
   }
-  match (try? reg.remove(plan.from_agent_id)) {
-    Ok(_) => ()
-    Err(e) => return @types.Response::Err(e.message())
+  try reg.remove(plan.from_agent_id) catch {
+    e => return @types.Response::Err(@types.choir_error_message_from_caught(e))
+  } noraise {
+    _ => ()
   }
   @phase.remove_child_from_supervisor_lifecycle(
     project_dir,

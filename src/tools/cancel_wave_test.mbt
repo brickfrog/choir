@@ -51,9 +51,10 @@ async test "cancel_wave force=false clean" {
   }
 
   // Verify agent state is Failed
-  match (try? reg.get("main.leaf1")) {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Failed)
-    Err(_) => fail("expected agent1 in registry")
+  try reg.get("main.leaf1") catch {
+    _ => fail("expected agent1 in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Failed)
   }
 }
 
@@ -94,9 +95,10 @@ async test "cancel_wave cancels spawning agent" {
   }
 
   // Verify agent state is Failed
-  match (try? reg.get("main.spawning1")) {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Failed)
-    Err(_) => fail("expected spawning1 in registry")
+  try reg.get("main.spawning1") catch {
+    _ => fail("expected spawning1 in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Failed)
   }
 }
 
@@ -150,9 +152,10 @@ async test "cancel_wave force=false blocked by PR" {
   }
 
   // Verify agent state is still Active
-  match (try? reg.get("main.leaf1")) {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Active)
-    Err(_) => fail("expected agent1 in registry")
+  try reg.get("main.leaf1") catch {
+    _ => fail("expected agent1 in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Active)
   }
 }
 
@@ -209,9 +212,10 @@ async test "cancel_wave force=true overrides PR block" {
   }
 
   // Verify agent state is Failed
-  match (try? reg.get("main.leaf1")) {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Failed)
-    Err(_) => fail("expected agent1 in registry")
+  try reg.get("main.leaf1") catch {
+    _ => fail("expected agent1 in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Failed)
   }
 
   // Verify PR is untracked
