@@ -1,4 +1,11 @@
 ///|
+/// Persistence boundary between historical KV/JSONL shape and MoonBit `derive(ToJson)` JSON.
+///
+/// **Derived → legacy must be schema-aware:** a generic walk that maps every `Json::String` to
+/// `{ "tag": ... }` would corrupt ordinary fields (`slug`, `branch`, `url`, `message`, …). Only
+/// the typed `derived_*_to_legacy` functions here wrap enum positions; struct string fields pass
+/// through unchanged. There is intentionally no `derived_enum_tree_to_legacy_tagged`.
+///
 /// Convert persisted `{ "tag": ... }` lifecycle JSON to MoonBit `derive(ToJson)` shape
 /// (nullary variants as strings, payloads as `["Variant", { fields... }]`).
 fn legacy_enum_tree_to_derived(j : Json) -> Json {
