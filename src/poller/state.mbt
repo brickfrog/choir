@@ -777,6 +777,24 @@ async fn state_tick_sha_change_under_changes_requested(
 }
 
 ///|
+async fn state_tick_none_to_changes_requested(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+  @async.sleep(0)
+  (true, ChangesRequested, "head1", Success, "fix it", true, false)
+}
+
+///|
+async fn state_tick_changes_requested_to_approved(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+  @async.sleep(0)
+  (true, Approved, "head1", Success, "", true, false)
+}
+
+///|
 async test "tick_with failed poll increments consecutive_failures and backoff_until" {
   let ps = PollerState::new()
   ps.track(101, "main.leaf", "main.leaf", "main", "u", 100L)
@@ -876,5 +894,55 @@ async test "tick_with resets stall fields when SHA changes under ChangesRequeste
       assert_eq(t.last_sha, "sha-new")
     }
     None => fail("expected PR 201 after tick")
+  }
+}
+
+///|
+async test "tick_with sets changes_requested_since when entering ChangesRequested" {
+  let ps = PollerState::new()
+  ps.track(202, "main.leaf", "main.leaf", "main", "u", 1L)
+  let noop_ev = fn(_e : PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : PollerPrTickLog) -> Unit { () }
+  let now = 77L
+  let _ = ps.tick_with(
+    now, 3600L, state_tick_none_to_changes_requested, noop_ev, noop_log,
+  )
+  match ps.get(202) {
+    Some(t) => {
+      assert_eq(t.changes_requested_since, now)
+      assert_eq(t.stall_notified, false)
+      assert_eq(t.last_review_state, ChangesRequested)
+    }
+    None => fail("expected PR 202 after tick")
+  }
+}
+
+///|
+async test "tick_with clears stall fields when leaving ChangesRequested" {
+  let ps = PollerState::new()
+  ps.track(203, "main.leaf", "main.leaf", "main", "u", 1L)
+  let base = match ps.get(203) {
+    Some(t) => t
+    None => fail("expected PR 203")
+  }
+  ps.restore({
+    ..base,
+    last_review_state: ChangesRequested,
+    last_sha: "head1",
+    changes_requested_since: 500L,
+    stall_notified: true,
+  })
+  let noop_ev = fn(_e : PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : PollerPrTickLog) -> Unit { () }
+  let _ = ps.tick_with(
+    88L, 3600L, state_tick_changes_requested_to_approved, noop_ev, noop_log,
+  )
+  match ps.get(203) {
+    Some(t) => {
+      assert_eq(t.changes_requested_since, 0L)
+      assert_eq(t.stall_notified, false)
+      assert_eq(t.last_review_state, Approved)
+    }
+    None => fail("expected PR 203 after tick")
   }
 }
