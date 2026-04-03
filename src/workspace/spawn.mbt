@@ -61,7 +61,8 @@ pub fn launch_env_prefix(
     env_assignment("CHOIR_SESSION_ID", agent_id),
     env_assignment("CHOIR_PARENT_AGENT", spec.parent_id),
   ]
-  if spec.agent_type == @types.AgentType::Gemini {
+  if spec.agent_type == @types.AgentType::Gemini ||
+    spec.agent_type == @types.AgentType::Unknown {
     assignments.push(
       env_assignment(
         "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
@@ -117,7 +118,8 @@ pub fn launch_env_assignments(
     env_pair_raw("CHOIR_SESSION_ID", agent_id),
     env_pair_raw("CHOIR_PARENT_AGENT", spec.parent_id),
   ]
-  if spec.agent_type == @types.AgentType::Gemini {
+  if spec.agent_type == @types.AgentType::Gemini ||
+    spec.agent_type == @types.AgentType::Unknown {
     assignments.push(
       env_pair_raw(
         "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
