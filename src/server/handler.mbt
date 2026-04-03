@@ -90,6 +90,7 @@ async fn emit_span(
     }
     ignore(
       append_event(
+        state.append_file,
         state.config.project_dir,
         agent_id_str,
         "tools.call",
@@ -862,7 +863,7 @@ pub fn ServerState::plan_poll_event_deliveries(
           try {
             let parent = self.resolve_parent_for_delivery(leaf_agent_id)
             ignore(
-              @sys.append_file_sync(
+              (self.append_file)(
                 self.config.project_dir + "/.choir/delivery.log",
                 "[poller-parent] agent=" +
                 leaf_agent_id +
@@ -1018,12 +1019,13 @@ async fn deliver_pending_poll_events(
 }
 
 ///|
-fn append_poller_delivery_line(project_dir : String, line : String) -> Unit {
+fn append_poller_delivery_line(
+  append_file : (String, String) -> Bool,
+  project_dir : String,
+  line : String,
+) -> Unit {
   ignore(
-    @sys.append_file_sync(
-      project_dir + "/.choir/delivery.log",
-      "[poller] " + line + "\n",
-    ),
+    append_file(project_dir + "/.choir/delivery.log", "[poller] " + line + "\n"),
   )
 }
 
@@ -1062,6 +1064,7 @@ fn poll_events_delivery_summary(events : Array[@poller.PollEvent]) -> String {
 
 ///|
 fn log_poller_pr_tick(
+  append_file : (String, String) -> Bool,
   project_dir : String,
   log : @poller.PollerPrTickLog,
 ) -> Unit {
@@ -1109,7 +1112,7 @@ fn log_poller_pr_tick(
     events_summary +
     " failures=" +
     log.consecutive_failures.to_string()
-  append_poller_delivery_line(project_dir, line)
+  append_poller_delivery_line(append_file, project_dir, line)
   if log.consecutive_failures > log.previous_consecutive_failures {
     @moontrace.info(
       "poller backoff",
@@ -1121,6 +1124,7 @@ fn log_poller_pr_tick(
       ]),
     )
     append_poller_delivery_line(
+      append_file,
       project_dir,
       "backoff pr=" +
       log.pr_number.to_string() +
@@ -1180,7 +1184,9 @@ pub async fn ServerState::process_poller_tick(
     fields=@moontrace.fields([("tracked_prs", tracked_before.to_json())]),
   )
   let project_dir = self.config.project_dir
+  let append_file = self.append_file
   append_poller_delivery_line(
+    append_file,
     project_dir,
     "tick_start tracked_prs=" + tracked_before.to_string(),
   )
@@ -1194,7 +1200,7 @@ pub async fn ServerState::process_poller_tick(
     },
     fn(log) {
       tick_event_total = tick_event_total + log.events.length()
-      log_poller_pr_tick(project_dir, log)
+      log_poller_pr_tick(append_file, project_dir, log)
     },
   )
   let tracked_after = self.poller.tracked.length()
@@ -1206,6 +1212,7 @@ pub async fn ServerState::process_poller_tick(
     ]),
   )
   append_poller_delivery_line(
+    append_file,
     project_dir,
     "tick_end events_generated=" +
     tick_event_total.to_string() +
@@ -1340,7 +1347,7 @@ fn ServerState::clear_agent_runtime_tracking(
 async fn ServerState::finalize_agent_with_runner(
   self : ServerState,
   agent_id : String,
-  exit_reason : String,
+  exit_reason : @types.ExitReason,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   notify_parent? : Bool = false,
   close_target? : Bool = true,
@@ -1370,7 +1377,7 @@ async fn ServerState::fail_agent_with_runner(
   agent_id : String,
   reason : @phase.FailureReason,
   parent_message : String,
-  exit_reason : String,
+  exit_reason : @types.ExitReason,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   close_target? : Bool = false,
 ) -> Unit {
@@ -1634,7 +1641,7 @@ pub async fn ServerState::check_idle_agents(
           agent_id,
           @phase.FailureReason::WatchdogTimeout,
           message,
-          "watchdog",
+          @types.ExitReason::Shutdown,
           runner,
           close_target=true,
         )
@@ -1677,11 +1684,11 @@ pub async fn ServerState::handle_disconnect_with_runner(
       let lifecycle = self.current_lifecycle(agent_id)
       let exit_reason = match lifecycle.process {
         @phase.ProcessState::Finalizing(reason=@phase.FinalizeReason::Merged) =>
-          "merged"
+          @types.ExitReason::Merged
         @phase.ProcessState::Finalizing(
           reason=@phase.FinalizeReason::DisconnectFinalized
-        ) => "disconnect"
-        _ => "shutdown"
+        ) => @types.ExitReason::Disconnected
+        _ => @types.ExitReason::Shutdown
       }
       self.finalize_agent_with_runner(
         agent_id,
@@ -1699,7 +1706,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
         @phase.LifecycleDisconnectPolicy::FinalizeDone(..) =>
           self.finalize_agent_with_runner(
             agent_id,
-            "disconnect",
+            @types.ExitReason::Disconnected,
             runner,
             notify_parent=false,
             close_target=false,
@@ -1776,7 +1783,11 @@ pub async fn ServerState::handle_disconnect_with_runner(
                 )
               }
               self.fail_agent_with_runner(
-                agent_id, reason, msg, "disconnect", runner,
+                agent_id,
+                reason,
+                msg,
+                @types.ExitReason::Disconnected,
+                runner,
               )
             }
           }
@@ -2292,7 +2303,7 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
     caller_id,
     @phase.FailureReason::WatchdogTimeout,
     "watchdog timeout",
-    "watchdog",
+    @types.ExitReason::Shutdown,
     runner,
   )
 

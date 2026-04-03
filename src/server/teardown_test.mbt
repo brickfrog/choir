@@ -21,7 +21,7 @@ test "plan_finalize - basic success" {
   let effects = plan_finalize(
     agent,
     lifecycle,
-    "shutdown",
+    @types.ExitReason::Shutdown,
     notify_parent=true,
     close_target=true,
     remove_worktree=true,
@@ -57,7 +57,8 @@ test "plan_finalize - basic success" {
     _ => fail("expected NotifyParent")
   }
   match effects[3] {
-    FireHook(agent_id="main.leaf", exit_reason="shutdown", ..) => ()
+    FireHook(agent_id="main.leaf", exit_reason=@types.ExitReason::Shutdown, ..) =>
+      ()
     _ => fail("expected FireHook")
   }
   match effects[4] {
@@ -124,7 +125,7 @@ test "plan_fail - basic failure" {
     lifecycle,
     @phase.FailureReason::WatchdogTimeout,
     "watchdog timeout",
-    "disconnect",
+    @types.ExitReason::Disconnected,
     Some(parent),
     close_target=true,
   )
@@ -139,7 +140,11 @@ test "plan_fail - basic failure" {
 
   assert_eq(effects.length(), 7)
   match effects[0] {
-    FireHook(agent_id="main.leaf", exit_reason="disconnect", ..) => ()
+    FireHook(
+      agent_id="main.leaf",
+      exit_reason=@types.ExitReason::Disconnected,
+      ..
+    ) => ()
     _ => fail("expected FireHook")
   }
   match effects[1] {

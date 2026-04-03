@@ -1,5 +1,6 @@
 ///|
 fn append_event(
+  append_file : (String, String) -> Bool,
   project_dir : String,
   agent_id : String,
   event_type : String,
@@ -15,7 +16,7 @@ fn append_event(
     "agent_id": agent_id.to_json(),
     "data": data_json,
   }
-  @sys.append_file_sync(path, obj.to_json().stringify() + "\n")
+  append_file(path, obj.to_json().stringify() + "\n")
 }
 
 ///|

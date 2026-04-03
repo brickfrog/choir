@@ -1,4 +1,9 @@
 ///|
+fn default_append_file_sync(path : String, content : String) -> Bool {
+  @sys.append_file_sync(path, content)
+}
+
+///|
 /// Shared server state, passed to all tool handlers.
 pub struct ServerState {
   config : @types.Config
@@ -10,6 +15,7 @@ pub struct ServerState {
   pending_disconnects : Map[String, Int64]
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
+  append_file : (String, String) -> Bool
 }
 
 ///|
@@ -60,5 +66,6 @@ pub fn ServerState::new(
     pending_disconnects: {},
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
+    append_file: default_append_file_sync,
   }
 }
