@@ -65,17 +65,18 @@ pub fn ChildTracker::to_json(self : ChildTracker) -> String {
 pub fn ChildTracker::from_json(json_str : String) -> ChildTracker {
   let tracker = ChildTracker::new()
   let json = @json.parse(json_str) catch { _ => return tracker }
-  try {
-    let rows : Array[ChildTrackerEntry] = @json.from_json(json)
-    for row in rows {
+  guard json is Array(arr) else { return tracker }
+  for item in arr {
+    try {
+      let row : ChildTrackerEntry = @json.from_json(item)
       tracker.add(row.id, {
         slug: row.slug,
         branch: row.branch,
         agent_type: row.agent_type,
       })
+    } catch {
+      _ => ()
     }
-  } catch {
-    _ => ()
   }
   tracker
 }
