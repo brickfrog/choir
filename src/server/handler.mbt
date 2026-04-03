@@ -263,9 +263,10 @@ pub fn ServerState::sync_recovered_pr_lifecycle(
   pr : @runtime.OpenPR,
   review : @poller.ReviewState,
 ) -> Unit {
-  let agent_opt = match (try? self.registry.get(agent_id)) {
-    Ok(a) => Some(a)
-    Err(_) => None
+  let agent_opt = try self.registry.get(agent_id) catch {
+    _ => None
+  } noraise {
+    a => Some(a)
   }
   let lifecycle = self.current_lifecycle(agent_id)
   let workflow = match lifecycle.workflow {
@@ -806,9 +807,10 @@ pub fn ServerState::plan_poll_event_deliveries(
     Some(pr) => pr.agent_id
     None => agent_id
   }
-  let leaf_owner = match (try? self.registry.get(leaf_agent_id)) {
-    Ok(agent) => Some(agent)
-    Err(_) => None
+  let leaf_owner = try self.registry.get(leaf_agent_id) catch {
+    _ => None
+  } noraise {
+    agent => Some(agent)
   }
   match (tracked, event) {
     (Some(_), ReviewReceived(n, body)) =>
@@ -1238,18 +1240,19 @@ fn ServerState::current_lifecycle(
   self : ServerState,
   agent_id : String,
 ) -> @phase.AgentLifecycle {
-  match (try? self.registry.get(agent_id)) {
-    Ok(agent) =>
+  try self.registry.get(agent_id) catch {
+    _ =>
+      match @phase.read_lifecycle(self.config.project_dir, agent_id) {
+        Some(lifecycle) => lifecycle
+        None => @phase.lifecycle_for_role(agent_id, @types.Role::Dev)
+      }
+  } noraise {
+    agent =>
       @phase.read_or_default_lifecycle(
         self.config.project_dir,
         agent_id,
         agent.role,
       )
-    Err(_) =>
-      match @phase.read_lifecycle(self.config.project_dir, agent_id) {
-        Some(lifecycle) => lifecycle
-        None => @phase.lifecycle_for_role(agent_id, @types.Role::Dev)
-      }
   }
 }
 
@@ -1343,8 +1346,10 @@ async fn ServerState::finalize_agent_with_runner(
   close_target? : Bool = true,
   remove_worktree? : Bool = true,
 ) -> Unit {
-  match (try? self.registry.get(agent_id)) {
-    Ok(agent) => {
+  try self.registry.get(agent_id) catch {
+    _ => self.clear_agent_runtime_tracking(agent_id)
+  } noraise {
+    agent => {
       let lifecycle = self.current_lifecycle(agent_id)
       let effects = plan_finalize(
         agent,
@@ -1356,7 +1361,6 @@ async fn ServerState::finalize_agent_with_runner(
       )
       self.interpret_teardown_effects(effects, runner)
     }
-    Err(_) => self.clear_agent_runtime_tracking(agent_id)
   }
 }
 
@@ -1371,14 +1375,17 @@ async fn ServerState::fail_agent_with_runner(
   close_target? : Bool = false,
 ) -> Unit {
   @async.sleep(0)
-  match (try? self.registry.get(agent_id)) {
-    Ok(agent) => {
+  try self.registry.get(agent_id) catch {
+    _ => self.clear_agent_runtime_tracking(agent_id)
+  } noraise {
+    agent => {
       let lifecycle = self.current_lifecycle(agent_id)
       let parent = match agent.parent {
         Some(pid) =>
-          match (try? self.resolve_parent_by_id(pid)) {
-            Ok(p) => Some(p)
-            Err(_) => None
+          try self.resolve_parent_by_id(pid) catch {
+            _ => None
+          } noraise {
+            p => Some(p)
           }
         None => None
       }
@@ -1393,7 +1400,6 @@ async fn ServerState::fail_agent_with_runner(
       )
       self.interpret_teardown_effects(effects, runner)
     }
-    Err(_) => self.clear_agent_runtime_tracking(agent_id)
   }
 }
 
@@ -1482,13 +1488,14 @@ async fn ServerState::interpret_teardown_effects(
       ClearRuntimeTracking(agent_id) =>
         self.clear_agent_runtime_tracking(agent_id)
       WatchPane(agent_id~) =>
-        match (try? self.registry.get(agent_id)) {
-          Ok(agent) =>
+        try self.registry.get(agent_id) catch {
+          _ => ()
+        } noraise {
+          agent =>
             match agent.terminal_target {
               Some(_) => self.watch_pane(agent_id)
               None => ()
             }
-          Err(_) => ()
         }
       UpdateDevLifecycle(agent_id~, event~) =>
         ignore(
@@ -1581,12 +1588,13 @@ pub async fn ServerState::check_idle_agents(
 ) -> Unit {
   let agent_ids = self.pane_watcher.watched_agents()
   for agent_id in agent_ids {
-    let agent = match (try? self.registry.get(agent_id)) {
-      Ok(a) => a
-      Err(_) => {
+    let agent = try self.registry.get(agent_id) catch {
+      _ => {
         self.stop_subscribe(agent_id)
         continue
       }
+    } noraise {
+      a => a
     }
     if agent.state != @types.AgentState::Active {
       self.stop_subscribe(agent_id)

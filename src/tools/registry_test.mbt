@@ -240,9 +240,14 @@ test "tool registry lookup wrong role" {
 ///|
 test "permission denied response uses Show role casing not wire lowercase" {
   let reg = @tools.ToolRegistry::new()
-  match (try? reg.lookup(@types.Role::Worker, "fork_wave")) {
-    Err(e) => assert_eq(e.message(), "role Worker cannot call fork_wave")
-    Ok(_) => fail("expected permission denied for Worker calling fork_wave")
+  try reg.lookup(@types.Role::Worker, "fork_wave") catch {
+    e =>
+      assert_eq(
+        @types.choir_error_message_from_caught(e),
+        "role Worker cannot call fork_wave",
+      )
+  } noraise {
+    _ => fail("expected permission denied for Worker calling fork_wave")
   }
 }
 
@@ -447,8 +452,14 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
     }
     Err(msg) => fail("spawn_worker failed: " + msg)
   }
-  match (try? agent_reg.get("main.pi-worker")) {
-    Ok(agent) => {
+  try agent_reg.get("main.pi-worker") catch {
+    e =>
+      fail(
+        "missing worker registration: " +
+        @types.choir_error_message_from_caught(e),
+      )
+  } noraise {
+    agent => {
       assert_eq(agent.role, @types.Role::Worker)
       assert_eq(agent.agent_type, @types.AgentType::Pi)
       assert_eq(agent.parent, Some("root"))
@@ -458,7 +469,6 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
         @types.LocalTarget::parse("zellij-pane:choir:pi-worker"),
       )
     }
-    Err(e) => fail("missing worker registration: " + e.message())
   }
 }
 
@@ -515,8 +525,14 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
     }
     Err(msg) => fail("fork_wave failed: " + msg)
   }
-  match (try? agent_reg.get("master.pi-smoke-leaf-0")) {
-    Ok(agent) => {
+  try agent_reg.get("master.pi-smoke-leaf-0") catch {
+    e =>
+      fail(
+        "missing child registration: " +
+        @types.choir_error_message_from_caught(e),
+      )
+  } noraise {
+    agent => {
       assert_eq(agent.role, @types.Role::Dev)
       assert_eq(agent.agent_type, @types.AgentType::Pi)
       assert_eq(agent.parent, Some("root"))
@@ -527,7 +543,6 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
         @types.LocalTarget::parse("zellij-tab:choir:pi-smoke-leaf-0"),
       )
     }
-    Err(e) => fail("missing child registration: " + e.message())
   }
 }
 
@@ -714,20 +729,22 @@ test "tool registry lookup spawn_worker allowed for TL" {
 ///|
 test "tool registry spawn descriptions distinguish leaves from workers" {
   let reg = @tools.ToolRegistry::new()
-  match (try? reg.lookup(@types.Role::TL, "spawn_worker")) {
-    Ok(def) => {
+  try reg.lookup(@types.Role::TL, "spawn_worker") catch {
+    _ => fail("expected spawn_worker definition")
+  } noraise {
+    def => {
       assert_true(def.description.contains("research/review"))
       assert_true(def.description.contains("do not own a branch or PR"))
     }
-    Err(_) => fail("expected spawn_worker definition")
   }
-  match (try? reg.lookup(@types.Role::TL, "fork_wave")) {
-    Ok(def) =>
+  try reg.lookup(@types.Role::TL, "fork_wave") catch {
+    _ => fail("expected fork_wave definition")
+  } noraise {
+    def =>
       assert_true(
         def.description.contains("worktrees") &&
         def.description.contains("optional role"),
       )
-    Err(_) => fail("expected fork_wave definition")
   }
 }
 
@@ -808,9 +825,10 @@ async test "register accepts whitespace-trimmed spawn_depth" {
     Ok(_) => ()
     Err(e) => fail("register failed: " + e)
   }
-  match (try? reg.get("main.depth-trim")) {
-    Ok(agent) => assert_eq(agent.spawn_depth, 1)
-    Err(_) => fail("expected registered agent")
+  try reg.get("main.depth-trim") catch {
+    _ => fail("expected registered agent")
+  } noraise {
+    agent => assert_eq(agent.spawn_depth, 1)
   }
 }
 

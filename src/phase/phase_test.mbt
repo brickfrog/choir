@@ -796,9 +796,10 @@ test "interpret_lifecycle_effects updates registry after successful persist" {
     [PersistLifecycle(lifecycle=next)],
     registry=Some(reg),
   )
-  match (try? reg.get(agent_id)) {
-    Ok(a) => assert_eq(a.state, @types.AgentState::Completing)
-    Err(_) => fail("expected agent in registry")
+  try reg.get(agent_id) catch {
+    _ => fail("expected agent in registry")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Completing)
   }
   ignore(@sys.system("rm -rf " + project_dir))
 }
