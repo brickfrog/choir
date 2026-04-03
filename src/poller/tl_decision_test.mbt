@@ -317,3 +317,129 @@ test "detect_orphaned_prs empty input returns empty" {
   let got : Array[(TrackedPR, Bool)] = []
   assert_eq(detect_orphaned_prs(got).length(), 0)
 }
+
+///|
+test "build_wave_rollups groups three PRs in same wave into one rollup" {
+  let es = [
+    WaveRollupEntry::{
+      pr_number: 10,
+      agent_id: "main.leaf-a",
+      category: BlockedOnChanges,
+    },
+    WaveRollupEntry::{
+      pr_number: 11,
+      agent_id: "main.leaf-b",
+      category: MergeGateOpenPendingPolicyConfirmation,
+    },
+    WaveRollupEntry::{
+      pr_number: 12,
+      agent_id: "main.leaf-c",
+      category: WaitingOnReviewOrCI,
+    },
+  ]
+  let m : Map[String, (String, Int)] = {
+    "main.leaf-a": ("main.tl", 1),
+    "main.leaf-b": ("main.tl", 1),
+    "main.leaf-c": ("main.tl", 1),
+  }
+  let (rollups, ft) = build_wave_rollups(es, m)
+  assert_eq(rollups.length(), 1)
+  assert_eq(ft.length(), 0)
+  assert_eq(rollups[0].parent_id, "main.tl")
+  assert_eq(rollups[0].wave, 1)
+  assert_eq(rollups[0].entries.length(), 3)
+}
+
+///|
+test "build_wave_rollups single-PR wave falls through" {
+  let es = [
+    WaveRollupEntry::{
+      pr_number: 20,
+      agent_id: "main.solo",
+      category: BlockedOnChanges,
+    },
+  ]
+  let m : Map[String, (String, Int)] = { "main.solo": ("main.tl", 1) }
+  let (rollups, ft) = build_wave_rollups(es, m)
+  assert_eq(rollups.length(), 0)
+  assert_eq(ft.length(), 1)
+  assert_eq(ft[0].pr_number, 20)
+}
+
+///|
+test "build_wave_rollups unmapped agent falls through" {
+  let es = [
+    WaveRollupEntry::{
+      pr_number: 21,
+      agent_id: "orphan.leaf",
+      category: AttentionRequiredCIFailed,
+    },
+  ]
+  let m : Map[String, (String, Int)] = {}
+  let (rollups, ft) = build_wave_rollups(es, m)
+  assert_eq(rollups.length(), 0)
+  assert_eq(ft.length(), 1)
+  assert_eq(ft[0].agent_id, "orphan.leaf")
+}
+
+///|
+test "build_wave_rollups different waves produce separate rollups" {
+  let es = [
+    WaveRollupEntry::{
+      pr_number: 30,
+      agent_id: "main.w1a",
+      category: BlockedOnChanges,
+    },
+    WaveRollupEntry::{
+      pr_number: 31,
+      agent_id: "main.w1b",
+      category: BlockedOnChanges,
+    },
+    WaveRollupEntry::{
+      pr_number: 40,
+      agent_id: "main.w2a",
+      category: BlockedOnChanges,
+    },
+    WaveRollupEntry::{
+      pr_number: 41,
+      agent_id: "main.w2b",
+      category: BlockedOnChanges,
+    },
+  ]
+  let m : Map[String, (String, Int)] = {
+    "main.w1a": ("main.tl", 1),
+    "main.w1b": ("main.tl", 1),
+    "main.w2a": ("main.tl", 2),
+    "main.w2b": ("main.tl", 2),
+  }
+  let (rollups, ft) = build_wave_rollups(es, m)
+  assert_eq(rollups.length(), 2)
+  assert_eq(ft.length(), 0)
+  assert_eq(rollups[0].wave, 1)
+  assert_eq(rollups[1].wave, 2)
+}
+
+///|
+test "format_wave_rollup matches expected header and PR lines" {
+  let rollup : WaveRollup = {
+    parent_id: "main",
+    wave: 1,
+    entries: [
+      WaveRollupEntry::{
+        pr_number: 42,
+        agent_id: "main.leaf-a",
+        category: MergeGateOpenPendingPolicyConfirmation,
+      },
+      WaveRollupEntry::{
+        pr_number: 45,
+        agent_id: "main.leaf-c",
+        category: BlockedOnChanges,
+      },
+    ],
+  }
+  let expected =
+    #|[WAVE 1] 2/4 PRs with updates: 1 merge-ready, 1 blocked on changes
+    #|  PR #42 (main.leaf-a): Merge gate open
+    #|  PR #45 (main.leaf-c): Blocked on review changes
+  assert_eq(format_wave_rollup(rollup, 4), expected)
+}
