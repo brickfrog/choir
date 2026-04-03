@@ -96,44 +96,54 @@ fn is_alphanumeric_or_dash(c : Char) -> Bool {
 }
 
 ///|
-fn validate_slug(s : String) -> Result[Unit, String] {
+fn validate_slug(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "" {
-    return Err("slug cannot be empty")
+    return Err(@types.ChoirError::validation_error("slug cannot be empty"))
   }
   for c in s {
     if !is_alphanumeric_or_dash(c) {
-      return Err("invalid character in slug: " + c.to_string())
+      return Err(
+        @types.ChoirError::validation_error(
+          "invalid character in slug: " + c.to_string(),
+        ),
+      )
     }
   }
   Ok(())
 }
 
 ///|
-fn validate_branch(s : String) -> Result[Unit, String] {
+fn validate_branch(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "" {
-    return Err("branch cannot be empty")
+    return Err(@types.ChoirError::validation_error("branch cannot be empty"))
   }
   for c in s {
     if !is_alphanumeric_or_dash(c) && c != '.' {
-      return Err("invalid character in branch: " + c.to_string())
+      return Err(
+        @types.ChoirError::validation_error(
+          "invalid character in branch: " + c.to_string(),
+        ),
+      )
     }
   }
   if s.contains("..") {
-    return Err("branch cannot contain '..'")
+    return Err(
+      @types.ChoirError::validation_error("branch cannot contain '..'"),
+    )
   }
   Ok(())
 }
 
 ///|
-fn validate_kv_key(s : String) -> Result[Unit, String] {
+fn validate_kv_key(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "" {
-    return Err("key cannot be empty")
+    return Err(@types.ChoirError::validation_error("key cannot be empty"))
   }
   if s.contains("..") {
-    return Err("key cannot contain '..'")
+    return Err(@types.ChoirError::validation_error("key cannot contain '..'"))
   }
   if s[0] == '/' {
-    return Err("key cannot start with '/'")
+    return Err(@types.ChoirError::validation_error("key cannot start with '/'"))
   }
   for c in s {
     if !((c >= 'a' && c <= 'z') ||
@@ -143,7 +153,11 @@ fn validate_kv_key(s : String) -> Result[Unit, String] {
       c == '_' ||
       c == '/' ||
       c == '.') {
-      return Err("invalid character in key: " + c.to_string())
+      return Err(
+        @types.ChoirError::validation_error(
+          "invalid character in key: " + c.to_string(),
+        ),
+      )
     }
   }
   Ok(())
@@ -161,7 +175,13 @@ pub fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
   }
   match validate_branch(branch) {
     Ok(_) => ()
-    Err(e) => return Err(ParseError::InvalidFormat(field="branch", message=e))
+    Err(e) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="branch",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   match parent_branch {
     Some(pb) =>
@@ -169,7 +189,10 @@ pub fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
         Ok(_) => ()
         Err(e) =>
           return Err(
-            ParseError::InvalidFormat(field="parent_branch", message=e),
+            ParseError::InvalidFormat(
+              field="parent_branch",
+              message=e.message(),
+            ),
           )
       }
     None => ()
@@ -227,12 +250,23 @@ fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, ParseError] {
   )
   match validate_branch(branch) {
     Ok(_) => ()
-    Err(e) => return Err(ParseError::InvalidFormat(field="branch", message=e))
+    Err(e) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="branch",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   match validate_branch(parent_branch) {
     Ok(_) => ()
     Err(e) =>
-      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
+      return Err(
+        ParseError::InvalidFormat(
+          field="parent_branch",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   Ok({
     pr_number,
@@ -359,7 +393,12 @@ fn parse_rescue_leaf_args(
   match validate_branch(from_agent_id) {
     Ok(_) => ()
     Err(e) =>
-      return Err(ParseError::InvalidFormat(field="from_agent_id", message=e))
+      return Err(
+        ParseError::InvalidFormat(
+          field="from_agent_id",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let new_slug = match tool_args_get(args, "new_slug") {
     Some(v) =>
@@ -372,7 +411,13 @@ fn parse_rescue_leaf_args(
   }
   match validate_slug(new_slug) {
     Ok(_) => ()
-    Err(e) => return Err(ParseError::InvalidFormat(field="new_slug", message=e))
+    Err(e) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="new_slug",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let agent_type_str = tool_args_get(args, "agent_type").unwrap_or(
     "cursor_agent",
@@ -406,13 +451,24 @@ fn parse_spawn_gemini_args(
   }
   match validate_slug(slug) {
     Ok(_) => ()
-    Err(e) => return Err(ParseError::InvalidFormat(field="slug", message=e))
+    Err(e) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="slug",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let parent_branch = tool_args_get(args, "parent_branch").unwrap_or("main")
   match validate_branch(parent_branch) {
     Ok(_) => ()
     Err(e) =>
-      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
+      return Err(
+        ParseError::InvalidFormat(
+          field="parent_branch",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let parent_session_id = lookup_parent_session_id(project_dir, args)
   Ok({ task, caller_id, slug, parent_branch, parent_session_id })
@@ -479,7 +535,12 @@ pub fn parse_fork_wave_args(
   match validate_branch(parent_branch) {
     Ok(_) => ()
     Err(e) =>
-      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
+      return Err(
+        ParseError::InvalidFormat(
+          field="parent_branch",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let slug_prefix = tool_args_get(args, "slug_prefix").unwrap_or("wave")
   let normalized_slug_prefix = if slug_prefix == "" {
@@ -500,7 +561,12 @@ pub fn parse_fork_wave_args(
   match validate_slug(normalized_slug_prefix) {
     Ok(_) => ()
     Err(e) =>
-      return Err(ParseError::InvalidFormat(field="slug_prefix", message=e))
+      return Err(
+        ParseError::InvalidFormat(
+          field="slug_prefix",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let role_raw = tool_args_get(args, "role").unwrap_or("dev")
   let normalized_role = role_raw.trim().to_lower().to_string()
@@ -547,12 +613,23 @@ fn parse_leaf_spawn_args(
   )
   match validate_slug(slug) {
     Ok(_) => ()
-    Err(e) => return Err(ParseError::InvalidFormat(field="slug", message=e))
+    Err(e) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="slug",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   match validate_branch(parent_branch) {
     Ok(_) => ()
     Err(e) =>
-      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
+      return Err(
+        ParseError::InvalidFormat(
+          field="parent_branch",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   Ok({
     task: render_leaf_spawn_prompt_with_defaults(
@@ -585,7 +662,13 @@ fn parse_worker_spawn_args(
   let slug = get_arg_or_alias(args, "slug", "agent_id", "inline-worker")
   match validate_slug(slug) {
     Ok(_) => ()
-    Err(e) => return Err(ParseError::InvalidFormat(field="slug", message=e))
+    Err(e) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="slug",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("gemini")
   let normalized_agent_type_str = if agent_type_str == "" {
@@ -656,7 +739,13 @@ fn parse_task_create_args(
   }
   match validate_slug(id) {
     Ok(_) => ()
-    Err(e) => return Err(ParseError::InvalidFormat(field="id", message=e))
+    Err(e) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="id",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let status = tool_args_get(args, "status").unwrap_or("todo")
   let normalized_status = if status == "" { "todo" } else { status }
@@ -775,7 +864,13 @@ fn parse_kv_key_args(args : ToolArgs) -> Result[KvKeyArgs, ParseError] {
   }
   match validate_kv_key(key) {
     Ok(_) => Ok({ key, })
-    Err(e) => Err(ParseError::InvalidFormat(field="key", message=e))
+    Err(e) =>
+      Err(
+        ParseError::InvalidFormat(
+          field="key",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
 }
 
@@ -843,9 +938,9 @@ fn parse_mutex_release_args(
 }
 
 ///|
-fn validate_thread_id(s : String) -> Result[Unit, String] {
+fn validate_thread_id(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "" {
-    return Err("thread_id cannot be empty")
+    return Err(@types.ChoirError::validation_error("thread_id cannot be empty"))
   }
   for c in s {
     let ok = (c >= 'a' && c <= 'z') ||
@@ -855,7 +950,11 @@ fn validate_thread_id(s : String) -> Result[Unit, String] {
       c == '-' ||
       c == '='
     if !ok {
-      return Err("invalid character in thread_id: " + c.to_string())
+      return Err(
+        @types.ChoirError::validation_error(
+          "invalid character in thread_id: " + c.to_string(),
+        ),
+      )
     }
   }
   Ok(())
@@ -872,7 +971,12 @@ fn parse_resolve_review_thread_args(
   match validate_thread_id(thread_id) {
     Ok(_) => ()
     Err(e) =>
-      return Err(ParseError::InvalidFormat(field="thread_id", message=e))
+      return Err(
+        ParseError::InvalidFormat(
+          field="thread_id",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   let caller_id = match tool_args_get(args, "caller_id") {
     Some(v) => if v == "" { "server" } else { v }
@@ -901,7 +1005,12 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
   match validate_branch(normalized_parent_branch) {
     Ok(_) => ()
     Err(e) =>
-      return Err(ParseError::InvalidFormat(field="parent_branch", message=e))
+      return Err(
+        ParseError::InvalidFormat(
+          field="parent_branch",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
   Ok({
     pr_number,
@@ -975,7 +1084,13 @@ fn parse_session_name_args(
   }
   match validate_slug(name) {
     Ok(_) => Ok({ name, })
-    Err(e) => Err(ParseError::InvalidFormat(field="name", message=e))
+    Err(e) =>
+      Err(
+        ParseError::InvalidFormat(
+          field="name",
+          message=e.validation_detail_or_message(),
+        ),
+      )
   }
 }
 

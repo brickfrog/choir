@@ -120,7 +120,7 @@ async test "execute_delivery retries local terminal command with exponential bac
   )
   match result {
     Ok(_) => ()
-    Err(e) => fail("expected delivery success after retries: " + e)
+    Err(e) => fail("expected delivery success after retries: " + e.message())
   }
   assert_eq(read_counter(test_counter_path("success")), 4)
   assert_eq(@sys.read_file(test_sleep_path("success")), "1000\n2000\n4000\n")
@@ -136,7 +136,7 @@ async test "execute_delivery returns error after exhausting retries" {
   )
   match result {
     Ok(_) => fail("expected delivery failure")
-    Err(e) => assert_true(e.contains("delivery command failed"))
+    Err(e) => assert_true(e.message().contains("delivery command failed"))
   }
   assert_eq(read_counter(test_counter_path("failure")), 4)
   assert_eq(@sys.read_file(test_sleep_path("failure")), "1000\n2000\n4000\n")
@@ -152,7 +152,8 @@ async test "execute_delivery retries and sleeps when runner throws" {
   )
   match result {
     Ok(_) => ()
-    Err(e) => fail("expected delivery success after thrown retries: " + e)
+    Err(e) =>
+      fail("expected delivery success after thrown retries: " + e.message())
   }
   assert_eq(read_counter(test_counter_path("throws")), 4)
   assert_eq(@sys.read_file(test_sleep_path("throws")), "1000\n2000\n4000\n")

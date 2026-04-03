@@ -805,9 +805,13 @@ async fn mock_preflight_err(
   _branch : String,
   _parent_branch : String,
   _dir : String,
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   @async.sleep(0)
-  Err("cannot file PR: branch 'x' is missing locally.")
+  Err(
+    @types.ChoirError::git_error(
+      "cannot file PR: branch 'x' is missing locally.",
+    ),
+  )
 }
 
 ///|
@@ -815,7 +819,7 @@ async fn mock_preflight_ok(
   _branch : String,
   _parent_branch : String,
   _dir : String,
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   @async.sleep(0)
   Ok(())
 }
@@ -855,7 +859,7 @@ async fn mock_ensure_pr_ok(
   _dir : String,
   _title : String?,
   _body : String?,
-) -> Result[PullRequestInfo, String] {
+) -> Result[PullRequestInfo, @types.ChoirError] {
   @async.sleep(0)
   Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
 }
@@ -867,9 +871,9 @@ async fn mock_ensure_pr_err(
   _dir : String,
   _title : String?,
   _body : String?,
-) -> Result[PullRequestInfo, String] {
+) -> Result[PullRequestInfo, @types.ChoirError] {
   @async.sleep(0)
-  Err("gh pr create failed for branch: main.leaf")
+  Err(@types.ChoirError::git_error("gh pr create failed for branch: main.leaf"))
 }
 
 ///|
@@ -885,7 +889,7 @@ async test "interpret_file_pr_preflight_create returns preflight error and skips
     inputs, mock_preflight_err, mock_runner_all_ok, mock_capture_empty, mock_ensure_pr_ok,
   )
   match got {
-    Err(msg) => assert_true(msg.contains("missing locally"))
+    Err(e) => assert_true(e.message().contains("missing locally"))
     Ok(_) => fail("expected Err from preflight")
   }
 }
@@ -903,10 +907,12 @@ async test "interpret_file_pr_preflight_create returns push failure detail" {
     inputs, mock_preflight_ok, mock_runner_first_fails, mock_capture_empty, mock_ensure_pr_ok,
   )
   match got {
-    Err(msg) =>
+    Err(e) => {
+      let msg = e.message()
       // `run_strict` uses either `git failed (exit …)` with stderr detail or
       // `command failed with status …` when capture returned empty output.
       assert_true(msg.contains("3") && msg.contains("failed"))
+    }
     Ok(_) => fail("expected Err from push")
   }
 }
@@ -924,7 +930,13 @@ async test "interpret_file_pr_preflight_create returns ensure_pr error after pus
     inputs, mock_preflight_ok, mock_runner_all_ok, mock_capture_empty, mock_ensure_pr_err,
   )
   match got {
-    Err(msg) => assert_eq(msg, "gh pr create failed for branch: main.leaf")
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::git_error(
+          "gh pr create failed for branch: main.leaf",
+        ).message(),
+      )
     Ok(_) => fail("expected Err from ensure_pr")
   }
 }
@@ -1885,7 +1897,7 @@ async test "interpret_merge_pr_preflight force bypass skips capture" {
   )
   match got {
     Ok(_) => ()
-    Err(e) => fail(e)
+    Err(e) => fail(e.message())
   }
 }
 
@@ -1916,7 +1928,7 @@ async test "interpret_merge_pr_preflight ok when no poller block and no threads"
   )
   match got {
     Ok(_) => ()
-    Err(e) => fail(e)
+    Err(e) => fail(e.message())
   }
 }
 
@@ -1946,7 +1958,8 @@ async test "interpret_merge_pr_preflight err when review threads unresolved" {
     mock_preflight_capture_one_unresolved_thread,
   )
   match got {
-    Err(msg) => {
+    Err(e) => {
+      let msg = e.message()
       assert_true(msg.contains("PR #3"))
       assert_true(msg.contains("unresolved review thread"))
       assert_true(msg.contains("fix it"))
@@ -1979,7 +1992,7 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     mock_preflight_capture_no_unresolved_threads,
   )
   match got {
-    Err(msg) => assert_true(msg.contains("ChangesRequested"))
+    Err(e) => assert_true(e.message().contains("ChangesRequested"))
     Ok(_) => fail("expected Err from poller gate")
   }
 }
@@ -2204,7 +2217,7 @@ async test "interpret_merge_pr_merge_host ok without mutex" {
   )
   match got {
     Ok(_) => ()
-    Err(e) => fail("expected Ok got " + e)
+    Err(e) => fail("expected Ok got " + e.message())
   }
 }
 
@@ -2220,8 +2233,13 @@ async test "interpret_merge_pr_merge_host maps merge failure via merge_pr_comman
     mock_merge_host_capture_for_merge,
   )
   match got {
-    Err(msg) =>
-      assert_eq(msg, merge_pr_merge_failure_message(4, "permission denied"))
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::git_error(
+          merge_pr_merge_failure_message(4, "permission denied"),
+        ).message(),
+      )
     Ok(_) => fail("expected Err")
   }
 }
@@ -2244,7 +2262,13 @@ async test "interpret_merge_pr_merge_host returns busy when mutex held" {
     mock_capture_empty,
   )
   match got {
-    Err(msg) => assert_eq(msg, merge_pr_serialization_busy_message())
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::validation_error(
+          merge_pr_serialization_busy_message(),
+        ).message(),
+      )
     Ok(_) => fail("expected busy Err")
   }
 }
@@ -2314,7 +2338,12 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
   )
   match got {
     @types.Response::Err(msg) =>
-      assert_eq(msg, merge_pr_merge_failure_message(4, "permission denied"))
+      assert_eq(
+        msg,
+        @types.ChoirError::git_error(
+          merge_pr_merge_failure_message(4, "permission denied"),
+        ).message(),
+      )
     _ => fail("expected merge host Err")
   }
 }
@@ -3370,7 +3399,7 @@ test "rescue_leaf_spawn_plan builds reuse spec and ids" {
       assert_eq(plan.spec.agent_type, @types.AgentType::MoonPilot)
       assert_eq(plan.spec.spawn_depth, 0)
     }
-    Err(e) => fail("expected Ok got " + e)
+    Err(e) => fail("expected Ok got " + e.message())
   }
 }
 
@@ -3382,7 +3411,7 @@ test "rescue_leaf_spawn_plan uses from_agent_id when branch empty" {
   )
   match rescue_leaf_spawn_plan(args, from_agent) {
     Ok(plan) => assert_eq(plan.git_branch, "main.old-leaf")
-    Err(e) => fail(e)
+    Err(e) => fail(e.message())
   }
 }
 
@@ -3392,7 +3421,13 @@ test "rescue_leaf_spawn_plan err non-dev role" {
   let dev = rescue_leaf_ok_dev("main.old-leaf", "/proj/.choir/worktrees/x", "b")
   let non_dev = { ..dev, role: @types.Role::TL }
   match rescue_leaf_spawn_plan(args, non_dev) {
-    Err(msg) => assert_eq(msg, "rescue_leaf only supports dev leaves")
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::validation_error(
+          "rescue_leaf only supports dev leaves",
+        ).message(),
+      )
     Ok(_) => fail("expected Err")
   }
 }
@@ -3404,7 +3439,13 @@ test "rescue_leaf_spawn_plan err parent mismatch" {
     "main.old-leaf", "/proj/.choir/worktrees/x", "b",
   )
   match rescue_leaf_spawn_plan(args, { ..from_agent, parent: Some("other") }) {
-    Err(msg) => assert_eq(msg, "caller_id must match the salvaged leaf parent")
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::validation_error(
+          "caller_id must match the salvaged leaf parent",
+        ).message(),
+      )
     Ok(_) => fail("expected Err")
   }
 }
@@ -3416,7 +3457,13 @@ test "rescue_leaf_spawn_plan err no parent" {
     "main.old-leaf", "/proj/.choir/worktrees/x", "b",
   )
   match rescue_leaf_spawn_plan(args, { ..from_agent, parent: None }) {
-    Err(msg) => assert_eq(msg, "salvaged leaf has no parent in registry")
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::validation_error(
+          "salvaged leaf has no parent in registry",
+        ).message(),
+      )
     Ok(_) => fail("expected Err")
   }
 }
@@ -3426,8 +3473,13 @@ test "rescue_leaf_spawn_plan err no choir worktree path" {
   let args = rescue_leaf_base_args()
   let from_agent = rescue_leaf_ok_dev("main.old-leaf", "/proj/other", "b")
   match rescue_leaf_spawn_plan(args, from_agent) {
-    Err(msg) =>
-      assert_eq(msg, "salvaged leaf has no choir worktree path to reuse")
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::validation_error(
+          "salvaged leaf has no choir worktree path to reuse",
+        ).message(),
+      )
     Ok(_) => fail("expected Err")
   }
 }
@@ -3439,9 +3491,12 @@ test "rescue_leaf_spawn_plan err invalid from_agent_id" {
     "mainleaf", "/proj/.choir/worktrees/x", "b",
   )
   match rescue_leaf_spawn_plan(args, from_agent) {
-    Err(msg) =>
+    Err(e) =>
       assert_eq(
-        msg, "invalid from_agent_id (expected nested branch like parent.child)",
+        e.message(),
+        @types.ChoirError::validation_error(
+          "invalid from_agent_id (expected nested branch like parent.child)",
+        ).message(),
       )
     Ok(_) => fail("expected Err")
   }
@@ -3588,7 +3643,12 @@ async test "interpret_rescue_leaf err when spawn plan rejects role" {
   )
   match got {
     @types.Response::Err(msg) =>
-      assert_eq(msg, "rescue_leaf only supports dev leaves")
+      assert_eq(
+        msg,
+        @types.ChoirError::validation_error(
+          "rescue_leaf only supports dev leaves",
+        ).message(),
+      )
     _ => fail("expected spawn-plan err")
   }
 }

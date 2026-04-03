@@ -508,7 +508,8 @@ async test "ensure_branch_has_unique_commits_with_capture fails when not ahead" 
     "t.leaf", "main", "/repo", mock_preflight_not_ahead,
   )
   match got {
-    Err(msg) => {
+    Err(e) => {
+      let msg = e.message()
       assert_true(msg.contains("t.leaf"))
       assert_true(msg.contains("main"))
       assert_true(msg.contains("no commits ahead"))
@@ -564,7 +565,7 @@ async test "ensure_pull_request_with_capture uses injected capture for unique co
       assert_eq(pr.number, 42)
       assert_eq(pr.state, "CLOSED")
     }
-    Err(e) => fail("expected Ok: " + e)
+    Err(e) => fail("expected Ok: " + e.message())
   }
 }
 
@@ -583,6 +584,6 @@ async test "ensure_pull_request_with_capture returns existing open PR" {
       assert_eq(pr.number, 42)
       assert_eq(pr.state, "OPEN")
     }
-    Err(e) => fail("expected Ok: " + e)
+    Err(e) => fail("expected Ok: " + e.message())
   }
 }

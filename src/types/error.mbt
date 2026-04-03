@@ -50,6 +50,14 @@ pub fn ChoirError::validation_error(msg : String) -> ChoirError {
 }
 
 ///|
+pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
+  match self {
+    ValidationError(msg) => msg
+    _ => self.message()
+  }
+}
+
+///|
 pub fn ChoirError::workspace_error(msg : String) -> ChoirError {
   WorkspaceError(msg)
 }
