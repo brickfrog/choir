@@ -327,7 +327,7 @@ pub fn interpret_lifecycle_effects(
 pub fn plan_dev_event_checked(
   lifecycle : AgentLifecycle,
   event : DevEvent,
-) -> Result[(DevPhase, Array[LifecycleEffect]), String] {
+) -> Result[(DevPhase, Array[LifecycleEffect]), @types.ChoirError] {
   let dev = match lifecycle.workflow {
     WorkflowState::Dev(dev) => dev
     _ => DevLifecycle::Working
@@ -391,9 +391,11 @@ pub fn plan_dev_event_checked(
                 ),
               )
             }
-            InvalidTransition(message) => Err(message)
+            InvalidTransition(message) =>
+              Err(@types.ChoirError::validation_error(message))
           }
-        None => Err("unsupported dev event")
+        None =>
+          Err(@types.ChoirError::validation_error("unsupported dev event"))
       }
     }
   }
@@ -408,7 +410,7 @@ pub fn plan_dev_event_for_scope(
   project_dir : String,
   scope : String,
   event : DevEvent,
-) -> Result[(DevPhase, Array[LifecycleEffect]), String] {
+) -> Result[(DevPhase, Array[LifecycleEffect]), @types.ChoirError] {
   let store = LifecycleStore::new(project_dir)
   let lifecycle = store.read_or_default(scope, @types.Role::Dev)
   plan_dev_event_checked(lifecycle, event)

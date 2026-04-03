@@ -720,7 +720,7 @@ test "plan_dev_event_checked PRCreated emits two lifecycle effects" {
         _ => fail("expected AppendLifecycleEvent")
       }
     }
-    Err(msg) => fail("unexpected err: " + msg)
+    Err(msg) => fail("unexpected err: " + msg.message())
   }
 }
 
@@ -738,7 +738,7 @@ test "plan_dev_event_checked NotifyParentSuccess has empty effects" {
       DevEvent::NotifyParentSuccess(message="ok"),
     ) {
     Ok((_, effects)) => assert_eq(effects.length(), 0)
-    Err(msg) => fail("unexpected err: " + msg)
+    Err(msg) => fail("unexpected err: " + msg.message())
   }
 }
 

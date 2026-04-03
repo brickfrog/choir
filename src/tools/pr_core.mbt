@@ -2505,7 +2505,9 @@ pub async fn interpret_rescue_leaf_post_spawn(
       @types.Role::Dev,
     ) {
     Err(e) =>
-      return @types.Response::Err(rescue_leaf_handoff_failure_message(e))
+      return @types.Response::Err(
+        rescue_leaf_handoff_failure_message(e.message()),
+      )
     Ok(_) => ()
   }
   ignore(ps.transfer_owner(plan.from_agent_id, plan.to_id, plan.git_branch, ""))
