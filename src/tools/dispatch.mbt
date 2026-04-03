@@ -534,6 +534,7 @@ pub async fn handle_request(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -571,7 +572,7 @@ pub async fn handle_request(
         exit_reason: None,
       }
       let input_json = input.to_json_string()
-      let (hook_status, output_json) = @exec.capture_hook_script_merged(
+      let (hook_status, output_json) = hook_capture(
         hook_path,
         input_json,
         Some(project_dir),
@@ -646,6 +647,7 @@ pub async fn handle_request(
         exit_reason: None,
       },
       project_dir,
+      hook_capture~,
     )
   }
   resp
@@ -656,15 +658,14 @@ pub async fn fire_hook_async(
   event : @hooks.HookEvent,
   input : @hooks.HookInput,
   project_dir : String,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
 ) -> Unit {
   let hook_path = project_dir + "/.choir/hooks/" + event.script_name() + ".sh"
   if @sys.read_file(hook_path) == "" {
     return
   }
   let input_json = input.to_json_string()
-  ignore(
-    @exec.capture_hook_script_merged(hook_path, input_json, Some(project_dir)),
-  )
+  ignore(hook_capture(hook_path, input_json, Some(project_dir)))
 }
 
 ///|

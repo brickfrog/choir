@@ -26,7 +26,7 @@ fn last_is_clear_runtime_for(
 ///|
 fn count_persist_with_trigger(
   effects : Array[TeardownEffect],
-  trigger : String,
+  trigger : @types.LifecycleTrigger,
 ) -> Int {
   let mut c = 0
   for e in effects {
@@ -127,8 +127,17 @@ test "plan_post_tool_actions - shutdown with agent yields finalize teardown shap
     terminal_session,
   )
   assert_true(last_is_clear_runtime_for(effects, "main.leaf"))
-  assert_eq(count_persist_with_trigger(effects, "shutdown"), 1)
-  assert_eq(count_persist_with_trigger(effects, "FinalizeComplete"), 1)
+  assert_eq(
+    count_persist_with_trigger(effects, @types.LifecycleTrigger::ExitShutdown),
+    1,
+  )
+  assert_eq(
+    count_persist_with_trigger(
+      effects,
+      @types.LifecycleTrigger::FinalizeComplete,
+    ),
+    1,
+  )
   assert_true(
     has_fire_hook_exit(effects, "main.leaf", @types.ExitReason::Shutdown),
   )
@@ -225,8 +234,17 @@ test "plan_post_tool_actions - merge_pr effect shape and ordering" {
     }
     None => fail("expected DeliverToParentMerged")
   }
-  assert_eq(count_persist_with_trigger(effects, "merged"), 1)
-  assert_eq(count_persist_with_trigger(effects, "FinalizeComplete"), 1)
+  assert_eq(
+    count_persist_with_trigger(effects, @types.LifecycleTrigger::ExitMerged),
+    1,
+  )
+  assert_eq(
+    count_persist_with_trigger(
+      effects,
+      @types.LifecycleTrigger::FinalizeComplete,
+    ),
+    1,
+  )
   assert_true(has_fire_hook_exit(effects, agent_id, @types.ExitReason::Merged))
 }
 
@@ -289,7 +307,10 @@ test "plan_post_tool_actions - kill_agent failure chain" {
   assert_true(
     has_fire_hook_exit(effects, "main.leaf", @types.ExitReason::Shutdown),
   )
-  assert_eq(count_persist_with_trigger(effects, "shutdown"), 1)
+  assert_eq(
+    count_persist_with_trigger(effects, @types.LifecycleTrigger::ExitShutdown),
+    1,
+  )
   let mut saw_notify = false
   let mut saw_echo_slot = false
   for e in effects {

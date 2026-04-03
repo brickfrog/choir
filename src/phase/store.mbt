@@ -80,13 +80,7 @@ pub fn LifecycleStore::append_event(
   agent_id : String,
   from_lc : AgentLifecycle,
   to_lc : AgentLifecycle,
-  trigger : String,
+  trigger : @types.LifecycleTrigger,
 ) -> Bool {
-  append_lifecycle_event(
-    self.project_dir,
-    agent_id,
-    lifecycle_to_json(from_lc),
-    lifecycle_to_json(to_lc),
-    trigger,
-  )
+  append_lifecycle_event(self.project_dir, agent_id, from_lc, to_lc, trigger)
 }

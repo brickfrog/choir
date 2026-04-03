@@ -669,7 +669,7 @@ test "plan_tl_lifecycle_effects ChildSpawned emits persist then append" {
   match effects[1] {
     AppendLifecycleEvent(agent_id~, trigger~, ..) => {
       assert_eq(agent_id, "main.tl")
-      assert_eq(trigger, "ChildSpawned")
+      assert_eq(trigger, @types.LifecycleTrigger::ChildSpawned)
     }
     _ => fail("expected AppendLifecycleEvent second")
   }
@@ -715,7 +715,8 @@ test "plan_dev_event_checked PRCreated emits two lifecycle effects" {
         _ => fail("expected PersistLifecycle")
       }
       match effects[1] {
-        AppendLifecycleEvent(trigger~, ..) => assert_eq(trigger, "PRCreated")
+        AppendLifecycleEvent(trigger~, ..) =>
+          assert_eq(trigger, @types.LifecycleTrigger::PrCreated)
         _ => fail("expected AppendLifecycleEvent")
       }
     }
@@ -775,7 +776,7 @@ test "interpret_lifecycle_effects writes lifecycle and event log" {
       agent_id=from_lc.agent_id,
       from_lc~,
       to_lc~,
-      trigger="test",
+      trigger=@types.LifecycleTrigger::Raw("test"),
     ),
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
@@ -808,7 +809,7 @@ test "interpret_lifecycle_effects skips append when persist fails" {
       agent_id=lc.agent_id,
       from_lc=lc,
       to_lc=lc,
-      trigger="t",
+      trigger=@types.LifecycleTrigger::Raw("t"),
     ),
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
@@ -874,7 +875,7 @@ test "interpret_lifecycle_effects append ignored when last persist is another ag
       agent_id=lc_a.agent_id,
       from_lc=lc_a,
       to_lc=lc_a,
-      trigger="orphan-append",
+      trigger=@types.LifecycleTrigger::Raw("orphan-append"),
     ),
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
@@ -906,13 +907,13 @@ test "interpret_lifecycle_effects second append without new persist is ignored" 
       agent_id=from_lc.agent_id,
       from_lc~,
       to_lc~,
-      trigger="first",
+      trigger=@types.LifecycleTrigger::Raw("first"),
     ),
     AppendLifecycleEvent(
       agent_id=from_lc.agent_id,
       from_lc~,
       to_lc~,
-      trigger="second",
+      trigger=@types.LifecycleTrigger::Raw("second"),
     ),
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)

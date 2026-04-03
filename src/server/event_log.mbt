@@ -26,11 +26,9 @@ fn append_event(
 pub fn append_lifecycle_event(
   project_dir : String,
   agent_id : String,
-  from_state : String,
-  to_state : String,
-  trigger : String,
+  from_lc : @phase.AgentLifecycle,
+  to_lc : @phase.AgentLifecycle,
+  trigger : @types.LifecycleTrigger,
 ) -> Bool {
-  @phase.append_lifecycle_event(
-    project_dir, agent_id, from_state, to_state, trigger,
-  )
+  @phase.append_lifecycle_event(project_dir, agent_id, from_lc, to_lc, trigger)
 }

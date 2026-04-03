@@ -25,9 +25,9 @@ fn build_lifecycle_transition_jsonl_line(
 pub fn append_lifecycle_event(
   project_dir : String,
   agent_id : String,
-  from_state : String,
-  to_state : String,
-  trigger : String,
+  from_lc : AgentLifecycle,
+  to_lc : AgentLifecycle,
+  trigger : @types.LifecycleTrigger,
 ) -> Bool {
   let sanitized_id = @types.sanitize_agent_id(agent_id)
   let events_dir = project_dir + "/.choir/events/"
@@ -38,9 +38,9 @@ pub fn append_lifecycle_event(
   let line = build_lifecycle_transition_jsonl_line(
     @poller.now_sec(),
     agent_id,
-    from_state,
-    to_state,
-    trigger,
+    lifecycle_to_json(from_lc),
+    lifecycle_to_json(to_lc),
+    trigger.to_wire_string(),
   )
   @sys.append_file_sync(path, line)
 }
