@@ -44,6 +44,22 @@ pub(all) enum AgentState {
 } derive(Show, Eq)
 
 ///|
+pub(all) enum ExitReason {
+  Merged
+  Disconnected
+  Shutdown
+} derive(Show, Eq)
+
+///|
+pub fn ExitReason::lifecycle_trigger(self : ExitReason) -> String {
+  match self {
+    Merged => "merged"
+    Disconnected => "disconnect"
+    Shutdown => "shutdown"
+  }
+}
+
+///|
 /// Zellij target type for agent panes.
 pub(all) enum TargetKind {
   ZellijTab

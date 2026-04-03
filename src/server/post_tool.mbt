@@ -13,7 +13,11 @@ pub(all) enum TeardownEffect {
     status~ : String
   )
   RemoveTeamMember(parent_id~ : String, slug~ : String)
-  FireHook(agent_id~ : String, role~ : @types.Role, exit_reason~ : String)
+  FireHook(
+    agent_id~ : String,
+    role~ : @types.Role,
+    exit_reason~ : @types.ExitReason
+  )
   RemoveWorktree(String)
   CloseTerminal(@types.LocalTarget)
   InjectTerminalMessage(@types.LocalTarget, String)
@@ -39,11 +43,14 @@ pub(all) enum TeardownEffect {
 } derive(Show, Eq)
 
 ///|
-fn finalize_reason_for_exit(exit_reason : String) -> @phase.FinalizeReason {
+fn finalize_reason_for_exit(
+  exit_reason : @types.ExitReason,
+) -> @phase.FinalizeReason {
   match exit_reason {
-    "merged" => @phase.FinalizeReason::Merged
-    "disconnect" => @phase.FinalizeReason::DisconnectFinalized
-    _ => @phase.FinalizeReason::Shutdown
+    @types.ExitReason::Merged => @phase.FinalizeReason::Merged
+    @types.ExitReason::Disconnected =>
+      @phase.FinalizeReason::DisconnectFinalized
+    @types.ExitReason::Shutdown => @phase.FinalizeReason::Shutdown
   }
 }
 
@@ -53,7 +60,7 @@ fn finalize_reason_for_exit(exit_reason : String) -> @phase.FinalizeReason {
 pub fn plan_finalize(
   agent : @types.Agent,
   lifecycle : @phase.AgentLifecycle,
-  exit_reason : String,
+  exit_reason : @types.ExitReason,
   notify_parent? : Bool = false,
   close_target? : Bool = true,
   remove_worktree? : Bool = true,
@@ -61,7 +68,7 @@ pub fn plan_finalize(
   let agent_id = agent.agent_id.to_string()
   let effects : Array[TeardownEffect] = []
   let finalize_reason = finalize_reason_for_exit(exit_reason)
-  let allow_merge_refinalize = exit_reason == "merged"
+  let allow_merge_refinalize = exit_reason == @types.ExitReason::Merged
 
   match lifecycle.process {
     @phase.ProcessState::Failed(..) => {
@@ -86,7 +93,11 @@ pub fn plan_finalize(
     process: @phase.ProcessState::Finalizing(reason=finalize_reason),
   }
   effects.push(
-    PersistLifecycle(agent_id~, lifecycle=with_finalizing, trigger=exit_reason),
+    PersistLifecycle(
+      agent_id~,
+      lifecycle=with_finalizing,
+      trigger=exit_reason.lifecycle_trigger(),
+    ),
   )
 
   // Notify Parent
@@ -158,7 +169,7 @@ pub fn plan_fail(
   lifecycle : @phase.AgentLifecycle,
   reason : @phase.FailureReason,
   parent_message : String,
-  exit_reason : String,
+  exit_reason : @types.ExitReason,
   parent : @types.Agent?,
   close_target? : Bool = false,
 ) -> Array[TeardownEffect] {
@@ -201,7 +212,11 @@ pub fn plan_fail(
     workflow: failed_workflow,
   }
   effects.push(
-    PersistLifecycle(agent_id~, lifecycle=failed, trigger=exit_reason),
+    PersistLifecycle(
+      agent_id~,
+      lifecycle=failed,
+      trigger=exit_reason.lifecycle_trigger(),
+    ),
   )
   effects.push(SyncParentLifecycle(agent_id~, lifecycle=failed))
 
@@ -294,7 +309,7 @@ pub fn plan_post_tool_actions(
                 e in plan_finalize(
                   agent,
                   lifecycle,
-                  "shutdown",
+                  @types.ExitReason::Shutdown,
                   notify_parent=true,
                 ) {
                 effects.push(e)
@@ -339,7 +354,13 @@ pub fn plan_post_tool_actions(
             agent_id,
             leaf.role,
           )
-          for e in plan_finalize(leaf, lifecycle, "merged", notify_parent=false) {
+          for
+            e in plan_finalize(
+              leaf,
+              lifecycle,
+              @types.ExitReason::Merged,
+              notify_parent=false,
+            ) {
             effects.push(e)
           }
         } catch {
@@ -370,7 +391,7 @@ pub fn plan_post_tool_actions(
               lifecycle,
               @phase.FailureReason::ParentKilled,
               "agent killed by parent",
-              "killed",
+              @types.ExitReason::Shutdown,
               parent,
               close_target=false,
             ) {

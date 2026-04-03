@@ -18,7 +18,7 @@ pub(all) struct HookInput {
   tool_name : String?
   tool_args : Map[String, String]?
   tool_result_status : String?
-  exit_reason : String?
+  exit_reason : @types.ExitReason?
 } derive(Show)
 
 ///|
@@ -69,7 +69,7 @@ pub fn HookInput::to_json_string(self : HookInput) -> String {
     None => ()
   }
   match self.exit_reason {
-    Some(v) => obj.set("exit_reason", v.to_json())
+    Some(v) => obj.set("exit_reason", v.lifecycle_trigger().to_json())
     None => ()
   }
   obj.to_json().stringify()
@@ -162,7 +162,13 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
   // Minimal support for args, as it's not strictly used for logic yet
   let tool_args = None
   let tool_result_status = json_opt_string(obj, "tool_result_status")
-  let exit_reason = json_opt_string(obj, "exit_reason")
+  let exit_reason = match json_opt_string(obj, "exit_reason") {
+    Some("merged") => Some(@types.ExitReason::Merged)
+    Some("disconnect") => Some(@types.ExitReason::Disconnected)
+    Some("shutdown") | Some("killed") | Some("watchdog") =>
+      Some(@types.ExitReason::Shutdown)
+    Some(_) | None => None
+  }
   Some({
     event,
     session_id,
