@@ -21,6 +21,258 @@ pub(all) enum TlTrackedPrWorkflowCategory {
 } derive(Show, Eq)
 
 ///|
+pub(all) struct WaveRollupEntry {
+  pr_number : Int
+  agent_id : String
+  category : TlTrackedPrWorkflowCategory
+} derive(Show, Eq)
+
+///|
+pub(all) struct WaveRollup {
+  parent_id : String
+  wave : Int
+  entries : Array[WaveRollupEntry]
+} derive(Show, Eq)
+
+///|
+fn distinct_pr_count_in_rollups(entries : Array[WaveRollupEntry]) -> Int {
+  let mut n = 0
+  for i = 0; i < entries.length(); i = i + 1 {
+    let pr = entries[i].pr_number
+    let mut seen_before = false
+    for j = 0; j < i; j = j + 1 {
+      if entries[j].pr_number == pr {
+        seen_before = true
+        break
+      }
+    }
+    if !seen_before {
+      n = n + 1
+    }
+  }
+  n
+}
+
+///|
+fn wave_group_key(parent_id : String, wave : Int) -> String {
+  parent_id + "\u{001F}" + wave.to_string()
+}
+
+///|
+fn collect_wave_entries(
+  pr_categories : Array[WaveRollupEntry],
+  agent_wave_map : Map[String, (String, Int)],
+  key : String,
+) -> Array[WaveRollupEntry] {
+  let out : Array[WaveRollupEntry] = []
+  for e in pr_categories {
+    match agent_wave_map.get(e.agent_id) {
+      Some((pid, w)) => if wave_group_key(pid, w) == key { out.push(e) }
+      None => ()
+    }
+  }
+  out
+}
+
+///|
+fn sort_wave_rollups(rs : Array[WaveRollup]) -> Array[WaveRollup] {
+  if rs.length() <= 1 {
+    return rs
+  }
+  let mut remaining : Array[WaveRollup] = []
+  for r in rs {
+    remaining.push(r)
+  }
+  let sorted : Array[WaveRollup] = []
+  while remaining.length() > 0 {
+    let mut best_i = 0
+    let mut i = 1
+    while i < remaining.length() {
+      let a = remaining[best_i]
+      let b = remaining[i]
+      let b_wins = a.parent_id > b.parent_id ||
+        (a.parent_id == b.parent_id && a.wave > b.wave)
+      if b_wins {
+        best_i = i
+      }
+      i = i + 1
+    }
+    sorted.push(remaining[best_i])
+    let next : Array[WaveRollup] = []
+    for k = 0; k < remaining.length(); k = k + 1 {
+      if k != best_i {
+        next.push(remaining[k])
+      }
+    }
+    remaining = next
+  }
+  sorted
+}
+
+///|
+pub fn build_wave_rollups(
+  pr_categories : Array[WaveRollupEntry],
+  agent_wave_map : Map[String, (String, Int)],
+) -> (Array[WaveRollup], Array[WaveRollupEntry]) {
+  let seen_keys : Map[String, Bool] = {}
+  let keys : Array[String] = []
+  for e in pr_categories {
+    match agent_wave_map.get(e.agent_id) {
+      Some((pid, w)) => {
+        let key = wave_group_key(pid, w)
+        if !seen_keys.contains(key) {
+          seen_keys.set(key, true)
+          keys.push(key)
+        }
+      }
+      None => ()
+    }
+  }
+  let multi_wave : Map[String, Bool] = {}
+  for key in keys {
+    let collected = collect_wave_entries(pr_categories, agent_wave_map, key)
+    if distinct_pr_count_in_rollups(collected) >= 2 {
+      multi_wave.set(key, true)
+    }
+  }
+  let rollups : Array[WaveRollup] = []
+  for key in keys {
+    let collected = collect_wave_entries(pr_categories, agent_wave_map, key)
+    if distinct_pr_count_in_rollups(collected) < 2 {
+      continue
+    }
+    match agent_wave_map.get(collected[0].agent_id) {
+      Some((parent_id, wave)) =>
+        rollups.push({ parent_id, wave, entries: collected })
+      None => ()
+    }
+  }
+  let fallthrough : Array[WaveRollupEntry] = []
+  for e in pr_categories {
+    match agent_wave_map.get(e.agent_id) {
+      None => fallthrough.push(e)
+      Some((pid, w)) => {
+        let key = wave_group_key(pid, w)
+        match multi_wave.get(key) {
+          Some(true) => ()
+          _ => fallthrough.push(e)
+        }
+      }
+    }
+  }
+  (sort_wave_rollups(rollups), fallthrough)
+}
+
+///|
+fn tl_category_rollup_header_bucket(
+  cat : TlTrackedPrWorkflowCategory,
+) -> String {
+  match cat {
+    MergeGateOpenPendingPolicyConfirmation
+    | MergeSnapshotReadyCopilotIssueCommentMissing => "merge-ready"
+    BlockedOnChanges | StalledOnChangesRequested => "blocked on changes"
+    AttentionRequiredCopilotSilentAfterTimeout | AttentionRequiredCIFailed =>
+      "attention required"
+    WaitingOnReviewOrCI
+    | WaitingOnCopilotIssueComment
+    | CopilotIssueCommentSeenRecheckRemainingGates
+    | ReadyForTLRecheck => "waiting or re-check"
+    ObservedMergedExternal => "merged externally"
+    OrphanedPRNeedsManualAction => "orphaned"
+  }
+}
+
+///|
+fn tl_category_rollup_pr_line(cat : TlTrackedPrWorkflowCategory) -> String {
+  match cat {
+    BlockedOnChanges => "Blocked on review changes"
+    AttentionRequiredCopilotSilentAfterTimeout =>
+      "Attention required: Copilot review silent after timeout"
+    AttentionRequiredCIFailed => "Attention required: CI failing"
+    WaitingOnReviewOrCI => "Waiting on review or CI"
+    WaitingOnCopilotIssueComment => "Waiting on Copilot issue comment"
+    CopilotIssueCommentSeenRecheckRemainingGates =>
+      "Copilot issue comment seen; re-check gates"
+    ReadyForTLRecheck => "Ready for TL re-check"
+    MergeGateOpenPendingPolicyConfirmation => "Merge gate open"
+    MergeSnapshotReadyCopilotIssueCommentMissing => "Merge gate open"
+    ObservedMergedExternal => "Merged externally"
+    OrphanedPRNeedsManualAction => "Orphaned PR needs manual action"
+    StalledOnChangesRequested => "Stalled on changes requested"
+  }
+}
+
+///|
+pub fn format_wave_rollup(rollup : WaveRollup, total_in_wave : Int) -> String {
+  let by_pr : Map[Int, WaveRollupEntry] = {}
+  for e in rollup.entries {
+    if !by_pr.contains(e.pr_number) {
+      by_pr.set(e.pr_number, e)
+    }
+  }
+  let distinct : Array[WaveRollupEntry] = []
+  for e in by_pr.values() {
+    distinct.push(e)
+  }
+  let n_pr = distinct.length()
+  for i = 0; i < n_pr; i = i + 1 {
+    for j = i + 1; j < n_pr; j = j + 1 {
+      let a = distinct[i]
+      let b = distinct[j]
+      if a.pr_number > b.pr_number {
+        distinct[i] = b
+        distinct[j] = a
+      }
+    }
+  }
+  let bucket_counts : Map[String, Int] = {}
+  for e in distinct {
+    let b = tl_category_rollup_header_bucket(e.category)
+    let prev = match bucket_counts.get(b) {
+      Some(v) => v
+      None => 0
+    }
+    bucket_counts.set(b, prev + 1)
+  }
+  let order : Array[String] = [
+    "merge-ready", "blocked on changes", "attention required", "waiting or re-check",
+    "merged externally", "orphaned",
+  ]
+  let summary_parts : Array[String] = []
+  for label in order {
+    match bucket_counts.get(label) {
+      Some(cnt) =>
+        if cnt > 0 {
+          summary_parts.push(cnt.to_string() + " " + label)
+        }
+      None => ()
+    }
+  }
+  let summary = summary_parts.join(", ")
+  let wave_total = if total_in_wave > 0 { total_in_wave } else { n_pr }
+  let header = "[WAVE " +
+    rollup.wave.to_string() +
+    "] " +
+    n_pr.to_string() +
+    "/" +
+    wave_total.to_string() +
+    " PRs with updates: " +
+    summary
+  let lines : Array[String] = []
+  for e in distinct {
+    lines.push(
+      "  PR #" +
+      e.pr_number.to_string() +
+      " (" +
+      e.agent_id +
+      "): " +
+      tl_category_rollup_pr_line(e.category),
+    )
+  }
+  header + "\n" + lines.join("\n")
+}
+
+///|
 /// Pure merge gate: approved + CI rollup success + zero unresolved threads when
 /// the GraphQL count is available. `None` threads means the gate is not open
 /// (honest: unknown thread state).
