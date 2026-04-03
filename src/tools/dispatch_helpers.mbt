@@ -90,7 +90,7 @@ async fn dispatch_to_plugin(
         tool: req.name,
         args: req.args,
         agent_id,
-        role: req.role.to_string(),
+        role: req.role.to_wire_string(),
       })
       let (_exit, resp_str) = @exec.capture_plugin_shell_command(
         plugin.command,
