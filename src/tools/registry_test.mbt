@@ -5,7 +5,7 @@ async fn mock_registry_ensure_pr(
   _project_dir : String,
   _title : String?,
   _body : String?,
-) -> Result[@tools.PullRequestInfo, String] {
+) -> Result[@tools.PullRequestInfo, @types.ChoirError] {
   @async.sleep(0)
   Ok({ number: 1, url: "https://example.test/pr/" + branch, state: "OPEN" })
 }
@@ -15,7 +15,7 @@ async fn mock_registry_branch_ready(
   _branch : String,
   _parent_branch : String,
   _project_dir : String,
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   @async.sleep(0)
   Ok(())
 }
@@ -171,12 +171,16 @@ async fn mock_registry_branch_ready_capture(
   _branch : String,
   _parent_branch : String,
   project_dir : String,
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   @async.sleep(0)
   if project_dir == "/tmp/task-leaf-worktree" {
     Ok(())
   } else {
-    Err("wrong ensure_branch_ready project_dir: " + project_dir)
+    Err(
+      @types.ChoirError::validation_error(
+        "wrong ensure_branch_ready project_dir: " + project_dir,
+      ),
+    )
   }
 }
 
@@ -187,10 +191,14 @@ async fn mock_registry_ensure_pr_capture(
   project_dir : String,
   _title : String?,
   _body : String?,
-) -> Result[@tools.PullRequestInfo, String] {
+) -> Result[@tools.PullRequestInfo, @types.ChoirError] {
   @async.sleep(0)
   if project_dir != "/tmp/task-leaf-worktree" {
-    return Err("wrong ensure_pr project_dir: " + project_dir)
+    return Err(
+      @types.ChoirError::validation_error(
+        "wrong ensure_pr project_dir: " + project_dir,
+      ),
+    )
   }
   Ok({ number: 1, url: "https://example.test/pr/" + branch, state: "OPEN" })
 }
@@ -202,7 +210,7 @@ async fn mock_auto_notify_ensure_pr(
   _project_dir : String,
   _title : String?,
   _body : String?,
-) -> Result[@tools.PullRequestInfo, String] {
+) -> Result[@tools.PullRequestInfo, @types.ChoirError] {
   @async.sleep(0)
   Ok({ number: 99, url: "https://auto.test/pr", state: "OPEN" })
 }
