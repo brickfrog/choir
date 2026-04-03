@@ -50,7 +50,7 @@ pub(all) struct ChildLifecycle {
   child_id : String
   slug : String
   branch : String
-  agent_type : String
+  agent_type : @types.AgentType
   summary : ChildLifecycleSummary
 } derive(Show, Eq, ToJson, FromJson)
 

@@ -383,7 +383,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     child_id,
     slug: @phase.extract_slug(child_id),
     branch: child_id,
-    agent_type: "claude",
+    agent_type: @types.AgentType::Claude,
     summary: @phase.ChildLifecycleSummary::ReviewOwned(
       pr_number~,
       state=@phase.ReviewOwnership::ApprovedAwaitingMerge,

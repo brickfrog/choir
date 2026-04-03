@@ -2,7 +2,7 @@
 pub(all) struct ChildHandle {
   slug : String
   branch : String
-  agent_type : String
+  agent_type : @types.AgentType
 } derive(Show, Eq, ToJson, FromJson)
 
 ///|
@@ -10,7 +10,7 @@ pub(all) struct ChildTrackerEntry {
   id : String
   slug : String
   branch : String
-  agent_type : String
+  agent_type : @types.AgentType
 } derive(Show, Eq, ToJson, FromJson)
 
 ///|

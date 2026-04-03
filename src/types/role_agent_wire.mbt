@@ -61,3 +61,21 @@ pub fn AgentType::parse_wire(s : String) -> AgentType raise ChoirError {
     Err(e) => raise e
   }
 }
+
+///|
+pub impl ToJson for AgentType with to_json(self) -> Json {
+  self.to_wire_string().to_json()
+}
+
+///|
+pub impl FromJson for AgentType with from_json(json, path) {
+  match json {
+    String(s) =>
+      match AgentType::try_parse_wire(s) {
+        Ok(t) => t
+        Err(e) =>
+          raise JsonDecodeError((path, "AgentType::from_json: " + e.message()))
+      }
+    _ => raise JsonDecodeError((path, "AgentType::from_json: expected string"))
+  }
+}
