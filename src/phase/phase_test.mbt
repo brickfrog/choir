@@ -239,6 +239,74 @@ test "dev phase legacy PRFiled alias maps to PROpenUnreviewed" {
 }
 
 ///|
+test "lifecycle literal blob child slug branch agent_type stay JSON strings" {
+  let raw =
+    #|{"agent_id":"parent","role":"TL","process":{"tag":"Connected"},"workflow":{"tag":"Supervisor","state":{"tag":"Supervising","wave":1,"children":[{"child_id":"parent.leaf","slug":"leaf-slug","branch":"parent.leaf","agent_type":"gemini","summary":{"tag":"Working"}}]}}}
+  match lifecycle_from_json(raw.to_string()) {
+    Some(lc) => {
+      let out = lifecycle_to_json(lc)
+      assert_false(out.contains("\"slug\":{\"tag\""))
+      assert_false(out.contains("\"branch\":{\"tag\""))
+      assert_false(out.contains("\"agent_type\":{\"tag\""))
+      let j = @json.parse(out) catch { _ => fail("parse out") }
+      guard j is Object(root) else { fail("root") }
+      guard root.get("workflow") is Some(wf) else { fail("wf") }
+      guard wf is Object(wfo) else { fail("wfo") }
+      guard wfo.get("state") is Some(st) else { fail("st") }
+      guard st is Object(sto) else { fail("sto") }
+      guard sto.get("children") is Some(ch) else { fail("ch") }
+      guard ch is Array(cha) else { fail("cha") }
+      guard cha.length() == 1 else { fail("one child") }
+      guard cha[0] is Object(ch0) else { fail("ch0") }
+      guard ch0.get("slug") is Some(String(s)) else { fail("slug str") }
+      guard ch0.get("branch") is Some(String(b)) else { fail("branch str") }
+      guard ch0.get("agent_type") is Some(String(at)) else { fail("at str") }
+      assert_eq(s, "leaf-slug")
+      assert_eq(b, "parent.leaf")
+      assert_eq(at, "gemini")
+    }
+    None => fail("parse literal supervisor lifecycle")
+  }
+}
+
+///|
+test "lifecycle literal blob ChildFailure message stays plain JSON string" {
+  let raw =
+    #|{"agent_id":"x","role":"TL","process":{"tag":"Connected"},"workflow":{"tag":"Supervisor","state":{"tag":"Supervising","wave":1,"children":[{"child_id":"x.c","slug":"c","branch":"x.c","agent_type":"g","summary":{"tag":"Failed","reason":{"tag":"ChildFailure","message":"ci failed"}}}]}}}
+  match lifecycle_from_json(raw.to_string()) {
+    Some(lc) => {
+      let out = lifecycle_to_json(lc)
+      assert_false(out.contains("\"message\":{\"tag\""))
+      let j = @json.parse(out) catch { _ => fail("parse out") }
+      guard j is Object(root) else { fail("root") }
+      guard root.get("workflow") is Some(wf) else { fail("wf") }
+      guard wf is Object(wfo) else { fail("wfo") }
+      guard wfo.get("state") is Some(st) else { fail("st") }
+      guard st is Object(sto) else { fail("sto") }
+      guard sto.get("children") is Some(ch) else { fail("ch") }
+      guard ch is Array(cha) else { fail("cha") }
+      guard cha[0] is Object(ch0) else { fail("ch0") }
+      guard ch0.get("summary") is Some(su) else { fail("su") }
+      guard su is Object(suo) else { fail("suo") }
+      guard suo.get("reason") is Some(r) else { fail("r") }
+      guard r is Object(ro) else { fail("ro") }
+      guard ro.get("message") is Some(String(m)) else {
+        fail("message must be string")
+      }
+      assert_eq(m, "ci failed")
+    }
+    None => fail("parse ChildFailure blob")
+  }
+}
+
+///|
+test "ChildTracker from_json all invalid rows yields empty tracker" {
+  let raw = "[{\"x\":1},{\"y\":2}]"
+  let tr = ChildTracker::from_json(raw)
+  assert_eq(tr.count(), 0)
+}
+
+///|
 test "ChildTracker from_json skips bad rows and keeps valid entries" {
   let raw = "[{\"id\":\"a\",\"slug\":\"s\",\"branch\":\"b\",\"agent_type\":\"t\"},{\"not\":\"valid\"},{\"id\":\"c\",\"slug\":\"s2\",\"branch\":\"b2\",\"agent_type\":\"t2\"}]"
   let tr = ChildTracker::from_json(raw)

@@ -62,6 +62,7 @@ pub fn ChildTracker::to_json(self : ChildTracker) -> String {
 }
 
 ///|
+/// Decodes each array element independently so one malformed row does not discard the rest.
 pub fn ChildTracker::from_json(json_str : String) -> ChildTracker {
   let tracker = ChildTracker::new()
   let json = @json.parse(json_str) catch { _ => return tracker }
