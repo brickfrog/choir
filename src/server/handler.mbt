@@ -978,6 +978,63 @@ fn pr_comment_body(
 }
 
 ///|
+async fn deliver_poller_stall_notifications(
+  state : ServerState,
+  now : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let pairs : Array[(@poller.TrackedPR, Bool)] = []
+  state.poller.tracked.each(fn(_k, pr) {
+    let active = try state.registry.get(pr.agent_id) catch {
+      _ => false
+    } noraise {
+      agent =>
+        match agent.state {
+          @types.AgentState::Done | @types.AgentState::Failed => false
+          _ => true
+        }
+    }
+    pairs.push((pr, active))
+  })
+  let stalled = @poller.detect_stalled_on_review(pairs, now, 600L)
+  for pr in stalled {
+    let mins = (now - pr.changes_requested_since) / 60L
+    let msg = "[STALLED] PR #" +
+      pr.pr_number.to_string() +
+      " (" +
+      pr.agent_id +
+      ") — changes requested " +
+      mins.to_string() +
+      "m ago, no new commits from leaf"
+    try {
+      let parent = state.resolve_parent_for_delivery(pr.agent_id)
+      ignore(
+        (state.append_file)(
+          state.config.project_dir + "/.choir/delivery.log",
+          "[poller-parent] agent=" +
+          pr.agent_id +
+          " parent=" +
+          parent.agent_id.to_string() +
+          " terminal_target=" +
+          parent.terminal_target
+          .map(@types.LocalTarget::to_string)
+          .unwrap_or("NONE") +
+          "\n",
+        ),
+      )
+      let delivery = @message.plan_delivery(parent, pr.agent_id, msg, "info")
+      ignore(@tools.execute_delivery(delivery, runner))
+      match state.poller.get(pr.pr_number) {
+        Some(cur) => state.poller.restore({ ..cur, stall_notified: true })
+        None => ()
+      }
+    } catch {
+      _ => ()
+    }
+  }
+}
+
+///|
 async fn deliver_pending_poll_events(
   state : ServerState,
   pending_events : Array[@poller.PollEvent],
@@ -1165,6 +1222,7 @@ pub async fn ServerState::process_poller_tick_with(
     fn(_) { () },
   )
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+  deliver_poller_stall_notifications(self, now, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 
@@ -1220,6 +1278,7 @@ pub async fn ServerState::process_poller_tick(
     tracked_after.to_string(),
   )
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+  deliver_poller_stall_notifications(self, now, runner)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 

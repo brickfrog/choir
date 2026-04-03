@@ -36,6 +36,35 @@ pub fn tl_tracked_pr_copilot_review_silent_escalation_active(
 }
 
 ///|
+pub fn detect_stalled_on_review(
+  tracked_with_liveness : Array[(TrackedPR, Bool)],
+  now : Int64,
+  stall_threshold_sec : Int64,
+) -> Array[TrackedPR] {
+  let out : Array[TrackedPR] = []
+  for pair in tracked_with_liveness {
+    let (pr, agent_is_active) = pair
+    if pr.last_review_state != ChangesRequested {
+      continue
+    }
+    if pr.changes_requested_since <= 0L {
+      continue
+    }
+    if now - pr.changes_requested_since < stall_threshold_sec {
+      continue
+    }
+    if pr.stall_notified {
+      continue
+    }
+    if !agent_is_active {
+      continue
+    }
+    out.push(pr)
+  }
+  out
+}
+
+///|
 pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   tracked : TrackedPR,
   unresolved_threads : Int?,
