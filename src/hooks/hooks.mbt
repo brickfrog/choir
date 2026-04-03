@@ -69,7 +69,8 @@ pub fn HookInput::to_json_string(self : HookInput) -> String {
     None => ()
   }
   match self.exit_reason {
-    Some(v) => obj.set("exit_reason", v.lifecycle_trigger().to_json())
+    Some(v) =>
+      obj.set("exit_reason", v.lifecycle_trigger().to_wire_string().to_json())
     None => ()
   }
   obj.to_json().stringify()

@@ -114,28 +114,30 @@ fn legacy_dev_phase_from_lifecycle(lifecycle : DevLifecycle) -> DevPhase {
 }
 
 ///|
-fn tl_event_trigger(event : TLEvent) -> String {
+fn tl_event_trigger(event : TLEvent) -> @types.LifecycleTrigger {
   match event {
-    TLEvent::ChildSpawned(_) => "ChildSpawned"
-    TLEvent::ChildCompleted(_) => "ChildCompleted"
-    TLEvent::ChildFailed(_, ..) => "ChildFailed"
-    TLEvent::PRMerged(..) => "PRMerged"
-    TLEvent::AllChildrenDone => "AllChildrenDone"
-    TLEvent::OwnPRFiled(..) => "OwnPRFiled"
+    TLEvent::ChildSpawned(_) => @types.LifecycleTrigger::ChildSpawned
+    TLEvent::ChildCompleted(_) => @types.LifecycleTrigger::ChildCompleted
+    TLEvent::ChildFailed(_, ..) => @types.LifecycleTrigger::ChildFailed
+    TLEvent::PRMerged(..) => @types.LifecycleTrigger::PRMerged
+    TLEvent::AllChildrenDone => @types.LifecycleTrigger::AllChildrenDone
+    TLEvent::OwnPRFiled(..) => @types.LifecycleTrigger::OwnPRFiled
   }
 }
 
 ///|
-fn dev_event_trigger(event : DevEvent) -> String {
+fn dev_event_trigger(event : DevEvent) -> @types.LifecycleTrigger {
   match event {
-    DevEvent::PRCreated(..) => "PRCreated"
-    DevEvent::NotifyParentSuccess(..) => "NotifyParentSuccess"
-    DevEvent::NotifyParentFailure(..) => "NotifyParentFailure"
-    DevEvent::ExitRequested => "ExitRequested"
-    DevEvent::MergeObserved(_) => "MergeObserved"
-    DevEvent::ReviewReceivedEv(..) => "ReviewReceived"
-    DevEvent::ReviewApprovedEv(_) => "ReviewApproved"
-    DevEvent::FixesPushedEv(..) => "FixesPushed"
+    DevEvent::PRCreated(..) => @types.LifecycleTrigger::PRCreated
+    DevEvent::NotifyParentSuccess(..) =>
+      @types.LifecycleTrigger::NotifyParentSuccess
+    DevEvent::NotifyParentFailure(..) =>
+      @types.LifecycleTrigger::NotifyParentFailure
+    DevEvent::ExitRequested => @types.LifecycleTrigger::ExitRequested
+    DevEvent::MergeObserved(_) => @types.LifecycleTrigger::MergeObserved
+    DevEvent::ReviewReceivedEv(..) => @types.LifecycleTrigger::ReviewReceived
+    DevEvent::ReviewApprovedEv(_) => @types.LifecycleTrigger::ReviewApproved
+    DevEvent::FixesPushedEv(..) => @types.LifecycleTrigger::FixesPushed
   }
 }
 
@@ -308,11 +310,7 @@ pub fn interpret_lifecycle_effects(
             if lc.agent_id == agent_id {
               ignore(
                 append_lifecycle_event(
-                  project_dir,
-                  agent_id,
-                  lifecycle_to_json(from_lc),
-                  lifecycle_to_json(to_lc),
-                  trigger,
+                  project_dir, agent_id, from_lc, to_lc, trigger,
                 ),
               )
             }
@@ -581,7 +579,7 @@ pub fn sync_parent_child_lifecycle(
               agent_type=Some(agent.agent_type),
             ),
           ),
-          "ChildUpdated",
+          @types.LifecycleTrigger::ChildUpdated,
         )
       } else {
         (
@@ -589,13 +587,13 @@ pub fn sync_parent_child_lifecycle(
             supervisor,
             SupervisorEvent::ChildSpawned(child~),
           ),
-          "ChildSpawned",
+          @types.LifecycleTrigger::ChildSpawned,
         )
       }
     _ =>
       (
         supervisor_transition(supervisor, SupervisorEvent::ChildSpawned(child~)),
-        "ChildSpawned",
+        @types.LifecycleTrigger::ChildSpawned,
       )
   }
   match transitioned {
@@ -607,11 +605,7 @@ pub fn sync_parent_child_lifecycle(
       if persist_lifecycle(project_dir, registry, next_parent) {
         ignore(
           append_lifecycle_event(
-            project_dir,
-            parent_id,
-            lifecycle_to_json(parent_lifecycle),
-            lifecycle_to_json(next_parent),
-            supervisor_trigger,
+            project_dir, parent_id, parent_lifecycle, next_parent, supervisor_trigger,
           ),
         )
       }
@@ -656,9 +650,9 @@ pub fn remove_parent_child_lifecycle(
           append_lifecycle_event(
             project_dir,
             parent_id,
-            lifecycle_to_json(parent_lifecycle),
-            lifecycle_to_json(next_parent),
-            "ChildRemoved",
+            parent_lifecycle,
+            next_parent,
+            @types.LifecycleTrigger::ChildRemoved,
           ),
         )
       }

@@ -1429,8 +1429,8 @@ async fn ServerState::interpret_teardown_effects(
             append_lifecycle_event(
               self.config.project_dir,
               agent_id,
-              @phase.lifecycle_to_json(prev),
-              @phase.lifecycle_to_json(lifecycle),
+              prev,
+              lifecycle,
               trigger,
             ),
           )
