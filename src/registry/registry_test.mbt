@@ -13,8 +13,8 @@ test "registry insert and get" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let _ = reg.insert(agent)
-  let found = reg.get("main.feat")
+  ignore(try? reg.insert(agent))
+  let found = try? reg.get("main.feat")
   assert_true(found is Ok(_))
 }
 
@@ -33,8 +33,8 @@ test "registry duplicate insert fails" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let _ = reg.insert(agent)
-  let result = reg.insert(agent)
+  ignore(try? reg.insert(agent))
+  let result = try? reg.insert(agent)
   assert_true(result is Err(_))
 }
 
@@ -61,7 +61,7 @@ test "registry upsert refreshes existing agent metadata" {
     terminal_target: @types.LocalTarget::parse("zellij-tab:choir:refresh-b"),
   })
   assert_true(refreshed_second)
-  match reg.get("main.refresh") {
+  match (try? reg.get("main.refresh")) {
     Ok(found) => {
       assert_eq(found.workspace, ".choir/worktrees/refresh-b")
       assert_eq(
@@ -100,9 +100,9 @@ test "registry get parent" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let _ = reg.insert(parent)
-  let _ = reg.insert(child)
-  let found_parent = reg.get_parent("main.child")
+  ignore(try? reg.insert(parent))
+  ignore(try? reg.insert(child))
+  let found_parent = try? reg.get_parent("main.child")
   match found_parent {
     Ok(p) => assert_eq(p.agent_id, "root")
     Err(_) => fail("expected parent")
@@ -148,9 +148,9 @@ test "registry children" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let _ = reg.insert(parent)
-  let _ = reg.insert(child1)
-  let _ = reg.insert(child2)
+  ignore(try? reg.insert(parent))
+  ignore(try? reg.insert(child1))
+  ignore(try? reg.insert(child2))
   let kids = reg.children("root")
   assert_eq(kids.length(), 2)
 }
@@ -170,22 +170,22 @@ test "registry set state valid transitions" {
     spawn_depth: 0,
     state: @types.AgentState::Spawning,
   }
-  let _ = reg.insert(agent)
+  ignore(try? reg.insert(agent))
 
   // Spawning -> Active
-  let res = reg.set_state("main.test", @types.AgentState::Active)
+  let res = try? reg.set_state("main.test", @types.AgentState::Active)
   assert_true(res is Ok(_))
-  match reg.get("main.test") {
+  match (try? reg.get("main.test")) {
     Ok(a) => assert_eq(a.state, @types.AgentState::Active)
     Err(_) => fail("expected agent")
   }
 
   // Active -> Completing
-  let res2 = reg.set_state("main.test", @types.AgentState::Completing)
+  let res2 = try? reg.set_state("main.test", @types.AgentState::Completing)
   assert_true(res2 is Ok(_))
 
   // Completing -> Done
-  let res3 = reg.set_state("main.test", @types.AgentState::Done)
+  let res3 = try? reg.set_state("main.test", @types.AgentState::Done)
   assert_true(res3 is Ok(_))
 
   // Test Active -> Failed and Failed -> Done
@@ -194,12 +194,12 @@ test "registry set state valid transitions" {
     agent_id: "main.fail",
     state: @types.AgentState::Active,
   }
-  let _ = reg.insert(agent2)
+  ignore(try? reg.insert(agent2))
 
-  let res4 = reg.set_state("main.fail", @types.AgentState::Failed)
+  let res4 = try? reg.set_state("main.fail", @types.AgentState::Failed)
   assert_true(res4 is Ok(_))
 
-  let res5 = reg.set_state("main.fail", @types.AgentState::Done)
+  let res5 = try? reg.set_state("main.fail", @types.AgentState::Done)
   assert_true(res5 is Ok(_))
 }
 
@@ -218,10 +218,10 @@ test "registry set state invalid transition" {
     spawn_depth: 0,
     state: @types.AgentState::Spawning,
   }
-  let _ = reg.insert(agent)
+  ignore(try? reg.insert(agent))
 
   // Spawning -> Done (invalid)
-  let res = reg.set_state("main.test", @types.AgentState::Done)
+  let res = try? reg.set_state("main.test", @types.AgentState::Done)
   assert_true(res is Err(_))
 }
 
@@ -240,12 +240,12 @@ test "registry set alive" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let _ = reg.insert(agent)
+  ignore(try? reg.insert(agent))
 
-  let res = reg.set_alive("main.test", false)
+  let res = try? reg.set_alive("main.test", false)
   assert_true(res is Ok(_))
 
-  let res_err = reg.set_alive("nonexistent", false)
+  let res_err = try? reg.set_alive("nonexistent", false)
   assert_true(res_err is Err(_))
 }
 
@@ -275,9 +275,9 @@ test "registry active agents" {
     state: @types.AgentState::Completing,
   }
 
-  let _ = reg.insert(a1)
-  let _ = reg.insert(a2)
-  let _ = reg.insert(a3)
+  ignore(try? reg.insert(a1))
+  ignore(try? reg.insert(a2))
+  ignore(try? reg.insert(a3))
 
   let active = reg.active_agents()
   assert_eq(active.length(), 1)
@@ -302,9 +302,9 @@ test "registry by role" {
   let a2 : @types.Agent = { ..a1, agent_id: "a2", role: @types.Role::Dev }
   let a3 : @types.Agent = { ..a1, agent_id: "a3", role: @types.Role::Dev }
 
-  let _ = reg.insert(a1)
-  let _ = reg.insert(a2)
-  let _ = reg.insert(a3)
+  ignore(try? reg.insert(a1))
+  ignore(try? reg.insert(a2))
+  ignore(try? reg.insert(a3))
 
   let tl_agents = reg.by_role(@types.Role::TL)
   assert_eq(tl_agents.length(), 1)

@@ -153,7 +153,9 @@ pub async fn ServerState::handle_with_runner(
       poller_state=Some(self.poller),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
-    )
+    ) catch {
+      e => @types.Response::Err(@types.choir_error_message_from_caught(e))
+    }
   }
 
   let effects = plan_post_tool_actions(
@@ -183,7 +185,7 @@ pub async fn ServerState::handle_with_runner(
 pub fn ServerState::register_agent(
   self : ServerState,
   agent : @types.Agent,
-) -> Result[Unit, @types.ChoirError] {
+) -> Unit {
   self.clear_pending_disconnect(agent.agent_id.to_string())
   let agent_id = agent.agent_id.to_string()
   let lifecycle = match
@@ -207,7 +209,6 @@ pub fn ServerState::register_agent(
     agent_id,
     lifecycle,
   )
-  Ok(())
 }
 
 ///|
@@ -216,12 +217,13 @@ pub fn ServerState::apply_recovered_agent(
   agent : @types.Agent,
   alive : Bool,
 ) -> Unit {
-  match self.register_agent(agent) {
-    Ok(_) =>
-      if !alive {
-        ignore(self.registry.set_alive(agent.agent_id.to_string(), false))
-      }
-    Err(_) => ()
+  try {
+    self.register_agent(agent)
+    if !alive {
+      ignore(self.registry.set_alive(agent.agent_id.to_string(), false))
+    }
+  } catch {
+    _ => ()
   }
 }
 
@@ -261,7 +263,10 @@ pub fn ServerState::sync_recovered_pr_lifecycle(
   pr : @runtime.OpenPR,
   review : @poller.ReviewState,
 ) -> Unit {
-  let agent_opt = self.registry.get(agent_id).to_option()
+  let agent_opt = match (try? self.registry.get(agent_id)) {
+    Ok(a) => Some(a)
+    Err(_) => None
+  }
   let lifecycle = self.current_lifecycle(agent_id)
   let workflow = match lifecycle.workflow {
     @phase.WorkflowState::Dev(dev) =>
@@ -329,18 +334,16 @@ pub fn ServerState::notify_parent(
   caller_id : String,
   message : String,
   status : String,
-) -> Result[@message.DeliveryMethod, @types.ChoirError] {
-  match self.resolve_parent_for_delivery(caller_id) {
-    Ok(parent) => Ok(@message.plan_delivery(parent, caller_id, message, status))
-    Err(e) => Err(e)
-  }
+) -> @message.DeliveryMethod raise @types.ChoirError {
+  let parent = self.resolve_parent_for_delivery(caller_id)
+  @message.plan_delivery(parent, caller_id, message, status)
 }
 
 ///|
 fn ServerState::resolve_parent_by_id(
   self : ServerState,
   parent_id : String,
-) -> Result[@types.Agent, @types.ChoirError] {
+) -> @types.Agent raise @types.ChoirError {
   @phase.resolve_agent_with_fallback(
     self.config.project_dir,
     self.config.terminal_session,
@@ -353,7 +356,7 @@ fn ServerState::resolve_parent_by_id(
 fn ServerState::resolve_parent_for_delivery(
   self : ServerState,
   caller_id : String,
-) -> Result[@types.Agent, @types.ChoirError] {
+) -> @types.Agent raise @types.ChoirError {
   @phase.resolve_parent_with_fallback(
     self.config.project_dir,
     self.config.terminal_session,
@@ -803,7 +806,7 @@ pub fn ServerState::plan_poll_event_deliveries(
     Some(pr) => pr.agent_id
     None => agent_id
   }
-  let leaf_owner = match self.registry.get(leaf_agent_id) {
+  let leaf_owner = match (try? self.registry.get(leaf_agent_id)) {
     Ok(agent) => Some(agent)
     Err(_) => None
   }
@@ -854,27 +857,27 @@ pub fn ServerState::plan_poll_event_deliveries(
       match
         parent_poll_event_message(pr, event, unresolved_threads_for_recheck) {
         Some((message, status)) =>
-          match self.resolve_parent_for_delivery(leaf_agent_id) {
-            Ok(parent) => {
-              ignore(
-                @sys.append_file_sync(
-                  self.config.project_dir + "/.choir/delivery.log",
-                  "[poller-parent] agent=" +
-                  leaf_agent_id +
-                  " parent=" +
-                  parent.agent_id.to_string() +
-                  " terminal_target=" +
-                  parent.terminal_target
-                  .map(@types.LocalTarget::to_string)
-                  .unwrap_or("NONE") +
-                  "\n",
-                ),
-              )
-              deliveries.push(
-                @message.plan_delivery(parent, leaf_agent_id, message, status),
-              )
-            }
-            Err(_) => ()
+          try {
+            let parent = self.resolve_parent_for_delivery(leaf_agent_id)
+            ignore(
+              @sys.append_file_sync(
+                self.config.project_dir + "/.choir/delivery.log",
+                "[poller-parent] agent=" +
+                leaf_agent_id +
+                " parent=" +
+                parent.agent_id.to_string() +
+                " terminal_target=" +
+                parent.terminal_target
+                .map(@types.LocalTarget::to_string)
+                .unwrap_or("NONE") +
+                "\n",
+              ),
+            )
+            deliveries.push(
+              @message.plan_delivery(parent, leaf_agent_id, message, status),
+            )
+          } catch {
+            _ => ()
           }
         None => ()
       }
@@ -1216,10 +1219,7 @@ pub async fn ServerState::process_poller_tick(
 /// Starts a `zellij subscribe` process that streams pane viewport updates
 /// to a snapshot file, replacing the old dump-screen polling approach.
 pub fn ServerState::watch_pane(self : ServerState, agent_id : String) -> Unit {
-  let agent = match self.registry.get(agent_id) {
-    Ok(a) => a
-    Err(_) => return
-  }
+  let agent = self.registry.get(agent_id) catch { _ => return }
   let target = match agent.terminal_target {
     Some(t) => t
     None => return
@@ -1238,7 +1238,7 @@ fn ServerState::current_lifecycle(
   self : ServerState,
   agent_id : String,
 ) -> @phase.AgentLifecycle {
-  match self.registry.get(agent_id) {
+  match (try? self.registry.get(agent_id)) {
     Ok(agent) =>
       @phase.read_or_default_lifecycle(
         self.config.project_dir,
@@ -1258,39 +1258,27 @@ pub fn ServerState::transfer_leaf_ownership(
   self : ServerState,
   from_agent_id : String,
   to_agent_id : String,
-) -> Result[Int, @types.ChoirError] {
+) -> Int raise @types.ChoirError {
   if from_agent_id == to_agent_id {
-    return Ok(0)
+    return 0
   }
-  let from_agent = match self.registry.get(from_agent_id) {
-    Ok(agent) => agent
-    Err(e) => return Err(e)
-  }
-  let to_agent = match self.registry.get(to_agent_id) {
-    Ok(agent) => agent
-    Err(e) => return Err(e)
-  }
+  let from_agent = self.registry.get(from_agent_id)
+  let to_agent = self.registry.get(to_agent_id)
   if from_agent.parent != to_agent.parent {
-    return Err(
-      @types.ChoirError::validation_error(
-        "cannot transfer ownership across different parents",
-      ),
+    raise @types.ChoirError::validation_error(
+      "cannot transfer ownership across different parents",
     )
   }
   if from_agent.role != to_agent.role {
-    return Err(
-      @types.ChoirError::validation_error(
-        "cannot transfer ownership across different roles",
-      ),
+    raise @types.ChoirError::validation_error(
+      "cannot transfer ownership across different roles",
     )
   }
   match from_agent.role {
     @types.Role::Dev | @types.Role::Worker => ()
     _ =>
-      return Err(
-        @types.ChoirError::validation_error(
-          "ownership transfer only supports leaf roles",
-        ),
+      raise @types.ChoirError::validation_error(
+        "ownership transfer only supports leaf roles",
       )
   }
   let transferred = self.poller.transfer_owner(
@@ -1333,7 +1321,7 @@ pub fn ServerState::transfer_leaf_ownership(
     self.registry,
     from_agent_id,
   )
-  Ok(transferred)
+  transferred
 }
 
 ///|
@@ -1355,7 +1343,7 @@ async fn ServerState::finalize_agent_with_runner(
   close_target? : Bool = true,
   remove_worktree? : Bool = true,
 ) -> Unit {
-  match self.registry.get(agent_id) {
+  match (try? self.registry.get(agent_id)) {
     Ok(agent) => {
       let lifecycle = self.current_lifecycle(agent_id)
       let effects = plan_finalize(
@@ -1383,12 +1371,12 @@ async fn ServerState::fail_agent_with_runner(
   close_target? : Bool = false,
 ) -> Unit {
   @async.sleep(0)
-  match self.registry.get(agent_id) {
+  match (try? self.registry.get(agent_id)) {
     Ok(agent) => {
       let lifecycle = self.current_lifecycle(agent_id)
       let parent = match agent.parent {
         Some(pid) =>
-          match self.resolve_parent_by_id(pid) {
+          match (try? self.resolve_parent_by_id(pid)) {
             Ok(p) => Some(p)
             Err(_) => None
           }
@@ -1444,18 +1432,18 @@ async fn ServerState::interpret_teardown_effects(
           lifecycle,
         )
       NotifyParent(parent_id~, agent_id~, message~, status~) =>
-        match self.resolve_parent_by_id(parent_id) {
-          Ok(parent) => {
-            let delivery = @message.plan_delivery(
-              parent, agent_id, message, status,
-            )
-            ignore(
-              @tools.execute_delivery(delivery, runner) catch {
-                _ => Ok(())
-              },
-            )
-          }
-          Err(_) => ()
+        try {
+          let parent = self.resolve_parent_by_id(parent_id)
+          let delivery = @message.plan_delivery(
+            parent, agent_id, message, status,
+          )
+          ignore(
+            @tools.execute_delivery(delivery, runner) catch {
+              _ => Ok(())
+            },
+          )
+        } catch {
+          _ => ()
         }
       RemoveTeamMember(parent_id~, slug~) =>
         ignore(@workspace.remove_team_member(parent_id, slug))
@@ -1494,7 +1482,7 @@ async fn ServerState::interpret_teardown_effects(
       ClearRuntimeTracking(agent_id) =>
         self.clear_agent_runtime_tracking(agent_id)
       WatchPane(agent_id~) =>
-        match self.registry.get(agent_id) {
+        match (try? self.registry.get(agent_id)) {
           Ok(agent) =>
             match agent.terminal_target {
               Some(_) => self.watch_pane(agent_id)
@@ -1521,21 +1509,21 @@ async fn ServerState::interpret_teardown_effects(
       ) =>
         match parent_id {
           Some(pid) =>
-            match self.resolve_parent_by_id(pid) {
-              Ok(parent) => {
-                let body = merged_pr_parent_message(
-                  pr_number, leaf_id, branch, parent_branch, url,
-                )
-                let delivery = @message.plan_delivery(
-                  parent, leaf_id, body, "success",
-                )
-                ignore(
-                  @tools.execute_delivery(delivery, runner) catch {
-                    _ => Ok(())
-                  },
-                )
-              }
-              Err(_) => ()
+            try {
+              let parent = self.resolve_parent_by_id(pid)
+              let body = merged_pr_parent_message(
+                pr_number, leaf_id, branch, parent_branch, url,
+              )
+              let delivery = @message.plan_delivery(
+                parent, leaf_id, body, "success",
+              )
+              ignore(
+                @tools.execute_delivery(delivery, runner) catch {
+                  _ => Ok(())
+                },
+              )
+            } catch {
+              _ => ()
             }
           None => ()
         }
@@ -1545,38 +1533,38 @@ async fn ServerState::interpret_teardown_effects(
         parent_message~,
         reason~
       ) =>
-        match self.resolve_parent_by_id(parent_id) {
-          Ok(p) => {
-            let delivery = @message.plan_delivery(
-              p, agent_id, parent_message, "failure",
-            )
-            let already_terminal = match delivery {
-              @message.DeliveryMethod::LocalTerminalInput(_, _) => true
-              _ => false
-            }
-            let is_self_reported = match reason {
-              @phase.FailureReason::ChildFailure(_) => true
-              _ => false
-            }
-            if !is_self_reported && !already_terminal {
-              match p.terminal_target {
-                Some(target) => {
-                  let reason_str = reason.to_string()
-                  let msg = @message.format_failure(agent_id, reason_str)
-                  ignore(
-                    @tools.execute_delivery(
-                      @message.DeliveryMethod::LocalTerminalInput(target, msg),
-                      runner,
-                    ) catch {
-                      _ => Ok(())
-                    },
-                  )
-                }
-                None => ()
+        try {
+          let p = self.resolve_parent_by_id(parent_id)
+          let delivery = @message.plan_delivery(
+            p, agent_id, parent_message, "failure",
+          )
+          let already_terminal = match delivery {
+            @message.DeliveryMethod::LocalTerminalInput(_, _) => true
+            _ => false
+          }
+          let is_self_reported = match reason {
+            @phase.FailureReason::ChildFailure(_) => true
+            _ => false
+          }
+          if !is_self_reported && !already_terminal {
+            match p.terminal_target {
+              Some(target) => {
+                let reason_str = reason.to_string()
+                let msg = @message.format_failure(agent_id, reason_str)
+                ignore(
+                  @tools.execute_delivery(
+                    @message.DeliveryMethod::LocalTerminalInput(target, msg),
+                    runner,
+                  ) catch {
+                    _ => Ok(())
+                  },
+                )
               }
+              None => ()
             }
           }
-          Err(_) => ()
+        } catch {
+          _ => ()
         }
     }
   }
@@ -1593,7 +1581,7 @@ pub async fn ServerState::check_idle_agents(
 ) -> Unit {
   let agent_ids = self.pane_watcher.watched_agents()
   for agent_id in agent_ids {
-    let agent = match self.registry.get(agent_id) {
+    let agent = match (try? self.registry.get(agent_id)) {
       Ok(a) => a
       Err(_) => {
         self.stop_subscribe(agent_id)
@@ -1657,7 +1645,7 @@ pub fn ServerState::list_agents(self : ServerState) -> Array[@types.Agent] {
 pub fn ServerState::get_agent(
   self : ServerState,
   agent_id : String,
-) -> Result[@types.Agent, @types.ChoirError] {
+) -> @types.Agent raise @types.ChoirError {
   self.registry.get(agent_id)
 }
 
@@ -1674,122 +1662,117 @@ pub async fn ServerState::handle_disconnect_with_runner(
   agent_id : String,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
-  match self.registry.get(agent_id) {
-    Err(_) => ()
-    Ok(agent) =>
-      match agent.state {
-        Done | Failed => ()
-        Completing => {
-          let lifecycle = self.current_lifecycle(agent_id)
-          let exit_reason = match lifecycle.process {
-            @phase.ProcessState::Finalizing(
-              reason=@phase.FinalizeReason::Merged
-            ) => "merged"
-            @phase.ProcessState::Finalizing(
-              reason=@phase.FinalizeReason::DisconnectFinalized
-            ) => "disconnect"
-            _ => "shutdown"
-          }
+  let agent = self.registry.get(agent_id) catch { _ => return }
+  match agent.state {
+    Done | Failed => ()
+    Completing => {
+      let lifecycle = self.current_lifecycle(agent_id)
+      let exit_reason = match lifecycle.process {
+        @phase.ProcessState::Finalizing(reason=@phase.FinalizeReason::Merged) =>
+          "merged"
+        @phase.ProcessState::Finalizing(
+          reason=@phase.FinalizeReason::DisconnectFinalized
+        ) => "disconnect"
+        _ => "shutdown"
+      }
+      self.finalize_agent_with_runner(
+        agent_id,
+        exit_reason,
+        runner,
+        notify_parent=false,
+        close_target=false,
+        remove_worktree=false,
+      )
+    }
+    _ =>
+      match
+        @phase.lifecycle_disconnect_policy(self.current_lifecycle(agent_id)) {
+        @phase.LifecycleDisconnectPolicy::Preserve => ()
+        @phase.LifecycleDisconnectPolicy::FinalizeDone(..) =>
           self.finalize_agent_with_runner(
             agent_id,
-            exit_reason,
+            "disconnect",
             runner,
             notify_parent=false,
             close_target=false,
             remove_worktree=false,
           )
-        }
-        _ =>
-          match
-            @phase.lifecycle_disconnect_policy(self.current_lifecycle(agent_id)) {
-            @phase.LifecycleDisconnectPolicy::Preserve => ()
-            @phase.LifecycleDisconnectPolicy::FinalizeDone(..) =>
-              self.finalize_agent_with_runner(
-                agent_id,
-                "disconnect",
-                runner,
-                notify_parent=false,
-                close_target=false,
-                remove_worktree=false,
-              )
-            @phase.LifecycleDisconnectPolicy::Ignore => ()
-            @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
-              // Before failing: check if a dev leaf filed a PR via raw `gh pr create`
-              // (bypassing file_pr). Restrict this to branch-owning dev agents so
-              // top-level TLs/workers with empty branches cannot steal tracked PR ownership.
-              let recovered_pr = if disconnect_pr_recovery_candidate(agent) {
-                @runtime.find_pr_for_branch_in_provider(
-                  self.recovery_provider,
-                  self.config.project_dir,
-                  agent.branch,
-                )
-              } else {
-                None
+        @phase.LifecycleDisconnectPolicy::Ignore => ()
+        @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
+          // Before failing: check if a dev leaf filed a PR via raw `gh pr create`
+          // (bypassing file_pr). Restrict this to branch-owning dev agents so
+          // top-level TLs/workers with empty branches cannot steal tracked PR ownership.
+          let recovered_pr = if disconnect_pr_recovery_candidate(agent) {
+            @runtime.find_pr_for_branch_in_provider(
+              self.recovery_provider,
+              self.config.project_dir,
+              agent.branch,
+            )
+          } else {
+            None
+          }
+          match recovered_pr {
+            Some((pr_number, pr_url)) => {
+              let parent_branch = match @workspace.parent_branch(agent.branch) {
+                Some(pb) => pb
+                None => "main"
               }
-              match recovered_pr {
-                Some((pr_number, pr_url)) => {
-                  let parent_branch = match
-                    @workspace.parent_branch(agent.branch) {
-                    Some(pb) => pb
-                    None => "main"
-                  }
-                  @tools.apply_dev_event(
-                    self.config.project_dir,
-                    agent.branch,
-                    @phase.DevEvent::PRCreated(
-                      pr_number~,
-                      url=pr_url,
-                      branch=agent.branch,
-                    ),
-                    registry=Some(self.registry),
-                  )
-                  self.poller.ensure_tracked(
-                    pr_number,
-                    agent_id,
-                    agent.branch,
-                    parent_branch,
-                    pr_url,
-                    @poller.now_sec(),
-                  )
-                  ignore(self.poller.write_state_file(self.config.project_dir))
-                }
-                None => {
-                  let snapshot = self.pane_watcher.read_viewport(agent_id)
-                  let screen = @runtime.extract_viewport_text(snapshot)
-                  let (reason, msg) = if screen != "" {
-                    let classified = @phase.classify_failure(screen)
-                    match classified {
-                      @phase.FailureReason::ChildFailure(_) =>
-                        (
-                          default_reason,
-                          "[FAILED: " +
-                          agent_id +
-                          "] disconnected unexpectedly - agent may have crashed or run out of context",
-                        )
-                      _ =>
-                        (
-                          classified,
-                          "[FAILED: " +
-                          agent_id +
-                          "] " +
-                          @phase.failure_reason_message(classified),
-                        )
-                    }
-                  } else {
+              @tools.apply_dev_event(
+                self.config.project_dir,
+                agent.branch,
+                @phase.DevEvent::PRCreated(
+                  pr_number~,
+                  url=pr_url,
+                  branch=agent.branch,
+                ),
+                registry=Some(self.registry),
+              )
+              self.poller.ensure_tracked(
+                pr_number,
+                agent_id,
+                agent.branch,
+                parent_branch,
+                pr_url,
+                @poller.now_sec(),
+              )
+              ignore(self.poller.write_state_file(self.config.project_dir))
+            }
+            None => {
+              let snapshot = self.pane_watcher.read_viewport(agent_id)
+              let screen = @runtime.extract_viewport_text(snapshot)
+              let (reason, msg) = if screen != "" {
+                let classified = @phase.classify_failure(screen)
+                match classified {
+                  @phase.FailureReason::ChildFailure(_) =>
                     (
                       default_reason,
                       "[FAILED: " +
                       agent_id +
                       "] disconnected unexpectedly - agent may have crashed or run out of context",
                     )
-                  }
-                  self.fail_agent_with_runner(
-                    agent_id, reason, msg, "disconnect", runner,
-                  )
+                  _ =>
+                    (
+                      classified,
+                      "[FAILED: " +
+                      agent_id +
+                      "] " +
+                      @phase.failure_reason_message(classified),
+                    )
                 }
+              } else {
+                (
+                  default_reason,
+                  "[FAILED: " +
+                  agent_id +
+                  "] disconnected unexpectedly - agent may have crashed or run out of context",
+                )
               }
+              self.fail_agent_with_runner(
+                agent_id, reason, msg, "disconnect", runner,
+              )
             }
           }
+        }
       }
   }
 }

@@ -168,14 +168,14 @@ pub fn ToolRegistry::lookup(
   self : ToolRegistry,
   role : @types.Role,
   name : String,
-) -> Result[@types.ToolDef, @types.ChoirError] {
+) -> @types.ToolDef raise @types.ChoirError {
   match self.tools.get(name) {
-    None => Err(@types.ChoirError::tool_not_found(name))
+    None => raise @types.ChoirError::tool_not_found(name)
     Some(def) =>
       if def.is_role_allowed(role) {
-        Ok(def)
+        def
       } else {
-        Err(@types.ChoirError::permission_denied(role.to_string(), name))
+        raise @types.ChoirError::permission_denied(role.to_string(), name)
       }
   }
 }
