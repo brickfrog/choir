@@ -108,6 +108,34 @@ choir init
 - 一个 TL 客户端会话
 - 位于 `.choir/` 的本地状态目录
 
+`choir init --recreate` 会重建服务端/TL 会话，默认保留可恢复的代理状态。加 `--purge` 可执行干净关闭，移除工作树、inline 元数据、生命周期和 poller 状态。
+
+常用组合：
+
+```bash
+choir stop                 # 停止，保留恢复状态
+choir init --recreate      # 重启，保留恢复状态
+choir stop --purge         # 停止并清除恢复状态
+choir init --recreate --purge  # 从干净状态重启
+```
+
+## CLI 工具访问
+
+Choir 的服务端工具也可通过本地控制面板直接调用。适用于 shell 自动化和非 MCP 集成。
+
+```bash
+choir tool agent_list
+choir tool agent_list --include_inactive true
+choir tool mutex_status --name review-lock
+choir tool fork_wave --caller-role tl --json '{"caller_id":"root","tasks":["task A","task B"],"agent_type":"gemini","parent_branch":"main"}'
+```
+
+响应为 JSON，使用 Choir 标准内部信封格式：
+
+```json
+{"ok":true,"result":{...}}
+```
+
 ## Smoke 测试
 
 ```bash
@@ -252,23 +280,21 @@ Sub-TL 嵌套深度无限制；depth 字段仅作信息用途追踪。
 
 ### Effect 架构
 
-`fork_wave` 的执行路径被建模为纯 `Eff[A]` 树（scaffold 门控检查 + 派生命令），
-由异步 trampoline 解释执行。计划是纯数据；在调用 `interpret` 之前不会执行任何 IO。
-测试可直接遍历树，无需 mock 或异步基础设施。
+Choir 采用 **Exomonad 风格**架构，在纯编排逻辑与宿主 I/O（Git、GitHub、Zellij、文件系统）之间建立硬性 effect 边界。所有主要编排循环（生命周期、工具、恢复、工具后置动作）均实现为纯规划器，输出类型化的 effect 请求，再由宿主特定的解释器执行。
 
 ## 状态
 
 - 本地 UDS 工作流：已验证
 - zellij 后端（0.44+）：已验证
 - 叶子代理：Claude、Gemini、Moon Pilot、Codex、Cursor Agent
+- effect 架构重构（迁移 1-6）：**已完成**
+- Copilot 可靠性与上下文自动化：**已完成**
 - 结构化日志：[moontrace](https://github.com/brickfrog/moontrace)，支持彩色输出和 OTLP span 导出
 - 多 wave 生命周期（WaveComplete）：已实现
 - Sub-TL 嵌套（role=tl）：已实现，深度无限制
 - scaffold 门控（fork 前需提交并推送）：已强制执行
-- 类型化错误（ParseError、ForkWaveError、ChoirError）：已实现
 - StateMachine trait（machine_name、can_exit）：已实现
 - companion / 叶子代理 / review / merge 的 live smoke：已具备
-- TCP/remote 路径：已实现，但验证程度低于本地 UDS
 
 ## 致谢
 
