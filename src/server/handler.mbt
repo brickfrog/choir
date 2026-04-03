@@ -1885,6 +1885,9 @@ test "parent_poll_event_message PR READY stresses not merged" {
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), None) {
@@ -1919,6 +1922,9 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRReady(70), Some(0)) {
@@ -1951,6 +1957,9 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8), None) {
@@ -1984,6 +1993,9 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(
@@ -2059,6 +2071,9 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(
@@ -2120,6 +2135,9 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 100L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     leaf_poll_review_injection_message(
@@ -2172,6 +2190,9 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   assert_eq(
     parent_poll_event_message(
@@ -2328,6 +2349,9 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(
@@ -2365,6 +2389,9 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 999L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(
@@ -2402,6 +2429,9 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     last_ci_rollup: @poller.CiRollupStatus::Failure,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::CIFailed(62), None) {
@@ -2432,6 +2462,9 @@ test "parent_poll_event_message PRMerged does not append TLDecision suffix" {
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRMerged(63), Some(0)) {

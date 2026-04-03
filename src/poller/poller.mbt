@@ -40,6 +40,9 @@ pub(all) struct TrackedPR {
   /// True once the poller has observed an issue-thread comment authored by a
   /// GitHub Copilot bot login (REST `/issues/{n}/comments`), distinct from review objects.
   mut copilot_issue_comment_seen : Bool
+  mut orphan_notified : Bool
+  mut changes_requested_since : Int64
+  mut stall_notified : Bool
 } derive(Show, Eq)
 
 ///|

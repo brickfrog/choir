@@ -20,6 +20,9 @@ fn sample_tracked(
     last_ci_rollup: ci,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
   }
 }
 
