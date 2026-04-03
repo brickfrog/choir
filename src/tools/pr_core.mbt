@@ -273,6 +273,7 @@ pub async fn interpret_file_pr_post_success(
     }
     _ => ()
   }
+  let mut review_request_failed = false
   if pr_review {
     match effects.review_context {
       Some(ctx) => {
@@ -368,9 +369,16 @@ pub async fn interpret_file_pr_post_success(
           "\n",
         ),
       )
+      review_request_failed = true
     }
   }
-  effects.response
+  if review_request_failed {
+    effects.response.with_warning(
+      "copilot_review_request_failed: reviewer request for @copilot failed — request manually via gh pr edit --add-reviewer @copilot",
+    )
+  } else {
+    effects.response
+  }
 }
 
 ///|
