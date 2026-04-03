@@ -16,6 +16,24 @@ MoonBit has two test modes — use the right one:
 
 Do not place public-API-only tests inline in source files. Do not place tests that need private symbols in `_test.mbt` files (they won't compile).
 
+## Effect Architecture
+
+Choir follows an exomonad-style architecture. Respect these invariants:
+
+- **No direct I/O in orchestration logic.** Code in `src/server/`, `src/tools/`, `src/poller/`, `src/phase/`, `src/runtime/` must not call `@sys.*` or `@process.*` directly. Emit typed effects or use injected adapter functions. All host I/O (Git, GitHub, Zellij, filesystem) goes through `src/exec/` or injected function parameters.
+- **Use enums, not strings, for fixed domains.** Agent types use `AgentType`, roles use `Role`, states use `AgentState`. Do not introduce new `String` fields for values drawn from a fixed set — define an enum.
+- **Use `ChoirError` suberror, not `String`, for errors.** New error paths should return `Result[T, ChoirError]` or `raise ChoirError`, not `Result[T, String]`. The `ChoirError` type in `src/types/error.mbt` has variants for common cases.
+- **Inject I/O dependencies.** Functions that need to run commands, capture output, or read files should take the capability as an optional parameter with a default (see `dispatch()` pattern with `runner?`, `capture?`, `git_capture?`). This enables testing with mocks.
+
+### Known gaps (do not widen)
+
+These are pre-existing violations to fix, not patterns to follow:
+
+- `agent_type : String` in `phase/lifecycle.mbt` ChildLifecycle and `phase/tl.mbt` ChildHandle/ChildTrackerEntry — should be `@types.AgentType`
+- `exit_reason : String` in `server/post_tool.mbt` and `server/handler.mbt` — should be an enum
+- Direct `@sys.append_file_sync` in `server/handler.mbt` poller delivery logging — should use an adapter
+- ~37 `Result[T, String]` in `src/tools/` — should migrate to `Result[T, ChoirError]`
+
 ## Safety
 
 - Never let test fixtures write to the real checkout outside their dedicated temp area.
