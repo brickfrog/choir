@@ -2483,22 +2483,22 @@ test "tool local agent context keeps registration path" {
 test "tool env fallback synthesizes inline worker identity" {
   let env : Map[String, String] = {
     "CHOIR_ROLE": "worker",
-    "CHOIR_AGENT_ID": "main.pi-worker",
+    "CHOIR_AGENT_ID": "main.claude-worker",
     "CHOIR_PARENT_ID": "root",
-    "CHOIR_BRANCH": "main.pi-worker",
+    "CHOIR_BRANCH": "main.claude-worker",
     "CHOIR_PARENT_BRANCH": "main",
     "CHOIR_WORKSPACE": "/proj",
-    "CHOIR_TERMINAL_TARGET": "zellij-pane:choir:pi-worker",
-    "CHOIR_AGENT_TYPE": "pi",
+    "CHOIR_TERMINAL_TARGET": "zellij-pane:choir:claude-worker",
+    "CHOIR_AGENT_TYPE": "claude",
   }
   let local_cfg = local_cfg_from_env_lookup(fn(key) { env.get(key) })
   assert_eq(local_cfg.role, Some(@types.Role::Worker))
-  assert_eq(local_cfg.agent_id, Some("main.pi-worker"))
+  assert_eq(local_cfg.agent_id, Some("main.claude-worker"))
   assert_eq(local_cfg.parent_id, Some("root"))
-  assert_eq(local_cfg.branch, Some("main.pi-worker"))
+  assert_eq(local_cfg.branch, Some("main.claude-worker"))
   assert_eq(local_cfg.parent_branch, Some("main"))
   assert_eq(local_cfg.workspace, Some("/proj"))
-  assert_eq(local_cfg.agent_type, Some(@types.AgentType::Pi))
+  assert_eq(local_cfg.agent_type, Some(@types.AgentType::Claude))
   assert_true(tool_should_register(local_cfg))
 }
 
@@ -3240,45 +3240,6 @@ test "companion gemini commands trust workspace and use zellij tab cwd" {
 }
 
 ///|
-test "companion pi commands prepare isolated runtime and launch pi" {
-  let cmds = init_companion_commands(
-    "/proj",
-    "howdy",
-    @types.Config::default(),
-    "main",
-    {
-      name: "pi-helper",
-      role: "worker",
-      command: "pi",
-      task: "report findings",
-    },
-  )
-  assert_eq(cmds.length(), 10)
-  assert_eq(cmds[6].program, @workspace.native_pi_runtime_dirs_program)
-  assert_eq(cmds[6].args[0], "/proj/.choir/agents/pi-helper/.choir/pi")
-  assert_eq(cmds[7].program, @workspace.native_pi_seed_auth_program)
-  assert_eq(cmds[7].args[0], "/proj/.choir/agents/pi-helper/.choir/pi")
-  assert_eq(cmds[7].args[1], "/proj")
-  assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(cmds[8].args[1], ".choir/pi/choir-extension.ts")
-  assert_true(cmds[8].args[2].contains("registerTool"))
-  assert_eq(cmds[9].program, "zellij")
-  let z9 = cmds[9].args
-  let mut blob9 = ""
-  for i = 0; i < z9.length(); i = i + 1 {
-    blob9 = blob9 + z9[i]
-  }
-  assert_true(
-    blob9.contains(
-      "PI_CODING_AGENT_DIR=/proj/.choir/agents/pi-helper/.choir/pi/agent",
-    ),
-  )
-  assert_true(
-    blob9.contains("/proj/.choir/agents/pi-helper/.choir/pi/choir-extension.ts"),
-  )
-}
-
-///|
 test "init choir source tree detection only matches choir source markers" {
   assert_true(
     init_is_choir_source_files(
@@ -3772,81 +3733,6 @@ test "init TL launch command supports cursor_agent" {
 }
 
 ///|
-test "init TL launch command supports pi" {
-  let tab = @workspace.init_tl_zellij_tab_command(
-    "choir-demo", "/tmp/choir repo", "pi",
-  )
-  assert_eq(tab.program, "zellij")
-  let mut saw_pi_env = false
-  let mut saw_skip = false
-  let mut saw_agent = false
-  let mut saw_role = false
-  let mut saw_type = false
-  let mut saw_ws = false
-  let mut saw_sess = false
-  let mut saw_target = false
-  let mut saw_session_id = false
-  for a in tab.args {
-    if a.contains("PI_CODING_AGENT_DIR") && a.contains(".choir/pi/agent") {
-      saw_pi_env = true
-    }
-    if a == "PI_SKIP_VERSION_CHECK=1" {
-      saw_skip = true
-    }
-    if a == "CHOIR_AGENT_ID=root" {
-      saw_agent = true
-    }
-    if a == "CHOIR_ROLE=tl" {
-      saw_role = true
-    }
-    if a == "CHOIR_AGENT_TYPE=pi" {
-      saw_type = true
-    }
-    if a == "CHOIR_WORKSPACE=/tmp/choir repo" {
-      saw_ws = true
-    }
-    if a == "CHOIR_TERMINAL_SESSION=choir-demo" {
-      saw_sess = true
-    }
-    if a == "CHOIR_TERMINAL_TARGET=zellij-tab:choir-demo:TL" {
-      saw_target = true
-    }
-    if a == "CHOIR_SESSION_ID=root" {
-      saw_session_id = true
-    }
-  }
-  assert_true(saw_pi_env)
-  assert_true(saw_skip)
-  assert_true(saw_agent)
-  assert_true(saw_role)
-  assert_true(saw_type)
-  assert_true(saw_ws)
-  assert_true(saw_sess)
-  assert_true(saw_target)
-  assert_true(saw_session_id)
-  let script = tab.args[tab.args.length() - 1]
-  assert_false(script.contains("PI_CODING_AGENT_DIR"))
-  assert_true(script.contains("pi"))
-  assert_true(script.contains("--no-extensions"))
-  assert_true(script.contains("/tmp/choir repo/.choir/pi/choir-extension.ts"))
-  assert_true(script.contains("--session-dir"))
-  assert_true(script.contains("/tmp/choir repo/.choir/pi/sessions"))
-  assert_true(script.contains("--tools"))
-  assert_true(script.contains("read,bash,grep,find,ls"))
-  assert_true(script.contains("--thinking"))
-  assert_true(script.contains("high"))
-  assert_true(script.contains("[TL exited]"))
-}
-
-///|
-test "init pi TL system prompt reinforces delegation" {
-  let prompt = @workspace.pi_append_system_prompt(@types.Role::TL)
-  assert_true(prompt.contains("Team Lead"))
-  assert_true(prompt.contains("fork_wave"))
-  assert_true(prompt.contains("merge_pr"))
-}
-
-///|
 test "init parse_tl_type extracts --tl flag" {
   assert_eq(init_parse_tl_type(["choir", "init", "--tl", "codex"]), "codex")
   assert_eq(init_parse_tl_type(["choir", "init"]), "claude")
@@ -3854,7 +3740,7 @@ test "init parse_tl_type extracts --tl flag" {
     init_parse_tl_type(["choir", "init", "--recreate", "--tl", "gemini"]),
     "gemini",
   )
-  assert_eq(init_parse_tl_type(["choir", "init", "--tl", "pi"]), "pi")
+  assert_eq(init_parse_tl_type(["choir", "init", "--tl", "codex"]), "codex")
 }
 
 ///|
@@ -3909,9 +3795,6 @@ fn init_companion_agent_type(command : String) -> @types.AgentType? {
   }
   if first == "agent" || first.has_suffix("/agent") {
     return Some(@types.AgentType::CursorAgent)
-  }
-  if first == "pi" || first.has_suffix("/pi") {
-    return Some(@types.AgentType::Pi)
   }
   None
 }
@@ -3984,16 +3867,6 @@ fn init_companion_commands(
       workspace, ".birth_branch", branch,
     ),
   ]
-  if agent_type == @types.AgentType::Pi {
-    let runtime_root = @workspace.pi_runtime_root(
-      workspace,
-      @workspace.canonical_agent_id(spec),
-      spec.isolation,
-    )
-    cmds.push(@workspace.write_pi_runtime_dirs(runtime_root))
-    cmds.push(@workspace.seed_pi_auth(runtime_root, project_dir))
-    cmds.push(@workspace.write_pi_extension(workspace, runtime_root))
-  }
   if agent_type == @types.AgentType::Gemini {
     cmds.push(@workspace.trust_gemini_folder(workspace))
   }
@@ -4046,34 +3919,6 @@ async fn init_run_or_exit(cmd : @workspace.Command) -> Unit {
 }
 
 ///|
-fn init_prepare_pi_runtime(project_dir : String) -> Unit {
-  let runtime_root = project_dir + "/.choir/pi"
-  let mkdir_code = @workspace.run_native_pi_runtime_dirs_command(
-    @workspace.write_pi_runtime_dirs(runtime_root),
-  )
-  if mkdir_code != 0 {
-    @sys.exit(1)
-  }
-  let ext_cmd = @workspace.write_pi_extension(project_dir, runtime_root)
-  let ext_code = @workspace.run_native_workspace_rel_file_command(ext_cmd)
-  if ext_code != 0 {
-    @sys.write_stdout(
-      "error: failed to write " +
-      ext_cmd.args[1] +
-      " under " +
-      project_dir +
-      "\n",
-    )
-    @sys.exit(1)
-  }
-  ignore(
-    @workspace.run_native_pi_seed_auth_command(
-      @workspace.seed_pi_auth(runtime_root, project_dir),
-    ),
-  )
-}
-
-///|
 fn init_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
@@ -4098,9 +3943,6 @@ fn init_run() -> Unit {
       init_bootstrap_ensure_choir_dir_and_config_if_absent(
         init_config_toml_content(default_session),
       )
-      if tl_type == "pi" {
-        init_prepare_pi_runtime(project_dir)
-      }
       // Set up Claude Code statusline if .claude/settings.json doesn't exist
       init_bootstrap_seed_claude_settings_best_effort()
       let maybe_patch_config = @sys.read_file(".choir/config.toml")
@@ -4824,7 +4666,7 @@ fn main {
       "statusline" => statusline_run()
       _ => {
         @sys.write_stdout(
-          "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|pi]|stop [--purge]|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline>\n",
+          "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent]|stop [--purge]|reply|smoke [--keep-temp|--leafs|--companions|--review|--e2e-live]|watch|statusline>\n",
         )
         @sys.exit(1)
       }

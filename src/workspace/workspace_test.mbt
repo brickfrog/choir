@@ -135,25 +135,6 @@ test "init_tl_zellij_tab_command claude uses env argv and single sh -lc trailer"
 }
 
 ///|
-test "init_tl_zellij_tab_command pi keeps Choir env in argv and trailer only in shell script" {
-  let cmd = @workspace.init_tl_zellij_tab_command("howdy", "/abs/proj", "pi")
-  assert_eq(cmd.program, "zellij")
-  let mut saw_pi_dir = false
-  for a in cmd.args {
-    if a.contains("PI_CODING_AGENT_DIR") &&
-      a.contains("/abs/proj/.choir/pi/agent") {
-      saw_pi_dir = true
-    }
-  }
-  assert_true(saw_pi_dir)
-  let script = cmd.args[cmd.args.length() - 1]
-  assert_false(script.contains("PI_CODING_AGENT_DIR"))
-  assert_true(script.contains("pi"))
-  assert_true(script.contains("[TL exited]"))
-  assert_true(script.contains("exec bash -l"))
-}
-
-///|
 test "zellij_list_sessions_command uses env argv without shell" {
   let cmd = @workspace.zellij_list_sessions_command()
   assert_eq(cmd.program, "env")
@@ -237,13 +218,11 @@ test "agent_launch_command for each AgentType" {
   let spec_gemini = { ..spec_claude, agent_type: @types.AgentType::Gemini }
   let spec_moon = { ..spec_claude, agent_type: @types.AgentType::MoonPilot }
   let spec_codex = { ..spec_claude, agent_type: @types.AgentType::Codex }
-  let spec_pi = { ..spec_claude, agent_type: @types.AgentType::Pi }
 
   let cmd_claude = @workspace.agent_launch_command(spec_claude, "/path")
   let cmd_gemini = @workspace.agent_launch_command(spec_gemini, "/path")
   let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
   let cmd_codex = @workspace.agent_launch_command(spec_codex, "/path")
-  let cmd_pi = @workspace.agent_launch_command(spec_pi, "/path")
 
   assert_eq(cmd_claude.program, "claude")
   assert_eq(cmd_claude.args[0], "--dangerously-skip-permissions")
@@ -295,21 +274,6 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_cursor.args[3], "/path")
   assert_eq(cmd_cursor.args[4], "fix bugs")
   assert_eq(cmd_cursor.workdir, Some("/path"))
-
-  assert_eq(cmd_pi.program, "pi")
-  assert_eq(cmd_pi.args[0], "--no-extensions")
-  assert_eq(cmd_pi.args[1], "-e")
-  assert_eq(cmd_pi.args[2], "/path/.choir/pi/choir-extension.ts")
-  assert_eq(cmd_pi.args[3], "--no-skills")
-  assert_eq(cmd_pi.args[5], "--no-themes")
-  assert_eq(cmd_pi.args[6], "--session-dir")
-  assert_eq(cmd_pi.args[7], "/path/.choir/pi/sessions")
-  assert_eq(cmd_pi.args[8], "--tools")
-  assert_eq(cmd_pi.args[9], "read,bash,edit,write,grep,find,ls")
-  assert_eq(cmd_pi.args[10], "--thinking")
-  assert_eq(cmd_pi.args[11], "medium")
-  assert_eq(cmd_pi.args[14], "fix bugs")
-  assert_eq(cmd_pi.workdir, Some("/path"))
 }
 
 ///|
@@ -386,7 +350,7 @@ test "agent_launch_command supports command_override" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
     role: @types.Role::Dev,
-    agent_type: @types.AgentType::Pi,
+    agent_type: @types.AgentType::Gemini,
     task: "do work",
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
@@ -399,12 +363,10 @@ test "agent_launch_command supports command_override" {
   let cmd = @workspace.agent_launch_command(
     spec,
     "/path",
-    command_override=Some("my-pi --flag"),
+    command_override=Some("my-gemini --flag"),
   )
-  assert_eq(cmd.program, "my-pi")
+  assert_eq(cmd.program, "my-gemini")
   assert_eq(cmd.args[0], "--flag")
-  assert_eq(cmd.args[1], "--no-extensions")
-  assert_eq(cmd.args[15], "do work")
   assert_eq(cmd.workdir, Some("/path"))
 }
 
@@ -672,80 +634,6 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
 }
 
 ///|
-test "spawn_commands pi worktree writes isolated runtime and launches pi" {
-  let spec = @types.SpawnSpec::{
-    slug: "pi-leaf",
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Pi,
-    task: "implement feature",
-    isolation: @types.IsolationMode::Worktree,
-    parent_id: "root",
-    parent_branch: "main",
-    reuse_workspace: false,
-    workspace_slug: None,
-    reuse_git_branch: None,
-    spawn_depth: 0,
-  }
-  let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  assert_eq(cmds.length(), 10)
-  assert_eq(cmds[6].program, @workspace.native_pi_runtime_dirs_program)
-  assert_eq(cmds[6].args[0], "/proj/.choir/worktrees/pi-leaf/.choir/pi")
-  assert_eq(cmds[7].program, @workspace.native_pi_seed_auth_program)
-  assert_eq(cmds[7].args[0], "/proj/.choir/worktrees/pi-leaf/.choir/pi")
-  assert_eq(cmds[7].args[1], "/proj")
-  assert_eq(cmds[8].program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(cmds[8].args[1], ".choir/pi/choir-extension.ts")
-  assert_true(cmds[8].args[2].contains("registerTool"))
-  let zargs = cmds[9].args
-  let mut blob = ""
-  for i = 0; i < zargs.length(); i = i + 1 {
-    blob = blob + zargs[i]
-  }
-  assert_true(
-    blob.contains(
-      "PI_CODING_AGENT_DIR=/proj/.choir/worktrees/pi-leaf/.choir/pi/agent",
-    ),
-  )
-  assert_true(blob.contains("PI_SKIP_VERSION_CHECK=1"))
-  assert_true(blob.contains("pi"))
-  assert_true(
-    blob.contains("/proj/.choir/worktrees/pi-leaf/.choir/pi/choir-extension.ts"),
-  )
-}
-
-///|
-test "pi extension payload is stable across workspace layouts" {
-  let body = @workspace.pi_extension_content()
-  let root_pi = @workspace.write_pi_extension("/proj", "/proj/.choir/pi")
-  let wt_pi = @workspace.write_pi_extension(
-    "/proj/.choir/worktrees/pi-leaf", "/proj/.choir/worktrees/pi-leaf/.choir/pi",
-  )
-  assert_eq(root_pi.args[2], body)
-  assert_eq(wt_pi.args[2], body)
-}
-
-///|
-test "init TL pi agent command matches agent_launch_command for root TL Pi spec" {
-  let spec = @types.SpawnSpec::{
-    slug: "root",
-    role: @types.Role::TL,
-    agent_type: @types.AgentType::Pi,
-    task: "",
-    isolation: @types.IsolationMode::Worktree,
-    parent_id: "root",
-    parent_branch: "",
-    reuse_workspace: true,
-    workspace_slug: Some("root"),
-    reuse_git_branch: Some("root"),
-    spawn_depth: 0,
-  }
-  assert_eq(
-    @workspace.init_tl_agent_command("pi", "/proj"),
-    @workspace.agent_launch_command(spec, "/proj"),
-  )
-}
-
-///|
 test "spawn_commands for inline mode writes metadata and uses zellij run" {
   let spec = @types.SpawnSpec::{
     slug: "worker-a",
@@ -780,46 +668,6 @@ test "spawn_commands for inline mode writes metadata and uses zellij run" {
     }
   }
   assert_true(found_terminal)
-}
-
-///|
-test "spawn_commands pi inline runtime root is agent-specific" {
-  let spec = @types.SpawnSpec::{
-    slug: "pi-worker",
-    role: @types.Role::Worker,
-    agent_type: @types.AgentType::Pi,
-    task: "report findings",
-    isolation: @types.IsolationMode::Inline,
-    parent_id: "root",
-    parent_branch: "main",
-    reuse_workspace: false,
-    workspace_slug: None,
-    reuse_git_branch: None,
-    spawn_depth: 0,
-  }
-  let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
-  assert_eq(cmds.length(), 5)
-  assert_true(cmds[0].args[0].contains("/project/.choir/inline/main.pi-worker"))
-  assert_eq(cmds[1].program, @workspace.native_pi_runtime_dirs_program)
-  assert_eq(cmds[1].args[0], "/project/.choir/pi/main.pi-worker")
-  let zargs = cmds[4].args
-  let mut found_pi = false
-  for i = 0; i < zargs.length(); i = i + 1 {
-    if zargs[i].contains("PI_CODING_AGENT_DIR=") &&
-      zargs[i].contains("/project/.choir/pi/main.pi-worker/agent") {
-      found_pi = true
-      break
-    }
-  }
-  assert_true(found_pi)
-  let mut found_ext = false
-  for i = 0; i < zargs.length(); i = i + 1 {
-    if zargs[i].contains("/project/.choir/pi/main.pi-worker/choir-extension.ts") {
-      found_ext = true
-      break
-    }
-  }
-  assert_true(found_ext)
 }
 
 ///|
@@ -888,7 +736,7 @@ test "run_native_leaf_helpers_command ignores foreign programs" {
 }
 
 ///|
-test "gemini settings, cursor mcp json, and pi extension use native file commands" {
+test "gemini settings and cursor mcp json use native file commands" {
   let gem = @workspace.write_gemini_settings("/wt", "main.leaf", "dev")
   assert_eq(gem.program, @workspace.native_write_choir_file_program)
   assert_eq(gem.args[1], "gemini-settings.json")
@@ -897,20 +745,6 @@ test "gemini settings, cursor mcp json, and pi extension use native file command
   assert_eq(cur.program, @workspace.native_write_workspace_rel_file_program)
   assert_eq(cur.args[1], ".cursor/mcp.json")
   assert_true(cur.args[2].contains("\"choir\""))
-  let pi = @workspace.write_pi_extension("/proj", "/proj/.choir/pi")
-  assert_eq(pi.program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(pi.args[1], ".choir/pi/choir-extension.ts")
-  assert_true(pi.args[2].contains("registerTool"))
-  let pi_inline = @workspace.write_pi_extension(
-    "/proj", "/proj/.choir/pi/main.worker",
-  )
-  assert_eq(pi_inline.args[1], ".choir/pi/main.worker/choir-extension.ts")
-  let pi_dirs = @workspace.write_pi_runtime_dirs("/tmp/pi-rt")
-  assert_eq(pi_dirs.program, @workspace.native_pi_runtime_dirs_program)
-  assert_eq(pi_dirs.args, ["/tmp/pi-rt"])
-  let pi_seed = @workspace.seed_pi_auth("/tmp/pi-rt", "/repo/root")
-  assert_eq(pi_seed.program, @workspace.native_pi_seed_auth_program)
-  assert_eq(pi_seed.args, ["/tmp/pi-rt", "/repo/root"])
 }
 
 ///|

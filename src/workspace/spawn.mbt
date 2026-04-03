@@ -69,13 +69,6 @@ pub fn launch_env_prefix(
       ),
     )
   }
-  if spec.agent_type == @types.AgentType::Pi {
-    let runtime_root = pi_runtime_root(workspace, agent_id, spec.isolation)
-    assignments.push(
-      env_assignment("PI_CODING_AGENT_DIR", pi_agent_dir(runtime_root)),
-    )
-    assignments.push(env_assignment("PI_SKIP_VERSION_CHECK", "1"))
-  }
   match @sys.getenv("TRACEPARENT") {
     Some(value) =>
       if value != "" {
@@ -131,13 +124,6 @@ pub fn launch_env_assignments(
         workspace + "/.choir/gemini-settings.json",
       ),
     )
-  }
-  if spec.agent_type == @types.AgentType::Pi {
-    let runtime_root = pi_runtime_root(workspace, agent_id, spec.isolation)
-    assignments.push(
-      env_pair_raw("PI_CODING_AGENT_DIR", pi_agent_dir(runtime_root)),
-    )
-    assignments.push(env_pair_raw("PI_SKIP_VERSION_CHECK", "1"))
   }
   match @sys.getenv("TRACEPARENT") {
     Some(value) =>
@@ -238,16 +224,6 @@ pub fn spawn_commands(
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
-      if spec.agent_type == Pi {
-        let runtime_root = pi_runtime_root(
-          workspace,
-          canonical_agent_id(spec),
-          spec.isolation,
-        )
-        cmds.push(write_pi_runtime_dirs(runtime_root))
-        cmds.push(seed_pi_auth(runtime_root, root_project))
-        cmds.push(write_pi_extension(workspace, runtime_root))
-      }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
         let ctx_paths = resolve_context_paths(
@@ -300,16 +276,6 @@ pub fn spawn_commands(
           config_local_content(spec, workspace, terminal_target),
         ),
       )
-      if spec.agent_type == Pi {
-        let runtime_root = pi_runtime_root(
-          workspace,
-          canonical_agent_id(spec),
-          spec.isolation,
-        )
-        cmds.push(write_pi_runtime_dirs(runtime_root))
-        cmds.push(seed_pi_auth(runtime_root, root_project))
-        cmds.push(write_pi_extension(workspace, runtime_root))
-      }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
       }
@@ -350,16 +316,6 @@ pub fn spawn_commands(
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
-      if spec.agent_type == Pi {
-        let runtime_root = pi_runtime_root(
-          workspace,
-          canonical_agent_id(spec),
-          spec.isolation,
-        )
-        cmds.push(write_pi_runtime_dirs(runtime_root))
-        cmds.push(seed_pi_auth(runtime_root, root_project))
-        cmds.push(write_pi_extension(workspace, runtime_root))
-      }
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
         let ctx_paths = resolve_context_paths(
@@ -545,15 +501,11 @@ pub fn remote_spawn_commands(
 /// - Chaining agent exit → echoes → interactive login shell requires shell control operators (`;`,
 ///   `exec`). Zellij’s `env <prog> <argv…>` tab entry has no “on exit run …” hook.
 ///
-/// A single login-shell script is the minimal wrapper; Pi TL further moves runtime env into zellij
-/// `env` argv (see body), so `PI_*` / Choir env are not duplicated inside this string.
+/// A single login-shell script is the minimal wrapper for the TL agent command.
 const INIT_TL_POST_EXIT_SHELL_SUFFIX : String = "; echo; echo '[TL exited]'; exec bash -l"
 
 ///|
-/// TL init zellij tab: Pi injects Choir env via `env` argv (same as [`launch_env_assignments`]); other
-/// TL kinds rely on the agent command string only. The child remains `sh -lc <script>` where `script`
-/// is [`Command::to_string`] for the TL agent plus [`INIT_TL_POST_EXIT_SHELL_SUFFIX`] (see comment
-/// there: intentional interactive-shell boundary).
+/// TL init zellij tab: spawns a login-shell wrapping the TL agent command.
 pub fn init_tl_zellij_tab_command(
   session : String,
   project_dir : String,
@@ -563,26 +515,7 @@ pub fn init_tl_zellij_tab_command(
     init_tl_agent_command(tl_type, project_dir),
   )
   let script = inner.to_string() + INIT_TL_POST_EXIT_SHELL_SUFFIX
-  let env_assignments = if tl_type == "pi" {
-    let spec : @types.SpawnSpec = {
-      slug: "root",
-      role: @types.Role::TL,
-      agent_type: @types.AgentType::Pi,
-      task: "",
-      isolation: Worktree,
-      parent_id: "root",
-      parent_branch: "",
-      reuse_workspace: true,
-      workspace_slug: Some("root"),
-      reuse_git_branch: Some("root"),
-      spawn_depth: 0,
-    }
-    let terminal_target = local_target_for(session, "TL", Worktree)
-    launch_env_assignments(spec, session, project_dir, terminal_target)
-  } else {
-    []
-  }
-  zellij_new_tab(session, "TL", project_dir, env_assignments, {
+  zellij_new_tab(session, "TL", project_dir, [], {
     program: "sh",
     args: ["-lc", script],
     workdir: None,

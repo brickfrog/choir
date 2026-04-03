@@ -122,7 +122,6 @@ test "AgentType to_wire_string encodes all variants" {
   assert_eq(@types.AgentType::MoonPilot.to_wire_string(), "moon_pilot")
   assert_eq(@types.AgentType::Codex.to_wire_string(), "codex")
   assert_eq(@types.AgentType::CursorAgent.to_wire_string(), "cursor_agent")
-  assert_eq(@types.AgentType::Pi.to_wire_string(), "pi")
 }
 
 ///|
@@ -147,10 +146,6 @@ test "AgentType try_parse_wire accepts canonical wire strings" {
     Ok(t) => assert_eq(t, @types.AgentType::CursorAgent)
     Err(e) => fail(e.message())
   }
-  match @types.AgentType::try_parse_wire("pi") {
-    Ok(t) => assert_eq(t, @types.AgentType::Pi)
-    Err(e) => fail(e.message())
-  }
 }
 
 ///|
@@ -173,7 +168,6 @@ test "AgentType try_parse_wire round-trips to_wire_string for all types" {
     @types.AgentType::MoonPilot,
     @types.AgentType::Codex,
     @types.AgentType::CursorAgent,
-    @types.AgentType::Pi,
   ]
   for t in types {
     match @types.AgentType::try_parse_wire(t.to_wire_string()) {
@@ -196,7 +190,6 @@ test "AgentType try_parse_wire rejects unknown strings with config_error message
 test "AgentType parse_wire agrees with try_parse_wire on canonical and alias strings" {
   let inputs = [
     "claude", "gemini", "moon_pilot", "moonpilot", "codex", "cursor_agent", "cursoragent",
-    "pi",
   ]
   for s in inputs {
     match @types.AgentType::try_parse_wire(s) {

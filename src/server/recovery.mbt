@@ -160,7 +160,7 @@ test "plan_recovery reconciles local agents and open PRs" {
           agent: Some({
             agent_id: @types.AgentId("slug1"),
             role: @types.Role::Dev,
-            agent_type: @types.AgentType::Pi,
+            agent_type: @types.AgentType::Claude,
             parent: None,
             workspace: "/tmp/w",
             branch: "feat/x",
@@ -239,7 +239,7 @@ test "plan_recovery uses fallback poll row when TrackNewPR snapshot map has no e
           agent: Some({
             agent_id: @types.AgentId("slug1"),
             role: @types.Role::Dev,
-            agent_type: @types.AgentType::Pi,
+            agent_type: @types.AgentType::Claude,
             parent: None,
             workspace: "/tmp/w",
             branch: "feat/x",
@@ -302,7 +302,7 @@ test "plan_recovery handles offline agent and persisted PR" {
           agent: Some({
             agent_id: @types.AgentId("slug-off"),
             role: @types.Role::Dev,
-            agent_type: @types.AgentType::Pi,
+            agent_type: @types.AgentType::Claude,
             parent: None,
             workspace: "/tmp/w-off",
             branch: "feat/offline",

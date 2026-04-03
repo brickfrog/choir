@@ -2192,7 +2192,7 @@ test "disconnect PR recovery only applies to branch-owning dev agents" {
     @types.Agent::{
       agent_id: "agent",
       role,
-      agent_type: @types.AgentType::Pi,
+      agent_type: @types.AgentType::Claude,
       parent: Some("root"),
       workspace: "/proj",
       branch,
