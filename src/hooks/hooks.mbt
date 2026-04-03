@@ -167,7 +167,8 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     Some("disconnect") => Some(@types.ExitReason::Disconnected)
     Some("shutdown") | Some("killed") | Some("watchdog") =>
       Some(@types.ExitReason::Shutdown)
-    Some(_) | None => None
+    Some(_) => Some(@types.ExitReason::Shutdown)
+    None => None
   }
   Some({
     event,

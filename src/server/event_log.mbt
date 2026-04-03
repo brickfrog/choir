@@ -8,6 +8,9 @@ fn append_event(
 ) -> Bool {
   let sanitized_id = @types.sanitize_agent_id(agent_id)
   let events_dir = project_dir + "/.choir/events/"
+  if !@sys.create_dir_all(events_dir) {
+    return false
+  }
   let path = events_dir + sanitized_id + ".jsonl"
   let now = @poller.now_sec()
   let obj : Map[String, Json] = {
