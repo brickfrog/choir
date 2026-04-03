@@ -197,36 +197,6 @@ pub fn agent_launch_command(
         ],
         workdir: Some(workspace_path),
       }
-    Pi => {
-      let runtime_root = pi_runtime_root(
-        workspace_path,
-        canonical_agent_id(spec),
-        spec.isolation,
-      )
-      let role_str = @config.role_to_string(spec.role)
-      {
-        program: cmd_program.unwrap_or("pi"),
-        args: [
-          ..cmd_extra_args,
-          "--no-extensions",
-          "-e",
-          pi_extension_path(runtime_root),
-          "--no-skills",
-          "--no-prompt-templates",
-          "--no-themes",
-          "--session-dir",
-          pi_session_dir(runtime_root),
-          "--tools",
-          pi_default_builtin_tools(role_str),
-          "--thinking",
-          pi_default_thinking_level(role_str),
-          "--append-system-prompt",
-          pi_append_system_prompt(spec.role),
-          spec.task,
-        ],
-        workdir: Some(workspace_path),
-      }
-    }
   }
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)
@@ -242,8 +212,7 @@ pub fn init_tl_claude_mcp_config_json() -> String {
 
 ///|
 /// Inner TL agent command for the init zellij tab (no post-exit trailer; that lives only in
-/// [`init_tl_zellij_tab_command`]). Non-Pi kinds omit Choir env in the shell script; Pi moves env to
-/// zellij `env` argv there while the agent line still comes from [`Command::to_string`].
+/// [`init_tl_zellij_tab_command`]).
 pub fn init_tl_agent_command(tl_type : String, project_dir : String) -> Command {
   match tl_type {
     "codex" => {
@@ -268,22 +237,6 @@ pub fn init_tl_agent_command(tl_type : String, project_dir : String) -> Command 
         args: ["--yolo", "--approve-mcps", "--workspace", project_dir],
         workdir: None,
       }
-    "pi" => {
-      let spec : @types.SpawnSpec = {
-        slug: "root",
-        role: @types.Role::TL,
-        agent_type: @types.AgentType::Pi,
-        task: "",
-        isolation: @types.IsolationMode::Worktree,
-        parent_id: "root",
-        parent_branch: "",
-        reuse_workspace: true,
-        workspace_slug: Some("root"),
-        reuse_git_branch: Some("root"),
-        spawn_depth: 0,
-      }
-      agent_launch_command(spec, project_dir)
-    }
     _ =>
       {
         program: "claude",

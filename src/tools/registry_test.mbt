@@ -427,8 +427,8 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
     name: "spawn_worker",
     args: {
       "caller_id": "root",
-      "slug": "pi-worker",
-      "agent_type": "pi",
+      "slug": "claude-worker",
+      "agent_type": "claude",
       "task": "report findings",
     },
   }
@@ -447,12 +447,12 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
   match res {
     Ok(map) => {
       assert_eq(map.get("status"), Some("spawned"))
-      assert_eq(map.get("agent_id"), Some("main.pi-worker"))
-      assert_eq(map.get("agent_ids"), Some("main.pi-worker"))
+      assert_eq(map.get("agent_id"), Some("main.claude-worker"))
+      assert_eq(map.get("agent_ids"), Some("main.claude-worker"))
     }
     Err(msg) => fail("spawn_worker failed: " + msg)
   }
-  try agent_reg.get("main.pi-worker") catch {
+  try agent_reg.get("main.claude-worker") catch {
     e =>
       fail(
         "missing worker registration: " +
@@ -461,12 +461,12 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
   } noraise {
     agent => {
       assert_eq(agent.role, @types.Role::Worker)
-      assert_eq(agent.agent_type, @types.AgentType::Pi)
+      assert_eq(agent.agent_type, @types.AgentType::Claude)
       assert_eq(agent.parent, Some("root"))
       assert_eq(agent.workspace, project_dir)
       assert_eq(
         agent.terminal_target,
-        @types.LocalTarget::parse("zellij-pane:choir:pi-worker"),
+        @types.LocalTarget::parse("zellij-pane:choir:claude-worker"),
       )
     }
   }
@@ -484,7 +484,7 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
     agent_reg.upsert({
       agent_id: "root",
       role: @types.Role::TL,
-      agent_type: @types.AgentType::Pi,
+      agent_type: @types.AgentType::Claude,
       parent: None,
       workspace: project_dir,
       branch: "",
@@ -500,9 +500,9 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
     args: {
       "caller_id": "root",
       "parent_branch": "master",
-      "slug_prefix": "pi-smoke-leaf",
+      "slug_prefix": "claude-smoke-leaf",
       "count": "1",
-      "agent_type": "pi",
+      "agent_type": "claude",
       "task": "open a PR",
     },
   }
@@ -521,11 +521,11 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
   match res {
     Ok(map) => {
       assert_eq(map.get("status"), Some("spawned"))
-      assert_eq(map.get("agent_ids"), Some("master.pi-smoke-leaf-0"))
+      assert_eq(map.get("agent_ids"), Some("master.claude-smoke-leaf-0"))
     }
     Err(msg) => fail("fork_wave failed: " + msg)
   }
-  try agent_reg.get("master.pi-smoke-leaf-0") catch {
+  try agent_reg.get("master.claude-smoke-leaf-0") catch {
     e =>
       fail(
         "missing child registration: " +
@@ -534,13 +534,15 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
   } noraise {
     agent => {
       assert_eq(agent.role, @types.Role::Dev)
-      assert_eq(agent.agent_type, @types.AgentType::Pi)
+      assert_eq(agent.agent_type, @types.AgentType::Claude)
       assert_eq(agent.parent, Some("root"))
       assert_eq(agent.state, @types.AgentState::Spawning)
-      assert_true(agent.workspace.contains("/.choir/worktrees/pi-smoke-leaf-0"))
+      assert_true(
+        agent.workspace.contains("/.choir/worktrees/claude-smoke-leaf-0"),
+      )
       assert_eq(
         agent.terminal_target,
-        @types.LocalTarget::parse("zellij-tab:choir:pi-smoke-leaf-0"),
+        @types.LocalTarget::parse("zellij-tab:choir:claude-smoke-leaf-0"),
       )
     }
   }

@@ -122,11 +122,11 @@ pub fn to_internal_request(
 /// Create a JSON-RPC response for the MCP initialize handshake.
 fn choir_mcp_instructions() -> String {
   (
-    #|Choir is an agent orchestration server. You are the Team Lead (TL). Delegate all implementation to leaf agents via fork_wave (default gemini; set agent_type for claude, moon_pilot, codex, cursor_agent, or pi). Never edit files directly -- read code to understand it, then delegate. For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). For identical parallel work, pass task + count. spawn_worker is research-only -- workers cannot edit files or file PRs. After spawning leaves, stop and wait for notify_parent messages. Do not poll with sleep or git log. Use merge_pr to merge PRs, not git merge. Merge one at a time. Do not merge PRs until Copilot has reviewed them -- review notifications arrive automatically via the poller. When a leaf reports a PR, wait for the [REVIEW] notification before merging. Do not tell the user a PR is merged based on [PR READY], [FIXES PUSHED], or leaf notify_parent/shutdown text alone. Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.
+    #|Choir is an agent orchestration server. You are the Team Lead (TL). Delegate all implementation to leaf agents via fork_wave (default gemini; set agent_type for claude, moon_pilot, codex, or cursor_agent). Never edit files directly -- read code to understand it, then delegate. For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). For identical parallel work, pass task + count. spawn_worker is research-only -- workers cannot edit files or file PRs. After spawning leaves, stop and wait for notify_parent messages. Do not poll with sleep or git log. Use merge_pr to merge PRs, not git merge. Merge one at a time. Do not merge PRs until Copilot has reviewed them -- review notifications arrive automatically via the poller. When a leaf reports a PR, wait for the [REVIEW] notification before merging. Do not tell the user a PR is merged based on [PR READY], [FIXES PUSHED], or leaf notify_parent/shutdown text alone. Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.
     #|
     #|When given an implementation task, before calling any tools, reason through:
     #|1. Size — single leaf (self-contained, one area) or wave (2+ independent subtasks)? Sequential waves needed?
-    #|2. Agent types — gemini (default, bulk implementation), cursor_agent (refactor/file navigation), codex (isolated logic), claude (complex reasoning/architecture), pi (Pi-based runtime), spawn_worker (research or review only, no branch).
+    #|2. Agent types — gemini (default, bulk implementation), cursor_agent (refactor/file navigation), codex (isolated logic), claude (complex reasoning/architecture), spawn_worker (research or review only, no branch).
     #|3. Scaffold — any shared types, interfaces, or test infra that must land on the parent branch before forking? If so, commit it first.
     #|4. Waves — wave 1 is all independent tasks in parallel; wave 2+ for tasks that depend on wave 1 output.
     #|Then state your plan in 2-4 lines and execute immediately. Do not ask for approval unless the task is genuinely ambiguous.
@@ -159,7 +159,7 @@ fn spawn_worker_props() -> Array[SchemaProp] {
     { name: "agent_id", desc: "Compatibility alias for slug" },
     {
       name: "agent_type",
-      desc: "Worker agent type: gemini, claude, moon_pilot, codex, cursor_agent, or pi",
+      desc: "Worker agent type: gemini, claude, moon_pilot, codex, or cursor_agent",
     },
     { name: "type", desc: "Worker profile: research or review" },
     { name: "read_first", desc: "Newline-separated paths to read first" },
@@ -194,7 +194,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "agent_type",
-          desc: "Agent type: gemini (default), claude, moon_pilot, codex, cursor_agent, or pi",
+          desc: "Agent type: gemini (default), claude, moon_pilot, codex, or cursor_agent",
         },
         {
           name: "role",
@@ -238,7 +238,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "rescue_leaf",
-      description: "Reuse a salvageable dev worktree/branch: spawn replacement agent (default cursor_agent, optional pi), hand off dev lifecycle, transfer tracked PR ownership, supersede old leaf",
+      description: "Reuse a salvageable dev worktree/branch: spawn replacement agent (default cursor_agent), hand off dev lifecycle, transfer tracked PR ownership, supersede old leaf",
       props: [
         { name: "task", desc: "Task prompt for the replacement leaf" },
         {
@@ -255,7 +255,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "agent_type",
-          desc: "gemini|claude|moon_pilot|codex|cursor_agent|pi (default cursor_agent)",
+          desc: "gemini|claude|moon_pilot|codex|cursor_agent (default cursor_agent)",
         },
       ],
       required: ["task", "from_agent_id", "new_slug", "caller_id"],

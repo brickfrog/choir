@@ -22,7 +22,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn one or more agents in worktrees; optional agent_type (gemini|claude|moon_pilot|codex|cursor_agent|pi, default gemini); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review",
+      description: "Spawn one or more agents in worktrees; optional agent_type (gemini|claude|moon_pilot|codex|cursor_agent, default gemini); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -37,7 +37,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "rescue_leaf",
-      description: "Manual rescue: spawn a replacement dev leaf (default cursor_agent, optional pi) into an existing salvaged worktree/branch; hand off lifecycle and re-point tracked PRs",
+      description: "Manual rescue: spawn a replacement dev leaf (default cursor_agent) into an existing salvaged worktree/branch; hand off lifecycle and re-point tracked PRs",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -47,7 +47,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker for research/review; optional agent_type (gemini|claude|moon_pilot|pi, default gemini). Workers do not own a branch or PR",
+      description: "Spawn an inline worker for research/review; optional agent_type (gemini|claude|moon_pilot, default gemini). Workers do not own a branch or PR",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

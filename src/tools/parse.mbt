@@ -997,7 +997,6 @@ fn parse_agent_type(s : String) -> Result[@types.AgentType, ParseError] {
     "codex" => Ok(@types.AgentType::Codex)
     "cursor_agent" => Ok(@types.AgentType::CursorAgent)
     "cursoragent" => Ok(@types.AgentType::CursorAgent)
-    "pi" => Ok(@types.AgentType::Pi)
     _ => Err(ParseError::UnknownAgentType(value=s))
   }
 }

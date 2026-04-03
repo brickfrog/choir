@@ -358,7 +358,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_recovery_provider())
   let parent_id = "main.tl"
-  let child_id = "main.pi-leaf"
+  let child_id = "main.claude-leaf"
   let pr_number = 88
   let parent_target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":TL") {
@@ -383,7 +383,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     child_id,
     slug: @phase.extract_slug(child_id),
     branch: child_id,
-    agent_type: "pi",
+    agent_type: "claude",
     summary: @phase.ChildLifecycleSummary::ReviewOwned(
       pr_number~,
       state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
@@ -418,9 +418,9 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     state.register_agent({
       agent_id: child_id,
       role: @types.Role::Dev,
-      agent_type: @types.AgentType::Pi,
+      agent_type: @types.AgentType::Claude,
       parent: Some(parent_id),
-      workspace: project_dir + "/.choir/worktrees/pi-leaf",
+      workspace: project_dir + "/.choir/worktrees/claude-leaf",
       branch: child_id,
       terminal_target: None,
       host: @types.Host::Local,
