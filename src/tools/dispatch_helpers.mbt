@@ -680,11 +680,20 @@ fn parse_task_file(content : String) -> Result[TaskFile, @types.ChoirError] {
         @types.ChoirError::validation_error("missing or invalid title"),
       )
   }
-  let status = match json_get_string(fields, "status") {
+  let status_str = match json_get_string(fields, "status") {
     Some(v) => v
     None =>
       return Err(
         @types.ChoirError::validation_error("missing or invalid status"),
+      )
+  }
+  let status = match @types.TaskStatus::try_parse_wire(status_str) {
+    Ok(s) => s
+    Err(_) =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "missing or invalid status: " + status_str,
+        ),
       )
   }
   let assignee = match json_get_string(fields, "assignee") {
@@ -709,7 +718,7 @@ fn task_to_json(task : TaskFile) -> Json {
   {
     "id": task.id.to_json(),
     "title": task.title.to_json(),
-    "status": task.status.to_json(),
+    "status": task.status.to_wire_string().to_json(),
     "assignee": task.assignee.to_json(),
     "notes": task.notes.to_json(),
   }.to_json()

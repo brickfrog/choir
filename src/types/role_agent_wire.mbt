@@ -81,3 +81,22 @@ pub impl FromJson for AgentType with from_json(json, path) {
     _ => raise JsonDecodeError((path, "AgentType::from_json: expected string"))
   }
 }
+
+///|
+pub fn TaskStatus::to_wire_string(self : TaskStatus) -> String {
+  match self {
+    Todo => "todo"
+    InProgress => "in_progress"
+    Done => "done"
+  }
+}
+
+///|
+pub fn TaskStatus::try_parse_wire(s : String) -> Result[TaskStatus, ChoirError] {
+  match s {
+    "todo" => Ok(Todo)
+    "in_progress" => Ok(InProgress)
+    "done" => Ok(Done)
+    _ => Err(ChoirError::config_error("unknown task status: " + s))
+  }
+}
