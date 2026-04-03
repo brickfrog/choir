@@ -700,7 +700,7 @@ pub fn handoff_dev_workflow_to_new_agent(
   from_agent_id : String,
   to_agent_id : String,
   to_role : @types.Role,
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   match read_lifecycle(project_dir, from_agent_id) {
     Some(lc) =>
       match lc.workflow {
@@ -714,12 +714,26 @@ pub fn handoff_dev_workflow_to_new_agent(
           if write_lifecycle(project_dir, next) {
             Ok(())
           } else {
-            Err("failed to write lifecycle for " + to_agent_id)
+            Err(
+              @types.ChoirError::workspace_error(
+                "failed to write lifecycle for " + to_agent_id,
+              ),
+            )
           }
         }
-        _ => Err("rescue source must be a dev leaf lifecycle")
+        _ =>
+          Err(
+            @types.ChoirError::validation_error(
+              "rescue source must be a dev leaf lifecycle",
+            ),
+          )
       }
-    None => Err("missing lifecycle for " + from_agent_id)
+    None =>
+      Err(
+        @types.ChoirError::validation_error(
+          "missing lifecycle for " + from_agent_id,
+        ),
+      )
   }
 }
 
