@@ -3,7 +3,15 @@ pub(all) struct ChildHandle {
   slug : String
   branch : String
   agent_type : String
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct ChildTrackerEntry {
+  id : String
+  slug : String
+  branch : String
+  agent_type : String
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) struct ChildTracker {
@@ -41,44 +49,35 @@ pub fn ChildTracker::count(self : ChildTracker) -> Int {
 
 ///|
 pub fn ChildTracker::to_json(self : ChildTracker) -> String {
-  let entries : Array[Json] = []
+  let entries : Array[ChildTrackerEntry] = []
   self.children.each(fn(id, h) {
-    entries.push(
-      {
-        "id": id.to_json(),
-        "slug": h.slug.to_json(),
-        "branch": h.branch.to_json(),
-        "agent_type": h.agent_type.to_json(),
-      }.to_json(),
-    )
+    entries.push({
+      id,
+      slug: h.slug,
+      branch: h.branch,
+      agent_type: h.agent_type,
+    })
   })
   entries.to_json().stringify()
 }
 
 ///|
+/// Decodes each array element independently so one malformed row does not discard the rest.
 pub fn ChildTracker::from_json(json_str : String) -> ChildTracker {
   let tracker = ChildTracker::new()
   let json = @json.parse(json_str) catch { _ => return tracker }
   guard json is Array(arr) else { return tracker }
   for item in arr {
-    guard item is Object(obj) else { continue }
-    let id = match obj.get("id") {
-      Some(String(v)) => v
-      _ => continue
+    try {
+      let row : ChildTrackerEntry = @json.from_json(item)
+      tracker.add(row.id, {
+        slug: row.slug,
+        branch: row.branch,
+        agent_type: row.agent_type,
+      })
+    } catch {
+      _ => ()
     }
-    let slug = match obj.get("slug") {
-      Some(String(v)) => v
-      _ => continue
-    }
-    let branch = match obj.get("branch") {
-      Some(String(v)) => v
-      _ => continue
-    }
-    let agent_type = match obj.get("agent_type") {
-      Some(String(v)) => v
-      _ => continue
-    }
-    tracker.add(id, { slug, branch, agent_type })
   }
   tracker
 }
@@ -94,7 +93,7 @@ pub(all) enum TLPhase {
   PRFiled(number~ : Int, url~ : String)
   Done
   Failed(reason~ : String)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum TLEvent {
@@ -104,7 +103,7 @@ pub(all) enum TLEvent {
   PRMerged(number~ : Int, url~ : String)
   AllChildrenDone
   OwnPRFiled(number~ : Int, url~ : String, branch~ : String)
-} derive(Show, Eq)
+} derive(Show, Eq, ToJson, FromJson)
 
 ///|
 pub fn tl_transition(
@@ -170,31 +169,7 @@ pub fn tl_can_exit(phase : TLPhase) -> StopCheckResult {
 
 ///|
 pub fn tl_phase_to_json(phase : TLPhase) -> String {
-  let json : Json = match phase {
-    Planning => { "phase": "Planning".to_json() }.to_json()
-    Dispatching => { "phase": "Dispatching".to_json() }.to_json()
-    Waiting(count~, wave~) =>
-      {
-        "phase": "Waiting".to_json(),
-        "count": count.to_json(),
-        "wave": wave.to_json(),
-      }.to_json()
-    WaveComplete(wave~) =>
-      { "phase": "WaveComplete".to_json(), "wave": wave.to_json() }.to_json()
-    Merging(count~) =>
-      { "phase": "Merging".to_json(), "count": count.to_json() }.to_json()
-    AllMerged => { "phase": "AllMerged".to_json() }.to_json()
-    PRFiled(number~, url~) =>
-      {
-        "phase": "PRFiled".to_json(),
-        "count": number.to_json(),
-        "url": url.to_json(),
-      }.to_json()
-    Done => { "phase": "Done".to_json() }.to_json()
-    Failed(reason~) =>
-      { "phase": "Failed".to_json(), "reason": reason.to_json() }.to_json()
-  }
-  json.stringify()
+  derived_tl_phase_json_to_legacy(phase.to_json()).stringify()
 }
 
 ///|
@@ -218,38 +193,11 @@ pub fn TLPhase::transition(
 ///|
 pub fn tl_phase_from_json(json_str : String) -> TLPhase? {
   let json = @json.parse(json_str) catch { _ => return None }
-  guard json is Object(obj) else { return None }
-  match obj.get("phase") {
-    Some(String("Planning")) => Some(Planning)
-    Some(String("Dispatching")) => Some(Dispatching)
-    Some(String("Waiting")) => {
-      guard obj.get("count") is Some(Number(n, ..)) else { return None }
-      let wave = match obj.get("wave") {
-        Some(Number(w, ..)) => w.to_int()
-        _ => 1
-      }
-      Some(Waiting(count=n.to_int(), wave~))
-    }
-    Some(String("WaveComplete")) => {
-      guard obj.get("wave") is Some(Number(w, ..)) else { return None }
-      Some(WaveComplete(wave=w.to_int()))
-    }
-    Some(String("Merging")) => {
-      guard obj.get("count") is Some(Number(n, ..)) else { return None }
-      Some(Merging(count=n.to_int()))
-    }
-    Some(String("AllMerged")) => Some(AllMerged)
-    Some(String("PRFiled")) => {
-      guard obj.get("count") is Some(Number(n, ..)) else { return None }
-      guard obj.get("url") is Some(String(u)) else { return None }
-      Some(PRFiled(number=n.to_int(), url=u))
-    }
-    Some(String("Done")) => Some(Done)
-    Some(String("Failed")) =>
-      match obj.get("reason") {
-        Some(String(r)) => Some(Failed(reason=r))
-        _ => None
-      }
+  let adapted = legacy_tl_phase_json_to_derived(json)
+  try {
+    let p : TLPhase = @json.from_json(adapted)
+    Some(p)
+  } catch {
     _ => None
   }
 }
