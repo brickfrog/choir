@@ -431,6 +431,7 @@ pub fn plan_tl_poll_event_parent(
     ReviewCommented(_, _) => WaitingOnReviewOrCI
     CopilotIssueCommentSeen(_) =>
       tl_snapshot_workflow_category(tracked, merge_ready)
+    MergeReady(_) => MergeGateOpenPendingPolicyConfirmation
   }
 }
 
