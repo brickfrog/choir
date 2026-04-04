@@ -40,7 +40,7 @@ pub(all) enum DeliveryMethod {
 pub fn teams_inbox_json(
   sender : String,
   content : String,
-  status : String,
+  status : @types.Status,
 ) -> String {
   {
     "from": sender.to_json(),
@@ -61,7 +61,7 @@ pub fn plan_delivery(
   agent : @types.Agent,
   sender_id : String,
   content : String,
-  status : String,
+  status : @types.Status,
 ) -> DeliveryMethod {
   match agent.host {
     Remote(_) =>

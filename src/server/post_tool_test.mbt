@@ -319,7 +319,7 @@ test "plan_post_tool_actions - kill_agent failure chain" {
         parent_id="parent",
         agent_id="main.leaf",
         message="agent killed by parent",
-        status="failure"
+        status=@types.Status::Failure
       ) => saw_notify = true
       ParentFailureTerminalEchoIfNeeded(
         parent_id="parent",

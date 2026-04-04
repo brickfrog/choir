@@ -10,7 +10,7 @@ pub(all) enum TeardownEffect {
     parent_id~ : String,
     agent_id~ : String,
     message~ : String,
-    status~ : String
+    status~ : @types.Status
   )
   RemoveTeamMember(parent_id~ : String, slug~ : String)
   FireHook(
@@ -112,7 +112,7 @@ pub fn plan_finalize(
             parent_id~,
             agent_id~,
             message="agent shutdown",
-            status="success",
+            status=@types.Status::Success,
           ),
         )
       }
@@ -234,7 +234,7 @@ pub fn plan_fail(
           parent_id~,
           agent_id~,
           message=parent_message,
-          status="failure",
+          status=@types.Status::Failure,
         ),
       )
       effects.push(

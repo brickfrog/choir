@@ -166,7 +166,7 @@ struct ResolveReviewThreadArgs {
 pub(all) struct CallerMessageArgs {
   caller_id : String
   message : String
-  status : String
+  status : @types.Status
 } derive(Show, Eq)
 
 ///|
@@ -174,7 +174,7 @@ struct SendMessageArgs {
   target_id : String
   sender_id : String
   message : String
-  status : String
+  status : @types.Status
 } derive(Show, Eq)
 
 ///|
