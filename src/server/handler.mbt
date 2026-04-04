@@ -390,7 +390,7 @@ fn render_parent_next_action(
 /// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
 fn parent_poll_ci_escalation_prefix(tracked : @poller.TrackedPR) -> String {
   if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
-    "Choir already escalated a review wait timeout for this PR (no review in snapshot; the reviewer request may not have been accepted).\n\n"
+    "Review timeout already fired — no review in snapshot. Run: gh pr edit --add-reviewer @copilot\n\n"
   } else {
     ""
   }
@@ -479,7 +479,7 @@ fn parent_poll_event_message(
         agent_id +
         " PR #" +
         n.to_string() +
-        " — review wait window elapsed; Choir snapshot still shows no PR review\n" +
+        " — no review after timeout\n" +
         "branch: " +
         branch +
         "\n" +
@@ -487,8 +487,7 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "The reviewer request may not have been accepted; inspect the PR on GitHub or add a reviewer manually. Do not infer progress from CI alone while review is missing from snapshot.\n" +
-        "Next action: verify the review request on GitHub or add a reviewer manually." +
+        "Next action: gh pr edit --add-reviewer @copilot" +
         parent_poll_tl_decision_suffix(
           tracked, event, unresolved_threads_for_recheck,
         )
@@ -745,7 +744,7 @@ fn leaf_poll_review_injection_message(
           if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
             "[REVIEW] PR #" +
             n.to_string() +
-            ": CI no longer reports failure on latest head — review wait already timed out with no review in snapshot; the reviewer request may not have been accepted. Verify GitHub and add a reviewer manually if needed (not merge or approval)"
+            ": CI cleared but still no review. Run: gh pr edit --add-reviewer @copilot"
           } else {
             base
           }
@@ -762,7 +761,7 @@ fn leaf_poll_review_injection_message(
           if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
             "[REVIEW] PR #" +
             n.to_string() +
-            ": Actions rollup all-success on latest head — review wait already timed out with no review in snapshot; the reviewer request may not have been accepted. Inspect the PR on GitHub or add a reviewer manually (not merge or approval by itself)"
+            ": CI green but still no review. Run: gh pr edit --add-reviewer @copilot"
           } else {
             base
           }
@@ -2274,7 +2273,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("[PR MERGED]"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Waiting on a GitHub Copilot issue comment"))
+      assert_true(message.contains("Waiting on Copilot review"))
     }
     None => fail("expected PRReady message")
   }
@@ -2307,7 +2306,7 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     Some((message, status)) => {
       assert_eq(status, @types.Status::Success)
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Merge gate open"))
+      assert_true(message.contains("MERGE NOW"))
     }
     None => fail("expected merge-gate-open PRReady message")
   }
@@ -2343,11 +2342,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(
-        message.contains(
-          "Waiting on approving review, CI, or unresolved threads",
-        ),
-      )
+      assert_true(message.contains("Waiting on review or CI"))
     }
     None => fail("expected FixesPushed message")
   }
@@ -2393,7 +2388,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
       assert_true(message.contains("changes_requested"))
       assert_true(message.contains("GitHub review requests changes"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Blocked on review changes"))
+      assert_true(message.contains("BLOCKED: review requested changes"))
     }
     None => fail("expected CIFailureCleared message")
   }
@@ -2471,7 +2466,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
       assert_true(message.contains("no tracked blockers"))
       assert_true(message.contains("Does not merge"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Merge gate open"))
+      assert_true(message.contains("MERGE NOW"))
     }
     None => fail("expected CILatestHeadRollupSucceeded message")
   }
@@ -2522,9 +2517,8 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Info)
-      assert_true(message.contains("timed out"))
-      assert_true(message.contains("reviewer request"))
-      assert_true(message.contains("reviewer manually"))
+      assert_true(message.contains("no review"))
+      assert_true(message.contains("add-reviewer"))
       assert_false(message.contains("re-check review thread and policy"))
     }
     None => fail("expected leaf CI escalation injection")
@@ -2738,9 +2732,9 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     Some((message, status)) => {
       assert_eq(status, @types.Status::Failure)
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Attention required: review wait timed out"))
-      assert_true(message.contains("reviewer request"))
-      assert_true(message.contains("inspect the PR on GitHub"))
+      assert_true(message.contains("ACTION REQUIRED: no review"))
+      assert_true(message.contains("add-reviewer"))
+      assert_true(message.contains("add-reviewer"))
       assert_false(message.contains("15min"))
     }
     None => fail("expected ReviewTimeout message")
@@ -2777,11 +2771,9 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
     ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Info)
-      assert_true(
-        message.contains("Choir already escalated a review wait timeout"),
-      )
+      assert_true(message.contains("Review timeout already fired"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Attention required: review wait timed out"))
+      assert_true(message.contains("ACTION REQUIRED: no review"))
     }
     None => fail("expected CILatestHeadRollupSucceeded escalation message")
   }
@@ -2814,7 +2806,7 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Failure)
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Attention required: CI is failing"))
+      assert_true(message.contains("BLOCKED: CI failing"))
     }
     None => fail("expected CIFailed message")
   }

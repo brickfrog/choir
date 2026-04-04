@@ -76,22 +76,22 @@ test "tl_tracked_pr_workflow_category_sentence covers alert categories" {
   assert_true(
     tl_tracked_pr_workflow_category_sentence(
       AttentionRequiredCopilotSilentAfterTimeout,
-    ).contains("review wait timed out"),
-  )
-  assert_true(
-    tl_tracked_pr_workflow_category_sentence(
-      AttentionRequiredCopilotSilentAfterTimeout,
-    ).contains("reviewer request"),
+    ).contains("ACTION REQUIRED"),
   )
   assert_true(
     tl_tracked_pr_workflow_category_sentence(AttentionRequiredCIFailed).contains(
-      "CI is failing",
+      "CI failing",
     ),
   )
   assert_true(
     tl_tracked_pr_workflow_category_sentence(ObservedMergedExternal).contains(
-      "merged or closed externally",
+      "merged externally",
     ),
+  )
+  assert_true(
+    tl_tracked_pr_workflow_category_sentence(
+      MergeGateOpenPendingPolicyConfirmation,
+    ).contains("MERGE NOW"),
   )
 }
 
