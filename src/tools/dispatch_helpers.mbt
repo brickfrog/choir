@@ -272,13 +272,19 @@ pub async fn execute_delivery(
   project_dir? : String = ".",
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, @types.ChoirError] {
-  fn ensure_success(statuses : Array[Int]) -> Result[Unit, @types.ChoirError] {
+  fn ensure_success(
+    statuses : Array[Int],
+    cmd : @workspace.Command,
+  ) -> Result[Unit, @types.ChoirError] {
     if statuses.length() == 0 || statuses[0] == 0 {
       Ok(())
     } else {
       Err(
         @types.ChoirError::transport_error(
-          "delivery command failed with exit code " + statuses[0].to_string(),
+          "delivery command failed (exit " +
+          statuses[0].to_string() +
+          "): " +
+          cmd.to_string(),
         ),
       )
     }
@@ -355,7 +361,7 @@ pub async fn execute_delivery(
       let attempt_result = if run_threw {
         Err(last_error)
       } else {
-        ensure_success(statuses)
+        ensure_success(statuses, cmd)
       }
       match attempt_result {
         Ok(_) => return Ok(())
