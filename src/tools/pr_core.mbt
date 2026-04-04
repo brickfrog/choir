@@ -1702,10 +1702,21 @@ pub async fn interpret_kill_agent(
       let agent = reg.get(args.agent_id) catch {
         _ => return @types.Response::Err("agent not found: " + args.agent_id)
       }
+      let mut pane_close_failed = false
       match kill_agent_pane_close_command(agent) {
         Some(cmd) => {
-          let _ = runner([cmd])
-          ()
+          let codes = runner([cmd]) catch { _ => [-1] }
+          if codes.length() > 0 && codes[0] != 0 {
+            pane_close_failed = true
+            @moontrace.warn(
+              "kill_agent pane close failed",
+              fields=@moontrace.fields([
+                ("agent_id", args.agent_id.to_json()),
+                ("exit", codes[0].to_json()),
+                ("cmd", cmd.to_string().to_json()),
+              ]),
+            )
+          }
         }
         None => ()
       }
@@ -1726,7 +1737,14 @@ pub async fn interpret_kill_agent(
           ("reason", args.reason.to_json()),
         ]),
       )
-      kill_agent_ok_response(args.agent_id)
+      let response = kill_agent_ok_response(args.agent_id)
+      if pane_close_failed {
+        response.with_warning(
+          "pane close failed — zellij tab/pane may still be open",
+        )
+      } else {
+        response
+      }
     }
   }
 }
