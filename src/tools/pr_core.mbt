@@ -120,7 +120,10 @@ pub fn file_pr_auto_notify_plan(
   match parent_result {
     Ok(parent) => {
       let delivery = @message.plan_delivery(
-        parent, tracked_agent_id, notify_message, "success",
+        parent,
+        tracked_agent_id,
+        notify_message,
+        @types.Status::Success,
       )
       let delivery_log_append = "[auto-notify] caller=" +
         tracked_agent_id +
@@ -472,7 +475,7 @@ pub fn send_message_plan(
   target_id : String,
   sender_id : String,
   message : String,
-  status : String,
+  status : @types.Status,
   registry_lookup : Result[@types.Agent, @types.ChoirError]?,
 ) -> SendMessagePlan {
   match registry_lookup {

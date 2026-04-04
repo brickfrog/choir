@@ -56,7 +56,7 @@ test "plan_finalize - basic success" {
       parent_id="parent",
       agent_id="main.leaf",
       message="agent shutdown",
-      status="success"
+      status=@types.Status::Success
     ) => ()
     _ => fail("expected NotifyParent")
   }
@@ -176,7 +176,7 @@ test "plan_fail - basic failure" {
       parent_id="parent",
       agent_id="main.leaf",
       message="watchdog timeout",
-      status="failure"
+      status=@types.Status::Failure
     ) => ()
     _ => fail("expected NotifyParent")
   }

@@ -50,7 +50,7 @@ test "notify_parent uses live registry parent when present" {
   )
 
   let message = "hello parent"
-  let res = try? state.notify_parent(caller_id, message, "success")
+  let res = try? state.notify_parent(caller_id, message, @types.Status::Success)
   match res {
     Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
       assert_eq(target, live_target)
@@ -136,7 +136,7 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
   )
 
   let message = "hello parent"
-  let res = try? state.notify_parent(caller_id, message, "success")
+  let res = try? state.notify_parent(caller_id, message, @types.Status::Success)
   match res {
     Ok(@message.DeliveryMethod::LocalTerminalInput(target, text)) => {
       let expected_target = match
@@ -187,7 +187,7 @@ test "notify_parent returns clear error when parent cannot be resolved" {
   assert_true(@phase.read_lifecycle(project_dir, parent_id) == None)
 
   let message = "hello parent"
-  let res = try? state.notify_parent(caller_id, message, "success")
+  let res = try? state.notify_parent(caller_id, message, @types.Status::Success)
   match res {
     Ok(_) => fail("expected Err AgentNotFound, got Ok")
     Err(e) => assert_eq(e.message(), "agent not found: " + parent_id)
