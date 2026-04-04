@@ -657,6 +657,25 @@ fn parent_poll_event_message(
           @types.Status::Success,
         ),
       )
+    MergeReady(n) => {
+      let message = "[MERGE READY] " +
+        agent_id +
+        " PR #" +
+        n.to_string() +
+        " — reviewed, CI green, ready to merge\n" +
+        "branch: " +
+        branch +
+        "\n" +
+        "parent_branch: " +
+        parent_branch.unwrap_or("<unknown>") +
+        pr_url +
+        "\n" +
+        render_parent_next_action(n, parent_branch) +
+        parent_poll_tl_decision_suffix(
+          tracked, event, unresolved_threads_for_recheck,
+        )
+      Some((message, @types.Status::Success))
+    }
   }
 }
 
@@ -673,6 +692,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     CILatestHeadRollupSucceeded(n) => n
     CopilotIssueCommentSeen(n) => n
     PRMerged(n) => n
+    MergeReady(n) => n
   }
 }
 
@@ -796,6 +816,7 @@ fn leaf_poll_review_injection_message(
           @types.Status::Success,
         ),
       )
+    MergeReady(_) => None
   }
 }
 
@@ -1112,6 +1133,7 @@ fn pr_comment_body(
         ),
       )
     PRMerged(_) => None
+    MergeReady(_) => None
   }
 }
 

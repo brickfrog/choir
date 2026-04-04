@@ -667,8 +667,23 @@ pub async fn PollerState::tick_with(
     } else {
       base_events
     }
+    let merge_snapshot_ready = (review == Approved || review == Commented) &&
+      ci_rollup == Success
+    let needs_merge_nudge = events.length() == 0 &&
+      merge_snapshot_ready &&
+      !tracked_ok.notified_parent
+    let all_events = if needs_merge_nudge {
+      let merged : Array[PollEvent] = []
+      for e in events {
+        merged.push(e)
+      }
+      merged.push(PollEvent::MergeReady(pr_number))
+      merged
+    } else {
+      events
+    }
     let mut timeout_at = tracked_ok.last_timeout_at
-    for event in events {
+    for event in all_events {
       on_event(event, tracked_ok.agent_id)
       match event {
         ReviewTimeout(_) => timeout_at = now

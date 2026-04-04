@@ -80,4 +80,5 @@ pub(all) enum PollEvent {
   /// First poll tick where a GitHub Copilot issue-thread comment was observed (REST); sticky state updated.
   CopilotIssueCommentSeen(Int)
   PRMerged(Int)
+  MergeReady(Int)
 } derive(Show, Eq)
