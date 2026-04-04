@@ -1990,8 +1990,17 @@ fn zellij_action_run() -> Unit {
               match zellij_target_pane_id(target, panes) {
                 Some(id) => id
                 None => {
+                  let tab_names = panes.map(fn(p) { p.tab_name })
                   @sys.write_stdout(
-                    "error: zellij target not found: " + target_text + "\n",
+                    "error: zellij target not found: " +
+                    target_text +
+                    " (session=" +
+                    target.session +
+                    " panes_found=" +
+                    panes.length().to_string() +
+                    " tabs=" +
+                    tab_names.to_string() +
+                    ")\n",
                   )
                   @sys.exit(1)
                   return
@@ -2047,8 +2056,17 @@ fn zellij_action_run() -> Unit {
                     zellij_target_pane_id(target, panes, allow_exited=true) {
                     Some(id) => id
                     None => {
+                      let tab_names = panes.map(fn(p) { p.tab_name })
                       @sys.write_stdout(
-                        "error: zellij target not found: " + target_text + "\n",
+                        "error: zellij target not found: " +
+                        target_text +
+                        " (session=" +
+                        target.session +
+                        " panes_found=" +
+                        panes.length().to_string() +
+                        " tabs=" +
+                        tab_names.to_string() +
+                        ")\n",
                       )
                       @sys.exit(1)
                       return
