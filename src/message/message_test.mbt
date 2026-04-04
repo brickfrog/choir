@@ -12,19 +12,25 @@ test "format failure" {
 
 ///|
 test "teams inbox json output" {
-  let json = @message.teams_inbox_json("sender", "hello", "Success")
+  let json = @message.teams_inbox_json(
+    "sender",
+    "hello",
+    @types.Status::Success,
+  )
   assert_eq(
-    json, "{\"from\":\"sender\",\"content\":\"hello\",\"status\":\"Success\"}",
+    json, "{\"from\":\"sender\",\"content\":\"hello\",\"status\":\"success\"}",
   )
 }
 
 ///|
 test "teams inbox json escapes content" {
   let json = @message.teams_inbox_json(
-    "sender\"1", "line 1\nline \"2\"", "Info",
+    "sender\"1",
+    "line 1\nline \"2\"",
+    @types.Status::Info,
   )
   assert_eq(
-    json, "{\"from\":\"sender\\\"1\",\"content\":\"line 1\\nline \\\"2\\\"\",\"status\":\"Info\"}",
+    json, "{\"from\":\"sender\\\"1\",\"content\":\"line 1\\nline \\\"2\\\"\",\"status\":\"info\"}",
   )
 }
 
@@ -48,10 +54,15 @@ test "plan delivery for Claude agent -> TeamsInbox" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
+  let res = @message.plan_delivery(
+    agent,
+    "sender-1",
+    "hi",
+    @types.Status::Success,
+  )
   let expected = @message.DeliveryMethod::TeamsInbox(
     "~/.claude/teams/agent-claude/inboxes/default.json",
-    "{\"from\":\"sender-1\",\"content\":\"hi\",\"status\":\"Success\"}",
+    "{\"from\":\"sender-1\",\"content\":\"hi\",\"status\":\"success\"}",
     fallback_target=Some("agent-claude"),
   )
   assert_eq(res, expected)
@@ -71,7 +82,12 @@ test "plan delivery for Claude agent with terminal target -> LocalTerminalInput"
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
+  let res = @message.plan_delivery(
+    agent,
+    "sender-1",
+    "hi",
+    @types.Status::Success,
+  )
   let expected = @message.DeliveryMethod::LocalTerminalInput(
     @types.LocalTarget::parse("zellij-tab:choir:TL").unwrap(),
     "[from: sender-1] hi",
@@ -93,7 +109,12 @@ test "plan delivery for Gemini agent -> LocalTerminalInput" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
+  let res = @message.plan_delivery(
+    agent,
+    "sender-1",
+    "hi",
+    @types.Status::Success,
+  )
   let expected = @message.DeliveryMethod::LocalTerminalInput(
     @types.LocalTarget::parse("zellij-pane:choir:target-pane").unwrap(),
     "[from: sender-1] hi",
@@ -115,7 +136,12 @@ test "plan delivery for MoonPilot agent -> LocalTerminalInput" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
+  let res = @message.plan_delivery(
+    agent,
+    "sender-1",
+    "hi",
+    @types.Status::Success,
+  )
   let expected = @message.DeliveryMethod::LocalTerminalInput(
     @types.LocalTarget::parse("zellij-tab:choir:moonpilot").unwrap(),
     "[from: sender-1] hi",
@@ -137,7 +163,12 @@ test "plan delivery for Remote agent -> TcpPush" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  let res = @message.plan_delivery(agent, "sender-1", "hi", "Success")
+  let res = @message.plan_delivery(
+    agent,
+    "sender-1",
+    "hi",
+    @types.Status::Success,
+  )
   let expected = @message.DeliveryMethod::TcpPush(
     "agent-remote", "[from: sender-1] hi",
   )

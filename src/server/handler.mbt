@@ -335,7 +335,7 @@ pub fn ServerState::notify_parent(
   self : ServerState,
   caller_id : String,
   message : String,
-  status : String,
+  status : @types.Status,
 ) -> @message.DeliveryMethod raise @types.ChoirError {
   let parent = self.resolve_parent_for_delivery(caller_id)
   @message.plan_delivery(parent, caller_id, message, status)
@@ -420,7 +420,7 @@ fn parent_poll_event_message(
   tracked : @poller.TrackedPR,
   event : @poller.PollEvent,
   unresolved_threads_for_recheck : Int?,
-) -> (String, String)? {
+) -> (String, @types.Status)? {
   let agent_id = tracked.agent_id
   let branch = tracked.branch
   let parent_branch = if tracked.parent_branch == "" {
@@ -452,7 +452,7 @@ fn parent_poll_event_message(
         parent_poll_tl_decision_suffix(
           tracked, event, unresolved_threads_for_recheck,
         )
-      Some((message, "success"))
+      Some((message, @types.Status::Success))
     }
     FixesPushed(n) => {
       let message = "[FIXES PUSHED] " +
@@ -472,7 +472,7 @@ fn parent_poll_event_message(
         parent_poll_tl_decision_suffix(
           tracked, event, unresolved_threads_for_recheck,
         )
-      Some((message, "info"))
+      Some((message, @types.Status::Info))
     }
     ReviewTimeout(n) => {
       let message = "[REVIEW TIMEOUT] " +
@@ -492,7 +492,7 @@ fn parent_poll_event_message(
         parent_poll_tl_decision_suffix(
           tracked, event, unresolved_threads_for_recheck,
         )
-      Some((message, "failure"))
+      Some((message, @types.Status::Failure))
     }
     ReviewReceived(n, comments) =>
       if comments == "" {
@@ -512,7 +512,7 @@ fn parent_poll_event_message(
             parent_poll_tl_decision_suffix(
               tracked, event, unresolved_threads_for_recheck,
             ),
-            "info",
+            @types.Status::Info,
           ),
         )
       } else {
@@ -527,7 +527,7 @@ fn parent_poll_event_message(
             parent_poll_tl_decision_suffix(
               tracked, event, unresolved_threads_for_recheck,
             ),
-            "info",
+            @types.Status::Info,
           ),
         )
       }
@@ -549,7 +549,7 @@ fn parent_poll_event_message(
           parent_poll_tl_decision_suffix(
             tracked, event, unresolved_threads_for_recheck,
           ),
-          "failure",
+          @types.Status::Failure,
         ),
       )
     CIFailureCleared(n) => {
@@ -577,7 +577,7 @@ fn parent_poll_event_message(
           parent_poll_tl_decision_suffix(
             tracked, event, unresolved_threads_for_recheck,
           ),
-          "info",
+          @types.Status::Info,
         ),
       )
     }
@@ -606,7 +606,7 @@ fn parent_poll_event_message(
           parent_poll_tl_decision_suffix(
             tracked, event, unresolved_threads_for_recheck,
           ),
-          "info",
+          @types.Status::Info,
         ),
       )
     }
@@ -632,7 +632,7 @@ fn parent_poll_event_message(
           parent_poll_tl_decision_suffix(
             tracked, event, unresolved_threads_for_recheck,
           ),
-          "info",
+          @types.Status::Info,
         ),
       )
     }
@@ -655,7 +655,7 @@ fn parent_poll_event_message(
           parent_poll_tl_decision_suffix(
             tracked, event, unresolved_threads_for_recheck,
           ),
-          "success",
+          @types.Status::Success,
         ),
       )
   }
@@ -699,7 +699,7 @@ fn clamp_review_summary_for_pane(body : String) -> String {
 fn leaf_poll_review_injection_message(
   event : @poller.PollEvent,
   tracked : @poller.TrackedPR?,
-) -> (String, String)? {
+) -> (String, @types.Status)? {
   match event {
     ReviewReceived(n, body) =>
       Some(
@@ -712,7 +712,7 @@ fn leaf_poll_review_injection_message(
             ": " +
             clamp_review_summary_for_pane(body)
           },
-          "info",
+          @types.Status::Info,
         ),
       )
     ReviewCommented(n, body) =>
@@ -726,11 +726,16 @@ fn leaf_poll_review_injection_message(
             ": " +
             clamp_review_summary_for_pane(body)
           },
-          "info",
+          @types.Status::Info,
         ),
       )
     CIFailed(n) =>
-      Some(("[REVIEW] PR #" + n.to_string() + ": CI checks failing", "failure"))
+      Some(
+        (
+          "[REVIEW] PR #" + n.to_string() + ": CI checks failing",
+          @types.Status::Failure,
+        ),
+      )
     CIFailureCleared(n) => {
       let base = "[REVIEW] PR #" +
         n.to_string() +
@@ -746,7 +751,7 @@ fn leaf_poll_review_injection_message(
           }
         None => base
       }
-      Some((msg, "info"))
+      Some((msg, @types.Status::Info))
     }
     CILatestHeadRollupSucceeded(n) => {
       let base = "[REVIEW] PR #" +
@@ -763,7 +768,7 @@ fn leaf_poll_review_injection_message(
           }
         None => base
       }
-      Some((msg, "info"))
+      Some((msg, @types.Status::Info))
     }
     CopilotIssueCommentSeen(n) =>
       Some(
@@ -771,7 +776,7 @@ fn leaf_poll_review_injection_message(
           "[REVIEW] PR #" +
           n.to_string() +
           ": GitHub Copilot issue-thread comment observed — re-check remaining gates (not merge or approval by itself)",
-          "info",
+          @types.Status::Info,
         ),
       )
     PRReady(n) =>
@@ -780,7 +785,7 @@ fn leaf_poll_review_injection_message(
           "[REVIEW] PR #" +
           n.to_string() +
           ": approved (not merged until merge_pr succeeds)",
-          "success",
+          @types.Status::Success,
         ),
       )
     FixesPushed(_) => None
@@ -789,7 +794,7 @@ fn leaf_poll_review_injection_message(
       Some(
         (
           "[PR MERGED] PR #" + n.to_string() + " merged — call shutdown",
-          "success",
+          @types.Status::Success,
         ),
       )
   }
@@ -800,7 +805,7 @@ priv struct PendingPollParentRow {
   tracked : @poller.TrackedPR
   leaf_agent_id : String
   message : String
-  status : String
+  status : @types.Status
   category : @poller.TlTrackedPrWorkflowCategory
 }
 
@@ -906,23 +911,23 @@ fn rollup_rows_for(
 }
 
 ///|
-fn rollup_delivery_status(rows : Array[PendingPollParentRow]) -> String {
+fn rollup_delivery_status(rows : Array[PendingPollParentRow]) -> @types.Status {
   let mut has_failure = false
   let mut has_success = false
   for row in rows {
-    if row.status == "failure" {
+    if row.status == @types.Status::Failure {
       has_failure = true
     }
-    if row.status == "success" {
+    if row.status == @types.Status::Success {
       has_success = true
     }
   }
   if has_failure {
-    "failure"
+    @types.Status::Failure
   } else if has_success {
-    "success"
+    @types.Status::Success
   } else {
-    "info"
+    @types.Status::Info
   }
 }
 
@@ -1159,7 +1164,12 @@ async fn deliver_poller_stall_notifications(
           "\n",
         ),
       )
-      let delivery = @message.plan_delivery(parent, pr.agent_id, msg, "info")
+      let delivery = @message.plan_delivery(
+        parent,
+        pr.agent_id,
+        msg,
+        @types.Status::Info,
+      )
       ignore(@tools.execute_delivery(delivery, runner))
       match state.poller.get(pr.pr_number) {
         Some(cur) => state.poller.restore({ ..cur, stall_notified: true })
@@ -1389,7 +1399,7 @@ async fn deliver_orphaned_pr_notifications(
         parent,
         pr.agent_id,
         message,
-        "failure",
+        @types.Status::Failure,
       )
       match @tools.execute_delivery(delivery, runner) {
         Ok(_) =>
@@ -1889,7 +1899,10 @@ async fn ServerState::interpret_teardown_effects(
                 pr_number, leaf_id, branch, parent_branch, url,
               )
               let delivery = @message.plan_delivery(
-                parent, leaf_id, body, "success",
+                parent,
+                leaf_id,
+                body,
+                @types.Status::Success,
               )
               ignore(
                 @tools.execute_delivery(delivery, runner) catch {
@@ -1910,7 +1923,10 @@ async fn ServerState::interpret_teardown_effects(
         try {
           let p = self.resolve_parent_by_id(parent_id)
           let delivery = @message.plan_delivery(
-            p, agent_id, parent_message, "failure",
+            p,
+            agent_id,
+            parent_message,
+            @types.Status::Failure,
           )
           let already_terminal = match delivery {
             @message.DeliveryMethod::LocalTerminalInput(_, _) => true
@@ -2252,7 +2268,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), None) {
     Some((message, status)) => {
-      assert_eq(status, "success")
+      assert_eq(status, @types.Status::Success)
       assert_true(message.contains("[PR READY]"))
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
@@ -2289,7 +2305,7 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRReady(70), Some(0)) {
     Some((message, status)) => {
-      assert_eq(status, "success")
+      assert_eq(status, @types.Status::Success)
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("Merge gate open"))
     }
@@ -2322,7 +2338,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
   match
     parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8), None) {
     Some((message, status)) => {
-      assert_eq(status, "info")
+      assert_eq(status, @types.Status::Info)
       assert_true(message.contains("[FIXES PUSHED]"))
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
@@ -2366,7 +2382,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
       Some(0),
     ) {
     Some((message, status)) => {
-      assert_eq(status, "info")
+      assert_eq(status, @types.Status::Info)
       assert_true(message.contains("[CI FAILURE CLEARED]"))
       assert_true(message.contains("not a merge/review verdict"))
       assert_true(message.contains("pending"))
@@ -2391,7 +2407,7 @@ test "leaf_poll_review_injection_message CIFailureCleared is honest about scope"
       None,
     ) {
     Some((message, status)) => {
-      assert_eq(status, "info")
+      assert_eq(status, @types.Status::Info)
       assert_true(message.contains("no longer reports failure"))
       assert_true(message.contains("GitHub"))
       assert_true(message.contains("not merge"))
@@ -2444,7 +2460,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
       Some(0),
     ) {
     Some((message, status)) => {
-      assert_eq(status, "info")
+      assert_eq(status, @types.Status::Info)
       assert_true(message.contains("[CI LATEST HEAD]"))
       assert_true(message.contains("not merge approval"))
       assert_true(message.contains("re-check"))
@@ -2469,7 +2485,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded is scoped" 
       None,
     ) {
     Some((message, status)) => {
-      assert_eq(status, "info")
+      assert_eq(status, @types.Status::Info)
       assert_true(message.contains("all checks successful"))
       assert_true(message.contains("not merge"))
     }
@@ -2505,7 +2521,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
       Some(tracked),
     ) {
     Some((message, status)) => {
-      assert_eq(status, "info")
+      assert_eq(status, @types.Status::Info)
       assert_true(message.contains("timed out"))
       assert_true(message.contains("reviewer request"))
       assert_true(message.contains("reviewer manually"))
@@ -2720,7 +2736,7 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
       None,
     ) {
     Some((message, status)) => {
-      assert_eq(status, "failure")
+      assert_eq(status, @types.Status::Failure)
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("Attention required: review wait timed out"))
       assert_true(message.contains("reviewer request"))
@@ -2760,7 +2776,7 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
       Some(0),
     ) {
     Some((message, status)) => {
-      assert_eq(status, "info")
+      assert_eq(status, @types.Status::Info)
       assert_true(
         message.contains("Choir already escalated a review wait timeout"),
       )
@@ -2796,7 +2812,7 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
   match
     parent_poll_event_message(tracked, @poller.PollEvent::CIFailed(62), None) {
     Some((message, status)) => {
-      assert_eq(status, "failure")
+      assert_eq(status, @types.Status::Failure)
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("Attention required: CI is failing"))
     }
@@ -2829,7 +2845,7 @@ test "parent_poll_event_message PRMerged does not append TLDecision suffix" {
   match
     parent_poll_event_message(tracked, @poller.PollEvent::PRMerged(63), Some(0)) {
     Some((message, status)) => {
-      assert_eq(status, "success")
+      assert_eq(status, @types.Status::Success)
       assert_false(message.contains("TLDecision:"))
       assert_true(message.contains("leaf will shut down automatically"))
     }

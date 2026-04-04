@@ -100,3 +100,40 @@ pub fn TaskStatus::try_parse_wire(s : String) -> Result[TaskStatus, ChoirError] 
     _ => Err(ChoirError::config_error("unknown task status: " + s))
   }
 }
+
+///|
+pub fn Status::to_wire_string(self : Status) -> String {
+  match self {
+    Success => "success"
+    Failure => "failure"
+    Info => "info"
+  }
+}
+
+///|
+pub fn Status::try_parse_wire(s : String) -> Result[Status, ChoirError] {
+  match s {
+    "success" => Ok(Success)
+    "failure" => Ok(Failure)
+    "info" => Ok(Info)
+    _ => Err(ChoirError::config_error("unknown status: " + s))
+  }
+}
+
+///|
+pub impl ToJson for Status with to_json(self) -> Json {
+  self.to_wire_string().to_json()
+}
+
+///|
+pub impl FromJson for Status with from_json(json, path) {
+  match json {
+    String(s) =>
+      match Status::try_parse_wire(s) {
+        Ok(t) => t
+        Err(e) =>
+          raise JsonDecodeError((path, "Status::from_json: " + e.message()))
+      }
+    _ => raise JsonDecodeError((path, "Status::from_json: expected string"))
+  }
+}

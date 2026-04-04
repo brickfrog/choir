@@ -7,6 +7,7 @@ pub(all) enum ParseError {
   UnknownRole(value~ : String)
   UnknownAgentType(value~ : String)
   UnknownTaskStatus(value~ : String)
+  UnknownStatus(value~ : String)
 } derive(Show, Eq)
 
 ///|
@@ -18,7 +19,8 @@ pub fn ParseError::message(self : ParseError) -> String {
     UnknownTool(name~) => "unknown tool: " + name
     UnknownRole(value~) => "invalid role: " + value
     UnknownAgentType(value~) => "invalid agent_type: " + value
-    UnknownTaskStatus(value~) => "invalid status: " + value
+    UnknownTaskStatus(value~) => "invalid task status: " + value
+    UnknownStatus(value~) => "invalid status: " + value
   }
 }
 
@@ -1030,6 +1032,14 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
 }
 
 ///|
+fn validate_status(status : String) -> Result[@types.Status, ParseError] {
+  match @types.Status::try_parse_wire(status) {
+    Ok(s) => Ok(s)
+    Err(_) => Err(ParseError::UnknownStatus(value=status))
+  }
+}
+
+///|
 fn parse_caller_message_args(
   args : ToolArgs,
 ) -> Result[CallerMessageArgs, ParseError] {
@@ -1037,10 +1047,15 @@ fn parse_caller_message_args(
   if caller_id == "" {
     return Err(ParseError::MissingField(field="caller_id"))
   }
+  let status = match
+    validate_status(tool_args_get(args, "status").unwrap_or("info")) {
+    Ok(s) => s
+    Err(e) => return Err(e)
+  }
   Ok({
     caller_id,
     message: tool_args_get(args, "message").unwrap_or(""),
-    status: tool_args_get(args, "status").unwrap_or("info"),
+    status,
   })
 }
 
@@ -1052,11 +1067,16 @@ fn parse_send_message_args(
   if target_id == "" {
     return Err(ParseError::MissingField(field="target_id"))
   }
+  let status = match
+    validate_status(tool_args_get(args, "status").unwrap_or("info")) {
+    Ok(s) => s
+    Err(e) => return Err(e)
+  }
   Ok({
     target_id,
     sender_id: tool_args_get(args, "sender_id").unwrap_or("unknown"),
     message: tool_args_get(args, "message").unwrap_or(""),
-    status: tool_args_get(args, "status").unwrap_or("info"),
+    status,
   })
 }
 
