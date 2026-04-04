@@ -373,27 +373,24 @@ pub fn tl_tracked_pr_workflow_category_sentence(
 ) -> String {
   match cat {
     BlockedOnChanges =>
-      "Blocked on review changes — leaf owns follow-up before merge."
+      "BLOCKED: review requested changes. Wait for leaf to push fixes."
     AttentionRequiredCopilotSilentAfterTimeout =>
-      "Attention required: review wait timed out and Choir still sees no PR review in its snapshot; the reviewer request may not have been accepted — inspect the PR on GitHub or add a reviewer manually before merge decisions."
-    AttentionRequiredCIFailed =>
-      "Attention required: CI is failing on the latest head — do not merge until the failure is understood or fixed."
-    WaitingOnReviewOrCI =>
-      "Waiting on approving review, CI, or unresolved threads — do not infer merge from partial snapshot."
+      "ACTION REQUIRED: no review appeared after timeout. Run: gh pr edit --add-reviewer @copilot"
+    AttentionRequiredCIFailed => "BLOCKED: CI failing. Do not merge."
+    WaitingOnReviewOrCI => "Waiting on review or CI. No action needed yet."
     WaitingOnCopilotIssueComment =>
-      "Waiting on a GitHub Copilot issue comment on this PR — review-rollups alone do not prove Copilot commented on the issue thread; CI/review/thread gates may still apply."
+      "Waiting on Copilot review. No action needed yet."
     CopilotIssueCommentSeenRecheckRemainingGates =>
-      "GitHub Copilot issue comment observed on the PR; re-check remaining review, CI, and thread gates before merge."
+      "Copilot reviewed. Check threads, then merge_pr if clear."
     ReadyForTLRecheck =>
-      "TL re-check required — CI/review signal changed; verify GitHub before merge_pr."
+      "CI/review changed. Re-check threads, then merge_pr if clear."
     MergeGateOpenPendingPolicyConfirmation =>
-      "Merge gate open on Choir snapshot (approved, CI success, zero unresolved threads when known); confirm policy, then merge_pr if appropriate. Does not merge automatically."
-    ObservedMergedExternal =>
-      "PR merged or closed externally — use lifecycle/leaf shutdown as appropriate."
+      "MERGE NOW: reviewed, CI green, threads resolved. Run merge_pr."
+    ObservedMergedExternal => "PR already merged externally. Kill the leaf."
     OrphanedPRNeedsManualAction =>
-      "PR's owning agent is no longer active — merge manually via merge_pr or respawn via rescue_leaf."
+      "ORPHANED: leaf is dead, PR still open. Run merge_pr or rescue_leaf."
     StalledOnChangesRequested =>
-      "Changes requested but leaf has not pushed fixes — check leaf status or respawn."
+      "STALLED: changes requested but leaf hasn't pushed. Check leaf or respawn."
   }
 }
 
