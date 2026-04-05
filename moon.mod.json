@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "deps": {
     "moonbitlang/async": "0.16.8",
-    "brickfrog/moontrace": "0.5.1",
+    "brickfrog/moontrace": "0.6.0",
     "brickfrog/tempo": "0.2.1"
   },
   "readme": "README.md",

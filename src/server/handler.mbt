@@ -54,14 +54,14 @@ async fn emit_span(
   let role_str = req.role.to_wire_string()
   let status = resp.status_tag()
   let duration_ms = end_ms - start_ms
-  let fields = @moontrace.fields([
-    ("agent_id", agent_id_str.to_json()),
-    ("role", role_str.to_json()),
-    ("status", status.to_json()),
-    ("duration_ms", duration_ms.to_json()),
-  ])
+  let fields = [
+    @moontrace.field("agent_id", agent_id_str),
+    @moontrace.field("role", role_str),
+    @moontrace.field("status", status),
+    @moontrace.field("duration_ms", duration_ms),
+  ]
   match resp.error_message() {
-    Some(msg) => fields.push({ key: "error", value: msg.to_json() })
+    Some(msg) => fields.push(@moontrace.field("error", msg))
     None => ()
   }
   @moontrace.info(name, fields~)
@@ -1470,20 +1470,17 @@ fn log_poller_pr_tick(
   } else {
     ""
   }
-  @moontrace.info(
-    "poller pr",
-    fields=@moontrace.fields([
-      ("pr", log.pr_number.to_json()),
-      ("agent", log.agent_id.to_json()),
-      ("action", action.to_json()),
-      ("skip_reason", skip_reason.to_json()),
-      ("prior_review", log.prior_review_state.to_string().to_json()),
-      ("detected_review", log.detected_review_state.to_string().to_json()),
-      ("events", events_summary.to_json()),
-      ("failures", log.consecutive_failures.to_json()),
-      ("prev_failures", log.previous_consecutive_failures.to_json()),
-    ]),
-  )
+  @moontrace.info("poller pr", fields=[
+    @moontrace.field("pr", log.pr_number),
+    @moontrace.field("agent", log.agent_id),
+    @moontrace.field("action", action),
+    @moontrace.field("skip_reason", skip_reason),
+    @moontrace.field("prior_review", log.prior_review_state.to_string()),
+    @moontrace.field("detected_review", log.detected_review_state.to_string()),
+    @moontrace.field("events", events_summary),
+    @moontrace.field("failures", log.consecutive_failures),
+    @moontrace.field("prev_failures", log.previous_consecutive_failures),
+  ])
   let line = "pr=" +
     log.pr_number.to_string() +
     " agent=" +
@@ -1501,15 +1498,12 @@ fn log_poller_pr_tick(
     log.consecutive_failures.to_string()
   append_poller_delivery_line(append_file, project_dir, line)
   if log.consecutive_failures > log.previous_consecutive_failures {
-    @moontrace.info(
-      "poller backoff",
-      fields=@moontrace.fields([
-        ("pr", log.pr_number.to_json()),
-        ("agent", log.agent_id.to_json()),
-        ("consecutive_failures", log.consecutive_failures.to_json()),
-        ("backoff_until", log.backoff_until.to_json()),
-      ]),
-    )
+    @moontrace.info("poller backoff", fields=[
+      @moontrace.field("pr", log.pr_number),
+      @moontrace.field("agent", log.agent_id),
+      @moontrace.field("consecutive_failures", log.consecutive_failures),
+      @moontrace.field("backoff_until", log.backoff_until),
+    ])
     append_poller_delivery_line(
       append_file,
       project_dir,
@@ -1568,10 +1562,9 @@ pub async fn ServerState::process_poller_tick(
   let pending_events = []
   let pending_agent_ids = []
   let mut tick_event_total = 0
-  @moontrace.info(
-    "poller tick start",
-    fields=@moontrace.fields([("tracked_prs", tracked_before.to_json())]),
-  )
+  @moontrace.info("poller tick start", fields=[
+    @moontrace.field("tracked_prs", tracked_before),
+  ])
   let project_dir = self.config.project_dir
   let append_file = self.append_file
   append_poller_delivery_line(
@@ -1593,13 +1586,10 @@ pub async fn ServerState::process_poller_tick(
     },
   )
   let tracked_after = self.poller.tracked.length()
-  @moontrace.info(
-    "poller tick end",
-    fields=@moontrace.fields([
-      ("events_generated", tick_event_total.to_json()),
-      ("tracked_after", tracked_after.to_json()),
-    ]),
-  )
+  @moontrace.info("poller tick end", fields=[
+    @moontrace.field("events_generated", tick_event_total),
+    @moontrace.field("tracked_after", tracked_after),
+  ])
   append_poller_delivery_line(
     append_file,
     project_dir,
@@ -2022,13 +2012,10 @@ pub async fn ServerState::check_idle_agents(
       Some(screen) => {
         ignore(screen) // We could extract failure reason from screen if desired, but watchdog just kills it
         // Kill the agent
-        @moontrace.warn(
-          "watchdog killing idle agent",
-          fields=@moontrace.fields([
-            ("agent", agent_id.to_json()),
-            ("idle_sec", timeout.to_json()),
-          ]),
-        )
+        @moontrace.warn("watchdog killing idle agent", fields=[
+          @moontrace.field("agent", agent_id),
+          @moontrace.field("idle_sec", timeout),
+        ])
         let message = "[WATCHDOG] agent " +
           agent_id +
           " killed after " +
