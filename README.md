@@ -2,16 +2,18 @@
 
 English | [简体中文](README.zh.md)
 
-A local agent orchestrator built in MoonBit. Use your expensive subscription
-to think (Claude as team lead), and cheaper or specialized subscriptions to
-implement (Gemini, Codex, Moon Pilot, Cursor Agent as leaf agents). Each leaf works in its
-own git worktree and files a PR targeting the TL's branch when done. A built-in
-poller tracks the PR on GitHub: it automates the official **Reviewer Request**
-for @copilot, optionally injects **Review Context** to guide the review,
-watches for Copilot issue comments and review/CI state, and notifies the TL
-and leaf with actionable summaries via a canonical decision engine. The TL
-merges when policy and snapshot gates align — or forks further waves / files its
-own PR upward.
+A local agent orchestrator built in MoonBit. One expensive model thinks
+(Claude as team lead), cheaper models implement (Gemini, Codex, Moon Pilot,
+Cursor Agent as leaves). Each leaf gets its own git worktree, files a PR
+targeting the TL's branch, and a built-in poller automates Copilot review
+requests, routes review/CI feedback to the right pane, and tells the TL
+when a PR is merge-ready. The core loop is **scaffold → fork → converge**:
+the TL commits shared types, forks a wave of parallel leaves, merges their
+PRs one at a time, then either forks another wave or files its own PR upward.
+
+Orchestration logic is pure — typed effect planners with no direct I/O.
+Host adapters (Git, GitHub, Zellij, filesystem) are injected and testable.
+Architecture is informed by [exomonad](https://github.com/tidepool-heavy-industries/exomonad).
 
 ```
 choir init
@@ -30,143 +32,54 @@ choir init
                       Sub-TL files PR → TL branch when done
 ```
 
-## Synopsis
+## Quick Start
 
 ```bash
 choir init              # bring up server + TL session
-choir stop              # shut down server, preserving recoverable state
-choir stop --purge      # shut down server and remove recoverable state/worktrees
-choir serve             # run server directly
-choir tool agent_list   # call a Choir tool directly (JSON response)
-choir mcp-stdio         # MCP JSON-RPC bridge (one per agent)
-choir smoke             # MCP bridge smoke test
-choir smoke --leafs     # live spawn/PR smoke
-choir smoke --review    # live review delivery smoke
-choir smoke --e2e-live  # full spawn/review/merge smoke
+choir stop              # shut down server, keep recovery state
+choir init --recreate   # restart server + TL, keep recovery state
+choir stop --purge      # shut down and remove worktrees/state
 ```
 
 ## Build
 
 ```bash
-moon check
-moon test --target native
 moon build --target native --release
+moon test --target native
 moon fmt
 ```
 
-## Verification
-
-Optional local hook setup:
+Optional pre-commit hook:
 
 ```bash
-git config core.hooksPath .githooks
+git config core.hooksPath .githooks   # runs moon fmt + moon check
 ```
-
-The repo provides a normal `pre-commit` hook that runs:
-
-- `moon fmt`
-- `moon check --target native`
 
 ## Runtime Dependencies
 
-The release artifact is the `choir` executable, but the workflow also expects
-some external tools.
-
-- required: `git`
-- required for PR workflow: `gh`
-- required for local session management: `zellij` (0.44+)
-- required for the agent CLIs you actually use: `claude`, `gemini`, `moon`, `codex`, `agent` (Cursor)
-
-The Nix dev shell includes the open-source dependencies above. Proprietary
-agent CLIs still need to be installed and authenticated separately.
-
-## Releases
-
-Native binaries are intended to ship through GitHub Releases.
-
-- `choir-linux-x86_64`
-- `choir-macos-arm64`
-- `SHA256SUMS`
-
-Release source of truth: `moon.mod.json`.
-
-Release cut:
-
-```bash
-./scripts/release.sh patch
-```
-
-## Nix
-
-```bash
-nix develop
-```
-
-The flake currently provides a reproducible development shell and MoonBit
-toolchain for Choir. It does not yet expose a standalone `nix build .#choir`
-package.
-
-## Quick Start
-
-```bash
-choir init
-```
-
-This brings up:
-
-- one persistent server session
-- one TL client session
-- local state under `.choir/`
-
-`choir init --recreate` recreates the server/TL session while preserving recoverable agent state by default. Add `--purge` for a clean teardown that removes worktrees, inline metadata, lifecycles, and poller state.
-
-Useful split:
-
-```bash
-choir stop                 # stop, keep recovery state
-choir init --recreate      # restart, keep recovery state
-choir stop --purge         # stop and remove recovery state
-choir init --recreate --purge  # restart from a clean slate
-```
+- `git`, `gh` (PR workflow), `zellij` 0.44+ (session management)
+- Agent CLIs you use: `claude`, `gemini`, `moon`, `codex`, `agent` (Cursor)
+- Nix dev shell provides the open-source deps; proprietary CLIs need separate install
 
 ## CLI Tool Access
 
-Choir's server tools can also be called directly over the local control plane.
-This is useful for shell automation and non-MCP integrations.
-
 ```bash
 choir tool agent_list
-choir tool agent_list --include_inactive true
-choir tool mutex_status --name review-lock
-choir tool fork_wave --caller-role tl --json '{"caller_id":"root","tasks":["task A","task B"],"agent_type":"gemini","parent_branch":"main"}'
+choir tool fork_wave --caller-role tl --json '{"caller_id":"root","tasks":["task A","task B"]}'
 ```
 
-Responses are JSON using Choir's normal internal envelope:
-
-```json
-{"ok":true,"result":{...}}
-```
+Responses: `{"ok":true,"result":{...}}` or `{"ok":false,"error":"..."}`.
 
 ## Smoke Tests
 
 ```bash
-choir smoke
-choir smoke --companions
-choir smoke --leafs
-choir smoke --review
-choir smoke --e2e-live
+choir smoke             # MCP bridge smoke
+choir smoke --leafs     # live spawn/PR smoke
+choir smoke --review    # live review delivery smoke
+choir smoke --e2e-live  # full spawn/review/merge smoke
 ```
 
-- `choir smoke`: MCP bridge/runtime smoke
-- `choir smoke --companions`: `init` companion isolation smoke
-- `choir smoke --leafs`: live Moon Pilot + Gemini spawn/PR smoke
-- `choir smoke --review`: live review delivery smoke
-- `choir smoke --e2e-live`: live spawn/review/merge smoke
-
 ## Flow
-
-The core pattern is **scaffold → fork → converge**, optionally repeated across
-multiple waves or delegated to a sub-TL.
 
 ```mermaid
 flowchart TD
@@ -214,124 +127,24 @@ flowchart TD
   style Recovery fill:#6b7280,color:#fff
 ```
 
-## Files
-
-```text
-.choir/config.toml        main config
-.choir/server.sock        local UDS socket
-.choir/tasks/             task files
-.choir/kv/                key-value store
-.choir/worktrees/         spawned worktrees
-.choir/inline/            recovery metadata for inline agents
-.choir/hooks/hook.wasm    optional WASM hook plugin
-.choir/rewrite_rules.json optional PII rewrite rules
-.choir/context/common.md  shared Choir guidance
-.choir/context/dev.md     leaf-agent guidance
-.choir/context/tl.md      TL guidance
-.choir/context/worker.md  worker guidance
-```
-
-## WASM Hooks
-
-Choir supports WASM plugins for Gemini model hooks (BeforeModel/AfterModel)
-via [extism](https://extism.org/). The plugin is written in MoonBit using the
-`extism/moonbit-pdk` and compiled to WASM.
-
-### Setup
+## Releases
 
 ```bash
-# install extism CLI (host runtime)
-curl -s https://getextism.org/cli | sh -s -- -v v1.6.2 -y
-extism lib install --prefix ~/.local
-
-# build the hook plugin
-cd hooks
-moon build --target wasm --release
-
-# install to project
-cp _build/wasm/release/build/src/src.wasm ../.choir/hooks/hook.wasm
+./scripts/release.sh patch
 ```
 
-When `.choir/hooks/hook.wasm` exists, Gemini agents automatically get
-BeforeModel/AfterModel hooks in their settings. No plugin = no hooks.
+Binaries: `choir-linux-x86_64`, `choir-macos-arm64`, `SHA256SUMS`. Version source of truth: `moon.mod.json`.
 
-### What the plugin does
+## Nix
 
-- **before_model**: rewrites PII in LLM requests (real terms to tokens)
-- **after_model**: reverses rewrites in LLM responses (tokens to real terms)
-- **pre_tool_use**: blocks known Gemini failure patterns (pragma corruption, read-only Json constructors)
-
-### Rewrite rules
-
-Create `.choir/rewrite_rules.json`:
-
-```json
-[
-  {"real": "Acme Corp", "token": "COMPANY_ALPHA"},
-  {"real": "john@acme.com", "token": "EMAIL_ONE"}
-]
+```bash
+nix develop   # reproducible dev shell with MoonBit toolchain
 ```
-
-Pass rules via extism config when calling the plugin. Without rules,
-the plugin passes input through unchanged.
-
-## Architecture Notes
-
-### Scaffold-Fork-Converge
-
-`fork_wave` enforces that the TL's working tree is clean and pushed before
-spawning. Children fork from the TL's HEAD, so any scaffold work (shared
-types, stubs, CLAUDE.md changes) committed before the fork is automatically
-inherited by all leaves in the wave. This is the same invariant as exomonad's
-pre-fork git state check.
-
-### Multi-Wave
-
-After all leaves in a wave are merged the TL lifecycle reaches `WaveComplete`.
-The TL can then fork a second wave that builds on the merged output of the
-first, repeating until ready to file its own PR upward. This is the
-hylomorphism: unfold (fork waves downward), fold (merge upward).
-
-### Sub-TL
-
-`fork_wave role=tl` spawns a child with full TL capability — it can scaffold,
-fork its own wave of leaves, merge them, and file a PR to the parent TL's
-branch. Sub-TL nesting is unbounded; depth is tracked for informational
-purposes.
-
-### Effect Architecture
-
-Choir follows an **Exomonad-style** architecture with a hard effect boundary
-between pure orchestration logic and host I/O (Git, GitHub, Zellij, FS). All
-major orchestration loops (Lifecycles, Tools, Recovery, Post-Tool Actions) are
-implemented as pure planners that emit typed effect requests, which are then
-executed by host-specific interpreters.
-
-## Status
-
-- local UDS workflow: proven
-- zellij backend (0.44+): proven
-- leaf agents: Claude, Gemini, Moon Pilot, Codex, Cursor Agent
-- effect architecture refactor (Migrations 1-6): **complete**
-- Copilot reliability & context automation: **complete**
-- structured logging: [moontrace](https://github.com/brickfrog/moontrace) with colored output and OTLP span export
-- multi-wave lifecycle (WaveComplete): implemented
-- sub-TL nesting (role=tl): implemented, unbounded depth
-- scaffold gate (commit+push before fork): enforced
-- StateMachine trait (machine_name, can_exit): implemented
-- live companion/leaf/review/merge smokes: present
 
 ## Acknowledgements
 
-Choir's architecture is informed by [exomonad](https://github.com/tidepool-heavy-industries/exomonad), a Rust/WASM agent orchestration framework. The tree-of-agents model, scaffold-fork-converge pattern, role context files, and several workflow conventions originated there.
+Architecture informed by [exomonad](https://github.com/tidepool-heavy-industries/exomonad). The tree-of-agents model, scaffold-fork-converge pattern, role context files, and several workflow conventions originated there.
 
 ## License
 
 MIT
-
-## See Also
-
-- [`.choir/context/common.md`](.choir/context/common.md)
-- [`.choir/context/dev.md`](.choir/context/dev.md)
-- [`.choir/context/tl.md`](.choir/context/tl.md)
-- [`.choir/context/worker.md`](.choir/context/worker.md)
