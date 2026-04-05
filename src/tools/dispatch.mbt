@@ -517,10 +517,9 @@ pub async fn dispatch(
 /// error is not a [`ChoirError`] variant (masked as `"internal error"`).
 pub fn tool_response_err_from_caught(e : Error) -> @types.Response {
   if !@types.caught_error_is_choir_error(e) {
-    @moontrace.warn(
-      "choir_internal_error",
-      fields=@moontrace.fields([("details", String::to_json(e.to_string()))]),
-    )
+    @moontrace.warn("choir_internal_error", fields=[
+      @moontrace.field("details", e.to_string()),
+    ])
   }
   @types.Response::Err(@types.choir_error_message_from_caught(e))
 }

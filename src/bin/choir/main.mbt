@@ -91,10 +91,9 @@ async fn serve_handle_connection(
             }
             let resp = state.handle(req) catch {
               e => {
-                @moontrace.error(
-                  "handler panic",
-                  fields=@moontrace.fields([("error", e.to_string().to_json())]),
-                )
+                @moontrace.error("handler panic", fields=[
+                  @moontrace.field("error", e.to_string()),
+                ])
                 @types.Response::Err("internal error: " + e.to_string())
               }
             }
@@ -102,10 +101,9 @@ async fn serve_handle_connection(
             conn.write(@utf8.encode(resp_str))
           }
           Err(err) => {
-            @moontrace.warn(
-              "parse error",
-              fields=@moontrace.fields([("line", line.to_json())]),
-            )
+            @moontrace.warn("parse error", fields=[
+              @moontrace.field("line", line),
+            ])
             let resp = @types.Response::Err("parse error: " + err)
             conn.write(@utf8.encode(@transport.format_response(resp) + "\n"))
           }
@@ -124,17 +122,15 @@ async fn serve_handle_connection(
 ///|
 fn serve_write_all_uds(fd : Int, data : Bytes) -> Unit {
   let mut written = 0
-  @moontrace.trace(
-    "UDS write start",
-    fields=@moontrace.fields([("bytes", data.length().to_json())]),
-  )
+  @moontrace.trace("UDS write start", fields=[
+    @moontrace.field("bytes", data.length()),
+  ])
   while written < data.length() {
     let n = @uds.write_bytes(fd, data, written, data.length() - written)
     if n <= 0 {
-      @moontrace.warn(
-        "UDS client disconnected",
-        fields=@moontrace.fields([("written", written.to_json())]),
-      )
+      @moontrace.warn("UDS client disconnected", fields=[
+        @moontrace.field("written", written),
+      ])
       break
     }
     written = written + n
@@ -175,29 +171,23 @@ async fn serve_handle_uds_connection(
             }
             let resp = state.handle(req) catch {
               e => {
-                @moontrace.error(
-                  "handler panic",
-                  fields=@moontrace.fields([("error", e.to_string().to_json())]),
-                )
+                @moontrace.error("handler panic", fields=[
+                  @moontrace.field("error", e.to_string()),
+                ])
                 @types.Response::Err("internal error: " + e.to_string())
               }
             }
             let resp_str = @transport.format_response(resp) + "\n"
-            @moontrace.trace(
-              "request",
-              fields=@moontrace.fields([("line", line.to_json())]),
-            )
-            @moontrace.trace(
-              "response",
-              fields=@moontrace.fields([("body", resp_str.to_json())]),
-            )
+            @moontrace.trace("request", fields=[@moontrace.field("line", line)])
+            @moontrace.trace("response", fields=[
+              @moontrace.field("body", resp_str),
+            ])
             serve_write_all_uds(client.fd, @utf8.encode(resp_str))
           }
           Err(err) => {
-            @moontrace.warn(
-              "parse error",
-              fields=@moontrace.fields([("line", line.to_json())]),
-            )
+            @moontrace.warn("parse error", fields=[
+              @moontrace.field("line", line),
+            ])
             let resp = @types.Response::Err("parse error: " + err)
             serve_write_all_uds(
               client.fd,
@@ -276,27 +266,24 @@ fn serve_run() -> Unit {
             state.check_idle_agents(now, 300L, @exec.run_sequence)
           } catch {
             e =>
-              @moontrace.error(
-                "poller tick error",
-                fields=@moontrace.fields([("error", e.to_string().to_json())]),
-              )
+              @moontrace.error("poller tick error", fields=[
+                @moontrace.field("error", e.to_string()),
+              ])
           }
         }
       })
       root.spawn_bg(async fn() {
         let server_fd = @uds.server_create(config.listen_uds)
         if server_fd < 0 {
-          @moontrace.error(
-            "failed to bind UDS server",
-            fields=@moontrace.fields([("path", config.listen_uds.to_json())]),
-          )
+          @moontrace.error("failed to bind UDS server", fields=[
+            @moontrace.field("path", config.listen_uds),
+          ])
           return
         }
         ignore(@uds.set_nonblocking(server_fd))
-        @moontrace.info(
-          "UDS server listening",
-          fields=@moontrace.fields([("path", config.listen_uds.to_json())]),
-        )
+        @moontrace.info("UDS server listening", fields=[
+          @moontrace.field("path", config.listen_uds),
+        ])
         let clients : Array[ServeUDSClient] = []
         for ;; {
           for ;; {
@@ -330,16 +317,14 @@ fn serve_run() -> Unit {
         Some(addr_str) => {
           let server = @socket.TcpServer::new(@socket.Addr::parse(addr_str))
           try {
-            @moontrace.info(
-              "TCP server listening",
-              fields=@moontrace.fields([("addr", addr_str.to_json())]),
-            )
+            @moontrace.info("TCP server listening", fields=[
+              @moontrace.field("addr", addr_str),
+            ])
             for ;; {
               let (conn, addr) = server.accept()
-              @moontrace.debug(
-                "TCP connection",
-                fields=@moontrace.fields([("addr", addr.to_string().to_json())]),
-              )
+              @moontrace.debug("TCP connection", fields=[
+                @moontrace.field("addr", addr.to_string()),
+              ])
               root.spawn_bg(async fn() {
                 serve_handle_connection(conn, state) catch {
                   _ => ()

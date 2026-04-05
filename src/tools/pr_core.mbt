@@ -250,12 +250,9 @@ pub async fn interpret_file_pr_post_success(
           match execute_delivery(delivery, runner, project_dir~, sleep_fn~) {
             Ok(_) => ()
             Err(e) => {
-              @moontrace.error(
-                "file_pr auto-notify delivery failed",
-                fields=@moontrace.fields([
-                  ("error", String::to_json(e.message())),
-                ]),
-              )
+              @moontrace.error("file_pr auto-notify delivery failed", fields=[
+                @moontrace.field("error", e.message()),
+              ])
               ignore(
                 @sys.append_file_sync(
                   delivery_log_path,
@@ -269,10 +266,9 @@ pub async fn interpret_file_pr_post_success(
           delivery_log_append~,
           parent_resolve_error~
         ) => {
-          @moontrace.error(
-            "file_pr auto-notify parent resolution failed",
-            fields=@moontrace.fields([("error", parent_resolve_error.to_json())]),
-          )
+          @moontrace.error("file_pr auto-notify parent resolution failed", fields=[
+            @moontrace.field("error", parent_resolve_error),
+          ])
           ignore(@sys.append_file_sync(delivery_log_path, delivery_log_append))
         }
       }
@@ -304,16 +300,16 @@ pub async fn interpret_file_pr_post_success(
           }
           let fields = match spawn_err_comment {
             Some(err) =>
-              @moontrace.fields([
-                ("pr_number", pr_number.to_json()),
-                ("exit", exit_json_c),
-                ("error", err.to_json()),
-              ])
+              [
+                @moontrace.field("pr_number", pr_number),
+                @moontrace.field("exit", exit_json_c),
+                @moontrace.field("error", err),
+              ]
             None =>
-              @moontrace.fields([
-                ("pr_number", pr_number.to_json()),
-                ("exit", exit_json_c),
-              ])
+              [
+                @moontrace.field("pr_number", pr_number),
+                @moontrace.field("exit", exit_json_c),
+              ]
           }
           @moontrace.warn("file_pr copilot review comment failed", fields~)
           let err_part_c = match spawn_err_comment {
@@ -350,16 +346,16 @@ pub async fn interpret_file_pr_post_success(
       }
       let fields = match spawn_err {
         Some(err) =>
-          @moontrace.fields([
-            ("pr_number", pr_number.to_json()),
-            ("exit", exit_json),
-            ("error", err.to_json()),
-          ])
+          [
+            @moontrace.field("pr_number", pr_number),
+            @moontrace.field("exit", exit_json),
+            @moontrace.field("error", err),
+          ]
         None =>
-          @moontrace.fields([
-            ("pr_number", pr_number.to_json()),
-            ("exit", exit_json),
-          ])
+          [
+            @moontrace.field("pr_number", pr_number),
+            @moontrace.field("exit", exit_json),
+          ]
       }
       @moontrace.warn("file_pr copilot reviewer request failed", fields~)
       let err_part = match spawn_err {
@@ -525,10 +521,9 @@ pub async fn interpret_send_message(
       match execute_delivery(delivery, runner, project_dir~, sleep_fn~) {
         Ok(_) => response_ok
         Err(e) => {
-          @moontrace.error(
-            "send_message delivery failed",
-            fields=@moontrace.fields([("error", String::to_json(e.message()))]),
-          )
+          @moontrace.error("send_message delivery failed", fields=[
+            @moontrace.field("error", e.message()),
+          ])
           @types.Response::Err(e.message())
         }
       }
@@ -1708,14 +1703,11 @@ pub async fn interpret_kill_agent(
           let codes = runner([cmd]) catch { _ => [-1] }
           if codes.length() > 0 && codes[0] != 0 {
             pane_close_failed = true
-            @moontrace.warn(
-              "kill_agent pane close failed",
-              fields=@moontrace.fields([
-                ("agent_id", args.agent_id.to_json()),
-                ("exit", codes[0].to_json()),
-                ("cmd", cmd.to_string().to_json()),
-              ]),
-            )
+            @moontrace.warn("kill_agent pane close failed", fields=[
+              @moontrace.field("agent_id", args.agent_id),
+              @moontrace.field("exit", codes[0]),
+              @moontrace.field("cmd", cmd.to_string()),
+            ])
           }
         }
         None => ()
@@ -1730,13 +1722,10 @@ pub async fn interpret_kill_agent(
       ignore(reg.set_state(args.agent_id, @types.AgentState::Failed)) catch {
         _ => ()
       }
-      @moontrace.warn(
-        "agent killed",
-        fields=@moontrace.fields([
-          ("agent_id", args.agent_id.to_json()),
-          ("reason", args.reason.to_json()),
-        ]),
-      )
+      @moontrace.warn("agent killed", fields=[
+        @moontrace.field("agent_id", args.agent_id),
+        @moontrace.field("reason", args.reason),
+      ])
       let response = kill_agent_ok_response(args.agent_id)
       if pane_close_failed {
         response.with_warning(

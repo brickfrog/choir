@@ -37,14 +37,11 @@ test "build_otlp_envelope includes choir resource and scope" {
 
 ///|
 test "span_to_otlp preserves choir fields as attributes" {
-  let mt_span = @moontrace.span(
-    "tools/call fork_wave",
-    fields=@moontrace.fields([
-      ("agent_id", "leaf-1".to_json()),
-      ("role", "TL".to_json()),
-      ("status", "ok".to_json()),
-    ]),
-  )
+  let mt_span = @moontrace.span("tools/call fork_wave", fields=[
+    @moontrace.field("agent_id", "leaf-1"),
+    @moontrace.field("role", "TL"),
+    @moontrace.field("status", "ok"),
+  ])
   mt_span.start_time = (1000 : UInt64)
   mt_span.end_time = (2000 : UInt64)
   let otlp_span = @otlp.span_to_otlp(
