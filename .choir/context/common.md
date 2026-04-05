@@ -8,7 +8,7 @@ Choir is a MoonBit native orchestration server for coding-agent teams.
 - Agents make implementation decisions, but they do not invent new orchestration flows.
 - Prefer Choir tools over ad hoc shell work when a Choir tool exists.
 - Treat `.choir/` as Choir-owned runtime and guidance state.
-- The Choir × Pi product/runtime path is substantially validated; non-MCP control is `choir tool` plus Pi extension/runtime under `.choir/pi/`. The exomonad-style **hard effect boundary** (pure orchestration vs host I/O) is **still in progress**—see `PI_NORTH_STAR.md` if you touch dispatch, server handlers, or recovery.
+- The exomonad-style effect boundary (pure orchestration vs host I/O) is enforced — see CLAUDE.md for invariants.
 
 ## Repository Rules
 
