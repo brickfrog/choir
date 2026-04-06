@@ -49,8 +49,9 @@ test "render_worker_spawn_prompt uses research profile" {
     }),
   )
   assert_true(prompt.contains("## TASK\nInvestigate flaky tests"))
-  assert_true(prompt.contains("## Completion Protocol (Research Worker)"))
-  assert_true(prompt.contains("Do not edit files."))
+  assert_true(prompt.contains("## Completion Protocol (Worker)"))
+  assert_true(prompt.contains("research worker"))
+  assert_true(prompt.contains("do not own a branch"))
   assert_true(prompt.contains("notify_parent"))
 }
 
@@ -63,7 +64,7 @@ test "render_worker_spawn_prompt respects prompt override" {
     }),
   )
   assert_true(prompt.has_prefix("Use this exact prompt."))
-  assert_true(prompt.contains("## Completion Protocol (Review Worker)"))
+  assert_true(prompt.contains("## Completion Protocol (Worker)"))
 }
 
 ///|
@@ -71,16 +72,15 @@ test "render_worker_spawn_prompt strips leaf-only instructions" {
   let prompt = render_worker_spawn_prompt(
     PromptSpec::from_map({
       "task": "Investigate CLI tests",
-      "steps": "Read files\nFile a PR through Choir\nCommit your changes\nNotify parent",
-      "done_criteria": "PR is filed\nParent is notified\nTests pass",
+      "steps": "Read files\nUse file_pr to submit\nRun git commit\nNotify parent",
+      "done_criteria": "file_pr is called\nParent is notified\nTests pass",
       "type": "review",
     }),
   )
-  assert_true(prompt.contains("## Completion Protocol (Review Worker)"))
+  assert_true(prompt.contains("## Completion Protocol (Worker)"))
   assert_true(prompt.contains("1. Read files"))
   assert_true(prompt.contains("2. Notify parent"))
-  assert_false(prompt.contains("File a PR through Choir"))
-  assert_false(prompt.contains("Commit your changes"))
-  assert_false(prompt.contains("- PR is filed"))
+  assert_false(prompt.contains("file_pr"))
+  assert_false(prompt.contains("git commit"))
   assert_true(prompt.contains("- Parent is notified"))
 }
