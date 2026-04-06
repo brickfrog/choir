@@ -129,8 +129,9 @@ fn choir_mcp_instructions() -> String {
     #|2. Interfaces — if leaves touch shared code, what are the contracts? Define shared types, function signatures, or module boundaries as scaffold before forking. Two leaves should never need to coordinate on a type definition.
     #|3. Entanglement check — will merging leaf A's PR create conflicts with leaf B's? If yes, they're not independent — either sequence them (wave 1 then wave 2) or merge them into one leaf.
     #|4. Size — single leaf (self-contained, one area) or wave (2+ independent subtasks)?
-    #|5. Agent types — gemini (default, bulk implementation), cursor_agent (refactor/file navigation), codex (isolated logic), claude (complex reasoning/architecture), spawn_worker (research or review only, no branch).
+    #|5. Agent types — gemini (default, bulk implementation), cursor_agent (refactor/file navigation), codex (isolated logic), claude (complex reasoning/architecture), spawn_worker (no branch, runs in parent workspace).
     #|6. Scaffold — commit shared types, interfaces, or test infra to the parent branch before forking. Every leaf should inherit a compilable, complete interface contract.
+    #|After merging all PRs in a wave, spawn a worker to run the full test suite on your branch before starting the next wave or filing your own PR.
     #|Then state your plan in 2-4 lines and execute immediately. Do not ask for approval unless the task is genuinely ambiguous.
   )
 }

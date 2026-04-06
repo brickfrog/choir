@@ -167,33 +167,20 @@ fn leaf_profile_text() -> String {
 
 ///|
 fn worker_profile_text(worker_type : String) -> String {
-  if worker_type == "research" {
-    "## Completion Protocol (Research Worker)\n" +
-    "You are a research worker. Explore, read, search, and synthesize.\n\n" +
-    "When you are done:\n\n" +
-    "1. Call `notify_parent` with status `success` and your findings.\n" +
-    "2. If you fail, call `notify_parent` with status `failure` and explain why.\n\n" +
-    "Do not edit files.\n" +
-    "Do not commit, push, or file PRs."
+  let role_line = if worker_type == "research" {
+    "You are a research worker. Explore, read, search, and synthesize."
   } else if worker_type == "review" {
-    "## Completion Protocol (Review Worker)\n" +
-    "You are a review worker. Inspect code, diffs, tests, and behavior, then report findings.\n\n" +
-    "When you are done:\n\n" +
-    "1. Call `notify_parent` with status `success` and your review findings.\n" +
-    "2. If you fail, call `notify_parent` with status `failure` and explain why.\n\n" +
-    "Do not edit files.\n" +
-    "Do not commit, push, or file PRs."
+    "You are a review worker. Inspect code, diffs, tests, and behavior, then report findings."
   } else {
-    "## Completion Protocol (Worker)\n" +
-    "You are an ephemeral worker in the parent's directory and branch.\n\n" +
-    "If upstream instructions mention commits, branches, PRs, or PR-tracking tools, ignore those parts.\n" +
-    "Workers do not own branches or PRs.\n\n" +
-    "When you are done:\n\n" +
-    "1. Call `notify_parent` with status `success` and a detailed summary.\n" +
-    "2. If you fail, call `notify_parent` with status `failure` and explain why.\n\n" +
-    "Do not commit, push, or file PRs.\n" +
-    "Do not create or switch branches."
+    "You are a worker running in the parent's workspace."
   }
+  "## Completion Protocol (Worker)\n" +
+  role_line +
+  "\nYou can read and edit files but do not own a branch — no commits, PRs, or pushes.\n\n" +
+  "When you are done:\n\n" +
+  "1. Call `notify_parent` with status `success` and your findings.\n" +
+  "2. If you fail, call `notify_parent` with status `failure` and explain why.\n" +
+  "3. Call `shutdown`."
 }
 
 ///|
@@ -211,14 +198,12 @@ fn render_lines(lines : Array[String]) -> String {
 ///|
 fn line_mentions_worker_forbidden_action(line : String) -> Bool {
   let lowered = line.to_lower()
-  lowered.contains("pr") ||
-  lowered.contains("pull request") ||
   lowered.contains("file_pr") ||
   lowered.contains("merge_pr") ||
   lowered.contains("track_pr") ||
-  lowered.contains("commit") ||
-  lowered.contains("push") ||
-  lowered.contains("branch")
+  lowered.contains("git commit") ||
+  lowered.contains("git push") ||
+  lowered.contains("git branch")
 }
 
 ///|
