@@ -674,12 +674,9 @@ pub fn lifecycle_from_json(json_str : String) -> AgentLifecycle? {
 
 ///|
 pub fn last_segment_after_dot(value : String) -> String {
-  let mut last_dot = -1
-  for i = value.length() - 1; i >= 0; i = i - 1 {
-    if value[i] == '.' {
-      last_dot = i
-      break
-    }
+  let last_dot = match value.rev_find(".") {
+    Some(i) => i
+    None => -1
   }
   if last_dot == -1 {
     value

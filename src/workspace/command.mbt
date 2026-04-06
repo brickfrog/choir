@@ -87,11 +87,9 @@ fn validate_workspace_rel_path(rel : String) -> Bool {
 
 ///|
 fn parent_dir_for_file(full_path : String) -> String {
-  let mut last_slash = -1
-  for i = 0; i < full_path.length(); i = i + 1 {
-    if full_path[i] == '/' {
-      last_slash = i
-    }
+  let last_slash = match full_path.rev_find("/") {
+    Some(i) => i
+    None => -1
   }
   if last_slash <= 0 {
     return "."
