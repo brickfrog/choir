@@ -12,30 +12,50 @@ pub fn sanitize_agent_id(agent_id : String) -> String {
 }
 
 ///|
-pub fn escape_for_json(s : String) -> String {
-  let buf = StringBuilder::new()
-  for c in s {
-    if c == '"' {
-      buf.write_string("\\\"")
-    } else if c == '\\' {
-      buf.write_string("\\\\")
-    } else if c == '\n' {
-      buf.write_string("\\n")
-    } else if c == '\r' {
-      buf.write_string("\\r")
-    } else if c == '\t' {
-      buf.write_string("\\t")
-    } else {
-      buf.write_char(c)
-    }
-  }
-  buf.to_string()
-}
-
-///|
 pub fn json_field_string(fields : Map[String, Json], key : String) -> String? {
   match fields.get(key) {
     Some(String(value)) => Some(value)
+    _ => None
+  }
+}
+
+///|
+pub fn json_field_int(fields : Map[String, Json], key : String) -> Int? {
+  match fields.get(key) {
+    Some(Number(n, ..)) => Some(n.to_int())
+    _ => None
+  }
+}
+
+///|
+pub fn json_field_int64(fields : Map[String, Json], key : String) -> Int64? {
+  match fields.get(key) {
+    Some(Number(n, ..)) => Some(n.to_int64())
+    Some(String(s)) => {
+      let mut res = 0L
+      let mut valid = s != ""
+      for c in s {
+        if c >= '0' && c <= '9' {
+          res = res * 10L + (c.to_int() - '0'.to_int()).to_int64()
+        } else {
+          valid = false
+        }
+      }
+      if valid {
+        Some(res)
+      } else {
+        None
+      }
+    }
+    _ => None
+  }
+}
+
+///|
+pub fn json_field_bool(fields : Map[String, Json], key : String) -> Bool? {
+  match fields.get(key) {
+    Some(True) => Some(true)
+    Some(False) => Some(false)
     _ => None
   }
 }
