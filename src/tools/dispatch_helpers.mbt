@@ -659,14 +659,6 @@ pub async fn fetch_unresolved_review_threads(
 }
 
 ///|
-fn json_get_string(obj : Map[String, Json], key : String) -> String? {
-  match obj.get(key) {
-    Some(String(v)) => Some(v)
-    _ => None
-  }
-}
-
-///|
 fn parse_task_file(content : String) -> Result[TaskFile, @types.ChoirError] {
   let json = @json.parse(content) catch {
     _ => return Err(@types.ChoirError::validation_error("invalid task json"))
@@ -674,19 +666,19 @@ fn parse_task_file(content : String) -> Result[TaskFile, @types.ChoirError] {
   guard json is Object(fields) else {
     return Err(@types.ChoirError::validation_error("invalid task json"))
   }
-  let id = match json_get_string(fields, "id") {
+  let id = match @types.json_field_string(fields, "id") {
     Some(v) => v
     None =>
       return Err(@types.ChoirError::validation_error("missing or invalid id"))
   }
-  let title = match json_get_string(fields, "title") {
+  let title = match @types.json_field_string(fields, "title") {
     Some(v) => v
     None =>
       return Err(
         @types.ChoirError::validation_error("missing or invalid title"),
       )
   }
-  let status_str = match json_get_string(fields, "status") {
+  let status_str = match @types.json_field_string(fields, "status") {
     Some(v) => v
     None =>
       return Err(
@@ -702,14 +694,14 @@ fn parse_task_file(content : String) -> Result[TaskFile, @types.ChoirError] {
         ),
       )
   }
-  let assignee = match json_get_string(fields, "assignee") {
+  let assignee = match @types.json_field_string(fields, "assignee") {
     Some(v) => v
     None =>
       return Err(
         @types.ChoirError::validation_error("missing or invalid assignee"),
       )
   }
-  let notes = match json_get_string(fields, "notes") {
+  let notes = match @types.json_field_string(fields, "notes") {
     Some(v) => v
     None =>
       return Err(

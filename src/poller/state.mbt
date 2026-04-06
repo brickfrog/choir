@@ -72,49 +72,8 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
 }
 
 ///|
-fn json_field_int(fields : Map[String, Json], key : String) -> Int? {
-  match fields.get(key) {
-    Some(Number(n, ..)) => Some(n.to_int())
-    _ => None
-  }
-}
-
-///|
-fn json_field_int64(fields : Map[String, Json], key : String) -> Int64? {
-  match fields.get(key) {
-    Some(Number(n, ..)) => Some(n.to_int64())
-    Some(String(s)) => {
-      let mut res = 0L
-      let mut valid = s != ""
-      for c in s {
-        if c >= '0' && c <= '9' {
-          res = res * 10L + (c.to_int() - '0'.to_int()).to_int64()
-        } else {
-          valid = false
-        }
-      }
-      if valid {
-        Some(res)
-      } else {
-        None
-      }
-    }
-    _ => None
-  }
-}
-
-///|
-fn json_field_bool(fields : Map[String, Json], key : String) -> Bool? {
-  match fields.get(key) {
-    Some(True) => Some(true)
-    Some(False) => Some(false)
-    _ => None
-  }
-}
-
-///|
 fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
-  let pr_number = match json_field_int(fields, "pr_number") {
+  let pr_number = match @types.json_field_int(fields, "pr_number") {
     Some(value) => value
     None => return None
   }
@@ -134,16 +93,16 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => return None
   }
-  let first_seen = match json_field_int64(fields, "first_seen") {
+  let first_seen = match @types.json_field_int64(fields, "first_seen") {
     Some(value) => value
     None => return None
   }
   let consecutive_failures = match
-    json_field_int(fields, "consecutive_failures") {
+    @types.json_field_int(fields, "consecutive_failures") {
     Some(value) => value
     None => 0
   }
-  let backoff_until = match json_field_int64(fields, "backoff_until") {
+  let backoff_until = match @types.json_field_int64(fields, "backoff_until") {
     Some(value) => value
     None => 0L
   }
@@ -165,7 +124,8 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => return None
   }
-  let notified_parent = match json_field_bool(fields, "notified_parent") {
+  let notified_parent = match
+    @types.json_field_bool(fields, "notified_parent") {
     Some(value) => value
     None => return None
   }
@@ -177,31 +137,33 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
         None => return None
       }
     None =>
-      match json_field_bool(fields, "last_ci_failed") {
+      match @types.json_field_bool(fields, "last_ci_failed") {
         Some(true) => Failure
         Some(false) => Unknown
         None => return None
       }
   }
-  let last_timeout_at = match json_field_int64(fields, "last_timeout_at") {
+  let last_timeout_at = match
+    @types.json_field_int64(fields, "last_timeout_at") {
     Some(value) => value
     None => 0L
   }
   let copilot_issue_comment_seen = match
-    json_field_bool(fields, "copilot_issue_comment_seen") {
+    @types.json_field_bool(fields, "copilot_issue_comment_seen") {
     Some(value) => value
     None => false
   }
-  let orphan_notified = match json_field_bool(fields, "orphan_notified") {
+  let orphan_notified = match
+    @types.json_field_bool(fields, "orphan_notified") {
     Some(value) => value
     None => false
   }
   let changes_requested_since = match
-    json_field_int64(fields, "changes_requested_since") {
+    @types.json_field_int64(fields, "changes_requested_since") {
     Some(value) => value
     None => 0L
   }
-  let stall_notified = match json_field_bool(fields, "stall_notified") {
+  let stall_notified = match @types.json_field_bool(fields, "stall_notified") {
     Some(value) => value
     None => false
   }
@@ -508,12 +470,7 @@ pub fn PollerState::has_tracked_pr(
   self : PollerState,
   agent_id : String,
 ) -> Bool {
-  for tracked in self.tracked.values() {
-    if tracked.agent_id == agent_id {
-      return true
-    }
-  }
-  false
+  self.tracked.values().any(fn(t) { t.agent_id == agent_id })
 }
 
 ///|
