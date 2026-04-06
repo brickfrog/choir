@@ -25,11 +25,9 @@ pub fn inline_agent_metadata_dir(
 
 ///|
 pub fn parent_branch(branch : String) -> String? {
-  let mut last_dot = -1
-  for i = 0; i < branch.length(); i = i + 1 {
-    if branch[i] == '.' {
-      last_dot = i
-    }
+  let last_dot = match branch.rev_find(".") {
+    Some(i) => i
+    None => -1
   }
   if last_dot <= 0 {
     None
