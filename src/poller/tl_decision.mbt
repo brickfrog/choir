@@ -421,7 +421,12 @@ pub fn plan_tl_poll_event_parent(
         ReadyForTLRecheck
       }
     PRReady(_) => tl_snapshot_workflow_category(tracked, merge_ready)
-    FixesPushed(_) => WaitingOnReviewOrCI
+    FixesPushed(_) =>
+      if merge_ready {
+        MergeGateOpenPendingPolicyConfirmation
+      } else {
+        WaitingOnReviewOrCI
+      }
     ReviewReceived(_, _) =>
       if tracked.last_review_state == ChangesRequested {
         BlockedOnChanges
