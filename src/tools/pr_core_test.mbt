@@ -134,7 +134,7 @@ test "file_pr_auto_notify_plan delivers and formats delivery log append" {
       assert_eq(
         delivery_log_append,
         "[auto-notify] caller=main.leaf parent=main.tl delivery=" +
-        delivery.to_string() +
+        delivery.to_display_string() +
         "\n",
       )
     }
@@ -345,7 +345,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
     @types.Status::Success,
   )
   let expected_log = "[auto-notify] caller=main.leaf parent=main.tl delivery=" +
-    expected_delivery.to_string() +
+    expected_delivery.to_display_string() +
     "\n"
   assert_eq(@sys.read_file(log_path), expected_log)
 }
@@ -515,7 +515,7 @@ test "send_message_delivery_log_append matches dispatch log shape" {
   assert_eq(
     send_message_delivery_log_append("main.leaf", agent, delivery),
     "[send_message] target=main.leaf terminal_target=zellij-tab:choir:leaf delivery=" +
-    delivery.to_string() +
+    delivery.to_display_string() +
     "\n",
   )
 }

@@ -8,7 +8,7 @@ pub(all) enum ParseError {
   UnknownAgentType(value~ : String)
   UnknownTaskStatus(value~ : String)
   UnknownStatus(value~ : String)
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn ParseError::message(self : ParseError) -> String {
@@ -1318,4 +1318,10 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
     }
     Err(e) => fail("unexpected error: " + e.message())
   }
+}
+
+///|
+pub impl Show for ParseError with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

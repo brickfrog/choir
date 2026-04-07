@@ -15,7 +15,7 @@ pub(all) struct Config {
   terminal_session : String
   /// When true, `file_pr` requests `@copilot` as a reviewer via `gh pr edit --add-reviewer` (best-effort).
   pr_review : Bool
-} derive(Show)
+} derive(Debug)
 
 ///|
 pub(all) struct LocalConfig {
@@ -28,7 +28,7 @@ pub(all) struct LocalConfig {
   terminal_target : LocalTarget?
   agent_type : AgentType?
   spawn_depth : Int?
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// Default configuration values.
@@ -63,4 +63,16 @@ pub fn LocalConfig::default() -> LocalConfig {
     agent_type: None,
     spawn_depth: None,
   }
+}
+
+///|
+pub impl Show for Config with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for LocalConfig with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

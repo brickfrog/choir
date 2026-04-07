@@ -122,9 +122,9 @@ pub fn AgentRegistry::set_state(
       } else {
         raise @types.ChoirError::validation_error(
           "invalid state transition: " +
-          agent.state.to_string() +
+          agent.state.to_wire_string() +
           " -> " +
-          new_state.to_string(),
+          new_state.to_wire_string(),
         )
       }
     }

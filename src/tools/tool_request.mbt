@@ -29,7 +29,7 @@ pub(all) enum ToolRequest {
   AgentList(AgentListArgs)
   CancelWave(CancelWaveArgs)
   ResolveReviewThread(ResolveReviewThreadArgs)
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
@@ -64,4 +64,9 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     CancelWave(_) => "cancel_wave"
     ResolveReviewThread(_) => "resolve_review_thread"
   }
+}
+
+///|
+pub impl Show for ToolRequest with output(self, logger) -> Unit {
+  logger.write_string(self.tool_name())
 }

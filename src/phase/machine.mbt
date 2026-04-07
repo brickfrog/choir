@@ -3,13 +3,13 @@ pub(all) enum StopCheckResult {
   MustBlock(String)
   ShouldNudge(String)
   Clean
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum TransitionResult[P] {
   Transitioned(P)
   InvalidTransition(String)
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn describe_stop_result(r : StopCheckResult) -> String {
@@ -93,4 +93,16 @@ pub fn apply_event(
   } else {
     Some(current)
   }
+}
+
+///|
+pub impl Show for StopCheckResult with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl[T : Show] Show for TransitionResult[T] with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

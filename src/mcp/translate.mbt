@@ -2,7 +2,7 @@
 struct SchemaProp {
   name : String
   desc : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct CatalogTool {
@@ -10,7 +10,7 @@ struct CatalogTool {
   description : String
   props : Array[SchemaProp]
   required : Array[String]
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 fn schema_prop_json(prop : SchemaProp) -> Json {
@@ -507,4 +507,16 @@ pub fn error_response(
   message : String,
 ) -> JsonRpcResponse {
   { jsonrpc: "2.0", id, result: None, error: Some({ code, message }) }
+}
+
+///|
+pub impl Show for SchemaProp with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for CatalogTool with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }
