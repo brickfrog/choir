@@ -26,7 +26,7 @@ pub fn ParseError::message(self : ParseError) -> String {
 
 ///|
 fn parse_int(s : String) -> Int? {
-  Some(@strconv.parse_int(s.trim().to_string())) catch {
+  Some(@string.parse_int(s.trim().to_string())) catch {
     _ => None
   }
 }
