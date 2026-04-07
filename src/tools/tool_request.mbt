@@ -68,6 +68,5 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
 
 ///|
 pub impl Show for ToolRequest with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
+  logger.write_string(self.tool_name())
 }
