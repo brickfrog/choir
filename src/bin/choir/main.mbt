@@ -618,7 +618,7 @@ fn mcp_parse_content_length(line : String) -> Int? {
     return None
   }
   let value_str = trimmed[prefix.length():].trim().to_string()
-  Some(@strconv.parse_int(value_str)) catch {
+  Some(@string.parse_int(value_str)) catch {
     _ => None
   }
 }
@@ -714,7 +714,7 @@ fn mcp_cli_raw_stdio(args : Array[String]) -> Bool {
 
 ///|
 fn mcp_parse_decimal_u32(s : String) -> Int? {
-  let n_opt = Some(@strconv.parse_int(s)) catch { _ => None }
+  let n_opt = Some(@string.parse_int(s)) catch { _ => None }
   match n_opt {
     Some(n) => if n <= 0 { None } else { Some(n) }
     None => None
@@ -3289,7 +3289,7 @@ async fn init_tab_exists(session : String, tab_name : String) -> Bool {
 
 ///|
 fn init_parse_server_pid_line(s : String) -> Int? {
-  Some(@strconv.parse_int(s.trim().to_string())) catch {
+  Some(@string.parse_int(s.trim().to_string())) catch {
     _ => None
   }
 }

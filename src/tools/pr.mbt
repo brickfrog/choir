@@ -170,7 +170,7 @@ pub fn gh_pr_view_command(branch : String) -> @workspace.Command {
 
 ///|
 fn parse_non_negative_int(s : String) -> Int? {
-  Some(@strconv.parse_int(s.trim().to_string())) catch {
+  Some(@string.parse_int(s.trim().to_string())) catch {
     _ => None
   }
 }

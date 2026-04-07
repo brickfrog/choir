@@ -194,7 +194,7 @@ pub fn parse_config(
 ///|
 fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ChoirError] {
   let s = raw.trim().to_string()
-  let n_opt = Some(@strconv.parse_int(s)) catch { _ => None }
+  let n_opt = Some(@string.parse_int(s)) catch { _ => None }
   match n_opt {
     Some(n) => {
       if n < 0 || n > 1 {

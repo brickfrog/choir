@@ -13,7 +13,7 @@ import {
   "choir/src/runtime",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
-  "moonbitlang/core/strconv",
+  "moonbitlang/core/string",
   "moonbitlang/async",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
