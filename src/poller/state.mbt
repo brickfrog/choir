@@ -647,9 +647,11 @@ pub async fn PollerState::tick_with(
         _ => ()
       }
     }
-    let notified_parent = next_notified_parent(
-      tracked_ok, review, review_bodies, sha,
-    )
+    let notified_parent = if needs_merge_nudge {
+      true
+    } else {
+      next_notified_parent(tracked_ok, review, review_bodies, sha)
+    }
     let copilot_sticky = tracked_ok.copilot_issue_comment_seen || copilot_now
     let mut crs = tracked_ok.changes_requested_since
     let mut sn = tracked_ok.stall_notified
