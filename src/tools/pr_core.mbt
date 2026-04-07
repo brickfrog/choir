@@ -109,7 +109,7 @@ pub(all) enum FilePrAutoNotifyPlan {
     delivery_log_append~ : String,
     parent_resolve_error~ : String
   )
-} derive(Show, Eq)
+} derive(Eq)
 
 ///|
 pub fn file_pr_auto_notify_plan(
@@ -130,7 +130,7 @@ pub fn file_pr_auto_notify_plan(
         " parent=" +
         parent.agent_id.to_string() +
         " delivery=" +
-        delivery.to_string() +
+        delivery.to_display_string() +
         "\n"
       Deliver(delivery~, delivery_log_append~)
     }
@@ -396,7 +396,7 @@ pub(all) enum NotifyParentPlan {
     dev_event_on_success~ : @phase.DevEvent,
     response_ok~ : @types.Response
   )
-} derive(Show)
+}
 
 ///|
 pub fn notify_parent_plan(
@@ -448,7 +448,7 @@ pub fn send_message_delivery_log_append(
   " terminal_target=" +
   agent.terminal_target.map(@types.LocalTarget::to_string).unwrap_or("NONE") +
   " delivery=" +
-  delivery.to_string() +
+  delivery.to_display_string() +
   "\n"
 }
 
@@ -464,7 +464,7 @@ pub(all) enum SendMessagePlan {
     delivery_log_append~ : String,
     response_ok~ : @types.Response
   )
-} derive(Show)
+}
 
 ///|
 pub fn send_message_plan(
@@ -588,7 +588,7 @@ pub(all) enum FilePrPreflightHostStep {
   EnsureBranchReady
   GitPush
   EnsurePullRequest
-} derive(Eq, Show)
+} derive(Debug, Eq)
 
 ///|
 pub fn file_pr_preflight_host_steps() -> Array[FilePrPreflightHostStep] {
@@ -985,7 +985,7 @@ pub(all) enum ForkWavePostSpawnHostStep {
   RegistryUpsertSpawnedSpecs
   PerSlugTeamRegisterAndTlEventAndPaneResolve
   RegistryTerminalTargetUpsertFromPanes
-} derive(Eq, Show)
+} derive(Debug, Eq)
 
 ///|
 pub fn fork_wave_post_spawn_host_steps() -> Array[ForkWavePostSpawnHostStep] {
@@ -1125,7 +1125,7 @@ pub async fn interpret_file_pr(
 pub(all) enum MergePrPreflightHostStep {
   PollerSnapshot
   FetchUnresolvedReviewThreads
-} derive(Eq, Show)
+} derive(Debug, Eq)
 
 ///|
 pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
@@ -1329,7 +1329,7 @@ pub fn merge_pr_serialization_busy_message() -> String {
 pub(all) enum MergePrHostStep {
   GhPrMerge
   GitFetch
-} derive(Eq, Show)
+} derive(Debug, Eq)
 
 ///|
 pub fn merge_pr_host_step_sequence() -> Array[MergePrHostStep] {
@@ -1672,7 +1672,7 @@ pub fn kill_agent_ok_response(agent_id : String) -> @types.Response {
 pub(all) enum KillAgentAdapterHostStep {
   PaneClose
   WorktreeRemove
-} derive(Eq, Show)
+} derive(Debug, Eq)
 
 ///|
 pub fn kill_agent_adapter_host_steps() -> Array[KillAgentAdapterHostStep] {
@@ -1792,7 +1792,7 @@ pub(all) enum ShutdownAdapterHostStep {
   LifecycleRead
   DevExitEventApply
   WorktreeCleanupAttempt
-} derive(Eq, Show)
+} derive(Debug, Eq)
 
 ///|
 pub fn shutdown_adapter_host_steps() -> Array[ShutdownAdapterHostStep] {
@@ -1961,7 +1961,7 @@ pub(all) enum CancelWavePerAgentHostStep {
   WorktreeRemove
   RegistryFailed
   PollerUntrack
-} derive(Eq, Show)
+} derive(Debug, Eq)
 
 ///|
 pub fn cancel_wave_per_agent_host_steps() -> Array[CancelWavePerAgentHostStep] {
@@ -2048,7 +2048,7 @@ pub(all) struct SpawnWorkerPlan {
   terminal_target : @types.LocalTarget
   registry_agent : @types.Agent
   ok_response : @types.Response
-} derive(Show)
+}
 
 ///|
 pub fn spawn_worker_ok_response(agent_id : String) -> @types.Response {
@@ -2161,7 +2161,7 @@ pub async fn interpret_spawn_worker(
 pub(all) struct SpawnRemotePlan {
   spec : @types.SpawnSpec
   ok_response : @types.Response
-} derive(Show)
+}
 
 ///|
 pub fn spawn_remote_plan(args : RemoteSpawnArgs) -> SpawnRemotePlan {
@@ -2220,7 +2220,7 @@ pub async fn interpret_spawn_remote(
 pub(all) struct SpawnGeminiPlan {
   spec : @types.SpawnSpec
   ok_response : @types.Response
-} derive(Show)
+}
 
 ///|
 pub fn spawn_gemini_plan(args : SpawnGeminiArgs) -> SpawnGeminiPlan {
@@ -2290,7 +2290,7 @@ pub(all) struct RescueLeafSpawnPlan {
   salvage_slug : String
   git_branch : String
   spec : @types.SpawnSpec
-} derive(Show)
+}
 
 ///|
 /// Second `remove_child_from_supervisor_lifecycle` call uses `salvage_slug` when
@@ -2474,7 +2474,7 @@ pub(all) enum RescueLeafPostSpawnHostStep {
   TeamRegisterMember
   TlEventChildSpawned
   PaneResolveAndUpsertTerminal
-} derive(Eq, Show)
+} derive(Debug, Eq)
 
 ///|
 pub fn rescue_leaf_post_spawn_host_steps() -> Array[RescueLeafPostSpawnHostStep] {
@@ -2580,4 +2580,94 @@ pub async fn interpret_rescue_leaf_post_spawn(
     None => ()
   }
   rescue_leaf_ok_response(plan.to_id, plan.from_agent_id, rescue_args.new_slug)
+}
+
+///|
+pub impl Show for FilePrAutoNotifyPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for NotifyParentPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for SendMessagePlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for SpawnWorkerPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for SpawnRemotePlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for SpawnGeminiPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RescueLeafSpawnPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for FilePrPreflightHostStep with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for ForkWavePostSpawnHostStep with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for MergePrPreflightHostStep with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for MergePrHostStep with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for KillAgentAdapterHostStep with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for ShutdownAdapterHostStep with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for CancelWavePerAgentHostStep with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RescueLeafPostSpawnHostStep with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

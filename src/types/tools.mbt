@@ -16,7 +16,7 @@ pub(all) struct SpawnSpec {
   reuse_git_branch : String?
   /// Same semantics as `Agent.spawn_depth`; 0 at root TL, 1 for a sub-TL spawned under depth 0.
   spawn_depth : Int
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// Tool definition in the registry.
@@ -24,10 +24,22 @@ pub(all) struct ToolDef {
   name : String
   description : String
   allowed_roles : Array[Role]
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// Check if a role is allowed to call a tool.
 pub fn ToolDef::is_role_allowed(self : ToolDef, role : Role) -> Bool {
   self.allowed_roles.contains(role)
+}
+
+///|
+pub impl Show for SpawnSpec with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for ToolDef with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

@@ -137,3 +137,14 @@ pub impl FromJson for Status with from_json(json, path) {
     _ => raise JsonDecodeError((path, "Status::from_json: expected string"))
   }
 }
+
+///|
+pub fn AgentState::to_wire_string(self : AgentState) -> String {
+  match self {
+    Spawning => "spawning"
+    Active => "active"
+    Completing => "completing"
+    Done => "done"
+    Failed => "failed"
+  }
+}

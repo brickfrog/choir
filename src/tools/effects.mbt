@@ -11,7 +11,7 @@ pub(all) enum ForkWaveError {
   UnpushedCommits(output~ : String)
   /// A spawn command exited with a non-zero status.
   CommandFailed(status~ : Int, failing_cmd~ : @workspace.Command?)
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn ForkWaveError::message(self : ForkWaveError) -> String {
@@ -149,4 +149,10 @@ pub fn fork_wave_plan(
       )
     }
   })
+}
+
+///|
+pub impl Show for ForkWaveError with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

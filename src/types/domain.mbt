@@ -5,7 +5,17 @@ pub(all) enum Role {
   TL
   Dev
   Worker
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for Role with output(self, logger) -> Unit {
+  match self {
+    Root => logger.write_string("Root")
+    TL => logger.write_string("TL")
+    Dev => logger.write_string("Dev")
+    Worker => logger.write_string("Worker")
+  }
+}
 
 ///|
 /// Types of agents the orchestrator can manage.
@@ -16,18 +26,28 @@ pub(all) enum AgentType {
   Codex
   CursorAgent
   Unknown
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for AgentType with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
 
 ///|
 /// Where an agent runs.
 pub(all) enum Host {
   Local
   Remote(String)
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 /// Type-safe agent identifier. Prevents mixing with branch names, slugs, etc.
-pub(all) struct AgentId(String) derive(Show, Eq, Compare, Hash)
+pub(all) struct AgentId(String) derive(Debug, Eq, Compare, Hash)
+
+///|
+pub impl Show for AgentId with output(self, logger) -> Unit {
+  logger.write_string(self.0)
+}
 
 ///|
 pub fn AgentId::to_string(self : AgentId) -> String {
@@ -42,7 +62,12 @@ pub(all) enum AgentState {
   Completing
   Done
   Failed
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for AgentState with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
 
 ///|
 pub(all) enum LifecycleTrigger {
@@ -67,7 +92,7 @@ pub(all) enum LifecycleTrigger {
   ExitShutdown
   FinalizeComplete
   Raw(String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
@@ -101,7 +126,16 @@ pub(all) enum ExitReason {
   Merged
   Disconnected
   Shutdown
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for ExitReason with output(self, logger) -> Unit {
+  match self {
+    Merged => logger.write_string("Merged")
+    Disconnected => logger.write_string("Disconnected")
+    Shutdown => logger.write_string("Shutdown")
+  }
+}
 
 ///|
 pub fn ExitReason::lifecycle_trigger(self : ExitReason) -> LifecycleTrigger {
@@ -117,7 +151,15 @@ pub fn ExitReason::lifecycle_trigger(self : ExitReason) -> LifecycleTrigger {
 pub(all) enum TargetKind {
   ZellijTab
   ZellijPane
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for TargetKind with output(self, logger) -> Unit {
+  match self {
+    ZellijTab => logger.write_string("ZellijTab")
+    ZellijPane => logger.write_string("ZellijPane")
+  }
+}
 
 ///|
 /// A typed terminal target — session + pane/tab identifier.
@@ -125,7 +167,12 @@ pub(all) struct LocalTarget {
   kind : TargetKind
   session : String
   name : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for LocalTarget with output(self, logger) -> Unit {
+  logger.write_string(self.to_string())
+}
 
 ///|
 pub fn LocalTarget::to_string(self : LocalTarget) -> String {
@@ -169,7 +216,7 @@ pub(all) struct Agent {
   state : AgentState
   /// Sub-TL nesting depth: 0 for root supervisor, 1 for a sub-TL under one TL level.
   spawn_depth : Int
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// Message status tag.
@@ -177,7 +224,7 @@ pub(all) enum Status {
   Success
   Failure
   Info
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 /// A message between agents.
@@ -186,7 +233,7 @@ pub(all) struct Message {
   recipient : String
   content : String
   status : Status?
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// A git worktree workspace.
@@ -195,7 +242,7 @@ pub(all) struct Workspace {
   branch : String
   parent_branch : String
   host : Host
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// Isolation mode for agent workspaces.
@@ -203,7 +250,7 @@ pub(all) enum IsolationMode {
   Worktree
   Inline
   Standalone
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 /// PR tracking state.
@@ -211,7 +258,7 @@ pub(all) enum PRStatus {
   Open
   Merged
   Closed
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 /// CI check status.
@@ -219,7 +266,7 @@ pub(all) enum CIStatus {
   Pending
   Passing
   Failing
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 /// A tracked pull request.
@@ -229,7 +276,7 @@ pub(all) struct PR {
   base : String
   status : PRStatus
   ci_status : CIStatus
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// A coordination lock.
@@ -238,11 +285,70 @@ pub(all) struct MutexLock {
   holder : String
   acquired : Int64
   ttl : Int64
-} derive(Show)
+} derive(Debug)
 
 ///|
 pub(all) enum TaskStatus {
   Todo
   InProgress
   Done
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for Host with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for LifecycleTrigger with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+pub impl Show for Status with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for Message with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for Workspace with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for IsolationMode with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for PRStatus with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for CIStatus with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for MutexLock with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for TaskStatus with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}

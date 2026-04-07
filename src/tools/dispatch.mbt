@@ -3,12 +3,12 @@ pub(all) struct ToolCall {
   role : @types.Role
   name : String
   args : Map[String, String]
-} derive(Show)
+}
 
 ///|
 struct ToolArgs {
   values : Map[String, Json]
-} derive(Show)
+}
 
 ///|
 pub fn tool_args_from_map(args : Map[String, String]) -> ToolArgs {
@@ -292,7 +292,7 @@ pub async fn dispatch(
                 "agent_id": agent.agent_id.0.to_json(),
                 "role": agent.role.to_wire_string().to_json(),
                 "agent_type": agent.agent_type.to_wire_string().to_json(),
-                "state": agent.state.to_string().to_json(),
+                "state": agent.state.to_wire_string().to_json(),
                 "parent": agent.parent.to_json(),
                 "branch": agent.branch.to_json(),
                 "workspace": agent.workspace.to_json(),
@@ -781,4 +781,16 @@ pub fn apply_dev_event_checked(
     }
     Err(e) => Err(e)
   }
+}
+
+///|
+pub impl Show for ToolCall with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for ToolArgs with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

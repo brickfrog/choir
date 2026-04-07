@@ -175,7 +175,7 @@ pub fn ToolRegistry::lookup(
       if def.is_role_allowed(role) {
         def
       } else {
-        raise @types.ChoirError::permission_denied(role.to_string(), name)
+        raise @types.ChoirError::permission_denied(role.to_wire_string(), name)
       }
   }
 }
