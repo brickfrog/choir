@@ -13,7 +13,7 @@ pub(all) struct PromptSpec {
   non_goals : Array[String]
   worker_type : String
   no_commit : Bool
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 fn split_nonempty_lines(s : String) -> Array[String] {
@@ -299,4 +299,10 @@ pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
   render_worker_spawn_prompt_with_defaults(spec, [
     ".choir/context/common.md", ".choir/context/worker.md",
   ])
+}
+
+///|
+pub impl Show for PromptSpec with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

@@ -12,7 +12,13 @@ fn json_to_compat_string(json : Json) -> String {
 /// JSON object field bag used on the internal wire (request args and ok-payload fields).
 pub(all) struct FieldMap {
   values : Map[String, Json]
-} derive(Show)
+} derive(Eq)
+
+///|
+pub impl Show for FieldMap with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
 
 ///|
 pub type RequestArgs = FieldMap
@@ -96,14 +102,26 @@ pub(all) struct Request {
   role : Role
   name : String
   args : RequestArgs
-} derive(Show)
+} derive(Eq)
+
+///|
+pub impl Show for Request with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
 
 ///|
 /// Internal wire format response.
 pub(all) enum Response {
   Ok(ResponseFields)
   Err(String)
-} derive(Show)
+} derive(Eq)
+
+///|
+pub impl Show for Response with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
 
 ///|
 pub fn Response::ok(self : Map[String, String]) -> Response {

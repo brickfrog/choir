@@ -3,7 +3,7 @@ pub(all) struct Command {
   program : String
   args : Array[String]
   workdir : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 /// Marker `Command.program` for `run_native_choir_file_command` / `exec.run`.
@@ -428,4 +428,10 @@ pub fn gh_pr_add_reviewer(
     args: ["pr", "edit", pr_number.to_string(), "--add-reviewer", reviewer],
     workdir: Some(project_dir),
   }
+}
+
+///|
+pub impl Show for Command with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

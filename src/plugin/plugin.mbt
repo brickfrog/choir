@@ -3,7 +3,7 @@ pub(all) struct PluginDef {
   name : String
   command : String
   tools : String
-} derive(Show, Eq)
+} derive(Eq)
 
 ///|
 pub(all) struct PluginCall {
@@ -11,7 +11,7 @@ pub(all) struct PluginCall {
   args : @types.RequestArgs
   agent_id : String
   role : String
-} derive(Show)
+} derive(Eq)
 
 ///|
 pub fn parse_plugins_json(s : String) -> Array[PluginDef] {
@@ -113,4 +113,10 @@ pub fn parse_response(s : String) -> Result[@types.Response, String] {
     }
     Err(err)
   }
+}
+
+///|
+pub impl Show for PluginDef with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

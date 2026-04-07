@@ -2,7 +2,7 @@
 pub(all) struct ZellijLiveTargets {
   tabs : Array[String]
   panes : Array[String]
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct OpenPR {
@@ -11,20 +11,20 @@ pub(all) struct OpenPR {
   base : String
   url : String
   created_sec : Int64?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct LocalAgentSnapshot {
   slug : String
   dir_name : String
   agent : @types.Agent?
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// Live zellij tab/pane names used to decide whether agent terminal targets are still attached.
 pub(all) struct RecoveryPanesSnapshot {
   live : ZellijLiveTargets
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// GitHub review/CI row for a PR, collected by the host before reconciliation (replaces inline `gh_poll` in planning).
@@ -34,20 +34,20 @@ pub(all) struct RecoveryPrPollRow {
   ci_rollup : @poller.CiRollupStatus
   review_bodies : String
   copilot_issue_comment_seen : Bool
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct RecoveryPrsSnapshot {
   open_prs : Array[OpenPR]
   /// Entries for open PRs that need fresh GitHub state (no matching persisted track row, and a reconcilable local agent).
   polls : Map[Int, RecoveryPrPollRow]
-} derive(Show)
+} derive(Debug)
 
 ///|
 pub(all) struct RecoveryFilesSnapshot {
   local_agents : Array[LocalAgentSnapshot]
   persisted_tracked_prs : Array[@poller.TrackedPR]
-} derive(Show)
+} derive(Debug)
 
 ///|
 pub(all) enum RecoveryAction {
@@ -68,14 +68,14 @@ pub(all) enum RecoveryAction {
   )
   SyncLifecycle(agent_id~ : String, pr~ : OpenPR, review~ : @poller.ReviewState)
   FinalizeOfflineAgent(agent_id~ : String)
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// Result of one [`build_agent_recovery_actions`] pass; [`discover_recovery_input`] stores it so [`plan_recovery`] does not repeat that work.
 pub(all) struct PrebuiltAgentPhase {
   recovered_agents : Array[@types.Agent]
   agent_stage_actions : Array[RecoveryAction]
-} derive(Show)
+} derive(Debug)
 
 ///|
 /// Fully materialized recovery input: host adapters populate each snapshot; `plan_recovery` stays pure.
@@ -86,12 +86,12 @@ pub(all) struct RecoveryReconcileInput {
   recovered_at : Int64
   /// `Some` when built by [`discover_recovery_input`] (reuses agent phase in [`plan_recovery`]).
   prebuilt_agent_phase : PrebuiltAgentPhase?
-} derive(Show)
+} derive(Debug)
 
 ///|
 pub(all) struct RecoveryPlan {
   actions : Array[RecoveryAction]
-} derive(Show)
+} derive(Debug)
 
 ///|
 pub(all) struct RecoveryProvider {
@@ -808,4 +808,70 @@ pub fn parse_zellij_live_targets(output : String) -> ZellijLiveTargets {
     }
   }
   { tabs, panes }
+}
+
+///|
+pub impl Show for ZellijLiveTargets with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for OpenPR with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for LocalAgentSnapshot with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RecoveryPanesSnapshot with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RecoveryPrPollRow with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RecoveryPrsSnapshot with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RecoveryFilesSnapshot with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RecoveryAction with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for PrebuiltAgentPhase with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RecoveryReconcileInput with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for RecoveryPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }
