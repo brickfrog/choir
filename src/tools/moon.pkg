@@ -22,4 +22,5 @@ import {
 
 options(
   "is-main": false,
+  targets: { "pr_test.mbt": [ "native" ] },
 )

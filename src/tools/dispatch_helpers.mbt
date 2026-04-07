@@ -1079,15 +1079,6 @@ async test "handle_kv_list uses test and find argv and sorts keys" {
 }
 
 ///|
-async test "capture_plugin_shell_command pipes stdin to argv plugin (no sh -c for simple argv)" {
-  let (exit_code, out) = @exec.capture_plugin_shell_command(
-    "cat", "{\"ok\":true}", 10,
-  )
-  assert_eq(exit_code, 0)
-  assert_eq(out.trim(), "{\"ok\":true}")
-}
-
-///|
 async fn mock_inline_comments_two_items(
   cmd : @workspace.Command,
 ) -> (Int, String) {

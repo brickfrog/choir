@@ -45,6 +45,15 @@ async test "capture_hook_script_merged writes stdin without newline and captures
 }
 
 ///|
+async test "capture_plugin_shell_command pipes stdin to argv plugin (no sh -c for simple argv)" {
+  let (exit_code, out) = @exec.capture_plugin_shell_command(
+    "cat", "{\"ok\":true}", 10,
+  )
+  assert_eq(exit_code, 0)
+  assert_eq(out.trim(), "{\"ok\":true}")
+}
+
+///|
 test "parse_left_right_counts parses tab separated counts" {
   match parse_left_right_counts("2\t5\n") {
     Some((left, right)) => {

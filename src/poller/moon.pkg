@@ -11,4 +11,8 @@ import {
 
 options(
   "is-main": false,
+  targets: {
+    "gh_spawn.mbt": [ "native" ],
+    "gh_spawn_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+  },
 )

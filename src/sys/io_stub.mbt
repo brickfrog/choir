@@ -138,3 +138,43 @@ pub fn init_cleanup_purge_artifacts_native() -> Unit {
 pub fn register_cleanup_runtime_artifacts() -> Unit {
 
 }
+
+///|
+pub fn create_dir_all(_path : String) -> Bool {
+  false
+}
+
+///|
+pub fn chmod_mode(_path : String, _mode : Int) -> Bool {
+  false
+}
+
+///|
+pub fn symlink_force(_target : String, _linkpath : String) -> Bool {
+  false
+}
+
+///|
+pub fn shell_quote(_s : String) -> String {
+  "''"
+}
+
+///|
+pub fn path_exists(_path : String) -> Bool {
+  false
+}
+
+///|
+pub fn kill_pid_best_effort(_pid : Int) -> Unit {
+
+}
+
+///|
+pub fn kill_server_pid_sequence_best_effort(_pid : Int) -> Unit {
+
+}
+
+///|
+pub fn pid_is_alive(_pid : Int) -> Bool {
+  false
+}
