@@ -170,18 +170,9 @@ pub fn gh_pr_view_command(branch : String) -> @workspace.Command {
 
 ///|
 fn parse_non_negative_int(s : String) -> Int? {
-  let trimmed = s.trim().to_string()
-  if trimmed == "" {
-    return None
+  Some(@strconv.parse_int(s.trim().to_string())) catch {
+    _ => None
   }
-  let mut res = 0
-  for c in trimmed {
-    if c < '0' || c > '9' {
-      return None
-    }
-    res = res * 10 + (c.to_int() - '0'.to_int())
-  }
-  Some(res)
 }
 
 ///|

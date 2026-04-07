@@ -26,18 +26,9 @@ pub fn ParseError::message(self : ParseError) -> String {
 
 ///|
 fn parse_int(s : String) -> Int? {
-  if s == "" {
-    return None
+  Some(@strconv.parse_int(s.trim().to_string())) catch {
+    _ => None
   }
-  let mut res = 0
-  for c in s {
-    if c >= '0' && c <= '9' {
-      res = res * 10 + (c.to_int() - '0'.to_int())
-    } else {
-      return None
-    }
-  }
-  Some(res)
 }
 
 ///|

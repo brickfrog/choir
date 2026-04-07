@@ -194,21 +194,25 @@ pub fn parse_config(
 ///|
 fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ChoirError] {
   let s = raw.trim().to_string()
-  if s == "" {
-    return Err(@types.ChoirError::config_error("spawn_depth cannot be empty"))
-  }
-  let mut n = 0
-  for c in s {
-    if c >= '0' && c <= '9' {
-      n = n * 10 + (c.to_int() - '0'.to_int())
-    } else {
-      return Err(@types.ChoirError::config_error("invalid spawn_depth: " + raw))
+  let n_opt = Some(@strconv.parse_int(s)) catch { _ => None }
+  match n_opt {
+    Some(n) => {
+      if n < 0 || n > 1 {
+        return Err(
+          @types.ChoirError::config_error("spawn_depth must be 0 or 1"),
+        )
+      }
+      Ok(n)
+    }
+    None => {
+      if s == "" {
+        return Err(
+          @types.ChoirError::config_error("spawn_depth cannot be empty"),
+        )
+      }
+      Err(@types.ChoirError::config_error("invalid spawn_depth: " + raw))
     }
   }
-  if n > 1 {
-    return Err(@types.ChoirError::config_error("spawn_depth must be 0 or 1"))
-  }
-  Ok(n)
 }
 
 ///|
