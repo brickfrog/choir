@@ -1,6 +1,7 @@
 import {
   "choir/src/types",
   "moonbitlang/core/json",
+  "moonbitlang/core/strconv",
 }
 
 options(

@@ -4,6 +4,7 @@ import {
   "choir/src/config",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
+  "moonbitlang/core/strconv",
   "choir/src/exec",
   "choir/src/workspace",
   "choir/src/registry",

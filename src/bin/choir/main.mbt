@@ -610,29 +610,16 @@ fn mcp_response_wire(resp : @mcp.JsonRpcResponse, raw_stdio : Bool) -> String {
 ///|
 fn mcp_parse_content_length(line : String) -> Int? {
   let trimmed = line.trim().to_string()
-  if !trimmed.has_prefix("Content-Length:") &&
-    !trimmed.has_prefix("content-length:") {
+  let prefix = if trimmed.has_prefix("Content-Length:") {
+    "Content-Length:"
+  } else if trimmed.has_prefix("content-length:") {
+    "content-length:"
+  } else {
     return None
   }
-  let mut value = 0
-  let mut saw_digit = false
-  let mut saw_colon = false
-  for c in trimmed {
-    if !saw_colon {
-      if c == ':' {
-        saw_colon = true
-      }
-      continue
-    }
-    if c >= '0' && c <= '9' {
-      saw_digit = true
-      value = value * 10 + (c.to_int() - '0'.to_int())
-    }
-  }
-  if saw_digit {
-    Some(value)
-  } else {
-    None
+  let value_str = trimmed[prefix.length():].trim().to_string()
+  Some(@strconv.parse_int(value_str)) catch {
+    _ => None
   }
 }
 
@@ -727,20 +714,11 @@ fn mcp_cli_raw_stdio(args : Array[String]) -> Bool {
 
 ///|
 fn mcp_parse_decimal_u32(s : String) -> Int? {
-  if s == "" {
-    return None
+  let n_opt = Some(@strconv.parse_int(s)) catch { _ => None }
+  match n_opt {
+    Some(n) => if n <= 0 { None } else { Some(n) }
+    None => None
   }
-  let mut n = 0
-  for c in s {
-    if c < '0' || c > '9' {
-      return None
-    }
-    n = n * 10 + (c.to_int() - '0'.to_int())
-  }
-  if n == 0 {
-    return None
-  }
-  Some(n)
 }
 
 ///|
@@ -3311,18 +3289,9 @@ async fn init_tab_exists(session : String, tab_name : String) -> Bool {
 
 ///|
 fn init_parse_server_pid_line(s : String) -> Int? {
-  let t = s.trim().to_string()
-  if t == "" {
-    return None
+  Some(@strconv.parse_int(s.trim().to_string())) catch {
+    _ => None
   }
-  let mut n = 0
-  for c in t {
-    if c < '0' || c > '9' {
-      return None
-    }
-    n = n * 10 + (c.to_int() - '0'.to_int())
-  }
-  Some(n)
 }
 
 ///|
