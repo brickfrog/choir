@@ -99,9 +99,18 @@ pub(all) enum PollEvent {
 } derive(Debug, Eq)
 
 ///|
+pub fn CiRollupStatus::to_wire_string(self : CiRollupStatus) -> String {
+  match self {
+    Unknown => "unknown"
+    InProgress => "in_progress"
+    Success => "success"
+    Failure => "failure"
+  }
+}
+
+///|
 pub impl Show for CiRollupStatus with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
+  logger.write_string(self.to_wire_string())
 }
 
 ///|

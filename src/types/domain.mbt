@@ -302,8 +302,7 @@ pub impl Show for Host with output(self, logger) -> Unit {
 
 ///|
 pub impl Show for LifecycleTrigger with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
+  logger.write_string(self.to_wire_string())
 }
 
 ///|
