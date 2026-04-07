@@ -40,7 +40,7 @@ pub(all) enum TeardownEffect {
     parent_message~ : String,
     reason~ : @phase.FailureReason
   )
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 fn finalize_reason_for_exit(
@@ -468,4 +468,10 @@ pub fn merged_pr_parent_message(
   parent_disp +
   url_line +
   "\nAuthoritative merge signal: do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
+}
+
+///|
+pub impl Show for TeardownEffect with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

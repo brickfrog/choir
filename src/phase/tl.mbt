@@ -3,7 +3,7 @@ pub(all) struct ChildHandle {
   slug : String
   branch : String
   agent_type : @types.AgentType
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) struct ChildTrackerEntry {
@@ -11,7 +11,7 @@ pub(all) struct ChildTrackerEntry {
   slug : String
   branch : String
   agent_type : @types.AgentType
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) struct ChildTracker {
@@ -93,7 +93,7 @@ pub(all) enum TLPhase {
   PRFiled(number~ : Int, url~ : String)
   Done
   Failed(reason~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum TLEvent {
@@ -103,7 +103,7 @@ pub(all) enum TLEvent {
   PRMerged(number~ : Int, url~ : String)
   AllChildrenDone
   OwnPRFiled(number~ : Int, url~ : String, branch~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub fn tl_transition(
@@ -200,4 +200,28 @@ pub fn tl_phase_from_json(json_str : String) -> TLPhase? {
   } catch {
     _ => None
   }
+}
+
+///|
+pub impl Show for ChildHandle with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for ChildTrackerEntry with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for TLPhase with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for TLEvent with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

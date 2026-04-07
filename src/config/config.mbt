@@ -36,7 +36,7 @@ pub(all) struct CompanionDef {
   role : String
   command : String
   task : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn parse_companions_json(s : String) -> Array[CompanionDef] {
@@ -292,4 +292,10 @@ pub fn resolve_role(
     Some(r) => r
     None => config.default_role
   }
+}
+
+///|
+pub impl Show for CompanionDef with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

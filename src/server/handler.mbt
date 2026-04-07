@@ -1475,8 +1475,11 @@ fn log_poller_pr_tick(
     @moontrace.field("agent", log.agent_id),
     @moontrace.field("action", action),
     @moontrace.field("skip_reason", skip_reason),
-    @moontrace.field("prior_review", log.prior_review_state.to_string()),
-    @moontrace.field("detected_review", log.detected_review_state.to_string()),
+    @moontrace.field("prior_review", log.prior_review_state.to_wire_string()),
+    @moontrace.field(
+      "detected_review",
+      log.detected_review_state.to_wire_string(),
+    ),
     @moontrace.field("events", events_summary),
     @moontrace.field("failures", log.consecutive_failures),
     @moontrace.field("prev_failures", log.previous_consecutive_failures),
@@ -1489,9 +1492,9 @@ fn log_poller_pr_tick(
     action +
     (if skip_reason != "" { " " + skip_reason } else { "" }) +
     " prior=" +
-    log.prior_review_state.to_string() +
+    log.prior_review_state.to_wire_string() +
     " detected=" +
-    log.detected_review_state.to_string() +
+    log.detected_review_state.to_wire_string() +
     " events=" +
     events_summary +
     " failures=" +
@@ -1950,7 +1953,7 @@ async fn ServerState::interpret_teardown_effects(
           if !is_self_reported && !already_terminal {
             match p.terminal_target {
               Some(target) => {
-                let reason_str = reason.to_string()
+                let reason_str = reason.to_wire_string()
                 let msg = @message.format_failure(agent_id, reason_str)
                 ignore(
                   @tools.execute_delivery(

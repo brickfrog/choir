@@ -4,7 +4,7 @@ pub(all) enum DevStage {
   PRUnderReview
   FixesPushedAwaitingReview
   ApprovedAwaitingMerge
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevPhase {
@@ -24,7 +24,7 @@ pub(all) enum DevPhase {
   Exitable
   Done
   Failed(reason~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevEvent {
@@ -36,14 +36,14 @@ pub(all) enum DevEvent {
   ReviewReceivedEv(pr_number~ : Int, body~ : String)
   ReviewApprovedEv(pr_number~ : Int)
   FixesPushedEv(pr_number~ : Int, sha~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevExitDecision {
   Blocked(message~ : String)
   Deferred(message~ : String)
   ExitableNow
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevDisconnectPolicy {
@@ -51,7 +51,7 @@ pub(all) enum DevDisconnectPolicy {
   Preserve
   FinalizeDone
   Ignore
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 fn deferred_message(
@@ -358,4 +358,34 @@ pub fn dev_phase_from_json(json_str : String) -> DevPhase? {
   } catch {
     _ => None
   }
+}
+
+///|
+pub impl Show for DevStage with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for DevPhase with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for DevEvent with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for DevExitDecision with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for DevDisconnectPolicy with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }

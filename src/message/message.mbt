@@ -34,7 +34,23 @@ pub(all) enum DeliveryMethod {
   LocalTerminalInput(@types.LocalTarget, String)
   TcpPush(String, String)
   UdsHttp(String, String)
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for DeliveryMethod with output(self, logger) -> Unit {
+  logger.write_string(self.to_display_string())
+}
+
+///|
+pub fn DeliveryMethod::to_display_string(self : DeliveryMethod) -> String {
+  match self {
+    TeamsInbox(path, _, fallback_target=_) => "teams:" + path
+    LocalTerminalInput(target, _) =>
+      "terminal:" + target.session + "/" + target.name
+    TcpPush(host, _) => "tcp:" + host
+    UdsHttp(path, _) => "uds:" + path
+  }
+}
 
 ///|
 pub fn teams_inbox_json(
