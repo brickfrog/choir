@@ -2101,6 +2101,7 @@ test "format_tl_pr_recheck_summary ready snapshot when approved success zero thr
   assert_true(s.contains("success"))
   assert_true(s.contains("GitHub Copilot issue comment (REST): not seen"))
   assert_true(s.contains("Advisory evaluation verdict: ready"))
+  assert_true(s.contains("Merge policy decision: merge_now"))
 }
 
 ///|
@@ -2113,6 +2114,7 @@ test "format_tl_pr_recheck_summary lists blockers for changes requested" {
   assert_true(s.contains("GitHub review requests changes"))
   assert_false(s.contains("no tracked blockers"))
   assert_true(s.contains("Advisory evaluation verdict: blocked"))
+  assert_true(s.contains("Merge policy decision: blocked"))
 }
 
 ///|
@@ -2125,6 +2127,7 @@ test "format_tl_pr_recheck_summary does not claim ready when thread count not fe
   assert_true(s.contains("not fetched"))
   assert_false(s.contains("no tracked blockers"))
   assert_true(s.contains("Advisory evaluation verdict: needs_human"))
+  assert_true(s.contains("Merge policy decision: needs_human"))
 }
 
 ///|
@@ -2137,6 +2140,23 @@ test "format_tl_pr_recheck_summary notes Copilot issue comment when seen on merg
   let s = format_tl_pr_recheck_summary(t, Some(0))
   assert_true(s.contains("GitHub Copilot issue comment (REST): seen"))
   assert_true(s.contains("Copilot issue comment observed"))
+}
+
+///|
+test "format_tl_pr_recheck_summary policy needs human when required verify is missing" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let s = format_tl_pr_recheck_summary(t, Some(0), task_contract=Some(contract))
+  assert_true(s.contains("Advisory evaluation verdict: needs_human"))
+  assert_true(s.contains("Merge policy decision: needs_human"))
+  assert_true(s.contains("local verify not observed"))
 }
 
 ///|

@@ -119,20 +119,25 @@ pub async fn ServerState::handle_with_runner(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> @types.Response {
   let start_ms = @env.now()
-  let merged_agent_id = if req.name == "merge_pr" {
+  let merged_pr_context : (String, String?)? = if req.name == "merge_pr" {
     match request_int_arg(req, "pr_number") {
       Some(pr_number) =>
         match self.poller.get(pr_number) {
-          Some(tracked) => Some(tracked.agent_id)
+          Some(tracked) =>
+            Some((tracked.agent_id, evidence_optional_string(tracked.pr_url)))
           None =>
             // Poller doesn't have this PR (server restart, file_pr bypassed).
             // Fall back to scanning the registry for an agent in ReviewOwned
             // for this PR number.
-            @runtime.find_agent_for_pr_in_lifecycle(
-              self.recovery_provider,
-              self.config.project_dir,
-              pr_number,
-            )
+            match
+              @runtime.find_agent_for_pr_in_lifecycle(
+                self.recovery_provider,
+                self.config.project_dir,
+                pr_number,
+              ) {
+              Some(agent_id) => Some((agent_id, None))
+              None => None
+            }
         }
       None => None
     }
@@ -166,7 +171,10 @@ pub async fn ServerState::handle_with_runner(
   let effects = plan_post_tool_actions(
     req,
     resp,
-    merged_agent_id~,
+    merged_agent_id=match merged_pr_context {
+      Some((agent_id, _)) => Some(agent_id)
+      None => None
+    },
     self.poller,
     self.registry,
     self.config.project_dir,
@@ -182,6 +190,17 @@ pub async fn ServerState::handle_with_runner(
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp) catch {
     _ => ()
+  }
+  match merged_pr_context {
+    Some((agent_id, pr_url)) =>
+      append_merge_pr_evidence_if_needed(
+        self,
+        req,
+        resp,
+        Some(agent_id),
+        pr_url,
+      )
+    None => append_merge_pr_evidence_if_needed(self, req, resp, None, None)
   }
   resp
 }
@@ -438,6 +457,147 @@ fn task_contract_for_agent(
     }
   }
   None
+}
+
+///|
+fn evidence_review_state_from_snapshot(
+  review : @poller.ReviewState,
+) -> @evidence.EvidenceReviewState {
+  match review {
+    @poller.ReviewState::None_ => @evidence.EvidenceReviewState::None_
+    @poller.ReviewState::Commented => @evidence.EvidenceReviewState::Commented
+    @poller.ReviewState::Approved => @evidence.EvidenceReviewState::Approved
+    @poller.ReviewState::ChangesRequested =>
+      @evidence.EvidenceReviewState::ChangesRequested
+  }
+}
+
+///|
+fn evidence_ci_status_from_snapshot(
+  ci : @poller.CiRollupStatus,
+) -> @evidence.EvidenceCiStatus {
+  match ci {
+    @poller.CiRollupStatus::Unknown => @evidence.EvidenceCiStatus::Unknown
+    @poller.CiRollupStatus::InProgress => @evidence.EvidenceCiStatus::InProgress
+    @poller.CiRollupStatus::Success => @evidence.EvidenceCiStatus::Success
+    @poller.CiRollupStatus::Failure => @evidence.EvidenceCiStatus::Failure
+  }
+}
+
+///|
+fn evidence_optional_string(value : String) -> String? {
+  if value == "" {
+    None
+  } else {
+    Some(value)
+  }
+}
+
+///|
+fn evidence_events_for_poll_snapshot(
+  tracked : @poller.TrackedPR,
+  event : @poller.PollEvent,
+  unresolved_threads_for_recheck : Int?,
+) -> Array[@evidence.EvidenceEvent] {
+  let events : Array[@evidence.EvidenceEvent] = [
+    @evidence.EvidenceEvent::ReviewObserved(
+      state=evidence_review_state_from_snapshot(tracked.last_review_state),
+      body=evidence_optional_string(tracked.last_review_bodies),
+    ),
+    @evidence.EvidenceEvent::CiObserved(
+      status=evidence_ci_status_from_snapshot(tracked.last_ci_rollup),
+      head_sha=evidence_optional_string(tracked.last_sha),
+    ),
+  ]
+  match unresolved_threads_for_recheck {
+    Some(count) => events.push(@evidence.EvidenceEvent::ThreadsObserved(count~))
+    None => events.push(@evidence.EvidenceEvent::ThreadsUnobserved)
+  }
+  if tracked.copilot_issue_comment_seen {
+    events.push(@evidence.EvidenceEvent::CopilotIssueCommentObserved)
+  } else {
+    events.push(@evidence.EvidenceEvent::CopilotIssueCommentUnobserved)
+  }
+  match event {
+    @poller.PollEvent::PRMerged(pr_number) =>
+      events.push(
+        @evidence.EvidenceEvent::MergeObserved(
+          pr_number~,
+          pr_url=evidence_optional_string(tracked.pr_url),
+        ),
+      )
+    _ => ()
+  }
+  events
+}
+
+///|
+fn append_poll_snapshot_evidence(
+  state : ServerState,
+  tracked : @poller.TrackedPR,
+  event : @poller.PollEvent,
+  unresolved_threads_for_recheck : Int?,
+) -> Unit {
+  for
+    evidence_event in evidence_events_for_poll_snapshot(
+      tracked, event, unresolved_threads_for_recheck,
+    ) {
+    ignore(
+      append_evidence_event(
+        state.append_file,
+        state.config.project_dir,
+        tracked.agent_id,
+        evidence_event,
+      ),
+    )
+  }
+}
+
+///|
+fn append_merge_pr_evidence_if_needed(
+  state : ServerState,
+  req : @types.Request,
+  resp : @types.Response,
+  merged_agent_id : String?,
+  merged_pr_url : String?,
+) -> Unit {
+  guard req.name == "merge_pr" else { return }
+  let pr_number = match request_int_arg(req, "pr_number") {
+    Some(value) => value
+    None => return
+  }
+  let force = req.args.get_bool("force").unwrap_or(false)
+  match merged_agent_id {
+    Some(agent_id) => {
+      if force {
+        ignore(
+          append_evidence_event(
+            state.append_file,
+            state.config.project_dir,
+            agent_id,
+            @evidence.EvidenceEvent::UserOverrideObserved(
+              scope="merge_pr.force",
+              reason=Some("merge_pr invoked with force=true"),
+            ),
+          ),
+        )
+      }
+      if resp.is_ok() {
+        ignore(
+          append_evidence_event(
+            state.append_file,
+            state.config.project_dir,
+            agent_id,
+            @evidence.EvidenceEvent::MergeObserved(
+              pr_number~,
+              pr_url=merged_pr_url,
+            ),
+          ),
+        )
+      }
+    }
+    None => ()
+  }
 }
 
 ///|
@@ -1286,7 +1446,8 @@ async fn deliver_pending_poll_events(
       ignore(@tools.execute_delivery(delivery, runner))
     }
     match state.poller.get(poll_event_pr_number(event)) {
-      Some(pr) =>
+      Some(pr) => {
+        append_poll_snapshot_evidence(state, pr, event, unresolved_threads)
         match
           parent_poll_event_message(
             pr,
@@ -1312,6 +1473,7 @@ async fn deliver_pending_poll_events(
           }
           None => ()
         }
+      }
       None => ()
     }
     match pr_comment_body(event, agent_id) {
@@ -2915,5 +3077,94 @@ test "parent_poll_event_message PRMerged does not append TLDecision suffix" {
       assert_true(message.contains("leaf will shut down automatically"))
     }
     None => fail("expected PRMerged message")
+  }
+}
+
+///|
+test "evidence_events_for_poll_snapshot emits normalized snapshot events" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 64,
+    agent_id: "main.dev-evidence",
+    branch: "work/evidence",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/64",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "looks good",
+    last_sha: "sha64",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+  }
+  let events = evidence_events_for_poll_snapshot(
+    tracked,
+    @poller.PollEvent::CILatestHeadRollupSucceeded(64),
+    Some(0),
+  )
+  assert_eq(events.length(), 4)
+  match events[0] {
+    @evidence.EvidenceEvent::ReviewObserved(state~, body~) => {
+      assert_eq(state, @evidence.EvidenceReviewState::Approved)
+      assert_eq(body, Some("looks good"))
+    }
+    _ => fail("expected review evidence")
+  }
+  match events[1] {
+    @evidence.EvidenceEvent::CiObserved(status~, head_sha~) => {
+      assert_eq(status, @evidence.EvidenceCiStatus::Success)
+      assert_eq(head_sha, Some("sha64"))
+    }
+    _ => fail("expected ci evidence")
+  }
+  match events[2] {
+    @evidence.EvidenceEvent::ThreadsObserved(count~) => assert_eq(count, 0)
+    _ => fail("expected threads evidence")
+  }
+  match events[3] {
+    @evidence.EvidenceEvent::CopilotIssueCommentObserved => ()
+    _ => fail("expected copilot evidence")
+  }
+}
+
+///|
+test "evidence_events_for_poll_snapshot includes merge observed on PRMerged" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 65,
+    agent_id: "main.dev-evidence-merged",
+    branch: "work/evidence-merged",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/65",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha65",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+  }
+  let events = evidence_events_for_poll_snapshot(
+    tracked,
+    @poller.PollEvent::PRMerged(65),
+    None,
+  )
+  assert_eq(events.length(), 5)
+  match events[4] {
+    @evidence.EvidenceEvent::MergeObserved(pr_number~, pr_url~) => {
+      assert_eq(pr_number, 65)
+      assert_eq(pr_url, Some("https://ex/pr/65"))
+    }
+    _ => fail("expected merge evidence")
   }
 }

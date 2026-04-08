@@ -418,6 +418,36 @@ pub fn advisory_evaluation_summary_line(
 }
 
 ///|
+pub fn merge_policy_decision_for_tracked_pr(
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  task_contract? : @types.TaskContract? = None,
+) -> @policy.MergeDecision {
+  @policy.decide_merge(
+    task_contract,
+    advisory_evaluation_bundle_for_tracked_pr(
+      tracked,
+      unresolved_threads,
+      task_contract~,
+    ),
+  )
+}
+
+///|
+pub fn merge_policy_summary_line(
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  task_contract? : @types.TaskContract? = None,
+) -> String {
+  let decision = merge_policy_decision_for_tracked_pr(
+    tracked,
+    unresolved_threads,
+    task_contract~,
+  )
+  "Merge policy decision: " + decision.label() + " (" + decision.reason() + ")."
+}
+
+///|
 fn tl_snapshot_workflow_category(
   tracked : TrackedPR,
   merge_ready : Bool,
