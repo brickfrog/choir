@@ -295,6 +295,292 @@ pub(all) enum TaskStatus {
 } derive(Debug, Eq)
 
 ///|
+/// Canonical task intent passed through spawn/planning flows.
+pub(all) struct TaskContract {
+  goal : String
+  scope : Array[String]
+  acceptance_checks : Array[String]
+  constraints : Array[String]
+  non_goals : Array[String]
+  review_context : String?
+  verify : Array[String]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Normalized review rollup used by evaluation helpers.
+pub(all) enum EvaluationReviewState {
+  Unknown
+  None_
+  Commented
+  Approved
+  ChangesRequested
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Normalized CI rollup used by evaluation helpers.
+pub(all) enum EvaluationCiRollup {
+  Unknown
+  InProgress
+  Success
+  Failure
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum VerifyStatus {
+  Passed
+  Failed
+  NotObserved
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct VerifyCheckResult {
+  name : String
+  status : VerifyStatus
+  details : String
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Typed evidence items used by advisory evaluation.
+pub(all) enum EvaluationSignal {
+  Review(state~ : EvaluationReviewState, body~ : String)
+  Ci(status~ : EvaluationCiRollup)
+  ThreadsObserved(count~ : Int)
+  ThreadsUnobserved
+  CopilotIssueCommentObserved
+  CopilotIssueCommentUnobserved
+  Verify(result~ : VerifyCheckResult)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Grouped evidence for one advisory evaluation pass.
+pub(all) struct EvaluationBundle {
+  task_contract : TaskContract?
+  signals : Array[EvaluationSignal]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) enum EvaluationVerdict {
+  Ready
+  Blocked(reason~ : String)
+  NeedsHuman(reason~ : String)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct EvaluationResult {
+  verdict : EvaluationVerdict
+  summary : String
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub fn TaskContract::empty() -> TaskContract {
+  {
+    goal: "",
+    scope: [],
+    acceptance_checks: [],
+    constraints: [],
+    non_goals: [],
+    review_context: None,
+    verify: [],
+  }
+}
+
+///|
+pub fn TaskContract::is_empty(self : TaskContract) -> Bool {
+  self.goal.trim().to_string() == "" &&
+  self.scope.length() == 0 &&
+  self.acceptance_checks.length() == 0 &&
+  self.constraints.length() == 0 &&
+  self.non_goals.length() == 0 &&
+  self.review_context is None &&
+  self.verify.length() == 0
+}
+
+///|
+pub fn TaskContract::to_json_string(self : TaskContract) -> String {
+  self.to_json().stringify()
+}
+
+///|
+fn evaluation_latest_review_state(
+  signals : Array[EvaluationSignal],
+) -> EvaluationReviewState {
+  let mut latest = EvaluationReviewState::Unknown
+  for signal in signals {
+    match signal {
+      EvaluationSignal::Review(state~, ..) => latest = state
+      _ => ()
+    }
+  }
+  latest
+}
+
+///|
+fn evaluation_latest_ci_rollup(
+  signals : Array[EvaluationSignal],
+) -> EvaluationCiRollup {
+  let mut latest = EvaluationCiRollup::Unknown
+  for signal in signals {
+    match signal {
+      EvaluationSignal::Ci(status~) => latest = status
+      _ => ()
+    }
+  }
+  latest
+}
+
+///|
+fn evaluation_latest_threads(signals : Array[EvaluationSignal]) -> Int? {
+  let mut latest : Int? = None
+  for signal in signals {
+    match signal {
+      EvaluationSignal::ThreadsObserved(count~) => latest = Some(count)
+      EvaluationSignal::ThreadsUnobserved => latest = None
+      _ => ()
+    }
+  }
+  latest
+}
+
+///|
+fn evaluation_copilot_seen(signals : Array[EvaluationSignal]) -> Bool {
+  let mut seen = false
+  for signal in signals {
+    match signal {
+      EvaluationSignal::CopilotIssueCommentObserved => seen = true
+      EvaluationSignal::CopilotIssueCommentUnobserved => seen = false
+      _ => ()
+    }
+  }
+  seen
+}
+
+///|
+fn evaluation_verify_results_for_required(
+  required : Array[String],
+  signals : Array[EvaluationSignal],
+) -> Array[VerifyCheckResult] {
+  let observed : Map[String, VerifyCheckResult] = {}
+  for signal in signals {
+    match signal {
+      EvaluationSignal::Verify(result~) => observed.set(result.name, result)
+      _ => ()
+    }
+  }
+  let out : Array[VerifyCheckResult] = []
+  for name in required {
+    match observed.get(name) {
+      Some(found) => out.push(found)
+      None => out.push({ name, status: VerifyStatus::NotObserved, details: "" })
+    }
+  }
+  out
+}
+
+///|
+fn evaluation_missing_verify_names(
+  results : Array[VerifyCheckResult],
+) -> Array[String] {
+  let out : Array[String] = []
+  for result in results {
+    if result.status == VerifyStatus::NotObserved {
+      out.push(result.name)
+    }
+  }
+  out
+}
+
+///|
+fn evaluation_failed_verify_names(
+  results : Array[VerifyCheckResult],
+) -> Array[String] {
+  let out : Array[String] = []
+  for result in results {
+    if result.status == VerifyStatus::Failed {
+      out.push(result.name)
+    }
+  }
+  out
+}
+
+///|
+pub fn advisory_evaluation_result(
+  bundle : EvaluationBundle,
+) -> EvaluationResult {
+  let review = evaluation_latest_review_state(bundle.signals)
+  let ci = evaluation_latest_ci_rollup(bundle.signals)
+  let threads = evaluation_latest_threads(bundle.signals)
+  let verify_required = match bundle.task_contract {
+    Some(contract) => contract.verify
+    None => []
+  }
+  let verify_results = evaluation_verify_results_for_required(
+    verify_required,
+    bundle.signals,
+  )
+  let failed_verify = evaluation_failed_verify_names(verify_results)
+  if failed_verify.length() > 0 {
+    let reason = "local verify failed: " + failed_verify.join(", ")
+    return { verdict: Blocked(reason~), summary: reason }
+  }
+  let missing_verify = evaluation_missing_verify_names(verify_results)
+  if review == EvaluationReviewState::ChangesRequested {
+    let reason = "review requested changes"
+    return { verdict: Blocked(reason~), summary: reason }
+  }
+  match threads {
+    Some(count) =>
+      if count > 0 {
+        let reason = count.to_string() + " unresolved inline review thread(s)"
+        return { verdict: Blocked(reason~), summary: reason }
+      }
+    None => ()
+  }
+  if ci == EvaluationCiRollup::Failure {
+    let reason = "CI failing"
+    return { verdict: Blocked(reason~), summary: reason }
+  }
+  if missing_verify.length() > 0 {
+    let reason = "local verify not observed: " + missing_verify.join(", ")
+    return { verdict: NeedsHuman(reason~), summary: reason }
+  }
+  if review == EvaluationReviewState::Unknown ||
+    review == EvaluationReviewState::None_ {
+    let reason = "no approving review observed"
+    return { verdict: NeedsHuman(reason~), summary: reason }
+  }
+  if review == EvaluationReviewState::Commented {
+    let reason = "latest review is comment-only"
+    return { verdict: NeedsHuman(reason~), summary: reason }
+  }
+  if ci == EvaluationCiRollup::Unknown || ci == EvaluationCiRollup::InProgress {
+    let reason = "latest head CI rollup is not all-success"
+    return { verdict: NeedsHuman(reason~), summary: reason }
+  }
+  match threads {
+    None => {
+      let reason = "unresolved inline review threads not fetched"
+      return { verdict: NeedsHuman(reason~), summary: reason }
+    }
+    Some(_) => ()
+  }
+  let summary = if evaluation_copilot_seen(bundle.signals) {
+    "ready: no tracked blockers; Copilot issue comment observed"
+  } else {
+    "ready: no tracked blockers; Copilot issue comment not observed"
+  }
+  { verdict: Ready, summary }
+}
+
+///|
+pub fn EvaluationVerdict::label(self : EvaluationVerdict) -> String {
+  match self {
+    Ready => "ready"
+    Blocked(_) => "blocked"
+    NeedsHuman(_) => "needs_human"
+  }
+}
+
+///|
 pub impl Show for Host with output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
@@ -349,6 +635,60 @@ pub impl Show for MutexLock with output(self, logger) -> Unit {
 
 ///|
 pub impl Show for TaskStatus with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for TaskContract with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for EvaluationReviewState with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for EvaluationCiRollup with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for VerifyStatus with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for VerifyCheckResult with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for EvaluationSignal with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for EvaluationBundle with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for EvaluationVerdict with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for EvaluationResult with output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
 }

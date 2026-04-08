@@ -333,6 +333,91 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
 }
 
 ///|
+fn evaluation_review_state_from_snapshot(
+  review : ReviewState,
+) -> @types.EvaluationReviewState {
+  match review {
+    None_ => @types.EvaluationReviewState::None_
+    Commented => @types.EvaluationReviewState::Commented
+    Approved => @types.EvaluationReviewState::Approved
+    ChangesRequested => @types.EvaluationReviewState::ChangesRequested
+  }
+}
+
+///|
+fn evaluation_ci_rollup_from_snapshot(
+  ci : CiRollupStatus,
+) -> @types.EvaluationCiRollup {
+  match ci {
+    Unknown => @types.EvaluationCiRollup::Unknown
+    InProgress => @types.EvaluationCiRollup::InProgress
+    Success => @types.EvaluationCiRollup::Success
+    Failure => @types.EvaluationCiRollup::Failure
+  }
+}
+
+///|
+pub fn advisory_evaluation_bundle_for_tracked_pr(
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  task_contract? : @types.TaskContract? = None,
+) -> @types.EvaluationBundle {
+  let signals : Array[@types.EvaluationSignal] = [
+    @types.EvaluationSignal::Review(
+      state=evaluation_review_state_from_snapshot(tracked.last_review_state),
+      body=tracked.last_review_bodies,
+    ),
+    @types.EvaluationSignal::Ci(
+      status=evaluation_ci_rollup_from_snapshot(tracked.last_ci_rollup),
+    ),
+  ]
+  match unresolved_threads {
+    Some(count) =>
+      signals.push(@types.EvaluationSignal::ThreadsObserved(count~))
+    None => signals.push(@types.EvaluationSignal::ThreadsUnobserved)
+  }
+  if tracked.copilot_issue_comment_seen {
+    signals.push(@types.EvaluationSignal::CopilotIssueCommentObserved)
+  } else {
+    signals.push(@types.EvaluationSignal::CopilotIssueCommentUnobserved)
+  }
+  { task_contract, signals }
+}
+
+///|
+pub fn advisory_evaluation_result_for_tracked_pr(
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  task_contract? : @types.TaskContract? = None,
+) -> @types.EvaluationResult {
+  @types.advisory_evaluation_result(
+    advisory_evaluation_bundle_for_tracked_pr(
+      tracked,
+      unresolved_threads,
+      task_contract~,
+    ),
+  )
+}
+
+///|
+pub fn advisory_evaluation_summary_line(
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  task_contract? : @types.TaskContract? = None,
+) -> String {
+  let result = advisory_evaluation_result_for_tracked_pr(
+    tracked,
+    unresolved_threads,
+    task_contract~,
+  )
+  "Advisory evaluation verdict: " +
+  result.verdict.label() +
+  " (" +
+  result.summary +
+  ")."
+}
+
+///|
 fn tl_snapshot_workflow_category(
   tracked : TrackedPR,
   merge_ready : Bool,

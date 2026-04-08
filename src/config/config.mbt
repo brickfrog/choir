@@ -216,6 +216,28 @@ fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ChoirError] {
 }
 
 ///|
+fn parse_task_contract_json(
+  raw : String,
+) -> Result[@types.TaskContract, @types.ChoirError] {
+  let parsed = @json.parse(raw) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::config_error(
+          "invalid task_contract_json: invalid JSON",
+        ),
+      )
+  }
+  Ok(@json.from_json(parsed)) catch {
+    _ =>
+      Err(
+        @types.ChoirError::config_error(
+          "invalid task_contract_json: unexpected shape",
+        ),
+      )
+  }
+}
+
+///|
 /// Parses config.local.toml into the local spawn/session metadata.
 pub fn parse_local_config(
   content : String,
@@ -254,6 +276,14 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let task_contract = match doc.get_optional_nonempty("task_contract_json") {
+    Some(v) =>
+      match parse_task_contract_json(v) {
+        Ok(contract) => Some(contract)
+        Err(e) => return Err(e)
+      }
+    None => None
+  }
   Ok({
     role,
     agent_id,
@@ -264,6 +294,7 @@ pub fn parse_local_config(
     terminal_target,
     agent_type,
     spawn_depth,
+    task_contract,
   })
 }
 

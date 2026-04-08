@@ -28,6 +28,7 @@ pub(all) struct LocalConfig {
   terminal_target : LocalTarget?
   agent_type : AgentType?
   spawn_depth : Int?
+  task_contract : TaskContract?
 } derive(Debug)
 
 ///|
@@ -62,6 +63,7 @@ pub fn LocalConfig::default() -> LocalConfig {
     terminal_target: None,
     agent_type: None,
     spawn_depth: None,
+    task_contract: None,
   }
 }
 

@@ -32,6 +32,106 @@ fn tool_args_get(args : ToolArgs, key : String) -> String? {
 }
 
 ///|
+fn tool_args_get_json(args : ToolArgs, key : String) -> Json? {
+  args.values.get(key)
+}
+
+///|
+fn json_string_list(value : Json?) -> Array[String] {
+  match value {
+    Some(Array(items)) => {
+      let out : Array[String] = []
+      for item in items {
+        match item {
+          String(s) => {
+            let trimmed = s.trim().to_string()
+            if trimmed != "" {
+              out.push(trimmed)
+            }
+          }
+          _ => ()
+        }
+      }
+      out
+    }
+    Some(String(s)) => split_nonempty_lines(s)
+    _ => []
+  }
+}
+
+///|
+fn json_optional_trimmed_string(value : Json?) -> String? {
+  match value {
+    Some(String(s)) => {
+      let trimmed = s.trim().to_string()
+      if trimmed == "" {
+        None
+      } else {
+        Some(trimmed)
+      }
+    }
+    _ => None
+  }
+}
+
+///|
+fn task_contract_from_json_object(value : Json?) -> @types.TaskContract {
+  match value {
+    Some(Object(obj)) => {
+      let goal = json_optional_trimmed_string(obj.get("goal")).unwrap_or(
+        json_optional_trimmed_string(obj.get("task")).unwrap_or(""),
+      )
+      let acceptance_checks = merge_unique_lines(
+        json_string_list(obj.get("acceptance_checks")),
+        json_string_list(obj.get("done_criteria")),
+      )
+      {
+        goal,
+        scope: json_string_list(obj.get("scope")),
+        acceptance_checks,
+        constraints: json_string_list(obj.get("constraints")),
+        non_goals: json_string_list(obj.get("non_goals")),
+        review_context: json_optional_trimmed_string(obj.get("review_context")),
+        verify: json_string_list(obj.get("verify")),
+      }
+    }
+    Some(String(s)) => {
+      let parsed = @json.parse(s) catch {
+        _ => return @types.TaskContract::empty()
+      }
+      task_contract_from_json_object(Some(parsed))
+    }
+    _ => @types.TaskContract::empty()
+  }
+}
+
+///|
+fn merge_task_contracts(
+  nested : @types.TaskContract,
+  top_level : @types.TaskContract,
+) -> @types.TaskContract {
+  {
+    goal: if top_level.goal != "" {
+      top_level.goal
+    } else {
+      nested.goal
+    },
+    scope: merge_unique_lines(nested.scope, top_level.scope),
+    acceptance_checks: merge_unique_lines(
+      nested.acceptance_checks,
+      top_level.acceptance_checks,
+    ),
+    constraints: merge_unique_lines(nested.constraints, top_level.constraints),
+    non_goals: merge_unique_lines(nested.non_goals, top_level.non_goals),
+    review_context: match top_level.review_context {
+      Some(value) => Some(value)
+      None => nested.review_context
+    },
+    verify: merge_unique_lines(nested.verify, top_level.verify),
+  }
+}
+
+///|
 fn tool_args_to_map(args : ToolArgs) -> Map[String, String] {
   let converted : Map[String, String] = {}
   args.values.each(fn(k, v) {
@@ -48,7 +148,20 @@ fn tool_args_to_map(args : ToolArgs) -> Map[String, String] {
 
 ///|
 fn prompt_spec_from_tool_args(args : ToolArgs) -> PromptSpec {
-  PromptSpec::from_map(tool_args_to_map(args))
+  let base = PromptSpec::from_map(tool_args_to_map(args))
+  let merged_contract = merge_task_contracts(
+    task_contract_from_json_object(tool_args_get_json(args, "contract")),
+    base.task_contract,
+  )
+  {
+    ..base,
+    task: merged_contract.goal,
+    task_contract: merged_contract,
+    verify: merged_contract.verify,
+    done_criteria: merged_contract.acceptance_checks,
+    constraints: merged_contract.constraints,
+    non_goals: merged_contract.non_goals,
+  }
 }
 
 ///|

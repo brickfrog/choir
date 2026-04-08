@@ -66,6 +66,15 @@ test "parse_toml_doc optional helpers" {
 }
 
 ///|
+test "parse_toml_doc unescapes double-quoted strings" {
+  let doc = parse_toml_doc(
+    "json = \"{\\\"goal\\\":\\\"ship feature\\\"}\"\npath = \"line\\\\two\"",
+  )
+  assert_eq(doc.get("json"), Some("{\"goal\":\"ship feature\"}"))
+  assert_eq(doc.get("path"), Some("line\\two"))
+}
+
+///|
 test "parse_config - empty string defaults" {
   let content =
     #|shell_command = ""
@@ -202,6 +211,40 @@ test "parse_local_config spawn_depth" {
     #|agent_id = "main.sub"
   let local_cfg = parse_local_config(with_depth).unwrap()
   assert_eq(local_cfg.spawn_depth, Some(1))
+}
+
+///|
+fn escape_toml_test_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+test "parse_local_config task_contract_json" {
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let with_contract = "role = \"dev\"\n" +
+    "task_contract_json = \"" +
+    escape_toml_test_string(contract.to_json_string()) +
+    "\"\n"
+  let local_cfg = parse_local_config(with_contract).unwrap()
+  match local_cfg.task_contract {
+    Some(parsed) => {
+      assert_eq(parsed.goal, "ship feature")
+      assert_eq(parsed.verify, ["moon test --target native"])
+    }
+    None => fail("expected task_contract")
+  }
 }
 
 ///|

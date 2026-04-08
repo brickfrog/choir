@@ -401,6 +401,46 @@ fn parent_poll_ci_escalation_prefix(tracked : @poller.TrackedPR) -> String {
 }
 
 ///|
+fn task_contract_for_agent(
+  project_dir : String,
+  registry : @registry.AgentRegistry,
+  agent_id : String,
+) -> @types.TaskContract? {
+  let candidate_paths : Array[String] = []
+  try {
+    let agent = registry.get(agent_id)
+    if agent.workspace != "" {
+      candidate_paths.push(agent.workspace + "/config.local.toml")
+    }
+  } catch {
+    _ => ()
+  }
+  let fallback_path = @workspace.worktree_path(
+      project_dir,
+      @phase.extract_slug(agent_id),
+    ) +
+    "/config.local.toml"
+  if !candidate_paths.contains(fallback_path) {
+    candidate_paths.push(fallback_path)
+  }
+  for path in candidate_paths {
+    let content = @sys.read_file(path)
+    if content == "" {
+      continue
+    }
+    match @config.parse_local_config(content) {
+      Ok(local_cfg) =>
+        match local_cfg.task_contract {
+          Some(contract) => return Some(contract)
+          None => ()
+        }
+      Err(_) => ()
+    }
+  }
+  None
+}
+
+///|
 /// Canonical TL decision line for parent delivery (see `@poller.plan_tl_poll_event_parent`).
 fn parent_poll_tl_decision_suffix(
   tracked : @poller.TrackedPR,
@@ -424,6 +464,7 @@ fn parent_poll_event_message(
   tracked : @poller.TrackedPR,
   event : @poller.PollEvent,
   unresolved_threads_for_recheck : Int?,
+  task_contract? : @types.TaskContract? = None,
 ) -> (String, @types.Status)? {
   let agent_id = tracked.agent_id
   let branch = tracked.branch
@@ -557,7 +598,9 @@ fn parent_poll_event_message(
       )
     CIFailureCleared(n) => {
       let summary = @tools.format_tl_pr_recheck_summary(
-        tracked, unresolved_threads_for_recheck,
+        tracked,
+        unresolved_threads_for_recheck,
+        task_contract~,
       )
       let prefix = parent_poll_ci_escalation_prefix(tracked)
       Some(
@@ -586,7 +629,9 @@ fn parent_poll_event_message(
     }
     CILatestHeadRollupSucceeded(n) => {
       let summary = @tools.format_tl_pr_recheck_summary(
-        tracked, unresolved_threads_for_recheck,
+        tracked,
+        unresolved_threads_for_recheck,
+        task_contract~,
       )
       let prefix = parent_poll_ci_escalation_prefix(tracked)
       Some(
@@ -615,7 +660,9 @@ fn parent_poll_event_message(
     }
     CopilotIssueCommentSeen(n) => {
       let summary = @tools.format_tl_pr_recheck_summary(
-        tracked, unresolved_threads_for_recheck,
+        tracked,
+        unresolved_threads_for_recheck,
+        task_contract~,
       )
       Some(
         (
@@ -1240,7 +1287,17 @@ async fn deliver_pending_poll_events(
     }
     match state.poller.get(poll_event_pr_number(event)) {
       Some(pr) =>
-        match parent_poll_event_message(pr, event, unresolved_threads) {
+        match
+          parent_poll_event_message(
+            pr,
+            event,
+            unresolved_threads,
+            task_contract=task_contract_for_agent(
+              state.config.project_dir,
+              state.registry,
+              pr.agent_id,
+            ),
+          ) {
           Some((message, status)) => {
             let category = @poller.plan_tl_poll_event_parent(
               event, pr, unresolved_threads,

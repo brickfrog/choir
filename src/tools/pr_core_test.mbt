@@ -1464,6 +1464,10 @@ fn fork_wave_args_base() -> ForkWaveArgs {
   {
     count: 2,
     tasks: ["shared task", "shared task"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "shared task" },
+      { ..@types.TaskContract::empty(), goal: "shared task" },
+    ],
     has_per_leaf_tasks: false,
     parent_branch: "main",
     caller_id: "main.tl",
@@ -1498,6 +1502,10 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
   let args : ForkWaveArgs = {
     count: 2,
     tasks: ["alpha beta", "alpha beta"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "alpha beta" },
+      { ..@types.TaskContract::empty(), goal: "alpha beta" },
+    ],
     has_per_leaf_tasks: true,
     parent_branch: "pb",
     caller_id: "pb.tl",
@@ -2092,6 +2100,7 @@ test "format_tl_pr_recheck_summary ready snapshot when approved success zero thr
   assert_true(s.contains("Does not merge"))
   assert_true(s.contains("success"))
   assert_true(s.contains("GitHub Copilot issue comment (REST): not seen"))
+  assert_true(s.contains("Advisory evaluation verdict: ready"))
 }
 
 ///|
@@ -2103,6 +2112,7 @@ test "format_tl_pr_recheck_summary lists blockers for changes requested" {
   let s = format_tl_pr_recheck_summary(t, Some(0))
   assert_true(s.contains("GitHub review requests changes"))
   assert_false(s.contains("no tracked blockers"))
+  assert_true(s.contains("Advisory evaluation verdict: blocked"))
 }
 
 ///|
@@ -2114,6 +2124,7 @@ test "format_tl_pr_recheck_summary does not claim ready when thread count not fe
   let s = format_tl_pr_recheck_summary(t, None)
   assert_true(s.contains("not fetched"))
   assert_false(s.contains("no tracked blockers"))
+  assert_true(s.contains("Advisory evaluation verdict: needs_human"))
 }
 
 ///|
@@ -3160,6 +3171,7 @@ test "spawn_worker_ok_response matches spawned envelope" {
 test "spawn_worker_plan builds inline worker spec registry row and response" {
   let worker_args : WorkerSpawnArgs = {
     task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
     caller_id: "main.tl",
     slug: "w1",
     agent_type: @types.AgentType::MoonPilot,
@@ -3206,6 +3218,7 @@ async fn mock_capture_origin_main(_cmd : @workspace.Command) -> (Int, String) {
 async test "interpret_spawn_worker registers agent on success" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
     caller_id: "main.tl",
     slug: "w1",
     agent_type: @types.AgentType::Claude,
@@ -3240,6 +3253,7 @@ async test "interpret_spawn_worker registers agent on success" {
 test "spawn_remote_plan builds dev claude worktree spec and spawned response" {
   let spawn_args : RemoteSpawnArgs = {
     task: "remote-task",
+    task_contract: { ..@types.TaskContract::empty(), goal: "remote-task" },
     caller_id: "main.tl",
     slug: "leaf-a",
     parent_branch: "main",
@@ -3276,6 +3290,7 @@ test "spawn_remote_plan builds dev claude worktree spec and spawned response" {
 async test "interpret_spawn_remote returns plan ok when runner succeeds" {
   let spawn_args : RemoteSpawnArgs = {
     task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
     caller_id: "pb.caller",
     slug: "s1",
     parent_branch: "pb",
@@ -3303,6 +3318,7 @@ async test "interpret_spawn_remote returns plan ok when runner succeeds" {
 async test "interpret_spawn_remote returns err when run_strict fails" {
   let spawn_args : RemoteSpawnArgs = {
     task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
     caller_id: "x",
     slug: "y",
     parent_branch: "main",
@@ -3325,6 +3341,7 @@ async test "interpret_spawn_remote returns err when run_strict fails" {
 test "spawn_gemini_plan builds dev gemini worktree spec and spawned response" {
   let spawn_args : SpawnGeminiArgs = {
     task: "do the thing",
+    task_contract: { ..@types.TaskContract::empty(), goal: "do the thing" },
     caller_id: "main.tl",
     slug: "g1",
     parent_branch: "main",
@@ -3357,6 +3374,7 @@ test "spawn_gemini_plan builds dev gemini worktree spec and spawned response" {
 async test "interpret_spawn_gemini returns plan ok when runner succeeds" {
   let spawn_args : SpawnGeminiArgs = {
     task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
     caller_id: "pb.caller",
     slug: "gem",
     parent_branch: "pb",
@@ -3380,6 +3398,7 @@ async test "interpret_spawn_gemini returns plan ok when runner succeeds" {
 async test "interpret_spawn_gemini returns err when run_strict fails" {
   let spawn_args : SpawnGeminiArgs = {
     task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
     caller_id: "x",
     slug: "y",
     parent_branch: "main",
@@ -3399,6 +3418,7 @@ async test "interpret_spawn_gemini returns err when run_strict fails" {
 fn rescue_leaf_base_args() -> RescueLeafArgs {
   {
     task: "continue",
+    task_contract: { ..@types.TaskContract::empty(), goal: "continue" },
     caller_id: "main.tl",
     from_agent_id: "main.old-leaf",
     new_slug: "new-leaf",

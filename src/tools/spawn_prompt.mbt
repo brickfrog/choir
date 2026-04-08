@@ -2,6 +2,7 @@
 pub(all) struct PromptSpec {
   prompt : String
   task : String
+  task_contract : @types.TaskContract
   boundary : Array[String]
   read_first : Array[String]
   steps : Array[String]
@@ -36,6 +37,32 @@ fn split_nonempty_lines(s : String) -> Array[String] {
 fn push_unique(items : Array[String], value : String) -> Unit {
   if value != "" && !items.contains(value) {
     items.push(value)
+  }
+}
+
+///|
+fn merge_unique_lines(
+  items : Array[String],
+  more : Array[String],
+) -> Array[String] {
+  for value in more {
+    push_unique(items, value.trim().to_string())
+  }
+  items
+}
+
+///|
+fn parse_optional_trimmed(value : String?) -> String? {
+  match value {
+    Some(v) => {
+      let trimmed = v.trim().to_string()
+      if trimmed == "" {
+        None
+      } else {
+        Some(trimmed)
+      }
+    }
+    None => None
   }
 }
 
@@ -91,18 +118,48 @@ fn parse_truthy_flag(s : String) -> Bool {
 
 ///|
 pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
+  let task = parse_optional_trimmed(args.get("task")).unwrap_or(
+    parse_optional_trimmed(args.get("goal")).unwrap_or(""),
+  )
+  let acceptance_checks = merge_unique_lines(
+    split_nonempty_lines(args.get("done_criteria").unwrap_or("")),
+    split_nonempty_lines(args.get("acceptance_checks").unwrap_or("")),
+  )
+  let constraints = merge_unique_lines(
+    split_nonempty_lines(args.get("constraints").unwrap_or("")),
+    [],
+  )
+  let non_goals = merge_unique_lines(
+    split_nonempty_lines(args.get("non_goals").unwrap_or("")),
+    [],
+  )
+  let verify = merge_unique_lines(
+    split_nonempty_lines(args.get("verify").unwrap_or("")),
+    [],
+  )
+  let scope = split_nonempty_lines(args.get("scope").unwrap_or(""))
+  let review_context = parse_optional_trimmed(args.get("review_context"))
   {
     prompt: args.get("prompt").unwrap_or("").trim().to_string(),
-    task: args.get("task").unwrap_or(""),
+    task,
+    task_contract: {
+      goal: task,
+      scope,
+      acceptance_checks,
+      constraints,
+      non_goals,
+      review_context,
+      verify,
+    },
     boundary: split_nonempty_lines(args.get("boundary").unwrap_or("")),
     read_first: split_nonempty_lines(args.get("read_first").unwrap_or("")),
     steps: split_nonempty_lines(args.get("steps").unwrap_or("")),
-    verify: split_nonempty_lines(args.get("verify").unwrap_or("")),
-    done_criteria: split_nonempty_lines(args.get("done_criteria").unwrap_or("")),
-    constraints: split_nonempty_lines(args.get("constraints").unwrap_or("")),
+    verify,
+    done_criteria: acceptance_checks,
+    constraints,
     context: args.get("context").unwrap_or("").trim().to_string(),
     key_decisions: split_nonempty_lines(args.get("key_decisions").unwrap_or("")),
-    non_goals: split_nonempty_lines(args.get("non_goals").unwrap_or("")),
+    non_goals,
     worker_type: args
     .get("type")
     .unwrap_or("research")
@@ -122,8 +179,8 @@ fn render_context_block(spec : PromptSpec) -> String {
   if spec.key_decisions.length() > 0 {
     sections.push("Key decisions:\n" + render_bullets(spec.key_decisions))
   }
-  if spec.non_goals.length() > 0 {
-    sections.push("Non-goals:\n" + render_bullets(spec.non_goals))
+  if spec.task_contract.non_goals.length() > 0 {
+    sections.push("Non-goals:\n" + render_bullets(spec.task_contract.non_goals))
   }
   join_sections(sections)
 }
@@ -229,7 +286,8 @@ fn render_common_prompt(
   }
 
   let sections : Array[String] = []
-  add_section(sections, "TASK", spec.task)
+  add_section(sections, "TASK", spec.task_contract.goal)
+  add_section(sections, "SCOPE", render_bullets(spec.task_contract.scope))
   add_section(sections, "BOUNDARY", render_bullets(spec.boundary))
 
   let read_first = spec.read_first
@@ -246,18 +304,18 @@ fn render_common_prompt(
   add_section(sections, "CONTEXT", render_context_block(spec))
 
   let verify_lines : Array[String] = []
-  for cmd in spec.verify {
+  for cmd in spec.task_contract.verify {
     verify_lines.push("- `" + cmd + "`")
   }
   add_section(sections, "VERIFY", render_lines(verify_lines))
   let done_criteria = if sanitize_worker {
-    sanitize_worker_lines(spec.done_criteria)
+    sanitize_worker_lines(spec.task_contract.acceptance_checks)
   } else {
-    spec.done_criteria
+    spec.task_contract.acceptance_checks
   }
   add_section(sections, "DONE CRITERIA", render_bullets(done_criteria))
 
-  let constraints = spec.constraints
+  let constraints = spec.task_contract.constraints
   if spec.no_commit {
     constraints.push("Do not commit. Report back when done or blocked.")
   }

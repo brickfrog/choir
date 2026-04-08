@@ -782,6 +782,7 @@ pub fn fork_wave_spawn_plan(
       role: fork_wave_args.child_role,
       agent_type: fork_wave_args.agent_type,
       task: leaf_task,
+      task_contract: Some(fork_wave_args.task_contracts[i]),
       isolation: @types.IsolationMode::Worktree,
       parent_id: fork_wave_args.caller_id,
       parent_branch: fork_wave_args.parent_branch,
@@ -1209,6 +1210,7 @@ pub fn merge_pr_preflight_block_message(
 pub fn format_tl_pr_recheck_summary(
   tracked : @poller.TrackedPR,
   unresolved_thread_count : Int?,
+  task_contract? : @types.TaskContract? = None,
 ) -> String {
   let review = match tracked.last_review_state {
     None_ => "none"
@@ -1234,6 +1236,11 @@ pub fn format_tl_pr_recheck_summary(
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
     tracked, unresolved_thread_count,
   )
+  let advisory = @poller.advisory_evaluation_summary_line(
+    tracked,
+    unresolved_thread_count,
+    task_contract~,
+  )
   "PR re-check summary (Choir snapshot; not merge approval):\n" +
   "- GitHub review rollup: " +
   review +
@@ -1248,7 +1255,10 @@ pub fn format_tl_pr_recheck_summary(
   ci +
   "\n" +
   "- " +
-  gate
+  gate +
+  "\n" +
+  "- " +
+  advisory
 }
 
 ///|
@@ -2073,6 +2083,7 @@ pub fn spawn_worker_plan(
     role: @types.Role::Worker,
     agent_type: worker_args.agent_type,
     task: worker_args.task,
+    task_contract: Some(worker_args.task_contract),
     isolation: @types.IsolationMode::Inline,
     parent_id: worker_args.caller_id,
     parent_branch: resolved_parent_branch,
@@ -2170,6 +2181,7 @@ pub fn spawn_remote_plan(args : RemoteSpawnArgs) -> SpawnRemotePlan {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: args.task,
+    task_contract: Some(args.task_contract),
     isolation: @types.IsolationMode::Worktree,
     parent_id: args.caller_id,
     parent_branch: args.parent_branch,
@@ -2229,6 +2241,7 @@ pub fn spawn_gemini_plan(args : SpawnGeminiArgs) -> SpawnGeminiPlan {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Gemini,
     task: args.task,
+    task_contract: Some(args.task_contract),
     isolation: @types.IsolationMode::Worktree,
     parent_id: args.caller_id,
     parent_branch: args.parent_branch,
@@ -2359,6 +2372,7 @@ pub fn rescue_leaf_spawn_plan(
     role: @types.Role::Dev,
     agent_type: args.agent_type,
     task: args.task,
+    task_contract: Some(args.task_contract),
     isolation: @types.IsolationMode::Worktree,
     parent_id: args.caller_id,
     parent_branch: parent_prefix,

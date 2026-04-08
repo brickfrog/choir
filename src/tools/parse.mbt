@@ -362,11 +362,22 @@ pub fn slugify_task(task : String, index : Int) -> String {
 }
 
 ///|
+fn prompt_spec_with_task(spec : PromptSpec, task : String) -> PromptSpec {
+  let trimmed = task.trim().to_string()
+  {
+    ..spec,
+    task: trimmed,
+    task_contract: { ..spec.task_contract, goal: trimmed },
+  }
+}
+
+///|
 fn parse_rescue_leaf_args(
   project_dir : String,
   args : ToolArgs,
 ) -> Result[RescueLeafArgs, ParseError] {
-  let task = tool_args_get(args, "task").unwrap_or("")
+  let prompt_spec = prompt_spec_from_tool_args(args)
+  let task = prompt_spec.task
   if task == "" {
     return Err(ParseError::MissingField(field="task"))
   }
@@ -425,7 +436,15 @@ fn parse_rescue_leaf_args(
     Err(e) => return Err(e)
   }
   let parent_session_id = lookup_parent_session_id(project_dir, args)
-  Ok({ task, caller_id, from_agent_id, new_slug, agent_type, parent_session_id })
+  Ok({
+    task,
+    task_contract: prompt_spec.task_contract,
+    caller_id,
+    from_agent_id,
+    new_slug,
+    agent_type,
+    parent_session_id,
+  })
 }
 
 ///|
@@ -433,7 +452,8 @@ fn parse_spawn_gemini_args(
   project_dir : String,
   args : ToolArgs,
 ) -> Result[SpawnGeminiArgs, ParseError] {
-  let task = tool_args_get(args, "task").unwrap_or("")
+  let prompt_spec = prompt_spec_from_tool_args(args)
+  let task = prompt_spec.task
   if task == "" {
     return Err(ParseError::MissingField(field="task"))
   }
@@ -464,7 +484,14 @@ fn parse_spawn_gemini_args(
       )
   }
   let parent_session_id = lookup_parent_session_id(project_dir, args)
-  Ok({ task, caller_id, slug, parent_branch, parent_session_id })
+  Ok({
+    task,
+    task_contract: prompt_spec.task_contract,
+    caller_id,
+    slug,
+    parent_branch,
+    parent_session_id,
+  })
 }
 
 ///|
@@ -499,28 +526,28 @@ pub fn parse_fork_wave_args(
     }
   }
   let default_read_first = @workspace.resolve_context_paths(project_dir, "dev")
+  let base_spec = prompt_spec_from_tool_args(args)
+  let task_contracts : Array[@types.TaskContract] = []
   let tasks = if per_leaf_tasks.length() > 0 {
     // Render each per-leaf task through the prompt builder
     let rendered : Array[String] = []
     for task in per_leaf_tasks {
-      let spec = prompt_spec_from_tool_args(args)
+      let spec = prompt_spec_with_task(base_spec, task)
       rendered.push(
-        render_leaf_spawn_prompt_with_defaults(
-          { ..spec, task, },
-          default_read_first,
-        ),
+        render_leaf_spawn_prompt_with_defaults(spec, default_read_first),
       )
+      task_contracts.push(spec.task_contract)
     }
     rendered
   } else {
     // Shared task — same prompt for all leaves
     let shared = render_leaf_spawn_prompt_with_defaults(
-      prompt_spec_from_tool_args(args),
-      default_read_first,
+      base_spec, default_read_first,
     )
     let arr : Array[String] = []
     for i = 0; i < count; i = i + 1 {
       arr.push(shared)
+      task_contracts.push(base_spec.task_contract)
     }
     arr
   }
@@ -583,6 +610,7 @@ pub fn parse_fork_wave_args(
   Ok({
     count,
     tasks,
+    task_contracts,
     has_per_leaf_tasks: per_leaf_tasks.length() > 0,
     parent_branch,
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
@@ -600,6 +628,7 @@ fn parse_leaf_spawn_args(
   args : ToolArgs,
   default_slug : String,
 ) -> Result[LeafSpawnArgs, ParseError] {
+  let prompt_spec = prompt_spec_from_tool_args(args)
   let slug = get_arg_or_alias(args, "slug", "branch", default_slug)
   let parent_branch = get_arg_or_alias(
     args, "parent_branch", "base_branch", "main",
@@ -626,9 +655,10 @@ fn parse_leaf_spawn_args(
   }
   Ok({
     task: render_leaf_spawn_prompt_with_defaults(
-      prompt_spec_from_tool_args(args),
+      prompt_spec,
       @workspace.resolve_context_paths(project_dir, "dev"),
     ),
+    task_contract: prompt_spec.task_contract,
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     parent_branch,
@@ -678,6 +708,7 @@ fn parse_worker_spawn_args(
       prompt_spec,
       @workspace.resolve_context_paths(project_dir, "worker"),
     ),
+    task_contract: prompt_spec.task_contract,
     caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
     slug,
     agent_type,
@@ -708,6 +739,7 @@ fn parse_remote_spawn_args(
   }
   Ok({
     task: leaf_args.task,
+    task_contract: leaf_args.task_contract,
     caller_id: leaf_args.caller_id,
     slug: leaf_args.slug,
     parent_branch: leaf_args.parent_branch,
@@ -1282,6 +1314,34 @@ test "parse_worker_spawn_args only injects existing context paths" {
   ignore(@sys.system("rm -rf \"" + project_dir + "\""))
   assert_true(parsed.task.contains("/.choir/context/common.md"))
   assert_false(parsed.task.contains("/.choir/context/worker.md"))
+}
+
+///|
+test "parse_fork_wave_args merges nested contract object with top-level task" {
+  let args : ToolArgs = {
+    values: {
+      "count": (1).to_json(),
+      "caller_id": "root".to_json(),
+      "parent_branch": "main".to_json(),
+      "task": "Ship feature".to_json(),
+      "contract": {
+        "scope": ["src/tools", "src/poller"].to_json(),
+        "acceptance_checks": ["All tests pass"].to_json(),
+        "verify": ["moon test --target native"].to_json(),
+      }.to_json(),
+    },
+  }
+  match parse_fork_wave_args(".", args) {
+    Ok(parsed) => {
+      assert_eq(parsed.task_contracts.length(), 1)
+      assert_eq(parsed.task_contracts[0].goal, "Ship feature")
+      assert_eq(parsed.task_contracts[0].scope, ["src/tools", "src/poller"])
+      assert_eq(parsed.task_contracts[0].verify, ["moon test --target native"])
+      assert_true(parsed.tasks[0].contains("## SCOPE"))
+      assert_true(parsed.tasks[0].contains("All tests pass"))
+    }
+    Err(e) => fail("unexpected parse error: " + e.message())
+  }
 }
 
 ///|
