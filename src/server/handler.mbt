@@ -74,9 +74,13 @@ async fn emit_span(
       )
       mt_span.start_time = start_ms
       mt_span.end_time = end_ms
-      let status_code = if resp.is_ok() { 1 } else { 2 }
-      let status_message = resp.error_message().unwrap_or("")
-      let otlp_span = @otlp.span_to_otlp(mt_span, status_code~, status_message~)
+      mt_span.status = if resp.is_ok() {
+        @moontrace.Ok
+      } else {
+        @moontrace.SpanError
+      }
+      mt_span.status_message = resp.error_message().unwrap_or("")
+      let otlp_span = @otlp.span_to_otlp(mt_span)
       export_otlp_span(otlp_span, ep) catch {
         _ => ()
       }

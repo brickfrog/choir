@@ -44,13 +44,9 @@ test "span_to_otlp preserves choir fields as attributes" {
   ])
   mt_span.start_time = (1000 : UInt64)
   mt_span.end_time = (2000 : UInt64)
-  let otlp_span = @otlp.span_to_otlp(
-    mt_span,
-    trace_id="0".repeat(32),
-    status_code=1,
-  )
+  mt_span.status = @moontrace.Ok
+  let otlp_span = @otlp.span_to_otlp(mt_span)
   assert_eq(otlp_span.name, "tools/call fork_wave")
-  assert_eq(otlp_span.trace_id, "0".repeat(32))
   assert_eq(otlp_span.status_code, 1)
   assert_eq(otlp_span.attributes.length(), 3)
   assert_eq(otlp_span.attributes[0].key, "agent_id")
