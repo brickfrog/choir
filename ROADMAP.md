@@ -8,7 +8,7 @@ Choir has achieved its target architecture. The codebase is now idiomatic MoonBi
 
 ## 🚀 Immediate Next: Autonomous Team Flow
 
-With the new architecture in place, we are moving toward a "Self-Driving" team model that reduces the manual triage burden on the Team Lead.
+With the new architecture in place, plus typed task contracts and advisory evaluation, we are moving toward a "Self-Driving" team model that reduces the manual triage burden on the Team Lead.
 
 ### Autonomous Merge Decision
 When a PR reaches the `MergeGateOpenPendingPolicyConfirmation` state (CI green, Copilot commented, threads resolved), the server should proactively perform the merge if the wave policy allows, or provide a one-click merge affordance in the parent terminal.
@@ -32,6 +32,14 @@ Explore parallel `moon test` execution during wave reconciliation to reduce the 
 ---
 
 ## ✅ Completed
+
+### Typed Intent Contracts & Advisory Evaluation (2026-04-08)
+- **Typed Task Contracts**: Canonical `TaskContract` values now carry goal, scope, acceptance checks, constraints, non-goals, review context, and verify commands through spawn planning.
+- **Backward-Compatible Tool Inputs**: Existing prompt-shaped tool arguments still work, but now canonicalize into typed task data before prompt rendering.
+- **Persisted Contract Context**: Spawned agents now persist `task_contract_json` in `config.local.toml`, so lifecycle, recovery, and parent summaries can recover the original typed task intent.
+- **Advisory Evaluation Layer**: CI state, review state, unresolved-thread observations, Copilot presence, and local verify results now normalize into typed evaluation bundles and verdicts.
+- **TL Merge Readiness Summaries**: PR recheck summaries now include advisory `ready` / `blocked` / `needs_human` evaluation output without enabling autonomous merge yet.
+- **Parser Boundary Cleanup**: Local TOML parsing now round-trips escaped structured strings correctly at the I/O edge instead of leaking transport quirks into planner code.
 
 ### 100% Architecture Purification (Migrations 1-6)
 - **Hard Effect Boundary**: Orchestration logic is now separated from host I/O.

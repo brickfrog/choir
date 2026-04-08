@@ -42,6 +42,7 @@ test "canonical agent id uses parent branch and slug" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Gemini,
     task: "do work",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "root",
     parent_branch: "main.subtl",
@@ -207,6 +208,7 @@ test "agent_launch_command for each AgentType" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "fix bugs",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -283,6 +285,7 @@ test "agent_launch_command wraps with shell_command" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "fix bugs",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -315,6 +318,7 @@ test "agent_launch_command no wrap when shell_command is None" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "fix bugs",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -352,6 +356,7 @@ test "agent_launch_command supports command_override" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Gemini,
     task: "do work",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -377,6 +382,7 @@ test "agent_launch_command supports Claude fork_session" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "fix bugs",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -424,6 +430,7 @@ test "config_local_content includes spawn_depth" {
     role: @types.Role::TL,
     agent_type: @types.AgentType::Claude,
     task: "plan",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -442,12 +449,42 @@ test "config_local_content includes spawn_depth" {
 }
 
 ///|
+test "config_local_content persists task_contract_json when present" {
+  let spec = @types.SpawnSpec::{
+    slug: "leaf-0",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    task: "ship feature",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "ship feature",
+      verify: ["moon test --target native"],
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+  }
+  let target = match @types.LocalTarget::parse("zellij-tab:choir:leaf-0") {
+    Some(t) => t
+    None => fail("expected target")
+  }
+  let content = @workspace.config_local_content(spec, "/tmp/wt", target)
+  assert_true(content.contains("task_contract_json = "))
+  assert_true(content.contains("moon test --target native"))
+}
+
+///|
 test "spawn_commands for worktree mode returns zellij tab" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "fix bugs",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -489,6 +526,7 @@ test "spawn_commands worktree config write content" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "do something",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "root",
     parent_branch: "main",
@@ -525,6 +563,7 @@ test "spawn_commands gemini worktree adds trust and settings" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Gemini,
     task: "do something",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "root",
     parent_branch: "main",
@@ -552,6 +591,7 @@ test "spawn_commands standalone includes config writes" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "do something",
+    task_contract: None,
     isolation: @types.IsolationMode::Standalone,
     parent_id: "root",
     parent_branch: "main",
@@ -587,6 +627,7 @@ test "spawn_commands adds Gemini trust bootstrap" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Gemini,
     task: "fix bugs",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -614,6 +655,7 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::CursorAgent,
     task: "do something",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "root",
     parent_branch: "main",
@@ -640,6 +682,7 @@ test "spawn_commands for inline mode writes metadata and uses zellij run" {
     role: @types.Role::Worker,
     agent_type: @types.AgentType::MoonPilot,
     task: "reply READY",
+    task_contract: None,
     isolation: @types.IsolationMode::Inline,
     parent_id: "root",
     parent_branch: "main",
@@ -677,6 +720,7 @@ test "spawn_commands launch text contains env vars" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Gemini,
     task: "do something",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "root",
     parent_branch: "main",
@@ -804,6 +848,7 @@ test "remote_spawn_commands produces 3 ssh commands and includes spawn_depth" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "implement feature Y",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "root",
     parent_branch: "main",
@@ -851,6 +896,7 @@ test "remote_spawn_commands passes extra MCP servers into launch command" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "implement feature Y",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "root",
     parent_branch: "main",
@@ -878,6 +924,7 @@ test "remote_spawn_commands local side is direct ssh argv (no local shell wrappe
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Claude,
     task: "t",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "root",
     parent_branch: "main",
@@ -907,6 +954,7 @@ test "validate_reuse_spawn_spec rejects missing reuse_git_branch" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::CursorAgent,
     task: "t",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -928,6 +976,7 @@ test "spawn_commands worktree reuse skips destructive bootstrap" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::CursorAgent,
     task: "continue",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",
@@ -949,6 +998,7 @@ test "spawn_git_branch honors reuse_git_branch" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::CursorAgent,
     task: "t",
+    task_contract: None,
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main",
     parent_branch: "main",

@@ -1493,6 +1493,7 @@ fn local_cfg_from_env_lookup(
     terminal_target,
     agent_type,
     spawn_depth: None,
+    task_contract: None,
   }
 }
 
@@ -3794,6 +3795,7 @@ fn init_companion_commands(
     role,
     agent_type,
     task: companion.task,
+    task_contract: None,
     isolation: @types.IsolationMode::Standalone,
     parent_id: "root",
     parent_branch: current_branch,

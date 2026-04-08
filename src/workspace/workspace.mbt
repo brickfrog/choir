@@ -185,6 +185,13 @@ pub fn config_local_content(
   let agent_type_str = @config.agent_type_to_string(spec.agent_type)
   let agent_id = canonical_agent_id(spec)
   let git_branch = spawn_git_branch(spec)
+  let task_contract_line = match spec.task_contract {
+    Some(contract) =>
+      "\ntask_contract_json = \"" +
+      escape_toml_string(contract.to_json_string()) +
+      "\"\n"
+    None => "\n"
+  }
   "role = \"" +
   escape_toml_string(role_str) +
   "\"\nagent_id = \"" +
@@ -203,7 +210,7 @@ pub fn config_local_content(
   escape_toml_string(terminal_target.to_string()) +
   "\"\nspawn_depth = " +
   spec.spawn_depth.to_string() +
-  "\n"
+  task_contract_line
 }
 
 ///|

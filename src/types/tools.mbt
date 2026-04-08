@@ -5,6 +5,7 @@ pub(all) struct SpawnSpec {
   role : Role
   agent_type : AgentType
   task : String
+  task_contract : TaskContract?
   isolation : IsolationMode
   parent_id : String
   parent_branch : String

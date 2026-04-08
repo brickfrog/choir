@@ -224,3 +224,85 @@ test "AgentType parse_wire raises on unknown strings matching try_parse_wire err
     }
   }
 }
+
+///|
+test "TaskContract empty helper returns empty contract" {
+  let contract = @types.TaskContract::empty()
+  assert_true(contract.is_empty())
+  assert_eq(contract.goal, "")
+  assert_eq(contract.verify.length(), 0)
+}
+
+///|
+test "advisory_evaluation_result ready when review CI and threads are clear" {
+  let bundle : @types.EvaluationBundle = {
+    task_contract: None,
+    signals: [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Approved,
+        body="",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::CopilotIssueCommentObserved,
+    ],
+  }
+  let result = @types.advisory_evaluation_result(bundle)
+  assert_eq(result.verdict, @types.EvaluationVerdict::Ready)
+  assert_true(result.summary.contains("ready"))
+}
+
+///|
+test "advisory_evaluation_result needs human when verify evidence is missing" {
+  let bundle : @types.EvaluationBundle = {
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "ship feature",
+      verify: ["moon test --target native"],
+    }),
+    signals: [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Approved,
+        body="",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+    ],
+  }
+  let result = @types.advisory_evaluation_result(bundle)
+  match result.verdict {
+    @types.EvaluationVerdict::NeedsHuman(reason~) =>
+      assert_true(reason.contains("local verify not observed"))
+    _ => fail("expected NeedsHuman verdict")
+  }
+}
+
+///|
+test "advisory_evaluation_result blocks on failed verify" {
+  let bundle : @types.EvaluationBundle = {
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "ship feature",
+      verify: ["moon test --target native"],
+    }),
+    signals: [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Approved,
+        body="",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::Verify(result={
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Failed,
+        details: "1 test failed",
+      }),
+    ],
+  }
+  let result = @types.advisory_evaluation_result(bundle)
+  match result.verdict {
+    @types.EvaluationVerdict::Blocked(reason~) =>
+      assert_true(reason.contains("local verify failed"))
+    _ => fail("expected Blocked verdict")
+  }
+}

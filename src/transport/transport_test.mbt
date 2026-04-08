@@ -133,6 +133,7 @@ test "format_registration_request includes local config metadata" {
     terminal_target: @types.LocalTarget::parse("zellij-tab:choir:leaf-1"),
     agent_type: Some(@types.AgentType::Gemini),
     spawn_depth: Some(1),
+    task_contract: None,
   }
   let output = format_registration_request(
     @types.Role::Dev,

@@ -4,6 +4,34 @@ pub(all) struct TomlDoc {
 } derive(Debug)
 
 ///|
+fn unescape_basic_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  let mut i = 0
+  while i < s.length() {
+    let c = Int::unsafe_to_char(s[i].to_int())
+    if c != '\\' || i + 1 >= s.length() {
+      buf.write_char(c)
+      i = i + 1
+      continue
+    }
+    let next = Int::unsafe_to_char(s[i + 1].to_int())
+    match next {
+      '"' => buf.write_char('"')
+      '\\' => buf.write_char('\\')
+      'n' => buf.write_char('\n')
+      'r' => buf.write_char('\r')
+      't' => buf.write_char('\t')
+      _ => {
+        buf.write_char(c)
+        buf.write_char(next)
+      }
+    }
+    i = i + 2
+  }
+  buf.to_string()
+}
+
+///|
 pub fn TomlDoc::get(self : TomlDoc, key : String) -> String? {
   self.values.get(key)
 }
@@ -50,7 +78,7 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
       let key = str[0:idx].to_string().trim().to_string()
       let mut val = str[idx + 1:].to_string().trim().to_string()
       if val.has_prefix("\"") && val.has_suffix("\"") && val.length() >= 2 {
-        val = val[1:val.length() - 1].to_string()
+        val = unescape_basic_toml_string(val[1:val.length() - 1].to_string())
       } else if val.has_prefix("'") && val.has_suffix("'") && val.length() >= 2 {
         val = val[1:val.length() - 1].to_string()
       }

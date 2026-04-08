@@ -31,6 +31,7 @@ pub(all) struct TrackPrArgs {
 pub(all) struct ForkWaveArgs {
   count : Int
   tasks : Array[String]
+  task_contracts : Array[@types.TaskContract]
   has_per_leaf_tasks : Bool
   parent_branch : String
   caller_id : String
@@ -46,6 +47,7 @@ pub(all) struct ForkWaveArgs {
 ///|
 pub(all) struct SpawnGeminiArgs {
   task : String
+  task_contract : @types.TaskContract
   caller_id : String
   slug : String
   parent_branch : String
@@ -55,6 +57,7 @@ pub(all) struct SpawnGeminiArgs {
 ///|
 pub(all) struct RescueLeafArgs {
   task : String
+  task_contract : @types.TaskContract
   caller_id : String
   from_agent_id : String
   new_slug : String
@@ -65,6 +68,7 @@ pub(all) struct RescueLeafArgs {
 ///|
 struct LeafSpawnArgs {
   task : String
+  task_contract : @types.TaskContract
   caller_id : String
   slug : String
   parent_branch : String
@@ -73,6 +77,7 @@ struct LeafSpawnArgs {
 ///|
 pub(all) struct WorkerSpawnArgs {
   task : String
+  task_contract : @types.TaskContract
   caller_id : String
   slug : String
   agent_type : @types.AgentType
@@ -81,6 +86,7 @@ pub(all) struct WorkerSpawnArgs {
 ///|
 pub(all) struct RemoteSpawnArgs {
   task : String
+  task_contract : @types.TaskContract
   caller_id : String
   slug : String
   parent_branch : String
