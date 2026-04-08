@@ -3,7 +3,12 @@ pub(all) struct Command {
   program : String
   args : Array[String]
   workdir : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for Command with output(self, logger) {
+  logger.write_string(self.to_string())
+}
 
 ///|
 /// Marker `Command.program` for `run_native_choir_file_command` / `exec.run`.

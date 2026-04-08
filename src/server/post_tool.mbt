@@ -40,7 +40,7 @@ pub(all) enum TeardownEffect {
     parent_message~ : String,
     reason~ : @phase.FailureReason
   )
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 fn finalize_reason_for_exit(

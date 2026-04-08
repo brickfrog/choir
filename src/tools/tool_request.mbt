@@ -29,7 +29,7 @@ pub(all) enum ToolRequest {
   AgentList(AgentListArgs)
   CancelWave(CancelWaveArgs)
   ResolveReviewThread(ResolveReviewThreadArgs)
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn ToolRequest::tool_name(self : ToolRequest) -> String {

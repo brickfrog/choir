@@ -5,7 +5,17 @@ pub(all) enum ReviewState {
   Approved
   ChangesRequested
   Commented
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for ReviewState with output(self, logger) {
+  match self {
+    None_ => logger.write_string("None")
+    Approved => logger.write_string("Approved")
+    ChangesRequested => logger.write_string("ChangesRequested")
+    Commented => logger.write_string("Commented")
+  }
+}
 
 ///|
 /// GitHub `statusCheckRollup` aggregate for the PR head (honest, coarse).
@@ -18,7 +28,17 @@ pub(all) enum CiRollupStatus {
   Success
   /// At least one check failed or errored.
   Failure
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for CiRollupStatus with output(self, logger) {
+  match self {
+    Unknown => logger.write_string("Unknown")
+    InProgress => logger.write_string("InProgress")
+    Success => logger.write_string("Success")
+    Failure => logger.write_string("Failure")
+  }
+}
 
 ///|
 /// Tracked state for a single PR in the poller.
@@ -43,7 +63,14 @@ pub(all) struct TrackedPR {
   mut orphan_notified : Bool
   mut changes_requested_since : Int64
   mut stall_notified : Bool
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for TrackedPR with output(self, logger) {
+  logger.write_string("TrackedPR { pr_number: ")
+  logger.write_string(self.pr_number.to_string())
+  logger.write_string(" }")
+}
 
 ///|
 /// Per-PR outcome of one poller tick (for tracing and delivery logs).
@@ -68,6 +95,7 @@ pub(all) enum PollEvent {
   ReviewReceived(Int, String)
   ReviewCommented(Int, String)
   PRReady(Int)
+  MergeReady(Int)
   FixesPushed(Int)
   ReviewTimeout(Int)
   CIFailed(Int)
@@ -80,5 +108,27 @@ pub(all) enum PollEvent {
   /// First poll tick where a GitHub Copilot issue-thread comment was observed (REST); sticky state updated.
   CopilotIssueCommentSeen(Int)
   PRMerged(Int)
-  MergeReady(Int)
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for PollEvent with output(self, logger) {
+  match self {
+    ReviewReceived(n, s) =>
+      logger.write_string("ReviewReceived(" + n.to_string() + ", " + s + ")")
+    ReviewCommented(n, s) =>
+      logger.write_string("ReviewCommented(" + n.to_string() + ", " + s + ")")
+    PRReady(n) => logger.write_string("PRReady(" + n.to_string() + ")")
+    MergeReady(n) => logger.write_string("MergeReady(" + n.to_string() + ")")
+    FixesPushed(n) => logger.write_string("FixesPushed(" + n.to_string() + ")")
+    ReviewTimeout(n) =>
+      logger.write_string("ReviewTimeout(" + n.to_string() + ")")
+    CIFailed(n) => logger.write_string("CIFailed(" + n.to_string() + ")")
+    CIFailureCleared(n) =>
+      logger.write_string("CIFailureCleared(" + n.to_string() + ")")
+    CILatestHeadRollupSucceeded(n) =>
+      logger.write_string("CILatestHeadRollupSucceeded(" + n.to_string() + ")")
+    CopilotIssueCommentSeen(n) =>
+      logger.write_string("CopilotIssueCommentSeen(" + n.to_string() + ")")
+    PRMerged(n) => logger.write_string("PRMerged(" + n.to_string() + ")")
+  }
+}

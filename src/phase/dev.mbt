@@ -4,7 +4,7 @@ pub(all) enum DevStage {
   PRUnderReview
   FixesPushedAwaitingReview
   ApprovedAwaitingMerge
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevPhase {
@@ -24,7 +24,36 @@ pub(all) enum DevPhase {
   Exitable
   Done
   Failed(reason~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for DevPhase with output(self, logger) {
+  match self {
+    Spawned => logger.write_string("Spawned")
+    Working => logger.write_string("Working")
+    PROpenUnreviewed(pr_number~, ..) =>
+      logger.write_string("PROpenUnreviewed(" + pr_number.to_string() + ")")
+    PRUnderReview(pr_number~, ..) =>
+      logger.write_string("PRUnderReview(" + pr_number.to_string() + ")")
+    ChangesRequested(pr_number~, ..) =>
+      logger.write_string("ChangesRequested(" + pr_number.to_string() + ")")
+    FixesPushedAwaitingReview(pr_number~, ..) =>
+      logger.write_string(
+        "FixesPushedAwaitingReview(" + pr_number.to_string() + ")",
+      )
+    ApprovedAwaitingMerge(pr_number~, ..) =>
+      logger.write_string(
+        "ApprovedAwaitingMerge(" + pr_number.to_string() + ")",
+      )
+    ExitRequestedDeferred(pr_number~, ..) =>
+      logger.write_string(
+        "ExitRequestedDeferred(" + pr_number.to_string() + ")",
+      )
+    Exitable => logger.write_string("Exitable")
+    Done => logger.write_string("Done")
+    Failed(reason~, ..) => logger.write_string("Failed(" + reason + ")")
+  }
+}
 
 ///|
 pub(all) enum DevEvent {
@@ -36,14 +65,42 @@ pub(all) enum DevEvent {
   ReviewReceivedEv(pr_number~ : Int, body~ : String)
   ReviewApprovedEv(pr_number~ : Int)
   FixesPushedEv(pr_number~ : Int, sha~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for DevEvent with output(self, logger) {
+  match self {
+    PRCreated(pr_number~, ..) =>
+      logger.write_string("PRCreated(" + pr_number.to_string() + ")")
+    NotifyParentSuccess(..) => logger.write_string("NotifyParentSuccess")
+    NotifyParentFailure(..) => logger.write_string("NotifyParentFailure")
+    ExitRequested => logger.write_string("ExitRequested")
+    MergeObserved(pr_number~, ..) =>
+      logger.write_string("MergeObserved(" + pr_number.to_string() + ")")
+    ReviewReceivedEv(pr_number~, ..) =>
+      logger.write_string("ReviewReceivedEv(" + pr_number.to_string() + ")")
+    ReviewApprovedEv(pr_number~, ..) =>
+      logger.write_string("ReviewApprovedEv(" + pr_number.to_string() + ")")
+    FixesPushedEv(pr_number~, ..) =>
+      logger.write_string("FixesPushedEv(" + pr_number.to_string() + ")")
+  }
+}
 
 ///|
 pub(all) enum DevExitDecision {
   Blocked(message~ : String)
   Deferred(message~ : String)
   ExitableNow
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for DevExitDecision with output(self, logger) {
+  match self {
+    Blocked(message~) => logger.write_string("Blocked(" + message + ")")
+    Deferred(message~) => logger.write_string("Deferred(" + message + ")")
+    ExitableNow => logger.write_string("ExitableNow")
+  }
+}
 
 ///|
 pub(all) enum DevDisconnectPolicy {
@@ -51,7 +108,17 @@ pub(all) enum DevDisconnectPolicy {
   Preserve
   FinalizeDone
   Ignore
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for DevDisconnectPolicy with output(self, logger) {
+  match self {
+    Fail => logger.write_string("Fail")
+    Preserve => logger.write_string("Preserve")
+    FinalizeDone => logger.write_string("FinalizeDone")
+    Ignore => logger.write_string("Ignore")
+  }
+}
 
 ///|
 fn deferred_message(

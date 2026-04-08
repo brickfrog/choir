@@ -8,7 +8,7 @@ pub(all) enum ParseError {
   UnknownAgentType(value~ : String)
   UnknownTaskStatus(value~ : String)
   UnknownStatus(value~ : String)
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn ParseError::message(self : ParseError) -> String {

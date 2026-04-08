@@ -3,34 +3,55 @@
 /// poller snapshot (and optional unresolved thread count when fetched).
 pub(all) enum TlTrackedPrWorkflowCategory {
   BlockedOnChanges
-  /// Review-wait window elapsed; Choir snapshot still shows no review (comment-triggered Copilot is unreliable).
   AttentionRequiredCopilotSilentAfterTimeout
   AttentionRequiredCIFailed
   WaitingOnReviewOrCI
-  /// No Copilot issue comment observed yet on the PR issue thread (REST).
   WaitingOnCopilotIssueComment
-  /// Copilot issue comment seen; other snapshot gates may still block merge.
   CopilotIssueCommentSeenRecheckRemainingGates
   ReadyForTLRecheck
   MergeGateOpenPendingPolicyConfirmation
   ObservedMergedExternal
   OrphanedPRNeedsManualAction
   StalledOnChangesRequested
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for TlTrackedPrWorkflowCategory with output(self, logger) {
+  match self {
+    BlockedOnChanges => logger.write_string("BlockedOnChanges")
+    AttentionRequiredCopilotSilentAfterTimeout =>
+      logger.write_string("AttentionRequiredCopilotSilentAfterTimeout")
+    AttentionRequiredCIFailed =>
+      logger.write_string("AttentionRequiredCIFailed")
+    WaitingOnReviewOrCI => logger.write_string("WaitingOnReviewOrCI")
+    WaitingOnCopilotIssueComment =>
+      logger.write_string("WaitingOnCopilotIssueComment")
+    CopilotIssueCommentSeenRecheckRemainingGates =>
+      logger.write_string("CopilotIssueCommentSeenRecheckRemainingGates")
+    ReadyForTLRecheck => logger.write_string("ReadyForTLRecheck")
+    MergeGateOpenPendingPolicyConfirmation =>
+      logger.write_string("MergeGateOpenPendingPolicyConfirmation")
+    ObservedMergedExternal => logger.write_string("ObservedMergedExternal")
+    OrphanedPRNeedsManualAction =>
+      logger.write_string("OrphanedPRNeedsManualAction")
+    StalledOnChangesRequested =>
+      logger.write_string("StalledOnChangesRequested")
+  }
+}
 
 ///|
 pub(all) struct WaveRollupEntry {
   pr_number : Int
   agent_id : String
   category : TlTrackedPrWorkflowCategory
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct WaveRollup {
   parent_id : String
   wave : Int
   entries : Array[WaveRollupEntry]
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 fn distinct_pr_count_in_rollups(entries : Array[WaveRollupEntry]) -> Int {

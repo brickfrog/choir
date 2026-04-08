@@ -34,7 +34,41 @@ pub(all) enum DeliveryMethod {
   LocalTerminalInput(@types.LocalTarget, String)
   TcpPush(String, String)
   UdsHttp(String, String)
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for DeliveryMethod with output(self, logger) {
+  match self {
+    TeamsInbox(path, content, ..) => {
+      logger.write_string("TeamsInbox(")
+      logger.write_string(path)
+      logger.write_string(", ")
+      logger.write_string(content)
+      logger.write_string(")")
+    }
+    LocalTerminalInput(target, content) => {
+      logger.write_string("LocalTerminalInput(")
+      target.output(logger)
+      logger.write_string(", ")
+      logger.write_string(content)
+      logger.write_string(")")
+    }
+    TcpPush(id, content) => {
+      logger.write_string("TcpPush(")
+      logger.write_string(id)
+      logger.write_string(", ")
+      logger.write_string(content)
+      logger.write_string(")")
+    }
+    UdsHttp(id, content) => {
+      logger.write_string("UdsHttp(")
+      logger.write_string(id)
+      logger.write_string(", ")
+      logger.write_string(content)
+      logger.write_string(")")
+    }
+  }
+}
 
 ///|
 pub fn teams_inbox_json(

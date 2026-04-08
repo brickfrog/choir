@@ -1,7 +1,7 @@
 ///|
 pub(all) struct TomlDoc {
   values : Map[String, String]
-} derive(Show)
+} derive(Debug)
 
 ///|
 pub fn TomlDoc::get(self : TomlDoc, key : String) -> String? {

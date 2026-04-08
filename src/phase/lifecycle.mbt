@@ -6,7 +6,18 @@ pub(all) enum FinalizeReason {
   RecoveredDone
   /// Prior leaf finished after a rescue handoff; not a hard failure.
   RescuedByReplacement
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for FinalizeReason with output(self, logger) {
+  match self {
+    Shutdown => logger.write_string("Shutdown")
+    Merged => logger.write_string("Merged")
+    DisconnectFinalized => logger.write_string("DisconnectFinalized")
+    RecoveredDone => logger.write_string("RecoveredDone")
+    RescuedByReplacement => logger.write_string("RescuedByReplacement")
+  }
+}
 
 ///|
 pub(all) enum FailureReason {
@@ -19,20 +30,37 @@ pub(all) enum FailureReason {
   McpInitializeFailure
   ParentKilled
   BlockedByReview
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for FailureReason with output(self, logger) {
+  match self {
+    UnexpectedDisconnect => logger.write_string("UnexpectedDisconnect")
+    WatchdogTimeout => logger.write_string("WatchdogTimeout")
+    ParentFailureNotification =>
+      logger.write_string("ParentFailureNotification")
+    ChildFailure(message~, ..) =>
+      logger.write_string("ChildFailure(" + message + ")")
+    RecoveredFailed => logger.write_string("RecoveredFailed")
+    ModelAtCapacity => logger.write_string("ModelAtCapacity")
+    McpInitializeFailure => logger.write_string("McpInitializeFailure")
+    ParentKilled => logger.write_string("ParentKilled")
+    BlockedByReview => logger.write_string("BlockedByReview")
+  }
+}
 
 ///|
 pub(all) enum ExitBlockReason {
   ChangesRequested
   OwnPROpen(number~ : Int, url~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum ReviewOwnership {
   OpenUnreviewed(url~ : String)
   FixesAwaitingReview(round~ : Int)
   ApprovedAwaitingMerge
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum ChildLifecycleSummary {
@@ -43,7 +71,20 @@ pub(all) enum ChildLifecycleSummary {
   Exitable
   Done
   Failed(reason~ : FailureReason)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for ChildLifecycleSummary with output(self, logger) {
+  match self {
+    Working => logger.write_string("Working")
+    ReviewOwned(..) => logger.write_string("ReviewOwned")
+    ChangesRequested(..) => logger.write_string("ChangesRequested")
+    ExitRequestedDeferred(..) => logger.write_string("ExitRequestedDeferred")
+    Exitable => logger.write_string("Exitable")
+    Done => logger.write_string("Done")
+    Failed(..) => logger.write_string("Failed")
+  }
+}
 
 ///|
 pub(all) struct ChildLifecycle {
@@ -52,7 +93,7 @@ pub(all) struct ChildLifecycle {
   branch : String
   agent_type : @types.AgentType
   summary : ChildLifecycleSummary
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum SupervisorLifecycle {
@@ -63,7 +104,7 @@ pub(all) enum SupervisorLifecycle {
   OwnPRFiled(number~ : Int, url~ : String)
   Done
   Failed(reason~ : FailureReason)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum DevLifecycle {
@@ -74,7 +115,7 @@ pub(all) enum DevLifecycle {
   Exitable
   Done(reason~ : FinalizeReason)
   Failed(reason~ : FailureReason)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum WorkerLifecycle {
@@ -82,14 +123,23 @@ pub(all) enum WorkerLifecycle {
   Exitable
   Done(reason~ : FinalizeReason)
   Failed(reason~ : FailureReason)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum WorkflowState {
   Supervisor(SupervisorLifecycle)
   Dev(DevLifecycle)
   Worker(WorkerLifecycle)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for WorkflowState with output(self, logger) {
+  match self {
+    Supervisor(_) => logger.write_string("Supervisor")
+    Dev(_) => logger.write_string("Dev")
+    Worker(_) => logger.write_string("Worker")
+  }
+}
 
 ///|
 pub(all) enum ProcessState {
@@ -97,7 +147,17 @@ pub(all) enum ProcessState {
   Finalizing(reason~ : FinalizeReason)
   Finalized(reason~ : FinalizeReason)
   Failed(reason~ : FailureReason)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for ProcessState with output(self, logger) {
+  match self {
+    Connected => logger.write_string("Connected")
+    Finalizing(..) => logger.write_string("Finalizing")
+    Finalized(..) => logger.write_string("Finalized")
+    Failed(..) => logger.write_string("Failed")
+  }
+}
 
 ///|
 pub(all) struct AgentLifecycle {
@@ -105,7 +165,14 @@ pub(all) struct AgentLifecycle {
   role : @types.Role
   process : ProcessState
   workflow : WorkflowState
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for AgentLifecycle with output(self, logger) {
+  logger.write_string("AgentLifecycle { agent_id: ")
+  logger.write_string(self.agent_id)
+  logger.write_string(" }")
+}
 
 ///|
 /// Side effects produced by lifecycle orchestration; interpreted by the host
@@ -120,14 +187,23 @@ pub(all) enum LifecycleEffect {
     to_lc~ : AgentLifecycle,
     trigger~ : @types.LifecycleTrigger
   )
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum LifecycleExitPolicy {
   Blocked(reason~ : ExitBlockReason)
   Deferred(message~ : String)
   Allowed
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for LifecycleExitPolicy with output(self, logger) {
+  match self {
+    Blocked(_) => logger.write_string("Blocked")
+    Deferred(message~, ..) => logger.write_string("Deferred(" + message + ")")
+    Allowed => logger.write_string("Allowed")
+  }
+}
 
 ///|
 pub(all) enum LifecycleDisconnectPolicy {
@@ -135,7 +211,17 @@ pub(all) enum LifecycleDisconnectPolicy {
   Fail(reason~ : FailureReason)
   FinalizeDone(reason~ : FinalizeReason)
   Ignore
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for LifecycleDisconnectPolicy with output(self, logger) {
+  match self {
+    Preserve => logger.write_string("Preserve")
+    Fail(_) => logger.write_string("Fail")
+    FinalizeDone(_) => logger.write_string("FinalizeDone")
+    Ignore => logger.write_string("Ignore")
+  }
+}
 
 ///|
 pub(all) enum DevLifecycleEvent {
@@ -145,7 +231,7 @@ pub(all) enum DevLifecycleEvent {
   FixesPushed(pr_number~ : Int, sha~ : String)
   ExitRequested
   MergeObserved(pr_number~ : Int)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) enum SupervisorEvent {
@@ -159,7 +245,7 @@ pub(all) enum SupervisorEvent {
   ChildFailed(child_id~ : String, reason~ : FailureReason)
   AllChildrenComplete
   OwnPRFiled(number~ : Int, url~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 fn review_summary_message(pr_number : Int, state : ReviewOwnership) -> String {

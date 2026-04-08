@@ -12,7 +12,7 @@ pub(all) enum FilePrPreflightError {
   BranchRangeUnreadable(String)
   GitCommandFailed(String, String)
   GhAuthFailed(String)
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn FilePrPreflightError::to_user_message(
@@ -90,7 +90,7 @@ pub(all) struct PullRequestInfo {
   number : Int
   url : String
   state : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn parse_pull_request_info(data : String) -> PullRequestInfo? {

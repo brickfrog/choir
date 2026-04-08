@@ -12,7 +12,24 @@ fn json_to_compat_string(json : Json) -> String {
 /// JSON object field bag used on the internal wire (request args and ok-payload fields).
 pub(all) struct FieldMap {
   values : Map[String, Json]
-} derive(Show)
+} derive(Eq)
+
+///|
+pub impl Show for FieldMap with output(self, logger) {
+  logger.write_string("{")
+  let mut first = true
+  for k, v in self.values {
+    if !first {
+      logger.write_string(", ")
+    }
+    logger.write_string("\"")
+    logger.write_string(k)
+    logger.write_string("\": ")
+    logger.write_string(v.stringify())
+    first = false
+  }
+  logger.write_string("}")
+}
 
 ///|
 pub type RequestArgs = FieldMap
@@ -96,14 +113,43 @@ pub(all) struct Request {
   role : Role
   name : String
   args : RequestArgs
-} derive(Show)
+} derive(Eq)
+
+///|
+pub impl Show for Request with output(self, logger) {
+  logger.write_string("Request { req_method: ")
+  logger.write_string(self.req_method)
+  logger.write_string(", role: ")
+  logger.write_string(self.role.to_wire_string())
+  logger.write_string(", name: ")
+  logger.write_string(self.name)
+  logger.write_string(", args: ")
+  self.args.output(logger)
+  logger.write_string(" }")
+}
 
 ///|
 /// Internal wire format response.
 pub(all) enum Response {
   Ok(ResponseFields)
   Err(String)
-} derive(Show)
+} derive(Eq)
+
+///|
+pub impl Show for Response with output(self, logger) {
+  match self {
+    Ok(fields) => {
+      logger.write_string("Ok(")
+      fields.output(logger)
+      logger.write_string(")")
+    }
+    Err(msg) => {
+      logger.write_string("Err(")
+      logger.write_string(msg)
+      logger.write_string(")")
+    }
+  }
+}
 
 ///|
 pub fn Response::ok(self : Map[String, String]) -> Response {

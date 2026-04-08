@@ -36,7 +36,7 @@ pub(all) struct CompanionDef {
   role : String
   command : String
   task : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub fn parse_companions_json(s : String) -> Array[CompanionDef] {

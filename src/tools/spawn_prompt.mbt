@@ -13,7 +13,7 @@ pub(all) struct PromptSpec {
   non_goals : Array[String]
   worker_type : String
   no_commit : Bool
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 fn split_nonempty_lines(s : String) -> Array[String] {

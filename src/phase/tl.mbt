@@ -3,7 +3,7 @@ pub(all) struct ChildHandle {
   slug : String
   branch : String
   agent_type : @types.AgentType
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) struct ChildTrackerEntry {
@@ -11,7 +11,7 @@ pub(all) struct ChildTrackerEntry {
   slug : String
   branch : String
   agent_type : @types.AgentType
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) struct ChildTracker {
@@ -93,7 +93,27 @@ pub(all) enum TLPhase {
   PRFiled(number~ : Int, url~ : String)
   Done
   Failed(reason~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for TLPhase with output(self, logger) {
+  match self {
+    Planning => logger.write_string("Planning")
+    Dispatching => logger.write_string("Dispatching")
+    Waiting(count~, wave~) =>
+      logger.write_string(
+        "Waiting(" + count.to_string() + "," + wave.to_string() + ")",
+      )
+    WaveComplete(wave~) =>
+      logger.write_string("WaveComplete(" + wave.to_string() + ")")
+    Merging(count~) => logger.write_string("Merging(" + count.to_string() + ")")
+    AllMerged => logger.write_string("AllMerged")
+    PRFiled(number~, ..) =>
+      logger.write_string("PRFiled(" + number.to_string() + ")")
+    Done => logger.write_string("Done")
+    Failed(reason~) => logger.write_string("Failed(" + reason + ")")
+  }
+}
 
 ///|
 pub(all) enum TLEvent {
@@ -103,7 +123,24 @@ pub(all) enum TLEvent {
   PRMerged(number~ : Int, url~ : String)
   AllChildrenDone
   OwnPRFiled(number~ : Int, url~ : String, branch~ : String)
-} derive(Show, Eq, ToJson, FromJson)
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for TLEvent with output(self, logger) {
+  match self {
+    ChildSpawned(child_id~) =>
+      logger.write_string("ChildSpawned(" + child_id + ")")
+    ChildCompleted(child_id~) =>
+      logger.write_string("ChildCompleted(" + child_id + ")")
+    ChildFailed(child_id~, reason~) =>
+      logger.write_string("ChildFailed(" + child_id + "," + reason + ")")
+    PRMerged(number~, ..) =>
+      logger.write_string("PRMerged(" + number.to_string() + ")")
+    AllChildrenDone => logger.write_string("AllChildrenDone")
+    OwnPRFiled(number~, ..) =>
+      logger.write_string("OwnPRFiled(" + number.to_string() + ")")
+  }
+}
 
 ///|
 pub fn tl_transition(

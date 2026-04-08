@@ -5,7 +5,7 @@ struct TaskFile {
   status : @types.TaskStatus
   assignee : String
   notes : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct FilePrArgs {
@@ -16,7 +16,7 @@ pub(all) struct FilePrArgs {
   body : String?
   /// Optional context posted as `@copilot review: …` on the PR when review is requested.
   review_context : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct TrackPrArgs {
@@ -25,7 +25,7 @@ pub(all) struct TrackPrArgs {
   branch : String
   parent_branch : String
   pr_url : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct ForkWaveArgs {
@@ -41,7 +41,7 @@ pub(all) struct ForkWaveArgs {
   parent_session_id : String?
   /// Appended to each leaf task so children can pass it to `file_pr` / Copilot review.
   review_context : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct SpawnGeminiArgs {
@@ -50,7 +50,7 @@ pub(all) struct SpawnGeminiArgs {
   slug : String
   parent_branch : String
   parent_session_id : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct RescueLeafArgs {
@@ -60,7 +60,7 @@ pub(all) struct RescueLeafArgs {
   new_slug : String
   agent_type : @types.AgentType
   parent_session_id : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct LeafSpawnArgs {
@@ -68,7 +68,7 @@ struct LeafSpawnArgs {
   caller_id : String
   slug : String
   parent_branch : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct WorkerSpawnArgs {
@@ -76,7 +76,7 @@ pub(all) struct WorkerSpawnArgs {
   caller_id : String
   slug : String
   agent_type : @types.AgentType
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct RemoteSpawnArgs {
@@ -88,7 +88,7 @@ pub(all) struct RemoteSpawnArgs {
   repo_url : String
   tcp_addr : String
   parent_session_id : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct TaskCreateArgs {
@@ -97,7 +97,7 @@ struct TaskCreateArgs {
   status : @types.TaskStatus
   assignee : String
   notes : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct TaskUpdateArgs {
@@ -105,7 +105,7 @@ struct TaskUpdateArgs {
   status : @types.TaskStatus?
   assignee : String?
   notes : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct RegisterArgs {
@@ -117,36 +117,36 @@ struct RegisterArgs {
   workspace : String
   branch : String
   spawn_depth : Int
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct KvKeyArgs {
   key : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct KvSetArgs {
   key : String
   value : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct MutexAcquireArgs {
   name : String
   agent_id : String
   ttl_sec : Int64
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct MutexNameArgs {
   name : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct MutexReleaseArgs {
   name : String
   agent_id : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct MergePrArgs {
@@ -154,20 +154,20 @@ pub(all) struct MergePrArgs {
   parent_branch : String
   caller_id : String
   force : Bool
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct ResolveReviewThreadArgs {
   thread_id : String
   caller_id : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct CallerMessageArgs {
   caller_id : String
   message : String
   status : @types.Status
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct SendMessageArgs {
@@ -175,43 +175,43 @@ struct SendMessageArgs {
   sender_id : String
   message : String
   status : @types.Status
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct ShutdownArgs {
   caller_id : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct KillAgentArgs {
   agent_id : String
   reason : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct AgentListArgs {
   parent_id : String?
   include_inactive : Bool
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct CancelWaveArgs {
   force : Bool
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct IdArgs {
   id : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 struct SessionNameArgs {
   name : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct ReplyArgs {
   id : String
   payload : String
   cancel : Bool
-} derive(Show, Eq)
+} derive(Debug, Eq)

@@ -3,12 +3,28 @@ pub(all) struct ToolCall {
   role : @types.Role
   name : String
   args : Map[String, String]
-} derive(Show)
+} derive(Debug)
 
 ///|
 struct ToolArgs {
   values : Map[String, Json]
-} derive(Show)
+}
+
+///|
+pub impl Show for ToolArgs with output(self, logger) {
+  logger.write_string("{ ")
+  let mut first = true
+  for k, v in self.values {
+    if !first {
+      logger.write_string(", ")
+    }
+    logger.write_string(k)
+    logger.write_string(": ")
+    logger.write_string(v.stringify())
+    first = false
+  }
+  logger.write_string(" }")
+}
 
 ///|
 pub fn tool_args_from_map(args : Map[String, String]) -> ToolArgs {

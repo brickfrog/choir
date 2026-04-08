@@ -7,7 +7,12 @@ pub(all) enum HookEvent {
   SessionStop
   BeforeModel
   AfterModel
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for HookEvent with output(self, logger) {
+  logger.write_string(self.hook_event_wire_name())
+}
 
 ///|
 pub(all) struct HookInput {
@@ -19,7 +24,12 @@ pub(all) struct HookInput {
   tool_args : Map[String, String]?
   tool_result_status : String?
   exit_reason : @types.ExitReason?
-} derive(Show)
+} derive(Debug)
+
+///|
+pub impl Show for HookInput with output(self, logger) {
+  logger.write_string(self.to_json_string())
+}
 
 ///|
 fn HookEvent::hook_event_wire_name(self : HookEvent) -> String {
@@ -80,7 +90,12 @@ pub fn HookInput::to_json_string(self : HookInput) -> String {
 pub(all) struct HookResponse {
   continue_ : Bool
   message : String?
-} derive(Show, Eq)
+} derive(Debug, Eq)
+
+///|
+pub impl Show for HookResponse with output(self, logger) {
+  logger.write_string(self.to_json_string())
+}
 
 ///|
 pub fn HookResponse::allow() -> HookResponse {

@@ -3,7 +3,7 @@ pub(all) struct PluginDef {
   name : String
   command : String
   tools : String
-} derive(Show, Eq)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct PluginCall {
@@ -11,7 +11,16 @@ pub(all) struct PluginCall {
   args : @types.RequestArgs
   agent_id : String
   role : String
-} derive(Show)
+}
+
+///|
+pub impl Show for PluginCall with output(self, logger) {
+  logger.write_string("PluginCall { tool: ")
+  logger.write_string(self.tool)
+  logger.write_string(", agent_id: ")
+  logger.write_string(self.agent_id)
+  logger.write_string(" }")
+}
 
 ///|
 pub fn parse_plugins_json(s : String) -> Array[PluginDef] {
