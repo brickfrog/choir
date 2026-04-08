@@ -1,5 +1,6 @@
 import {
   "choir/src/config",
+  "choir/src/evidence",
   "choir/src/types",
   "choir/src/phase",
   "choir/src/registry",

@@ -194,6 +194,26 @@ test "tl_tracked_pr_recheck_gate_line matches no blocked snapshot" {
 }
 
 ///|
+test "merge_policy_decision_for_tracked_pr returns merge_now for approved success zero threads" {
+  let t = sample_tracked(Approved, Success, 12)
+  let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
+  assert_eq(decision.label(), "merge_now")
+}
+
+///|
+test "merge_policy_summary_line reflects missing verify evidence" {
+  let t = sample_tracked(Approved, Success, 13)
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let line = merge_policy_summary_line(t, Some(0), task_contract=Some(contract))
+  assert_true(line.contains("needs_human"))
+  assert_true(line.contains("local verify not observed"))
+}
+
+///|
 test "detect_stalled_on_review fires when threshold exceeded and agent active" {
   let t = {
     ..sample_tracked(ChangesRequested, Success, 50),

@@ -1241,6 +1241,11 @@ pub fn format_tl_pr_recheck_summary(
     unresolved_thread_count,
     task_contract~,
   )
+  let policy = @poller.merge_policy_summary_line(
+    tracked,
+    unresolved_thread_count,
+    task_contract~,
+  )
   "PR re-check summary (Choir snapshot; not merge approval):\n" +
   "- GitHub review rollup: " +
   review +
@@ -1258,7 +1263,10 @@ pub fn format_tl_pr_recheck_summary(
   gate +
   "\n" +
   "- " +
-  advisory
+  advisory +
+  "\n" +
+  "- " +
+  policy
 }
 
 ///|

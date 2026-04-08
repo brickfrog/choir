@@ -1,0 +1,9 @@
+import {
+  "choir/src/types",
+  "choir/src/sys",
+  "moonbitlang/core/json",
+}
+
+options(
+  "is-main": false,
+)
