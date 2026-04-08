@@ -1952,6 +1952,7 @@ async test "interpret_merge_pr_preflight force bypass skips capture" {
     None,
     "/repo",
     mock_preflight_capture_unreachable,
+    None,
   )
   match got {
     Ok(_) => ()
@@ -1983,6 +1984,7 @@ async test "interpret_merge_pr_preflight ok when no poller block and no threads"
     None,
     "/repo",
     mock_preflight_capture_no_unresolved_threads,
+    None,
   )
   match got {
     Ok(_) => ()
@@ -2014,6 +2016,7 @@ async test "interpret_merge_pr_preflight err when review threads unresolved" {
     None,
     "/repo",
     mock_preflight_capture_one_unresolved_thread,
+    None,
   )
   match got {
     Err(e) => {
@@ -2048,6 +2051,7 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     Some(ps),
     "/repo",
     mock_preflight_capture_no_unresolved_threads,
+    None,
   )
   match got {
     Err(e) => assert_true(e.message().contains("ChangesRequested"))
@@ -2061,7 +2065,7 @@ test "merge_pr_preflight_block_message prefers ChangesRequested over thread gate
     @poller.ReviewState::ChangesRequested,
     "main.leaf",
   )
-  match merge_pr_preflight_block_message(9, Some(t), 2, "threads") {
+  match merge_pr_preflight_block_message(9, Some(t), 2, "threads", None) {
     Some(msg) => {
       assert_true(msg.contains("ChangesRequested"))
       assert_false(msg.contains("unresolved review thread"))
@@ -2072,7 +2076,7 @@ test "merge_pr_preflight_block_message prefers ChangesRequested over thread gate
 
 ///|
 test "merge_pr_preflight_block_message blocks on unresolved threads" {
-  match merge_pr_preflight_block_message(3, None, 1, "body") {
+  match merge_pr_preflight_block_message(3, None, 1, "body", None) {
     Some(msg) => {
       assert_true(msg.contains("PR #3"))
       assert_true(msg.contains("1 unresolved review thread"))
@@ -2086,7 +2090,47 @@ test "merge_pr_preflight_block_message blocks on unresolved threads" {
 ///|
 test "merge_pr_preflight_block_message allows Approved with no threads" {
   let t = merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf")
-  assert_eq(merge_pr_preflight_block_message(9, Some(t), 0, ""), None)
+  assert_eq(merge_pr_preflight_block_message(9, Some(t), 0, "", None), None)
+}
+
+///|
+test "merge_pr_preflight_block_message policy Blocked" {
+  let policy_decision = Some(
+    @policy.MergeDecision::Blocked(reason="insufficient evidence"),
+  )
+  match merge_pr_preflight_block_message(9, None, 0, "", policy_decision) {
+    Some(msg) => {
+      assert_true(msg.contains("policy blocked: insufficient evidence"))
+      assert_true(msg.contains("pass force=true to override"))
+    }
+    None => fail("expected block")
+  }
+}
+
+///|
+test "merge_pr_preflight_block_message policy Wait" {
+  let policy_decision = Some(@policy.MergeDecision::Wait(reason="pending CI"))
+  match merge_pr_preflight_block_message(9, None, 0, "", policy_decision) {
+    Some(msg) => {
+      assert_true(msg.contains("policy wait: pending CI"))
+      assert_true(msg.contains("pass force=true to override"))
+    }
+    None => fail("expected wait")
+  }
+}
+
+///|
+test "merge_pr_preflight_block_message policy NeedsHuman" {
+  let policy_decision = Some(
+    @policy.MergeDecision::NeedsHuman(reason="manual check"),
+  )
+  match merge_pr_preflight_block_message(9, None, 0, "", policy_decision) {
+    Some(msg) => {
+      assert_true(msg.contains("policy requires human check: manual check"))
+      assert_true(msg.contains("pass force=true to override"))
+    }
+    None => fail("expected needs human")
+  }
 }
 
 ///|
@@ -2095,7 +2139,7 @@ test "format_tl_pr_recheck_summary ready snapshot when approved success zero thr
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
   }
-  let s = format_tl_pr_recheck_summary(t, Some(0))
+  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
   assert_true(s.contains("no tracked blockers"))
   assert_true(s.contains("Does not merge"))
   assert_true(s.contains("success"))
@@ -2110,7 +2154,7 @@ test "format_tl_pr_recheck_summary lists blockers for changes requested" {
     ..merge_pr_test_tracked(@poller.ReviewState::ChangesRequested, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
   }
-  let s = format_tl_pr_recheck_summary(t, Some(0))
+  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
   assert_true(s.contains("GitHub review requests changes"))
   assert_false(s.contains("no tracked blockers"))
   assert_true(s.contains("Advisory evaluation verdict: blocked"))
@@ -2123,7 +2167,7 @@ test "format_tl_pr_recheck_summary does not claim ready when thread count not fe
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
   }
-  let s = format_tl_pr_recheck_summary(t, None)
+  let s = format_tl_pr_recheck_summary(t, "/repo", None)
   assert_true(s.contains("not fetched"))
   assert_false(s.contains("no tracked blockers"))
   assert_true(s.contains("Advisory evaluation verdict: needs_human"))
@@ -2137,9 +2181,11 @@ test "format_tl_pr_recheck_summary notes Copilot issue comment when seen on merg
     last_ci_rollup: @poller.CiRollupStatus::Success,
     copilot_issue_comment_seen: true,
   }
-  let s = format_tl_pr_recheck_summary(t, Some(0))
+  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
   assert_true(s.contains("GitHub Copilot issue comment (REST): seen"))
   assert_true(s.contains("Copilot issue comment observed"))
+  assert_true(s.contains("Advisory evaluation verdict: ready"))
+  assert_true(s.contains("Merge policy decision: merge_now"))
 }
 
 ///|
@@ -2153,7 +2199,12 @@ test "format_tl_pr_recheck_summary policy needs human when required verify is mi
     goal: "ship feature",
     verify: ["moon test --target native"],
   }
-  let s = format_tl_pr_recheck_summary(t, Some(0), task_contract=Some(contract))
+  let s = format_tl_pr_recheck_summary(
+    t,
+    "/repo",
+    Some(0),
+    task_contract=Some(contract),
+  )
   assert_true(s.contains("Advisory evaluation verdict: needs_human"))
   assert_true(s.contains("Merge policy decision: needs_human"))
   assert_true(s.contains("local verify not observed"))
