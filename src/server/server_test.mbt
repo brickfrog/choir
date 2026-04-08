@@ -449,6 +449,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
       "pr_number": pr_number.to_string(),
       "caller_id": parent_id,
       "parent_branch": "main",
+      "force": "true",
     }),
   }
   let resp = state.handle_with_runner(req, runner=async fn(
