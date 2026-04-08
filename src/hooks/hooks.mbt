@@ -27,11 +27,6 @@ pub(all) struct HookInput {
 } derive(Debug)
 
 ///|
-pub impl Show for HookInput with output(self, logger) -> Unit {
-  logger.write_string("HookInput")
-}
-
-///|
 fn HookEvent::hook_event_wire_name(self : HookEvent) -> String {
   match self {
     SessionStart => "SessionStart"
@@ -93,8 +88,17 @@ pub(all) struct HookResponse {
 } derive(Debug, Eq)
 
 ///|
-pub impl Show for HookResponse with output(self, logger) -> Unit {
-  logger.write_string("HookResponse")
+pub impl Show for HookResponse with output(self, logger) {
+  logger.write_string("HookResponse(continue_=")
+  logger.write_string(self.continue_.to_string())
+  match self.message {
+    Some(m) => {
+      logger.write_string(", message=")
+      logger.write_string(m)
+    }
+    None => ()
+  }
+  logger.write_string(")")
 }
 
 ///|
