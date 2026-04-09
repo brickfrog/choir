@@ -18,8 +18,6 @@ Do not place public-API-only tests inline in source files. Do not place tests th
 
 ## Effect Architecture
 
-Choir follows an exomonad-style architecture. Respect these invariants:
-
 - **No direct I/O in orchestration logic.** Code in `src/server/`, `src/tools/`, `src/poller/`, `src/phase/`, `src/runtime/` must not call `@sys.*` or `@process.*` directly. Emit typed effects or use injected adapter functions. All host I/O (Git, GitHub, Zellij, filesystem) goes through `src/exec/` or injected function parameters.
 - **Use enums, not strings, for fixed domains.** Agent types use `AgentType`, roles use `Role`, states use `AgentState`. Do not introduce new `String` fields for values drawn from a fixed set — define an enum.
 - **Use `ChoirError` suberror, not `String`, for errors.** New error paths should return `Result[T, ChoirError]` or `raise ChoirError`, not `Result[T, String]`. The `ChoirError` type in `src/types/error.mbt` has variants for common cases.
@@ -34,3 +32,7 @@ The former known gaps (typed lifecycle triggers, typed lifecycle snapshots in ev
 - Never let test fixtures write to the real checkout outside their dedicated temp area.
 - Prefer pure state-machine, parser, and helper tests over integration-heavy harnesses.
 - If a test design risks poisoning local repo state, stop and choose a smaller boundary.
+
+## Commits
+
+- Semantic commits only
