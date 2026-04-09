@@ -420,3 +420,44 @@ test "merged_pr_parent_message uses unknown when branch or parent_branch missing
   assert_true(msg.contains("parent_branch: <unknown>"))
   assert_false(msg.contains("pr_url:"))
 }
+
+///|
+test "plan_post_tool_actions includes RefreshPR for resolve_review_thread success" {
+  let project_dir = isolated_post_tool_project_dir("resolve-refresh")
+  let terminal_session = "test-session"
+  let poller = @poller.PollerState::new()
+  let registry = @registry.AgentRegistry::new()
+
+  let agent_id = "main.dev"
+  let pr_number = 123
+  poller.track(
+    pr_number, agent_id, "work", "main", "https://github.com/o/r/pull/123", 100L,
+  )
+
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "resolve_review_thread",
+    args: @types.RequestArgs::new({ "thread_id": "T1", "caller_id": agent_id }),
+  }
+  let resp = @types.Response::ok_values({})
+
+  let effects = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id=None,
+    poller,
+    registry,
+    project_dir,
+    terminal_session,
+  )
+
+  let mut found_refresh = false
+  for effect in effects {
+    match effect {
+      RefreshPR(n) => if n == pr_number { found_refresh = true }
+      _ => ()
+    }
+  }
+  assert_true(found_refresh)
+}

@@ -1817,6 +1817,58 @@ pub async fn ServerState::process_poller_tick(
 }
 
 ///|
+pub async fn ServerState::refresh_pr_with(
+  self : ServerState,
+  pr_number : Int,
+  now : Int64,
+  timeout : Int64,
+  poll : async (Int, Bool) -> (
+    Bool,
+    @poller.ReviewState,
+    String,
+    @poller.CiRollupStatus,
+    String,
+    Bool,
+    Bool,
+  ),
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+) -> Unit {
+  let pending_events : Array[@poller.PollEvent] = []
+  let pending_agent_ids : Array[String] = []
+  self.poller.tick_pr_with(
+    pr_number,
+    now,
+    timeout,
+    poll,
+    fn(event, agent_id) {
+      pending_events.push(event)
+      pending_agent_ids.push(agent_id)
+    },
+    fn(_) { () },
+    force_refresh=true,
+  )
+  deliver_orphaned_pr_notifications(self, runner)
+  deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+  deliver_poller_stall_notifications(self, now, runner)
+  ignore(self.poller.write_state_file(self.config.project_dir))
+}
+
+///|
+pub async fn ServerState::refresh_pr_with_runner(
+  self : ServerState,
+  pr_number : Int,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  self.refresh_pr_with(
+    pr_number,
+    @poller.now_sec(),
+    900L,
+    @poller.gh_poll_pr,
+    runner~,
+  )
+}
+
+///|
 /// Register a pane for idle watchdog monitoring.
 /// Starts a `zellij subscribe` process that streams pane viewport updates
 /// to a snapshot file, replacing the old dump-screen polling approach.
@@ -2179,6 +2231,7 @@ async fn ServerState::interpret_teardown_effects(
         } catch {
           _ => ()
         }
+      RefreshPR(pr_number) => self.refresh_pr_with_runner(pr_number, runner)
     }
   }
 }
