@@ -44,6 +44,29 @@ test "decide_merge returns merge_now when review CI threads and verify all pass"
 }
 
 ///|
+test "decide_merge returns merge_now for comment-only review when CI threads and verify all pass" {
+  let contract = contract_with_verify()
+  let decision = decide_merge(
+    None,
+    bundle_with_signals(Some(contract), [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Commented,
+        body="left comments",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::Verify(result={
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "ok",
+      }),
+    ]),
+  )
+  assert_eq(decision.label(), "merge_now")
+  assert_true(decision.reason().contains("ready"))
+}
+
+///|
 test "decide_merge blocks on changes requested" {
   let contract = contract_with_verify()
   let decision = decide_merge(

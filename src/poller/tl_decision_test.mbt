@@ -487,23 +487,21 @@ test "format_wave_rollup uses PR count as denominator when wave size unknown" {
 }
 
 ///|
-test "tl_tracked_pr_merge_gate_snapshot_ready requires Approved (Commented is not enough)" {
+test "tl_tracked_pr_merge_gate_snapshot_ready accepts comment-only review when threads are clear" {
   let t = sample_tracked(Commented, Success, 100)
-  assert_false(tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0)))
+  assert_true(tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0)))
 }
 
 ///|
-test "tl_classify_tracked_pr_workflow - comment-only review, zero threads, CI success is NOT merge-ready" {
+test "tl_classify_tracked_pr_workflow treats comment-only review as merge-ready when CI is green and threads are clear" {
   let t = sample_tracked(Commented, Success, 200)
   let cat = tl_classify_tracked_pr_workflow(t, Some(0))
-  // It should be one of the waiting categories, not MergeGateOpenPendingPolicyConfirmation
-  assert_false(cat == MergeGateOpenPendingPolicyConfirmation)
-  assert_eq(cat, WaitingOnCopilotIssueComment)
+  assert_eq(cat, MergeGateOpenPendingPolicyConfirmation)
 }
 
 ///|
-test "merge_policy_decision_for_tracked_pr - comment-only review, zero threads, CI success is wait" {
+test "merge_policy_decision_for_tracked_pr returns merge_now for comment-only review when CI is green and threads are clear" {
   let t = sample_tracked(Commented, Success, 201)
   let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
-  assert_eq(decision.label(), "wait")
+  assert_eq(decision.label(), "merge_now")
 }
