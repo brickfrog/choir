@@ -114,6 +114,7 @@ test "initialize_response instructions forbid parent branch implementation durin
               "do not implement the feature directly on the parent branch",
             ),
           )
+          assert_true(instructions.contains("choir tl-parent-override on"))
           assert_true(
             instructions.contains(
               "kill that leaf immediately and close or abandon its PR",

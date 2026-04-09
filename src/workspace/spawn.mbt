@@ -4,8 +4,33 @@ fn command_text_for_launch(cmd : Command) -> String {
 }
 
 ///|
+fn tl_policy_supervised_shell_script(
+  env_exports : String,
+  inner : Command,
+  post_exit_shell : String,
+) -> String {
+  let foreground_script = "choir tl-policy-watch --pid $$ & exec " +
+    command_text_for_launch(inner)
+  env_exports +
+  "sh -lc " +
+  @sys.shell_quote(foreground_script) +
+  "; status=$?;" +
+  post_exit_shell
+}
+
+///|
 fn env_assignment(key : String, value : String) -> String {
   key + "=" + @sys.shell_quote(value)
+}
+
+///|
+fn export_assignment(key : String, value : String) -> String {
+  "export " + key + "=" + @sys.shell_quote(value) + "; "
+}
+
+///|
+fn export_path_assignment(prefix : String) -> String {
+  "export PATH=" + @sys.shell_quote(prefix) + ":$PATH; "
 }
 
 ///|
@@ -89,6 +114,50 @@ pub fn launch_env_prefix(
   } else {
     buf.to_string() + " "
   }
+}
+
+///|
+fn launch_env_exports(
+  spec : @types.SpawnSpec,
+  session : String,
+  workspace : String,
+  terminal_target : @types.LocalTarget,
+) -> String {
+  let role = @config.role_to_string(spec.role)
+  let agent_id = canonical_agent_id(spec)
+  let git_branch = spawn_git_branch(spec)
+  let agent_type = @config.agent_type_to_string(spec.agent_type)
+  let assignments : Array[String] = [
+    export_path_assignment(workspace + "/.choir/bin"),
+    export_assignment("CHOIR_AGENT_ID", agent_id),
+    export_assignment("CHOIR_PARENT_ID", spec.parent_id),
+    export_assignment("CHOIR_BRANCH", git_branch),
+    export_assignment("CHOIR_PARENT_BRANCH", spec.parent_branch),
+    export_assignment("CHOIR_WORKSPACE", workspace),
+    export_assignment("CHOIR_ROLE", role),
+    export_assignment("CHOIR_AGENT_TYPE", agent_type),
+    export_assignment("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
+    export_assignment("CHOIR_TERMINAL_SESSION", session),
+    export_assignment("CHOIR_SESSION_ID", agent_id),
+    export_assignment("CHOIR_PARENT_AGENT", spec.parent_id),
+  ]
+  if spec.agent_type == @types.AgentType::Gemini ||
+    spec.agent_type == @types.AgentType::Unknown {
+    assignments.push(
+      export_assignment(
+        "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
+        workspace + "/.choir/gemini-settings.json",
+      ),
+    )
+  }
+  match @sys.getenv("TRACEPARENT") {
+    Some(value) =>
+      if value != "" {
+        assignments.push(export_assignment("TRACEPARENT", value))
+      }
+    None => ()
+  }
+  assignments.join("")
 }
 
 ///|
@@ -257,15 +326,31 @@ pub fn spawn_commands(
           ),
         )
       }
-      for
-        cmd in launch_commands(
+      let launch_cmds = if spec.role == @types.Role::TL &&
+        spec.isolation != @types.IsolationMode::Inline {
+        [
+          zellij_new_tab_shell(
+            session,
+            spec.slug,
+            workspace,
+            tl_policy_supervised_shell_script(
+              launch_env_exports(spec, session, workspace, terminal_target),
+              launch_cmd,
+              " exit \"$status\"",
+            ),
+          ),
+        ]
+      } else {
+        launch_commands(
           session,
           spec.slug,
           workspace,
           env_for_zellij,
           launch_cmd,
           spec.isolation,
-        ) {
+        )
+      }
+      for cmd in launch_cmds {
         cmds.push(cmd)
       }
       cmds
@@ -281,15 +366,31 @@ pub fn spawn_commands(
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
       }
-      for
-        cmd in launch_commands(
+      let launch_cmds = if spec.role == @types.Role::TL &&
+        spec.isolation != @types.IsolationMode::Inline {
+        [
+          zellij_new_tab_shell(
+            session,
+            spec.slug,
+            workspace,
+            tl_policy_supervised_shell_script(
+              launch_env_exports(spec, session, workspace, terminal_target),
+              launch_cmd,
+              " exit \"$status\"",
+            ),
+          ),
+        ]
+      } else {
+        launch_commands(
           session,
           spec.slug,
           workspace,
           env_for_zellij,
           launch_cmd,
           spec.isolation,
-        ) {
+        )
+      }
+      for cmd in launch_cmds {
         cmds.push(cmd)
       }
       cmds
@@ -349,15 +450,31 @@ pub fn spawn_commands(
           ),
         )
       }
-      for
-        cmd in launch_commands(
+      let launch_cmds = if spec.role == @types.Role::TL &&
+        spec.isolation != @types.IsolationMode::Inline {
+        [
+          zellij_new_tab_shell(
+            session,
+            spec.slug,
+            workspace,
+            tl_policy_supervised_shell_script(
+              launch_env_exports(spec, session, workspace, terminal_target),
+              launch_cmd,
+              " exit \"$status\"",
+            ),
+          ),
+        ]
+      } else {
+        launch_commands(
           session,
           spec.slug,
           workspace,
           env_for_zellij,
           launch_cmd,
           spec.isolation,
-        ) {
+        )
+      }
+      for cmd in launch_cmds {
         cmds.push(cmd)
       }
       cmds
@@ -504,7 +621,7 @@ pub fn remote_spawn_commands(
 ///   `exec`). Zellij’s `env <prog> <argv…>` tab entry has no “on exit run …” hook.
 ///
 /// A single login-shell script is the minimal wrapper for the TL agent command.
-const INIT_TL_POST_EXIT_SHELL_SUFFIX : String = "; echo; echo '[TL exited]'; exec bash -l"
+const INIT_TL_POST_EXIT_SHELL_SUFFIX : String = " echo; echo '[TL exited]'; exec bash -l"
 
 ///|
 /// TL init zellij tab: spawns a login-shell wrapping the TL agent command.
@@ -512,14 +629,30 @@ pub fn init_tl_zellij_tab_command(
   session : String,
   project_dir : String,
   tl_type : String,
+  branch : String,
 ) -> Command {
   let inner = zellij_launch_inner_command(
     init_tl_agent_command(tl_type, project_dir),
   )
-  let script = inner.to_string() + INIT_TL_POST_EXIT_SHELL_SUFFIX
-  zellij_new_tab(session, "TL", project_dir, [], {
-    program: "sh",
-    args: ["-lc", script],
-    workdir: None,
-  })
+  let env_exports = export_assignment("CHOIR_AGENT_ID", "root") +
+    export_assignment("CHOIR_BRANCH", branch) +
+    export_assignment("CHOIR_PARENT_BRANCH", branch) +
+    export_assignment("CHOIR_ROLE", "tl") +
+    export_assignment("CHOIR_WORKSPACE", project_dir) +
+    export_assignment(
+      "CHOIR_TERMINAL_TARGET",
+      local_target_for(session, "TL", @types.IsolationMode::Worktree).to_string(),
+    ) +
+    export_assignment("CHOIR_TERMINAL_SESSION", session) +
+    export_assignment("CHOIR_SESSION_ID", "root")
+  zellij_new_tab_shell(
+    session,
+    "TL",
+    project_dir,
+    tl_policy_supervised_shell_script(
+      env_exports,
+      inner,
+      INIT_TL_POST_EXIT_SHELL_SUFFIX,
+    ),
+  )
 }

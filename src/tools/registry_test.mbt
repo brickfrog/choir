@@ -31,6 +31,46 @@ async fn mock_registry_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
 }
 
 ///|
+async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "git" &&
+    cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+    return (0, "origin/main\n")
+  }
+  if cmd.program == "zellij" {
+    return (1, "")
+  }
+  if cmd.program == "gh" {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.args.contains("comments") {
+      return (0, "[]")
+    }
+    return (0, "")
+  }
+  (0, "")
+}
+
+///|
+async fn mock_registry_capture_with_pane(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "zellij" {
+    return (
+      0, "[{\"id\":17,\"tab_name\":\"claude-pane-leaf-0\",\"is_plugin\":false}]",
+    )
+  }
+  mock_registry_capture(cmd)
+}
+
+///|
 async fn mock_clean_git(program : String, args : Array[String]) -> String {
   @async.sleep(0)
   if args.contains("rev-parse") {
@@ -332,6 +372,7 @@ async test "handle_request with valid tool returns Ok" {
     project_dir="/tmp/choir-test-noop",
     runner=mock_registry_runner,
     git_capture=mock_clean_git,
+    capture=mock_registry_capture,
   )
   assert_true(res is Ok(_))
 }
@@ -392,6 +433,7 @@ async test "dispatch returns correct stub for each tool name" {
       project_dir~,
       runner=mock_registry_runner,
       git_capture=mock_clean_git,
+      capture=mock_registry_capture,
       ensure_branch_ready=Some(mock_registry_branch_ready),
       ensure_pr=Some(mock_registry_ensure_pr),
       mutex_registry=Some(@registry.MutexRegistry::new()),
@@ -446,6 +488,7 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
     session="choir",
     runner=mock_registry_runner,
     git_capture=mock_clean_git,
+    capture=mock_registry_capture,
     ensure_branch_ready=Some(mock_registry_branch_ready),
     ensure_pr=Some(mock_registry_ensure_pr),
     registry=Some(agent_reg),
@@ -520,6 +563,7 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
     session="choir",
     runner=mock_registry_runner,
     git_capture=mock_clean_git,
+    capture=mock_registry_capture,
     ensure_branch_ready=Some(mock_registry_branch_ready),
     ensure_pr=Some(mock_registry_ensure_pr),
     registry=Some(agent_reg),
@@ -553,6 +597,72 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
         @types.LocalTarget::parse("zellij-tab:choir:claude-smoke-leaf-0"),
       )
     }
+  }
+}
+
+///|
+async test "dispatch fork_wave post-spawn pane resolution uses injected capture" {
+  let project_dir = "/tmp/choir-fork-wave-pane-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let agent_reg = @registry.AgentRegistry::new()
+  ignore(
+    agent_reg.upsert({
+      agent_id: "root",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "",
+      terminal_target: @types.LocalTarget::parse("zellij-tab:choir:TL"),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "fork_wave",
+    args: {
+      "caller_id": "root",
+      "parent_branch": "master",
+      "slug_prefix": "claude-pane-leaf",
+      "count": "1",
+      "agent_type": "claude",
+      "task": "open a PR",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    session="choir",
+    runner=mock_registry_runner,
+    git_capture=mock_clean_git,
+    capture=mock_registry_capture_with_pane,
+    ensure_branch_ready=Some(mock_registry_branch_ready),
+    ensure_pr=Some(mock_registry_ensure_pr),
+    registry=Some(agent_reg),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Ok(map) => assert_eq(map.get("status"), Some("spawned"))
+    Err(msg) => fail("fork_wave failed: " + msg)
+  }
+  try agent_reg.get("master.claude-pane-leaf-0") catch {
+    e =>
+      fail(
+        "missing child registration: " +
+        @types.choir_error_message_from_caught(e),
+      )
+  } noraise {
+    agent =>
+      assert_eq(
+        agent.terminal_target,
+        @types.LocalTarget::parse("zellij-pane:choir:terminal_17"),
+      )
   }
 }
 
@@ -592,6 +702,7 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
     project_dir~,
     runner=mock_registry_runner_capture_workdir,
     git_capture=mock_clean_git,
+    capture=mock_registry_capture,
     ensure_branch_ready=Some(mock_registry_branch_ready_capture),
     ensure_pr=Some(mock_registry_ensure_pr_capture),
     registry=Some(reg),
@@ -659,6 +770,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
     project_dir~,
     runner=mock_registry_runner,
     git_capture=mock_clean_git,
+    capture=mock_registry_capture,
     ensure_branch_ready=Some(mock_registry_branch_ready),
     ensure_pr=Some(mock_auto_notify_ensure_pr),
     registry=Some(reg),
@@ -712,6 +824,7 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
     project_dir~,
     runner=mock_registry_runner,
     git_capture=mock_clean_git,
+    capture=mock_registry_capture,
     ensure_branch_ready=Some(mock_registry_branch_ready),
     ensure_pr=Some(mock_auto_notify_ensure_pr),
     registry=Some(reg),
@@ -782,6 +895,7 @@ async test "fork_wave scaffold gate blocks dirty working tree" {
     project_dir="/tmp/choir-test-noop",
     runner=mock_registry_runner,
     git_capture=mock_dirty_git,
+    capture=mock_registry_capture,
   )
   match res {
     Err(msg) => assert_true(msg.contains("uncommitted changes"))
@@ -806,6 +920,7 @@ async test "fork_wave scaffold gate blocks unpushed commits" {
     project_dir="/tmp/choir-test-noop",
     runner=mock_registry_runner,
     git_capture=mock_unpushed_git,
+    capture=mock_registry_capture,
   )
   match res {
     Err(msg) => assert_true(msg.contains("Unpushed commits"))
@@ -830,6 +945,7 @@ async test "register accepts whitespace-trimmed spawn_depth" {
     call,
     project_dir="/tmp/choir-test-noop",
     registry=Some(reg),
+    capture=mock_registry_capture,
   )
   match res {
     Ok(_) => ()
@@ -878,6 +994,7 @@ async test "dispatch agent_list defaults to active agents only" {
     call,
     project_dir="/tmp/choir-test-noop",
     registry=Some(reg),
+    capture=mock_registry_capture,
   )
   match res {
     Ok(map) => {
@@ -934,6 +1051,7 @@ async test "dispatch agent_list include_inactive returns full registry view" {
     call,
     project_dir="/tmp/choir-test-noop",
     registry=Some(reg),
+    capture=mock_registry_capture,
   )
   match res {
     Ok(map) => {
@@ -1001,6 +1119,7 @@ async test "dispatch agent_list filters by parent_id before include_inactive han
     call,
     project_dir="/tmp/choir-test-noop",
     registry=Some(reg),
+    capture=mock_registry_capture,
   )
   match res {
     Ok(map) => {

@@ -1852,6 +1852,7 @@ async fn deliver_pending_poll_events(
   pending_events : Array[@poller.PollEvent],
   pending_agent_ids : Array[String],
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> Unit {
   let pending_parent_rows : Array[PendingPollParentRow] = []
   let automerge_attempted_prs : Map[Int, Bool] = {}
@@ -1877,7 +1878,7 @@ async fn deliver_pending_poll_events(
       let (count, _) = @tools.fetch_unresolved_review_threads(
         poll_event_pr_number(event),
         state.config.project_dir,
-        @exec.capture_command_stdout,
+        capture,
       )
       Some(count)
     } else {
@@ -2316,6 +2317,7 @@ pub async fn ServerState::refresh_pr_with(
     Bool,
   ),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> Unit {
   let pending_events : Array[@poller.PollEvent] = []
   let pending_agent_ids : Array[String] = []
@@ -2343,7 +2345,13 @@ pub async fn ServerState::refresh_pr_with(
     None => ()
   }
   if pending_events.length() > 0 {
-    deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+    deliver_pending_poll_events(
+      self,
+      pending_events,
+      pending_agent_ids,
+      runner,
+      capture~,
+    )
   }
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
@@ -2353,6 +2361,7 @@ pub async fn ServerState::refresh_pr_with_runner(
   self : ServerState,
   pr_number : Int,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> Unit {
   self.refresh_pr_with(
     pr_number,
@@ -2360,6 +2369,7 @@ pub async fn ServerState::refresh_pr_with_runner(
     900L,
     @poller.gh_poll_pr,
     runner~,
+    capture~,
   )
 }
 
@@ -3120,7 +3130,13 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       parent: None,
       workspace: project_dir,
       branch: "main",
-      terminal_target: None,
+      terminal_target: Some(
+        @workspace.local_target_for(
+          terminal_session,
+          "TL",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
       host: @types.Host::Local,
       spawn_depth: 0,
       state: @types.AgentState::Active,
