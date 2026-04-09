@@ -321,8 +321,7 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
     Some(n) => n == 0
     None => false
   }
-  let review_ok = tracked.last_review_state == Approved ||
-    (tracked.last_review_state == Commented && threads_clear)
+  let review_ok = tracked.last_review_state == Approved
   if !review_ok {
     return false
   }

@@ -485,3 +485,9 @@ test "format_wave_rollup uses PR count as denominator when wave size unknown" {
   let out = format_wave_rollup(rollup, 0)
   assert_true(out.contains("[WAVE 1] 2/2 PRs with updates:"))
 }
+
+///|
+test "tl_tracked_pr_merge_gate_snapshot_ready requires Approved (Commented is not enough)" {
+  let t = sample_tracked(Commented, Success, 100)
+  assert_false(tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0)))
+}
