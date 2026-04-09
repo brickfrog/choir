@@ -96,6 +96,7 @@ pub(all) enum PollEvent {
   CopilotIssueCommentSeen(Int)
   PRMerged(Int)
   MergeReady(Int)
+  ReviewThreadsResolved(Int)
 } derive(Debug, Eq)
 
 ///|
@@ -178,6 +179,11 @@ pub impl Show for PollEvent with output(self, logger) -> Unit {
     }
     MergeReady(n) => {
       logger.write_string("MergeReady(")
+      logger.write_string(n.to_string())
+      logger.write_string(")")
+    }
+    ReviewThreadsResolved(n) => {
+      logger.write_string("ReviewThreadsResolved(")
       logger.write_string(n.to_string())
       logger.write_string(")")
     }

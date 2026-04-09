@@ -321,8 +321,7 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
     Some(n) => n == 0
     None => false
   }
-  let review_ok = tracked.last_review_state == Approved ||
-    (tracked.last_review_state == Commented && threads_clear)
+  let review_ok = tracked.last_review_state == Approved
   if !review_ok {
     return false
   }
@@ -496,9 +495,9 @@ pub fn tl_tracked_pr_workflow_category_sentence(
     WaitingOnCopilotIssueComment =>
       "Waiting on Copilot review. No action needed yet."
     CopilotIssueCommentSeenRecheckRemainingGates =>
-      "Copilot reviewed. Check threads, then merge_pr if clear."
+      "Copilot reviewed. Check approval/threads, then merge_pr if clear."
     ReadyForTLRecheck =>
-      "CI/review changed. Re-check threads, then merge_pr if clear."
+      "CI/review changed. Check approval/threads, then merge_pr if clear."
     MergeGateOpenPendingPolicyConfirmation =>
       "MERGE NOW: reviewed, CI green, threads resolved. Run merge_pr."
     ObservedMergedExternal => "PR already merged externally. Kill the leaf."
@@ -552,6 +551,7 @@ pub fn plan_tl_poll_event_parent(
     CopilotIssueCommentSeen(_) =>
       tl_snapshot_workflow_category(tracked, merge_ready)
     MergeReady(_) => MergeGateOpenPendingPolicyConfirmation
+    ReviewThreadsResolved(_) => ReadyForTLRecheck
   }
 }
 
