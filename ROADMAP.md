@@ -2,7 +2,7 @@
 
 ## Current state: Policy-Driven Merge Control (2026-04-09)
 
-Choir now has typed task contracts, a typed evidence ledger, a pure merge policy, and an explicit automerge control plane. `fork_wave` can persist a per-wave `automerge` override, the server can trigger the existing `merge_pr` path when policy reaches `MergeNow`, and merge provenance is recorded as manual, server-automerge, or force-override. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
+Choir now has typed task contracts, a typed evidence ledger, a pure merge policy, and an explicit automerge control plane. `fork_wave` can persist a per-wave `automerge` override, the server can trigger the existing `merge_pr` path when policy reaches `MergeNow`, and merge provenance is recorded as manual, server-automerge, or force-override. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance. TL prompt guidance now explicitly forbids parent-branch feature work when the user asked for leaf execution, and parent-killed stale leaf PRs are reconciled instead of left to generic orphan spam.
 
 ---
 
@@ -10,27 +10,34 @@ Choir now has typed task contracts, a typed evidence ledger, a pure merge policy
 
 The next milestone is not more merge architecture. The merge control plane is now explicit. The next work is making delivery, cleanup, and operator visibility as durable as the policy layer.
 
-### 1. Durable Team Inbox
+### 1. TL Policy Enforcement
+- Prompt text is not enough. Add hard server-side enforcement so an active TL cannot implement feature work on the parent branch while a wave is live unless the user explicitly overrides it.
+- Detect "leaf mode" from active spawned children / tracked wave state and reject parent-branch non-doc writes in that mode.
+- Allow narrowly-scoped exceptions for pre-fork scaffold, integration of completed leaf work, and cleanup of stale leaves/PRs.
+- Surface a direct policy error when the TL attempts prohibited parent-branch implementation instead of relying on etiquette.
+- Extend the same enforcement to superseded leaves so kill/close happens as a control-plane rule, not just an instruction in the prompt.
+
+### 2. Durable Team Inbox
 - Replace viewport-sniffed delivery assumptions with a durable inbox or queue model.
 - Persist outbound parent/child messages until acknowledged or expired.
 - Re-deliver pending important notifications after restart.
 - Separate "evidence for policy" from "messages for humans" so retries do not duplicate policy state.
 - Keep the current pane integrations as adapters, not as the source of truth.
 
-### 2. External Merge and Orphan Reconciliation
+### 3. External Merge and Orphan Reconciliation
 - Initial stale-leaf cleanup is now in place: `kill_agent` auto-closes tracked PRs for parent-killed leaves, emits one explicit stale-PR outcome to the parent, and suppresses generic orphan spam for that path.
 - Tighten the post-merge/finalization path for merges observed outside the server-triggered `merge_pr` flow.
 - Ensure external merges, manual merges, and recovered leaves converge to one canonical lifecycle outcome.
 - Reduce repeated re-check nudges once a leaf is definitely done in the remaining external/manual-merge paths.
 - Add focused tests for merged-orphan cleanup and restart recovery after merge.
 
-### 3. Merge Audit and Operator UX
+### 4. Merge Audit and Operator UX
 - Surface merge provenance and policy reason clearly in TL/operator summaries.
 - Make it obvious when a wave is `automerge=true` versus manual mode.
 - Improve parent-facing notifications so `[MERGE READY]` is informational when automerge is enabled and actionable when it is not.
 - Keep `merge_pr force=true` as an explicit override path with evidence attached.
 
-### 4. External Task Memory Provider
+### 5. External Task Memory Provider
 - Pilot Chainlink as an optional task-memory provider instead of building a Choir-native issue tracker.
 - Start with read-only import of active issue, subissue, dependencies, and handoff context into `TaskContract`.
 - Add write-back for PR URL, execution status, merge outcome, and concise handoff notes.
@@ -53,6 +60,12 @@ Add an optional high-ceremony path for risky work where Choir requests a fresh-c
 ---
 
 ## ✅ Completed
+
+### TL Prompt Guardrails (2026-04-09)
+- **Leaf-Mode Prompt Rule**: MCP initialize instructions now explicitly say that if the user asked for implementation via leaves/waves/agents, the TL must not implement the feature directly on the parent branch.
+- **Allowed Parent Scope**: The prompt narrows parent-branch work to pre-fork scaffold, integrating completed leaf work, or cleaning up stale leaves/PRs.
+- **Supersede Cleanup Rule**: The prompt now requires killing superseded leaves immediately and closing or abandoning their PRs before continuing.
+- **Regression Coverage**: MCP tests assert that those prompt constraints remain present in the initialize instructions.
 
 ### Stale Leaf PR Reconciliation (2026-04-09)
 - **Parent-Kill PR Cleanup**: `kill_agent` now reconciles tracked PRs for intentionally killed leaves instead of letting them drift into generic orphan state.
