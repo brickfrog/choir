@@ -461,3 +461,44 @@ test "plan_post_tool_actions includes RefreshPR for resolve_review_thread succes
   }
   assert_true(found_refresh)
 }
+
+///|
+test "plan_post_tool_actions includes all RefreshPR for resolve_review_thread success" {
+  let project_dir = isolated_post_tool_project_dir("resolve-refresh-multi")
+  let terminal_session = "test-session"
+  let poller = @poller.PollerState::new()
+  let registry = @registry.AgentRegistry::new()
+
+  let agent_id = "main.dev"
+  poller.track(123, agent_id, "work", "main", "url1", 100L)
+  poller.track(456, agent_id, "work", "main", "url2", 100L)
+
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "resolve_review_thread",
+    args: @types.RequestArgs::new({ "thread_id": "T1", "caller_id": agent_id }),
+  }
+  let resp = @types.Response::ok_values({})
+
+  let effects = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id=None,
+    poller,
+    registry,
+    project_dir,
+    terminal_session,
+  )
+
+  let refreshed = []
+  for effect in effects {
+    match effect {
+      RefreshPR(n) => refreshed.push(n)
+      _ => ()
+    }
+  }
+  assert_eq(refreshed.length(), 2)
+  assert_true(refreshed.contains(123))
+  assert_true(refreshed.contains(456))
+}
