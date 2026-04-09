@@ -103,12 +103,15 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
   let pr_number = 789
   state.poller.track(pr_number, agent_id, "work", "main", "url", 100L)
 
-  // Set initial state
+  // Set initial state to match exactly what poll will return
   match state.poller.get(pr_number) {
     Some(t) =>
       state.poller.restore({
         ..t,
         last_review_state: @poller.ReviewState::Commented,
+        last_sha: "sha1",
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_review_bodies: "comment!",
       })
     None => fail("expected PR")
   }
@@ -137,11 +140,17 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
     )
   }
 
-  let mut runner_called = false
+  let mut found_resolved_msg = false
   state.refresh_pr_with(pr_number, 200L, 900L, mock_poll, runner=async fn(
     cmds,
   ) {
-    runner_called = true
+    for cmd in cmds {
+      for arg in cmd.args {
+        if arg.contains("[THREADS RESOLVED]") {
+          found_resolved_msg = true
+        }
+      }
+    }
     let res = []
     for _ in cmds {
       res.push(0)
@@ -149,5 +158,5 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
     res
   })
 
-  assert_true(runner_called)
+  assert_true(found_resolved_msg)
 }

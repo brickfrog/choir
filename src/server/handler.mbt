@@ -1919,12 +1919,12 @@ pub async fn ServerState::refresh_pr_with(
         pending_agent_ids.push(pr.agent_id)
       }
       deliver_orphaned_pr_notification_for(self, pr, runner)
-      deliver_pending_poll_events(
-        self, pending_events, pending_agent_ids, runner,
-      )
       deliver_poller_stall_notification_for(self, pr, now, runner)
     }
     None => ()
+  }
+  if pending_events.length() > 0 {
+    deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   }
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
