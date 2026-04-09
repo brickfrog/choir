@@ -59,6 +59,19 @@ fn latest_threads(signals : Array[@types.EvaluationSignal]) -> Int? {
 }
 
 ///|
+fn latest_copilot_seen(signals : Array[@types.EvaluationSignal]) -> Bool {
+  let mut seen = false
+  for signal in signals {
+    match signal {
+      @types.EvaluationSignal::CopilotIssueCommentObserved => seen = true
+      @types.EvaluationSignal::CopilotIssueCommentUnobserved => seen = false
+      _ => ()
+    }
+  }
+  seen
+}
+
+///|
 fn verify_results_for_required(
   required : Array[String],
   signals : Array[@types.EvaluationSignal],
@@ -111,9 +124,9 @@ fn failed_verify_names(
 ///|
 fn ready_reason(required_verify : Array[String]) -> String {
   if required_verify.length() > 0 {
-    "ready: review approved, CI passed, threads clear, local verify passed"
+    "ready: review received, CI passed, threads clear, local verify passed"
   } else {
-    "ready: review approved, CI passed, threads clear"
+    "ready: review received, CI passed, threads clear"
   }
 }
 
@@ -126,6 +139,7 @@ pub fn decide_merge(
   let review = latest_review_state(bundle.signals)
   let ci = latest_ci_rollup(bundle.signals)
   let threads = latest_threads(bundle.signals)
+  let copilot_seen = latest_copilot_seen(bundle.signals)
   let required_verify = match effective_contract {
     Some(contract) => contract.verify
     None => []
@@ -165,6 +179,9 @@ pub fn decide_merge(
   if review == @types.EvaluationReviewState::Unknown ||
     review == @types.EvaluationReviewState::None_ {
     return MergeDecision::Wait(reason="waiting for review")
+  }
+  if review == @types.EvaluationReviewState::Commented && !copilot_seen {
+    return MergeDecision::Wait(reason="waiting for Copilot comments")
   }
   if ci == @types.EvaluationCiRollup::Unknown ||
     ci == @types.EvaluationCiRollup::InProgress {

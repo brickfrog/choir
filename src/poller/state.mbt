@@ -290,8 +290,8 @@ pub fn PollerState::transfer_owner(
 ///|
 fn recovered_notified_parent(review : ReviewState) -> Bool {
   match review {
-    Approved | Commented => true
-    ChangesRequested | None_ => false
+    Approved => true
+    ChangesRequested | Commented | None_ => false
   }
 }
 
@@ -619,7 +619,9 @@ pub async fn PollerState::tick_pr_with(
   } else {
     base_events
   }
-  let merge_snapshot_ready = (review == Approved || review == Commented) &&
+  let merge_snapshot_ready = (
+      review == Approved || (review == Commented && copilot_effective)
+    ) &&
     ci_rollup == Success
   let needs_merge_nudge = events.length() == 0 &&
     merge_snapshot_ready &&

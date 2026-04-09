@@ -53,6 +53,7 @@ test "decide_merge returns merge_now for comment-only review when CI threads and
         state=@types.EvaluationReviewState::Commented,
         body="left comments",
       ),
+      @types.EvaluationSignal::CopilotIssueCommentObserved,
       @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
       @types.EvaluationSignal::ThreadsObserved(count=0),
       @types.EvaluationSignal::Verify(result={
@@ -64,6 +65,30 @@ test "decide_merge returns merge_now for comment-only review when CI threads and
   )
   assert_eq(decision.label(), "merge_now")
   assert_true(decision.reason().contains("ready"))
+}
+
+///|
+test "decide_merge waits for comment-only review until Copilot comments are observed" {
+  let contract = contract_with_verify()
+  let decision = decide_merge(
+    None,
+    bundle_with_signals(Some(contract), [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Commented,
+        body="left comments",
+      ),
+      @types.EvaluationSignal::CopilotIssueCommentUnobserved,
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::Verify(result={
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "ok",
+      }),
+    ]),
+  )
+  assert_eq(decision.label(), "wait")
+  assert_true(decision.reason().contains("Copilot comments"))
 }
 
 ///|

@@ -487,21 +487,50 @@ test "format_wave_rollup uses PR count as denominator when wave size unknown" {
 }
 
 ///|
-test "tl_tracked_pr_merge_gate_snapshot_ready accepts comment-only review when threads are clear" {
+test "tl_tracked_pr_merge_gate_snapshot_ready waits for Copilot comment on comment-only review" {
   let t = sample_tracked(Commented, Success, 100)
+  assert_false(tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0)))
+}
+
+///|
+test "tl_tracked_pr_merge_gate_snapshot_ready accepts comment-only review after Copilot comment is seen" {
+  let t = {
+    ..sample_tracked(Commented, Success, 101),
+    copilot_issue_comment_seen: true,
+  }
   assert_true(tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0)))
 }
 
 ///|
-test "tl_classify_tracked_pr_workflow treats comment-only review as merge-ready when CI is green and threads are clear" {
+test "tl_classify_tracked_pr_workflow waits for Copilot comment on comment-only review" {
   let t = sample_tracked(Commented, Success, 200)
+  let cat = tl_classify_tracked_pr_workflow(t, Some(0))
+  assert_eq(cat, WaitingOnCopilotIssueComment)
+}
+
+///|
+test "tl_classify_tracked_pr_workflow treats comment-only review as merge-ready after Copilot comment is seen" {
+  let t = {
+    ..sample_tracked(Commented, Success, 201),
+    copilot_issue_comment_seen: true,
+  }
   let cat = tl_classify_tracked_pr_workflow(t, Some(0))
   assert_eq(cat, MergeGateOpenPendingPolicyConfirmation)
 }
 
 ///|
-test "merge_policy_decision_for_tracked_pr returns merge_now for comment-only review when CI is green and threads are clear" {
-  let t = sample_tracked(Commented, Success, 201)
+test "merge_policy_decision_for_tracked_pr waits for comment-only review until Copilot comment is seen" {
+  let t = sample_tracked(Commented, Success, 202)
+  let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
+  assert_eq(decision.label(), "wait")
+}
+
+///|
+test "merge_policy_decision_for_tracked_pr returns merge_now for comment-only review after Copilot comment is seen" {
+  let t = {
+    ..sample_tracked(Commented, Success, 203),
+    copilot_issue_comment_seen: true,
+  }
   let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
   assert_eq(decision.label(), "merge_now")
 }

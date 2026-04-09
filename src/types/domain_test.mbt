@@ -272,6 +272,28 @@ test "advisory_evaluation_result ready for comment-only review when CI and threa
 }
 
 ///|
+test "advisory_evaluation_result needs human for comment-only review before Copilot comments arrive" {
+  let bundle : @types.EvaluationBundle = {
+    task_contract: None,
+    signals: [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Commented,
+        body="left comments",
+      ),
+      @types.EvaluationSignal::CopilotIssueCommentUnobserved,
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+    ],
+  }
+  let result = @types.advisory_evaluation_result(bundle)
+  match result.verdict {
+    @types.EvaluationVerdict::NeedsHuman(reason~) =>
+      assert_true(reason.contains("Copilot comments"))
+    _ => fail("expected NeedsHuman verdict")
+  }
+}
+
+///|
 test "advisory_evaluation_result needs human when verify evidence is missing" {
   let bundle : @types.EvaluationBundle = {
     task_contract: Some({

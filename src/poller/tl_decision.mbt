@@ -322,7 +322,10 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
     None => false
   }
   let review_ok = tracked.last_review_state == Approved ||
-    tracked.last_review_state == Commented
+    (
+      tracked.last_review_state == Commented &&
+      tracked.copilot_issue_comment_seen
+    )
   if !review_ok {
     return false
   }
