@@ -9,18 +9,40 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_recovery_provider())
 
+  let parent_id = "main"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some(
+        @workspace.local_target_for(
+          terminal_session,
+          "TL",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
   let agent_id = "main.dev"
   ignore(
     state.register_agent({
       agent_id,
       role: @types.Role::Dev,
       agent_type: @types.AgentType::Gemini,
-      parent: None,
+      parent: Some(parent_id),
       workspace: project_dir,
       branch: "work",
       terminal_target: None,
       host: @types.Host::Local,
-      spawn_depth: 0,
+      spawn_depth: 1,
       state: @types.AgentState::Active,
     }),
   )
@@ -84,18 +106,40 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_recovery_provider())
 
+  let parent_id = "main"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some(
+        @workspace.local_target_for(
+          terminal_session,
+          "TL",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
   let agent_id = "main.dev"
   ignore(
     state.register_agent({
       agent_id,
       role: @types.Role::Dev,
       agent_type: @types.AgentType::Gemini,
-      parent: None,
+      parent: Some(parent_id),
       workspace: project_dir,
       branch: "work",
       terminal_target: None,
       host: @types.Host::Local,
-      spawn_depth: 0,
+      spawn_depth: 1,
       state: @types.AgentState::Active,
     }),
   )
