@@ -607,6 +607,10 @@ pub fn parse_fork_wave_args(
     }
     None => None
   }
+  let automerge = match tool_args_get(args, "automerge") {
+    Some(v) => parse_truthy_spawn_flag(v)
+    None => false
+  }
   Ok({
     count,
     tasks,
@@ -619,6 +623,7 @@ pub fn parse_fork_wave_args(
     child_role,
     parent_session_id: lookup_parent_session_id(project_dir, args),
     review_context,
+    automerge,
   })
 }
 

@@ -93,6 +93,7 @@ test "tools_list_response" {
           assert_true(t.contains("tasks"))
           assert_true(t.contains("per-leaf task"))
           assert_true(t.contains("research/review"))
+          assert_true(t.contains("automerge"))
         }
         _ => fail("expected tools array")
       }

@@ -188,7 +188,7 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
-      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks (best-of-N), pass task + count",
+      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks (best-of-N), pass task + count. Set automerge=true to request automatic merge_pr once review policy is satisfied (default false — TL merges manually)",
       props: [
         { name: "task", desc: "Shared task for all leaves (use with count)" },
         {
@@ -210,6 +210,10 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "branch", desc: "Compatibility alias for parent_branch" },
         { name: "count", desc: "Number of leaves when using shared task" },
         { name: "slug_prefix", desc: "Slug prefix for spawned children" },
+        {
+          name: "automerge",
+          desc: "Request automatic merge_pr after review policy is satisfied (default false — TL merges manually via merge_pr)",
+        },
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },
         { name: "verify", desc: "Newline-separated verification commands" },

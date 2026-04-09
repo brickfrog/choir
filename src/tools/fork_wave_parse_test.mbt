@@ -53,3 +53,77 @@ test "parse_fork_wave_args captures review_context" {
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
+
+///|
+test "parse_fork_wave_args defaults automerge to false" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.automerge, false)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses automerge true" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "automerge": "true",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.automerge, true)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses automerge yes as true" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "automerge": "yes",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.automerge, true)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses automerge 1 as true" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "automerge": "1",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.automerge, true)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses automerge false explicitly" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "automerge": "false",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.automerge, false)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}

@@ -4,6 +4,8 @@
 
 Choir now has the core pieces needed for policy-driven autonomy: typed task contracts, a typed evidence ledger, a pure merge policy, and manual merge gating backed by that policy. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
 
+**Current merge behavior**: Merges are performed manually by the TL via `merge_pr`. In practice, TL agents often merge immediately after receiving a `[PR READY]` notification, creating a de facto automerge pattern driven by prompt instructions rather than policy. The `fork_wave` tool now exposes an `automerge` flag (default `false`) that reserves the parameter slot for the upcoming server-triggered merge path. Setting `automerge=true` today has no effect on server behavior — the flag is a forward-compatible interface surface only.
+
 ---
 
 ## 🚀 Immediate Next: Policy-Driven Autonomy
@@ -11,9 +13,9 @@ Choir now has the core pieces needed for policy-driven autonomy: typed task cont
 The next milestone is not more architecture work. It is executing the new typed policy layer end-to-end so the Team Lead stops doing repetitive merge and cleanup work by hand.
 
 ### 1. Autonomous Merge Execution
-- Add an explicit per-wave or per-PR opt-in policy flag for autonomous merge.
+- **Server-triggered merge via `merge_pr`**: When `fork_wave` is called with `automerge=true`, the server/poller will automatically call the existing `merge_pr` tool once the typed merge policy emits `MergeDecision::MergeNow` for a tracked leaf PR. No new merge executor — the existing `merge_pr` path is the only merge path.
 - Interpret `MergeDecision::MergeNow` in the server/poller path instead of only surfacing it in summaries and `merge_pr` preflight.
-- Preserve manual `merge_pr` as the override and fallback path.
+- Preserve manual `merge_pr` as the override and fallback path; `automerge=false` (the default) keeps current behavior unchanged.
 - Require clear audit evidence for every autonomous merge decision, including the exact typed reason.
 - Add end-to-end tests for `MergeNow`, `Wait`, `Blocked`, and `NeedsHuman`.
 
