@@ -509,6 +509,7 @@ pub fn advisory_evaluation_result(
   let review = evaluation_latest_review_state(bundle.signals)
   let ci = evaluation_latest_ci_rollup(bundle.signals)
   let threads = evaluation_latest_threads(bundle.signals)
+  let copilot_seen = evaluation_copilot_seen(bundle.signals)
   let verify_required = match bundle.task_contract {
     Some(contract) => contract.verify
     None => []
@@ -546,6 +547,10 @@ pub fn advisory_evaluation_result(
   if review == EvaluationReviewState::Unknown ||
     review == EvaluationReviewState::None_ {
     let reason = "no review observed"
+    return { verdict: NeedsHuman(reason~), summary: reason }
+  }
+  if review == EvaluationReviewState::Commented && !copilot_seen {
+    let reason = "waiting for Copilot comments"
     return { verdict: NeedsHuman(reason~), summary: reason }
   }
   if ci == EvaluationCiRollup::Unknown || ci == EvaluationCiRollup::InProgress {
