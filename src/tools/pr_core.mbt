@@ -1146,6 +1146,7 @@ pub async fn interpret_merge_pr_preflight(
   poller_state : @poller.PollerState?,
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
+  registry : @registry.AgentRegistry?,
 ) -> Result[Unit, @types.ChoirError] {
   if force {
     return Ok(())
@@ -1157,9 +1158,32 @@ pub async fn interpret_merge_pr_preflight(
   let (thread_count, thread_text) = fetch_unresolved_review_threads(
     pr_number, project_dir, capture,
   )
+  let policy_decision = match poller_tracked {
+    Some(tracked) => {
+      let task_contract = match registry {
+        Some(reg) =>
+          @workspace.task_contract_for_agent_workspace(
+            project_dir,
+            Some(reg.get(tracked.agent_id).workspace) catch {
+              _ => None
+            },
+            @phase.extract_slug(tracked.agent_id),
+          )
+        None => None
+      }
+      Some(
+        @poller.merge_policy_decision_for_tracked_pr(
+          tracked,
+          Some(thread_count),
+          task_contract~,
+        ),
+      )
+    }
+    None => None
+  }
   match
     merge_pr_preflight_block_message(
-      pr_number, poller_tracked, thread_count, thread_text,
+      pr_number, poller_tracked, thread_count, thread_text, policy_decision,
     ) {
     Some(msg) => Err(@types.ChoirError::validation_error(msg))
     None => Ok(())
@@ -1175,6 +1199,7 @@ pub fn merge_pr_preflight_block_message(
   poller_tracked : @poller.TrackedPR?,
   unresolved_thread_count : Int,
   unresolved_thread_text : String,
+  policy_decision : @policy.MergeDecision?,
 ) -> String? {
   match poller_tracked {
     Some(tracked) =>
@@ -1187,6 +1212,27 @@ pub fn merge_pr_preflight_block_message(
         )
       }
     None => ()
+  }
+  match policy_decision {
+    Some(@policy.MergeDecision::Blocked(reason~)) =>
+      return Some(
+        "policy blocked: " +
+        reason +
+        ". Address the blocking policy condition before merging, or pass force=true to override.",
+      )
+    Some(@policy.MergeDecision::Wait(reason~)) =>
+      return Some(
+        "policy wait: " +
+        reason +
+        ". Wait for the policy condition to clear, or pass force=true to override.",
+      )
+    Some(@policy.MergeDecision::NeedsHuman(reason~)) =>
+      return Some(
+        "policy requires human check: " +
+        reason +
+        ". Request the required human check before merging, or pass force=true to override.",
+      )
+    _ => ()
   }
   if unresolved_thread_count > 0 {
     return Some(
@@ -1209,9 +1255,11 @@ pub fn merge_pr_preflight_block_message(
 /// `unresolved_thread_count` is `None` when the GraphQL fetch was not performed.
 pub fn format_tl_pr_recheck_summary(
   tracked : @poller.TrackedPR,
+  _project_dir : String,
   unresolved_thread_count : Int?,
   task_contract? : @types.TaskContract? = None,
 ) -> String {
+  ignore(task_contract)
   let review = match tracked.last_review_state {
     None_ => "none"
     Commented => "commented"
@@ -1236,6 +1284,7 @@ pub fn format_tl_pr_recheck_summary(
   let gate = @poller.tl_tracked_pr_recheck_gate_line(
     tracked, unresolved_thread_count,
   )
+
   let advisory = @poller.advisory_evaluation_summary_line(
     tracked,
     unresolved_thread_count,
@@ -1246,6 +1295,7 @@ pub fn format_tl_pr_recheck_summary(
     unresolved_thread_count,
     task_contract~,
   )
+
   "PR re-check summary (Choir snapshot; not merge approval):\n" +
   "- GitHub review rollup: " +
   review +
@@ -1480,6 +1530,7 @@ pub async fn interpret_merge_pr(
       poller_state,
       project_dir,
       capture,
+      registry,
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) =>

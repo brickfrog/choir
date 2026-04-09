@@ -403,3 +403,97 @@ pub impl Show for EvidenceRecord with output(self, logger) -> Unit {
     self.ts.to_string() + " " + self.agent_id + " " + self.event.type_name(),
   )
 }
+
+///|
+pub fn evaluation_bundle_from_evidence(
+  events : Array[EvidenceEvent],
+  task_contract? : @types.TaskContract? = None,
+) -> @types.EvaluationBundle {
+  let mut latest_review : @types.EvaluationReviewState = Unknown
+  let mut latest_review_body : String = ""
+  let mut latest_ci : @types.EvaluationCiRollup = Unknown
+  let mut latest_threads : Int? = None
+  let mut threads_unobserved : Bool = false
+  let mut copilot_seen : Bool = false
+  let mut copilot_unobserved : Bool = false
+  let verify_results : Map[String, @types.VerifyCheckResult] = {}
+
+  for event in events {
+    match event {
+      ReviewObserved(state~, body~) => {
+        latest_review = match state {
+          None_ => @types.EvaluationReviewState::None_
+          Commented => @types.EvaluationReviewState::Commented
+          Approved => @types.EvaluationReviewState::Approved
+          ChangesRequested => @types.EvaluationReviewState::ChangesRequested
+        }
+        latest_review_body = body.unwrap_or("")
+      }
+      CiObserved(status~, ..) =>
+        latest_ci = match status {
+          Unknown => @types.EvaluationCiRollup::Unknown
+          InProgress => @types.EvaluationCiRollup::InProgress
+          Success => @types.EvaluationCiRollup::Success
+          Failure => @types.EvaluationCiRollup::Failure
+        }
+      ThreadsObserved(count~) => {
+        latest_threads = Some(count)
+        threads_unobserved = false
+      }
+      ThreadsUnobserved => {
+        latest_threads = None
+        threads_unobserved = true
+      }
+      CopilotIssueCommentObserved => {
+        copilot_seen = true
+        copilot_unobserved = false
+      }
+      CopilotIssueCommentUnobserved => {
+        copilot_seen = false
+        copilot_unobserved = true
+      }
+      VerifyResultObserved(name~, ok~, details~) => {
+        let status = if ok {
+          @types.VerifyStatus::Passed
+        } else {
+          @types.VerifyStatus::Failed
+        }
+        verify_results.set(name, {
+          name,
+          status,
+          details: details.unwrap_or(""),
+        })
+      }
+      _ => ()
+    }
+  }
+
+  let signals : Array[@types.EvaluationSignal] = [
+    @types.EvaluationSignal::Review(
+      state=latest_review,
+      body=latest_review_body,
+    ),
+    @types.EvaluationSignal::Ci(status=latest_ci),
+  ]
+
+  match latest_threads {
+    Some(count) =>
+      signals.push(@types.EvaluationSignal::ThreadsObserved(count~))
+    None =>
+      if threads_unobserved {
+        signals.push(@types.EvaluationSignal::ThreadsUnobserved)
+      }
+  }
+
+  if copilot_seen {
+    signals.push(@types.EvaluationSignal::CopilotIssueCommentObserved)
+  } else if copilot_unobserved {
+    signals.push(@types.EvaluationSignal::CopilotIssueCommentUnobserved)
+  }
+
+  for result in verify_results.values() {
+    signals.push(@types.EvaluationSignal::Verify(result~))
+  }
+
+  { task_contract, signals }
+}

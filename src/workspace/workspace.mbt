@@ -226,6 +226,40 @@ fn strip_json_object_braces(s : String) -> String? {
 }
 
 ///|
+/// Read the task contract for an agent from its config.local.toml.
+pub fn task_contract_for_agent_workspace(
+  project_dir : String,
+  agent_workspace : String?,
+  agent_slug : String,
+) -> @types.TaskContract? {
+  let candidate_paths : Array[String] = []
+  match agent_workspace {
+    Some(w) => if w != "" { candidate_paths.push(w + "/config.local.toml") }
+    None => ()
+  }
+  let fallback_path = worktree_path(project_dir, agent_slug) +
+    "/config.local.toml"
+  if !candidate_paths.contains(fallback_path) {
+    candidate_paths.push(fallback_path)
+  }
+  for path in candidate_paths {
+    let content = @sys.read_file(path)
+    if content == "" {
+      continue
+    }
+    match @config.parse_local_config(content) {
+      Ok(local_cfg) =>
+        match local_cfg.task_contract {
+          Some(contract) => return Some(contract)
+          None => ()
+        }
+      Err(_) => ()
+    }
+  }
+  None
+}
+
+///|
 /// Construct the .mcp.json content for a child worktree.
 pub fn mcp_json_content(
   role : @types.Role,
