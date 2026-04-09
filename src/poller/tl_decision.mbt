@@ -495,9 +495,9 @@ pub fn tl_tracked_pr_workflow_category_sentence(
     WaitingOnCopilotIssueComment =>
       "Waiting on Copilot review. No action needed yet."
     CopilotIssueCommentSeenRecheckRemainingGates =>
-      "Copilot reviewed. Check threads, then merge_pr if clear."
+      "Copilot reviewed. Check approval/threads, then merge_pr if clear."
     ReadyForTLRecheck =>
-      "CI/review changed. Re-check threads, then merge_pr if clear."
+      "CI/review changed. Check approval/threads, then merge_pr if clear."
     MergeGateOpenPendingPolicyConfirmation =>
       "MERGE NOW: reviewed, CI green, threads resolved. Run merge_pr."
     ObservedMergedExternal => "PR already merged externally. Kill the leaf."

@@ -491,3 +491,19 @@ test "tl_tracked_pr_merge_gate_snapshot_ready requires Approved (Commented is no
   let t = sample_tracked(Commented, Success, 100)
   assert_false(tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0)))
 }
+
+///|
+test "tl_classify_tracked_pr_workflow - comment-only review, zero threads, CI success is NOT merge-ready" {
+  let t = sample_tracked(Commented, Success, 200)
+  let cat = tl_classify_tracked_pr_workflow(t, Some(0))
+  // It should be one of the waiting categories, not MergeGateOpenPendingPolicyConfirmation
+  assert_false(cat == MergeGateOpenPendingPolicyConfirmation)
+  assert_eq(cat, WaitingOnCopilotIssueComment)
+}
+
+///|
+test "merge_policy_decision_for_tracked_pr - comment-only review, zero threads, CI success is wait" {
+  let t = sample_tracked(Commented, Success, 201)
+  let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
+  assert_eq(decision.label(), "wait")
+}
