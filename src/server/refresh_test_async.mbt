@@ -53,13 +53,20 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
     )
   }
 
+  let mut runner_called = false
   state.refresh_pr_with(pr_number, 200L, 900L, mock_poll, runner=async fn(
-    _cmds,
+    cmds,
   ) {
-    []
+    runner_called = true
+    let res = []
+    for _ in cmds {
+      res.push(0)
+    }
+    res
   })
 
   assert_true(poll_called)
+  assert_true(runner_called)
   match state.poller.get(pr_number) {
     Some(t) => assert_eq(t.last_review_state, @poller.ReviewState::Approved)
     None => fail("expected PR to remain tracked")
