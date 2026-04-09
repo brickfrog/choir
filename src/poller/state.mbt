@@ -939,3 +939,55 @@ async test "tick_with clears stall fields when leaving ChangesRequested" {
     None => fail("expected PR 203 after tick")
   }
 }
+
+///|
+async test "tick_pr_with with force_refresh=true bypasses backoff" {
+  let ps = PollerState::new()
+  let pr_number = 301
+  ps.track(pr_number, "main.leaf", "main.leaf", "main", "u", 100L)
+  let noop_ev = fn(_e : PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : PollerPrTickLog) -> Unit { () }
+
+  // 1. Force a failure to enter backoff
+  ps.tick_pr_with(
+    pr_number, 200L, 3600L, state_tick_backoff_mock_failure, noop_ev, noop_log,
+  )
+  let until = match ps.get(pr_number) {
+    Some(t) => {
+      assert_eq(t.consecutive_failures, 1)
+      t.backoff_until
+    }
+    None => fail("expected PR 301")
+  }
+
+  // 2. Poll during backoff window WITHOUT force_refresh (should skip)
+  let mid = 200L + (until - 200L) / 2L
+  ps.tick_pr_with(
+    pr_number, mid, 3600L, state_tick_backoff_mock_success, noop_ev, noop_log,
+  )
+  match ps.get(pr_number) {
+    Some(t) => {
+      assert_eq(t.last_sha, "") // No update
+      assert_eq(t.consecutive_failures, 1)
+    }
+    None => fail("expected PR 301")
+  }
+
+  // 3. Poll during backoff window WITH force_refresh=true (should poll)
+  ps.tick_pr_with(
+    pr_number,
+    mid,
+    3600L,
+    state_tick_backoff_mock_success,
+    noop_ev,
+    noop_log,
+    force_refresh=true,
+  )
+  match ps.get(pr_number) {
+    Some(t) => {
+      assert_eq(t.last_sha, "sha-1") // Updated!
+      assert_eq(t.consecutive_failures, 0)
+    }
+    None => fail("expected PR 301")
+  }
+}
