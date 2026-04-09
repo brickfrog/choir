@@ -91,6 +91,7 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   let t = parsed[0]
   assert_eq(t.consecutive_failures, 0)
   assert_eq(t.backoff_until, 0L)
+  assert_eq(t.orphan_reconciling, false)
 }
 
 ///|
@@ -115,6 +116,7 @@ test "parse_tracked_prs_json maps legacy last_ci_failed to CiRollupStatus" {
   let parsed_failure = @poller.parse_tracked_prs_json(json_legacy_failure)
   assert_eq(parsed_failure.length(), 1)
   assert_eq(parsed_failure[0].last_ci_rollup, Failure)
+  assert_eq(parsed_failure[0].orphan_reconciling, false)
 
   let json_legacy_unknown =
     #|[
@@ -136,4 +138,5 @@ test "parse_tracked_prs_json maps legacy last_ci_failed to CiRollupStatus" {
   let parsed_unknown = @poller.parse_tracked_prs_json(json_legacy_unknown)
   assert_eq(parsed_unknown.length(), 1)
   assert_eq(parsed_unknown[0].last_ci_rollup, Unknown)
+  assert_eq(parsed_unknown[0].orphan_reconciling, false)
 }

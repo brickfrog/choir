@@ -20,6 +20,21 @@ test "evidence jsonl round trip for typed event" {
 }
 
 ///|
+test "evidence jsonl round trip for merge execution mode" {
+  let event = EvidenceEvent::MergeExecutionRequested(
+    mode=MergeExecutionMode::ServerAutomerge,
+  )
+  let line = build_evidence_jsonl_line(7L, "leaf/2", event)
+  let records = load_agent_evidence_records_from_content(line)
+  assert_eq(records.length(), 1)
+  match records[0].event {
+    MergeExecutionRequested(mode~) =>
+      assert_eq(mode, MergeExecutionMode::ServerAutomerge)
+    _ => fail("expected MergeExecutionRequested")
+  }
+}
+
+///|
 test "evidence append load replay file" {
   let project_dir = "/tmp/choir-evidence-ledger-" + @sys.get_pid().to_string()
   let event1 = EvidenceEvent::CiObserved(
@@ -27,7 +42,10 @@ test "evidence append load replay file" {
     head_sha=Some("abc123"),
   )
   let event2 = EvidenceEvent::ThreadsUnobserved
-  let event3 = EvidenceEvent::UserOverrideObserved(
+  let event3 = EvidenceEvent::MergeExecutionRequested(
+    mode=MergeExecutionMode::ForceOverride,
+  )
+  let event4 = EvidenceEvent::UserOverrideObserved(
     scope="merge_pr.force",
     reason=Some("manual approval"),
   )
@@ -46,10 +64,15 @@ test "evidence append load replay file" {
       @sys.append_file_sync, project_dir, "leaf/1", 102L, event3,
     ),
   )
+  assert_true(
+    append_agent_evidence_event(
+      @sys.append_file_sync, project_dir, "leaf/1", 103L, event4,
+    ),
+  )
   let records = load_agent_evidence_records(project_dir, "leaf/1")
-  assert_eq(records.length(), 3)
+  assert_eq(records.length(), 4)
   let replayed = replay_evidence_records(records)
-  assert_eq(replayed.length(), 3)
+  assert_eq(replayed.length(), 4)
   match replayed[0] {
     CiObserved(status~, head_sha~) => {
       assert_eq(status, EvidenceCiStatus::Success)
@@ -62,6 +85,11 @@ test "evidence append load replay file" {
     _ => fail("expected ThreadsUnobserved")
   }
   match replayed[2] {
+    MergeExecutionRequested(mode~) =>
+      assert_eq(mode, MergeExecutionMode::ForceOverride)
+    _ => fail("expected MergeExecutionRequested")
+  }
+  match replayed[3] {
     UserOverrideObserved(scope~, reason~) => {
       assert_eq(scope, "merge_pr.force")
       assert_eq(reason, Some("manual approval"))

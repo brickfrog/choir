@@ -22,7 +22,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn one or more agents in worktrees; optional agent_type (gemini|claude|moon_pilot|codex|cursor_agent, default gemini); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review",
+      description: "Spawn one or more agents in worktrees; optional agent_type (gemini|claude|moon_pilot|codex|cursor_agent, default gemini); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge overrides the server default for that wave",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

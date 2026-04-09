@@ -25,6 +25,7 @@ fn detect_test_tracked(
     last_timeout_at,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }

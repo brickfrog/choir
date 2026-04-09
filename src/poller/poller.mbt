@@ -56,6 +56,9 @@ pub(all) struct TrackedPR {
   /// GitHub Copilot bot login (REST `/issues/{n}/comments`), distinct from review objects.
   mut copilot_issue_comment_seen : Bool
   mut orphan_notified : Bool
+  /// True while the server is explicitly reconciling a stale PR for an inactive
+  /// leaf, so generic orphan detection stays quiet during cleanup.
+  mut orphan_reconciling : Bool
   mut changes_requested_since : Int64
   mut stall_notified : Bool
 } derive(Debug, Eq)

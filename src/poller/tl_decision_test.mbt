@@ -21,6 +21,7 @@ fn sample_tracked(
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -321,6 +322,13 @@ test "detect_orphaned_prs returns PR when agent inactive and not yet notified" {
 ///|
 test "detect_orphaned_prs skips when orphan_notified" {
   let pr = { ..sample_tracked(None_, Unknown, 502), orphan_notified: true }
+  let got = detect_orphaned_prs([(pr, false)])
+  assert_eq(got.length(), 0)
+}
+
+///|
+test "detect_orphaned_prs skips while stale PR reconciliation is in progress" {
+  let pr = { ..sample_tracked(None_, Unknown, 504), orphan_reconciling: true }
   let got = detect_orphaned_prs([(pr, false)])
   assert_eq(got.length(), 0)
 }

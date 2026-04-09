@@ -287,6 +287,7 @@ test "plan_recovery handles offline agent and persisted PR" {
           last_timeout_at: 0L,
           copilot_issue_comment_seen: false,
           orphan_notified: false,
+          orphan_reconciling: false,
           changes_requested_since: 0L,
           stall_notified: false,
         },

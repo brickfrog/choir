@@ -1494,6 +1494,7 @@ fn local_cfg_from_env_lookup(
     agent_type,
     spawn_depth: None,
     task_contract: None,
+    automerge: None,
   }
 }
 
@@ -3803,6 +3804,7 @@ fn init_companion_commands(
     workspace_slug: None,
     reuse_git_branch: Some(branch),
     spawn_depth: 0,
+    automerge: None,
   }
   let env_z = @workspace.launch_env_assignments(
     spec, session, workspace, terminal_target,

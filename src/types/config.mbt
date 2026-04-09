@@ -15,6 +15,8 @@ pub(all) struct Config {
   terminal_session : String
   /// When true, `file_pr` requests `@copilot` as a reviewer via `gh pr edit --add-reviewer` (best-effort).
   pr_review : Bool
+  /// Global default for server-triggered automerge after policy reaches `MergeNow`.
+  automerge : Bool
 } derive(Debug)
 
 ///|
@@ -29,6 +31,8 @@ pub(all) struct LocalConfig {
   agent_type : AgentType?
   spawn_depth : Int?
   task_contract : TaskContract?
+  /// Per-wave automerge override persisted into spawned leaf config. `None` inherits global config.
+  automerge : Bool?
 } derive(Debug)
 
 ///|
@@ -48,6 +52,7 @@ pub fn Config::default() -> Config {
     plugins_json: None,
     terminal_session: "choir",
     pr_review: true,
+    automerge: false,
   }
 }
 
@@ -64,6 +69,7 @@ pub fn LocalConfig::default() -> LocalConfig {
     agent_type: None,
     spawn_depth: None,
     task_contract: None,
+    automerge: None,
   }
 }
 

@@ -64,6 +64,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "last_timeout_at": self.last_timeout_at.to_json(),
     "copilot_issue_comment_seen": self.copilot_issue_comment_seen.to_json(),
     "orphan_notified": self.orphan_notified.to_json(),
+    "orphan_reconciling": self.orphan_reconciling.to_json(),
     "changes_requested_since": self.changes_requested_since.to_json(),
     "stall_notified": self.stall_notified.to_json(),
   }
@@ -158,6 +159,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => false
   }
+  let orphan_reconciling = match
+    @types.json_field_bool(fields, "orphan_reconciling") {
+    Some(value) => value
+    None => false
+  }
   let changes_requested_since = match
     @types.json_field_int64(fields, "changes_requested_since") {
     Some(value) => value
@@ -184,6 +190,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     last_timeout_at,
     copilot_issue_comment_seen,
     orphan_notified,
+    orphan_reconciling,
     changes_requested_since,
     stall_notified,
   })
@@ -221,6 +228,7 @@ pub fn PollerState::track(
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -327,6 +335,7 @@ pub fn PollerState::track_recovered(
     last_timeout_at: 0L,
     copilot_issue_comment_seen,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }

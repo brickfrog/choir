@@ -93,11 +93,36 @@ test "tools_list_response" {
           assert_true(t.contains("tasks"))
           assert_true(t.contains("per-leaf task"))
           assert_true(t.contains("research/review"))
+          assert_true(t.contains("automerge"))
         }
         _ => fail("expected tools array")
       }
     None => fail("expected result")
     Some(_) => fail("expected object result")
+  }
+}
+
+///|
+test "initialize_response instructions forbid parent branch implementation during leaf mode" {
+  let rpc = @mcp.initialize_response(Number(21))
+  match rpc.result {
+    Some(Object(result)) =>
+      match result.get("instructions") {
+        Some(String(instructions)) => {
+          assert_true(
+            instructions.contains(
+              "do not implement the feature directly on the parent branch",
+            ),
+          )
+          assert_true(
+            instructions.contains(
+              "kill that leaf immediately and close or abandon its PR",
+            ),
+          )
+        }
+        _ => fail("expected instructions string")
+      }
+    _ => fail("expected initialize result object")
   }
 }
 

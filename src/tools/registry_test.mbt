@@ -1016,3 +1016,13 @@ async test "dispatch agent_list filters by parent_id before include_inactive han
     Err(e) => fail("agent_list failed: " + e)
   }
 }
+
+///|
+test "tool registry fork_wave description mentions automerge" {
+  let reg = @tools.ToolRegistry::new()
+  try reg.lookup(@types.Role::TL, "fork_wave") catch {
+    _ => fail("expected fork_wave definition")
+  } noraise {
+    def => assert_true(def.description.contains("automerge"))
+  }
+}

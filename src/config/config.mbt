@@ -173,6 +173,15 @@ pub fn parse_config(
           return Err(@types.ChoirError::config_error("pr_review: " + msg))
       }
   }
+  let automerge = match doc.get("automerge") {
+    None => default_cfg.automerge
+    Some(raw) =>
+      match parse_bool_config_value(raw) {
+        Ok(b) => b
+        Err(msg) =>
+          return Err(@types.ChoirError::config_error("automerge: " + msg))
+      }
+  }
 
   Ok({
     default_role,
@@ -188,6 +197,7 @@ pub fn parse_config(
     plugins_json,
     terminal_session,
     pr_review,
+    automerge,
   })
 }
 
@@ -284,6 +294,15 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let automerge = match doc.get("automerge") {
+    Some(raw) =>
+      match parse_bool_config_value(raw) {
+        Ok(b) => Some(b)
+        Err(msg) =>
+          return Err(@types.ChoirError::config_error("automerge: " + msg))
+      }
+    None => None
+  }
   Ok({
     role,
     agent_id,
@@ -295,6 +314,7 @@ pub fn parse_local_config(
     agent_type,
     spawn_depth,
     task_contract,
+    automerge,
   })
 }
 

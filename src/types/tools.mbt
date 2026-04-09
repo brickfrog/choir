@@ -17,6 +17,8 @@ pub(all) struct SpawnSpec {
   reuse_git_branch : String?
   /// Same semantics as `Agent.spawn_depth`; 0 at root TL, 1 for a sub-TL spawned under depth 0.
   spawn_depth : Int
+  /// Per-wave automerge override persisted into the spawned leaf config. `None` inherits global config.
+  automerge : Bool?
 } derive(Debug)
 
 ///|

@@ -48,6 +48,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.shell_command, None)
   assert_eq(cfg.terminal_session, "choir")
   assert_eq(cfg.pr_review, true)
+  assert_eq(cfg.automerge, false)
 }
 
 ///|
@@ -143,6 +144,24 @@ test "parse_config pr_review invalid is error" {
 }
 
 ///|
+test "parse_config automerge explicit true" {
+  let cfg = parse_config("automerge = true").unwrap()
+  assert_eq(cfg.automerge, true)
+}
+
+///|
+test "parse_config automerge explicit false" {
+  let cfg = parse_config("automerge = false").unwrap()
+  assert_eq(cfg.automerge, false)
+}
+
+///|
+test "parse_config automerge invalid is error" {
+  let r = parse_config("automerge = maybe")
+  assert_true(r is Err(_))
+}
+
+///|
 test "parse config with tcp_auth_token" {
   let content =
     #|default_role = "tl"
@@ -211,6 +230,15 @@ test "parse_local_config spawn_depth" {
     #|agent_id = "main.sub"
   let local_cfg = parse_local_config(with_depth).unwrap()
   assert_eq(local_cfg.spawn_depth, Some(1))
+}
+
+///|
+test "parse_local_config automerge override" {
+  let content =
+    #|role = "dev"
+    #|automerge = true
+  let local_cfg = parse_local_config(content).unwrap()
+  assert_eq(local_cfg.automerge, Some(true))
 }
 
 ///|

@@ -33,6 +33,185 @@ fn request_int_arg(req : @types.Request, key : String) -> Int? {
 }
 
 ///|
+fn request_bool_arg(req : @types.Request, key : String) -> Bool? {
+  match req.args.get_bool(key) {
+    Some(value) => Some(value)
+    None =>
+      match req.args.get(key) {
+        Some(value) => {
+          let lowered = value.trim().to_lower()
+          if lowered == "true" || lowered == "1" || lowered == "yes" {
+            Some(true)
+          } else if lowered == "false" || lowered == "0" || lowered == "no" {
+            Some(false)
+          } else {
+            None
+          }
+        }
+        None => None
+      }
+  }
+}
+
+///|
+fn tracked_prs_for_agent(
+  state : ServerState,
+  agent_id : String,
+) -> Array[@poller.TrackedPR] {
+  let prs : Array[@poller.TrackedPR] = []
+  state.poller.tracked.each(fn(_k, pr) {
+    if pr.agent_id == agent_id {
+      prs.push(pr)
+    }
+  })
+  prs
+}
+
+///|
+fn stale_pr_close_comment(agent_id : String) -> String {
+  "Closed automatically by Choir: owning leaf `" +
+  agent_id +
+  "` was killed by parent, so this PR is no longer active."
+}
+
+///|
+fn stale_pr_close_command(
+  project_dir : String,
+  pr_number : Int,
+  agent_id : String,
+) -> @workspace.Command {
+  {
+    program: "gh",
+    args: [
+      "pr",
+      "close",
+      pr_number.to_string(),
+      "--comment",
+      stale_pr_close_comment(agent_id),
+    ],
+    workdir: Some(project_dir),
+  }
+}
+
+///|
+fn stale_pr_close_failure_detail(output : String) -> String {
+  let trimmed = output.trim().to_string()
+  if trimmed == "" {
+    ""
+  } else if trimmed.length() <= 160 {
+    trimmed
+  } else {
+    trimmed[:160].to_string() + "..."
+  }
+}
+
+///|
+async fn deliver_stale_pr_reconciliation_message(
+  state : ServerState,
+  pr : @poller.TrackedPR,
+  message : String,
+  status : @types.Status,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  try {
+    let parent = state.resolve_parent_for_delivery(pr.agent_id)
+    let delivery = @message.plan_delivery(parent, pr.agent_id, message, status)
+    ignore(@tools.execute_delivery(delivery, runner))
+  } catch {
+    _ => ()
+  }
+}
+
+///|
+async fn reconcile_killed_agent_tracked_prs(
+  state : ServerState,
+  agent_id : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Unit {
+  let prs = tracked_prs_for_agent(state, agent_id)
+  if prs.length() == 0 {
+    return
+  }
+  let mut wrote_state = false
+  for pr in prs {
+    match state.poller.get(pr.pr_number) {
+      Some(current) => {
+        state.poller.restore({ ..current, orphan_reconciling: true })
+        wrote_state = true
+      }
+      None => continue
+    }
+    let (exit_code, output) = capture(
+      stale_pr_close_command(
+        state.config.project_dir,
+        pr.pr_number,
+        pr.agent_id,
+      ),
+    )
+    if exit_code == 0 {
+      state.poller.untrack(pr.pr_number)
+      append_poller_delivery_line(
+        state.append_file,
+        state.config.project_dir,
+        "stale pr auto-closed pr=" +
+        pr.pr_number.to_string() +
+        " agent=" +
+        pr.agent_id,
+      )
+      deliver_stale_pr_reconciliation_message(
+        state,
+        pr,
+        "[STALE PR CLOSED] PR #" +
+        pr.pr_number.to_string() +
+        " (" +
+        pr.agent_id +
+        ") — closed automatically after leaf was killed by parent",
+        @types.Status::Info,
+        runner,
+      )
+    } else {
+      let detail = stale_pr_close_failure_detail(output)
+      match state.poller.get(pr.pr_number) {
+        Some(current) =>
+          state.poller.restore({
+            ..current,
+            orphan_notified: true,
+            orphan_reconciling: false,
+          })
+        None => ()
+      }
+      append_poller_delivery_line(
+        state.append_file,
+        state.config.project_dir,
+        "stale pr auto-close failed pr=" +
+        pr.pr_number.to_string() +
+        " agent=" +
+        pr.agent_id +
+        " exit=" +
+        exit_code.to_string(),
+      )
+      let detail_suffix = if detail == "" { "" } else { ": " + detail }
+      deliver_stale_pr_reconciliation_message(
+        state,
+        pr,
+        "[STALE PR CLOSE FAILED] PR #" +
+        pr.pr_number.to_string() +
+        " (" +
+        pr.agent_id +
+        ") — auto-close after leaf kill failed; manual cleanup may be needed" +
+        detail_suffix,
+        @types.Status::Failure,
+        runner,
+      )
+    }
+  }
+  if wrote_state {
+    ignore(state.poller.write_state_file(state.config.project_dir))
+  }
+}
+
+///|
 fn request_span_name(req : @types.Request) -> String {
   if req.req_method == "tools/list" {
     "tools/list"
@@ -107,7 +286,11 @@ pub async fn ServerState::handle(
   self : ServerState,
   req : @types.Request,
 ) -> @types.Response {
-  self.handle_with_runner(req, runner=@exec.run_sequence)
+  self.handle_with_runner_and_capture(
+    req,
+    runner=@exec.run_sequence,
+    capture=@exec.capture_command_merged,
+  )
 }
 
 ///|
@@ -115,6 +298,20 @@ pub async fn ServerState::handle_with_runner(
   self : ServerState,
   req : @types.Request,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+) -> @types.Response {
+  self.handle_with_runner_and_capture(
+    req,
+    runner~,
+    capture=@exec.capture_command_merged,
+  )
+}
+
+///|
+pub async fn ServerState::handle_with_runner_and_capture(
+  self : ServerState,
+  req : @types.Request,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> @types.Response {
   let start_ms = @env.now()
   let merged_pr_context : (String, String?)? = if req.name == "merge_pr" {
@@ -151,6 +348,7 @@ pub async fn ServerState::handle_with_runner(
       project_dir=self.config.project_dir,
       session=self.config.terminal_session,
       runner~,
+      capture~,
       extra_mcp_servers_json=self.config.extra_mcp_servers_json,
       shell_command=self.config.shell_command,
       listen_uds=self.config.listen_uds,
@@ -184,6 +382,13 @@ pub async fn ServerState::handle_with_runner(
     @async.sleep(0)
   }
   self.interpret_teardown_effects(effects, runner)
+  if req.name == "kill_agent" && resp.is_ok() {
+    match req.args.get("agent_id") {
+      Some(agent_id) =>
+        reconcile_killed_agent_tracked_prs(self, agent_id, runner, capture)
+      None => ()
+    }
+  }
 
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp)
@@ -432,6 +637,189 @@ fn task_contract_for_agent(
 }
 
 ///|
+fn local_config_for_agent(
+  project_dir : String,
+  registry : @registry.AgentRegistry,
+  agent_id : String,
+) -> @types.LocalConfig? {
+  let agent_workspace = Some(registry.get(agent_id).workspace) catch {
+    _ => None
+  }
+  let candidate_paths : Array[String] = []
+  match agent_workspace {
+    Some(w) => if w != "" { candidate_paths.push(w + "/config.local.toml") }
+    None => ()
+  }
+  let fallback_path = @workspace.worktree_path(
+      project_dir,
+      @phase.extract_slug(agent_id),
+    ) +
+    "/config.local.toml"
+  if !candidate_paths.contains(fallback_path) {
+    candidate_paths.push(fallback_path)
+  }
+  for path in candidate_paths {
+    let content = @sys.read_file(path)
+    if content == "" {
+      continue
+    }
+    match @config.parse_local_config(content) {
+      Ok(local_cfg) => return Some(local_cfg)
+      Err(_) => ()
+    }
+  }
+  None
+}
+
+///|
+fn automerge_enabled_for_agent(
+  config : @types.Config,
+  local_cfg : @types.LocalConfig?,
+) -> Bool {
+  match local_cfg {
+    Some(cfg) =>
+      match cfg.automerge {
+        Some(value) => value
+        None => config.automerge
+      }
+    None => config.automerge
+  }
+}
+
+///|
+fn automerge_candidate_event(event : @poller.PollEvent) -> Bool {
+  match event {
+    @poller.PollEvent::PRReady(_)
+    | @poller.PollEvent::CIFailureCleared(_)
+    | @poller.PollEvent::CILatestHeadRollupSucceeded(_)
+    | @poller.PollEvent::CopilotIssueCommentSeen(_)
+    | @poller.PollEvent::MergeReady(_)
+    | @poller.PollEvent::ReviewThreadsResolved(_) => true
+    _ => false
+  }
+}
+
+///|
+fn should_fetch_unresolved_threads_for_pending_event(
+  event : @poller.PollEvent,
+  automerge_enabled : Bool,
+) -> Bool {
+  match event {
+    @poller.PollEvent::CIFailureCleared(_)
+    | @poller.PollEvent::CILatestHeadRollupSucceeded(_)
+    | @poller.PollEvent::ReviewThreadsResolved(_) => true
+    _ => automerge_enabled && automerge_candidate_event(event)
+  }
+}
+
+///|
+fn merge_execution_mode_for_request(
+  req : @types.Request,
+) -> @evidence.MergeExecutionMode {
+  if request_bool_arg(req, "force").unwrap_or(false) {
+    return @evidence.MergeExecutionMode::ForceOverride
+  }
+  if request_bool_arg(req, "automerge").unwrap_or(false) {
+    return @evidence.MergeExecutionMode::ServerAutomerge
+  }
+  @evidence.MergeExecutionMode::Manual
+}
+
+///|
+fn automerge_parent_caller_id_for_tracked_pr(
+  state : ServerState,
+  tracked : @poller.TrackedPR,
+) -> String? {
+  Some(state.resolve_parent_for_delivery(tracked.agent_id).agent_id.to_string()) catch {
+    _ => None
+  }
+}
+
+///|
+fn automerge_merge_pr_request(
+  tracked : @poller.TrackedPR,
+  caller_id : String,
+) -> @types.Request {
+  let parent_branch = if tracked.parent_branch == "" {
+    "main"
+  } else {
+    tracked.parent_branch
+  }
+  let args : Map[String, Json] = {
+    "pr_number": tracked.pr_number.to_json(),
+    "caller_id": caller_id.to_json(),
+    "parent_branch": parent_branch.to_json(),
+    "automerge": true.to_json(),
+  }
+  {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::from_values(args),
+  }
+}
+
+///|
+async fn maybe_trigger_automerge_for_pending_event(
+  state : ServerState,
+  event : @poller.PollEvent,
+  tracked : @poller.TrackedPR,
+  unresolved_threads : Int?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+) -> Bool {
+  if !automerge_candidate_event(event) {
+    return false
+  }
+  let local_cfg = local_config_for_agent(
+    state.config.project_dir,
+    state.registry,
+    tracked.agent_id,
+  )
+  if !automerge_enabled_for_agent(state.config, local_cfg) {
+    return false
+  }
+  let task_contract = task_contract_for_agent(
+    state.config.project_dir,
+    state.registry,
+    tracked.agent_id,
+  )
+  let decision = @poller.merge_policy_decision_for_tracked_pr(
+    tracked,
+    unresolved_threads,
+    task_contract~,
+  )
+  guard decision is @policy.MergeDecision::MergeNow(_) else { return false }
+  let caller_id = match
+    automerge_parent_caller_id_for_tracked_pr(state, tracked) {
+    Some(value) => value
+    None => return false
+  }
+  append_poller_delivery_line(
+    state.append_file,
+    state.config.project_dir,
+    "automerge attempt pr=" +
+    tracked.pr_number.to_string() +
+    " agent=" +
+    tracked.agent_id,
+  )
+  let resp = state.handle_with_runner_and_capture(
+    automerge_merge_pr_request(tracked, caller_id),
+    runner~,
+    capture~,
+  )
+  append_poller_delivery_line(
+    state.append_file,
+    state.config.project_dir,
+    "automerge result pr=" +
+    tracked.pr_number.to_string() +
+    " status=" +
+    resp.status_tag(),
+  )
+  resp.is_ok()
+}
+
+///|
 fn evidence_review_state_from_snapshot(
   review : @poller.ReviewState,
 ) -> @evidence.EvidenceReviewState {
@@ -540,9 +928,18 @@ fn append_merge_pr_evidence_if_needed(
     Some(value) => value
     None => return
   }
-  let force = req.args.get_bool("force").unwrap_or(false)
+  let force = request_bool_arg(req, "force").unwrap_or(false)
+  let merge_mode = merge_execution_mode_for_request(req)
   match merged_agent_id {
     Some(agent_id) => {
+      ignore(
+        append_evidence_event(
+          state.append_file,
+          state.config.project_dir,
+          agent_id,
+          @evidence.EvidenceEvent::MergeExecutionRequested(mode=merge_mode),
+        ),
+      )
       if force {
         ignore(
           append_evidence_event(
@@ -1457,21 +1854,34 @@ async fn deliver_pending_poll_events(
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
   let pending_parent_rows : Array[PendingPollParentRow] = []
+  let automerge_attempted_prs : Map[Int, Bool] = {}
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
-    let unresolved_threads : Int? = match event {
-      @poller.PollEvent::CIFailureCleared(_)
-      | @poller.PollEvent::CILatestHeadRollupSucceeded(_)
-      | @poller.PollEvent::ReviewThreadsResolved(_) => {
-        let (count, _) = @tools.fetch_unresolved_review_threads(
-          poll_event_pr_number(event),
-          state.config.project_dir,
-          @exec.capture_command_stdout,
+    let tracked_before_delivery = state.poller.get(poll_event_pr_number(event))
+    let automerge_enabled = match tracked_before_delivery {
+      Some(pr) =>
+        automerge_enabled_for_agent(
+          state.config,
+          local_config_for_agent(
+            state.config.project_dir,
+            state.registry,
+            pr.agent_id,
+          ),
         )
-        Some(count)
-      }
-      _ => None
+      None => false
+    }
+    let unresolved_threads : Int? = if should_fetch_unresolved_threads_for_pending_event(
+        event, automerge_enabled,
+      ) {
+      let (count, _) = @tools.fetch_unresolved_review_threads(
+        poll_event_pr_number(event),
+        state.config.project_dir,
+        @exec.capture_command_stdout,
+      )
+      Some(count)
+    } else {
+      None
     }
     for
       delivery in state.plan_poll_event_deliveries(
@@ -1485,6 +1895,19 @@ async fn deliver_pending_poll_events(
     match state.poller.get(poll_event_pr_number(event)) {
       Some(pr) => {
         append_poll_snapshot_evidence(state, pr, event, unresolved_threads)
+        if !automerge_attempted_prs.contains(pr.pr_number) {
+          automerge_attempted_prs.set(pr.pr_number, true)
+          if maybe_trigger_automerge_for_pending_event(
+              state,
+              event,
+              pr,
+              unresolved_threads,
+              runner,
+              capture=@exec.capture_command_merged,
+            ) {
+            continue
+          }
+        }
         match
           parent_poll_event_message(
             pr,
@@ -2589,6 +3012,403 @@ test "poll_events_delivery_summary escapes newlines and truncates long events" {
 }
 
 ///|
+test "merge_execution_mode_for_request distinguishes manual automerge and force" {
+  let manual_req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::new({ "pr_number": "5" }),
+  }
+  assert_eq(
+    merge_execution_mode_for_request(manual_req),
+    @evidence.MergeExecutionMode::Manual,
+  )
+  let automerge_args : Map[String, Json] = {
+    "pr_number": Int::to_json(5),
+    "automerge": Bool::to_json(true),
+  }
+  let automerge_req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::from_values(automerge_args),
+  }
+  assert_eq(
+    merge_execution_mode_for_request(automerge_req),
+    @evidence.MergeExecutionMode::ServerAutomerge,
+  )
+  let force_args : Map[String, Json] = {
+    "pr_number": Int::to_json(5),
+    "automerge": Bool::to_json(true),
+    "force": Bool::to_json(true),
+  }
+  let force_req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::from_values(force_args),
+  }
+  assert_eq(
+    merge_execution_mode_for_request(force_req),
+    @evidence.MergeExecutionMode::ForceOverride,
+  )
+}
+
+///|
+test "should_fetch_unresolved_threads_for_pending_event widens for automerge" {
+  assert_false(
+    should_fetch_unresolved_threads_for_pending_event(
+      @poller.PollEvent::MergeReady(7),
+      false,
+    ),
+  )
+  assert_true(
+    should_fetch_unresolved_threads_for_pending_event(
+      @poller.PollEvent::MergeReady(7),
+      true,
+    ),
+  )
+  assert_true(
+    should_fetch_unresolved_threads_for_pending_event(
+      @poller.PollEvent::CILatestHeadRollupSucceeded(7),
+      false,
+    ),
+  )
+}
+
+///|
+test "automerge_enabled_for_agent respects local override" {
+  let global_true = { ..@types.Config::default(), automerge: true }
+  assert_true(automerge_enabled_for_agent(global_true, None))
+  assert_false(
+    automerge_enabled_for_agent(
+      global_true,
+      Some({ ..@types.LocalConfig::default(), automerge: Some(false) }),
+    ),
+  )
+  assert_true(
+    automerge_enabled_for_agent(
+      { ..@types.Config::default(), automerge: false },
+      Some({ ..@types.LocalConfig::default(), automerge: Some(true) }),
+    ),
+  )
+}
+
+///|
+async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
+  let project_dir = "/tmp/choir-automerge-handler-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session,
+    automerge: true,
+  }
+  let state = ServerState::new(config, make_recovery_provider())
+  let parent_id = "main.tl"
+  let child_id = "main.auto-leaf"
+  let pr_number = 90
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::MoonPilot,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/auto-leaf",
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let parent_child : @phase.ChildLifecycle = {
+    child_id,
+    slug: @phase.extract_slug(child_id),
+    branch: child_id,
+    agent_type: @types.AgentType::MoonPilot,
+    summary: @phase.ChildLifecycleSummary::ReviewOwned(
+      pr_number~,
+      state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+    ),
+  }
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
+      ),
+    }),
+  )
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        ),
+      ),
+    }),
+  )
+  state.poller.track(
+    pr_number, child_id, child_id, "main", "https://example.test/pr/90", 100L,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::Approved,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+      })
+    None => fail("expected tracked PR")
+  }
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let review_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+    if cmd.program == "gh" &&
+      cmd.args == ["repo", "view", "--json", "owner,name"] {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1] == "graphql" {
+      return (0, review_threads_json)
+    }
+    (0, "")
+  }
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::ReviewThreadsResolved(pr_number),
+    tracked,
+    Some(0),
+    runner,
+    capture~,
+  )
+  assert_true(merged)
+  assert_true(merge_seen)
+  assert_true(state.poller.get(pr_number) == None)
+  match @phase.read_lifecycle(project_dir, child_id) {
+    Some(lifecycle) =>
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+      )
+    None => fail("expected merged child lifecycle")
+  }
+}
+
+///|
+fn kill_agent_reconciliation_fixture(
+  label : String,
+  pr_number : Int,
+) -> (ServerState, String, String) {
+  let project_dir = "/tmp/choir-kill-reconcile-" +
+    label +
+    "-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  let parent_id = "main.parent"
+  let child_id = "main.child"
+  let live_target = match
+    @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":live-parent") {
+    Some(t) => t
+    None => panic()
+  }
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some(live_target),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::MoonPilot,
+      parent: Some(parent_id),
+      workspace: project_dir + "/child",
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.poller.track(
+    pr_number,
+    child_id,
+    child_id,
+    "main",
+    "https://example.test/pr/" + pr_number.to_string(),
+    100L,
+  )
+  (state, parent_id, child_id)
+}
+
+///|
+async test "kill_agent auto-closes tracked stale PR and untracks it" {
+  let pr_number = 208
+  let (state, _parent_id, child_id) = kill_agent_reconciliation_fixture(
+    "ok", pr_number,
+  )
+  let mut close_seen = false
+  let mut stale_closed_delivered = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.contains("zellij-action") &&
+        cmd.args.contains("send") {
+        let text = cmd.args[cmd.args.length() - 1]
+        if text.contains("[STALE PR CLOSED]") &&
+          text.contains("PR #" + pr_number.to_string()) {
+          stale_closed_delivered = true
+        }
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[0] == "pr" &&
+      cmd.args[1] == "close" &&
+      cmd.args[2] == pr_number.to_string() {
+      close_seen = true
+      return (0, "closed")
+    }
+    (0, "")
+  }
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "kill_agent",
+    args: @types.RequestArgs::new({ "agent_id": child_id }),
+  }
+  let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
+  assert_true(resp.is_ok())
+  assert_true(close_seen)
+  assert_true(stale_closed_delivered)
+  assert_true(state.poller.get(pr_number) == None)
+}
+
+///|
+async test "kill_agent close failure sends one explicit stale PR failure and suppresses generic orphan notification" {
+  let pr_number = 209
+  let (state, _parent_id, child_id) = kill_agent_reconciliation_fixture(
+    "fail", pr_number,
+  )
+  let mut stale_failed_delivered = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.contains("zellij-action") &&
+        cmd.args.contains("send") {
+        let text = cmd.args[cmd.args.length() - 1]
+        if text.contains("[STALE PR CLOSE FAILED]") &&
+          text.contains("PR #" + pr_number.to_string()) {
+          stale_failed_delivered = true
+        }
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[0] == "pr" &&
+      cmd.args[1] == "close" &&
+      cmd.args[2] == pr_number.to_string() {
+      return (1, "permission denied")
+    }
+    (0, "")
+  }
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "kill_agent",
+    args: @types.RequestArgs::new({ "agent_id": child_id }),
+  }
+  let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
+  assert_true(resp.is_ok())
+  assert_true(stale_failed_delivered)
+  match state.poller.get(pr_number) {
+    Some(tracked) => {
+      assert_true(tracked.orphan_notified)
+      assert_false(tracked.orphan_reconciling)
+      assert_eq(@poller.detect_orphaned_prs([(tracked, false)]).length(), 0)
+    }
+    None => fail("expected tracked PR to remain after close failure")
+  }
+}
+
+///|
 test "parent_poll_event_message PR READY stresses not merged" {
   let tracked : @poller.TrackedPR = {
     pr_number: 7,
@@ -2607,6 +3427,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -2649,6 +3470,7 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -2687,6 +3509,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -2728,6 +3551,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -2807,6 +3631,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -2870,6 +3695,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     last_timeout_at: 100L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -2924,6 +3750,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -3084,6 +3911,7 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -3125,6 +3953,7 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
     last_timeout_at: 999L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -3164,6 +3993,7 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -3202,6 +4032,7 @@ test "parent_poll_event_message PRMerged does not append TLDecision suffix" {
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -3240,6 +4071,7 @@ test "evidence_events_for_poll_snapshot emits normalized snapshot events" {
     last_timeout_at: 0L,
     copilot_issue_comment_seen: true,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }
@@ -3292,6 +4124,7 @@ test "evidence_events_for_poll_snapshot includes merge observed on PRMerged" {
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }

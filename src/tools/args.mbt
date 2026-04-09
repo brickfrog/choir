@@ -42,6 +42,8 @@ pub(all) struct ForkWaveArgs {
   parent_session_id : String?
   /// Appended to each leaf task so children can pass it to `file_pr` / Copilot review.
   review_context : String?
+  /// Per-wave automerge override. `None` means "use the global config default".
+  automerge : Bool?
 } derive(Debug, Eq)
 
 ///|

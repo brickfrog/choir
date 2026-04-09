@@ -55,6 +55,24 @@ fn parse_truthy_spawn_flag(s : String) -> Bool {
 }
 
 ///|
+fn parse_optional_spawn_flag(
+  field : String,
+  raw : String,
+) -> Result[Bool?, ParseError] {
+  let lowered = raw.trim().to_lower()
+  if lowered == "" {
+    return Ok(None)
+  }
+  if lowered == "true" || lowered == "1" || lowered == "yes" {
+    return Ok(Some(true))
+  }
+  if lowered == "false" || lowered == "0" || lowered == "no" {
+    return Ok(Some(false))
+  }
+  Err(ParseError::InvalidValue(field~, value=raw))
+}
+
+///|
 fn lookup_parent_session_id(project_dir : String, args : ToolArgs) -> String? {
   match tool_args_get(args, "parent_session_id") {
     Some(v) => if v.trim() != "" { return Some(v.trim().to_string()) }
@@ -607,6 +625,14 @@ pub fn parse_fork_wave_args(
     }
     None => None
   }
+  let automerge = match tool_args_get(args, "automerge") {
+    Some(v) =>
+      match parse_optional_spawn_flag("automerge", v) {
+        Ok(value) => value
+        Err(e) => return Err(e)
+      }
+    None => None
+  }
   Ok({
     count,
     tasks,
@@ -619,6 +645,7 @@ pub fn parse_fork_wave_args(
     child_role,
     parent_session_id: lookup_parent_session_id(project_dir, args),
     review_context,
+    automerge,
   })
 }
 

@@ -618,7 +618,7 @@ pub fn detect_orphaned_prs(
   let out = []
   for pair in tracked_with_liveness {
     let (pr, agent_is_active) = pair
-    if !agent_is_active && !pr.orphan_notified {
+    if !agent_is_active && !pr.orphan_notified && !pr.orphan_reconciling {
       out.push(pr)
     }
   }
