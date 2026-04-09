@@ -1476,6 +1476,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     child_role: @types.Role::Dev,
     parent_session_id: None,
     review_context: None,
+    automerge: None,
   }
 }
 
@@ -1514,6 +1515,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     child_role: @types.Role::Dev,
     parent_session_id: None,
     review_context: None,
+    automerge: None,
   }
   let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
   assert_eq(plan.spawned_count, 2)
@@ -1922,6 +1924,7 @@ fn merge_pr_test_tracked(
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
+    orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
   }

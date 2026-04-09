@@ -192,6 +192,11 @@ pub fn config_local_content(
       "\"\n"
     None => "\n"
   }
+  let automerge_line = match spec.automerge {
+    Some(enabled) =>
+      "\nautomerge = " + (if enabled { "true" } else { "false" }) + "\n"
+    None => ""
+  }
   "role = \"" +
   escape_toml_string(role_str) +
   "\"\nagent_id = \"" +
@@ -210,6 +215,7 @@ pub fn config_local_content(
   escape_toml_string(terminal_target.to_string()) +
   "\"\nspawn_depth = " +
   spec.spawn_depth.to_string() +
+  automerge_line +
   task_contract_line
 }
 

@@ -134,6 +134,7 @@ test "format_registration_request includes local config metadata" {
     agent_type: Some(@types.AgentType::Gemini),
     spawn_depth: Some(1),
     task_contract: None,
+    automerge: None,
   }
   let output = format_registration_request(
     @types.Role::Dev,

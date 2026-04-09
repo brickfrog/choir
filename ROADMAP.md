@@ -1,35 +1,34 @@
 # Choir Roadmap
 
-## Current state: Policy-Ready Core (2026-04-09)
+## Current state: Policy-Driven Merge Control (2026-04-09)
 
-Choir now has the core pieces needed for policy-driven autonomy: typed task contracts, a typed evidence ledger, a pure merge policy, and manual merge gating backed by that policy. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
+Choir now has typed task contracts, a typed evidence ledger, a pure merge policy, and an explicit automerge control plane. `fork_wave` can persist a per-wave `automerge` override, the server can trigger the existing `merge_pr` path when policy reaches `MergeNow`, and merge provenance is recorded as manual, server-automerge, or force-override. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
 
 ---
 
-## 🚀 Immediate Next: Policy-Driven Autonomy
+## 🚀 Immediate Next: Delivery and Supervision
 
-The next milestone is not more architecture work. It is executing the new typed policy layer end-to-end so the Team Lead stops doing repetitive merge and cleanup work by hand.
+The next milestone is not more merge architecture. The merge control plane is now explicit. The next work is making delivery, cleanup, and operator visibility as durable as the policy layer.
 
-### 1. Autonomous Merge Execution
-- Add an explicit per-wave or per-PR opt-in policy flag for autonomous merge.
-- Interpret `MergeDecision::MergeNow` in the server/poller path instead of only surfacing it in summaries and `merge_pr` preflight.
-- Preserve manual `merge_pr` as the override and fallback path.
-- Require clear audit evidence for every autonomous merge decision, including the exact typed reason.
-- Add end-to-end tests for `MergeNow`, `Wait`, `Blocked`, and `NeedsHuman`.
-
-### 2. Wave Auto-Finalization
-- When merge is observed, automatically shut down the owning leaf if appropriate.
-- Transition the lifecycle to the correct completed state without waiting for manual TL cleanup.
-- Clear tracked PR state and persist the final evidence/lifecycle snapshot.
-- Notify the parent with one canonical completion message instead of repeated re-check nudges.
-- Add tests for normal merge, external merge, forced merge, and merged-orphan cleanup.
-
-### 3. Durable Team Inbox
+### 1. Durable Team Inbox
 - Replace viewport-sniffed delivery assumptions with a durable inbox or queue model.
 - Persist outbound parent/child messages until acknowledged or expired.
 - Re-deliver pending important notifications after restart.
 - Separate "evidence for policy" from "messages for humans" so retries do not duplicate policy state.
 - Keep the current pane integrations as adapters, not as the source of truth.
+
+### 2. External Merge and Orphan Reconciliation
+- Initial stale-leaf cleanup is now in place: `kill_agent` auto-closes tracked PRs for parent-killed leaves, emits one explicit stale-PR outcome to the parent, and suppresses generic orphan spam for that path.
+- Tighten the post-merge/finalization path for merges observed outside the server-triggered `merge_pr` flow.
+- Ensure external merges, manual merges, and recovered leaves converge to one canonical lifecycle outcome.
+- Reduce repeated re-check nudges once a leaf is definitely done in the remaining external/manual-merge paths.
+- Add focused tests for merged-orphan cleanup and restart recovery after merge.
+
+### 3. Merge Audit and Operator UX
+- Surface merge provenance and policy reason clearly in TL/operator summaries.
+- Make it obvious when a wave is `automerge=true` versus manual mode.
+- Improve parent-facing notifications so `[MERGE READY]` is informational when automerge is enabled and actionable when it is not.
+- Keep `merge_pr force=true` as an explicit override path with evidence attached.
 
 ### 4. External Task Memory Provider
 - Pilot Chainlink as an optional task-memory provider instead of building a Choir-native issue tracker.
@@ -54,6 +53,21 @@ Add an optional high-ceremony path for risky work where Choir requests a fresh-c
 ---
 
 ## ✅ Completed
+
+### Stale Leaf PR Reconciliation (2026-04-09)
+- **Parent-Kill PR Cleanup**: `kill_agent` now reconciles tracked PRs for intentionally killed leaves instead of letting them drift into generic orphan state.
+- **Server-Side Auto-Close**: The server issues `gh pr close` directly for those stale PRs and untracks them on success.
+- **One-Shot Operator Signal**: Parents now get a single `[STALE PR CLOSED]` or `[STALE PR CLOSE FAILED]` message rather than repeated orphan noise.
+- **Poller Quiet Period**: Tracked PR state now records reconciliation-in-progress so the poller does not race the cleanup path with `[ORPHANED PR]` while the server is already resolving it.
+- **Focused Coverage**: Poller/server tests now cover reconciliation suppression, close success, and close failure behavior.
+
+### Formalized Auto-Merge Control Plane (2026-04-09)
+- **Explicit Auto-Merge Config**: `Config.automerge` now defines the global default, and spawned leaves can persist a per-wave override in `config.local.toml`.
+- **Server-Triggered Merge Execution**: The poller/handler path now interprets `MergeDecision::MergeNow` and can invoke the existing `merge_pr` path without relying on the TL prompt as the trigger.
+- **Single Merge Executor**: Auto-merge and manual merge both go through `merge_pr`, so preflight policy checks, mutexing, evidence logging, and post-merge lifecycle updates remain unified.
+- **Typed Merge Provenance**: Evidence now records whether merge execution was requested manually, via server automerge, or via force override.
+- **Forward-Compatible Tool Surface**: `fork_wave` now exposes an `automerge` argument in the registry and MCP schema, and TL instructions explain how manual mode and automerge mode differ.
+- **Verification Coverage**: Native build, type-check, and test coverage now exercise the automerge trigger and evidence path.
 
 ### Typed Evidence Ledger, Merge Policy & Refresh Reliability (2026-04-09)
 - **Typed Evidence Ledger**: Agent-local JSONL evidence now records normalized CI, review, threads, Copilot, verify, merge, and override events.

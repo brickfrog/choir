@@ -1,7 +1,9 @@
 import {
+  "choir/src/config",
   "choir/src/evidence",
   "choir/src/types",
   "choir/src/phase",
+  "choir/src/policy",
   "choir/src/registry",
   "choir/src/tools",
   "choir/src/exec",

@@ -122,7 +122,7 @@ pub fn to_internal_request(
 /// Create a JSON-RPC response for the MCP initialize handshake.
 fn choir_mcp_instructions() -> String {
   (
-    #|Choir is an agent orchestration server. You are the Team Lead (TL). Delegate all implementation to leaf agents via fork_wave (default gemini; set agent_type for claude, moon_pilot, codex, or cursor_agent). Never edit files directly -- read code to understand it, then delegate. For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). For identical parallel work, pass task + count. spawn_worker is research-only -- workers cannot edit files or file PRs. After spawning leaves, stop and wait for notify_parent messages. Do not poll with sleep or git log. Use merge_pr to merge PRs, not git merge. Merge one at a time. Do not merge PRs until Copilot has reviewed them -- review notifications arrive automatically via the poller. When a leaf reports a PR, wait for the [REVIEW] notification before merging. Do not tell the user a PR is merged based on [PR READY], [FIXES PUSHED], or leaf notify_parent/shutdown text alone. Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.
+    #|Choir is an agent orchestration server. You are the Team Lead (TL). Delegate all implementation to leaf agents via fork_wave (default gemini; set agent_type for claude, moon_pilot, codex, or cursor_agent). Never edit files directly -- read code to understand it, then delegate. If the user explicitly asks for work to be done via leaves/waves/agents, do not implement the feature directly on the parent branch. The parent branch is only for pre-fork scaffold, integrating completed leaf work, or cleaning up stale leaves/PRs. If a parent-branch change or user decision supersedes a leaf, kill that leaf immediately and close or abandon its PR before continuing. For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). For identical parallel work, pass task + count. spawn_worker is research-only -- workers cannot edit files or file PRs. After spawning leaves, stop and wait for notify_parent messages. Do not poll with sleep or git log. Use merge_pr to merge PRs, not git merge. Merge one at a time. Do not merge PRs until Copilot has reviewed them -- review notifications arrive automatically via the poller. When a leaf reports a PR, wait for the [REVIEW] notification before merging. If you spawned a wave with automerge enabled, do not manually call merge_pr just because you saw [MERGE READY] — wait for [PR MERGED] unless the server reports an error or the user asks you to intervene. Do not tell the user a PR is merged based on [PR READY], [FIXES PUSHED], or leaf notify_parent/shutdown text alone. Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.
     #|
     #|When given an implementation task, before calling any tools, reason through:
     #|1. Boundaries — what are the independent units of work? Each leaf should own a complete vertical slice (types + logic + tests) with no runtime coupling to other leaves' changes.
@@ -188,7 +188,7 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
-      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks (best-of-N), pass task + count",
+      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks, pass task + count. Optional automerge overrides the server default for that wave.",
       props: [
         { name: "task", desc: "Shared task for all leaves (use with count)" },
         {
@@ -210,6 +210,10 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "branch", desc: "Compatibility alias for parent_branch" },
         { name: "count", desc: "Number of leaves when using shared task" },
         { name: "slug_prefix", desc: "Slug prefix for spawned children" },
+        {
+          name: "automerge",
+          desc: "Optional per-wave override for server-triggered merge_pr after merge policy reaches MergeNow; omitted inherits config default (default config is false)",
+        },
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },
         { name: "verify", desc: "Newline-separated verification commands" },

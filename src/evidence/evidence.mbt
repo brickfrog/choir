@@ -69,6 +69,37 @@ fn parse_evidence_review_state(s : String) -> EvidenceReviewState? {
 }
 
 ///|
+pub(all) enum MergeExecutionMode {
+  Manual
+  ServerAutomerge
+  ForceOverride
+} derive(Debug, Eq)
+
+///|
+pub fn MergeExecutionMode::to_wire_string(self : MergeExecutionMode) -> String {
+  match self {
+    Manual => "manual"
+    ServerAutomerge => "server_automerge"
+    ForceOverride => "force_override"
+  }
+}
+
+///|
+pub impl Show for MergeExecutionMode with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+fn parse_merge_execution_mode(s : String) -> MergeExecutionMode? {
+  match s {
+    "manual" => Some(Manual)
+    "server_automerge" => Some(ServerAutomerge)
+    "force_override" => Some(ForceOverride)
+    _ => None
+  }
+}
+
+///|
 pub(all) enum EvidenceEvent {
   CiObserved(status~ : EvidenceCiStatus, head_sha~ : String?)
   ReviewObserved(state~ : EvidenceReviewState, body~ : String?)
@@ -77,6 +108,7 @@ pub(all) enum EvidenceEvent {
   VerifyResultObserved(name~ : String, ok~ : Bool, details~ : String?)
   CopilotIssueCommentObserved
   CopilotIssueCommentUnobserved
+  MergeExecutionRequested(mode~ : MergeExecutionMode)
   MergeObserved(pr_number~ : Int, pr_url~ : String?)
   UserOverrideObserved(scope~ : String, reason~ : String?)
   ReviewThreadsResolved
@@ -107,6 +139,7 @@ pub fn EvidenceEvent::type_name(self : EvidenceEvent) -> String {
     VerifyResultObserved(..) => "evidence.verify_result_observed"
     CopilotIssueCommentObserved => "evidence.copilot_issue_comment_observed"
     CopilotIssueCommentUnobserved => "evidence.copilot_issue_comment_unobserved"
+    MergeExecutionRequested(..) => "evidence.merge_execution_requested"
     MergeObserved(..) => "evidence.merge_observed"
     UserOverrideObserved(..) => "evidence.user_override_observed"
     ReviewThreadsResolved => "evidence.review_threads_resolved"
@@ -148,6 +181,8 @@ fn evidence_event_data_json(event : EvidenceEvent) -> Json {
     }
     CopilotIssueCommentObserved => ()
     CopilotIssueCommentUnobserved => ()
+    MergeExecutionRequested(mode~) =>
+      fields.set("mode", mode.to_wire_string().to_json())
     MergeObserved(pr_number~, pr_url~) => {
       fields.set("pr_number", pr_number.to_json())
       match pr_url {
@@ -234,6 +269,17 @@ fn evidence_event_from_fields(
       Some(EvidenceEvent::CopilotIssueCommentObserved)
     "evidence.copilot_issue_comment_unobserved" =>
       Some(EvidenceEvent::CopilotIssueCommentUnobserved)
+    "evidence.merge_execution_requested" => {
+      let mode = match @types.json_field_string(fields, "mode") {
+        Some(raw) =>
+          match parse_merge_execution_mode(raw) {
+            Some(parsed) => parsed
+            None => return None
+          }
+        None => return None
+      }
+      Some(EvidenceEvent::MergeExecutionRequested(mode~))
+    }
     "evidence.merge_observed" => {
       let pr_number = match @types.json_field_int(fields, "pr_number") {
         Some(value) => value
