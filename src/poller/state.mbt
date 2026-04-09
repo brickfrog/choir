@@ -619,8 +619,7 @@ pub async fn PollerState::tick_pr_with(
   } else {
     base_events
   }
-  let merge_snapshot_ready = (review == Approved || review == Commented) &&
-    ci_rollup == Success
+  let merge_snapshot_ready = review == Approved && ci_rollup == Success
   let needs_merge_nudge = events.length() == 0 &&
     merge_snapshot_ready &&
     !tracked_ok.notified_parent
