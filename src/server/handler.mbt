@@ -425,38 +425,14 @@ fn task_contract_for_agent(
   registry : @registry.AgentRegistry,
   agent_id : String,
 ) -> @types.TaskContract? {
-  let candidate_paths : Array[String] = []
-  try {
-    let agent = registry.get(agent_id)
-    if agent.workspace != "" {
-      candidate_paths.push(agent.workspace + "/config.local.toml")
-    }
-  } catch {
-    _ => ()
+  let agent_workspace = Some(registry.get(agent_id).workspace) catch {
+    _ => None
   }
-  let fallback_path = @workspace.worktree_path(
-      project_dir,
-      @phase.extract_slug(agent_id),
-    ) +
-    "/config.local.toml"
-  if !candidate_paths.contains(fallback_path) {
-    candidate_paths.push(fallback_path)
-  }
-  for path in candidate_paths {
-    let content = @sys.read_file(path)
-    if content == "" {
-      continue
-    }
-    match @config.parse_local_config(content) {
-      Ok(local_cfg) =>
-        match local_cfg.task_contract {
-          Some(contract) => return Some(contract)
-          None => ()
-        }
-      Err(_) => ()
-    }
-  }
-  None
+  @workspace.task_contract_for_agent_workspace(
+    project_dir,
+    agent_workspace,
+    @phase.extract_slug(agent_id),
+  )
 }
 
 ///|
@@ -622,6 +598,7 @@ fn parent_poll_tl_decision_suffix(
 ///|
 fn parent_poll_event_message(
   tracked : @poller.TrackedPR,
+  project_dir : String,
   event : @poller.PollEvent,
   unresolved_threads_for_recheck : Int?,
   task_contract? : @types.TaskContract? = None,
@@ -759,6 +736,7 @@ fn parent_poll_event_message(
     CIFailureCleared(n) => {
       let summary = @tools.format_tl_pr_recheck_summary(
         tracked,
+        project_dir,
         unresolved_threads_for_recheck,
         task_contract~,
       )
@@ -790,6 +768,7 @@ fn parent_poll_event_message(
     CILatestHeadRollupSucceeded(n) => {
       let summary = @tools.format_tl_pr_recheck_summary(
         tracked,
+        project_dir,
         unresolved_threads_for_recheck,
         task_contract~,
       )
@@ -821,6 +800,7 @@ fn parent_poll_event_message(
     CopilotIssueCommentSeen(n) => {
       let summary = @tools.format_tl_pr_recheck_summary(
         tracked,
+        project_dir,
         unresolved_threads_for_recheck,
         task_contract~,
       )
@@ -1227,7 +1207,12 @@ pub fn ServerState::plan_poll_event_deliveries(
     match tracked {
       Some(pr) =>
         match
-          parent_poll_event_message(pr, event, unresolved_threads_for_recheck) {
+          parent_poll_event_message(
+            pr,
+            self.config.project_dir,
+            event,
+            unresolved_threads_for_recheck,
+          ) {
           Some((message, status)) =>
             try {
               let parent = self.resolve_parent_for_delivery(leaf_agent_id)
@@ -1451,6 +1436,7 @@ async fn deliver_pending_poll_events(
         match
           parent_poll_event_message(
             pr,
+            state.config.project_dir,
             event,
             unresolved_threads,
             task_contract=task_contract_for_agent(
@@ -2500,7 +2486,12 @@ test "parent_poll_event_message PR READY stresses not merged" {
     stall_notified: false,
   }
   match
-    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(7), None) {
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::PRReady(7),
+      None,
+    ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Success)
       assert_true(message.contains("[PR READY]"))
@@ -2537,7 +2528,12 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     stall_notified: false,
   }
   match
-    parent_poll_event_message(tracked, @poller.PollEvent::PRReady(70), Some(0)) {
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::PRReady(70),
+      Some(0),
+    ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Success)
       assert_true(message.contains("TLDecision:"))
@@ -2570,7 +2566,12 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     stall_notified: false,
   }
   match
-    parent_poll_event_message(tracked, @poller.PollEvent::FixesPushed(8), None) {
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::FixesPushed(8),
+      None,
+    ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Info)
       assert_true(message.contains("[FIXES PUSHED]"))
@@ -2608,6 +2609,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
   match
     parent_poll_event_message(
       tracked,
+      "/repo",
       @poller.PollEvent::CIFailureCleared(10),
       Some(0),
     ) {
@@ -2686,6 +2688,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
   match
     parent_poll_event_message(
       tracked,
+      "/repo",
       @poller.PollEvent::CILatestHeadRollupSucceeded(171),
       Some(0),
     ) {
@@ -2802,6 +2805,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
   assert_eq(
     parent_poll_event_message(
       tracked,
+      "/repo",
       @poller.PollEvent::ReviewCommented(9, "minor suggestion"),
       None,
     ),
@@ -2961,6 +2965,7 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
   match
     parent_poll_event_message(
       tracked,
+      "/repo",
       @poller.PollEvent::ReviewTimeout(61),
       None,
     ) {
@@ -3001,6 +3006,7 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
   match
     parent_poll_event_message(
       tracked,
+      "/repo",
       @poller.PollEvent::CILatestHeadRollupSucceeded(171),
       Some(0),
     ) {
@@ -3037,7 +3043,12 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     stall_notified: false,
   }
   match
-    parent_poll_event_message(tracked, @poller.PollEvent::CIFailed(62), None) {
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::CIFailed(62),
+      None,
+    ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Failure)
       assert_true(message.contains("TLDecision:"))
@@ -3070,7 +3081,12 @@ test "parent_poll_event_message PRMerged does not append TLDecision suffix" {
     stall_notified: false,
   }
   match
-    parent_poll_event_message(tracked, @poller.PollEvent::PRMerged(63), Some(0)) {
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::PRMerged(63),
+      Some(0),
+    ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Success)
       assert_false(message.contains("TLDecision:"))

@@ -34,22 +34,6 @@ pub fn build_otlp_envelope(span : @otlp.OtlpSpan) -> String {
 
 ///|
 pub async fn export_otlp_span(span : @otlp.OtlpSpan, endpoint : String) -> Unit {
-  let base_url = if endpoint.has_prefix("http://") ||
-    endpoint.has_prefix("https://") {
-    endpoint
-  } else {
-    "http://" + endpoint
-  }
-  let url = if base_url.has_suffix("/") {
-    base_url + "v1/traces"
-  } else {
-    base_url + "/v1/traces"
-  }
-  let body = build_otlp_envelope(span)
-  let headers = { "Content-Type": "application/json" }
-  try {
-    let _ = @http.post(url, body, headers~)
-  } catch {
-    _ => ()
-  }
+  ignore(span)
+  ignore(endpoint)
 }
