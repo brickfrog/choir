@@ -249,6 +249,7 @@ fn serve_run() -> Unit {
         config.terminal_session,
       )
       @server.recover_state(state, config.terminal_session, recovery_input)
+      state.replay_pending_outbox(runner=@exec.run_sequence)
       root.spawn_bg(async fn() {
         let timeout_sec = 900L
         let disconnect_grace_sec = 60L

@@ -6,6 +6,7 @@ import {
   "choir/src/policy",
   "choir/src/registry",
   "choir/src/tools",
+  "choir/src/outbox",
   "choir/src/exec",
   "choir/src/message",
   "choir/src/poller",

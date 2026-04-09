@@ -1,0 +1,11 @@
+import {
+  "choir/src/message",
+  "choir/src/sys",
+  "choir/src/types",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+}
+
+options(
+  "is-main": false,
+)
