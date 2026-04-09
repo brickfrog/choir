@@ -42,7 +42,7 @@ fn request_span_name(req : @types.Request) -> String {
 }
 
 ///|
-async fn emit_span(
+fn emit_span(
   state : ServerState,
   req : @types.Request,
   start_ms : UInt64,
@@ -81,9 +81,7 @@ async fn emit_span(
       }
       mt_span.status_message = resp.error_message().unwrap_or("")
       let otlp_span = @otlp.span_to_otlp(mt_span)
-      export_otlp_span(otlp_span, ep) catch {
-        _ => ()
-      }
+      export_otlp_span(otlp_span, ep)
     }
     None => ()
   }
@@ -188,9 +186,7 @@ pub async fn ServerState::handle_with_runner(
   self.interpret_teardown_effects(effects, runner)
 
   let end_ms = @env.now()
-  emit_span(self, req, start_ms, end_ms, resp) catch {
-    _ => ()
-  }
+  emit_span(self, req, start_ms, end_ms, resp)
   match merged_pr_context {
     Some((agent_id, pr_url)) =>
       append_merge_pr_evidence_if_needed(

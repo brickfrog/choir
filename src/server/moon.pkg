@@ -12,7 +12,6 @@ import {
   "choir/src/hooks",
   "choir/src/runtime",
   "moonbitlang/async",
-  "moonbitlang/async/http",
   "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",

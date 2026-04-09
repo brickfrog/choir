@@ -63,6 +63,7 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
     Bool,
     Bool,
   ) {
+    @async.sleep(0)
     poll_called = true
     (
       true,
@@ -79,6 +80,7 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
   state.refresh_pr_with(pr_number, 200L, 900L, mock_poll, runner=async fn(
     cmds,
   ) {
+    @async.sleep(0)
     runner_called = true
     let res = []
     for _ in cmds {
@@ -173,6 +175,7 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
     Bool,
     Bool,
   ) {
+    @async.sleep(0)
     (
       true,
       @poller.ReviewState::Commented,
@@ -188,6 +191,7 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
   state.refresh_pr_with(pr_number, 200L, 900L, mock_poll, runner=async fn(
     _cmds,
   ) {
+    @async.sleep(0)
     runner_called = true
     let res = []
     for _ in _cmds {
