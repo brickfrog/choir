@@ -1,5 +1,5 @@
 ///|
-async test "ServerState::refresh_pr_with triggers poll and deliveries" {
+async test "ServerState::refresh_pr_with triggers poll and updates state" {
   let project_dir = "/tmp/choir-refresh-state-test-" +
     @sys.get_pid().to_string() +
     "-" +

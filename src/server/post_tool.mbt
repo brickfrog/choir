@@ -447,7 +447,6 @@ pub fn plan_post_tool_actions(
         for pr in poller.tracked.values() {
           if pr.agent_id == agent_id {
             effects.push(RefreshPR(pr.pr_number))
-            break
           }
         }
       None => ()
