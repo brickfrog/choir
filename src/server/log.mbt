@@ -33,7 +33,7 @@ pub fn build_otlp_envelope(span : @otlp.OtlpSpan) -> String {
 }
 
 ///|
-pub async fn export_otlp_span(span : @otlp.OtlpSpan, endpoint : String) -> Unit {
+pub fn export_otlp_span(span : @otlp.OtlpSpan, endpoint : String) -> Unit {
   ignore(span)
   ignore(endpoint)
 }
