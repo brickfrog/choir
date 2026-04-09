@@ -280,7 +280,12 @@ pub async fn dispatch(
       // Post-spawn side effects: only run if spawn succeeded.
       if resp.is_ok() && spawn_plan.spawned_count > 0 {
         interpret_fork_wave_post_spawn(
-          fork_wave_args, spawn_plan, project_dir, session, registry,
+          fork_wave_args,
+          spawn_plan,
+          project_dir,
+          session,
+          registry,
+          capture~,
         )
       }
       resp

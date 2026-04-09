@@ -4,6 +4,7 @@ suberror ChoirError {
   AgentNotFound(String)
   ToolNotFound(String)
   PermissionDenied(String, String)
+  PolicyBlocked(String)
   ValidationError(String)
   WorkspaceError(String)
   TransportError(String)
@@ -17,6 +18,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     AgentNotFound(id) => "agent not found: " + id
     ToolNotFound(name) => "tool not found: " + name
     PermissionDenied(role, tool) => "role " + role + " cannot call " + tool
+    PolicyBlocked(msg) => "policy blocked: " + msg
     ValidationError(msg) => "validation error: " + msg
     WorkspaceError(msg) => "workspace error: " + msg
     TransportError(msg) => "transport error: " + msg
@@ -42,6 +44,11 @@ pub fn ChoirError::permission_denied(
   tool : String,
 ) -> ChoirError {
   PermissionDenied(role, tool)
+}
+
+///|
+pub fn ChoirError::policy_blocked(msg : String) -> ChoirError {
+  PolicyBlocked(msg)
 }
 
 ///|
@@ -93,6 +100,7 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     ToolNotFound(name) => ChoirError::tool_not_found(name).message()
     PermissionDenied(role, tool) =>
       ChoirError::permission_denied(role, tool).message()
+    PolicyBlocked(msg) => ChoirError::policy_blocked(msg).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
     WorkspaceError(msg) => ChoirError::workspace_error(msg).message()
     TransportError(msg) => ChoirError::transport_error(msg).message()
@@ -109,6 +117,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     AgentNotFound(_)
     | ToolNotFound(_)
     | PermissionDenied(_, _)
+    | PolicyBlocked(_)
     | ValidationError(_)
     | WorkspaceError(_)
     | TransportError(_)

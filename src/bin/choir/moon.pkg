@@ -11,6 +11,8 @@ import {
   "choir/src/hooks",
   "choir/src/workspace",
   "choir/src/runtime",
+  "choir/src/policy",
+  "choir/src/phase",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/string",

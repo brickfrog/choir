@@ -196,3 +196,67 @@ test "decide_merge blocks on failed verify" {
   assert_eq(decision.label(), "blocked")
   assert_true(decision.reason().contains("local verify failed"))
 }
+
+///|
+test "classify_tl_parent_branch_paths returns doc only for markdown and docs paths" {
+  let class = classify_tl_parent_branch_paths([
+    "README.md", ".choir/context/tl.md", "docs/design/overview.txt",
+  ])
+  assert_true(class == TLParentBranchChangeClass::DocOnly)
+}
+
+///|
+test "classify_tl_parent_branch_paths returns non doc for source files" {
+  let class = classify_tl_parent_branch_paths([
+    "README.md", "src/server/handler.mbt",
+  ])
+  assert_true(class == TLParentBranchChangeClass::NonDoc)
+}
+
+///|
+test "decide_tl_parent_branch_write blocks non doc changes during live wave" {
+  let decision = decide_tl_parent_branch_write(
+    true,
+    Some(3),
+    ["src/tools/dispatch.mbt"],
+    false,
+  )
+  assert_true(decision.is_blocked())
+  assert_true(decision.reason().contains("wave 3"))
+}
+
+///|
+test "decide_tl_parent_branch_write allows doc only changes during live wave" {
+  let decision = decide_tl_parent_branch_write(
+    true,
+    Some(1),
+    ["README.md", ".choir/context/common.md"],
+    false,
+  )
+  assert_false(decision.is_blocked())
+  assert_true(decision.reason().contains("doc-only"))
+}
+
+///|
+test "decide_tl_parent_branch_write allows explicit override" {
+  let decision = decide_tl_parent_branch_write(
+    true,
+    Some(1),
+    ["src/server/handler.mbt"],
+    true,
+  )
+  assert_false(decision.is_blocked())
+  assert_true(decision.reason().contains("override"))
+}
+
+///|
+test "decide_tl_parent_branch_write allows non doc changes when no live wave exists" {
+  let decision = decide_tl_parent_branch_write(
+    false,
+    Some(4),
+    ["src/server/handler.mbt"],
+    false,
+  )
+  assert_false(decision.is_blocked())
+  assert_true(decision.reason().contains("no live wave"))
+}

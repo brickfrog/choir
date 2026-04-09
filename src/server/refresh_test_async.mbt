@@ -1,4 +1,20 @@
 ///|
+async fn mock_refresh_capture(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+  }
+  (1, "")
+}
+
+///|
 async test "ServerState::refresh_pr_with triggers poll and updates state" {
   let project_dir = "/tmp/choir-refresh-state-test-" +
     @sys.get_pid().to_string() +
@@ -40,7 +56,13 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
       parent: Some(parent_id),
       workspace: project_dir,
       branch: "work",
-      terminal_target: None,
+      terminal_target: Some(
+        @workspace.local_target_for(
+          terminal_session,
+          "main.dev",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
       host: @types.Host::Local,
       spawn_depth: 1,
       state: @types.AgentState::Active,
@@ -77,17 +99,22 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
   }
 
   let mut runner_called = false
-  state.refresh_pr_with(pr_number, 200L, 900L, mock_poll, runner=async fn(
-    cmds,
-  ) {
-    @async.sleep(0)
-    runner_called = true
-    let res = []
-    for _ in cmds {
-      res.push(0)
-    }
-    res
-  })
+  state.refresh_pr_with(
+    pr_number,
+    200L,
+    900L,
+    mock_poll,
+    runner=async fn(cmds) {
+      @async.sleep(0)
+      runner_called = true
+      let res = []
+      for _ in cmds {
+        res.push(0)
+      }
+      res
+    },
+    capture=mock_refresh_capture,
+  )
 
   assert_true(poll_called)
   assert_true(runner_called)
@@ -139,7 +166,13 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
       parent: Some(parent_id),
       workspace: project_dir,
       branch: "work",
-      terminal_target: None,
+      terminal_target: Some(
+        @workspace.local_target_for(
+          terminal_session,
+          "main.dev",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
       host: @types.Host::Local,
       spawn_depth: 1,
       state: @types.AgentState::Active,
@@ -188,17 +221,22 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
   }
 
   let mut runner_called = false
-  state.refresh_pr_with(pr_number, 200L, 900L, mock_poll, runner=async fn(
-    _cmds,
-  ) {
-    @async.sleep(0)
-    runner_called = true
-    let res = []
-    for _ in _cmds {
-      res.push(0)
-    }
-    res
-  })
+  state.refresh_pr_with(
+    pr_number,
+    200L,
+    900L,
+    mock_poll,
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      runner_called = true
+      let res = []
+      for _ in _cmds {
+        res.push(0)
+      }
+      res
+    },
+    capture=mock_refresh_capture,
+  )
 
   assert_true(runner_called)
 }

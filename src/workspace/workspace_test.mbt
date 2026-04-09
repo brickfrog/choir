@@ -123,15 +123,20 @@ test "zellij_new_tab_shell keeps sh -lc for script launches" {
 }
 
 ///|
-test "init_tl_zellij_tab_command claude uses env argv and single sh -lc trailer" {
-  let cmd = @workspace.init_tl_zellij_tab_command("howdy", "/proj", "claude")
+test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
+  let cmd = @workspace.init_tl_zellij_tab_command(
+    "howdy", "/proj", "claude", "main",
+  )
   assert_eq(cmd.program, "zellij")
-  assert_eq(cmd.args[9], "env")
-  let n = cmd.args.length()
-  assert_eq(cmd.args[n - 3], "sh")
-  assert_eq(cmd.args[n - 2], "-lc")
-  let script = cmd.args[n - 1]
+  assert_eq(cmd.args[9], "sh")
+  assert_eq(cmd.args[10], "-lc")
+  let script = cmd.args[11]
   assert_true(script.contains("claude"))
+  assert_true(script.contains("CHOIR_AGENT_ID='root'"))
+  assert_true(script.contains("CHOIR_BRANCH='main'"))
+  assert_true(script.contains("choir tl-policy-watch --pid"))
+  assert_true(script.contains("exec claude"))
+  assert_false(script.contains("child_pid=$!"))
   assert_true(script.contains("[TL exited]"))
   assert_true(script.contains("exec bash -l"))
 }
@@ -565,6 +570,36 @@ test "spawn_commands worktree config write content" {
   )
   assert_eq(cmds[5].program, @workspace.native_leaf_helpers_program)
   assert_eq(cmds[6].program, "zellij")
+}
+
+///|
+test "spawn_commands wraps TL worktree launch with policy watcher shell" {
+  let spec = @types.SpawnSpec::{
+    slug: "subtl-a",
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    task: "plan work",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 1,
+    automerge: None,
+  }
+  let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
+  let last = cmds[cmds.length() - 1]
+  assert_eq(last.program, "zellij")
+  assert_eq(last.args[9], "sh")
+  assert_eq(last.args[10], "-lc")
+  let script = last.args[11]
+  assert_true(script.contains("CHOIR_AGENT_ID='main.subtl-a'"))
+  assert_true(script.contains("CHOIR_ROLE='tl'"))
+  assert_true(script.contains("choir tl-policy-watch --pid"))
+  assert_true(script.contains("exec claude"))
+  assert_false(script.contains("child_pid=$!"))
 }
 
 ///|
