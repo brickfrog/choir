@@ -502,6 +502,8 @@ fn evidence_events_for_poll_snapshot(
           pr_url=evidence_optional_string(tracked.pr_url),
         ),
       )
+    @poller.PollEvent::ReviewThreadsResolved(_) =>
+      events.push(@evidence.EvidenceEvent::ReviewThreadsResolved)
     _ => ()
   }
   events
@@ -867,6 +869,31 @@ fn parent_poll_event_message(
         )
       Some((message, @types.Status::Success))
     }
+    ReviewThreadsResolved(n) => {
+      let summary = @tools.format_tl_pr_recheck_summary(
+        tracked,
+        project_dir,
+        unresolved_threads_for_recheck,
+        task_contract~,
+      )
+      let message = "[THREADS RESOLVED] " +
+        agent_id +
+        " PR #" +
+        n.to_string() +
+        " review threads were marked resolved (not a merge/review verdict).\n" +
+        "branch: " +
+        branch +
+        "\n" +
+        "parent_branch: " +
+        parent_branch.unwrap_or("<unknown>") +
+        pr_url +
+        "\n\n" +
+        summary +
+        parent_poll_tl_decision_suffix(
+          tracked, event, unresolved_threads_for_recheck,
+        )
+      Some((message, @types.Status::Info))
+    }
   }
 }
 
@@ -884,6 +911,7 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
     CopilotIssueCommentSeen(n) => n
     PRMerged(n) => n
     MergeReady(n) => n
+    ReviewThreadsResolved(n) => n
   }
 }
 
@@ -1008,6 +1036,15 @@ fn leaf_poll_review_injection_message(
         ),
       )
     MergeReady(_) => None
+    ReviewThreadsResolved(n) =>
+      Some(
+        (
+          "[REVIEW] PR #" +
+          n.to_string() +
+          ": review threads marked resolved (re-check state)",
+          @types.Status::Info,
+        ),
+      )
   }
 }
 
@@ -1330,48 +1367,53 @@ fn pr_comment_body(
       )
     PRMerged(_) => None
     MergeReady(_) => None
+    ReviewThreadsResolved(n) =>
+      Some(
+        (
+          n, "**Choir:** review threads marked resolved — re-checking PR state (not a merge signal).",
+        ),
+      )
   }
 }
 
 ///|
-async fn deliver_poller_stall_notifications(
+async fn deliver_poller_stall_notification_for(
   state : ServerState,
+  pr : @poller.TrackedPR,
   now : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
-  let pairs : Array[(@poller.TrackedPR, Bool)] = []
-  state.poller.tracked.each(fn(_k, pr) {
-    let active = try state.registry.get(pr.agent_id) catch {
-      _ => false
-    } noraise {
-      agent =>
-        match agent.state {
-          @types.AgentState::Active | @types.AgentState::Completing => true
-          _ => false
-        }
-    }
-    pairs.push((pr, active))
-  })
+  let active = try state.registry.get(pr.agent_id) catch {
+    _ => false
+  } noraise {
+    agent =>
+      match agent.state {
+        @types.AgentState::Active | @types.AgentState::Completing => true
+        _ => false
+      }
+  }
   let stall_threshold_seconds : Int64 = 600L
   let stalled = @poller.detect_stalled_on_review(
-    pairs, now, stall_threshold_seconds,
+    [(pr, active)],
+    now,
+    stall_threshold_seconds,
   )
-  for pr in stalled {
-    let mins = (now - pr.changes_requested_since) / 60L
+  for p in stalled {
+    let mins = (now - p.changes_requested_since) / 60L
     let msg = "[STALLED] PR #" +
-      pr.pr_number.to_string() +
+      p.pr_number.to_string() +
       " (" +
-      pr.agent_id +
+      p.agent_id +
       ") — changes requested " +
       mins.to_string() +
       "m ago, no new commits from leaf"
     try {
-      let parent = state.resolve_parent_for_delivery(pr.agent_id)
+      let parent = state.resolve_parent_for_delivery(p.agent_id)
       ignore(
         (state.append_file)(
           state.config.project_dir + "/.choir/delivery.log",
           "[poller-parent] agent=" +
-          pr.agent_id +
+          p.agent_id +
           " parent=" +
           parent.agent_id.to_string() +
           " terminal_target=" +
@@ -1383,18 +1425,31 @@ async fn deliver_poller_stall_notifications(
       )
       let delivery = @message.plan_delivery(
         parent,
-        pr.agent_id,
+        p.agent_id,
         msg,
         @types.Status::Info,
       )
       ignore(@tools.execute_delivery(delivery, runner))
-      match state.poller.get(pr.pr_number) {
+      match state.poller.get(p.pr_number) {
         Some(cur) => state.poller.restore({ ..cur, stall_notified: true })
         None => ()
       }
     } catch {
       _ => ()
     }
+  }
+}
+
+///|
+async fn deliver_poller_stall_notifications(
+  state : ServerState,
+  now : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let prs : Array[@poller.TrackedPR] = []
+  state.poller.tracked.each(fn(_k, pr) { prs.push(pr) })
+  for pr in prs {
+    deliver_poller_stall_notification_for(state, pr, now, runner)
   }
 }
 
@@ -1411,7 +1466,8 @@ async fn deliver_pending_poll_events(
     let agent_id = pending_agent_ids[i]
     let unresolved_threads : Int? = match event {
       @poller.PollEvent::CIFailureCleared(_)
-      | @poller.PollEvent::CILatestHeadRollupSucceeded(_) => {
+      | @poller.PollEvent::CILatestHeadRollupSucceeded(_)
+      | @poller.PollEvent::ReviewThreadsResolved(_) => {
         let (count, _) = @tools.fetch_unresolved_review_threads(
           poll_event_pr_number(event),
           state.config.project_dir,
@@ -1581,41 +1637,38 @@ fn poller_sanitize_event_for_log(raw : String) -> String {
 }
 
 ///|
-async fn deliver_orphaned_pr_notifications(
+async fn deliver_orphaned_pr_notification_for(
   state : ServerState,
+  pr : @poller.TrackedPR,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
-  let pairs : Array[(@poller.TrackedPR, Bool)] = []
-  state.poller.tracked.each(fn(_k, pr) {
-    let agent_opt = try state.registry.get(pr.agent_id) catch {
-      _ => None
-    } noraise {
-      a => Some(a)
-    }
-    let agent_is_active = match agent_opt {
-      Some(agent) =>
-        agent.state == @types.AgentState::Active ||
-        agent.state == @types.AgentState::Completing
-      None => false
-    }
-    pairs.push((pr, agent_is_active))
-  })
-  let orphans = @poller.detect_orphaned_prs(pairs)
+  let agent_opt = try state.registry.get(pr.agent_id) catch {
+    _ => None
+  } noraise {
+    a => Some(a)
+  }
+  let agent_is_active = match agent_opt {
+    Some(agent) =>
+      agent.state == @types.AgentState::Active ||
+      agent.state == @types.AgentState::Completing
+    None => false
+  }
+  let orphans = @poller.detect_orphaned_prs([(pr, agent_is_active)])
   let append_file = state.append_file
   let project_dir = state.config.project_dir
-  for pr in orphans {
+  for p in orphans {
     let message = "[ORPHANED PR] PR #" +
-      pr.pr_number.to_string() +
+      p.pr_number.to_string() +
       " (" +
-      pr.agent_id +
+      p.agent_id +
       ") — owning agent is no longer active; merge manually via merge_pr or respawn via rescue_leaf"
     try {
-      let parent = state.resolve_parent_for_delivery(pr.agent_id)
+      let parent = state.resolve_parent_for_delivery(p.agent_id)
       ignore(
         append_file(
           project_dir + "/.choir/delivery.log",
           "[poller-parent] agent=" +
-          pr.agent_id +
+          p.agent_id +
           " parent=" +
           parent.agent_id.to_string() +
           " terminal_target=" +
@@ -1627,13 +1680,13 @@ async fn deliver_orphaned_pr_notifications(
       )
       let delivery = @message.plan_delivery(
         parent,
-        pr.agent_id,
+        p.agent_id,
         message,
         @types.Status::Failure,
       )
       match @tools.execute_delivery(delivery, runner) {
         Ok(_) =>
-          match state.poller.get(pr.pr_number) {
+          match state.poller.get(p.pr_number) {
             Some(current) =>
               state.poller.restore({ ..current, orphan_notified: true })
             None => ()
@@ -1643,6 +1696,18 @@ async fn deliver_orphaned_pr_notifications(
     } catch {
       _ => ()
     }
+  }
+}
+
+///|
+async fn deliver_orphaned_pr_notifications(
+  state : ServerState,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let prs : Array[@poller.TrackedPR] = []
+  state.poller.tracked.each(fn(_k, pr) { prs.push(pr) })
+  for pr in prs {
+    deliver_orphaned_pr_notification_for(state, pr, runner)
   }
 }
 
@@ -1847,9 +1912,20 @@ pub async fn ServerState::refresh_pr_with(
     fn(_) { () },
     force_refresh=true,
   )
-  deliver_orphaned_pr_notifications(self, runner)
-  deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
-  deliver_poller_stall_notifications(self, now, runner)
+  match self.poller.get(pr_number) {
+    Some(pr) => {
+      if pending_events.length() == 0 {
+        pending_events.push(@poller.PollEvent::ReviewThreadsResolved(pr_number))
+        pending_agent_ids.push(pr.agent_id)
+      }
+      deliver_orphaned_pr_notification_for(self, pr, runner)
+      deliver_pending_poll_events(
+        self, pending_events, pending_agent_ids, runner,
+      )
+      deliver_poller_stall_notification_for(self, pr, now, runner)
+    }
+    None => ()
+  }
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 

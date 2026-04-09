@@ -551,6 +551,7 @@ pub fn plan_tl_poll_event_parent(
     CopilotIssueCommentSeen(_) =>
       tl_snapshot_workflow_category(tracked, merge_ready)
     MergeReady(_) => MergeGateOpenPendingPolicyConfirmation
+    ReviewThreadsResolved(_) => ReadyForTLRecheck
   }
 }
 
