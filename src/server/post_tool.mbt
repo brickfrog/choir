@@ -40,6 +40,7 @@ pub(all) enum TeardownEffect {
     parent_message~ : String,
     reason~ : @phase.FailureReason
   )
+  RefreshPR(Int)
 } derive(Debug, Eq)
 
 ///|
@@ -436,6 +437,20 @@ pub fn plan_post_tool_actions(
     }
     for agent_id in watch_ids {
       effects.push(WatchPane(agent_id~))
+    }
+  }
+
+  // resolve_review_thread
+  if req.name == "resolve_review_thread" {
+    match request_agent_id(req) {
+      Some(agent_id) =>
+        for pr in poller.tracked.values() {
+          if pr.agent_id == agent_id {
+            effects.push(RefreshPR(pr.pr_number))
+            break
+          }
+        }
+      None => ()
     }
   }
   effects
