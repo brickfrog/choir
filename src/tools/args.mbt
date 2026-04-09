@@ -42,7 +42,7 @@ pub(all) struct ForkWaveArgs {
   parent_session_id : String?
   /// Appended to each leaf task so children can pass it to `file_pr` / Copilot review.
   review_context : String?
-  /// When true, the server will automatically merge each leaf PR via merge_pr once review policy is satisfied. Default false.
+  /// Reserved flag for server-triggered automatic merge via merge_pr after review policy is satisfied. Currently a no-op (default false). The TL merges manually until the server-triggered path is implemented.
   automerge : Bool
 } derive(Debug, Eq)
 
