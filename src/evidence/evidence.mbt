@@ -79,6 +79,7 @@ pub(all) enum EvidenceEvent {
   CopilotIssueCommentUnobserved
   MergeObserved(pr_number~ : Int, pr_url~ : String?)
   UserOverrideObserved(scope~ : String, reason~ : String?)
+  ReviewThreadsResolved
 } derive(Debug, Eq)
 
 ///|
@@ -108,6 +109,7 @@ pub fn EvidenceEvent::type_name(self : EvidenceEvent) -> String {
     CopilotIssueCommentUnobserved => "evidence.copilot_issue_comment_unobserved"
     MergeObserved(..) => "evidence.merge_observed"
     UserOverrideObserved(..) => "evidence.user_override_observed"
+    ReviewThreadsResolved => "evidence.review_threads_resolved"
   }
 }
 
@@ -160,6 +162,7 @@ fn evidence_event_data_json(event : EvidenceEvent) -> Json {
         None => ()
       }
     }
+    ReviewThreadsResolved => ()
   }
   fields.to_json()
 }
@@ -255,6 +258,8 @@ fn evidence_event_from_fields(
         ),
       )
     }
+    "evidence.review_threads_resolved" =>
+      Some(EvidenceEvent::ReviewThreadsResolved)
     _ => None
   }
 }
