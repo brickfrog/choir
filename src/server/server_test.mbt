@@ -336,7 +336,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
   )
   let mut parent_review_mentions_replacement = false
   for d in deliveries {
-    match d {
+    match d.delivery {
       @message.DeliveryMethod::LocalTerminalInput(_, text) =>
         if text.contains(new_id) && text.contains("[REVIEW]") {
           parent_review_mentions_replacement = true
@@ -593,4 +593,139 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
   } noraise {
     _ => fail("expected validation error for mismatched parents")
   }
+}
+
+///|
+async test "replay_pending_outbox_with replays pending message and marks it delivered" {
+  let project_dir = "/tmp/choir-outbox-replay-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  let recipient = @types.Agent::{
+    agent_id: "main.parent",
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: @types.LocalTarget::parse(
+      "zellij-tab:" + terminal_session + ":parent",
+    ),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  ignore(state.register_agent(recipient))
+  let delivery = @message.plan_delivery(
+    recipient,
+    "main.leaf",
+    "hello parent",
+    @types.Status::Success,
+  )
+  let pending = @outbox.OutboxMessage::new(
+    "msg-replay-1",
+    "main.leaf",
+    "main.parent",
+    "hello parent",
+    @types.Status::Success,
+    delivery,
+    100L,
+    200L,
+  )
+  assert_true(
+    @outbox.append_outbox_snapshot(@sys.append_file_sync, project_dir, pending),
+  )
+  let mut runner_calls = 0
+  state.replay_pending_outbox_with(150L, runner=async fn(
+    cmds : Array[@workspace.Command],
+  ) {
+    @async.sleep(0)
+    runner_calls = runner_calls + cmds.length()
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  })
+  assert_eq(runner_calls, 1)
+  let messages = @outbox.load_recipient_outbox(
+    @sys.read_file, project_dir, "main.parent",
+  )
+  assert_eq(messages.length(), 1)
+  let message = messages[0]
+  assert_eq(message.delivery_state, @outbox.OutboxDeliveryState::Delivered)
+  assert_eq(message.delivery_attempts, 1)
+  assert_eq(message.last_attempt_at, Some(150L))
+  assert_eq(message.last_error, None)
+}
+
+///|
+test "sweep_outbox marks expired pending messages and compacts recipient file" {
+  let project_dir = "/tmp/choir-outbox-sweep-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  let recipient = @types.Agent::{
+    agent_id: "main.parent",
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: @types.LocalTarget::parse(
+      "zellij-tab:" + terminal_session + ":parent",
+    ),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  ignore(state.register_agent(recipient))
+  let delivery = @message.plan_delivery(
+    recipient,
+    "main.leaf",
+    "stale note",
+    @types.Status::Info,
+  )
+  let pending = @outbox.OutboxMessage::new(
+    "msg-expire-1",
+    "main.leaf",
+    "main.parent",
+    "stale note",
+    @types.Status::Info,
+    delivery,
+    10L,
+    20L,
+  )
+  let failed = pending.record_failed_attempt(15L, "temporary")
+  assert_true(
+    @outbox.append_outbox_snapshot(@sys.append_file_sync, project_dir, pending),
+  )
+  assert_true(
+    @outbox.append_outbox_snapshot(@sys.append_file_sync, project_dir, failed),
+  )
+  state.sweep_outbox(25L)
+  let messages = @outbox.load_recipient_outbox(
+    @sys.read_file, project_dir, "main.parent",
+  )
+  assert_eq(messages.length(), 1)
+  assert_eq(messages[0].delivery_state, @outbox.OutboxDeliveryState::Expired)
+  assert_eq(messages[0].delivery_attempts, 1)
+  let content = @sys.read_file(
+    @outbox.recipient_outbox_path(project_dir, "main.parent"),
+  )
+  let mut nonempty_lines = 0
+  for line in content.split("\n") {
+    if line.to_string().trim().to_string() != "" {
+      nonempty_lines = nonempty_lines + 1
+    }
+  }
+  assert_eq(nonempty_lines, 1)
 }

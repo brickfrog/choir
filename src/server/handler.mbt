@@ -106,6 +106,176 @@ fn stale_pr_close_failure_detail(output : String) -> String {
 }
 
 ///|
+pub(all) struct PlannedDelivery {
+  recipient_id : String
+  sender_id : String
+  body : String
+  status : @types.Status
+  delivery : @message.DeliveryMethod
+} derive(Debug, Eq)
+
+///|
+fn durable_delivery_message_id(
+  state : ServerState,
+  recipient_id : String,
+  sender_id : String,
+  body : String,
+  status : @types.Status,
+  now_ms : Int64,
+) -> String {
+  let hash_input = state.run_id +
+    "|" +
+    recipient_id +
+    "|" +
+    sender_id +
+    "|" +
+    status.to_wire_string() +
+    "|" +
+    body
+  state.run_id +
+  "-" +
+  now_ms.to_string() +
+  "-" +
+  @runtime.simple_hash(hash_input).to_string()
+}
+
+///|
+fn ServerState::append_outbox_snapshot(
+  self : ServerState,
+  message : @outbox.OutboxMessage,
+) -> Result[Unit, @types.ChoirError] {
+  if @outbox.append_outbox_snapshot(
+      self.append_file,
+      self.config.project_dir,
+      message,
+    ) {
+    Ok(())
+  } else {
+    Err(
+      @types.ChoirError::workspace_error(
+        "failed to append outbox snapshot for " + message.recipient_id,
+      ),
+    )
+  }
+}
+
+///|
+fn ServerState::write_recipient_outbox_snapshots(
+  self : ServerState,
+  recipient_id : String,
+  messages : Array[@outbox.OutboxMessage],
+) -> Result[Unit, @types.ChoirError] {
+  if @outbox.write_recipient_outbox(
+      self.write_file_atomic,
+      self.config.project_dir,
+      recipient_id,
+      messages,
+    ) {
+    Ok(())
+  } else {
+    Err(
+      @types.ChoirError::workspace_error(
+        "failed to rewrite outbox for " + recipient_id,
+      ),
+    )
+  }
+}
+
+///|
+async fn ServerState::durable_dispatch_planned(
+  self : ServerState,
+  planned : PlannedDelivery,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Result[Unit, @types.ChoirError] {
+  let created_at = @poller.now_sec()
+  let initial = @outbox.OutboxMessage::new(
+    durable_delivery_message_id(
+      self,
+      planned.recipient_id,
+      planned.sender_id,
+      planned.body,
+      planned.status,
+      @env.now().reinterpret_as_int64(),
+    ),
+    planned.sender_id,
+    planned.recipient_id,
+    planned.body,
+    planned.status,
+    planned.delivery,
+    created_at,
+    created_at + @outbox.default_outbox_ttl_sec,
+  )
+  match self.append_outbox_snapshot(initial) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  match
+    @tools.execute_delivery(
+      planned.delivery,
+      runner,
+      project_dir=self.config.project_dir,
+    ) {
+    Ok(_) => {
+      let delivered = initial.mark_delivered(@poller.now_sec())
+      match self.append_outbox_snapshot(delivered) {
+        Ok(_) => Ok(())
+        Err(e) => Err(e)
+      }
+    }
+    Err(e) => {
+      let failed = initial.record_failed_attempt(@poller.now_sec(), e.message())
+      match self.append_outbox_snapshot(failed) {
+        Ok(_) => Err(e)
+        Err(write_err) => Err(write_err)
+      }
+    }
+  }
+}
+
+///|
+async fn ServerState::durable_deliver_to_agent(
+  self : ServerState,
+  recipient : @types.Agent,
+  sender_id : String,
+  body : String,
+  status : @types.Status,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Result[Unit, @types.ChoirError] {
+  let delivery = @message.plan_delivery(recipient, sender_id, body, status)
+  self.durable_dispatch_planned(
+    {
+      recipient_id: recipient.agent_id.to_string(),
+      sender_id,
+      body,
+      status,
+      delivery,
+    },
+    runner,
+  )
+}
+
+///|
+async fn ServerState::durable_deliver_to_parent(
+  self : ServerState,
+  sender_id : String,
+  body : String,
+  status : @types.Status,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Result[Unit, @types.ChoirError] {
+  try self.resolve_parent_for_delivery(sender_id) catch {
+    e =>
+      Err(
+        @types.ChoirError::workspace_error(
+          @types.choir_error_message_from_caught(e),
+        ),
+      )
+  } noraise {
+    parent =>
+      self.durable_deliver_to_agent(parent, sender_id, body, status, runner)
+  }
+}
+
+///|
 async fn deliver_stale_pr_reconciliation_message(
   state : ServerState,
   pr : @poller.TrackedPR,
@@ -113,13 +283,7 @@ async fn deliver_stale_pr_reconciliation_message(
   status : @types.Status,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
-  try {
-    let parent = state.resolve_parent_for_delivery(pr.agent_id)
-    let delivery = @message.plan_delivery(parent, pr.agent_id, message, status)
-    ignore(@tools.execute_delivery(delivery, runner))
-  } catch {
-    _ => ()
-  }
+  ignore(state.durable_deliver_to_parent(pr.agent_id, message, status, runner))
 }
 
 ///|
@@ -552,6 +716,79 @@ pub async fn ServerState::persist_recovered_poller_state(
   let tracked = []
   self.poller.tracked.each(fn(_k, v) { tracked.push(v) })
   (self.recovery_provider.write_poller_state)(self.config.project_dir, tracked)
+}
+
+///|
+pub async fn ServerState::replay_pending_outbox_with(
+  self : ServerState,
+  now : Int64,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+) -> Unit {
+  for agent in self.registry.list() {
+    let recipient_id = agent.agent_id.to_string()
+    let messages = @outbox.load_recipient_outbox(
+      self.read_file,
+      self.config.project_dir,
+      recipient_id,
+    )
+    if messages.length() == 0 {
+      continue
+    }
+    let updated : Array[@outbox.OutboxMessage] = []
+    for message in messages {
+      let next = if message.delivery_state !=
+        @outbox.OutboxDeliveryState::Pending {
+        message
+      } else if now >= message.expires_at {
+        message.mark_expired()
+      } else {
+        match
+          @tools.execute_delivery(
+            message.delivery_method,
+            runner,
+            project_dir=self.config.project_dir,
+          ) {
+          Ok(_) => message.mark_delivered(now)
+          Err(e) => message.record_failed_attempt(now, e.message())
+        }
+      }
+      updated.push(next)
+    }
+    ignore(self.write_recipient_outbox_snapshots(recipient_id, updated))
+  }
+}
+
+///|
+pub async fn ServerState::replay_pending_outbox(
+  self : ServerState,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+) -> Unit {
+  self.replay_pending_outbox_with(@poller.now_sec(), runner~)
+}
+
+///|
+pub fn ServerState::sweep_outbox(self : ServerState, now : Int64) -> Unit {
+  for agent in self.registry.list() {
+    let recipient_id = agent.agent_id.to_string()
+    let messages = @outbox.load_recipient_outbox(
+      self.read_file,
+      self.config.project_dir,
+      recipient_id,
+    )
+    if messages.length() == 0 {
+      continue
+    }
+    let updated : Array[@outbox.OutboxMessage] = []
+    for message in messages {
+      if message.delivery_state == @outbox.OutboxDeliveryState::Pending &&
+        now >= message.expires_at {
+        updated.push(message.mark_expired())
+      } else {
+        updated.push(message)
+      }
+    }
+    ignore(self.write_recipient_outbox_snapshots(recipient_id, updated))
+  }
 }
 
 ///|
@@ -1579,8 +1816,8 @@ pub fn ServerState::plan_poll_event_deliveries(
   agent_id : String,
   unresolved_threads_for_recheck : Int?,
   skip_parent? : Bool = false,
-) -> Array[@message.DeliveryMethod] {
-  let deliveries : Array[@message.DeliveryMethod] = []
+) -> Array[PlannedDelivery] {
+  let deliveries : Array[PlannedDelivery] = []
   let tracked = self.poller.get(poll_event_pr_number(event))
   let leaf_agent_id = match tracked {
     Some(pr) => pr.agent_id
@@ -1660,9 +1897,15 @@ pub fn ServerState::plan_poll_event_deliveries(
                   "\n",
                 ),
               )
-              deliveries.push(
-                @message.plan_delivery(parent, leaf_agent_id, message, status),
-              )
+              deliveries.push({
+                recipient_id: parent.agent_id.to_string(),
+                sender_id: leaf_agent_id,
+                body: message,
+                status,
+                delivery: @message.plan_delivery(
+                  parent, leaf_agent_id, message, status,
+                ),
+              })
             } catch {
               _ => ()
             }
@@ -1678,9 +1921,15 @@ pub fn ServerState::plan_poll_event_deliveries(
         @types.AgentState::Active | @types.AgentState::Completing =>
           match leaf_poll_review_injection_message(event, tracked) {
             Some((message, status)) =>
-              deliveries.push(
-                @message.plan_delivery(agent, "poller", message, status),
-              )
+              deliveries.push({
+                recipient_id: agent.agent_id.to_string(),
+                sender_id: "poller",
+                body: message,
+                status,
+                delivery: @message.plan_delivery(
+                  agent, "poller", message, status,
+                ),
+              })
             None => ()
           }
         _ => () // Done/Failed/Spawning — skip leaf delivery
@@ -1822,10 +2071,21 @@ async fn deliver_poller_stall_notification_for(
         msg,
         @types.Status::Info,
       )
-      ignore(@tools.execute_delivery(delivery, runner))
-      match state.poller.get(p.pr_number) {
-        Some(cur) => state.poller.restore({ ..cur, stall_notified: true })
-        None => ()
+      ignore(delivery)
+      match
+        state.durable_deliver_to_agent(
+          parent,
+          p.agent_id,
+          msg,
+          @types.Status::Info,
+          runner,
+        ) {
+        Ok(_) =>
+          match state.poller.get(p.pr_number) {
+            Some(cur) => state.poller.restore({ ..cur, stall_notified: true })
+            None => ()
+          }
+        Err(_) => ()
       }
     } catch {
       _ => ()
@@ -1885,13 +2145,13 @@ async fn deliver_pending_poll_events(
       None
     }
     for
-      delivery in state.plan_poll_event_deliveries(
+      planned in state.plan_poll_event_deliveries(
         event,
         agent_id,
         unresolved_threads,
         skip_parent=true,
       ) {
-      ignore(@tools.execute_delivery(delivery, runner))
+      ignore(state.durable_dispatch_planned(planned, runner))
     }
     match state.poller.get(poll_event_pr_number(event)) {
       Some(pr) => {
@@ -1985,7 +2245,10 @@ async fn deliver_pending_poll_events(
           ),
         )
         let delivery = @message.plan_delivery(parent, sender, body, status)
-        ignore(@tools.execute_delivery(delivery, runner))
+        ignore(delivery)
+        ignore(
+          state.durable_deliver_to_agent(parent, sender, body, status, runner),
+        )
       } catch {
         _ => ()
       }
@@ -2016,7 +2279,16 @@ async fn deliver_pending_poll_events(
           row.message,
           row.status,
         )
-        ignore(@tools.execute_delivery(delivery, runner))
+        ignore(delivery)
+        ignore(
+          state.durable_deliver_to_agent(
+            parent,
+            row.leaf_agent_id,
+            row.message,
+            row.status,
+            runner,
+          ),
+        )
       } catch {
         _ => ()
       }
@@ -2104,7 +2376,15 @@ async fn deliver_orphaned_pr_notification_for(
         message,
         @types.Status::Failure,
       )
-      match @tools.execute_delivery(delivery, runner) {
+      ignore(delivery)
+      match
+        state.durable_deliver_to_agent(
+          parent,
+          p.agent_id,
+          message,
+          @types.Status::Failure,
+          runner,
+        ) {
         Ok(_) =>
           match state.poller.get(p.pr_number) {
             Some(current) =>
@@ -2245,6 +2525,7 @@ pub async fn ServerState::process_poller_tick_with(
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   deliver_poller_stall_notifications(self, now, runner)
+  self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 
@@ -2298,6 +2579,7 @@ pub async fn ServerState::process_poller_tick(
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   deliver_poller_stall_notifications(self, now, runner)
+  self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
 
@@ -2597,13 +2879,10 @@ async fn ServerState::interpret_teardown_effects(
       NotifyParent(parent_id~, agent_id~, message~, status~) =>
         try {
           let parent = self.resolve_parent_by_id(parent_id)
-          let delivery = @message.plan_delivery(
-            parent, agent_id, message, status,
-          )
           ignore(
-            @tools.execute_delivery(delivery, runner) catch {
-              _ => Ok(())
-            },
+            self.durable_deliver_to_agent(
+              parent, agent_id, message, status, runner,
+            ),
           )
         } catch {
           _ => ()
@@ -2678,16 +2957,14 @@ async fn ServerState::interpret_teardown_effects(
               let body = merged_pr_parent_message(
                 pr_number, leaf_id, branch, parent_branch, url,
               )
-              let delivery = @message.plan_delivery(
-                parent,
-                leaf_id,
-                body,
-                @types.Status::Success,
-              )
               ignore(
-                @tools.execute_delivery(delivery, runner) catch {
-                  _ => Ok(())
-                },
+                self.durable_deliver_to_agent(
+                  parent,
+                  leaf_id,
+                  body,
+                  @types.Status::Success,
+                  runner,
+                ),
               )
             } catch {
               _ => ()

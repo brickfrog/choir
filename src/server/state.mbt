@@ -4,6 +4,16 @@ fn default_append_file_sync(path : String, content : String) -> Bool {
 }
 
 ///|
+fn default_read_file(path : String) -> String {
+  @sys.read_file(path)
+}
+
+///|
+fn default_write_file_atomic(path : String, content : String) -> Bool {
+  @sys.write_file_atomic(path, content)
+}
+
+///|
 /// Shared server state, passed to all tool handlers.
 pub struct ServerState {
   config : @types.Config
@@ -16,6 +26,8 @@ pub struct ServerState {
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
   append_file : (String, String) -> Bool
+  read_file : (String) -> String
+  write_file_atomic : (String, String) -> Bool
 }
 
 ///|
@@ -67,5 +79,7 @@ pub fn ServerState::new(
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
     append_file: default_append_file_sync,
+    read_file: default_read_file,
+    write_file_atomic: default_write_file_atomic,
   }
 }
