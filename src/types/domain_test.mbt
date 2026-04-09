@@ -253,6 +253,25 @@ test "advisory_evaluation_result ready when review CI and threads are clear" {
 }
 
 ///|
+test "advisory_evaluation_result ready for comment-only review when CI and threads are clear" {
+  let bundle : @types.EvaluationBundle = {
+    task_contract: None,
+    signals: [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Commented,
+        body="left comments",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::CopilotIssueCommentObserved,
+    ],
+  }
+  let result = @types.advisory_evaluation_result(bundle)
+  assert_eq(result.verdict, @types.EvaluationVerdict::Ready)
+  assert_true(result.summary.contains("ready"))
+}
+
+///|
 test "advisory_evaluation_result needs human when verify evidence is missing" {
   let bundle : @types.EvaluationBundle = {
     task_contract: Some({

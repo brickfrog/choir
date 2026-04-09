@@ -321,7 +321,8 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
     Some(n) => n == 0
     None => false
   }
-  let review_ok = tracked.last_review_state == Approved
+  let review_ok = tracked.last_review_state == Approved ||
+    tracked.last_review_state == Commented
   if !review_ok {
     return false
   }
@@ -495,9 +496,9 @@ pub fn tl_tracked_pr_workflow_category_sentence(
     WaitingOnCopilotIssueComment =>
       "Waiting on Copilot review. No action needed yet."
     CopilotIssueCommentSeenRecheckRemainingGates =>
-      "Copilot reviewed. Check approval/threads, then merge_pr if clear."
+      "Copilot reviewed. Check threads/CI, then merge_pr if clear."
     ReadyForTLRecheck =>
-      "CI/review changed. Check approval/threads, then merge_pr if clear."
+      "CI/review changed. Check threads/CI, then merge_pr if clear."
     MergeGateOpenPendingPolicyConfirmation =>
       "MERGE NOW: reviewed, CI green, threads resolved. Run merge_pr."
     ObservedMergedExternal => "PR already merged externally. Kill the leaf."
@@ -547,7 +548,7 @@ pub fn plan_tl_poll_event_parent(
       } else {
         WaitingOnReviewOrCI
       }
-    ReviewCommented(_, _) => WaitingOnReviewOrCI
+    ReviewCommented(_, _) => tl_snapshot_workflow_category(tracked, merge_ready)
     CopilotIssueCommentSeen(_) =>
       tl_snapshot_workflow_category(tracked, merge_ready)
     MergeReady(_) => MergeGateOpenPendingPolicyConfirmation
@@ -567,9 +568,9 @@ pub fn tl_tracked_pr_recheck_gate_line(
   )
   if snapshot_ready {
     if tracked.copilot_issue_comment_seen {
-      "Choir snapshot: no tracked blockers (approved, CI success, zero unresolved threads). Copilot issue comment observed. Confirm repo policy, then merge_pr if appropriate. Does not merge."
+      "Choir snapshot: no tracked blockers (reviewed, CI success, zero unresolved threads). Copilot issue comment observed. Confirm repo policy, then merge_pr if appropriate. Does not merge."
     } else {
-      "Choir snapshot: no tracked blockers (approved, CI success, zero unresolved threads), but no Copilot issue comment observed on this PR yet — confirm policy before merge_pr. Does not merge."
+      "Choir snapshot: no tracked blockers (reviewed, CI success, zero unresolved threads), but no Copilot issue comment observed on this PR yet — confirm policy before merge_pr. Does not merge."
     }
   } else {
     let parts : Array[String] = []
@@ -587,10 +588,7 @@ pub fn tl_tracked_pr_recheck_gate_line(
       parts.push("GitHub review requests changes")
     }
     if tracked.last_review_state == None_ {
-      parts.push("no approving review in GitHub snapshot")
-    }
-    if tracked.last_review_state == Commented {
-      parts.push("latest review is comment-only (not an approval)")
+      parts.push("no review in GitHub snapshot")
     }
     match unresolved_thread_count {
       Some(n) =>

@@ -164,10 +164,7 @@ pub fn decide_merge(
   }
   if review == @types.EvaluationReviewState::Unknown ||
     review == @types.EvaluationReviewState::None_ {
-    return MergeDecision::Wait(reason="waiting for approving review")
-  }
-  if review == @types.EvaluationReviewState::Commented {
-    return MergeDecision::Wait(reason="waiting for review approval")
+    return MergeDecision::Wait(reason="waiting for review")
   }
   if ci == @types.EvaluationCiRollup::Unknown ||
     ci == @types.EvaluationCiRollup::InProgress {

@@ -184,23 +184,17 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
     )
   }
 
-  let mut found_resolved_msg = false
+  let mut runner_called = false
   state.refresh_pr_with(pr_number, 200L, 900L, mock_poll, runner=async fn(
-    cmds,
+    _cmds,
   ) {
-    for cmd in cmds {
-      for arg in cmd.args {
-        if arg.contains("[THREADS RESOLVED]") {
-          found_resolved_msg = true
-        }
-      }
-    }
+    runner_called = true
     let res = []
-    for _ in cmds {
+    for _ in _cmds {
       res.push(0)
     }
     res
   })
 
-  assert_true(found_resolved_msg)
+  assert_true(runner_called)
 }

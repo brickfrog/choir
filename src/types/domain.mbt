@@ -545,11 +545,7 @@ pub fn advisory_evaluation_result(
   }
   if review == EvaluationReviewState::Unknown ||
     review == EvaluationReviewState::None_ {
-    let reason = "no approving review observed"
-    return { verdict: NeedsHuman(reason~), summary: reason }
-  }
-  if review == EvaluationReviewState::Commented {
-    let reason = "latest review is comment-only"
+    let reason = "no review observed"
     return { verdict: NeedsHuman(reason~), summary: reason }
   }
   if ci == EvaluationCiRollup::Unknown || ci == EvaluationCiRollup::InProgress {
