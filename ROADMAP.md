@@ -1,22 +1,15 @@
 # Choir Roadmap
 
-## Current state: External Merge Reconciliation (2026-04-10)
+## Current state: Merge Audit and Operator UX (2026-04-10)
 
-Choir now has typed task contracts, a typed evidence ledger, a pure merge policy, an explicit automerge control plane, hard TL parent-branch enforcement, a durable outbox for server-originated human notifications, and a unified external-merge reconciliation path. Poller-observed merges, manual merges, and recovered-offline merges all converge to the same canonical `Finalized(Merged)` lifecycle outcome through `plan_external_merge_finalization`. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
+Choir now has typed task contracts, a typed evidence ledger, a pure merge policy, an explicit automerge control plane, hard TL parent-branch enforcement, a durable outbox for server-originated human notifications, a unified external-merge reconciliation path, and operator-facing merge audit surfaces. Parent notifications, wave rollups, and the statusline now distinguish manual merge, server automerge, force override, and external observation without relying on ad hoc wording. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
 
 ---
 
-## 🚀 Immediate Next: Operator UX and Task Memory
+## 🚀 Immediate Next: External Task Memory Provider
 
-The merge control plane is explicit, TL parent-branch enforcement is in place, durable delivery exists, and external-merge reconciliation converges to one canonical lifecycle. The remaining work in this milestone is operator visibility and task-memory integration.
+The merge control plane and operator UX are now explicit. The next step in this milestone is task-memory integration rather than more merge-surface cleanup.
 
-### 1. Merge Audit and Operator UX
-- Surface merge provenance and policy reason clearly in TL/operator summaries.
-- Make it obvious when a wave is `automerge=true` versus manual mode.
-- Improve parent-facing notifications so `[MERGE READY]` is informational when automerge is enabled and actionable when it is not.
-- Keep `merge_pr force=true` as an explicit override path with evidence attached.
-
-### 2. External Task Memory Provider
 - Pilot Chainlink as an optional task-memory provider instead of building a Choir-native issue tracker.
 - Start with read-only import of active issue, subissue, dependencies, and handoff context into `TaskContract`.
 - Add write-back for PR URL, execution status, merge outcome, and concise handoff notes.
@@ -39,6 +32,14 @@ Add an optional high-ceremony path for risky work where Choir requests a fresh-c
 ---
 
 ## ✅ Completed
+
+### Merge Audit and Operator UX (2026-04-10)
+- **Explicit Merge Provenance**: Authoritative `[PR MERGED]` notifications now identify whether the merge came from manual `merge_pr`, server automerge, `force=true`, or external observation.
+- **Mode-Aware Parent Messaging**: Parent-facing readiness notifications now show `merge_mode: manual` vs `merge_mode: automerge`, and `[MERGE READY]` is actionable only in manual mode.
+- **Wave and Statusline Visibility**: Wave rollups can show merge mode in the header, and the CLI statusline now distinguishes manual merge-ready PRs from automerge-ready PRs.
+- **Force Override Audit**: `merge_pr force=true` remains explicit in operator-facing merged notifications instead of being buried in evidence only.
+- **Quiet Recovery Finalization**: Restart recovery still reconciles merged leaves to `Finalized(Merged)` but no longer interrupts the TL with a fresh `[PR MERGED]` on startup.
+- **Focused Coverage**: Tests cover parent message rendering, rollup formatting, compact statusline signals, and quiet recovery finalization.
 
 ### External Merge and Orphan Reconciliation (2026-04-10)
 - **Unified External-Merge Path**: Poller-observed `PRMerged` events now carry the full tracked-PR snapshot (branch, URL, review, CI) so the server does not lose context when the poller untracks.
