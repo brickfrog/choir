@@ -2901,6 +2901,7 @@ async fn ServerState::reconcile_external_merge_with_runner(
   parent_branch : String,
   pr_url : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  notify_parent? : Bool = true,
 ) -> Unit {
   let agent = try self.registry.get(agent_id) catch {
     _ =>
@@ -2915,7 +2916,13 @@ async fn ServerState::reconcile_external_merge_with_runner(
   }
   let lifecycle = self.current_lifecycle(agent_id)
   let effects = plan_external_merge_finalization(
-    agent, lifecycle, pr_number, branch, parent_branch, pr_url,
+    agent,
+    lifecycle,
+    pr_number,
+    branch,
+    parent_branch,
+    pr_url,
+    notify_parent~,
   )
   self.interpret_teardown_effects(effects, runner)
 }

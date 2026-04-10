@@ -44,7 +44,13 @@ pub async fn recover_state(
         pr_url~
       ) =>
         state.reconcile_external_merge_with_runner(
-          agent_id, pr_number, branch, parent_branch, pr_url, @exec.run_sequence,
+          agent_id,
+          pr_number,
+          branch,
+          parent_branch,
+          pr_url,
+          @exec.run_sequence,
+          notify_parent=false,
         )
       @runtime.RecoveryAction::FinalizeOfflineAgent(agent_id~) =>
         state.finalize_recovered_offline_agent(agent_id)
