@@ -1205,7 +1205,7 @@ test "write_chainlink_subissue_id writes override file" {
   let project_dir = "/tmp/choir-ws-subissue-write-" + @sys.get_pid().to_string()
   let workspace = @workspace.worktree_path(project_dir, "leaf")
   assert_true(@sys.create_dir_all(workspace))
-  @workspace.write_chainlink_subissue_id(project_dir, "leaf", "42")
+  assert_true(@workspace.write_chainlink_subissue_id(project_dir, "leaf", "42"))
   assert_eq(@sys.read_file(workspace + "/.chainlink_issue_id"), "42\n")
 }
 
@@ -1233,7 +1233,7 @@ test "chainlink_issue_id_for_agent_workspace prefers override file" {
       ),
     ),
   )
-  @workspace.write_chainlink_subissue_id(project_dir, "leaf", "42")
+  assert_true(@workspace.write_chainlink_subissue_id(project_dir, "leaf", "42"))
   assert_eq(
     @workspace.chainlink_issue_id_for_agent_workspace(
       project_dir,
