@@ -238,6 +238,34 @@ pub fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
 }
 
 ///|
+pub fn parse_chainlink_list_args(args : ToolArgs) -> Result[String, ParseError] {
+  let status = match tool_args_get(args, "status") {
+    Some(v) => {
+      let trimmed = v.trim().to_string()
+      if trimmed == "" {
+        "open"
+      } else {
+        trimmed
+      }
+    }
+    None => "open"
+  }
+  Ok(status)
+}
+
+///|
+pub fn parse_chainlink_show_args(args : ToolArgs) -> Result[String, ParseError] {
+  let id = match tool_args_get(args, "id") {
+    Some(v) => v.trim().to_string()
+    None => return Err(ParseError::MissingField(field="id"))
+  }
+  if id == "" {
+    return Err(ParseError::InvalidFormat(field="id", message="cannot be empty"))
+  }
+  Ok(id)
+}
+
+///|
 fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, ParseError] {
   let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
   if pr_str == "" {
@@ -1238,6 +1266,15 @@ fn parse_tool_request(
       })
     "fork_session" =>
       parse_session_name_args(args).map(fn(a) { ToolRequest::ForkSession(a) })
+    "chainlink_list" =>
+      parse_chainlink_list_args(args).map(fn(status) {
+        ToolRequest::ChainlinkList(status)
+      })
+    "chainlink_show" =>
+      parse_chainlink_show_args(args).map(fn(id) {
+        ToolRequest::ChainlinkShow(id)
+      })
+    "chainlink_ready" => Ok(ToolRequest::ChainlinkReady)
     "file_pr" => parse_file_pr_args(args).map(fn(a) { ToolRequest::FilePr(a) })
     "merge_pr" =>
       parse_merge_pr_args(args).map(fn(a) { ToolRequest::MergePr(a) })
@@ -1446,6 +1483,22 @@ test "parse_fork_wave_args ignores empty issue_id" {
   match parse_fork_wave_args(".", args) {
     Ok(fork) => assert_eq(fork.chainlink_issue_id, None)
     Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_chainlink_show_args rejects missing id" {
+  match parse_chainlink_show_args(tool_args_from_map({})) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "id")
+    _ => fail("expected MissingField(id)")
+  }
+}
+
+///|
+test "parse_chainlink_list_args defaults to open" {
+  match parse_chainlink_list_args(tool_args_from_map({})) {
+    Ok(status) => assert_eq(status, "open")
+    Err(e) => fail("unexpected error: " + e.message())
   }
 }
 
