@@ -679,3 +679,70 @@ test "plan_post_tool_actions includes all RefreshPR for resolve_review_thread su
   assert_true(refreshed.contains(123))
   assert_true(refreshed.contains(456))
 }
+
+///|
+async test "best_effort_release_chainlink_lock_for_agent releases when issue id is present" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("main.tl"),
+    workspace: "/tmp/leaf",
+    branch: "main.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let mut released = false
+  best_effort_release_chainlink_lock_for_agent(
+    "/proj",
+    agent,
+    read_chainlink_issue_id=fn(
+      _project_dir : String,
+      _agent_workspace : String?,
+      _agent_slug : String,
+    ) {
+      Some("5")
+    },
+    release_lock=async fn(issue_id : String) {
+      @async.sleep(0)
+      assert_eq(issue_id, "5")
+      released = true
+      true
+    },
+  )
+  assert_true(released)
+}
+
+///|
+async test "best_effort_release_chainlink_lock_for_agent skips when issue id is absent" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("main.tl"),
+    workspace: "/tmp/leaf",
+    branch: "main.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  best_effort_release_chainlink_lock_for_agent(
+    "/proj",
+    agent,
+    read_chainlink_issue_id=fn(
+      _project_dir : String,
+      _agent_workspace : String?,
+      _agent_slug : String,
+    ) {
+      None
+    },
+    release_lock=async fn(_issue_id : String) {
+      @async.sleep(0)
+      fail("release_lock should not run")
+      false
+    },
+  )
+}
