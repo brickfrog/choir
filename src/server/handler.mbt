@@ -2925,6 +2925,18 @@ async fn ServerState::reconcile_external_merge_with_runner(
     notify_parent~,
   )
   self.interpret_teardown_effects(effects, runner)
+  let chainlink_id = @workspace.chainlink_issue_id_for_agent_workspace(
+    self.config.project_dir,
+    Some(agent.workspace),
+    @phase.extract_slug(agent_id),
+  )
+  match chainlink_id {
+    Some(cid) => {
+      @chainlink.write_back_merge(cid, pr_number, branch)
+      ignore(@chainlink.release_lock(cid))
+    }
+    None => ()
+  }
 }
 
 ///|

@@ -15,6 +15,7 @@ import {
   "choir/src/policy",
   "choir/src/uds",
   "choir/src/hooks",
+  "choir/src/chainlink",
   "moonbitlang/async",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",

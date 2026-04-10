@@ -393,7 +393,7 @@ pub async fn dispatch(
         shutdown_args, project_dir, poller_state, registry, runner,
       )
     ToolRequest::KillAgent(kill_args) =>
-      interpret_kill_agent(kill_args, registry, runner)
+      interpret_kill_agent(kill_args, project_dir, registry, runner)
     ToolRequest::AgentList(args) =>
       match registry {
         Some(reg) => {

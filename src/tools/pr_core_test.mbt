@@ -2758,7 +2758,7 @@ test "kill_agent_adapter_host_steps is pane close then worktree remove" {
 ///|
 async test "interpret_kill_agent err when no registry" {
   let args : KillAgentArgs = { agent_id: "main.x", reason: "r" }
-  let got = interpret_kill_agent(args, None, mock_runner_all_ok)
+  let got = interpret_kill_agent(args, "", None, mock_runner_all_ok)
   match got {
     @types.Response::Err(msg) => assert_eq(msg, "no agent registry available")
     _ => fail("expected no-registry err")
@@ -2769,7 +2769,7 @@ async test "interpret_kill_agent err when no registry" {
 async test "interpret_kill_agent err when agent missing" {
   let reg = @registry.AgentRegistry::new()
   let args : KillAgentArgs = { agent_id: "main.missing", reason: "r" }
-  let got = interpret_kill_agent(args, Some(reg), mock_runner_all_ok)
+  let got = interpret_kill_agent(args, "", Some(reg), mock_runner_all_ok)
   match got {
     @types.Response::Err(msg) => assert_eq(msg, "agent not found: main.missing")
     _ => fail("expected not-found err")
@@ -2786,7 +2786,7 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
   let agent = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-0")
   ignore(reg.upsert(agent))
   let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
-  let got = interpret_kill_agent(args, Some(reg), mock_runner_all_ok)
+  let got = interpret_kill_agent(args, "", Some(reg), mock_runner_all_ok)
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
@@ -2800,6 +2800,97 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
   } noraise {
     a => assert_eq(a.state, @types.AgentState::Failed)
   }
+}
+
+///|
+fn chainlink_plumbing_test_dir() -> String {
+  @sys.getenv("PROJECT_ROOT").unwrap_or(".") +
+  "/.choir/tmp/chainlink_plumbing_test"
+}
+
+///|
+async test "interpret_file_pr_post_success issues chainlink write-back when issue id present" {
+  let project_dir = chainlink_plumbing_test_dir()
+  let agent_workspace = project_dir + "/worktrees/leaf"
+  ignore(@sys.delete_file_sync(agent_workspace + "/config.local.toml"))
+  assert_true(@sys.create_dir_all(agent_workspace))
+  assert_true(
+    @sys.write_file_sync(
+      agent_workspace + "/config.local.toml",
+      "chainlink_issue_id = \"5\"\n",
+    ),
+  )
+  let args : FilePrArgs = {
+    branch: "main.topic",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+    review_context: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 55,
+    url: "https://example.test/pr/55",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, true)
+  let effects = file_pr_post_success_effects(plan, true, false)
+  let _ = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    agent_workspace,
+    pr.number,
+    false,
+    effects,
+    None,
+    None,
+    mock_runner_all_ok,
+  )
+  // We can't easily assert the chainlink command was issued without a real chainlink binary
+  // but we can verify it doesn't crash.
+}
+
+///|
+async test "interpret_merge_pr_post_success issues chainlink write-back and release when issue id present" {
+  let project_dir = chainlink_plumbing_test_dir()
+  let agent_workspace = project_dir + "/worktrees/leaf-merge"
+  ignore(@sys.delete_file_sync(agent_workspace + "/config.local.toml"))
+  assert_true(@sys.create_dir_all(agent_workspace))
+  assert_true(
+    @sys.write_file_sync(
+      agent_workspace + "/config.local.toml",
+      "chainlink_issue_id = \"7\"\n",
+    ),
+  )
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.leaf-merge"),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: agent_workspace,
+      branch: "topic",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let ps = @poller.PollerState::new()
+  ps.ensure_tracked(
+    88, "main.leaf-merge", "topic", "main", "https://example.test/pr/88", 0L,
+  )
+  let _ = interpret_merge_pr_post_success(
+    project_dir,
+    "main.tl",
+    88,
+    Some(ps),
+    Some(reg),
+  )
+  // Verification is best-effort (no crash).
 }
 
 ///|

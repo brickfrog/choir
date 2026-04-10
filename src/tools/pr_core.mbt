@@ -276,6 +276,23 @@ pub async fn interpret_file_pr_post_success(
     }
     _ => ()
   }
+  let chainlink_id = @workspace.chainlink_issue_id_for_agent_workspace(
+    project_dir,
+    Some(file_pr_workdir),
+    @phase.extract_slug(tracked_agent_id),
+  )
+  match chainlink_id {
+    Some(id) => {
+      let pr_url = match effects.dev_event {
+        @phase.DevEvent::PRCreated(url~, ..) => url
+        _ => ""
+      }
+      if pr_url != "" {
+        @chainlink.write_back_pr(id, pr_url, pr_number)
+      }
+    }
+    None => ()
+  }
   let mut review_request_failed = false
   if pr_review {
     match effects.review_context {
@@ -1022,6 +1039,13 @@ pub async fn interpret_fork_wave_post_spawn(
             fork_wave_spawned_registry_agent(spec, project_dir, session),
           ),
         )
+        match spec.chainlink_issue_id {
+          Some(id) => {
+            let branch = @workspace.spawn_git_branch(spec)
+            let _ = @chainlink.claim_lock(id, branch)
+          }
+          None => ()
+        }
       }
     None => ()
   }
@@ -1479,7 +1503,7 @@ pub fn merge_pr_tracked_branch_for_post_success(
 /// After `interpret_merge_pr_merge_host` succeeds: resolve tracked branch,
 /// build `merge_pr_post_success_plan`, apply the TL lifecycle event, optionally
 /// untrack and persist poller state, return the tool response.
-pub fn interpret_merge_pr_post_success(
+pub async fn interpret_merge_pr_post_success(
   project_dir : String,
   caller_id : String,
   pr_number : Int,
@@ -1504,6 +1528,28 @@ pub fn interpret_merge_pr_post_success(
   if plan.poller_untrack_and_write_state {
     match poller_state {
       Some(ps) => {
+        match ps.get(pr_number) {
+          Some(tracked) => {
+            let agent_id = tracked.agent_id
+            let agent_workspace = match registry {
+              Some(reg) => Some(reg.get(agent_id).workspace) catch { _ => None }
+              None => None
+            }
+            let id = @workspace.chainlink_issue_id_for_agent_workspace(
+              project_dir,
+              agent_workspace,
+              @phase.extract_slug(agent_id),
+            )
+            match id {
+              Some(cid) => {
+                @chainlink.write_back_merge(cid, pr_number, tracked.branch)
+                ignore(@chainlink.release_lock(cid))
+              }
+              None => ()
+            }
+          }
+          None => ()
+        }
         ps.untrack(pr_number)
         ignore(ps.write_state_file(project_dir))
       }
@@ -1760,6 +1806,7 @@ pub fn kill_agent_adapter_host_steps() -> Array[KillAgentAdapterHostStep] {
 /// `ToolRequest::KillAgent` control flow while keeping `dispatch` as a thin caller.
 pub async fn interpret_kill_agent(
   args : KillAgentArgs,
+  project_dir : String,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> @types.Response {
@@ -1789,6 +1836,15 @@ pub async fn interpret_kill_agent(
           let _ = runner([cmd])
           ()
         }
+        None => ()
+      }
+      let chainlink_id = @workspace.chainlink_issue_id_for_agent_workspace(
+        project_dir,
+        Some(agent.workspace),
+        @phase.extract_slug(args.agent_id),
+      )
+      match chainlink_id {
+        Some(id) => ignore(@chainlink.release_lock(id))
         None => ()
       }
       ignore(reg.set_state(args.agent_id, @types.AgentState::Failed)) catch {
