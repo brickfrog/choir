@@ -5,7 +5,7 @@ pub async fn fetch_issue(id : String) -> ChainlinkIssue? {
     args: ["issue", "show", id, "--json"],
     workdir: None,
   }
-  let (exit_code, output) = @exec.capture_command_merged(cmd)
+  let (exit_code, output) = @exec.capture_command_stdout(cmd)
   if exit_code != 0 || output == "" {
     return None
   }
@@ -20,7 +20,7 @@ pub async fn fetch_list(status? : String = "open") -> Array[ChainlinkIssue] {
     args: ["issue", "list", "--json", "-s", status],
     workdir: None,
   }
-  let (exit_code, output) = @exec.capture_command_merged(cmd)
+  let (exit_code, output) = @exec.capture_command_stdout(cmd)
   if exit_code != 0 || output == "" {
     return []
   }
