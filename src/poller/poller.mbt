@@ -97,7 +97,7 @@ pub(all) enum PollEvent {
   CILatestHeadRollupSucceeded(Int)
   /// First poll tick where a GitHub Copilot issue-thread comment was observed (REST); sticky state updated.
   CopilotIssueCommentSeen(Int)
-  PRMerged(Int)
+  PRMerged(TrackedPR)
   MergeReady(Int)
   ReviewThreadsResolved(Int)
 } derive(Debug, Eq)
@@ -175,9 +175,9 @@ pub impl Show for PollEvent with output(self, logger) -> Unit {
       logger.write_string(n.to_string())
       logger.write_string(")")
     }
-    PRMerged(n) => {
+    PRMerged(pr) => {
       logger.write_string("PRMerged(")
-      logger.write_string(n.to_string())
+      logger.write_string(pr.pr_number.to_string())
       logger.write_string(")")
     }
     MergeReady(n) => {

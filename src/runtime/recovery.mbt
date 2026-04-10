@@ -14,6 +14,23 @@ pub(all) struct OpenPR {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum KnownPRState {
+  Open
+  Merged
+  Closed
+} derive(Debug, Eq)
+
+///|
+pub(all) struct KnownPR {
+  pr_number : Int
+  branch : String
+  base : String
+  url : String
+  created_sec : Int64?
+  state : KnownPRState
+} derive(Debug, Eq)
+
+///|
 pub(all) struct LocalAgentSnapshot {
   slug : String
   dir_name : String
@@ -41,6 +58,8 @@ pub(all) struct RecoveryPrsSnapshot {
   open_prs : Array[OpenPR]
   /// Entries for open PRs that need fresh GitHub state (no matching persisted track row, and a reconcilable local agent).
   polls : Map[Int, RecoveryPrPollRow]
+  /// Targeted status lookups for known tracked PRs or known agent branches that are no longer open.
+  resolved_prs : Array[KnownPR]
 } derive(Debug)
 
 ///|
@@ -67,6 +86,13 @@ pub(all) enum RecoveryAction {
     created_at~ : Int64
   )
   SyncLifecycle(agent_id~ : String, pr~ : OpenPR, review~ : @poller.ReviewState)
+  FinalizeMergedAgent(
+    agent_id~ : String,
+    pr_number~ : Int,
+    branch~ : String,
+    parent_branch~ : String,
+    pr_url~ : String
+  )
   FinalizeOfflineAgent(agent_id~ : String)
 } derive(Debug)
 
@@ -98,6 +124,8 @@ pub(all) struct RecoveryProvider {
   zellij_live : async (String, String) -> ZellijLiveTargets
   open_prs : async (String) -> Array[OpenPR]
   find_prs_by_head : async (String, String) -> Array[OpenPR]
+  find_prs_by_head_any : async (String, String) -> Array[KnownPR]
+  find_pr_by_number : async (String, Int) -> KnownPR?
   list_agent_containers : async (String) -> Array[String]
   list_agents_in_container : async (String, String) -> Array[String]
   read_agent_config : async (String, String, String) -> String
@@ -204,6 +232,84 @@ pub fn parse_open_prs(output : String) -> Array[OpenPR] {
     }
   }
   prs
+}
+
+///|
+fn known_pr_state_from_fields(fields : Map[String, Json]) -> KnownPRState {
+  let merged_at = match fields.get("mergedAt") {
+    Some(String(v)) => v.trim().to_string()
+    _ => ""
+  }
+  if merged_at != "" {
+    return KnownPRState::Merged
+  }
+  match fields.get("state") {
+    Some(String("OPEN")) => KnownPRState::Open
+    Some(String(_)) => KnownPRState::Closed
+    _ => KnownPRState::Closed
+  }
+}
+
+///|
+fn known_pr_from_fields(fields : Map[String, Json]) -> KnownPR? {
+  let pr_number = match fields.get("number") {
+    Some(Number(n, ..)) => n.to_int()
+    _ => return None
+  }
+  let branch = match fields.get("headRefName") {
+    Some(String(v)) => v
+    _ => return None
+  }
+  let base = match fields.get("baseRefName") {
+    Some(String(v)) => v
+    _ => return None
+  }
+  let url = match fields.get("url") {
+    Some(String(v)) => v
+    _ => return None
+  }
+  let created_sec = match fields.get("createdAt") {
+    Some(String(v)) => parse_github_time_utc_sec(v)
+    _ => None
+  }
+  Some({
+    pr_number,
+    branch,
+    base,
+    url,
+    created_sec,
+    state: known_pr_state_from_fields(fields),
+  })
+}
+
+///|
+pub fn parse_known_prs(output : String) -> Array[KnownPR] {
+  let prs = []
+  let json = @json.parse(output) catch { _ => return prs }
+  let arr = match json {
+    Json::Array(items) => items
+    _ => return prs
+  }
+  for item in arr {
+    match item {
+      Json::Object(fields) =>
+        match known_pr_from_fields(fields) {
+          Some(pr) => prs.push(pr)
+          None => ()
+        }
+      _ => ()
+    }
+  }
+  prs
+}
+
+///|
+pub fn parse_known_pr(output : String) -> KnownPR? {
+  let json = @json.parse(output) catch { _ => return None }
+  match json {
+    Json::Object(fields) => known_pr_from_fields(fields)
+    _ => None
+  }
 }
 
 ///|
@@ -436,6 +542,30 @@ pub fn make_shell_recovery_provider(
       )
       parse_open_prs(output)
     },
+    find_prs_by_head_any: async fn(project_dir, branch) {
+      let output = capture(
+        "gh",
+        [
+          "pr", "list", "--head", branch, "--state", "all", "--json", "number,headRefName,baseRefName,url,state,mergedAt,createdAt",
+        ],
+        Some(project_dir),
+      )
+      parse_known_prs(output)
+    },
+    find_pr_by_number: async fn(project_dir, pr_number) {
+      let output = capture(
+        "gh",
+        [
+          "pr",
+          "view",
+          pr_number.to_string(),
+          "--json",
+          "number,headRefName,baseRefName,url,state,mergedAt,createdAt",
+        ],
+        Some(project_dir),
+      )
+      parse_known_pr(output)
+    },
     list_agent_containers: fn(_project_dir) {
       ["worktrees", "agents", "inline"]
     },
@@ -538,6 +668,124 @@ fn find_persisted_tracked_pr(
     }
   }
   None
+}
+
+///|
+fn open_pr_contains(
+  open_prs : Array[OpenPR],
+  pr_number : Int,
+  branch : String,
+) -> Bool {
+  for pr in open_prs {
+    if pr.pr_number == pr_number && pr.branch == branch {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn open_pr_branch_exists(open_prs : Array[OpenPR], branch : String) -> Bool {
+  for pr in open_prs {
+    if pr.branch == branch {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn resolved_prs_contains(
+  resolved_prs : Array[KnownPR],
+  pr_number : Int,
+) -> Bool {
+  for pr in resolved_prs {
+    if pr.pr_number == pr_number {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn resolved_prs_contains_branch(
+  resolved_prs : Array[KnownPR],
+  branch : String,
+) -> Bool {
+  for pr in resolved_prs {
+    if pr.branch == branch {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn known_pr_sort_key(pr : KnownPR) -> Int64 {
+  match pr.created_sec {
+    Some(ts) => ts
+    None => pr.pr_number.to_int64()
+  }
+}
+
+///|
+fn known_pr_priority(state : KnownPRState) -> Int {
+  match state {
+    KnownPRState::Merged => 2
+    KnownPRState::Open => 1
+    KnownPRState::Closed => 0
+  }
+}
+
+///|
+fn preferred_known_pr(left : KnownPR, right : KnownPR) -> KnownPR {
+  let left_priority = known_pr_priority(left.state)
+  let right_priority = known_pr_priority(right.state)
+  if right_priority > left_priority {
+    return right
+  }
+  if right_priority < left_priority {
+    return left
+  }
+  if known_pr_sort_key(right) > known_pr_sort_key(left) {
+    right
+  } else {
+    left
+  }
+}
+
+///|
+fn best_known_pr_for_branch(prs : Array[KnownPR]) -> KnownPR? {
+  let mut best : KnownPR? = None
+  for pr in prs {
+    best = match best {
+      Some(current) => Some(preferred_known_pr(current, pr))
+      None => Some(pr)
+    }
+  }
+  best
+}
+
+///|
+fn preferred_agent_id_for_known_pr(
+  recovered_agents : Array[@types.Agent],
+  persisted_tracked_prs : Array[@poller.TrackedPR],
+  pr : KnownPR,
+) -> String? {
+  let restored = find_persisted_tracked_pr(
+    persisted_tracked_prs,
+    pr.pr_number,
+    pr.branch,
+  )
+  match
+    find_registered_agent_for_branch_in_list(
+      recovered_agents,
+      pr.branch,
+      preferred_agent_id=restored.map(fn(tracked) { tracked.agent_id }),
+    ) {
+    Some(agent) => Some(agent.agent_id.to_string())
+    None => restored.map(fn(tracked) { tracked.agent_id })
+  }
 }
 
 ///|
@@ -718,6 +966,30 @@ pub fn plan_recovery(
     }
   }
 
+  for pr in input.prs.resolved_prs {
+    if pr.state != KnownPRState::Merged {
+      continue
+    }
+    match
+      preferred_agent_id_for_known_pr(
+        recovered_agents,
+        input.files.persisted_tracked_prs,
+        pr,
+      ) {
+      Some(agent_id) =>
+        actions.push(
+          RecoveryAction::FinalizeMergedAgent(
+            agent_id~,
+            pr_number=pr.pr_number,
+            branch=pr.branch,
+            parent_branch=pr.base,
+            pr_url=pr.url,
+          ),
+        )
+      None => ()
+    }
+  }
+
   { actions, }
 }
 
@@ -752,6 +1024,7 @@ pub async fn discover_recovery_input(
     agent_stage_actions: prebuilt.1,
   }
   let polls : Map[Int, RecoveryPrPollRow] = Map::new()
+  let resolved_prs : Array[KnownPR] = []
   for pr in open_prs {
     match
       find_persisted_tracked_pr(persisted_tracked_prs, pr.pr_number, pr.branch) {
@@ -774,9 +1047,43 @@ pub async fn discover_recovery_input(
         }
     }
   }
+  for tracked in persisted_tracked_prs {
+    if open_pr_contains(open_prs, tracked.pr_number, tracked.branch) {
+      continue
+    }
+    match (provider.find_pr_by_number)(project_dir, tracked.pr_number) {
+      Some(pr) =>
+        if !resolved_prs_contains(resolved_prs, pr.pr_number) {
+          resolved_prs.push(pr)
+        }
+      None => ()
+    }
+  }
+  for agent in recovered_preview {
+    if agent.role != @types.Role::Dev || agent.branch.trim() == "" {
+      continue
+    }
+    if resolved_prs_contains_branch(resolved_prs, agent.branch) {
+      continue
+    }
+    if open_pr_branch_exists(open_prs, agent.branch) {
+      continue
+    }
+    match
+      best_known_pr_for_branch(
+        (provider.find_prs_by_head_any)(project_dir, agent.branch),
+      ) {
+      Some(pr) =>
+        if pr.state != KnownPRState::Open &&
+          !resolved_prs_contains(resolved_prs, pr.pr_number) {
+          resolved_prs.push(pr)
+        }
+      None => ()
+    }
+  }
   {
     panes: { live, },
-    prs: { open_prs, polls },
+    prs: { open_prs, polls, resolved_prs },
     files: { local_agents, persisted_tracked_prs },
     recovered_at,
     prebuilt_agent_phase: Some(prebuilt_phase),
@@ -828,6 +1135,18 @@ pub impl Show for ZellijLiveTargets with output(self, logger) -> Unit {
 
 ///|
 pub impl Show for OpenPR with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for KnownPRState with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
+pub impl Show for KnownPR with output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
 }

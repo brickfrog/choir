@@ -782,3 +782,152 @@ test "sweep_outbox marks expired pending messages and compacts recipient file" {
   }
   assert_eq(nonempty_lines, 1)
 }
+
+///|
+async test "process_poller_tick_with finalizes externally merged leaf and notifies parent" {
+  let project_dir = "/tmp/choir-poller-merged-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+
+  let parent_id = "main.tl"
+  let parent_target = match
+    @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":TL") {
+    Some(target) => target
+    None => fail("expected parseable parent target")
+  }
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some(parent_target),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  let leaf_id = "main.leaf"
+  let leaf_target = match
+    @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":leaf") {
+    Some(target) => target
+    None => fail("expected parseable leaf target")
+  }
+  ignore(
+    state.register_agent({
+      agent_id: leaf_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Gemini,
+      parent: Some(parent_id),
+      workspace: project_dir,
+      branch: "feat/merged",
+      terminal_target: Some(leaf_target),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  @phase.apply_dev_event(
+    project_dir,
+    leaf_id,
+    @phase.DevEvent::PRCreated(
+      pr_number=21,
+      url="https://gh.test/21",
+      branch="feat/merged",
+    ),
+  )
+  @phase.apply_dev_event(
+    project_dir,
+    leaf_id,
+    @phase.DevEvent::ReviewApprovedEv(pr_number=21),
+  )
+
+  state.poller.track(
+    21, leaf_id, "feat/merged", "main", "https://gh.test/21", 0L,
+  )
+  match state.poller.get(21) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::Approved,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_sha: "sha-merged",
+      })
+    None => fail("expected tracked PR before poll tick")
+  }
+
+  let mut sent_parent_merge = false
+  let mut closed_leaf = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "choir" && cmd.args.contains("send") {
+        let text = cmd.args[cmd.args.length() - 1]
+        if text.contains("external merge observed") &&
+          text.contains("main.leaf") {
+          sent_parent_merge = true
+        }
+      }
+      if cmd.program == "choir" &&
+        cmd.args.contains("close") &&
+        cmd.args.contains("zellij-tab:" + terminal_session + ":leaf") {
+        closed_leaf = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+
+  state.process_poller_tick_with(
+    1000L,
+    300L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-merged",
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+      )
+    },
+    runner~,
+  )
+
+  assert_true(sent_parent_merge)
+  assert_true(closed_leaf)
+  assert_eq(state.poller.get(21), None)
+  match @phase.read_lifecycle(project_dir, leaf_id) {
+    Some(lifecycle) => {
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+      )
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Done(reason=@phase.FinalizeReason::Merged)
+        ) => ()
+        _ => fail("expected dev lifecycle done with merged reason")
+      }
+    }
+    None => fail("expected merged lifecycle on disk")
+  }
+  let outbox = @outbox.load_recipient_outbox(
+    @sys.read_file, project_dir, parent_id,
+  )
+  assert_eq(outbox.length(), 1)
+  assert_eq(outbox[0].delivery_state, @outbox.OutboxDeliveryState::Delivered)
+  assert_true(outbox[0].body.contains("external merge observed"))
+}

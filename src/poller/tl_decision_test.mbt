@@ -180,7 +180,7 @@ test "plan_tl_poll_event_parent CI rollup success uses escalation when review ti
 test "plan_tl_poll_event_parent observed merged external" {
   let t = sample_tracked(Approved, Success, 10)
   assert_eq(
-    plan_tl_poll_event_parent(PRMerged(10), t, Some(0)),
+    plan_tl_poll_event_parent(PRMerged(t), t, Some(0)),
     ObservedMergedExternal,
   )
 }

@@ -1,4 +1,10 @@
 ///|
+pub(all) enum MergedDeliverySource {
+  MergePrTool
+  ExternalObservation
+} derive(Debug, Eq)
+
+///|
 pub(all) enum TeardownEffect {
   PersistLifecycle(
     agent_id~ : String,
@@ -30,6 +36,7 @@ pub(all) enum TeardownEffect {
     branch~ : String,
     parent_branch~ : String,
     url~ : String,
+    source~ : MergedDeliverySource,
     parent_id~ : String?
   )
   /// If primary parent notification used a non-terminal channel, optionally echo failure text
@@ -164,6 +171,70 @@ pub fn plan_finalize(
   effects.push(ClearRuntimeTracking(agent_id))
 
   effects
+}
+
+///|
+fn lifecycle_accepts_merge_observed(
+  lifecycle : @phase.AgentLifecycle,
+  pr_number : Int,
+) -> Bool {
+  match
+    @phase.plan_dev_event_checked(
+      lifecycle,
+      @phase.DevEvent::MergeObserved(pr_number~),
+    ) {
+    Ok(_) => true
+    Err(_) => false
+  }
+}
+
+///|
+pub fn plan_external_merge_finalization(
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  pr_number : Int,
+  branch : String,
+  parent_branch : String,
+  url : String,
+) -> Array[TeardownEffect] {
+  let agent_id = agent.agent_id.to_string()
+  match lifecycle.process {
+    @phase.ProcessState::Failed(..)
+    | @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged) =>
+      [ClearRuntimeTracking(agent_id)]
+    _ => {
+      let effects : Array[TeardownEffect] = []
+      if lifecycle_accepts_merge_observed(lifecycle, pr_number) {
+        effects.push(
+          UpdateDevLifecycle(
+            agent_id~,
+            event=@phase.DevEvent::MergeObserved(pr_number~),
+          ),
+        )
+      }
+      effects.push(
+        DeliverToParentMerged(
+          leaf_id=agent_id,
+          pr_number~,
+          branch~,
+          parent_branch~,
+          url~,
+          source=MergedDeliverySource::ExternalObservation,
+          parent_id=agent.parent,
+        ),
+      )
+      for
+        effect in plan_finalize(
+          agent,
+          lifecycle,
+          @types.ExitReason::Merged,
+          notify_parent=false,
+        ) {
+        effects.push(effect)
+      }
+      effects
+    }
+  }
 }
 
 ///|
@@ -351,6 +422,7 @@ pub fn plan_post_tool_actions(
               branch~,
               parent_branch~,
               url~,
+              source=MergedDeliverySource::MergePrTool,
               parent_id=leaf.parent,
             ),
           )
@@ -463,6 +535,7 @@ pub fn merged_pr_parent_message(
   branch : String,
   parent_branch : String,
   pr_url : String,
+  source : MergedDeliverySource,
 ) -> String {
   let branch_disp = if branch == "" { "<unknown>" } else { branch }
   let parent_disp = if parent_branch == "" {
@@ -471,7 +544,17 @@ pub fn merged_pr_parent_message(
     parent_branch
   }
   let url_line = if pr_url == "" { "" } else { "\npr_url: " + pr_url }
-  "[PR MERGED] merge_pr succeeded — PR #" +
+  let header = match source {
+    MergePrTool => "[PR MERGED] merge_pr succeeded — PR #"
+    ExternalObservation => "[PR MERGED] external merge observed — PR #"
+  }
+  let guidance = match source {
+    MergePrTool =>
+      "\nAuthoritative merge signal: do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
+    ExternalObservation =>
+      "\nAutomatic reconciliation is finalizing the leaf. Do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
+  }
+  header +
   pr_number.to_string() +
   " is merged on the remote." +
   "\nleaf_agent: " +
@@ -481,7 +564,7 @@ pub fn merged_pr_parent_message(
   "\nparent_branch: " +
   parent_disp +
   url_line +
-  "\nAuthoritative merge signal: do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
+  guidance
 }
 
 ///|

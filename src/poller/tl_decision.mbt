@@ -504,7 +504,8 @@ pub fn tl_tracked_pr_workflow_category_sentence(
       "CI/review changed. Check threads/CI, then merge_pr if clear."
     MergeGateOpenPendingPolicyConfirmation =>
       "MERGE NOW: reviewed, CI green, threads resolved. Run merge_pr."
-    ObservedMergedExternal => "PR already merged externally. Kill the leaf."
+    ObservedMergedExternal =>
+      "PR already merged externally. Automatic reconciliation will finalize the leaf."
     OrphanedPRNeedsManualAction =>
       "ORPHANED: leaf is dead, PR still open. Run merge_pr or rescue_leaf."
     StalledOnChangesRequested =>
