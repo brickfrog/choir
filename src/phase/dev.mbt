@@ -345,15 +345,14 @@ pub fn dev_can_exit(phase : DevPhase) -> StopCheckResult {
 
 ///|
 pub fn dev_phase_to_json(phase : DevPhase) -> String {
-  derived_dev_phase_json_to_legacy(phase.to_json()).stringify()
+  phase.to_json().stringify()
 }
 
 ///|
 pub fn dev_phase_from_json(json_str : String) -> DevPhase? {
   let json = @json.parse(json_str) catch { _ => return None }
-  let adapted = legacy_dev_phase_json_to_derived(json)
   try {
-    let p : DevPhase = @json.from_json(adapted)
+    let p : DevPhase = @json.from_json(json)
     Some(p)
   } catch {
     _ => None

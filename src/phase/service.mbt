@@ -59,7 +59,7 @@ fn promote_if_wave_complete(
 }
 
 ///|
-fn legacy_dev_phase_from_lifecycle(lifecycle : DevLifecycle) -> DevPhase {
+fn dev_phase_from_lifecycle(lifecycle : DevLifecycle) -> DevPhase {
   match lifecycle {
     DevLifecycle::Working => DevPhase::Working
     DevLifecycle::ReviewOwned(
@@ -333,14 +333,13 @@ pub fn plan_dev_event_checked(
     _ => DevLifecycle::Working
   }
   match event {
-    DevEvent::NotifyParentSuccess(..) =>
-      Ok((legacy_dev_phase_from_lifecycle(dev), []))
+    DevEvent::NotifyParentSuccess(..) => Ok((dev_phase_from_lifecycle(dev), []))
     DevEvent::NotifyParentFailure(message~) => {
       let failed = DevLifecycle::Failed(reason=classify_failure(message))
       let next_lc = { ..lifecycle, workflow: WorkflowState::Dev(failed) }
       Ok(
         (
-          legacy_dev_phase_from_lifecycle(failed),
+          dev_phase_from_lifecycle(failed),
           [
             PersistLifecycle(lifecycle=next_lc),
             AppendLifecycleEvent(
@@ -378,7 +377,7 @@ pub fn plan_dev_event_checked(
               }
               Ok(
                 (
-                  legacy_dev_phase_from_lifecycle(new_dev),
+                  dev_phase_from_lifecycle(new_dev),
                   [
                     PersistLifecycle(lifecycle=next_lc),
                     AppendLifecycleEvent(
@@ -435,7 +434,7 @@ pub fn current_dev_phase(project_dir : String, scope : String) -> DevPhase {
   let store = LifecycleStore::new(project_dir)
   let lifecycle = store.read_or_default(scope, @types.Role::Dev)
   match lifecycle.workflow {
-    WorkflowState::Dev(dev) => legacy_dev_phase_from_lifecycle(dev)
+    WorkflowState::Dev(dev) => dev_phase_from_lifecycle(dev)
     _ => DevPhase::Working
   }
 }
