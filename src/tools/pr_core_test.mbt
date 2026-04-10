@@ -1477,6 +1477,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     parent_session_id: None,
     review_context: None,
     automerge: None,
+    chainlink_issue_id: None,
   }
 }
 
@@ -1516,6 +1517,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     parent_session_id: None,
     review_context: None,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
   assert_eq(plan.spawned_count, 2)

@@ -633,6 +633,17 @@ pub fn parse_fork_wave_args(
       }
     None => None
   }
+  let chainlink_issue_id = match tool_args_get(args, "issue_id") {
+    Some(v) => {
+      let t = v.trim().to_string()
+      if t == "" {
+        None
+      } else {
+        Some(t)
+      }
+    }
+    None => None
+  }
   Ok({
     count,
     tasks,
@@ -646,6 +657,7 @@ pub fn parse_fork_wave_args(
     parent_session_id: lookup_parent_session_id(project_dir, args),
     review_context,
     automerge,
+    chainlink_issue_id,
   })
 }
 

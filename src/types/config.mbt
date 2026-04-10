@@ -33,6 +33,7 @@ pub(all) struct LocalConfig {
   task_contract : TaskContract?
   /// Per-wave automerge override persisted into spawned leaf config. `None` inherits global config.
   automerge : Bool?
+  chainlink_issue_id : String?
 } derive(Debug)
 
 ///|
@@ -70,6 +71,7 @@ pub fn LocalConfig::default() -> LocalConfig {
     spawn_depth: None,
     task_contract: None,
     automerge: None,
+    chainlink_issue_id: None,
   }
 }
 

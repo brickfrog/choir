@@ -214,6 +214,10 @@ fn tool_defs() -> Array[CatalogTool] {
           name: "automerge",
           desc: "Optional per-wave override for server-triggered merge_pr after merge policy reaches MergeNow; omitted inherits config default (default config is false)",
         },
+        {
+          name: "issue_id",
+          desc: "Optional Chainlink issue ID to link spawned leaf work (e.g. \"5\"). Enables automatic lock coordination and write-back.",
+        },
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },
         { name: "verify", desc: "Newline-separated verification commands" },

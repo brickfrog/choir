@@ -19,6 +19,7 @@ pub(all) struct SpawnSpec {
   spawn_depth : Int
   /// Per-wave automerge override persisted into the spawned leaf config. `None` inherits global config.
   automerge : Bool?
+  chainlink_issue_id : String?
 } derive(Debug)
 
 ///|

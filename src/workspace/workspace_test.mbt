@@ -51,6 +51,7 @@ test "canonical agent id uses parent branch and slug" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   assert_eq(@workspace.canonical_agent_id(spec), "main.subtl.leaf-task")
 }
@@ -223,6 +224,7 @@ test "agent_launch_command for each AgentType" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let spec_gemini = { ..spec_claude, agent_type: @types.AgentType::Gemini }
   let spec_moon = { ..spec_claude, agent_type: @types.AgentType::MoonPilot }
@@ -301,6 +303,7 @@ test "agent_launch_command wraps with shell_command" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmd = @workspace.agent_launch_command(
     spec,
@@ -335,6 +338,7 @@ test "agent_launch_command no wrap when shell_command is None" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmd = @workspace.agent_launch_command(spec, "/path", shell_command=None)
   assert_eq(cmd.program, "claude")
@@ -374,6 +378,7 @@ test "agent_launch_command supports command_override" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmd = @workspace.agent_launch_command(
     spec,
@@ -401,6 +406,7 @@ test "agent_launch_command supports Claude fork_session" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmd = @workspace.agent_launch_command(
     spec,
@@ -450,6 +456,7 @@ test "config_local_content includes spawn_depth" {
     reuse_git_branch: None,
     spawn_depth: 1,
     automerge: Some(true),
+    chainlink_issue_id: None,
   }
   let target = match @types.LocalTarget::parse("zellij-tab:choir:subtl-0") {
     Some(t) => t
@@ -481,6 +488,7 @@ test "config_local_content persists task_contract_json when present" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let target = match @types.LocalTarget::parse("zellij-tab:choir:leaf-0") {
     Some(t) => t
@@ -489,6 +497,7 @@ test "config_local_content persists task_contract_json when present" {
   let content = @workspace.config_local_content(spec, "/tmp/wt", target)
   assert_true(content.contains("task_contract_json = "))
   assert_true(content.contains("moon test --target native"))
+  assert_false(content.contains("chainlink_issue_id"))
 }
 
 ///|
@@ -507,6 +516,7 @@ test "spawn_commands for worktree mode returns zellij tab" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
   // cleanup, fetch parent, git worktree add from origin/<parent>, configs, helpers, zellij
@@ -550,6 +560,7 @@ test "spawn_commands worktree config write content" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
   assert_eq(cmds.length(), 7)
@@ -588,6 +599,7 @@ test "spawn_commands wraps TL worktree launch with policy watcher shell" {
     reuse_git_branch: None,
     spawn_depth: 1,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
   let last = cmds[cmds.length() - 1]
@@ -618,6 +630,7 @@ test "spawn_commands gemini worktree adds trust and settings" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
   assert_eq(cmds.length(), 9)
@@ -647,6 +660,7 @@ test "spawn_commands standalone includes config writes" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
   // git init, config.toml, config.local.toml, helpers, zellij new-tab
@@ -684,6 +698,7 @@ test "spawn_commands adds Gemini trust bootstrap" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
   assert_eq(cmds.length(), 9)
@@ -713,6 +728,7 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
   // cleanup, fetch parent, worktree add from origin/<parent>, configs, helpers, mcp json, zellij
@@ -741,6 +757,7 @@ test "spawn_commands for inline mode writes metadata and uses zellij run" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
   assert_eq(cmds.length(), 2)
@@ -780,6 +797,7 @@ test "spawn_commands launch text contains env vars" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
   // Last command is zellij new-tab; env + argv follow `-- env`
@@ -909,6 +927,7 @@ test "remote_spawn_commands produces 3 ssh commands and includes spawn_depth" {
     reuse_git_branch: None,
     spawn_depth: 1,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.remote_spawn_commands(
     spec, "user@remote-host", "git@github.com:org/repo.git", "10.0.0.1:9100",
@@ -958,6 +977,7 @@ test "remote_spawn_commands passes extra MCP servers into launch command" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.remote_spawn_commands(
     spec,
@@ -987,6 +1007,7 @@ test "remote_spawn_commands local side is direct ssh argv (no local shell wrappe
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.remote_spawn_commands(
     spec, "user@host", "git@github.com:org/r.git", "127.0.0.1:9",
@@ -1018,6 +1039,7 @@ test "validate_reuse_spawn_spec rejects missing reuse_git_branch" {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   match @workspace.validate_reuse_spawn_spec(spec) {
     Ok(_) => fail("expected validation error")
@@ -1041,6 +1063,7 @@ test "spawn_commands worktree reuse skips destructive bootstrap" {
     reuse_git_branch: Some("main.salvage"),
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
   assert_eq(cmds.length(), 5)
@@ -1064,6 +1087,7 @@ test "spawn_git_branch honors reuse_git_branch" {
     reuse_git_branch: Some("main.original"),
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   assert_eq(@workspace.spawn_git_branch(spec), "main.original")
 }
