@@ -197,6 +197,10 @@ pub fn config_local_content(
       "\nautomerge = " + (if enabled { "true" } else { "false" }) + "\n"
     None => ""
   }
+  let chainlink_issue_id_line = match spec.chainlink_issue_id {
+    Some(id) => "\nchainlink_issue_id = \"" + escape_toml_string(id) + "\"\n"
+    None => ""
+  }
   "role = \"" +
   escape_toml_string(role_str) +
   "\"\nagent_id = \"" +
@@ -216,6 +220,7 @@ pub fn config_local_content(
   "\"\nspawn_depth = " +
   spec.spawn_depth.to_string() +
   automerge_line +
+  chainlink_issue_id_line +
   task_contract_line
 }
 

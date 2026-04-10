@@ -633,6 +633,17 @@ pub fn parse_fork_wave_args(
       }
     None => None
   }
+  let chainlink_issue_id = match tool_args_get(args, "issue_id") {
+    Some(v) => {
+      let t = v.trim().to_string()
+      if t == "" {
+        None
+      } else {
+        Some(t)
+      }
+    }
+    None => None
+  }
   Ok({
     count,
     tasks,
@@ -646,6 +657,7 @@ pub fn parse_fork_wave_args(
     parent_session_id: lookup_parent_session_id(project_dir, args),
     review_context,
     automerge,
+    chainlink_issue_id,
   })
 }
 
@@ -1404,6 +1416,36 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
       assert_eq(args.caller_id, "agent-1")
     }
     Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses issue_id" {
+  let args = tool_args_from_map({
+    "task": "work",
+    "count": "1",
+    "issue_id": " 42 ",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.chainlink_issue_id, Some("42"))
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args ignores empty issue_id" {
+  let args = tool_args_from_map({
+    "task": "work",
+    "count": "1",
+    "issue_id": "   ",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.chainlink_issue_id, None)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
 
