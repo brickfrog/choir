@@ -25,4 +25,5 @@ If your task names you as Sarcasmotron or an adversary reviewer:
 - **Implementation**: Correctness, resource cleanup, coupling, security surface (injection, overflow, unhandled errors, information leakage).
 - **Output format**: Numbered list. Each item must include `file:line` where applicable and a concrete description of the flaw.
 - Do NOT write "overall this looks good." Only flaws count. If you genuinely find nothing wrong, state that explicitly with justification — do not manufacture nitpicks, but do not soften real problems.
-- Report via `notify_parent` and then `shutdown`.
+- Call `notify_parent` with the FULL numbered list as the message body. Do not summarize. Do not write "Critique complete" or any other placeholder. The entire list must be in the notify body — that is the only channel the parent has to your output.
+- Call `shutdown` after `notify_parent`.
