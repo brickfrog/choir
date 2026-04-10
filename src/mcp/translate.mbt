@@ -482,8 +482,19 @@ fn tool_defs() -> Array[CatalogTool] {
 
 ///|
 /// Create a JSON-RPC response with the list of available tools.
-pub fn tools_list_response(id : JsonRpcId) -> JsonRpcResponse {
-  let defs = tool_defs()
+pub fn tools_list_response(
+  id : JsonRpcId,
+  role : @types.Role,
+) -> JsonRpcResponse {
+  let registry = @tools.ToolRegistry::new()
+  let defs = tool_defs().filter(fn(def) {
+    try {
+      ignore(registry.lookup(role, def.name))
+      true
+    } catch {
+      _ => false
+    }
+  })
   let tools_arr : Array[Json] = defs.map(fn(d) { tool_json(d) })
   let result : Map[String, Json] = { "tools": tools_arr.to_json() }
   { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
