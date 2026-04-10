@@ -456,7 +456,7 @@ test "config_local_content includes spawn_depth" {
     reuse_git_branch: None,
     spawn_depth: 1,
     automerge: Some(true),
-    chainlink_issue_id: Some("7\"escape"),
+    chainlink_issue_id: None,
   }
   let target = match @types.LocalTarget::parse("zellij-tab:choir:subtl-0") {
     Some(t) => t
@@ -466,7 +466,32 @@ test "config_local_content includes spawn_depth" {
   assert_true(content.contains("role = \"tl\""))
   assert_true(content.contains("spawn_depth = 1"))
   assert_true(content.contains("automerge = true"))
-  assert_true(content.contains("chainlink_issue_id = \"7\\\"escape\""))
+}
+
+///|
+test "config_local_content emits chainlink_issue_id" {
+  let spec = @types.SpawnSpec::{
+    slug: "subtl-0",
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    task: "plan",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    chainlink_issue_id: Some("7"),
+  }
+  let target = match @types.LocalTarget::parse("zellij-tab:choir:subtl-0") {
+    Some(t) => t
+    None => fail("expected target")
+  }
+  let content = @workspace.config_local_content(spec, "/tmp/wt", target)
+  assert_true(content.contains("chainlink_issue_id = \"7\""))
 }
 
 ///|
