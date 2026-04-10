@@ -51,6 +51,13 @@ pub async fn fetch_next_text() -> String {
   }
   let (exit_code, output) = @exec.capture_command_merged(cmd)
   if exit_code != 0 {
+    @sys.write_stderr(
+      "Failed to fetch next Chainlink issue: exit code " +
+      exit_code.to_string() +
+      "\nOutput: " +
+      output +
+      "\n",
+    )
     return ""
   }
   output
