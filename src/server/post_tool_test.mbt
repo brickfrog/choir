@@ -218,6 +218,7 @@ test "plan_post_tool_actions - merge_pr effect shape and ordering" {
         parent_branch="main",
         url="url",
         source=MergedDeliverySource::MergePrTool,
+        merge_execution_mode=Some(@evidence.MergeExecutionMode::Manual),
         parent_id=Some("parent")
       ) => {
         assert_eq(aid, agent_id)
@@ -407,16 +408,18 @@ test "merged_pr_parent_message is distinct from pre-merge signals" {
     "main",
     "https://github.com/o/r/pull/42",
     MergedDeliverySource::MergePrTool,
+    merge_execution_mode=Some(@evidence.MergeExecutionMode::Manual),
   )
   assert_true(msg.contains("[PR MERGED]"))
-  assert_true(msg.contains("merge_pr succeeded"))
+  assert_true(msg.contains("merge_provenance: merge_pr"))
+  assert_true(msg.contains("Authoritative: merge_pr succeeded"))
   assert_true(msg.contains("PR #42"))
   assert_true(msg.contains("main.leaf-z"))
   assert_true(msg.contains("feat/z"))
   assert_true(msg.contains("parent_branch: main"))
   assert_true(msg.contains("pr_url: https://github.com/o/r/pull/42"))
-  assert_true(msg.contains("[PR READY]"))
-  assert_true(msg.contains("[FIXES PUSHED]"))
+  assert_false(msg.contains("[PR READY]"))
+  assert_false(msg.contains("[FIXES PUSHED]"))
 }
 
 ///|
@@ -428,11 +431,41 @@ test "merged_pr_parent_message uses unknown when branch or parent_branch missing
     "",
     "",
     MergedDeliverySource::ExternalObservation,
+    merge_execution_mode=None,
   )
   assert_true(msg.contains("branch: <unknown>"))
   assert_true(msg.contains("parent_branch: <unknown>"))
   assert_false(msg.contains("pr_url:"))
-  assert_true(msg.contains("Automatic reconciliation"))
+  assert_true(msg.contains("merge_provenance: external_observation"))
+  assert_true(msg.contains("automatic reconciliation finalized the leaf"))
+}
+
+///|
+test "merged_pr_parent_message marks automerge and force override distinctly" {
+  let automerge_msg = merged_pr_parent_message(
+    7,
+    "main.leaf-a",
+    "feat/a",
+    "main",
+    "",
+    MergedDeliverySource::MergePrTool,
+    merge_execution_mode=Some(@evidence.MergeExecutionMode::ServerAutomerge),
+  )
+  let force_msg = merged_pr_parent_message(
+    8,
+    "main.leaf-b",
+    "feat/b",
+    "main",
+    "",
+    MergedDeliverySource::MergePrTool,
+    merge_execution_mode=Some(@evidence.MergeExecutionMode::ForceOverride),
+  )
+  assert_true(automerge_msg.contains("merge_provenance: server_automerge"))
+  assert_true(automerge_msg.contains("server automerge succeeded"))
+  assert_true(force_msg.contains("merge_provenance: force_override"))
+  assert_true(
+    force_msg.contains("policy_override: merge_pr invoked with force=true"),
+  )
 }
 
 ///|
@@ -476,6 +509,7 @@ test "plan_external_merge_finalization reuses canonical merged teardown" {
       parent_branch="main",
       url="https://gh.test/42",
       source=MergedDeliverySource::ExternalObservation,
+      merge_execution_mode=None,
       parent_id=Some("main.tl")
     ) => ()
     _ => fail("expected external DeliverToParentMerged second")

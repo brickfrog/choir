@@ -1,29 +1,22 @@
 # Choir Roadmap
 
-## Current state: Delivery and Supervision Foundations (2026-04-09)
+## Current state: External Merge Reconciliation (2026-04-10)
 
-Choir now has typed task contracts, a typed evidence ledger, a pure merge policy, an explicit automerge control plane, hard TL parent-branch enforcement, and a durable outbox for server-originated human notifications. `fork_wave` can persist a per-wave `automerge` override, the server can trigger the existing `merge_pr` path when policy reaches `MergeNow`, merge provenance is recorded as manual, server-automerge, or force-override, and parent notifications can survive restart and replay cleanly. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
+Choir now has typed task contracts, a typed evidence ledger, a pure merge policy, an explicit automerge control plane, hard TL parent-branch enforcement, a durable outbox for server-originated human notifications, and a unified external-merge reconciliation path. Poller-observed merges, manual merges, and recovered-offline merges all converge to the same canonical `Finalized(Merged)` lifecycle outcome through `plan_external_merge_finalization`. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
 
 ---
 
-## 🚀 Immediate Next: Delivery and Supervision
+## 🚀 Immediate Next: Operator UX and Task Memory
 
-The merge control plane is now explicit, TL parent-branch enforcement is in place, and durable delivery exists for server-originated notifications. The remaining work in this milestone is tightening external reconciliation, operator visibility, and task-memory integration.
+The merge control plane is explicit, TL parent-branch enforcement is in place, durable delivery exists, and external-merge reconciliation converges to one canonical lifecycle. The remaining work in this milestone is operator visibility and task-memory integration.
 
-### 1. External Merge and Orphan Reconciliation
-- Initial stale-leaf cleanup is now in place: `kill_agent` auto-closes tracked PRs for parent-killed leaves, emits one explicit stale-PR outcome to the parent, and suppresses generic orphan spam for that path.
-- Tighten the post-merge/finalization path for merges observed outside the server-triggered `merge_pr` flow.
-- Ensure external merges, manual merges, and recovered leaves converge to one canonical lifecycle outcome.
-- Reduce repeated re-check nudges once a leaf is definitely done in the remaining external/manual-merge paths.
-- Add focused tests for merged-orphan cleanup and restart recovery after merge.
-
-### 2. Merge Audit and Operator UX
+### 1. Merge Audit and Operator UX
 - Surface merge provenance and policy reason clearly in TL/operator summaries.
 - Make it obvious when a wave is `automerge=true` versus manual mode.
 - Improve parent-facing notifications so `[MERGE READY]` is informational when automerge is enabled and actionable when it is not.
 - Keep `merge_pr force=true` as an explicit override path with evidence attached.
 
-### 3. External Task Memory Provider
+### 2. External Task Memory Provider
 - Pilot Chainlink as an optional task-memory provider instead of building a Choir-native issue tracker.
 - Start with read-only import of active issue, subissue, dependencies, and handoff context into `TaskContract`.
 - Add write-back for PR URL, execution status, merge outcome, and concise handoff notes.
@@ -46,6 +39,15 @@ Add an optional high-ceremony path for risky work where Choir requests a fresh-c
 ---
 
 ## ✅ Completed
+
+### External Merge and Orphan Reconciliation (2026-04-10)
+- **Unified External-Merge Path**: Poller-observed `PRMerged` events now carry the full tracked-PR snapshot (branch, URL, review, CI) so the server does not lose context when the poller untracks.
+- **Canonical Finalization**: `plan_external_merge_finalization` reuses `plan_finalize(...Merged)` so poller merges, manual merges, and `merge_pr` all converge to the same `Finalized(Merged)` lifecycle outcome.
+- **Typed Merge Source**: `DeliverToParentMerged` now carries a typed merge source (tool, poller, recovery) and the parent notification no longer emits stale "call shutdown" / "kill the leaf" guidance.
+- **Recovery Convergence**: Restart recovery records targeted non-open PR status for known tracked PRs and agent branches, emits `FinalizeMergedAgent`, and converges to `Finalized(Merged)` instead of generic `RecoveredDone`.
+- **Orphan/Stall Suppression**: Orphan and stall notifications are suppressed once the lifecycle is already terminal (`Finalized` or `Failed`), eliminating repeated nudges for externally-merged PRs.
+- **Merge Evidence from Snapshot**: Evidence events are now persisted from the preserved tracked-PR snapshot at external-merge time, not just from the `merge_pr` tool path.
+- **Focused Coverage**: 783 tests passing, with new coverage in `post_tool_test.mbt`, `recovery_test.mbt`, `server_test.mbt`, and `tl_decision_test.mbt`.
 
 ### Durable Team Inbox (V1, 2026-04-09)
 - **Durable Outbox**: Server-originated human notifications now persist in `.choir/outbox/*.jsonl` instead of relying on pane visibility as the source of truth.

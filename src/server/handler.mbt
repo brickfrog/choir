@@ -861,19 +861,9 @@ fn ServerState::resolve_parent_for_delivery(
 fn render_parent_next_action(
   pr_number : Int,
   parent_branch : String?,
+  merge_mode : @poller.MergeOperatorMode,
 ) -> String {
-  match parent_branch {
-    Some(branch) =>
-      "Next action: `merge_pr(pr_number: \"" +
-      pr_number.to_string() +
-      "\", parent_branch: \"" +
-      branch +
-      "\")`"
-    None =>
-      "Next action: merge PR #" +
-      pr_number.to_string() +
-      " once the parent branch is confirmed."
-  }
+  @poller.merge_ready_next_action(pr_number, parent_branch, merge_mode)
 }
 
 ///|
@@ -1243,17 +1233,34 @@ fn parent_poll_tl_decision_suffix(
   tracked : @poller.TrackedPR,
   event : @poller.PollEvent,
   unresolved_threads_for_recheck : Int?,
+  merge_mode : @poller.MergeOperatorMode,
 ) -> String {
+  let category = @poller.plan_tl_poll_event_parent(
+    event, tracked, unresolved_threads_for_recheck,
+  )
+  let sentence = match category {
+    @poller.TlTrackedPrWorkflowCategory::MergeGateOpenPendingPolicyConfirmation =>
+      @poller.tl_merge_gate_sentence(merge_mode)
+    _ => @poller.tl_tracked_pr_workflow_category_sentence(category)
+  }
   match event {
     PRMerged(_) => ""
-    _ =>
-      "\nTLDecision: " +
-      @poller.tl_tracked_pr_workflow_category_sentence(
-        @poller.plan_tl_poll_event_parent(
-          event, tracked, unresolved_threads_for_recheck,
-        ),
-      )
+    _ => "\nTLDecision: " + sentence
   }
+}
+
+///|
+fn parent_merge_policy_line(
+  tracked : @poller.TrackedPR,
+  unresolved_threads_for_recheck : Int?,
+  task_contract? : @types.TaskContract? = None,
+) -> String {
+  "\n" +
+  @poller.merge_policy_summary_line(
+    tracked,
+    unresolved_threads_for_recheck,
+    task_contract~,
+  )
 }
 
 ///|
@@ -1263,6 +1270,7 @@ fn parent_poll_event_message(
   event : @poller.PollEvent,
   unresolved_threads_for_recheck : Int?,
   task_contract? : @types.TaskContract? = None,
+  merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
 ) -> (String, @types.Status)? {
   let agent_id = tracked.agent_id
   let branch = tracked.branch
@@ -1290,10 +1298,13 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "Pre-merge: wait for [PR MERGED] after merge_pr succeeds (or verify merged on GitHub) before claiming merged.\n" +
-        render_parent_next_action(n, parent_branch) +
+        @poller.merge_mode_line(merge_mode) +
+        "\n" +
+        @poller.premerge_wait_line(merge_mode) +
+        "\n" +
+        render_parent_next_action(n, parent_branch, merge_mode) +
         parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck,
+          tracked, event, unresolved_threads_for_recheck, merge_mode,
         )
       Some((message, @types.Status::Success))
     }
@@ -1313,7 +1324,7 @@ fn parent_poll_event_message(
         "Pre-merge: re-check the PR; merge only after review is clear and merge_pr succeeds.\n" +
         "Next action: re-check the PR and merge when ready." +
         parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck,
+          tracked, event, unresolved_threads_for_recheck, merge_mode,
         )
       Some((message, @types.Status::Info))
     }
@@ -1332,7 +1343,7 @@ fn parent_poll_event_message(
         "\n" +
         "Next action: gh pr edit --add-reviewer @copilot" +
         parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck,
+          tracked, event, unresolved_threads_for_recheck, merge_mode,
         )
       Some((message, @types.Status::Failure))
     }
@@ -1352,7 +1363,7 @@ fn parent_poll_event_message(
             parent_branch.unwrap_or("<unknown>") +
             pr_url +
             parent_poll_tl_decision_suffix(
-              tracked, event, unresolved_threads_for_recheck,
+              tracked, event, unresolved_threads_for_recheck, merge_mode,
             ),
             @types.Status::Info,
           ),
@@ -1367,7 +1378,7 @@ fn parent_poll_event_message(
             " has review comments:\n" +
             comments +
             parent_poll_tl_decision_suffix(
-              tracked, event, unresolved_threads_for_recheck,
+              tracked, event, unresolved_threads_for_recheck, merge_mode,
             ),
             @types.Status::Info,
           ),
@@ -1389,7 +1400,7 @@ fn parent_poll_event_message(
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
           parent_poll_tl_decision_suffix(
-            tracked, event, unresolved_threads_for_recheck,
+            tracked, event, unresolved_threads_for_recheck, merge_mode,
           ),
           @types.Status::Failure,
         ),
@@ -1420,7 +1431,7 @@ fn parent_poll_event_message(
           "Next action: re-check the PR thread and full CI status on GitHub before merging or requesting review.\n\n" +
           summary +
           parent_poll_tl_decision_suffix(
-            tracked, event, unresolved_threads_for_recheck,
+            tracked, event, unresolved_threads_for_recheck, merge_mode,
           ),
           @types.Status::Info,
         ),
@@ -1452,7 +1463,7 @@ fn parent_poll_event_message(
           "Next action: re-check Copilot/review thread and branch policy, then merge_pr only if appropriate.\n\n" +
           summary +
           parent_poll_tl_decision_suffix(
-            tracked, event, unresolved_threads_for_recheck,
+            tracked, event, unresolved_threads_for_recheck, merge_mode,
           ),
           @types.Status::Info,
         ),
@@ -1481,7 +1492,7 @@ fn parent_poll_event_message(
           "\n\n" +
           summary +
           parent_poll_tl_decision_suffix(
-            tracked, event, unresolved_threads_for_recheck,
+            tracked, event, unresolved_threads_for_recheck, merge_mode,
           ),
           @types.Status::Info,
         ),
@@ -1493,7 +1504,7 @@ fn parent_poll_event_message(
         agent_id +
         " PR #" +
         n.to_string() +
-        " — reviewed, CI green, ready to merge\n" +
+        " — reviewed, CI green, merge gate open\n" +
         "branch: " +
         branch +
         "\n" +
@@ -1501,11 +1512,18 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        render_parent_next_action(n, parent_branch) +
+        @poller.merge_mode_line(merge_mode) +
+        parent_merge_policy_line(
+          tracked,
+          unresolved_threads_for_recheck,
+          task_contract~,
+        ) +
+        "\n" +
+        render_parent_next_action(n, parent_branch, merge_mode) +
         parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck,
+          tracked, event, unresolved_threads_for_recheck, merge_mode,
         )
-      Some((message, @types.Status::Success))
+      Some((message, @poller.merge_ready_status(merge_mode)))
     }
     ReviewThreadsResolved(n) => {
       let summary = @tools.format_tl_pr_recheck_summary(
@@ -1528,7 +1546,7 @@ fn parent_poll_event_message(
         "\n\n" +
         summary +
         parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck,
+          tracked, event, unresolved_threads_for_recheck, merge_mode,
         )
       Some((message, @types.Status::Info))
     }
@@ -1718,6 +1736,7 @@ priv struct PendingPollParentRow {
   message : String
   status : @types.Status
   category : @poller.TlTrackedPrWorkflowCategory
+  merge_mode : @poller.MergeOperatorMode
 }
 
 ///|
@@ -1843,6 +1862,36 @@ fn rollup_delivery_status(rows : Array[PendingPollParentRow]) -> @types.Status {
 }
 
 ///|
+fn rollup_merge_mode(
+  rows : Array[PendingPollParentRow],
+) -> @poller.MergeOperatorMode? {
+  if rows.length() == 0 {
+    return None
+  }
+  let mut has_manual = false
+  let mut has_automerge = false
+  for row in rows {
+    match row.merge_mode {
+      @poller.MergeOperatorMode::Manual => has_manual = true
+      @poller.MergeOperatorMode::Automerge => has_automerge = true
+      @poller.MergeOperatorMode::Mixed => {
+        has_manual = true
+        has_automerge = true
+      }
+    }
+  }
+  Some(
+    if has_manual && has_automerge {
+      @poller.MergeOperatorMode::Mixed
+    } else if has_automerge {
+      @poller.MergeOperatorMode::Automerge
+    } else {
+      @poller.MergeOperatorMode::Manual
+    },
+  )
+}
+
+///|
 pub fn ServerState::plan_poll_event_deliveries(
   self : ServerState,
   event : @poller.PollEvent,
@@ -1903,6 +1952,16 @@ pub fn ServerState::plan_poll_event_deliveries(
             self.config.project_dir,
             event,
             unresolved_threads_for_recheck,
+            merge_mode=@poller.merge_operator_mode_from_automerge(
+              automerge_enabled_for_agent(
+                self.config,
+                local_config_for_agent(
+                  self.config.project_dir,
+                  self.registry,
+                  pr.agent_id,
+                ),
+              ),
+            ),
           ) {
           Some((message, status)) =>
             try {
@@ -2225,6 +2284,9 @@ async fn deliver_pending_poll_events(
               state.registry,
               pr.agent_id,
             ),
+            merge_mode=@poller.merge_operator_mode_from_automerge(
+              automerge_enabled,
+            ),
           ) {
           Some((message, status)) => {
             let category = @poller.plan_tl_poll_event_parent(
@@ -2236,6 +2298,9 @@ async fn deliver_pending_poll_events(
               message,
               status,
               category,
+              merge_mode: @poller.merge_operator_mode_from_automerge(
+                automerge_enabled,
+              ),
             })
           }
           None => ()
@@ -2273,8 +2338,12 @@ async fn deliver_pending_poll_events(
         state.config.project_dir,
         rollup.parent_id,
       )
-      let body = @poller.format_wave_rollup(rollup, total_in_wave)
       let matched = rollup_rows_for(pending_parent_rows, rollup)
+      let body = @poller.format_wave_rollup(
+        rollup,
+        total_in_wave,
+        merge_mode=rollup_merge_mode(matched),
+      )
       let status = rollup_delivery_status(matched)
       let sender = "poller"
       try {
@@ -3025,6 +3094,7 @@ async fn ServerState::interpret_teardown_effects(
         parent_branch~,
         url~,
         source~,
+        merge_execution_mode~,
         parent_id~
       ) =>
         match parent_id {
@@ -3032,7 +3102,13 @@ async fn ServerState::interpret_teardown_effects(
             try {
               let parent = self.resolve_parent_by_id(pid)
               let body = merged_pr_parent_message(
-                pr_number, leaf_id, branch, parent_branch, url, source,
+                pr_number,
+                leaf_id,
+                branch,
+                parent_branch,
+                url,
+                source,
+                merge_execution_mode~,
               )
               ignore(
                 self.durable_deliver_to_agent(
@@ -3812,6 +3888,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
       assert_eq(status, @types.Status::Success)
       assert_true(message.contains("[PR READY]"))
       assert_true(message.contains("(not merged yet)"))
+      assert_true(message.contains("merge_mode: manual"))
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("[PR MERGED]"))
       assert_true(message.contains("TLDecision:"))
@@ -3857,6 +3934,91 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
       assert_true(message.contains("MERGE NOW"))
     }
     None => fail("expected merge-gate-open PRReady message")
+  }
+}
+
+///|
+test "parent_poll_event_message MergeReady is actionable in manual mode" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 71,
+    agent_id: "main.dev-manual",
+    branch: "work/manual",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/71",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::MergeReady(71),
+      Some(0),
+      merge_mode=@poller.MergeOperatorMode::Manual,
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Success)
+      assert_true(message.contains("[MERGE READY]"))
+      assert_true(message.contains("merge_mode: manual"))
+      assert_true(message.contains("Merge policy decision: merge_now"))
+      assert_true(message.contains("merge_pr("))
+      assert_true(message.contains("MERGE NOW"))
+    }
+    None => fail("expected manual MergeReady message")
+  }
+}
+
+///|
+test "parent_poll_event_message MergeReady is informational in automerge mode" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 72,
+    agent_id: "main.dev-auto",
+    branch: "work/auto",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/72",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::MergeReady(72),
+      Some(0),
+      merge_mode=@poller.MergeOperatorMode::Automerge,
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("merge_mode: automerge"))
+      assert_true(message.contains("server will attempt merge automatically"))
+      assert_true(message.contains("AUTO-MERGE READY"))
+      assert_false(message.contains("`merge_pr("))
+    }
+    None => fail("expected automerge MergeReady message")
   }
 }
 

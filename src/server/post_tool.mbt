@@ -37,6 +37,7 @@ pub(all) enum TeardownEffect {
     parent_branch~ : String,
     url~ : String,
     source~ : MergedDeliverySource,
+    merge_execution_mode~ : @evidence.MergeExecutionMode?,
     parent_id~ : String?
   )
   /// If primary parent notification used a non-terminal channel, optionally echo failure text
@@ -189,6 +190,55 @@ fn lifecycle_accepts_merge_observed(
 }
 
 ///|
+fn merged_provenance_label(
+  source : MergedDeliverySource,
+  merge_execution_mode : @evidence.MergeExecutionMode?,
+) -> String {
+  match source {
+    ExternalObservation => "external_observation"
+    MergePrTool =>
+      match merge_execution_mode {
+        Some(@evidence.MergeExecutionMode::ServerAutomerge) =>
+          "server_automerge"
+        Some(@evidence.MergeExecutionMode::ForceOverride) => "force_override"
+        _ => "merge_pr"
+      }
+  }
+}
+
+///|
+fn merged_summary_line(
+  source : MergedDeliverySource,
+  merge_execution_mode : @evidence.MergeExecutionMode?,
+) -> String {
+  match source {
+    ExternalObservation =>
+      "Authoritative: external merge observed; automatic reconciliation finalized the leaf."
+    MergePrTool =>
+      match merge_execution_mode {
+        Some(@evidence.MergeExecutionMode::ServerAutomerge) =>
+          "Authoritative: server automerge succeeded; no TL merge action was required."
+        Some(@evidence.MergeExecutionMode::ForceOverride) =>
+          "Authoritative: merge_pr force=true succeeded; merge policy was overridden explicitly."
+        _ =>
+          "Authoritative: merge_pr succeeded; the leaf is finalized and cleaned up."
+      }
+  }
+}
+
+///|
+fn merged_override_reason_line(
+  source : MergedDeliverySource,
+  merge_execution_mode : @evidence.MergeExecutionMode?,
+) -> String? {
+  match (source, merge_execution_mode) {
+    (MergePrTool, Some(@evidence.MergeExecutionMode::ForceOverride)) =>
+      Some("policy_override: merge_pr invoked with force=true")
+    _ => None
+  }
+}
+
+///|
 pub fn plan_external_merge_finalization(
   agent : @types.Agent,
   lifecycle : @phase.AgentLifecycle,
@@ -220,6 +270,7 @@ pub fn plan_external_merge_finalization(
           parent_branch~,
           url~,
           source=MergedDeliverySource::ExternalObservation,
+          merge_execution_mode=None,
           parent_id=agent.parent,
         ),
       )
@@ -423,6 +474,15 @@ pub fn plan_post_tool_actions(
               parent_branch~,
               url~,
               source=MergedDeliverySource::MergePrTool,
+              merge_execution_mode=Some(
+                if request_bool_arg(req, "force").unwrap_or(false) {
+                  @evidence.MergeExecutionMode::ForceOverride
+                } else if request_bool_arg(req, "automerge").unwrap_or(false) {
+                  @evidence.MergeExecutionMode::ServerAutomerge
+                } else {
+                  @evidence.MergeExecutionMode::Manual
+                },
+              ),
               parent_id=leaf.parent,
             ),
           )
@@ -536,6 +596,7 @@ pub fn merged_pr_parent_message(
   parent_branch : String,
   pr_url : String,
   source : MergedDeliverySource,
+  merge_execution_mode? : @evidence.MergeExecutionMode? = None,
 ) -> String {
   let branch_disp = if branch == "" { "<unknown>" } else { branch }
   let parent_disp = if parent_branch == "" {
@@ -543,28 +604,25 @@ pub fn merged_pr_parent_message(
   } else {
     parent_branch
   }
-  let url_line = if pr_url == "" { "" } else { "\npr_url: " + pr_url }
-  let header = match source {
-    MergePrTool => "[PR MERGED] merge_pr succeeded — PR #"
-    ExternalObservation => "[PR MERGED] external merge observed — PR #"
+  let lines : Array[String] = [
+    "[PR MERGED] " +
+    leaf_agent_id +
+    " PR #" +
+    pr_number.to_string() +
+    " is merged on the remote.",
+    "branch: " + branch_disp,
+    "parent_branch: " + parent_disp,
+    "merge_provenance: " + merged_provenance_label(source, merge_execution_mode),
+    merged_summary_line(source, merge_execution_mode),
+  ]
+  match merged_override_reason_line(source, merge_execution_mode) {
+    Some(line) => lines.push(line)
+    None => ()
   }
-  let guidance = match source {
-    MergePrTool =>
-      "\nAuthoritative merge signal: do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
-    ExternalObservation =>
-      "\nAutomatic reconciliation is finalizing the leaf. Do not treat [PR READY], [FIXES PUSHED], or leaf updates as merged state."
+  if pr_url != "" {
+    lines.push("pr_url: " + pr_url)
   }
-  header +
-  pr_number.to_string() +
-  " is merged on the remote." +
-  "\nleaf_agent: " +
-  leaf_agent_id +
-  "\nbranch: " +
-  branch_disp +
-  "\nparent_branch: " +
-  parent_disp +
-  url_line +
-  guidance
+  lines.join("\n")
 }
 
 ///|

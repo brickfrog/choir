@@ -19,6 +19,95 @@ pub(all) enum TlTrackedPrWorkflowCategory {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum MergeOperatorMode {
+  Manual
+  Automerge
+  Mixed
+} derive(Debug, Eq)
+
+///|
+pub fn merge_operator_mode_from_automerge(
+  automerge_enabled : Bool,
+) -> MergeOperatorMode {
+  if automerge_enabled {
+    Automerge
+  } else {
+    Manual
+  }
+}
+
+///|
+pub fn merge_operator_mode_label(mode : MergeOperatorMode) -> String {
+  match mode {
+    Manual => "manual"
+    Automerge => "automerge"
+    Mixed => "mixed"
+  }
+}
+
+///|
+pub fn merge_mode_line(mode : MergeOperatorMode) -> String {
+  "merge_mode: " + merge_operator_mode_label(mode)
+}
+
+///|
+pub fn merge_ready_status(mode : MergeOperatorMode) -> @types.Status {
+  match mode {
+    Manual => @types.Status::Success
+    Automerge | Mixed => @types.Status::Info
+  }
+}
+
+///|
+pub fn merge_ready_next_action(
+  pr_number : Int,
+  parent_branch : String?,
+  mode : MergeOperatorMode,
+) -> String {
+  match mode {
+    Manual =>
+      match parent_branch {
+        Some(branch) =>
+          "Next action: `merge_pr(pr_number: \"" +
+          pr_number.to_string() +
+          "\", parent_branch: \"" +
+          branch +
+          "\")`"
+        None =>
+          "Next action: merge PR #" +
+          pr_number.to_string() +
+          " once the parent branch is confirmed."
+      }
+    Automerge =>
+      "Next action: informational only. The server will attempt merge automatically; wait for [PR MERGED] unless intervention is needed."
+    Mixed => "Next action: check the leaf's merge mode before merging manually."
+  }
+}
+
+///|
+pub fn premerge_wait_line(mode : MergeOperatorMode) -> String {
+  match mode {
+    Manual =>
+      "Pre-merge: wait for [PR MERGED] after merge_pr succeeds (or verify merged on GitHub) before claiming merged."
+    Automerge =>
+      "Pre-merge: automerge is enabled. Wait for [PR MERGED] after the server merges it; do not claim merged from readiness alone."
+    Mixed =>
+      "Pre-merge: confirm whether this leaf is manual or automerge before acting."
+  }
+}
+
+///|
+pub fn tl_merge_gate_sentence(mode : MergeOperatorMode) -> String {
+  match mode {
+    Manual => "MERGE NOW: reviewed, CI green, threads resolved. Run merge_pr."
+    Automerge =>
+      "AUTO-MERGE READY: reviewed, CI green, threads resolved. The server should merge automatically."
+    Mixed =>
+      "MERGE READY: reviewed, CI green, threads resolved. Check per-leaf merge mode."
+  }
+}
+
+///|
 pub(all) struct WaveRollupEntry {
   pr_number : Int
   agent_id : String
@@ -199,7 +288,11 @@ fn tl_category_rollup_pr_line(cat : TlTrackedPrWorkflowCategory) -> String {
 }
 
 ///|
-pub fn format_wave_rollup(rollup : WaveRollup, total_in_wave : Int) -> String {
+pub fn format_wave_rollup(
+  rollup : WaveRollup,
+  total_in_wave : Int,
+  merge_mode? : MergeOperatorMode? = None,
+) -> String {
   let by_pr : Map[Int, WaveRollupEntry] = {}
   for e in rollup.entries {
     if !by_pr.contains(e.pr_number) {
@@ -246,9 +339,14 @@ pub fn format_wave_rollup(rollup : WaveRollup, total_in_wave : Int) -> String {
   }
   let summary = summary_parts.join(", ")
   let wave_total = if total_in_wave > 0 { total_in_wave } else { n_pr }
+  let mode_label = match merge_mode {
+    Some(mode) => "[" + merge_operator_mode_label(mode) + "] "
+    None => ""
+  }
   let header = "[WAVE " +
     rollup.wave.to_string() +
     "] " +
+    mode_label +
     n_pr.to_string() +
     "/" +
     wave_total.to_string() +
