@@ -181,6 +181,18 @@ test "parse_unresolved_threads_response empty on all resolved" {
 }
 
 ///|
+test "parse_unresolved_threads_response skips outdated threads" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_old","isResolved":false,"isOutdated":true,"path":"src/foo.mbt","comments":{"nodes":[{"body":"stale comment"}]}},{"id":"PRRT_new","isResolved":false,"isOutdated":false,"path":"src/bar.mbt","comments":{"nodes":[{"body":"active comment"}]}}]}}}}}
+  let (count, text) = parse_unresolved_threads_response(json)
+  assert_eq(count, 1)
+  assert_true(text.contains("PRRT_new"))
+  assert_true(text.contains("active comment"))
+  assert_false(text.contains("PRRT_old"))
+  assert_false(text.contains("stale comment"))
+}
+
+///|
 test "parse_unresolved_threads_response empty on parse error" {
   let (count, text) = parse_unresolved_threads_response("not json")
   assert_eq(count, 0)

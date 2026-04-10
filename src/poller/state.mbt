@@ -445,14 +445,14 @@ fn backoff_delay_seconds(consecutive_failures : Int) -> Int64 {
   let mut delay = 30L
   let mut i = 0
   while i < consecutive_failures {
-    if delay >= 300L {
-      return 300L
+    if delay >= 60L {
+      return 60L
     }
     delay = delay * 2L
     i = i + 1
   }
-  if delay > 300L {
-    300L
+  if delay > 60L {
+    60L
   } else {
     delay
   }
