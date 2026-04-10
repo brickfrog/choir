@@ -3,7 +3,7 @@ pub(all) struct ChainlinkComment {
   id : Int
   content : String
   kind : String
-} derive(Debug)
+} derive(Debug, Eq)
 
 ///|
 pub fn parse_chainlink_comment_from_json(json : Json) -> ChainlinkComment? {
