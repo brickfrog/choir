@@ -14,6 +14,7 @@ fn mock_issue(
     labels: ["backend"],
     blocked_by: [],
     subissues: [],
+    comments: [],
   }
 }
 
