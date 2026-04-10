@@ -719,13 +719,42 @@ pub async fn ServerState::persist_recovered_poller_state(
 }
 
 ///|
+async fn ServerState::replay_outbox_recipient_ids(
+  self : ServerState,
+) -> Array[String] {
+  let ids : Map[String, Bool] = {}
+  for agent in self.registry.list() {
+    ids.set(agent.agent_id.to_string(), true)
+  }
+  let outbox_files = (self.recovery_provider.list_agents_in_container)(
+    self.config.project_dir,
+    "outbox",
+  )
+  for filename in outbox_files {
+    if !filename.has_suffix(".jsonl") {
+      continue
+    }
+    let path = self.config.project_dir + "/.choir/outbox/" + filename
+    let messages = @outbox.load_recipient_outbox_from_content(
+      (self.read_file)(path),
+    )
+    if messages.length() == 0 {
+      continue
+    }
+    ids.set(messages[0].recipient_id, true)
+  }
+  let recipient_ids = []
+  ids.each(fn(recipient_id, _present) { recipient_ids.push(recipient_id) })
+  recipient_ids
+}
+
+///|
 pub async fn ServerState::replay_pending_outbox_with(
   self : ServerState,
   now : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
-  for agent in self.registry.list() {
-    let recipient_id = agent.agent_id.to_string()
+  for recipient_id in self.replay_outbox_recipient_ids() {
     let messages = @outbox.load_recipient_outbox(
       self.read_file,
       self.config.project_dir,
