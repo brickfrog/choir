@@ -2822,7 +2822,10 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
 
 ///|
 async test "chainlink hooks run when local config exposes issue id" {
+  let mut claimed_issue : String? = None
   let mut claimed_branch : String? = None
+  let mut commented_issue : String? = None
+  let mut commented_task : String? = None
   let fork_args : ForkWaveArgs = {
     ..fork_wave_args_base(),
     chainlink_issue_id: Some("5"),
@@ -2862,12 +2865,25 @@ async test "chainlink hooks run when local config exposes issue id" {
     capture=mock_capture_empty,
     claim_lock=async fn(issue_id : String, branch : String) {
       @async.sleep(0)
-      assert_eq(issue_id, "5")
+      claimed_issue = Some(issue_id)
       claimed_branch = Some(branch)
       true
     },
+    create_subissue=async fn(_parent_id : String, _title : String) {
+      @async.sleep(0)
+      fail("create_subissue should not run for single-leaf wave")
+      None
+    },
+    write_plan_comment=async fn(issue_id : String, text : String) {
+      @async.sleep(0)
+      commented_issue = Some(issue_id)
+      commented_task = Some(text)
+    },
   )
+  assert_eq(claimed_issue, Some("5"))
   assert_eq(claimed_branch, Some("main.wave-0"))
+  assert_eq(commented_issue, Some("5"))
+  assert_eq(commented_task, Some("shared task"))
 
   let project_dir = file_pr_post_success_test_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
@@ -2989,6 +3005,8 @@ async test "chainlink hooks run when local config exposes issue id" {
 
 ///|
 async test "chainlink hooks are skipped when local config has no issue id" {
+  let mut created = false
+  let mut commented = false
   let fork_args = fork_wave_args_base()
   let fork_plan : ForkWaveSpawnPlan = {
     cmds: [],
@@ -3028,7 +3046,18 @@ async test "chainlink hooks are skipped when local config has no issue id" {
       fail("claim_lock should not run")
       false
     },
+    create_subissue=async fn(_parent_id : String, _title : String) {
+      @async.sleep(0)
+      created = true
+      None
+    },
+    write_plan_comment=async fn(_issue_id : String, _text : String) {
+      @async.sleep(0)
+      commented = true
+    },
   )
+  assert_false(created)
+  assert_false(commented)
 
   let project_dir = file_pr_post_success_test_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
@@ -3136,6 +3165,177 @@ async test "chainlink hooks are skipped when local config has no issue id" {
     @types.Response::Ok(_) => ()
     _ => fail("expected ok")
   }
+}
+
+///|
+async test "chainlink multi-leaf wave creates subissues and uses them for comment and lock" {
+  let created_titles : Array[(String, String)] = []
+  let commented : Array[(String, String)] = []
+  let claimed : Array[(String, String)] = []
+  let written_ids : Array[(String, String, String)] = []
+  let long_task = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz"
+  let fork_plan : ForkWaveSpawnPlan = {
+    cmds: [],
+    spawned_specs: [
+      {
+        slug: "wave-0",
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Claude,
+        task: long_task,
+        task_contract: None,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: "main.tl",
+        parent_branch: "main",
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
+        spawn_depth: 0,
+        automerge: None,
+        chainlink_issue_id: Some("5"),
+      },
+      {
+        slug: "wave-1",
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Claude,
+        task: "second task",
+        task_contract: None,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: "main.tl",
+        parent_branch: "main",
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
+        spawn_depth: 0,
+        automerge: None,
+        chainlink_issue_id: Some("5"),
+      },
+    ],
+    spawned_slugs: [],
+    spawned_count: 2,
+    skipped_count: 0,
+    agent_ids: "main.wave-0,main.wave-1",
+    skipped_ids: "",
+  }
+  interpret_fork_wave_post_spawn(
+    fork_wave_args_base(),
+    fork_plan,
+    "/tmp/project",
+    "choir",
+    None,
+    capture=mock_capture_empty,
+    create_subissue=async fn(parent_id : String, title : String) {
+      @async.sleep(0)
+      created_titles.push((parent_id, title))
+      Some(if title == "second task" { 12 } else { 11 })
+    },
+    write_plan_comment=async fn(issue_id : String, text : String) {
+      @async.sleep(0)
+      commented.push((issue_id, text))
+    },
+    claim_lock=async fn(issue_id : String, branch : String) {
+      @async.sleep(0)
+      claimed.push((issue_id, branch))
+      true
+    },
+    write_subissue_id=fn(
+      project_dir : String,
+      agent_slug : String,
+      issue_id : String,
+    ) {
+      written_ids.push((project_dir, agent_slug, issue_id))
+      true
+    },
+  )
+  assert_eq(created_titles.length(), 2)
+  assert_eq(created_titles[0], ("5", long_task[:80].to_string()))
+  assert_eq(created_titles[1], ("5", "second task"))
+  assert_eq(commented, [("11", long_task), ("12", "second task")])
+  assert_eq(claimed, [("11", "main.wave-0"), ("12", "main.wave-1")])
+  assert_eq(written_ids, [
+    ("/tmp/project", "wave-0", "11"),
+    ("/tmp/project", "wave-1", "12"),
+  ])
+}
+
+///|
+async test "chainlink multi-leaf wave falls back to parent issue when subissue creation fails" {
+  let commented : Array[(String, String)] = []
+  let claimed : Array[(String, String)] = []
+  let mut wrote_subissue_id = false
+  let fork_plan : ForkWaveSpawnPlan = {
+    cmds: [],
+    spawned_specs: [
+      {
+        slug: "wave-0",
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Claude,
+        task: "shared task",
+        task_contract: None,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: "main.tl",
+        parent_branch: "main",
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
+        spawn_depth: 0,
+        automerge: None,
+        chainlink_issue_id: Some("5"),
+      },
+      {
+        slug: "wave-1",
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Claude,
+        task: "other task",
+        task_contract: None,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: "main.tl",
+        parent_branch: "main",
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
+        spawn_depth: 0,
+        automerge: None,
+        chainlink_issue_id: Some("5"),
+      },
+    ],
+    spawned_slugs: [],
+    spawned_count: 2,
+    skipped_count: 0,
+    agent_ids: "main.wave-0,main.wave-1",
+    skipped_ids: "",
+  }
+  interpret_fork_wave_post_spawn(
+    fork_wave_args_base(),
+    fork_plan,
+    "/tmp/project",
+    "choir",
+    None,
+    capture=mock_capture_empty,
+    create_subissue=async fn(_parent_id : String, _title : String) {
+      @async.sleep(0)
+      None
+    },
+    write_plan_comment=async fn(issue_id : String, text : String) {
+      @async.sleep(0)
+      commented.push((issue_id, text))
+    },
+    claim_lock=async fn(issue_id : String, branch : String) {
+      @async.sleep(0)
+      claimed.push((issue_id, branch))
+      true
+    },
+    write_subissue_id=fn(
+      _project_dir : String,
+      _agent_slug : String,
+      _issue_id : String,
+    ) {
+      wrote_subissue_id = true
+      true
+    },
+  )
+  assert_eq(commented, [("5", "shared task"), ("5", "other task")])
+  assert_eq(claimed, [("5", "main.wave-0"), ("5", "main.wave-1")])
+  assert_false(wrote_subissue_id)
 }
 
 ///|

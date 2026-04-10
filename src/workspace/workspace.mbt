@@ -283,12 +283,33 @@ pub fn task_contract_for_agent_workspace(
 }
 
 ///|
-/// Read the Chainlink issue id for an agent from its config.local.toml.
+pub fn write_chainlink_subissue_id(
+  project_dir : String,
+  agent_slug : String,
+  issue_id : String,
+) -> Bool {
+  let workspace_dir = worktree_path(project_dir, agent_slug)
+  if !@sys.create_dir_all(workspace_dir) {
+    return false
+  }
+  @sys.write_file_sync(workspace_dir + "/.chainlink_issue_id", issue_id + "\n")
+}
+
+///|
+/// Read the Chainlink issue id for an agent, preferring the per-worktree
+/// `.chainlink_issue_id` override and falling back to `config.local.toml`.
 pub fn chainlink_issue_id_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,
   agent_slug : String,
 ) -> String? {
+  let override_path = worktree_path(project_dir, agent_slug) +
+    "/.chainlink_issue_id"
+  let override_content = @sys.read_file(override_path)
+  let trimmed_override = override_content.trim().to_string()
+  if trimmed_override != "" {
+    return Some(trimmed_override)
+  }
   for
     path in local_config_candidate_paths_for_agent_workspace(
       project_dir, agent_workspace, agent_slug,
