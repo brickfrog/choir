@@ -4,13 +4,11 @@ pub async fn run_dev_entr_watcher(
   _entr_path : String,
   _choir_exe : String,
 ) -> Int {
-  @async.sleep(0)
   -1
 }
 
 ///|
 pub async fn capture_command_merged(_cmd : @workspace.Command) -> (Int, String) {
-  @async.sleep(0)
   (-1, "")
 }
 
@@ -20,13 +18,11 @@ pub async fn capture_hook_script_merged(
   _stdin_body : String,
   _cwd : String?,
 ) -> (Int, String) {
-  @async.sleep(0)
   (-1, "")
 }
 
 ///|
 pub async fn capture_command_stdout(_cmd : @workspace.Command) -> (Int, String) {
-  @async.sleep(0)
   (-1, "")
 }
 
@@ -36,13 +32,11 @@ pub async fn capture_plugin_shell_command(
   _request_line : String,
   _timeout_sec : Int,
 ) -> (Int, String) {
-  @async.sleep(0)
   (-1, "")
 }
 
 ///|
 pub async fn capture_stdout(_program : String, _args : Array[String]) -> String {
-  @async.sleep(0)
   ""
 }
 
@@ -52,13 +46,11 @@ pub async fn capture_stdout_with_cwd(
   _args : Array[String],
   _cwd : String?,
 ) -> String {
-  @async.sleep(0)
   ""
 }
 
 ///|
 pub async fn run(cmd : @workspace.Command) -> Int {
-  @async.sleep(0)
   let native = @workspace.run_native_choir_file_command(cmd)
   if native >= 0 {
     return native
@@ -88,7 +80,6 @@ pub async fn run(cmd : @workspace.Command) -> Int {
 
 ///|
 pub async fn run_sequence(cmds : Array[@workspace.Command]) -> Array[Int] {
-  @async.sleep(0)
   let results = []
   for cmd in cmds {
     let status = run(cmd)
