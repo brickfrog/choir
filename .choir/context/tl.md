@@ -81,21 +81,25 @@ When a leaf sends `[RED GATE]`:
 
 Always pass `issue_id=<chainlink_id>` to `fork_wave` — this auto-creates subissues per leaf and tracks plan/result/handoff comments through the lifecycle.
 
-### Phase 2 — Adversarial Code Review
+### Phase 2 — Adversarial Code Review (pre-merge)
 
-After a wave fully merges, spawn an adversary worker with fresh context:
+After Copilot review is clean on a PR — **before calling merge_pr** — spawn an adversary worker on that branch:
 
 ```
 spawn_worker(
-  task="You are Sarcasmotron reviewing <feature name>. Spec: <paste spec text>. Run: git diff main~<N>..main. Run: moon test --target native -v. Find every flaw in: (1) spec fidelity — does the impl match the spec exactly? (2) test quality — behavioral vs structural, tautologies, mutation survivors? (3) implementation correctness — resource cleanup, coupling, security surface? (4) anything else that would embarrass us. Report as a numbered list with file:line for each finding. No softening.",
+  task="You are Sarcasmotron reviewing <feature name>. Spec: <paste spec text>. Run: git diff main..<branch> in the worktree at <path>. Run: moon test --target native -v. Find every flaw in: (1) spec fidelity — does the impl match the spec exactly? (2) test quality — behavioral vs structural, tautologies, mutation survivors? (3) implementation correctness — resource cleanup, coupling, security surface? (4) anything else that would embarrass us. Report as a numbered list with file:line for each finding. No softening.",
   worker_type="adversary"
 )
 ```
 
+**Nothing merges to main until the adversary is satisfied.**
+
 Route adversary findings:
 - **Spec gap** → return to Phase 0 with the user, revise spec, re-run adversarial spec review
-- **Test gap** → new leaf to add missing tests
-- **Impl flaw** → new leaf to fix
+- **Test gap** → `send_message` to the leaf to add missing tests in-branch, then re-run adversary
+- **Impl flaw** → `send_message` to the leaf to fix in-branch, then re-run adversary
+
+For multi-leaf waves where spec fidelity only makes sense against the combined result: run the adversary against the last PR's branch (which incorporates all prior merged leaves via rebase), or merge all but the last PR first, then run adversary on the final PR before merging it.
 
 ### Convergence
 
