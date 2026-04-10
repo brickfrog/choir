@@ -40,11 +40,23 @@ test "parse_open_prs ignores malformed entries" {
 }
 
 ///|
+test "parse_known_prs distinguishes merged and closed states" {
+  let prs = parse_known_prs(
+    "[{\"number\":12,\"headRefName\":\"main.leaf-a\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/12\",\"state\":\"CLOSED\",\"mergedAt\":\"2026-03-22T01:02:03Z\",\"createdAt\":\"2026-03-20T01:02:03Z\"},{\"number\":13,\"headRefName\":\"main.leaf-b\",\"baseRefName\":\"main\",\"url\":\"https://example.test/pr/13\",\"state\":\"CLOSED\",\"mergedAt\":null,\"createdAt\":\"2026-03-21T00:00:00Z\"}]",
+  )
+  assert_eq(prs.length(), 2)
+  assert_eq(prs[0].state, KnownPRState::Merged)
+  assert_eq(prs[1].state, KnownPRState::Closed)
+}
+
+///|
 async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
   let mock_provider : RecoveryProvider = {
     zellij_live: fn(_dir, _session) { { tabs: [], panes: [] } },
     open_prs: fn(_dir) { [] },
     find_prs_by_head: fn(_dir, _branch) { [] },
+    find_prs_by_head_any: fn(_dir, _branch) { [] },
+    find_pr_by_number: fn(_dir, _pr_number) { None },
     list_agent_containers: fn(_dir) { [] },
     list_agents_in_container: fn(_dir, _container) { [] },
     read_agent_config: fn(_dir, _container, _slug) { "" },
@@ -97,6 +109,8 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
         []
       }
     },
+    find_prs_by_head_any: fn(_dir, _branch) { [] },
+    find_pr_by_number: fn(_dir, _pr_number) { None },
     list_agent_containers: fn(_dir) { [] },
     list_agents_in_container: fn(_dir, _container) { [] },
     read_agent_config: fn(_dir, _container, _slug) { "" },

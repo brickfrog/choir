@@ -217,6 +217,7 @@ test "plan_post_tool_actions - merge_pr effect shape and ordering" {
         branch="branch",
         parent_branch="main",
         url="url",
+        source=MergedDeliverySource::MergePrTool,
         parent_id=Some("parent")
       ) => {
         assert_eq(aid, agent_id)
@@ -400,7 +401,12 @@ test "plan_post_tool_actions - watch pane ids from response" {
 ///|
 test "merged_pr_parent_message is distinct from pre-merge signals" {
   let msg = merged_pr_parent_message(
-    42, "main.leaf-z", "feat/z", "main", "https://github.com/o/r/pull/42",
+    42,
+    "main.leaf-z",
+    "feat/z",
+    "main",
+    "https://github.com/o/r/pull/42",
+    MergedDeliverySource::MergePrTool,
   )
   assert_true(msg.contains("[PR MERGED]"))
   assert_true(msg.contains("merge_pr succeeded"))
@@ -415,10 +421,106 @@ test "merged_pr_parent_message is distinct from pre-merge signals" {
 
 ///|
 test "merged_pr_parent_message uses unknown when branch or parent_branch missing" {
-  let msg = merged_pr_parent_message(3, "leaf", "", "", "")
+  let msg = merged_pr_parent_message(
+    3,
+    "leaf",
+    "",
+    "",
+    "",
+    MergedDeliverySource::ExternalObservation,
+  )
   assert_true(msg.contains("branch: <unknown>"))
   assert_true(msg.contains("parent_branch: <unknown>"))
   assert_false(msg.contains("pr_url:"))
+  assert_true(msg.contains("Automatic reconciliation"))
+}
+
+///|
+test "plan_external_merge_finalization reuses canonical merged teardown" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("main.tl"),
+    workspace: "dir",
+    branch: "branch",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    ..@phase.lifecycle_for_role("main.leaf", @types.Role::Dev),
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=42,
+        state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+      ),
+    ),
+  }
+  let effects = plan_external_merge_finalization(
+    agent, lifecycle, 42, "branch", "main", "https://gh.test/42",
+  )
+  match effects[0] {
+    UpdateDevLifecycle(
+      agent_id="main.leaf",
+      event=@phase.DevEvent::MergeObserved(pr_number=42)
+    ) => ()
+    _ => fail("expected MergeObserved update first")
+  }
+  match effects[1] {
+    DeliverToParentMerged(
+      leaf_id="main.leaf",
+      pr_number=42,
+      branch="branch",
+      parent_branch="main",
+      url="https://gh.test/42",
+      source=MergedDeliverySource::ExternalObservation,
+      parent_id=Some("main.tl")
+    ) => ()
+    _ => fail("expected external DeliverToParentMerged second")
+  }
+  assert_true(last_is_clear_runtime_for(effects, "main.leaf"))
+  assert_eq(
+    count_persist_with_trigger(effects, @types.LifecycleTrigger::ExitMerged),
+    1,
+  )
+  assert_eq(
+    count_persist_with_trigger(
+      effects,
+      @types.LifecycleTrigger::FinalizeComplete,
+    ),
+    1,
+  )
+}
+
+///|
+test "plan_external_merge_finalization is idempotent for merged leaf" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("main.tl"),
+    workspace: "dir",
+    branch: "branch",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Done,
+    spawn_depth: 0,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    ..@phase.lifecycle_for_role("main.leaf", @types.Role::Dev),
+    process: @phase.ProcessState::Finalized(
+      reason=@phase.FinalizeReason::Merged,
+    ),
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::Done(reason=@phase.FinalizeReason::Merged),
+    ),
+  }
+  let effects = plan_external_merge_finalization(
+    agent, lifecycle, 42, "branch", "main", "https://gh.test/42",
+  )
+  assert_eq(effects, [ClearRuntimeTracking("main.leaf")])
 }
 
 ///|

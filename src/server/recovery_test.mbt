@@ -26,6 +26,8 @@ async test "discover_recovery_input with mock provider" {
         },
       ]
     },
+    find_prs_by_head_any: fn(_dir, _branch) { [] },
+    find_pr_by_number: fn(_dir, _pr_number) { None },
     list_agent_containers: fn(_dir) { ["worktrees"] },
     list_agents_in_container: fn(_dir, container) {
       if container == "worktrees" {
@@ -103,6 +105,7 @@ test "plan_recovery reconciles local agents and open PRs" {
         },
       ],
       polls,
+      resolved_prs: [],
     },
     files: {
       local_agents: [
@@ -182,6 +185,7 @@ test "plan_recovery uses fallback poll row when TrackNewPR snapshot map has no e
         },
       ],
       polls: Map::new(),
+      resolved_prs: [],
     },
     files: {
       local_agents: [
@@ -245,6 +249,7 @@ test "plan_recovery handles offline agent and persisted PR" {
         },
       ],
       polls: Map::new(),
+      resolved_prs: [],
     },
     files: {
       local_agents: [
@@ -337,5 +342,73 @@ test "plan_recovery handles offline agent and persisted PR" {
       assert_eq(pr.pr_number, 456)
     }
     _ => fail("expected SyncLifecycle")
+  }
+}
+
+///|
+test "plan_recovery finalizes merged tracked PR after restart" {
+  let input : @runtime.RecoveryReconcileInput = {
+    panes: { live: { tabs: [], panes: [] } },
+    prs: {
+      open_prs: [],
+      polls: Map::new(),
+      resolved_prs: [
+        @runtime.KnownPR::{
+          pr_number: 777,
+          branch: "feat/merged",
+          base: "main",
+          url: "https://gh.test/777",
+          created_sec: Some(5000L),
+          state: @runtime.KnownPRState::Merged,
+        },
+      ],
+    },
+    files: {
+      local_agents: [],
+      persisted_tracked_prs: [
+        @poller.TrackedPR::{
+          pr_number: 777,
+          agent_id: "main.leaf-merged",
+          branch: "feat/merged",
+          parent_branch: "main",
+          pr_url: "https://gh.test/777",
+          first_seen: 4000L,
+          consecutive_failures: 0,
+          backoff_until: 0L,
+          last_review_state: @poller.ReviewState::Approved,
+          last_review_bodies: "",
+          last_sha: "sha-merged",
+          notified_parent: true,
+          last_ci_rollup: @poller.CiRollupStatus::Success,
+          last_timeout_at: 0L,
+          copilot_issue_comment_seen: false,
+          orphan_notified: false,
+          orphan_reconciling: false,
+          changes_requested_since: 0L,
+          stall_notified: false,
+        },
+      ],
+    },
+    recovered_at: 6000L,
+    prebuilt_agent_phase: None,
+  }
+
+  let plan = @runtime.plan_recovery("session", input)
+  assert_eq(plan.actions.length(), 1)
+  match plan.actions[0] {
+    @runtime.RecoveryAction::FinalizeMergedAgent(
+      agent_id~,
+      pr_number~,
+      branch~,
+      parent_branch~,
+      pr_url~
+    ) => {
+      assert_eq(agent_id, "main.leaf-merged")
+      assert_eq(pr_number, 777)
+      assert_eq(branch, "feat/merged")
+      assert_eq(parent_branch, "main")
+      assert_eq(pr_url, "https://gh.test/777")
+    }
+    _ => fail("expected FinalizeMergedAgent")
   }
 }
