@@ -672,15 +672,14 @@ pub fn exit_block_reason_message(reason : ExitBlockReason) -> String {
 
 ///|
 pub fn lifecycle_to_json(lifecycle : AgentLifecycle) -> String {
-  derived_agent_lifecycle_json_to_legacy(lifecycle.to_json()).stringify()
+  lifecycle.to_json().stringify()
 }
 
 ///|
 pub fn lifecycle_from_json(json_str : String) -> AgentLifecycle? {
   let json = @json.parse(json_str) catch { _ => return None }
-  let adapted = legacy_agent_lifecycle_json_to_derived(json)
   try {
-    let lc : AgentLifecycle = @json.from_json(adapted)
+    let lc : AgentLifecycle = @json.from_json(json)
     Some(lc)
   } catch {
     _ => None

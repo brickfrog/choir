@@ -169,7 +169,7 @@ pub fn tl_can_exit(phase : TLPhase) -> StopCheckResult {
 
 ///|
 pub fn tl_phase_to_json(phase : TLPhase) -> String {
-  derived_tl_phase_json_to_legacy(phase.to_json()).stringify()
+  phase.to_json().stringify()
 }
 
 ///|
@@ -193,9 +193,8 @@ pub fn TLPhase::transition(
 ///|
 pub fn tl_phase_from_json(json_str : String) -> TLPhase? {
   let json = @json.parse(json_str) catch { _ => return None }
-  let adapted = legacy_tl_phase_json_to_derived(json)
   try {
-    let p : TLPhase = @json.from_json(adapted)
+    let p : TLPhase = @json.from_json(json)
     Some(p)
   } catch {
     _ => None
