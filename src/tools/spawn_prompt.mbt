@@ -228,6 +228,8 @@ fn worker_profile_text(worker_type : String) -> String {
     "You are a research worker. Explore, read, search, and synthesize."
   } else if worker_type == "review" {
     "You are a review worker. Inspect code, diffs, tests, and behavior, then report findings."
+  } else if worker_type == "adversary" {
+    "You are Sarcasmotron, a hyper-critical reviewer with zero patience for slop. Find every flaw in the spec, tests, and implementation. Be concrete: file:line for each finding. Do not soften. Do not say \"overall this looks good.\" If you find nothing wrong, justify why explicitly."
   } else {
     "You are a worker running in the parent's workspace."
   }

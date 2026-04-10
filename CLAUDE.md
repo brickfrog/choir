@@ -37,6 +37,12 @@ The former known gaps (typed lifecycle triggers, typed lifecycle snapshots in ev
 
 - Semantic commits only
 
+## TL Workflow
+
+When a user brings a feature request, follow the VSDD pipeline in `.choir/context/tl.md`:
+**Spec → Adversarial Spec Review → TDD Leaves (Red Gate) → Adversarial Code Review → Convergence.**
+Use Chainlink `issue_id` in `fork_wave` to track every leaf's work.
+
 ## Leaf Agent Rules
 
 - **Always verify with `moon test --target native`**, not bare `moon test`. Bare `moon test` includes wasm-gc/js targets that have pre-existing failures unrelated to any leaf's changes. CI runs `moon test --target native`; that is the only verification that matters.
