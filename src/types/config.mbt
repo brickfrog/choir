@@ -33,6 +33,7 @@ pub(all) struct LocalConfig {
   task_contract : TaskContract?
   /// Per-wave automerge override persisted into spawned leaf config. `None` inherits global config.
   automerge : Bool?
+  /// Optional Chainlink issue id from `config.local.toml` key `chainlink_issue_id`, for consumers that need to associate local config/workflows with a Chainlink issue.
   chainlink_issue_id : String?
 } derive(Debug)
 
