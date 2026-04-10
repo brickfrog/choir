@@ -3,6 +3,10 @@
 extern "C" fn c_get_file_size(path : Bytes) -> Int = "choir_get_file_size"
 
 ///|
+#borrow(path)
+extern "C" fn c_path_entry_exists(path : Bytes) -> Int = "choir_path_entry_exists"
+
+///|
 #borrow(path, buf)
 extern "C" fn c_read_file_to_buf(path : Bytes, buf : Bytes, size : Int) = "choir_read_file_to_buf"
 
@@ -75,6 +79,13 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 pub fn path_exists(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_get_file_size(path_bytes) >= 0
+}
+
+///|
+/// True when `stat(2)` succeeds (path exists as a file, directory, or other node).
+pub fn path_entry_exists(path : String) -> Bool {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  c_path_entry_exists(path_bytes) != 0
 }
 
 ///|

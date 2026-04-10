@@ -165,6 +165,11 @@ pub fn path_exists(_path : String) -> Bool {
 }
 
 ///|
+pub fn path_entry_exists(_path : String) -> Bool {
+  false
+}
+
+///|
 pub fn kill_pid_best_effort(_pid : Int) -> Unit {
 
 }

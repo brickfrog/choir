@@ -160,14 +160,17 @@ int choir_uds_http_post(const char *sock_path, int path_len,
         "\r\n",
         body_len);
 
-    write(fd, header, (size_t)header_len);
+    ssize_t nw = write(fd, header, (size_t)header_len);
+    (void)nw;
     if (body_len > 0) {
-        write(fd, body, (size_t)body_len);
+        ssize_t nb = write(fd, body, (size_t)body_len);
+        (void)nb;
     }
 
     /* Drain response to avoid connection reset on the agent side */
     char resp[256];
-    read(fd, resp, sizeof(resp));
+    ssize_t nr = read(fd, resp, sizeof(resp));
+    (void)nr;
 
     close(fd);
     return 0;

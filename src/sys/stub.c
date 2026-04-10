@@ -23,7 +23,8 @@ static void choir_sigterm_handler(int sig) {
         unlink(".choir/server.sock");
         unlink(".choir/run_id");
     } else if (choir_cleanup_cmd[0] != '\0') {
-        system(choir_cleanup_cmd);
+        int rc = system(choir_cleanup_cmd);
+        (void)rc;
     }
     _exit(0);
 }
@@ -57,10 +58,16 @@ int choir_get_file_size(const char* path) {
     return (int)size;
 }
 
+int choir_path_entry_exists(const char* path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
 void choir_read_file_to_buf(const char* path, char* buf, int size) {
     FILE* f = fopen(path, "rb");
     if (!f) return;
-    fread(buf, 1, size, f);
+    size_t n = fread(buf, 1, (size_t)size, f);
+    (void)n;
     fclose(f);
 }
 
