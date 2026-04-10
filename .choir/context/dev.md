@@ -27,9 +27,24 @@ You are a leaf agent working in your own worktree and branch.
 - Do not inspect wrapper scripts, `--help` output, environment dumps, or process lists unless the task explicitly requires debugging those layers.
 - Use the documented shell forms exactly. Do not invent extra flags or alternate CLI syntaxes.
 
+## TDD Protocol
+
+If your task includes a `## TDD Protocol` section, follow it exactly:
+
+1. Write ALL tests first. No implementation code — stubs only if needed to compile.
+2. Commit with `test:` prefix: `git commit -m "test: add failing tests for <feature>"`
+3. Push. Run `moon test --target native` — ALL new tests MUST fail. If any pass, the test is wrong — report it to parent immediately.
+4. `notify_parent` with `[RED GATE] <N> tests written, all failing. Awaiting green light.`
+5. Wait. Do not write any implementation until the parent responds.
+6. On proceed signal: implement minimum code to pass each test, one at a time.
+7. Continue with normal workflow (moon fmt, file_pr, etc.).
+
+Do not skip the Red Gate. Do not implement speculatively. "Fail fast" means the tests should fail before implementation — that's the entire point.
+
 ## Anti-Patterns
 
 - Never `git add .`
 - Do not use raw `gh` flows when `file_pr` does the job.
 - Do not shut down before the PR/review loop is in the right state.
 - Do not rerun the same tests over and over after they have already passed.
+- Do not implement before Red Gate confirmation if TDD Protocol is in your task.
