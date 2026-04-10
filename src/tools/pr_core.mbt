@@ -1066,14 +1066,13 @@ pub async fn interpret_fork_wave_post_spawn(
   ) {
     @chainlink.create_subissue(parent_id, title)
   },
-  write_plan_comment? : async (String, String) -> Bool = async fn(
+  write_plan_comment? : async (String, String) -> Unit = async fn(
     issue_id : String,
     text : String,
   ) {
     @chainlink.write_plan_comment(issue_id, text)
-    true
   },
-  write_subissue_id? : (String, String, String) -> Unit = @workspace.write_chainlink_subissue_id,
+  write_subissue_id? : (String, String, String) -> Bool = @workspace.write_chainlink_subissue_id,
 ) -> Unit {
   let resolved_pane_ids : Array[(String, String)] = []
   match registry {
@@ -1103,7 +1102,15 @@ pub async fn interpret_fork_wave_post_spawn(
           match created_subissue {
             Some(sub_id) => {
               let subissue_id = sub_id.to_string()
-              write_subissue_id(project_dir, spec.slug, subissue_id)
+              if !write_subissue_id(project_dir, spec.slug, subissue_id) {
+                @sys.write_stderr(
+                  "[chainlink] warn: failed to persist subissue id " +
+                  subissue_id +
+                  " for " +
+                  spec.slug +
+                  "\n",
+                )
+              }
               subissue_id
             }
             None => parent_id
@@ -1111,7 +1118,9 @@ pub async fn interpret_fork_wave_post_spawn(
         } else {
           parent_id
         }
-        let _ = write_plan_comment(effective_id, spec.task) catch { _ => false }
+        write_plan_comment(effective_id, spec.task) catch {
+          _ => ()
+        }
         let ok = claim_lock(effective_id, branch) catch { _ => false }
         if !ok {
           @sys.write_stderr(

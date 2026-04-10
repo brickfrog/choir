@@ -287,17 +287,17 @@ pub fn write_chainlink_subissue_id(
   project_dir : String,
   agent_slug : String,
   issue_id : String,
-) -> Unit {
-  ignore(
-    @sys.write_file_sync(
-      worktree_path(project_dir, agent_slug) + "/.chainlink_issue_id",
-      issue_id + "\n",
-    ),
-  )
+) -> Bool {
+  let workspace_dir = worktree_path(project_dir, agent_slug)
+  if !@sys.create_dir_all(workspace_dir) {
+    return false
+  }
+  @sys.write_file_sync(workspace_dir + "/.chainlink_issue_id", issue_id + "\n")
 }
 
 ///|
-/// Read the Chainlink issue id for an agent from its config.local.toml.
+/// Read the Chainlink issue id for an agent, preferring the per-worktree
+/// `.chainlink_issue_id` override and falling back to `config.local.toml`.
 pub fn chainlink_issue_id_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,

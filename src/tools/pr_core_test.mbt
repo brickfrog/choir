@@ -2878,7 +2878,6 @@ async test "chainlink hooks run when local config exposes issue id" {
       @async.sleep(0)
       commented_issue = Some(issue_id)
       commented_task = Some(text)
-      true
     },
   )
   assert_eq(claimed_issue, Some("5"))
@@ -3055,7 +3054,6 @@ async test "chainlink hooks are skipped when local config has no issue id" {
     write_plan_comment=async fn(_issue_id : String, _text : String) {
       @async.sleep(0)
       commented = true
-      true
     },
   )
   assert_false(created)
@@ -3233,7 +3231,6 @@ async test "chainlink multi-leaf wave creates subissues and uses them for commen
     write_plan_comment=async fn(issue_id : String, text : String) {
       @async.sleep(0)
       commented.push((issue_id, text))
-      true
     },
     claim_lock=async fn(issue_id : String, branch : String) {
       @async.sleep(0)
@@ -3246,6 +3243,7 @@ async test "chainlink multi-leaf wave creates subissues and uses them for commen
       issue_id : String,
     ) {
       written_ids.push((project_dir, agent_slug, issue_id))
+      true
     },
   )
   assert_eq(created_titles.length(), 2)
@@ -3320,7 +3318,6 @@ async test "chainlink multi-leaf wave falls back to parent issue when subissue c
     write_plan_comment=async fn(issue_id : String, text : String) {
       @async.sleep(0)
       commented.push((issue_id, text))
-      true
     },
     claim_lock=async fn(issue_id : String, branch : String) {
       @async.sleep(0)
@@ -3333,6 +3330,7 @@ async test "chainlink multi-leaf wave falls back to parent issue when subissue c
       _issue_id : String,
     ) {
       wrote_subissue_id = true
+      true
     },
   )
   assert_eq(commented, [("5", "shared task"), ("5", "other task")])
