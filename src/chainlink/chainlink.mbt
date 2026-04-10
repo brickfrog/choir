@@ -109,20 +109,6 @@ pub async fn write_plan_comment(issue_id : String, text : String) -> Unit {
 }
 
 ///|
-pub async fn fetch_next_text() -> String {
-  let cmd : @workspace.Command = {
-    program: "chainlink",
-    args: ["issue", "next"],
-    workdir: None,
-  }
-  let (exit_code, output) = @exec.capture_command_stdout(cmd)
-  if exit_code != 0 {
-    return ""
-  }
-  output
-}
-
-///|
 pub async fn claim_lock(issue_id : String, branch : String) -> Bool {
   let cmd : @workspace.Command = {
     program: "chainlink",

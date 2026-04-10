@@ -46,12 +46,6 @@ pub async fn write_plan_comment(issue_id : String, text : String) -> Bool {
 }
 
 ///|
-pub async fn fetch_next_text() -> String {
-  @async.sleep(0)
-  ""
-}
-
-///|
 pub async fn claim_lock(issue_id : String, branch : String) -> Bool {
   ignore(issue_id)
   ignore(branch)
