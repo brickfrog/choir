@@ -109,3 +109,33 @@ test "parse_fork_wave_args rejects invalid automerge value" {
   })
   assert_true(@tools.parse_fork_wave_args(".", args) is Err(_))
 }
+
+///|
+test "parse_fork_wave_args parses issue_id" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "issue_id": " 42 ",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.chainlink_issue_id, Some("42"))
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args ignores empty issue_id" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "issue_id": "   ",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.chainlink_issue_id, None)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
