@@ -792,6 +792,7 @@ pub fn fork_wave_spawn_plan(
       reuse_git_branch: None,
       spawn_depth: child_spawn_depth,
       automerge: fork_wave_args.automerge,
+      chainlink_issue_id: fork_wave_args.chainlink_issue_id,
     }
     spawned_specs.push(spec)
     for
@@ -2153,6 +2154,7 @@ pub fn spawn_worker_plan(
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let agent_id = @workspace.canonical_agent_id(spec)
   let terminal_target = @workspace.local_target_for(
@@ -2252,6 +2254,7 @@ pub fn spawn_remote_plan(args : RemoteSpawnArgs) -> SpawnRemotePlan {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let ok_response = @types.Response::ok_values({
     "status": String::to_json("spawned"),
@@ -2313,6 +2316,7 @@ pub fn spawn_gemini_plan(args : SpawnGeminiArgs) -> SpawnGeminiPlan {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   let ok_response = @types.Response::ok_values({
     "status": String::to_json("spawned"),
@@ -2445,6 +2449,7 @@ pub fn rescue_leaf_spawn_plan(
     reuse_git_branch: Some(git_branch),
     spawn_depth: 0,
     automerge: None,
+    chainlink_issue_id: None,
   }
   match @workspace.validate_reuse_spawn_spec(spec) {
     Err(e) => Err(@types.ChoirError::validation_error(e))
