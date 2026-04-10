@@ -1,6 +1,5 @@
 ///|
 pub async fn fetch_issue(id : String) -> ChainlinkIssue? {
-  @async.sleep(0)
   let cmd : @workspace.Command = {
     program: "chainlink",
     args: ["issue", "show", id, "--json"],
