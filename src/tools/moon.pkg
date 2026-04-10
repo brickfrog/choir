@@ -6,6 +6,7 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/string",
   "choir/src/exec",
+  "choir/src/chainlink",
   "choir/src/workspace",
   "choir/src/registry",
   "choir/src/message",

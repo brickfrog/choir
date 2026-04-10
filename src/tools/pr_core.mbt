@@ -215,6 +215,8 @@ pub async fn interpret_file_pr_post_success(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
+  write_back_pr? : async (String, String, Int) -> Unit = @chainlink.write_back_pr,
 ) -> @types.Response {
   match effects.poller_track {
     Some(tracked_pr) =>
@@ -275,6 +277,30 @@ pub async fn interpret_file_pr_post_success(
       }
     }
     _ => ()
+  }
+  let tracked_agent_workspace = agent_workspace_from_registry(
+    registry, tracked_agent_id,
+  )
+  match
+    read_chainlink_issue_id(
+      project_dir,
+      tracked_agent_workspace,
+      @phase.extract_slug(tracked_agent_id),
+    ) {
+    Some(issue_id) =>
+      match effects.response.ok_field("pr_url") {
+        Some(pr_url) =>
+          write_back_pr(issue_id, pr_url, pr_number) catch {
+            _ =>
+              @sys.write_stderr(
+                "[chainlink] warn: PR write-back failed for issue " +
+                issue_id +
+                "\n",
+              )
+          }
+        None => ()
+      }
+    None => ()
   }
   let mut review_request_failed = false
   if pr_review {
@@ -579,6 +605,27 @@ pub fn file_pr_workdir(
         _ => root_project_dir
       }
     None => root_project_dir
+  }
+}
+
+///|
+fn agent_workspace_from_registry(
+  reg : @registry.AgentRegistry?,
+  agent_id : String,
+) -> String? {
+  match reg {
+    Some(agent_reg) =>
+      try {
+        let agent = agent_reg.get(agent_id)
+        if agent.workspace != "" {
+          Some(agent.workspace)
+        } else {
+          None
+        }
+      } catch {
+        _ => None
+      }
+    None => None
   }
 }
 
@@ -1012,6 +1059,7 @@ pub async fn interpret_fork_wave_post_spawn(
   session : String,
   registry : @registry.AgentRegistry?,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  claim_lock? : async (String, String) -> Bool = @chainlink.claim_lock,
 ) -> Unit {
   let resolved_pane_ids : Array[(String, String)] = []
   match registry {
@@ -1024,6 +1072,20 @@ pub async fn interpret_fork_wave_post_spawn(
         )
       }
     None => ()
+  }
+  for spec in spawn_plan.spawned_specs {
+    match spec.chainlink_issue_id {
+      Some(issue_id) => {
+        let branch = @workspace.spawn_git_branch(spec)
+        let ok = claim_lock(issue_id, branch) catch { _ => false }
+        if !ok {
+          @sys.write_stderr(
+            "[chainlink] warn: lock claim failed for issue " + issue_id + "\n",
+          )
+        }
+      }
+      None => ()
+    }
   }
   for slug in spawn_plan.spawned_slugs {
     let _ = @workspace.register_team_member(
@@ -1479,13 +1541,20 @@ pub fn merge_pr_tracked_branch_for_post_success(
 /// After `interpret_merge_pr_merge_host` succeeds: resolve tracked branch,
 /// build `merge_pr_post_success_plan`, apply the TL lifecycle event, optionally
 /// untrack and persist poller state, return the tool response.
-pub fn interpret_merge_pr_post_success(
+pub async fn interpret_merge_pr_post_success(
   project_dir : String,
   caller_id : String,
   pr_number : Int,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
+  read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
+  write_back_merge? : async (String, Int, String) -> Unit = @chainlink.write_back_merge,
+  release_lock? : async (String) -> Bool = @chainlink.release_lock,
 ) -> @types.Response {
+  let tracked = match poller_state {
+    Some(ps) => ps.get(pr_number)
+    None => None
+  }
   let tracked_branch = merge_pr_tracked_branch_for_post_success(
     poller_state, pr_number,
   )
@@ -1509,6 +1578,36 @@ pub fn interpret_merge_pr_post_success(
       }
       None => ()
     }
+  }
+  match tracked {
+    Some(pr) =>
+      match
+        read_chainlink_issue_id(
+          project_dir,
+          agent_workspace_from_registry(registry, pr.agent_id),
+          @phase.extract_slug(pr.agent_id),
+        ) {
+        Some(issue_id) => {
+          write_back_merge(issue_id, pr_number, pr.branch) catch {
+            _ =>
+              @sys.write_stderr(
+                "[chainlink] warn: merge write-back failed for issue " +
+                issue_id +
+                "\n",
+              )
+          }
+          let released = release_lock(issue_id) catch { _ => false }
+          if !released {
+            @sys.write_stderr(
+              "[chainlink] warn: lock release failed for issue " +
+              issue_id +
+              "\n",
+            )
+          }
+        }
+        None => ()
+      }
+    None => ()
   }
   plan.response
 }
@@ -1762,6 +1861,8 @@ pub async fn interpret_kill_agent(
   args : KillAgentArgs,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
+  release_lock? : async (String) -> Bool = @chainlink.release_lock,
 ) -> @types.Response {
   match registry {
     None => @types.Response::Err("no agent registry available")
@@ -1788,6 +1889,24 @@ pub async fn interpret_kill_agent(
         Some(cmd) => {
           let _ = runner([cmd])
           ()
+        }
+        None => ()
+      }
+      match
+        read_chainlink_issue_id(
+          ".",
+          Some(agent.workspace),
+          @phase.extract_slug(args.agent_id),
+        ) {
+        Some(issue_id) => {
+          let released = release_lock(issue_id) catch { _ => false }
+          if !released {
+            @sys.write_stderr(
+              "[chainlink] warn: lock release failed for issue " +
+              issue_id +
+              "\n",
+            )
+          }
         }
         None => ()
       }

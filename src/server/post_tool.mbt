@@ -629,6 +629,31 @@ pub fn merged_pr_parent_message(
 }
 
 ///|
+pub async fn best_effort_release_chainlink_lock_for_agent(
+  project_dir : String,
+  agent : @types.Agent,
+  read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
+  release_lock? : async (String) -> Bool = @chainlink.release_lock,
+) -> Unit {
+  match
+    read_chainlink_issue_id(
+      project_dir,
+      Some(agent.workspace),
+      @phase.extract_slug(agent.agent_id.to_string()),
+    ) {
+    Some(issue_id) => {
+      let released = release_lock(issue_id) catch { _ => false }
+      if !released {
+        @sys.write_stderr(
+          "[chainlink] warn: lock release failed for issue " + issue_id + "\n",
+        )
+      }
+    }
+    None => ()
+  }
+}
+
+///|
 pub impl Show for TeardownEffect with output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)

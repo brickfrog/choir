@@ -900,6 +900,24 @@ async fn mock_capture_empty(_cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+fn mock_read_chainlink_issue_id_present(
+  _project_dir : String,
+  _agent_workspace : String?,
+  _agent_slug : String,
+) -> String? {
+  Some("5")
+}
+
+///|
+fn mock_read_chainlink_issue_id_absent(
+  _project_dir : String,
+  _agent_workspace : String?,
+  _agent_slug : String,
+) -> String? {
+  None
+}
+
+///|
 async fn mock_ensure_pr_ok(
   _branch : String,
   _parent_branch : String,
@@ -2799,6 +2817,324 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
     _ => fail("expected agent in registry")
   } noraise {
     a => assert_eq(a.state, @types.AgentState::Failed)
+  }
+}
+
+///|
+async test "chainlink hooks run when local config exposes issue id" {
+  let mut claimed_branch : String? = None
+  let fork_args : ForkWaveArgs = {
+    ..fork_wave_args_base(),
+    chainlink_issue_id: Some("5"),
+  }
+  let fork_plan : ForkWaveSpawnPlan = {
+    cmds: [],
+    spawned_specs: [
+      {
+        slug: "wave-0",
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Claude,
+        task: "shared task",
+        task_contract: None,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: "main.tl",
+        parent_branch: "main",
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
+        spawn_depth: 0,
+        automerge: None,
+        chainlink_issue_id: Some("5"),
+      },
+    ],
+    spawned_slugs: [],
+    spawned_count: 1,
+    skipped_count: 0,
+    agent_ids: "main.wave-0",
+    skipped_ids: "",
+  }
+  interpret_fork_wave_post_spawn(
+    fork_args,
+    fork_plan,
+    "/tmp",
+    "choir",
+    None,
+    capture=mock_capture_empty,
+    claim_lock=async fn(issue_id : String, branch : String) {
+      @async.sleep(0)
+      assert_eq(issue_id, "5")
+      claimed_branch = Some(branch)
+      true
+    },
+  )
+  assert_eq(claimed_branch, Some("main.wave-0"))
+
+  let project_dir = file_pr_post_success_test_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let file_pr_args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+    review_context: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 21,
+    url: "https://example.test/pr/21",
+    state: "OPEN",
+  }
+  let file_pr_plan_value = file_pr_plan(file_pr_args, "main", pr, false)
+  let file_pr_effects = file_pr_post_success_effects(
+    file_pr_plan_value, false, false,
+  )
+  let mut wrote_pr = false
+  ignore(
+    interpret_file_pr_post_success(
+      project_dir,
+      "choir",
+      file_pr_args.branch,
+      file_pr_args.tracked_agent_id,
+      project_dir,
+      pr.number,
+      false,
+      file_pr_effects,
+      None,
+      None,
+      mock_runner_all_ok,
+      read_chainlink_issue_id=mock_read_chainlink_issue_id_present,
+      write_back_pr=async fn(
+        issue_id : String,
+        pr_url : String,
+        pr_number : Int,
+      ) {
+        @async.sleep(0)
+        assert_eq(issue_id, "5")
+        assert_eq(pr_url, "https://example.test/pr/21")
+        assert_eq(pr_number, 21)
+        wrote_pr = true
+      },
+    ),
+  )
+  assert_true(wrote_pr)
+
+  let poller = @poller.PollerState::new()
+  poller.track(
+    21, "main.leaf", "main.leaf", "main", "https://example.test/pr/21", 0L,
+  )
+  let mut wrote_merge = false
+  let mut released_after_merge = false
+  ignore(
+    interpret_merge_pr_post_success(
+      project_dir,
+      "main.tl",
+      21,
+      Some(poller),
+      None,
+      read_chainlink_issue_id=mock_read_chainlink_issue_id_present,
+      write_back_merge=async fn(
+        issue_id : String,
+        pr_number : Int,
+        branch : String,
+      ) {
+        @async.sleep(0)
+        assert_eq(issue_id, "5")
+        assert_eq(pr_number, 21)
+        assert_eq(branch, "main.leaf")
+        wrote_merge = true
+      },
+      release_lock=async fn(issue_id : String) {
+        @async.sleep(0)
+        assert_eq(issue_id, "5")
+        released_after_merge = true
+        true
+      },
+    ),
+  )
+  assert_true(wrote_merge)
+  assert_true(released_after_merge)
+
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.leaf",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/proj/.choir/worktrees/leaf",
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let mut released_after_kill = false
+  ignore(
+    interpret_kill_agent(
+      { agent_id: "main.leaf", reason: "cleanup" },
+      Some(reg),
+      mock_runner_all_ok,
+      read_chainlink_issue_id=mock_read_chainlink_issue_id_present,
+      release_lock=async fn(issue_id : String) {
+        @async.sleep(0)
+        assert_eq(issue_id, "5")
+        released_after_kill = true
+        true
+      },
+    ),
+  )
+  assert_true(released_after_kill)
+}
+
+///|
+async test "chainlink hooks are skipped when local config has no issue id" {
+  let fork_args = fork_wave_args_base()
+  let fork_plan : ForkWaveSpawnPlan = {
+    cmds: [],
+    spawned_specs: [
+      {
+        slug: "wave-0",
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Claude,
+        task: "shared task",
+        task_contract: None,
+        isolation: @types.IsolationMode::Worktree,
+        parent_id: "main.tl",
+        parent_branch: "main",
+        reuse_workspace: false,
+        workspace_slug: None,
+        reuse_git_branch: None,
+        spawn_depth: 0,
+        automerge: None,
+        chainlink_issue_id: None,
+      },
+    ],
+    spawned_slugs: [],
+    spawned_count: 1,
+    skipped_count: 0,
+    agent_ids: "main.wave-0",
+    skipped_ids: "",
+  }
+  interpret_fork_wave_post_spawn(
+    fork_args,
+    fork_plan,
+    "/tmp",
+    "choir",
+    None,
+    capture=mock_capture_empty,
+    claim_lock=async fn(_issue_id : String, _branch : String) {
+      @async.sleep(0)
+      fail("claim_lock should not run")
+      false
+    },
+  )
+
+  let project_dir = file_pr_post_success_test_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let file_pr_args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+    review_context: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 22,
+    url: "https://example.test/pr/22",
+    state: "OPEN",
+  }
+  let file_pr_plan_value = file_pr_plan(file_pr_args, "main", pr, false)
+  let file_pr_effects = file_pr_post_success_effects(
+    file_pr_plan_value, false, false,
+  )
+  match
+    interpret_file_pr_post_success(
+      project_dir,
+      "choir",
+      file_pr_args.branch,
+      file_pr_args.tracked_agent_id,
+      project_dir,
+      pr.number,
+      false,
+      file_pr_effects,
+      None,
+      None,
+      mock_runner_all_ok,
+      read_chainlink_issue_id=mock_read_chainlink_issue_id_absent,
+      write_back_pr=async fn(
+        _issue_id : String,
+        _pr_url : String,
+        _pr_number : Int,
+      ) {
+        @async.sleep(0)
+        fail("write_back_pr should not run")
+      },
+    ) {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+
+  let poller = @poller.PollerState::new()
+  poller.track(
+    22, "main.leaf", "main.leaf", "main", "https://example.test/pr/22", 0L,
+  )
+  match
+    interpret_merge_pr_post_success(
+      project_dir,
+      "main.tl",
+      22,
+      Some(poller),
+      None,
+      read_chainlink_issue_id=mock_read_chainlink_issue_id_absent,
+      write_back_merge=async fn(
+        _issue_id : String,
+        _pr_number : Int,
+        _branch : String,
+      ) {
+        @async.sleep(0)
+        fail("write_back_merge should not run")
+      },
+      release_lock=async fn(_issue_id : String) {
+        @async.sleep(0)
+        fail("release_lock should not run")
+        false
+      },
+    ) {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.leaf",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/proj/.choir/worktrees/leaf",
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  match
+    interpret_kill_agent(
+      { agent_id: "main.leaf", reason: "cleanup" },
+      Some(reg),
+      mock_runner_all_ok,
+      read_chainlink_issue_id=mock_read_chainlink_issue_id_absent,
+      release_lock=async fn(_issue_id : String) {
+        @async.sleep(0)
+        fail("release_lock should not run")
+        false
+      },
+    ) {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
   }
 }
 
