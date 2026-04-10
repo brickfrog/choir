@@ -99,13 +99,14 @@ pub async fn create_subissue(
 }
 
 ///|
-pub async fn write_plan_comment(issue_id : String, text : String) -> Unit {
+pub async fn write_plan_comment(issue_id : String, text : String) -> Bool {
   let cmd : @workspace.Command = {
     program: "chainlink",
     args: ["issue", "comment", issue_id, text, "--kind", "plan"],
     workdir: None,
   }
-  ignore(@exec.capture_command_merged(cmd))
+  let (exit_code, _) = @exec.capture_command_merged(cmd)
+  exit_code == 0
 }
 
 ///|
@@ -117,6 +118,13 @@ pub async fn fetch_next_text() -> String {
   }
   let (exit_code, output) = @exec.capture_command_stdout(cmd)
   if exit_code != 0 {
+    @sys.write_stderr(
+      "[chainlink] issue next failed: exit=" +
+      exit_code.to_string() +
+      " output=" +
+      output +
+      "\n",
+    )
     return ""
   }
   output
