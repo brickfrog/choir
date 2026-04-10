@@ -456,7 +456,7 @@ test "config_local_content includes spawn_depth" {
     reuse_git_branch: None,
     spawn_depth: 1,
     automerge: Some(true),
-    chainlink_issue_id: None,
+    chainlink_issue_id: Some("7\"escape"),
   }
   let target = match @types.LocalTarget::parse("zellij-tab:choir:subtl-0") {
     Some(t) => t
@@ -466,6 +466,7 @@ test "config_local_content includes spawn_depth" {
   assert_true(content.contains("role = \"tl\""))
   assert_true(content.contains("spawn_depth = 1"))
   assert_true(content.contains("automerge = true"))
+  assert_true(content.contains("chainlink_issue_id = \"7\\\"escape\""))
 }
 
 ///|

@@ -216,7 +216,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "issue_id",
-          desc: "Optional Chainlink issue ID to link spawned leaf work (e.g. \"5\"). Enables automatic lock coordination and write-back.",
+          desc: "Optional Chainlink issue ID to link spawned leaf work (e.g. \"5\"). Passed through as issue metadata for downstream consumers.",
         },
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },
