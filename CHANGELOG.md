@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 - **Idiomatic Errors**: `ChoirError` converted to `suberror` for use with MoonBit's `raise` / `try` patterns.
 
 ### Changed
+- test spec issue (#2)
+- test spec issue (#1)
 - **Architecture**: Completed all 6 major migrations from the North Star plan; the core is now purely logic-driven with explicit effects.
 - **Boilerplate Reduction**: Switched all lifecycle and phase types to `derive(ToJson, FromJson)`, deleting over 1,500 lines of manual serialization.
 - **Modernized Core**: Refactored `src/tools`, `src/server`, and `src/phase` to leverage checked exceptions.
