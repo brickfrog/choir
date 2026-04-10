@@ -786,16 +786,17 @@ test "spawn_commands for inline mode writes metadata and uses zellij run" {
     chainlink_issue_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "howdy")
-  assert_eq(cmds.length(), 2)
+  assert_eq(cmds.length(), 3)
   assert_eq(cmds[0].program, @workspace.native_write_choir_file_program)
   assert_true(cmds[0].args[0].contains("/project/.choir/inline/main.worker-a"))
   assert_true(cmds[0].args[2].contains("agent_id = \"main.worker-a\""))
-  assert_eq(cmds[1].program, "zellij")
-  assert_eq(cmds[1].args[0], "--session")
-  assert_eq(cmds[1].args[1], "howdy")
-  assert_eq(cmds[1].args[2], "run")
-  assert_eq(cmds[1].args[4], "worker-a")
-  let zargs = cmds[1].args
+  assert_eq(cmds[1].program, @workspace.native_leaf_helpers_program)
+  assert_eq(cmds[2].program, "zellij")
+  assert_eq(cmds[2].args[0], "--session")
+  assert_eq(cmds[2].args[1], "howdy")
+  assert_eq(cmds[2].args[2], "run")
+  assert_eq(cmds[2].args[4], "worker-a")
+  let zargs = cmds[2].args
   let mut found_terminal = false
   for i = 0; i < zargs.length(); i = i + 1 {
     if zargs[i].contains("CHOIR_TERMINAL_TARGET=") &&
