@@ -459,7 +459,11 @@ pub fn parse_unresolved_threads_response(json_str : String) -> (Int, String) {
       Some(True) => true
       _ => false
     }
-    if is_resolved {
+    let is_outdated = match thread.get("isOutdated") {
+      Some(True) => true
+      _ => false
+    }
+    if is_resolved || is_outdated {
       continue
     }
     let thread_id = match thread.get("id") {
@@ -634,7 +638,7 @@ pub async fn fetch_unresolved_review_threads(
     Some(pair) => pair
     None => return (0, "")
   }
-  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved path comments(first: 1) { nodes { body } } } } } } }"
+  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved isOutdated path comments(first: 1) { nodes { body } } } } } } }"
   let cmd : @workspace.Command = {
     program: "gh",
     args: [
