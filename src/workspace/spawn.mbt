@@ -363,8 +363,28 @@ pub fn spawn_commands(
           config_local_content(spec, workspace, terminal_target),
         ),
       )
+      cmds.push(write_leaf_helper_scripts(workspace))
       if spec.agent_type == Gemini {
         cmds.push(trust_gemini_folder(workspace))
+        let ctx_paths = resolve_context_paths(
+          root_project,
+          @config.role_to_string(spec.role),
+        )
+        let wasm_path = root_project + "/.choir/hooks/hook.wasm"
+        let wasm_hooks = if @sys.read_file(wasm_path) != "" {
+          Some(wasm_path)
+        } else {
+          None
+        }
+        cmds.push(
+          write_gemini_settings(
+            workspace,
+            canonical_agent_id(spec),
+            @config.role_to_string(spec.role),
+            context_paths=ctx_paths,
+            wasm_hooks_path=wasm_hooks,
+          ),
+        )
       }
       let launch_cmds = if spec.role == @types.Role::TL &&
         spec.isolation != @types.IsolationMode::Inline {
