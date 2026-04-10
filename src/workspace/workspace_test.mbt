@@ -1117,3 +1117,85 @@ test "spawn_git_branch honors reuse_git_branch" {
   }
   assert_eq(@workspace.spawn_git_branch(spec), "main.original")
 }
+
+///|
+fn escape_workspace_test_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+test "task_contract_for_agent_workspace falls back when first config lacks task_contract" {
+  let project_dir = "/tmp/choir-ws-task-contract-" + @sys.get_pid().to_string()
+  let agent_workspace = project_dir + "/alt-workspace"
+  let fallback_workspace = @workspace.worktree_path(project_dir, "leaf")
+  assert_true(@sys.create_dir_all(agent_workspace))
+  assert_true(@sys.create_dir_all(fallback_workspace))
+  ignore(
+    @sys.write_file_sync(
+      agent_workspace + "/config.local.toml",
+      (
+        #|automerge = true
+      ),
+    ),
+  )
+  ignore(
+    @sys.write_file_sync(
+      fallback_workspace + "/config.local.toml",
+      "task_contract_json = \"" +
+      escape_workspace_test_toml_string(
+        { ..@types.TaskContract::empty(), goal: "restore fallback" }.to_json_string(),
+      ) +
+      "\"\n",
+    ),
+  )
+  match
+    @workspace.task_contract_for_agent_workspace(
+      project_dir,
+      Some(agent_workspace),
+      "leaf",
+    ) {
+    Some(contract) => assert_eq(contract.goal, "restore fallback")
+    None => fail("expected fallback task contract")
+  }
+}
+
+///|
+test "chainlink_issue_id_for_agent_workspace falls back when first config lacks issue id" {
+  let project_dir = "/tmp/choir-ws-chainlink-" + @sys.get_pid().to_string()
+  let agent_workspace = project_dir + "/alt-workspace"
+  let fallback_workspace = @workspace.worktree_path(project_dir, "leaf")
+  assert_true(@sys.create_dir_all(agent_workspace))
+  assert_true(@sys.create_dir_all(fallback_workspace))
+  ignore(
+    @sys.write_file_sync(
+      agent_workspace + "/config.local.toml",
+      (
+        #|automerge = true
+      ),
+    ),
+  )
+  ignore(
+    @sys.write_file_sync(
+      fallback_workspace + "/config.local.toml",
+      (
+        #|chainlink_issue_id = "5"
+      ),
+    ),
+  )
+  assert_eq(
+    @workspace.chainlink_issue_id_for_agent_workspace(
+      project_dir,
+      Some(agent_workspace),
+      "leaf",
+    ),
+    Some("5"),
+  )
+}
