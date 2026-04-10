@@ -38,10 +38,11 @@ pub async fn create_subissue(
 }
 
 ///|
-pub async fn write_plan_comment(issue_id : String, text : String) -> Unit {
+pub async fn write_plan_comment(issue_id : String, text : String) -> Bool {
   ignore(issue_id)
   ignore(text)
   @async.sleep(0)
+  false
 }
 
 ///|
