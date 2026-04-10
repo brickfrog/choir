@@ -3,6 +3,9 @@ pub(all) enum ToolRequest {
   Register(RegisterArgs)
   ForkWave(ForkWaveArgs)
   ForkSession(SessionNameArgs)
+  ChainlinkList(String)
+  ChainlinkShow(String)
+  ChainlinkReady
   FilePr(FilePrArgs)
   MergePr(MergePrArgs)
   TrackPr(TrackPrArgs)
@@ -37,6 +40,9 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     Register(_) => "register"
     ForkWave(_) => "fork_wave"
     ForkSession(_) => "fork_session"
+    ChainlinkList(_) => "chainlink_list"
+    ChainlinkShow(_) => "chainlink_show"
+    ChainlinkReady => "chainlink_ready"
     FilePr(_) => "file_pr"
     MergePr(_) => "merge_pr"
     TrackPr(_) => "track_pr"

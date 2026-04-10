@@ -248,6 +248,24 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["task"],
     },
     {
+      name: "chainlink_list",
+      description: "List Chainlink issues. Optional status filter (default: open).",
+      props: [{ name: "status", desc: "Optional status filter" }],
+      required: [],
+    },
+    {
+      name: "chainlink_show",
+      description: "Show detail for a Chainlink issue by ID.",
+      props: [{ name: "id", desc: "Chainlink issue ID" }],
+      required: ["id"],
+    },
+    {
+      name: "chainlink_ready",
+      description: "List Chainlink issues with no open blockers (ready to work on).",
+      props: [],
+      required: [],
+    },
+    {
       name: "rescue_leaf",
       description: "Reuse a salvageable dev worktree/branch: spawn replacement agent (default cursor_agent), hand off dev lifecycle, transfer tracked PR ownership, supersede old leaf",
       props: [
@@ -464,8 +482,19 @@ fn tool_defs() -> Array[CatalogTool] {
 
 ///|
 /// Create a JSON-RPC response with the list of available tools.
-pub fn tools_list_response(id : JsonRpcId) -> JsonRpcResponse {
-  let defs = tool_defs()
+pub fn tools_list_response(
+  id : JsonRpcId,
+  role : @types.Role,
+) -> JsonRpcResponse {
+  let registry = @tools.ToolRegistry::new()
+  let defs = tool_defs().filter(fn(def) {
+    try {
+      ignore(registry.lookup(role, def.name))
+      true
+    } catch {
+      _ => false
+    }
+  })
   let tools_arr : Array[Json] = defs.map(fn(d) { tool_json(d) })
   let result : Map[String, Json] = { "tools": tools_arr.to_json() }
   { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
