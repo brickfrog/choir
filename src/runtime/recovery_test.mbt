@@ -136,3 +136,24 @@ test "parse_github_time_utc_sec handles valid and invalid timestamps" {
   assert_eq(parse_github_time_utc_sec("2026-02-30T01:02:03Z"), None)
   assert_eq(parse_github_time_utc_sec("2026-03-20 01:02:03Z"), None)
 }
+
+///|
+async test "shell recovery provider skips missing optional choir paths" {
+  let project_dir = "/tmp/choir-recovery-missing-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir"))
+  let provider = make_shell_recovery_provider((program, args, cwd) => {
+    ignore(program)
+    ignore(args)
+    ignore(cwd)
+    fail("capture should not run for missing optional paths")
+    ""
+  })
+  assert_eq((provider.list_agents_in_container)(project_dir, "worktrees"), [])
+  assert_eq((provider.read_agent_config)(project_dir, "agents", "root"), "")
+  assert_eq((provider.list_lifecycle_ids)(project_dir), [])
+  assert_eq((provider.read_lifecycle_content)(project_dir, "root"), "")
+  assert_eq((provider.read_poller_state)(project_dir), [])
+}

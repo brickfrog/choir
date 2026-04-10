@@ -664,6 +664,59 @@ async test "replay_pending_outbox_with replays pending message and marks it deli
 }
 
 ///|
+async test "replay_pending_outbox_with replays pending root delivery before root re-registers" {
+  let project_dir = "/tmp/choir-outbox-replay-root-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  let target = match
+    @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":TL") {
+    Some(t) => t
+    None => fail("expected parseable local target")
+  }
+  let pending = @outbox.OutboxMessage::new(
+    "msg-root-replay-1",
+    "main.leaf",
+    "root",
+    "agent killed by parent",
+    @types.Status::Failure,
+    @message.DeliveryMethod::LocalTerminalInput(
+      target, "[from: main.leaf] agent killed by parent",
+    ),
+    100L,
+    200L,
+  )
+  assert_true(
+    @outbox.append_outbox_snapshot(@sys.append_file_sync, project_dir, pending),
+  )
+  let mut runner_calls = 0
+  state.replay_pending_outbox_with(150L, runner=async fn(
+    cmds : Array[@workspace.Command],
+  ) {
+    @async.sleep(0)
+    runner_calls = runner_calls + cmds.length()
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  })
+  assert_eq(runner_calls, 1)
+  let messages = @outbox.load_recipient_outbox(
+    @sys.read_file, project_dir, "root",
+  )
+  assert_eq(messages.length(), 1)
+  assert_eq(messages[0].delivery_state, @outbox.OutboxDeliveryState::Delivered)
+  assert_eq(messages[0].delivery_attempts, 1)
+  assert_eq(messages[0].last_attempt_at, Some(150L))
+  assert_eq(messages[0].last_error, None)
+}
+
+///|
 test "sweep_outbox marks expired pending messages and compacts recipient file" {
   let project_dir = "/tmp/choir-outbox-sweep-" +
     @sys.get_pid().to_string() +

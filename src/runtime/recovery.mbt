@@ -440,24 +440,27 @@ pub fn make_shell_recovery_provider(
       ["worktrees", "agents", "inline"]
     },
     list_agents_in_container: async fn(project_dir, container) {
-      let output = capture(
-        "ls",
-        ["-1", ".choir/" + container],
-        Some(project_dir),
-      )
+      let rel = ".choir/" + container
+      if !@sys.path_exists(project_dir + "/" + rel) {
+        return []
+      }
+      let output = capture("ls", ["-1", rel], Some(project_dir))
       split_lines(output)
     },
     read_agent_config: async fn(project_dir, container, slug) {
-      capture(
-        "cat",
-        [".choir/" + container + "/" + slug + "/.choir/config.local.toml"],
-        Some(project_dir),
-      )
+      let rel = ".choir/" + container + "/" + slug + "/.choir/config.local.toml"
+      if !@sys.path_exists(project_dir + "/" + rel) {
+        return ""
+      }
+      capture("cat", [rel], Some(project_dir))
     },
     get_agent_relative_workspace: fn(container, slug) {
       ".choir/" + container + "/" + slug
     },
     list_lifecycle_ids: async fn(project_dir) {
+      if !@sys.path_exists(project_dir + "/.choir/kv") {
+        return []
+      }
       let output = capture(
         "find",
         [".choir/kv", "-maxdepth", "1", "-type", "f", "-name", "lifecycle--*"],
@@ -483,9 +486,16 @@ pub fn make_shell_recovery_provider(
       ids
     },
     read_lifecycle_content: async fn(project_dir, id) {
-      capture("cat", [".choir/kv/lifecycle--" + id], Some(project_dir))
+      let rel = ".choir/kv/lifecycle--" + id
+      if !@sys.path_exists(project_dir + "/" + rel) {
+        return ""
+      }
+      capture("cat", [rel], Some(project_dir))
     },
     read_poller_state: async fn(project_dir) {
+      if !@sys.path_exists(project_dir + "/.choir/poller_state.json") {
+        return []
+      }
       let content = capture(
         "cat",
         [".choir/poller_state.json"],
