@@ -46,6 +46,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::TL],
     },
     {
+      name: "chainlink_next",
+      description: "Show the next Chainlink issue to work on.",
+      allowed_roles: [@types.Role::TL],
+    },
+    {
       name: "spawn_gemini",
       description: "Spawn a single Gemini leaf agent in a worktree",
       allowed_roles: [@types.Role::Root, @types.Role::TL],

@@ -6,6 +6,7 @@ pub(all) enum ToolRequest {
   ChainlinkList(String)
   ChainlinkShow(String)
   ChainlinkReady
+  ChainlinkNext
   FilePr(FilePrArgs)
   MergePr(MergePrArgs)
   TrackPr(TrackPrArgs)
@@ -43,6 +44,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     ChainlinkList(_) => "chainlink_list"
     ChainlinkShow(_) => "chainlink_show"
     ChainlinkReady => "chainlink_ready"
+    ChainlinkNext => "chainlink_next"
     FilePr(_) => "file_pr"
     MergePr(_) => "merge_pr"
     TrackPr(_) => "track_pr"
