@@ -77,6 +77,58 @@ pub async fn fetch_tree_text() -> String {
 }
 
 ///|
+fn parse_subissue_id(output : String) -> Int? {
+  Some(@string.parse_int(output.trim().to_string())) catch {
+    _ => None
+  }
+}
+
+///|
+test "parse_subissue_id - valid integer" {
+  assert_eq(parse_subissue_id("42\n"), Some(42))
+}
+
+///|
+test "parse_subissue_id - empty output" {
+  assert_eq(parse_subissue_id(""), None)
+}
+
+///|
+test "parse_subissue_id - invalid integer" {
+  assert_eq(parse_subissue_id("not-a-number"), None)
+}
+
+///|
+pub async fn create_subissue(
+  parent_id : String,
+  title : String,
+  description? : String = "",
+) -> Int? {
+  let args = ["issue", "subissue", parent_id, title]
+  if description != "" {
+    args.push("-d")
+    args.push(description)
+  }
+  args.push("-q")
+  let cmd : @workspace.Command = { program: "chainlink", args, workdir: None }
+  let (exit_code, output) = @exec.capture_command_stdout(cmd)
+  if exit_code != 0 {
+    return None
+  }
+  parse_subissue_id(output)
+}
+
+///|
+pub async fn write_plan_comment(issue_id : String, text : String) -> Unit {
+  let cmd : @workspace.Command = {
+    program: "chainlink",
+    args: ["issue", "comment", issue_id, text, "--kind", "plan"],
+    workdir: None,
+  }
+  ignore(@exec.capture_command_merged(cmd))
+}
+
+///|
 pub async fn claim_lock(issue_id : String, branch : String) -> Bool {
   let cmd : @workspace.Command = {
     program: "chainlink",

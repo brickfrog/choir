@@ -26,6 +26,27 @@ pub async fn fetch_tree_text() -> String {
 }
 
 ///|
+pub async fn create_subissue(
+  parent_id : String,
+  title : String,
+  description? : String = "",
+) -> Int? {
+  ignore(parent_id)
+  ignore(title)
+  ignore(description)
+  @async.sleep(0)
+  None
+}
+
+///|
+pub async fn write_plan_comment(issue_id : String, text : String) -> Bool {
+  ignore(issue_id)
+  ignore(text)
+  @async.sleep(0)
+  false
+}
+
+///|
 pub async fn claim_lock(issue_id : String, branch : String) -> Bool {
   ignore(issue_id)
   ignore(branch)
