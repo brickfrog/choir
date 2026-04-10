@@ -237,12 +237,11 @@ fn strip_json_object_braces(s : String) -> String? {
 }
 
 ///|
-/// Read the task contract for an agent from its config.local.toml.
-pub fn task_contract_for_agent_workspace(
+fn local_config_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,
   agent_slug : String,
-) -> @types.TaskContract? {
+) -> @types.LocalConfig? {
   let candidate_paths : Array[String] = []
   match agent_workspace {
     Some(w) => if w != "" { candidate_paths.push(w + "/config.local.toml") }
@@ -259,15 +258,39 @@ pub fn task_contract_for_agent_workspace(
       continue
     }
     match @config.parse_local_config(content) {
-      Ok(local_cfg) =>
-        match local_cfg.task_contract {
-          Some(contract) => return Some(contract)
-          None => ()
-        }
+      Ok(local_cfg) => return Some(local_cfg)
       Err(_) => ()
     }
   }
   None
+}
+
+///|
+/// Read the task contract for an agent from its config.local.toml.
+pub fn task_contract_for_agent_workspace(
+  project_dir : String,
+  agent_workspace : String?,
+  agent_slug : String,
+) -> @types.TaskContract? {
+  match
+    local_config_for_agent_workspace(project_dir, agent_workspace, agent_slug) {
+    Some(local_cfg) => local_cfg.task_contract
+    None => None
+  }
+}
+
+///|
+/// Read the Chainlink issue id for an agent from its config.local.toml.
+pub fn chainlink_issue_id_for_agent_workspace(
+  project_dir : String,
+  agent_workspace : String?,
+  agent_slug : String,
+) -> String? {
+  match
+    local_config_for_agent_workspace(project_dir, agent_workspace, agent_slug) {
+    Some(local_cfg) => local_cfg.chainlink_issue_id
+    None => None
+  }
 }
 
 ///|
