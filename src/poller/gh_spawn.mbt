@@ -130,7 +130,8 @@ pub async fn gh_poll_pr(
   let (json_ok, review, sha, ci_rollup, review_bodies, is_open) = parse_gh_pr_view_output(
     merged,
   )
-  let copilot_issue_comment_seen = if skip_issue_comment_fetch {
+  let copilot_in_reviews = parse_copilot_in_reviews(output)
+  let copilot_from_issue_comment = if skip_issue_comment_fetch {
     false
   } else {
     let (issue_exit, issue_logins_json) = fetch_issue_comment_logins(pr_number)
@@ -145,6 +146,8 @@ pub async fn gh_poll_pr(
     }
     parse_issue_comment_logins_for_copilot_present(issue_logins_json)
   }
+  let copilot_issue_comment_seen = copilot_in_reviews ||
+    copilot_from_issue_comment
   (
     exit_ok && json_ok,
     review,

@@ -231,6 +231,30 @@ fn gh_login_is_copilot_issue_comment_author(login : String) -> Bool {
 }
 
 ///|
+/// Parse `gh pr view --json reviews` output; true if any review's author.login is a Copilot bot.
+/// This covers the common case where Copilot reviews via inline threads rather than REST issue comments.
+pub fn parse_copilot_in_reviews(json_text : String) -> Bool {
+  let json = @json.parse(json_text) catch { _ => return false }
+  guard json is Object(obj) else { return false }
+  guard obj.get("reviews") is Some(Array(reviews)) else { return false }
+  for r in reviews {
+    guard r is Object(rev) else { continue }
+    match rev.get("author") {
+      Some(Object(author)) =>
+        match author.get("login") {
+          Some(String(login)) =>
+            if gh_login_is_copilot_issue_comment_author(login) {
+              return true
+            }
+          _ => ()
+        }
+      _ => ()
+    }
+  }
+  false
+}
+
+///|
 /// Parse `gh api ... --jq "[.[] | .user.login]"` output; true if any login is Copilot.
 pub fn parse_issue_comment_logins_for_copilot_present(
   json_text : String,
