@@ -1420,6 +1420,36 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
 }
 
 ///|
+test "parse_fork_wave_args parses issue_id" {
+  let args = tool_args_from_map({
+    "task": "work",
+    "count": "1",
+    "issue_id": " 42 ",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.chainlink_issue_id, Some("42"))
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args ignores empty issue_id" {
+  let args = tool_args_from_map({
+    "task": "work",
+    "count": "1",
+    "issue_id": "   ",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.chainlink_issue_id, None)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
 pub impl Show for ParseError with output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
