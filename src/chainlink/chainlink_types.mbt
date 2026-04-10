@@ -7,7 +7,24 @@ pub(all) struct ChainlinkComment {
 
 ///|
 pub fn parse_chainlink_comment_from_json(json : Json) -> ChainlinkComment? {
-  Some({ id: -1, content: "STUB", kind: "STUB" })
+  match json {
+    Json::Object(map) => {
+      let id = match map.get("id") {
+        Some(Json::Number(n, ..)) => n.to_int()
+        _ => return None
+      }
+      let content = match map.get("content") {
+        Some(Json::String(s)) => s
+        _ => return None
+      }
+      let kind = match map.get("kind") {
+        Some(Json::String(s)) => s
+        _ => "observation"
+      }
+      Some({ id, content, kind })
+    }
+    _ => None
+  }
 }
 
 ///|
@@ -97,6 +114,19 @@ pub fn parse_chainlink_issue_from_json(json : Json) -> ChainlinkIssue? {
         }
         _ => []
       }
+      let comments = match map.get("comments") {
+        Some(Json::Array(arr)) => {
+          let res = []
+          for item in arr {
+            match parse_chainlink_comment_from_json(item) {
+              Some(c) => res.push(c)
+              None => ()
+            }
+          }
+          res
+        }
+        _ => []
+      }
       Some({
         id,
         title,
@@ -107,7 +137,7 @@ pub fn parse_chainlink_issue_from_json(json : Json) -> ChainlinkIssue? {
         labels,
         blocked_by,
         subissues,
-        comments: [],
+        comments,
       })
     }
     _ => None
