@@ -233,13 +233,23 @@ fn worker_profile_text(worker_type : String) -> String {
   } else {
     "You are a worker running in the parent's workspace."
   }
-  "## Completion Protocol (Worker)\n" +
-  role_line +
-  "\nYou can read and edit files but do not own a branch — no commits, PRs, or pushes.\n\n" +
-  "When you are done:\n\n" +
-  "1. Call `notify_parent` with status `success` and your findings.\n" +
-  "2. If you fail, call `notify_parent` with status `failure` and explain why.\n" +
-  "3. Call `shutdown`."
+  let completion = if worker_type == "adversary" {
+    "## Completion Protocol (Adversary Worker)\n" +
+    role_line +
+    "\nYou can read files but do not own a branch — no commits, PRs, or pushes.\n\n" +
+    "When you are done:\n\n" +
+    "1. Call `notify_parent` with the FULL numbered list of findings as the message body. Do not summarize. Do not write 'Critique complete' or any other placeholder. The entire list must be in the notify body — that is the only way the parent sees your output.\n" +
+    "2. Call `shutdown`."
+  } else {
+    "## Completion Protocol (Worker)\n" +
+    role_line +
+    "\nYou can read and edit files but do not own a branch — no commits, PRs, or pushes.\n\n" +
+    "When you are done:\n\n" +
+    "1. Call `notify_parent` with status `success` and your findings.\n" +
+    "2. If you fail, call `notify_parent` with status `failure` and explain why.\n" +
+    "3. Call `shutdown`."
+  }
+  completion
 }
 
 ///|
