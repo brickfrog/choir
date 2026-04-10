@@ -2932,6 +2932,8 @@ async fn ServerState::reconcile_external_merge_with_runner(
   )
   match chainlink_id {
     Some(cid) => {
+      // Best-effort write-back and lock release for external merges.
+      // These may be redundant if already performed elsewhere.
       @chainlink.write_back_merge(cid, pr_number, branch)
       ignore(@chainlink.release_lock(cid))
     }
