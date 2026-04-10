@@ -33,6 +33,12 @@ The former known gaps (typed lifecycle triggers, typed lifecycle snapshots in ev
 - Prefer pure state-machine, parser, and helper tests over integration-heavy harnesses.
 - If a test design risks poisoning local repo state, stop and choose a smaller boundary.
 
+## No Dead Code
+
+- **Delete code that no longer serves a purpose.** Backward-compatibility shims, format translation layers, renamed wrappers, and compat tests for behavior that no longer exists must be removed immediately — not left behind "just in case."
+- If something exists only to support an old on-disk format, an old API shape, or a removed feature: delete it. The next restart wipes state. There is no "someone might need this later."
+- If you add a function named `legacy_*`, `compat_*`, or `*_old`: that is a red flag. Either the old thing is gone and so should this be, or rename it to reflect what it actually does now.
+
 ## Commits
 
 - Semantic commits only
