@@ -237,12 +237,11 @@ fn strip_json_object_braces(s : String) -> String? {
 }
 
 ///|
-/// Read the task contract for an agent from its config.local.toml.
-pub fn task_contract_for_agent_workspace(
+fn local_config_candidate_paths_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,
   agent_slug : String,
-) -> @types.TaskContract? {
+) -> Array[String] {
   let candidate_paths : Array[String] = []
   match agent_workspace {
     Some(w) => if w != "" { candidate_paths.push(w + "/config.local.toml") }
@@ -253,7 +252,20 @@ pub fn task_contract_for_agent_workspace(
   if !candidate_paths.contains(fallback_path) {
     candidate_paths.push(fallback_path)
   }
-  for path in candidate_paths {
+  candidate_paths
+}
+
+///|
+/// Read the task contract for an agent from its config.local.toml.
+pub fn task_contract_for_agent_workspace(
+  project_dir : String,
+  agent_workspace : String?,
+  agent_slug : String,
+) -> @types.TaskContract? {
+  for
+    path in local_config_candidate_paths_for_agent_workspace(
+      project_dir, agent_workspace, agent_slug,
+    ) {
     let content = @sys.read_file(path)
     if content == "" {
       continue
@@ -262,6 +274,33 @@ pub fn task_contract_for_agent_workspace(
       Ok(local_cfg) =>
         match local_cfg.task_contract {
           Some(contract) => return Some(contract)
+          None => ()
+        }
+      Err(_) => ()
+    }
+  }
+  None
+}
+
+///|
+/// Read the Chainlink issue id for an agent from its config.local.toml.
+pub fn chainlink_issue_id_for_agent_workspace(
+  project_dir : String,
+  agent_workspace : String?,
+  agent_slug : String,
+) -> String? {
+  for
+    path in local_config_candidate_paths_for_agent_workspace(
+      project_dir, agent_workspace, agent_slug,
+    ) {
+    let content = @sys.read_file(path)
+    if content == "" {
+      continue
+    }
+    match @config.parse_local_config(content) {
+      Ok(local_cfg) =>
+        match local_cfg.chainlink_issue_id {
+          Some(issue_id) => return Some(issue_id)
           None => ()
         }
       Err(_) => ()

@@ -8,6 +8,7 @@ import {
   "choir/src/tools",
   "choir/src/outbox",
   "choir/src/exec",
+  "choir/src/chainlink",
   "choir/src/message",
   "choir/src/poller",
   "choir/src/sys",
