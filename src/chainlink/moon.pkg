@@ -1,0 +1,17 @@
+import {
+  "choir/src/exec",
+  "choir/src/sys",
+  "choir/src/workspace",
+  "moonbitlang/async",
+  "moonbitlang/async/process",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+}
+
+options(
+  "is-main": false,
+  targets: {
+    "chainlink.mbt": [ "native" ],
+    "chainlink_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+  },
+)
