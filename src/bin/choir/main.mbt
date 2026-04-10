@@ -800,7 +800,7 @@ fn mcp_run_request_loop(
           )
         } else if rpc.req_method == @mcp.method_tools_list {
           write_output(
-            mcp_response_wire(@mcp.tools_list_response(id), raw_stdio),
+            mcp_response_wire(@mcp.tools_list_response(id, role), raw_stdio),
           )
         } else {
           match
@@ -1011,7 +1011,7 @@ fn mcp_run() -> Unit {
               let resp = @mcp.initialize_response(id)
               @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
             } else if rpc.req_method == @mcp.method_tools_list {
-              let resp = @mcp.tools_list_response(id)
+              let resp = @mcp.tools_list_response(id, role)
               @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
             } else {
               match @mcp.to_internal_request(rpc, role) {

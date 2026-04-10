@@ -1,11 +1,11 @@
 ///|
-fn mark_async_package_used() -> Unit {
-  ignore(@async.sleep)
-}
+/// Keep a one-time reference to `moonbitlang/async` so target-specific
+/// builds retain the package even though this module does not otherwise call
+/// into it directly.
+let _async_package_used : Unit = ignore(@async.sleep)
 
 ///|
 pub async fn fetch_issue(id : String) -> ChainlinkIssue? {
-  mark_async_package_used()
   let cmd : @workspace.Command = {
     program: "chainlink",
     args: ["issue", "show", id, "--json"],
