@@ -29,6 +29,9 @@ pub(all) enum ToolRequest {
   AgentList(AgentListArgs)
   CancelWave(CancelWaveArgs)
   ResolveReviewThread(ResolveReviewThreadArgs)
+  ChainlinkList(String)
+  ChainlinkShow(String)
+  ChainlinkReady
 } derive(Debug, Eq)
 
 ///|
@@ -63,6 +66,9 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     AgentList(_) => "agent_list"
     CancelWave(_) => "cancel_wave"
     ResolveReviewThread(_) => "resolve_review_thread"
+    ChainlinkList(_) => "chainlink_list"
+    ChainlinkShow(_) => "chainlink_show"
+    ChainlinkReady => "chainlink_ready"
   }
 }
 

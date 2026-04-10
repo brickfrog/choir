@@ -12,9 +12,25 @@ pub(all) struct ChainlinkIssue {
 } derive(Debug)
 
 ///|
-pub impl Show for ChainlinkIssue with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
+pub impl ToJson for ChainlinkIssue with to_json(self) -> Json {
+  let map : Map[String, Json] = {
+    "id": self.id.to_json(),
+    "title": self.title.to_json(),
+    "priority": self.priority.to_json(),
+    "status": self.status.to_json(),
+    "labels": self.labels.to_json(),
+    "blocked_by": self.blocked_by.to_json(),
+    "subissues": self.subissues.to_json(),
+  }
+  match self.description {
+    Some(d) => map.set("description", d.to_json())
+    None => ()
+  }
+  match self.parent_id {
+    Some(p) => map.set("parent_id", p.to_json())
+    None => ()
+  }
+  map.to_json()
 }
 
 ///|

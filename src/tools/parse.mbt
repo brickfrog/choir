@@ -1215,6 +1215,28 @@ fn parse_reply_args(args : ToolArgs) -> Result[ReplyArgs, ParseError] {
 }
 
 ///|
+pub fn parse_chainlink_list_args(args : ToolArgs) -> Result[String, ParseError] {
+  let status = tool_args_get(args, "status").unwrap_or("open")
+  let normalized = status.trim().to_string()
+  if normalized == "" {
+    Ok("open")
+  } else {
+    Ok(normalized)
+  }
+}
+
+///|
+pub fn parse_chainlink_show_args(args : ToolArgs) -> Result[String, ParseError] {
+  let id = tool_args_get(args, "id").unwrap_or("")
+  let normalized = id.trim().to_string()
+  if normalized == "" {
+    Err(ParseError::MissingField(field="id"))
+  } else {
+    Ok(normalized)
+  }
+}
+
+///|
 fn parse_tool_request(
   name : String,
   _role : @types.Role,
@@ -1304,6 +1326,15 @@ fn parse_tool_request(
       parse_resolve_review_thread_args(args).map(fn(a) {
         ToolRequest::ResolveReviewThread(a)
       })
+    "chainlink_list" =>
+      parse_chainlink_list_args(args).map(fn(a) {
+        ToolRequest::ChainlinkList(a)
+      })
+    "chainlink_show" =>
+      parse_chainlink_show_args(args).map(fn(a) {
+        ToolRequest::ChainlinkShow(a)
+      })
+    "chainlink_ready" => Ok(ToolRequest::ChainlinkReady)
     _ => Err(ParseError::UnknownTool(name~))
   }
 }

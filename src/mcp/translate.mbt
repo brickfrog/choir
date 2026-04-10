@@ -459,6 +459,24 @@ fn tool_defs() -> Array[CatalogTool] {
       ],
       required: ["agent_id"],
     },
+    {
+      name: "chainlink_list",
+      description: "List Chainlink issues. Optional status filter (default: open).",
+      props: [{ name: "status", desc: "Issue status filter (default: open)" }],
+      required: [],
+    },
+    {
+      name: "chainlink_show",
+      description: "Show detail for a Chainlink issue by ID.",
+      props: [{ name: "id", desc: "Chainlink issue ID" }],
+      required: ["id"],
+    },
+    {
+      name: "chainlink_ready",
+      description: "List Chainlink issues with no open blockers (ready to work on).",
+      props: [],
+      required: [],
+    },
   ]
 }
 

@@ -627,6 +627,26 @@ pub async fn dispatch(
     }
     ToolRequest::ResolveReviewThread(resolve_args) =>
       interpret_resolve_review_thread(resolve_args, project_dir, capture)
+    ToolRequest::ChainlinkList(status) => {
+      let issues = @chainlink.fetch_list(status~)
+      @types.Response::ok_values({
+        "status": "ok".to_json(),
+        "issues": issues.to_json(),
+      })
+    }
+    ToolRequest::ChainlinkShow(issue_id) =>
+      match @chainlink.fetch_issue(issue_id) {
+        Some(issue) =>
+          @types.Response::ok_values({
+            "status": "ok".to_json(),
+            "issue": issue.to_json(),
+          })
+        None => @types.Response::Err("issue " + issue_id + " not found")
+      }
+    ToolRequest::ChainlinkReady => {
+      let text = @chainlink.fetch_ready_text()
+      @types.Response::ok({ "text": text })
+    }
   }
 }
 

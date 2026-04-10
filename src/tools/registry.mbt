@@ -155,6 +155,21 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       description: "Resolve a GitHub pull request review thread by its thread ID; thread IDs are included in merge_pr unresolved-thread error messages",
       allowed_roles: [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
     },
+    {
+      name: "chainlink_list",
+      description: "List Chainlink issues. Optional status filter (default: open).",
+      allowed_roles: [@types.Role::TL],
+    },
+    {
+      name: "chainlink_show",
+      description: "Show detail for a Chainlink issue by ID.",
+      allowed_roles: [@types.Role::TL],
+    },
+    {
+      name: "chainlink_ready",
+      description: "List Chainlink issues with no open blockers (ready to work on).",
+      allowed_roles: [@types.Role::TL],
+    },
   ]
   for def in defs {
     tools.set(def.name, def)
