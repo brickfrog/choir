@@ -224,3 +224,29 @@ test "parse_issue_comment_logins_for_copilot_present false for human login" {
 test "parse_issue_comment_logins_for_copilot_present false for empty input" {
   assert_false(parse_issue_comment_logins_for_copilot_present(""))
 }
+
+///|
+test "parse_copilot_in_reviews detects copilot-pull-request-reviewer in reviews" {
+  let json =
+    #|{"reviews":[{"state":"COMMENTED","author":{"login":"copilot-pull-request-reviewer"},"body":"overview"}]}
+  assert_true(parse_copilot_in_reviews(json))
+}
+
+///|
+test "parse_copilot_in_reviews false when only human reviewers" {
+  let json =
+    #|{"reviews":[{"state":"APPROVED","author":{"login":"octocat"},"body":"lgtm"}]}
+  assert_false(parse_copilot_in_reviews(json))
+}
+
+///|
+test "parse_copilot_in_reviews false on empty reviews array" {
+  let json =
+    #|{"reviews":[]}
+  assert_false(parse_copilot_in_reviews(json))
+}
+
+///|
+test "parse_copilot_in_reviews false on malformed json" {
+  assert_false(parse_copilot_in_reviews("not json"))
+}
