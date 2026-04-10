@@ -1,6 +1,7 @@
 import {
   "choir/src/exec",
   "choir/src/sys",
+  "choir/src/types",
   "choir/src/workspace",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
