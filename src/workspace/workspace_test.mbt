@@ -1199,3 +1199,47 @@ test "chainlink_issue_id_for_agent_workspace falls back when first config lacks 
     Some("5"),
   )
 }
+
+///|
+test "write_chainlink_subissue_id writes override file" {
+  let project_dir = "/tmp/choir-ws-subissue-write-" + @sys.get_pid().to_string()
+  let workspace = @workspace.worktree_path(project_dir, "leaf")
+  assert_true(@sys.create_dir_all(workspace))
+  @workspace.write_chainlink_subissue_id(project_dir, "leaf", "42")
+  assert_eq(@sys.read_file(workspace + "/.chainlink_issue_id"), "42\n")
+}
+
+///|
+test "chainlink_issue_id_for_agent_workspace prefers override file" {
+  let project_dir = "/tmp/choir-ws-subissue-override-" +
+    @sys.get_pid().to_string()
+  let agent_workspace = project_dir + "/alt-workspace"
+  let fallback_workspace = @workspace.worktree_path(project_dir, "leaf")
+  assert_true(@sys.create_dir_all(agent_workspace))
+  assert_true(@sys.create_dir_all(fallback_workspace))
+  ignore(
+    @sys.write_file_sync(
+      agent_workspace + "/config.local.toml",
+      (
+        #|chainlink_issue_id = "5"
+      ),
+    ),
+  )
+  ignore(
+    @sys.write_file_sync(
+      fallback_workspace + "/config.local.toml",
+      (
+        #|chainlink_issue_id = "7"
+      ),
+    ),
+  )
+  @workspace.write_chainlink_subissue_id(project_dir, "leaf", "42")
+  assert_eq(
+    @workspace.chainlink_issue_id_for_agent_workspace(
+      project_dir,
+      Some(agent_workspace),
+      "leaf",
+    ),
+    Some("42"),
+  )
+}

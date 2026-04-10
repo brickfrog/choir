@@ -1060,6 +1060,20 @@ pub async fn interpret_fork_wave_post_spawn(
   registry : @registry.AgentRegistry?,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   claim_lock? : async (String, String) -> Bool = @chainlink.claim_lock,
+  create_subissue? : async (String, String) -> Int? = async fn(
+    parent_id : String,
+    title : String,
+  ) {
+    @chainlink.create_subissue(parent_id, title)
+  },
+  write_plan_comment? : async (String, String) -> Bool = async fn(
+    issue_id : String,
+    text : String,
+  ) {
+    @chainlink.write_plan_comment(issue_id, text)
+    true
+  },
+  write_subissue_id? : (String, String, String) -> Unit = @workspace.write_chainlink_subissue_id,
 ) -> Unit {
   let resolved_pane_ids : Array[(String, String)] = []
   match registry {
@@ -1075,12 +1089,35 @@ pub async fn interpret_fork_wave_post_spawn(
   }
   for spec in spawn_plan.spawned_specs {
     match spec.chainlink_issue_id {
-      Some(issue_id) => {
+      Some(parent_id) => {
         let branch = @workspace.spawn_git_branch(spec)
-        let ok = claim_lock(issue_id, branch) catch { _ => false }
+        let effective_id = if spawn_plan.spawned_count > 1 {
+          let title = if spec.task.length() <= 80 {
+            spec.task
+          } else {
+            spec.task[:80].to_string()
+          }
+          let created_subissue = create_subissue(parent_id, title) catch {
+            _ => None
+          }
+          match created_subissue {
+            Some(sub_id) => {
+              let subissue_id = sub_id.to_string()
+              write_subissue_id(project_dir, spec.slug, subissue_id)
+              subissue_id
+            }
+            None => parent_id
+          }
+        } else {
+          parent_id
+        }
+        let _ = write_plan_comment(effective_id, spec.task) catch { _ => false }
+        let ok = claim_lock(effective_id, branch) catch { _ => false }
         if !ok {
           @sys.write_stderr(
-            "[chainlink] warn: lock claim failed for issue " + issue_id + "\n",
+            "[chainlink] warn: lock claim failed for issue " +
+            effective_id +
+            "\n",
           )
         }
       }
