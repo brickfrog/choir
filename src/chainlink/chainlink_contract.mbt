@@ -18,7 +18,7 @@ pub fn task_contract_from_chainlink_issue(
   let plan_decision = issue.comments.filter(fn(c) {
     c.kind == "plan" || c.kind == "decision"
   })
-  plan_decision.sort_by(fn(a, b) { a.id - b.id })
+  plan_decision.sort_by(fn(a, b) { a.id.compare(b.id) })
   let pd_parts : Array[String] = []
   for c in plan_decision {
     let t = c.content.trim().to_string()
@@ -29,7 +29,7 @@ pub fn task_contract_from_chainlink_issue(
 
   // Handoff comments sorted by id ascending
   let handoffs = issue.comments.filter(fn(c) { c.kind == "handoff" })
-  handoffs.sort_by(fn(a, b) { a.id - b.id })
+  handoffs.sort_by(fn(a, b) { a.id.compare(b.id) })
   let h_parts : Array[String] = []
   for c in handoffs {
     let t = c.content.trim().to_string()

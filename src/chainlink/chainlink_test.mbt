@@ -328,7 +328,7 @@ test "task_contract - title with surrounding whitespace is trimmed into goal" {
 }
 
 ///|
-test "task_contract - scope acceptance_checks non_goals verify are empty" {
+test "task_contract - scope acceptance_checks non_goals verify is empty" {
   let contract = task_contract_from_chainlink_issue(make_issue())
   assert_eq(contract.scope, [])
   assert_eq(contract.acceptance_checks, [])
