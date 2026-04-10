@@ -931,3 +931,117 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
   assert_eq(outbox[0].delivery_state, @outbox.OutboxDeliveryState::Delivered)
   assert_true(outbox[0].body.contains("external merge observed"))
 }
+
+///|
+async test "recover_state finalizes merged agent without startup parent notification" {
+  let project_dir = "/tmp/choir-recovery-merged-no-notify-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+
+  let parent_id = "root"
+  let leaf_id = "main.leaf"
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId(parent_id),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Codex,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Done,
+  }
+  let leaf : @types.Agent = {
+    agent_id: @types.AgentId(leaf_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Claude,
+    parent: Some(parent_id),
+    workspace: project_dir,
+    branch: "feat/merged",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Done,
+  }
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      ..@phase.lifecycle_for_role(leaf_id, @types.Role::Dev),
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number=21,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        ),
+      ),
+    }),
+  )
+
+  let input : @runtime.RecoveryReconcileInput = {
+    panes: { live: { tabs: [], panes: [] } },
+    prs: {
+      open_prs: [],
+      polls: Map::new(),
+      resolved_prs: [
+        @runtime.KnownPR::{
+          pr_number: 21,
+          branch: "feat/merged",
+          base: "main",
+          url: "https://gh.test/21",
+          created_sec: Some(100L),
+          state: @runtime.KnownPRState::Merged,
+        },
+      ],
+    },
+    files: {
+      local_agents: [
+        { slug: "root", dir_name: "agents", agent: Some(parent) },
+        { slug: "leaf", dir_name: "worktrees", agent: Some(leaf) },
+      ],
+      persisted_tracked_prs: [
+        @poller.TrackedPR::{
+          pr_number: 21,
+          agent_id: leaf_id,
+          branch: "feat/merged",
+          parent_branch: "main",
+          pr_url: "https://gh.test/21",
+          first_seen: 50L,
+          consecutive_failures: 0,
+          backoff_until: 0L,
+          last_review_state: @poller.ReviewState::Approved,
+          last_review_bodies: "",
+          last_sha: "sha-merged",
+          notified_parent: true,
+          last_ci_rollup: @poller.CiRollupStatus::Success,
+          last_timeout_at: 0L,
+          copilot_issue_comment_seen: true,
+          orphan_notified: false,
+          orphan_reconciling: false,
+          changes_requested_since: 0L,
+          stall_notified: false,
+        },
+      ],
+    },
+    recovered_at: 200L,
+    prebuilt_agent_phase: None,
+  }
+
+  recover_state(state, terminal_session, input)
+
+  let outbox = @outbox.load_recipient_outbox(
+    @sys.read_file, project_dir, parent_id,
+  )
+  assert_eq(outbox.length(), 0)
+  match @phase.read_lifecycle(project_dir, leaf_id) {
+    Some(lifecycle) =>
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+      )
+    None => fail("expected recovered merged lifecycle on disk")
+  }
+}

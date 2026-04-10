@@ -246,6 +246,7 @@ pub fn plan_external_merge_finalization(
   branch : String,
   parent_branch : String,
   url : String,
+  notify_parent? : Bool = true,
 ) -> Array[TeardownEffect] {
   let agent_id = agent.agent_id.to_string()
   match lifecycle.process {
@@ -262,18 +263,20 @@ pub fn plan_external_merge_finalization(
           ),
         )
       }
-      effects.push(
-        DeliverToParentMerged(
-          leaf_id=agent_id,
-          pr_number~,
-          branch~,
-          parent_branch~,
-          url~,
-          source=MergedDeliverySource::ExternalObservation,
-          merge_execution_mode=None,
-          parent_id=agent.parent,
-        ),
-      )
+      if notify_parent {
+        effects.push(
+          DeliverToParentMerged(
+            leaf_id=agent_id,
+            pr_number~,
+            branch~,
+            parent_branch~,
+            url~,
+            source=MergedDeliverySource::ExternalObservation,
+            merge_execution_mode=None,
+            parent_id=agent.parent,
+          ),
+        )
+      }
       for
         effect in plan_finalize(
           agent,

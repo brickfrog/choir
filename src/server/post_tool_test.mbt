@@ -558,6 +558,47 @@ test "plan_external_merge_finalization is idempotent for merged leaf" {
 }
 
 ///|
+test "plan_external_merge_finalization can suppress parent notification for recovery" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("main.tl"),
+    workspace: "dir",
+    branch: "branch",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    ..@phase.lifecycle_for_role("main.leaf", @types.Role::Dev),
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=42,
+        state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+      ),
+    ),
+  }
+  let effects = plan_external_merge_finalization(
+    agent,
+    lifecycle,
+    42,
+    "branch",
+    "main",
+    "https://gh.test/42",
+    notify_parent=false,
+  )
+  for effect in effects {
+    match effect {
+      DeliverToParentMerged(..) => fail("expected no parent delivery effect")
+      _ => ()
+    }
+  }
+  assert_true(last_is_clear_runtime_for(effects, "main.leaf"))
+}
+
+///|
 test "plan_post_tool_actions includes RefreshPR for resolve_review_thread success" {
   let project_dir = isolated_post_tool_project_dir("resolve-refresh")
   let terminal_session = "test-session"
