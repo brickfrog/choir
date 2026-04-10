@@ -97,6 +97,22 @@ test "tl_tracked_pr_workflow_category_sentence covers alert categories" {
 }
 
 ///|
+test "merge operator helpers distinguish manual and automerge" {
+  assert_eq(merge_ready_status(Manual), @types.Status::Success)
+  assert_eq(merge_ready_status(Automerge), @types.Status::Info)
+  assert_true(
+    merge_ready_next_action(7, Some("main"), Manual).contains("merge_pr"),
+  )
+  assert_true(
+    merge_ready_next_action(7, Some("main"), Automerge).contains(
+      "server will attempt merge automatically",
+    ),
+  )
+  assert_true(tl_merge_gate_sentence(Manual).contains("MERGE NOW"))
+  assert_true(tl_merge_gate_sentence(Automerge).contains("AUTO-MERGE READY"))
+}
+
+///|
 test "plan_tl_poll_event_parent PRReady waits when snapshot is not merge-ready" {
   let t = sample_tracked(Approved, InProgress, 5)
   let cat = plan_tl_poll_event_parent(PRReady(5), t, None)
@@ -492,6 +508,23 @@ test "format_wave_rollup uses PR count as denominator when wave size unknown" {
   }
   let out = format_wave_rollup(rollup, 0)
   assert_true(out.contains("[WAVE 1] 2/2 PRs with updates:"))
+}
+
+///|
+test "format_wave_rollup can include merge mode header" {
+  let rollup : WaveRollup = {
+    parent_id: "main",
+    wave: 2,
+    entries: [
+      WaveRollupEntry::{
+        pr_number: 52,
+        agent_id: "main.leaf-a",
+        category: MergeGateOpenPendingPolicyConfirmation,
+      },
+    ],
+  }
+  let out = format_wave_rollup(rollup, 1, merge_mode=Some(Automerge))
+  assert_true(out.contains("[WAVE 2] [automerge] 1/1 PRs with updates:"))
 }
 
 ///|
