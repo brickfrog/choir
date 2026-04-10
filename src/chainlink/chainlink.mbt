@@ -1,5 +1,11 @@
 ///|
+fn mark_async_package_used() -> Unit {
+  ignore(@async.sleep)
+}
+
+///|
 pub async fn fetch_issue(id : String) -> ChainlinkIssue? {
+  mark_async_package_used()
   let cmd : @workspace.Command = {
     program: "chainlink",
     args: ["issue", "show", id, "--json"],

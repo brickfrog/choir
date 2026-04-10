@@ -196,6 +196,28 @@ fn resolve_parent_for_notify(
 }
 
 ///|
+fn chainlink_issue_to_json(issue : @chainlink.ChainlinkIssue) -> Json {
+  let values : Map[String, Json] = {
+    "id": issue.id.to_json(),
+    "title": issue.title.to_json(),
+    "priority": issue.priority.to_json(),
+    "status": issue.status.to_json(),
+    "labels": issue.labels.to_json(),
+    "blocked_by": issue.blocked_by.to_json(),
+    "subissues": issue.subissues.map(chainlink_issue_to_json).to_json(),
+  }
+  match issue.description {
+    Some(description) => values.set("description", description.to_json())
+    None => ()
+  }
+  match issue.parent_id {
+    Some(parent_id) => values.set("parent_id", parent_id.to_json())
+    None => ()
+  }
+  values.to_json()
+}
+
+///|
 pub async fn dispatch(
   req : ToolRequest,
   project_dir? : String = ".",
@@ -203,6 +225,15 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  chainlink_fetch_issue? : async (String) -> @chainlink.ChainlinkIssue? = id => {
+    @chainlink.fetch_issue(id)
+  },
+  chainlink_fetch_list? : async (String) -> Array[@chainlink.ChainlinkIssue] = status => {
+    @chainlink.fetch_list(status~)
+  },
+  chainlink_fetch_ready? : async () -> String = () => {
+    @chainlink.fetch_ready_text()
+  },
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -310,6 +341,20 @@ pub async fn dispatch(
         @types.Response::Err("failed to create session: " + session_args.name)
       }
     }
+    ToolRequest::ChainlinkList(status) => {
+      let issues = chainlink_fetch_list(status)
+      @types.Response::ok_values({
+        "issues": issues.map(chainlink_issue_to_json).to_json(),
+      })
+    }
+    ToolRequest::ChainlinkShow(issue_id) =>
+      match chainlink_fetch_issue(issue_id) {
+        Some(issue) =>
+          @types.Response::ok_values({ "issue": chainlink_issue_to_json(issue) })
+        None => @types.Response::Err("failed to fetch issue " + issue_id)
+      }
+    ToolRequest::ChainlinkReady =>
+      @types.Response::ok_values({ "text": chainlink_fetch_ready().to_json() })
     ToolRequest::FilePr(file_pr_args) =>
       interpret_file_pr(
         file_pr_args, project_dir, session, poller_state, registry, pr_review, ensure_branch_ready,
