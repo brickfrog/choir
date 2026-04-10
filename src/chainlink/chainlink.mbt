@@ -43,6 +43,26 @@ pub async fn fetch_ready_text() -> String {
 }
 
 ///|
+pub async fn fetch_next_text() -> String {
+  let cmd : @workspace.Command = {
+    program: "chainlink",
+    args: ["issue", "next"],
+    workdir: None,
+  }
+  let (exit_code, output) = @exec.capture_command_merged(cmd)
+  if exit_code != 0 {
+    let error_message = "Failed to fetch next Chainlink issue: exit code " +
+      exit_code.to_string() +
+      "\nOutput: " +
+      output +
+      "\n"
+    @sys.write_stderr(error_message)
+    return error_message
+  }
+  output
+}
+
+///|
 pub async fn fetch_tree_text() -> String {
   let cmd : @workspace.Command = {
     program: "chainlink",

@@ -49,9 +49,17 @@ async fn mock_chainlink_fetch_ready() -> String {
 }
 
 ///|
+async fn mock_chainlink_fetch_next() -> String {
+  @async.sleep(0)
+  "8 next"
+}
+
+///|
 test "chainlink tools are TL only in registry" {
   let reg = @tools.ToolRegistry::new()
-  let names = ["chainlink_list", "chainlink_show", "chainlink_ready"]
+  let names = [
+    "chainlink_list", "chainlink_show", "chainlink_ready", "chainlink_next",
+  ]
   for name in names {
     let tl_result = try? reg.lookup(@types.Role::TL, name)
     assert_true(tl_result is Ok(_))
@@ -134,6 +142,22 @@ async test "dispatch chainlink_ready returns injected text" {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
       assert_eq(map.get("text"), Some("7 ready".to_json()))
+    }
+    _ => fail("expected response: Ok")
+  }
+}
+
+///|
+async test "dispatch chainlink_next returns injected text" {
+  let resp = dispatch(
+    ToolRequest::ChainlinkNext,
+    chainlink_fetch_next=mock_chainlink_fetch_next,
+  )
+
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("text"), Some("8 next".to_json()))
     }
     _ => fail("expected response: Ok")
   }
