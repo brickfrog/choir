@@ -234,6 +234,9 @@ pub async fn dispatch(
   chainlink_fetch_ready? : async () -> String = () => {
     @chainlink.fetch_ready_text()
   },
+  chainlink_fetch_next? : async () -> String = () => {
+    @chainlink.fetch_next_text()
+  },
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -355,6 +358,8 @@ pub async fn dispatch(
       }
     ToolRequest::ChainlinkReady =>
       @types.Response::ok_values({ "text": chainlink_fetch_ready().to_json() })
+    ToolRequest::ChainlinkNext =>
+      @types.Response::ok_values({ "text": chainlink_fetch_next().to_json() })
     ToolRequest::FilePr(file_pr_args) =>
       interpret_file_pr(
         file_pr_args, project_dir, session, poller_state, registry, pr_review, ensure_branch_ready,

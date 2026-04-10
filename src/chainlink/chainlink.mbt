@@ -43,6 +43,20 @@ pub async fn fetch_ready_text() -> String {
 }
 
 ///|
+pub async fn fetch_next_text() -> String {
+  let cmd : @workspace.Command = {
+    program: "chainlink",
+    args: ["issue", "next"],
+    workdir: None,
+  }
+  let (exit_code, output) = @exec.capture_command_merged(cmd)
+  if exit_code != 0 {
+    return ""
+  }
+  output
+}
+
+///|
 pub async fn fetch_tree_text() -> String {
   let cmd : @workspace.Command = {
     program: "chainlink",

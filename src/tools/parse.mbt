@@ -1275,6 +1275,7 @@ fn parse_tool_request(
         ToolRequest::ChainlinkShow(id)
       })
     "chainlink_ready" => Ok(ToolRequest::ChainlinkReady)
+    "chainlink_next" => Ok(ToolRequest::ChainlinkNext)
     "file_pr" => parse_file_pr_args(args).map(fn(a) { ToolRequest::FilePr(a) })
     "merge_pr" =>
       parse_merge_pr_args(args).map(fn(a) { ToolRequest::MergePr(a) })

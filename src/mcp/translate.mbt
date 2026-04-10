@@ -266,6 +266,12 @@ fn tool_defs() -> Array[CatalogTool] {
       required: [],
     },
     {
+      name: "chainlink_next",
+      description: "Show the next Chainlink issue to work on.",
+      props: [],
+      required: [],
+    },
+    {
       name: "rescue_leaf",
       description: "Reuse a salvageable dev worktree/branch: spawn replacement agent (default cursor_agent), hand off dev lifecycle, transfer tracked PR ownership, supersede old leaf",
       props: [
