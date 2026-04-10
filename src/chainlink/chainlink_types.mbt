@@ -1,4 +1,16 @@
 ///|
+pub(all) struct ChainlinkComment {
+  id : Int
+  content : String
+  kind : String
+} derive(Debug)
+
+///|
+pub fn parse_chainlink_comment_from_json(json : Json) -> ChainlinkComment? {
+  Some({ id: -1, content: "STUB", kind: "STUB" })
+}
+
+///|
 pub(all) struct ChainlinkIssue {
   id : Int
   title : String
@@ -9,6 +21,7 @@ pub(all) struct ChainlinkIssue {
   labels : Array[String]
   blocked_by : Array[Int]
   subissues : Array[ChainlinkIssue]
+  comments : Array[ChainlinkComment]
 } derive(Debug)
 
 ///|
@@ -94,6 +107,7 @@ pub fn parse_chainlink_issue_from_json(json : Json) -> ChainlinkIssue? {
         labels,
         blocked_by,
         subissues,
+        comments: [],
       })
     }
     _ => None
