@@ -571,7 +571,7 @@ pub fn make_shell_recovery_provider(
     },
     list_agents_in_container: async fn(project_dir, container) {
       let rel = ".choir/" + container
-      if !@sys.path_exists(project_dir + "/" + rel) {
+      if !@sys.path_entry_exists(project_dir + "/" + rel) {
         return []
       }
       let output = capture("ls", ["-1", rel], Some(project_dir))
@@ -588,7 +588,7 @@ pub fn make_shell_recovery_provider(
       ".choir/" + container + "/" + slug
     },
     list_lifecycle_ids: async fn(project_dir) {
-      if !@sys.path_exists(project_dir + "/.choir/kv") {
+      if !@sys.path_entry_exists(project_dir + "/.choir/kv") {
         return []
       }
       let output = capture(

@@ -4736,7 +4736,7 @@ async fn statusline_kv_files_matching_glob(
   name_glob : String,
 ) -> Array[String] {
   let kv_dir = project_dir + "/.choir/kv"
-  if !@sys.path_exists(kv_dir) {
+  if !@sys.path_entry_exists(kv_dir) {
     return []
   }
   try {
