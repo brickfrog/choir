@@ -36,3 +36,8 @@ The former known gaps (typed lifecycle triggers, typed lifecycle snapshots in ev
 ## Commits
 
 - Semantic commits only
+
+## Leaf Agent Rules
+
+- **Always verify with `moon test --target native`**, not bare `moon test`. Bare `moon test` includes wasm-gc/js targets that have pre-existing failures unrelated to any leaf's changes. CI runs `moon test --target native`; that is the only verification that matters.
+- **Do not call `notify_parent` until all Copilot review threads are resolved.** Filing a PR and immediately reporting it as ready is incorrect if unresolved inline threads remain. Wait for Copilot to review, address every thread, and confirm zero unresolved threads before notifying the parent.
