@@ -5015,8 +5015,9 @@ async test "test_disconnect_completing_agent_no_close" {
   })
 
   // Completing agents finalize state (PersistLifecycle) then transition to Done.
-  // No terminal close should occur since the pane may still be in use. The PersistLifecycle 
-  // effect does not use the runner, so calls should be empty.
+  // finalize_agent_with_runner is called with close_target=false and remove_worktree=false,
+  // so plan_finalize emits no CloseTerminal or RemoveWorktree effects — the only effects
+  // that invoke the runner. The assertion confirms no premature pane close occurs.
   assert_true(calls.is_empty())
 
   let agent = state.registry.get(agent_id) catch {
