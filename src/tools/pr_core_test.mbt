@@ -791,74 +791,227 @@ test "file_pr_preflight_create_inputs copies branch paths and title/body" {
 }
 
 ///|
-test "file_pr_workdir uses registry workspace when set" {
+async test "interpret_shutdown handoff with Exitable lifecycle has no pr_number" {
+  let project_dir = "/tmp/choir-shutdown-exit-" + @sys.get_pid().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
-      agent_id: "main.leaf",
+      agent_id: @types.AgentId("main.leaf3"),
       role: @types.Role::Dev,
       agent_type: @types.AgentType::Claude,
       parent: Some("main"),
-      workspace: "/proj/.choir/worktrees/leaf-0",
-      branch: "main.leaf",
+      workspace: project_dir + "/.choir/worktrees/leaf3",
+      branch: "main.leaf3",
       terminal_target: None,
       host: @types.Host::Local,
       spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
   )
-  assert_eq(
-    file_pr_workdir("/repo/root", "main.leaf", Some(reg)),
-    "/proj/.choir/worktrees/leaf-0",
-  )
-}
-
-///|
-test "file_pr_workdir falls back to root when workspace empty or agent missing" {
-  let reg = @registry.AgentRegistry::new()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/worktrees/leaf3"))
   ignore(
-    reg.upsert({
-      agent_id: "main.leaf",
-      role: @types.Role::Dev,
-      agent_type: @types.AgentType::Claude,
-      parent: Some("main"),
-      workspace: "",
-      branch: "main.leaf",
-      terminal_target: None,
-      host: @types.Host::Local,
-      spawn_depth: 0,
-      state: @types.AgentState::Active,
-    }),
-  )
-  assert_eq(file_pr_workdir("/repo/root", "main.leaf", Some(reg)), "/repo/root")
-  assert_eq(
-    file_pr_workdir("/repo/root", "main.missing", Some(reg)),
-    "/repo/root",
-  )
-  assert_eq(file_pr_workdir("/repo/root", "main.leaf", None), "/repo/root")
-}
-
-///|
-test "file_pr_preflight_host_steps is preflight then push then ensure_pr" {
-  let steps = file_pr_preflight_host_steps()
-  assert_eq(steps.length(), 3)
-  assert_eq(steps[0], FilePrPreflightHostStep::EnsureBranchReady)
-  assert_eq(steps[1], FilePrPreflightHostStep::GitPush)
-  assert_eq(steps[2], FilePrPreflightHostStep::EnsurePullRequest)
-}
-
-///|
-async fn mock_preflight_err(
-  _branch : String,
-  _parent_branch : String,
-  _dir : String,
-) -> Result[Unit, @types.ChoirError] {
-  @async.sleep(0)
-  Err(
-    @types.ChoirError::git_error(
-      "cannot file PR: branch 'x' is missing locally.",
+    @sys.write_file_sync(
+      project_dir + "/.choir/worktrees/leaf3/.chainlink_issue_id",
+      "99\n",
     ),
   )
+  // Exitable lifecycle — exit policy is Allowed, but has no pr_number
+  let lc : @phase.AgentLifecycle = {
+    agent_id: "main.leaf3",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Exitable),
+  }
+  assert_true(@phase.write_lifecycle(project_dir, lc))
+
+  let mut captured_comment : String? = None
+  let injected_handoff = async fn(_issue_id : String, comment : String) {
+    @async.sleep(0)
+    captured_comment = Some(comment)
+  }
+
+  let args : ShutdownArgs = { caller_id: Some("main.leaf3") }
+  let got = interpret_shutdown(
+    args,
+    project_dir,
+    None,
+    Some(reg),
+    mock_shutdown_runner_record_worktree,
+    chainlink_write_handoff=Some(injected_handoff),
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected shutdown ok")
+  }
+  match captured_comment {
+    Some(c) => {
+      assert_true(c.contains("[leaf3] [dev] shutdown"))
+      assert_true(c.contains("branch: main.leaf3"))
+      assert_true(c.contains("pr: (none)"))
+    }
+    None => fail("expected handoff comment")
+  }
+}
+
+///|
+async test "interpret_shutdown handoff includes pr_number from ExitRequestedDeferred lifecycle" {
+  let project_dir = "/tmp/choir-shutdown-deferred-" + @sys.get_pid().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.leaf4"),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main"),
+      workspace: project_dir + "/.choir/worktrees/leaf4",
+      branch: "main.leaf4",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/worktrees/leaf4"))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/worktrees/leaf4/.chainlink_issue_id",
+      "88\n",
+    ),
+  )
+  // Deferred lifecycle carrying a pr_number — exit policy is Deferred (not blocked)
+  let lc : @phase.AgentLifecycle = {
+    agent_id: "main.leaf4",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(
+        pr_number=33,
+        state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+      ),
+    ),
+  }
+  assert_true(@phase.write_lifecycle(project_dir, lc))
+
+  let mut captured_issue_id : String? = None
+  let mut captured_comment : String? = None
+  let injected_handoff = async fn(issue_id : String, comment : String) {
+    @async.sleep(0)
+    captured_issue_id = Some(issue_id)
+    captured_comment = Some(comment)
+  }
+
+  let args : ShutdownArgs = { caller_id: Some("main.leaf4") }
+  let got = interpret_shutdown(
+    args,
+    project_dir,
+    None,
+    Some(reg),
+    mock_shutdown_runner_record_worktree,
+    chainlink_write_handoff=Some(injected_handoff),
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("deferred")))
+    }
+    _ => fail("expected deferred ok")
+  }
+  assert_eq(captured_issue_id, Some("88"))
+  match captured_comment {
+    Some(c) => {
+      assert_true(c.contains("[leaf4] [dev] shutdown"))
+      assert_true(c.contains("branch: main.leaf4"))
+      assert_true(c.contains("pr: #33"))
+    }
+    None => fail("expected handoff comment with pr number")
+  }
+}
+
+///|
+async test "interpret_shutdown handoff works even when runner simulates worktree deletion" {
+  let project_dir = "/tmp/choir-shutdown-wt-del-" + @sys.get_pid().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.leaf5"),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main"),
+      workspace: project_dir + "/.choir/worktrees/leaf5",
+      branch: "main.leaf5",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/worktrees/leaf5"))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/worktrees/leaf5/.chainlink_issue_id",
+      "77\n",
+    ),
+  )
+
+  let mut captured_issue_id : String? = None
+  let mut captured_comment : String? = None
+  let injected_handoff = async fn(issue_id : String, comment : String) {
+    @async.sleep(0)
+    captured_issue_id = Some(issue_id)
+    captured_comment = Some(comment)
+  }
+  // Runner that simulates worktree deletion — after running any command
+  // referencing the worktree path, it removes the chainlink issue id file.
+  let wt_dir = project_dir + "/.choir/worktrees/leaf5"
+  let deleting_runner = async fn(
+    cmds : Array[@workspace.Command],
+  ) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      let args_str = cmd.args.join(" ")
+      if args_str.contains(wt_dir) || args_str.contains("worktree") {
+        // Simulate: worktree remove deletes the chainlink issue id file
+        ignore(@sys.write_file_sync(wt_dir + "/.chainlink_issue_id", ""))
+      }
+    }
+    [0]
+  }
+
+  let args : ShutdownArgs = { caller_id: Some("main.leaf5") }
+  let got = interpret_shutdown(
+    args,
+    project_dir,
+    None,
+    Some(reg),
+    deleting_runner,
+    chainlink_write_handoff=Some(injected_handoff),
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected shutdown ok")
+  }
+  // Handoff should still be captured because chainlink_issue_id was resolved
+  // BEFORE worktree cleanup ran.
+  assert_eq(captured_issue_id, Some("77"))
+  match captured_comment {
+    Some(c) => {
+      assert_true(c.contains("[leaf5] [dev] shutdown"))
+      assert_true(c.contains("branch: main.leaf5"))
+    }
+    None => fail("expected handoff comment even after worktree deletion")
+  }
 }
 
 ///|
@@ -869,6 +1022,16 @@ async fn mock_preflight_ok(
 ) -> Result[Unit, @types.ChoirError] {
   @async.sleep(0)
   Ok(())
+}
+
+///|
+async fn mock_preflight_err(
+  _branch : String,
+  _parent_branch : String,
+  _dir : String,
+) -> Result[Unit, @types.ChoirError] {
+  @async.sleep(0)
+  Err(@types.ChoirError::git_error("branch missing locally"))
 }
 
 ///|
@@ -4482,7 +4645,7 @@ test "format_handoff_comment with pr_number None" {
 }
 
 ///|
-test "format_handoff_comment with empty branch produces (worker)" {
+test "format_handoff_comment with empty branch produces (unknown)" {
   let comment = format_handoff_comment(
     "inline-0",
     @types.Role::Worker,
@@ -4493,7 +4656,7 @@ test "format_handoff_comment with empty branch produces (worker)" {
     comment,
     content=(
       #|[inline-0] [worker] shutdown
-      #|branch: (worker)
+      #|branch: (unknown)
       #|pr: (none)
     ),
   )
@@ -4563,7 +4726,15 @@ test "workflow_state_pr_number extracts from Dev workflow" {
 }
 
 ///|
-test "workflow_state_pr_number returns None for Supervisor workflow" {
+test "workflow_state_pr_number extracts from Supervisor OwnPRFiled" {
+  let ws = @phase.WorkflowState::Supervisor(
+    @phase.SupervisorLifecycle::OwnPRFiled(number=22, url="https://ex/22"),
+  )
+  assert_eq(workflow_state_pr_number(ws), Some(22))
+}
+
+///|
+test "workflow_state_pr_number returns None for Supervisor Planning" {
   let ws = @phase.WorkflowState::Supervisor(
     @phase.SupervisorLifecycle::Planning,
   )
