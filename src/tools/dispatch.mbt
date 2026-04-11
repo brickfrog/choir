@@ -310,7 +310,7 @@ pub async fn dispatch(
         listen_uds~,
         listen_tcp~,
         tcp_auth_token~,
-        chainlink_fetch=Some(@chainlink.fetch_issue),
+        chainlink_fetch=Some(chainlink_fetch_issue),
       )
       // Post-spawn side effects: only run if spawn succeeded.
       if resp.is_ok() && spawn_plan.spawned_count > 0 {

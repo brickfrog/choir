@@ -410,9 +410,7 @@ test "merge_chainlink - only last 5 non-empty comments by highest id" {
     { id: 6, content: "P6", kind: "plan" },
     { id: 7, content: "P7", kind: "plan" },
   ])
-  // Non-empty IDs: 1, 2, 4, 5, 6, 7. Last 5: 4, 5, 6, 7, 2 (wait, highest 5 are 7,6,5,4,2)
-  // Let's be careful: "Collect plan+decision comments. Filter to non-empty content (trimmed) FIRST, then take last 5 by id (highest 5 ids). Sort result ascending."
-  // Non-empty: [1, 2, 4, 5, 6, 7]. Highest 5: [2, 4, 5, 6, 7]. Sorted ascending: [2, 4, 5, 6, 7].
+  // Filter to non-empty trimmed comments, keep the 5 highest IDs, then output them sorted ascending: [2, 4, 5, 6, 7].
   let contract = @types.TaskContract::empty()
   let merged = merge_chainlink_into_task_contract(issue, contract)
   assert_eq(
