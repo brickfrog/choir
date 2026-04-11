@@ -1381,6 +1381,56 @@ pub fn merge_pr_reviews_command(
 }
 
 ///|
+fn merge_pr_review_reviewer_key(
+  fields : Map[String, Json],
+  fallback_index : Int,
+) -> String {
+  match fields.get("user") {
+    Some(Object(user)) =>
+      match user.get("login") {
+        Some(String(login)) =>
+          if login != "" {
+            "user:" + login
+          } else {
+            "review:" + fallback_index.to_string()
+          }
+        _ => "review:" + fallback_index.to_string()
+      }
+    _ => "review:" + fallback_index.to_string()
+  }
+}
+
+///|
+fn merge_pr_review_submitted_at(fields : Map[String, Json]) -> String {
+  match fields.get("submitted_at") {
+    Some(String(value)) => value
+    _ => ""
+  }
+}
+
+///|
+fn merge_pr_should_replace_review_state(
+  latest_times : Map[String, String],
+  latest_indexes : Map[String, Int],
+  key : String,
+  submitted_at : String,
+  index : Int,
+) -> Bool {
+  match latest_times.get(key) {
+    None => true
+    Some(prev_time) =>
+      if submitted_at != "" && prev_time != "" {
+        submitted_at >= prev_time
+      } else {
+        match latest_indexes.get(key) {
+          Some(prev_index) => index >= prev_index
+          None => true
+        }
+      }
+  }
+}
+
+///|
 pub fn merge_pr_review_gate_block_message(
   pr_number : Int,
   reviews_json : String,
@@ -1400,23 +1450,44 @@ pub fn merge_pr_review_gate_block_message(
       ),
     )
   }
-  let mut approved = false
-  for review in reviews {
+  let latest_states : Map[String, String] = {}
+  let latest_times : Map[String, String] = {}
+  let latest_indexes : Map[String, Int] = {}
+  for i = 0; i < reviews.length(); i = i + 1 {
+    let review = reviews[i]
     match review {
-      Object(fields) =>
-        match fields.get("state") {
-          Some(String("CHANGES_REQUESTED")) =>
-            return Ok(
-              Some(
-                "PR #" +
-                pr_number.to_string() +
-                " has a GitHub review requesting changes. Address it before merging.",
-              ),
-            )
-          Some(String("APPROVED")) => approved = true
-          _ => ()
+      Object(fields) => {
+        let state = match fields.get("state") {
+          Some(String(value)) => value
+          _ => ""
         }
+        if state != "" {
+          let key = merge_pr_review_reviewer_key(fields, i)
+          let submitted_at = merge_pr_review_submitted_at(fields)
+          if merge_pr_should_replace_review_state(
+              latest_times, latest_indexes, key, submitted_at, i,
+            ) {
+            latest_states.set(key, state)
+            latest_times.set(key, submitted_at)
+            latest_indexes.set(key, i)
+          }
+        }
+      }
       _ => ()
+    }
+  }
+  let mut approved = false
+  for state in latest_states.values() {
+    if state == "CHANGES_REQUESTED" {
+      return Ok(
+        Some(
+          "PR #" +
+          pr_number.to_string() +
+          " has a GitHub review requesting changes. Address it before merging.",
+        ),
+      )
+    } else if state == "APPROVED" {
+      approved = true
     }
   }
   if approved {

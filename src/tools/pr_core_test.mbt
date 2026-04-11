@@ -2145,10 +2145,42 @@ test "merge_pr_review_gate_block_message requires approval" {
 test "merge_pr_review_gate_block_message blocks changes requested" {
   match
     merge_pr_review_gate_block_message(
-      4, "[{\"state\":\"APPROVED\"},{\"state\":\"CHANGES_REQUESTED\"}]",
+      4,
+      (
+        #|[{"state":"APPROVED","user":{"login":"a"},"submitted_at":"2026-01-01T00:00:00Z"},{"state":"CHANGES_REQUESTED","user":{"login":"b"},"submitted_at":"2026-01-02T00:00:00Z"}]
+      ),
     ) {
     Ok(Some(msg)) => assert_true(msg.contains("requesting changes"))
     _ => fail("expected changes requested block")
+  }
+}
+
+///|
+test "merge_pr_review_gate_block_message ignores stale changes requested after same reviewer approves" {
+  let reviews =
+    #|[
+    #|  {"state":"CHANGES_REQUESTED","user":{"login":"reviewer"},"submitted_at":"2026-01-01T00:00:00Z"},
+    #|  {"state":"APPROVED","user":{"login":"reviewer"},"submitted_at":"2026-01-02T00:00:00Z"}
+    #|]
+  match merge_pr_review_gate_block_message(4, reviews) {
+    Ok(None) => ()
+    Ok(Some(msg)) => fail("expected stale changes requested to clear: " + msg)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "merge_pr_review_gate_block_message uses submitted_at over array order" {
+  let reviews =
+    #|[
+    #|  {"state":"APPROVED","user":{"login":"reviewer"},"submitted_at":"2026-01-02T00:00:00Z"},
+    #|  {"state":"CHANGES_REQUESTED","user":{"login":"reviewer"},"submitted_at":"2026-01-01T00:00:00Z"}
+    #|]
+  match merge_pr_review_gate_block_message(4, reviews) {
+    Ok(None) => ()
+    Ok(Some(msg)) =>
+      fail("expected older changes requested to be ignored: " + msg)
+    Err(e) => fail(e.message())
   }
 }
 
