@@ -46,7 +46,7 @@ The former known gaps (typed lifecycle triggers, typed lifecycle snapshots in ev
 ## TL Workflow
 
 When a user brings a feature request, follow the VSDD pipeline in `.choir/context/tl.md`:
-**Spec → Adversarial Spec Review → TDD Leaves (Red Gate) → Adversarial Code Review → Convergence.**
+**Spec Crystallization → TDD Leaves (Red Gate) → Code Review Gate → Convergence.**
 Use Chainlink `issue_id` in `fork_wave` to track every leaf's work.
 
 ## Leaf Agent Rules

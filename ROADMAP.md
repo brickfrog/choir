@@ -26,9 +26,6 @@ Leverage the new `suberror` system to provide richer, machine-readable error con
 ### Performance: Parallel Verification
 Explore parallel `moon test` execution during wave reconciliation to reduce the time-to-merge for large cohorts.
 
-### Adversarial Review Mode
-Add an optional high-ceremony path for risky work where Choir requests a fresh-context adversarial review pass before merge. This should layer onto the existing evidence and policy system rather than creating a separate workflow.
-
 ---
 
 ## ✅ Completed
@@ -109,7 +106,7 @@ Add an optional high-ceremony path for risky work where Choir requests a fresh-c
 
 ### Copilot Reliability & Context
 - **Automated Reviewer Requests**: Replaced flaky comment-triggers with official `gh pr edit --add-reviewer @copilot`.
-- **Context Injection**: Automated `@copilot review: <context>` to guide adversarial reviews.
+- **Context Injection**: Automated `@copilot review: <context>` to guide Copilot reviews.
 - **Login Recognition**: Robust detection of both bot and non-bot Copilot identities.
 
 ### Pi × Choir North Star
