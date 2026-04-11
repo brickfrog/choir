@@ -75,6 +75,91 @@ fn write_notify_gate_leaf_review_owned(
 }
 
 ///|
+/// Test-only: path whose file is written when [`runner_record_notify_blocked_text`]
+/// observes `[NOTIFY BLOCKED]` in a `choir zellij-action send` arg list.
+let notify_blocked_runner_marker_target : Array[String] = [""]
+
+///|
+async fn runner_record_notify_blocked_text(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let path = notify_blocked_runner_marker_target[0]
+  if path != "" {
+    for cmd in cmds {
+      for arg in cmd.args {
+        if arg.contains("[NOTIFY BLOCKED]") {
+          ignore(@sys.write_file_sync(path, "yes"))
+        }
+      }
+    }
+  }
+  [0]
+}
+
+///|
+async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY BLOCKED" {
+  let project_dir = "/tmp/choir-test-notify-blocked-send-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let marker = project_dir + "/.choir/notify_blocked_delivery.marker"
+  ignore(@sys.delete_file_sync(marker))
+  notify_blocked_runner_marker_target[0] = marker
+
+  let agent_id = "leaf-nb"
+  let pr_number = 77
+  let reg = @registry.AgentRegistry::new()
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("parent-nb"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:nptl"),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let child : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent-nb"),
+    workspace: project_dir,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
+
+  write_notify_gate_leaf_review_owned(project_dir, agent_id, pr_number)
+  let req = ToolRequest::NotifyParent({
+    caller_id: agent_id,
+    message: "done",
+    status: @types.Status::Success,
+  })
+  let resp = dispatch(
+    req,
+    project_dir~,
+    session="choir",
+    registry=Some(reg),
+    capture=mock_capture_threads_one,
+    runner=runner_record_notify_blocked_text,
+  )
+  match resp {
+    Err(msg) => assert_true(msg.contains("notify_parent blocked"))
+    Ok(_) => fail("expected block")
+  }
+  assert_eq(@sys.read_file(marker).trim(), "yes")
+  notify_blocked_runner_marker_target[0] = ""
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
 async test "dispatch NotifyParent blocks on unresolved threads" {
   let project_dir = "/tmp/choir-test-notify-gate-" + @sys.get_pid().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
