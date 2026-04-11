@@ -21,7 +21,6 @@ import {
   "choir/src/hooks",
   "moonbitlang/async",
   "moonbitlang/core/encoding/utf8",
-  "moonbitlang/core/env",
   "brickfrog/moontrace",
 }
 
