@@ -16,7 +16,7 @@ Host adapters (Git, GitHub, Zellij, filesystem) are injected and testable.
 
 ## VSDD Pipeline
 
-Choir's TL follows a built-in **Verify-Spec-Develop-Deploy** pipeline for every feature request:
+Choir's TL follows a built-in **[Verify-Spec-Develop-Deploy](https://gist.github.com/dollspace-gay/45c95ebfb5a3a3bae84d8bebd662cc25)** pipeline for every feature request:
 
 1. **Spec Crystallization** — TL helps articulate the behavioral contract (preconditions, edge cases, purity boundary). Spec is written to a Chainlink issue as a `plan` comment.
 2. **Adversarial Spec Review** — `spawn_worker(type="adversary")` invokes Sarcasmotron, a hyper-critical reviewer who finds every gap in the spec before a line of implementation is written.

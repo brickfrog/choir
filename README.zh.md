@@ -13,7 +13,7 @@ Copilot review、将 review/CI 反馈路由到对应面板、在 PR 可合并时
 
 ## VSDD 流水线
 
-Choir 的 TL 对每个功能请求自动执行 **Verify-Spec-Develop-Deploy** 流水线：
+Choir 的 TL 对每个功能请求自动执行 **[Verify-Spec-Develop-Deploy](https://gist.github.com/dollspace-gay/45c95ebfb5a3a3bae84d8bebd662cc25)** 流水线：
 
 1. **规格固化** — TL 协助用户明确行为契约（前置条件、边界情况、纯函数边界）。规格作为 `plan` 评论写入 Chainlink issue。
 2. **对抗性规格评审** — `spawn_worker(type="adversary")` 调用 Sarcasmotron（超挑剔评审员），在任何实现代码编写之前找出规格中的所有漏洞。
