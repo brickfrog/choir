@@ -146,6 +146,9 @@ fn validate_branch(s : String) -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
+/// `kv_get` / `kv_set` / `kv_delete` keys must match [`@kv.validate_kv_storage_key`]
+/// (flat names only: **`/`** was intentionally removed; no nested paths under
+/// `.choir/kv/`).
 fn validate_kv_key(s : String) -> Result[Unit, @types.ChoirError] {
   @kv.validate_kv_storage_key(s)
 }

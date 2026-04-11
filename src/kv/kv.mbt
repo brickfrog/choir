@@ -25,6 +25,13 @@ pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
   if s.contains("..") {
     return Err(@types.ChoirError::validation_error("key cannot contain '..'"))
   }
+  if s.contains("/") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "KV keys must be flat single-segment names (no '/' characters)",
+      ),
+    )
+  }
   for c in s {
     if !((c >= 'a' && c <= 'z') ||
       (c >= 'A' && c <= 'Z') ||
@@ -52,6 +59,7 @@ pub fn KvStore::get(self : KvStore, key : String) -> String? {
     Err(_) => None
     Ok(_) => {
       let path = self.project_dir + "/.choir/kv/" + key
+      // @sys.read_file returns "" for missing/unreadable files (see sys/io.mbt); None is returned for empty result.
       let raw = @sys.read_file(path).trim().to_string()
       if raw == "" {
         None
