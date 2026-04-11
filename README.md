@@ -26,7 +26,7 @@ Choir's TL follows a built-in **Verify-Spec-Develop-Deploy** pipeline for every 
 
 ## Chainlink
 
-Choir integrates with [Chainlink](https://github.com/brickfrog/chainlink), a local Git-backed issue tracker with typed comment kinds (`plan`, `decision`, `observation`, `result`, `handoff`).
+Choir integrates with [Chainlink](https://github.com/dollspace-gay/chainlink), a local Git-backed issue tracker with typed comment kinds (`plan`, `decision`, `observation`, `result`, `handoff`).
 
 ```bash
 chainlink issue create "Feature title"       # create issue, get ID
