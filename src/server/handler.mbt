@@ -521,6 +521,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       agent_registry=Some(self.registry),
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
+      kv_store=Some(self.kv_store),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
     ) catch {
