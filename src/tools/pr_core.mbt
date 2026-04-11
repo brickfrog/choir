@@ -769,6 +769,7 @@ pub fn fork_wave_spawn_plan(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  chainlink_enrichment_issue? : @chainlink.ChainlinkIssue? = None,
 ) -> ForkWaveSpawnPlan {
   let agent_ids = StringBuilder::new()
   let skipped_ids = StringBuilder::new()
@@ -825,12 +826,20 @@ pub fn fork_wave_spawn_plan(
       fork_wave_args.tasks[i],
       fork_wave_args.review_context,
     )
+    let mut task_contract = fork_wave_args.task_contracts[i]
+    match chainlink_enrichment_issue {
+      Some(issue) =>
+        task_contract = @chainlink.merge_chainlink_into_task_contract(
+          issue, task_contract,
+        )
+      None => ()
+    }
     let spec = @types.SpawnSpec::{
       slug,
       role: fork_wave_args.child_role,
       agent_type: fork_wave_args.agent_type,
       task: leaf_task,
-      task_contract: Some(fork_wave_args.task_contracts[i]),
+      task_contract: Some(task_contract),
       isolation: @types.IsolationMode::Worktree,
       parent_id: fork_wave_args.caller_id,
       parent_branch: fork_wave_args.parent_branch,
@@ -960,6 +969,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  chainlink_fetch? : (async (String) -> @chainlink.ChainlinkIssue?)? = None,
 ) -> (@types.Response, ForkWaveArgs, ForkWaveSpawnPlan) {
   let fork_wave_args = fork_wave_resolve_args_parent_branch(
     fork_wave_args, project_dir, capture,
@@ -972,6 +982,21 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     caller_spawn_depth,
     fork_wave_args.child_role,
   )
+
+  // Chainlink enrichment
+  let mut enrichment_issue : @chainlink.ChainlinkIssue? = None
+  match (fork_wave_args.chainlink_issue_id, chainlink_fetch) {
+    (Some(id), Some(fetch)) =>
+      match fetch(id) {
+        Some(issue) => enrichment_issue = Some(issue)
+        None =>
+          @sys.write_stderr(
+            "warning: failed to fetch chainlink issue #\{id} for enrichment\n",
+          )
+      }
+    _ => ()
+  }
+
   let spawn_plan = fork_wave_spawn_plan(
     fork_wave_args,
     child_spawn_depth,
@@ -983,6 +1008,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     listen_uds~,
     listen_tcp~,
     tcp_auth_token~,
+    chainlink_enrichment_issue=enrichment_issue,
   )
   let plan = fork_wave_plan(
     project_dir,
