@@ -74,7 +74,7 @@ Always pass `issue_id=<chainlink_id>` to `fork_wave` — this auto-creates subis
 
 ### Phase 2 — GitHub PR Review Gate
 
-After GitHub PR review approval from Copilot is recorded and all feedback is addressed, you may proceed with merging.
+After Copilot's GitHub PR review approval is recorded and all feedback is addressed, you may proceed with merging.
 
 **Nothing merges to main until the PR is approved by Copilot.**
 
