@@ -50,23 +50,22 @@ pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
-/// Reads `.choir/kv/{key}` after validation. Returns [`None`] if the key is
-/// invalid (**same as** a missing file or empty read) — callers cannot tell
-/// “bad key” from “no value”. The merge adversary gate only uses validated
-/// key shapes; other callers should validate or accept this ambiguity.
+/// Reads `.choir/kv/{key}` after validation. Returns [`None`] when the file is
+/// missing or the trimmed contents are empty.
 ///
-/// Invalid keys (failing [`validate_kv_storage_key`]) return [`None`],
-/// indistinguishable from a missing value. This is intentional for the adversary
-/// gate (it always constructs valid keys), but callers must not rely on
-/// [`None`] to detect key format errors.
+/// A key that fails [`validate_kv_storage_key`] is a **programmer error** for
+/// this API: the process aborts after writing to stderr (invalid keys must not
+/// be passed here; validate at the call site if input is untrusted).
 ///
 /// **Trim vs `kv_get` tool:** [`KvStore::get`] trims for internal gate
 /// comparisons; the `kv_get` MCP tool returns raw bytes so agents see the exact
 /// stored value.
-// FIXME: should return Result to distinguish missing vs invalid
 pub fn KvStore::get(self : KvStore, key : String) -> String? {
   match validate_kv_storage_key(key) {
-    Err(_) => None
+    Err(_) => {
+      @sys.write_stderr("KvStore::get called with invalid key: " + key + "\n")
+      panic()
+    }
     Ok(_) => {
       let path = self.project_dir + "/.choir/kv/" + key
       // @sys.read_file returns "" for missing/unreadable files (see sys/io.mbt); None is returned for empty result.

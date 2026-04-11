@@ -196,6 +196,42 @@ fn resolve_parent_for_notify(
 }
 
 ///|
+fn kv_adversary_key_tl_write_only_err() -> @types.Response {
+  @types.Response::Err("adversary-approved-* keys are TL-write-only")
+}
+
+///|
+/// `adversary-approved-*` must not be writable by leaves (they could self-approve
+/// the merge gate). Returns [`Some`] when the write must be rejected.
+fn kv_set_adversary_key_blocked_response(
+  key : String,
+  registry : @registry.AgentRegistry?,
+  caller_id : String?,
+) -> @types.Response? {
+  if !key.has_prefix("adversary-approved-") {
+    return None
+  }
+  match registry {
+    None => Some(kv_adversary_key_tl_write_only_err())
+    Some(reg) =>
+      match caller_id {
+        None | Some("") => Some(kv_adversary_key_tl_write_only_err())
+        Some(cid) =>
+          try {
+            let agent = reg.get(cid)
+            match agent.role {
+              @types.Role::Dev | @types.Role::Worker =>
+                Some(kv_adversary_key_tl_write_only_err())
+              @types.Role::Root | @types.Role::TL => None
+            }
+          } catch {
+            _ => Some(kv_adversary_key_tl_write_only_err())
+          }
+      }
+  }
+}
+
+///|
 fn chainlink_issue_to_json(issue : @types.ChainlinkIssue) -> Json {
   let values : Map[String, Json] = {
     "id": issue.id.to_json(),
@@ -394,7 +430,39 @@ pub async fn dispatch(
                 pr_number, project_dir, capture,
               )
               if count > 0 {
-                if thread_text == review_thread_fetch_failed_marker {
+                let gh_failed = thread_text == review_thread_fetch_failed_marker
+                try {
+                  let parent = resolve_parent_for_notify(
+                    project_dir,
+                    session,
+                    reg,
+                    notify_args.caller_id,
+                  )
+                  let body = if gh_failed {
+                    "[NOTIFY BLOCKED] " +
+                    notify_args.caller_id +
+                    " on PR #" +
+                    pr_number.to_string() +
+                    ": could not fetch review thread state (gh unavailable) — leaf is blocked and will be watchdog-killed in ~5 min if not resolved. Resolve threads or manually advance lifecycle."
+                  } else {
+                    "[NOTIFY BLOCKED] " +
+                    notify_args.caller_id +
+                    " has unresolved review threads on PR #" +
+                    pr_number.to_string() +
+                    " — leaf is waiting and will be watchdog-killed in ~5 min if threads are not resolved. Resolve threads or manually advance lifecycle."
+                  }
+                  let plan = send_message_plan(
+                    parent.agent_id.to_string(),
+                    notify_args.caller_id,
+                    body,
+                    @types.Status::Info,
+                    Some(Ok(parent)),
+                  )
+                  ignore(interpret_send_message(plan, project_dir, runner))
+                } catch {
+                  _ => ()
+                }
+                if gh_failed {
                   return @types.Response::Err(
                     "notify_parent blocked: gh unavailable (could not fetch review thread state) — contact TL to manually advance lifecycle",
                   )
@@ -526,14 +594,19 @@ pub async fn dispatch(
         @types.Response::ok({ "value": value })
       }
     }
-    ToolRequest::KvSet(kv_args) => {
-      let path = kv_file_path(project_dir, kv_args.key)
-      if @sys.write_file_atomic(path, kv_args.value) {
-        @types.Response::ok({ "status": "ok" })
-      } else {
-        @types.Response::Err("failed to write kv file: " + path)
+    ToolRequest::KvSet(kv_args) =>
+      match
+        kv_set_adversary_key_blocked_response(kv_args.key, registry, caller_id) {
+        Some(resp) => resp
+        None => {
+          let path = kv_file_path(project_dir, kv_args.key)
+          if @sys.write_file_atomic(path, kv_args.value) {
+            @types.Response::ok({ "status": "ok" })
+          } else {
+            @types.Response::Err("failed to write kv file: " + path)
+          }
+        }
       }
-    }
     ToolRequest::KvDelete(key_args) => {
       let path = kv_file_path(project_dir, key_args.key)
       ignore(@sys.delete_file_sync(path))
