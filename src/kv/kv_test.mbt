@@ -141,3 +141,15 @@ test "KvStore_get trims surrounding whitespace including newline" {
   assert_eq(kv.get("adversary-approved-42"), Some("true"))
   ignore(@sys.system("rm -rf " + project_dir))
 }
+
+///|
+test "KvStore_delete removes_valid_key_file" {
+  let project_dir = "/tmp/choir-kv-del-" + @sys.get_pid().to_string()
+  let kv_dir = project_dir + "/.choir/kv"
+  ignore(@sys.create_dir_all(kv_dir))
+  ignore(@sys.write_file_sync(kv_dir + "/my-key", "v"))
+  let kv = KvStore::new(project_dir)
+  kv.delete("my-key")
+  assert_eq(@sys.read_file(kv_dir + "/my-key"), "")
+  ignore(@sys.system("rm -rf " + project_dir))
+}

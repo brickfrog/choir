@@ -79,3 +79,16 @@ pub fn KvStore::get(self : KvStore, key : String) -> String? {
     }
   }
 }
+
+///|
+/// Removes `.choir/kv/{key}` when the key passes [`validate_kv_storage_key`].
+/// Invalid keys are ignored (no file removed).
+pub fn KvStore::delete(self : KvStore, key : String) -> Unit {
+  match validate_kv_storage_key(key) {
+    Err(_) => ()
+    Ok(_) => {
+      let path = self.project_dir + "/.choir/kv/" + key
+      ignore(@sys.delete_file_sync(path))
+    }
+  }
+}

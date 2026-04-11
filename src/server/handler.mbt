@@ -3217,10 +3217,9 @@ pub async fn ServerState::check_idle_agents(
     if agent.role == @types.Role::Root || agent.role == @types.Role::TL {
       continue
     }
-    // `ReviewOwned` leaves blocked on `notify_parent` (unresolved threads) stay
-    // Active and idle; they are not watchdog-exempt, so the TL may only see
-    // WatchdogTimeout unless threads are resolved — dispatch warns the parent
-    // when `notify_parent` is blocked for that reason.
+    // `ReviewOwned` devs are watchdog-exempt (idle while waiting for TL merge /
+    // review). Dispatch still warns the parent when `notify_parent` is blocked on
+    // unresolved threads.
     if @phase.lifecycle_idle_watchdog_exempt(self.current_lifecycle(agent_id)) {
       continue
     }

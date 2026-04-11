@@ -387,19 +387,22 @@ pub fn lifecycle_disconnect_policy(
 /// - **Dev `Done` / `Failed`**: terminal.
 /// - **Dev `ExitRequestedDeferred`**: deferred exit while PR/review coordination
 ///   is still resolving; killing mid-wait would lose that handshake.
+/// - **Dev `ReviewOwned(..)`**: leaf may be idle waiting for TL `merge_pr` or
+///   review resolution; [`notify_parent`] thread blocks warn the parent instead.
 /// - **Worker `Done` / `Failed`**: terminal.
-/// - **`Supervisor`**: TL agents are out of scope for leaf idle cleanup.
 ///
-/// **Not** exempt (examples): **`Working`**, **`ReviewOwned`**, **`ChangesRequested`**,
-/// **`Dev(Exitable)`**, **`Worker(Exitable)`** — e.g. a leaf that opened a PR then
-/// went silent must still be reclaimed; a leaf in **`Exitable`** waiting on parent
+/// **Not** exempt (examples): **`Working`**, **`ChangesRequested`**,
+/// **`Dev(Exitable)`**, **`Worker(Exitable)`** — e.g. a leaf that never filed a PR
+/// and went silent must still be reclaimed; a leaf in **`Exitable`** waiting on parent
 /// shutdown is still killable if it sits idle for the watchdog timeout.
+///
+/// Root/TL agents are skipped by role in [`check_idle_agents`] before this runs.
 pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
   match lifecycle.workflow {
     Dev(Done(..)) | Dev(Failed(..)) => true
     Dev(ExitRequestedDeferred(..)) => true
+    Dev(ReviewOwned(..)) => true
     Worker(Done(..)) | Worker(Failed(..)) => true
-    Supervisor(_) => true
     _ => false
   }
 }
