@@ -3059,12 +3059,16 @@ async fn ServerState::interpret_teardown_effects(
         )
       RemoveWorktree(path) =>
         ignore(runner([@workspace.git_worktree_remove(path)]) catch { _ => [] })
-      CloseTerminal(target) =>
-        ignore(
-          runner([@workspace.local_close_target(target)]) catch {
-            _ => []
-          },
-        )
+      CloseTerminal(target) => {
+        let cmd = @workspace.local_close_target(target)
+        let codes = runner([cmd]) catch { _ => [] }
+        if codes.length() > 0 && codes[0] != 0 {
+          @moontrace.warn("CloseTerminal failed", fields=[
+            @moontrace.field("exit", codes[0]),
+            @moontrace.field("cmd", cmd.to_string()),
+          ])
+        }
+      }
       InjectTerminalMessage(target, message) =>
         ignore(
           @tools.execute_delivery(
@@ -3284,7 +3288,16 @@ pub async fn ServerState::handle_disconnect_with_runner(
 ) -> Unit {
   let agent = self.registry.get(agent_id) catch { _ => return }
   match agent.state {
-    Done | Failed => ()
+    Done | Failed =>
+      match agent.terminal_target {
+        Some(target) =>
+          ignore(
+            runner([@workspace.local_close_target(target)]) catch {
+              _ => []
+            },
+          )
+        None => ()
+      }
     Completing => {
       let lifecycle = self.current_lifecycle(agent_id)
       let exit_reason = match lifecycle.process {
@@ -3502,10 +3515,7 @@ async test "test_close_terminal_warns_on_nonzero_exit" {
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
   @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  state.interpret_teardown_effects([CloseTerminal(target)], async fn(_cmds) {
-    @async.sleep(0)
-    [1]
-  })
+  state.interpret_teardown_effects([CloseTerminal(target)], fn(_cmds) { [1] })
   @moontrace.clear_subscriber()
   assert_eq(handler_close_terminal_warn_count(captured), 1)
 }
@@ -3516,10 +3526,7 @@ async test "test_close_terminal_no_warn_on_zero_exit" {
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
   @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  state.interpret_teardown_effects([CloseTerminal(target)], async fn(_cmds) {
-    @async.sleep(0)
-    [0]
-  })
+  state.interpret_teardown_effects([CloseTerminal(target)], fn(_cmds) { [0] })
   @moontrace.clear_subscriber()
   assert_eq(handler_close_terminal_warn_count(captured), 0)
 }
