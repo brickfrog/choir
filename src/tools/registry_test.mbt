@@ -506,6 +506,141 @@ async test "dispatch_call merge_pr adversary gate without kv file" {
 }
 
 ///|
+async test "dispatch_call kv_set adversary-approved rejected for Dev without TL caller" {
+  let project_dir = "/tmp/choir-kv-tlonly-dev-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let reg = @registry.AgentRegistry::new()
+  let leaf : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("main.tl"),
+    workspace: project_dir,
+    branch: "main.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 1,
+  }
+  ignore(try? reg.insert(leaf))
+  let call = ToolCall::{
+    role: @types.Role::Dev,
+    name: "kv_set",
+    args: {
+      "key": "adversary-approved-9",
+      "value": "true",
+      "caller_id": "main.leaf",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    registry=Some(reg),
+    runner=mock_registry_runner,
+    git_capture=mock_clean_git,
+    capture=mock_registry_capture,
+    ensure_branch_ready=Some(mock_registry_branch_ready),
+    ensure_pr=Some(mock_registry_ensure_pr),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Err(msg) => assert_true(msg.contains("TL-write-only"))
+    Ok(_) => fail("expected Dev blocked from adversary-approved kv_set")
+  }
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+}
+
+///|
+async test "dispatch_call kv_set adversary-approved allowed for TL caller" {
+  let project_dir = "/tmp/choir-kv-tlonly-ok-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let reg = @registry.AgentRegistry::new()
+  let tl : @types.Agent = {
+    agent_id: @types.AgentId("main.tl"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(tl))
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "kv_set",
+    args: {
+      "key": "adversary-approved-9",
+      "value": "true",
+      "caller_id": "main.tl",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    registry=Some(reg),
+    runner=mock_registry_runner,
+    git_capture=mock_clean_git,
+    capture=mock_registry_capture,
+    ensure_branch_ready=Some(mock_registry_branch_ready),
+    ensure_pr=Some(mock_registry_ensure_pr),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Ok(_) => {
+      let path = project_dir + "/.choir/kv/adversary-approved-9"
+      assert_eq(@sys.read_file(path).trim(), "true")
+    }
+    Err(msg) => fail("expected TL kv_set ok: " + msg)
+  }
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+}
+
+///|
+async test "dispatch_call kv_set adversary-approved fails closed without registry" {
+  let project_dir = "/tmp/choir-kv-tlonly-noreg-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "kv_set",
+    args: {
+      "key": "adversary-approved-2",
+      "value": "true",
+      "caller_id": "main.tl",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    runner=mock_registry_runner,
+    git_capture=mock_clean_git,
+    capture=mock_registry_capture,
+    ensure_branch_ready=Some(mock_registry_branch_ready),
+    ensure_pr=Some(mock_registry_ensure_pr),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Err(msg) => assert_true(msg.contains("TL-write-only"))
+    Ok(_) => fail("expected adversary kv_set blocked without registry")
+  }
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+}
+
+///|
 async test "dispatch spawn_worker registers inline worker with stable agent id" {
   let project_dir = "/tmp/choir-spawn-worker-reg-" +
     @sys.get_pid().to_string() +

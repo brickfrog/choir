@@ -1289,7 +1289,7 @@ pub async fn interpret_merge_pr_preflight(
   kv_store : @kv.KvStore?,
 ) -> Result[Unit, @types.ChoirError] {
   // Adversary gate — never bypassed by force. Canonical key: adversary-approved-{pr_number}
-  // (hyphen before PR number; colon is invalid for kv_set / validate_kv_storage_key.)
+  // (hyphen before PR number; colon is invalid for validate_kv_storage_key.)
   let key = "adversary-approved-" + pr_number.to_string()
   let approved = match kv_store {
     Some(kv) => kv.get(key) == Some("true")
@@ -1298,7 +1298,7 @@ pub async fn interpret_merge_pr_preflight(
   if !approved {
     return Err(
       @types.ChoirError::validation_error(
-        "adversary review required before merge: set canonical KV key adversary-approved-\{pr_number}=true (e.g. kv_set key=adversary-approved-\{pr_number} value=true, or write .choir/kv/adversary-approved-\{pr_number}) after Sarcasmotron approves",
+        "adversary review required before merge: set adversary-approved-\{pr_number}=true in the KV store after Sarcasmotron approves.",
       ),
     )
   }

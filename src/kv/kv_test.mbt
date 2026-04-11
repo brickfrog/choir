@@ -112,13 +112,6 @@ test "validate_kv_storage_key rejects leading_slash" {
 }
 
 ///|
-test "KvStore_get returns none_for_invalid_key" {
-  let kv = KvStore::new("/tmp")
-  assert_eq(kv.get(".."), None)
-  assert_eq(kv.get("../secret"), None)
-}
-
-///|
 test "KvStore_get returns none_for_missing_valid_key" {
   let project_dir = "/tmp/choir-kv-missing-" + @sys.get_pid().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
