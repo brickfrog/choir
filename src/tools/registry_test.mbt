@@ -506,6 +506,62 @@ async test "dispatch_call merge_pr adversary gate without kv file" {
 }
 
 ///|
+async test "dispatch_call reply then kv_get round trip reply-- key" {
+  let project_dir = "/tmp/choir-reply-kv-rt-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let reply_id = "req-roundtrip-7"
+  let payload = "hello-from-reply-tool"
+  let key = "reply--" + reply_id
+  let reply_call = @tools.ToolCall::{
+    role: @types.Role::Dev,
+    name: "reply",
+    args: { "id": reply_id, "payload": payload },
+  }
+  match
+    @tools.dispatch_call(
+      reply_call,
+      project_dir~,
+      runner=mock_registry_runner,
+      git_capture=mock_clean_git,
+      capture=mock_registry_capture,
+      ensure_branch_ready=Some(mock_registry_branch_ready),
+      ensure_pr=Some(mock_registry_ensure_pr),
+      mutex_registry=Some(@registry.MutexRegistry::new()),
+      poller_state=Some(@poller.PollerState::new()),
+    ) {
+    Ok(map) => {
+      assert_eq(map.get("status"), Some("ok"))
+      assert_eq(map.get("id"), Some(reply_id))
+    }
+    Err(m) => fail("reply dispatch: " + m)
+  }
+  let get_call = @tools.ToolCall::{
+    role: @types.Role::Dev,
+    name: "kv_get",
+    args: { "key": key },
+  }
+  match
+    @tools.dispatch_call(
+      get_call,
+      project_dir~,
+      runner=mock_registry_runner,
+      git_capture=mock_clean_git,
+      capture=mock_registry_capture,
+      ensure_branch_ready=Some(mock_registry_branch_ready),
+      ensure_pr=Some(mock_registry_ensure_pr),
+      mutex_registry=Some(@registry.MutexRegistry::new()),
+      poller_state=Some(@poller.PollerState::new()),
+    ) {
+    Ok(map) => assert_eq(map.get("value"), Some(payload))
+    Err(m) => fail("kv_get: " + m)
+  }
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+}
+
+///|
 async test "dispatch_call kv_set adversary-approved rejected for Dev without TL caller" {
   let project_dir = "/tmp/choir-kv-tlonly-dev-" +
     @sys.get_pid().to_string() +
