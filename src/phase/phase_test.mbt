@@ -44,6 +44,12 @@ test "lifecycle_idle_watchdog_exempt logic" {
   }
   assert_true(lifecycle_idle_watchdog_exempt(worker_done))
 
+  let worker_failed = {
+    ..worker_working,
+    workflow: Worker(Failed(reason=UnexpectedDisconnect)),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(worker_failed))
+
   let tl = lifecycle_for_role("tl", @types.Role::TL)
   // `Supervisor` is not exempt here; `check_idle_agents` skips TL/Root by role first.
   assert_false(lifecycle_idle_watchdog_exempt(tl))

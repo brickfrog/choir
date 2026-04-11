@@ -2143,6 +2143,44 @@ fn kv_store_with_adversary_approval(
 }
 
 ///|
+async test "interpret_merge_pr_preflight adversary gate blocks when kv_store None" {
+  let got = interpret_merge_pr_preflight(
+    false,
+    42,
+    None,
+    "",
+    mock_preflight_capture_unreachable,
+    None,
+    None,
+  )
+  match got {
+    Err(e) => assert_true(e.message().contains("adversary review required"))
+    Ok(_) => fail("expected Err when kv_store is None")
+  }
+}
+
+///|
+async test "interpret_merge_pr_preflight adversary gate force true still blocks without approval" {
+  let project_dir = "/tmp/choir-mpf-no-adv-kv-" + @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let kv = @kv.KvStore::new(project_dir)
+  let got = interpret_merge_pr_preflight(
+    true,
+    42,
+    None,
+    project_dir,
+    mock_preflight_capture_unreachable,
+    None,
+    Some(kv),
+  )
+  match got {
+    Err(e) => assert_true(e.message().contains("adversary review required"))
+    Ok(_) => fail("expected Err: force=true must not bypass adversary KV")
+  }
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
 async test "interpret_merge_pr_preflight force bypass skips capture" {
   let project_dir = "/tmp/choir-mpf-force-" + @sys.get_pid().to_string()
   let kv = kv_store_with_adversary_approval(project_dir, 1)
