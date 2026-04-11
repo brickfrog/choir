@@ -588,7 +588,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
               }
               @tools.apply_dev_event(
                 self.config.project_dir,
-                agent.branch,
+                agent_id,
                 @phase.DevEvent::PRCreated(
                   pr_number~,
                   url=pr_url,

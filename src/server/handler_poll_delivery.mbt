@@ -1039,8 +1039,6 @@ async fn deliver_pending_poll_events(
             "\n",
           ),
         )
-        let delivery = @message.plan_delivery(parent, sender, body, status)
-        ignore(delivery)
         ignore(
           state.durable_deliver_to_agent(parent, sender, body, status, runner),
         )
@@ -1068,13 +1066,6 @@ async fn deliver_pending_poll_events(
             "\n",
           ),
         )
-        let delivery = @message.plan_delivery(
-          parent,
-          row.leaf_agent_id,
-          row.message,
-          row.status,
-        )
-        ignore(delivery)
         ignore(
           state.durable_deliver_to_agent(
             parent,
@@ -1168,13 +1159,6 @@ pub async fn deliver_orphaned_pr_notification_for(
           "\n",
         ),
       )
-      let delivery = @message.plan_delivery(
-        parent,
-        p.agent_id,
-        message,
-        @types.Status::Failure,
-      )
-      ignore(delivery)
       match
         state.durable_deliver_to_agent(
           parent,

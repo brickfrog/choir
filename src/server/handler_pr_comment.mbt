@@ -132,13 +132,6 @@ pub async fn deliver_poller_stall_notification_for(
           "\n",
         ),
       )
-      let delivery = @message.plan_delivery(
-        parent,
-        p.agent_id,
-        msg,
-        @types.Status::Info,
-      )
-      ignore(delivery)
       match
         state.durable_deliver_to_agent(
           parent,

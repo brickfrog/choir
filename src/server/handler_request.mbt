@@ -376,8 +376,6 @@ async fn reconcile_killed_agent_tracked_prs(
 }
 
 ///|
-
-///|
 async fn ServerState::replay_outbox_recipient_ids(
   self : ServerState,
 ) -> Array[String] {
