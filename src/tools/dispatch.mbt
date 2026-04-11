@@ -876,8 +876,12 @@ pub async fn fire_hook_async(
 
 ///|
 /// CLI / test entrypoint for tool dispatch. When `kv_store` is [`None`], a
-/// [`@kv.KvStore::new`] for `project_dir` is supplied — this does **not** skip
-/// the merge adversary gate; it reads the same on-disk `.choir/kv/` as the server.
+/// [`@kv.KvStore::new`] for `project_dir` is supplied — it does **not** skip the
+/// merge adversary gate (same on-disk `.choir/kv/` as the server).
+///
+/// Note: to exercise **gate-blocked** behavior with no injected store, call
+/// [`dispatch`] with `kv_store=None` directly — [`dispatch_call`] always wires a
+/// default store when omitted.
 pub async fn dispatch_call(
   call : ToolCall,
   project_dir? : String = ".",

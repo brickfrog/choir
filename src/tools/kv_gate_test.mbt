@@ -13,6 +13,23 @@ async fn mock_capture(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+async test "test_adversary_gate_blocks_when_kv_store_none" {
+  let got = interpret_merge_pr_preflight(
+    false,
+    42,
+    None,
+    "",
+    mock_capture,
+    None,
+    None,
+  )
+  match got {
+    Err(e) => assert_true(e.message().contains("adversary review required"))
+    Ok(_) => fail("expected Err when kv_store is None")
+  }
+}
+
+///|
 async test "test_adversary_gate_blocks_when_absent" {
   let project_dir = "/tmp/choir-kv-test-absent-" + @sys.get_pid().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))

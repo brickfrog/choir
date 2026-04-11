@@ -117,3 +117,23 @@ test "KvStore_get returns none_for_invalid_key" {
   assert_eq(kv.get(".."), None)
   assert_eq(kv.get("../secret"), None)
 }
+
+///|
+test "KvStore_get returns none_for_missing_valid_key" {
+  let project_dir = "/tmp/choir-kv-missing-" + @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let kv = KvStore::new(project_dir)
+  assert_eq(kv.get("adversary-approved-99"), None)
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
+test "KvStore_get returns none_for_empty_file" {
+  let project_dir = "/tmp/choir-kv-empty-file-" + @sys.get_pid().to_string()
+  let kv_dir = project_dir + "/.choir/kv"
+  ignore(@sys.create_dir_all(kv_dir))
+  ignore(@sys.write_file_sync(kv_dir + "/my-empty-key", ""))
+  let kv = KvStore::new(project_dir)
+  assert_eq(kv.get("my-empty-key"), None)
+  ignore(@sys.system("rm -rf " + project_dir))
+}

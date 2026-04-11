@@ -347,6 +347,8 @@ pub fn lifecycle_dev_disconnect_policy(
   match lifecycle {
     Working => Fail(reason=UnexpectedDisconnect)
     ReviewOwned(..) => Preserve
+    // Waiting on reviewer-requested changes; work is in-flight and needs human
+    // follow-up — preserve across disconnect so the fix/review cycle is not lost.
     ChangesRequested(..) => Preserve
     ExitRequestedDeferred(..) => Preserve
     Exitable => FinalizeDone(reason=DisconnectFinalized)
@@ -380,13 +382,20 @@ pub fn lifecycle_disconnect_policy(
 
 ///|
 /// Whether an agent is exempt from the idle watchdog.
-/// Only truly terminal states (Done, Failed) are exempt.
-/// ReviewOwned agents keep their Preserve disconnect policy but are NOT
-/// watchdog-exempt — a leaf that files a PR and goes silent must still be
-/// killed eventually.
+///
+/// Exempt:
+/// - **Dev `Done` / `Failed`**: terminal.
+/// - **Dev `ExitRequestedDeferred`**: deferred exit while PR/review coordination
+///   is still resolving; killing mid-wait would lose that handshake.
+/// - **Worker `Done` / `Failed`**: terminal.
+/// - **`Supervisor`**: TL agents are out of scope for leaf idle cleanup.
+///
+/// **Not** exempt (examples): **`Working`**, **`ReviewOwned`**, **`ChangesRequested`**
+/// — e.g. a leaf that opened a PR then went silent must still be reclaimed.
 pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
   match lifecycle.workflow {
     Dev(Done(..)) | Dev(Failed(..)) => true
+    Dev(ExitRequestedDeferred(..)) => true
     Worker(Done(..)) | Worker(Failed(..)) => true
     Supervisor(_) => true
     _ => false
