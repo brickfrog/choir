@@ -217,3 +217,26 @@ test "parse_gh_repo_view_output extracts owner and repo" {
 test "parse_gh_repo_view_output returns None on malformed json" {
   assert_eq(parse_gh_repo_view_output("{\"owner\":{},\"name\":1}"), None)
 }
+
+///|
+async fn mock_capture_repo_view_unavailable(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" &&
+    cmd.args.length() >= 3 &&
+    cmd.args[0] == "repo" &&
+    cmd.args[1] == "view" {
+    return (1, "")
+  }
+  (0, "")
+}
+
+///|
+async test "fetch_unresolved_review_threads fails_closed_when_gh_repo_view_unavailable" {
+  let (count, text) = fetch_unresolved_review_threads(
+    7, "/tmp", mock_capture_repo_view_unavailable,
+  )
+  assert_eq(count, 1)
+  assert_eq(text, "[thread-fetch-failed: treating as unresolved]")
+}

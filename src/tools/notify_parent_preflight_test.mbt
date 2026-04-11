@@ -39,6 +39,25 @@ async fn mock_capture_threads_none(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+async fn mock_capture_repo_view_fails(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "gh" &&
+    cmd.args.length() >= 3 &&
+    cmd.args[0] == "repo" &&
+    cmd.args[1] == "view" {
+    return (1, "")
+  }
+  if cmd.program == "gh" && cmd.args.contains("graphql") {
+    return (
+      0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+    )
+  }
+  (0, "")
+}
+
+///|
 async test "dispatch NotifyParent blocks on unresolved threads" {
   let project_dir = "/tmp/choir-test-notify-gate-" + @sys.get_pid().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
@@ -127,6 +146,21 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
       assert_true(msg.contains("1 unresolved review thread"))
     }
     Ok(_) => fail("expected block on gh failure")
+  }
+
+  // Case 4: gh repo view unavailable (owner/repo resolution fails)
+  let resp4 = dispatch(
+    req,
+    project_dir~,
+    registry=Some(reg),
+    capture=mock_capture_repo_view_fails,
+  )
+  match resp4 {
+    Err(msg) => {
+      assert_true(msg.contains("notify_parent blocked"))
+      assert_true(msg.contains("thread-fetch-failed"))
+    }
+    Ok(_) => fail("expected block when gh repo view unavailable")
   }
 
   ignore(@sys.system("rm -rf " + project_dir))
