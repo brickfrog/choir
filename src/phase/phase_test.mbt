@@ -29,6 +29,9 @@ test "lifecycle_idle_watchdog_exempt logic" {
   let worker_working = lifecycle_for_role("w1", @types.Role::Worker)
   assert_false(lifecycle_idle_watchdog_exempt(worker_working))
 
+  let worker_exitable = { ..worker_working, workflow: Worker(Exitable) }
+  assert_false(lifecycle_idle_watchdog_exempt(worker_exitable))
+
   let worker_done = {
     ..worker_working,
     workflow: Worker(Done(reason=Shutdown)),
