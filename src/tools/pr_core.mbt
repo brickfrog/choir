@@ -769,7 +769,7 @@ pub fn fork_wave_spawn_plan(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
-  chainlink_enrichment_issue? : @chainlink.ChainlinkIssue? = None,
+  chainlink_enrichment_issue? : @types.ChainlinkIssue? = None,
 ) -> ForkWaveSpawnPlan {
   let agent_ids = StringBuilder::new()
   let skipped_ids = StringBuilder::new()
@@ -829,7 +829,7 @@ pub fn fork_wave_spawn_plan(
     let mut task_contract = fork_wave_args.task_contracts[i]
     match chainlink_enrichment_issue {
       Some(issue) =>
-        task_contract = @chainlink.merge_chainlink_into_task_contract(
+        task_contract = @contract.merge_chainlink_into_task_contract(
           issue, task_contract,
         )
       None => ()
@@ -969,7 +969,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
-  chainlink_fetch? : (async (String) -> @chainlink.ChainlinkIssue?)? = None,
+  chainlink_fetch? : (async (String) -> @types.ChainlinkIssue?)? = None,
 ) -> (@types.Response, ForkWaveArgs, ForkWaveSpawnPlan) {
   let fork_wave_args = fork_wave_resolve_args_parent_branch(
     fork_wave_args, project_dir, capture,
@@ -984,7 +984,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   )
 
   // Chainlink enrichment
-  let mut enrichment_issue : @chainlink.ChainlinkIssue? = None
+  let mut enrichment_issue : @types.ChainlinkIssue? = None
   match (fork_wave_args.chainlink_issue_id, chainlink_fetch) {
     (Some(id), Some(fetch)) =>
       match fetch(id) {

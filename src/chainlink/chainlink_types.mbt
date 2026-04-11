@@ -1,12 +1,7 @@
 ///|
-pub(all) struct ChainlinkComment {
-  id : Int
-  content : String
-  kind : String
-} derive(Debug, Eq)
-
-///|
-pub fn parse_chainlink_comment_from_json(json : Json) -> ChainlinkComment? {
+pub fn parse_chainlink_comment_from_json(
+  json : Json,
+) -> @types.ChainlinkComment? {
   match json {
     Json::Object(map) => {
       let id = match map.get("id") {
@@ -28,46 +23,7 @@ pub fn parse_chainlink_comment_from_json(json : Json) -> ChainlinkComment? {
 }
 
 ///|
-pub(all) struct ChainlinkIssue {
-  id : Int
-  title : String
-  description : String?
-  priority : String
-  status : String
-  parent_id : Int?
-  labels : Array[String]
-  blocked_by : Array[Int]
-  subissues : Array[ChainlinkIssue]
-  comments : Array[ChainlinkComment]
-} derive(Debug)
-
-///|
-pub impl Show for ChainlinkIssue with output(self, logger) -> Unit {
-  let desc = match self.description {
-    Some(d) => d
-    None => "(none)"
-  }
-  let parent = match self.parent_id {
-    Some(p) => p.to_string()
-    None => "(none)"
-  }
-  let labels = if self.labels.is_empty() {
-    "(none)"
-  } else {
-    self.labels.join(", ")
-  }
-  let blocked = if self.blocked_by.is_empty() {
-    "(none)"
-  } else {
-    self.blocked_by.map(fn(n) { n.to_string() }).join(", ")
-  }
-  logger.write_string(
-    "#\{self.id} [\{self.status}] [\{self.priority}] \{self.title}\ndesc: \{desc}\nparent: \{parent}\nlabels: \{labels}\nblocked_by: \{blocked}\nsubissues: \{self.subissues.length()}\ncomments: \{self.comments.length()}",
-  )
-}
-
-///|
-pub fn parse_chainlink_issue_from_json(json : Json) -> ChainlinkIssue? {
+pub fn parse_chainlink_issue_from_json(json : Json) -> @types.ChainlinkIssue? {
   match json {
     Json::Object(map) => {
       let id = match map.get("id") {
@@ -166,7 +122,7 @@ pub fn parse_chainlink_issue_from_json(json : Json) -> ChainlinkIssue? {
 ///|
 pub fn parse_chainlink_issue_list_from_json(
   json : Json,
-) -> Array[ChainlinkIssue] {
+) -> Array[@types.ChainlinkIssue] {
   match json {
     Json::Array(arr) => {
       let res = []

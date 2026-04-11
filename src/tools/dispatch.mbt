@@ -196,7 +196,7 @@ fn resolve_parent_for_notify(
 }
 
 ///|
-fn chainlink_issue_to_json(issue : @chainlink.ChainlinkIssue) -> Json {
+fn chainlink_issue_to_json(issue : @types.ChainlinkIssue) -> Json {
   let values : Map[String, Json] = {
     "id": issue.id.to_json(),
     "title": issue.title.to_json(),
@@ -225,10 +225,10 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  chainlink_fetch_issue? : async (String) -> @chainlink.ChainlinkIssue? = id => {
+  chainlink_fetch_issue? : async (String) -> @types.ChainlinkIssue? = id => {
     @chainlink.fetch_issue(id)
   },
-  chainlink_fetch_list? : async (String) -> Array[@chainlink.ChainlinkIssue] = status => {
+  chainlink_fetch_list? : async (String) -> Array[@types.ChainlinkIssue] = status => {
     @chainlink.fetch_list(status~)
   },
   chainlink_fetch_ready? : async () -> String = () => {

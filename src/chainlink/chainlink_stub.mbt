@@ -1,11 +1,13 @@
 ///|
-pub async fn fetch_issue(id : String) -> ChainlinkIssue? {
+pub async fn fetch_issue(id : String) -> @types.ChainlinkIssue? {
   ignore(id)
   None
 }
 
 ///|
-pub async fn fetch_list(status? : String = "open") -> Array[ChainlinkIssue] {
+pub async fn fetch_list(
+  status? : String = "open",
+) -> Array[@types.ChainlinkIssue] {
   ignore(status)
   []
 }

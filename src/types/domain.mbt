@@ -693,3 +693,51 @@ pub impl Show for EvaluationResult with output(self, logger) -> Unit {
   ignore(self)
   ignore(logger)
 }
+
+// ── Chainlink domain types ────────────────────────────────────────────────────
+
+///|
+pub(all) struct ChainlinkComment {
+  id : Int
+  content : String
+  kind : String
+} derive(Debug, Eq)
+
+///|
+pub(all) struct ChainlinkIssue {
+  id : Int
+  title : String
+  description : String?
+  priority : String
+  status : String
+  parent_id : Int?
+  labels : Array[String]
+  blocked_by : Array[Int]
+  subissues : Array[ChainlinkIssue]
+  comments : Array[ChainlinkComment]
+} derive(Debug)
+
+///|
+pub impl Show for ChainlinkIssue with output(self, logger) -> Unit {
+  let desc = match self.description {
+    Some(d) => d
+    None => "(none)"
+  }
+  let parent = match self.parent_id {
+    Some(p) => p.to_string()
+    None => "(none)"
+  }
+  let labels = if self.labels.is_empty() {
+    "(none)"
+  } else {
+    self.labels.join(", ")
+  }
+  let blocked = if self.blocked_by.is_empty() {
+    "(none)"
+  } else {
+    self.blocked_by.map(fn(n) { n.to_string() }).join(", ")
+  }
+  logger.write_string(
+    "#\{self.id} [\{self.status}] [\{self.priority}] \{self.title}\ndesc: \{desc}\nparent: \{parent}\nlabels: \{labels}\nblocked_by: \{blocked}\nsubissues: \{self.subissues.length()}\ncomments: \{self.comments.length()}",
+  )
+}
