@@ -6,10 +6,11 @@ A local agent orchestrator built in MoonBit. One expensive model thinks
 (Claude as team lead), cheaper models implement (Gemini, Codex, Moon Pilot,
 Cursor Agent as leaves). Each leaf gets its own git worktree, files a PR
 targeting the TL's branch, and a built-in poller automates Copilot review
-requests, routes review/CI feedback to the right pane, and tells the TL
-when a PR is merge-ready. The core loop is **scaffold → fork → converge**:
-the TL commits shared types, forks a wave of parallel leaves, merges their
-PRs one at a time, then either forks another wave or files its own PR upward.
+requests, routes GitHub PR review/CI feedback to the right pane, and tells
+the TL when Copilot has approved the PR. The core loop is **scaffold → fork
+→ converge**: the TL commits shared types, forks a wave of parallel leaves,
+merges approved PRs one at a time, then either forks another wave or files
+its own PR upward.
 
 ## Chainlink
 
@@ -38,8 +39,8 @@ choir init
       │  2. fork_wave ──▶ Leaf A ──file_pr──▶ PR → TL branch
       │              ──▶ Leaf B ──file_pr──▶ PR → TL branch
       │                     │
-      │        Poller ◀─ review/CI/issue comments ──▶ Leaf (fix)
-      │        Poller ──▶ TL (merge per policy + snapshot)
+      │        Poller ◀─ GitHub PR review/CI/issue comments ──▶ Leaf (fix)
+      │        Poller ──▶ TL (merge after Copilot approval + snapshot)
       │  3. WaveComplete → fork_wave again (wave 2) or file own PR up
       │
       └── optional: fork_wave(role=tl) ──▶ Sub-TL
