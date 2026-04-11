@@ -379,6 +379,28 @@ pub async fn dispatch(
         @poller.now_sec(),
       )
     ToolRequest::NotifyParent(notify_args) => {
+      if registry is Some(reg) {
+        try {
+          ignore(reg.get(notify_args.caller_id))
+          match @phase.read_lifecycle(project_dir, notify_args.caller_id) {
+            Some(
+              { workflow: @phase.Dev(@phase.ReviewOwned(pr_number~, ..)), .. }
+            ) => {
+              let (count, _) = fetch_unresolved_review_threads(
+                pr_number, project_dir, capture,
+              )
+              if count > 0 {
+                return @types.Response::Err(
+                  "notify_parent blocked: \{count} unresolved review thread(s) on PR #\{pr_number}. Resolve all threads before notifying parent.",
+                )
+              }
+            }
+            _ => ()
+          }
+        } catch {
+          _ => ()
+        }
+      }
       let parent_resolution = match registry {
         Some(reg) =>
           Some(

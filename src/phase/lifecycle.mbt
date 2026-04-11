@@ -347,7 +347,7 @@ pub fn lifecycle_dev_disconnect_policy(
   match lifecycle {
     Working => Fail(reason=UnexpectedDisconnect)
     ReviewOwned(..) => Preserve
-    ChangesRequested(..) => Fail(reason=UnexpectedDisconnect)
+    ChangesRequested(..) => Preserve
     ExitRequestedDeferred(..) => Preserve
     Exitable => FinalizeDone(reason=DisconnectFinalized)
     Done(..) => Ignore

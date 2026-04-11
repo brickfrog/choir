@@ -657,7 +657,7 @@ pub async fn fetch_unresolved_review_threads(
   }
   let (exit_code, output) = capture(cmd)
   if exit_code != 0 || output.trim().to_string() == "" {
-    return (0, "")
+    return (1, "[thread-fetch-failed: treating as unresolved]")
   }
   parse_unresolved_threads_response(output)
 }
