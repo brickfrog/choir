@@ -379,7 +379,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "kv_set",
-      description: "Write one value to shared KV storage (flat key, no '/')",
+      description: "Write one value to shared KV storage (flat key, no '/'). Note: adversary-approved-* keys are restricted to TL/Root callers.",
       props: [
         {
           name: "key",
@@ -391,7 +391,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "kv_delete",
-      description: "Delete one value from shared KV storage (flat key, no '/')",
+      description: "Delete one value from shared KV storage (flat key, no '/'). Note: adversary-approved-* keys are restricted to TL/Root callers.",
       props: [
         {
           name: "key",
