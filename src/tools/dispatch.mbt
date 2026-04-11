@@ -201,9 +201,14 @@ fn kv_adversary_key_tl_write_only_err() -> @types.Response {
 }
 
 ///|
-/// `adversary-approved-*` must not be writable by leaves (they could self-approve
-/// the merge gate). Returns [`Some`] when the write must be rejected.
-fn kv_set_adversary_key_blocked_response(
+/// Blocks **mutations** (`kv_set`, `kv_delete`) on `adversary-approved-*` for
+/// non-TL/Root callers so leaves cannot self-approve or strip the merge gate.
+///
+/// **Trust model:** this guard assumes **cooperative** agents. `caller_id` is
+/// self-reported in tool args and is **not** cryptographically bound to a
+/// connection identity. A deliberately adversarial agent can bypass this by
+/// impersonating a TL `caller_id`. Documented so future work can harden auth.
+fn kv_adversary_key_mutation_blocked_response(
   key : String,
   registry : @registry.AgentRegistry?,
   caller_id : String?,
@@ -229,6 +234,40 @@ fn kv_set_adversary_key_blocked_response(
           }
       }
   }
+}
+
+///|
+/// Build a [`send_message`] plan that warns the parent TL when `notify_parent`
+/// is blocked on review threads (best-effort; used for tests and dispatch).
+fn notify_parent_blocked_parent_warn_send_plan(
+  reg : @registry.AgentRegistry,
+  project_dir : String,
+  session : String,
+  caller_id : String,
+  pr_number : Int,
+  gh_thread_fetch_failed : Bool,
+) -> SendMessagePlan raise @types.ChoirError {
+  let parent = resolve_parent_for_notify(project_dir, session, reg, caller_id)
+  let body = if gh_thread_fetch_failed {
+    "[NOTIFY BLOCKED] " +
+    caller_id +
+    " on PR #" +
+    pr_number.to_string() +
+    ": could not fetch review thread state (gh unavailable) — leaf is blocked and will be watchdog-killed in ~5 min if not resolved. Resolve threads or manually advance lifecycle."
+  } else {
+    "[NOTIFY BLOCKED] " +
+    caller_id +
+    " has unresolved review threads on PR #" +
+    pr_number.to_string() +
+    " — leaf is waiting and will be watchdog-killed in ~5 min if threads are not resolved. Resolve threads or manually advance lifecycle."
+  }
+  send_message_plan(
+    parent.agent_id.to_string(),
+    caller_id,
+    body,
+    @types.Status::Info,
+    Some(Ok(parent)),
+  )
 }
 
 ///|
@@ -432,35 +471,22 @@ pub async fn dispatch(
               if count > 0 {
                 let gh_failed = thread_text == review_thread_fetch_failed_marker
                 try {
-                  let parent = resolve_parent_for_notify(
+                  let plan = notify_parent_blocked_parent_warn_send_plan(
+                    reg,
                     project_dir,
                     session,
-                    reg,
                     notify_args.caller_id,
-                  )
-                  let body = if gh_failed {
-                    "[NOTIFY BLOCKED] " +
-                    notify_args.caller_id +
-                    " on PR #" +
-                    pr_number.to_string() +
-                    ": could not fetch review thread state (gh unavailable) — leaf is blocked and will be watchdog-killed in ~5 min if not resolved. Resolve threads or manually advance lifecycle."
-                  } else {
-                    "[NOTIFY BLOCKED] " +
-                    notify_args.caller_id +
-                    " has unresolved review threads on PR #" +
-                    pr_number.to_string() +
-                    " — leaf is waiting and will be watchdog-killed in ~5 min if threads are not resolved. Resolve threads or manually advance lifecycle."
-                  }
-                  let plan = send_message_plan(
-                    parent.agent_id.to_string(),
-                    notify_args.caller_id,
-                    body,
-                    @types.Status::Info,
-                    Some(Ok(parent)),
+                    pr_number,
+                    gh_failed,
                   )
                   ignore(interpret_send_message(plan, project_dir, runner))
                 } catch {
-                  _ => ()
+                  e =>
+                    if @types.caught_error_is_agent_not_found(e) {
+                      ()
+                    } else {
+                      raise e
+                    }
                 }
                 if gh_failed {
                   return @types.Response::Err(
@@ -596,7 +622,11 @@ pub async fn dispatch(
     }
     ToolRequest::KvSet(kv_args) =>
       match
-        kv_set_adversary_key_blocked_response(kv_args.key, registry, caller_id) {
+        kv_adversary_key_mutation_blocked_response(
+          kv_args.key,
+          registry,
+          caller_id,
+        ) {
         Some(resp) => resp
         None => {
           let path = kv_file_path(project_dir, kv_args.key)
@@ -607,11 +637,20 @@ pub async fn dispatch(
           }
         }
       }
-    ToolRequest::KvDelete(key_args) => {
-      let path = kv_file_path(project_dir, key_args.key)
-      ignore(@sys.delete_file_sync(path))
-      @types.Response::ok({ "status": "ok" })
-    }
+    ToolRequest::KvDelete(key_args) =>
+      match
+        kv_adversary_key_mutation_blocked_response(
+          key_args.key,
+          registry,
+          caller_id,
+        ) {
+        Some(resp) => resp
+        None => {
+          let path = kv_file_path(project_dir, key_args.key)
+          ignore(@sys.delete_file_sync(path))
+          @types.Response::ok({ "status": "ok" })
+        }
+      }
     ToolRequest::KvList => handle_kv_list(project_dir, capture~)
     ToolRequest::MutexAcquire(mutex_args) =>
       match mutex_registry {
