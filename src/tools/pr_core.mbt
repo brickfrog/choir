@@ -2104,7 +2104,7 @@ pub fn format_handoff_comment(
   branch : String,
   pr_number : Int?,
 ) -> String {
-  let branch_display = if branch == "" { "(worker)" } else { branch }
+  let branch_display = if branch == "" { "(unknown)" } else { branch }
   let pr_display = match pr_number {
     Some(n) => "#" + n.to_string()
     None => "(none)"
@@ -2127,11 +2127,16 @@ pub fn dev_lifecycle_pr_number(dev_lifecycle : @phase.DevLifecycle) -> Int? {
 }
 
 ///|
-/// Extract the PR number from a [`WorkflowState`] when the workflow is
-/// `Dev(DevLifecycle)` and the dev lifecycle variant carries one.
+/// Extract the PR number from a [`WorkflowState`] when the workflow carries one.
+/// For `Dev(DevLifecycle)`, extracts from `ReviewOwned`, `ChangesRequested`,
+/// and `ExitRequestedDeferred` variants. For `Supervisor(SupervisorLifecycle)`,
+/// extracts from `OwnPRFiled`.
 pub fn workflow_state_pr_number(workflow : @phase.WorkflowState) -> Int? {
   match workflow {
     @phase.WorkflowState::Dev(dev) => dev_lifecycle_pr_number(dev)
+    @phase.WorkflowState::Supervisor(
+      @phase.SupervisorLifecycle::OwnPRFiled(number~, ..)
+    ) => Some(number)
     _ => None
   }
 }
@@ -2155,9 +2160,11 @@ pub async fn write_chainlink_handoff(
 
 ///|
 /// Effectful shutdown adapter: poller gate, lifecycle + `shutdown_exit_plan`,
-/// dev exit event, worktree cleanup, optional Chainlink handoff comment.
-/// Preserves the historical `ToolRequest::Shutdown` control flow while keeping
-/// `dispatch` as a thin caller. The optional `chainlink_write_handoff` injectable
+/// dev exit event, optional Chainlink handoff comment, worktree cleanup.
+/// Chainlink issue ID and handoff fields are resolved BEFORE worktree cleanup
+/// to avoid the race where `git worktree remove` deletes the worktree
+/// (including `.chainlink_issue_id` / `config.local.toml`) before the handoff
+/// comment can be written. The optional `chainlink_write_handoff` injectable
 /// allows tests to verify the handoff without a real Chainlink CLI.
 pub async fn interpret_shutdown(
   args : ShutdownArgs,
@@ -2189,6 +2196,32 @@ pub async fn interpret_shutdown(
       ),
     )
   }
+  // Resolve handoff fields BEFORE worktree cleanup to avoid the race where
+  // `git worktree remove` deletes the worktree (and the chainlink issue id
+  // file / config.local.toml within it) before we can read them.
+  let handoff : (String, String)? = match plan.response {
+    @types.Response::Err(_) => None
+    @types.Response::Ok(_) => {
+      let slug = @phase.extract_slug(caller_id)
+      let agent_workspace = agent_workspace_from_registry(registry, caller_id)
+      let chainlink_issue_id = @workspace.chainlink_issue_id_for_agent_workspace(
+        project_dir, agent_workspace, slug,
+      )
+      match chainlink_issue_id {
+        Some(issue_id) => {
+          let branch = match registry {
+            Some(reg) => reg.get(caller_id).branch catch { _ => "" }
+            None => ""
+          }
+          let pr_number = workflow_state_pr_number(lifecycle.workflow)
+          let comment = format_handoff_comment(slug, role, branch, pr_number)
+          Some((issue_id, comment))
+        }
+        None => None
+      }
+    }
+  }
+  // Now safe to run worktree cleanup — handoff data already captured.
   if plan.attempt_worktree_cleanup {
     match registry {
       Some(reg) =>
@@ -2204,36 +2237,17 @@ pub async fn interpret_shutdown(
       None => ()
     }
   }
-  // Write Chainlink handoff comment when:
-  //  1. shutdown is not blocked (plan.response is not Err)
-  //  2. a Chainlink issue ID is resolvable for this agent
-  match plan.response {
-    @types.Response::Err(_) => ()
-    @types.Response::Ok(_) => {
-      let slug = @phase.extract_slug(caller_id)
-      let agent_workspace = agent_workspace_from_registry(registry, caller_id)
-      let chainlink_issue_id = @workspace.chainlink_issue_id_for_agent_workspace(
-        project_dir, agent_workspace, slug,
-      )
-      match chainlink_issue_id {
-        Some(issue_id) => {
-          let branch = match registry {
-            Some(reg) => reg.get(caller_id).branch catch { _ => "" }
-            None => ""
+  // Write Chainlink handoff comment using pre-resolved data.
+  match handoff {
+    Some((issue_id, comment)) =>
+      match chainlink_write_handoff {
+        Some(injected) => injected(issue_id, comment) catch { _ => () }
+        None =>
+          write_chainlink_handoff(issue_id, comment, runner) catch {
+            _ => ()
           }
-          let pr_number = workflow_state_pr_number(lifecycle.workflow)
-          let comment = format_handoff_comment(slug, role, branch, pr_number)
-          match chainlink_write_handoff {
-            Some(injected) => injected(issue_id, comment) catch { _ => () }
-            None =>
-              write_chainlink_handoff(issue_id, comment, runner) catch {
-                _ => ()
-              }
-          }
-        }
-        None => ()
       }
-    }
+    None => ()
   }
   plan.response
 }
