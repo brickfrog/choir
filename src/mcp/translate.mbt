@@ -139,7 +139,10 @@ fn choir_mcp_instructions() -> String {
 ///|
 pub fn initialize_response(id : JsonRpcId) -> JsonRpcResponse {
   let empty_obj : Map[String, Json] = {}
-  let capabilities : Map[String, Json] = { "tools": empty_obj.to_json() }
+  let capabilities : Map[String, Json] = {
+    "tools": empty_obj.to_json(),
+    "prompts": empty_obj.to_json(),
+  }
   let server_info : Map[String, Json] = {
     "name": "choir".to_json(),
     "version": "1.0.0".to_json(),
@@ -503,6 +506,54 @@ pub fn tools_list_response(
   })
   let tools_arr : Array[Json] = defs.map(fn(d) { tool_json(d) })
   let result : Map[String, Json] = { "tools": tools_arr.to_json() }
+  { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
+}
+
+///|
+pub fn prompts_list_response(id : JsonRpcId) -> JsonRpcResponse {
+  let chainlink_prompt : Map[String, Json] = {
+    "name": "chainlink".to_json(),
+    "description": "Manage the Chainlink issue tracker: check what's next, create/close issues, triage work.".to_json(),
+  }
+  let result : Map[String, Json] = {
+    "prompts": ([chainlink_prompt.to_json()] : Array[Json]).to_json(),
+  }
+  { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
+}
+
+///|
+pub fn prompts_get_response(id : JsonRpcId, name : String) -> JsonRpcResponse {
+  if name != "chainlink" {
+    return error_response(id, err_method_not_found, "unknown prompt: \{name}")
+  }
+  let text =
+    #|Use the `chainlink` CLI directly. Do not tell the user to run commands — execute them yourself.
+    #|
+    #|Common operations:
+    #|  chainlink issue next                   # what to work on next
+    #|  chainlink issue list                   # all open issues
+    #|  chainlink issue show <id>              # detail for one issue
+    #|  chainlink issue close <id>             # close an issue
+    #|  chainlink issue create --title "..." --priority medium
+    #|  chainlink issue comment <id> -m "..."
+    #|  chainlink issue block <id> --blocked-by <other-id>
+    #|
+    #|Workflow:
+    #|- "What's next?" — run `chainlink issue next`, then check `git log --oneline -10` to verify it isn't already shipped. If shipped, close it and check next.
+    #|- After a wave merges — close the corresponding issue(s).
+    #|- New work — `chainlink issue create` with a clear title.
+  let msg_content : Map[String, Json] = {
+    "type": "text".to_json(),
+    "text": text.to_json(),
+  }
+  let msg : Map[String, Json] = {
+    "role": "user".to_json(),
+    "content": msg_content.to_json(),
+  }
+  let result : Map[String, Json] = {
+    "description": "Chainlink issue tracker workflow".to_json(),
+    "messages": ([msg.to_json()] : Array[Json]).to_json(),
+  }
   { jsonrpc: "2.0", id, result: Some(result.to_json()), error: None }
 }
 

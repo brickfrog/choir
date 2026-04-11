@@ -1,4 +1,72 @@
 ///|
+test "initialize_response includes prompts capability" {
+  let rpc = @mcp.initialize_response(Number(1))
+  match rpc.result {
+    Some(Object(res)) =>
+      match res.get("capabilities") {
+        Some(Object(caps)) => {
+          assert_true(caps.contains("tools"))
+          assert_true(caps.contains("prompts"))
+        }
+        _ => fail("expected capabilities object")
+      }
+    _ => fail("expected result object")
+  }
+}
+
+///|
+test "prompts_list_response" {
+  let rpc = @mcp.prompts_list_response(Number(30))
+  assert_eq(rpc.id, Number(30))
+  match rpc.result {
+    Some(Object(res)) =>
+      match res.get("prompts") {
+        Some(Array(prompts)) => {
+          assert_eq(prompts.length(), 1)
+          let p = prompts[0].to_json().stringify()
+          assert_true(p.contains("chainlink"))
+          assert_true(p.contains("issue tracker"))
+        }
+        _ => fail("expected prompts array")
+      }
+    _ => fail("expected result object")
+  }
+}
+
+///|
+test "prompts_get_response chainlink" {
+  let rpc = @mcp.prompts_get_response(Number(31), "chainlink")
+  assert_eq(rpc.id, Number(31))
+  match rpc.result {
+    Some(Object(res)) =>
+      match res.get("messages") {
+        Some(Array(messages)) => {
+          assert_eq(messages.length(), 1)
+          let msg = messages[0].to_json().stringify()
+          assert_true(msg.contains("user"))
+          assert_true(msg.contains("chainlink issue"))
+        }
+        _ => fail("expected messages array")
+      }
+    _ => fail("expected result object")
+  }
+}
+
+///|
+test "prompts_get_response unknown" {
+  let rpc = @mcp.prompts_get_response(Number(32), "unknown")
+  assert_eq(rpc.id, Number(32))
+  assert_true(rpc.result is None)
+  match rpc.error {
+    Some(e) => {
+      assert_eq(e.code, -32601)
+      assert_true(e.message.contains("unknown prompt"))
+    }
+    None => fail("expected error")
+  }
+}
+
+///|
 test "translate tools/call to internal request" {
   let params : Map[String, Json] = {
     "name": "fork_wave".to_json(),

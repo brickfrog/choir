@@ -802,6 +802,26 @@ fn mcp_run_request_loop(
           write_output(
             mcp_response_wire(@mcp.tools_list_response(id, role), raw_stdio),
           )
+        } else if rpc.req_method == @mcp.method_prompts_list {
+          write_output(
+            mcp_response_wire(@mcp.prompts_list_response(id), raw_stdio),
+          )
+        } else if rpc.req_method == @mcp.method_prompts_get {
+          let name = match rpc.params {
+            Some(params) =>
+              match params {
+                Object(m) =>
+                  match m.get("name") {
+                    Some(String(s)) => s
+                    _ => ""
+                  }
+                _ => ""
+              }
+            None => ""
+          }
+          write_output(
+            mcp_response_wire(@mcp.prompts_get_response(id, name), raw_stdio),
+          )
         } else {
           match
             @mcp.to_internal_request(
