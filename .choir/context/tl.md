@@ -72,9 +72,9 @@ When a leaf sends `[RED GATE]`:
 
 Always pass `issue_id=<chainlink_id>` to `fork_wave` — this auto-creates subissues per leaf and tracks plan/result/handoff comments through the lifecycle.
 
-### Phase 2 — Code Review (pre-merge)
+### Phase 2 — GitHub PR Review Gate
 
-After Copilot review is clean on a PR and all feedback is addressed, you may proceed with merging.
+After Copilot's GitHub PR review approval is recorded and all feedback is addressed, you may proceed with merging.
 
 **Nothing merges to main until the PR is approved by Copilot.**
 
