@@ -9,8 +9,6 @@ Copilot review、将 review/CI 反馈路由到对应面板、在 PR 可合并时
 核心循环是 **scaffold → fork → converge**：TL 提交共享类型，派生一波并行叶子，
 逐一合并 PR，然后继续下一波或向上提交自己的 PR。
 
-编排逻辑是纯函数式的——类型化 effect 规划器，无直接 I/O。宿主适配器（Git、GitHub、Zellij、文件系统）通过注入方式提供，可测试。
-
 ## Chainlink
 
 Choir 集成了 [Chainlink](https://github.com/dollspace-gay/chainlink)，这是一个本地 Git 后端 issue 追踪器，支持类型化评论（`plan`、`decision`、`observation`、`result`、`handoff`）。
