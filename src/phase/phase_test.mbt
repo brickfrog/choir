@@ -18,6 +18,14 @@ test "lifecycle_idle_watchdog_exempt logic" {
   }
   assert_true(lifecycle_idle_watchdog_exempt(dev_failed))
 
+  let dev_exit_deferred = {
+    ..dev_working,
+    workflow: Dev(
+      ExitRequestedDeferred(pr_number=1, state=ApprovedAwaitingMerge),
+    ),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(dev_exit_deferred))
+
   let worker_working = lifecycle_for_role("w1", @types.Role::Worker)
   assert_false(lifecycle_idle_watchdog_exempt(worker_working))
 
