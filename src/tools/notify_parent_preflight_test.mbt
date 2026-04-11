@@ -58,12 +58,11 @@ async fn mock_capture_repo_view_fails(
 }
 
 ///|
-async test "dispatch NotifyParent blocks on unresolved threads" {
-  let project_dir = "/tmp/choir-test-notify-gate-" + @sys.get_pid().to_string()
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
-
-  let agent_id = "leaf-1"
-  let pr_number = 123
+fn write_notify_gate_leaf_review_owned(
+  project_dir : String,
+  agent_id : String,
+  pr_number : Int,
+) -> Unit {
   let lifecycle : @phase.AgentLifecycle = {
     agent_id,
     role: @types.Role::Dev,
@@ -72,8 +71,16 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
       @phase.ReviewOwned(pr_number~, state=@phase.OpenUnreviewed(url="")),
     ),
   }
-
   ignore(@phase.write_lifecycle(project_dir, lifecycle))
+}
+
+///|
+async test "dispatch NotifyParent blocks on unresolved threads" {
+  let project_dir = "/tmp/choir-test-notify-gate-" + @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+
+  let agent_id = "leaf-1"
+  let pr_number = 123
 
   let reg = @registry.AgentRegistry::new()
   let parent : @types.Agent = {
@@ -110,6 +117,7 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
   })
 
   // Case 1: One unresolved thread
+  write_notify_gate_leaf_review_owned(project_dir, agent_id, pr_number)
   let resp1 = dispatch(
     req,
     project_dir~,
@@ -125,6 +133,7 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
   }
 
   // Case 2: Zero unresolved threads
+  write_notify_gate_leaf_review_owned(project_dir, agent_id, pr_number)
   let resp2 = dispatch(
     req,
     project_dir~,
@@ -133,7 +142,8 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
   )
   assert_true(resp2.is_ok())
 
-  // Case 3: gh failure (should block due to GAP 2 change)
+  // Case 3: gh GraphQL failure (fail-closed)
+  write_notify_gate_leaf_review_owned(project_dir, agent_id, pr_number)
   let resp3 = dispatch(
     req,
     project_dir~,
@@ -143,12 +153,14 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
   match resp3 {
     Err(msg) => {
       assert_true(msg.contains("notify_parent blocked"))
-      assert_true(msg.contains("1 unresolved review thread"))
+      assert_true(msg.contains("gh unavailable"))
+      assert_true(msg.contains("could not fetch review thread state"))
     }
     Ok(_) => fail("expected block on gh failure")
   }
 
   // Case 4: gh repo view unavailable (owner/repo resolution fails)
+  write_notify_gate_leaf_review_owned(project_dir, agent_id, pr_number)
   let resp4 = dispatch(
     req,
     project_dir~,
@@ -158,7 +170,8 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
   match resp4 {
     Err(msg) => {
       assert_true(msg.contains("notify_parent blocked"))
-      assert_true(msg.contains("thread-fetch-failed"))
+      assert_true(msg.contains("gh unavailable"))
+      assert_true(msg.contains("could not fetch review thread state"))
     }
     Ok(_) => fail("expected block when gh repo view unavailable")
   }

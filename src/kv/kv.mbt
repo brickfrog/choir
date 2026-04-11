@@ -9,9 +9,9 @@ pub fn KvStore::new(project_dir : String) -> KvStore {
 }
 
 ///|
-/// Same rules as historical `kv_set` / `kv_get` parsing in tools: avoids empty
-/// keys, `.` / `..` segments, absolute-style paths, embedded `..`, and characters
-/// outside the safe set.
+/// Flat single-segment keys for `.choir/kv/{key}` (no `/` — no subdirectories).
+/// Rejects: empty string; bare `.` or `..`; leading `/`; any substring `..`; any
+/// character outside `[a-zA-Z0-9._-]`.
 pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "" {
     return Err(@types.ChoirError::validation_error("key cannot be empty"))
@@ -31,7 +31,6 @@ pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
       (c >= '0' && c <= '9') ||
       c == '-' ||
       c == '_' ||
-      c == '/' ||
       c == '.') {
       return Err(
         @types.ChoirError::validation_error(
@@ -44,6 +43,10 @@ pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
+/// Reads `.choir/kv/{key}` after validation. Returns [`None`] if the key is
+/// invalid (**same as** a missing file or empty read) — callers cannot tell
+/// “bad key” from “no value”. The merge adversary gate only uses validated
+/// key shapes; other callers should validate or accept this ambiguity.
 pub fn KvStore::get(self : KvStore, key : String) -> String? {
   match validate_kv_storage_key(key) {
     Err(_) => None
