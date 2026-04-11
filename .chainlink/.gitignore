@@ -4,3 +4,8 @@ hook-config.local.json
 .cache/
 agent.json
 .locks-cache/
+
+# SQLite database — binary, changes on every operation, not useful in git
+issues.db
+issues.db-shm
+issues.db-wal
