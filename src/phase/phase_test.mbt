@@ -220,6 +220,35 @@ test "lifecycle dev transition carries typed review ownership" {
 }
 
 ///|
+test "dev_lifecycle_transition single_pass skips fixes awaiting review" {
+  let lifecycle : DevLifecycle = ChangesRequested(pr_number=123, next_round=2)
+  match
+    dev_lifecycle_transition(
+      lifecycle,
+      DevLifecycleEvent::FixesPushed(pr_number=123, sha="abc123"),
+      review_mode=@types.ReviewMode::SinglePass,
+    ) {
+    Transitioned(ReviewOwned(pr_number=123, state=ApprovedAwaitingMerge)) => ()
+    _ => fail("expected single-pass fixes to move to merge gate ownership")
+  }
+}
+
+///|
+test "dev_lifecycle_transition iterative keeps fixes awaiting review" {
+  let lifecycle : DevLifecycle = ChangesRequested(pr_number=123, next_round=2)
+  match
+    dev_lifecycle_transition(
+      lifecycle,
+      DevLifecycleEvent::FixesPushed(pr_number=123, sha="abc123"),
+      review_mode=@types.ReviewMode::Iterative,
+    ) {
+    Transitioned(ReviewOwned(pr_number=123, state=FixesAwaitingReview(round=2))) =>
+      ()
+    _ => fail("expected iterative fixes to await re-review")
+  }
+}
+
+///|
 test "lifecycle policy preserves deferred review ownership on disconnect" {
   let lifecycle : AgentLifecycle = {
     agent_id: "main.leaf-a",
