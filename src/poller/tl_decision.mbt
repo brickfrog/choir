@@ -414,6 +414,7 @@ pub fn detect_stalled_on_review(
 pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   tracked : TrackedPR,
   unresolved_threads : Int?,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> Bool {
   let threads_clear = match unresolved_threads {
     Some(n) => n == 0
@@ -423,6 +424,12 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
     (
       tracked.last_review_state == Commented &&
       tracked.copilot_issue_comment_seen
+    ) ||
+    (
+      review_mode == @types.ReviewMode::SinglePass &&
+      tracked.last_review_state == ChangesRequested &&
+      tracked.changes_requested_since == 0L &&
+      tracked.last_sha != ""
     )
   if !review_ok {
     return false
@@ -462,10 +469,20 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> @types.EvaluationBundle {
+  let single_pass_fixed = review_mode == @types.ReviewMode::SinglePass &&
+    tracked.last_review_state == ChangesRequested &&
+    tracked.changes_requested_since == 0L &&
+    tracked.last_sha != ""
+  let review_state = if single_pass_fixed {
+    @types.EvaluationReviewState::Commented
+  } else {
+    evaluation_review_state_from_snapshot(tracked.last_review_state)
+  }
   let signals : Array[@types.EvaluationSignal] = [
     @types.EvaluationSignal::Review(
-      state=evaluation_review_state_from_snapshot(tracked.last_review_state),
+      state=review_state,
       body=tracked.last_review_bodies,
     ),
     @types.EvaluationSignal::Ci(
@@ -477,7 +494,7 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
       signals.push(@types.EvaluationSignal::ThreadsObserved(count~))
     None => signals.push(@types.EvaluationSignal::ThreadsUnobserved)
   }
-  if tracked.copilot_issue_comment_seen {
+  if tracked.copilot_issue_comment_seen || single_pass_fixed {
     signals.push(@types.EvaluationSignal::CopilotIssueCommentObserved)
   } else {
     signals.push(@types.EvaluationSignal::CopilotIssueCommentUnobserved)
@@ -490,12 +507,14 @@ pub fn advisory_evaluation_result_for_tracked_pr(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> @types.EvaluationResult {
   @types.advisory_evaluation_result(
     advisory_evaluation_bundle_for_tracked_pr(
       tracked,
       unresolved_threads,
       task_contract~,
+      review_mode~,
     ),
   )
 }
@@ -505,11 +524,13 @@ pub fn advisory_evaluation_summary_line(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> String {
   let result = advisory_evaluation_result_for_tracked_pr(
     tracked,
     unresolved_threads,
     task_contract~,
+    review_mode~,
   )
   "Advisory evaluation verdict: " +
   result.verdict.label() +
@@ -523,6 +544,7 @@ pub fn merge_policy_decision_for_tracked_pr(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> @policy.MergeDecision {
   @policy.decide_merge(
     task_contract,
@@ -530,6 +552,7 @@ pub fn merge_policy_decision_for_tracked_pr(
       tracked,
       unresolved_threads,
       task_contract~,
+      review_mode~,
     ),
   )
 }
@@ -539,11 +562,13 @@ pub fn merge_policy_summary_line(
   tracked : TrackedPR,
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> String {
   let decision = merge_policy_decision_for_tracked_pr(
     tracked,
     unresolved_threads,
     task_contract~,
+    review_mode~,
   )
   "Merge policy decision: " + decision.label() + " (" + decision.reason() + ")."
 }
@@ -619,9 +644,12 @@ pub fn plan_tl_poll_event_parent(
   event : PollEvent,
   tracked : TrackedPR,
   unresolved_threads : Int?,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> TlTrackedPrWorkflowCategory {
   let merge_ready = tl_tracked_pr_merge_gate_snapshot_ready(
-    tracked, unresolved_threads,
+    tracked,
+    unresolved_threads,
+    review_mode~,
   )
   match event {
     PRMerged(_) => ObservedMergedExternal

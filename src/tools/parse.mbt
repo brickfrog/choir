@@ -640,6 +640,26 @@ pub fn parse_fork_wave_args(
       }
     None => None
   }
+  let review_mode = match tool_args_get(args, "review_mode") {
+    Some(v) => {
+      let t = v.trim().to_string()
+      if t == "" {
+        None
+      } else {
+        match @config.parse_review_mode(t) {
+          Ok(mode) => Some(mode)
+          Err(e) =>
+            return Err(
+              ParseError::InvalidFormat(
+                field="review_mode",
+                message=e.message(),
+              ),
+            )
+        }
+      }
+    }
+    None => None
+  }
   let chainlink_issue_id = match tool_args_get(args, "issue_id") {
     Some(v) => {
       let t = v.trim().to_string()
@@ -664,6 +684,7 @@ pub fn parse_fork_wave_args(
     parent_session_id: lookup_parent_session_id(project_dir, args),
     review_context,
     automerge,
+    review_mode,
     chainlink_issue_id,
   })
 }
@@ -1096,6 +1117,20 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
         lowered == "true" || lowered == "1" || lowered == "yes"
       }
       None => false
+    },
+    review_mode: match tool_args_get(args, "review_mode") {
+      Some(v) =>
+        match @config.parse_review_mode(v) {
+          Ok(mode) => mode
+          Err(e) =>
+            return Err(
+              ParseError::InvalidFormat(
+                field="review_mode",
+                message=e.message(),
+              ),
+            )
+        }
+      None => @types.ReviewMode::Iterative
     },
   })
 }

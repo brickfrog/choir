@@ -417,6 +417,7 @@ pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
 pub fn dev_lifecycle_transition(
   lifecycle : DevLifecycle,
   event : DevLifecycleEvent,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> TransitionResult[DevLifecycle] {
   match (lifecycle, event) {
     (Working, PRCreated(pr_number~, url~)) =>
@@ -446,9 +447,17 @@ pub fn dev_lifecycle_transition(
       }
     (ChangesRequested(pr_number=n, next_round~), FixesPushed(pr_number=c, ..)) =>
       if c == n {
-        Transitioned(
-          ReviewOwned(pr_number=c, state=FixesAwaitingReview(round=next_round)),
-        )
+        match review_mode {
+          @types.ReviewMode::SinglePass =>
+            Transitioned(ReviewOwned(pr_number=c, state=ApprovedAwaitingMerge))
+          @types.ReviewMode::Iterative =>
+            Transitioned(
+              ReviewOwned(
+                pr_number=c,
+                state=FixesAwaitingReview(round=next_round),
+              ),
+            )
+        }
       } else {
         InvalidTransition("fix count mismatch")
       }

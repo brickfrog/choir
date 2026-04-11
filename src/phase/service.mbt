@@ -327,6 +327,7 @@ pub fn interpret_lifecycle_effects(
 pub fn plan_dev_event_checked(
   lifecycle : AgentLifecycle,
   event : DevEvent,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> Result[(DevPhase, Array[LifecycleEffect]), @types.ChoirError] {
   let dev = match lifecycle.workflow {
     WorkflowState::Dev(dev) => dev
@@ -369,7 +370,7 @@ pub fn plan_dev_event_checked(
       }
       match lifecycle_event {
         Some(dev_event) =>
-          match dev_lifecycle_transition(dev, dev_event) {
+          match dev_lifecycle_transition(dev, dev_event, review_mode~) {
             Transitioned(new_dev) => {
               let next_lc = {
                 ..lifecycle,
@@ -409,10 +410,11 @@ pub fn plan_dev_event_for_scope(
   project_dir : String,
   scope : String,
   event : DevEvent,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> Result[(DevPhase, Array[LifecycleEffect]), @types.ChoirError] {
   let store = LifecycleStore::new(project_dir)
   let lifecycle = store.read_or_default(scope, @types.Role::Dev)
-  plan_dev_event_checked(lifecycle, event)
+  plan_dev_event_checked(lifecycle, event, review_mode~)
 }
 
 ///|
@@ -421,8 +423,9 @@ pub fn apply_dev_event(
   scope : String,
   event : DevEvent,
   registry? : @registry.AgentRegistry? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> Unit {
-  match plan_dev_event_for_scope(project_dir, scope, event) {
+  match plan_dev_event_for_scope(project_dir, scope, event, review_mode~) {
     Ok((_, effects)) =>
       interpret_lifecycle_effects(project_dir, effects, registry~)
     Err(_) => ()
