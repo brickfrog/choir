@@ -13,6 +13,7 @@ async fn mock_capture(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+/// `kv_store=None` is treated as not approved (`interpret_merge_pr_preflight` gate).
 async test "test_adversary_gate_blocks_when_kv_store_none" {
   let got = interpret_merge_pr_preflight(
     false,
@@ -51,6 +52,7 @@ async test "test_adversary_gate_blocks_when_absent" {
 }
 
 ///|
+/// Headline invariant: `force=true` does not bypass the adversary KV gate (no approval key).
 async test "test_adversary_gate_blocks_with_force_true" {
   let project_dir = "/tmp/choir-kv-test-force-" + @sys.get_pid().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))

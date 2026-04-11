@@ -398,6 +398,10 @@ pub fn lifecycle_disconnect_policy(
 /// in **`Exitable`** waiting on parent shutdown is still killable if it sits idle for the
 /// watchdog timeout.
 ///
+/// **MAINTENANCE NOTE:** If you add a new [`DevLifecycle`] or [`WorkerLifecycle`] variant,
+/// also update [`lifecycle_dev_disconnect_policy`] — these two functions have overlapping
+/// semantics and must be kept consistent.
+///
 /// Root/TL agents are skipped by role in [`check_idle_agents`] before this runs.
 pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
   match lifecycle.workflow {
