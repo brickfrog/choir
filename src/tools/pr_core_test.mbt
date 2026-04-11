@@ -2816,7 +2816,7 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     parent_branch: "main",
     caller_id: "main.tl",
     force: false,
-    review_mode: @types.ReviewMode::SinglePass,
+    review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let project_dir = "/tmp/choir-mpr-preflight-" + @sys.get_pid().to_string()
   let got = interpret_merge_pr(
@@ -2842,7 +2842,7 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
     parent_branch: "main",
     caller_id: "main.tl",
     force: true,
-    review_mode: @types.ReviewMode::SinglePass,
+    review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let project_dir = "/tmp/choir-mpr-host-err-" + @sys.get_pid().to_string()
   let got = interpret_merge_pr(
@@ -2876,7 +2876,7 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     parent_branch: "main",
     caller_id: "main.tl",
     force: true,
-    review_mode: @types.ReviewMode::SinglePass,
+    review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let got = interpret_merge_pr(
     args,
