@@ -3063,9 +3063,16 @@ async fn ServerState::interpret_teardown_effects(
         let cmd = @workspace.local_close_target(target)
         try {
           let codes = runner([cmd])
-          if codes.length() > 0 && codes[0] != 0 {
+          if codes.length() == 0 || codes[0] != 0 {
             @moontrace.warn("CloseTerminal failed", fields=[
-              @moontrace.field("exit", codes[0]),
+              @moontrace.field(
+                "exit",
+                if codes.length() > 0 {
+                  codes[0]
+                } else {
+                  -1
+                },
+              ),
               @moontrace.field("cmd", cmd.to_string()),
             ])
           }
@@ -4998,7 +5005,6 @@ async test "test_disconnect_completing_agent_no_close" {
       handler_auto_close_agent(agent_id, Completing, Some(target)),
     ),
   )
-  let close_cmd = @workspace.local_close_target(target)
   let calls : Array[@workspace.Command] = []
   state.handle_disconnect_with_runner(agent_id, runner=async fn(cmds) {
     @async.sleep(0)
@@ -5008,14 +5014,13 @@ async test "test_disconnect_completing_agent_no_close" {
     [0]
   })
 
-  // Finding 3: Disconnect of Completing agent should trigger finalize
-  // (PersistLifecycle etc). It transitions to Done after successful finalize.
+  // Completing agents finalize state (PersistLifecycle) then transition to Done.
+  // No terminal close should occur since the pane may still be in use. The PersistLifecycle 
+  // effect does not use the runner, so calls should be empty.
+  assert_true(calls.is_empty())
+
   let agent = state.registry.get(agent_id) catch {
     _ => fail("agent not found")
   }
   assert_eq(agent.state, Done)
-
-  for cmd in calls {
-    assert_false(cmd == close_cmd)
-  }
 }
