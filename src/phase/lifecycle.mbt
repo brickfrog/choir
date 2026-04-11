@@ -379,6 +379,21 @@ pub fn lifecycle_disconnect_policy(
 }
 
 ///|
+/// Whether an agent is exempt from the idle watchdog.
+/// Only truly terminal states (Done, Failed) are exempt.
+/// ReviewOwned agents keep their Preserve disconnect policy but are NOT
+/// watchdog-exempt — a leaf that files a PR and goes silent must still be
+/// killed eventually.
+pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
+  match lifecycle.workflow {
+    Dev(Done(..)) | Dev(Failed(..)) => true
+    Worker(Done(..)) | Worker(Failed(..)) => true
+    Supervisor(_) => true
+    _ => false
+  }
+}
+
+///|
 pub fn dev_lifecycle_transition(
   lifecycle : DevLifecycle,
   event : DevLifecycleEvent,

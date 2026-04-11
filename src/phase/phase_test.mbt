@@ -1,4 +1,37 @@
 ///|
+test "lifecycle_idle_watchdog_exempt logic" {
+  let dev_working = lifecycle_for_role("d1", @types.Role::Dev)
+  assert_false(lifecycle_idle_watchdog_exempt(dev_working))
+
+  let dev_review = {
+    ..dev_working,
+    workflow: Dev(ReviewOwned(pr_number=1, state=ApprovedAwaitingMerge)),
+  }
+  assert_false(lifecycle_idle_watchdog_exempt(dev_review))
+
+  let dev_done = { ..dev_working, workflow: Dev(Done(reason=Merged)) }
+  assert_true(lifecycle_idle_watchdog_exempt(dev_done))
+
+  let dev_failed = {
+    ..dev_working,
+    workflow: Dev(Failed(reason=UnexpectedDisconnect)),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(dev_failed))
+
+  let worker_working = lifecycle_for_role("w1", @types.Role::Worker)
+  assert_false(lifecycle_idle_watchdog_exempt(worker_working))
+
+  let worker_done = {
+    ..worker_working,
+    workflow: Worker(Done(reason=Shutdown)),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(worker_done))
+
+  let tl = lifecycle_for_role("tl", @types.Role::TL)
+  assert_true(lifecycle_idle_watchdog_exempt(tl))
+}
+
+///|
 test "tl_transition" {
   let mut p = TLPhase::Planning
   match tl_transition(p, ChildSpawned(child_id="c1")) {
