@@ -1496,6 +1496,7 @@ fn local_cfg_from_env_lookup(
     spawn_depth: None,
     task_contract: None,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
 }
@@ -3807,6 +3808,7 @@ fn init_companion_commands(
     reuse_git_branch: Some(branch),
     spawn_depth: 0,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
   let env_z = @workspace.launch_env_assignments(

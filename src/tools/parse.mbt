@@ -640,6 +640,26 @@ pub fn parse_fork_wave_args(
       }
     None => None
   }
+  let review_mode = match tool_args_get(args, "review_mode") {
+    Some(v) => {
+      let t = v.trim().to_string()
+      if t == "" {
+        None
+      } else {
+        match @config.parse_review_mode(t) {
+          Ok(mode) => Some(mode)
+          Err(e) =>
+            return Err(
+              ParseError::InvalidFormat(
+                field="review_mode",
+                message=e.message(),
+              ),
+            )
+        }
+      }
+    }
+    None => None
+  }
   let chainlink_issue_id = match tool_args_get(args, "issue_id") {
     Some(v) => {
       let t = v.trim().to_string()
@@ -664,6 +684,7 @@ pub fn parse_fork_wave_args(
     parent_session_id: lookup_parent_session_id(project_dir, args),
     review_context,
     automerge,
+    review_mode,
     chainlink_issue_id,
   })
 }
@@ -720,7 +741,6 @@ fn parse_worker_spawn_args(
   match prompt_spec.worker_type {
     "research" => ()
     "review" => ()
-    "adversary" => ()
     _ =>
       return Err(
         ParseError::InvalidValue(
@@ -1098,6 +1118,26 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
       }
       None => false
     },
+    review_mode: match tool_args_get(args, "review_mode") {
+      Some(v) => {
+        let trimmed = v.trim().to_string()
+        if trimmed == "" {
+          None
+        } else {
+          match @config.parse_review_mode(trimmed) {
+            Ok(mode) => Some(mode)
+            Err(e) =>
+              return Err(
+                ParseError::InvalidFormat(
+                  field="review_mode",
+                  message=e.message(),
+                ),
+              )
+          }
+        }
+      }
+      None => None
+    },
   })
 }
 
@@ -1433,6 +1473,36 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
       assert_eq(args.thread_id, "PRRT_kwDOABcdef")
       assert_eq(args.caller_id, "agent-1")
     }
+    Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_merge_pr_args leaves absent review_mode unset" {
+  match parse_merge_pr_args(tool_args_from_map({ "pr_number": "229" })) {
+    Ok(args) => assert_eq(args.review_mode, None)
+    Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_merge_pr_args trims review_mode" {
+  match
+    parse_merge_pr_args(
+      tool_args_from_map({ "pr_number": "229", "review_mode": " iterative " }),
+    ) {
+    Ok(args) => assert_eq(args.review_mode, Some(@types.ReviewMode::Iterative))
+    Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_merge_pr_args treats empty review_mode as unset" {
+  match
+    parse_merge_pr_args(
+      tool_args_from_map({ "pr_number": "229", "review_mode": "  " }),
+    ) {
+    Ok(args) => assert_eq(args.review_mode, None)
     Err(e) => fail("unexpected error: " + e.message())
   }
 }

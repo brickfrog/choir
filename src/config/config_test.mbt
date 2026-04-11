@@ -49,6 +49,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.terminal_session, "choir")
   assert_eq(cfg.pr_review, true)
   assert_eq(cfg.automerge, false)
+  assert_eq(cfg.review_mode, @types.ReviewMode::SinglePass)
 }
 
 ///|
@@ -162,6 +163,24 @@ test "parse_config automerge invalid is error" {
 }
 
 ///|
+test "parse_config review_mode explicit iterative" {
+  let cfg = parse_config("review_mode = \"iterative\"").unwrap()
+  assert_eq(cfg.review_mode, @types.ReviewMode::Iterative)
+}
+
+///|
+test "parse_config review_mode explicit single_pass" {
+  let cfg = parse_config("review_mode = \"single_pass\"").unwrap()
+  assert_eq(cfg.review_mode, @types.ReviewMode::SinglePass)
+}
+
+///|
+test "parse_config review_mode invalid is error" {
+  let r = parse_config("review_mode = \"again\"")
+  assert_true(r is Err(_))
+}
+
+///|
 test "parse config with tcp_auth_token" {
   let content =
     #|default_role = "tl"
@@ -239,6 +258,15 @@ test "parse_local_config automerge override" {
     #|automerge = true
   let local_cfg = parse_local_config(content).unwrap()
   assert_eq(local_cfg.automerge, Some(true))
+}
+
+///|
+test "parse_local_config review_mode override" {
+  let content =
+    #|role = "dev"
+    #|review_mode = "iterative"
+  let local_cfg = parse_local_config(content).unwrap()
+  assert_eq(local_cfg.review_mode, Some(@types.ReviewMode::Iterative))
 }
 
 ///|

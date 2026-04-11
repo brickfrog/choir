@@ -17,6 +17,8 @@ pub(all) struct Config {
   pr_review : Bool
   /// Global default for server-triggered automerge after policy reaches `MergeNow`.
   automerge : Bool
+  /// Review loop behavior after fixes are pushed for review comments.
+  review_mode : ReviewMode
 } derive(Debug)
 
 ///|
@@ -33,6 +35,8 @@ pub(all) struct LocalConfig {
   task_contract : TaskContract?
   /// Per-wave automerge override persisted into spawned leaf config. `None` inherits global config.
   automerge : Bool?
+  /// Per-wave review-mode override. `None` inherits global config.
+  review_mode : ReviewMode?
   /// Optional Chainlink issue id from `config.local.toml` key `chainlink_issue_id`, for consumers that need to associate local config/workflows with a Chainlink issue.
   chainlink_issue_id : String?
 } derive(Debug)
@@ -55,6 +59,7 @@ pub fn Config::default() -> Config {
     terminal_session: "choir",
     pr_review: true,
     automerge: false,
+    review_mode: SinglePass,
   }
 }
 
@@ -72,6 +77,7 @@ pub fn LocalConfig::default() -> LocalConfig {
     spawn_depth: None,
     task_contract: None,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
 }

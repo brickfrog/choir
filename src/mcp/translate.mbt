@@ -188,7 +188,7 @@ fn tool_defs() -> Array[CatalogTool] {
   [
     {
       name: "fork_wave",
-      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks, pass task + count. Optional automerge overrides the server default for that wave.",
+      description: "Spawn agents in new worktrees (default dev leaves; optional role=tl for a sub-team-lead). For distinct tasks, pass a tasks array (one entry per leaf, count is inferred). For identical tasks, pass task + count. Optional automerge and review_mode override server defaults for that wave.",
       props: [
         { name: "task", desc: "Shared task for all leaves (use with count)" },
         {
@@ -213,6 +213,10 @@ fn tool_defs() -> Array[CatalogTool] {
         {
           name: "automerge",
           desc: "Optional per-wave override for server-triggered merge_pr after merge policy reaches MergeNow; omitted inherits config default (default config is false)",
+        },
+        {
+          name: "review_mode",
+          desc: "Optional per-wave override for review behavior after fixes are pushed: single_pass or iterative; omitted inherits the server config default",
         },
         {
           name: "issue_id",
@@ -379,7 +383,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "kv_set",
-      description: "Write one value to shared KV storage (flat key, no '/'). Note: adversary-approved-* keys are restricted to TL/Root callers.",
+      description: "Write one value to shared KV storage (flat key, no '/')",
       props: [
         {
           name: "key",
@@ -391,7 +395,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "kv_delete",
-      description: "Delete one value from shared KV storage (flat key, no '/'). Note: adversary-approved-* keys are restricted to TL/Root callers.",
+      description: "Delete one value from shared KV storage (flat key, no '/')",
       props: [
         {
           name: "key",
