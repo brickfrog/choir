@@ -386,12 +386,12 @@ pub async fn dispatch(
             Some(
               { workflow: @phase.Dev(@phase.ReviewOwned(pr_number~, ..)), .. }
             ) => {
-              let (count, _) = fetch_unresolved_review_threads(
+              let (count, thread_text) = fetch_unresolved_review_threads(
                 pr_number, project_dir, capture,
               )
               if count > 0 {
                 return @types.Response::Err(
-                  "notify_parent blocked: \{count} unresolved review thread(s) on PR #\{pr_number}. Resolve all threads before notifying parent.",
+                  "notify_parent blocked: \{count} unresolved review thread(s) on PR #\{pr_number}. Resolve all threads before notifying parent.\n\n\{thread_text}",
                 )
               }
             }

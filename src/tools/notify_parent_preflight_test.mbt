@@ -58,19 +58,19 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
 
   let reg = @registry.AgentRegistry::new()
   let parent : @types.Agent = {
-    agent_id: @types.AgentId::to_string(@types.AgentId("parent")),
+    agent_id: @types.AgentId("parent"),
     role: @types.Role::TL,
     agent_type: @types.AgentType::Gemini,
     parent: None,
     workspace: project_dir,
     branch: "main",
     terminal_target: None,
-    host: @types.Host::Local,
+    host: @types.Host::Remote("test"),
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
   let child : @types.Agent = {
-    agent_id: @types.AgentId::to_string(@types.AgentId(agent_id)),
+    agent_id: @types.AgentId(agent_id),
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Gemini,
     parent: Some("parent"),
@@ -81,8 +81,8 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
     state: @types.AgentState::Active,
     spawn_depth: 0,
   }
-  reg.insert(child)
-  reg.insert(parent)
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
 
   let req = ToolRequest::NotifyParent({
     caller_id: agent_id,
