@@ -31,10 +31,10 @@ test "validate_kv_storage_key accepts adversary_approved_style" {
 }
 
 ///|
-test "validate_kv_storage_key accepts_nested_slash_key" {
+test "validate_kv_storage_key rejects_slash_in_key" {
   match validate_kv_storage_key("some/nested/key") {
-    Ok(_) => ()
-    Err(e) => fail(e.message())
+    Ok(_) => fail("expected Err")
+    Err(_) => ()
   }
 }
 

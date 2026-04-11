@@ -394,6 +394,11 @@ pub async fn dispatch(
                 pr_number, project_dir, capture,
               )
               if count > 0 {
+                if thread_text == review_thread_fetch_failed_marker {
+                  return @types.Response::Err(
+                    "notify_parent blocked: gh unavailable (could not fetch review thread state) — contact TL to manually advance lifecycle",
+                  )
+                }
                 return @types.Response::Err(
                   "notify_parent blocked: \{count} unresolved review thread(s) on PR #\{pr_number}. Resolve all threads before notifying parent.\n\n\{thread_text}",
                 )
@@ -692,7 +697,7 @@ pub async fn dispatch(
       let cancel = reply_args.cancel
       let payload = reply_args.payload
       let value = if cancel { "cancel" } else { payload }
-      let key = "reply/" + id
+      let key = "reply--" + id
       match validate_kv_key(key) {
         Err(e) => return @types.Response::Err(e.message())
         Ok(_) => ()

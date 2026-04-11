@@ -624,14 +624,15 @@ pub async fn fetch_inline_comments(
 }
 
 ///|
+/// Returned as the formatted body when `gh` cannot resolve owner/repo or the
+/// GraphQL thread query fails (fail-closed path).
+pub let review_thread_fetch_failed_marker : String = "[thread-fetch-failed: treating as unresolved]"
+
+///|
 /// Fetch unresolved review threads for a PR via GitHub GraphQL.
-/// Returns (count, formatted_text_with_thread_ids).
-///
-/// On failure (gh unavailable, repo resolution fail, or command error):
-/// Returns (1, "[thread-fetch-failed: treating as unresolved]").
-///
-/// Owner/repo are resolved explicitly via gh repo view to avoid relying on
-/// {owner}/{repo} substitution inside the GraphQL query body.
+/// Returns `(count, formatted_text_with_thread_ids)`.
+/// On the fail-closed paths above, returns `(1, review_thread_fetch_failed_marker)`.
+/// Owner/repo are resolved via `gh repo view`.
 pub async fn fetch_unresolved_review_threads(
   pr_number : Int,
   project_dir : String,
@@ -639,7 +640,7 @@ pub async fn fetch_unresolved_review_threads(
 ) -> (Int, String) {
   let (owner, repo) = match fetch_gh_repo_owner_name(project_dir, capture) {
     Some(pair) => pair
-    None => return (1, "[thread-fetch-failed: treating as unresolved]")
+    None => return (1, review_thread_fetch_failed_marker)
   }
   let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved isOutdated path comments(first: 1) { nodes { body } } } } } } }"
   let cmd : @workspace.Command = {
@@ -660,7 +661,7 @@ pub async fn fetch_unresolved_review_threads(
   }
   let (exit_code, output) = capture(cmd)
   if exit_code != 0 || output.trim().to_string() == "" {
-    return (1, "[thread-fetch-failed: treating as unresolved]")
+    return (1, review_thread_fetch_failed_marker)
   }
   parse_unresolved_threads_response(output)
 }

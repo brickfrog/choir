@@ -238,5 +238,5 @@ async test "fetch_unresolved_review_threads fails_closed_when_gh_repo_view_unava
     7, "/tmp", mock_capture_repo_view_unavailable,
   )
   assert_eq(count, 1)
-  assert_eq(text, "[thread-fetch-failed: treating as unresolved]")
+  assert_eq(text, review_thread_fetch_failed_marker)
 }
