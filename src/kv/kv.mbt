@@ -10,7 +10,11 @@ pub fn KvStore::new(project_dir : String) -> KvStore {
 
 ///|
 pub fn KvStore::get(self : KvStore, key : String) -> String? {
-  ignore(self)
-  ignore(key)
-  None
+  let path = self.project_dir + "/.choir/kv/" + key
+  let raw = @sys.read_file(path).trim().to_string()
+  if raw == "" {
+    None
+  } else {
+    Some(raw)
+  }
 }

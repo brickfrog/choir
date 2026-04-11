@@ -885,9 +885,14 @@ pub async fn dispatch_call(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  kv_store? : @kv.KvStore? = None,
   pr_review? : Bool = true,
 ) -> @types.Response {
   let tool_args = tool_args_from_map(call.args)
+  let kv_for_dispatch = match kv_store {
+    Some(kv) => Some(kv)
+    None => Some(@kv.KvStore::new(project_dir))
+  }
   try {
     match parse_tool_request(call.name, call.role, project_dir, tool_args) {
       Err(e) => @types.Response::Err(e.message())
@@ -909,6 +914,7 @@ pub async fn dispatch_call(
           registry~,
           mutex_registry~,
           poller_state~,
+          kv_store=kv_for_dispatch,
           caller_id=tool_args_get(tool_args, "caller_id"),
           pr_review~,
         )

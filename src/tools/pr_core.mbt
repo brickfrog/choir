@@ -1274,9 +1274,11 @@ pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
 }
 
 ///|
-/// `merge_pr` preflight when `force` is false: poller snapshot first, unresolved
-/// review-thread fetch second, then `merge_pr_preflight_block_message`. When
-/// `force` is true, skips all checks (same as the historical inline gate).
+/// `merge_pr` preflight: adversary KV approval is required first and is never
+/// bypassed by `force`. When `force` is false, poller snapshot, unresolved
+/// review-thread fetch, then `merge_pr_preflight_block_message`. When `force` is
+/// true, those checks are skipped after adversary approval (historical inline
+/// `force` behavior for poller/threads only).
 pub async fn interpret_merge_pr_preflight(
   force : Bool,
   pr_number : Int,
@@ -1286,6 +1288,19 @@ pub async fn interpret_merge_pr_preflight(
   registry : @registry.AgentRegistry?,
   kv_store : @kv.KvStore?,
 ) -> Result[Unit, @types.ChoirError] {
+  // Adversary gate — never bypassed by force
+  let key = "adversary-approved:" + pr_number.to_string()
+  let approved = match kv_store {
+    Some(kv) => kv.get(key) == Some("true")
+    None => false
+  }
+  if !approved {
+    return Err(
+      @types.ChoirError::validation_error(
+        "adversary review required before merge: set adversary-approved:\{pr_number}=true in KV store after Sarcasmotron approves",
+      ),
+    )
+  }
   if force {
     return Ok(())
   }

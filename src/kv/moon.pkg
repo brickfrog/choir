@@ -1,3 +1,7 @@
+import {
+  "choir/src/sys",
+}
+
 options(
   "is-main": false,
 )

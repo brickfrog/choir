@@ -1,5 +1,6 @@
 ///|
 async fn mock_capture(_cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
   (0, "")
 }
 

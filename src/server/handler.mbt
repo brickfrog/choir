@@ -3559,6 +3559,12 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/adversary-approved:90",
+      "true",
+    ),
+  )
   let terminal_session = "test-session"
   let config = {
     ..@types.Config::default(),
