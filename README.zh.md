@@ -9,7 +9,36 @@ Copilot review、将 review/CI 反馈路由到对应面板、在 PR 可合并时
 核心循环是 **scaffold → fork → converge**：TL 提交共享类型，派生一波并行叶子，
 逐一合并 PR，然后继续下一波或向上提交自己的 PR。
 
-编排逻辑是纯函数式的——类型化 effect 规划器，无直接 I/O。宿主适配器（Git、GitHub、Zellij、文件系统）通过注入方式提供，可测试。架构参考了 [exomonad](https://github.com/tidepool-heavy-industries/exomonad)。
+编排逻辑是纯函数式的——类型化 effect 规划器，无直接 I/O。宿主适配器（Git、GitHub、Zellij、文件系统）通过注入方式提供，可测试。
+
+## VSDD 流水线
+
+Choir 的 TL 对每个功能请求自动执行 **Verify-Spec-Develop-Deploy** 流水线：
+
+1. **规格固化** — TL 协助用户明确行为契约（前置条件、边界情况、纯函数边界）。规格作为 `plan` 评论写入 Chainlink issue。
+2. **对抗性规格评审** — `spawn_worker(type="adversary")` 调用 Sarcasmotron（超挑剔评审员），在任何实现代码编写之前找出规格中的所有漏洞。
+3. **TDD 红门** — 叶子先写所有测试，提交、推送、确认每个新测试失败，然后 `notify_parent "[RED GATE]"` 并等待。TL 派一个研究 worker 验证失败情况，再发送绿灯信号。
+4. **对抗性代码评审** — Copilot review 通过后，TL 在 PR 分支上（合并前）再次派 Sarcasmotron。任何代码在对抗者满意前不得合并到 main。
+5. **收敛** — 对抗者仅剩措辞挑剔。TL 向用户汇报收敛，然后合并。
+
+## Chainlink
+
+Choir 集成了 [Chainlink](https://github.com/brickfrog/chainlink)，这是一个本地 Git 后端 issue 追踪器，支持类型化评论（`plan`、`decision`、`observation`、`result`、`handoff`）。
+
+```bash
+chainlink issue create "功能标题"                    # 创建 issue，获取 ID
+chainlink issue comment <id> "<规格>" --kind plan    # 写入规格
+chainlink_next                                       # 继续下一个进行中的 issue
+chainlink_show <id>                                  # 加载 issue 及其评论
+```
+
+当 `fork_wave` 携带 `issue_id` 调用时，每个叶子的 `TaskContract` 会自动从 Chainlink issue 中丰富：
+
+- **goal** — 若叶子任务无明确目标，则回退为 issue 标题
+- **review_context** — issue 描述 + 最近 5 条 plan/decision 评论（按 id 升序），追加到 TL 提供的上下文后（带分隔符）
+- **constraints** — `blocked_by` 条目去重合并
+
+纯函数 `task_contract_from_chainlink_issue` 将 `ChainlinkIssue` 映射为 `TaskContract`；`merge_chainlink_into_task_contract` 处理合并逻辑。
 
 ```
 choir init
