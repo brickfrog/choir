@@ -11,9 +11,6 @@ when a PR is merge-ready. The core loop is **scaffold → fork → converge**:
 the TL commits shared types, forks a wave of parallel leaves, merges their
 PRs one at a time, then either forks another wave or files its own PR upward.
 
-Orchestration logic is pure — typed effect planners with no direct I/O.
-Host adapters (Git, GitHub, Zellij, filesystem) are injected and testable.
-
 ## Chainlink
 
 Choir integrates with [Chainlink](https://github.com/dollspace-gay/chainlink), a local Git-backed issue tracker with typed comment kinds (`plan`, `decision`, `observation`, `result`, `handoff`).
