@@ -391,9 +391,9 @@ pub fn lifecycle_disconnect_policy(
 /// - **`Supervisor`**: TL agents are out of scope for leaf idle cleanup.
 ///
 /// **Not** exempt (examples): **`Working`**, **`ReviewOwned`**, **`ChangesRequested`**,
-/// **`Dev(Exitable)`** — e.g. a leaf that opened a PR then went silent must still
-/// be reclaimed; a leaf in **`Exitable`** waiting on parent shutdown is still
-/// killable if it sits idle for the watchdog timeout.
+/// **`Dev(Exitable)`**, **`Worker(Exitable)`** — e.g. a leaf that opened a PR then
+/// went silent must still be reclaimed; a leaf in **`Exitable`** waiting on parent
+/// shutdown is still killable if it sits idle for the watchdog timeout.
 pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
   match lifecycle.workflow {
     Dev(Done(..)) | Dev(Failed(..)) => true

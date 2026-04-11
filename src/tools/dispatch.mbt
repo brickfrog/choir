@@ -516,6 +516,8 @@ pub async fn dispatch(
       interpret_cancel_wave(
         cancel_args, caller_id, project_dir, poller_state, registry, runner,
       )
+    // KvStore::get trims for internal gate comparisons; the kv_get MCP tool returns
+    // raw bytes so agents see the exact stored value (see kv.mbt).
     ToolRequest::KvGet(key_args) => {
       let value = @sys.read_file(kv_file_path(project_dir, key_args.key))
       if value == "" {
