@@ -2302,6 +2302,26 @@ test "merge_pr_preflight_block_message blocks on unresolved threads" {
 }
 
 ///|
+test "merge_pr_preflight_block_message gh thread fetch failed marker" {
+  match
+    merge_pr_preflight_block_message(
+      5,
+      None,
+      1,
+      review_thread_fetch_failed_marker,
+      None,
+    ) {
+    Some(msg) => {
+      assert_true(msg.contains("merge blocked: gh unavailable"))
+      assert_true(msg.contains("could not fetch review thread state"))
+      assert_true(msg.contains("manually advance lifecycle"))
+      assert_false(msg.contains("resolve_review_thread"))
+    }
+    None => fail("expected block")
+  }
+}
+
+///|
 test "merge_pr_preflight_block_message allows Approved with no threads" {
   let t = merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf")
   assert_eq(merge_pr_preflight_block_message(9, Some(t), 0, "", None), None)

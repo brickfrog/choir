@@ -1389,6 +1389,11 @@ pub fn merge_pr_preflight_block_message(
     _ => ()
   }
   if unresolved_thread_count > 0 {
+    if unresolved_thread_text == review_thread_fetch_failed_marker {
+      return Some(
+        "merge blocked: gh unavailable (could not fetch review thread state) — contact TL to manually advance lifecycle.",
+      )
+    }
     return Some(
       "PR #" +
       pr_number.to_string() +
