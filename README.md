@@ -13,7 +13,35 @@ PRs one at a time, then either forks another wave or files its own PR upward.
 
 Orchestration logic is pure — typed effect planners with no direct I/O.
 Host adapters (Git, GitHub, Zellij, filesystem) are injected and testable.
-Architecture is informed by [exomonad](https://github.com/tidepool-heavy-industries/exomonad).
+
+## VSDD Pipeline
+
+Choir's TL follows a built-in **Verify-Spec-Develop-Deploy** pipeline for every feature request:
+
+1. **Spec Crystallization** — TL helps articulate the behavioral contract (preconditions, edge cases, purity boundary). Spec is written to a Chainlink issue as a `plan` comment.
+2. **Adversarial Spec Review** — `spawn_worker(type="adversary")` invokes Sarcasmotron, a hyper-critical reviewer who finds every gap in the spec before a line of implementation is written.
+3. **TDD Red Gate** — Leaves write all tests first, commit, push, confirm every new test fails, then `notify_parent "[RED GATE]"` and wait. The TL spawns a research worker to verify the failures, then sends the green light.
+4. **Adversarial Code Review** — After Copilot review is clean, the TL spawns a second adversary on the PR branch (pre-merge). Nothing lands on main until the adversary is satisfied.
+5. **Convergence** — The adversary produces only wording nitpicks. TL reports convergence to the user and merges.
+
+## Chainlink
+
+Choir integrates with [Chainlink](https://github.com/brickfrog/chainlink), a local Git-backed issue tracker with typed comment kinds (`plan`, `decision`, `observation`, `result`, `handoff`).
+
+```bash
+chainlink issue create "Feature title"       # create issue, get ID
+chainlink issue comment <id> "<spec>" --kind plan   # write spec
+chainlink_next                               # pick up next in-progress issue
+chainlink_show <id>                          # load issue + comments
+```
+
+When `fork_wave` is called with an `issue_id`, each leaf's `TaskContract` is automatically enriched from the Chainlink issue:
+
+- **goal** — falls back to issue title if the leaf task has no explicit goal
+- **review_context** — issue description + last 5 plan/decision comments (sorted by id), appended to any TL-supplied context with a separator
+- **constraints** — `blocked_by` entries merged in without duplication
+
+The pure function `task_contract_from_chainlink_issue` maps a `ChainlinkIssue` to a `TaskContract`; `merge_chainlink_into_task_contract` handles the enrichment merge logic.
 
 ```
 choir init
