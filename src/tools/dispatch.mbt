@@ -196,6 +196,86 @@ fn resolve_parent_for_notify(
 }
 
 ///|
+fn kv_adversary_key_tl_write_only_err() -> @types.Response {
+  @types.Response::Err("adversary-approved-* keys are TL-write-only")
+}
+
+///|
+/// Blocks **mutations** (`kv_set`, `kv_delete`) on `adversary-approved-*` for
+/// non-TL/Root callers so leaves cannot self-approve or strip the merge gate.
+///
+/// **Trust model:** this guard assumes **cooperative** agents. `caller_id` is
+/// self-reported in tool args and is **not** cryptographically bound to a
+/// connection identity. A deliberately adversarial agent can bypass this by
+/// impersonating a TL `caller_id`. Documented so future work can harden auth.
+fn kv_adversary_key_mutation_blocked_response(
+  key : String,
+  registry : @registry.AgentRegistry?,
+  caller_id : String?,
+) -> @types.Response? raise Error {
+  if !key.has_prefix("adversary-approved-") {
+    return None
+  }
+  match registry {
+    None => Some(kv_adversary_key_tl_write_only_err())
+    Some(reg) =>
+      match caller_id {
+        None | Some("") => Some(kv_adversary_key_tl_write_only_err())
+        Some(cid) =>
+          try {
+            let agent = reg.get(cid)
+            match agent.role {
+              @types.Role::Dev | @types.Role::Worker =>
+                Some(kv_adversary_key_tl_write_only_err())
+              @types.Role::Root | @types.Role::TL => None
+            }
+          } catch {
+            e =>
+              if @types.caught_error_is_agent_not_found(e) {
+                Some(kv_adversary_key_tl_write_only_err())
+              } else {
+                raise e
+              }
+          }
+      }
+  }
+}
+
+///|
+/// Build a [`send_message`] plan that warns the parent TL when `notify_parent`
+/// is blocked on review threads (best-effort; used for tests and dispatch).
+fn notify_parent_blocked_parent_warn_send_plan(
+  reg : @registry.AgentRegistry,
+  project_dir : String,
+  session : String,
+  caller_id : String,
+  pr_number : Int,
+  gh_thread_fetch_failed : Bool,
+) -> SendMessagePlan raise @types.ChoirError {
+  let parent = resolve_parent_for_notify(project_dir, session, reg, caller_id)
+  let body = if gh_thread_fetch_failed {
+    "[NOTIFY BLOCKED] " +
+    caller_id +
+    " on PR #" +
+    pr_number.to_string() +
+    ": could not fetch review thread state (gh unavailable) — leaf is blocked and will be watchdog-killed in ~5 min if not resolved. Resolve threads or manually advance lifecycle."
+  } else {
+    "[NOTIFY BLOCKED] " +
+    caller_id +
+    " has unresolved review threads on PR #" +
+    pr_number.to_string() +
+    " — leaf is waiting and will be watchdog-killed in ~5 min if threads are not resolved. Resolve threads or manually advance lifecycle."
+  }
+  send_message_plan(
+    parent.agent_id.to_string(),
+    caller_id,
+    body,
+    @types.Status::Info,
+    Some(Ok(parent)),
+  )
+}
+
+///|
 fn chainlink_issue_to_json(issue : @types.ChainlinkIssue) -> Json {
   let values : Map[String, Json] = {
     "id": issue.id.to_json(),
@@ -218,6 +298,9 @@ fn chainlink_issue_to_json(issue : @types.ChainlinkIssue) -> Json {
 }
 
 ///|
+/// Server tool dispatch. When `kv_store` is [`None`], `merge_pr` sees no store
+/// and the merge is **denied** (gate defaults to not-approved; not skipped). Use
+/// [`dispatch_call`] for a default `@kv.KvStore::new(project_dir)` when omitted.
 pub async fn dispatch(
   req : ToolRequest,
   project_dir? : String = ".",
@@ -253,6 +336,7 @@ pub async fn dispatch(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  kv_store? : @kv.KvStore? = None,
   caller_id? : String? = None,
   pr_review? : Bool = true,
 ) -> @types.Response {
@@ -368,8 +452,8 @@ pub async fn dispatch(
       )
     ToolRequest::MergePr(merge_args) =>
       interpret_merge_pr(
-        merge_args, project_dir, poller_state, mutex_registry, registry, runner,
-        capture,
+        merge_args, project_dir, poller_state, mutex_registry, registry, kv_store,
+        runner, capture,
       )
     ToolRequest::TrackPr(track_pr_args) =>
       interpret_track_pr(
@@ -390,6 +474,30 @@ pub async fn dispatch(
                 pr_number, project_dir, capture,
               )
               if count > 0 {
+                let gh_failed = thread_text == review_thread_fetch_failed_marker
+                try {
+                  let plan = notify_parent_blocked_parent_warn_send_plan(
+                    reg,
+                    project_dir,
+                    session,
+                    notify_args.caller_id,
+                    pr_number,
+                    gh_failed,
+                  )
+                  ignore(interpret_send_message(plan, project_dir, runner))
+                } catch {
+                  e =>
+                    if @types.caught_error_is_agent_not_found(e) {
+                      ()
+                    } else {
+                      raise e
+                    }
+                }
+                if gh_failed {
+                  return @types.Response::Err(
+                    "notify_parent blocked: gh unavailable (could not fetch review thread state) — contact TL to manually advance lifecycle",
+                  )
+                }
                 return @types.Response::Err(
                   "notify_parent blocked: \{count} unresolved review thread(s) on PR #\{pr_number}. Resolve all threads before notifying parent.\n\n\{thread_text}",
                 )
@@ -398,7 +506,12 @@ pub async fn dispatch(
             _ => ()
           }
         } catch {
-          _ => ()
+          e =>
+            if @types.caught_error_is_agent_not_found(e) {
+              ()
+            } else {
+              raise e
+            }
         }
       }
       let parent_resolution = match registry {
@@ -502,6 +615,8 @@ pub async fn dispatch(
       interpret_cancel_wave(
         cancel_args, caller_id, project_dir, poller_state, registry, runner,
       )
+    // KvStore::get trims for internal gate comparisons; the kv_get MCP tool returns
+    // raw bytes so agents see the exact stored value (see kv.mbt).
     ToolRequest::KvGet(key_args) => {
       let value = @sys.read_file(kv_file_path(project_dir, key_args.key))
       if value == "" {
@@ -510,19 +625,37 @@ pub async fn dispatch(
         @types.Response::ok({ "value": value })
       }
     }
-    ToolRequest::KvSet(kv_args) => {
-      let path = kv_file_path(project_dir, kv_args.key)
-      if @sys.write_file_atomic(path, kv_args.value) {
-        @types.Response::ok({ "status": "ok" })
-      } else {
-        @types.Response::Err("failed to write kv file: " + path)
+    ToolRequest::KvSet(kv_args) =>
+      match
+        kv_adversary_key_mutation_blocked_response(
+          kv_args.key,
+          registry,
+          caller_id,
+        ) {
+        Some(resp) => resp
+        None => {
+          let path = kv_file_path(project_dir, kv_args.key)
+          if @sys.write_file_atomic(path, kv_args.value) {
+            @types.Response::ok({ "status": "ok" })
+          } else {
+            @types.Response::Err("failed to write kv file: " + path)
+          }
+        }
       }
-    }
-    ToolRequest::KvDelete(key_args) => {
-      let path = kv_file_path(project_dir, key_args.key)
-      ignore(@sys.delete_file_sync(path))
-      @types.Response::ok({ "status": "ok" })
-    }
+    ToolRequest::KvDelete(key_args) =>
+      match
+        kv_adversary_key_mutation_blocked_response(
+          key_args.key,
+          registry,
+          caller_id,
+        ) {
+        Some(resp) => resp
+        None => {
+          let path = kv_file_path(project_dir, key_args.key)
+          ignore(@sys.delete_file_sync(path))
+          @types.Response::ok({ "status": "ok" })
+        }
+      }
     ToolRequest::KvList => handle_kv_list(project_dir, capture~)
     ToolRequest::MutexAcquire(mutex_args) =>
       match mutex_registry {
@@ -683,7 +816,7 @@ pub async fn dispatch(
       let cancel = reply_args.cancel
       let payload = reply_args.payload
       let value = if cancel { "cancel" } else { payload }
-      let key = "reply/" + id
+      let key = "reply--" + id
       match validate_kv_key(key) {
         Err(e) => return @types.Response::Err(e.message())
         Ok(_) => ()
@@ -741,6 +874,7 @@ pub async fn handle_request(
   agent_registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  kv_store? : @kv.KvStore? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
 ) -> @types.Response {
@@ -806,6 +940,7 @@ pub async fn handle_request(
               registry=agent_registry,
               mutex_registry~,
               poller_state~,
+              kv_store~,
               caller_id=tool_args_get(tool_args, "caller_id"),
               pr_review~,
             )
@@ -859,6 +994,13 @@ pub async fn fire_hook_async(
 }
 
 ///|
+/// CLI / test entrypoint for tool dispatch. When `kv_store` is [`None`], a
+/// [`@kv.KvStore::new`] for `project_dir` is supplied — it does **not** skip the
+/// merge adversary gate (same on-disk `.choir/kv/` as the server).
+///
+/// Note: to exercise **merge denied (gate defaults to not-approved)** with no
+/// injected store, call [`dispatch`] with `kv_store=None` directly —
+/// [`dispatch_call`] always wires a default store when omitted.
 pub async fn dispatch_call(
   call : ToolCall,
   project_dir? : String = ".",
@@ -882,9 +1024,14 @@ pub async fn dispatch_call(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  kv_store? : @kv.KvStore? = None,
   pr_review? : Bool = true,
 ) -> @types.Response {
   let tool_args = tool_args_from_map(call.args)
+  let kv_for_dispatch = match kv_store {
+    Some(kv) => Some(kv)
+    None => Some(@kv.KvStore::new(project_dir))
+  }
   try {
     match parse_tool_request(call.name, call.role, project_dir, tool_args) {
       Err(e) => @types.Response::Err(e.message())
@@ -906,6 +1053,7 @@ pub async fn dispatch_call(
           registry~,
           mutex_registry~,
           poller_state~,
+          kv_store=kv_for_dispatch,
           caller_id=tool_args_get(tool_args, "caller_id"),
           pr_review~,
         )

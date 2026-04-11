@@ -354,6 +354,12 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/adversary-approved-88",
+      "true",
+    ),
+  )
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_recovery_provider())

@@ -1274,9 +1274,16 @@ pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
 }
 
 ///|
-/// `merge_pr` preflight when `force` is false: poller snapshot first, unresolved
-/// review-thread fetch second, then `merge_pr_preflight_block_message`. When
-/// `force` is true, skips all checks (same as the historical inline gate).
+/// `merge_pr` preflight: adversary KV approval is required first and is never
+/// bypassed by `force`. When `force` is false, poller snapshot, unresolved
+/// review-thread fetch, then `merge_pr_preflight_block_message`. When `force` is
+/// true, those checks are skipped after adversary approval (historical inline
+/// `force` behavior for poller/threads only).
+///
+/// **KV gate policy:** approval is keyed by PR number only — it does not track
+/// commit SHA. If material commits land after Sarcasmotron approves, the TL must
+/// delete `adversary-approved-{n}` and obtain re-approval before merging. After
+/// a successful merge, delete that key to avoid unbounded KV accumulation.
 pub async fn interpret_merge_pr_preflight(
   force : Bool,
   pr_number : Int,
@@ -1284,7 +1291,25 @@ pub async fn interpret_merge_pr_preflight(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
   registry : @registry.AgentRegistry?,
+  kv_store : @kv.KvStore?,
 ) -> Result[Unit, @types.ChoirError] {
+  // Adversary gate — never bypassed by force. Canonical key: adversary-approved-{pr_number}
+  // (hyphen before PR number; colon is invalid for validate_kv_storage_key.)
+  // Approval is per PR number, not per commit SHA — see module doc above.
+  let key = "adversary-approved-" + pr_number.to_string()
+  let approved = match kv_store {
+    Some(kv) => kv.get(key) == Some("true")
+    None => false
+  }
+  if !approved {
+    return Err(
+      @types.ChoirError::validation_error(
+        "adversary review required before merge: set adversary-approved-\{pr_number}=true in the KV store after Sarcasmotron approves. " +
+        "KV gate: approval covers the PR number only — it does not track commit SHA; if significant commits are pushed after Sarcasmotron approves, the TL must delete adversary-approved-\{pr_number} and get re-approval before merging. " +
+        "Delete adversary-approved-\{pr_number} after merge to avoid KV accumulation.",
+      ),
+    )
+  }
   if force {
     return Ok(())
   }
@@ -1372,6 +1397,11 @@ pub fn merge_pr_preflight_block_message(
     _ => ()
   }
   if unresolved_thread_count > 0 {
+    if unresolved_thread_text == review_thread_fetch_failed_marker {
+      return Some(
+        "merge blocked: gh unavailable (could not fetch review thread state) — contact TL to manually advance lifecycle.",
+      )
+    }
     return Some(
       "PR #" +
       pr_number.to_string() +
@@ -1619,6 +1649,7 @@ pub async fn interpret_merge_pr_post_success(
   pr_number : Int,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
+  kv_store? : @kv.KvStore? = None,
   read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
   write_back_merge? : async (String, Int, String) -> Unit = @chainlink.write_back_merge,
   release_lock? : async (String) -> Bool = @chainlink.release_lock,
@@ -1681,6 +1712,10 @@ pub async fn interpret_merge_pr_post_success(
       }
     None => ()
   }
+  match kv_store {
+    Some(kv) => kv.delete("adversary-approved-" + pr_number.to_string())
+    None => ()
+  }
   plan.response
 }
 
@@ -1694,6 +1729,7 @@ pub async fn interpret_merge_pr(
   poller_state : @poller.PollerState?,
   mutex_registry : @registry.MutexRegistry?,
   registry : @registry.AgentRegistry?,
+  kv_store : @kv.KvStore?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
@@ -1705,6 +1741,7 @@ pub async fn interpret_merge_pr(
       project_dir,
       capture,
       registry,
+      kv_store,
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) =>
@@ -1726,6 +1763,7 @@ pub async fn interpret_merge_pr(
             merge_args.pr_number,
             poller_state,
             registry,
+            kv_store~,
           )
       }
   }

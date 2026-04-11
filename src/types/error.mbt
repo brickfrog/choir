@@ -134,3 +134,11 @@ pub fn caught_error_is_tool_not_found(e : Error) -> Bool {
     _ => false
   }
 }
+
+///|
+pub fn caught_error_is_agent_not_found(e : Error) -> Bool {
+  match e {
+    AgentNotFound(_) => true
+    _ => false
+  }
+}

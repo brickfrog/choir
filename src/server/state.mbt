@@ -21,6 +21,7 @@ pub struct ServerState {
   mutex_registry : @registry.MutexRegistry
   tool_registry : @tools.ToolRegistry
   poller : @poller.PollerState
+  kv_store : @kv.KvStore
   run_id : String
   pending_disconnects : Map[String, Int64]
   pane_watcher : @runtime.PaneWatcher
@@ -74,6 +75,7 @@ pub fn ServerState::new(
     mutex_registry: @registry.MutexRegistry::new(),
     tool_registry: @tools.ToolRegistry::new(),
     poller: @poller.PollerState::new(),
+    kv_store: @kv.KvStore::new(config.project_dir),
     run_id,
     pending_disconnects: {},
     pane_watcher: @runtime.PaneWatcher::new(),
