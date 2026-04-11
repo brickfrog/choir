@@ -14,15 +14,6 @@ PRs one at a time, then either forks another wave or files its own PR upward.
 Orchestration logic is pure — typed effect planners with no direct I/O.
 Host adapters (Git, GitHub, Zellij, filesystem) are injected and testable.
 
-## VSDD Pipeline
-
-Choir's TL follows a built-in **[Verify-Spec-Develop-Deploy](https://gist.github.com/dollspace-gay/45c95ebfb5a3a3bae84d8bebd662cc25)** pipeline for every feature request:
-
-1. **Spec Crystallization** — TL helps articulate the behavioral contract (preconditions, edge cases, purity boundary). Spec is written to a Chainlink issue as a `plan` comment.
-2. **TDD Red Gate** — Leaves write all tests first, commit, push, confirm every new test fails, then `notify_parent "[RED GATE]"` and wait. The TL spawns a research worker to verify the failures, then sends the green light.
-3. **Code Review Gate** — GitHub PR review (Copilot) is the review gate. Leaves address all feedback until the PR is approved.
-4. **Convergence** — TL reports convergence to the user and merges after Copilot approval.
-
 ## Chainlink
 
 Choir integrates with [Chainlink](https://github.com/dollspace-gay/chainlink), a local Git-backed issue tracker with typed comment kinds (`plan`, `decision`, `observation`, `result`, `handoff`).
