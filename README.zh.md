@@ -16,10 +16,9 @@ Copilot review、将 review/CI 反馈路由到对应面板、在 PR 可合并时
 Choir 的 TL 对每个功能请求自动执行 **[Verify-Spec-Develop-Deploy](https://gist.github.com/dollspace-gay/45c95ebfb5a3a3bae84d8bebd662cc25)** 流水线：
 
 1. **规格固化** — TL 协助用户明确行为契约（前置条件、边界情况、纯函数边界）。规格作为 `plan` 评论写入 Chainlink issue。
-2. **对抗性规格评审** — `spawn_worker(type="adversary")` 调用 Sarcasmotron（超挑剔评审员），在任何实现代码编写之前找出规格中的所有漏洞。
-3. **TDD 红门** — 叶子先写所有测试，提交、推送、确认每个新测试失败，然后 `notify_parent "[RED GATE]"` 并等待。TL 派一个研究 worker 验证失败情况，再发送绿灯信号。
-4. **对抗性代码评审** — Copilot review 通过后，TL 在 PR 分支上（合并前）再次派 Sarcasmotron。任何代码在对抗者满意前不得合并到 main。
-5. **收敛** — 对抗者仅剩措辞挑剔。TL 向用户汇报收敛，然后合并。
+2. **TDD 红门** — 叶子先写所有测试，提交、推送、确认每个新测试失败，然后 `notify_parent "[RED GATE]"` 并等待。TL 派一个研究 worker 验证失败情况，再发送绿灯信号。
+3. **代码评审门槛** — GitHub PR review (Copilot) 是评审关卡。叶子需要解决所有反馈直到 PR 被批准。
+4. **收敛** — TL 向用户汇报收敛，在 Copilot 批准后合并。
 
 ## Chainlink
 
