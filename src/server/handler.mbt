@@ -3299,11 +3299,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
     Done | Failed =>
       match agent.terminal_target {
         Some(target) =>
-          ignore(
-            runner([@workspace.local_close_target(target)]) catch {
-              _ => []
-            },
-          )
+          self.interpret_teardown_effects([CloseTerminal(target)], runner)
         None => ()
       }
     Completing => {
@@ -3518,28 +3514,53 @@ fn handler_close_terminal_warn_count(events : Array[@moontrace.Event]) -> Int {
 }
 
 ///|
+
+///|
+let handler_test_subscribers : Ref[Array[(@moontrace.Event) -> Unit]] = {
+  val: [],
+}
+
+///|
+fn handler_setup_test_moontrace() -> Unit {
+  @moontrace.set_subscriber(fn(event) {
+    for sub in handler_test_subscribers.val {
+      sub(event)
+    }
+  })
+}
+
+///|
+async fn handler_with_moontrace_capture(
+  captured : Array[@moontrace.Event],
+  f : async () -> Unit,
+) -> Unit {
+  let sub = fn(event : @moontrace.Event) { captured.push(event) }
+  handler_test_subscribers.val.push(sub)
+  f()
+  let _ = handler_test_subscribers.val.pop()
+}
+
+///|
 async test "test_close_terminal_warns_on_nonzero_exit" {
+  handler_setup_test_moontrace()
   let state = handler_auto_close_test_state("close-warn")
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
-  @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  ignore(
-    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [1]),
-  )
-  @moontrace.clear_subscriber()
+  handler_with_moontrace_capture(captured, async fn() {
+    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [1])
+  })
   assert_eq(handler_close_terminal_warn_count(captured), 1)
 }
 
 ///|
 async test "test_close_terminal_no_warn_on_zero_exit" {
+  handler_setup_test_moontrace()
   let state = handler_auto_close_test_state("close-ok")
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
-  @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  ignore(
-    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [0]),
-  )
-  @moontrace.clear_subscriber()
+  handler_with_moontrace_capture(captured, async fn() {
+    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [0])
+  })
   assert_eq(handler_close_terminal_warn_count(captured), 0)
 }
 
@@ -4972,15 +4993,14 @@ async test "deliver_poller_stall_notification_for skips finalized merged lifecyc
 
 ///|
 async test "test_close_terminal_warns_on_error" {
+  handler_setup_test_moontrace()
   let state = handler_auto_close_test_state("close-error")
   let target = handler_auto_close_target("leaf-pane")
   let captured : Array[@moontrace.Event] = []
-  @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  ignore(
+  handler_with_moontrace_capture(captured, async fn() {
     state.interpret_teardown_effects([CloseTerminal(target)], _cmds => {
       raise @types.ChoirError::agent_not_found("test error")
-    }),
-  )
-  @moontrace.clear_subscriber()
+    })
+  })
   assert_eq(handler_close_terminal_warn_count(captured), 1)
 }
