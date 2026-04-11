@@ -720,7 +720,6 @@ fn parse_worker_spawn_args(
   match prompt_spec.worker_type {
     "research" => ()
     "review" => ()
-    "adversary" => ()
     _ =>
       return Err(
         ParseError::InvalidValue(

@@ -354,12 +354,6 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
-  ignore(
-    @sys.write_file_sync(
-      project_dir + "/.choir/kv/adversary-approved-88",
-      "true",
-    ),
-  )
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_recovery_provider())
@@ -439,7 +433,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     child_id,
     child_id,
     "main",
-    "https://example.test/pr/88",
+    "https://github.com/brickfrog/choir/pull/88",
     100L,
     @poller.ReviewState::Approved,
     "",
@@ -458,16 +452,25 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
       "force": "true",
     }),
   }
-  let resp = state.handle_with_runner(req, runner=async fn(
-    cmds : Array[@workspace.Command],
-  ) {
+  let runner = async fn(cmds : Array[@workspace.Command]) {
     @async.sleep(0)
     let statuses = []
     for _ in cmds {
       statuses.push(0)
     }
     statuses
-  })
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    (0, "")
+  }
+  let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
   assert_true(resp.is_ok())
   assert_eq(resp.ok_field("status"), Some("merged"))
   assert_true(state.poller.get(pr_number) == None)

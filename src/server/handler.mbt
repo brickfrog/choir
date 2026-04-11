@@ -521,7 +521,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
       agent_registry=Some(self.registry),
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
-      kv_store=Some(self.kv_store),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
     ) catch {
@@ -3586,12 +3585,6 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
-  ignore(
-    @sys.write_file_sync(
-      project_dir + "/.choir/kv/adversary-approved-90",
-      "true",
-    ),
-  )
   let terminal_session = "test-session"
   let config = {
     ..@types.Config::default(),
@@ -3671,7 +3664,8 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     }),
   )
   state.poller.track(
-    pr_number, child_id, child_id, "main", "https://example.test/pr/90", 100L,
+    pr_number, child_id, child_id, "main", "https://github.com/brickfrog/choir/pull/90",
+    100L,
   )
   match state.poller.get(pr_number) {
     Some(tracked) =>
@@ -3707,6 +3701,12 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let review_threads_json =
       #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
     if cmd.program == "gh" &&
       cmd.args == ["repo", "view", "--json", "owner,name"] {
       return (0, repo_view_json)
