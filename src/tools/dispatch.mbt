@@ -212,7 +212,7 @@ fn kv_adversary_key_mutation_blocked_response(
   key : String,
   registry : @registry.AgentRegistry?,
   caller_id : String?,
-) -> @types.Response? {
+) -> @types.Response? raise Error {
   if !key.has_prefix("adversary-approved-") {
     return None
   }
@@ -230,7 +230,12 @@ fn kv_adversary_key_mutation_blocked_response(
               @types.Role::Root | @types.Role::TL => None
             }
           } catch {
-            _ => Some(kv_adversary_key_tl_write_only_err())
+            e =>
+              if @types.caught_error_is_agent_not_found(e) {
+                Some(kv_adversary_key_tl_write_only_err())
+              } else {
+                raise e
+              }
           }
       }
   }

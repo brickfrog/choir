@@ -19,7 +19,7 @@ pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "." {
     return Err(@types.ChoirError::validation_error("key cannot be '.'"))
   }
-  if s[0] == '/' {
+  if Int::unsafe_to_char(s[0].to_int()) == '/' {
     return Err(@types.ChoirError::validation_error("key cannot start with '/'"))
   }
   if s.contains("..") {

@@ -1279,6 +1279,11 @@ pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
 /// review-thread fetch, then `merge_pr_preflight_block_message`. When `force` is
 /// true, those checks are skipped after adversary approval (historical inline
 /// `force` behavior for poller/threads only).
+///
+/// **KV gate policy:** approval is keyed by PR number only — it does not track
+/// commit SHA. If material commits land after Sarcasmotron approves, the TL must
+/// delete `adversary-approved-{n}` and obtain re-approval before merging. After
+/// a successful merge, delete that key to avoid unbounded KV accumulation.
 pub async fn interpret_merge_pr_preflight(
   force : Bool,
   pr_number : Int,
@@ -1290,6 +1295,7 @@ pub async fn interpret_merge_pr_preflight(
 ) -> Result[Unit, @types.ChoirError] {
   // Adversary gate — never bypassed by force. Canonical key: adversary-approved-{pr_number}
   // (hyphen before PR number; colon is invalid for validate_kv_storage_key.)
+  // Approval is per PR number, not per commit SHA — see module doc above.
   let key = "adversary-approved-" + pr_number.to_string()
   let approved = match kv_store {
     Some(kv) => kv.get(key) == Some("true")
@@ -1298,7 +1304,9 @@ pub async fn interpret_merge_pr_preflight(
   if !approved {
     return Err(
       @types.ChoirError::validation_error(
-        "adversary review required before merge: set adversary-approved-\{pr_number}=true in the KV store after Sarcasmotron approves.",
+        "adversary review required before merge: set adversary-approved-\{pr_number}=true in the KV store after Sarcasmotron approves. " +
+        "KV gate: approval covers the PR number only — it does not track commit SHA; if significant commits are pushed after Sarcasmotron approves, the TL must delete adversary-approved-\{pr_number} and get re-approval before merging. " +
+        "Delete adversary-approved-\{pr_number} after merge to avoid KV accumulation.",
       ),
     )
   }

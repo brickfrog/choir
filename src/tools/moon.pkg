@@ -5,6 +5,7 @@ import {
   "choir/src/kv",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
+  "moonbitlang/core/ref",
   "moonbitlang/core/string",
   "choir/src/exec",
   "choir/src/chainlink",

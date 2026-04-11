@@ -75,36 +75,13 @@ fn write_notify_gate_leaf_review_owned(
 }
 
 ///|
-/// Test-only: path whose file is written when [`runner_record_notify_blocked_text`]
-/// observes `[NOTIFY BLOCKED]` in a `choir zellij-action send` arg list.
-let notify_blocked_runner_marker_target : Array[String] = [""]
-
-///|
-async fn runner_record_notify_blocked_text(
-  cmds : Array[@workspace.Command],
-) -> Array[Int] {
-  @async.sleep(0)
-  let path = notify_blocked_runner_marker_target[0]
-  if path != "" {
-    for cmd in cmds {
-      for arg in cmd.args {
-        if arg.contains("[NOTIFY BLOCKED]") {
-          ignore(@sys.write_file_sync(path, "yes"))
-        }
-      }
-    }
-  }
-  [0]
-}
-
-///|
 async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY BLOCKED" {
   let project_dir = "/tmp/choir-test-notify-blocked-send-" +
     @sys.get_pid().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let marker = project_dir + "/.choir/notify_blocked_delivery.marker"
   ignore(@sys.delete_file_sync(marker))
-  notify_blocked_runner_marker_target[0] = marker
+  let marker_ref = @ref.new(marker)
 
   let agent_id = "leaf-nb"
   let pr_number = 77
@@ -142,6 +119,22 @@ async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY
     message: "done",
     status: @types.Status::Success,
   })
+  async fn runner_record_notify_blocked_text(
+    cmds : Array[@workspace.Command],
+  ) -> Array[Int] {
+    @async.sleep(0)
+    let path = marker_ref.val
+    if path != "" {
+      for cmd in cmds {
+        for arg in cmd.args {
+          if arg.contains("[NOTIFY BLOCKED]") {
+            ignore(@sys.write_file_sync(path, "yes"))
+          }
+        }
+      }
+    }
+    [0]
+  }
   let resp = dispatch(
     req,
     project_dir~,
@@ -155,7 +148,6 @@ async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY
     Ok(_) => fail("expected block")
   }
   assert_eq(@sys.read_file(marker).trim(), "yes")
-  notify_blocked_runner_marker_target[0] = ""
   ignore(@sys.system("rm -rf " + project_dir))
 }
 
