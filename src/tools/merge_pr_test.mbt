@@ -98,10 +98,23 @@ test "parse_github_owner_repo_from_url accepts pr and git remotes" {
 }
 
 ///|
-test "merge_pr_review_gate_block_message requires approval" {
+test "merge_pr_review_gate_block_message allows empty reviews" {
   match merge_pr_review_gate_block_message(4, "[]") {
-    Ok(Some(msg)) => assert_true(msg.contains("no approving GitHub review"))
-    _ => fail("expected missing approval block")
+    Ok(None) => ()
+    Ok(Some(msg)) => fail("expected empty reviews to pass: " + msg)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "merge_pr_review_gate_block_message allows commented reviews" {
+  match
+    merge_pr_review_gate_block_message(
+      4, "[{\"state\":\"COMMENTED\",\"user\":{\"login\":\"copilot\"},\"submitted_at\":\"2026-01-01T00:00:00Z\"}]",
+    ) {
+    Ok(None) => ()
+    Ok(Some(msg)) => fail("expected commented reviews to pass: " + msg)
+    Err(e) => fail(e.message())
   }
 }
 
@@ -199,6 +212,14 @@ async fn mock_preflight_capture_empty_reviews(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[]")
   }
+  if cmd.program == "gh" && cmd.args.contains("repo") {
+    return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+  }
+  if cmd.program == "gh" && cmd.args.contains("graphql") {
+    return (
+      0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+    )
+  }
   (0, "")
 }
 
@@ -219,7 +240,7 @@ async test "interpret_merge_pr_preflight review gate force true still blocks cha
 }
 
 ///|
-async test "interpret_merge_pr_preflight review gate blocks without approval" {
+async test "interpret_merge_pr_preflight review gate passes without approval" {
   let got = interpret_merge_pr_preflight(
     false,
     42,
@@ -229,8 +250,8 @@ async test "interpret_merge_pr_preflight review gate blocks without approval" {
     None,
   )
   match got {
-    Err(e) => assert_true(e.message().contains("no approving GitHub review"))
-    Ok(_) => fail("expected Err without approving GitHub review")
+    Ok(_) => ()
+    Err(e) => fail(e.message())
   }
 }
 
