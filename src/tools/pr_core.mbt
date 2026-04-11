@@ -1274,16 +1274,199 @@ pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
 }
 
 ///|
-/// `merge_pr` preflight: adversary KV approval is required first and is never
+pub fn parse_github_owner_repo_from_url(raw : String) -> (String, String)? {
+  let value = raw.trim().to_string()
+  let mut path = if value.has_prefix("https://github.com/") {
+    value["https://github.com/".length():].to_string()
+  } else if value.has_prefix("http://github.com/") {
+    value["http://github.com/".length():].to_string()
+  } else if value.has_prefix("git@github.com:") {
+    value["git@github.com:".length():].to_string()
+  } else if value.has_prefix("ssh://git@github.com/") {
+    value["ssh://git@github.com/".length():].to_string()
+  } else {
+    return None
+  }
+  if path.has_suffix(".git") {
+    path = path[:path.length() - ".git".length()].to_string()
+  }
+  let parts = []
+  for part in path.split("/") {
+    parts.push(part.to_string())
+  }
+  if parts.length() < 2 {
+    return None
+  }
+  let owner = parts[0]
+  let repo = parts[1]
+  if owner == "" || repo == "" {
+    None
+  } else {
+    Some((owner, repo))
+  }
+}
+
+///|
+fn merge_pr_owner_repo_from_tracked(
+  poller_state : @poller.PollerState?,
+  pr_number : Int,
+) -> (String, String)? {
+  match poller_state {
+    Some(ps) =>
+      match ps.get(pr_number) {
+        Some(tracked) => parse_github_owner_repo_from_url(tracked.pr_url)
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
+async fn merge_pr_owner_repo(
+  pr_number : Int,
+  poller_state : @poller.PollerState?,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[(String, String), @types.ChoirError] {
+  match merge_pr_owner_repo_from_tracked(poller_state, pr_number) {
+    Some(pair) => Ok(pair)
+    None => {
+      let cmd : @workspace.Command = {
+        program: "git",
+        args: ["remote", "get-url", "origin"],
+        workdir: Some(project_dir),
+      }
+      let (exit_code, output) = capture(cmd)
+      if exit_code != 0 || output.trim().to_string() == "" {
+        return Err(
+          @types.ChoirError::validation_error(
+            "merge blocked: could not resolve GitHub repository owner/name from tracked PR URL or origin remote",
+          ),
+        )
+      }
+      match parse_github_owner_repo_from_url(output) {
+        Some(pair) => Ok(pair)
+        None =>
+          Err(
+            @types.ChoirError::validation_error(
+              "merge blocked: origin remote is not a GitHub repository URL",
+            ),
+          )
+      }
+    }
+  }
+}
+
+///|
+pub fn merge_pr_reviews_command(
+  owner : String,
+  repo : String,
+  pr_number : Int,
+  project_dir : String,
+) -> @workspace.Command {
+  {
+    program: "gh",
+    args: [
+      "api",
+      "repos/" +
+      owner +
+      "/" +
+      repo +
+      "/pulls/" +
+      pr_number.to_string() +
+      "/reviews",
+    ],
+    workdir: Some(project_dir),
+  }
+}
+
+///|
+pub fn merge_pr_review_gate_block_message(
+  pr_number : Int,
+  reviews_json : String,
+) -> Result[String?, @types.ChoirError] {
+  let json = @json.parse(reviews_json) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "merge blocked: invalid JSON from GitHub PR reviews API",
+        ),
+      )
+  }
+  guard json is Array(reviews) else {
+    return Err(
+      @types.ChoirError::validation_error(
+        "merge blocked: unexpected GitHub PR reviews response shape",
+      ),
+    )
+  }
+  let mut approved = false
+  for review in reviews {
+    match review {
+      Object(fields) =>
+        match fields.get("state") {
+          Some(String("CHANGES_REQUESTED")) =>
+            return Ok(
+              Some(
+                "PR #" +
+                pr_number.to_string() +
+                " has a GitHub review requesting changes. Address it before merging.",
+              ),
+            )
+          Some(String("APPROVED")) => approved = true
+          _ => ()
+        }
+      _ => ()
+    }
+  }
+  if approved {
+    Ok(None)
+  } else {
+    Ok(
+      Some(
+        "PR #" +
+        pr_number.to_string() +
+        " has no approving GitHub review. Get an APPROVED review before merging.",
+      ),
+    )
+  }
+}
+
+///|
+async fn enforce_merge_pr_github_review_gate(
+  pr_number : Int,
+  poller_state : @poller.PollerState?,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[Unit, @types.ChoirError] {
+  let (owner, repo) = match
+    merge_pr_owner_repo(pr_number, poller_state, project_dir, capture) {
+    Ok(pair) => pair
+    Err(e) => return Err(e)
+  }
+  let cmd = merge_pr_reviews_command(owner, repo, pr_number, project_dir)
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 || output.trim().to_string() == "" {
+    return Err(
+      @types.ChoirError::validation_error(
+        "merge blocked: could not fetch GitHub review state for PR #" +
+        pr_number.to_string(),
+      ),
+    )
+  }
+  match merge_pr_review_gate_block_message(pr_number, output) {
+    Ok(Some(msg)) => Err(@types.ChoirError::validation_error(msg))
+    Ok(None) => Ok(())
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// `merge_pr` preflight: GitHub review approval is required first and is never
 /// bypassed by `force`. When `force` is false, poller snapshot, unresolved
 /// review-thread fetch, then `merge_pr_preflight_block_message`. When `force` is
-/// true, those checks are skipped after adversary approval (historical inline
-/// `force` behavior for poller/threads only).
-///
-/// **KV gate policy:** approval is keyed by PR number only — it does not track
-/// commit SHA. If material commits land after Sarcasmotron approves, the TL must
-/// delete `adversary-approved-{n}` and obtain re-approval before merging. After
-/// a successful merge, delete that key to avoid unbounded KV accumulation.
+/// true, those checks are skipped after GitHub review approval (historical
+/// inline `force` behavior for poller/threads only).
 pub async fn interpret_merge_pr_preflight(
   force : Bool,
   pr_number : Int,
@@ -1291,24 +1474,13 @@ pub async fn interpret_merge_pr_preflight(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
   registry : @registry.AgentRegistry?,
-  kv_store : @kv.KvStore?,
 ) -> Result[Unit, @types.ChoirError] {
-  // Adversary gate — never bypassed by force. Canonical key: adversary-approved-{pr_number}
-  // (hyphen before PR number; colon is invalid for validate_kv_storage_key.)
-  // Approval is per PR number, not per commit SHA — see module doc above.
-  let key = "adversary-approved-" + pr_number.to_string()
-  let approved = match kv_store {
-    Some(kv) => kv.get(key) == Some("true")
-    None => false
-  }
-  if !approved {
-    return Err(
-      @types.ChoirError::validation_error(
-        "adversary review required before merge: set adversary-approved-\{pr_number}=true in the KV store after Sarcasmotron approves. " +
-        "KV gate: approval covers the PR number only — it does not track commit SHA; if significant commits are pushed after Sarcasmotron approves, the TL must delete adversary-approved-\{pr_number} and get re-approval before merging. " +
-        "Delete adversary-approved-\{pr_number} after merge to avoid KV accumulation.",
-      ),
-    )
+  match
+    enforce_merge_pr_github_review_gate(
+      pr_number, poller_state, project_dir, capture,
+    ) {
+    Err(e) => return Err(e)
+    Ok(_) => ()
   }
   if force {
     return Ok(())
@@ -1649,7 +1821,6 @@ pub async fn interpret_merge_pr_post_success(
   pr_number : Int,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
-  kv_store? : @kv.KvStore? = None,
   read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
   write_back_merge? : async (String, Int, String) -> Unit = @chainlink.write_back_merge,
   release_lock? : async (String) -> Bool = @chainlink.release_lock,
@@ -1712,10 +1883,6 @@ pub async fn interpret_merge_pr_post_success(
       }
     None => ()
   }
-  match kv_store {
-    Some(kv) => kv.delete("adversary-approved-" + pr_number.to_string())
-    None => ()
-  }
   plan.response
 }
 
@@ -1729,7 +1896,6 @@ pub async fn interpret_merge_pr(
   poller_state : @poller.PollerState?,
   mutex_registry : @registry.MutexRegistry?,
   registry : @registry.AgentRegistry?,
-  kv_store : @kv.KvStore?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
@@ -1741,7 +1907,6 @@ pub async fn interpret_merge_pr(
       project_dir,
       capture,
       registry,
-      kv_store,
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) =>
@@ -1763,7 +1928,6 @@ pub async fn interpret_merge_pr(
             merge_args.pr_number,
             poller_state,
             registry,
-            kv_store~,
           )
       }
   }

@@ -23,14 +23,6 @@ test "validate_kv_storage_key rejects bare_dotdot" {
 }
 
 ///|
-test "validate_kv_storage_key accepts adversary_approved_style" {
-  match validate_kv_storage_key("adversary-approved-42") {
-    Ok(_) => ()
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
 test "validate_kv_storage_key rejects_slash_in_key" {
   match validate_kv_storage_key("some/nested/key") {
     Ok(_) => fail("expected Err")
@@ -64,7 +56,7 @@ test "validate_kv_storage_key rejects slash_prefix" {
 
 ///|
 test "validate_kv_storage_key rejects colon" {
-  match validate_kv_storage_key("adversary-approved:1") {
+  match validate_kv_storage_key("key:1") {
     Ok(_) => fail("expected Err")
     Err(_) => ()
   }
@@ -116,7 +108,7 @@ test "KvStore_get returns none_for_missing_valid_key" {
   let project_dir = "/tmp/choir-kv-missing-" + @sys.get_pid().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let kv = KvStore::new(project_dir)
-  assert_eq(kv.get("adversary-approved-99"), None)
+  assert_eq(kv.get("missing-key"), None)
   ignore(@sys.system("rm -rf " + project_dir))
 }
 
@@ -136,9 +128,9 @@ test "KvStore_get trims surrounding whitespace including newline" {
   let project_dir = "/tmp/choir-kv-trim-" + @sys.get_pid().to_string()
   let kv_dir = project_dir + "/.choir/kv"
   ignore(@sys.create_dir_all(kv_dir))
-  ignore(@sys.write_file_sync(kv_dir + "/adversary-approved-42", "true\n"))
+  ignore(@sys.write_file_sync(kv_dir + "/review-state", "true\n"))
   let kv = KvStore::new(project_dir)
-  assert_eq(kv.get("adversary-approved-42"), Some("true"))
+  assert_eq(kv.get("review-state"), Some("true"))
   ignore(@sys.system("rm -rf " + project_dir))
 }
 
