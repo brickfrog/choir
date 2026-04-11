@@ -218,6 +218,9 @@ fn chainlink_issue_to_json(issue : @types.ChainlinkIssue) -> Json {
 }
 
 ///|
+/// Server tool dispatch. When `kv_store` is [`None`], `merge_pr` sees no store
+/// and the adversary gate is **blocked** (not skipped). Use [`dispatch_call`]
+/// for a default `@kv.KvStore::new(project_dir)` when omitted.
 pub async fn dispatch(
   req : ToolRequest,
   project_dir? : String = ".",

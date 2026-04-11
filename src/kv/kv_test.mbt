@@ -7,10 +7,50 @@ test "validate_kv_storage_key rejects empty" {
 }
 
 ///|
+test "validate_kv_storage_key rejects bare_dot" {
+  match validate_kv_storage_key(".") {
+    Ok(_) => fail("expected Err")
+    Err(_) => ()
+  }
+}
+
+///|
 test "validate_kv_storage_key rejects bare_dotdot" {
   match validate_kv_storage_key("..") {
     Ok(_) => fail("expected Err")
     Err(_) => ()
+  }
+}
+
+///|
+test "validate_kv_storage_key accepts adversary_approved_style" {
+  match validate_kv_storage_key("adversary-approved-42") {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "validate_kv_storage_key accepts_nested_slash_key" {
+  match validate_kv_storage_key("some/nested/key") {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "validate_kv_storage_key accepts_dot_in_key" {
+  match validate_kv_storage_key("key_with.dot") {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "validate_kv_storage_key accepts_mixed_case_and_digits" {
+  match validate_kv_storage_key("MixedCase-123") {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
   }
 }
 
