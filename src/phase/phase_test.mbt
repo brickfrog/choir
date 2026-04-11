@@ -90,6 +90,7 @@ test "dev_can_exit" {
     ShouldNudge("PR 123 under review (round 1)"),
   )
   assert_eq(dev_disconnect_policy(Working), Fail)
+  assert_eq(dev_disconnect_policy(ChangesRequested(pr_number=123)), Preserve)
   assert_eq(
     dev_disconnect_policy(PROpenUnreviewed(pr_number=123, url="url")),
     Preserve,
@@ -175,6 +176,17 @@ test "lifecycle policy preserves deferred review ownership on disconnect" {
     lifecycle_exit_policy(lifecycle),
     Deferred(message="PR 99 awaiting re-review (round 2)"),
   )
+  assert_eq(lifecycle_disconnect_policy(lifecycle), Preserve)
+}
+
+///|
+test "lifecycle policy preserves changes-requested on disconnect" {
+  let lifecycle : AgentLifecycle = {
+    agent_id: "main.leaf-a",
+    role: @types.Role::Dev,
+    process: Connected,
+    workflow: Dev(ChangesRequested(pr_number=99, next_round=1)),
+  }
   assert_eq(lifecycle_disconnect_policy(lifecycle), Preserve)
 }
 
