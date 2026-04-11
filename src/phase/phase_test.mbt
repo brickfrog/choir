@@ -26,6 +26,12 @@ test "lifecycle_idle_watchdog_exempt logic" {
   }
   assert_true(lifecycle_idle_watchdog_exempt(dev_exit_deferred))
 
+  let dev_changes_requested = {
+    ..dev_working,
+    workflow: Dev(ChangesRequested(pr_number=1, next_round=2)),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(dev_changes_requested))
+
   let worker_working = lifecycle_for_role("w1", @types.Role::Worker)
   assert_false(lifecycle_idle_watchdog_exempt(worker_working))
 
