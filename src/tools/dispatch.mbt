@@ -219,8 +219,8 @@ fn chainlink_issue_to_json(issue : @types.ChainlinkIssue) -> Json {
 
 ///|
 /// Server tool dispatch. When `kv_store` is [`None`], `merge_pr` sees no store
-/// and the adversary gate is **blocked** (not skipped). Use [`dispatch_call`]
-/// for a default `@kv.KvStore::new(project_dir)` when omitted.
+/// and the merge is **denied** (gate defaults to not-approved; not skipped). Use
+/// [`dispatch_call`] for a default `@kv.KvStore::new(project_dir)` when omitted.
 pub async fn dispatch(
   req : ToolRequest,
   project_dir? : String = ".",
@@ -881,9 +881,9 @@ pub async fn fire_hook_async(
 /// [`@kv.KvStore::new`] for `project_dir` is supplied — it does **not** skip the
 /// merge adversary gate (same on-disk `.choir/kv/` as the server).
 ///
-/// Note: to exercise **gate-blocked** behavior with no injected store, call
-/// [`dispatch`] with `kv_store=None` directly — [`dispatch_call`] always wires a
-/// default store when omitted.
+/// Note: to exercise **merge denied (gate defaults to not-approved)** with no
+/// injected store, call [`dispatch`] with `kv_store=None` directly —
+/// [`dispatch_call`] always wires a default store when omitted.
 pub async fn dispatch_call(
   call : ToolCall,
   project_dir? : String = ".",

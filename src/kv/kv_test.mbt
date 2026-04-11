@@ -137,3 +137,14 @@ test "KvStore_get returns none_for_empty_file" {
   assert_eq(kv.get("my-empty-key"), None)
   ignore(@sys.system("rm -rf " + project_dir))
 }
+
+///|
+test "KvStore_get trims surrounding whitespace including newline" {
+  let project_dir = "/tmp/choir-kv-trim-" + @sys.get_pid().to_string()
+  let kv_dir = project_dir + "/.choir/kv"
+  ignore(@sys.create_dir_all(kv_dir))
+  ignore(@sys.write_file_sync(kv_dir + "/adversary-approved-42", "true\n"))
+  let kv = KvStore::new(project_dir)
+  assert_eq(kv.get("adversary-approved-42"), Some("true"))
+  ignore(@sys.system("rm -rf " + project_dir))
+}

@@ -55,9 +55,15 @@ pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
 /// “bad key” from “no value”. The merge adversary gate only uses validated
 /// key shapes; other callers should validate or accept this ambiguity.
 ///
+/// Invalid keys (failing [`validate_kv_storage_key`]) return [`None`],
+/// indistinguishable from a missing value. This is intentional for the adversary
+/// gate (it always constructs valid keys), but callers must not rely on
+/// [`None`] to detect key format errors.
+///
 /// **Trim vs `kv_get` tool:** [`KvStore::get`] trims for internal gate
 /// comparisons; the `kv_get` MCP tool returns raw bytes so agents see the exact
 /// stored value.
+// FIXME: should return Result to distinguish missing vs invalid
 pub fn KvStore::get(self : KvStore, key : String) -> String? {
   match validate_kv_storage_key(key) {
     Err(_) => None
