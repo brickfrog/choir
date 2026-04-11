@@ -4359,3 +4359,88 @@ async test "interpret_rescue_leaf err when run_strict fails" {
     _ => fail("expected run_strict err")
   }
 }
+
+// ──────────────────────────────────────────────────────────────────
+// fork_wave_spawn_plan enrichment tests
+// ──────────────────────────────────────────────────────────────────
+
+///|
+test "fork_wave_spawn_plan - enrichment_issue Some → task_contracts enriched" {
+  let contract = @types.TaskContract::empty()
+  let args = ForkWaveArgs::{
+    count: 1,
+    tasks: ["Task 1"],
+    task_contracts: [contract],
+    has_per_leaf_tasks: true,
+    parent_branch: "main",
+    caller_id: "parent",
+    slug_prefix: "leaf",
+    agent_type: @types.AgentType::Gemini,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    chainlink_issue_id: Some("123"),
+  }
+  let issue = @chainlink.ChainlinkIssue::{
+    id: 123,
+    title: "Enriched Title",
+    description: None,
+    priority: "medium",
+    status: "open",
+    parent_id: None,
+    labels: [],
+    blocked_by: [],
+    subissues: [],
+    comments: [],
+  }
+  let plan = fork_wave_spawn_plan(
+    args,
+    0,
+    None,
+    ".",
+    "session",
+    chainlink_enrichment_issue=Some(issue),
+  )
+  assert_eq(plan.spawned_specs.length(), 1)
+  match plan.spawned_specs[0].task_contract {
+    Some(c) => assert_eq(c.goal, "Enriched Title")
+    None => fail("expected task_contract")
+  }
+}
+
+///|
+test "fork_wave_spawn_plan - enrichment_issue None → task_contracts unchanged" {
+  let contract = @types.TaskContract::{
+    ..@types.TaskContract::empty(),
+    goal: "Original",
+  }
+  let args = ForkWaveArgs::{
+    count: 1,
+    tasks: ["Task 1"],
+    task_contracts: [contract],
+    has_per_leaf_tasks: true,
+    parent_branch: "main",
+    caller_id: "parent",
+    slug_prefix: "leaf",
+    agent_type: @types.AgentType::Gemini,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    chainlink_issue_id: Some("123"),
+  }
+  let plan = fork_wave_spawn_plan(
+    args,
+    0,
+    None,
+    ".",
+    "session",
+    chainlink_enrichment_issue=None,
+  )
+  assert_eq(plan.spawned_specs.length(), 1)
+  match plan.spawned_specs[0].task_contract {
+    Some(c) => assert_eq(c.goal, "Original")
+    None => fail("expected task_contract")
+  }
+}
