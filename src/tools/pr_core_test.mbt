@@ -2139,6 +2139,7 @@ async test "interpret_merge_pr_preflight force bypass skips capture" {
     "/repo",
     mock_preflight_capture_unreachable,
     None,
+    None,
   )
   match got {
     Ok(_) => ()
@@ -2171,6 +2172,7 @@ async test "interpret_merge_pr_preflight ok when no poller block and no threads"
     "/repo",
     mock_preflight_capture_no_unresolved_threads,
     None,
+    None,
   )
   match got {
     Ok(_) => ()
@@ -2202,6 +2204,7 @@ async test "interpret_merge_pr_preflight err when review threads unresolved" {
     None,
     "/repo",
     mock_preflight_capture_one_unresolved_thread,
+    None,
     None,
   )
   match got {
@@ -2237,6 +2240,7 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     Some(ps),
     "/repo",
     mock_preflight_capture_no_unresolved_threads,
+    None,
     None,
   )
   match got {
@@ -2628,6 +2632,7 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     Some(ps),
     None,
     None,
+    None,
     mock_runner_merge_pr_must_not_run,
     mock_preflight_capture_no_unresolved_threads,
   )
@@ -2648,6 +2653,7 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
   let got = interpret_merge_pr(
     args,
     "/repo",
+    None,
     None,
     None,
     None,
@@ -2679,6 +2685,7 @@ async test "interpret_merge_pr ok response matches merged envelope" {
   let got = interpret_merge_pr(
     args,
     project_dir,
+    None,
     None,
     None,
     None,

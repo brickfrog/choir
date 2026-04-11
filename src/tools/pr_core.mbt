@@ -1284,6 +1284,7 @@ pub async fn interpret_merge_pr_preflight(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
   registry : @registry.AgentRegistry?,
+  kv_store : @kv.KvStore?,
 ) -> Result[Unit, @types.ChoirError] {
   if force {
     return Ok(())
@@ -1694,6 +1695,7 @@ pub async fn interpret_merge_pr(
   poller_state : @poller.PollerState?,
   mutex_registry : @registry.MutexRegistry?,
   registry : @registry.AgentRegistry?,
+  kv_store : @kv.KvStore?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
@@ -1705,6 +1707,7 @@ pub async fn interpret_merge_pr(
       project_dir,
       capture,
       registry,
+      kv_store,
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) =>

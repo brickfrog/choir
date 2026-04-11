@@ -253,6 +253,7 @@ pub async fn dispatch(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  kv_store? : @kv.KvStore? = None,
   caller_id? : String? = None,
   pr_review? : Bool = true,
 ) -> @types.Response {
@@ -368,8 +369,8 @@ pub async fn dispatch(
       )
     ToolRequest::MergePr(merge_args) =>
       interpret_merge_pr(
-        merge_args, project_dir, poller_state, mutex_registry, registry, runner,
-        capture,
+        merge_args, project_dir, poller_state, mutex_registry, registry, kv_store,
+        runner, capture,
       )
     ToolRequest::TrackPr(track_pr_args) =>
       interpret_track_pr(
@@ -741,6 +742,7 @@ pub async fn handle_request(
   agent_registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  kv_store? : @kv.KvStore? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
 ) -> @types.Response {
@@ -806,6 +808,7 @@ pub async fn handle_request(
               registry=agent_registry,
               mutex_registry~,
               poller_state~,
+              kv_store~,
               caller_id=tool_args_get(tool_args, "caller_id"),
               pr_review~,
             )
