@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - **Idiomatic Errors**: `ChoirError` converted to `suberror` for use with MoonBit's `raise` / `try` patterns.
 
 ### Changed
+- handoff comment on leaf shutdown (#7)
 - fork-wave: enrich TaskContract from Chainlink issue when issue_id provided (#6)
 - ChainlinkIssue Show impl ignores self and logger — printing issues produces no output (#4)
 - Non-numeric items in blocked_by array silently dropped during parse (#5)
