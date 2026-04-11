@@ -11,15 +11,6 @@ Copilot review、将 review/CI 反馈路由到对应面板、在 PR 可合并时
 
 编排逻辑是纯函数式的——类型化 effect 规划器，无直接 I/O。宿主适配器（Git、GitHub、Zellij、文件系统）通过注入方式提供，可测试。
 
-## VSDD 流水线
-
-Choir 的 TL 对每个功能请求自动执行 **[Verify-Spec-Develop-Deploy](https://gist.github.com/dollspace-gay/45c95ebfb5a3a3bae84d8bebd662cc25)** 流水线：
-
-1. **规格固化** — TL 协助用户明确行为契约（前置条件、边界情况、纯函数边界）。规格作为 `plan` 评论写入 Chainlink issue。
-2. **TDD 红门** — 叶子先写所有测试，提交、推送、确认每个新测试失败，然后 `notify_parent "[RED GATE]"` 并等待。TL 派一个研究 worker 验证失败情况，再发送绿灯信号。
-3. **代码评审门槛** — GitHub PR review (Copilot) 是评审关卡。叶子需要解决所有反馈直到 PR 被批准。
-4. **收敛** — TL 向用户汇报收敛，在 Copilot 批准后合并。
-
 ## Chainlink
 
 Choir 集成了 [Chainlink](https://github.com/dollspace-gay/chainlink)，这是一个本地 Git 后端 issue 追踪器，支持类型化评论（`plan`、`decision`、`observation`、`result`、`handoff`）。
