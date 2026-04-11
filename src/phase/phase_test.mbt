@@ -7,7 +7,7 @@ test "lifecycle_idle_watchdog_exempt logic" {
     ..dev_working,
     workflow: Dev(ReviewOwned(pr_number=1, state=ApprovedAwaitingMerge)),
   }
-  assert_false(lifecycle_idle_watchdog_exempt(dev_review))
+  assert_true(lifecycle_idle_watchdog_exempt(dev_review))
 
   let dev_done = { ..dev_working, workflow: Dev(Done(reason=Merged)) }
   assert_true(lifecycle_idle_watchdog_exempt(dev_done))
@@ -18,8 +18,25 @@ test "lifecycle_idle_watchdog_exempt logic" {
   }
   assert_true(lifecycle_idle_watchdog_exempt(dev_failed))
 
+  let dev_exit_deferred = {
+    ..dev_working,
+    workflow: Dev(
+      ExitRequestedDeferred(pr_number=1, state=ApprovedAwaitingMerge),
+    ),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(dev_exit_deferred))
+
+  let dev_changes_requested = {
+    ..dev_working,
+    workflow: Dev(ChangesRequested(pr_number=1, next_round=2)),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(dev_changes_requested))
+
   let worker_working = lifecycle_for_role("w1", @types.Role::Worker)
   assert_false(lifecycle_idle_watchdog_exempt(worker_working))
+
+  let worker_exitable = { ..worker_working, workflow: Worker(Exitable) }
+  assert_false(lifecycle_idle_watchdog_exempt(worker_exitable))
 
   let worker_done = {
     ..worker_working,
@@ -27,8 +44,15 @@ test "lifecycle_idle_watchdog_exempt logic" {
   }
   assert_true(lifecycle_idle_watchdog_exempt(worker_done))
 
+  let worker_failed = {
+    ..worker_working,
+    workflow: Worker(Failed(reason=UnexpectedDisconnect)),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(worker_failed))
+
   let tl = lifecycle_for_role("tl", @types.Role::TL)
-  assert_true(lifecycle_idle_watchdog_exempt(tl))
+  // `Supervisor` is not exempt here; `check_idle_agents` skips TL/Root by role first.
+  assert_false(lifecycle_idle_watchdog_exempt(tl))
 }
 
 ///|

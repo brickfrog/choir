@@ -322,6 +322,8 @@ pub fn dev_disconnect_policy(phase : DevPhase) -> DevDisconnectPolicy {
   match phase {
     Spawned => Fail
     Working => Fail
+    // Same as lifecycle `ChangesRequested`: awaiting human/reviewer follow-up;
+    // disconnect should not tear down an in-progress changes-requested cycle.
     ChangesRequested(_) => Preserve
     PROpenUnreviewed(..) => Preserve
     PRUnderReview(..) => Preserve

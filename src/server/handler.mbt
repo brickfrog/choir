@@ -521,6 +521,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       agent_registry=Some(self.registry),
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
+      kv_store=Some(self.kv_store),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
     ) catch {
@@ -3216,6 +3217,9 @@ pub async fn ServerState::check_idle_agents(
     if agent.role == @types.Role::Root || agent.role == @types.Role::TL {
       continue
     }
+    // `ReviewOwned` devs are watchdog-exempt (idle while waiting for TL merge /
+    // review). Dispatch still warns the parent when `notify_parent` is blocked on
+    // unresolved threads.
     if @phase.lifecycle_idle_watchdog_exempt(self.current_lifecycle(agent_id)) {
       continue
     }
@@ -3558,6 +3562,12 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/adversary-approved-90",
+      "true",
+    ),
+  )
   let terminal_session = "test-session"
   let config = {
     ..@types.Config::default(),

@@ -347,6 +347,8 @@ pub fn lifecycle_dev_disconnect_policy(
   match lifecycle {
     Working => Fail(reason=UnexpectedDisconnect)
     ReviewOwned(..) => Preserve
+    // Waiting on reviewer-requested changes; work is in-flight and needs human
+    // follow-up — preserve across disconnect so the fix/review cycle is not lost.
     ChangesRequested(..) => Preserve
     ExitRequestedDeferred(..) => Preserve
     Exitable => FinalizeDone(reason=DisconnectFinalized)
@@ -380,15 +382,33 @@ pub fn lifecycle_disconnect_policy(
 
 ///|
 /// Whether an agent is exempt from the idle watchdog.
-/// Only truly terminal states (Done, Failed) are exempt.
-/// ReviewOwned agents keep their Preserve disconnect policy but are NOT
-/// watchdog-exempt — a leaf that files a PR and goes silent must still be
-/// killed eventually.
+///
+/// Exempt:
+/// - **Dev `Done` / `Failed`**: terminal.
+/// - **Dev `ExitRequestedDeferred`**: deferred exit while PR/review coordination
+///   is still resolving; killing mid-wait would lose that handshake.
+/// - **Dev `ReviewOwned(..)`**: leaf may be idle waiting for TL `merge_pr` or
+///   review resolution; [`notify_parent`] thread blocks warn the parent instead.
+/// - **Dev `ChangesRequested(..)`**: awaiting TL instructions after a review cycle,
+///   legitimately idle (same “parked waiting” rationale as `ExitRequestedDeferred`).
+/// - **Worker `Done` / `Failed`**: terminal.
+///
+/// **Not** exempt (examples): **`Working`**, **`Dev(Exitable)`**, **`Worker(Exitable)`**
+/// — e.g. a leaf that never filed a PR and went silent must still be reclaimed; a leaf
+/// in **`Exitable`** waiting on parent shutdown is still killable if it sits idle for the
+/// watchdog timeout.
+///
+/// **MAINTENANCE NOTE:** For a [`DevLifecycle`] variant, update [`lifecycle_dev_disconnect_policy`];
+/// for a [`WorkerLifecycle`] variant, update [`worker_disconnect_policy`].
+///
+/// Root/TL agents are skipped by role in [`check_idle_agents`] before this runs.
 pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
   match lifecycle.workflow {
     Dev(Done(..)) | Dev(Failed(..)) => true
+    Dev(ExitRequestedDeferred(..)) => true
+    Dev(ReviewOwned(..)) => true
+    Dev(ChangesRequested(..)) => true
     Worker(Done(..)) | Worker(Failed(..)) => true
-    Supervisor(_) => true
     _ => false
   }
 }
