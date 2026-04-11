@@ -1009,8 +1009,9 @@ pub fn apply_dev_event(
   scope : String,
   event : @phase.DevEvent,
   registry? : @registry.AgentRegistry? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> Unit {
-  @phase.apply_dev_event(project_dir, scope, event, registry~)
+  @phase.apply_dev_event(project_dir, scope, event, registry~, review_mode~)
 }
 
 ///|

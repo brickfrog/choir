@@ -848,6 +848,7 @@ pub fn fork_wave_spawn_plan(
       reuse_git_branch: None,
       spawn_depth: child_spawn_depth,
       automerge: fork_wave_args.automerge,
+      review_mode: fork_wave_args.review_mode,
       chainlink_issue_id: fork_wave_args.chainlink_issue_id,
     }
     spawned_specs.push(spec)
@@ -1545,6 +1546,7 @@ pub async fn interpret_merge_pr_preflight(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
   registry : @registry.AgentRegistry?,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
 ) -> Result[Unit, @types.ChoirError] {
   match
     enforce_merge_pr_github_review_gate(
@@ -1581,6 +1583,7 @@ pub async fn interpret_merge_pr_preflight(
           tracked,
           Some(thread_count),
           task_contract~,
+          review_mode~,
         ),
       )
     }
@@ -1588,7 +1591,12 @@ pub async fn interpret_merge_pr_preflight(
   }
   match
     merge_pr_preflight_block_message(
-      pr_number, poller_tracked, thread_count, thread_text, policy_decision,
+      pr_number,
+      poller_tracked,
+      thread_count,
+      thread_text,
+      policy_decision,
+      review_mode~,
     ) {
     Some(msg) => Err(@types.ChoirError::validation_error(msg))
     None => Ok(())
@@ -1605,10 +1613,14 @@ pub fn merge_pr_preflight_block_message(
   unresolved_thread_count : Int,
   unresolved_thread_text : String,
   policy_decision : @policy.MergeDecision?,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
 ) -> String? {
   match poller_tracked {
     Some(tracked) =>
-      if tracked.last_review_state == @poller.ReviewState::ChangesRequested {
+      if tracked.last_review_state == @poller.ReviewState::ChangesRequested &&
+        !(review_mode == @types.ReviewMode::SinglePass &&
+        tracked.changes_requested_since == 0L &&
+        tracked.last_sha != "") {
         return Some(
           "PR #" +
           pr_number.to_string() +
@@ -1978,6 +1990,7 @@ pub async fn interpret_merge_pr(
       project_dir,
       capture,
       registry,
+      review_mode=merge_args.review_mode,
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) =>
@@ -2724,6 +2737,7 @@ pub fn spawn_worker_plan(
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
   let agent_id = @workspace.canonical_agent_id(spec)
@@ -2824,6 +2838,7 @@ pub fn spawn_remote_plan(args : RemoteSpawnArgs) -> SpawnRemotePlan {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
   let ok_response = @types.Response::ok_values({
@@ -2886,6 +2901,7 @@ pub fn spawn_gemini_plan(args : SpawnGeminiArgs) -> SpawnGeminiPlan {
     reuse_git_branch: None,
     spawn_depth: 0,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
   let ok_response = @types.Response::ok_values({
@@ -3019,6 +3035,7 @@ pub fn rescue_leaf_spawn_plan(
     reuse_git_branch: Some(git_branch),
     spawn_depth: 0,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
   match @workspace.validate_reuse_spawn_spec(spec) {

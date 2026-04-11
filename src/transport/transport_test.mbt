@@ -135,6 +135,7 @@ test "format_registration_request includes local config metadata" {
     spawn_depth: Some(1),
     task_contract: None,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
   let output = format_registration_request(

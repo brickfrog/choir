@@ -543,6 +543,42 @@ test "tl_tracked_pr_merge_gate_snapshot_ready accepts comment-only review after 
 }
 
 ///|
+test "single_pass treats fixed changes-requested review as gate-ready when threads and CI pass" {
+  let t = sample_tracked(ChangesRequested, Success, 102)
+  assert_true(
+    tl_tracked_pr_merge_gate_snapshot_ready(
+      t,
+      Some(0),
+      review_mode=@types.ReviewMode::SinglePass,
+    ),
+  )
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(0),
+    review_mode=@types.ReviewMode::SinglePass,
+  )
+  assert_eq(decision.label(), "merge_now")
+}
+
+///|
+test "iterative keeps fixed changes-requested review blocked" {
+  let t = sample_tracked(ChangesRequested, Success, 103)
+  assert_false(
+    tl_tracked_pr_merge_gate_snapshot_ready(
+      t,
+      Some(0),
+      review_mode=@types.ReviewMode::Iterative,
+    ),
+  )
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(0),
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_eq(decision.label(), "blocked")
+}
+
+///|
 test "tl_classify_tracked_pr_workflow waits for Copilot comment on comment-only review" {
   let t = sample_tracked(Commented, Success, 200)
   let cat = tl_classify_tracked_pr_workflow(t, Some(0))

@@ -69,6 +69,47 @@ test "parse_fork_wave_args defaults automerge override to None" {
 }
 
 ///|
+test "parse_fork_wave_args defaults review_mode override to None" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.review_mode, None)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses review_mode iterative" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "review_mode": "iterative",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.review_mode, Some(@types.ReviewMode::Iterative))
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args rejects invalid review_mode" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "review_mode": "again",
+  })
+  assert_true(@tools.parse_fork_wave_args(".", args) is Err(_))
+}
+
+///|
 test "parse_fork_wave_args parses automerge true" {
   let args = @tools.tool_args_from_map({
     "count": "1",
