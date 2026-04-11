@@ -2131,15 +2131,29 @@ async fn mock_preflight_capture_unreachable(
 }
 
 ///|
+fn kv_store_with_adversary_approval(
+  project_dir : String,
+  pr_number : Int,
+) -> @kv.KvStore {
+  let kv_dir = project_dir + "/.choir/kv"
+  ignore(@sys.create_dir_all(kv_dir))
+  let key = "adversary-approved:" + pr_number.to_string()
+  ignore(@sys.write_file_sync(kv_dir + "/" + key, "true"))
+  @kv.KvStore::new(project_dir)
+}
+
+///|
 async test "interpret_merge_pr_preflight force bypass skips capture" {
+  let project_dir = "/tmp/choir-mpf-force-" + @sys.get_pid().to_string()
+  let kv = kv_store_with_adversary_approval(project_dir, 1)
   let got = interpret_merge_pr_preflight(
     true,
     1,
     None,
-    "/repo",
+    project_dir,
     mock_preflight_capture_unreachable,
     None,
-    None,
+    Some(kv),
   )
   match got {
     Ok(_) => ()
@@ -2165,14 +2179,16 @@ async fn mock_preflight_capture_no_unresolved_threads(
 
 ///|
 async test "interpret_merge_pr_preflight ok when no poller block and no threads" {
+  let project_dir = "/tmp/choir-mpf-ok-" + @sys.get_pid().to_string()
+  let kv = kv_store_with_adversary_approval(project_dir, 7)
   let got = interpret_merge_pr_preflight(
     false,
     7,
     None,
-    "/repo",
+    project_dir,
     mock_preflight_capture_no_unresolved_threads,
     None,
-    None,
+    Some(kv),
   )
   match got {
     Ok(_) => ()
@@ -2198,14 +2214,16 @@ async fn mock_preflight_capture_one_unresolved_thread(
 
 ///|
 async test "interpret_merge_pr_preflight err when review threads unresolved" {
+  let project_dir = "/tmp/choir-mpf-threads-" + @sys.get_pid().to_string()
+  let kv = kv_store_with_adversary_approval(project_dir, 3)
   let got = interpret_merge_pr_preflight(
     false,
     3,
     None,
-    "/repo",
+    project_dir,
     mock_preflight_capture_one_unresolved_thread,
     None,
-    None,
+    Some(kv),
   )
   match got {
     Err(e) => {
@@ -2234,14 +2252,16 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     @poller.CiRollupStatus::Unknown,
     false,
   )
+  let project_dir = "/tmp/choir-mpf-cr-" + @sys.get_pid().to_string()
+  let kv = kv_store_with_adversary_approval(project_dir, 9)
   let got = interpret_merge_pr_preflight(
     false,
     9,
     Some(ps),
-    "/repo",
+    project_dir,
     mock_preflight_capture_no_unresolved_threads,
     None,
-    None,
+    Some(kv),
   )
   match got {
     Err(e) => assert_true(e.message().contains("ChangesRequested"))
@@ -2626,13 +2646,15 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     caller_id: "main.tl",
     force: false,
   }
+  let project_dir = "/tmp/choir-mpr-preflight-" + @sys.get_pid().to_string()
+  let kv = kv_store_with_adversary_approval(project_dir, 9)
   let got = interpret_merge_pr(
     args,
-    "/repo",
+    project_dir,
     Some(ps),
     None,
     None,
-    None,
+    Some(kv),
     mock_runner_merge_pr_must_not_run,
     mock_preflight_capture_no_unresolved_threads,
   )
@@ -2650,13 +2672,15 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
     caller_id: "main.tl",
     force: true,
   }
+  let project_dir = "/tmp/choir-mpr-host-err-" + @sys.get_pid().to_string()
+  let kv = kv_store_with_adversary_approval(project_dir, 4)
   let got = interpret_merge_pr(
     args,
-    "/repo",
+    project_dir,
     None,
     None,
     None,
-    None,
+    Some(kv),
     mock_merge_host_runner_gh_fails,
     mock_merge_host_capture_for_merge,
   )
@@ -2676,6 +2700,7 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
 async test "interpret_merge_pr ok response matches merged envelope" {
   let project_dir = "/tmp/choir-mpr-interpret-" + @sys.get_pid().to_string()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let kv = kv_store_with_adversary_approval(project_dir, 77)
   let args : MergePrArgs = {
     pr_number: 77,
     parent_branch: "main",
@@ -2688,7 +2713,7 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     None,
     None,
     None,
-    None,
+    Some(kv),
     mock_merge_host_runner_ok,
     mock_capture_empty,
   )
