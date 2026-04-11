@@ -3,7 +3,7 @@ fn mock_issue(
   id : Int,
   title : String,
   status? : String = "open",
-) -> @chainlink.ChainlinkIssue {
+) -> @types.ChainlinkIssue {
   {
     id,
     title,
@@ -19,17 +19,13 @@ fn mock_issue(
 }
 
 ///|
-async fn mock_chainlink_fetch_issue_ok(
-  id : String,
-) -> @chainlink.ChainlinkIssue? {
+async fn mock_chainlink_fetch_issue_ok(id : String) -> @types.ChainlinkIssue? {
   @async.sleep(0)
   Some(mock_issue(@string.parse_int(id), "Issue " + id))
 }
 
 ///|
-async fn mock_chainlink_fetch_issue_none(
-  id : String,
-) -> @chainlink.ChainlinkIssue? {
+async fn mock_chainlink_fetch_issue_none(id : String) -> @types.ChainlinkIssue? {
   ignore(id)
   @async.sleep(0)
   None
@@ -38,7 +34,7 @@ async fn mock_chainlink_fetch_issue_none(
 ///|
 async fn mock_chainlink_fetch_list(
   status : String,
-) -> Array[@chainlink.ChainlinkIssue] {
+) -> Array[@types.ChainlinkIssue] {
   @async.sleep(0)
   [mock_issue(7, "List issue", status~)]
 }

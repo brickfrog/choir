@@ -1,5 +1,5 @@
 ///|
-pub async fn fetch_issue(id : String) -> ChainlinkIssue? {
+pub async fn fetch_issue(id : String) -> @types.ChainlinkIssue? {
   let cmd : @workspace.Command = {
     program: "chainlink",
     args: ["issue", "show", id, "--json"],
@@ -14,7 +14,9 @@ pub async fn fetch_issue(id : String) -> ChainlinkIssue? {
 }
 
 ///|
-pub async fn fetch_list(status? : String = "open") -> Array[ChainlinkIssue] {
+pub async fn fetch_list(
+  status? : String = "open",
+) -> Array[@types.ChainlinkIssue] {
   let cmd : @workspace.Command = {
     program: "chainlink",
     args: ["issue", "list", "--json", "-s", status],

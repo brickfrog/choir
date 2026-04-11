@@ -4382,7 +4382,7 @@ test "fork_wave_spawn_plan - enrichment_issue Some → task_contracts enriched" 
     automerge: None,
     chainlink_issue_id: Some("123"),
   }
-  let issue = @chainlink.ChainlinkIssue::{
+  let issue = @types.ChainlinkIssue::{
     id: 123,
     title: "Enriched Title",
     description: None,

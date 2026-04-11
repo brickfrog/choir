@@ -1,6 +1,6 @@
 ///|
 pub fn task_contract_from_chainlink_issue(
-  issue : ChainlinkIssue,
+  issue : @types.ChainlinkIssue,
 ) -> @types.TaskContract {
   let goal = issue.title.trim().to_string()
   let constraints = []
@@ -68,7 +68,7 @@ pub fn task_contract_from_chainlink_issue(
 
 ///|
 pub fn merge_chainlink_into_task_contract(
-  issue : ChainlinkIssue,
+  issue : @types.ChainlinkIssue,
   contract : @types.TaskContract,
 ) -> @types.TaskContract {
   // goal
