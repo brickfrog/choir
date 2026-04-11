@@ -44,7 +44,7 @@ async test "test_adversary_gate_passes_when_approved" {
   let kv_dir = project_dir + "/.choir/kv"
   ignore(@sys.create_dir_all(kv_dir))
   let kv = @kv.KvStore::new(project_dir)
-  let key = "adversary-approved:42"
+  let key = "adversary-approved-42"
   ignore(@sys.write_file_sync(kv_dir + "/" + key, "true"))
 
   let got = interpret_merge_pr_preflight(
@@ -68,7 +68,7 @@ async test "test_adversary_gate_blocks_wrong_value" {
   let kv_dir = project_dir + "/.choir/kv"
   ignore(@sys.create_dir_all(kv_dir))
   let kv = @kv.KvStore::new(project_dir)
-  let key = "adversary-approved:42"
+  let key = "adversary-approved-42"
   ignore(@sys.write_file_sync(kv_dir + "/" + key, "false"))
 
   let got = interpret_merge_pr_preflight(

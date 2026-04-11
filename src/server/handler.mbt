@@ -3561,7 +3561,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/kv/adversary-approved:90",
+      project_dir + "/.choir/kv/adversary-approved-90",
       "true",
     ),
   )

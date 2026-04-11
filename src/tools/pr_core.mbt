@@ -1288,8 +1288,8 @@ pub async fn interpret_merge_pr_preflight(
   registry : @registry.AgentRegistry?,
   kv_store : @kv.KvStore?,
 ) -> Result[Unit, @types.ChoirError] {
-  // Adversary gate — never bypassed by force
-  let key = "adversary-approved:" + pr_number.to_string()
+  // Adversary gate — never bypassed by force (key matches `kv_set` validation)
+  let key = "adversary-approved-" + pr_number.to_string()
   let approved = match kv_store {
     Some(kv) => kv.get(key) == Some("true")
     None => false
@@ -1297,7 +1297,7 @@ pub async fn interpret_merge_pr_preflight(
   if !approved {
     return Err(
       @types.ChoirError::validation_error(
-        "adversary review required before merge: set adversary-approved:\{pr_number}=true in KV store after Sarcasmotron approves",
+        "adversary review required before merge: set adversary-approved-\{pr_number}=true in KV store after Sarcasmotron approves (e.g. kv_set)",
       ),
     )
   }

@@ -2137,7 +2137,7 @@ fn kv_store_with_adversary_approval(
 ) -> @kv.KvStore {
   let kv_dir = project_dir + "/.choir/kv"
   ignore(@sys.create_dir_all(kv_dir))
-  let key = "adversary-approved:" + pr_number.to_string()
+  let key = "adversary-approved-" + pr_number.to_string()
   ignore(@sys.write_file_sync(kv_dir + "/" + key, "true"))
   @kv.KvStore::new(project_dir)
 }
