@@ -1658,6 +1658,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     parent_session_id: None,
     review_context: None,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
 }
@@ -1698,6 +1699,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     parent_session_id: None,
     review_context: None,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: None,
   }
   let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
@@ -2814,6 +2816,7 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     parent_branch: "main",
     caller_id: "main.tl",
     force: false,
+    review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let project_dir = "/tmp/choir-mpr-preflight-" + @sys.get_pid().to_string()
   let got = interpret_merge_pr(
@@ -2839,6 +2842,7 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
     parent_branch: "main",
     caller_id: "main.tl",
     force: true,
+    review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let project_dir = "/tmp/choir-mpr-host-err-" + @sys.get_pid().to_string()
   let got = interpret_merge_pr(
@@ -2872,6 +2876,7 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     parent_branch: "main",
     caller_id: "main.tl",
     force: true,
+    review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let got = interpret_merge_pr(
     args,
@@ -3208,6 +3213,7 @@ async test "chainlink hooks run when local config exposes issue id" {
         reuse_git_branch: None,
         spawn_depth: 0,
         automerge: None,
+        review_mode: None,
         chainlink_issue_id: Some("5"),
       },
     ],
@@ -3386,6 +3392,7 @@ async test "chainlink hooks are skipped when local config has no issue id" {
         reuse_git_branch: None,
         spawn_depth: 0,
         automerge: None,
+        review_mode: None,
         chainlink_issue_id: None,
       },
     ],
@@ -3552,6 +3559,7 @@ async test "chainlink multi-leaf wave creates subissues and uses them for commen
         reuse_git_branch: None,
         spawn_depth: 0,
         automerge: None,
+        review_mode: None,
         chainlink_issue_id: Some("5"),
       },
       {
@@ -3568,6 +3576,7 @@ async test "chainlink multi-leaf wave creates subissues and uses them for commen
         reuse_git_branch: None,
         spawn_depth: 0,
         automerge: None,
+        review_mode: None,
         chainlink_issue_id: Some("5"),
       },
     ],
@@ -3640,6 +3649,7 @@ async test "chainlink multi-leaf wave falls back to parent issue when subissue c
         reuse_git_branch: None,
         spawn_depth: 0,
         automerge: None,
+        review_mode: None,
         chainlink_issue_id: Some("5"),
       },
       {
@@ -3656,6 +3666,7 @@ async test "chainlink multi-leaf wave falls back to parent issue when subissue c
         reuse_git_branch: None,
         spawn_depth: 0,
         automerge: None,
+        review_mode: None,
         chainlink_issue_id: Some("5"),
       },
     ],
@@ -4741,6 +4752,7 @@ test "fork_wave_spawn_plan - enrichment_issue Some → task_contracts enriched" 
     parent_session_id: None,
     review_context: None,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: Some("123"),
   }
   let issue = @types.ChainlinkIssue::{
@@ -4789,6 +4801,7 @@ test "fork_wave_spawn_plan - enrichment_issue None → task_contracts unchanged"
     parent_session_id: None,
     review_context: None,
     automerge: None,
+    review_mode: None,
     chainlink_issue_id: Some("123"),
   }
   let plan = fork_wave_spawn_plan(

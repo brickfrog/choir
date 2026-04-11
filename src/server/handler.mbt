@@ -478,8 +478,10 @@ pub async fn ServerState::handle_with_runner_and_capture(
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> @types.Response {
   let start_ms = @env.now()
-  let merged_pr_context : (String, String?)? = if req.name == "merge_pr" {
-    match request_int_arg(req, "pr_number") {
+  let effective_req = self.request_with_review_mode_default(req)
+  let merged_pr_context : (String, String?)? = if effective_req.name ==
+    "merge_pr" {
+    match request_int_arg(effective_req, "pr_number") {
       Some(pr_number) =>
         match self.poller.get(pr_number) {
           Some(tracked) =>
@@ -508,7 +510,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
   } else {
     @tools.handle_request(
       self.tool_registry,
-      req,
+      effective_req,
       project_dir=self.config.project_dir,
       session=self.config.terminal_session,
       runner~,
@@ -529,7 +531,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
   }
 
   let effects = plan_post_tool_actions(
-    req,
+    effective_req,
     resp,
     merged_agent_id=match merged_pr_context {
       Some((agent_id, _)) => Some(agent_id)
@@ -867,6 +869,36 @@ fn render_parent_next_action(
 }
 
 ///|
+fn ServerState::request_with_review_mode_default(
+  self : ServerState,
+  req : @types.Request,
+) -> @types.Request {
+  if req.name != "merge_pr" || req.args.contains("review_mode") {
+    return req
+  }
+  let review_mode = match request_int_arg(req, "pr_number") {
+    Some(pr_number) =>
+      match self.poller.get(pr_number) {
+        Some(tracked) =>
+          review_mode_for_agent(
+            self.config,
+            local_config_for_agent(
+              self.config.project_dir,
+              self.registry,
+              tracked.agent_id,
+            ),
+          )
+        None => self.config.review_mode
+      }
+    None => self.config.review_mode
+  }
+  let values : Map[String, Json] = {}
+  req.args.each_json(fn(k, v) { values.set(k, v) })
+  values.set("review_mode", review_mode.to_wire_string().to_json())
+  { ..req, args: @types.RequestArgs::from_values(values) }
+}
+
+///|
 /// When review-wait already timed out with no review in snapshot, CI-only parent lines must not read like ordinary progress.
 fn parent_poll_ci_escalation_prefix(tracked : @poller.TrackedPR) -> String {
   if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(tracked) {
@@ -943,6 +975,21 @@ fn automerge_enabled_for_agent(
 }
 
 ///|
+fn review_mode_for_agent(
+  config : @types.Config,
+  local_cfg : @types.LocalConfig?,
+) -> @types.ReviewMode {
+  match local_cfg {
+    Some(cfg) =>
+      match cfg.review_mode {
+        Some(value) => value
+        None => config.review_mode
+      }
+    None => config.review_mode
+  }
+}
+
+///|
 fn automerge_candidate_event(event : @poller.PollEvent) -> Bool {
   match event {
     @poller.PollEvent::PRReady(_)
@@ -956,15 +1003,36 @@ fn automerge_candidate_event(event : @poller.PollEvent) -> Bool {
 }
 
 ///|
+fn automerge_candidate_event_for_review_mode(
+  event : @poller.PollEvent,
+  review_mode : @types.ReviewMode,
+) -> Bool {
+  match event {
+    @poller.PollEvent::FixesPushed(_) =>
+      review_mode == @types.ReviewMode::SinglePass
+    _ => automerge_candidate_event(event)
+  }
+}
+
+///|
 fn should_fetch_unresolved_threads_for_pending_event(
   event : @poller.PollEvent,
   automerge_enabled : Bool,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> Bool {
   match event {
     @poller.PollEvent::CIFailureCleared(_)
     | @poller.PollEvent::CILatestHeadRollupSucceeded(_)
     | @poller.PollEvent::ReviewThreadsResolved(_) => true
-    _ => automerge_enabled && automerge_candidate_event(event)
+    @poller.PollEvent::FixesPushed(_) =>
+      review_mode == @types.ReviewMode::SinglePass ||
+      (
+        automerge_enabled &&
+        automerge_candidate_event_for_review_mode(event, review_mode)
+      )
+    _ =>
+      automerge_enabled &&
+      automerge_candidate_event_for_review_mode(event, review_mode)
   }
 }
 
@@ -995,6 +1063,7 @@ fn automerge_parent_caller_id_for_tracked_pr(
 fn automerge_merge_pr_request(
   tracked : @poller.TrackedPR,
   caller_id : String,
+  review_mode : @types.ReviewMode,
 ) -> @types.Request {
   let parent_branch = if tracked.parent_branch == "" {
     "main"
@@ -1006,6 +1075,7 @@ fn automerge_merge_pr_request(
     "caller_id": caller_id.to_json(),
     "parent_branch": parent_branch.to_json(),
     "automerge": true.to_json(),
+    "review_mode": review_mode.to_wire_string().to_json(),
   }
   {
     req_method: "tools/call",
@@ -1023,8 +1093,9 @@ async fn maybe_trigger_automerge_for_pending_event(
   unresolved_threads : Int?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> Bool {
-  if !automerge_candidate_event(event) {
+  if !automerge_candidate_event_for_review_mode(event, review_mode) {
     return false
   }
   let local_cfg = local_config_for_agent(
@@ -1044,6 +1115,7 @@ async fn maybe_trigger_automerge_for_pending_event(
     tracked,
     unresolved_threads,
     task_contract~,
+    review_mode~,
   )
   guard decision is @policy.MergeDecision::MergeNow(_) else { return false }
   let caller_id = match
@@ -1060,7 +1132,7 @@ async fn maybe_trigger_automerge_for_pending_event(
     tracked.agent_id,
   )
   let resp = state.handle_with_runner_and_capture(
-    automerge_merge_pr_request(tracked, caller_id),
+    automerge_merge_pr_request(tracked, caller_id, review_mode),
     runner~,
     capture~,
   )
@@ -1234,9 +1306,13 @@ fn parent_poll_tl_decision_suffix(
   event : @poller.PollEvent,
   unresolved_threads_for_recheck : Int?,
   merge_mode : @poller.MergeOperatorMode,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> String {
   let category = @poller.plan_tl_poll_event_parent(
-    event, tracked, unresolved_threads_for_recheck,
+    event,
+    tracked,
+    unresolved_threads_for_recheck,
+    review_mode~,
   )
   let sentence = match category {
     @poller.TlTrackedPrWorkflowCategory::MergeGateOpenPendingPolicyConfirmation =>
@@ -1254,12 +1330,14 @@ fn parent_merge_policy_line(
   tracked : @poller.TrackedPR,
   unresolved_threads_for_recheck : Int?,
   task_contract? : @types.TaskContract? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> String {
   "\n" +
   @poller.merge_policy_summary_line(
     tracked,
     unresolved_threads_for_recheck,
     task_contract~,
+    review_mode~,
   )
 }
 
@@ -1271,6 +1349,7 @@ fn parent_poll_event_message(
   unresolved_threads_for_recheck : Int?,
   task_contract? : @types.TaskContract? = None,
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> (String, @types.Status)? {
   let agent_id = tracked.agent_id
   let branch = tracked.branch
@@ -1304,11 +1383,27 @@ fn parent_poll_event_message(
         "\n" +
         render_parent_next_action(n, parent_branch, merge_mode) +
         parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck, merge_mode,
+          tracked,
+          event,
+          unresolved_threads_for_recheck,
+          merge_mode,
+          review_mode~,
         )
       Some((message, @types.Status::Success))
     }
     FixesPushed(n) => {
+      let premerge_line = match review_mode {
+        @types.ReviewMode::SinglePass =>
+          "Pre-merge: resolving threads and checking gates; merge only after threads are resolved, CI is green, and merge_pr succeeds.\n"
+        @types.ReviewMode::Iterative =>
+          "Pre-merge: re-check the PR; merge only after review is clear and merge_pr succeeds.\n"
+      }
+      let next_action = match review_mode {
+        @types.ReviewMode::SinglePass =>
+          "Next action: resolve review threads and check gates."
+        @types.ReviewMode::Iterative =>
+          "Next action: re-check the PR and merge when ready."
+      }
       let message = "[FIXES PUSHED] " +
         agent_id +
         " PR #" +
@@ -1321,10 +1416,14 @@ fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "Pre-merge: re-check the PR; merge only after review is clear and merge_pr succeeds.\n" +
-        "Next action: re-check the PR and merge when ready." +
+        premerge_line +
+        next_action +
         parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck, merge_mode,
+          tracked,
+          event,
+          unresolved_threads_for_recheck,
+          merge_mode,
+          review_mode~,
         )
       Some((message, @types.Status::Info))
     }
@@ -1517,11 +1616,16 @@ fn parent_poll_event_message(
           tracked,
           unresolved_threads_for_recheck,
           task_contract~,
+          review_mode~,
         ) +
         "\n" +
         render_parent_next_action(n, parent_branch, merge_mode) +
         parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck, merge_mode,
+          tracked,
+          event,
+          unresolved_threads_for_recheck,
+          merge_mode,
+          review_mode~,
         )
       Some((message, @poller.merge_ready_status(merge_mode)))
     }
@@ -1910,6 +2014,16 @@ pub fn ServerState::plan_poll_event_deliveries(
   } noraise {
     agent => Some(agent)
   }
+  let local_cfg = match tracked {
+    Some(pr) =>
+      local_config_for_agent(
+        self.config.project_dir,
+        self.registry,
+        pr.agent_id,
+      )
+    None => None
+  }
+  let review_mode = review_mode_for_agent(self.config, local_cfg)
   match (tracked, event) {
     (Some(_), ReviewReceived(n, body)) =>
       @tools.apply_dev_event(
@@ -1932,6 +2046,7 @@ pub fn ServerState::plan_poll_event_deliveries(
         leaf_agent_id,
         @phase.DevEvent::FixesPushedEv(pr_number=n, sha=pr.last_sha),
         registry=Some(self.registry),
+        review_mode~,
       )
     _ => ()
   }
@@ -1953,15 +2068,9 @@ pub fn ServerState::plan_poll_event_deliveries(
             event,
             unresolved_threads_for_recheck,
             merge_mode=@poller.merge_operator_mode_from_automerge(
-              automerge_enabled_for_agent(
-                self.config,
-                local_config_for_agent(
-                  self.config.project_dir,
-                  self.registry,
-                  pr.agent_id,
-                ),
-              ),
+              automerge_enabled_for_agent(self.config, local_cfg),
             ),
+            review_mode~,
           ) {
           Some((message, status)) =>
             try {
@@ -2027,6 +2136,7 @@ pub fn ServerState::plan_poll_event_deliveries(
 fn pr_comment_body(
   event : @poller.PollEvent,
   agent_id : String,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> (Int, String)? {
   match event {
     ReviewReceived(n, _) =>
@@ -2080,7 +2190,12 @@ fn pr_comment_body(
           n,
           "**Choir:** fixes pushed by `" +
           agent_id +
-          "` — awaiting re-review (not merged yet).",
+          (match review_mode {
+            @types.ReviewMode::SinglePass =>
+              "` — resolving threads and checking gates (not merged yet)."
+            @types.ReviewMode::Iterative =>
+              "` — awaiting re-review (not merged yet)."
+          }),
         ),
       )
     ReviewTimeout(_) => None
@@ -2221,8 +2336,22 @@ async fn deliver_pending_poll_events(
         )
       None => false
     }
+    let review_mode = match tracked_before_delivery {
+      Some(pr) =>
+        review_mode_for_agent(
+          state.config,
+          local_config_for_agent(
+            state.config.project_dir,
+            state.registry,
+            pr.agent_id,
+          ),
+        )
+      None => state.config.review_mode
+    }
     let unresolved_threads : Int? = if should_fetch_unresolved_threads_for_pending_event(
-        event, automerge_enabled,
+        event,
+        automerge_enabled,
+        review_mode~,
       ) {
       let (count, _) = @tools.fetch_unresolved_review_threads(
         poll_event_pr_number(event),
@@ -2269,6 +2398,7 @@ async fn deliver_pending_poll_events(
               unresolved_threads,
               runner,
               capture=@exec.capture_command_merged,
+              review_mode~,
             ) {
             continue
           }
@@ -2287,10 +2417,14 @@ async fn deliver_pending_poll_events(
             merge_mode=@poller.merge_operator_mode_from_automerge(
               automerge_enabled,
             ),
+            review_mode~,
           ) {
           Some((message, status)) => {
             let category = @poller.plan_tl_poll_event_parent(
-              event, pr, unresolved_threads,
+              event,
+              pr,
+              unresolved_threads,
+              review_mode~,
             )
             pending_parent_rows.push({
               tracked: pr,
@@ -2308,7 +2442,7 @@ async fn deliver_pending_poll_events(
       }
       None => ()
     }
-    match pr_comment_body(event, agent_id) {
+    match pr_comment_body(event, agent_id, review_mode~) {
       Some((pr_number, body)) =>
         ignore(
           runner([
@@ -3579,6 +3713,28 @@ test "automerge_enabled_for_agent respects local override" {
 }
 
 ///|
+test "review_mode_for_agent respects local override" {
+  let global_iterative = {
+    ..@types.Config::default(),
+    review_mode: @types.ReviewMode::Iterative,
+  }
+  assert_eq(
+    review_mode_for_agent(global_iterative, None),
+    @types.ReviewMode::Iterative,
+  )
+  assert_eq(
+    review_mode_for_agent(
+      global_iterative,
+      Some({
+        ..@types.LocalConfig::default(),
+        review_mode: Some(@types.ReviewMode::SinglePass),
+      }),
+    ),
+    @types.ReviewMode::SinglePass,
+  )
+}
+
+///|
 async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
   let project_dir = "/tmp/choir-automerge-handler-" +
     @sys.get_pid().to_string() +
@@ -4112,6 +4268,59 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("Waiting on review or CI"))
     }
     None => fail("expected FixesPushed message")
+  }
+}
+
+///|
+test "parent_poll_event_message FixesPushed single_pass avoids re-review wording" {
+  let tracked : @poller.TrackedPR = {
+    pr_number: 9,
+    agent_id: "main.dev-c",
+    branch: "work/c",
+    parent_branch: "main",
+    pr_url: "",
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::ChangesRequested,
+    last_review_bodies: "",
+    last_sha: "abc",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+  }
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::FixesPushed(9),
+      Some(0),
+      review_mode=@types.ReviewMode::SinglePass,
+    ) {
+    Some((message, status)) => {
+      assert_eq(status, @types.Status::Info)
+      assert_true(message.contains("resolving threads and checking gates"))
+      assert_true(message.contains("MERGE NOW"))
+      assert_false(message.contains("awaiting re-review"))
+    }
+    None => fail("expected FixesPushed message")
+  }
+  match
+    pr_comment_body(
+      @poller.PollEvent::FixesPushed(9),
+      "main.dev-c",
+      review_mode=@types.ReviewMode::SinglePass,
+    ) {
+    Some((_, body)) => {
+      assert_true(body.contains("resolving threads and checking gates"))
+      assert_false(body.contains("awaiting re-review"))
+    }
+    None => fail("expected FixesPushed comment")
   }
 }
 

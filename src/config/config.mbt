@@ -23,6 +23,18 @@ pub fn agent_type_to_string(agent_type : @types.AgentType) -> String {
 }
 
 ///|
+pub fn parse_review_mode(
+  s : String,
+) -> Result[@types.ReviewMode, @types.ChoirError] {
+  @types.ReviewMode::try_parse_wire(s)
+}
+
+///|
+pub fn review_mode_to_string(mode : @types.ReviewMode) -> String {
+  mode.to_wire_string()
+}
+
+///|
 fn prefer_optional_string(value : String?, fallback : String?) -> String? {
   match value {
     Some(v) => Some(v)
@@ -182,6 +194,14 @@ pub fn parse_config(
           return Err(@types.ChoirError::config_error("automerge: " + msg))
       }
   }
+  let review_mode = match doc.get("review_mode") {
+    None => default_cfg.review_mode
+    Some(raw) =>
+      match parse_review_mode(raw) {
+        Ok(mode) => mode
+        Err(e) => return Err(e)
+      }
+  }
 
   Ok({
     default_role,
@@ -198,6 +218,7 @@ pub fn parse_config(
     terminal_session,
     pr_review,
     automerge,
+    review_mode,
   })
 }
 
@@ -303,6 +324,14 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let review_mode = match doc.get("review_mode") {
+    Some(raw) =>
+      match parse_review_mode(raw) {
+        Ok(mode) => Some(mode)
+        Err(e) => return Err(e)
+      }
+    None => None
+  }
   let chainlink_issue_id = doc.get_optional_nonempty("chainlink_issue_id")
   Ok({
     role,
@@ -316,6 +345,7 @@ pub fn parse_local_config(
     spawn_depth,
     task_contract,
     automerge,
+    review_mode,
     chainlink_issue_id,
   })
 }

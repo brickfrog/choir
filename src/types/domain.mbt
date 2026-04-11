@@ -95,6 +95,42 @@ pub(all) enum LifecycleTrigger {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum ReviewMode {
+  SinglePass
+  Iterative
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub fn ReviewMode::to_wire_string(self : ReviewMode) -> String {
+  match self {
+    SinglePass => "single_pass"
+    Iterative => "iterative"
+  }
+}
+
+///|
+pub impl Show for ReviewMode with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+pub fn ReviewMode::try_parse_wire(
+  raw : String,
+) -> Result[ReviewMode, ChoirError] {
+  let normalized = raw.trim().to_lower().to_string()
+  match normalized {
+    "single_pass" => Ok(SinglePass)
+    "iterative" => Ok(Iterative)
+    _ =>
+      Err(
+        ChoirError::config_error(
+          "review_mode must be \"single_pass\" or \"iterative\"",
+        ),
+      )
+  }
+}
+
+///|
 pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
   match self {
     ChildSpawned => "ChildSpawned"
