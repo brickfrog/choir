@@ -10,10 +10,14 @@ pub fn KvStore::new(project_dir : String) -> KvStore {
 
 ///|
 /// Same rules as historical `kv_set` / `kv_get` parsing in tools: avoids empty
-/// keys, absolute-style paths, `..`, and characters outside the safe set.
+/// keys, `.` / `..` segments, absolute-style paths, embedded `..`, and characters
+/// outside the safe set.
 pub fn validate_kv_storage_key(s : String) -> Result[Unit, @types.ChoirError] {
   if s == "" {
     return Err(@types.ChoirError::validation_error("key cannot be empty"))
+  }
+  if s == "." || s == ".." {
+    return Err(@types.ChoirError::validation_error("key cannot be '.' or '..'"))
   }
   if s[0] == '/' {
     return Err(@types.ChoirError::validation_error("key cannot start with '/'"))

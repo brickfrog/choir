@@ -2159,6 +2159,7 @@ async test "interpret_merge_pr_preflight force bypass skips capture" {
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
+  ignore(@sys.system("rm -rf " + project_dir))
 }
 
 ///|
@@ -2194,6 +2195,7 @@ async test "interpret_merge_pr_preflight ok when no poller block and no threads"
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
+  ignore(@sys.system("rm -rf " + project_dir))
 }
 
 ///|
@@ -2234,6 +2236,7 @@ async test "interpret_merge_pr_preflight err when review threads unresolved" {
     }
     Ok(_) => fail("expected Err")
   }
+  ignore(@sys.system("rm -rf " + project_dir))
 }
 
 ///|
@@ -2267,6 +2270,7 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     Err(e) => assert_true(e.message().contains("ChangesRequested"))
     Ok(_) => fail("expected Err from poller gate")
   }
+  ignore(@sys.system("rm -rf " + project_dir))
 }
 
 ///|
@@ -2662,6 +2666,7 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     @types.Response::Err(msg) => assert_true(msg.contains("ChangesRequested"))
     _ => fail("expected preflight Err")
   }
+  ignore(@sys.system("rm -rf " + project_dir))
 }
 
 ///|
@@ -2694,6 +2699,7 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
       )
     _ => fail("expected merge host Err")
   }
+  ignore(@sys.system("rm -rf " + project_dir))
 }
 
 ///|
@@ -2724,6 +2730,7 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     }
     _ => fail("expected ok merged")
   }
+  ignore(@sys.system("rm -rf " + project_dir))
 }
 
 ///|
