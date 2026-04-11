@@ -165,7 +165,7 @@ pub(all) struct MergePrArgs {
   parent_branch : String
   caller_id : String
   force : Bool
-  review_mode : @types.ReviewMode
+  review_mode : @types.ReviewMode?
 } derive(Debug, Eq)
 
 ///|

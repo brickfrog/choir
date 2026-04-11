@@ -216,7 +216,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "review_mode",
-          desc: "Optional per-wave override for review behavior after fixes are pushed: single_pass (default) or iterative",
+          desc: "Optional per-wave override for review behavior after fixes are pushed: single_pass or iterative; omitted inherits the server config default",
         },
         {
           name: "issue_id",

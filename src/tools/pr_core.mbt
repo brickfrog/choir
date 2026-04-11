@@ -1990,7 +1990,9 @@ pub async fn interpret_merge_pr(
       project_dir,
       capture,
       registry,
-      review_mode=merge_args.review_mode,
+      review_mode=merge_args.review_mode.unwrap_or(
+        @types.ReviewMode::SinglePass,
+      ),
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) =>
