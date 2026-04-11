@@ -37,10 +37,18 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
     cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
     return (0, "origin/main\n")
   }
+  if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
+    return (0, "https://github.com/brickfrog/choir.git\n")
+  }
   if cmd.program == "zellij" {
     return (1, "")
   }
   if cmd.program == "gh" {
+    if cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
     if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
     }
@@ -410,12 +418,6 @@ async test "dispatch returns correct stub for each tool name" {
     "-" +
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
-  ignore(
-    @sys.write_file_sync(
-      project_dir + "/.choir/kv/adversary-approved-1",
-      "true",
-    ),
-  )
   let cases = [
     ("fork_wave", "spawned", { "count": "1" }),
     ("fork_session", "ok", { "name": "nested-team" }),
@@ -471,41 +473,6 @@ async test "dispatch returns correct stub for each tool name" {
 }
 
 ///|
-async test "dispatch_call merge_pr adversary gate without kv file" {
-  let project_dir = "/tmp/choir-dispatch-merge-gate-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
-  let call = ToolCall::{
-    role: @types.Role::TL,
-    name: "merge_pr",
-    args: {
-      "pr_number": "7",
-      "parent_branch": "main",
-      "caller_id": "main.tl",
-      "force": "false",
-    },
-  }
-  let res = @tools.dispatch_call(
-    call,
-    project_dir~,
-    runner=mock_registry_runner,
-    git_capture=mock_clean_git,
-    capture=mock_registry_capture,
-    ensure_branch_ready=Some(mock_registry_branch_ready),
-    ensure_pr=Some(mock_registry_ensure_pr),
-    mutex_registry=Some(@registry.MutexRegistry::new()),
-    poller_state=Some(@poller.PollerState::new()),
-  )
-  match res {
-    Err(msg) => assert_true(msg.contains("adversary review required"))
-    Ok(_) => fail("expected adversary gate to block merge_pr")
-  }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-}
-
-///|
 async test "dispatch_call reply then kv_get round trip reply-- key" {
   let project_dir = "/tmp/choir-reply-kv-rt-" +
     @sys.get_pid().to_string() +
@@ -557,285 +524,6 @@ async test "dispatch_call reply then kv_get round trip reply-- key" {
     ) {
     Ok(map) => assert_eq(map.get("value"), Some(payload))
     Err(m) => fail("kv_get: " + m)
-  }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-}
-
-///|
-async test "dispatch_call kv_set adversary-approved rejected for Dev without TL caller" {
-  let project_dir = "/tmp/choir-kv-tlonly-dev-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
-  let reg = @registry.AgentRegistry::new()
-  let leaf : @types.Agent = {
-    agent_id: @types.AgentId("main.leaf"),
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Gemini,
-    parent: Some("main.tl"),
-    workspace: project_dir,
-    branch: "main.leaf",
-    terminal_target: None,
-    host: @types.Host::Local,
-    state: @types.AgentState::Active,
-    spawn_depth: 1,
-  }
-  ignore(try? reg.insert(leaf))
-  let call = ToolCall::{
-    role: @types.Role::Dev,
-    name: "kv_set",
-    args: {
-      "key": "adversary-approved-9",
-      "value": "true",
-      "caller_id": "main.leaf",
-    },
-  }
-  let res = @tools.dispatch_call(
-    call,
-    project_dir~,
-    registry=Some(reg),
-    runner=mock_registry_runner,
-    git_capture=mock_clean_git,
-    capture=mock_registry_capture,
-    ensure_branch_ready=Some(mock_registry_branch_ready),
-    ensure_pr=Some(mock_registry_ensure_pr),
-    mutex_registry=Some(@registry.MutexRegistry::new()),
-    poller_state=Some(@poller.PollerState::new()),
-  )
-  match res {
-    Err(msg) => assert_true(msg.contains("TL-write-only"))
-    Ok(_) => fail("expected Dev blocked from adversary-approved kv_set")
-  }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-}
-
-///|
-async test "dispatch_call kv_set adversary-approved rejected for Worker caller" {
-  let project_dir = "/tmp/choir-kv-tlonly-worker-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
-  let reg = @registry.AgentRegistry::new()
-  let w : @types.Agent = {
-    agent_id: @types.AgentId("main.w1"),
-    role: @types.Role::Worker,
-    agent_type: @types.AgentType::Gemini,
-    parent: Some("main.tl"),
-    workspace: project_dir,
-    branch: "main.w1",
-    terminal_target: None,
-    host: @types.Host::Local,
-    state: @types.AgentState::Active,
-    spawn_depth: 1,
-  }
-  ignore(try? reg.insert(w))
-  let call = ToolCall::{
-    role: @types.Role::Worker,
-    name: "kv_set",
-    args: {
-      "key": "adversary-approved-19",
-      "value": "true",
-      "caller_id": "main.w1",
-    },
-  }
-  let res = @tools.dispatch_call(
-    call,
-    project_dir~,
-    registry=Some(reg),
-    runner=mock_registry_runner,
-    git_capture=mock_clean_git,
-    capture=mock_registry_capture,
-    ensure_branch_ready=Some(mock_registry_branch_ready),
-    ensure_pr=Some(mock_registry_ensure_pr),
-    mutex_registry=Some(@registry.MutexRegistry::new()),
-    poller_state=Some(@poller.PollerState::new()),
-  )
-  match res {
-    Err(msg) => assert_true(msg.contains("TL-write-only"))
-    Ok(_) => fail("expected Worker blocked from adversary-approved kv_set")
-  }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-}
-
-///|
-async test "dispatch_call kv_delete adversary-approved rejected for Dev caller" {
-  let project_dir = "/tmp/choir-kv-tlonly-del-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
-  let key_path = project_dir + "/.choir/kv/adversary-approved-88"
-  ignore(@sys.write_file_sync(key_path, "true"))
-  let reg = @registry.AgentRegistry::new()
-  let leaf : @types.Agent = {
-    agent_id: @types.AgentId("main.leaf"),
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Gemini,
-    parent: Some("main.tl"),
-    workspace: project_dir,
-    branch: "main.leaf",
-    terminal_target: None,
-    host: @types.Host::Local,
-    state: @types.AgentState::Active,
-    spawn_depth: 1,
-  }
-  ignore(try? reg.insert(leaf))
-  let call = ToolCall::{
-    role: @types.Role::Dev,
-    name: "kv_delete",
-    args: { "key": "adversary-approved-88", "caller_id": "main.leaf" },
-  }
-  let res = @tools.dispatch_call(
-    call,
-    project_dir~,
-    registry=Some(reg),
-    runner=mock_registry_runner,
-    git_capture=mock_clean_git,
-    capture=mock_registry_capture,
-    ensure_branch_ready=Some(mock_registry_branch_ready),
-    ensure_pr=Some(mock_registry_ensure_pr),
-    mutex_registry=Some(@registry.MutexRegistry::new()),
-    poller_state=Some(@poller.PollerState::new()),
-  )
-  match res {
-    Err(msg) => assert_true(msg.contains("TL-write-only"))
-    Ok(_) => fail("expected Dev blocked from adversary-approved kv_delete")
-  }
-  assert_eq(@sys.read_file(key_path).trim(), "true")
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-}
-
-///|
-async test "dispatch_call kv_set adversary-approved allowed for TL caller" {
-  let project_dir = "/tmp/choir-kv-tlonly-ok-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
-  let reg = @registry.AgentRegistry::new()
-  let tl : @types.Agent = {
-    agent_id: @types.AgentId("main.tl"),
-    role: @types.Role::TL,
-    agent_type: @types.AgentType::Gemini,
-    parent: None,
-    workspace: project_dir,
-    branch: "main",
-    terminal_target: None,
-    host: @types.Host::Local,
-    state: @types.AgentState::Active,
-    spawn_depth: 0,
-  }
-  ignore(try? reg.insert(tl))
-  let call = ToolCall::{
-    role: @types.Role::TL,
-    name: "kv_set",
-    args: {
-      "key": "adversary-approved-9",
-      "value": "true",
-      "caller_id": "main.tl",
-    },
-  }
-  let res = @tools.dispatch_call(
-    call,
-    project_dir~,
-    registry=Some(reg),
-    runner=mock_registry_runner,
-    git_capture=mock_clean_git,
-    capture=mock_registry_capture,
-    ensure_branch_ready=Some(mock_registry_branch_ready),
-    ensure_pr=Some(mock_registry_ensure_pr),
-    mutex_registry=Some(@registry.MutexRegistry::new()),
-    poller_state=Some(@poller.PollerState::new()),
-  )
-  match res {
-    Ok(_) => {
-      let path = project_dir + "/.choir/kv/adversary-approved-9"
-      assert_eq(@sys.read_file(path).trim(), "true")
-    }
-    Err(msg) => fail("expected TL kv_set ok: " + msg)
-  }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-}
-
-///|
-async test "dispatch_call kv_delete adversary-approved allowed for TL caller" {
-  let project_dir = "/tmp/choir-kv-tlonly-delok-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
-  let key_path = project_dir + "/.choir/kv/adversary-approved-31"
-  ignore(@sys.write_file_sync(key_path, "true"))
-  let reg = @registry.AgentRegistry::new()
-  let tl : @types.Agent = {
-    agent_id: @types.AgentId("main.tl"),
-    role: @types.Role::TL,
-    agent_type: @types.AgentType::Gemini,
-    parent: None,
-    workspace: project_dir,
-    branch: "main",
-    terminal_target: None,
-    host: @types.Host::Local,
-    state: @types.AgentState::Active,
-    spawn_depth: 0,
-  }
-  ignore(try? reg.insert(tl))
-  let call = ToolCall::{
-    role: @types.Role::TL,
-    name: "kv_delete",
-    args: { "key": "adversary-approved-31", "caller_id": "main.tl" },
-  }
-  let res = @tools.dispatch_call(
-    call,
-    project_dir~,
-    registry=Some(reg),
-    runner=mock_registry_runner,
-    git_capture=mock_clean_git,
-    capture=mock_registry_capture,
-    ensure_branch_ready=Some(mock_registry_branch_ready),
-    ensure_pr=Some(mock_registry_ensure_pr),
-    mutex_registry=Some(@registry.MutexRegistry::new()),
-    poller_state=Some(@poller.PollerState::new()),
-  )
-  match res {
-    Ok(_) => assert_eq(@sys.read_file(key_path), "")
-    Err(msg) => fail("expected TL kv_delete ok: " + msg)
-  }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-}
-
-///|
-async test "dispatch_call kv_set adversary-approved fails closed without registry" {
-  let project_dir = "/tmp/choir-kv-tlonly-noreg-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
-  let call = ToolCall::{
-    role: @types.Role::TL,
-    name: "kv_set",
-    args: {
-      "key": "adversary-approved-2",
-      "value": "true",
-      "caller_id": "main.tl",
-    },
-  }
-  let res = @tools.dispatch_call(
-    call,
-    project_dir~,
-    runner=mock_registry_runner,
-    git_capture=mock_clean_git,
-    capture=mock_registry_capture,
-    ensure_branch_ready=Some(mock_registry_branch_ready),
-    ensure_pr=Some(mock_registry_ensure_pr),
-    mutex_registry=Some(@registry.MutexRegistry::new()),
-    poller_state=Some(@poller.PollerState::new()),
-  )
-  match res {
-    Err(msg) => assert_true(msg.contains("TL-write-only"))
-    Ok(_) => fail("expected adversary kv_set blocked without registry")
   }
   ignore(@sys.system("rm -rf \"" + project_dir + "\""))
 }
