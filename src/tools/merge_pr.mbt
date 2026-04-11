@@ -218,7 +218,6 @@ pub fn merge_pr_review_gate_block_message(
       _ => ()
     }
   }
-  let mut approved = false
   for state in latest_states.values() {
     if state == "CHANGES_REQUESTED" {
       return Ok(
@@ -228,21 +227,9 @@ pub fn merge_pr_review_gate_block_message(
           " has a GitHub review requesting changes. Address it before merging.",
         ),
       )
-    } else if state == "APPROVED" {
-      approved = true
     }
   }
-  if approved {
-    Ok(None)
-  } else {
-    Ok(
-      Some(
-        "PR #" +
-        pr_number.to_string() +
-        " has no approving GitHub review. Get an APPROVED review before merging.",
-      ),
-    )
-  }
+  Ok(None)
 }
 
 ///|
@@ -275,11 +262,11 @@ async fn enforce_merge_pr_github_review_gate(
 }
 
 ///|
-/// `merge_pr` preflight: GitHub review approval is required first and is never
-/// bypassed by `force`. When `force` is false, poller snapshot, unresolved
-/// review-thread fetch, then `merge_pr_preflight_block_message`. When `force` is
-/// true, those checks are skipped after GitHub review approval (historical
-/// inline `force` behavior for poller/threads only).
+/// `merge_pr` preflight: GitHub changes-requested reviews are checked first and
+/// are never bypassed by `force`. When `force` is false, poller snapshot,
+/// unresolved review-thread fetch, then `merge_pr_preflight_block_message`.
+/// When `force` is true, those checks are skipped after the GitHub review gate
+/// (historical inline `force` behavior for poller/threads only).
 pub async fn interpret_merge_pr_preflight(
   force : Bool,
   pr_number : Int,
