@@ -82,7 +82,12 @@ pub fn KvStore::get(self : KvStore, key : String) -> String? {
 
 ///|
 /// Removes `.choir/kv/{key}` when the key passes [`validate_kv_storage_key`].
-/// Invalid keys are ignored (no file removed).
+///
+/// **Asymmetry with [`KvStore::get`]:** `get` panics on an invalid key (programmer
+/// error — the caller asked for a stored value). **`delete` silently ignores invalid
+/// keys** — delete is idempotent; if the key does not exist or is invalid, the
+/// post-condition (nothing stored under that key) is already satisfied, so there is
+/// nothing to do.
 pub fn KvStore::delete(self : KvStore, key : String) -> Unit {
   match validate_kv_storage_key(key) {
     Err(_) => ()
