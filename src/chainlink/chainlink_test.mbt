@@ -335,3 +335,162 @@ test "task_contract - scope acceptance_checks non_goals verify is empty" {
   assert_eq(contract.non_goals, [])
   assert_eq(contract.verify, [])
 }
+
+// ──────────────────────────────────────────────────────────────────
+// merge_chainlink_into_task_contract tests
+// ──────────────────────────────────────────────────────────────────
+
+///|
+test "merge_chainlink - empty goal → uses issue title; non-empty goal → kept" {
+  let issue = make_issue(title="Issue Title")
+  let c1 = @types.TaskContract::{ ..@types.TaskContract::empty(), goal: "" }
+  let r1 = merge_chainlink_into_task_contract(issue, c1)
+  assert_eq(r1.goal, "Issue Title")
+
+  let c2 = @types.TaskContract::{
+    ..@types.TaskContract::empty(),
+    goal: "Existing Goal",
+  }
+  let r2 = merge_chainlink_into_task_contract(issue, c2)
+  assert_eq(r2.goal, "Existing Goal")
+}
+
+///|
+test "merge_chainlink - no comments → review_context from description only" {
+  let issue = make_issue(description=Some("Issue Description"))
+  let contract = @types.TaskContract::empty()
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(result.review_context, Some("Issue Description"))
+}
+
+///|
+test "merge_chainlink - plan comments only → correct headers and ids" {
+  let issue = make_issue(comments=[
+    { id: 2, content: "Step 2", kind: "plan" },
+    { id: 1, content: "Step 1", kind: "plan" },
+  ])
+  let contract = @types.TaskContract::empty()
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(
+    result.review_context,
+    Some("[plan #1]\nStep 1\n\n[plan #2]\nStep 2"),
+  )
+}
+
+///|
+test "merge_chainlink - mixed plan+decision → sorted by id ascending" {
+  let issue = make_issue(comments=[
+    { id: 10, content: "Decision A", kind: "decision" },
+    { id: 5, content: "Plan B", kind: "plan" },
+  ])
+  let contract = @types.TaskContract::empty()
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(
+    result.review_context,
+    Some("[plan #5]\nPlan B\n\n[decision #10]\nDecision A"),
+  )
+}
+
+///|
+test "merge_chainlink - >5 non-empty comments → only last 5 (highest ids)" {
+  let issue = make_issue(comments=[
+    { id: 1, content: "C1", kind: "plan" },
+    { id: 2, content: "C2", kind: "plan" },
+    { id: 3, content: "C3", kind: "plan" },
+    { id: 4, content: "C4", kind: "plan" },
+    { id: 5, content: "C5", kind: "plan" },
+    { id: 6, content: "C6", kind: "plan" },
+  ])
+  let contract = @types.TaskContract::empty()
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(
+    result.review_context,
+    Some(
+      "[plan #2]\nC2\n\n[plan #3]\nC3\n\n[plan #4]\nC4\n\n[plan #5]\nC5\n\n[plan #6]\nC6",
+    ),
+  )
+}
+
+///|
+test "merge_chainlink - empty-content comments excluded before taking last 5" {
+  let issue = make_issue(comments=[
+    { id: 1, content: "C1", kind: "plan" },
+    { id: 2, content: "  ", kind: "plan" },
+    { id: 3, content: "C3", kind: "plan" },
+    { id: 4, content: "C4", kind: "plan" },
+    { id: 5, content: "C5", kind: "plan" },
+    { id: 6, content: "C6", kind: "plan" },
+    { id: 7, content: "C7", kind: "plan" },
+  ])
+  let contract = @types.TaskContract::empty()
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(
+    result.review_context,
+    Some(
+      "[plan #3]\nC3\n\n[plan #4]\nC4\n\n[plan #5]\nC5\n\n[plan #6]\nC6\n\n[plan #7]\nC7",
+    ),
+  )
+}
+
+///|
+test "merge_chainlink - description + comments → description prepended" {
+  let issue = make_issue(description=Some("Desc"), comments=[
+    { id: 1, content: "P1", kind: "plan" },
+  ])
+  let contract = @types.TaskContract::empty()
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(result.review_context, Some("Desc\n\n[plan #1]\nP1"))
+}
+
+///|
+test "merge_chainlink - contract has review_context + chainlink has content → separator + append" {
+  let issue = make_issue(description=Some("Desc"))
+  let contract = @types.TaskContract::{
+    ..@types.TaskContract::empty(),
+    review_context: Some("Original"),
+  }
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(
+    result.review_context,
+    Some("Original\n\n--- chainlink plan history ---\n\nDesc"),
+  )
+}
+
+///|
+test "merge_chainlink - contract has review_context + chainlink empty → unchanged" {
+  let issue = make_issue()
+  let contract = @types.TaskContract::{
+    ..@types.TaskContract::empty(),
+    review_context: Some("Original"),
+  }
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(result.review_context, Some("Original"))
+}
+
+///|
+test "merge_chainlink - constraints merged with dedup" {
+  let issue = make_issue(blocked_by=[1, 2])
+  let contract = @types.TaskContract::{
+    ..@types.TaskContract::empty(),
+    constraints: ["existing", "blocked by: #1"],
+  }
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(result.constraints, ["existing", "blocked by: #1", "blocked by: #2"])
+}
+
+///|
+test "merge_chainlink - scope/acceptance_checks/non_goals/verify unchanged" {
+  let issue = make_issue(title="Title", description=Some("Desc"), blocked_by=[1])
+  let contract = @types.TaskContract::{
+    ..@types.TaskContract::empty(),
+    scope: ["S"],
+    acceptance_checks: ["A"],
+    non_goals: ["N"],
+    verify: ["V"],
+  }
+  let result = merge_chainlink_into_task_contract(issue, contract)
+  assert_eq(result.scope, ["S"])
+  assert_eq(result.acceptance_checks, ["A"])
+  assert_eq(result.non_goals, ["N"])
+  assert_eq(result.verify, ["V"])
+}

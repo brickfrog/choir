@@ -1518,6 +1518,102 @@ test "fork_wave_spawn_plan builds specs and agent_ids for shared-task wave" {
 }
 
 ///|
+test "fork_wave_spawn_plan enriches task contracts when issue is provided" {
+  let issue = @chainlink.ChainlinkIssue::{
+    id: 123,
+    title: "Enriched Goal",
+    description: Some("Enriched Desc"),
+    priority: "medium",
+    status: "open",
+    parent_id: None,
+    labels: [],
+    blocked_by: [],
+    subissues: [],
+    comments: [],
+  }
+  let args = {
+    ..fork_wave_args_base(),
+    count: 1,
+    tasks: ["Task"],
+    task_contracts: [@types.TaskContract::empty()],
+  }
+  let plan = fork_wave_spawn_plan(
+    args,
+    0,
+    None,
+    "/proj",
+    "choir",
+    chainlink_enrichment_issue=Some(issue),
+  )
+  assert_eq(plan.spawned_specs[0].task_contract.unwrap().goal, "Enriched Goal")
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase enriches task contracts when chainlink_issue_id provided" {
+  let reg = @registry.AgentRegistry::new()
+  // Mock TL agent
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/proj",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  let issue = @chainlink.ChainlinkIssue::{
+    id: 123,
+    title: "Enriched Goal",
+    description: Some("Enriched Desc"),
+    priority: "medium",
+    status: "open",
+    parent_id: None,
+    labels: [],
+    blocked_by: [],
+    subissues: [],
+    comments: [],
+  }
+
+  let fetch_issue = async fn(id : String) -> @chainlink.ChainlinkIssue? {
+    if id == "123" {
+      Some(issue)
+    } else {
+      None
+    }
+  }
+
+  let args = {
+    ..fork_wave_args_base(),
+    chainlink_issue_id: Some("123"),
+    count: 1,
+    tasks: ["Task"],
+    task_contracts: [@types.TaskContract::empty()],
+  }
+
+  let (_, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    args,
+    "/proj",
+    "choir",
+    Some(reg),
+    mock_capture_origin_topic,
+    mock_git_capture_fork_wave_clean,
+    mock_runner_all_ok,
+    chainlink_fetch=Some(fetch_issue),
+  )
+
+  assert_eq(
+    spawn_plan.spawned_specs[0].task_contract.unwrap().goal,
+    "Enriched Goal",
+  )
+}
+
+///|
 test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
   let args : ForkWaveArgs = {
     count: 2,
