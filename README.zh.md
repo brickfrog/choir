@@ -5,9 +5,9 @@
 用 MoonBit 编写的本地多代理编排器。用昂贵的模型来思考（Claude 担任 TL），
 用更便宜或更专业的模型来实现（Gemini、Codex、Moon Pilot、Cursor Agent 作为叶子代理）。
 每个叶子在独立的 git worktree 中工作，完成后向 TL 分支提交 PR。内置 poller 自动请求
-Copilot review、将 review/CI 反馈路由到对应面板、在 PR 可合并时通知 TL。
+Copilot review、将 GitHub PR review/CI 反馈路由到对应面板、在 Copilot 批准 PR 后通知 TL。
 核心循环是 **scaffold → fork → converge**：TL 提交共享类型，派生一波并行叶子，
-逐一合并 PR，然后继续下一波或向上提交自己的 PR。
+逐一合并已批准的 PR，然后继续下一波或向上提交自己的 PR。
 
 ## Chainlink
 
@@ -36,8 +36,8 @@ choir init
       │  2. fork_wave ──▶ 叶子 A ──file_pr──▶ PR → TL 分支
       │              ──▶ 叶子 B ──file_pr──▶ PR → TL 分支
       │                     │
-      │        Poller ◀─ Copilot review ──▶ 叶子（修复）
-      │        Poller ──▶ TL（通过后合并）
+      │        Poller ◀─ GitHub PR review/CI/issue 评论 ──▶ 叶子（修复）
+      │        Poller ──▶ TL（Copilot 批准后合并）
       │  3. WaveComplete → 再次 fork_wave（第 2 波）或向上提交 PR
       │
       └── 可选：fork_wave(role=tl) ──▶ Sub-TL
