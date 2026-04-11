@@ -209,8 +209,11 @@ fn leaf_profile_text() -> String {
   "   - Do not invent extra flags or alternate CLI syntaxes.\n" +
   "   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.\n" +
   "4. Wait for review feedback — it arrives automatically via the poller.\n" +
-  "5. If review feedback arrives, address the comments, push fixes, and `notify_parent` again.\n" +
-  "6. Call `shutdown` only AFTER the review comes back clean or the parent tells you to stop.\n" +
+  "5. If review feedback arrives, address every comment and push fixes.\n" +
+  "   - Resolve each thread on GitHub after addressing it: use the GraphQL mutation `resolveReviewThread(input: {threadId: \"<id>\"})` for each thread ID.\n" +
+  "   - Confirm zero unresolved threads with `gh api graphql` before notifying parent.\n" +
+  "   - Only notify_parent once you have verified zero unresolved threads.\n" +
+  "6. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.\n" +
   "7. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
   "Execution discipline:\n" +
   "- Run requested verification once per code change.\n" +
