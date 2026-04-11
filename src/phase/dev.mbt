@@ -322,7 +322,7 @@ pub fn dev_disconnect_policy(phase : DevPhase) -> DevDisconnectPolicy {
   match phase {
     Spawned => Fail
     Working => Fail
-    ChangesRequested(_) => Fail
+    ChangesRequested(_) => Preserve
     PROpenUnreviewed(..) => Preserve
     PRUnderReview(..) => Preserve
     FixesPushedAwaitingReview(..) => Preserve

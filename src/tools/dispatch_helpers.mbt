@@ -626,7 +626,10 @@ pub async fn fetch_inline_comments(
 ///|
 /// Fetch unresolved review threads for a PR via GitHub GraphQL.
 /// Returns (count, formatted_text_with_thread_ids).
-/// Fails gracefully: returns (0, "") if gh is unavailable or the call fails.
+///
+/// On failure (gh unavailable, repo resolution fail, or command error):
+/// Returns (1, "[thread-fetch-failed: treating as unresolved]").
+///
 /// Owner/repo are resolved explicitly via gh repo view to avoid relying on
 /// {owner}/{repo} substitution inside the GraphQL query body.
 pub async fn fetch_unresolved_review_threads(
@@ -657,7 +660,7 @@ pub async fn fetch_unresolved_review_threads(
   }
   let (exit_code, output) = capture(cmd)
   if exit_code != 0 || output.trim().to_string() == "" {
-    return (0, "")
+    return (1, "[thread-fetch-failed: treating as unresolved]")
   }
   parse_unresolved_threads_response(output)
 }
