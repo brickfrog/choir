@@ -2515,6 +2515,51 @@ test "merge_pr_post_success_plan ignores branch when poller unavailable" {
 }
 
 ///|
+async test "interpret_merge_pr_post_success deletes adversary approved kv key" {
+  let project_dir = "/tmp/choir-merge-kv-purge-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let pr_number = 55
+  let key = "adversary-approved-" + pr_number.to_string()
+  let key_path = project_dir + "/.choir/kv/" + key
+  ignore(@sys.write_file_sync(key_path, "true"))
+  let kv = @kv.KvStore::new(project_dir)
+  assert_eq(kv.get(key), Some("true"))
+  let poller = @poller.PollerState::new()
+  match
+    interpret_merge_pr_post_success(
+      project_dir,
+      "main.tl",
+      pr_number,
+      Some(poller),
+      None,
+      kv_store=Some(kv),
+      read_chainlink_issue_id=mock_read_chainlink_issue_id_absent,
+      write_back_merge=async fn(
+        _issue_id : String,
+        _pr_number : Int,
+        _branch : String,
+      ) {
+        @async.sleep(0)
+        fail("write_back_merge should not run")
+      },
+      release_lock=async fn(_issue_id : String) {
+        @async.sleep(0)
+        fail("release_lock should not run")
+        false
+      },
+    ) {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok response")
+  }
+  assert_eq(@sys.read_file(key_path), "")
+  assert_eq(kv.get(key), None)
+  ignore(@sys.system("rm -rf " + project_dir))
+}
+
+///|
 test "merge_pr_mutex_name prefixes branch" {
   assert_eq(merge_pr_mutex_name("main"), "branch:main")
 }

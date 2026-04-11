@@ -1649,6 +1649,7 @@ pub async fn interpret_merge_pr_post_success(
   pr_number : Int,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
+  kv_store? : @kv.KvStore? = None,
   read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
   write_back_merge? : async (String, Int, String) -> Unit = @chainlink.write_back_merge,
   release_lock? : async (String) -> Bool = @chainlink.release_lock,
@@ -1711,6 +1712,10 @@ pub async fn interpret_merge_pr_post_success(
       }
     None => ()
   }
+  match kv_store {
+    Some(kv) => kv.delete("adversary-approved-" + pr_number.to_string())
+    None => ()
+  }
   plan.response
 }
 
@@ -1758,6 +1763,7 @@ pub async fn interpret_merge_pr(
             merge_args.pr_number,
             poller_state,
             registry,
+            kv_store~,
           )
       }
   }

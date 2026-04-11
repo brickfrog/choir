@@ -7,7 +7,7 @@ test "lifecycle_idle_watchdog_exempt logic" {
     ..dev_working,
     workflow: Dev(ReviewOwned(pr_number=1, state=ApprovedAwaitingMerge)),
   }
-  assert_false(lifecycle_idle_watchdog_exempt(dev_review))
+  assert_true(lifecycle_idle_watchdog_exempt(dev_review))
 
   let dev_done = { ..dev_working, workflow: Dev(Done(reason=Merged)) }
   assert_true(lifecycle_idle_watchdog_exempt(dev_done))
@@ -39,7 +39,8 @@ test "lifecycle_idle_watchdog_exempt logic" {
   assert_true(lifecycle_idle_watchdog_exempt(worker_done))
 
   let tl = lifecycle_for_role("tl", @types.Role::TL)
-  assert_true(lifecycle_idle_watchdog_exempt(tl))
+  // `Supervisor` is not exempt here; `check_idle_agents` skips TL/Root by role first.
+  assert_false(lifecycle_idle_watchdog_exempt(tl))
 }
 
 ///|
