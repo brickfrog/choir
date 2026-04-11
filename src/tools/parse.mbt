@@ -147,31 +147,7 @@ fn validate_branch(s : String) -> Result[Unit, @types.ChoirError] {
 
 ///|
 fn validate_kv_key(s : String) -> Result[Unit, @types.ChoirError] {
-  if s == "" {
-    return Err(@types.ChoirError::validation_error("key cannot be empty"))
-  }
-  if s.contains("..") {
-    return Err(@types.ChoirError::validation_error("key cannot contain '..'"))
-  }
-  if s[0] == '/' {
-    return Err(@types.ChoirError::validation_error("key cannot start with '/'"))
-  }
-  for c in s {
-    if !((c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      c == '-' ||
-      c == '_' ||
-      c == '/' ||
-      c == '.') {
-      return Err(
-        @types.ChoirError::validation_error(
-          "invalid character in key: " + c.to_string(),
-        ),
-      )
-    }
-  }
-  Ok(())
+  @kv.validate_kv_storage_key(s)
 }
 
 ///|

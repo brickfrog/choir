@@ -356,7 +356,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
   ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/kv/adversary-approved:88",
+      project_dir + "/.choir/kv/adversary-approved-88",
       "true",
     ),
   )

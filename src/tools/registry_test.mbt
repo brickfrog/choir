@@ -412,7 +412,7 @@ async test "dispatch returns correct stub for each tool name" {
   ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
   ignore(
     @sys.write_file_sync(
-      project_dir + "/.choir/kv/adversary-approved:1",
+      project_dir + "/.choir/kv/adversary-approved-1",
       "true",
     ),
   )
