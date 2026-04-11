@@ -19,10 +19,9 @@ Host adapters (Git, GitHub, Zellij, filesystem) are injected and testable.
 Choir's TL follows a built-in **[Verify-Spec-Develop-Deploy](https://gist.github.com/dollspace-gay/45c95ebfb5a3a3bae84d8bebd662cc25)** pipeline for every feature request:
 
 1. **Spec Crystallization** — TL helps articulate the behavioral contract (preconditions, edge cases, purity boundary). Spec is written to a Chainlink issue as a `plan` comment.
-2. **Adversarial Spec Review** — `spawn_worker(type="adversary")` invokes Sarcasmotron, a hyper-critical reviewer who finds every gap in the spec before a line of implementation is written.
-3. **TDD Red Gate** — Leaves write all tests first, commit, push, confirm every new test fails, then `notify_parent "[RED GATE]"` and wait. The TL spawns a research worker to verify the failures, then sends the green light.
-4. **Adversarial Code Review** — After Copilot review is clean, the TL spawns a second adversary on the PR branch (pre-merge). Nothing lands on main until the adversary is satisfied.
-5. **Convergence** — The adversary produces only wording nitpicks. TL reports convergence to the user and merges.
+2. **TDD Red Gate** — Leaves write all tests first, commit, push, confirm every new test fails, then `notify_parent "[RED GATE]"` and wait. The TL spawns a research worker to verify the failures, then sends the green light.
+3. **Code Review Gate** — GitHub PR review (Copilot) is the review gate. Leaves address all feedback until the PR is approved.
+4. **Convergence** — TL reports convergence to the user and merges after Copilot approval.
 
 ## Chainlink
 

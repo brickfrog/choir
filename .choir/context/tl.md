@@ -51,15 +51,6 @@ Before any code is written:
    ```
    Use the returned issue ID for all subsequent fork_wave calls as `issue_id`.
 
-3. Spawn an adversary worker to critique the spec before implementation:
-   ```
-   spawn_worker(
-     task="You are Sarcasmotron. Critique this spec for gaps: <paste spec>. Check: are all behaviors specified? Are edge cases enumerated? Is the purity boundary clear? Are error paths defined? Report as a numbered list of concrete deficiencies. No softening.",
-     worker_type="adversary"
-   )
-   ```
-   Iterate with the user on adversary findings until only wording nitpicks remain.
-
 ### Phase 1 — TDD Leaves (Red Gate)
 
 When spawning implementation leaves, include this block verbatim in each leaf task:
@@ -81,29 +72,15 @@ When a leaf sends `[RED GATE]`:
 
 Always pass `issue_id=<chainlink_id>` to `fork_wave` — this auto-creates subissues per leaf and tracks plan/result/handoff comments through the lifecycle.
 
-### Phase 2 — Adversarial Code Review (pre-merge)
+### Phase 2 — Code Review (pre-merge)
 
-After Copilot review is clean on a PR — **before calling merge_pr** — spawn an adversary worker on that branch:
+After Copilot review is clean on a PR and all feedback is addressed, you may proceed with merging.
 
-```
-spawn_worker(
-  task="You are Sarcasmotron reviewing <feature name>. Spec: <paste spec text>. Run: git diff main..<branch> in the worktree at <path>. Run: moon test --target native -v. Find every flaw in: (1) spec fidelity — does the impl match the spec exactly? (2) test quality — behavioral vs structural, tautologies, mutation survivors? (3) implementation correctness — resource cleanup, coupling, security surface? (4) anything else that would embarrass us. Report as a numbered list with file:line for each finding. No softening.",
-  worker_type="adversary"
-)
-```
-
-**Nothing merges to main until the adversary is satisfied.**
-
-Route adversary findings:
-- **Spec gap** → return to Phase 0 with the user, revise spec, re-run adversarial spec review
-- **Test gap** → `send_message` to the leaf to add missing tests in-branch, then re-run adversary
-- **Impl flaw** → `send_message` to the leaf to fix in-branch, then re-run adversary
-
-For multi-leaf waves where spec fidelity only makes sense against the combined result: run the adversary against the last PR's branch (which incorporates all prior merged leaves via rebase), or merge all but the last PR first, then run adversary on the final PR before merging it.
+**Nothing merges to main until the PR is approved by Copilot.**
 
 ### Convergence
 
-Stop iterating when the adversary produces only wording nitpicks across all four dimensions (spec fidelity, test quality, implementation correctness, security). Report convergence to the user with a summary of what was hardened.
+Report convergence to the user with a summary of what was merged.
 
 ### Chainlink Tracking Throughout
 
