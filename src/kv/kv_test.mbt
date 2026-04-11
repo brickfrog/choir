@@ -1,6 +1,55 @@
 ///|
+test "validate_kv_storage_key rejects empty" {
+  match validate_kv_storage_key("") {
+    Ok(_) => fail("expected Err")
+    Err(_) => ()
+  }
+}
+
+///|
+test "validate_kv_storage_key rejects bare_dotdot" {
+  match validate_kv_storage_key("..") {
+    Ok(_) => fail("expected Err")
+    Err(_) => ()
+  }
+}
+
+///|
+test "validate_kv_storage_key rejects slash_prefix" {
+  match validate_kv_storage_key("/etc/passwd") {
+    Ok(_) => fail("expected Err")
+    Err(_) => ()
+  }
+}
+
+///|
 test "validate_kv_storage_key rejects colon" {
   match validate_kv_storage_key("adversary-approved:1") {
+    Ok(_) => fail("expected Err")
+    Err(_) => ()
+  }
+}
+
+///|
+test "validate_kv_storage_key rejects star" {
+  match validate_kv_storage_key("a*b") {
+    Ok(_) => fail("expected Err")
+    Err(_) => ()
+  }
+}
+
+///|
+test "validate_kv_storage_key rejects_backslash" {
+  match validate_kv_storage_key("a\\b") {
+    Ok(_) => fail("expected Err")
+    Err(_) => ()
+  }
+}
+
+///|
+test "validate_kv_storage_key rejects_null_byte" {
+  let null_key = "prefix\u{0000}suffix"
+  match validate_kv_storage_key(null_key) {
     Ok(_) => fail("expected Err")
     Err(_) => ()
   }

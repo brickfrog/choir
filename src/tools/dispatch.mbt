@@ -399,7 +399,12 @@ pub async fn dispatch(
             _ => ()
           }
         } catch {
-          _ => ()
+          e =>
+            if @types.caught_error_is_agent_not_found(e) {
+              ()
+            } else {
+              raise e
+            }
         }
       }
       let parent_resolution = match registry {
@@ -862,6 +867,9 @@ pub async fn fire_hook_async(
 }
 
 ///|
+/// CLI / test entrypoint for tool dispatch. When `kv_store` is [`None`], a
+/// [`@kv.KvStore::new`] for `project_dir` is supplied — this does **not** skip
+/// the merge adversary gate; it reads the same on-disk `.choir/kv/` as the server.
 pub async fn dispatch_call(
   call : ToolCall,
   project_dir? : String = ".",

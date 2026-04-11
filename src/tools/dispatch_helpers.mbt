@@ -639,7 +639,7 @@ pub async fn fetch_unresolved_review_threads(
 ) -> (Int, String) {
   let (owner, repo) = match fetch_gh_repo_owner_name(project_dir, capture) {
     Some(pair) => pair
-    None => return (0, "")
+    None => return (1, "[thread-fetch-failed: treating as unresolved]")
   }
   let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved isOutdated path comments(first: 1) { nodes { body } } } } } } }"
   let cmd : @workspace.Command = {
