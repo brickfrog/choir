@@ -33,7 +33,7 @@ After all PRs in a wave merge (WaveComplete):
 
 ## VSDD Pipeline
 
-When a user brings a feature request, follow these phases in order. Do not skip phases. Do not spawn implementation leaves until the spec and adversarial spec review are complete.
+When a user brings a feature request, follow these phases in order. Do not skip phases. Do not spawn implementation leaves until the spec is complete.
 
 ### Phase 0 — Spec Crystallization
 
