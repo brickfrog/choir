@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - **Idiomatic Errors**: `ChoirError` converted to `suberror` for use with MoonBit's `raise` / `try` patterns.
 
 ### Changed
+- chainlink-to-taskcontract: map ChainlinkIssue into TaskContract (#3)
 - test spec issue (#2)
 - test spec issue (#1)
 - **Architecture**: Completed all 6 major migrations from the North Star plan; the core is now purely logic-driven with explicit effects.
