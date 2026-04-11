@@ -471,6 +471,41 @@ async test "dispatch returns correct stub for each tool name" {
 }
 
 ///|
+async test "dispatch_call merge_pr adversary gate without kv file" {
+  let project_dir = "/tmp/choir-dispatch-merge-gate-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: {
+      "pr_number": "7",
+      "parent_branch": "main",
+      "caller_id": "main.tl",
+      "force": "false",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    runner=mock_registry_runner,
+    git_capture=mock_clean_git,
+    capture=mock_registry_capture,
+    ensure_branch_ready=Some(mock_registry_branch_ready),
+    ensure_pr=Some(mock_registry_ensure_pr),
+    mutex_registry=Some(@registry.MutexRegistry::new()),
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  match res {
+    Err(msg) => assert_true(msg.contains("adversary review required"))
+    Ok(_) => fail("expected adversary gate to block merge_pr")
+  }
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+}
+
+///|
 async test "dispatch spawn_worker registers inline worker with stable agent id" {
   let project_dir = "/tmp/choir-spawn-worker-reg-" +
     @sys.get_pid().to_string() +

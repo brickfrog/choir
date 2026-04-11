@@ -34,7 +34,7 @@ test "validate_kv_storage_key accepts adversary_approved_style" {
 test "validate_kv_storage_key rejects_slash_in_key" {
   match validate_kv_storage_key("some/nested/key") {
     Ok(_) => fail("expected Err")
-    Err(_) => ()
+    Err(e) => assert_true(e.message().contains("flat"))
   }
 }
 

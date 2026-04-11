@@ -112,17 +112,17 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "kv_get",
-      description: "Read one value from shared KV storage",
+      description: "Read one value from shared KV storage (flat key: no '/' in key)",
       allowed_roles: all_roles,
     },
     {
       name: "kv_set",
-      description: "Write one value to shared KV storage",
+      description: "Write one value to shared KV storage (flat key: no '/' in key)",
       allowed_roles: all_roles,
     },
     {
       name: "kv_delete",
-      description: "Delete one value from shared KV storage",
+      description: "Delete one value from shared KV storage (flat key: no '/' in key)",
       allowed_roles: all_roles,
     },
     {

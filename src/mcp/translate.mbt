@@ -368,23 +368,36 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "kv_get",
-      description: "Read one value from shared KV storage",
-      props: [{ name: "key", desc: "Storage key to read" }],
+      description: "Read one value from shared KV storage (flat key, no '/')",
+      props: [
+        {
+          name: "key",
+          desc: "Flat storage key (no '/' — single segment under .choir/kv)",
+        },
+      ],
       required: ["key"],
     },
     {
       name: "kv_set",
-      description: "Write one value to shared KV storage",
+      description: "Write one value to shared KV storage (flat key, no '/')",
       props: [
-        { name: "key", desc: "Storage key to write" },
+        {
+          name: "key",
+          desc: "Flat storage key (no '/' — single segment under .choir/kv)",
+        },
         { name: "value", desc: "Value to store" },
       ],
       required: ["key", "value"],
     },
     {
       name: "kv_delete",
-      description: "Delete one value from shared KV storage",
-      props: [{ name: "key", desc: "Storage key to delete" }],
+      description: "Delete one value from shared KV storage (flat key, no '/')",
+      props: [
+        {
+          name: "key",
+          desc: "Flat storage key (no '/' — single segment under .choir/kv)",
+        },
+      ],
       required: ["key"],
     },
     {
