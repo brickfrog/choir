@@ -28,7 +28,7 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
     prompt.contains("notify_parent [--status <success|failure|info>] <message>"),
   )
   assert_true(prompt.contains("If `notify_parent` fails, stop"))
-  assert_true(prompt.contains("Do not invent extra flags"))
+  assert_true(prompt.contains("auto-notifies the parent"))
   assert_true(prompt.contains("git rev-list --left-right --count"))
   assert_true(prompt.contains("branch is not ahead of the parent branch"))
   assert_true(prompt.contains("Call `shutdown`"))

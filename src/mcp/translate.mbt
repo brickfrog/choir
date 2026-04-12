@@ -326,7 +326,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "notify_parent",
-      description: "Notify the parent agent with a status update",
+      description: "Notify the parent agent. Each call wakes the parent at full context cost. Use only for blockers, failures, or review-complete. file_pr auto-notifies — do not duplicate.",
       props: [
         { name: "caller_id", desc: "ID of the calling agent" },
         { name: "message", desc: "Message to send to parent" },

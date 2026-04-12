@@ -202,19 +202,18 @@ fn leaf_profile_text() -> String {
   "   - `file_pr` also starts review tracking automatically.\n" +
   "   - Before filing, verify repo state with `git status --short`, `git log --oneline -1`, and `git rev-list --left-right --count <parent_branch>...HEAD`.\n" +
   "   - If the branch is not ahead of the parent branch, stop and report failure instead of retrying `file_pr`.\n" +
-  "3. Use `notify_parent` for status updates and blockers.\n" +
-  "   - After filing the PR, notify the parent that the PR is open and include the PR URL.\n" +
+  "3. `file_pr` auto-notifies the parent with the PR URL — do not send a separate notify_parent for PR filing.\n" +
+  "4. Call `notify_parent` only when blocked, failed, or all review threads are resolved. Do not send progress updates.\n" +
   "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n" +
   "   - Shell form: `notify_parent [--status <success|failure|info>] <message>`.\n" +
-  "   - Do not invent extra flags or alternate CLI syntaxes.\n" +
   "   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.\n" +
-  "4. Wait for review feedback — it arrives automatically via the poller.\n" +
-  "5. If review feedback arrives, address every comment and push fixes.\n" +
+  "5. Wait for review feedback — it arrives automatically via the poller.\n" +
+  "6. If review feedback arrives, address every comment and push fixes.\n" +
   "   - Resolve each thread on GitHub after addressing it: use the GraphQL mutation `resolveReviewThread(input: {threadId: \"<id>\"})` for each thread ID.\n" +
   "   - Confirm zero unresolved threads with `gh api graphql` before notifying parent.\n" +
   "   - Only notify_parent once you have verified zero unresolved threads.\n" +
-  "6. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.\n" +
-  "7. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
+  "7. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.\n" +
+  "8. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
   "Execution discipline:\n" +
   "- Run requested verification once per code change.\n" +
   "- Do not rerun the same tests repeatedly without new code changes.\n" +
@@ -238,7 +237,7 @@ fn worker_profile_text(worker_type : String) -> String {
     role_line +
     "\nYou can read and edit files but do not own a branch — no commits, PRs, or pushes.\n\n" +
     "When you are done:\n\n" +
-    "1. Call `notify_parent` with status `success` and your findings.\n" +
+    "1. Call `notify_parent` with status `success` and a concise summary (under 500 words, no raw dumps).\n" +
     "2. If you fail, call `notify_parent` with status `failure` and explain why.\n" +
     "3. Call `shutdown`."
   completion

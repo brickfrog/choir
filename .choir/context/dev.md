@@ -16,15 +16,14 @@ You are a leaf agent working in your own worktree and branch.
 3. `moon fmt`
 4. `git add` only the files you changed.
 5. Commit with a semantic message.
-6. Use `file_pr`.
-7. `notify_parent` with `[PR READY]` and the PR URL.
-8. Wait for Copilot review feedback — it arrives automatically via the poller.
+6. Use `file_pr` — it auto-notifies the parent with the PR URL. Do not send a separate notify_parent.
+7. Wait for Copilot review feedback — it arrives automatically via the poller.
 9. If Copilot leaves review comments:
    - Address every thread. Push the fix commit.
    - Resolve each thread on GitHub: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } } }'`
    - Confirm zero unresolved threads: `gh api graphql -f query='{ repository(owner: "<owner>", name: "<repo>") { pullRequest(number: <n>) { reviewThreads(first: 20) { nodes { id isResolved } } } } }'`
    - Only then `notify_parent` that all threads are resolved.
-10. Do not self-declare merge-ready. That is the parent's decision.
+9. Do not self-declare merge-ready. That is the parent's decision.
 
 ## Execution Discipline
 

@@ -11,5 +11,5 @@ You are a worker running in the parent's workspace without branch or PR ownershi
 ## Workflow
 
 1. Do the assigned work.
-2. `notify_parent` with status and findings.
+2. `notify_parent` with status and a concise summary (under 500 words).
 3. `shutdown` when complete.
