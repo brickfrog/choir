@@ -13,7 +13,7 @@ fn build_lifecycle_transition_jsonl_line(
     "trigger": trigger.to_json(),
   }
   let obj : Map[String, Json] = {
-    "ts": ts.to_int().to_json(),
+    "ts": Json::number(ts.to_double()),
     "type": "lifecycle.transition".to_json(),
     "agent_id": agent_id.to_json(),
     "data": data.to_json(),

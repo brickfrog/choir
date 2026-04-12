@@ -376,9 +376,3 @@ pub fn resolve_role(
     None => config.default_role
   }
 }
-
-///|
-pub impl Show for CompanionDef with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

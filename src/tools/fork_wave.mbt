@@ -328,6 +328,11 @@ pub(all) enum ForkWavePostSpawnHostStep {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for ForkWavePostSpawnHostStep with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub fn fork_wave_post_spawn_host_steps() -> Array[ForkWavePostSpawnHostStep] {
   [
     ForkWavePostSpawnHostStep::RegistryUpsertSpawnedSpecs,
@@ -455,10 +460,4 @@ pub async fn interpret_fork_wave_post_spawn(
       }
     None => ()
   }
-}
-
-///|
-pub impl Show for ForkWavePostSpawnHostStep with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

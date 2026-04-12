@@ -362,9 +362,3 @@ pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
     ".choir/context/common.md", ".choir/context/worker.md",
   ])
 }
-
-///|
-pub impl Show for PromptSpec with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

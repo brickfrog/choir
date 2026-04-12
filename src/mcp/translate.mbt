@@ -568,15 +568,3 @@ pub fn error_response(
 ) -> JsonRpcResponse {
   { jsonrpc: "2.0", id, result: None, error: Some({ code, message }) }
 }
-
-///|
-pub impl Show for SchemaProp with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for CatalogTool with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

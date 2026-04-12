@@ -92,9 +92,3 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
 pub fn parse_toml(content : String) -> Map[String, String] {
   parse_toml_doc(content).to_map()
 }
-
-///|
-pub impl Show for TomlDoc with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

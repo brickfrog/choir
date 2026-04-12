@@ -5,6 +5,11 @@ pub(all) enum MergedDeliverySource {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for MergedDeliverySource with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) enum TeardownEffect {
   PersistLifecycle(
     agent_id~ : String,
@@ -50,6 +55,11 @@ pub(all) enum TeardownEffect {
   )
   RefreshPR(Int)
 } derive(Debug, Eq)
+
+///|
+pub impl Show for TeardownEffect with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
 
 ///|
 fn finalize_reason_for_exit(
@@ -651,10 +661,4 @@ pub async fn best_effort_release_chainlink_lock_for_agent(
     }
     None => ()
   }
-}
-
-///|
-pub impl Show for TeardownEffect with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

@@ -1552,9 +1552,3 @@ test "parse_chainlink_list_args defaults to open" {
     Err(e) => fail("unexpected error: " + e.message())
   }
 }
-
-///|
-pub impl Show for ParseError with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

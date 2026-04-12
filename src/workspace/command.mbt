@@ -6,6 +6,11 @@ pub(all) struct Command {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for Command with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 /// Marker `Command.program` for `run_native_choir_file_command` / `exec.run`.
 /// Args: `[worktree_path, basename_under_.choir, file_body]`.
 pub let native_write_choir_file_program : String = "__choir_native_write_choir_file__"
@@ -428,10 +433,4 @@ pub fn gh_pr_add_reviewer(
     args: ["pr", "edit", pr_number.to_string(), "--add-reviewer", reviewer],
     workdir: Some(project_dir),
   }
-}
-
-///|
-pub impl Show for Command with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

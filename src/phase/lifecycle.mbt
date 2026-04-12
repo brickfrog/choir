@@ -9,6 +9,11 @@ pub(all) enum FinalizeReason {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub impl Show for FinalizeReason with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) enum FailureReason {
   UnexpectedDisconnect
   WatchdogTimeout
@@ -20,6 +25,11 @@ pub(all) enum FailureReason {
   ParentKilled
   BlockedByReview
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for FailureReason with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
 
 ///|
 pub fn FailureReason::to_wire_string(self : FailureReason) -> String {
@@ -59,6 +69,11 @@ pub(all) enum ChildLifecycleSummary {
   Done
   Failed(reason~ : FailureReason)
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for ChildLifecycleSummary with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
 
 ///|
 pub(all) struct ChildLifecycle {
@@ -107,6 +122,11 @@ pub(all) enum WorkflowState {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub impl Show for WorkflowState with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) enum ProcessState {
   Connected
   Finalizing(reason~ : FinalizeReason)
@@ -115,12 +135,22 @@ pub(all) enum ProcessState {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub impl Show for ProcessState with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) struct AgentLifecycle {
   agent_id : String
   role : @types.Role
   process : ProcessState
   workflow : WorkflowState
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for AgentLifecycle with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
 
 ///|
 /// Side effects produced by lifecycle orchestration; interpreted by the host
@@ -145,12 +175,22 @@ pub(all) enum LifecycleExitPolicy {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub impl Show for LifecycleExitPolicy with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) enum LifecycleDisconnectPolicy {
   Preserve
   Fail(reason~ : FailureReason)
   FinalizeDone(reason~ : FinalizeReason)
   Ignore
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub impl Show for LifecycleDisconnectPolicy with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
 
 ///|
 pub(all) enum DevLifecycleEvent {
@@ -676,17 +716,17 @@ pub fn failure_reason_message(reason : FailureReason) -> String {
 }
 
 ///|
+/// Last resort for unstructured screen output or freeform agent messages.
+/// Only called when a FailureReason cannot be constructed at the source.
+/// Patterns are ordered from most-specific to least-specific.
 pub fn classify_failure(message : String) -> FailureReason {
   let lower = message.to_lower()
-  if lower.contains("model at capacity") ||
-    lower.contains("at capacity") ||
-    lower.contains("rate limit") {
+  if lower.contains("model at capacity") || lower.contains("rate limit") {
     ModelAtCapacity
   } else if lower.contains("mcp initialize failure") ||
     lower.contains("mcp connection failed") ||
     lower.contains("mcp initialize") ||
-    lower.contains("mcp handshake") ||
-    lower.contains("failed to initialize") {
+    lower.contains("mcp handshake") {
     McpInitializeFailure
   } else if lower.contains("watchdog") ||
     (lower.contains("timeout") && lower.contains("idle")) {
@@ -859,100 +899,4 @@ pub fn SupervisorLifecycle::transition(
   event : SupervisorEvent,
 ) -> TransitionResult[SupervisorLifecycle] {
   supervisor_transition(self, event)
-}
-
-///|
-pub impl Show for FinalizeReason with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for FailureReason with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for ExitBlockReason with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for ReviewOwnership with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for ChildLifecycleSummary with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for SupervisorLifecycle with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for DevLifecycle with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for WorkerLifecycle with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for WorkflowState with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for ProcessState with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for AgentLifecycle with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for LifecycleEffect with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for LifecycleExitPolicy with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for LifecycleDisconnectPolicy with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for DevLifecycleEvent with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for SupervisorEvent with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

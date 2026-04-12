@@ -15,12 +15,6 @@ pub(all) struct FieldMap {
 } derive(Eq)
 
 ///|
-pub impl Show for FieldMap with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
 pub type RequestArgs = FieldMap
 
 ///|
@@ -105,23 +99,11 @@ pub(all) struct Request {
 } derive(Eq)
 
 ///|
-pub impl Show for Request with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
 /// Internal wire format response.
 pub(all) enum Response {
   Ok(ResponseFields)
   Err(String)
 } derive(Eq)
-
-///|
-pub impl Show for Response with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
 
 ///|
 pub fn Response::ok(self : Map[String, String]) -> Response {

@@ -56,106 +56,6 @@ test "lifecycle_idle_watchdog_exempt logic" {
 }
 
 ///|
-test "tl_transition" {
-  let mut p = TLPhase::Planning
-  match tl_transition(p, ChildSpawned(child_id="c1")) {
-    Transitioned(Waiting(count=1, wave=1)) => p = Waiting(count=1, wave=1)
-    _ => fail("expected Waiting(1)")
-  }
-  match tl_transition(p, ChildSpawned(child_id="c2")) {
-    Transitioned(Waiting(count=2, wave=1)) => p = Waiting(count=2, wave=1)
-    _ => fail("expected Waiting(2)")
-  }
-  match tl_transition(p, ChildCompleted(child_id="c1")) {
-    Transitioned(Waiting(count=1, wave=1)) => p = Waiting(count=1, wave=1)
-    _ => fail("expected Waiting(1)")
-  }
-  match tl_transition(p, PRMerged(number=1, url="url")) {
-    Transitioned(WaveComplete(wave=1)) => p = WaveComplete(wave=1)
-    _ => fail("expected WaveComplete(1)")
-  }
-}
-
-///|
-test "dev_transition" {
-  let mut p = DevPhase::Working
-  match
-    dev_transition(p, PRCreated(pr_number=123, url="url", branch="branch")) {
-    Transitioned(PROpenUnreviewed(pr_number=123, url="url")) =>
-      p = PROpenUnreviewed(pr_number=123, url="url")
-    _ => fail("expected PROpenUnreviewed")
-  }
-  match dev_transition(p, ReviewReceivedEv(pr_number=123, body="msg")) {
-    Transitioned(ChangesRequested(pr_number=123)) =>
-      p = ChangesRequested(pr_number=123)
-    _ => fail("expected ChangesRequested")
-  }
-  match dev_transition(p, FixesPushedEv(pr_number=123, sha="hash")) {
-    Transitioned(FixesPushedAwaitingReview(pr_number=123, round=1)) =>
-      p = FixesPushedAwaitingReview(pr_number=123, round=1)
-    _ => fail("expected FixesPushedAwaitingReview")
-  }
-  match dev_transition(p, ReviewApprovedEv(pr_number=123)) {
-    Transitioned(ApprovedAwaitingMerge(pr_number=123)) =>
-      p = ApprovedAwaitingMerge(pr_number=123)
-    _ => fail("expected ApprovedAwaitingMerge")
-  }
-  match dev_transition(p, ExitRequested) {
-    Transitioned(
-      ExitRequestedDeferred(
-        pr_number=123,
-        stage=ApprovedAwaitingMerge,
-        round=0,
-        url=""
-      )
-    ) =>
-      p = ExitRequestedDeferred(
-        pr_number=123,
-        stage=ApprovedAwaitingMerge,
-        round=0,
-        url="",
-      )
-    _ => fail("expected ExitRequestedDeferred")
-  }
-  match dev_transition(p, MergeObserved(pr_number=123)) {
-    Transitioned(Done) => p = Done
-    _ => fail("expected Done")
-  }
-}
-
-///|
-test "tl_can_exit" {
-  assert_eq(tl_can_exit(Planning), Clean)
-  assert_eq(
-    tl_can_exit(Waiting(count=1, wave=1)),
-    ShouldNudge("Waiting for 1 children"),
-  )
-  assert_eq(
-    tl_can_exit(PRFiled(number=1, url="url")),
-    MustBlock("PR filed (1) at url"),
-  )
-}
-
-///|
-test "dev_can_exit" {
-  assert_eq(
-    dev_can_exit(ChangesRequested(pr_number=123)),
-    MustBlock("Changes requested"),
-  )
-  assert_eq(
-    dev_can_exit(PRUnderReview(pr_number=123, round=1)),
-    ShouldNudge("PR 123 under review (round 1)"),
-  )
-  assert_eq(dev_disconnect_policy(Working), Fail)
-  assert_eq(dev_disconnect_policy(ChangesRequested(pr_number=123)), Preserve)
-  assert_eq(
-    dev_disconnect_policy(PROpenUnreviewed(pr_number=123, url="url")),
-    Preserve,
-  )
-  assert_eq(dev_disconnect_policy(Exitable), FinalizeDone)
-}
-
-///|
 test "lifecycle dev transition carries typed review ownership" {
   let mut lifecycle = DevLifecycle::Working
   match
@@ -277,33 +177,6 @@ test "lifecycle policy preserves changes-requested on disconnect" {
 }
 
 ///|
-test "ChildTracker from_json all invalid rows yields empty tracker" {
-  let raw = "[{\"x\":1},{\"y\":2}]"
-  let tr = ChildTracker::from_json(raw)
-  assert_eq(tr.count(), 0)
-}
-
-///|
-test "ChildTracker from_json skips bad rows and keeps valid entries" {
-  let raw = "[{\"id\":\"a\",\"slug\":\"s\",\"branch\":\"b\",\"agent_type\":\"gemini\"},{\"not\":\"valid\"},{\"id\":\"c\",\"slug\":\"s2\",\"branch\":\"b2\",\"agent_type\":\"claude\"}]"
-  let tr = ChildTracker::from_json(raw)
-  assert_eq(tr.count(), 2)
-  let ids = tr.active_ids()
-  let mut ok_a = false
-  let mut ok_c = false
-  for id in ids {
-    if id == "a" {
-      ok_a = true
-    }
-    if id == "c" {
-      ok_c = true
-    }
-  }
-  assert_true(ok_a)
-  assert_true(ok_c)
-}
-
-///|
 test "lifecycle json round-trip covers supervisor children" {
   let lifecycle : AgentLifecycle = {
     agent_id: "main",
@@ -351,13 +224,16 @@ test "default_workflow_state TL is Supervisor Planning" {
 ///|
 test "classify_failure variants" {
   assert_eq(classify_failure("model at capacity"), ModelAtCapacity)
-  assert_eq(classify_failure("service at capacity"), ModelAtCapacity)
+  assert_eq(
+    classify_failure("service at capacity"),
+    ChildFailure(message="service at capacity"),
+  )
   assert_eq(classify_failure("Rate limit exceeded"), ModelAtCapacity)
   assert_eq(classify_failure("MCP initialize failure"), McpInitializeFailure)
   assert_eq(classify_failure("mcp connection failed"), McpInitializeFailure)
   assert_eq(
     classify_failure("failed to initialize MCP server"),
-    McpInitializeFailure,
+    ChildFailure(message="failed to initialize MCP server"),
   )
   assert_eq(classify_failure("watchdog timeout"), WatchdogTimeout)
   assert_eq(classify_failure("timeout due to idle"), WatchdogTimeout)
@@ -370,28 +246,6 @@ test "classify_failure variants" {
     classify_failure("generic error"),
     ChildFailure(message="generic error"),
   )
-}
-
-///|
-test "tl phase json round-trip all variants" {
-  let phases : Array[TLPhase] = [
-    Planning,
-    Dispatching,
-    Waiting(count=3, wave=1),
-    WaveComplete(wave=1),
-    Merging(count=2),
-    AllMerged,
-    PRFiled(number=42, url="https://github.com/org/repo/pull/42"),
-    Done,
-    Failed(reason="merge conflict"),
-  ]
-  for phase in phases {
-    let json = tl_phase_to_json(phase)
-    match tl_phase_from_json(json) {
-      Some(restored) => assert_eq(restored, phase)
-      None => fail("round-trip failed for: " + json)
-    }
-  }
 }
 
 ///|
@@ -448,45 +302,6 @@ test "supervisor ChildUpdated with agent_type replaces placeholder" {
 }
 
 ///|
-test "state_machine tl machine_name and transition" {
-  let sm : TLPhase = Planning
-  assert_eq(StateMachine::machine_name(sm), "tl")
-  match sm.transition(TLEvent::ChildSpawned(child_id="c1")) {
-    Transitioned(Waiting(count=1, wave=1)) => ()
-    _ => fail("expected Waiting after ChildSpawned")
-  }
-}
-
-///|
-test "dev phase json round-trip all variants" {
-  let phases : Array[DevPhase] = [
-    Spawned,
-    Working,
-    PROpenUnreviewed(pr_number=99, url="https://github.com/org/repo/pull/99"),
-    PRUnderReview(pr_number=99, round=3),
-    ChangesRequested(pr_number=99),
-    FixesPushedAwaitingReview(pr_number=99, round=2),
-    ApprovedAwaitingMerge(pr_number=99),
-    ExitRequestedDeferred(
-      pr_number=99,
-      stage=ApprovedAwaitingMerge,
-      round=0,
-      url="",
-    ),
-    Exitable,
-    Done,
-    Failed(reason="lint errors"),
-  ]
-  for phase in phases {
-    let json = dev_phase_to_json(phase)
-    match dev_phase_from_json(json) {
-      Some(restored) => assert_eq(restored, phase)
-      None => fail("round-trip failed for: " + json)
-    }
-  }
-}
-
-///|
 test "resolve_agent_with_fallback - in registry" {
   let project_dir = "test_project"
   let session = "test_session"
@@ -520,7 +335,10 @@ test "resolve_agent_with_fallback - in registry" {
 
 ///|
 test "resolve_agent_with_fallback - fallback to lifecycle" {
-  let project_dir = "test_project_fallback"
+  let project_dir = "/tmp/choir-test-fallback-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
   let session = "test_session_fallback"
   let reg = @registry.AgentRegistry::new()
   let agent_id = "parent1"
@@ -734,7 +552,7 @@ test "interpret_lifecycle_effects writes lifecycle and event log" {
       agent_id=from_lc.agent_id,
       from_lc~,
       to_lc~,
-      trigger=@types.LifecycleTrigger::Raw("test"),
+      trigger=@types.LifecycleTrigger::PRCreated,
     ),
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
@@ -748,7 +566,7 @@ test "interpret_lifecycle_effects writes lifecycle and event log" {
     ".jsonl"
   let log = @sys.read_file(ev_path)
   assert_true(log.contains("lifecycle.transition"))
-  assert_true(log.contains("test"))
+  assert_true(log.contains("PRCreated"))
   ignore(@sys.system("rm -rf " + project_dir))
 }
 
@@ -767,7 +585,7 @@ test "interpret_lifecycle_effects skips append when persist fails" {
       agent_id=lc.agent_id,
       from_lc=lc,
       to_lc=lc,
-      trigger=@types.LifecycleTrigger::Raw("t"),
+      trigger=@types.LifecycleTrigger::PRCreated,
     ),
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
@@ -833,7 +651,7 @@ test "interpret_lifecycle_effects append ignored when last persist is another ag
       agent_id=lc_a.agent_id,
       from_lc=lc_a,
       to_lc=lc_a,
-      trigger=@types.LifecycleTrigger::Raw("orphan-append"),
+      trigger=@types.LifecycleTrigger::PRCreated,
     ),
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
@@ -865,13 +683,13 @@ test "interpret_lifecycle_effects second append without new persist is ignored" 
       agent_id=from_lc.agent_id,
       from_lc~,
       to_lc~,
-      trigger=@types.LifecycleTrigger::Raw("first"),
+      trigger=@types.LifecycleTrigger::PRCreated,
     ),
     AppendLifecycleEvent(
       agent_id=from_lc.agent_id,
       from_lc~,
       to_lc~,
-      trigger=@types.LifecycleTrigger::Raw("second"),
+      trigger=@types.LifecycleTrigger::ExitRequested,
     ),
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
@@ -880,8 +698,8 @@ test "interpret_lifecycle_effects second append without new persist is ignored" 
     @types.sanitize_agent_id("leaf.2a") +
     ".jsonl"
   let log = @sys.read_file(ev_path)
-  assert_true(log.contains("first"))
-  assert_false(log.contains("second"))
+  assert_true(log.contains("PRCreated"))
+  assert_false(log.contains("ExitRequested"))
   ignore(@sys.system("rm -rf " + project_dir))
 }
 

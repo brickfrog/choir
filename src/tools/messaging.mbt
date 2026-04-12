@@ -14,6 +14,12 @@ pub(all) enum NotifyParentPlan {
 }
 
 ///|
+pub impl Show for NotifyParentPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
 pub fn notify_parent_plan(
   args : CallerMessageArgs,
   parent_resolution : Result[@types.Agent, @types.ChoirError]?,
@@ -82,6 +88,12 @@ pub(all) enum SendMessagePlan {
 }
 
 ///|
+pub impl Show for SendMessagePlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
 pub fn send_message_plan(
   target_id : String,
   sender_id : String,
@@ -144,16 +156,4 @@ pub async fn interpret_send_message(
       }
     }
   }
-}
-
-///|
-pub impl Show for NotifyParentPlan with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for SendMessagePlan with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

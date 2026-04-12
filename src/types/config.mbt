@@ -81,15 +81,3 @@ pub fn LocalConfig::default() -> LocalConfig {
     chainlink_issue_id: None,
   }
 }
-
-///|
-pub impl Show for Config with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for LocalConfig with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

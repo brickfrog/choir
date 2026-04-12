@@ -585,7 +585,7 @@ pub(all) struct ForkWaveSpawnPlan {
   skipped_count : Int
   agent_ids : String
   skipped_ids : String
-}
+} derive(Debug)
 
 ///|
 /// When `fork_wave` passes `review_context`, append a stable section so leaves can reuse it for `file_pr`.
@@ -650,16 +650,4 @@ pub async fn interpret_file_pr(
       )
     }
   }
-}
-
-///|
-pub impl Show for FilePrAutoNotifyPlan with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for FilePrPreflightHostStep with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

@@ -3,7 +3,7 @@ pub(all) struct ToolCall {
   role : @types.Role
   name : String
   args : Map[String, String]
-}
+} derive(Debug)
 
 ///|
 struct ToolArgs {
@@ -1040,16 +1040,4 @@ pub fn apply_dev_event_checked(
     }
     Err(e) => Err(e)
   }
-}
-
-///|
-pub impl Show for ToolCall with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for ToolArgs with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

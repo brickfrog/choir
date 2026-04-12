@@ -635,15 +635,3 @@ pub fn merge_pr_command(pr_number : Int) -> @workspace.Command {
 pub fn merge_pr_commands(pr_number : Int) -> Array[@workspace.Command] {
   [merge_pr_command(pr_number), @workspace.git_fetch()]
 }
-
-///|
-pub impl Show for FilePrPreflightError with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for PullRequestInfo with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

@@ -41,6 +41,11 @@ pub(all) enum Host {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for Host with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 /// Type-safe agent identifier. Prevents mixing with branch names, slugs, etc.
 pub(all) struct AgentId(String) derive(Debug, Eq, Compare, Hash)
 
@@ -91,7 +96,6 @@ pub(all) enum LifecycleTrigger {
   ExitDisconnected
   ExitShutdown
   FinalizeComplete
-  Raw(String)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -153,7 +157,6 @@ pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
     ExitDisconnected => "disconnect"
     ExitShutdown => "shutdown"
     FinalizeComplete => "FinalizeComplete"
-    Raw(s) => s
   }
 }
 
@@ -263,6 +266,11 @@ pub(all) enum Status {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for Status with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 /// A message between agents.
 pub(all) struct Message {
   sender : String
@@ -287,6 +295,11 @@ pub(all) enum IsolationMode {
   Inline
   Standalone
 } derive(Debug, Eq)
+
+///|
+pub impl Show for IsolationMode with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
 
 ///|
 /// PR tracking state.
@@ -402,6 +415,11 @@ pub(all) enum EvaluationVerdict {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub impl Show for EvaluationVerdict with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) struct EvaluationResult {
   verdict : EvaluationVerdict
   summary : String
@@ -437,7 +455,7 @@ pub fn TaskContract::to_json_string(self : TaskContract) -> String {
 }
 
 ///|
-fn evaluation_latest_review_state(
+pub fn evaluation_latest_review_state(
   signals : Array[EvaluationSignal],
 ) -> EvaluationReviewState {
   let mut latest = EvaluationReviewState::Unknown
@@ -451,7 +469,7 @@ fn evaluation_latest_review_state(
 }
 
 ///|
-fn evaluation_latest_ci_rollup(
+pub fn evaluation_latest_ci_rollup(
   signals : Array[EvaluationSignal],
 ) -> EvaluationCiRollup {
   let mut latest = EvaluationCiRollup::Unknown
@@ -465,7 +483,7 @@ fn evaluation_latest_ci_rollup(
 }
 
 ///|
-fn evaluation_latest_threads(signals : Array[EvaluationSignal]) -> Int? {
+pub fn evaluation_latest_threads(signals : Array[EvaluationSignal]) -> Int? {
   let mut latest : Int? = None
   for signal in signals {
     match signal {
@@ -478,7 +496,7 @@ fn evaluation_latest_threads(signals : Array[EvaluationSignal]) -> Int? {
 }
 
 ///|
-fn evaluation_copilot_seen(signals : Array[EvaluationSignal]) -> Bool {
+pub fn evaluation_copilot_seen(signals : Array[EvaluationSignal]) -> Bool {
   let mut seen = false
   for signal in signals {
     match signal {
@@ -491,7 +509,7 @@ fn evaluation_copilot_seen(signals : Array[EvaluationSignal]) -> Bool {
 }
 
 ///|
-fn evaluation_verify_results_for_required(
+pub fn evaluation_verify_results_for_required(
   required : Array[String],
   signals : Array[EvaluationSignal],
 ) -> Array[VerifyCheckResult] {
@@ -513,7 +531,7 @@ fn evaluation_verify_results_for_required(
 }
 
 ///|
-fn evaluation_missing_verify_names(
+pub fn evaluation_missing_verify_names(
   results : Array[VerifyCheckResult],
 ) -> Array[String] {
   let out : Array[String] = []
@@ -526,7 +544,7 @@ fn evaluation_missing_verify_names(
 }
 
 ///|
-fn evaluation_failed_verify_names(
+pub fn evaluation_failed_verify_names(
   results : Array[VerifyCheckResult],
 ) -> Array[String] {
   let out : Array[String] = []
@@ -618,116 +636,8 @@ pub fn EvaluationVerdict::label(self : EvaluationVerdict) -> String {
 }
 
 ///|
-pub impl Show for Host with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
 pub impl Show for LifecycleTrigger with output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
-}
-
-///|
-pub impl Show for Status with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for Message with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for Workspace with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for IsolationMode with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for PRStatus with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for CIStatus with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for MutexLock with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for TaskStatus with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for TaskContract with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for EvaluationReviewState with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for EvaluationCiRollup with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for VerifyStatus with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for VerifyCheckResult with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for EvaluationSignal with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for EvaluationBundle with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for EvaluationVerdict with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for EvaluationResult with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }
 
 // ── Chainlink domain types ────────────────────────────────────────────────────

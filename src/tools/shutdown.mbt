@@ -61,6 +61,11 @@ pub(all) enum KillAgentAdapterHostStep {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for KillAgentAdapterHostStep with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub fn kill_agent_adapter_host_steps() -> Array[KillAgentAdapterHostStep] {
   [
     KillAgentAdapterHostStep::PaneClose,
@@ -199,6 +204,11 @@ pub(all) enum ShutdownAdapterHostStep {
   DevExitEventApply
   WorktreeCleanupAttempt
 } derive(Debug, Eq)
+
+///|
+pub impl Show for ShutdownAdapterHostStep with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
 
 ///|
 pub fn shutdown_adapter_host_steps() -> Array[ShutdownAdapterHostStep] {
@@ -393,16 +403,4 @@ pub async fn interpret_shutdown(
     None => ()
   }
   plan.response
-}
-
-///|
-pub impl Show for KillAgentAdapterHostStep with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for ShutdownAdapterHostStep with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

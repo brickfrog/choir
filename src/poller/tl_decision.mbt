@@ -19,6 +19,11 @@ pub(all) enum TlTrackedPrWorkflowCategory {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for TlTrackedPrWorkflowCategory with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) enum MergeOperatorMode {
   Manual
   Automerge
@@ -750,16 +755,4 @@ pub fn detect_orphaned_prs(
     }
   }
   out
-}
-
-///|
-pub impl Show for TlTrackedPrWorkflowCategory with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for WaveRollupEntry with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

@@ -114,9 +114,3 @@ pub fn parse_response(s : String) -> Result[@types.Response, String] {
     Err(err)
   }
 }
-
-///|
-pub impl Show for PluginDef with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

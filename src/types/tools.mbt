@@ -38,15 +38,3 @@ pub(all) struct ToolDef {
 pub fn ToolDef::is_role_allowed(self : ToolDef, role : Role) -> Bool {
   self.allowed_roles.contains(role)
 }
-
-///|
-pub impl Show for SpawnSpec with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for ToolDef with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

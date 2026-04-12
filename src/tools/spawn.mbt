@@ -10,6 +10,12 @@ pub(all) struct SpawnWorkerPlan {
 }
 
 ///|
+pub impl Show for SpawnWorkerPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
 pub fn spawn_worker_ok_response(agent_id : String) -> @types.Response {
   @types.Response::ok_values({
     "status": String::to_json("spawned"),
@@ -127,6 +133,12 @@ pub(all) struct SpawnRemotePlan {
 }
 
 ///|
+pub impl Show for SpawnRemotePlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
+}
+
+///|
 pub fn spawn_remote_plan(args : RemoteSpawnArgs) -> SpawnRemotePlan {
   let spec = @types.SpawnSpec::{
     slug: args.slug,
@@ -187,6 +199,12 @@ pub async fn interpret_spawn_remote(
 pub(all) struct SpawnGeminiPlan {
   spec : @types.SpawnSpec
   ok_response : @types.Response
+}
+
+///|
+pub impl Show for SpawnGeminiPlan with output(self, logger) -> Unit {
+  ignore(self)
+  ignore(logger)
 }
 
 ///|
@@ -253,21 +271,3 @@ pub async fn interpret_spawn_gemini(
 
 ///|
 /// Pure validation plus reuse [`SpawnSpec`] for `rescue_leaf` after the salvaged
-
-///|
-pub impl Show for SpawnWorkerPlan with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for SpawnRemotePlan with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for SpawnGeminiPlan with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

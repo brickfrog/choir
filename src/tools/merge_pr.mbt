@@ -8,6 +8,11 @@ pub(all) enum MergePrPreflightHostStep {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for MergePrPreflightHostStep with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
   [
     MergePrPreflightHostStep::PollerSnapshot,
@@ -550,6 +555,11 @@ pub(all) enum MergePrHostStep {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for MergePrHostStep with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub fn merge_pr_host_step_sequence() -> Array[MergePrHostStep] {
   [MergePrHostStep::GhPrMerge, MergePrHostStep::GitFetch]
 }
@@ -869,16 +879,4 @@ pub async fn interpret_resolve_review_thread(
     output,
     resolve_args.thread_id,
   )
-}
-
-///|
-pub impl Show for MergePrPreflightHostStep with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for MergePrHostStep with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

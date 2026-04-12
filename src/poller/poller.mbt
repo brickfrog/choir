@@ -64,6 +64,11 @@ pub(all) struct TrackedPR {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for TrackedPR with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 /// Per-PR outcome of one poller tick (for tracing and delivery logs).
 pub(all) struct PollerPrTickLog {
   pr_number : Int
@@ -115,12 +120,6 @@ pub fn CiRollupStatus::to_wire_string(self : CiRollupStatus) -> String {
 ///|
 pub impl Show for CiRollupStatus with output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
-}
-
-///|
-pub impl Show for TrackedPR with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }
 
 ///|

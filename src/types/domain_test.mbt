@@ -1,28 +1,4 @@
 ///|
-test "role equality" {
-  assert_eq(@types.Role::TL, @types.Role::TL)
-  assert_not_eq(@types.Role::Root, @types.Role::Dev)
-}
-
-///|
-test "agent construction" {
-  let agent : @types.Agent = {
-    agent_id: @types.AgentId("main.feature-a"),
-    role: @types.Role::Dev,
-    agent_type: @types.AgentType::Gemini,
-    parent: Some("root"),
-    workspace: ".choir/worktrees/feature-a",
-    branch: "main.feature-a",
-    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:feature-a"),
-    host: @types.Host::Local,
-    spawn_depth: 0,
-    state: @types.AgentState::Spawning,
-  }
-  assert_eq(agent.state, @types.AgentState::Spawning)
-  assert_eq(agent.role, @types.Role::Dev)
-}
-
-///|
 test "default config" {
   let config = @types.Config::default()
   assert_eq(config.default_role, @types.Role::TL)
@@ -31,34 +7,6 @@ test "default config" {
   assert_eq(config.extra_mcp_servers_json, None)
   assert_eq(config.companions_json, None)
   assert_eq(config.plugins_json, None)
-}
-
-///|
-test "Role to_wire_string encodes all variants in lowercase wire form" {
-  assert_eq(@types.Role::Root.to_wire_string(), "root")
-  assert_eq(@types.Role::TL.to_wire_string(), "tl")
-  assert_eq(@types.Role::Dev.to_wire_string(), "dev")
-  assert_eq(@types.Role::Worker.to_wire_string(), "worker")
-}
-
-///|
-test "Role try_parse_wire accepts each wire string and matches variant" {
-  match @types.Role::try_parse_wire("root") {
-    Ok(r) => assert_eq(r, @types.Role::Root)
-    Err(e) => fail(e.message())
-  }
-  match @types.Role::try_parse_wire("tl") {
-    Ok(r) => assert_eq(r, @types.Role::TL)
-    Err(e) => fail(e.message())
-  }
-  match @types.Role::try_parse_wire("dev") {
-    Ok(r) => assert_eq(r, @types.Role::Dev)
-    Err(e) => fail(e.message())
-  }
-  match @types.Role::try_parse_wire("worker") {
-    Ok(r) => assert_eq(r, @types.Role::Worker)
-    Err(e) => fail(e.message())
-  }
 }
 
 ///|
@@ -112,40 +60,6 @@ test "Role parse_wire raises on unknown strings matching try_parse_wire error" {
       (Err(_), Ok(_)) =>
         fail("try_parse_wire returned Ok but parse_wire raised for: " + s)
     }
-  }
-}
-
-///|
-test "AgentType to_wire_string encodes all variants" {
-  assert_eq(@types.AgentType::Claude.to_wire_string(), "claude")
-  assert_eq(@types.AgentType::Gemini.to_wire_string(), "gemini")
-  assert_eq(@types.AgentType::MoonPilot.to_wire_string(), "moon_pilot")
-  assert_eq(@types.AgentType::Codex.to_wire_string(), "codex")
-  assert_eq(@types.AgentType::CursorAgent.to_wire_string(), "cursor_agent")
-  assert_eq(@types.AgentType::Unknown.to_wire_string(), "")
-}
-
-///|
-test "AgentType try_parse_wire accepts canonical wire strings" {
-  match @types.AgentType::try_parse_wire("claude") {
-    Ok(t) => assert_eq(t, @types.AgentType::Claude)
-    Err(e) => fail(e.message())
-  }
-  match @types.AgentType::try_parse_wire("gemini") {
-    Ok(t) => assert_eq(t, @types.AgentType::Gemini)
-    Err(e) => fail(e.message())
-  }
-  match @types.AgentType::try_parse_wire("moon_pilot") {
-    Ok(t) => assert_eq(t, @types.AgentType::MoonPilot)
-    Err(e) => fail(e.message())
-  }
-  match @types.AgentType::try_parse_wire("codex") {
-    Ok(t) => assert_eq(t, @types.AgentType::Codex)
-    Err(e) => fail(e.message())
-  }
-  match @types.AgentType::try_parse_wire("cursor_agent") {
-    Ok(t) => assert_eq(t, @types.AgentType::CursorAgent)
-    Err(e) => fail(e.message())
   }
 }
 

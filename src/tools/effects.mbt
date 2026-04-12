@@ -150,9 +150,3 @@ pub fn fork_wave_plan(
     }
   })
 }
-
-///|
-pub impl Show for ForkWaveError with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

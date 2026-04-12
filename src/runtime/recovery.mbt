@@ -21,6 +21,11 @@ pub(all) enum KnownPRState {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for KnownPRState with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub(all) struct KnownPR {
   pr_number : Int
   branch : String
@@ -1125,82 +1130,4 @@ pub fn parse_zellij_live_targets(output : String) -> ZellijLiveTargets {
     }
   }
   { tabs, panes }
-}
-
-///|
-pub impl Show for ZellijLiveTargets with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for OpenPR with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for KnownPRState with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for KnownPR with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for LocalAgentSnapshot with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for RecoveryPanesSnapshot with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for RecoveryPrPollRow with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for RecoveryPrsSnapshot with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for RecoveryFilesSnapshot with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for RecoveryAction with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for PrebuiltAgentPhase with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for RecoveryReconcileInput with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for RecoveryPlan with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

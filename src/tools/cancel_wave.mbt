@@ -79,6 +79,11 @@ pub(all) enum CancelWavePerAgentHostStep {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for CancelWavePerAgentHostStep with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub fn cancel_wave_per_agent_host_steps() -> Array[CancelWavePerAgentHostStep] {
   [
     CancelWavePerAgentHostStep::PaneClose,
@@ -152,10 +157,4 @@ pub async fn interpret_cancel_wave(
       cancel_wave_ok_response(cancelled)
     }
   }
-}
-
-///|
-pub impl Show for CancelWavePerAgentHostStep with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
 }

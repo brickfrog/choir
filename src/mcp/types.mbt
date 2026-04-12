@@ -36,9 +36,3 @@ pub(all) struct JsonRpcResponse {
   result : Json?
   error : JsonRpcError?
 } derive(Eq)
-
-///|
-pub impl Show for JsonRpcError with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}

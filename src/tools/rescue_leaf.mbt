@@ -7,7 +7,7 @@ pub(all) struct RescueLeafSpawnPlan {
   salvage_slug : String
   git_branch : String
   spec : @types.SpawnSpec
-}
+} derive(Debug)
 
 ///|
 /// Second `remove_child_from_supervisor_lifecycle` call uses `salvage_slug` when
@@ -198,6 +198,11 @@ pub(all) enum RescueLeafPostSpawnHostStep {
 } derive(Debug, Eq)
 
 ///|
+pub impl Show for RescueLeafPostSpawnHostStep with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 pub fn rescue_leaf_post_spawn_host_steps() -> Array[RescueLeafPostSpawnHostStep] {
   [
     RescueLeafPostSpawnHostStep::LifecycleHandoff,
@@ -304,15 +309,3 @@ pub async fn interpret_rescue_leaf_post_spawn(
 }
 
 ///|
-
-///|
-pub impl Show for RescueLeafSpawnPlan with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
-
-///|
-pub impl Show for RescueLeafPostSpawnHostStep with output(self, logger) -> Unit {
-  ignore(self)
-  ignore(logger)
-}
