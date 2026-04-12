@@ -224,16 +224,13 @@ test "default_workflow_state TL is Supervisor Planning" {
 ///|
 test "classify_failure variants" {
   assert_eq(classify_failure("model at capacity"), ModelAtCapacity)
-  assert_eq(
-    classify_failure("service at capacity"),
-    ChildFailure(message="service at capacity"),
-  )
+  assert_eq(classify_failure("service at capacity"), ModelAtCapacity)
   assert_eq(classify_failure("Rate limit exceeded"), ModelAtCapacity)
   assert_eq(classify_failure("MCP initialize failure"), McpInitializeFailure)
   assert_eq(classify_failure("mcp connection failed"), McpInitializeFailure)
   assert_eq(
     classify_failure("failed to initialize MCP server"),
-    ChildFailure(message="failed to initialize MCP server"),
+    McpInitializeFailure,
   )
   assert_eq(classify_failure("watchdog timeout"), WatchdogTimeout)
   assert_eq(classify_failure("timeout due to idle"), WatchdogTimeout)
@@ -371,7 +368,7 @@ test "resolve_agent_with_fallback - fallback to lifecycle" {
   }
 
   // Cleanup
-  ignore(@sys.system("rm -rf " + project_dir))
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
 }
 
 ///|
@@ -567,7 +564,7 @@ test "interpret_lifecycle_effects writes lifecycle and event log" {
   let log = @sys.read_file(ev_path)
   assert_true(log.contains("lifecycle.transition"))
   assert_true(log.contains("PRCreated"))
-  ignore(@sys.system("rm -rf " + project_dir))
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
 }
 
 ///|
@@ -594,7 +591,7 @@ test "interpret_lifecycle_effects skips append when persist fails" {
     @types.sanitize_agent_id("u1") +
     ".jsonl"
   assert_eq(@sys.read_file(ev_path), "")
-  ignore(@sys.system("rm -rf " + project_dir))
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
 }
 
 ///|
@@ -632,7 +629,7 @@ test "interpret_lifecycle_effects updates registry after successful persist" {
   } noraise {
     a => assert_eq(a.state, @types.AgentState::Completing)
   }
-  ignore(@sys.system("rm -rf " + project_dir))
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
 }
 
 ///|
@@ -660,7 +657,7 @@ test "interpret_lifecycle_effects append ignored when last persist is another ag
     @types.sanitize_agent_id("a.only") +
     ".jsonl"
   assert_eq(@sys.read_file(ev_path), "")
-  ignore(@sys.system("rm -rf " + project_dir))
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
 }
 
 ///|
@@ -700,7 +697,7 @@ test "interpret_lifecycle_effects second append without new persist is ignored" 
   let log = @sys.read_file(ev_path)
   assert_true(log.contains("PRCreated"))
   assert_false(log.contains("ExitRequested"))
-  ignore(@sys.system("rm -rf " + project_dir))
+  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
 }
 
 ///|

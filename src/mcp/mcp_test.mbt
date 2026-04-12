@@ -22,7 +22,9 @@ test "translate tools/call to internal request" {
 }
 
 ///|
-test "translate tools/list to internal request" {
+test "translate tools/list returns unsupported method error" {
+  // mcp_mode.mbt handles tools/list before calling to_internal_request;
+  // if it somehow falls through, to_internal_request returns an error.
   let rpc : @mcp.JsonRpcRequest = {
     jsonrpc: "2.0",
     id: Some(Number(2)),
@@ -31,12 +33,8 @@ test "translate tools/list to internal request" {
   }
   let result = @mcp.to_internal_request(rpc, @types.Role::TL)
   match result {
-    Ok(req) => {
-      assert_eq(req.req_method, "tools/list")
-      assert_eq(req.name, "tools_list")
-      assert_eq(req.role, @types.Role::TL)
-    }
-    Err(_) => fail("expected Ok")
+    Err(e) => assert_true(e.message.contains("unsupported method"))
+    Ok(_) => fail("expected Err")
   }
 }
 

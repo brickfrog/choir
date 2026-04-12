@@ -183,9 +183,9 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
   let tool_args = None
   let tool_result_status = json_opt_string(obj, "tool_result_status")
   let exit_reason = match json_opt_string(obj, "exit_reason") {
-    Some("merged") => Some(@types.ExitReason::Merged)
-    Some("disconnect") => Some(@types.ExitReason::Disconnected)
-    Some("shutdown") | Some("killed") | Some("watchdog") =>
+    Some("ExitMerged") => Some(@types.ExitReason::Merged)
+    Some("ExitDisconnected") => Some(@types.ExitReason::Disconnected)
+    Some("ExitShutdown") | Some("killed") | Some("watchdog") =>
       Some(@types.ExitReason::Shutdown)
     Some(_) => Some(@types.ExitReason::Shutdown)
     None => None

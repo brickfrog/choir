@@ -55,7 +55,9 @@ fn init_run_id(project_dir : String) -> String {
   match normalize_run_id(@sys.read_file(run_id_path)) {
     Some(existing) => existing
     None => {
-      let generated = @poller.now_sec().to_string()
+      let generated = @poller.now_sec().to_string() +
+        "-" +
+        @sys.get_pid().to_string()
       persist_run_id(project_dir, generated)
       generated
     }

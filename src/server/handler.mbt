@@ -1,10 +1,6 @@
 ///|
 fn request_span_name(req : @types.Request) -> String {
-  if req.req_method == "tools/list" {
-    "tools/list"
-  } else {
-    "tools/call " + req.name
-  }
+  "tools/call " + req.name
 }
 
 ///|
@@ -128,29 +124,25 @@ pub async fn ServerState::handle_with_runner_and_capture(
   } else {
     None
   }
-  let resp = if req.req_method == "tools/list" {
-    @types.Response::ok({ "tools_list": "true" })
-  } else {
-    @tools.handle_request(
-      self.tool_registry,
-      effective_req,
-      project_dir=self.config.project_dir,
-      session=self.config.terminal_session,
-      runner~,
-      capture~,
-      extra_mcp_servers_json=self.config.extra_mcp_servers_json,
-      shell_command=self.config.shell_command,
-      listen_uds=self.config.listen_uds,
-      listen_tcp=self.config.listen_tcp,
-      tcp_auth_token=self.config.tcp_auth_token,
-      agent_registry=Some(self.registry),
-      mutex_registry=Some(self.mutex_registry),
-      poller_state=Some(self.poller),
-      plugins_json=self.config.plugins_json,
-      pr_review=self.config.pr_review,
-    ) catch {
-      e => @tools.tool_response_err_from_caught(e)
-    }
+  let resp = @tools.handle_request(
+    self.tool_registry,
+    effective_req,
+    project_dir=self.config.project_dir,
+    session=self.config.terminal_session,
+    runner~,
+    capture~,
+    extra_mcp_servers_json=self.config.extra_mcp_servers_json,
+    shell_command=self.config.shell_command,
+    listen_uds=self.config.listen_uds,
+    listen_tcp=self.config.listen_tcp,
+    tcp_auth_token=self.config.tcp_auth_token,
+    agent_registry=Some(self.registry),
+    mutex_registry=Some(self.mutex_registry),
+    poller_state=Some(self.poller),
+    plugins_json=self.config.plugins_json,
+    pr_review=self.config.pr_review,
+  ) catch {
+    e => @tools.tool_response_err_from_caught(e)
   }
 
   let effects = plan_post_tool_actions(

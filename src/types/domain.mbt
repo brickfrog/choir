@@ -153,9 +153,9 @@ pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
     FixesPushed => "FixesPushed"
     ChildUpdated => "ChildUpdated"
     ChildRemoved => "ChildRemoved"
-    ExitMerged => "merged"
-    ExitDisconnected => "disconnect"
-    ExitShutdown => "shutdown"
+    ExitMerged => "ExitMerged"
+    ExitDisconnected => "ExitDisconnected"
+    ExitShutdown => "ExitShutdown"
     FinalizeComplete => "FinalizeComplete"
   }
 }
@@ -598,6 +598,13 @@ pub fn advisory_evaluation_result(
     let reason = "local verify not observed: " + missing_verify.join(", ")
     return { verdict: NeedsHuman(reason~), summary: reason }
   }
+  match threads {
+    None => {
+      let reason = "unresolved inline review threads not fetched"
+      return { verdict: NeedsHuman(reason~), summary: reason }
+    }
+    Some(_) => ()
+  }
   if review == EvaluationReviewState::Unknown ||
     review == EvaluationReviewState::None_ {
     let reason = "no review observed"
@@ -610,13 +617,6 @@ pub fn advisory_evaluation_result(
   if ci == EvaluationCiRollup::Unknown || ci == EvaluationCiRollup::InProgress {
     let reason = "latest head CI rollup is not all-success"
     return { verdict: NeedsHuman(reason~), summary: reason }
-  }
-  match threads {
-    None => {
-      let reason = "unresolved inline review threads not fetched"
-      return { verdict: NeedsHuman(reason~), summary: reason }
-    }
-    Some(_) => ()
   }
   let summary = if evaluation_copilot_seen(bundle.signals) {
     "ready: no tracked blockers; Copilot issue comment observed"

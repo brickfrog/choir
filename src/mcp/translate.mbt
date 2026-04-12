@@ -62,15 +62,6 @@ pub fn to_internal_request(
   role : @types.Role,
   default_caller_id? : String? = None,
 ) -> Result[@types.Request, JsonRpcError] {
-  if rpc.req_method == method_tools_list {
-    // Return a sentinel request that the server will recognize
-    return Ok({
-      req_method: method_tools_list,
-      role,
-      name: "tools_list",
-      args: @types.RequestArgs::new({}),
-    })
-  }
   if rpc.req_method != method_tools_call {
     return Err({
       code: err_method_not_found,
