@@ -636,20 +636,13 @@ pub fn merge_pr_tracked_branch_for_post_success(
 /// After `interpret_merge_pr_merge_host` succeeds: resolve tracked branch,
 /// build `merge_pr_post_success_plan`, apply the TL lifecycle event, optionally
 /// untrack and persist poller state, return the tool response.
-pub async fn interpret_merge_pr_post_success(
+pub fn interpret_merge_pr_post_success(
   project_dir : String,
   caller_id : String,
   pr_number : Int,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
-  read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
-  write_back_merge? : async (String, Int, String) -> Unit = @chainlink.write_back_merge,
-  release_lock? : async (String) -> Bool = @chainlink.release_lock,
 ) -> @types.Response {
-  let tracked = match poller_state {
-    Some(ps) => ps.get(pr_number)
-    None => None
-  }
   let tracked_branch = merge_pr_tracked_branch_for_post_success(
     poller_state, pr_number,
   )
@@ -673,36 +666,6 @@ pub async fn interpret_merge_pr_post_success(
       }
       None => ()
     }
-  }
-  match tracked {
-    Some(pr) =>
-      match
-        read_chainlink_issue_id(
-          project_dir,
-          agent_workspace_from_registry(registry, pr.agent_id),
-          @phase.extract_slug(pr.agent_id),
-        ) {
-        Some(issue_id) => {
-          write_back_merge(issue_id, pr_number, pr.branch) catch {
-            _ =>
-              @sys.write_stderr(
-                "[chainlink] warn: merge write-back failed for issue " +
-                issue_id +
-                "\n",
-              )
-          }
-          let released = release_lock(issue_id) catch { _ => false }
-          if !released {
-            @sys.write_stderr(
-              "[chainlink] warn: lock release failed for issue " +
-              issue_id +
-              "\n",
-            )
-          }
-        }
-        None => ()
-      }
-    None => ()
   }
   plan.response
 }

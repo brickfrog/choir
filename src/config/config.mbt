@@ -332,7 +332,6 @@ pub fn parse_local_config(
       }
     None => None
   }
-  let chainlink_issue_id = doc.get_optional_nonempty("chainlink_issue_id")
   Ok({
     role,
     agent_id,
@@ -346,7 +345,6 @@ pub fn parse_local_config(
     task_contract,
     automerge,
     review_mode,
-    chainlink_issue_id,
   })
 }
 

@@ -103,38 +103,14 @@ test "tools_list_response" {
 }
 
 ///|
-test "tools_list_response hides tl only tools from dev" {
+test "tools_list_response dev role includes file_pr" {
   let rpc = @mcp.tools_list_response(Number(22), @types.Role::Dev)
   match rpc.result {
     Some(Object(res)) =>
       match res.get("tools") {
         Some(Array(tools)) => {
           let t = tools.to_json().stringify()
-          assert_true(!t.contains("chainlink_list"))
-          assert_true(!t.contains("chainlink_show"))
-          assert_true(!t.contains("chainlink_ready"))
-          assert_true(!t.contains("chainlink_next"))
           assert_true(t.contains("file_pr"))
-        }
-        _ => fail("expected tools array")
-      }
-    None => fail("expected result")
-    Some(_) => fail("expected object result")
-  }
-}
-
-///|
-test "tools_list_response shows tl only tools for tl" {
-  let rpc = @mcp.tools_list_response(Number(23), @types.Role::TL)
-  match rpc.result {
-    Some(Object(res)) =>
-      match res.get("tools") {
-        Some(Array(tools)) => {
-          let t = tools.to_json().stringify()
-          assert_true(t.contains("chainlink_list"))
-          assert_true(t.contains("chainlink_show"))
-          assert_true(t.contains("chainlink_ready"))
-          assert_true(t.contains("chainlink_next"))
         }
         _ => fail("expected tools array")
       }

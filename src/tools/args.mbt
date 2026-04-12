@@ -46,7 +46,6 @@ pub(all) struct ForkWaveArgs {
   automerge : Bool?
   /// Per-wave review-mode override. `None` means "use the global config default".
   review_mode : @types.ReviewMode?
-  chainlink_issue_id : String?
 } derive(Debug, Eq)
 
 ///|

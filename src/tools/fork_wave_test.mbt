@@ -378,7 +378,6 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     review_context: None,
     automerge: None,
     review_mode: None,
-    chainlink_issue_id: None,
   }
 }
 
@@ -419,7 +418,6 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     review_context: None,
     automerge: None,
     review_mode: None,
-    chainlink_issue_id: None,
   }
   let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
   assert_eq(plan.spawned_count, 2)
@@ -752,89 +750,6 @@ async test "fork_wave_response_from_interpret_result CommandFailed no cmd" {
   match got {
     @types.Response::Err(msg) => assert_eq(msg, "command failed with status 2")
     _ => fail("expected generic status err")
-  }
-}
-
-///|
-test "fork_wave_spawn_plan - enrichment_issue Some → task_contracts enriched" {
-  let contract = @types.TaskContract::empty()
-  let args = ForkWaveArgs::{
-    count: 1,
-    tasks: ["Task 1"],
-    task_contracts: [contract],
-    has_per_leaf_tasks: true,
-    parent_branch: "main",
-    caller_id: "parent",
-    slug_prefix: "leaf",
-    agent_type: @types.AgentType::Gemini,
-    child_role: @types.Role::Dev,
-    parent_session_id: None,
-    review_context: None,
-    automerge: None,
-    review_mode: None,
-    chainlink_issue_id: Some("123"),
-  }
-  let issue = @types.ChainlinkIssue::{
-    id: 123,
-    title: "Enriched Title",
-    description: None,
-    priority: "medium",
-    status: "open",
-    parent_id: None,
-    labels: [],
-    blocked_by: [],
-    subissues: [],
-    comments: [],
-  }
-  let plan = fork_wave_spawn_plan(
-    args,
-    0,
-    None,
-    ".",
-    "session",
-    chainlink_enrichment_issue=Some(issue),
-  )
-  assert_eq(plan.spawned_specs.length(), 1)
-  match plan.spawned_specs[0].task_contract {
-    Some(c) => assert_eq(c.goal, "Enriched Title")
-    None => fail("expected task_contract")
-  }
-}
-
-///|
-test "fork_wave_spawn_plan - enrichment_issue None → task_contracts unchanged" {
-  let contract = @types.TaskContract::{
-    ..@types.TaskContract::empty(),
-    goal: "Original",
-  }
-  let args = ForkWaveArgs::{
-    count: 1,
-    tasks: ["Task 1"],
-    task_contracts: [contract],
-    has_per_leaf_tasks: true,
-    parent_branch: "main",
-    caller_id: "parent",
-    slug_prefix: "leaf",
-    agent_type: @types.AgentType::Gemini,
-    child_role: @types.Role::Dev,
-    parent_session_id: None,
-    review_context: None,
-    automerge: None,
-    review_mode: None,
-    chainlink_issue_id: Some("123"),
-  }
-  let plan = fork_wave_spawn_plan(
-    args,
-    0,
-    None,
-    ".",
-    "session",
-    chainlink_enrichment_issue=None,
-  )
-  assert_eq(plan.spawned_specs.length(), 1)
-  match plan.spawned_specs[0].task_contract {
-    Some(c) => assert_eq(c.goal, "Original")
-    None => fail("expected task_contract")
   }
 }
 

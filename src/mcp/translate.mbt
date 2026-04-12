@@ -218,10 +218,6 @@ fn tool_defs() -> Array[CatalogTool] {
           name: "review_mode",
           desc: "Optional per-wave override for review behavior after fixes are pushed: single_pass or iterative; omitted inherits the server config default",
         },
-        {
-          name: "issue_id",
-          desc: "Optional Chainlink issue ID to link spawned leaf work (e.g. \"5\"). Passed through as issue metadata for downstream consumers.",
-        },
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },
         { name: "verify", desc: "Newline-separated verification commands" },
@@ -250,30 +246,6 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "caller_id", desc: "ID of the caller" },
       ],
       required: ["task"],
-    },
-    {
-      name: "chainlink_list",
-      description: "List Chainlink issues. Optional status filter (default: open).",
-      props: [{ name: "status", desc: "Optional status filter" }],
-      required: [],
-    },
-    {
-      name: "chainlink_show",
-      description: "Show detail for a Chainlink issue by ID.",
-      props: [{ name: "id", desc: "Chainlink issue ID" }],
-      required: ["id"],
-    },
-    {
-      name: "chainlink_ready",
-      description: "List Chainlink issues with no open blockers (ready to work on).",
-      props: [],
-      required: [],
-    },
-    {
-      name: "chainlink_next",
-      description: "Show the next Chainlink issue to work on.",
-      props: [],
-      required: [],
     },
     {
       name: "rescue_leaf",

@@ -12,25 +12,6 @@ the TL when Copilot has approved the PR. The core loop is **scaffold → fork
 merges approved PRs one at a time, then either forks another wave or files
 its own PR upward.
 
-## Chainlink
-
-Choir integrates with [Chainlink](https://github.com/dollspace-gay/chainlink), a local Git-backed issue tracker with typed comment kinds (`plan`, `decision`, `observation`, `result`, `handoff`).
-
-```bash
-chainlink issue create "Feature title"       # create issue, get ID
-chainlink issue comment <id> "<spec>" --kind plan   # write spec
-chainlink_next                               # pick up next in-progress issue
-chainlink_show <id>                          # load issue + comments
-```
-
-When `fork_wave` is called with an `issue_id`, each leaf's `TaskContract` is automatically enriched from the Chainlink issue:
-
-- **goal** — falls back to issue title if the leaf task has no explicit goal
-- **review_context** — issue description + last 5 plan/decision comments (sorted by id), appended to any TL-supplied context with a separator
-- **constraints** — `blocked_by` entries merged in without duplication
-
-The pure function `task_contract_from_chainlink_issue` maps a `ChainlinkIssue` to a `TaskContract`; `merge_chainlink_into_task_contract` handles the enrichment merge logic.
-
 ```
 choir init
   Server (persistent, UDS)

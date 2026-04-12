@@ -9,25 +9,6 @@ Copilot review、将 GitHub PR review/CI 反馈路由到对应面板、在 Copil
 核心循环是 **scaffold → fork → converge**：TL 提交共享类型，派生一波并行叶子，
 逐一合并已批准的 PR，然后继续下一波或向上提交自己的 PR。
 
-## Chainlink
-
-Choir 集成了 [Chainlink](https://github.com/dollspace-gay/chainlink)，这是一个本地 Git 后端 issue 追踪器，支持类型化评论（`plan`、`decision`、`observation`、`result`、`handoff`）。
-
-```bash
-chainlink issue create "功能标题"                    # 创建 issue，获取 ID
-chainlink issue comment <id> "<规格>" --kind plan    # 写入规格
-chainlink_next                                       # 继续下一个进行中的 issue
-chainlink_show <id>                                  # 加载 issue 及其评论
-```
-
-当 `fork_wave` 携带 `issue_id` 调用时，每个叶子的 `TaskContract` 会自动从 Chainlink issue 中丰富：
-
-- **goal** — 若叶子任务无明确目标，则回退为 issue 标题
-- **review_context** — issue 描述 + 最近 5 条 plan/decision 评论（按 id 升序），追加到 TL 提供的上下文后（带分隔符）
-- **constraints** — `blocked_by` 条目去重合并
-
-纯函数 `task_contract_from_chainlink_issue` 将 `ChainlinkIssue` 映射为 `TaskContract`；`merge_chainlink_into_task_contract` 处理合并逻辑。
-
 ```
 choir init
   服务端 (常驻, UDS)

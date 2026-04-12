@@ -37,8 +37,6 @@ pub(all) struct LocalConfig {
   automerge : Bool?
   /// Per-wave review-mode override. `None` inherits global config.
   review_mode : ReviewMode?
-  /// Optional Chainlink issue id from `config.local.toml` key `chainlink_issue_id`, for consumers that need to associate local config/workflows with a Chainlink issue.
-  chainlink_issue_id : String?
 } derive(Debug)
 
 ///|
@@ -78,6 +76,5 @@ pub fn LocalConfig::default() -> LocalConfig {
     task_contract: None,
     automerge: None,
     review_mode: None,
-    chainlink_issue_id: None,
   }
 }

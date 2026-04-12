@@ -376,17 +376,7 @@ pub async fn ServerState::interpret_teardown_effects(
             }
           None => ()
         }
-        if source == ExternalObservation {
-          try {
-            let leaf = self.registry.get(leaf_id)
-            best_effort_release_chainlink_lock_for_agent(
-              self.config.project_dir,
-              leaf,
-            )
-          } catch {
-            _ => ()
-          }
-        }
+        ignore(source)
       }
       ParentFailureTerminalEchoIfNeeded(
         parent_id~,

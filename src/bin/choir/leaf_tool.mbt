@@ -442,7 +442,6 @@ fn local_cfg_from_env_lookup(
     task_contract: None,
     automerge: None,
     review_mode: None,
-    chainlink_issue_id: None,
   }
 }
 

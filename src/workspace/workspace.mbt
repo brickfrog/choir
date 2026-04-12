@@ -204,10 +204,6 @@ pub fn config_local_content(
       "\"\n"
     None => ""
   }
-  let chainlink_issue_id_line = match spec.chainlink_issue_id {
-    Some(id) => "\nchainlink_issue_id = \"" + escape_toml_string(id) + "\"\n"
-    None => ""
-  }
   "role = \"" +
   escape_toml_string(role_str) +
   "\"\nagent_id = \"" +
@@ -228,7 +224,6 @@ pub fn config_local_content(
   spec.spawn_depth.to_string() +
   automerge_line +
   review_mode_line +
-  chainlink_issue_id_line +
   task_contract_line
 }
 
@@ -282,54 +277,6 @@ pub fn task_contract_for_agent_workspace(
       Ok(local_cfg) =>
         match local_cfg.task_contract {
           Some(contract) => return Some(contract)
-          None => ()
-        }
-      Err(_) => ()
-    }
-  }
-  None
-}
-
-///|
-pub fn write_chainlink_subissue_id(
-  project_dir : String,
-  agent_slug : String,
-  issue_id : String,
-) -> Bool {
-  let workspace_dir = worktree_path(project_dir, agent_slug)
-  if !@sys.create_dir_all(workspace_dir) {
-    return false
-  }
-  @sys.write_file_sync(workspace_dir + "/.chainlink_issue_id", issue_id + "\n")
-}
-
-///|
-/// Read the Chainlink issue id for an agent, preferring the per-worktree
-/// `.chainlink_issue_id` override and falling back to `config.local.toml`.
-pub fn chainlink_issue_id_for_agent_workspace(
-  project_dir : String,
-  agent_workspace : String?,
-  agent_slug : String,
-) -> String? {
-  let override_path = worktree_path(project_dir, agent_slug) +
-    "/.chainlink_issue_id"
-  let override_content = @sys.read_file(override_path)
-  let trimmed_override = override_content.trim().to_string()
-  if trimmed_override != "" {
-    return Some(trimmed_override)
-  }
-  for
-    path in local_config_candidate_paths_for_agent_workspace(
-      project_dir, agent_workspace, agent_slug,
-    ) {
-    let content = @sys.read_file(path)
-    if content == "" {
-      continue
-    }
-    match @config.parse_local_config(content) {
-      Ok(local_cfg) =>
-        match local_cfg.chainlink_issue_id {
-          Some(issue_id) => return Some(issue_id)
           None => ()
         }
       Err(_) => ()

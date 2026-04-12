@@ -45,12 +45,6 @@ Before any code is written:
    - Non-functional requirements (performance bounds, memory, concurrency)
    - Purity boundary: what is pure core (functions, parsers, state machines) vs effectful shell (exec, sys, process calls)?
 
-2. Once the spec text is agreed, spawn a worker to record it in Chainlink:
-   ```
-   spawn_worker(task="Run: chainlink issue create '<title>' -q to get an issue ID. Then run: chainlink issue comment <id> '<full spec text>' --kind plan. Report the issue ID.")
-   ```
-   Use the returned issue ID for all subsequent fork_wave calls as `issue_id`.
-
 ### Phase 1 — TDD Leaves (Red Gate)
 
 When spawning implementation leaves, include this block verbatim in each leaf task:
@@ -70,8 +64,6 @@ When a leaf sends `[RED GATE]`:
 1. Spawn a research worker to verify tests actually fail: `spawn_worker(task="Run moon test --target native in <worktree path> and confirm the new tests fail. Report exact failure output.")`
 2. On confirmation, `send_message` to the leaf: "Red gate confirmed. Proceed with implementation."
 
-Always pass `issue_id=<chainlink_id>` to `fork_wave` — this auto-creates subissues per leaf and tracks plan/result/handoff comments through the lifecycle.
-
 ### Phase 2 — GitHub PR Review Gate
 
 After Copilot's GitHub PR review approval is recorded and all feedback is addressed, you may proceed with merging.
@@ -82,8 +74,3 @@ After Copilot's GitHub PR review approval is recorded and all feedback is addres
 
 Report convergence to the user with a summary of what was merged.
 
-### Chainlink Tracking Throughout
-
-- Run `chainlink_next` at session start to pick up existing in-progress issues rather than starting from scratch.
-- Run `chainlink_show <id>` to load a spec comment before spawning leaves.
-- The `fork_wave` `issue_id` parameter auto-creates one subissue per leaf and writes plan/result/handoff comments through the lifecycle — always use it when you have a Chainlink issue.

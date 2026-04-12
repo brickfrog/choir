@@ -270,21 +270,6 @@ test "parse_local_config review_mode override" {
 }
 
 ///|
-test "parse_local_config chainlink_issue_id" {
-  let content =
-    #|chainlink_issue_id = "42"
-  let local_cfg = parse_local_config(content).unwrap()
-  assert_eq(local_cfg.chainlink_issue_id, Some("42"))
-}
-
-///|
-test "parse_local_config chainlink_issue_id absent" {
-  let content = ""
-  let local_cfg = parse_local_config(content).unwrap()
-  assert_eq(local_cfg.chainlink_issue_id, None)
-}
-
-///|
 fn escape_toml_test_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {

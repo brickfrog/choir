@@ -31,26 +31,6 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
-      name: "chainlink_list",
-      description: "List Chainlink issues. Optional status filter (default: open).",
-      allowed_roles: [@types.Role::TL],
-    },
-    {
-      name: "chainlink_show",
-      description: "Show detail for a Chainlink issue by ID.",
-      allowed_roles: [@types.Role::TL],
-    },
-    {
-      name: "chainlink_ready",
-      description: "List Chainlink issues with no open blockers (ready to work on).",
-      allowed_roles: [@types.Role::TL],
-    },
-    {
-      name: "chainlink_next",
-      description: "Show the next Chainlink issue to work on.",
-      allowed_roles: [@types.Role::TL],
-    },
-    {
       name: "spawn_gemini",
       description: "Spawn a single Gemini leaf agent in a worktree",
       allowed_roles: [@types.Role::Root, @types.Role::TL],

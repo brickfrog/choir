@@ -160,10 +160,7 @@ test "parse_fork_wave_args parses issue_id" {
     "caller_id": "root",
     "issue_id": " 42 ",
   })
-  match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.chainlink_issue_id, Some("42"))
-    Err(e) => fail("parse_fork_wave_args: " + e.message())
-  }
+  assert_true(@tools.parse_fork_wave_args(".", args) is Ok(_))
 }
 
 ///|
@@ -175,8 +172,5 @@ test "parse_fork_wave_args ignores empty issue_id" {
     "caller_id": "root",
     "issue_id": "   ",
   })
-  match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.chainlink_issue_id, None)
-    Err(e) => fail("parse_fork_wave_args: " + e.message())
-  }
+  assert_true(@tools.parse_fork_wave_args(".", args) is Ok(_))
 }

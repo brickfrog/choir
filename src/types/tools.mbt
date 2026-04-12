@@ -21,8 +21,6 @@ pub(all) struct SpawnSpec {
   automerge : Bool?
   /// Per-wave review-mode override persisted into the spawned leaf config. `None` inherits global config.
   review_mode : ReviewMode?
-  /// Chainlink issue identifier sourced from MCP `fork_wave` arg `issue_id`, persisted into `config.local.toml`.
-  chainlink_issue_id : String?
 } derive(Debug)
 
 ///|

@@ -31,7 +31,6 @@ pub fn fork_wave_spawn_plan(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
-  chainlink_enrichment_issue? : @types.ChainlinkIssue? = None,
 ) -> ForkWaveSpawnPlan {
   let agent_ids = StringBuilder::new()
   let skipped_ids = StringBuilder::new()
@@ -88,14 +87,7 @@ pub fn fork_wave_spawn_plan(
       fork_wave_args.tasks[i],
       fork_wave_args.review_context,
     )
-    let mut task_contract = fork_wave_args.task_contracts[i]
-    match chainlink_enrichment_issue {
-      Some(issue) =>
-        task_contract = @contract.merge_chainlink_into_task_contract(
-          issue, task_contract,
-        )
-      None => ()
-    }
+    let task_contract = fork_wave_args.task_contracts[i]
     let spec = @types.SpawnSpec::{
       slug,
       role: fork_wave_args.child_role,
@@ -111,7 +103,6 @@ pub fn fork_wave_spawn_plan(
       spawn_depth: child_spawn_depth,
       automerge: fork_wave_args.automerge,
       review_mode: fork_wave_args.review_mode,
-      chainlink_issue_id: fork_wave_args.chainlink_issue_id,
     }
     spawned_specs.push(spec)
     for
@@ -232,7 +223,6 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
-  chainlink_fetch? : (async (String) -> @types.ChainlinkIssue?)? = None,
 ) -> (@types.Response, ForkWaveArgs, ForkWaveSpawnPlan) {
   let fork_wave_args = fork_wave_resolve_args_parent_branch(
     fork_wave_args, project_dir, capture,
@@ -246,20 +236,6 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     fork_wave_args.child_role,
   )
 
-  // Chainlink enrichment
-  let mut enrichment_issue : @types.ChainlinkIssue? = None
-  match (fork_wave_args.chainlink_issue_id, chainlink_fetch) {
-    (Some(id), Some(fetch)) =>
-      match fetch(id) {
-        Some(issue) => enrichment_issue = Some(issue)
-        None =>
-          @sys.write_stderr(
-            "warning: failed to fetch chainlink issue #\{id} for enrichment\n",
-          )
-      }
-    _ => ()
-  }
-
   let spawn_plan = fork_wave_spawn_plan(
     fork_wave_args,
     child_spawn_depth,
@@ -271,7 +247,6 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     listen_uds~,
     listen_tcp~,
     tcp_auth_token~,
-    chainlink_enrichment_issue=enrichment_issue,
   )
   let plan = fork_wave_plan(
     project_dir,
@@ -353,20 +328,6 @@ pub async fn interpret_fork_wave_post_spawn(
   session : String,
   registry : @registry.AgentRegistry?,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
-  claim_lock? : async (String, String) -> Bool = @chainlink.claim_lock,
-  create_subissue? : async (String, String) -> Int? = async fn(
-    parent_id : String,
-    title : String,
-  ) {
-    @chainlink.create_subissue(parent_id, title)
-  },
-  write_plan_comment? : async (String, String) -> Unit = async fn(
-    issue_id : String,
-    text : String,
-  ) {
-    @chainlink.write_plan_comment(issue_id, text)
-  },
-  write_subissue_id? : (String, String, String) -> Bool = @workspace.write_chainlink_subissue_id,
 ) -> Unit {
   let resolved_pane_ids : Array[(String, String)] = []
   match registry {
@@ -379,53 +340,6 @@ pub async fn interpret_fork_wave_post_spawn(
         )
       }
     None => ()
-  }
-  for spec in spawn_plan.spawned_specs {
-    match spec.chainlink_issue_id {
-      Some(parent_id) => {
-        let branch = @workspace.spawn_git_branch(spec)
-        let effective_id = if spawn_plan.spawned_count > 1 {
-          let title = if spec.task.length() <= 80 {
-            spec.task
-          } else {
-            spec.task[:80].to_string()
-          }
-          let created_subissue = create_subissue(parent_id, title) catch {
-            _ => None
-          }
-          match created_subissue {
-            Some(sub_id) => {
-              let subissue_id = sub_id.to_string()
-              if !write_subissue_id(project_dir, spec.slug, subissue_id) {
-                @sys.write_stderr(
-                  "[chainlink] warn: failed to persist subissue id " +
-                  subissue_id +
-                  " for " +
-                  spec.slug +
-                  "\n",
-                )
-              }
-              subissue_id
-            }
-            None => parent_id
-          }
-        } else {
-          parent_id
-        }
-        write_plan_comment(effective_id, spec.task) catch {
-          _ => ()
-        }
-        let ok = claim_lock(effective_id, branch) catch { _ => false }
-        if !ok {
-          @sys.write_stderr(
-            "[chainlink] warn: lock claim failed for issue " +
-            effective_id +
-            "\n",
-          )
-        }
-      }
-      None => ()
-    }
   }
   for slug in spawn_plan.spawned_slugs {
     let _ = @workspace.register_team_member(

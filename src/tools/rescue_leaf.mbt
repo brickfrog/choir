@@ -86,7 +86,6 @@ pub fn rescue_leaf_spawn_plan(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
-    chainlink_issue_id: None,
   }
   match @workspace.validate_reuse_spawn_spec(spec) {
     Err(e) => Err(@types.ChoirError::validation_error(e))

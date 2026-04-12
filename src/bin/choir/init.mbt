@@ -350,7 +350,6 @@ fn init_companion_commands(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
-    chainlink_issue_id: None,
   }
   let env_z = @workspace.launch_env_assignments(
     spec, session, workspace, terminal_target,

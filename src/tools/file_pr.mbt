@@ -215,8 +215,6 @@ pub async fn interpret_file_pr_post_success(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  read_chainlink_issue_id? : (String, String?, String) -> String? = @workspace.chainlink_issue_id_for_agent_workspace,
-  write_back_pr? : async (String, String, Int) -> Unit = @chainlink.write_back_pr,
 ) -> @types.Response {
   match effects.poller_track {
     Some(tracked_pr) =>
@@ -277,30 +275,6 @@ pub async fn interpret_file_pr_post_success(
       }
     }
     _ => ()
-  }
-  let tracked_agent_workspace = agent_workspace_from_registry(
-    registry, tracked_agent_id,
-  )
-  match
-    read_chainlink_issue_id(
-      project_dir,
-      tracked_agent_workspace,
-      @phase.extract_slug(tracked_agent_id),
-    ) {
-    Some(issue_id) =>
-      match effects.response.ok_field("pr_url") {
-        Some(pr_url) =>
-          write_back_pr(issue_id, pr_url, pr_number) catch {
-            _ =>
-              @sys.write_stderr(
-                "[chainlink] warn: PR write-back failed for issue " +
-                issue_id +
-                "\n",
-              )
-          }
-        None => ()
-      }
-    None => ()
   }
   let mut review_request_failed = false
   if pr_review {
@@ -457,27 +431,6 @@ pub fn file_pr_workdir(
         _ => root_project_dir
       }
     None => root_project_dir
-  }
-}
-
-///|
-fn agent_workspace_from_registry(
-  reg : @registry.AgentRegistry?,
-  agent_id : String,
-) -> String? {
-  match reg {
-    Some(agent_reg) =>
-      try {
-        let agent = agent_reg.get(agent_id)
-        if agent.workspace != "" {
-          Some(agent.workspace)
-        } else {
-          None
-        }
-      } catch {
-        _ => None
-      }
-    None => None
   }
 }
 

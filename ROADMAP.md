@@ -6,16 +6,6 @@ Choir now has typed task contracts, a typed evidence ledger, a pure merge policy
 
 ---
 
-## 🚀 Immediate Next: External Task Memory Provider
-
-The merge control plane and operator UX are now explicit. The next step in this milestone is task-memory integration rather than more merge-surface cleanup.
-
-- Pilot Chainlink as an optional task-memory provider instead of building a Choir-native issue tracker.
-- Start with read-only import of active issue, subissue, dependencies, and handoff context into `TaskContract`.
-- Add write-back for PR URL, execution status, merge outcome, and concise handoff notes.
-- Treat specs and task structure as living inputs that evolve during execution, not as a rigid up-front gate.
-- Non-goal: do not rebuild Chainlink inside Choir unless the pilot exposes a hard architectural gap.
-
 ---
 
 ## 🛠️ Operational Improvements
