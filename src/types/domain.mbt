@@ -557,73 +557,96 @@ pub fn evaluation_failed_verify_names(
 }
 
 ///|
-pub fn advisory_evaluation_result(
-  bundle : EvaluationBundle,
-) -> EvaluationResult {
-  let review = evaluation_latest_review_state(bundle.signals)
-  let ci = evaluation_latest_ci_rollup(bundle.signals)
-  let threads = evaluation_latest_threads(bundle.signals)
-  let copilot_seen = evaluation_copilot_seen(bundle.signals)
-  let verify_required = match bundle.task_contract {
-    Some(contract) => contract.verify
-    None => []
-  }
+/// Shared cascade verdict used by both advisory_evaluation_result and
+/// decide_merge (in policy). Single source of truth for the evaluation
+/// order and blocking semantics.
+pub(all) enum CascadeVerdict {
+  Ready(reason~ : String)
+  Blocked(reason~ : String)
+  NeedsHuman(reason~ : String)
+  Waiting(reason~ : String)
+} derive(Debug, Eq)
+
+///|
+/// Canonical evaluation cascade. All readiness/merge decisions must go
+/// through this function so the ordering and blocking rules stay in sync.
+pub fn evaluation_cascade(
+  verify_required : Array[String],
+  signals : Array[EvaluationSignal],
+) -> CascadeVerdict {
+  let review = evaluation_latest_review_state(signals)
+  let ci = evaluation_latest_ci_rollup(signals)
+  let threads = evaluation_latest_threads(signals)
+  let copilot_seen = evaluation_copilot_seen(signals)
   let verify_results = evaluation_verify_results_for_required(
-    verify_required,
-    bundle.signals,
+    verify_required, signals,
   )
   let failed_verify = evaluation_failed_verify_names(verify_results)
   if failed_verify.length() > 0 {
-    let reason = "local verify failed: " + failed_verify.join(", ")
-    return { verdict: Blocked(reason~), summary: reason }
+    return CascadeVerdict::Blocked(
+      reason="local verify failed: " + failed_verify.join(", "),
+    )
   }
-  let missing_verify = evaluation_missing_verify_names(verify_results)
   if review == EvaluationReviewState::ChangesRequested {
-    let reason = "review requested changes"
-    return { verdict: Blocked(reason~), summary: reason }
+    return CascadeVerdict::Blocked(reason="review changes requested")
   }
   match threads {
     Some(count) =>
       if count > 0 {
-        let reason = count.to_string() + " unresolved inline review thread(s)"
-        return { verdict: Blocked(reason~), summary: reason }
+        return CascadeVerdict::Blocked(
+          reason=count.to_string() + " unresolved inline review thread(s)",
+        )
       }
     None => ()
   }
   if ci == EvaluationCiRollup::Failure {
-    let reason = "CI failing"
-    return { verdict: Blocked(reason~), summary: reason }
+    return CascadeVerdict::Blocked(reason="CI failing")
   }
+  let missing_verify = evaluation_missing_verify_names(verify_results)
   if missing_verify.length() > 0 {
-    let reason = "local verify not observed: " + missing_verify.join(", ")
-    return { verdict: NeedsHuman(reason~), summary: reason }
+    return CascadeVerdict::NeedsHuman(
+      reason="local verify not observed: " + missing_verify.join(", "),
+    )
   }
-  match threads {
-    None => {
-      let reason = "unresolved inline review threads not fetched"
-      return { verdict: NeedsHuman(reason~), summary: reason }
-    }
-    Some(_) => ()
+  if threads is None {
+    return CascadeVerdict::NeedsHuman(reason="review threads not fetched")
   }
   if review == EvaluationReviewState::Unknown ||
     review == EvaluationReviewState::None_ {
-    let reason = "no review observed"
-    return { verdict: NeedsHuman(reason~), summary: reason }
+    return CascadeVerdict::Waiting(reason="waiting for review")
   }
   if review == EvaluationReviewState::Commented && !copilot_seen {
-    let reason = "waiting for Copilot comments"
-    return { verdict: NeedsHuman(reason~), summary: reason }
+    return CascadeVerdict::Waiting(reason="waiting for Copilot comments")
   }
   if ci == EvaluationCiRollup::Unknown || ci == EvaluationCiRollup::InProgress {
-    let reason = "latest head CI rollup is not all-success"
-    return { verdict: NeedsHuman(reason~), summary: reason }
+    return CascadeVerdict::Waiting(reason="waiting for CI to finish")
   }
-  let summary = if evaluation_copilot_seen(bundle.signals) {
+  let ready_reason = if copilot_seen {
     "ready: no tracked blockers; Copilot issue comment observed"
   } else {
     "ready: no tracked blockers; Copilot issue comment not observed"
   }
-  { verdict: Ready, summary }
+  CascadeVerdict::Ready(reason=ready_reason)
+}
+
+///|
+pub fn advisory_evaluation_result(
+  bundle : EvaluationBundle,
+) -> EvaluationResult {
+  let verify_required = match bundle.task_contract {
+    Some(contract) => contract.verify
+    None => []
+  }
+  let cascade = evaluation_cascade(verify_required, bundle.signals)
+  match cascade {
+    Ready(reason~) => { verdict: EvaluationVerdict::Ready, summary: reason }
+    Blocked(reason~) =>
+      { verdict: EvaluationVerdict::Blocked(reason~), summary: reason }
+    NeedsHuman(reason~) =>
+      { verdict: EvaluationVerdict::NeedsHuman(reason~), summary: reason }
+    Waiting(reason~) =>
+      { verdict: EvaluationVerdict::NeedsHuman(reason~), summary: reason }
+  }
 }
 
 ///|

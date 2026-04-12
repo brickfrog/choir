@@ -32,58 +32,17 @@ pub fn decide_merge(
   bundle : @types.EvaluationBundle,
 ) -> MergeDecision {
   let effective_contract = effective_task_contract(task_contract, bundle)
-  let review = @types.evaluation_latest_review_state(bundle.signals)
-  let ci = @types.evaluation_latest_ci_rollup(bundle.signals)
-  let threads = @types.evaluation_latest_threads(bundle.signals)
-  let copilot_seen = @types.evaluation_copilot_seen(bundle.signals)
   let required_verify = match effective_contract {
     Some(contract) => contract.verify
     None => []
   }
-  let verify_results = @types.evaluation_verify_results_for_required(
-    required_verify,
-    bundle.signals,
-  )
-  let failed_verify = @types.evaluation_failed_verify_names(verify_results)
-  if failed_verify.length() > 0 {
-    let reason = "local verify failed: " + failed_verify.join(", ")
-    return MergeDecision::Blocked(reason~)
+  let cascade = @types.evaluation_cascade(required_verify, bundle.signals)
+  match cascade {
+    Ready(_) => MergeDecision::MergeNow(reason=ready_reason(required_verify))
+    Blocked(reason~) => MergeDecision::Blocked(reason~)
+    NeedsHuman(reason~) => MergeDecision::NeedsHuman(reason~)
+    Waiting(reason~) => MergeDecision::Wait(reason~)
   }
-  if review == @types.EvaluationReviewState::ChangesRequested {
-    return MergeDecision::Blocked(reason="review changes requested")
-  }
-  match threads {
-    Some(count) =>
-      if count > 0 {
-        return MergeDecision::Blocked(
-          reason=count.to_string() + " unresolved inline review thread(s)",
-        )
-      }
-    None => ()
-  }
-  if ci == @types.EvaluationCiRollup::Failure {
-    return MergeDecision::Blocked(reason="CI failing")
-  }
-  let missing_verify = @types.evaluation_missing_verify_names(verify_results)
-  if missing_verify.length() > 0 {
-    let reason = "local verify not observed: " + missing_verify.join(", ")
-    return MergeDecision::NeedsHuman(reason~)
-  }
-  if threads is None {
-    return MergeDecision::NeedsHuman(reason="review threads not fetched")
-  }
-  if review == @types.EvaluationReviewState::Unknown ||
-    review == @types.EvaluationReviewState::None_ {
-    return MergeDecision::Wait(reason="waiting for review")
-  }
-  if review == @types.EvaluationReviewState::Commented && !copilot_seen {
-    return MergeDecision::Wait(reason="waiting for Copilot comments")
-  }
-  if ci == @types.EvaluationCiRollup::Unknown ||
-    ci == @types.EvaluationCiRollup::InProgress {
-    return MergeDecision::Wait(reason="waiting for CI to finish")
-  }
-  MergeDecision::MergeNow(reason=ready_reason(required_verify))
 }
 
 ///|
