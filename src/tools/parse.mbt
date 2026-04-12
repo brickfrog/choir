@@ -454,7 +454,10 @@ fn parse_spawn_gemini_args(
   if task == "" {
     return Err(ParseError::MissingField(field="task"))
   }
-  let caller_id = tool_args_get(args, "caller_id").unwrap_or("main")
+  let caller_id = match tool_args_get(args, "caller_id") {
+    Some(v) if v.trim() != "" => v
+    _ => return Err(ParseError::MissingField(field="caller_id"))
+  }
   let slug = match tool_args_get(args, "slug") {
     Some(v) => if v == "" { slugify_task(task, 0) } else { v }
     None => slugify_task(task, 0)
@@ -585,6 +588,9 @@ pub fn parse_fork_wave_args(
         ),
       )
   }
+  // `role` defaults to "dev" — most waves fork Dev leaves and omitting it is
+  // intentional (not an error). Explicit "tl" is required when forking sub-TL
+  // waves. Unknown values still hard-error below.
   let role_raw = tool_args_get(args, "role").unwrap_or("dev")
   let normalized_role = role_raw.trim().to_lower().to_string()
   let role_norm = if normalized_role == "" { "dev" } else { normalized_role }
@@ -632,13 +638,17 @@ pub fn parse_fork_wave_args(
     }
     None => None
   }
+  let caller_id = match tool_args_get(args, "caller_id") {
+    Some(v) if v.trim() != "" => v
+    _ => return Err(ParseError::MissingField(field="caller_id"))
+  }
   Ok({
     count,
     tasks,
     task_contracts,
     has_per_leaf_tasks: per_leaf_tasks.length() > 0,
     parent_branch,
-    caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
+    caller_id,
     slug_prefix: normalized_slug_prefix,
     agent_type,
     child_role,
@@ -680,13 +690,17 @@ fn parse_leaf_spawn_args(
         ),
       )
   }
+  let caller_id = match tool_args_get(args, "caller_id") {
+    Some(v) if v.trim() != "" => v
+    _ => return Err(ParseError::MissingField(field="caller_id"))
+  }
   Ok({
     task: render_leaf_spawn_prompt_with_defaults(
       prompt_spec,
       @workspace.resolve_context_paths(project_dir, "dev"),
     ),
     task_contract: prompt_spec.task_contract,
-    caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
+    caller_id,
     slug,
     parent_branch,
   })
@@ -730,13 +744,17 @@ fn parse_worker_spawn_args(
     Ok(value) => value
     Err(e) => return Err(e)
   }
+  let caller_id = match tool_args_get(args, "caller_id") {
+    Some(v) if v.trim() != "" => v
+    _ => return Err(ParseError::MissingField(field="caller_id"))
+  }
   Ok({
     task: render_worker_spawn_prompt_with_defaults(
       prompt_spec,
       @workspace.resolve_context_paths(project_dir, "worker"),
     ),
     task_contract: prompt_spec.task_contract,
-    caller_id: tool_args_get(args, "caller_id").unwrap_or("main"),
+    caller_id,
     slug,
     agent_type,
   })
@@ -1454,5 +1472,38 @@ test "parse_merge_pr_args treats empty review_mode as unset" {
     ) {
     Ok(args) => assert_eq(args.review_mode, None)
     Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_spawn_gemini_args rejects missing caller_id" {
+  match parse_spawn_gemini_args(".", tool_args_from_map({ "task": "do it" })) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "caller_id")
+    _ => fail("expected MissingField(caller_id)")
+  }
+}
+
+///|
+test "parse_leaf_spawn_args rejects missing caller_id" {
+  match
+    parse_leaf_spawn_args(
+      ".",
+      tool_args_from_map({ "task": "do it", "slug": "work" }),
+      "work",
+    ) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "caller_id")
+    _ => fail("expected MissingField(caller_id)")
+  }
+}
+
+///|
+test "parse_worker_spawn_args rejects missing caller_id" {
+  match
+    parse_worker_spawn_args(
+      ".",
+      tool_args_from_map({ "task": "research", "worker_type": "research" }),
+    ) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "caller_id")
+    _ => fail("expected MissingField(caller_id)")
   }
 }

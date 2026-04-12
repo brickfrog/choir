@@ -567,7 +567,14 @@ pub fn sync_parent_child_lifecycle(
   agent_id : String,
   lifecycle : AgentLifecycle,
 ) -> Unit {
-  let agent = registry.get(agent_id) catch { _ => return }
+  let agent = registry.get(agent_id) catch {
+    _ => {
+      @moontrace.warn("sync_parent_child_lifecycle: agent not in registry", fields=[
+        @moontrace.field("agent_id", agent_id),
+      ])
+      return
+    }
+  }
   let parent_id = match agent.parent {
     Some(parent_id) => parent_id
     None => return
@@ -575,7 +582,13 @@ pub fn sync_parent_child_lifecycle(
   let parent = resolve_agent_with_fallback(
     project_dir, session, registry, parent_id,
   ) catch {
-    _ => return
+    _ => {
+      @moontrace.warn("sync_parent_child_lifecycle: parent not in registry", fields=[
+        @moontrace.field("agent_id", agent_id),
+        @moontrace.field("parent_id", parent_id),
+      ])
+      return
+    }
   }
   let child : ChildLifecycle = {
     child_id: agent_id,
@@ -647,12 +660,27 @@ pub fn remove_parent_child_lifecycle(
   registry : @registry.AgentRegistry,
   agent_id : String,
 ) -> Unit {
-  let agent = registry.get(agent_id) catch { _ => return }
+  let agent = registry.get(agent_id) catch {
+    _ => {
+      @moontrace.warn("remove_parent_child_lifecycle: agent not in registry", fields=[
+        @moontrace.field("agent_id", agent_id),
+      ])
+      return
+    }
+  }
   let parent_id = match agent.parent {
     Some(parent_id) => parent_id
     None => return
   }
-  let parent = registry.get(parent_id) catch { _ => return }
+  let parent = registry.get(parent_id) catch {
+    _ => {
+      @moontrace.warn("remove_parent_child_lifecycle: parent not in registry", fields=[
+        @moontrace.field("agent_id", agent_id),
+        @moontrace.field("parent_id", parent_id),
+      ])
+      return
+    }
+  }
   let parent_lifecycle = read_or_default_lifecycle(
     project_dir,
     parent_id,

@@ -451,17 +451,15 @@ fn next_notified_parent(
 
 ///|
 fn backoff_delay_seconds(consecutive_failures : Int) -> Int64 {
+  let max_delay = 900L // 15-min ceiling
   let mut delay = 30L
   let mut i = 0
-  while i < consecutive_failures {
-    if delay >= 60L {
-      return 60L
-    }
+  while i < consecutive_failures && delay < max_delay {
     delay = delay * 2L
     i = i + 1
   }
-  if delay > 60L {
-    60L
+  if delay > max_delay {
+    max_delay
   } else {
     delay
   }

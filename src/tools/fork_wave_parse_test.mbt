@@ -174,3 +174,16 @@ test "parse_fork_wave_args ignores empty issue_id" {
   })
   assert_true(@tools.parse_fork_wave_args(".", args) is Ok(_))
 }
+
+///|
+test "parse_fork_wave_args rejects missing caller_id" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Err(e) => assert_true(e.message().contains("caller_id"))
+    Ok(_) => fail("expected MissingField(caller_id)")
+  }
+}

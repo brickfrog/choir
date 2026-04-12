@@ -1,11 +1,13 @@
 ///|
-test "poller_backoff_delay_after_failure matches internal ladder" {
+test "poller_backoff_delay_after_failure exponential ladder capped at 900s" {
   assert_eq(@poller.poller_backoff_delay_after_failure(0), 30L)
   assert_eq(@poller.poller_backoff_delay_after_failure(1), 60L)
-  assert_eq(@poller.poller_backoff_delay_after_failure(2), 60L)
-  assert_eq(@poller.poller_backoff_delay_after_failure(3), 60L)
-  assert_eq(@poller.poller_backoff_delay_after_failure(6), 60L)
-  assert_eq(@poller.poller_backoff_delay_after_failure(50), 60L)
+  assert_eq(@poller.poller_backoff_delay_after_failure(2), 120L)
+  assert_eq(@poller.poller_backoff_delay_after_failure(3), 240L)
+  assert_eq(@poller.poller_backoff_delay_after_failure(4), 480L)
+  assert_eq(@poller.poller_backoff_delay_after_failure(5), 900L)
+  assert_eq(@poller.poller_backoff_delay_after_failure(6), 900L)
+  assert_eq(@poller.poller_backoff_delay_after_failure(50), 900L)
 }
 
 ///|

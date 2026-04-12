@@ -462,6 +462,11 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
+    // AUDIT: Hardcoded APPROVED response is a fixture precondition, not the
+    // assertion target. This test verifies owner-lineage recovery across a
+    // restart when the original PR owner is offline; the approval is the
+    // input state the scenario requires, and the assertions below are on
+    // lifecycle/supervisor transitions, not on this mock.
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&

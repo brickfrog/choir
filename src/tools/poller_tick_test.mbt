@@ -110,10 +110,13 @@ async test "tick_with resets failure counters after successful poll" {
 
 ///|
 async test "tick_with clamps failure counter at max bound" {
+  // Step must exceed the maximum backoff (900s) so every iteration triggers
+  // a poll and failures accumulate. Fewer iterations than the old test since
+  // each is guaranteed to fire.
   let ps = @poller.PollerState::new()
   ps.track(14, "main.leaf", "main.leaf", "main", "u", 100L)
   let mut now = 200L
-  for i = 0; i < 12; i = i + 1 {
+  for i = 0; i < 15; i = i + 1 {
     let _ = ps.tick_with(
       now,
       3600L,
@@ -121,7 +124,7 @@ async test "tick_with clamps failure counter at max bound" {
       fn(_e : @poller.PollEvent, _a : String) -> Unit { () },
       fn(_l : @poller.PollerPrTickLog) -> Unit { () },
     )
-    now = now + 300L
+    now = now + 1000L
   }
   match ps.get(14) {
     Some(t) => assert_eq(t.consecutive_failures, 10)

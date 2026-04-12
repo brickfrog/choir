@@ -372,7 +372,7 @@ async test "handle_request with valid tool returns Ok" {
     req_method: "tools/call",
     role: @types.Role::TL,
     name: "fork_wave",
-    args: @types.RequestArgs::new({ "count": "3" }),
+    args: @types.RequestArgs::new({ "count": "3", "caller_id": "main.tl" }),
   }
   let res = handle_request(
     reg,
@@ -419,7 +419,7 @@ async test "dispatch returns correct stub for each tool name" {
     @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
   let cases = [
-    ("fork_wave", "spawned", { "count": "1" }),
+    ("fork_wave", "spawned", { "count": "1", "caller_id": "main.tl" }),
     ("fork_session", "ok", { "name": "nested-team" }),
     ("file_pr", "pr_created", { "branch": "test" }),
     ("merge_pr", "merged", { "pr_number": "1" }),
@@ -431,7 +431,7 @@ async test "dispatch returns correct stub for each tool name" {
     ("mutex_status", "", { "name": "readme" }),
     ("shutdown", "shutdown", Map::new()),
     ("task_list", "ok", Map::new()),
-    ("spawn_worker", "spawned", Map::new()),
+    ("spawn_worker", "spawned", { "caller_id": "main.tl" }),
   ]
   for c in cases {
     let (name, expected_status, args) = c

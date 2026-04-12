@@ -1,4 +1,5 @@
 import {
+  "brickfrog/moontrace",
   "choir/src/sys",
   "choir/src/types",
   "choir/src/poller",

@@ -602,6 +602,12 @@ pub fn evaluation_cascade(
   if ci == EvaluationCiRollup::Failure {
     return CascadeVerdict::Blocked(reason="CI failing")
   }
+  // AUDIT: Blocked-vs-NeedsHuman asymmetry is intentional. `verify_required`
+  // is server-authoritative (sourced from bundle.task_contract.verify at
+  // dispatch time); agents under evaluation cannot mutate it. "Failed"
+  // means we observed the run and it failed -> hard block. "Missing" means
+  // we never observed a run -> human confirms nothing silently skipped.
+  // This is NOT an LLM-downgrade vector.
   let missing_verify = evaluation_missing_verify_names(verify_results)
   if missing_verify.length() > 0 {
     return CascadeVerdict::NeedsHuman(

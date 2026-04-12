@@ -37,6 +37,13 @@ fn tool_args_get_json(args : ToolArgs, key : String) -> Json? {
 }
 
 ///|
+/// Parse a JSON value into an array of trimmed, non-empty strings.
+///
+/// AUDIT: Non-string array elements are intentionally dropped (not an
+/// error). This is the LLM-input boundary for free-form text fields
+/// (scope, verify, constraints, etc.). Hard-erroring on a stray non-string
+/// would just force the LLM to retry and hit the same path. Strict
+/// validation belongs in the task_contract schema, not here.
 fn json_string_list(value : Json?) -> Array[String] {
   match value {
     Some(Array(items)) => {
@@ -97,7 +104,13 @@ fn task_contract_from_json_object(value : Json?) -> @types.TaskContract {
     }
     Some(String(s)) => {
       let parsed = @json.parse(s) catch {
-        _ => return @types.TaskContract::empty()
+        _ => {
+          let preview_end = if s.length() < 120 { s.length() } else { 120 }
+          @moontrace.warn("task contract inner parse failed", fields=[
+            @moontrace.field("payload_prefix", s[:preview_end].to_string()),
+          ])
+          return @types.TaskContract::empty()
+        }
       }
       task_contract_from_json_object(Some(parsed))
     }
