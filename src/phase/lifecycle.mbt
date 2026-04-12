@@ -6,6 +6,8 @@ pub(all) enum FinalizeReason {
   RecoveredDone
   /// Prior leaf finished after a rescue handoff; not a hard failure.
   RescuedByReplacement
+  /// Agent was in `Completing` state at server startup; original finalize reason unknown.
+  Recovered
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -98,6 +100,9 @@ pub(all) enum SupervisorLifecycle {
 ///|
 pub(all) enum DevLifecycle {
   Working
+  /// Leaf sent `[RED GATE]` via notify_parent; waiting for TL to confirm tests
+  /// actually fail and send a proceed signal. Watchdog-exempt while in this state.
+  WaitingForRedGate
   ReviewOwned(pr_number~ : Int, state~ : ReviewOwnership)
   ChangesRequested(pr_number~ : Int, next_round~ : Int)
   ExitRequestedDeferred(pr_number~ : Int, state~ : ReviewOwnership)
@@ -263,7 +268,8 @@ pub fn lifecycle_for_agent(agent : @types.Agent) -> AgentLifecycle {
   let process = match agent.state {
     @types.AgentState::Spawning => Connected
     @types.AgentState::Active => Connected
-    @types.AgentState::Completing => Finalizing(reason=FinalizeReason::Shutdown)
+    @types.AgentState::Completing =>
+      Finalizing(reason=FinalizeReason::Recovered)
     @types.AgentState::Done => Finalized(reason=FinalizeReason::RecoveredDone)
     @types.AgentState::Failed => Failed(reason=FailureReason::RecoveredFailed)
   }
@@ -301,7 +307,7 @@ pub fn child_summary_from_lifecycle(
 ) -> ChildLifecycleSummary {
   match lifecycle.workflow {
     Supervisor(_) => ChildLifecycleSummary::Working
-    Dev(Working) => ChildLifecycleSummary::Working
+    Dev(Working) | Dev(WaitingForRedGate) => ChildLifecycleSummary::Working
     Dev(ReviewOwned(pr_number~, state~)) =>
       ChildLifecycleSummary::ReviewOwned(pr_number~, state~)
     Dev(ChangesRequested(pr_number~, next_round~)) =>
@@ -349,7 +355,7 @@ pub fn supervisor_exit_policy(
 ///|
 pub fn dev_exit_policy(lifecycle : DevLifecycle) -> LifecycleExitPolicy {
   match lifecycle {
-    Working => Allowed
+    Working | WaitingForRedGate => Allowed
     ReviewOwned(pr_number~, state~) =>
       Deferred(message=review_summary_message(pr_number, state))
     ChangesRequested(_, ..) => Blocked(reason=ExitBlockReason::ChangesRequested)
@@ -386,6 +392,9 @@ pub fn lifecycle_dev_disconnect_policy(
 ) -> LifecycleDisconnectPolicy {
   match lifecycle {
     Working => Fail(reason=UnexpectedDisconnect)
+    // Waiting at red gate for TL proceed signal; preserve so the leaf can resume
+    // when the TL responds instead of treating the disconnect as a failure.
+    WaitingForRedGate => Preserve
     ReviewOwned(..) => Preserve
     // Waiting on reviewer-requested changes; work is in-flight and needs human
     // follow-up — preserve across disconnect so the fix/review cycle is not lost.
@@ -431,6 +440,9 @@ pub fn lifecycle_disconnect_policy(
 ///   review resolution; [`notify_parent`] thread blocks warn the parent instead.
 /// - **Dev `ChangesRequested(..)`**: awaiting TL instructions after a review cycle,
 ///   legitimately idle (same “parked waiting” rationale as `ExitRequestedDeferred`).
+/// - **Dev `WaitingForRedGate`**: leaf sent `[RED GATE]` and is waiting for TL to
+///   confirm tests fail and send a proceed signal. The spec requires this wait;
+///   killing it here would violate the TDD protocol.
 /// - **Worker `Done` / `Failed`**: terminal.
 ///
 /// **Not** exempt (examples): **`Working`**, **`Dev(Exitable)`**, **`Worker(Exitable)`**
@@ -448,6 +460,7 @@ pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
     Dev(ExitRequestedDeferred(..)) => true
     Dev(ReviewOwned(..)) => true
     Dev(ChangesRequested(..)) => true
+    Dev(WaitingForRedGate) => true
     Worker(Done(..)) | Worker(Failed(..)) => true
     _ => false
   }
@@ -459,7 +472,13 @@ pub fn dev_lifecycle_transition(
   event : DevLifecycleEvent,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> TransitionResult[DevLifecycle] {
-  match (lifecycle, event) {
+  // WaitingForRedGate is semantically Working — same transition table, just
+  // watchdog-exempt. Normalize before matching so all Working arms apply.
+  let effective = match lifecycle {
+    WaitingForRedGate => DevLifecycle::Working
+    other => other
+  }
+  match (effective, event) {
     (Working, PRCreated(pr_number~, url~)) =>
       Transitioned(ReviewOwned(pr_number~, state=OpenUnreviewed(url~)))
     (Exitable, PRCreated(pr_number~, url~)) =>
@@ -624,10 +643,8 @@ pub fn supervisor_transition(
     }
     (WaveComplete(wave~, ..), ChildSpawned(child~)) =>
       Transitioned(Supervising(children=[child], wave=wave + 1))
-    (Planning, OwnPRFiled(number~, url~)) =>
-      Transitioned(OwnPRFiled(number~, url~))
-    (Dispatching, OwnPRFiled(number~, url~)) =>
-      Transitioned(OwnPRFiled(number~, url~))
+    // OwnPRFiled is only valid at Convergence (Supervising or WaveComplete).
+    // Planning/Dispatching cannot file a PR before any children are spawned.
     (Supervising(..), OwnPRFiled(number~, url~)) =>
       Transitioned(OwnPRFiled(number~, url~))
     (WaveComplete(_, ..), OwnPRFiled(number~, url~)) =>
@@ -721,6 +738,10 @@ pub fn failure_reason_message(reason : FailureReason) -> String {
 /// Patterns are ordered from most-specific to least-specific.
 pub fn classify_failure(message : String) -> FailureReason {
   let lower = message.to_lower()
+  let first_line = match lower.find("\n") {
+    Some(i) => lower[:i].to_string()
+    None => lower
+  }
   if lower.contains("model at capacity") ||
     lower.contains("service at capacity") ||
     lower.contains("rate limit") {
@@ -741,8 +762,9 @@ pub fn classify_failure(message : String) -> FailureReason {
     lower.contains("killed by parent") ||
     lower.contains("agent killed") {
     ParentKilled
-  } else if lower.contains("blocked by review") ||
-    lower.contains("changes requested") {
+  } else if first_line.has_prefix("blocked by review") ||
+    first_line == "changes requested" ||
+    first_line.has_prefix("changes requested:") {
     BlockedByReview
   } else {
     ChildFailure(message~)

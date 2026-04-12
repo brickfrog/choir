@@ -462,6 +462,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -506,6 +507,7 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -545,6 +547,7 @@ test "parent_poll_event_message MergeReady is actionable in manual mode" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -588,6 +591,7 @@ test "parent_poll_event_message MergeReady is informational in automerge mode" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -630,6 +634,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -672,6 +677,7 @@ test "parent_poll_event_message FixesPushed single_pass avoids re-review wording
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 1L,
   }
   match
     parent_poll_event_message(
@@ -725,6 +731,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -805,6 +812,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -869,6 +877,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     leaf_poll_review_injection_message(
@@ -924,6 +933,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   assert_eq(
     parent_poll_event_message(
@@ -1085,6 +1095,7 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -1127,6 +1138,7 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -1167,6 +1179,7 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   match
     parent_poll_event_message(
@@ -1206,6 +1219,7 @@ test "parent_poll_event_message PRMerged is handled by canonical teardown delive
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   assert_eq(
     parent_poll_event_message(
@@ -1240,6 +1254,7 @@ test "evidence_events_for_poll_snapshot emits normalized snapshot events" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   let events = evidence_events_for_poll_snapshot(
     tracked,
@@ -1293,6 +1308,7 @@ test "evidence_events_for_poll_snapshot includes merge observed on PRMerged" {
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   let events = evidence_events_for_poll_snapshot(
     tracked,
@@ -1354,6 +1370,7 @@ async test "deliver_orphaned_pr_notification_for skips finalized merged lifecycl
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   let mut runner_calls = 0
   deliver_orphaned_pr_notification_for(state, pr, async fn(cmds) {
@@ -1409,6 +1426,7 @@ async test "deliver_poller_stall_notification_for skips finalized merged lifecyc
     orphan_reconciling: false,
     changes_requested_since: 1L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   let mut runner_calls = 0
   deliver_poller_stall_notification_for(state, pr, 1000L, async fn(cmds) {

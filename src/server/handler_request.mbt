@@ -123,9 +123,7 @@ fn durable_delivery_message_id(
   status : @types.Status,
   now_ms : Int64,
 ) -> String {
-  let hash_input = state.run_id +
-    "|" +
-    recipient_id +
+  let hash_input = recipient_id +
     "|" +
     sender_id +
     "|" +
@@ -283,7 +281,15 @@ async fn deliver_stale_pr_reconciliation_message(
   status : @types.Status,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
-  ignore(state.durable_deliver_to_parent(pr.agent_id, message, status, runner))
+  match state.durable_deliver_to_parent(pr.agent_id, message, status, runner) {
+    Ok(_) => ()
+    Err(e) =>
+      @moontrace.error("outbox write failed for stale PR delivery", fields=[
+        @moontrace.field("agent_id", pr.agent_id),
+        @moontrace.field("pr_number", pr.pr_number),
+        @moontrace.field("error", e.message()),
+      ])
+  }
 }
 
 ///|

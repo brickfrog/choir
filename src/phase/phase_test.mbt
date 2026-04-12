@@ -53,6 +53,83 @@ test "lifecycle_idle_watchdog_exempt logic" {
   let tl = lifecycle_for_role("tl", @types.Role::TL)
   // `Supervisor` is not exempt here; `check_idle_agents` skips TL/Root by role first.
   assert_false(lifecycle_idle_watchdog_exempt(tl))
+
+  // WaitingForRedGate must be exempt (leaf is following TDD protocol; spec says wait).
+  let dev_red_gate = {
+    ..lifecycle_for_role("d2", @types.Role::Dev),
+    workflow: Dev(WaitingForRedGate),
+  }
+  assert_true(lifecycle_idle_watchdog_exempt(dev_red_gate))
+}
+
+///|
+test "WaitingForRedGate transitions identically to Working" {
+  // PRCreated from WaitingForRedGate should work like from Working.
+  match
+    dev_lifecycle_transition(
+      WaitingForRedGate,
+      DevLifecycleEvent::PRCreated(pr_number=1, url="https://ex/pr/1"),
+    ) {
+    Transitioned(ReviewOwned(pr_number=1, state=OpenUnreviewed(_))) => ()
+    _ => fail("expected ReviewOwned from WaitingForRedGate + PRCreated")
+  }
+  // ExitRequested from WaitingForRedGate should become Exitable.
+  match
+    dev_lifecycle_transition(
+      WaitingForRedGate,
+      DevLifecycleEvent::ExitRequested,
+    ) {
+    Transitioned(Exitable) => ()
+    _ => fail("expected Exitable from WaitingForRedGate + ExitRequested")
+  }
+}
+
+///|
+test "WaitingForRedGate is disconnect-preserve, not fail" {
+  assert_eq(
+    lifecycle_dev_disconnect_policy(WaitingForRedGate),
+    LifecycleDisconnectPolicy::Preserve,
+  )
+}
+
+///|
+test "supervisor_transition rejects OwnPRFiled from Planning and Dispatching" {
+  let ev = SupervisorEvent::OwnPRFiled(number=1, url="https://ex/pr/1")
+  match supervisor_transition(SupervisorLifecycle::Planning, ev) {
+    InvalidTransition(_) => ()
+    _ => fail("expected InvalidTransition from Planning + OwnPRFiled")
+  }
+  match supervisor_transition(SupervisorLifecycle::Dispatching, ev) {
+    InvalidTransition(_) => ()
+    _ => fail("expected InvalidTransition from Dispatching + OwnPRFiled")
+  }
+}
+
+///|
+test "classify_failure does not misclassify incidental review phrases" {
+  // "no changes requested yet" contains "changes requested" but should NOT
+  // classify as BlockedByReview — it does not start with the keyword.
+  match classify_failure("no changes requested yet, still waiting") {
+    ChildFailure(_) => ()
+    _ =>
+      fail(
+        "expected ChildFailure for message containing review phrase mid-sentence",
+      )
+  }
+  // A message that STARTS with "changes requested:" should classify correctly.
+  match classify_failure("changes requested: please add tests") {
+    BlockedByReview => ()
+    _ =>
+      fail(
+        "expected BlockedByReview for first-line prefix 'changes requested:'",
+      )
+  }
+  // Bare "blocked by review" prefix still works.
+  match classify_failure("blocked by review at round 2") {
+    BlockedByReview => ()
+    _ =>
+      fail("expected BlockedByReview for first-line prefix 'blocked by review'")
+  }
 }
 
 ///|

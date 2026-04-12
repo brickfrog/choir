@@ -67,6 +67,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "orphan_reconciling": self.orphan_reconciling.to_json(),
     "changes_requested_since": self.changes_requested_since.to_json(),
     "stall_notified": self.stall_notified.to_json(),
+    "fixes_pushed_at": self.fixes_pushed_at.to_json(),
   }
   .to_json()
   .stringify()
@@ -173,6 +174,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => false
   }
+  let fixes_pushed_at = match
+    @types.json_field_int64(fields, "fixes_pushed_at") {
+    Some(value) => value
+    None => 0L
+  }
   Some({
     pr_number,
     agent_id,
@@ -193,6 +199,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     orphan_reconciling,
     changes_requested_since,
     stall_notified,
+    fixes_pushed_at,
   })
 }
 
@@ -231,6 +238,7 @@ pub fn PollerState::track(
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   self.tracked.set(pr_number, pr)
 }
@@ -338,6 +346,7 @@ pub fn PollerState::track_recovered(
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
   self.tracked.set(pr_number, pr)
 }
@@ -661,12 +670,18 @@ pub async fn PollerState::tick_pr_with(
   let copilot_sticky = tracked_ok.copilot_issue_comment_seen || copilot_now
   let mut crs = tracked_ok.changes_requested_since
   let mut sn = tracked_ok.stall_notified
+  let mut fpa = tracked_ok.fixes_pushed_at
   let sha_moved = tracked_ok.last_sha != "" &&
     sha != "" &&
     sha != tracked_ok.last_sha
   if sha_moved {
     crs = 0L
     sn = false
+    // Record when the SHA moved out of ChangesRequested so SinglePass merge
+    // mode can distinguish "fixes pushed" from "fresh PR that never got reviewed".
+    if tracked_ok.last_review_state == ChangesRequested {
+      fpa = now
+    }
   }
   if review != ChangesRequested {
     crs = 0L
@@ -686,6 +701,7 @@ pub async fn PollerState::tick_pr_with(
       copilot_issue_comment_seen: copilot_sticky,
       changes_requested_since: crs,
       stall_notified: sn,
+      fixes_pushed_at: fpa,
     }
   } else {
     {
@@ -699,6 +715,7 @@ pub async fn PollerState::tick_pr_with(
       copilot_issue_comment_seen: copilot_sticky,
       changes_requested_since: crs,
       stall_notified: sn,
+      fixes_pushed_at: fpa,
     }
   }
   self.tracked.set(pr_number, updated)

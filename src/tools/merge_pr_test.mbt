@@ -74,6 +74,7 @@ fn merge_pr_test_tracked(
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
 }
 

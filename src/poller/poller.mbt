@@ -61,6 +61,11 @@ pub(all) struct TrackedPR {
   mut orphan_reconciling : Bool
   mut changes_requested_since : Int64
   mut stall_notified : Bool
+  /// Timestamp (epoch seconds) when SHA last moved out of `ChangesRequested`;
+  /// `0L` means no post-review push has been observed. Used by SinglePass
+  /// merge-gate to distinguish "fixes pushed after changes requested" from
+  /// "fresh PR that never had a review" (both would have `changes_requested_since == 0L`).
+  mut fixes_pushed_at : Int64
 } derive(Debug, Eq)
 
 ///|

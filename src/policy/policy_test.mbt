@@ -260,3 +260,45 @@ test "decide_tl_parent_branch_write allows non doc changes when no live wave exi
   assert_false(decision.is_blocked())
   assert_true(decision.reason().contains("no live wave"))
 }
+
+///|
+test "decide_merge explicit task_contract arg takes precedence over bundle contract" {
+  // The explicit first arg is Some with one verify command; the bundle's contract
+  // has a different verify command. The explicit arg must win.
+  let explicit_contract = {
+    ..@types.TaskContract::empty(),
+    goal: "explicit goal",
+    verify: ["moon test --target native"],
+  }
+  let bundle_contract = {
+    ..@types.TaskContract::empty(),
+    goal: "bundle goal",
+    verify: ["moon check"],
+  }
+  let signals = [
+    @types.EvaluationSignal::Review(
+      state=@types.EvaluationReviewState::Approved,
+      body="looks good",
+    ),
+    @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+    @types.EvaluationSignal::ThreadsObserved(count=0),
+    @types.EvaluationSignal::Verify(result={
+      name: "moon test --target native",
+      status: @types.VerifyStatus::Passed,
+      details: "ok",
+    }),
+  ]
+  // Explicit arg wins: verify command matches, should be merge_now
+  let decision_explicit = decide_merge(
+    Some(explicit_contract),
+    bundle_with_signals(Some(bundle_contract), signals),
+  )
+  assert_eq(decision_explicit.label(), "merge_now")
+  // With the bundle contract, "moon test --target native" is not a required
+  // verify command (bundle only requires "moon check"), so needs_human.
+  let decision_bundle = decide_merge(
+    None,
+    bundle_with_signals(Some(bundle_contract), signals),
+  )
+  assert_eq(decision_bundle.label(), "needs_human")
+}

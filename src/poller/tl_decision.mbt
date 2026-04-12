@@ -128,21 +128,11 @@ pub(all) struct WaveRollup {
 
 ///|
 fn distinct_pr_count_in_rollups(entries : Array[WaveRollupEntry]) -> Int {
-  let mut n = 0
-  for i = 0; i < entries.length(); i = i + 1 {
-    let pr = entries[i].pr_number
-    let mut seen_before = false
-    for j = 0; j < i; j = j + 1 {
-      if entries[j].pr_number == pr {
-        seen_before = true
-        break
-      }
-    }
-    if !seen_before {
-      n = n + 1
-    }
+  let seen : Map[Int, Bool] = {}
+  for e in entries {
+    seen.set(e.pr_number, true)
   }
-  n
+  seen.length()
 }
 
 ///|
@@ -168,36 +158,20 @@ fn collect_wave_entries(
 
 ///|
 fn sort_wave_rollups(rs : Array[WaveRollup]) -> Array[WaveRollup] {
-  if rs.length() <= 1 {
-    return rs
-  }
-  let mut remaining : Array[WaveRollup] = []
-  for r in rs {
-    remaining.push(r)
-  }
-  let sorted : Array[WaveRollup] = []
-  while remaining.length() > 0 {
-    let mut best_i = 0
-    let mut i = 1
-    while i < remaining.length() {
-      let a = remaining[best_i]
-      let b = remaining[i]
-      let b_wins = a.parent_id > b.parent_id ||
-        (a.parent_id == b.parent_id && a.wave > b.wave)
-      if b_wins {
-        best_i = i
-      }
-      i = i + 1
+  let sorted = rs.copy()
+  sorted.sort_by(fn(a, b) {
+    if a.parent_id < b.parent_id {
+      -1
+    } else if a.parent_id > b.parent_id {
+      1
+    } else if a.wave < b.wave {
+      -1
+    } else if a.wave > b.wave {
+      1
+    } else {
+      0
     }
-    sorted.push(remaining[best_i])
-    let next : Array[WaveRollup] = []
-    for k = 0; k < remaining.length(); k = k + 1 {
-      if k != best_i {
-        next.push(remaining[k])
-      }
-    }
-    remaining = next
-  }
+  })
   sorted
 }
 
@@ -431,9 +405,13 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
       tracked.copilot_issue_comment_seen
     ) ||
     (
+    // SinglePass: treat as reviewed if the leaf pushed fixes after the review
+    // requested changes (SHA moved out of ChangesRequested → fixes_pushed_at set).
+    // `fixes_pushed_at > 0L` distinguishes a fresh PR (which also has
+    // `changes_requested_since == 0L`) from one where a real push was observed.
       review_mode == @types.ReviewMode::SinglePass &&
       tracked.last_review_state == ChangesRequested &&
-      tracked.changes_requested_since == 0L &&
+      tracked.fixes_pushed_at > 0L &&
       tracked.last_sha != ""
     )
   if !review_ok {
@@ -478,7 +456,7 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
 ) -> @types.EvaluationBundle {
   let single_pass_fixed = review_mode == @types.ReviewMode::SinglePass &&
     tracked.last_review_state == ChangesRequested &&
-    tracked.changes_requested_since == 0L &&
+    tracked.fixes_pushed_at > 0L &&
     tracked.last_sha != ""
   let review_state = if single_pass_fixed {
     @types.EvaluationReviewState::Commented

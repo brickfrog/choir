@@ -24,6 +24,7 @@ fn sample_tracked(
     orphan_reconciling: false,
     changes_requested_since: 0L,
     stall_notified: false,
+    fixes_pushed_at: 0L,
   }
 }
 
@@ -44,9 +45,13 @@ test "tl_classify_tracked_pr_workflow distinguishes blocked, waiting, and merge-
     ),
     BlockedOnChanges,
   )
+  // Waiting because copilot_issue_comment_seen is false (CI state is irrelevant here).
   assert_eq(
     tl_classify_tracked_pr_workflow(
-      sample_tracked(Approved, InProgress, 3),
+      {
+        ..sample_tracked(Approved, Success, 3),
+        copilot_issue_comment_seen: false,
+      },
       None,
     ),
     WaitingOnCopilotIssueComment,
@@ -543,8 +548,12 @@ test "tl_tracked_pr_merge_gate_snapshot_ready accepts comment-only review after 
 }
 
 ///|
-test "single_pass treats fixed changes-requested review as gate-ready when threads and CI pass" {
-  let t = sample_tracked(ChangesRequested, Success, 102)
+test "single_pass treats fixed changes-requested review as gate-ready when fixes were pushed" {
+  // fixes_pushed_at > 0 signals the leaf actually pushed after changes were requested.
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 102),
+    fixes_pushed_at: 999L,
+  }
   assert_true(
     tl_tracked_pr_merge_gate_snapshot_ready(
       t,
@@ -558,6 +567,27 @@ test "single_pass treats fixed changes-requested review as gate-ready when threa
     review_mode=@types.ReviewMode::SinglePass,
   )
   assert_eq(decision.label(), "merge_now")
+}
+
+///|
+test "single_pass does NOT treat fresh ChangesRequested as gate-ready when no fixes were pushed" {
+  // fixes_pushed_at == 0L means the PR is freshly reviewed or just started;
+  // no post-review push observed. Must not merge in SinglePass mode.
+  let t = sample_tracked(ChangesRequested, Success, 104)
+  assert_eq(t.fixes_pushed_at, 0L) // fresh — no fixes pushed yet
+  assert_false(
+    tl_tracked_pr_merge_gate_snapshot_ready(
+      t,
+      Some(0),
+      review_mode=@types.ReviewMode::SinglePass,
+    ),
+  )
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(0),
+    review_mode=@types.ReviewMode::SinglePass,
+  )
+  assert_eq(decision.label(), "blocked")
 }
 
 ///|

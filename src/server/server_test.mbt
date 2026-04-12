@@ -1032,6 +1032,7 @@ async test "recover_state finalizes merged agent without startup parent notifica
           orphan_reconciling: false,
           changes_requested_since: 0L,
           stall_notified: false,
+          fixes_pushed_at: 0L,
         },
       ],
     },

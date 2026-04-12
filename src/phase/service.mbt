@@ -61,7 +61,7 @@ fn promote_if_wave_complete(
 ///|
 fn dev_phase_from_lifecycle(lifecycle : DevLifecycle) -> DevPhase {
   match lifecycle {
-    DevLifecycle::Working => DevPhase::Working
+    DevLifecycle::Working | DevLifecycle::WaitingForRedGate => DevPhase::Working
     DevLifecycle::ReviewOwned(
       pr_number~,
       state=ReviewOwnership::OpenUnreviewed(url~)
@@ -334,7 +334,30 @@ pub fn plan_dev_event_checked(
     _ => DevLifecycle::Working
   }
   match event {
-    DevEvent::NotifyParentSuccess(..) => Ok((dev_phase_from_lifecycle(dev), []))
+    DevEvent::NotifyParentSuccess(message~) =>
+      // Detect the TDD red-gate protocol: leaf calls notify_parent "[RED GATE]..."
+      // while Working → transition to WaitingForRedGate so the idle watchdog
+      // does not kill a leaf that is intentionally blocked waiting for TL confirmation.
+      if dev == DevLifecycle::Working && message.contains("[RED GATE]") {
+        let next_dev = DevLifecycle::WaitingForRedGate
+        let next_lc = { ..lifecycle, workflow: WorkflowState::Dev(next_dev) }
+        Ok(
+          (
+            dev_phase_from_lifecycle(next_dev),
+            [
+              PersistLifecycle(lifecycle=next_lc),
+              AppendLifecycleEvent(
+                agent_id=lifecycle.agent_id,
+                from_lc=lifecycle,
+                to_lc=next_lc,
+                trigger=@types.LifecycleTrigger::NotifyParentSuccess,
+              ),
+            ],
+          ),
+        )
+      } else {
+        Ok((dev_phase_from_lifecycle(dev), []))
+      }
     DevEvent::NotifyParentFailure(message~) => {
       let failed = DevLifecycle::Failed(reason=classify_failure(message))
       let next_lc = { ..lifecycle, workflow: WorkflowState::Dev(failed) }
