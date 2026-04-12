@@ -48,7 +48,7 @@ fn review_body_is_noise(body : String) -> Bool {
     return true
   }
   // Copilot template uses "## Pull request overview" (markdown H2); plain-text prefix check misses it.
-  if normalized.contains("## pull request overview") {
+  if normalized.has_prefix("## pull request overview") {
     return true
   }
   false
@@ -87,16 +87,23 @@ fn parse_review_bodies(json : Json) -> String {
           Some(String(v)) => v
           _ => ""
         }
+        let line = match comment.get("line") {
+          Some(Number(n, ..)) => n.to_int()
+          _ => 0
+        }
         let body = match comment.get("body") {
           Some(String(v)) => v
           _ => ""
         }
         if body != "" {
-          if path != "" {
-            push_review_body(bodies, "[" + path + "] " + body)
+          let prefix = if path != "" && line > 0 {
+            "[" + path + ":" + line.to_string() + "] "
+          } else if path != "" {
+            "[" + path + "] "
           } else {
-            push_review_body(bodies, body)
+            ""
           }
+          push_review_body(bodies, prefix + body)
         }
       }
     _ => ()

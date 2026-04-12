@@ -141,6 +141,56 @@ test "parse_gh_pr_view_output filters pull request overview inline noise with pa
 }
 
 ///|
+test "parse_gh_pr_view_output does not filter bracketed review mentioning overview mid-sentence" {
+  let json =
+    #|{"reviews":[{"state":"COMMENTED","body":"[CRITICAL] The ## pull request overview section is missing auth headers."}],
+    #|"inline_comments":[],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN"}
+  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(review, Commented)
+  assert_eq(
+    bodies, "[CRITICAL] The ## pull request overview section is missing auth headers.",
+  )
+  assert_true(open)
+}
+
+///|
+test "parse_gh_pr_view_output inline comment with line number gets path:line prefix" {
+  let json =
+    #|{"reviews":[],
+    #|"inline_comments":[{"path":"src/a.mbt","body":"Add error handling here.","line":10}],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN"}
+  let (ok, _r, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(bodies, "[src/a.mbt:10] Add error handling here.")
+  assert_true(open)
+}
+
+///|
+test "parse_gh_pr_view_output same body on different lines both appear in output" {
+  let json =
+    #|{"reviews":[],
+    #|"inline_comments":[
+    #|  {"path":"src/a.mbt","body":"Add error handling here.","line":10},
+    #|  {"path":"src/a.mbt","body":"Add error handling here.","line":42}
+    #|],
+    #|"headRefOid":"sha",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN"}
+  let (ok, _r, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  assert_eq(
+    bodies, "[src/a.mbt:10] Add error handling here.\n---\n[src/a.mbt:42] Add error handling here.",
+  )
+  assert_true(open)
+}
+
+///|
 test "parse_gh_pr_view_output rollup InProgress when check is still running" {
   let json =
     #|{"reviews":[],

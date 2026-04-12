@@ -27,7 +27,7 @@ async fn fetch_inline_comments(pr_number : Int) -> String {
     "api",
     "repos/{owner}/{repo}/pulls/" + pr_number.to_string() + "/comments",
     "--jq",
-    "[.[] | {path, body}]",
+    "[.[] | {path, body, line: (.line // .original_line // 0)}]",
   ])
 }
 
