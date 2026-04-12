@@ -64,6 +64,9 @@ pub fn KvStore::get(self : KvStore, key : String) -> String? {
   match validate_kv_storage_key(key) {
     Err(_) => {
       @sys.write_stderr("KvStore::get called with invalid key: " + key + "\n")
+      // AUDIT: get/delete asymmetry is intentional — see KvStore::delete docstring.
+      // get has a value-retrieval contract; invalid key = caller bug, fail fast.
+      // delete is idempotent; invalid key = post-condition already satisfied.
       panic()
     }
     Ok(_) => {

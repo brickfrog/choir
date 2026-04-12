@@ -91,7 +91,7 @@ async fn serve_handle_connection(
             }
             let resp = state.handle(req) catch {
               e => {
-                @moontrace.error("handler panic", fields=[
+                @moontrace.error("handler error", fields=[
                   @moontrace.field("error", e.to_string()),
                 ])
                 @types.Response::Err("internal error: " + e.to_string())
@@ -171,7 +171,7 @@ async fn serve_handle_uds_connection(
             }
             let resp = state.handle(req) catch {
               e => {
-                @moontrace.error("handler panic", fields=[
+                @moontrace.error("handler error", fields=[
                   @moontrace.field("error", e.to_string()),
                 ])
                 @types.Response::Err("internal error: " + e.to_string())

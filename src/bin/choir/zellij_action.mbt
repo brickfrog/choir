@@ -181,8 +181,10 @@ fn zellij_action_run() -> Unit {
             @sys.exit(write_code)
             return
           }
-          // Delay so Claude Code finishes processing pasted text before Enter
-          ignore(@exec.run({ program: "sleep", args: ["0.5"], workdir: None }))
+          // Delay so Claude Code finishes processing pasted text before Enter.
+          // Native async sleep instead of shelling out to /bin/sleep — same
+          // semantics, no subprocess fork, no PATH dependency.
+          @async.sleep(500)
           let key_code = @exec.run({
             program: "zellij",
             args: [
