@@ -112,6 +112,8 @@ pub fn AgentRegistry::set_state(
         (Spawning, Failed) => true
         (Active, Completing) => true
         (Active, Failed) => true
+        (Active, Suspended) => true
+        (Suspended, Active) => true
         (Completing, Done) => true
         (Failed, Done) => true
         _ => false

@@ -206,6 +206,17 @@ pub(all) struct AgentListArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct SuspendArgs {
+  agent_id : String
+  reason : String
+} derive(Debug, Eq)
+
+///|
+pub(all) struct ResumeArgs {
+  agent_id : String
+} derive(Debug, Eq)
+
+///|
 pub(all) struct CancelWaveArgs {
   force : Bool
 } derive(Debug, Eq)

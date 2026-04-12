@@ -251,6 +251,7 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -493,6 +494,9 @@ pub async fn dispatch(
       )
     ToolRequest::KillAgent(kill_args) =>
       interpret_kill_agent(kill_args, registry, runner)
+    ToolRequest::Suspend(suspend_args) =>
+      interpret_suspend(suspend_args, registry, project_dir, hook_capture~)
+    ToolRequest::Resume(resume_args) => interpret_resume(resume_args, registry)
     ToolRequest::AgentList(args) =>
       match registry {
         Some(reg) => {
@@ -788,6 +792,7 @@ pub async fn handle_request(
         tool_args: Some(tool_args_to_map(tool_args)),
         tool_result_status: None,
         exit_reason: None,
+        suspend_reason: None,
       }
       let input_json = input.to_json_string()
       let (hook_status, output_json) = hook_capture(
@@ -824,6 +829,7 @@ pub async fn handle_request(
               runner~,
               git_capture~,
               capture~,
+              hook_capture~,
               ensure_branch_ready~,
               ensure_pr~,
               extra_mcp_servers_json~,
@@ -863,6 +869,7 @@ pub async fn handle_request(
         tool_args: None,
         tool_result_status: Some(status_tag),
         exit_reason: None,
+        suspend_reason: None,
       },
       project_dir,
       hook_capture~,

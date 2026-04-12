@@ -67,6 +67,9 @@ pub(all) enum AgentState {
   Completing
   Done
   Failed
+  /// Human-in-the-loop pause: poller and idle watchdog skip this agent.
+  /// Only the TL may suspend; resume via the `resume` RPC transitions back to Active.
+  Suspended
 } derive(Debug, Eq)
 
 ///|

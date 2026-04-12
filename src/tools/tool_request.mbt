@@ -29,6 +29,8 @@ pub(all) enum ToolRequest {
   AgentList(AgentListArgs)
   CancelWave(CancelWaveArgs)
   ResolveReviewThread(ResolveReviewThreadArgs)
+  Suspend(SuspendArgs)
+  Resume(ResumeArgs)
 } derive(Debug, Eq)
 
 ///|
@@ -63,6 +65,8 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     AgentList(_) => "agent_list"
     CancelWave(_) => "cancel_wave"
     ResolveReviewThread(_) => "resolve_review_thread"
+    Suspend(_) => "suspend"
+    Resume(_) => "resume"
   }
 }
 

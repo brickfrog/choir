@@ -268,6 +268,8 @@ pub fn lifecycle_for_agent(agent : @types.Agent) -> AgentLifecycle {
   let process = match agent.state {
     @types.AgentState::Spawning => Connected
     @types.AgentState::Active => Connected
+    // Suspended is a mid-flight pause — agent is still Connected at the process level.
+    @types.AgentState::Suspended => Connected
     @types.AgentState::Completing =>
       Finalizing(reason=FinalizeReason::Recovered)
     @types.AgentState::Done => Finalized(reason=FinalizeReason::RecoveredDone)

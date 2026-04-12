@@ -279,6 +279,7 @@ pub async fn ServerState::interpret_teardown_effects(
             tool_args: None,
             tool_result_status: None,
             exit_reason: Some(exit_reason),
+            suspend_reason: None,
           },
           self.config.project_dir,
         )

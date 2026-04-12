@@ -1330,6 +1330,25 @@ fn parse_tool_request(
       parse_resolve_review_thread_args(args).map(fn(a) {
         ToolRequest::ResolveReviewThread(a)
       })
+    "suspend" => {
+      let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
+      if agent_id == "" {
+        Err(ParseError::MissingField(field="agent_id"))
+      } else {
+        let reason = tool_args_get(args, "reason").unwrap_or(
+          "suspended by parent",
+        )
+        Ok(ToolRequest::Suspend({ agent_id, reason }))
+      }
+    }
+    "resume" => {
+      let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
+      if agent_id == "" {
+        Err(ParseError::MissingField(field="agent_id"))
+      } else {
+        Ok(ToolRequest::Resume({ agent_id, }))
+      }
+    }
     _ => Err(ParseError::UnknownTool(name~))
   }
 }

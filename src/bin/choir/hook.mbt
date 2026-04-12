@@ -54,6 +54,7 @@ fn hook_run() -> Unit {
       @hooks.HookEvent::PreToolUse => "hook.pre_tool_use"
       @hooks.HookEvent::PostToolUse => "hook.post_tool_use"
       @hooks.HookEvent::AgentExit => "hook.agent_exit"
+      @hooks.HookEvent::AgentSuspended => "hook.agent_suspended"
       @hooks.HookEvent::SessionStop => "hook.session_stop"
       @hooks.HookEvent::BeforeModel => "hook.before_model"
       @hooks.HookEvent::AfterModel => "hook.after_model"

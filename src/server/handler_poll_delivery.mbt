@@ -867,6 +867,13 @@ async fn deliver_pending_poll_events(
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
+    // Skip suspended agents — the human is actively editing the worktree
+    // and the daemon must not race against them. `resume` RPC flips
+    // the agent back to Active and unblocks delivery.
+    let agent_lookup = try? state.registry.get(agent_id)
+    if agent_lookup is Ok(agent) && agent.state == @types.AgentState::Suspended {
+      continue
+    }
     let tracked_before_delivery = poll_event_tracked_snapshot(
       event,
       state.poller.get(poll_event_pr_number(event)),

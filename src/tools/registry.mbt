@@ -155,6 +155,16 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       description: "Resolve a GitHub pull request review thread by its thread ID; thread IDs are included in merge_pr unresolved-thread error messages",
       allowed_roles: [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
     },
+    {
+      name: "suspend",
+      description: "Suspend a child agent: transitions Active → Suspended, pausing poll delivery and the idle watchdog for that agent until `resume` is called. Use when handing the worktree back to a human for manual intervention.",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
+      name: "resume",
+      description: "Resume a suspended child agent: transitions Suspended → Active, unblocking poll delivery for that agent.",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
   ]
   for def in defs {
     tools.set(def.name, def)

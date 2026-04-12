@@ -388,6 +388,72 @@ test "mutex registry expire clears stale waiters on reacquire" {
 }
 
 ///|
+fn make_active_agent(id : String) -> @types.Agent {
+  {
+    agent_id: id,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: ".",
+    branch: id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+}
+
+///|
+test "registry Active → Suspended → Active round-trip" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(try? reg.insert(make_active_agent("tl.leaf")))
+  let r1 = try? reg.set_state("tl.leaf", @types.AgentState::Suspended)
+  assert_true(r1 is Ok(_))
+  try reg.get("tl.leaf") catch {
+    _ => fail("expected agent")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Suspended)
+  }
+  let r2 = try? reg.set_state("tl.leaf", @types.AgentState::Active)
+  assert_true(r2 is Ok(_))
+  try reg.get("tl.leaf") catch {
+    _ => fail("expected agent")
+  } noraise {
+    a => assert_eq(a.state, @types.AgentState::Active)
+  }
+}
+
+///|
+test "registry Suspended → Failed is rejected" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(try? reg.insert(make_active_agent("tl.leaf2")))
+  ignore(try? reg.set_state("tl.leaf2", @types.AgentState::Suspended))
+  let r = try? reg.set_state("tl.leaf2", @types.AgentState::Failed)
+  assert_true(r is Err(_))
+}
+
+///|
+test "registry Suspended → Done is rejected" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(try? reg.insert(make_active_agent("tl.leaf3")))
+  ignore(try? reg.set_state("tl.leaf3", @types.AgentState::Suspended))
+  let r = try? reg.set_state("tl.leaf3", @types.AgentState::Done)
+  assert_true(r is Err(_))
+}
+
+///|
+test "registry Spawning → Suspended is rejected" {
+  let reg = @registry.AgentRegistry::new()
+  let agent : @types.Agent = {
+    ..make_active_agent("tl.leaf4"),
+    state: @types.AgentState::Spawning,
+  }
+  ignore(try? reg.insert(agent))
+  let r = try? reg.set_state("tl.leaf4", @types.AgentState::Suspended)
+  assert_true(r is Err(_))
+}
+
+///|
 test "mutex registry expire hands off to queued waiter" {
   let reg = @registry.MutexRegistry::new()
   ignore(reg.acquire("README", "agent-a", 5L, 10L))

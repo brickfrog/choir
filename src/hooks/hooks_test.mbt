@@ -77,6 +77,7 @@ test "HookInput construction with all fields" {
     tool_args: Some(Map::of([("key", "value")])),
     tool_result_status: None,
     exit_reason: None,
+    suspend_reason: None,
   }
   assert_eq(input.event, HookEvent::PreToolUse)
 }
@@ -92,6 +93,7 @@ test "HookInput construction with minimal fields" {
     tool_args: None,
     tool_result_status: None,
     exit_reason: None,
+    suspend_reason: None,
   }
   assert_eq(input.event, HookEvent::SessionStart)
 }

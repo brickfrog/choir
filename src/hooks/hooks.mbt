@@ -4,6 +4,7 @@ pub(all) enum HookEvent {
   PreToolUse
   PostToolUse
   AgentExit
+  AgentSuspended
   SessionStop
   BeforeModel
   AfterModel
@@ -24,6 +25,7 @@ pub(all) struct HookInput {
   tool_args : Map[String, String]?
   tool_result_status : String?
   exit_reason : @types.ExitReason?
+  suspend_reason : String?
 } derive(Debug)
 
 ///|
@@ -33,6 +35,7 @@ fn HookEvent::hook_event_wire_name(self : HookEvent) -> String {
     PreToolUse => "PreToolUse"
     PostToolUse => "PostToolUse"
     AgentExit => "AgentExit"
+    AgentSuspended => "AgentSuspended"
     SessionStop => "SessionStop"
     BeforeModel => "BeforeModel"
     AfterModel => "AfterModel"
@@ -76,6 +79,10 @@ pub fn HookInput::to_json_string(self : HookInput) -> String {
   match self.exit_reason {
     Some(v) =>
       obj.set("exit_reason", v.lifecycle_trigger().to_wire_string().to_json())
+    None => ()
+  }
+  match self.suspend_reason {
+    Some(v) => obj.set("suspend_reason", v.to_json())
     None => ()
   }
   obj.to_json().stringify()
@@ -162,6 +169,7 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     "PreToolUse" => HookEvent::PreToolUse
     "PostToolUse" => HookEvent::PostToolUse
     "AgentExit" => HookEvent::AgentExit
+    "AgentSuspended" => HookEvent::AgentSuspended
     "SessionStop" => HookEvent::SessionStop
     "BeforeModel" => HookEvent::BeforeModel
     "AfterModel" => HookEvent::AfterModel
@@ -190,6 +198,7 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     Some(_) => Some(@types.ExitReason::Shutdown)
     None => None
   }
+  let suspend_reason = json_opt_string(obj, "suspend_reason")
   Some({
     event,
     session_id,
@@ -199,6 +208,7 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     tool_args,
     tool_result_status,
     exit_reason,
+    suspend_reason,
   })
 }
 
@@ -209,6 +219,7 @@ pub fn HookEvent::script_name(self : HookEvent) -> String {
     PreToolUse => "pre_tool_use"
     PostToolUse => "post_tool_use"
     AgentExit => "agent_exit"
+    AgentSuspended => "agent_suspended"
     SessionStop => "session_stop"
     BeforeModel => "before_model"
     AfterModel => "after_model"

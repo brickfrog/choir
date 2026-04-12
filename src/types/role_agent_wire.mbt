@@ -146,5 +146,6 @@ pub fn AgentState::to_wire_string(self : AgentState) -> String {
     Completing => "completing"
     Done => "done"
     Failed => "failed"
+    Suspended => "suspended"
   }
 }
