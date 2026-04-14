@@ -2,6 +2,9 @@
 
 English | [简体中文](README.zh.md)
 
+> [!NOTE]
+> This is primarily used for my own workflows, so may change as they / the space evolves.
+
 A local agent orchestrator built in MoonBit. One expensive model thinks
 (Claude as team lead), cheaper models implement (Gemini, Codex, Moon Pilot,
 Cursor Agent as leaves). Each leaf gets its own git worktree, files a PR

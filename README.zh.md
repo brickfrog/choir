@@ -2,6 +2,9 @@
 
 [English](README.md) | 简体中文
 
+> [!NOTE]
+> 这个主要是给我自己的工作流程用的，所以可能会随着它们或者这个领域的发展而改变。
+
 用 MoonBit 编写的本地多代理编排器。用昂贵的模型来思考（Claude 担任 TL），
 用更便宜或更专业的模型来实现（Gemini、Codex、Moon Pilot、Cursor Agent 作为叶子代理）。
 每个叶子在独立的 git worktree 中工作，完成后向 TL 分支提交 PR。内置 poller 自动请求
