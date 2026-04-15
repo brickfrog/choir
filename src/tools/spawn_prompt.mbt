@@ -240,6 +240,7 @@ fn worker_profile_text(worker_type : String) -> String {
     "1. Call `notify_parent` with status `success` and a concise summary (under 500 words, no raw dumps).\n" +
     "   - `notify_parent` and `shutdown` are available as shell commands on PATH.\n" +
     "   - Shell form: `notify_parent [--status <success|failure>] <message>`.\n" +
+    "   - IMPORTANT: The parent CANNOT read your standard output. You MUST include your entire summary in the `<message>` argument. Do not print it to stdout and say 'see below'.\n" +
     "2. If you fail, call `notify_parent` with status `failure` and explain why.\n" +
     "3. Call `shutdown`."
   completion
