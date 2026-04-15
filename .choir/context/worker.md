@@ -12,4 +12,5 @@ You are a worker running in the parent's workspace without branch or PR ownershi
 
 1. Do the assigned work.
 2. `notify_parent` with status and a concise summary (under 500 words).
-3. `shutdown` when complete.
+   - If your environment does not have MCP tools available, `notify_parent` is available as a shell command on your PATH. (e.g. `notify_parent --status success "Summary here"`)
+3. `shutdown` when complete. (also available as a shell command `shutdown`)

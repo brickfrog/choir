@@ -238,6 +238,8 @@ fn worker_profile_text(worker_type : String) -> String {
     "\nYou can read and edit files but do not own a branch — no commits, PRs, or pushes.\n\n" +
     "When you are done:\n\n" +
     "1. Call `notify_parent` with status `success` and a concise summary (under 500 words, no raw dumps).\n" +
+    "   - `notify_parent` and `shutdown` are available as shell commands on PATH.\n" +
+    "   - Shell form: `notify_parent [--status <success|failure>] <message>`.\n" +
     "2. If you fail, call `notify_parent` with status `failure` and explain why.\n" +
     "3. Call `shutdown`."
   completion
