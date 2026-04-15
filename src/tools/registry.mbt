@@ -22,7 +22,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn one or more agents in worktrees; optional agent_type (gemini|claude|moon_pilot|codex|cursor_agent, default gemini); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge and review_mode override server defaults for that wave",
+      description: "Spawn one or more agents in worktrees; optional agent_type (gemini|claude|moon_pilot|codex|cursor_agent, default gemini); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge and review_mode override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -32,7 +32,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_gemini",
-      description: "Spawn a single Gemini leaf agent in a worktree",
+      description: "Spawn a single Gemini leaf agent in a worktree. The leaf will automatically notify you of PR/completion via MCP events.",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -42,12 +42,12 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_remote",
-      description: "Spawn an agent on a remote machine via SSH, connecting back over TCP",
+      description: "Spawn an agent on a remote machine via SSH, connecting back over TCP. The agent will automatically notify you via MCP events.",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker for research/review; optional agent_type (gemini|claude|moon_pilot, default gemini). Workers do not own a branch or PR",
+      description: "Spawn an inline worker for research/review; optional agent_type (gemini|claude|moon_pilot, default gemini). Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
