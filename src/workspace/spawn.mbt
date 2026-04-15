@@ -228,6 +228,41 @@ fn ssh_cmd(target : String, remote_shell : String) -> Command {
 }
 
 ///|
+pub fn provider_materialization_commands(
+  agent_type : @types.AgentType,
+  root_project : String,
+  workspace : String,
+  agent_id : String,
+  role : @types.Role,
+) -> Array[Command] {
+  let cmds : Array[Command] = []
+  let role_str = @config.role_to_string(role)
+  if agent_type == Gemini || agent_type == Unknown {
+    cmds.push(trust_gemini_folder(workspace))
+    let ctx_paths = resolve_context_paths(root_project, role_str)
+    let wasm_path = root_project + "/.choir/hooks/hook.wasm"
+    let wasm_hooks = if @sys.read_file(wasm_path) != "" {
+      Some(wasm_path)
+    } else {
+      None
+    }
+    cmds.push(
+      write_gemini_settings(
+        workspace,
+        agent_id,
+        role_str,
+        context_paths=ctx_paths,
+        wasm_hooks_path=wasm_hooks,
+      ),
+    )
+  }
+  if agent_type == CursorAgent {
+    cmds.push(write_cursor_mcp_json(workspace, agent_id, role_str))
+  }
+  cmds
+}
+
+///|
 pub fn spawn_commands(
   spec : @types.SpawnSpec,
   project_dir : String,
@@ -258,6 +293,13 @@ pub fn spawn_commands(
   let terminal_target = local_target_for(session, spec.slug, spec.isolation)
   let env_for_zellij = launch_env_assignments(
     spec, session, workspace, terminal_target,
+  )
+  let provider_cmds = provider_materialization_commands(
+    spec.agent_type,
+    root_project,
+    workspace,
+    canonical_agent_id(spec),
+    spec.role,
   )
   match spec.isolation {
     Worktree => {
@@ -295,36 +337,8 @@ pub fn spawn_commands(
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
-      if spec.agent_type == Gemini {
-        cmds.push(trust_gemini_folder(workspace))
-        let ctx_paths = resolve_context_paths(
-          root_project,
-          @config.role_to_string(spec.role),
-        )
-        let wasm_path = root_project + "/.choir/hooks/hook.wasm"
-        let wasm_hooks = if @sys.read_file(wasm_path) != "" {
-          Some(wasm_path)
-        } else {
-          None
-        }
-        cmds.push(
-          write_gemini_settings(
-            workspace,
-            canonical_agent_id(spec),
-            @config.role_to_string(spec.role),
-            context_paths=ctx_paths,
-            wasm_hooks_path=wasm_hooks,
-          ),
-        )
-      }
-      if spec.agent_type == CursorAgent {
-        cmds.push(
-          write_cursor_mcp_json(
-            workspace,
-            canonical_agent_id(spec),
-            @config.role_to_string(spec.role),
-          ),
-        )
+      for cmd in provider_cmds {
+        cmds.push(cmd)
       }
       let launch_cmds = if spec.role == @types.Role::TL &&
         spec.isolation != @types.IsolationMode::Inline {
@@ -364,27 +378,8 @@ pub fn spawn_commands(
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
-      if spec.agent_type == Gemini {
-        cmds.push(trust_gemini_folder(workspace))
-        let ctx_paths = resolve_context_paths(
-          root_project,
-          @config.role_to_string(spec.role),
-        )
-        let wasm_path = root_project + "/.choir/hooks/hook.wasm"
-        let wasm_hooks = if @sys.read_file(wasm_path) != "" {
-          Some(wasm_path)
-        } else {
-          None
-        }
-        cmds.push(
-          write_gemini_settings(
-            workspace,
-            canonical_agent_id(spec),
-            @config.role_to_string(spec.role),
-            context_paths=ctx_paths,
-            wasm_hooks_path=wasm_hooks,
-          ),
-        )
+      for cmd in provider_cmds {
+        cmds.push(cmd)
       }
       let launch_cmds = if spec.role == @types.Role::TL &&
         spec.isolation != @types.IsolationMode::Inline {
@@ -439,36 +434,8 @@ pub fn spawn_commands(
         ),
       )
       cmds.push(write_leaf_helper_scripts(workspace))
-      if spec.agent_type == Gemini {
-        cmds.push(trust_gemini_folder(workspace))
-        let ctx_paths = resolve_context_paths(
-          root_project,
-          @config.role_to_string(spec.role),
-        )
-        let wasm_path = root_project + "/.choir/hooks/hook.wasm"
-        let wasm_hooks = if @sys.read_file(wasm_path) != "" {
-          Some(wasm_path)
-        } else {
-          None
-        }
-        cmds.push(
-          write_gemini_settings(
-            workspace,
-            canonical_agent_id(spec),
-            @config.role_to_string(spec.role),
-            context_paths=ctx_paths,
-            wasm_hooks_path=wasm_hooks,
-          ),
-        )
-      }
-      if spec.agent_type == CursorAgent {
-        cmds.push(
-          write_cursor_mcp_json(
-            workspace,
-            canonical_agent_id(spec),
-            @config.role_to_string(spec.role),
-          ),
-        )
+      for cmd in provider_cmds {
+        cmds.push(cmd)
       }
       let launch_cmds = if spec.role == @types.Role::TL &&
         spec.isolation != @types.IsolationMode::Inline {

@@ -23,7 +23,7 @@ fn main {
       "tl-parent-override" => tl_parent_override_run()
       _ => {
         @sys.write_stdout(
-          "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent]|stop [--purge]|reply|watch|statusline|tl-policy-watch --pid <pid>|tl-parent-override <on|off>>\n",
+          "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|agent]|stop [--purge]|reply|watch|statusline|tl-policy-watch --pid <pid>|tl-parent-override <on|off>>\n",
         )
         @sys.exit(1)
       }

@@ -73,6 +73,10 @@ test "AgentType try_parse_wire accepts legacy aliases" {
     Ok(t) => assert_eq(t, @types.AgentType::CursorAgent)
     Err(e) => fail(e.message())
   }
+  match @types.AgentType::try_parse_wire("agent") {
+    Ok(t) => assert_eq(t, @types.AgentType::CursorAgent)
+    Err(e) => fail(e.message())
+  }
   match @types.AgentType::try_parse_wire("") {
     Ok(t) => assert_eq(t, @types.AgentType::Unknown)
     Err(e) => fail(e.message())
@@ -113,8 +117,8 @@ test "AgentType try_parse_wire rejects unknown strings with config_error message
 ///|
 test "AgentType parse_wire agrees with try_parse_wire on canonical and alias strings" {
   let inputs = [
-    "claude", "gemini", "moon_pilot", "moonpilot", "codex", "cursor_agent", "cursoragent",
-    "", "unknown",
+    "claude", "gemini", "moon_pilot", "moonpilot", "codex", "agent", "cursor_agent",
+    "cursoragent", "", "unknown",
   ]
   for s in inputs {
     match @types.AgentType::try_parse_wire(s) {

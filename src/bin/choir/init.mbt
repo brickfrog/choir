@@ -203,7 +203,7 @@ fn init_config_has_terminal_session(content : String) -> Bool {
 fn init_parse_tl_type(args : Array[String]) -> String {
   for i = 0; i < args.length() - 1; i = i + 1 {
     if args[i] == "--tl" {
-      return args[i + 1]
+      return @workspace.normalize_tl_type(args[i + 1])
     }
   }
   "claude"
@@ -251,6 +251,18 @@ test "init TL launch command supports cursor_agent" {
 }
 
 ///|
+test "init TL launch command supports agent alias" {
+  let cmd = @workspace.init_tl_agent_command("agent", "/tmp/choir repo")
+  let s = cmd.to_string()
+  assert_true(s.contains("agent"))
+  assert_true(s.contains("--yolo"))
+  assert_true(s.contains("--approve-mcps"))
+  assert_true(s.contains("--workspace"))
+  assert_true(s.contains("/tmp/choir repo"))
+  assert_false(s.contains("--mcp-config"))
+}
+
+///|
 test "init parse_tl_type extracts --tl flag" {
   assert_eq(init_parse_tl_type(["choir", "init", "--tl", "codex"]), "codex")
   assert_eq(init_parse_tl_type(["choir", "init"]), "claude")
@@ -259,6 +271,10 @@ test "init parse_tl_type extracts --tl flag" {
     "gemini",
   )
   assert_eq(init_parse_tl_type(["choir", "init", "--tl", "codex"]), "codex")
+  assert_eq(
+    init_parse_tl_type(["choir", "init", "--tl", "agent"]),
+    "cursor_agent",
+  )
 }
 
 ///|
@@ -568,6 +584,17 @@ fn init_run() -> Unit {
       }
       let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
       if !tl_tab_exists {
+        let tl_agent_type = @workspace.tl_type_agent_type(tl_type)
+        let tl_materialization = @workspace.provider_materialization_commands(
+          tl_agent_type,
+          project_dir,
+          project_dir,
+          "root",
+          @types.Role::TL,
+        )
+        for cmd in tl_materialization {
+          ignore(@exec.run(cmd) catch { _ => 0 })
+        }
         init_run_or_exit(
           @workspace.init_tl_zellij_tab_command(
             session, project_dir, tl_type, current_branch,

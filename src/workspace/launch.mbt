@@ -96,6 +96,128 @@ fn split_words(s : String) -> Array[String] {
 }
 
 ///|
+pub fn normalize_tl_type(tl_type : String) -> String {
+  match tl_type.trim().to_lower() {
+    "agent" => "cursor_agent"
+    other => other.to_string()
+  }
+}
+
+///|
+pub fn tl_type_agent_type(tl_type : String) -> @types.AgentType {
+  match normalize_tl_type(tl_type) {
+    "claude" => @types.AgentType::Claude
+    "gemini" => @types.AgentType::Gemini
+    "moon_pilot" => @types.AgentType::MoonPilot
+    "moonpilot" => @types.AgentType::MoonPilot
+    "codex" => @types.AgentType::Codex
+    "cursor_agent" => @types.AgentType::CursorAgent
+    "cursoragent" => @types.AgentType::CursorAgent
+    _ => @types.AgentType::Claude
+  }
+}
+
+///|
+fn provider_launch_command(
+  agent_type : @types.AgentType,
+  role : @types.Role,
+  agent_id : String,
+  workspace_path : String,
+  task? : String? = None,
+  parent_session_id? : String? = None,
+  cmd_program? : String? = None,
+  cmd_extra_args? : Array[String] = [],
+  extra_mcp_servers_json? : String? = None,
+  tl_init_mode? : Bool = false,
+) -> Command {
+  let claude_mcp = if tl_init_mode {
+    ["--mcp-config", init_tl_claude_mcp_config_json(), "--strict-mcp-config"]
+  } else {
+    claude_mcp_args(role, agent_id, extra_mcp_servers_json~)
+  }
+  let task_args = match task {
+    Some(t) => [t]
+    None => []
+  }
+  match agent_type {
+    Claude => {
+      let program = cmd_program.unwrap_or("claude")
+      if tl_init_mode {
+        {
+          program,
+          args: [
+            ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
+          ],
+          workdir: Some(workspace_path),
+        }
+      } else {
+        match parent_session_id {
+          Some(session_id) =>
+            {
+              program,
+              args: [
+                ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
+                "--resume", session_id, "--fork-session", ..task_args,
+              ],
+              workdir: Some(workspace_path),
+            }
+          None =>
+            {
+              program,
+              args: [
+                ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
+                ..task_args,
+              ],
+              workdir: Some(workspace_path),
+            }
+        }
+      }
+    }
+    Gemini =>
+      {
+        program: cmd_program.unwrap_or("gemini"),
+        args: [..cmd_extra_args, "--yolo", "--prompt-interactive", ..task_args],
+        workdir: Some(workspace_path),
+      }
+    MoonPilot =>
+      {
+        program: cmd_program.unwrap_or("moon"),
+        args: [..cmd_extra_args, "pilot", ..task_args],
+        workdir: Some(workspace_path),
+      }
+    Codex =>
+      {
+        program: cmd_program.unwrap_or("codex"),
+        args: [
+          ..cmd_extra_args,
+          "--dangerously-bypass-approvals-and-sandbox",
+          "--no-alt-screen",
+          ..codex_mcp_override_args(role, agent_id, workspace_path),
+          "-C",
+          workspace_path,
+          ..task_args,
+        ],
+        workdir: Some(workspace_path),
+      }
+    CursorAgent =>
+      {
+        program: cmd_program.unwrap_or("agent"),
+        args: [
+          ..cmd_extra_args, "--yolo", "--approve-mcps", "--workspace", workspace_path,
+          ..task_args,
+        ],
+        workdir: Some(workspace_path),
+      }
+    Unknown =>
+      {
+        program: cmd_program.unwrap_or("gemini"),
+        args: [..cmd_extra_args, "--yolo", "--prompt-interactive", ..task_args],
+        workdir: Some(workspace_path),
+      }
+  }
+}
+
+///|
 pub fn agent_launch_command(
   spec : @types.SpawnSpec,
   workspace_path : String,
@@ -118,92 +240,17 @@ pub fn agent_launch_command(
   } else {
     []
   }
-  let claude_mcp = claude_mcp_args(
+  let cmd = provider_launch_command(
+    spec.agent_type,
     spec.role,
     canonical_agent_id(spec),
+    workspace_path,
+    task=Some(spec.task),
+    parent_session_id~,
+    cmd_program~,
+    cmd_extra_args~,
     extra_mcp_servers_json~,
   )
-  let cmd = match spec.agent_type {
-    Claude => {
-      let program = cmd_program.unwrap_or("claude")
-      match parent_session_id {
-        Some(session_id) =>
-          {
-            program,
-            args: [
-              ..cmd_extra_args,
-              "--dangerously-skip-permissions",
-              ..claude_mcp,
-              "--resume",
-              session_id,
-              "--fork-session",
-              spec.task,
-            ],
-            workdir: Some(workspace_path),
-          }
-        None =>
-          {
-            program,
-            args: [
-              ..cmd_extra_args,
-              "--dangerously-skip-permissions",
-              ..claude_mcp,
-              spec.task,
-            ],
-            workdir: Some(workspace_path),
-          }
-      }
-    }
-    Gemini =>
-      {
-        program: cmd_program.unwrap_or("gemini"),
-        args: [..cmd_extra_args, "--yolo", "--prompt-interactive", spec.task],
-        workdir: Some(workspace_path),
-      }
-    MoonPilot =>
-      {
-        program: cmd_program.unwrap_or("moon"),
-        args: [..cmd_extra_args, "pilot", spec.task],
-        workdir: Some(workspace_path),
-      }
-    Codex =>
-      {
-        program: cmd_program.unwrap_or("codex"),
-        args: [
-          ..cmd_extra_args,
-          "--dangerously-bypass-approvals-and-sandbox",
-          "--no-alt-screen",
-          ..codex_mcp_override_args(
-            spec.role,
-            canonical_agent_id(spec),
-            workspace_path,
-          ),
-          "-C",
-          workspace_path,
-          spec.task,
-        ],
-        workdir: Some(workspace_path),
-      }
-    CursorAgent =>
-      {
-        program: cmd_program.unwrap_or("agent"),
-        args: [
-          ..cmd_extra_args,
-          "--yolo",
-          "--approve-mcps",
-          "--workspace",
-          workspace_path,
-          spec.task,
-        ],
-        workdir: Some(workspace_path),
-      }
-    Unknown =>
-      {
-        program: cmd_program.unwrap_or("gemini"),
-        args: [..cmd_extra_args, "--yolo", "--prompt-interactive", spec.task],
-        workdir: Some(workspace_path),
-      }
-  }
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)
     _ => cmd
@@ -220,39 +267,12 @@ pub fn init_tl_claude_mcp_config_json() -> String {
 /// Inner TL agent command for the init zellij tab (no post-exit trailer; that lives only in
 /// [`init_tl_zellij_tab_command`]).
 pub fn init_tl_agent_command(tl_type : String, project_dir : String) -> Command {
-  match tl_type {
-    "codex" => {
-      let args : Array[String] = [
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--no-alt-screen",
-        ..codex_mcp_override_args(@types.Role::TL, "root", project_dir),
-        "-C",
-        project_dir,
-      ]
-      { program: "codex", args, workdir: None }
-    }
-    "gemini" =>
-      {
-        program: "gemini",
-        args: ["--yolo", "--prompt-interactive"],
-        workdir: None,
-      }
-    "cursor_agent" =>
-      {
-        program: "agent",
-        args: ["--yolo", "--approve-mcps", "--workspace", project_dir],
-        workdir: None,
-      }
-    _ =>
-      {
-        program: "claude",
-        args: [
-          "--dangerously-skip-permissions",
-          "--mcp-config",
-          init_tl_claude_mcp_config_json(),
-          "--strict-mcp-config",
-        ],
-        workdir: None,
-      }
-  }
+  let cmd = provider_launch_command(
+    tl_type_agent_type(tl_type),
+    @types.Role::TL,
+    "root",
+    project_dir,
+    tl_init_mode=true,
+  )
+  { ..cmd, workdir: None }
 }

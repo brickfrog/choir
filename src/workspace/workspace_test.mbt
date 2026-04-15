@@ -143,6 +143,23 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
 }
 
 ///|
+test "normalize_tl_type maps agent alias" {
+  assert_eq(@workspace.normalize_tl_type("agent"), "cursor_agent")
+  assert_eq(@workspace.normalize_tl_type("cursor_agent"), "cursor_agent")
+  assert_eq(@workspace.normalize_tl_type("codex"), "codex")
+}
+
+///|
+test "init_tl_agent_command supports agent alias for cursor" {
+  let cmd = @workspace.init_tl_agent_command("agent", "/repo")
+  assert_eq(cmd.program, "agent")
+  assert_eq(cmd.args[0], "--yolo")
+  assert_eq(cmd.args[1], "--approve-mcps")
+  assert_eq(cmd.args[2], "--workspace")
+  assert_eq(cmd.args[3], "/repo")
+}
+
+///|
 test "zellij_list_sessions_command uses env argv without shell" {
   let cmd = @workspace.zellij_list_sessions_command()
   assert_eq(cmd.program, "env")
@@ -885,6 +902,40 @@ test "gemini settings and cursor mcp json use native file commands" {
   assert_eq(cur.program, @workspace.native_write_workspace_rel_file_program)
   assert_eq(cur.args[1], ".cursor/mcp.json")
   assert_true(cur.args[2].contains("\"choir\""))
+}
+
+///|
+test "provider_materialization_commands emits gemini trust/settings and cursor mcp" {
+  let gem = @workspace.provider_materialization_commands(
+    @types.AgentType::Gemini,
+    "/proj",
+    "/proj",
+    "root",
+    @types.Role::TL,
+  )
+  assert_eq(gem.length(), 2)
+  assert_eq(gem[0].program, "choir")
+  assert_eq(gem[1].program, @workspace.native_write_choir_file_program)
+  assert_eq(gem[1].args[1], "gemini-settings.json")
+  assert_true(gem[1].args[2].contains("\"--name\""))
+  assert_true(gem[1].args[2].contains("\"root\""))
+  assert_true(gem[1].args[2].contains("\"--role\""))
+  assert_true(gem[1].args[2].contains("\"tl\""))
+
+  let cur = @workspace.provider_materialization_commands(
+    @types.AgentType::CursorAgent,
+    "/proj",
+    "/proj",
+    "root",
+    @types.Role::TL,
+  )
+  assert_eq(cur.length(), 1)
+  assert_eq(cur[0].program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(cur[0].args[1], ".cursor/mcp.json")
+  assert_true(cur[0].args[2].contains("\"--name\""))
+  assert_true(cur[0].args[2].contains("\"root\""))
+  assert_true(cur[0].args[2].contains("\"--role\""))
+  assert_true(cur[0].args[2].contains("\"tl\""))
 }
 
 ///|

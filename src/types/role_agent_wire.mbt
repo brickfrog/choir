@@ -50,6 +50,7 @@ pub fn AgentType::try_parse_wire(s : String) -> Result[AgentType, ChoirError] {
     "moon_pilot" => Ok(MoonPilot)
     "moonpilot" => Ok(MoonPilot)
     "codex" => Ok(Codex)
+    "agent" => Ok(CursorAgent)
     "cursor_agent" => Ok(CursorAgent)
     "cursoragent" => Ok(CursorAgent)
     _ => Err(ChoirError::config_error("unknown agent_type: " + s))

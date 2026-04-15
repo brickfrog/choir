@@ -1220,6 +1220,7 @@ fn parse_agent_type(s : String) -> Result[@types.AgentType, ParseError] {
     "moon_pilot" => Ok(@types.AgentType::MoonPilot)
     "moonpilot" => Ok(@types.AgentType::MoonPilot)
     "codex" => Ok(@types.AgentType::Codex)
+    "agent" => Ok(@types.AgentType::CursorAgent)
     "cursor_agent" => Ok(@types.AgentType::CursorAgent)
     "cursoragent" => Ok(@types.AgentType::CursorAgent)
     _ => Err(ParseError::UnknownAgentType(value=s))
