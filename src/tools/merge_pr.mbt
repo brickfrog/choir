@@ -547,6 +547,25 @@ pub fn merge_pr_serialization_busy_message() -> String {
 }
 
 ///|
+/// Same busy notice but annotated with the caller's queue position at the
+/// moment of the failed acquire. `position == 0` (shouldn't happen on busy)
+/// or `position == 1` is suppressed; `position >= 2` means "N callers ahead
+/// of you" and is appended so operators can tell apart 'first in line' from
+/// 'backed up behind a queue'.
+pub fn merge_pr_serialization_busy_message_with_position(
+  position : Int,
+) -> String {
+  if position <= 1 {
+    merge_pr_serialization_busy_message()
+  } else {
+    merge_pr_serialization_busy_message() +
+    " (position " +
+    position.to_string() +
+    " in queue)"
+  }
+}
+
+///|
 /// Ordered host steps for `merge_pr` after preflight: `gh pr merge` then
 /// `git fetch` (see `merge_pr_commands` in `pr.mbt`).
 pub(all) enum MergePrHostStep {
@@ -581,14 +600,14 @@ pub async fn interpret_merge_pr_merge_host(
   let mutex_name = merge_pr_mutex_name(parent_branch)
   match mutex_registry {
     Some(reg) => {
-      let (acquired, _) = reg.acquire(
+      let (acquired, queue_position) = reg.acquire(
         mutex_name, caller_id, merge_pr_mutex_ttl_sec, now_sec,
       )
       if !acquired {
         ignore(reg.release(mutex_name, caller_id, now_sec))
         return Err(
           @types.ChoirError::validation_error(
-            merge_pr_serialization_busy_message(),
+            merge_pr_serialization_busy_message_with_position(queue_position),
           ),
         )
       }

@@ -658,6 +658,17 @@ test "merge_pr_serialization_busy_message is stable" {
 }
 
 ///|
+test "merge_pr_serialization_busy_message_with_position annotates only for >= 2" {
+  let base = merge_pr_serialization_busy_message()
+  assert_eq(merge_pr_serialization_busy_message_with_position(0), base)
+  assert_eq(merge_pr_serialization_busy_message_with_position(1), base)
+  assert_eq(
+    merge_pr_serialization_busy_message_with_position(3),
+    base + " (position 3 in queue)",
+  )
+}
+
+///|
 async fn mock_merge_host_runner_ok(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {
