@@ -85,6 +85,12 @@ fn lookup_parent_session_id(project_dir : String, args : ToolArgs) -> String? {
   if caller_id == "" {
     return None
   }
+  // `caller_id` is concatenated into a filesystem path; reject anything
+  // that is not a valid slug to close the `..`/`/` traversal seam.
+  match validate_slug(caller_id) {
+    Err(_) => return None
+    Ok(_) => ()
+  }
   let path = project_dir +
     "/.choir/sessions/claude/" +
     caller_id +
@@ -1376,6 +1382,30 @@ test "parse_leaf_spawn_args only injects existing context paths" {
   ignore(@sys.system("rm -rf \"" + project_dir + "\""))
   assert_true(parsed.task.contains("/.choir/context/common.md"))
   assert_false(parsed.task.contains("/.choir/context/dev.md"))
+}
+
+///|
+/// Regression: lookup_parent_session_id concatenates caller_id into a
+/// filesystem path. Without validate_slug it would follow `../` segments
+/// out of `.choir/sessions/claude/`. Since the function must short-circuit
+/// to `None` on validation failure, no filesystem is required here.
+test "lookup_parent_session_id rejects traversal caller_id" {
+  let traversal = lookup_parent_session_id(
+    "/tmp/irrelevant",
+    tool_args_from_map({ "fork_session": "true", "caller_id": "../../etc" }),
+  )
+  assert_eq(traversal, None)
+  let slash = lookup_parent_session_id(
+    "/tmp/irrelevant",
+    tool_args_from_map({ "fork_session": "true", "caller_id": "a/b" }),
+  )
+  assert_eq(slash, None)
+  let ok_shape = lookup_parent_session_id(
+    "/tmp/choir-no-such-dir-xyz",
+    tool_args_from_map({ "fork_session": "true", "caller_id": "main.tl" }),
+  )
+  // Valid slug, but file doesn't exist — read_file returns "" → None.
+  assert_eq(ok_shape, None)
 }
 
 ///|
