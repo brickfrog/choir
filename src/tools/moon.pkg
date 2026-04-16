@@ -20,6 +20,7 @@ import {
   "moonbitlang/async",
   "moonbitlang/core/encoding/utf8",
   "brickfrog/moontrace",
+  "brickfrog/tempo",
 }
 
 options(

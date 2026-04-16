@@ -156,6 +156,21 @@ fn merge_pr_review_submitted_at(fields : Map[String, Json]) -> String {
 }
 
 ///|
+/// Parse a GitHub `submitted_at` string (ISO-8601 UTC) into Unix seconds.
+/// `None` when the string is empty or not a recognized shape. Today GitHub
+/// emits fixed-width `YYYY-MM-DDTHH:MM:SSZ` and a lexicographic compare is
+/// coincidentally ordered — but we don't want that coincidence to be a
+/// load-bearing invariant.
+fn merge_pr_parse_submitted_at(s : String) -> Int64? {
+  if s == "" {
+    return None
+  }
+  Some(@tempo.DateTime::parse(s).to_unix_seconds()) catch {
+    _ => None
+  }
+}
+
+///|
 fn merge_pr_should_replace_review_state(
   latest_times : Map[String, String],
   latest_indexes : Map[String, Int],
@@ -165,15 +180,20 @@ fn merge_pr_should_replace_review_state(
 ) -> Bool {
   match latest_times.get(key) {
     None => true
-    Some(prev_time) =>
-      if submitted_at != "" && prev_time != "" {
-        submitted_at >= prev_time
-      } else {
-        match latest_indexes.get(key) {
-          Some(prev_index) => index >= prev_index
-          None => true
-        }
+    Some(prev_time) => {
+      let now_ts = merge_pr_parse_submitted_at(submitted_at)
+      let prev_ts = merge_pr_parse_submitted_at(prev_time)
+      match (now_ts, prev_ts) {
+        (Some(a), Some(b)) => a >= b
+        _ =>
+          // One or both timestamps unparseable — fall back to array-order
+          // to preserve the existing last-wins-in-response semantics.
+          match latest_indexes.get(key) {
+            Some(prev_index) => index >= prev_index
+            None => true
+          }
       }
+    }
   }
 }
 

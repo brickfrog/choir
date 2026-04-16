@@ -163,6 +163,24 @@ test "merge_pr_review_gate_block_message uses submitted_at over array order" {
 }
 
 ///|
+/// When both `submitted_at` values fail to parse, fall back to array order
+/// (last-in-response wins) so the gate stays operational against format
+/// regressions instead of silently preferring the first entry.
+test "merge_pr_review_gate_block_message falls back to array order on unparseable submitted_at" {
+  let reviews =
+    #|[
+    #|  {"state":"APPROVED","user":{"login":"reviewer"},"submitted_at":"not-a-date"},
+    #|  {"state":"CHANGES_REQUESTED","user":{"login":"reviewer"},"submitted_at":"also-not-a-date"}
+    #|]
+  match merge_pr_review_gate_block_message(4, reviews) {
+    Ok(Some(_)) => ()
+    Ok(None) =>
+      fail("expected later CHANGES_REQUESTED to win via array-order fallback")
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 async fn mock_preflight_capture_approved_no_graphql(
   cmd : @workspace.Command,
 ) -> (Int, String) {
