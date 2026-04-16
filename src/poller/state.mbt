@@ -421,12 +421,22 @@ pub fn read_state_file(project_dir : String) -> Array[TrackedPR] {
   }
   parse_tracked_prs_json(content) catch {
     e => {
+      // Quarantine the corrupt file so an operator can inspect it,
+      // then return an empty tracking set. The daemon re-discovers
+      // PRs from GitHub on its next tick.
+      let quarantine = poller_state_path(project_dir) +
+        ".corrupt-" +
+        @env.now().reinterpret_as_int64().to_string()
+      ignore(@sys.write_file_atomic(quarantine, content))
+      ignore(@sys.delete_file_sync(poller_state_path(project_dir)))
       @sys.write_stderr(
-        "poller_state.json parse error: " +
+        "poller_state.json parse error (quarantined to " +
+        quarantine +
+        ", returning empty): " +
         @types.choir_error_message_from_caught(e) +
         "\n",
       )
-      panic()
+      []
     }
   }
 }

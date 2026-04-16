@@ -50,6 +50,29 @@ test "parse_known_prs distinguishes merged and closed states" {
 }
 
 ///|
+/// Regression: the shell recovery provider used to `panic()` when
+/// `gh pr list` returned malformed or truncated JSON. This broke the
+/// boot-loop contract — the daemon whose entire job is tolerating
+/// prior-run noise was the first thing to die on bad input. The
+/// provider now logs to stderr and returns empty so the daemon can
+/// rebuild state from the next tick. This test exercises both the
+/// open_prs and find_prs_by_head closures via a capture stub that
+/// produces invalid JSON.
+async test "make_shell_recovery_provider open_prs falls back to empty on invalid JSON" {
+  let bad_capture = async fn(_prog, _args, _cwd) {
+    @async.sleep(0)
+    "{not valid json"
+  }
+  let provider = make_shell_recovery_provider(bad_capture)
+  let open_result = (provider.open_prs)("/tmp")
+  assert_eq(open_result.length(), 0)
+  let head_result = (provider.find_prs_by_head)("/tmp", "main.leaf")
+  assert_eq(head_result.length(), 0)
+  let head_any_result = (provider.find_prs_by_head_any)("/tmp", "main.leaf")
+  assert_eq(head_any_result.length(), 0)
+}
+
+///|
 async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
   let mock_provider : RecoveryProvider = {
     zellij_live: fn(_dir, _session) { { tabs: [], panes: [] } },

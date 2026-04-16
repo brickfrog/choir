@@ -548,11 +548,11 @@ pub fn make_shell_recovery_provider(
       parse_open_prs(open_pr_output) catch {
         e => {
           @sys.write_stderr(
-            "gh parse_open_prs open error: " +
+            "gh parse_open_prs open error (returning empty): " +
             @types.choir_error_message_from_caught(e) +
             "\n",
           )
-          panic()
+          []
         }
       }
     },
@@ -570,11 +570,11 @@ pub fn make_shell_recovery_provider(
       parse_open_prs(output) catch {
         e => {
           @sys.write_stderr(
-            "gh parse_open_prs head error: " +
+            "gh parse_open_prs head error (returning empty): " +
             @types.choir_error_message_from_caught(e) +
             "\n",
           )
-          panic()
+          []
         }
       }
     },
@@ -592,11 +592,11 @@ pub fn make_shell_recovery_provider(
       parse_known_prs(output) catch {
         e => {
           @sys.write_stderr(
-            "gh parse_known_prs error: " +
+            "gh parse_known_prs error (returning empty): " +
             @types.choir_error_message_from_caught(e) +
             "\n",
           )
-          panic()
+          []
         }
       }
     },
@@ -689,12 +689,24 @@ pub fn make_shell_recovery_provider(
       }
       @poller.parse_tracked_prs_json(content) catch {
         e => {
+          // Quarantine the corrupt file for operator inspection, then
+          // fall back to empty tracked-PR state. The daemon rebuilds
+          // poller state from GitHub on the next tick.
+          let quarantine = project_dir +
+            "/.choir/poller_state.json.corrupt-" +
+            @env.now().reinterpret_as_int64().to_string()
+          ignore(@sys.write_file_atomic(quarantine, content))
+          ignore(
+            @sys.delete_file_sync(project_dir + "/.choir/poller_state.json"),
+          )
           @sys.write_stderr(
-            "poller_state.json parse error: " +
+            "poller_state.json parse error (quarantined to " +
+            quarantine +
+            ", returning empty): " +
             @types.choir_error_message_from_caught(e) +
             "\n",
           )
-          panic()
+          []
         }
       }
     },
