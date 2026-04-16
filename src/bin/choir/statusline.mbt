@@ -47,47 +47,35 @@ priv struct StatuslinePrSummary {
 }
 
 ///|
-/// List regular files in `.choir/kv` whose basename matches `name_glob` (`find -name` pattern).
-async fn statusline_kv_files_matching_glob(
+/// Full paths of entries in `.choir/kv` whose basename starts with `prefix`.
+/// Replaces the former `find -maxdepth 1 -type f -name <prefix>*` subprocess;
+/// both call sites (`lifecycle--`, `children--`) use prefix matching so the
+/// glob shape was already strictly `prefix*`.
+fn statusline_kv_files_with_prefix(
   project_dir : String,
-  name_glob : String,
+  prefix : String,
 ) -> Array[String] {
   let kv_dir = project_dir + "/.choir/kv"
   if !@sys.path_entry_exists(kv_dir) {
     return []
   }
-  try {
-    let (code, output) = @exec.capture_command_stdout({
-      program: "find",
-      args: [kv_dir, "-maxdepth", "1", "-type", "f", "-name", name_glob],
-      workdir: None,
-    })
-    if code != 0 {
-      return []
+  let files : Array[String] = []
+  for name in @sys.list_dir(kv_dir) {
+    if name.has_prefix(prefix) {
+      files.push(kv_dir + "/" + name)
     }
-    let files = []
-    for line in output.split("\n") {
-      let trimmed = line.trim().to_string()
-      if trimmed != "" {
-        files.push(trimmed)
-      }
-    }
-    files
-  } catch {
-    _ => []
   }
+  files
 }
 
 ///|
-async fn statusline_list_lifecycle_files(project_dir : String) -> Array[String] {
-  statusline_kv_files_matching_glob(project_dir, "lifecycle--*")
+fn statusline_list_lifecycle_files(project_dir : String) -> Array[String] {
+  statusline_kv_files_with_prefix(project_dir, "lifecycle--")
 }
 
 ///|
-async fn statusline_collect_child_ids(
-  project_dir : String,
-) -> Map[String, Bool] {
-  let paths = statusline_kv_files_matching_glob(project_dir, "children--*")
+fn statusline_collect_child_ids(project_dir : String) -> Map[String, Bool] {
+  let paths = statusline_kv_files_with_prefix(project_dir, "children--")
   let ids : Map[String, Bool] = {}
   for path in paths {
     let content = @sys.read_file(path)
@@ -114,9 +102,7 @@ async fn statusline_collect_child_ids(
 }
 
 ///|
-async fn statusline_count_agents(
-  project_dir : String,
-) -> (Int, Int, Int, Int, Int) {
+fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
   let child_ids = statusline_collect_child_ids(project_dir)
   let files = statusline_list_lifecycle_files(project_dir)
   let mut working = 0
@@ -155,7 +141,7 @@ async fn statusline_count_agents(
 }
 
 ///|
-async test "statusline_count_agents matches child ids using lifecycle content agent_id" {
+test "statusline_count_agents matches child ids using lifecycle content agent_id" {
   let project_dir = "/tmp/choir-statusline-agent-id-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -175,9 +161,7 @@ async test "statusline_count_agents matches child ids using lifecycle content ag
   )
   let (working, review, changes, failed, done) = statusline_count_agents(
     project_dir,
-  ) catch {
-    _ => (0, 0, 0, 0, 0)
-  }
+  )
   ignore(@sys.rm_rf(project_dir))
   assert_eq((working, review, changes, failed, done), (1, 0, 0, 0, 0))
 }
@@ -405,58 +389,54 @@ fn statusline_run() -> Unit {
     @sys.write_stdout(out.to_string())
     return
   }
-  @async.run_async_main(async fn() {
-    let (working, review, changes, failed, _done) = statusline_count_agents(
-      project_dir,
-    ) catch {
-      _ => (0, 0, 0, 0, 0)
+  let (working, review, changes, failed, _done) = statusline_count_agents(
+    project_dir,
+  )
+  let total = working + review + changes + failed
+  if total > 0 {
+    out.write_string("  ")
+    let mut need_sep = false
+    if working > 0 {
+      out.write_string("\u001b[33m")
+      out.write_string(working.to_string())
+      out.write_string("\u001b[2m wip\u001b[0m")
+      need_sep = true
     }
-    let total = working + review + changes + failed
-    if total > 0 {
-      out.write_string("  ")
-      let mut need_sep = false
-      if working > 0 {
-        out.write_string("\u001b[33m")
-        out.write_string(working.to_string())
-        out.write_string("\u001b[2m wip\u001b[0m")
-        need_sep = true
+    if review > 0 {
+      if need_sep {
+        out.write_string("\u001b[2m/\u001b[0m")
       }
-      if review > 0 {
-        if need_sep {
-          out.write_string("\u001b[2m/\u001b[0m")
-        }
-        out.write_string("\u001b[32m")
-        out.write_string(review.to_string())
-        out.write_string("\u001b[2m pr\u001b[0m")
-        need_sep = true
-      }
-      if changes > 0 {
-        if need_sep {
-          out.write_string("\u001b[2m/\u001b[0m")
-        }
-        out.write_string("\u001b[35m")
-        out.write_string(changes.to_string())
-        out.write_string("\u001b[2m fix\u001b[0m")
-        need_sep = true
-      }
-      if failed > 0 {
-        if need_sep {
-          out.write_string("\u001b[2m/\u001b[0m")
-        }
-        out.write_string("\u001b[31m")
-        out.write_string(failed.to_string())
-        out.write_string("\u001b[2m err\u001b[0m")
-      }
+      out.write_string("\u001b[32m")
+      out.write_string(review.to_string())
+      out.write_string("\u001b[2m pr\u001b[0m")
+      need_sep = true
     }
-    let pr_summary = statusline_pr_summary(project_dir)
-    if pr_summary.has_automerge {
-      out.write_string("  ")
-      out.write_string("\u001b[36mam\u001b[0m")
+    if changes > 0 {
+      if need_sep {
+        out.write_string("\u001b[2m/\u001b[0m")
+      }
+      out.write_string("\u001b[35m")
+      out.write_string(changes.to_string())
+      out.write_string("\u001b[2m fix\u001b[0m")
+      need_sep = true
     }
-    if pr_summary.body != "" {
-      out.write_string("  ")
-      out.write_string(pr_summary.body)
+    if failed > 0 {
+      if need_sep {
+        out.write_string("\u001b[2m/\u001b[0m")
+      }
+      out.write_string("\u001b[31m")
+      out.write_string(failed.to_string())
+      out.write_string("\u001b[2m err\u001b[0m")
     }
-    @sys.write_stdout(out.to_string())
-  })
+  }
+  let pr_summary = statusline_pr_summary(project_dir)
+  if pr_summary.has_automerge {
+    out.write_string("  ")
+    out.write_string("\u001b[36mam\u001b[0m")
+  }
+  if pr_summary.body != "" {
+    out.write_string("  ")
+    out.write_string(pr_summary.body)
+  }
+  @sys.write_stdout(out.to_string())
 }
