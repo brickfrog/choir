@@ -496,7 +496,8 @@ pub async fn dispatch(
       interpret_kill_agent(kill_args, registry, runner)
     ToolRequest::Suspend(suspend_args) =>
       interpret_suspend(suspend_args, registry, project_dir, hook_capture~)
-    ToolRequest::Resume(resume_args) => interpret_resume(resume_args, registry)
+    ToolRequest::Resume(resume_args) =>
+      interpret_resume(resume_args, registry, project_dir, hook_capture~)
     ToolRequest::AgentList(args) =>
       match registry {
         Some(reg) => {

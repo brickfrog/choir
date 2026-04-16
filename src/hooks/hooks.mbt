@@ -5,6 +5,7 @@ pub(all) enum HookEvent {
   PostToolUse
   AgentExit
   AgentSuspended
+  AgentResumed
   SessionStop
   BeforeModel
   AfterModel
@@ -36,6 +37,7 @@ fn HookEvent::hook_event_wire_name(self : HookEvent) -> String {
     PostToolUse => "PostToolUse"
     AgentExit => "AgentExit"
     AgentSuspended => "AgentSuspended"
+    AgentResumed => "AgentResumed"
     SessionStop => "SessionStop"
     BeforeModel => "BeforeModel"
     AfterModel => "AfterModel"
@@ -170,6 +172,7 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     "PostToolUse" => HookEvent::PostToolUse
     "AgentExit" => HookEvent::AgentExit
     "AgentSuspended" => HookEvent::AgentSuspended
+    "AgentResumed" => HookEvent::AgentResumed
     "SessionStop" => HookEvent::SessionStop
     "BeforeModel" => HookEvent::BeforeModel
     "AfterModel" => HookEvent::AfterModel
@@ -220,6 +223,7 @@ pub fn HookEvent::script_name(self : HookEvent) -> String {
     PostToolUse => "post_tool_use"
     AgentExit => "agent_exit"
     AgentSuspended => "agent_suspended"
+    AgentResumed => "agent_resumed"
     SessionStop => "session_stop"
     BeforeModel => "before_model"
     AfterModel => "after_model"

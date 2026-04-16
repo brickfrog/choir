@@ -60,10 +60,16 @@ async test "interpret_suspend returns error when no registry" {
 }
 
 ///|
-test "interpret_resume transitions agent back to Active and returns ok" {
+async test "interpret_resume transitions agent back to Active and returns ok" {
   let reg = make_test_registry_with_active_agent("tl.leaf")
   ignore(try? reg.set_state("tl.leaf", @types.AgentState::Suspended))
-  let resp = interpret_resume({ agent_id: "tl.leaf" }, Some(reg))
+  let resp = interpret_resume({ agent_id: "tl.leaf" }, Some(reg), ".", hook_capture=fn(
+    _path,
+    _input,
+    _dir,
+  ) {
+    (0, "")
+  })
   assert_true(resp.is_ok())
   try reg.get("tl.leaf") catch {
     _ => fail("expected agent after resume")
@@ -73,14 +79,26 @@ test "interpret_resume transitions agent back to Active and returns ok" {
 }
 
 ///|
-test "interpret_resume returns error for unknown agent" {
+async test "interpret_resume returns error for unknown agent" {
   let reg = @registry.AgentRegistry::new()
-  let resp = interpret_resume({ agent_id: "nonexistent" }, Some(reg))
+  let resp = interpret_resume({ agent_id: "nonexistent" }, Some(reg), ".", hook_capture=fn(
+    _path,
+    _input,
+    _dir,
+  ) {
+    (0, "")
+  })
   assert_false(resp.is_ok())
 }
 
 ///|
-test "interpret_resume returns error when no registry" {
-  let resp = interpret_resume({ agent_id: "tl.leaf" }, None)
+async test "interpret_resume returns error when no registry" {
+  let resp = interpret_resume({ agent_id: "tl.leaf" }, None, ".", hook_capture=fn(
+    _path,
+    _input,
+    _dir,
+  ) {
+    (0, "")
+  })
   assert_false(resp.is_ok())
 }

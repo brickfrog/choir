@@ -46,11 +46,14 @@ pub async fn interpret_suspend(
 }
 
 ///|
-/// Resume a suspended agent: transitions Suspended → Active and unblocks
-/// poll delivery for that agent.
-pub fn interpret_resume(
+/// Resume a suspended agent: transitions Suspended → Active, unblocks poll
+/// delivery, and fires the AgentResumed hook so operators who paged on the
+/// matching AgentSuspended event see the paired recovery.
+pub async fn interpret_resume(
   args : ResumeArgs,
   registry : @registry.AgentRegistry?,
+  project_dir : String,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
 ) -> @types.Response {
   match registry {
     None => @types.Response::Err("no agent registry available")
@@ -61,6 +64,22 @@ pub fn interpret_resume(
       @moontrace.info("agent resumed", fields=[
         @moontrace.field("agent_id", args.agent_id),
       ])
+      fire_hook_async(
+        @hooks.HookEvent::AgentResumed,
+        {
+          event: @hooks.HookEvent::AgentResumed,
+          session_id: None,
+          agent_id: Some(args.agent_id),
+          role: None,
+          tool_name: None,
+          tool_args: None,
+          tool_result_status: None,
+          exit_reason: None,
+          suspend_reason: None,
+        },
+        project_dir,
+        hook_capture~,
+      )
       @types.Response::ok_values({
         "status": "resumed".to_json(),
         "agent_id": args.agent_id.to_json(),
