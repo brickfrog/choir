@@ -8,6 +8,10 @@ extern "C" fn c_path_entry_exists(path : Bytes) -> Int = "choir_path_entry_exist
 
 ///|
 #borrow(path, buf)
+extern "C" fn c_list_dir(path : Bytes, buf : Bytes, max_size : Int) -> Int = "choir_list_dir"
+
+///|
+#borrow(path, buf)
 extern "C" fn c_read_file_to_buf(path : Bytes, buf : Bytes, size : Int) = "choir_read_file_to_buf"
 
 ///|
@@ -90,6 +94,31 @@ pub fn path_exists(path : String) -> Bool {
 pub fn path_entry_exists(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_path_entry_exists(path_bytes) != 0
+}
+
+///|
+/// Entry names of `path`, skipping `.` and `..`. Returns empty array when the
+/// directory cannot be opened (non-existent, permission denied, not a dir).
+/// A 64 KiB buffer caps the read; directories with more entries than fit are
+/// silently truncated — callers here operate on `.choir/kv` and `.choir/worktrees`
+/// which stay well under that.
+pub fn list_dir(path : String) -> Array[String] {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let max_size = 65536
+  let buf = Bytes::new(max_size)
+  let n = c_list_dir(path_bytes, buf, max_size)
+  if n <= 0 {
+    return []
+  }
+  let content = @utf8.decode_lossy(buf[:n])
+  let entries : Array[String] = []
+  for raw in content.split("\n") {
+    let name = raw.trim().to_string()
+    if name != "" {
+      entries.push(name)
+    }
+  }
+  entries
 }
 
 ///|

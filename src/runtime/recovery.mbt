@@ -623,67 +623,52 @@ pub fn make_shell_recovery_provider(
       ["worktrees", "agents", "inline"]
     },
     list_agents_in_container: async fn(project_dir, container) {
+      @async.sleep(0)
       let rel = ".choir/" + container
       if !@sys.path_entry_exists(project_dir + "/" + rel) {
         return []
       }
-      let output = capture("ls", ["-1", rel], Some(project_dir))
-      split_lines(output)
+      @sys.list_dir(project_dir + "/" + rel)
     },
     read_agent_config: async fn(project_dir, container, slug) {
+      @async.sleep(0)
       let rel = ".choir/" + container + "/" + slug + "/.choir/config.local.toml"
       if !@sys.path_exists(project_dir + "/" + rel) {
         return ""
       }
-      capture("cat", [rel], Some(project_dir))
+      @sys.read_file(project_dir + "/" + rel)
     },
     get_agent_relative_workspace: fn(container, slug) {
       ".choir/" + container + "/" + slug
     },
     list_lifecycle_ids: async fn(project_dir) {
+      @async.sleep(0)
       if !@sys.path_entry_exists(project_dir + "/.choir/kv") {
         return []
       }
-      let output = capture(
-        "find",
-        [".choir/kv", "-maxdepth", "1", "-type", "f", "-name", "lifecycle--*"],
-        Some(project_dir),
-      )
-      let paths = split_lines(output)
-      let ids = []
       let prefix = "lifecycle--"
-      for path in paths {
-        let parts = path.split("/")
-        let filenames = []
-        for part in parts {
-          filenames.push(part)
-        }
-        if filenames.length() == 0 {
-          continue
-        }
-        let filename = filenames[filenames.length() - 1].to_string()
-        if filename.has_prefix(prefix) && filename.length() > prefix.length() {
-          ids.push(filename[prefix.length():].to_string())
+      let ids = []
+      for name in @sys.list_dir(project_dir + "/.choir/kv") {
+        if name.has_prefix(prefix) && name.length() > prefix.length() {
+          ids.push(name[prefix.length():].to_string())
         }
       }
       ids
     },
     read_lifecycle_content: async fn(project_dir, id) {
+      @async.sleep(0)
       let rel = ".choir/kv/lifecycle--" + id
       if !@sys.path_exists(project_dir + "/" + rel) {
         return ""
       }
-      capture("cat", [rel], Some(project_dir))
+      @sys.read_file(project_dir + "/" + rel)
     },
     read_poller_state: async fn(project_dir) {
+      @async.sleep(0)
       if !@sys.path_exists(project_dir + "/.choir/poller_state.json") {
         return []
       }
-      let content = capture(
-        "cat",
-        [".choir/poller_state.json"],
-        Some(project_dir),
-      )
+      let content = @sys.read_file(project_dir + "/.choir/poller_state.json")
       if content == "" {
         return []
       }

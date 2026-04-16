@@ -54,6 +54,34 @@ int choir_path_entry_exists(const char* path) {
     return stat(path, &st) == 0;
 }
 
+/* Writes newline-separated entry names of `path` into `buf` (skipping "." and
+ * "..").  Returns bytes written, or -1 if the directory could not be opened.
+ * If the buffer would overflow, stops before the entry that would not fit —
+ * caller sees a partial list with no indicator (sufficient for our use: the
+ * caller expects small directories like .choir/kv and .choir/worktrees). */
+int choir_list_dir(const char *path, char *buf, int max_size) {
+    DIR *d = opendir(path);
+    if (!d) {
+        return -1;
+    }
+    struct dirent *ent;
+    int total = 0;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.') {
+            continue;
+        }
+        int len = (int)strlen(ent->d_name);
+        if (total + len + 1 > max_size) {
+            break;
+        }
+        memcpy(buf + total, ent->d_name, (size_t)len);
+        buf[total + len] = '\n';
+        total += len + 1;
+    }
+    closedir(d);
+    return total;
+}
+
 void choir_read_file_to_buf(const char* path, char* buf, int size) {
     FILE* f = fopen(path, "rb");
     if (!f) return;

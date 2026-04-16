@@ -9,6 +9,11 @@ pub fn read_file(_path : String) -> String {
 }
 
 ///|
+pub fn list_dir(_path : String) -> Array[String] {
+  []
+}
+
+///|
 pub fn write_stdout(_s : String) -> Unit {
 
 }

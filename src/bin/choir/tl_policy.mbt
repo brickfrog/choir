@@ -102,19 +102,13 @@ fn git_status_changed_paths(output : String) -> Array[String] {
 }
 
 ///|
-fn tl_policy_status_paths(repo_dir : String) -> Array[String] {
-  let tmp_path = "/tmp/choir-tl-policy-status-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  let cmd = "git -C " +
-    @sys.shell_quote(repo_dir) +
-    " status --porcelain --untracked-files=all > " +
-    @sys.shell_quote(tmp_path) +
-    " 2>/dev/null"
-  let exit_code = @sys.system(cmd)
-  let output = @sys.read_file(tmp_path)
-  ignore(@sys.delete_file_sync(tmp_path))
+async fn tl_policy_status_paths(repo_dir : String) -> Array[String] {
+  let cmd : @workspace.Command = {
+    program: "git",
+    args: ["-C", repo_dir, "status", "--porcelain", "--untracked-files=all"],
+    workdir: None,
+  }
+  let (exit_code, output) = @exec.capture_command_merged(cmd)
   if exit_code != 0 {
     return []
   }
