@@ -187,7 +187,7 @@ fn tool_args_get_int(args : ToolArgs, key : String) -> Int? {
 
 ///|
 fn tool_args_get_bool(args : ToolArgs, key : String) -> Bool {
-  parse_truthy_spawn_flag(tool_args_get(args, key).unwrap_or("false"))
+  parse_lenient_bool_flag(key, tool_args_get(args, key).unwrap_or("false"))
 }
 
 ///|

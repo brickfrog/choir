@@ -49,9 +49,31 @@ fn get_arg_or_alias(
 }
 
 ///|
-fn parse_truthy_spawn_flag(s : String) -> Bool {
+/// Lenient boolean flag parser for tool args. Empty or known falsy strings
+/// return `false`; known truthy strings return `true`. Unrecognized non-empty
+/// values emit a stderr warning (naming `field`, if given) and return `false`
+/// so a typo like `cancel=yse` does not silently pass as `false` without a
+/// trace — the warning is a flag for the operator to notice and correct.
+fn parse_lenient_bool_flag(field : String, s : String) -> Bool {
   let lowered = s.trim().to_lower()
-  lowered == "true" || lowered == "1" || lowered == "yes"
+  if lowered == "" ||
+    lowered == "false" ||
+    lowered == "0" ||
+    lowered == "no" ||
+    lowered == "off" {
+    return false
+  }
+  if lowered == "true" || lowered == "1" || lowered == "yes" || lowered == "on" {
+    return true
+  }
+  @sys.write_stderr(
+    "unrecognized boolean value '" +
+    s +
+    "' for '" +
+    field +
+    "', treating as false\n",
+  )
+  false
 }
 
 ///|
@@ -63,10 +85,10 @@ fn parse_optional_spawn_flag(
   if lowered == "" {
     return Ok(None)
   }
-  if lowered == "true" || lowered == "1" || lowered == "yes" {
+  if lowered == "true" || lowered == "1" || lowered == "yes" || lowered == "on" {
     return Ok(Some(true))
   }
-  if lowered == "false" || lowered == "0" || lowered == "no" {
+  if lowered == "false" || lowered == "0" || lowered == "no" || lowered == "off" {
     return Ok(Some(false))
   }
   Err(ParseError::InvalidValue(field~, value=raw))
