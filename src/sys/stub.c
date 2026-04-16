@@ -45,6 +45,10 @@ int choir_get_file_size(const char* path) {
     return (int)size;
 }
 
+int choir_system(const char* cmd) {
+    return system(cmd);
+}
+
 int choir_path_entry_exists(const char* path) {
     struct stat st;
     return stat(path, &st) == 0;

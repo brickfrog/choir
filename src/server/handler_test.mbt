@@ -377,7 +377,10 @@ async test "kill_agent auto-closes tracked stale PR and untracks it" {
     req_method: "tools/call",
     role: @types.Role::TL,
     name: "kill_agent",
-    args: @types.RequestArgs::new({ "agent_id": child_id }),
+    args: @types.RequestArgs::new({
+      "agent_id": child_id,
+      "caller_id": _parent_id,
+    }),
   }
   let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
   assert_true(resp.is_ok())
@@ -425,7 +428,10 @@ async test "kill_agent close failure sends one explicit stale PR failure and sup
     req_method: "tools/call",
     role: @types.Role::TL,
     name: "kill_agent",
-    args: @types.RequestArgs::new({ "agent_id": child_id }),
+    args: @types.RequestArgs::new({
+      "agent_id": child_id,
+      "caller_id": _parent_id,
+    }),
   }
   let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
   assert_true(resp.is_ok())

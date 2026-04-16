@@ -50,6 +50,10 @@ extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_se
 extern "C" fn c_wait_for_socket(path : Bytes, max_tries : Int) -> Int = "choir_wait_for_socket"
 
 ///|
+#borrow(cmd)
+extern "C" fn c_system(cmd : Bytes) -> Int = "choir_system"
+
+///|
 #borrow(path, out)
 extern "C" fn c_realpath(path : Bytes, out : Bytes, out_size : Int) -> Int = "choir_realpath"
 
@@ -221,6 +225,12 @@ pub fn getenv(name : String) -> String? {
     return None
   }
   Some(@utf8.decode_lossy(buf[:len]))
+}
+
+///|
+pub fn system(cmd : String) -> Int {
+  let bytes = string_to_null_terminated_bytes(cmd)
+  c_system(bytes)
 }
 
 ///|

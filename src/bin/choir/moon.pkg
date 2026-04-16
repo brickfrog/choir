@@ -24,4 +24,21 @@ import {
 
 options(
   "is-main": true,
+  targets: {
+    "hook.mbt": [ "native" ],
+    "init.mbt": [ "native" ],
+    "init_bootstrap.mbt": [ "native" ],
+    "leaf_tool.mbt": [ "native" ],
+    "main.mbt": [ "native" ],
+    "mcp_mode.mbt": [ "native" ],
+    "runtime_commands.mbt": [ "native" ],
+    "statusline.mbt": [ "native" ],
+    "stub_main.mbt": [ "not", "native" ],
+    "tcp_reader.mbt": [ "native" ],
+    "tl_policy.mbt": [ "native" ],
+    "trust_gemini_folder.mbt": [ "native" ],
+    "uds_reader.mbt": [ "native" ],
+    "uds_server.mbt": [ "native" ],
+    "zellij_action.mbt": [ "native" ],
+  },
 )
