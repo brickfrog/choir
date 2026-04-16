@@ -50,8 +50,8 @@ extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_se
 extern "C" fn c_wait_for_socket(path : Bytes, max_tries : Int) -> Int = "choir_wait_for_socket"
 
 ///|
-#borrow(cmd)
-extern "C" fn c_system(cmd : Bytes) -> Int = "choir_system"
+#borrow(path, out)
+extern "C" fn c_realpath(path : Bytes, out : Bytes, out_size : Int) -> Int = "choir_realpath"
 
 ///|
 #borrow(path)
@@ -224,9 +224,14 @@ pub fn getenv(name : String) -> String? {
 }
 
 ///|
-pub fn system(cmd : String) -> Int {
-  let bytes = string_to_null_terminated_bytes(cmd)
-  c_system(bytes)
+pub fn realpath_native(path : String) -> String? {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let out = Bytes::new(4096)
+  let len = c_realpath(path_bytes, out, 4096)
+  if len <= 0 {
+    return None
+  }
+  Some(@utf8.decode_lossy(out[:len]))
 }
 
 ///|
@@ -318,18 +323,8 @@ extern "C" fn c_append_file_sync(
 extern "C" fn c_create_dir_all(path : Bytes) -> Int = "choir_create_dir_all"
 
 ///|
-#borrow(cmd)
-extern "C" fn c_register_cleanup(cmd : Bytes) = "choir_register_cleanup"
-
-///|
 pub fn create_dir_all(path : String) -> Bool {
   c_create_dir_all(string_to_null_terminated_bytes(path)) == 0
-}
-
-///|
-/// Register a shell command to run on SIGTERM/SIGINT before exit.
-pub fn register_cleanup(cmd : String) -> Unit {
-  c_register_cleanup(string_to_null_terminated_bytes(cmd))
 }
 
 ///|

@@ -12,8 +12,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static char choir_cleanup_cmd[4096] = {0};
-/** When non-zero, SIGTERM/SIGINT unlink runtime markers only (no shell). */
 static int choir_cleanup_runtime_native = 0;
 
 static void choir_sigterm_handler(int sig) {
@@ -22,23 +20,12 @@ static void choir_sigterm_handler(int sig) {
         unlink(".choir/server.pid");
         unlink(".choir/server.sock");
         unlink(".choir/run_id");
-    } else if (choir_cleanup_cmd[0] != '\0') {
-        int rc = system(choir_cleanup_cmd);
-        (void)rc;
     }
     _exit(0);
 }
 
-void choir_register_cleanup(const char* cmd) {
-    choir_cleanup_runtime_native = 0;
-    snprintf(choir_cleanup_cmd, sizeof(choir_cleanup_cmd), "%s", cmd);
-    signal(SIGTERM, choir_sigterm_handler);
-    signal(SIGINT, choir_sigterm_handler);
-}
-
 void choir_register_cleanup_runtime_artifacts(void) {
     choir_cleanup_runtime_native = 1;
-    choir_cleanup_cmd[0] = '\0';
     signal(SIGTERM, choir_sigterm_handler);
     signal(SIGINT, choir_sigterm_handler);
 }
@@ -153,11 +140,36 @@ int choir_pid_is_alive(int pid) {
 }
 
 int choir_spawn_serve(const char* exe, int exe_len) {
-    char cmd[4096];
-    (void)exe_len;
-    snprintf(cmd, sizeof(cmd),
-        "%s serve >> .choir/serve.log 2>&1 &", exe);
-    return system(cmd);
+    (void)exe_len; // Ensure unused param warning is avoided
+    pid_t pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        // Child 1
+        pid_t pid2 = fork();
+        if (pid2 < 0) {
+            _exit(127);
+        }
+        if (pid2 > 0) {
+            // Child 1 exits, making Child 2 an orphan
+            _exit(0);
+        }
+        // Child 2
+        int fd = open(".choir/serve.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd >= 0) {
+            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDERR_FILENO);
+            close(fd);
+        }
+        char* argv[] = { (char*)exe, "serve", NULL };
+        execvp(exe, argv);
+        _exit(127);
+    }
+    // Parent waits for Child 1
+    int st = 0;
+    waitpid(pid, &st, 0);
+    return 0;
 }
 
 static int choir_wait_for_uds_ready(const char* path) {
@@ -203,8 +215,17 @@ int choir_redirect_stderr_append(const char* path) {
     return 0;
 }
 
-int choir_system(const char* cmd) {
-    return system(cmd);
+int choir_realpath(const char* path, char* out, int out_size) {
+    if (!path || !out || out_size <= 0) return -1;
+    char r_path[4096];
+    if (realpath(path, r_path)) {
+        int len = (int)strlen(r_path);
+        if (len < out_size) {
+            memcpy(out, r_path, len + 1);
+            return len;
+        }
+    }
+    return -1;
 }
 
 int choir_getenv(const char* name, char* out, int out_size) {

@@ -475,7 +475,7 @@ pub fn spawn_commands(
 fn remote_ssh_git_clone_checkout_script(
   parent_branch : String,
   repo_url : String,
-  workspace : String,
+  workspace_expr : String,
   agent_branch : String,
 ) -> String {
   "git clone -b " +
@@ -483,9 +483,9 @@ fn remote_ssh_git_clone_checkout_script(
   " " +
   @sys.shell_quote(repo_url) +
   " " +
-  workspace +
+  workspace_expr +
   " && cd " +
-  workspace +
+  workspace_expr +
   " && git checkout -b " +
   @sys.shell_quote(agent_branch)
 }
@@ -493,32 +493,32 @@ fn remote_ssh_git_clone_checkout_script(
 ///|
 /// Write merged Choir config files under `workspace/.choir/` on the remote host.
 fn remote_ssh_write_choir_config_files_script(
-  workspace : String,
+  workspace_expr : String,
   config_toml : String,
   local_config_toml : String,
 ) -> String {
   "mkdir -p " +
-  workspace +
+  workspace_expr +
   "/.choir && printf '%s' " +
   @sys.shell_quote(config_toml) +
   " > " +
-  workspace +
+  workspace_expr +
   "/.choir/config.toml && printf '%s' " +
   @sys.shell_quote(local_config_toml) +
   " > " +
-  workspace +
+  workspace_expr +
   "/.choir/config.local.toml"
 }
 
 ///|
 /// `nohup` agent process with merged stdout/stderr to `/tmp/<slug>.log` (background).
 fn remote_ssh_nohup_agent_script(
-  workspace : String,
+  workspace_expr : String,
   agent_cmd : String,
   slug : String,
 ) -> String {
   "cd " +
-  workspace +
+  workspace_expr +
   " && nohup " +
   agent_cmd +
   " > /tmp/" +
@@ -551,6 +551,7 @@ pub fn remote_spawn_commands(
 ) -> Array[Command] {
   let branch = canonical_agent_id(spec)
   let workspace = "$HOME/exo-workspaces/" + branch
+  let workspace_expr = "$HOME/exo-workspaces/" + @sys.shell_quote(branch)
   let terminal_target = @types.LocalTarget::{
     kind: ZellijPane,
     session: "remote",
@@ -579,19 +580,19 @@ pub fn remote_spawn_commands(
       remote_ssh_git_clone_checkout_script(
         spec.parent_branch,
         repo_url,
-        workspace,
+        workspace_expr,
         branch,
       ),
     ),
     ssh_cmd(
       ssh_target,
       remote_ssh_write_choir_config_files_script(
-        workspace, config_toml, local_config_toml,
+        workspace_expr, config_toml, local_config_toml,
       ),
     ),
     ssh_cmd(
       ssh_target,
-      remote_ssh_nohup_agent_script(workspace, agent_cmd, spec.slug),
+      remote_ssh_nohup_agent_script(workspace_expr, agent_cmd, spec.slug),
     ),
   ]
 }

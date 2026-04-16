@@ -112,11 +112,15 @@ pub fn run_native_workspace_rel_file_command(cmd : Command) -> Int {
   if cmd.args.length() != 3 {
     return 1
   }
-  let root = cmd.args[0]
+  let root_raw = cmd.args[0]
   let rel = cmd.args[1]
   let content = cmd.args[2]
   if !validate_workspace_rel_path(rel) {
     return 1
+  }
+  let root = match @sys.realpath_native(root_raw) {
+    Some(p) => p
+    None => root_raw
   }
   let full = root + "/" + rel
   if !full.has_prefix(root + "/") && full != root {
@@ -124,6 +128,13 @@ pub fn run_native_workspace_rel_file_command(cmd : Command) -> Int {
   }
   let parent = parent_dir_for_file(full)
   if !@sys.create_dir_all(parent) {
+    return 1
+  }
+  let parent_real = match @sys.realpath_native(parent) {
+    Some(p) => p
+    None => return 1
+  }
+  if !parent_real.has_prefix(root + "/") && parent_real != root {
     return 1
   }
   if !@sys.write_file_sync(full, content) {

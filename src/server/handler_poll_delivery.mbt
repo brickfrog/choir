@@ -1301,6 +1301,7 @@ pub async fn ServerState::process_poller_tick_with(
   ),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
+  self.mutex_registry.expire(now)
   let pending_events = []
   let pending_agent_ids = []
   self.poller.tick_with(
@@ -1327,6 +1328,7 @@ pub async fn ServerState::process_poller_tick(
   timeout : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
+  self.mutex_registry.expire(now)
   let tracked_before = self.poller.tracked.length()
   let pending_events = []
   let pending_agent_ids = []

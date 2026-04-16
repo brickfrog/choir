@@ -164,9 +164,12 @@ pub async fn ServerState::handle_with_runner_and_capture(
   }
   self.interpret_teardown_effects(effects, runner)
   if req.name == "kill_agent" && resp.is_ok() {
+    let caller_id = request_agent_id(req).unwrap_or("")
     match req.args.get("agent_id") {
       Some(agent_id) =>
-        reconcile_killed_agent_tracked_prs(self, agent_id, runner, capture)
+        reconcile_killed_agent_tracked_prs(
+          self, agent_id, caller_id, runner, capture,
+        )
       None => ()
     }
   }

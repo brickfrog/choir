@@ -10,6 +10,13 @@ Choir now has typed task contracts, a typed evidence ledger, a pure merge policy
 
 ## 🛠️ Operational Improvements
 
+### Core v2 Adversarial Audit Remediation (High Priority)
+Address the findings from the recent adversarial audit detailed in `AUDIT_SYNTHESIS.md`. Priority must be given to fixing the three high-severity concurrency hazards:
+- **Poller State Race**: Serialize poller mutations/writes or use a generation counter to prevent silent PR tracking loss.
+- **PaneWatcher Idle Race**: Consolidate watchdog state and serialize check/stop operations to prevent memory leaks and false idle readings.
+- **Merge PR Mutex Release Window**: Move mutex release into a `try/finally` pattern *after* error capture completes to prevent concurrent merges on a dirty Git state.
+Medium-severity issues including outbox staleness, hash collisions, and orphan PR handling should be addressed in subsequent passes.
+
 ### Standardized Error Context
 Leverage the new `suberror` system to provide richer, machine-readable error context across the UDS and CLI boundaries.
 

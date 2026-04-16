@@ -13,7 +13,7 @@ test "parse_int_simple" {
 ///|
 test "PaneWatcher::new" {
   let pw = PaneWatcher::new()
-  assert_eq(pw.subscribe_pids.length(), 0)
+  assert_eq(pw.watches.size(), 0)
 }
 
 ///|
@@ -44,7 +44,7 @@ test "PaneWatcher::with_host routes subscribe and cleanup through injected host 
   }
   let snap = pane_snapshot_path("agent-x")
   pw.watch_pane("agent-x", target, 0L)
-  assert_eq(pw.subscribe_pids.get("agent-x"), Some(99))
+  assert_eq(pw.watches.get("agent-x").map(fn(w) { w.pid }), Some(99))
   assert_eq(spawn_args, ["sess", "tab1", snap])
   assert_eq(
     pw.read_viewport("agent-x"),
@@ -52,7 +52,7 @@ test "PaneWatcher::with_host routes subscribe and cleanup through injected host 
   )
   assert_eq(read_paths, [snap])
   pw.stop_subscribe("agent-x")
-  assert_eq(pw.subscribe_pids.get("agent-x"), None)
+  assert_eq(pw.watches.get("agent-x").map(fn(w) { w.pid }), None)
   assert_eq(killed_pids, [99])
   assert_eq(deleted_paths, [snap])
 }

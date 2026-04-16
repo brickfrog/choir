@@ -731,7 +731,7 @@ async test "replay_pending_outbox_with replays pending root delivery before root
 }
 
 ///|
-test "sweep_outbox marks expired pending messages and compacts recipient file" {
+async test "sweep_outbox marks expired pending messages and compacts recipient file" {
   let project_dir = "/tmp/choir-outbox-sweep-" +
     @sys.get_pid().to_string() +
     "-" +

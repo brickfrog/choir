@@ -1,6 +1,7 @@
 ///|
 pub(all) struct PollerState {
   tracked : Map[Int, TrackedPR]
+  mut write_generation : Int
 }
 
 ///|
@@ -205,7 +206,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
 
 ///|
 pub fn PollerState::new() -> PollerState {
-  { tracked: Map::new() }
+  { tracked: Map::new(), write_generation: 0 }
 }
 
 ///|
@@ -370,21 +371,30 @@ pub fn PollerState::to_json(self : PollerState) -> String {
 }
 
 ///|
-pub fn parse_tracked_prs_json(content : String) -> Array[TrackedPR] {
+pub fn parse_tracked_prs_json(content : String) -> Array[TrackedPR] raise {
   let tracked = []
-  let json = @json.parse(content) catch { _ => return tracked }
+  let json = @json.parse(content)
   let arr = match json {
     Json::Array(items) => items
-    _ => return tracked
+    _ =>
+      raise @types.ChoirError::validation_error(
+        "poller_state.json is not a JSON array",
+      )
   }
   for item in arr {
     match item {
       Json::Object(fields) =>
         match parse_tracked_pr(fields) {
           Some(parsed) => tracked.push(parsed)
-          None => ()
+          None =>
+            raise @types.ChoirError::validation_error(
+              "poller_state.json contains invalid PR object",
+            )
         }
-      _ => ()
+      _ =>
+        raise @types.ChoirError::validation_error(
+          "poller_state.json contains non-object in array",
+        )
     }
   }
   tracked
@@ -405,7 +415,20 @@ pub fn PollerState::write_state_file(
 
 ///|
 pub fn read_state_file(project_dir : String) -> Array[TrackedPR] {
-  parse_tracked_prs_json(@sys.read_file(poller_state_path(project_dir)))
+  let content = @sys.read_file(poller_state_path(project_dir))
+  if content == "" {
+    return []
+  }
+  parse_tracked_prs_json(content) catch {
+    e => {
+      @sys.write_stderr(
+        "poller_state.json parse error: " +
+        @types.choir_error_message_from_caught(e) +
+        "\n",
+      )
+      panic()
+    }
+  }
 }
 
 ///|
@@ -433,7 +456,7 @@ fn next_notified_parent(
       None_ => notified_parent = false
     }
   }
-  if review != Approved &&
+  if review == ChangesRequested &&
     review_bodies != "" &&
     review_bodies != tracked.last_review_bodies {
     notified_parent = false
@@ -576,6 +599,10 @@ pub async fn PollerState::tick_pr_with(
     pr_number,
     tracked.copilot_issue_comment_seen,
   )
+  let tracked = match self.tracked.get(pr_number) {
+    Some(value) => value
+    None => return
+  }
   if !poll_ok {
     let failures = clamp_consecutive_failures(tracked.consecutive_failures + 1)
     let delay = backoff_delay_seconds(failures)

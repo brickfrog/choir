@@ -239,7 +239,7 @@ pub async fn capture_plugin_shell_command(
   let parsed = parse_plugin_argv_line(plugin_command)
   let use_shell = plugin_capture_uses_shell(plugin_command)
   let timeout_args = if use_shell {
-    [timeout_sec.to_string(), "sh", "-c", plugin_command]
+    return (-1, "")
   } else {
     match parsed {
       Some(words) => {
@@ -250,7 +250,7 @@ pub async fn capture_plugin_shell_command(
         }
         args
       }
-      None => [timeout_sec.to_string(), "sh", "-c", plugin_command]
+      None => return (-1, "")
     }
   }
   let pid = @process.spawn_orphan(

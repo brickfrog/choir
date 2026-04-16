@@ -296,15 +296,27 @@ async fn deliver_stale_pr_reconciliation_message(
 async fn reconcile_killed_agent_tracked_prs(
   state : ServerState,
   agent_id : String,
+  caller_id : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Unit {
+  let caller_branch = state.registry.get(caller_id).branch catch { _ => "" }
   let prs = tracked_prs_for_agent(state, agent_id)
   if prs.length() == 0 {
     return
   }
   let mut wrote_state = false
   for pr in prs {
+    if caller_branch != "" &&
+      pr.parent_branch != "" &&
+      pr.parent_branch != caller_branch {
+      @moontrace.warn("Skipping PR closure due to parent branch mismatch", fields=[
+        @moontrace.field("pr", pr.pr_number),
+        @moontrace.field("expected", caller_branch),
+        @moontrace.field("actual", pr.parent_branch),
+      ])
+      continue
+    }
     match state.poller.get(pr.pr_number) {
       Some(current) => {
         state.poller.restore({ ..current, orphan_reconciling: true })
@@ -459,9 +471,8 @@ pub async fn ServerState::replay_pending_outbox(
 }
 
 ///|
-pub fn ServerState::sweep_outbox(self : ServerState, now : Int64) -> Unit {
-  for agent in self.registry.list() {
-    let recipient_id = agent.agent_id.to_string()
+pub async fn ServerState::sweep_outbox(self : ServerState, now : Int64) -> Unit {
+  for recipient_id in self.replay_outbox_recipient_ids() {
     let messages = @outbox.load_recipient_outbox(
       self.read_file,
       self.config.project_dir,

@@ -141,7 +141,5 @@ pub fn ServerState::finalize_recovered_offline_agent(
 pub async fn ServerState::persist_recovered_poller_state(
   self : ServerState,
 ) -> Unit {
-  let tracked = []
-  self.poller.tracked.each(fn(_k, v) { tracked.push(v) })
-  (self.recovery_provider.write_poller_state)(self.config.project_dir, tracked)
+  ignore(self.poller.write_state_file(self.config.project_dir))
 }

@@ -183,3 +183,8 @@ pub fn kill_server_pid_sequence_best_effort(_pid : Int) -> Unit {
 pub fn pid_is_alive(_pid : Int) -> Bool {
   false
 }
+
+///|
+pub fn realpath_native(path : String) -> String? {
+  Some(path)
+}

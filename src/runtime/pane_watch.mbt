@@ -24,10 +24,16 @@ pub fn PaneWatchHost::native() -> PaneWatchHost {
 }
 
 ///|
+pub(all) struct WatchState {
+  pid : Int
+  mut last_change_at : Int64
+  mut last_hash : Int
+  mut last_len : Int
+}
+
+///|
 pub struct PaneWatcher {
-  subscribe_pids : Map[String, Int]
-  last_change_at : Map[String, Int64]
-  last_hashes : Map[String, Int]
+  watches : Map[String, WatchState]
   host : PaneWatchHost
 }
 
@@ -38,7 +44,7 @@ pub fn PaneWatcher::new() -> PaneWatcher {
 
 ///|
 pub fn PaneWatcher::with_host(host : PaneWatchHost) -> PaneWatcher {
-  { subscribe_pids: {}, last_change_at: {}, last_hashes: {}, host }
+  { watches: {}, host }
 }
 
 ///|
@@ -48,7 +54,6 @@ pub fn PaneWatcher::watch_pane(
   target : @types.LocalTarget,
   now : Int64,
 ) -> Unit {
-  self.last_change_at.set(agent_id, now)
   let snapshot_path = pane_snapshot_path(agent_id)
   let pid = (self.host.spawn_zellij_pane_viewport_subscribe)(
     target.session,
@@ -56,7 +61,12 @@ pub fn PaneWatcher::watch_pane(
     snapshot_path,
   )
   if pid > 0 {
-    self.subscribe_pids.set(agent_id, pid)
+    self.watches.set(agent_id, {
+      pid,
+      last_change_at: now,
+      last_hash: 0,
+      last_len: 0,
+    })
   }
 }
 
@@ -65,12 +75,10 @@ pub fn PaneWatcher::stop_subscribe(
   self : PaneWatcher,
   agent_id : String,
 ) -> Unit {
-  self.last_change_at.remove(agent_id)
-  self.last_hashes.remove(agent_id)
-  match self.subscribe_pids.get(agent_id) {
-    Some(pid) => {
-      (self.host.kill_pid_best_effort)(pid)
-      self.subscribe_pids.remove(agent_id)
+  match self.watches.get(agent_id) {
+    Some(watch) => {
+      (self.host.kill_pid_best_effort)(watch.pid)
+      self.watches.remove(agent_id)
     }
     None => ()
   }
@@ -130,11 +138,7 @@ pub fn extract_viewport_text(json_str : String) -> String {
 
 ///|
 pub fn simple_hash(s : String) -> Int {
-  let mut h = 5381
-  for c in s {
-    h = (h * 31 + c.to_int()) % 1_000_000_007
-  }
-  // Reserve 0 as sentinel for "no snapshot yet"
+  let h = s.hash()
   if h == 0 {
     1
   } else {
@@ -150,22 +154,26 @@ pub fn PaneWatcher::check_idle(
   now : Int64,
   timeout : Int64,
 ) -> String? {
+  let watch = match self.watches.get(agent_id) {
+    Some(w) => w
+    None => return None
+  }
   let snapshot = self.read_viewport(agent_id)
   if snapshot.trim().to_string() == "" {
     return None
   }
   let screen = extract_viewport_text(snapshot)
   let hash = simple_hash(screen)
-  let prev_hash = self.last_hashes.get(agent_id).unwrap_or(0)
+  let len = screen.length()
 
-  if hash != prev_hash {
-    self.last_change_at.set(agent_id, now)
-    self.last_hashes.set(agent_id, hash)
+  if hash != watch.last_hash || len != watch.last_len {
+    watch.last_change_at = now
+    watch.last_hash = hash
+    watch.last_len = len
     return None
   }
 
-  let last_change = self.last_change_at.get(agent_id).unwrap_or(now)
-  let elapsed = now - last_change
+  let elapsed = now - watch.last_change_at
   if elapsed >= timeout {
     Some(screen)
   } else {
@@ -176,6 +184,6 @@ pub fn PaneWatcher::check_idle(
 ///|
 pub fn PaneWatcher::watched_agents(self : PaneWatcher) -> Array[String] {
   let ids = []
-  self.subscribe_pids.each(fn(agent_id, _) { ids.push(agent_id) })
+  self.watches.each(fn(agent_id, _) { ids.push(agent_id) })
   ids
 }

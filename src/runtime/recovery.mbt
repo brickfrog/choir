@@ -201,12 +201,13 @@ pub fn parse_github_time_utc_sec(s : String) -> Int64? {
 }
 
 ///|
-pub fn parse_open_prs(output : String) -> Array[OpenPR] {
+pub fn parse_open_prs(output : String) -> Array[OpenPR] raise {
   let prs = []
-  let json = @json.parse(output) catch { _ => return prs }
+  let json = @json.parse(output)
   let arr = match json {
     Json::Array(items) => items
-    _ => return prs
+    _ =>
+      raise @types.ChoirError::validation_error("open PRs is not a JSON array")
   }
   for item in arr {
     match item {
@@ -288,12 +289,13 @@ fn known_pr_from_fields(fields : Map[String, Json]) -> KnownPR? {
 }
 
 ///|
-pub fn parse_known_prs(output : String) -> Array[KnownPR] {
+pub fn parse_known_prs(output : String) -> Array[KnownPR] raise {
   let prs = []
-  let json = @json.parse(output) catch { _ => return prs }
+  let json = @json.parse(output)
   let arr = match json {
     Json::Array(items) => items
-    _ => return prs
+    _ =>
+      raise @types.ChoirError::validation_error("known PRs is not a JSON array")
   }
   for item in arr {
     match item {
@@ -309,11 +311,16 @@ pub fn parse_known_prs(output : String) -> Array[KnownPR] {
 }
 
 ///|
-pub fn parse_known_pr(output : String) -> KnownPR? {
-  let json = @json.parse(output) catch { _ => return None }
+pub fn parse_known_pr(output : String) -> KnownPR raise {
+  let json = @json.parse(output)
   match json {
-    Json::Object(fields) => known_pr_from_fields(fields)
-    _ => None
+    Json::Object(fields) =>
+      match known_pr_from_fields(fields) {
+        Some(pr) => pr
+        None =>
+          raise @types.ChoirError::validation_error("invalid known PR object")
+      }
+    _ => raise @types.ChoirError::validation_error("known PR is not an object")
   }
 }
 
@@ -535,7 +542,19 @@ pub fn make_shell_recovery_provider(
         ],
         Some(project_dir),
       )
-      parse_open_prs(open_pr_output)
+      if open_pr_output == "" {
+        return []
+      }
+      parse_open_prs(open_pr_output) catch {
+        e => {
+          @sys.write_stderr(
+            "gh parse_open_prs open error: " +
+            @types.choir_error_message_from_caught(e) +
+            "\n",
+          )
+          panic()
+        }
+      }
     },
     find_prs_by_head: async fn(project_dir, branch) {
       let output = capture(
@@ -545,7 +564,19 @@ pub fn make_shell_recovery_provider(
         ],
         Some(project_dir),
       )
-      parse_open_prs(output)
+      if output == "" {
+        return []
+      }
+      parse_open_prs(output) catch {
+        e => {
+          @sys.write_stderr(
+            "gh parse_open_prs head error: " +
+            @types.choir_error_message_from_caught(e) +
+            "\n",
+          )
+          panic()
+        }
+      }
     },
     find_prs_by_head_any: async fn(project_dir, branch) {
       let output = capture(
@@ -555,7 +586,19 @@ pub fn make_shell_recovery_provider(
         ],
         Some(project_dir),
       )
-      parse_known_prs(output)
+      if output == "" {
+        return []
+      }
+      parse_known_prs(output) catch {
+        e => {
+          @sys.write_stderr(
+            "gh parse_known_prs error: " +
+            @types.choir_error_message_from_caught(e) +
+            "\n",
+          )
+          panic()
+        }
+      }
     },
     find_pr_by_number: async fn(project_dir, pr_number) {
       let output = capture(
@@ -569,7 +612,12 @@ pub fn make_shell_recovery_provider(
         ],
         Some(project_dir),
       )
-      parse_known_pr(output)
+      if output == "" {
+        return None
+      }
+      Some(parse_known_pr(output)) catch {
+        _ => None
+      }
     },
     list_agent_containers: fn(_project_dir) {
       ["worktrees", "agents", "inline"]
@@ -636,7 +684,19 @@ pub fn make_shell_recovery_provider(
         [".choir/poller_state.json"],
         Some(project_dir),
       )
-      @poller.parse_tracked_prs_json(content)
+      if content == "" {
+        return []
+      }
+      @poller.parse_tracked_prs_json(content) catch {
+        e => {
+          @sys.write_stderr(
+            "poller_state.json parse error: " +
+            @types.choir_error_message_from_caught(e) +
+            "\n",
+          )
+          panic()
+        }
+      }
     },
     write_poller_state: async fn(project_dir, tracked) {
       @async.sleep(0)
@@ -967,7 +1027,42 @@ pub fn plan_recovery(
             )
           }
         }
-      None => ()
+      None =>
+        match restored {
+          Some(existing) =>
+            actions.push(
+              RecoveryAction::RestorePRTracking({
+                ..existing,
+                branch: pr.branch,
+                parent_branch: pr.base,
+                pr_url: pr.url,
+              }),
+            )
+          None => {
+            let row = match input.prs.polls.get(pr.pr_number) {
+              Some(r) => r
+              None => recovery_pr_poll_row_fallback()
+            }
+            actions.push(
+              RecoveryAction::TrackNewPR(
+                pr_number=pr.pr_number,
+                agent_id="orphan:pr:" + pr.pr_number.to_string(),
+                branch=pr.branch,
+                parent_branch=pr.base,
+                pr_url=pr.url,
+                review=row.review,
+                review_bodies=row.review_bodies,
+                sha=row.sha,
+                ci_rollup=row.ci_rollup,
+                copilot_issue_comment_seen=row.copilot_issue_comment_seen,
+                created_at=match pr.created_sec {
+                  Some(created_sec) => created_sec
+                  None => input.recovered_at
+                },
+              ),
+            )
+          }
+        }
     }
   }
 

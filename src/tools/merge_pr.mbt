@@ -597,10 +597,6 @@ pub async fn interpret_merge_pr_merge_host(
   }
   let cmds = merge_pr_commands(pr_number)
   let merge_result = run_strict(runner, cmds, capture~)
-  match mutex_registry {
-    Some(reg) => ignore(reg.release(mutex_name, caller_id))
-    None => ()
-  }
   match merge_result {
     Err(_) => {
       let (_, output) = capture(merge_pr_command(pr_number))
@@ -611,7 +607,13 @@ pub async fn interpret_merge_pr_merge_host(
         ),
       )
     }
-    Ok(_) => Ok(())
+    Ok(_) => {
+      match mutex_registry {
+        Some(reg) => ignore(reg.release(mutex_name, caller_id))
+        None => ()
+      }
+      Ok(())
+    }
   }
 }
 
