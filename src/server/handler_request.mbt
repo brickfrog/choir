@@ -305,11 +305,19 @@ async fn reconcile_killed_agent_tracked_prs(
   if prs.length() == 0 {
     return
   }
+  // Fail-closed: if either branch is unknown, skip auto-close. The
+  // previous fail-open policy (skip only when both known and differ)
+  // meant that an empty caller_branch matched every tracked PR.
+  if caller_branch == "" {
+    @moontrace.warn("Skipping PR closure: caller branch unresolved", fields=[
+      @moontrace.field("caller_id", caller_id),
+      @moontrace.field("agent_id", agent_id),
+    ])
+    return
+  }
   let mut wrote_state = false
   for pr in prs {
-    if caller_branch != "" &&
-      pr.parent_branch != "" &&
-      pr.parent_branch != caller_branch {
+    if pr.parent_branch == "" || pr.parent_branch != caller_branch {
       @moontrace.warn("Skipping PR closure due to parent branch mismatch", fields=[
         @moontrace.field("pr", pr.pr_number),
         @moontrace.field("expected", caller_branch),

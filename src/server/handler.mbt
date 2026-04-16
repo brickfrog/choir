@@ -167,12 +167,18 @@ pub async fn ServerState::handle_with_runner_and_capture(
     let caller_id = req.args
       .get("caller_id")
       .unwrap_or(request_agent_id(req).unwrap_or(""))
-    match req.args.get("agent_id") {
-      Some(agent_id) =>
-        reconcile_killed_agent_tracked_prs(
-          self, agent_id, caller_id, runner, capture,
-        )
-      None => ()
+    // Empty caller_id → cannot resolve a caller branch; the downstream
+    // guard in `reconcile_killed_agent_tracked_prs` short-circuits when
+    // caller_branch is empty and would then match every tracked PR.
+    // Enforce the precondition at the boundary.
+    if caller_id != "" {
+      match req.args.get("agent_id") {
+        Some(agent_id) =>
+          reconcile_killed_agent_tracked_prs(
+            self, agent_id, caller_id, runner, capture,
+          )
+        None => ()
+      }
     }
   }
 
