@@ -24,7 +24,7 @@ async test "capture_command_merged merges stderr into captured output" {
 ///|
 async test "capture_hook_script_merged writes stdin without newline and captures merged output" {
   let dir = "/tmp/choir-hook-capture-" + @sys.get_pid().to_string()
-  ignore(@sys.system("mkdir -p \"" + dir + "\""))
+  assert_true(@sys.create_dir_all(dir))
   let script = dir + "/hook.sh"
   let script_body = "#!/bin/sh\n" +
     "body=$(cat)\n" +
@@ -33,7 +33,7 @@ async test "capture_hook_script_merged writes stdin without newline and captures
   if !@sys.write_file_sync(script, script_body) {
     fail("write hook script")
   }
-  ignore(@sys.system("chmod +x \"" + script + "\""))
+  assert_true(@sys.chmod_mode(script, 0o755))
   let stdin_json = "{\"event\":\"PreToolUse\"}"
   let (code, out) = @exec.capture_hook_script_merged(
     script,

@@ -7,6 +7,10 @@ extern "C" fn c_get_file_size(path : Bytes) -> Int = "choir_get_file_size"
 extern "C" fn c_path_entry_exists(path : Bytes) -> Int = "choir_path_entry_exists"
 
 ///|
+#borrow(path)
+extern "C" fn c_rm_rf(path : Bytes) -> Int = "choir_rm_rf"
+
+///|
 #borrow(path, buf)
 extern "C" fn c_list_dir(path : Bytes, buf : Bytes, max_size : Int) -> Int = "choir_list_dir"
 
@@ -94,6 +98,15 @@ pub fn path_exists(path : String) -> Bool {
 pub fn path_entry_exists(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_path_entry_exists(path_bytes) != 0
+}
+
+///|
+/// Recursive delete of `path`. Returns `true` on success (including the
+/// idempotent "already gone" case) and `false` on any failure. Symbolic
+/// links are unlinked, not followed. Intended for test scaffolding under
+/// `/tmp` — not a substitute for git-aware worktree removal.
+pub fn rm_rf(path : String) -> Bool {
+  c_rm_rf(string_to_null_terminated_bytes(path)) == 0
 }
 
 ///|

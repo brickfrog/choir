@@ -148,7 +148,7 @@ async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY
     Ok(_) => fail("expected block")
   }
   assert_eq(@sys.read_file(marker).trim(), "yes")
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -253,5 +253,5 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
     Ok(_) => fail("expected block when gh repo view unavailable")
   }
 
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }

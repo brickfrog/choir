@@ -14,6 +14,11 @@ pub fn list_dir(_path : String) -> Array[String] {
 }
 
 ///|
+pub fn rm_rf(_path : String) -> Bool {
+  false
+}
+
+///|
 pub fn write_stdout(_s : String) -> Unit {
 
 }

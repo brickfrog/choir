@@ -445,7 +445,7 @@ test "resolve_agent_with_fallback - fallback to lifecycle" {
   }
 
   // Cleanup
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -641,7 +641,7 @@ test "interpret_lifecycle_effects writes lifecycle and event log" {
   let log = @sys.read_file(ev_path)
   assert_true(log.contains("lifecycle.transition"))
   assert_true(log.contains("PRCreated"))
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -668,7 +668,7 @@ test "interpret_lifecycle_effects skips append when persist fails" {
     @types.sanitize_agent_id("u1") +
     ".jsonl"
   assert_eq(@sys.read_file(ev_path), "")
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -706,7 +706,7 @@ test "interpret_lifecycle_effects updates registry after successful persist" {
   } noraise {
     a => assert_eq(a.state, @types.AgentState::Completing)
   }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -734,7 +734,7 @@ test "interpret_lifecycle_effects append ignored when last persist is another ag
     @types.sanitize_agent_id("a.only") +
     ".jsonl"
   assert_eq(@sys.read_file(ev_path), "")
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -774,7 +774,7 @@ test "interpret_lifecycle_effects second append without new persist is ignored" 
   let log = @sys.read_file(ev_path)
   assert_true(log.contains("PRCreated"))
   assert_false(log.contains("ExitRequested"))
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

@@ -160,7 +160,7 @@ async test "statusline_count_agents matches child ids using lifecycle content ag
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   ignore(
     @sys.write_file_sync(
       project_dir + "/.choir/kv/lifecycle--main--leaf",
@@ -178,7 +178,7 @@ async test "statusline_count_agents matches child ids using lifecycle content ag
   ) catch {
     _ => (0, 0, 0, 0, 0)
   }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
   assert_eq((working, review, changes, failed, done), (1, 0, 0, 0, 0))
 }
 
@@ -217,9 +217,7 @@ test "statusline_pr_summary distinguishes manual and automerge merge-ready PRs" 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(
-    @sys.system("mkdir -p \"" + project_dir + "/.choir/worktrees/leaf-auto\""),
-  )
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/worktrees/leaf-auto"))
   ignore(
     @sys.write_file_sync(
       project_dir + "/.choir/config.toml",
@@ -241,7 +239,7 @@ test "statusline_pr_summary distinguishes manual and automerge merge-ready PRs" 
     ),
   )
   let summary = statusline_pr_summary(project_dir)
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
   assert_true(summary.body.contains("#81M"))
   assert_true(summary.body.contains("#82A"))
   assert_true(summary.has_automerge)

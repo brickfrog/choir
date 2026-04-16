@@ -119,7 +119,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = {
     ..@types.Config::default(),
@@ -286,7 +286,7 @@ fn kill_agent_reconciliation_fixture(
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
   let state = ServerState::new(config, make_recovery_provider())
@@ -1042,7 +1042,7 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
@@ -1381,7 +1381,7 @@ async test "deliver_orphaned_pr_notification_for skips finalized merged lifecycl
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -1437,7 +1437,7 @@ async test "deliver_poller_stall_notification_for skips finalized merged lifecyc
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,
@@ -1510,7 +1510,7 @@ fn handler_auto_close_test_state(label : String) -> ServerState {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p " + project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let config = {
     ..@types.Config::default(),
     project_dir,

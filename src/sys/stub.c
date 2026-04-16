@@ -54,6 +54,45 @@ int choir_path_entry_exists(const char* path) {
     return stat(path, &st) == 0;
 }
 
+/* Recursive delete of `path` (file or directory).  Returns 0 on success
+ * (including the idempotent "already gone" case) and -1 if any step failed.
+ * Symbolic links are unlinked, not followed; traversal uses lstat.  Intended
+ * for test-scaffolding use under /tmp, not as a general-purpose rm. */
+int choir_rm_rf(const char *path) {
+    struct stat st;
+    if (lstat(path, &st) != 0) {
+        return 0;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        return unlink(path) == 0 ? 0 : -1;
+    }
+    DIR *d = opendir(path);
+    if (!d) {
+        return -1;
+    }
+    struct dirent *ent;
+    char child[4096];
+    int rc = 0;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+        int n = snprintf(child, sizeof(child), "%s/%s", path, ent->d_name);
+        if (n < 0 || (size_t)n >= sizeof(child)) {
+            rc = -1;
+            continue;
+        }
+        if (choir_rm_rf(child) != 0) {
+            rc = -1;
+        }
+    }
+    closedir(d);
+    if (rmdir(path) != 0) {
+        rc = -1;
+    }
+    return rc;
+}
+
 /* Writes newline-separated entry names of `path` into `buf` (skipping "." and
  * "..").  Returns bytes written, or -1 if the directory could not be opened.
  * If the buffer would overflow, stops before the entry that would not fit —

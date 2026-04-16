@@ -1388,8 +1388,8 @@ test "parse_leaf_spawn_args only injects existing context paths" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/context\""))
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/context"))
   ignore(
     @sys.write_file_sync(
       project_dir + "/.choir/context/common.md",
@@ -1401,7 +1401,7 @@ test "parse_leaf_spawn_args only injects existing context paths" {
     tool_args_from_map({ "task": "ship it", "caller_id": "root" }),
     "leaf-a",
   ).unwrap()
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
   assert_true(parsed.task.contains("/.choir/context/common.md"))
   assert_false(parsed.task.contains("/.choir/context/dev.md"))
 }
@@ -1436,8 +1436,8 @@ test "parse_worker_spawn_args only injects existing context paths" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/context\""))
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/context"))
   ignore(
     @sys.write_file_sync(
       project_dir + "/.choir/context/common.md",
@@ -1448,7 +1448,7 @@ test "parse_worker_spawn_args only injects existing context paths" {
     project_dir,
     tool_args_from_map({ "task": "report findings", "caller_id": "root" }),
   ).unwrap()
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
   assert_true(parsed.task.contains("/.choir/context/common.md"))
   assert_false(parsed.task.contains("/.choir/context/worker.md"))
 }

@@ -417,7 +417,7 @@ async test "dispatch returns correct stub for each tool name" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let cases = [
     ("fork_wave", "spawned", { "count": "1", "caller_id": "main.tl" }),
     ("fork_session", "ok", { "name": "nested-team" }),
@@ -525,7 +525,7 @@ async test "dispatch_call reply then kv_get round trip reply-- key" {
     Ok(map) => assert_eq(map.get("value"), Some(payload))
     Err(m) => fail("kv_get: " + m)
   }
-  ignore(@sys.system("rm -rf \"" + project_dir + "\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -534,7 +534,7 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let agent_reg = @registry.AgentRegistry::new()
   let call = ToolCall::{
     role: @types.Role::TL,
@@ -593,7 +593,7 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let agent_reg = @registry.AgentRegistry::new()
   ignore(
     agent_reg.upsert({
@@ -670,7 +670,7 @@ async test "dispatch fork_wave post-spawn pane resolution uses injected capture"
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let agent_reg = @registry.AgentRegistry::new()
   ignore(
     agent_reg.upsert({
@@ -736,7 +736,7 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir/kv\""))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -785,7 +785,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir\""))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let tl_target = match
     @types.LocalTarget::parse("zellij-tab:choir-session:auto-notify-tl") {
     Some(t) => t
@@ -858,7 +858,7 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.system("mkdir -p \"" + project_dir + "/.choir\""))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
