@@ -62,58 +62,66 @@ fn resolved_project_dir(project_dir : String) -> String {
 }
 
 ///|
-pub fn launch_env_prefix(
+/// Canonical (key, value) list of every non-PATH environment variable that
+/// spawned agents receive. Single source of truth for the three serializers
+/// below; adding a new CHOIR_* var (or a new conditional) goes here once.
+/// PATH is intentionally not included — each serializer merges PATH with its
+/// own format (shell vs argv) since the handling differs.
+fn shared_env_pairs(
   spec : @types.SpawnSpec,
   session : String,
   workspace : String,
   terminal_target : @types.LocalTarget,
-) -> String {
+) -> Array[(String, String)] {
   let role = @config.role_to_string(spec.role)
   let agent_id = canonical_agent_id(spec)
   let git_branch = spawn_git_branch(spec)
   let agent_type = @config.agent_type_to_string(spec.agent_type)
-  let assignments : Array[String] = [
-    path_assignment(workspace + "/.choir/bin"),
-    env_assignment("CHOIR_AGENT_ID", agent_id),
-    env_assignment("CHOIR_PARENT_ID", spec.parent_id),
-    env_assignment("CHOIR_BRANCH", git_branch),
-    env_assignment("CHOIR_PARENT_BRANCH", spec.parent_branch),
-    env_assignment("CHOIR_WORKSPACE", workspace),
-    env_assignment("CHOIR_ROLE", role),
-    env_assignment("CHOIR_AGENT_TYPE", agent_type),
-    env_assignment("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
-    env_assignment("CHOIR_TERMINAL_SESSION", session),
-    env_assignment("CHOIR_SESSION_ID", agent_id),
-    env_assignment("CHOIR_PARENT_AGENT", spec.parent_id),
+  let pairs : Array[(String, String)] = [
+    ("CHOIR_AGENT_ID", agent_id),
+    ("CHOIR_PARENT_ID", spec.parent_id),
+    ("CHOIR_BRANCH", git_branch),
+    ("CHOIR_PARENT_BRANCH", spec.parent_branch),
+    ("CHOIR_WORKSPACE", workspace),
+    ("CHOIR_ROLE", role),
+    ("CHOIR_AGENT_TYPE", agent_type),
+    ("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
+    ("CHOIR_TERMINAL_SESSION", session),
+    ("CHOIR_SESSION_ID", agent_id),
+    ("CHOIR_PARENT_AGENT", spec.parent_id),
   ]
   if spec.agent_type == @types.AgentType::Gemini ||
     spec.agent_type == @types.AgentType::Unknown {
-    assignments.push(
-      env_assignment(
+    pairs.push(
+      (
         "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
         workspace + "/.choir/gemini-settings.json",
       ),
     )
   }
   match @sys.getenv("TRACEPARENT") {
-    Some(value) =>
-      if value != "" {
-        assignments.push(env_assignment("TRACEPARENT", value))
-      }
+    Some(value) => if value != "" { pairs.push(("TRACEPARENT", value)) }
     None => ()
   }
+  pairs
+}
+
+///|
+pub fn launch_env_prefix(
+  spec : @types.SpawnSpec,
+  session : String,
+  workspace : String,
+  terminal_target : @types.LocalTarget,
+) -> String {
   let buf = StringBuilder::new()
-  for i = 0; i < assignments.length(); i = i + 1 {
-    if i > 0 {
-      buf.write_char(' ')
-    }
-    buf.write_string(assignments[i])
+  buf.write_string(path_assignment(workspace + "/.choir/bin"))
+  for pair in shared_env_pairs(spec, session, workspace, terminal_target) {
+    let (k, v) = pair
+    buf.write_char(' ')
+    buf.write_string(env_assignment(k, v))
   }
-  if assignments.length() == 0 {
-    ""
-  } else {
-    buf.to_string() + " "
-  }
+  buf.write_char(' ')
+  buf.to_string()
 }
 
 ///|
@@ -123,41 +131,13 @@ fn launch_env_exports(
   workspace : String,
   terminal_target : @types.LocalTarget,
 ) -> String {
-  let role = @config.role_to_string(spec.role)
-  let agent_id = canonical_agent_id(spec)
-  let git_branch = spawn_git_branch(spec)
-  let agent_type = @config.agent_type_to_string(spec.agent_type)
-  let assignments : Array[String] = [
-    export_path_assignment(workspace + "/.choir/bin"),
-    export_assignment("CHOIR_AGENT_ID", agent_id),
-    export_assignment("CHOIR_PARENT_ID", spec.parent_id),
-    export_assignment("CHOIR_BRANCH", git_branch),
-    export_assignment("CHOIR_PARENT_BRANCH", spec.parent_branch),
-    export_assignment("CHOIR_WORKSPACE", workspace),
-    export_assignment("CHOIR_ROLE", role),
-    export_assignment("CHOIR_AGENT_TYPE", agent_type),
-    export_assignment("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
-    export_assignment("CHOIR_TERMINAL_SESSION", session),
-    export_assignment("CHOIR_SESSION_ID", agent_id),
-    export_assignment("CHOIR_PARENT_AGENT", spec.parent_id),
-  ]
-  if spec.agent_type == @types.AgentType::Gemini ||
-    spec.agent_type == @types.AgentType::Unknown {
-    assignments.push(
-      export_assignment(
-        "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
-        workspace + "/.choir/gemini-settings.json",
-      ),
-    )
+  let buf = StringBuilder::new()
+  buf.write_string(export_path_assignment(workspace + "/.choir/bin"))
+  for pair in shared_env_pairs(spec, session, workspace, terminal_target) {
+    let (k, v) = pair
+    buf.write_string(export_assignment(k, v))
   }
-  match @sys.getenv("TRACEPARENT") {
-    Some(value) =>
-      if value != "" {
-        assignments.push(export_assignment("TRACEPARENT", value))
-      }
-    None => ()
-  }
-  assignments.join("")
+  buf.to_string()
 }
 
 ///|
@@ -169,47 +149,102 @@ pub fn launch_env_assignments(
   workspace : String,
   terminal_target : @types.LocalTarget,
 ) -> Array[String] {
-  let role = @config.role_to_string(spec.role)
-  let agent_id = canonical_agent_id(spec)
-  let git_branch = spawn_git_branch(spec)
-  let agent_type = @config.agent_type_to_string(spec.agent_type)
-  let assignments : Array[String] = [
+  let result : Array[String] = [
     path_env_merged_for_argv(workspace + "/.choir/bin"),
-    env_pair_raw("CHOIR_AGENT_ID", agent_id),
-    env_pair_raw("CHOIR_PARENT_ID", spec.parent_id),
-    env_pair_raw("CHOIR_BRANCH", git_branch),
-    env_pair_raw("CHOIR_PARENT_BRANCH", spec.parent_branch),
-    env_pair_raw("CHOIR_WORKSPACE", workspace),
-    env_pair_raw("CHOIR_ROLE", role),
-    env_pair_raw("CHOIR_AGENT_TYPE", agent_type),
-    env_pair_raw("CHOIR_TERMINAL_TARGET", terminal_target.to_string()),
-    env_pair_raw("CHOIR_TERMINAL_SESSION", session),
-    env_pair_raw("CHOIR_SESSION_ID", agent_id),
-    env_pair_raw("CHOIR_PARENT_AGENT", spec.parent_id),
   ]
-  if spec.agent_type == @types.AgentType::Gemini ||
-    spec.agent_type == @types.AgentType::Unknown {
-    assignments.push(
-      env_pair_raw(
-        "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
-        workspace + "/.choir/gemini-settings.json",
-      ),
-    )
+  for pair in shared_env_pairs(spec, session, workspace, terminal_target) {
+    let (k, v) = pair
+    result.push(env_pair_raw(k, v))
   }
-  match @sys.getenv("TRACEPARENT") {
-    Some(value) =>
-      if value != "" {
-        assignments.push(env_pair_raw("TRACEPARENT", value))
-      }
-    None => ()
-  }
-  assignments
+  result
 }
 
 ///|
 /// Strip `workdir` so zellij `--cwd` is the sole working-directory seam (matches spawn launch).
 pub fn zellij_launch_inner_command(cmd : Command) -> Command {
   { ..cmd, workdir: None }
+}
+
+///|
+/// The three serializers (launch_env_prefix / launch_env_exports /
+/// launch_env_assignments) must agree on which non-PATH keys ship to a
+/// spawned agent; the only axis they disagree on is the string shape.
+/// Since they all delegate to `shared_env_pairs` now, this invariant holds
+/// by construction — the test fences it so a future accidental divergence
+/// (e.g. adding a key in only one of the three) is caught.
+test "launch env serializers agree on the non-PATH key set" {
+  let spec : @types.SpawnSpec = {
+    slug: "leaf-a",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    task: "t",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "root",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+  }
+  let target = @types.LocalTarget::{
+    kind: @types.TargetKind::ZellijTab,
+    session: "sess",
+    name: "leaf-a",
+  }
+  let pairs = shared_env_pairs(spec, "sess", "/ws", target)
+  let expected_keys : Array[String] = []
+  for p in pairs {
+    let (k, _) = p
+    expected_keys.push(k)
+  }
+  // Prefix serializer: `PATH=... K1='v1' K2='v2' ... ` — split on space.
+  let prefix = launch_env_prefix(spec, "sess", "/ws", target)
+  let prefix_keys : Array[String] = []
+  for token in prefix.split(" ") {
+    let s = token.to_string()
+    if s == "" || s.has_prefix("PATH=") {
+      continue
+    }
+    match s.split_once("=") {
+      Some((k, _)) => prefix_keys.push(k.to_string())
+      None => ()
+    }
+  }
+  assert_eq(prefix_keys, expected_keys)
+  // Exports serializer: `export PATH=...; export K1='v1'; ...` — split on `;`.
+  let exports = launch_env_exports(spec, "sess", "/ws", target)
+  let export_keys : Array[String] = []
+  for stmt in exports.split(";") {
+    let s = stmt.trim().to_string()
+    if !s.has_prefix("export ") {
+      continue
+    }
+    let rhs = s["export ".length():].to_string()
+    if rhs.has_prefix("PATH=") {
+      continue
+    }
+    match rhs.split_once("=") {
+      Some((k, _)) => export_keys.push(k.to_string())
+      None => ()
+    }
+  }
+  assert_eq(export_keys, expected_keys)
+  // Argv serializer: `Array[String]` — first entry is PATH, rest are K=V.
+  let argv = launch_env_assignments(spec, "sess", "/ws", target)
+  let argv_keys : Array[String] = []
+  for s in argv {
+    if s.has_prefix("PATH=") {
+      continue
+    }
+    match s.split_once("=") {
+      Some((k, _)) => argv_keys.push(k.to_string())
+      None => ()
+    }
+  }
+  assert_eq(argv_keys, expected_keys)
 }
 
 ///|
