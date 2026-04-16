@@ -27,27 +27,68 @@ pub async fn run_dev_entr_watcher(
 }
 
 ///|
+/// Default capture cap for `drain_process_stdout`. One megabyte accommodates
+/// JSON responses like `gh pr list` for large repos (previously 64 KiB, which
+/// truncated mid-array and fed malformed JSON into downstream parsers).
+pub let capture_max_bytes : Int = 1048576
+
+///|
 /// Read up to `max_bytes` from a pipe wired to process stdout (or stderr), close the reader,
 /// and return the captured output as lossy UTF-8 plus the number of bytes read.
+///
+/// On silent failure modes — read error mid-stream, or output exceeding
+/// `max_bytes` — emit a diagnostic to stderr so downstream parse failures
+/// on truncated input are explainable. The return signature is preserved
+/// for existing callers; upgrading them to receive a truncation flag is
+/// deferred.
 async fn drain_process_stdout(
   reader : @process.ReadFromProcess,
   max_bytes : Int,
 ) -> (String, Int) {
   let buf = FixedArray::make(max_bytes, (0 : Byte))
   let mut total = 0
+  let mut read_error = false
   for ;; {
     if total >= buf.length() {
       break
     }
     let n = reader.read(buf, offset=total, max_len=buf.length() - total) catch {
-      _ => 0
+      _ => {
+        read_error = true
+        0
+      }
     }
     if n == 0 {
       break
     }
     total = total + n
   }
+  // If the buffer filled, probe one more byte to distinguish "capture == EOF"
+  // from "capture == cap exceeded". A positive read here means the child had
+  // more to say than the cap allowed.
+  let mut truncated = false
+  if total >= buf.length() {
+    let probe = FixedArray::make(1, (0 : Byte))
+    let extra = reader.read(probe, offset=0, max_len=1) catch { _ => 0 }
+    if extra > 0 {
+      truncated = true
+    }
+  }
   reader.close()
+  if truncated {
+    @sys.write_stderr(
+      "capture truncated at " +
+      total.to_string() +
+      " bytes (cap " +
+      max_bytes.to_string() +
+      "); downstream parse may fail\n",
+    )
+  }
+  if read_error {
+    @sys.write_stderr(
+      "capture read error after " + total.to_string() + " bytes\n",
+    )
+  }
   (@utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total]), total)
 }
 
@@ -93,7 +134,7 @@ async fn run_find_and_pump_to(
 
 ///|
 /// Spawn `cmd` with argv (`program` + `args`) and optional `workdir`, redirecting stderr to the
-/// same pipe as stdout (shell `2>&1` semantics). Capture up to 64KiB merged output, wait for exit.
+/// same pipe as stdout (shell `2>&1` semantics). Capture up to `capture_max_bytes` merged output, wait for exit.
 /// Returns `(exit_code, output)`; negative `exit_code` means spawn/pipe/wait failure.
 pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
   let (reader, writer) = @process.read_from_process() catch {
@@ -117,7 +158,7 @@ pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
         }
       }
   }
-  let (output, _) = drain_process_stdout(reader, 65536)
+  let (output, _) = drain_process_stdout(reader, capture_max_bytes)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
   (exit_code, output)
 }
@@ -175,7 +216,7 @@ pub async fn capture_hook_script_merged(
   }
   ignore(stdin_write.write(stdin_body) catch { _ => () })
   stdin_write.close()
-  let (output, _) = drain_process_stdout(stdout_read, 65536)
+  let (output, _) = drain_process_stdout(stdout_read, capture_max_bytes)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
   (exit_code, output)
 }
@@ -205,14 +246,14 @@ pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
         }
       }
   }
-  let (output, _) = drain_process_stdout(reader, 65536)
+  let (output, _) = drain_process_stdout(reader, capture_max_bytes)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
   (exit_code, output)
 }
 
 ///|
 /// Run `plugin_command` under `timeout` (seconds), write `request_line` plus newline on stdin,
-/// capture up to 64KiB of stdout (stderr discarded). When the command is a simple argv list
+/// capture up to `capture_max_bytes` of stdout (stderr discarded). When the command is a simple argv list
 /// (no shell-only syntax), runs `timeout <sec> <argv...>` directly; otherwise falls back to
 /// `timeout <sec> sh -c <plugin_command>`. See [`plugin_capture_uses_shell`].
 pub async fn capture_plugin_shell_command(
@@ -269,19 +310,19 @@ pub async fn capture_plugin_shell_command(
   let line = request_line + "\n"
   ignore(stdin_write.write(line) catch { _ => () })
   stdin_write.close()
-  let (output, _) = drain_process_stdout(stdout_read, 65536)
+  let (output, _) = drain_process_stdout(stdout_read, capture_max_bytes)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
   (exit_code, output)
 }
 
 ///|
-/// Spawn `program` with `args`, capture stdout (up to 64KiB), wait for exit, return decoded output.
+/// Spawn `program` with `args`, capture stdout (up to `capture_max_bytes`), wait for exit, return decoded output.
 pub async fn capture_stdout(program : String, args : Array[String]) -> String {
   capture_stdout_with_cwd(program, args, None)
 }
 
 ///|
-/// Spawn `program` with `args` in `cwd`, capture stdout (up to 64KiB), wait for exit, return decoded output.
+/// Spawn `program` with `args` in `cwd`, capture stdout (up to `capture_max_bytes`), wait for exit, return decoded output.
 pub async fn capture_stdout_with_cwd(
   program : String,
   args : Array[String],
@@ -304,7 +345,7 @@ pub async fn capture_stdout_with_cwd(
         }
       }
   }
-  let (output, _) = drain_process_stdout(reader, 65536)
+  let (output, _) = drain_process_stdout(reader, capture_max_bytes)
   ignore(@process.wait_pid(pid) catch { _ => -1 })
   output
 }
