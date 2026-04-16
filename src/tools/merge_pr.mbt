@@ -585,7 +585,7 @@ pub async fn interpret_merge_pr_merge_host(
         mutex_name, caller_id, merge_pr_mutex_ttl_sec, now_sec,
       )
       if !acquired {
-        ignore(reg.release(mutex_name, caller_id))
+        ignore(reg.release(mutex_name, caller_id, now_sec))
         return Err(
           @types.ChoirError::validation_error(
             merge_pr_serialization_busy_message(),
@@ -597,6 +597,13 @@ pub async fn interpret_merge_pr_merge_host(
   }
   let cmds = merge_pr_commands(pr_number)
   let merge_result = run_strict(runner, cmds, capture~)
+  // Release before result inspection so the failure-capture path below
+  // does not hold the lock across another `gh` call; failure-capture
+  // does not mutate the remote.
+  match mutex_registry {
+    Some(reg) => ignore(reg.release(mutex_name, caller_id, now_sec))
+    None => ()
+  }
   match merge_result {
     Err(_) => {
       let (_, output) = capture(merge_pr_command(pr_number))
@@ -607,13 +614,7 @@ pub async fn interpret_merge_pr_merge_host(
         ),
       )
     }
-    Ok(_) => {
-      match mutex_registry {
-        Some(reg) => ignore(reg.release(mutex_name, caller_id))
-        None => ()
-      }
-      Ok(())
-    }
+    Ok(_) => Ok(())
   }
 }
 

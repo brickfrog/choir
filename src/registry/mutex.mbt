@@ -85,6 +85,7 @@ pub fn MutexRegistry::release(
   self : MutexRegistry,
   name : String,
   agent_id : String,
+  now_sec : Int64,
 ) -> String? {
   match self.locks.get(name) {
     None => None
@@ -93,7 +94,10 @@ pub fn MutexRegistry::release(
         if entry.queue.length() > 0 {
           let next = entry.queue.remove(0)
           entry.holder = Some(next)
-          entry.acquired_sec = 0L
+          // The new holder's TTL starts now; a sentinel (e.g. 0L) would
+          // make `expire()` (now - 0L > ttl_sec) fire instantly under
+          // real Unix-scale timestamps.
+          entry.acquired_sec = now_sec
           Some(next)
         } else {
           entry.holder = None

@@ -351,7 +351,7 @@ test "mutex registry release hands off to next waiter" {
   ignore(reg.acquire("README", "agent-a", 300L, 10L))
   ignore(reg.acquire("README", "agent-b", 300L, 11L))
   ignore(reg.acquire("README", "agent-c", 300L, 12L))
-  let next = reg.release("README", "agent-a")
+  let next = reg.release("README", "agent-a", 15L)
   assert_eq(next, Some("agent-b"))
   let (holder, queue) = reg.status("README")
   assert_eq(holder, Some("agent-b"))
@@ -367,7 +367,7 @@ test "mutex registry release removes non-holder from queue" {
   ignore(reg.acquire("README", "agent-a", 300L, 10L))
   ignore(reg.acquire("README", "agent-b", 300L, 11L))
   ignore(reg.acquire("README", "agent-c", 300L, 12L))
-  let next = reg.release("README", "agent-b")
+  let next = reg.release("README", "agent-b", 13L)
   assert_eq(next, None)
   let (holder, queue) = reg.status("README")
   assert_eq(holder, Some("agent-a"))
@@ -462,4 +462,40 @@ test "mutex registry expire hands off to queued waiter" {
   let (holder, queue) = reg.status("README")
   assert_eq(holder, Some("agent-b"))
   assert_eq(queue.length(), 0)
+}
+
+///|
+/// Regression: release() used to set acquired_sec=0L on handoff, which
+/// made `now - 0L > ttl_sec` trivially true for any Unix timestamp —
+/// the new holder was expire-eligible on the very next tick. Assert
+/// that a fresh handoff survives expire() under real Unix-scale `now`
+/// values within the TTL.
+test "mutex registry release handoff survives expire within ttl" {
+  let reg = @registry.MutexRegistry::new()
+  let now_acquire : Int64 = 1700000000L
+  let ttl : Int64 = 120L
+  ignore(reg.acquire("README", "agent-a", ttl, now_acquire))
+  ignore(reg.acquire("README", "agent-b", ttl, now_acquire + 1L))
+  let next = reg.release("README", "agent-a", now_acquire + 2L)
+  assert_eq(next, Some("agent-b"))
+  reg.expire(now_acquire + 3L)
+  let (holder, _) = reg.status("README")
+  assert_eq(holder, Some("agent-b"))
+  reg.expire(now_acquire + ttl)
+  let (holder_still, _) = reg.status("README")
+  assert_eq(holder_still, Some("agent-b"))
+}
+
+///|
+/// Regression: merge_pr used to release only in the Ok arm, leaking the
+/// mutex on merge failure until expire() cleared it. Exercised indirectly
+/// via `interpret_merge_pr_merge_host` in merge_pr_test.mbt; this unit-
+/// level test confirms release() is agnostic to why the caller releases.
+test "mutex registry release succeeds on any holder state" {
+  let reg = @registry.MutexRegistry::new()
+  ignore(reg.acquire("README", "agent-a", 120L, 1700000000L))
+  let next = reg.release("README", "agent-a", 1700000001L)
+  assert_eq(next, None)
+  let (holder, _) = reg.status("README")
+  assert_eq(holder, None)
 }

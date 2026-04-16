@@ -577,7 +577,11 @@ pub async fn dispatch(
         Some(reg) => {
           let (holder, _) = reg.status(mutex_args.name)
           let was_waiting = reg.is_waiting(mutex_args.name, mutex_args.agent_id)
-          let next_waiter = reg.release(mutex_args.name, mutex_args.agent_id)
+          let next_waiter = reg.release(
+            mutex_args.name,
+            mutex_args.agent_id,
+            @poller.now_sec(),
+          )
           let released = holder == Some(mutex_args.agent_id) || was_waiting
           @types.Response::ok_values({
             "released": Bool::to_json(released),
