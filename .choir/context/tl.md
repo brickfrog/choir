@@ -31,6 +31,29 @@ After all PRs in a wave merge (WaveComplete):
 
 ---
 
+## Feature-Branch Workflow
+
+All non-trivial work ships through a `feature/<name>` branch, not directly
+onto main.
+
+1. **Branch creation.** During Spec Crystallization, once the feature name is
+   agreed, bash-run:
+   `git checkout -b feature/<name> main && git push -u origin feature/<name>`
+2. **Fork leaves onto the feature branch.** Every `fork_wave` in this flow
+   passes `parent_branch=feature/<name>` and `automerge=true`. Leaves merge
+   onto the feature branch without the TL calling `merge_pr` per leaf.
+3. **Integrate.** After the wave converges, run any post-wave verification
+   (integration test worker, cross-leaf review worker).
+4. **Critical review.** Invoke `/review`. A Sarcasmotron worker scrutinizes
+   the full `main...feature/<name>` diff and reports findings. TL relays
+   to the user.
+5. **Ship gate.** Once findings are addressed:
+   `gh pr create --base main --head $(git branch --show-current)`
+   The PR to main is the human gate — TL does **not** call `merge_pr` on this
+   PR. User merges manually on GitHub after final review.
+
+---
+
 ## VSDD Pipeline
 
 When a user brings a feature request, follow these phases in order. Do not skip phases. Do not spawn implementation leaves until the spec is complete.
@@ -69,6 +92,7 @@ When a leaf sends `[RED GATE]`:
 After Copilot's GitHub PR review approval is recorded and all feedback is addressed, you may proceed with merging.
 
 **Nothing merges to main until the PR is approved by Copilot.**
+Automerge onto the feature branch is fine; the feature→main PR is where Copilot's review (or its absence on MoonBit-heavy diffs) feeds into human judgment.
 
 ### Convergence
 
