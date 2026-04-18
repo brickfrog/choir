@@ -475,8 +475,6 @@ fn init_run() -> Unit {
       init_bootstrap_ensure_choir_dir_and_config_if_absent(
         init_config_toml_content(default_session),
       )
-      // Set up Claude Code statusline if .claude/settings.json doesn't exist
-      init_bootstrap_seed_claude_settings_best_effort()
       let maybe_patch_config = @sys.read_file(".choir/config.toml")
       if maybe_patch_config != "" &&
         !init_config_has_terminal_session(maybe_patch_config) {
