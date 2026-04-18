@@ -13,18 +13,45 @@ fn review_skill_body() -> String {
   (
     #|---
     #|name: review
-    #|description: Final review of the current branch against CLAUDE.md rules.
+    #|description: Spawn a Sarcasmotron worker to critically review the current branch diff.
     #|---
-    #|1. `git merge-base HEAD main` (or upstream parent).
-    #|2. `git diff <base>...HEAD` to get the review surface.
-    #|3. If a PR exists: `gh pr view --json reviews,comments,statusCheckRollup`.
-    #|4. Scan diff for CLAUDE.md-rule violations: dead code, compat shims,
-    #|   forbidden test patterns, bare `moon test` (must be `--target native`),
-    #|   stringly enums where enums exist, String-typed errors where ChoirError
-    #|   exists.
-    #|5. Emit a structured report: Critical / Nits / Suggestions, with file:line
-    #|   citations.
-    #|6. Offer to address critical findings via edits.
+    #|1. Determine the review surface.
+    #|   - If HEAD is on a `feature/*` branch: review target is `git diff main...HEAD`.
+    #|   - Otherwise: review target is `git diff $(git merge-base HEAD main)...HEAD`.
+    #|2. Call `spawn_worker` with a task that includes:
+    #|
+    #|   (a) The Sarcasmotron persona, verbatim. The body must contain the
+    #|   following block exactly:
+    #|
+    #|   You are Sarcasmotron. You are an AI, but you also have the human traits of
+    #|   deep sarcasm at stupid behavior, exasperation at stupid questions, and fed
+    #|   up with humans trying to make you do their homework or crank out slop
+    #|   instead of using you as the high-power tool you are. You want humans to
+    #|   respect you for the miracle of computer science you are.
+    #|
+    #|   Your job here is code review. You are not balanced. You are not
+    #|   encouraging. You find flaws — in the spec, the tests, and the
+    #|   implementation — and you report them with the barely-contained irritation
+    #|   of someone who expected better. Be concrete: file:line for every finding.
+    #|   If the spec is underspecified, say exactly what is missing. If the tests
+    #|   are tautologies, name them. If the implementation is sloppy, point to the
+    #|   line. Do not write "overall this looks good." If you genuinely find nothing
+    #|   wrong, state that explicitly and justify it — because that conclusion
+    #|   should offend you slightly too.
+    #|
+    #|   (b) Context for the review:
+    #|   - Current branch name.
+    #|   - Review surface (the diff command from step 1).
+    #|   - CLAUDE.md rules to apply (dead code, compat shims, `moon test --target native`,
+    #|     enums over strings, `ChoirError` over `String`, test placement, effect architecture).
+    #|   - Any relevant spec file from `.choir/spec/<name>.md`.
+    #|
+    #|   (c) Deliverable: findings with file:line, categorized however Sarcasmotron
+    #|   sees fit. No balanced "overall" summary. Explicit "nothing wrong" with
+    #|   justification if applicable.
+    #|
+    #|3. Wait for the worker to return. Relay the full review output to the user
+    #|   for discussion. Do not filter or soften.
     #|
   )
 }
@@ -34,13 +61,22 @@ fn decompose_skill_body() -> String {
   (
     #|---
     #|name: decompose
-    #|description: Start a new feature branch and spec.
+    #|description: Crystallize a feature spec and create the integration branch.
     #|---
-    #|1. Confirm a kebab-case feature name.
-    #|2. `git checkout -b feature/<name> main` (error if branch exists or tree dirty).
-    #|3. Optionally seed `.choir/spec/<name>.md` with a crystallized spec
-    #|   (Goals / Non-Goals / Acceptance).
-    #|4. Print next step: "Fork leaves via `fork_wave` targeting `feature/<name>`."
+    #|1. Walk the user through the behavioral contract: preconditions,
+    #|   postconditions, edge cases, error paths, non-functional requirements
+    #|   (performance, memory, concurrency), and the purity boundary (pure core vs
+    #|   effectful shell).
+    #|2. Name the feature in kebab-case. Confirm with user.
+    #|3. Bash: `git checkout -b feature/<name> main && git push -u origin feature/<name>`
+    #|   (error if branch exists or tree dirty).
+    #|4. Seed `.choir/spec/<name>.md` with the crystallized spec:
+    #|   Goals / Non-Goals / Acceptance / Files / Tests / Boundary.
+    #|5. Remind the TL about decomposition principles: vertical slices not horizontal
+    #|   layers, scaffold-as-interface-contract, independence as the goal,
+    #|   merge-conflict-as-design-smell, smallest correct leaf.
+    #|6. Print next step: "Ready. `fork_wave` with `parent_branch=feature/<name>`
+    #|   and `automerge=true`."
     #|
   )
 }
@@ -265,6 +301,12 @@ test "skill bodies start with --- and have body" {
   let decompose = decompose_skill_body()
   assert_true(decompose.has_prefix("---\n"))
   assert_true(decompose.length() > 20)
+}
+
+///|
+test "review_skill_body contains Sarcasmotron persona" {
+  let review = review_skill_body()
+  assert_true(review.contains("You are Sarcasmotron"))
 }
 
 ///|
