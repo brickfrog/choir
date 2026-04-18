@@ -1,4 +1,122 @@
 ///|
+fn build_plugin_manifest_json() -> String {
+  let manifest : Map[String, Json] = {
+    "name": "choir".to_json(),
+    "version": "1.0.0".to_json(),
+    "description": "Embedded Choir skills".to_json(),
+  }
+  manifest.to_json().stringify()
+}
+
+///|
+fn review_skill_body() -> String {
+  (
+    #|---
+    #|name: review
+    #|description: Final review of the current branch against CLAUDE.md rules.
+    #|---
+    #|1. `git merge-base HEAD main` (or upstream parent).
+    #|2. `git diff <base>...HEAD` to get the review surface.
+    #|3. If a PR exists: `gh pr view --json reviews,comments,statusCheckRollup`.
+    #|4. Scan diff for CLAUDE.md-rule violations: dead code, compat shims,
+    #|   forbidden test patterns, bare `moon test` (must be `--target native`),
+    #|   stringly enums where enums exist, String-typed errors where ChoirError
+    #|   exists.
+    #|5. Emit a structured report: Critical / Nits / Suggestions, with file:line
+    #|   citations.
+    #|6. Offer to address critical findings via edits.
+    #|
+  )
+}
+
+///|
+fn decompose_skill_body() -> String {
+  (
+    #|---
+    #|name: decompose
+    #|description: Start a new feature branch and spec.
+    #|---
+    #|1. Confirm a kebab-case feature name.
+    #|2. `git checkout -b feature/<name> main` (error if branch exists or tree dirty).
+    #|3. Optionally seed `.choir/spec/<name>.md` with a crystallized spec
+    #|   (Goals / Non-Goals / Acceptance).
+    #|4. Print next step: "Fork leaves via `fork_wave` targeting `feature/<name>`."
+    #|
+  )
+}
+
+///|
+fn hooks_json_scaffold() -> String {
+  let hooks : Map[String, Json] = {}
+  hooks.to_json().stringify()
+}
+
+///|
+fn synthesize_plugin_dir(
+  project_dir : String,
+) -> Result[Unit, @types.ChoirError] {
+  let plugin_dir = project_dir + "/.choir/plugin"
+
+  if !@sys.create_dir_all(plugin_dir + "/.claude-plugin") {
+    return Err(
+      @types.ChoirError::workspace_error("failed to create .claude-plugin dir"),
+    )
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/.claude-plugin/plugin.json",
+      build_plugin_manifest_json(),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write plugin.json"),
+    )
+  }
+
+  if !@sys.create_dir_all(plugin_dir + "/skills/review") {
+    return Err(
+      @types.ChoirError::workspace_error("failed to create skills/review dir"),
+    )
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/skills/review/SKILL.md",
+      review_skill_body(),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write review/SKILL.md"),
+    )
+  }
+
+  if !@sys.create_dir_all(plugin_dir + "/skills/decompose") {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to create skills/decompose dir",
+      ),
+    )
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/skills/decompose/SKILL.md",
+      decompose_skill_body(),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write decompose/SKILL.md"),
+    )
+  }
+
+  if !@sys.create_dir_all(plugin_dir + "/hooks") {
+    return Err(@types.ChoirError::workspace_error("failed to create hooks dir"))
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/hooks/hooks.json",
+      hooks_json_scaffold(),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write hooks/hooks.json"),
+    )
+  }
+
+  Ok(())
+}
+
+///|
 /// Build the `ClaudeCodeSettings` blob passed via `claude --settings <tempfile>`.
 /// Synthesized per-invocation so bare `claude` runs see none of Choir's config.
 fn build_claude_settings_json(
@@ -13,12 +131,14 @@ fn build_claude_settings_json(
       "args": ["mcp-stdio", "--role", role_str, "--name", session_name].to_json(),
     }.to_json(),
   }
+  let enabled_plugins : Map[String, Json] = { "choir@local": true.to_json() }
   let settings : Map[String, Json] = {
     "statusLine": {
       "type": "command".to_json(),
       "command": "choir statusline".to_json(),
     }.to_json(),
     "mcpServers": mcp.to_json(),
+    "enabledPlugins": enabled_plugins.to_json(),
   }
   settings.to_json().stringify()
 }
@@ -64,6 +184,27 @@ fn claude_wrapper_run() -> Unit {
   let tmpdir = claude_wrapper_tmpdir()
   let settings_path = claude_wrapper_settings_tempfile_path(tmpdir, pid, nanos)
   let session_name = claude_wrapper_session_name(pid, nanos)
+
+  let cwd = match @sys.realpath_native(".") {
+    Some(cwd) => cwd
+    None =>
+      match @sys.getenv("PWD") {
+        Some(pwd) => pwd
+        None => "."
+      }
+  }
+
+  match synthesize_plugin_dir(cwd) {
+    Ok(_) => ()
+    Err(e) => {
+      @sys.write_stderr(
+        "choir claude: failed to synthesize plugin: " + e.message() + "\n",
+      )
+      @sys.exit(1)
+      return
+    }
+  }
+
   let body = build_claude_settings_json(@types.Role::TL, session_name)
   if !@sys.write_file_sync(settings_path, body) {
     @sys.write_stderr(
@@ -72,7 +213,18 @@ fn claude_wrapper_run() -> Unit {
     @sys.exit(1)
     return
   }
-  let claude_args : Array[String] = ["--settings", settings_path]
+
+  ignore(@sys.create_dir_all(".choir"))
+  ignore(@sys.symlink_force(settings_path, ".choir/last-claude-settings.json"))
+
+  let plugin_dir = match @sys.realpath_native(".choir/plugin") {
+    Some(path) => path
+    None => cwd + "/.choir/plugin"
+  }
+
+  let claude_args : Array[String] = [
+    "--settings", settings_path, "--plugin-dir", plugin_dir,
+  ]
   for a in forward {
     claude_args.push(a)
   }
@@ -86,6 +238,96 @@ fn claude_wrapper_run() -> Unit {
     ignore(@sys.rm_rf(settings_path))
     @sys.exit(code)
   })
+}
+
+///|
+test "build_plugin_manifest_json()" {
+  let json = build_plugin_manifest_json()
+  let parsed = @json.parse(json) catch {
+    _ => {
+      fail("manifest json did not parse")
+      return
+    }
+  }
+  guard parsed is Object(top) else {
+    fail("manifest is not an object")
+    return
+  }
+  assert_eq(top.get("name"), Some("choir".to_json()))
+}
+
+///|
+test "skill bodies start with --- and have body" {
+  let review = review_skill_body()
+  assert_true(review.has_prefix("---\n"))
+  assert_true(review.length() > 20)
+
+  let decompose = decompose_skill_body()
+  assert_true(decompose.has_prefix("---\n"))
+  assert_true(decompose.length() > 20)
+}
+
+///|
+test "hooks_json_scaffold() parses as empty object" {
+  let json = hooks_json_scaffold()
+  let parsed = @json.parse(json) catch {
+    _ => {
+      fail("hooks json did not parse")
+      return
+    }
+  }
+  guard parsed is Object(top) else {
+    fail("hooks is not an object")
+    return
+  }
+  assert_eq(top.length(), 0)
+}
+
+///|
+test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
+  let tmp = "/tmp/choir-plugin-test-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(tmp))
+  ignore(@sys.create_dir_all(tmp))
+
+  match synthesize_plugin_dir(tmp) {
+    Ok(_) => ()
+    Err(e) => {
+      fail("synthesize_plugin_dir failed: " + e.message())
+      return
+    }
+  }
+
+  let manifest = @sys.read_file(
+    tmp + "/.choir/plugin/.claude-plugin/plugin.json",
+  )
+  assert_true(manifest != "")
+
+  let review = @sys.read_file(tmp + "/.choir/plugin/skills/review/SKILL.md")
+  assert_true(review != "")
+
+  let decompose = @sys.read_file(
+    tmp + "/.choir/plugin/skills/decompose/SKILL.md",
+  )
+  assert_true(decompose != "")
+
+  let hooks = @sys.read_file(tmp + "/.choir/plugin/hooks/hooks.json")
+  assert_true(hooks != "")
+
+  // Run again, must be identical
+  match synthesize_plugin_dir(tmp) {
+    Ok(_) => ()
+    Err(e) => {
+      fail("synthesize_plugin_dir (rerun) failed: " + e.message())
+      return
+    }
+  }
+  assert_eq(
+    @sys.read_file(tmp + "/.choir/plugin/.claude-plugin/plugin.json"),
+    manifest,
+  )
+
+  ignore(@sys.rm_rf(tmp))
 }
 
 ///|
@@ -127,6 +369,11 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
   assert_eq(args_json[2], "tl".to_json())
   assert_eq(args_json[3], "--name".to_json())
   assert_eq(args_json[4], "user-123-456".to_json())
+  guard top.get("enabledPlugins") is Some(Object(plugins)) else {
+    fail("enabledPlugins missing or not an object")
+    return
+  }
+  assert_eq(plugins.get("choir@local"), Some(true.to_json()))
 }
 
 ///|
