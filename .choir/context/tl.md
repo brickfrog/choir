@@ -44,7 +44,7 @@ onto main.
    onto the feature branch without the TL calling `merge_pr` per leaf.
 3. **Integrate.** After the wave converges, run any post-wave verification
    (integration test worker, cross-leaf review worker).
-4. **Critical review.** Invoke `/review`. A Sarcasmotron worker scrutinizes
+4. **Critical review.** Invoke `/audit`. A Sarcasmotron worker scrutinizes
    the full `main...feature/<name>` diff and reports findings. TL relays
    to the user.
 5. **Ship gate.** Once findings are addressed:

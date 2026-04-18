@@ -9,11 +9,11 @@ fn build_plugin_manifest_json() -> String {
 }
 
 ///|
-fn review_skill_body() -> String {
+fn audit_skill_body() -> String {
   (
     #|---
-    #|name: review
-    #|description: Spawn a Sarcasmotron worker to critically review the current branch diff.
+    #|name: audit
+    #|description: Spawn a Sarcasmotron worker to critically audit the current branch diff.
     #|---
     #|1. Determine the review surface.
     #|   - If HEAD is on a `feature/*` branch: review target is `git diff main...HEAD`.
@@ -107,17 +107,17 @@ fn synthesize_plugin_dir(
     )
   }
 
-  if !@sys.create_dir_all(plugin_dir + "/skills/review") {
+  if !@sys.create_dir_all(plugin_dir + "/skills/audit") {
     return Err(
-      @types.ChoirError::workspace_error("failed to create skills/review dir"),
+      @types.ChoirError::workspace_error("failed to create skills/audit dir"),
     )
   }
   if !@sys.write_file_sync(
-      plugin_dir + "/skills/review/SKILL.md",
-      review_skill_body(),
+      plugin_dir + "/skills/audit/SKILL.md",
+      audit_skill_body(),
     ) {
     return Err(
-      @types.ChoirError::workspace_error("failed to write review/SKILL.md"),
+      @types.ChoirError::workspace_error("failed to write audit/SKILL.md"),
     )
   }
 
@@ -294,7 +294,7 @@ test "build_plugin_manifest_json()" {
 
 ///|
 test "skill bodies start with --- and have body" {
-  let review = review_skill_body()
+  let review = audit_skill_body()
   assert_true(review.has_prefix("---\n"))
   assert_true(review.length() > 20)
 
@@ -304,8 +304,8 @@ test "skill bodies start with --- and have body" {
 }
 
 ///|
-test "review_skill_body contains Sarcasmotron persona" {
-  let review = review_skill_body()
+test "audit_skill_body contains Sarcasmotron persona" {
+  let review = audit_skill_body()
   assert_true(review.contains("You are Sarcasmotron"))
 }
 
@@ -345,7 +345,7 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   )
   assert_true(manifest != "")
 
-  let review = @sys.read_file(tmp + "/.choir/plugin/skills/review/SKILL.md")
+  let review = @sys.read_file(tmp + "/.choir/plugin/skills/audit/SKILL.md")
   assert_true(review != "")
 
   let decompose = @sys.read_file(
