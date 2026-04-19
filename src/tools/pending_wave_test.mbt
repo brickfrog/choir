@@ -279,8 +279,8 @@ test "validate_pending_wave_deps: rejects TL-id dep via registry with role in er
     Err(e) => {
       let msg = e.message()
       assert_true(msg.contains("main.tl"))
-      assert_true(msg.contains("not a leaf"))
-      assert_true(msg.contains("tl"))
+      assert_true(msg.contains("dev leaves"))
+      assert_true(msg.contains("role=tl"))
     }
     Ok(_) => fail("expected config_error for TL-id dep")
   }
@@ -305,7 +305,8 @@ test "validate_pending_wave_deps: rejects TL-id dep via lifecycle file" {
     Err(e) => {
       let msg = e.message()
       assert_true(msg.contains("main.tl"))
-      assert_true(msg.contains("not a leaf"))
+      assert_true(msg.contains("dev leaves"))
+      assert_true(msg.contains("role=tl"))
     }
     Ok(_) => fail("expected config_error for TL-id dep from lifecycle")
   }
@@ -346,6 +347,39 @@ test "validate_pending_wave_deps: accepts Dev-id dep via lifecycle" {
   let got = @tools.validate_pending_wave_deps(project_dir, None, ["main.dep"])
   ignore(@sys.rm_rf(project_dir))
   assert_true(got is Ok(_))
+}
+
+///|
+test "validate_pending_wave_deps: rejects Worker-id dep" {
+  let project_dir = pending_wave_test_setup("validate-worker")
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.worker"),
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/w",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let got = @tools.validate_pending_wave_deps(project_dir, Some(reg), [
+    "main.worker",
+  ])
+  ignore(@sys.rm_rf(project_dir))
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("main.worker"))
+      assert_true(msg.contains("dev leaves"))
+      assert_true(msg.contains("role=worker"))
+    }
+    Ok(_) => fail("expected config_error for Worker-id dep")
+  }
 }
 
 ///|

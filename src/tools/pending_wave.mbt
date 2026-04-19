@@ -523,16 +523,17 @@ pub fn lookup_dep_role(
 }
 
 ///|
-/// Leaves own branches and file PRs, so only their `Merged` signal can move a
-/// pending wave forward. TLs and Root supervisors never transition to
-/// `Dev(Done(Merged))`; a TL-id dep would stay `Pending` forever with no
-/// watchdog to reap it. Workers are allowed through: they don't file PRs
-/// either, but the server only spawns them inline and no real fork_wave call
-/// site names one, so rejecting them would add noise without fixing a bug.
+/// Only `Dev` leaves own branches and file PRs, so only their
+/// `Dev(Done(Merged))` signal can move a pending wave forward.
+/// `dep_status_for_lifecycle` pattern-matches exclusively on
+/// `WorkflowState::Dev(_)` — every other role (`TL`, `Root`, `Worker`) falls
+/// through to `Pending` forever with no watchdog, no retry bound. Reject them
+/// all at validation time so the config error surfaces at `fork_wave` instead
+/// of silently stalling the wave.
 fn is_valid_dep_role(role : @types.Role) -> Bool {
   match role {
     @types.Role::Dev => true
-    @types.Role::Worker => true
+    @types.Role::Worker => false
     @types.Role::TL => false
     @types.Role::Root => false
   }
@@ -563,11 +564,11 @@ pub fn validate_pending_wave_deps(
         if !is_valid_dep_role(role) {
           return Err(
             @types.ChoirError::config_error(
-              "depends_on agent_id is not a leaf: " +
+              "depends_on entries must be dev leaves; " +
               dep +
-              " (role=" +
+              " has role=" +
               role.to_wire_string() +
-              ")",
+              " (only `dev` is satisfied by `Dev(Done(Merged))`)",
             ),
           )
         }
