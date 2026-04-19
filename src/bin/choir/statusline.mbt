@@ -422,18 +422,21 @@ fn statusline_run() -> Unit {
   let has_choir = @sys.read_file(project_dir + "/.choir/config.toml") != ""
   let out = StringBuilder::new()
 
+  let sep = "\u001b[2m │ \u001b[0m"
+
   // Branch segment: feature/* gets a distinguishing prefix; main/master plain.
   let branch = statusline_git_branch(project_dir)
   if branch != "" {
     if branch.has_prefix("feature/") {
       out.write_string("\u001b[2m↪ \u001b[0m\u001b[36m")
       out.write_string(branch)
-      out.write_string("\u001b[0m  ")
+      out.write_string("\u001b[0m")
     } else {
       out.write_string("\u001b[36m")
       out.write_string(branch)
-      out.write_string("\u001b[0m  ")
+      out.write_string("\u001b[0m")
     }
+    out.write_string(sep)
   }
 
   // Context bars: 5h and 7d windows, 10-char block bars side by side.
@@ -451,7 +454,7 @@ fn statusline_run() -> Unit {
   )
   let total = working + review + changes + failed
   if total > 0 {
-    out.write_string("  ")
+    out.write_string(sep)
     let mut need_sep = false
     if working > 0 {
       out.write_string("\u001b[33m●")
@@ -489,16 +492,16 @@ fn statusline_run() -> Unit {
 
   // Override warning — bright so the TL can't miss it.
   if statusline_override_active(project_dir) {
-    out.write_string("  \u001b[1;31m⚠ override\u001b[0m")
+    out.write_string(sep)
+    out.write_string("\u001b[1;31m⚠ override\u001b[0m")
   }
   let pr_summary = statusline_pr_summary(project_dir)
-  if pr_summary.has_automerge {
-    out.write_string("  ")
-    out.write_string("\u001b[36mam\u001b[0m")
-  }
   if pr_summary.body != "" {
-    out.write_string("  ")
+    out.write_string(sep)
     out.write_string(pr_summary.body)
+  }
+  if pr_summary.has_automerge {
+    out.write_string(" \u001b[36mam\u001b[0m")
   }
   @sys.write_stdout(out.to_string())
 }
