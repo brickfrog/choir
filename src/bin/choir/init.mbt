@@ -475,6 +475,13 @@ fn init_run() -> Unit {
       init_bootstrap_ensure_choir_dir_and_config_if_absent(
         init_config_toml_content(default_session),
       )
+      match synthesize_plugin_dir(project_dir) {
+        Ok(_) => ()
+        Err(e) =>
+          @sys.write_stderr(
+            "warning: failed to synthesize .choir/plugin: " + e.message() + "\n",
+          )
+      }
       let maybe_patch_config = @sys.read_file(".choir/config.toml")
       if maybe_patch_config != "" &&
         !init_config_has_terminal_session(maybe_patch_config) {
