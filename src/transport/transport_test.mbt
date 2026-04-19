@@ -136,6 +136,7 @@ test "format_registration_request includes local config metadata" {
     task_contract: None,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
   let output = format_registration_request(
     @types.Role::Dev,

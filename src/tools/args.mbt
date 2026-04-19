@@ -185,6 +185,15 @@ pub(all) struct CallerMessageArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct ReportUsageArgs {
+  caller_id : String
+  tokens_in : Int
+  tokens_out : Int
+  elapsed_s : Int
+  cost_usd : Double?
+} derive(Debug, Eq)
+
+///|
 struct SendMessageArgs {
   target_id : String
   sender_id : String

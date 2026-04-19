@@ -660,8 +660,24 @@ pub async fn try_dispatch_pending_waves(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          wave_id=Some(pw.wave_id),
         )
         if resp.is_ok() && spawn_plan.spawned_count > 0 {
+          match
+            append_spawned_agents_to_wave_index(
+              project_dir,
+              pw.wave_id,
+              resolved_args.parent_branch,
+              @env.now().reinterpret_as_int64(),
+              spawn_plan.agent_ids,
+            ) {
+            Err(e) =>
+              @moontrace.warn("pending_wave_index_append_failed", fields=[
+                @moontrace.field("wave_id", pw.wave_id),
+                @moontrace.field("error", e.message()),
+              ])
+            Ok(_) => ()
+          }
           interpret_fork_wave_post_spawn(
             resolved_args,
             spawn_plan,

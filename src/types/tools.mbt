@@ -21,6 +21,8 @@ pub(all) struct SpawnSpec {
   automerge : Bool?
   /// Per-wave review-mode override persisted into the spawned leaf config. `None` inherits global config.
   review_mode : ReviewMode?
+  /// Wave telemetry id persisted into the spawned agent config. `None` for non-wave spawns.
+  wave_id : String?
 } derive(Debug)
 
 ///|

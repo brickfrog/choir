@@ -71,6 +71,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {
+      name: "report_usage",
+      description: "Self-report usage for wave telemetry; no-op when caller has no wave_id",
+      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
+    },
+    {
       name: "send_message",
       description: "Send message to any agent by ID",
       allowed_roles: all_roles,

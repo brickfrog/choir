@@ -227,6 +227,7 @@ test "parse_local_config - metadata" {
     #|workspace = "/tmp/worktree"
     #|terminal_target = "zellij-tab:choir:child"
     #|agent_type = "gemini"
+    #|wave_id = "wv-demo"
   let local_cfg = parse_local_config(content).unwrap()
   assert_eq(local_cfg.role, Some(@types.Role::Dev))
   assert_eq(local_cfg.agent_id, Some("main.child"))
@@ -239,6 +240,7 @@ test "parse_local_config - metadata" {
     @types.LocalTarget::parse("zellij-tab:choir:child"),
   )
   assert_eq(local_cfg.agent_type, Some(@types.AgentType::Gemini))
+  assert_eq(local_cfg.wave_id, Some("wv-demo"))
 }
 
 ///|

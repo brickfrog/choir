@@ -204,6 +204,10 @@ pub fn config_local_content(
       "\"\n"
     None => ""
   }
+  let wave_id_line = match spec.wave_id {
+    Some(id) => "\nwave_id = \"" + escape_toml_string(id) + "\"\n"
+    None => ""
+  }
   "role = \"" +
   escape_toml_string(role_str) +
   "\"\nagent_id = \"" +
@@ -224,6 +228,7 @@ pub fn config_local_content(
   spec.spawn_depth.to_string() +
   automerge_line +
   review_mode_line +
+  wave_id_line +
   task_contract_line
 }
 

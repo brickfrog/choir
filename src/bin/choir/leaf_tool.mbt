@@ -190,6 +190,24 @@ fn leaf_tool_request_args(
         None => Err("notify_parent requires a message")
       }
     }
+    "report_usage" => {
+      if !flags.contains("caller_id") {
+        match @sys.getenv("CHOIR_AGENT_ID") {
+          Some(id) => if id != "" { flags.set("caller_id", id) }
+          None => ()
+        }
+      }
+      for key in ["tokens_in", "tokens_out", "elapsed_s"] {
+        match flags.get(key) {
+          Some(v) =>
+            if v.trim() == "" {
+              return Err("report_usage requires " + key)
+            }
+          None => return Err("report_usage requires " + key)
+        }
+      }
+      Ok(flags)
+    }
     "shutdown" => {
       if !flags.contains("caller_id") {
         match @sys.getenv("CHOIR_AGENT_ID") {
@@ -258,6 +276,8 @@ fn leaf_tool_usage(tool : String) -> String {
       "usage: file_pr [--branch <branch>] [--parent-branch <parent_branch>]"
     "notify_parent" =>
       "usage: notify_parent [--status <success|failure|info>] <message>"
+    "report_usage" =>
+      "usage: report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds> [--cost-usd <usd>]"
     "shutdown" => "usage: shutdown [--caller-id <caller_id>]"
     "task_list" => "usage: task_list"
     "task_get" => "usage: task_get <id>"
@@ -442,6 +462,7 @@ fn local_cfg_from_env_lookup(
     task_contract: None,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
 }
 

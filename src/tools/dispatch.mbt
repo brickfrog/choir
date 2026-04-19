@@ -343,6 +343,13 @@ pub async fn dispatch(
           }
         }
       } else {
+        let fork_ts_ms = @env.now().reinterpret_as_int64()
+        let wave_id = allocate_wave_id(
+          project_dir,
+          fork_wave_args.slug_prefix,
+          fork_ts_ms,
+          @sys.get_pid(),
+        )
         let (resp, fork_wave_args, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
           fork_wave_args,
           project_dir,
@@ -356,9 +363,21 @@ pub async fn dispatch(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          wave_id=Some(wave_id),
         )
         // Post-spawn side effects: only run if spawn succeeded.
         if resp.is_ok() && spawn_plan.spawned_count > 0 {
+          match
+            save_fresh_spawned_wave_index(
+              project_dir,
+              wave_id,
+              fork_wave_args.parent_branch,
+              fork_ts_ms,
+              spawn_plan.agent_ids,
+            ) {
+            Err(e) => return @types.Response::Err(e.message())
+            Ok(_) => ()
+          }
           interpret_fork_wave_post_spawn(
             fork_wave_args,
             spawn_plan,
@@ -368,7 +387,14 @@ pub async fn dispatch(
             capture~,
           )
         }
-        resp
+        match resp.ok_payload() {
+          Some(fields) => {
+            let payload = fields.to_json_map()
+            payload.set("wave_id", wave_id.to_json())
+            @types.Response::ok_values(payload)
+          }
+          None => resp
+        }
       }
     ToolRequest::ForkSession(session_args) => {
       let session_dir = project_dir + "/.choir/sessions/" + session_args.name
@@ -519,6 +545,8 @@ pub async fn dispatch(
           }
       }
     }
+    ToolRequest::ReportUsage(report_args) =>
+      interpret_report_usage(report_args, project_dir, registry)
     ToolRequest::SendMessage(send_args) => {
       let registry_lookup = match registry {
         Some(reg) => Some(try? reg.get(send_args.target_id))

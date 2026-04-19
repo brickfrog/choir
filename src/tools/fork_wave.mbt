@@ -26,6 +26,7 @@ pub fn fork_wave_spawn_plan(
   registry : @registry.AgentRegistry?,
   project_dir : String,
   session : String,
+  wave_id? : String? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -103,6 +104,7 @@ pub fn fork_wave_spawn_plan(
       spawn_depth: child_spawn_depth,
       automerge: fork_wave_args.automerge,
       review_mode: fork_wave_args.review_mode,
+      wave_id,
     }
     spawned_specs.push(spec)
     for
@@ -223,6 +225,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  wave_id? : String? = None,
 ) -> (@types.Response, ForkWaveArgs, ForkWaveSpawnPlan) {
   let fork_wave_args = fork_wave_resolve_args_parent_branch(
     fork_wave_args, project_dir, capture,
@@ -242,6 +245,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     registry,
     project_dir,
     session,
+    wave_id~,
     extra_mcp_servers_json~,
     shell_command~,
     listen_uds~,
@@ -259,6 +263,108 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   let interpret_result = interpret(plan, git_capture~, runner~)
   let resp = fork_wave_response_from_interpret_result(interpret_result, capture)
   (resp, fork_wave_args, spawn_plan)
+}
+
+///|
+fn split_spawned_agent_ids(agent_ids : String) -> Array[String] {
+  let out : Array[String] = []
+  for part in agent_ids.split(",") {
+    let trimmed = part.trim().to_string()
+    if trimmed != "" {
+      out.push(trimmed)
+    }
+  }
+  out
+}
+
+///|
+pub fn allocate_wave_id(
+  project_dir : String,
+  slug_prefix : String,
+  now_ticks : Int64,
+  pid : Int,
+  max_attempts? : Int = 1000,
+) -> String {
+  let base = generate_pending_wave_id(slug_prefix, now_ticks, pid)
+  if !@sys.path_entry_exists(wave_index_path(project_dir, base)) {
+    return base
+  }
+  let mut suffix = 1
+  while suffix < max_attempts {
+    let candidate = base + "-" + suffix.to_string()
+    if !@sys.path_entry_exists(wave_index_path(project_dir, candidate)) {
+      return candidate
+    }
+    suffix = suffix + 1
+  }
+  base + "-" + suffix.to_string()
+}
+
+///|
+pub fn generate_wave_id_and_save(
+  project_dir : String,
+  slug_prefix : String,
+  parent_branch : String,
+  agent_ids : Array[String],
+  now_ms : Int64,
+  pid : Int,
+) -> Result[String, @types.ChoirError] {
+  let wave_id = allocate_wave_id(project_dir, slug_prefix, now_ms, pid)
+  match
+    save_wave_index(
+      project_dir,
+      WaveIndex::new(wave_id, parent_branch, now_ms, agent_ids),
+    ) {
+    Ok(_) => Ok(wave_id)
+    Err(e) => Err(e)
+  }
+}
+
+///|
+pub fn save_fresh_spawned_wave_index(
+  project_dir : String,
+  wave_id : String,
+  parent_branch : String,
+  fork_ts_ms : Int64,
+  agent_ids_csv : String,
+) -> Result[Unit, @types.ChoirError] {
+  save_wave_index(
+    project_dir,
+    WaveIndex::new(
+      wave_id,
+      parent_branch,
+      fork_ts_ms,
+      split_spawned_agent_ids(agent_ids_csv),
+    ),
+  )
+}
+
+///|
+pub fn append_spawned_agents_to_wave_index(
+  project_dir : String,
+  wave_id : String,
+  parent_branch : String,
+  fork_ts_ms : Int64,
+  agent_ids_csv : String,
+) -> Result[Unit, @types.ChoirError] {
+  let ids = split_spawned_agent_ids(agent_ids_csv)
+  if !@sys.path_entry_exists(wave_index_path(project_dir, wave_id)) {
+    match
+      save_wave_index(
+        project_dir,
+        WaveIndex::new(wave_id, parent_branch, fork_ts_ms, []),
+      ) {
+      Ok(_) => ()
+      Err(e) => return Err(e)
+    }
+  }
+  for agent_id in ids {
+    match append_agent_id(project_dir, wave_id, agent_id) {
+      Ok(_) => ()
+      Err(e) => return Err(e)
+    }
+  }
+  Ok(())
 }
 
 ///|
