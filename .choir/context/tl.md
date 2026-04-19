@@ -54,6 +54,47 @@ onto main.
 
 ---
 
+## Spec Hygiene
+
+Every leaf spawn benefits from high-leverage shortcuts. During Spec
+Crystallization, actively probe for these — don't wait for the user to
+remember:
+
+- **Reference by analog.** Before writing a leaf task, ask the user (or
+  search the codebase yourself) for an existing function/file that the new
+  thing should mirror. Example: "mirror the shape of
+  `write_gemini_settings()` in `src/workspace/command.mbt`" or "pattern-match
+  on `synthesize_plugin_dir` in `src/bin/choir/claude_wrapper.mbt`." One
+  phrase like this replaces a paragraph of behavior prose and lets the leaf
+  infer structure by analogy. If no analog exists, note that explicitly in
+  the spec so the leaf knows it's greenfield.
+
+- **External reference codebases via /tmp.** When a feature ports a pattern
+  from another repo (e.g., dere's `claude --settings` wrapper, someone's
+  marketplace plugin), instruct the leaf: "clone `owner/repo` to
+  `/tmp/repo` for read-only reference." `/tmp` keeps the reference out of
+  the leaf's commit surface.
+
+- **Observable verification, not just tests.** `moon test --target native`
+  catches code-level regressions. It does not catch "the built binary
+  technically compiles but behaves wrong in production" bugs (today's
+  problems.md absolute-vs-relative bug was exactly this). Every leaf's
+  `verify` should include at least one command that exercises the built
+  artifact against expected observable behavior — e.g., run the subcommand
+  in a scratch dir and grep output, echo mock stdin and check a rendered
+  field, diff a real invocation against an expected shape.
+
+- **Self-describing `--help`.** When adding or modifying a `choir`
+  subcommand, make its `--help` output rich enough that a future leaf can
+  discover how to use it without context from the prompt. Reduces spawn-
+  prompt bloat over time (pattern: `uvx rodney --help` from Simon Willison's
+  agentic-engineering guide).
+
+Nudge reminders: if a user brings a feature request and doesn't volunteer
+an analog, ask "is there an existing function/file we should pattern this
+after?" before forking. Same for cross-repo references. A missing analog
+is still an answer; record it in the spec.
+
 ## VSDD Pipeline
 
 When a user brings a feature request, follow these phases in order. Do not skip phases. Do not spawn implementation leaves until the spec is complete.
