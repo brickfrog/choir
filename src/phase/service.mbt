@@ -484,6 +484,60 @@ pub fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
 }
 
 ///|
+fn is_root_tl_shaped_agent_id(agent_id : String) -> Bool {
+  if !agent_id.has_prefix("user-") || agent_id.contains(".") {
+    return false
+  }
+  let parts : Array[String] = []
+  for part in agent_id["user-".length():].to_string().split("-") {
+    parts.push(part.to_string())
+  }
+  if parts.length() != 2 || parts[0] == "" || parts[1] == "" {
+    return false
+  }
+  let pid = Some(@string.parse_int(parts[0])) catch { _ => None }
+  let nanos = Some(@string.parse_int(parts[1])) catch { _ => None }
+  pid is Some(_) && nanos is Some(_)
+}
+
+///|
+test "is_root_tl_shaped_agent_id matches only known root TL id patterns" {
+  assert_true(is_root_tl_shaped_agent_id("user-12345-67890"))
+  assert_false(is_root_tl_shaped_agent_id(""))
+  assert_false(is_root_tl_shaped_agent_id("   "))
+  assert_false(is_root_tl_shaped_agent_id("agent-dev-12345"))
+  assert_false(is_root_tl_shaped_agent_id("agent-worker-12345"))
+  assert_false(is_root_tl_shaped_agent_id("agent-tl-12345"))
+  assert_false(is_root_tl_shaped_agent_id("main.worker"))
+  assert_false(is_root_tl_shaped_agent_id("user-"))
+  assert_false(is_root_tl_shaped_agent_id("user-12345"))
+  assert_false(is_root_tl_shaped_agent_id("user-not-a-pid-67890"))
+  assert_false(is_root_tl_shaped_agent_id("user-abc-xyz"))
+}
+
+///|
+fn synthesize_root_tl_agent(
+  project_dir : String,
+  session : String,
+  agent_id : String,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::TL,
+    agent_type: synthesized_parent_agent_type(@types.Role::TL),
+    parent: None,
+    workspace: project_dir,
+    branch: agent_id,
+    terminal_target: Some(
+      synthesized_parent_terminal_target(session, agent_id, @types.Role::TL),
+    ),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+}
+
+///|
 pub fn resolve_agent_with_fallback(
   project_dir : String,
   session : String,
@@ -512,7 +566,12 @@ pub fn resolve_agent_with_fallback(
             state: lifecycle.to_agent_state(),
             spawn_depth: 0,
           }
-        None => raise @types.ChoirError::agent_not_found(agent_id)
+        None =>
+          if is_root_tl_shaped_agent_id(agent_id) {
+            synthesize_root_tl_agent(project_dir, session, agent_id)
+          } else {
+            raise @types.ChoirError::agent_not_found(agent_id)
+          }
       }
   }
 }
