@@ -32,7 +32,9 @@ options(
     "leaf_tool.mbt": [ "native" ],
     "main.mbt": [ "native" ],
     "mcp_mode.mbt": [ "native" ],
+    "mcp_subcommand.mbt": [ "native" ],
     "runtime_commands.mbt": [ "native" ],
+    "skill_subcommand.mbt": [ "native" ],
     "statusline.mbt": [ "native" ],
     "stub_main.mbt": [ "not", "native" ],
     "tcp_reader.mbt": [ "native" ],
@@ -40,6 +42,7 @@ options(
     "trust_gemini_folder.mbt": [ "native" ],
     "uds_reader.mbt": [ "native" ],
     "uds_server.mbt": [ "native" ],
+    "user_config.mbt": [ "native" ],
     "zellij_action.mbt": [ "native" ],
   },
 )
