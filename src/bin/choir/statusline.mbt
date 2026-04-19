@@ -102,6 +102,32 @@ fn statusline_collect_child_ids(project_dir : String) -> Map[String, Bool] {
 }
 
 ///|
+/// Parse `.git/HEAD` synchronously. Returns the branch name (e.g. `main`,
+/// `feature/xyz`) or a short 7-char hash when HEAD is detached. Empty string
+/// if `.git/HEAD` is unreadable.
+fn statusline_git_branch(project_dir : String) -> String {
+  let head = @sys.read_file(project_dir + "/.git/HEAD")
+  if head == "" {
+    return ""
+  }
+  let trimmed = head.trim().to_string()
+  if trimmed.has_prefix("ref: refs/heads/") {
+    trimmed[16:].to_string()
+  } else if trimmed.length() >= 7 {
+    trimmed[0:7].to_string()
+  } else {
+    trimmed
+  }
+}
+
+///|
+/// True when any `tl-parent-override--*` sentinel exists in `.choir/kv`.
+fn statusline_override_active(project_dir : String) -> Bool {
+  statusline_kv_files_with_prefix(project_dir, "tl-parent-override--").length() >
+  0
+}
+
+///|
 fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
   let child_ids = statusline_collect_child_ids(project_dir)
   let files = statusline_list_lifecycle_files(project_dir)
@@ -361,13 +387,30 @@ fn statusline_run() -> Unit {
   }
   let project_dir = cwd
   let has_choir = @sys.read_file(project_dir + "/.choir/config.toml") != ""
+  let out = StringBuilder::new()
+
+  // Branch segment: feature/* gets a distinguishing prefix; main/master plain.
+  let branch = statusline_git_branch(project_dir)
+  if branch != "" {
+    if branch.has_prefix("feature/") {
+      out.write_string("\u001b[2m↪ \u001b[0m\u001b[36m")
+      out.write_string(branch)
+      out.write_string("\u001b[0m  ")
+    } else {
+      out.write_string("\u001b[36m")
+      out.write_string(branch)
+      out.write_string("\u001b[0m  ")
+    }
+  }
+
+  // Context bar: 20-char block with color based on severity.
   let filled = week_pct / 5
   let bar = StringBuilder::new()
   for i = 0; i < 20; i = i + 1 {
     if i < filled {
-      bar.write_string("|")
+      bar.write_string("▓")
     } else {
-      bar.write_string(" ")
+      bar.write_string("░")
     }
   }
   let bar_color = if week_pct >= 80 {
@@ -377,18 +420,17 @@ fn statusline_run() -> Unit {
   } else {
     "\u001b[32m"
   }
-  let out = StringBuilder::new()
   out.write_string(bar_color)
-  out.write_string("[")
   out.write_string(bar.to_string())
-  out.write_string("]")
   out.write_string("\u001b[0m ")
   out.write_string(week_pct.to_string())
-  out.write_string("% 7d")
+  out.write_string("\u001b[2m% 7d\u001b[0m")
   if !has_choir {
     @sys.write_stdout(out.to_string())
     return
   }
+
+  // Leaf state glyphs — show only nonzero counts.
   let (working, review, changes, failed, _done) = statusline_count_agents(
     project_dir,
   )
@@ -397,37 +439,42 @@ fn statusline_run() -> Unit {
     out.write_string("  ")
     let mut need_sep = false
     if working > 0 {
-      out.write_string("\u001b[33m")
+      out.write_string("\u001b[33m●")
       out.write_string(working.to_string())
-      out.write_string("\u001b[2m wip\u001b[0m")
+      out.write_string("\u001b[0m")
       need_sep = true
     }
     if review > 0 {
       if need_sep {
-        out.write_string("\u001b[2m/\u001b[0m")
+        out.write_string(" ")
       }
-      out.write_string("\u001b[32m")
+      out.write_string("\u001b[32m◐")
       out.write_string(review.to_string())
-      out.write_string("\u001b[2m pr\u001b[0m")
+      out.write_string("\u001b[0m")
       need_sep = true
     }
     if changes > 0 {
       if need_sep {
-        out.write_string("\u001b[2m/\u001b[0m")
+        out.write_string(" ")
       }
-      out.write_string("\u001b[35m")
+      out.write_string("\u001b[35m◆")
       out.write_string(changes.to_string())
-      out.write_string("\u001b[2m fix\u001b[0m")
+      out.write_string("\u001b[0m")
       need_sep = true
     }
     if failed > 0 {
       if need_sep {
-        out.write_string("\u001b[2m/\u001b[0m")
+        out.write_string(" ")
       }
-      out.write_string("\u001b[31m")
+      out.write_string("\u001b[31m✗")
       out.write_string(failed.to_string())
-      out.write_string("\u001b[2m err\u001b[0m")
+      out.write_string("\u001b[0m")
     }
+  }
+
+  // Override warning — bright so the TL can't miss it.
+  if statusline_override_active(project_dir) {
+    out.write_string("  \u001b[1;31m⚠ override\u001b[0m")
   }
   let pr_summary = statusline_pr_summary(project_dir)
   if pr_summary.has_automerge {
