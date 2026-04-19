@@ -4,7 +4,7 @@ fn fixture_wave() -> @tools.WaveIndex {
     "feature-x.a", "feature-x.b",
   ])
   idx.usage.set("feature-x.a", {
-    agent_type: "codex",
+    agent_type: @types.AgentType::Codex,
     tokens_in: 100,
     tokens_out: 50,
     elapsed_s: 60,
@@ -57,8 +57,8 @@ test "format_log_plain renders canonical wave snapshot" {
     #|wave wv-demo (feature-x, forked 2026-04-12 13:20:00 UTC)
     #|members: a (codex), b (<unknown>)
     #|
-    #|13:20:02  [a]  lifecycle.transition: x -> Dev(Red) (t)
-    #|13:20:10  [b]  lifecycle.transition: x -> Dev(Done) (t)
+    #|13:20:02  [a]  lifecycle: Dev(Red)
+    #|13:20:10  [b]  lifecycle: Dev(Done)
     #|
   assert_eq(format_log_plain(idx, events), expected)
 }

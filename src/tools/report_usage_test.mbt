@@ -4,7 +4,11 @@ test "configured_usage_cost_usd reads pricing section" {
     #|[pricing.codex]
     #|rate_in = 0.001
     #|rate_out = 0.002
-  assert_eq(@tools.configured_usage_cost_usd(cfg, "codex", 100, 50), Some(0.2))
+  match
+    @tools.configured_usage_cost_usd(cfg, @types.AgentType::Codex, 100, 50) {
+    Ok(cost) => assert_eq(cost, Some(0.2))
+    Err(e) => fail(e.message())
+  }
 }
 
 ///|
@@ -71,6 +75,7 @@ test "interpret_report_usage records usage for wave caller config" {
       match idx.usage.get("main.leaf") {
         Some(u) => {
           assert_eq(u.tokens_in, 100)
+          assert_eq(u.agent_type, @types.AgentType::Codex)
           assert_eq(u.cost_usd, Some(0.2))
         }
         None => fail("usage missing")

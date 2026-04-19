@@ -19,7 +19,15 @@ pub(all) struct Config {
   automerge : Bool
   /// Review loop behavior after fixes are pushed for review comments.
   review_mode : ReviewMode
+  /// Per-agent-type token pricing, keyed by canonical AgentType wire string.
+  pricing : Map[String, PricingRate]
 } derive(Debug)
+
+///|
+pub(all) struct PricingRate {
+  rate_in : Double
+  rate_out : Double
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct LocalConfig {
@@ -60,6 +68,7 @@ pub fn Config::default() -> Config {
     pr_review: true,
     automerge: false,
     review_mode: SinglePass,
+    pricing: {},
   }
 }
 

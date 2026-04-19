@@ -301,26 +301,6 @@ pub fn allocate_wave_id(
 }
 
 ///|
-pub fn generate_wave_id_and_save(
-  project_dir : String,
-  slug_prefix : String,
-  parent_branch : String,
-  agent_ids : Array[String],
-  now_ms : Int64,
-  pid : Int,
-) -> Result[String, @types.ChoirError] {
-  let wave_id = allocate_wave_id(project_dir, slug_prefix, now_ms, pid)
-  match
-    save_wave_index(
-      project_dir,
-      WaveIndex::new(wave_id, parent_branch, now_ms, agent_ids),
-    ) {
-    Ok(_) => Ok(wave_id)
-    Err(e) => Err(e)
-  }
-}
-
-///|
 pub fn save_fresh_spawned_wave_index(
   project_dir : String,
   wave_id : String,

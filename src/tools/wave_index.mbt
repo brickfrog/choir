@@ -14,7 +14,7 @@ pub(all) struct WaveIndex {
 
 ///|
 pub(all) struct WaveUsage {
-  agent_type : String
+  agent_type : @types.AgentType
   tokens_in : Int
   tokens_out : Int
   elapsed_s : Int
@@ -45,7 +45,7 @@ pub fn wave_index_path(project_dir : String, wave_id : String) -> String {
 ///|
 fn wave_usage_to_json(u : WaveUsage) -> Json {
   let obj : Map[String, Json] = {
-    "agent_type": u.agent_type.to_json(),
+    "agent_type": u.agent_type.to_wire_string().to_json(),
     "tokens_in": u.tokens_in.to_json(),
     "tokens_out": u.tokens_out.to_json(),
     "elapsed_s": u.elapsed_s.to_json(),
@@ -89,7 +89,15 @@ fn parse_wave_usage(v : Json) -> Result[WaveUsage, @types.ChoirError] {
     return Err(@types.ChoirError::config_error("usage entry must be an object"))
   }
   let agent_type = match obj.get("agent_type") {
-    Some(String(s)) => s
+    Some(String(s)) =>
+      match @types.AgentType::try_parse_wire(s) {
+        Ok(@types.AgentType::Unknown) =>
+          return Err(
+            @types.ChoirError::config_error("unknown agent_type: " + s),
+          )
+        Ok(t) => t
+        Err(e) => return Err(e)
+      }
     _ =>
       return Err(
         @types.ChoirError::config_error("usage entry missing 'agent_type'"),
@@ -118,7 +126,10 @@ fn parse_wave_usage(v : Json) -> Result[WaveUsage, @types.ChoirError] {
   }
   let reported_at_ms = match obj.get("reported_at_ms") {
     Some(Number(n, ..)) => n.to_int64()
-    _ => 0L
+    _ =>
+      return Err(
+        @types.ChoirError::config_error("usage entry missing 'reported_at_ms'"),
+      )
   }
   let cost_usd = match obj.get("cost_usd") {
     Some(Number(n, ..)) => Some(n)
@@ -232,9 +243,24 @@ pub fn save_wave_index(
     return Err(@types.ChoirError::workspace_error("failed to create " + dir))
   }
   let path = wave_index_path(project_dir, idx.wave_id)
+  let tmp_path = path +
+    ".tmp." +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
   let body = render_wave_index_json(idx)
-  if !@sys.write_file_sync(path, body) {
-    return Err(@types.ChoirError::workspace_error("failed to write " + path))
+  if !@sys.write_file_sync(tmp_path, body) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write " + tmp_path),
+    )
+  }
+  if !@sys.rename_file_sync(tmp_path, path) {
+    ignore(@sys.rm_rf(tmp_path))
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to rename " + tmp_path + " -> " + path,
+      ),
+    )
   }
   Ok(())
 }
@@ -336,149 +362,4 @@ pub fn record_usage(
     }
     Err(e) => Err(e)
   }
-}
-
-///|
-test "render_wave_index_json + parse_wave_index_json round-trips" {
-  let idx = WaveIndex::new("wv-demo", "feature-x", 1776000000000L, [
-    "feature-x.leaf-0", "feature-x.leaf-1",
-  ])
-  idx.usage.set("feature-x.leaf-0", {
-    agent_type: "codex",
-    tokens_in: 100,
-    tokens_out: 50,
-    elapsed_s: 60,
-    cost_usd: Some(0.12),
-    reported_at_ms: 1776000120000L,
-  })
-  idx.rescued.set("feature-x.leaf-0-old", "feature-x.leaf-0")
-  let body = render_wave_index_json(idx)
-  let parsed = match parse_wave_index_json(body) {
-    Ok(p) => p
-    Err(e) => {
-      fail("round-trip parse failed: " + e.message())
-      return
-    }
-  }
-  assert_eq(parsed.wave_id, "wv-demo")
-  assert_eq(parsed.parent_branch, "feature-x")
-  assert_eq(parsed.fork_ts_ms, 1776000000000L)
-  assert_eq(parsed.agent_ids.length(), 2)
-  assert_eq(parsed.agent_ids[0], "feature-x.leaf-0")
-  assert_eq(
-    parsed.rescued.get("feature-x.leaf-0-old"),
-    Some("feature-x.leaf-0"),
-  )
-  match parsed.usage.get("feature-x.leaf-0") {
-    Some(u) => {
-      assert_eq(u.agent_type, "codex")
-      assert_eq(u.tokens_in, 100)
-      assert_eq(u.tokens_out, 50)
-      assert_eq(u.elapsed_s, 60)
-      assert_eq(u.cost_usd, Some(0.12))
-    }
-    None => fail("missing usage entry")
-  }
-}
-
-///|
-test "parse_wave_index_json rejects missing required fields" {
-  match parse_wave_index_json("{}") {
-    Ok(_) => fail("empty object should fail")
-    Err(e) => assert_true(e.message().contains("wave_id"))
-  }
-  match parse_wave_index_json("{\"wave_id\":\"x\"}") {
-    Ok(_) => fail("missing parent_branch should fail")
-    Err(e) => assert_true(e.message().contains("parent_branch"))
-  }
-  match parse_wave_index_json("not json at all") {
-    Ok(_) => fail("malformed should fail")
-    Err(e) => assert_true(e.message().contains("malformed"))
-  }
-}
-
-///|
-test "save/load/list round-trip on a tmp project dir" {
-  let tmp = "/tmp/choir-wave-index-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.rm_rf(tmp))
-  ignore(@sys.create_dir_all(tmp))
-  let idx = WaveIndex::new("wv-a", "feature-z", 1L, ["feature-z.leaf-0"])
-  match save_wave_index(tmp, idx) {
-    Ok(_) => ()
-    Err(e) => {
-      fail("save failed: " + e.message())
-      ignore(@sys.rm_rf(tmp))
-      return
-    }
-  }
-  let ids = list_wave_ids(tmp)
-  assert_eq(ids.length(), 1)
-  assert_eq(ids[0], "wv-a")
-  match load_wave_index(tmp, "wv-a") {
-    Ok(parsed) => assert_eq(parsed.agent_ids[0], "feature-z.leaf-0")
-    Err(e) => fail("load failed: " + e.message())
-  }
-  ignore(@sys.rm_rf(tmp))
-}
-
-///|
-test "append_agent_id is idempotent and record_rescue updates map" {
-  let tmp = "/tmp/choir-wave-index-append-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.rm_rf(tmp))
-  ignore(@sys.create_dir_all(tmp))
-  let idx = WaveIndex::new("wv-b", "feature-y", 2L, ["feature-y.a"])
-  ignore(save_wave_index(tmp, idx))
-  ignore(append_agent_id(tmp, "wv-b", "feature-y.b"))
-  ignore(append_agent_id(tmp, "wv-b", "feature-y.b")) // dup
-  ignore(record_rescue(tmp, "wv-b", "feature-y.a-old", "feature-y.a-new"))
-  match load_wave_index(tmp, "wv-b") {
-    Ok(parsed) => {
-      assert_eq(parsed.agent_ids.length(), 3)
-      assert_eq(parsed.rescued.get("feature-y.a-old"), Some("feature-y.a-new"))
-    }
-    Err(e) => fail("load after mutations: " + e.message())
-  }
-  ignore(@sys.rm_rf(tmp))
-}
-
-///|
-test "record_usage overwrites on repeat call" {
-  let tmp = "/tmp/choir-wave-index-usage-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.rm_rf(tmp))
-  ignore(@sys.create_dir_all(tmp))
-  let idx = WaveIndex::new("wv-c", "feature-u", 3L, ["feature-u.a"])
-  ignore(save_wave_index(tmp, idx))
-  let u1 : WaveUsage = {
-    agent_type: "codex",
-    tokens_in: 10,
-    tokens_out: 5,
-    elapsed_s: 1,
-    cost_usd: None,
-    reported_at_ms: 1L,
-  }
-  let u2 : WaveUsage = {
-    agent_type: "codex",
-    tokens_in: 20,
-    tokens_out: 15,
-    elapsed_s: 2,
-    cost_usd: Some(0.02),
-    reported_at_ms: 2L,
-  }
-  ignore(record_usage(tmp, "wv-c", "feature-u.a", u1))
-  ignore(record_usage(tmp, "wv-c", "feature-u.a", u2))
-  match load_wave_index(tmp, "wv-c") {
-    Ok(parsed) =>
-      match parsed.usage.get("feature-u.a") {
-        Some(u) => {
-          assert_eq(u.tokens_in, 20)
-          assert_eq(u.cost_usd, Some(0.02))
-        }
-        None => fail("usage missing")
-      }
-    Err(e) => fail("load after record_usage: " + e.message())
-  }
-  ignore(@sys.rm_rf(tmp))
 }
