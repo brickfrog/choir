@@ -99,16 +99,20 @@ pub async fn interpret_kill_agent(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   project_dir? : String = ".",
 ) -> @types.Response {
-  match read_pending_wave(project_dir, args.agent_id) {
-    Some(_) => {
-      delete_pending_wave(project_dir, args.agent_id)
-      @moontrace.warn("pending wave killed", fields=[
-        @moontrace.field("wave_id", args.agent_id),
-        @moontrace.field("reason", args.reason),
-      ])
-      return kill_pending_wave_ok_response(args.agent_id)
-    }
-    None => ()
+  // File existence is the source of truth for "is this id a pending wave"
+  // — delete the entry whether or not its JSON parses. A partial/corrupt
+  // file would otherwise fall through to the registry-kill path and orphan
+  // the pending KV row (statusline would keep counting it as queued).
+  let pending_path = pending_wave_kv_path(project_dir, args.agent_id)
+  if @sys.path_entry_exists(pending_path) {
+    let parsed_ok = read_pending_wave(project_dir, args.agent_id) is Some(_)
+    delete_pending_wave(project_dir, args.agent_id)
+    @moontrace.warn("pending wave killed", fields=[
+      @moontrace.field("wave_id", args.agent_id),
+      @moontrace.field("reason", args.reason),
+      @moontrace.field("parseable", parsed_ok),
+    ])
+    return kill_pending_wave_ok_response(args.agent_id)
   }
   for pw in pending_waves_naming_dep(project_dir, args.agent_id) {
     mark_pending_wave_failed(project_dir, registry, runner, pw, args.agent_id)

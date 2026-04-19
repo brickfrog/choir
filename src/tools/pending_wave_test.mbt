@@ -322,3 +322,163 @@ test "pending_wave_kv_key prefix is pending-wave--" {
   assert_eq(@tools.pending_wave_kv_key("foo"), "pending-wave--foo")
   assert_eq(@tools.failed_wave_kv_key("foo"), "failed-wave--foo")
 }
+
+///|
+test "allocate_pending_wave_id appends suffix on collision" {
+  let project_dir = pending_wave_test_setup("allocate-collision")
+  let base_id = @tools.generate_pending_wave_id("wv", 42L, 7)
+  // Simulate an existing pending file at the base id.
+  ignore(
+    @sys.write_file_sync(
+      @tools.pending_wave_kv_path(project_dir, base_id),
+      "{}",
+    ),
+  )
+  let allocated = @tools.allocate_pending_wave_id(project_dir, "wv", 42L, 7)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(allocated, base_id + "-1")
+}
+
+///|
+test "allocate_pending_wave_id returns base when free" {
+  let project_dir = pending_wave_test_setup("allocate-free")
+  let allocated = @tools.allocate_pending_wave_id(project_dir, "wv", 99L, 5)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(allocated, @tools.generate_pending_wave_id("wv", 99L, 5))
+}
+
+///|
+test "allocate_pending_wave_id walks suffix until free slot" {
+  let project_dir = pending_wave_test_setup("allocate-walk")
+  let base_id = @tools.generate_pending_wave_id("wv", 1L, 1)
+  ignore(
+    @sys.write_file_sync(
+      @tools.pending_wave_kv_path(project_dir, base_id),
+      "{}",
+    ),
+  )
+  ignore(
+    @sys.write_file_sync(
+      @tools.pending_wave_kv_path(project_dir, base_id + "-1"),
+      "{}",
+    ),
+  )
+  ignore(
+    @sys.write_file_sync(
+      @tools.pending_wave_kv_path(project_dir, base_id + "-2"),
+      "{}",
+    ),
+  )
+  let allocated = @tools.allocate_pending_wave_id(project_dir, "wv", 1L, 1)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(allocated, base_id + "-3")
+}
+
+///|
+test "reap_unparseable_pending_waves deletes empty + invalid entries" {
+  let project_dir = pending_wave_test_setup("reap")
+  // valid entry
+  let args = pending_wave_test_args("main.tl", "wv", ["main.dep"])
+  ignore(@tools.write_pending_wave(project_dir, { wave_id: "wv-ok", args }))
+  // empty file (partial-write)
+  ignore(
+    @sys.write_file_sync(project_dir + "/.choir/kv/pending-wave--wv-empty", ""),
+  )
+  // garbage JSON
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/pending-wave--wv-garbage",
+      "{not-json",
+    ),
+  )
+  // wrong shape (parses but not a pending wave)
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/pending-wave--wv-wrong",
+      "{\"wave_id\":\"wv-wrong\"}",
+    ),
+  )
+  let removed = @tools.reap_unparseable_pending_waves(project_dir)
+  let remaining_paths = @tools.list_pending_wave_paths(project_dir)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(removed.length(), 3)
+  assert_true(removed.contains("pending-wave--wv-empty"))
+  assert_true(removed.contains("pending-wave--wv-garbage"))
+  assert_true(removed.contains("pending-wave--wv-wrong"))
+  assert_eq(remaining_paths.length(), 1)
+}
+
+///|
+test "reap_unparseable_pending_waves keeps a parseable entry" {
+  let project_dir = pending_wave_test_setup("reap-keep")
+  let args = pending_wave_test_args("main.tl", "wv", ["main.dep"])
+  ignore(@tools.write_pending_wave(project_dir, { wave_id: "wv-keep", args }))
+  let removed = @tools.reap_unparseable_pending_waves(project_dir)
+  let remaining = @tools.list_pending_wave_paths(project_dir)
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(removed.length(), 0)
+  assert_eq(remaining.length(), 1)
+}
+
+///|
+async test "interpret_kill_agent deletes a malformed pending wave file" {
+  let project_dir = pending_wave_test_setup("kill-malformed")
+  let wave_id = "wv-malformed"
+  // File exists but cannot be parsed as a PendingWave.
+  ignore(
+    @sys.write_file_sync(
+      @tools.pending_wave_kv_path(project_dir, wave_id),
+      "{\"wave_id\":42}",
+    ),
+  )
+  let args : @tools.KillAgentArgs = { agent_id: wave_id, reason: "cleanup" }
+  let resp = @tools.interpret_kill_agent(
+    args,
+    None,
+    pending_wave_runner_record,
+    project_dir~,
+  )
+  let still_there = @sys.read_file(
+    @tools.pending_wave_kv_path(project_dir, wave_id),
+  )
+  ignore(@sys.rm_rf(project_dir))
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("killed_pending_wave")))
+      assert_eq(map.get("wave_id"), Some(String::to_json(wave_id)))
+    }
+    _ => fail("expected killed_pending_wave ok response")
+  }
+  assert_eq(still_there, "")
+}
+
+///|
+async test "interpret_kill_agent deletes a parseable pending wave file" {
+  let project_dir = pending_wave_test_setup("kill-parseable")
+  let args = pending_wave_test_args("main.tl", "wv", ["main.dep"])
+  let pw : @tools.PendingWave = { wave_id: "wv-good", args }
+  ignore(@tools.write_pending_wave(project_dir, pw))
+  let kill_args : @tools.KillAgentArgs = {
+    agent_id: "wv-good",
+    reason: "user-cancel",
+  }
+  let resp = @tools.interpret_kill_agent(
+    kill_args,
+    None,
+    pending_wave_runner_record,
+    project_dir~,
+  )
+  let still_there = @sys.read_file(
+    @tools.pending_wave_kv_path(project_dir, "wv-good"),
+  )
+  ignore(@sys.rm_rf(project_dir))
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      assert_eq(map.get("status"), Some(String::to_json("killed_pending_wave")))
+    }
+    _ => fail("expected killed_pending_wave ok response")
+  }
+  assert_eq(still_there, "")
+}

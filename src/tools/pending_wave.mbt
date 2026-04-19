@@ -33,15 +33,52 @@ pub fn failed_wave_kv_path(project_dir : String, wave_id : String) -> String {
 }
 
 ///|
-/// Generate a wave id from `slug_prefix` plus seconds and pid for uniqueness
-/// when several waves are queued in the same second. Output is restricted to
-/// characters allowed by `validate_kv_storage_key`.
+/// Build the deterministic base of a pending wave id.
+///
+/// `now_ticks` should be `@env.now().reinterpret_as_int64()` — the high
+/// resolution clock; second-resolution would collide if the same TL fired
+/// two `fork_wave` calls with the same `slug_prefix` within one second.
+/// `pid` differentiates servers if two run on the same host.
+///
+/// Even at this resolution, a same-process loop could in principle still
+/// collide; `allocate_pending_wave_id` resolves that by probing the KV
+/// directory and adding a counter suffix on collision.
 pub fn generate_pending_wave_id(
   slug_prefix : String,
-  now_sec : Int64,
+  now_ticks : Int64,
   pid : Int,
 ) -> String {
-  slug_prefix + "-" + now_sec.to_string() + "-" + pid.to_string()
+  slug_prefix + "-" + now_ticks.to_string() + "-" + pid.to_string()
+}
+
+///|
+/// Generate a wave id whose `pending-wave--<id>` file does not yet exist.
+/// Probes `pending_wave_kv_path` and appends an integer suffix until the
+/// path is free, so concurrent or fast-fire `fork_wave` calls cannot
+/// overwrite an existing pending entry. Bounded retry — gives up after
+/// `max_attempts` and falls back to the suffixed candidate (existence
+/// would still mean the call site loses the race, which is preferable to
+/// looping forever).
+pub fn allocate_pending_wave_id(
+  project_dir : String,
+  slug_prefix : String,
+  now_ticks : Int64,
+  pid : Int,
+  max_attempts? : Int = 1000,
+) -> String {
+  let base = generate_pending_wave_id(slug_prefix, now_ticks, pid)
+  if !@sys.path_entry_exists(pending_wave_kv_path(project_dir, base)) {
+    return base
+  }
+  let mut suffix = 1
+  while suffix < max_attempts {
+    let candidate = base + "-" + suffix.to_string()
+    if !@sys.path_entry_exists(pending_wave_kv_path(project_dir, candidate)) {
+      return candidate
+    }
+    suffix = suffix + 1
+  }
+  base + "-" + suffix.to_string()
 }
 
 ///|
@@ -327,6 +364,39 @@ pub fn read_all_pending_waves(project_dir : String) -> Array[PendingWave] {
 }
 
 ///|
+/// Delete any `pending-wave--*` file whose contents do not parse as a
+/// [`PendingWave`]. Such an orphan would otherwise keep the statusline
+/// `⧗N` counter elevated (it counts by filename prefix) while never being
+/// dispatched (the dispatcher filters by parse success). Empty files
+/// — the partial-write or zero-byte case — are treated the same.
+///
+/// Returns the basenames of the files that were removed (handy for logs
+/// and tests).
+pub fn reap_unparseable_pending_waves(project_dir : String) -> Array[String] {
+  let removed : Array[String] = []
+  for path in list_pending_wave_paths(project_dir) {
+    let content = @sys.read_file(path)
+    let parseable = if content == "" {
+      false
+    } else {
+      parse_pending_wave(content) is Some(_)
+    }
+    if !parseable {
+      ignore(@sys.delete_file_sync(path))
+      let basename = match path.rev_find("/") {
+        Some(idx) => path[idx + 1:].to_string()
+        None => path
+      }
+      @sys.write_stderr(
+        "pending wave entry unparseable, removing: " + path + "\n",
+      )
+      removed.push(basename)
+    }
+  }
+  removed
+}
+
+///|
 /// Where a single dep stands relative to the pending wave that names it.
 ///
 /// `Merged` — `Dev(Done(reason=Merged))`. The dep's PR is on the parent
@@ -532,6 +602,11 @@ pub async fn try_dispatch_pending_waves(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
 ) -> Unit {
+  // Sweep orphans first so a malformed `pending-wave--*` file does not stay
+  // forever counted by the statusline (which scans by filename prefix) while
+  // never being dispatchable through `read_all_pending_waves` (which filters
+  // by parse success).
+  ignore(reap_unparseable_pending_waves(project_dir))
   for pw in read_all_pending_waves(project_dir) {
     match evaluate_pending_wave(project_dir, pw) {
       PendingWaveDecision::Wait => ()

@@ -324,9 +324,10 @@ pub async fn dispatch(
             let resolved_args = fork_wave_resolve_args_parent_branch(
               fork_wave_args, project_dir, capture,
             )
-            let wave_id = generate_pending_wave_id(
+            let wave_id = allocate_pending_wave_id(
+              project_dir,
               resolved_args.slug_prefix,
-              @poller.now_sec(),
+              @env.now().reinterpret_as_int64(),
               @sys.get_pid(),
             )
             let pw : PendingWave = { wave_id, args: resolved_args }
