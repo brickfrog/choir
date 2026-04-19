@@ -13,7 +13,7 @@ test "parse_int_simple" {
 ///|
 test "PaneWatcher::new" {
   let pw = PaneWatcher::new()
-  assert_eq(pw.watches.size(), 0)
+  assert_eq(pw.watches.length(), 0)
 }
 
 ///|

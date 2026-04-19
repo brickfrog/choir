@@ -88,8 +88,42 @@ fn hooks_json_scaffold() -> String {
 }
 
 ///|
+fn merge_user_skills_into_plugin(
+  plugin_dir : String,
+  home : String,
+) -> Result[Unit, @types.ChoirError] {
+  let skills_dir = match user_skills_dir_for(home) {
+    Ok(d) => d
+    Err(_) => return Ok(())
+  }
+  if !@sys.path_entry_exists(skills_dir) {
+    return Ok(())
+  }
+  let entries = @sys.list_dir(skills_dir)
+  for entry in entries {
+    if entry == "audit" || entry == "decompose" {
+      let msg = "choir claude: user skill '" +
+        entry +
+        "' clashes with builtin; rename or remove ~/.config/choir/skills/" +
+        entry
+      @sys.write_stderr(msg + "\n")
+      return Err(@types.ChoirError::workspace_error(msg))
+    }
+    let src = skills_dir + "/" + entry
+    let dst = plugin_dir + "/skills/" + entry
+    if !@sys.copy_dir_recursive(src, dst) {
+      return Err(
+        @types.ChoirError::workspace_error("failed to copy user skill " + entry),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
 fn synthesize_plugin_dir(
   project_dir : String,
+  home : String,
 ) -> Result[Unit, @types.ChoirError] {
   let plugin_dir = project_dir + "/.choir/plugin"
 
@@ -149,7 +183,7 @@ fn synthesize_plugin_dir(
     )
   }
 
-  Ok(())
+  merge_user_skills_into_plugin(plugin_dir, home)
 }
 
 ///|
@@ -277,7 +311,12 @@ fn claude_wrapper_run() -> Unit {
       }
   }
 
-  match synthesize_plugin_dir(cwd) {
+  let home = match @sys.getenv("HOME") {
+    Some(h) => if h == "" { "" } else { h }
+    None => ""
+  }
+
+  match synthesize_plugin_dir(cwd, home) {
     Ok(_) => ()
     Err(e) => {
       @sys.write_stderr(
@@ -376,10 +415,13 @@ test "hooks_json_scaffold() parses as empty object" {
 test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   let tmp = "/tmp/choir-plugin-test-" +
     @env.now().reinterpret_as_int64().to_string()
+  let fake_home = "/tmp/choir-plugin-fake-home-" +
+    @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(tmp))
+  ignore(@sys.rm_rf(fake_home))
   ignore(@sys.create_dir_all(tmp))
 
-  match synthesize_plugin_dir(tmp) {
+  match synthesize_plugin_dir(tmp, fake_home) {
     Ok(_) => ()
     Err(e) => {
       fail("synthesize_plugin_dir failed: " + e.message())
@@ -404,7 +446,7 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   assert_true(hooks != "")
 
   // Run again, must be identical
-  match synthesize_plugin_dir(tmp) {
+  match synthesize_plugin_dir(tmp, fake_home) {
     Ok(_) => ()
     Err(e) => {
       fail("synthesize_plugin_dir (rerun) failed: " + e.message())
@@ -417,6 +459,52 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   )
 
   ignore(@sys.rm_rf(tmp))
+}
+
+///|
+test "merge_user_skills_into_plugin copies valid user skills" {
+  let home = "/tmp/choir-plugin-test-home-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let plugin_dir = "/tmp/choir-plugin-test-dir-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+
+  let skills_dir = home + "/.config/choir/skills"
+  ignore(@sys.create_dir_all(skills_dir + "/my-skill"))
+  ignore(@sys.write_file_sync(skills_dir + "/my-skill/SKILL.md", "hello"))
+
+  match merge_user_skills_into_plugin(plugin_dir, home) {
+    Ok(_) => ()
+    Err(e) => fail("merge failed: " + e.message())
+  }
+
+  assert_eq(@sys.read_file(plugin_dir + "/skills/my-skill/SKILL.md"), "hello")
+
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+}
+
+///|
+test "merge_user_skills_into_plugin returns Err on clash" {
+  let home = "/tmp/choir-plugin-test-home-clash-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let plugin_dir = "/tmp/choir-plugin-test-dir-clash-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+
+  let skills_dir = home + "/.config/choir/skills"
+  ignore(@sys.create_dir_all(skills_dir + "/audit"))
+  ignore(@sys.write_file_sync(skills_dir + "/audit/SKILL.md", "hello"))
+
+  match merge_user_skills_into_plugin(plugin_dir, home) {
+    Ok(_) => fail("merge should have failed")
+    Err(e) => assert_true(e.message().contains("clashes with builtin"))
+  }
+
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
 }
 
 ///|
