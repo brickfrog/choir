@@ -254,6 +254,135 @@ test "validate_pending_wave_deps: config_error on empty entry" {
 }
 
 ///|
+test "validate_pending_wave_deps: rejects TL-id dep via registry with role in error" {
+  let project_dir = pending_wave_test_setup("validate-tl-registry")
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/w",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let got = @tools.validate_pending_wave_deps(project_dir, Some(reg), [
+    "main.tl",
+  ])
+  ignore(@sys.rm_rf(project_dir))
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("main.tl"))
+      assert_true(msg.contains("dev leaves"))
+      assert_true(msg.contains("role=tl"))
+    }
+    Ok(_) => fail("expected config_error for TL-id dep")
+  }
+}
+
+///|
+test "validate_pending_wave_deps: rejects TL-id dep via lifecycle file" {
+  let project_dir = pending_wave_test_setup("validate-tl-lifecycle")
+  // Lifecycle file for a TL agent — would otherwise pass the exists check.
+  let lc : @phase.AgentLifecycle = {
+    agent_id: "main.tl",
+    role: @types.Role::TL,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Supervisor(
+      @phase.SupervisorLifecycle::Planning,
+    ),
+  }
+  ignore(@phase.write_lifecycle(project_dir, lc))
+  let got = @tools.validate_pending_wave_deps(project_dir, None, ["main.tl"])
+  ignore(@sys.rm_rf(project_dir))
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("main.tl"))
+      assert_true(msg.contains("dev leaves"))
+      assert_true(msg.contains("role=tl"))
+    }
+    Ok(_) => fail("expected config_error for TL-id dep from lifecycle")
+  }
+}
+
+///|
+test "validate_pending_wave_deps: rejects Root-id dep" {
+  let project_dir = pending_wave_test_setup("validate-root")
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main"),
+      role: @types.Role::Root,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/w",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let got = @tools.validate_pending_wave_deps(project_dir, Some(reg), ["main"])
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(got is Err(_))
+}
+
+///|
+test "validate_pending_wave_deps: accepts Dev-id dep via lifecycle" {
+  let project_dir = pending_wave_test_setup("validate-dev-ok")
+  let lc = pending_wave_test_dev_lifecycle(
+    "main.dep",
+    @phase.DevLifecycle::Working,
+    @phase.ProcessState::Connected,
+  )
+  ignore(@phase.write_lifecycle(project_dir, lc))
+  let got = @tools.validate_pending_wave_deps(project_dir, None, ["main.dep"])
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(got is Ok(_))
+}
+
+///|
+test "validate_pending_wave_deps: rejects Worker-id dep" {
+  let project_dir = pending_wave_test_setup("validate-worker")
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.worker"),
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/w",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let got = @tools.validate_pending_wave_deps(project_dir, Some(reg), [
+    "main.worker",
+  ])
+  ignore(@sys.rm_rf(project_dir))
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("main.worker"))
+      assert_true(msg.contains("dev leaves"))
+      assert_true(msg.contains("role=worker"))
+    }
+    Ok(_) => fail("expected config_error for Worker-id dep")
+  }
+}
+
+///|
 test "dep_failed_notify_message format" {
   let msg = @tools.dep_failed_notify_message("wv-99", "main.bad")
   assert_eq(msg, "[DEP FAILED] wave wv-99 — dep failed: main.bad")
