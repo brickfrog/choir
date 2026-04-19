@@ -378,6 +378,7 @@ fn fork_wave_args_base() -> ForkWaveArgs {
     review_context: None,
     automerge: None,
     review_mode: None,
+    depends_on: [],
   }
 }
 
@@ -418,6 +419,7 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
     review_context: None,
     automerge: None,
     review_mode: None,
+    depends_on: [],
   }
   let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
   assert_eq(plan.spawned_count, 2)

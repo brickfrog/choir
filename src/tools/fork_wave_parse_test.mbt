@@ -176,6 +176,80 @@ test "parse_fork_wave_args ignores empty issue_id" {
 }
 
 ///|
+test "parse_fork_wave_args defaults depends_on to empty array" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.depends_on.length(), 0)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses depends_on JSON-array string" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "depends_on": "[\"main.dep-a\",\"main.dep-b\"]",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.depends_on, ["main.dep-a", "main.dep-b"])
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses single-entry depends_on" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "depends_on": "[\"main.dep\"]",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.depends_on, ["main.dep"])
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args rejects non-array depends_on" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "depends_on": "\"not-an-array\"",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Err(e) => assert_true(e.message().contains("depends_on"))
+    Ok(_) => fail("expected InvalidFormat for non-array depends_on")
+  }
+}
+
+///|
+test "parse_fork_wave_args ignores empty depends_on string" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "depends_on": "   ",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.depends_on.length(), 0)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
 test "parse_fork_wave_args rejects missing caller_id" {
   let args = @tools.tool_args_from_map({
     "count": "1",

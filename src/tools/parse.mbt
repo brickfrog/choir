@@ -533,6 +533,95 @@ fn parse_spawn_gemini_args(
 }
 
 ///|
+/// Parse the optional `depends_on` arg for `fork_wave` into an array of agent
+/// IDs. Accepts a JSON array (`["main.a","main.b"]`) directly or as a string
+/// (the `tool_args_from_map` shape). Empty / missing yields `[]`. Anything
+/// else is `InvalidFormat(depends_on, ...)`.
+fn parse_depends_on(args : ToolArgs) -> Result[Array[String], ParseError] {
+  let json_value = tool_args_get_json(args, "depends_on")
+  match json_value {
+    None => Ok([])
+    Some(Array(items)) => {
+      let out : Array[String] = []
+      for item in items {
+        match item {
+          String(s) => {
+            let trimmed = s.trim().to_string()
+            if trimmed != "" {
+              out.push(trimmed)
+            }
+          }
+          _ =>
+            return Err(
+              ParseError::InvalidFormat(
+                field="depends_on",
+                message="entries must be strings",
+              ),
+            )
+        }
+      }
+      Ok(out)
+    }
+    Some(String(raw)) => {
+      let trimmed = raw.trim().to_string()
+      if trimmed == "" {
+        return Ok([])
+      }
+      // tool_args_from_map shape: the depends_on value is the JSON-stringified
+      // array. Parse it explicitly so we don't fall back to the line-splitter
+      // that `json_string_list` uses for free-form text fields (which would
+      // hand us back the bracketed string as a single entry).
+      let parsed : Json = @json.parse(trimmed) catch {
+        _ =>
+          return Err(
+            ParseError::InvalidFormat(
+              field="depends_on",
+              message="invalid JSON",
+            ),
+          )
+      }
+      match parsed {
+        Array(items) => {
+          let out : Array[String] = []
+          for item in items {
+            match item {
+              String(s) => {
+                let item_trimmed = s.trim().to_string()
+                if item_trimmed != "" {
+                  out.push(item_trimmed)
+                }
+              }
+              _ =>
+                return Err(
+                  ParseError::InvalidFormat(
+                    field="depends_on",
+                    message="entries must be strings",
+                  ),
+                )
+            }
+          }
+          Ok(out)
+        }
+        _ =>
+          Err(
+            ParseError::InvalidFormat(
+              field="depends_on",
+              message="must be a JSON array",
+            ),
+          )
+      }
+    }
+    Some(_) =>
+      Err(
+        ParseError::InvalidFormat(
+          field="depends_on",
+          message="must be a JSON array",
+        ),
+      )
+  }
+}
+
+///|
 pub fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
@@ -680,6 +769,10 @@ pub fn parse_fork_wave_args(
     Some(v) if v.trim() != "" => v
     _ => return Err(ParseError::MissingField(field="caller_id"))
   }
+  let depends_on = match parse_depends_on(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
   Ok({
     count,
     tasks,
@@ -694,6 +787,7 @@ pub fn parse_fork_wave_args(
     review_context,
     automerge,
     review_mode,
+    depends_on,
   })
 }
 

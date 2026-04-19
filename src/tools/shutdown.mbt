@@ -74,14 +74,45 @@ pub fn kill_agent_adapter_host_steps() -> Array[KillAgentAdapterHostStep] {
 }
 
 ///|
+/// Success JSON for `kill_agent` when the target was a queued pending wave id
+/// (no agent process to terminate; just the KV entry to clean up).
+pub fn kill_pending_wave_ok_response(wave_id : String) -> @types.Response {
+  @types.Response::ok_values({
+    "status": String::to_json("killed_pending_wave"),
+    "wave_id": String::to_json(wave_id),
+  })
+}
+
+///|
 /// Effectful `kill_agent` adapter: optional pane close, optional worktree remove,
 /// registry failed state, warning log, success response. Preserves historical
 /// `ToolRequest::KillAgent` control flow while keeping `dispatch` as a thin caller.
+///
+/// Pending-wave handling (Feature 1):
+/// 1. If `args.agent_id` matches a `pending-wave--<id>` KV entry, delete it
+///    and return `killed_pending_wave` without touching the registry.
+/// 2. Otherwise, propagate failure to every pending wave that names this
+///    `agent_id` as a dep before continuing with the normal kill sequence.
 pub async fn interpret_kill_agent(
   args : KillAgentArgs,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  project_dir? : String = ".",
 ) -> @types.Response {
+  match read_pending_wave(project_dir, args.agent_id) {
+    Some(_) => {
+      delete_pending_wave(project_dir, args.agent_id)
+      @moontrace.warn("pending wave killed", fields=[
+        @moontrace.field("wave_id", args.agent_id),
+        @moontrace.field("reason", args.reason),
+      ])
+      return kill_pending_wave_ok_response(args.agent_id)
+    }
+    None => ()
+  }
+  for pw in pending_waves_naming_dep(project_dir, args.agent_id) {
+    mark_pending_wave_failed(project_dir, registry, runner, pw, args.agent_id)
+  }
   match registry {
     None => @types.Response::Err("no agent registry available")
     Some(reg) => {

@@ -311,34 +311,64 @@ pub async fn dispatch(
         None =>
           @types.Response::ok_values({ "status": String::to_json("registered") })
       }
-    ToolRequest::ForkWave(fork_wave_args) => {
-      let (resp, fork_wave_args, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
-        fork_wave_args,
-        project_dir,
-        session,
-        registry,
-        capture,
-        git_capture,
-        runner,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
-      )
-      // Post-spawn side effects: only run if spawn succeeded.
-      if resp.is_ok() && spawn_plan.spawned_count > 0 {
-        interpret_fork_wave_post_spawn(
+    ToolRequest::ForkWave(fork_wave_args) =>
+      if fork_wave_args.depends_on.length() > 0 {
+        match
+          validate_pending_wave_deps(
+            project_dir,
+            registry,
+            fork_wave_args.depends_on,
+          ) {
+          Err(e) => @types.Response::Err(e.message())
+          Ok(_) => {
+            let resolved_args = fork_wave_resolve_args_parent_branch(
+              fork_wave_args, project_dir, capture,
+            )
+            let wave_id = generate_pending_wave_id(
+              resolved_args.slug_prefix,
+              @poller.now_sec(),
+              @sys.get_pid(),
+            )
+            let pw : PendingWave = { wave_id, args: resolved_args }
+            if !write_pending_wave(project_dir, pw) {
+              @types.Response::Err("failed to write pending wave: " + wave_id)
+            } else {
+              @types.Response::ok_values({
+                "status": String::to_json("pending"),
+                "wave_id": String::to_json(wave_id),
+                "depends_on": resolved_args.depends_on.to_json(),
+              })
+            }
+          }
+        }
+      } else {
+        let (resp, fork_wave_args, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
           fork_wave_args,
-          spawn_plan,
           project_dir,
           session,
           registry,
-          capture~,
+          capture,
+          git_capture,
+          runner,
+          extra_mcp_servers_json~,
+          shell_command~,
+          listen_uds~,
+          listen_tcp~,
+          tcp_auth_token~,
         )
+        // Post-spawn side effects: only run if spawn succeeded.
+        if resp.is_ok() && spawn_plan.spawned_count > 0 {
+          interpret_fork_wave_post_spawn(
+            fork_wave_args,
+            spawn_plan,
+            project_dir,
+            session,
+            registry,
+            capture~,
+          )
+        }
+        resp
       }
-      resp
-    }
     ToolRequest::ForkSession(session_args) => {
       let session_dir = project_dir + "/.choir/sessions/" + session_args.name
       let context_path = session_dir + "/context.json"
@@ -364,11 +394,28 @@ pub async fn dispatch(
         file_pr_args, project_dir, session, poller_state, registry, pr_review, ensure_branch_ready,
         runner, capture, ensure_pr,
       )
-    ToolRequest::MergePr(merge_args) =>
-      interpret_merge_pr(
+    ToolRequest::MergePr(merge_args) => {
+      let resp = interpret_merge_pr(
         merge_args, project_dir, poller_state, mutex_registry, registry, runner,
         capture,
       )
+      if resp.is_ok() {
+        try_dispatch_pending_waves(
+          project_dir,
+          session,
+          registry,
+          capture,
+          git_capture,
+          runner,
+          extra_mcp_servers_json~,
+          shell_command~,
+          listen_uds~,
+          listen_tcp~,
+          tcp_auth_token~,
+        )
+      }
+      resp
+    }
     ToolRequest::TrackPr(track_pr_args) =>
       interpret_track_pr(
         track_pr_args,
@@ -493,7 +540,7 @@ pub async fn dispatch(
         shutdown_args, project_dir, poller_state, registry, runner,
       )
     ToolRequest::KillAgent(kill_args) =>
-      interpret_kill_agent(kill_args, registry, runner)
+      interpret_kill_agent(kill_args, registry, runner, project_dir~)
     ToolRequest::Suspend(suspend_args) =>
       interpret_suspend(suspend_args, registry, project_dir, hook_capture~)
     ToolRequest::Resume(resume_args) =>
