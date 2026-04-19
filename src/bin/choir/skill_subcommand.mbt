@@ -167,7 +167,7 @@ fn skill_list(skills_dir : String) -> Unit {
     entries.sort()
     for entry in entries {
       let skill_path = skills_dir + "/" + entry
-      if @sys.path_entry_exists(skill_path) && !@sys.path_exists(skill_path) {
+      if @sys.path_entry_exists(skill_path) {
         let md_path = skill_path + "/SKILL.md"
         if @sys.path_exists(md_path) {
           let content = @sys.read_file(md_path)
