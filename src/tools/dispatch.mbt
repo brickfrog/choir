@@ -332,27 +332,29 @@ pub async fn dispatch(
             )
             let fork_ts_ms = @env.now().reinterpret_as_int64()
             let pw : PendingWave = { wave_id, args: resolved_args }
-            if !write_pending_wave(project_dir, pw) {
-              @types.Response::Err("failed to write pending wave: " + wave_id)
-            } else {
-              match
-                save_wave_index(
-                  project_dir,
-                  WaveIndex::new(
-                    wave_id,
-                    resolved_args.parent_branch,
-                    fork_ts_ms,
-                    [],
-                  ),
-                ) {
-                Err(e) => @types.Response::Err(e.message())
-                Ok(_) =>
+            match
+              save_wave_index(
+                project_dir,
+                WaveIndex::new(
+                  wave_id,
+                  resolved_args.parent_branch,
+                  fork_ts_ms,
+                  [],
+                ),
+              ) {
+              Err(e) => @types.Response::Err(e.message())
+              Ok(_) =>
+                if !write_pending_wave(project_dir, pw) {
+                  @types.Response::Err(
+                    "failed to write pending wave: " + wave_id,
+                  )
+                } else {
                   @types.Response::ok_values({
                     "status": String::to_json("pending"),
                     "wave_id": String::to_json(wave_id),
                     "depends_on": resolved_args.depends_on.to_json(),
                   })
-              }
+                }
             }
           }
         }
