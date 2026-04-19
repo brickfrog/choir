@@ -203,17 +203,18 @@ fn leaf_profile_text() -> String {
   "   - Before filing, verify repo state with `git status --short`, `git log --oneline -1`, and `git rev-list --left-right --count <parent_branch>...HEAD`.\n" +
   "   - If the branch is not ahead of the parent branch, stop and report failure instead of retrying `file_pr`.\n" +
   "3. `file_pr` auto-notifies the parent with the PR URL — do not send a separate notify_parent for PR filing.\n" +
-  "4. Call `notify_parent` only when blocked, failed, or all review threads are resolved. Do not send progress updates.\n" +
+  "4. Before a final success notification, call `report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds>` if usage figures are available; omit `--cost-usd` unless you have an exact provider cost.\n" +
+  "5. Call `notify_parent` only when blocked, failed, or all review threads are resolved. Do not send progress updates.\n" +
   "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n" +
   "   - Shell form: `notify_parent [--status <success|failure|info>] <message>`.\n" +
   "   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.\n" +
-  "5. Wait for review feedback — it arrives automatically via the poller.\n" +
-  "6. If review feedback arrives, address every comment and push fixes.\n" +
+  "6. Wait for review feedback — it arrives automatically via the poller.\n" +
+  "7. If review feedback arrives, address every comment and push fixes.\n" +
   "   - Resolve each thread on GitHub after addressing it: use the GraphQL mutation `resolveReviewThread(input: {threadId: \"<id>\"})` for each thread ID.\n" +
   "   - Confirm zero unresolved threads with `gh api graphql` before notifying parent.\n" +
   "   - Only notify_parent once you have verified zero unresolved threads.\n" +
-  "7. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.\n" +
-  "8. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
+  "8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.\n" +
+  "9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
   "Execution discipline:\n" +
   "- Run requested verification once per code change.\n" +
   "- Do not rerun the same tests repeatedly without new code changes.\n" +

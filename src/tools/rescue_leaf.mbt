@@ -86,6 +86,7 @@ pub fn rescue_leaf_spawn_plan(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
   match @workspace.validate_reuse_spawn_spec(spec) {
     Err(e) => Err(@types.ChoirError::validation_error(e))
@@ -160,6 +161,12 @@ pub async fn interpret_rescue_leaf(
     Err(e) => return @types.Response::Err(e.message())
     Ok(p) => p
   }
+  let old_wave_id = read_agent_wave_id(
+    project_dir,
+    plan.from_agent_id,
+    registry,
+  )
+  let plan = { ..plan, spec: { ..plan.spec, wave_id: old_wave_id } }
   let cmds = @workspace.spawn_commands(
     plan.spec,
     project_dir,
@@ -301,6 +308,15 @@ pub async fn interpret_rescue_leaf_post_spawn(
         } catch {
           _ => ()
         }
+      }
+    None => ()
+  }
+  match plan.spec.wave_id {
+    Some(wave_id) =>
+      match
+        record_rescue(project_dir, wave_id, plan.from_agent_id, plan.to_id) {
+        Ok(_) => ()
+        Err(e) => return @types.Response::Err(e.message())
       }
     None => ()
   }

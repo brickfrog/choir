@@ -332,6 +332,7 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let wave_id = doc.get_optional_nonempty("wave_id")
   Ok({
     role,
     agent_id,
@@ -345,6 +346,7 @@ pub fn parse_local_config(
     task_contract,
     automerge,
     review_mode,
+    wave_id,
   })
 }
 

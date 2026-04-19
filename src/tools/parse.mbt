@@ -32,6 +32,15 @@ fn parse_int(s : String) -> Int? {
 }
 
 ///|
+fn parse_double_arg(s : String) -> Double? {
+  let parsed = @json.parse(s.trim().to_string()) catch { _ => return None }
+  match parsed {
+    Number(n, ..) => Some(n)
+    _ => None
+  }
+}
+
+///|
 fn get_arg_or_alias(
   args : ToolArgs,
   key : String,
@@ -1280,6 +1289,54 @@ fn parse_caller_message_args(
 }
 
 ///|
+fn parse_report_usage_args(
+  args : ToolArgs,
+) -> Result[ReportUsageArgs, ParseError] {
+  let caller_id = tool_args_get(args, "caller_id").unwrap_or("")
+  if caller_id == "" {
+    return Err(ParseError::MissingField(field="caller_id"))
+  }
+  let tokens_in_raw = tool_args_get(args, "tokens_in").unwrap_or("")
+  let tokens_in = match parse_int(tokens_in_raw) {
+    Some(v) => v
+    None =>
+      return Err(
+        ParseError::InvalidValue(field="tokens_in", value=tokens_in_raw),
+      )
+  }
+  let tokens_out_raw = tool_args_get(args, "tokens_out").unwrap_or("")
+  let tokens_out = match parse_int(tokens_out_raw) {
+    Some(v) => v
+    None =>
+      return Err(
+        ParseError::InvalidValue(field="tokens_out", value=tokens_out_raw),
+      )
+  }
+  let elapsed_s_raw = tool_args_get(args, "elapsed_s").unwrap_or("")
+  let elapsed_s = match parse_int(elapsed_s_raw) {
+    Some(v) => v
+    None =>
+      return Err(
+        ParseError::InvalidValue(field="elapsed_s", value=elapsed_s_raw),
+      )
+  }
+  let cost_usd = match tool_args_get(args, "cost_usd") {
+    Some(raw) =>
+      if raw.trim().to_string() == "" {
+        None
+      } else {
+        match parse_double_arg(raw) {
+          Some(v) => Some(v)
+          None =>
+            return Err(ParseError::InvalidValue(field="cost_usd", value=raw))
+        }
+      }
+    None => None
+  }
+  Ok({ caller_id, tokens_in, tokens_out, elapsed_s, cost_usd })
+}
+
+///|
 fn parse_send_message_args(
   args : ToolArgs,
 ) -> Result[SendMessageArgs, ParseError] {
@@ -1404,6 +1461,8 @@ fn parse_tool_request(
       parse_track_pr_args(args).map(fn(a) { ToolRequest::TrackPr(a) })
     "notify_parent" =>
       parse_caller_message_args(args).map(fn(a) { ToolRequest::NotifyParent(a) })
+    "report_usage" =>
+      parse_report_usage_args(args).map(fn(a) { ToolRequest::ReportUsage(a) })
     "send_message" =>
       parse_send_message_args(args).map(fn(a) { ToolRequest::SendMessage(a) })
     "reply" => parse_reply_args(args).map(fn(a) { ToolRequest::Reply(a) })

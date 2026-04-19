@@ -37,6 +37,8 @@ pub(all) struct LocalConfig {
   automerge : Bool?
   /// Per-wave review-mode override. `None` inherits global config.
   review_mode : ReviewMode?
+  /// Wave telemetry id assigned by `fork_wave`. `None` for root/pre-scaffold agents.
+  wave_id : String?
 } derive(Debug)
 
 ///|
@@ -76,5 +78,6 @@ pub fn LocalConfig::default() -> LocalConfig {
     task_contract: None,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
 }

@@ -325,6 +325,18 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["caller_id", "message"],
     },
     {
+      name: "report_usage",
+      description: "Self-report token/cost usage for the caller's wave. No-ops when the caller has no wave_id.",
+      props: [
+        { name: "caller_id", desc: "ID of the calling agent" },
+        { name: "tokens_in", desc: "Input token count" },
+        { name: "tokens_out", desc: "Output token count" },
+        { name: "elapsed_s", desc: "Elapsed wall-clock seconds" },
+        { name: "cost_usd", desc: "Optional computed cost in USD" },
+      ],
+      required: ["caller_id", "tokens_in", "tokens_out", "elapsed_s"],
+    },
+    {
       name: "send_message",
       description: "Send a message to another agent",
       props: [
