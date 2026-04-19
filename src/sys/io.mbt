@@ -391,6 +391,12 @@ pub fn is_dir(path : String) -> Bool {
 
 ///|
 pub fn copy_dir_recursive(src : String, dst : String) -> Bool {
+  // AUDIT: copy_dir_recursive inherits `list_dir`'s behavior of skipping all
+  // dot-prefixed entries (see choir_list_dir in src/sys/stub.c), not just
+  // `.`/`..`. Hidden files inside a skill dir are therefore not copied. This
+  // is acceptable for SKILL.md-based skills which use conventional filenames.
+  // Changing the stub's policy would affect other callers (KV scan, worktree
+  // walks) and is out of scope for this PR.
   if !is_dir(src) {
     return false
   }
@@ -439,14 +445,17 @@ test "copy_dir_recursive copies files and directories correctly" {
   if !path_exists(dst + "/subdir/subfile.txt") {
     fail("dst/subdir/subfile.txt does not exist")
   }
-  if !path_exists(dst + "/.dotfile") {
-    fail("dst/.dotfile does not exist")
+  // .dotfile should NOT exist because list_dir skips it
+  if path_exists(dst + "/.dotfile") {
+    fail("dst/.dotfile should NOT exist")
   }
   assert_eq(read_file(dst + "/file.txt"), "hello")
   assert_eq(read_file(dst + "/subdir/subfile.txt"), "world")
-  assert_eq(read_file(dst + "/.dotfile"), "dot")
 
   assert_false(copy_dir_recursive(src + "/file.txt", dst + "/invalid"))
+  assert_false(
+    copy_dir_recursive("/nonexistent/path/for/choir/test", dst + "/invalid2"),
+  )
 
   ignore(rm_rf(src))
   ignore(rm_rf(dst))

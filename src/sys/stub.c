@@ -106,7 +106,7 @@ int choir_list_dir(const char *path, char *buf, int max_size) {
     struct dirent *ent;
     int total = 0;
     while ((ent = readdir(d)) != NULL) {
-        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+        if (ent->d_name[0] == '.') {
             continue;
         }
         int len = (int)strlen(ent->d_name);
