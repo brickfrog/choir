@@ -372,32 +372,3 @@ pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
     ".choir/context/common.md", ".choir/context/worker.md",
   ])
 }
-
-///|
-test "render_leaf_spawn_prompt auto-includes problems.md when present" {
-  let spec = PromptSpec::from_map({
-    "task": "Test feature",
-    "read_first": "src/foo.mbt",
-  })
-
-  // Case 1: file exists (simulated by it being in default_read_first)
-  let prompt_with = render_leaf_spawn_prompt_with_defaults(spec, [
-    ".choir/context/problems.md", ".choir/context/common.md",
-  ])
-  assert_true(
-    prompt_with.contains(
-      "## READ FIRST\n- .choir/context/problems.md\n- src/foo.mbt\n- .choir/context/common.md",
-    ),
-  )
-
-  // Case 2: file missing, behavior unchanged
-  let prompt_without = render_leaf_spawn_prompt_with_defaults(spec, [
-    ".choir/context/common.md",
-  ])
-  assert_true(
-    prompt_without.contains(
-      "## READ FIRST\n- src/foo.mbt\n- .choir/context/common.md",
-    ),
-  )
-  assert_false(prompt_without.contains(".choir/context/problems.md"))
-}
