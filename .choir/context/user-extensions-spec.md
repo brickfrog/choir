@@ -64,9 +64,13 @@ choir skill list
       <name>     — <description from SKILL.md frontmatter>
 
 choir skill remove <name>
-  Errors if <name> is a builtin.
+  Errors if <name> is empty / contains path separators / is `.` or `..`.
   Errors if user skill does not exist.
   Deletes ~/.config/choir/skills/<name>/.
+  Does NOT block on builtin-name clashes: a stale user dir with a
+  builtin name (e.g. `audit`) is garbage to clean up — binary always
+  wins at merge time, so protecting the user dir from removal is
+  backwards. `skill add` still blocks creating builtin-named skills.
 
 choir mcp add <name> -- <command> [args...]
   Appends {"<name>": {"type":"stdio","command":"<command>","args":[...]}}
@@ -285,5 +289,7 @@ covers the shared helpers.
   strings is fine.
 - **Skill description extraction** for `skill list`: parse the YAML
   frontmatter's `description:` line with a tiny scanner, not a full YAML
-  parser. Fail gracefully (print `<no description>`) on malformed
-  frontmatter.
+  parser. Supports quoted, unquoted, and block-scalar (`>` folded / `|`
+  literal) forms — block scalars fold continuation lines into a single
+  space-separated string for display. Fail gracefully (print
+  `<no description>`) on malformed frontmatter.

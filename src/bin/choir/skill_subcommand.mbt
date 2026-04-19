@@ -10,15 +10,30 @@ pub fn SkillDesc::new(name : String, description : String) -> SkillDesc {
 }
 
 ///|
-pub fn validate_skill_name(
+/// Syntax-only name check: non-empty, no path separators, not `.`/`..`.
+/// Used for `remove` where builtin-named user dirs must still be removable
+/// (binary wins at merge, so a stale user dir with a builtin name is garbage
+/// to clean up, not to protect).
+pub fn validate_skill_name_syntax(
   name : String,
-  builtins : Array[String],
 ) -> Result[Unit, @types.ChoirError] {
   if name == "" {
     return Err(@types.ChoirError::validation_error("empty skill name"))
   }
   if name.contains("/") || name.contains("\\") || name == "." || name == ".." {
     return Err(@types.ChoirError::validation_error("invalid skill name"))
+  }
+  Ok(())
+}
+
+///|
+pub fn validate_skill_name(
+  name : String,
+  builtins : Array[String],
+) -> Result[Unit, @types.ChoirError] {
+  match validate_skill_name_syntax(name) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
   }
   for b in builtins {
     if name == b {
@@ -76,11 +91,20 @@ fn pad_right(s : String, width : Int) -> String {
 }
 
 ///|
+/// Extract the `description:` value from YAML frontmatter. Supports quoted,
+/// unquoted, and block-scalar (`>` folded / `|` literal) forms. For block
+/// scalars, continuation lines are the indented non-blank lines immediately
+/// following; folding collapses them into a single space-separated string
+/// (both `>` and `|` are folded the same way here since a skill list row
+/// only has room for one line anyway).
 pub fn extract_description(content : String) -> String {
   let lines = content.split("\n")
   let mut in_frontmatter = false
+  let mut collecting_block = false
+  let folded_parts : Array[String] = []
   for line in lines {
-    let trimmed = line.trim().to_string()
+    let line_s = line.to_string()
+    let trimmed = line_s.trim().to_string()
     if trimmed == "---" {
       if in_frontmatter {
         break
@@ -89,9 +113,24 @@ pub fn extract_description(content : String) -> String {
         continue
       }
     }
-    if in_frontmatter && trimmed.has_prefix("description:") {
+    if !in_frontmatter {
+      continue
+    }
+    if collecting_block {
+      // Indented non-blank line = continuation. Anything else ends the block.
+      if trimmed != "" && line_s != trimmed {
+        folded_parts.push(trimmed)
+        continue
+      }
+      break
+    }
+    if trimmed.has_prefix("description:") {
       let desc_len = "description:".length()
       let desc = trimmed[desc_len:].to_string().trim().to_string()
+      if desc == ">" || desc == "|" {
+        collecting_block = true
+        continue
+      }
       if desc.has_prefix("\"") && desc.has_suffix("\"") && desc.length() >= 2 {
         return desc[1:desc.length() - 1].to_string()
       }
@@ -100,6 +139,9 @@ pub fn extract_description(content : String) -> String {
       }
       return desc
     }
+  }
+  if folded_parts.length() > 0 {
+    return folded_parts.join(" ")
   }
   "<no description>"
 }
@@ -184,7 +226,7 @@ fn skill_list(skills_dir : String) -> Unit {
 
 ///|
 fn skill_remove(name : String, skills_dir : String) -> Unit {
-  match validate_skill_name(name, ["audit", "decompose"]) {
+  match validate_skill_name_syntax(name) {
     Ok(_) => ()
     Err(e) => {
       @sys.write_stderr("error: " + e.message() + "\n")
