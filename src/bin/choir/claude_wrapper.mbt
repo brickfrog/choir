@@ -160,20 +160,67 @@ fn build_claude_settings_json(
   session_name : String,
 ) -> String {
   let role_str = @config.role_to_string(role)
-  let mcp = {
+  let mcp : Map[String, Json] = {
     "choir": {
       "type": "stdio".to_json(),
       "command": "choir".to_json(),
       "args": ["mcp-stdio", "--role", role_str, "--name", session_name].to_json(),
     }.to_json(),
   }
+
+  let merged_mcp = match user_mcp_json_path() {
+    Ok(p) =>
+      if @sys.path_exists(p) {
+        let content = @sys.read_file(p)
+        if content != "" {
+          match parse_mcp_config_json(content) {
+            Ok(user_servers) => {
+              let user_json : Map[String, Json] = {}
+              for k, v in user_servers {
+                let srv_obj : Map[String, Json] = {
+                  "type": v.kind.to_json(),
+                  "command": v.command.to_json(),
+                }
+                let args_json : Array[Json] = []
+                for a in v.args {
+                  args_json.push(a.to_json())
+                }
+                srv_obj.set("args", args_json.to_json())
+                user_json.set(k, srv_obj.to_json())
+              }
+              match merge_mcp_maps(mcp, user_json) {
+                Ok(m) => m
+                Err(e) => {
+                  @sys.write_stderr("choir claude: " + e.message() + "\n")
+                  @sys.exit(1)
+                  mcp
+                }
+              }
+            }
+            Err(e) => {
+              @sys.write_stderr(
+                "choir claude: error parsing " + p + ": " + e.message() + "\n",
+              )
+              @sys.exit(1)
+              mcp
+            }
+          }
+        } else {
+          mcp
+        }
+      } else {
+        mcp
+      }
+    Err(_) => mcp
+  }
+
   let enabled_plugins : Map[String, Json] = { "choir@local": true.to_json() }
   let settings : Map[String, Json] = {
     "statusLine": {
       "type": "command".to_json(),
       "command": "choir statusline".to_json(),
     }.to_json(),
-    "mcpServers": mcp.to_json(),
+    "mcpServers": merged_mcp.to_json(),
     "enabledPlugins": enabled_plugins.to_json(),
   }
   settings.to_json().stringify()
