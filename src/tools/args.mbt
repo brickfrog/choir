@@ -46,6 +46,10 @@ pub(all) struct ForkWaveArgs {
   automerge : Bool?
   /// Per-wave review-mode override. `None` means "use the global config default".
   review_mode : @types.ReviewMode?
+  /// Agent IDs the wave depends on. When non-empty the wave is queued as a
+  /// pending wave (`pending-wave--<id>`) and only spawned after every named
+  /// dep reaches `Dev(Done(Merged))`. See `pending_wave.mbt`.
+  depends_on : Array[String]
 } derive(Debug, Eq)
 
 ///|
