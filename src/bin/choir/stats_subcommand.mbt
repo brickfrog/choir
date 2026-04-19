@@ -17,7 +17,7 @@ pub(all) struct WaveStats {
 
 ///|
 pub(all) struct AgentTypeStats {
-  agent_type : String
+  agent_type : @types.AgentType
   totals : StatsTotals
   reports : Int
 } derive(Debug, Eq)
@@ -58,9 +58,11 @@ fn sorted_agent_type_stats(
 ) -> Array[AgentTypeStats] {
   let out = stats.values().collect()
   out.sort_by(fn(a, b) {
-    if a.agent_type < b.agent_type {
+    let a_key = a.agent_type.to_wire_string()
+    let b_key = b.agent_type.to_wire_string()
+    if a_key < b_key {
       -1
-    } else if a.agent_type > b.agent_type {
+    } else if a_key > b_key {
       1
     } else {
       0
@@ -81,14 +83,15 @@ pub fn rollup_stats(waves : Array[@tools.WaveIndex]) -> StatsRollup {
       match wave.usage.get(agent_id) {
         Some(usage) => {
           totals = add_usage_to_totals(totals, usage)
+          let agent_type_key = usage.agent_type.to_wire_string()
           let existing = by_type
-            .get(usage.agent_type)
+            .get(agent_type_key)
             .unwrap_or({
               agent_type: usage.agent_type,
               totals: empty_totals(),
               reports: 0,
             })
-          by_type.set(usage.agent_type, {
+          by_type.set(agent_type_key, {
             agent_type: usage.agent_type,
             totals: add_usage_to_totals(existing.totals, usage),
             reports: existing.reports + 1,
@@ -148,7 +151,7 @@ fn totals_columns(t : StatsTotals) -> String {
 ///|
 fn render_rollup(
   rollup : StatsRollup,
-  agent_type_filter? : String? = None,
+  agent_type_filter? : @types.AgentType? = None,
 ) -> String {
   let out = StringBuilder::new()
   out.write_string("waves\n")
@@ -180,7 +183,7 @@ fn render_rollup(
       None => ()
     }
     rendered_any = true
-    out.write_string(row.agent_type)
+    out.write_string(row.agent_type.to_wire_string())
     out.write_string("\t")
     out.write_string(row.reports.to_string())
     out.write_string("\t")
@@ -207,7 +210,7 @@ fn render_wave_detail(wave : @tools.WaveIndex) -> String {
       Some(u) => {
         out.write_string(agent_id)
         out.write_string("\t")
-        out.write_string(u.agent_type)
+        out.write_string(u.agent_type.to_wire_string())
         out.write_string("\t")
         out.write_string(
           totals_columns({
@@ -238,7 +241,7 @@ fn render_wave_detail(wave : @tools.WaveIndex) -> String {
 ///|
 pub(all) struct StatsCliArgs {
   wave_id : String?
-  agent_type : String?
+  agent_type : @types.AgentType?
   limit : Int
   help : Bool
 } derive(Debug, Eq)
@@ -253,9 +256,9 @@ fn parse_limit(raw : String) -> Int? {
 ///|
 pub fn parse_stats_cli_args(
   args : Array[String],
-) -> Result[StatsCliArgs, String] {
+) -> Result[StatsCliArgs, @types.ChoirError] {
   let mut wave_id : String? = None
-  let mut agent_type : String? = None
+  let mut agent_type : @types.AgentType? = None
   let mut limit = 10
   let mut help = false
   let mut i = 2
@@ -267,34 +270,57 @@ pub fn parse_stats_cli_args(
       }
       "--wave" => {
         if i + 1 >= args.length() {
-          return Err("--wave requires an id")
+          return Err(
+            @types.ChoirError::validation_error("--wave requires an id"),
+          )
         }
         wave_id = Some(args[i + 1])
         i = i + 2
       }
       "--agent-type" => {
         if i + 1 >= args.length() {
-          return Err("--agent-type requires a type")
+          return Err(
+            @types.ChoirError::validation_error("--agent-type requires a type"),
+          )
         }
-        agent_type = Some(args[i + 1])
+        agent_type = match @types.AgentType::try_parse_wire(args[i + 1]) {
+          Ok(@types.AgentType::Unknown) =>
+            return Err(
+              @types.ChoirError::validation_error(
+                "unknown agent_type: " + args[i + 1],
+              ),
+            )
+          Ok(t) => Some(t)
+          Err(e) => return Err(@types.ChoirError::validation_error(e.message()))
+        }
         i = i + 2
       }
       "--limit" => {
         if i + 1 >= args.length() {
-          return Err("--limit requires a number")
+          return Err(
+            @types.ChoirError::validation_error("--limit requires a number"),
+          )
         }
         match parse_limit(args[i + 1]) {
           Some(n) =>
             if n > 0 {
               limit = n
             } else {
-              return Err("--limit must be positive")
+              return Err(
+                @types.ChoirError::validation_error("--limit must be positive"),
+              )
             }
-          None => return Err("--limit must be a number")
+          None =>
+            return Err(
+              @types.ChoirError::validation_error("--limit must be a number"),
+            )
         }
         i = i + 2
       }
-      other => return Err("unknown stats flag: " + other)
+      other =>
+        return Err(
+          @types.ChoirError::validation_error("unknown stats flag: " + other),
+        )
     }
   }
   Ok({ wave_id, agent_type, limit, help })
@@ -358,7 +384,7 @@ pub fn stats_subcommand_run() -> Unit {
   let parsed = match parse_stats_cli_args(@env.args()) {
     Ok(v) => v
     Err(e) => {
-      @sys.write_stderr("choir stats: " + e + "\n")
+      @sys.write_stderr("choir stats: " + e.message() + "\n")
       @sys.write_stderr(stats_help())
       @sys.exit(1)
       return

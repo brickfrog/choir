@@ -128,34 +128,39 @@ fn event_summary(event : Event) -> String {
   match event.data {
     Object(fields) =>
       if event.type_ == "lifecycle.transition" {
-        let from = @types.json_field_string(fields, "from").unwrap_or("?")
-        let to = @types.json_field_string(fields, "to").unwrap_or("?")
-        let trigger = @types.json_field_string(fields, "trigger")
-        match trigger {
-          Some(t) => from + " -> " + to + " (" + t + ")"
-          None => from + " -> " + to
-        }
+        @types.json_field_string(fields, "to").unwrap_or("?")
+      } else if event.type_ == "evidence.ci_observed" {
+        "ci_observed(" +
+        @types.json_field_string(fields, "status").unwrap_or("?") +
+        ")"
+      } else if event.type_ == "evidence.review_observed" {
+        "review_observed(" +
+        @types.json_field_string(fields, "state").unwrap_or("?") +
+        ")"
       } else {
-        match @types.json_field_string(fields, "status") {
-          Some(s) => s
-          None =>
-            match @types.json_field_string(fields, "state") {
-              Some(s) => s
-              None =>
-                match @types.json_field_string(fields, "name") {
-                  Some(name) =>
-                    match @types.json_field_bool(fields, "ok") {
-                      Some(true) => name + " ok"
-                      Some(false) => name + " failed"
-                      None => name
-                    }
-                  None => event.data.stringify()
-                }
-            }
+        let (_, subtype) = event_category_and_subtype(event.type_)
+        if subtype == "" {
+          event.data.stringify()
+        } else {
+          subtype + " " + event.data.stringify()
         }
       }
     _ => event.data.stringify()
   }
+}
+
+///|
+fn event_category_and_subtype(type_ : String) -> (String, String) {
+  match type_.split_once(".") {
+    Some((category, subtype)) => (category.to_string(), subtype.to_string())
+    None => (type_, "")
+  }
+}
+
+///|
+fn event_line_label(event : Event) -> String {
+  let (category, _) = event_category_and_subtype(event.type_)
+  category
 }
 
 ///|
@@ -177,7 +182,7 @@ pub fn format_log_plain(
   let members : Array[String] = []
   for agent_id in idx.agent_ids {
     let agent_type = match idx.usage.get(agent_id) {
-      Some(u) => u.agent_type
+      Some(u) => u.agent_type.to_wire_string()
       None => "<unknown>"
     }
     members.push(last_dot_segment(agent_id) + " (" + agent_type + ")")
@@ -192,7 +197,7 @@ pub fn format_log_plain(
     out.write_string("  [")
     out.write_string(last_dot_segment(event.agent_id))
     out.write_string("]  ")
-    out.write_string(event.type_)
+    out.write_string(event_line_label(event))
     out.write_string(": ")
     out.write_string(event_summary(event))
     out.write_string("\n")

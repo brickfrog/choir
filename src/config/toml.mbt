@@ -62,9 +62,14 @@ pub fn TomlDoc::to_map(self : TomlDoc) -> Map[String, String] {
 pub fn parse_toml_doc(content : String) -> TomlDoc {
   let map : Map[String, String] = Map::new()
   let lines = content.split("\n")
+  let mut section = ""
   for line in lines {
     let str = line.to_string().trim().to_string()
     if str.has_prefix("#") || str == "" {
+      continue
+    }
+    if str.has_prefix("[") && str.has_suffix("]") && str.length() >= 2 {
+      section = str[1:str.length() - 1].to_string().trim().to_string()
       continue
     }
     let mut idx = -1
@@ -75,7 +80,8 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
       }
     }
     if idx != -1 {
-      let key = str[0:idx].to_string().trim().to_string()
+      let raw_key = str[0:idx].to_string().trim().to_string()
+      let key = if section == "" { raw_key } else { section + "." + raw_key }
       let mut val = str[idx + 1:].to_string().trim().to_string()
       if val.has_prefix("\"") && val.has_suffix("\"") && val.length() >= 2 {
         val = unescape_basic_toml_string(val[1:val.length() - 1].to_string())

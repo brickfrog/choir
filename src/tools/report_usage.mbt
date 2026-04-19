@@ -1,17 +1,4 @@
 ///|
-fn parse_double_value(raw : String) -> Double? {
-  let trimmed = raw.trim().to_string()
-  if trimmed == "" {
-    return None
-  }
-  let parsed = @json.parse(trimmed) catch { _ => return None }
-  match parsed {
-    Number(n, ..) => Some(n)
-    _ => None
-  }
-}
-
-///|
 fn agent_slug_from_id(agent_id : String) -> String {
   @phase.extract_slug(agent_id)
 }
@@ -80,61 +67,25 @@ pub fn read_agent_wave_id(
 }
 
 ///|
-fn pricing_rate_key(agent_type : String, name : String) -> String {
-  "pricing." + agent_type + "." + name
-}
-
-///|
-fn pricing_rate_from_section(
-  config_content : String,
-  agent_type : String,
-  name : String,
-) -> Double? {
-  let section_header = "[pricing." + agent_type + "]"
-  let lines = config_content.split("\n")
-  let mut in_section = false
-  for line in lines {
-    let trimmed = line.to_string().trim().to_string()
-    if trimmed.has_prefix("[") && trimmed.has_suffix("]") {
-      in_section = trimmed == section_header
-      continue
-    }
-    if !in_section {
-      continue
-    }
-    let eq = match trimmed.find("=") {
-      Some(i) => i
-      None => continue
-    }
-    let key = trimmed[0:eq].to_string().trim().to_string()
-    if key != name {
-      continue
-    }
-    return parse_double_value(trimmed[eq + 1:].to_string())
-  }
-  None
-}
-
-///|
 pub fn configured_usage_cost_usd(
   config_content : String,
-  agent_type : String,
+  agent_type : @types.AgentType,
   tokens_in : Int,
   tokens_out : Int,
-) -> Double? {
-  let doc = @config.parse_toml_doc(config_content)
-  let rate_in = match doc.get(pricing_rate_key(agent_type, "rate_in")) {
-    Some(v) => parse_double_value(v)
-    None => pricing_rate_from_section(config_content, agent_type, "rate_in")
+) -> Result[Double?, @types.ChoirError] {
+  let cfg = match @config.parse_config(config_content) {
+    Ok(c) => c
+    Err(e) => return Err(e)
   }
-  let rate_out = match doc.get(pricing_rate_key(agent_type, "rate_out")) {
-    Some(v) => parse_double_value(v)
-    None => pricing_rate_from_section(config_content, agent_type, "rate_out")
-  }
-  match (rate_in, rate_out) {
-    (Some(ri), Some(ro)) =>
-      Some(tokens_in.to_double() * ri + tokens_out.to_double() * ro)
-    _ => None
+  match cfg.pricing.get(agent_type.to_wire_string()) {
+    Some(rate) =>
+      Ok(
+        Some(
+          tokens_in.to_double() * rate.rate_in +
+          tokens_out.to_double() * rate.rate_out,
+        ),
+      )
+    None => Ok(None)
   }
 }
 
@@ -158,26 +109,29 @@ pub fn interpret_report_usage(
   let agent_type = match registry {
     Some(reg) =>
       match (Some(reg.get(args.caller_id)) catch { _ => None }) {
-        Some(agent) => @config.agent_type_to_string(agent.agent_type)
+        Some(agent) => agent.agent_type
         None =>
           match read_agent_local_config(project_dir, args.caller_id, registry) {
             Some(cfg) =>
               match cfg.agent_type {
-                Some(t) => @config.agent_type_to_string(t)
-                None => "unknown"
+                Some(t) => t
+                None => @types.AgentType::Unknown
               }
-            None => "unknown"
+            None => @types.AgentType::Unknown
           }
       }
     None =>
       match read_agent_local_config(project_dir, args.caller_id, registry) {
         Some(cfg) =>
           match cfg.agent_type {
-            Some(t) => @config.agent_type_to_string(t)
-            None => "unknown"
+            Some(t) => t
+            None => @types.AgentType::Unknown
           }
-        None => "unknown"
+        None => @types.AgentType::Unknown
       }
+  }
+  if agent_type == @types.AgentType::Unknown {
+    return @types.Response::Err("unknown agent_type for usage report")
   }
   let cost_usd = match args.cost_usd {
     Some(c) => Some(c)
@@ -186,12 +140,16 @@ pub fn interpret_report_usage(
         Some(c) => c
         None => @sys.read_file(project_dir + "/.choir/config.toml")
       }
-      configured_usage_cost_usd(
-        cfg,
-        agent_type,
-        args.tokens_in,
-        args.tokens_out,
-      )
+      match
+        configured_usage_cost_usd(
+          cfg,
+          agent_type,
+          args.tokens_in,
+          args.tokens_out,
+        ) {
+        Ok(cost) => cost
+        Err(e) => return @types.Response::Err(e.message())
+      }
     }
   }
   let usage : WaveUsage = {
