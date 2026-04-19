@@ -484,6 +484,33 @@ pub fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
 }
 
 ///|
+fn is_root_tl_shaped_agent_id(agent_id : String) -> Bool {
+  agent_id != "" && !agent_id.contains(".")
+}
+
+///|
+fn synthesize_root_tl_agent(
+  project_dir : String,
+  session : String,
+  agent_id : String,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::TL,
+    agent_type: synthesized_parent_agent_type(@types.Role::TL),
+    parent: None,
+    workspace: project_dir,
+    branch: agent_id,
+    terminal_target: Some(
+      synthesized_parent_terminal_target(session, agent_id, @types.Role::TL),
+    ),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+}
+
+///|
 pub fn resolve_agent_with_fallback(
   project_dir : String,
   session : String,
@@ -512,7 +539,12 @@ pub fn resolve_agent_with_fallback(
             state: lifecycle.to_agent_state(),
             spawn_depth: 0,
           }
-        None => raise @types.ChoirError::agent_not_found(agent_id)
+        None =>
+          if is_root_tl_shaped_agent_id(agent_id) {
+            synthesize_root_tl_agent(project_dir, session, agent_id)
+          } else {
+            raise @types.ChoirError::agent_not_found(agent_id)
+          }
       }
   }
 }

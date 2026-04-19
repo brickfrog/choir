@@ -168,7 +168,7 @@ test "notify_parent synthesizes user root TL parent when lifecycle is absent" {
   let root_tl_id = "user-12345-67890"
   let caller_id = root_tl_id + ".worker"
   ignore(
-    state.register_agent({
+    state.registry.upsert({
       agent_id: caller_id,
       role: @types.Role::Worker,
       agent_type: @types.AgentType::Gemini,
