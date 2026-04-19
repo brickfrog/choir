@@ -138,8 +138,6 @@ pub fn ServerState::finalize_recovered_offline_agent(
 }
 
 ///|
-pub async fn ServerState::persist_recovered_poller_state(
-  self : ServerState,
-) -> Unit {
+pub fn ServerState::persist_recovered_poller_state(self : ServerState) -> Unit {
   ignore(self.poller.write_state_file(self.config.project_dir))
 }

@@ -380,6 +380,88 @@ pub fn create_dir_all(path : String) -> Bool {
 }
 
 ///|
+pub fn is_dir(path : String) -> Bool {
+  if !path_entry_exists(path) {
+    return false
+  }
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let buf = Bytes::new(1)
+  c_list_dir(path_bytes, buf, 1) >= 0
+}
+
+///|
+pub fn copy_dir_recursive(src : String, dst : String) -> Bool {
+  // AUDIT: copy_dir_recursive inherits `list_dir`'s behavior of skipping all
+  // dot-prefixed entries (see choir_list_dir in src/sys/stub.c), not just
+  // `.`/`..`. Hidden files inside a skill dir are therefore not copied. This
+  // is acceptable for SKILL.md-based skills which use conventional filenames.
+  // Changing the stub's policy would affect other callers (KV scan, worktree
+  // walks) and is out of scope for this PR.
+  if !is_dir(src) {
+    return false
+  }
+  if !create_dir_all(dst) {
+    return false
+  }
+  let entries = list_dir(src)
+  let mut success = true
+  for entry in entries {
+    let src_path = src + "/" + entry
+    let dst_path = dst + "/" + entry
+    if is_dir(src_path) {
+      if !copy_dir_recursive(src_path, dst_path) {
+        success = false
+      }
+    } else {
+      let content = read_file(src_path)
+      if !write_file_sync(dst_path, content) {
+        success = false
+      }
+    }
+  }
+  success
+}
+
+///|
+test "copy_dir_recursive copies files and directories correctly" {
+  let pid_str = get_pid().to_string()
+  let src = "/tmp/choir-io-copy-test-src-" + pid_str
+  let dst = "/tmp/choir-io-copy-test-dst-" + pid_str
+  ignore(rm_rf(src))
+  ignore(rm_rf(dst))
+
+  assert_true(create_dir_all(src + "/subdir"))
+  assert_true(write_file_sync(src + "/file.txt", "hello"))
+  assert_true(write_file_sync(src + "/subdir/subfile.txt", "world"))
+  assert_true(write_file_sync(src + "/.dotfile", "dot"))
+
+  if !copy_dir_recursive(src, dst) {
+    fail("copy_dir_recursive returned false")
+  }
+
+  if !path_exists(dst + "/file.txt") {
+    fail("dst/file.txt does not exist")
+  }
+  if !path_exists(dst + "/subdir/subfile.txt") {
+    fail("dst/subdir/subfile.txt does not exist")
+  }
+  // .dotfile should NOT exist because list_dir skips it
+  if path_exists(dst + "/.dotfile") {
+    fail("dst/.dotfile should NOT exist")
+  }
+  assert_eq(read_file(dst + "/file.txt"), "hello")
+  assert_eq(read_file(dst + "/subdir/subfile.txt"), "world")
+
+  assert_false(copy_dir_recursive(src + "/file.txt", dst + "/invalid"))
+  assert_false(
+    copy_dir_recursive("/nonexistent/path/for/choir/test", dst + "/invalid2"),
+  )
+
+  ignore(rm_rf(src))
+  ignore(rm_rf(dst))
+}
+
+///|
 pub fn append_file_sync(path : String, content : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   let content_bytes = @utf8.encode(content)
