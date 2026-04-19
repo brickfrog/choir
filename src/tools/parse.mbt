@@ -157,7 +157,7 @@ fn validate_branch(s : String) -> Result[Unit, @types.ChoirError] {
     return Err(@types.ChoirError::validation_error("branch cannot be empty"))
   }
   for c in s {
-    if !is_alphanumeric_or_dash(c) && c != '.' {
+    if !is_alphanumeric_or_dash(c) && c != '.' && c != '/' && c != '_' {
       return Err(
         @types.ChoirError::validation_error(
           "invalid character in branch: " + c.to_string(),
@@ -168,6 +168,16 @@ fn validate_branch(s : String) -> Result[Unit, @types.ChoirError] {
   if s.contains("..") {
     return Err(
       @types.ChoirError::validation_error("branch cannot contain '..'"),
+    )
+  }
+  if s.has_prefix("/") || s.has_suffix("/") {
+    return Err(
+      @types.ChoirError::validation_error("branch cannot start or end with '/'"),
+    )
+  }
+  if s.contains("//") {
+    return Err(
+      @types.ChoirError::validation_error("branch cannot contain '//'"),
     )
   }
   Ok(())
@@ -1578,4 +1588,18 @@ test "parse_worker_spawn_args rejects missing caller_id" {
     Err(ParseError::MissingField(field~)) => assert_eq(field, "caller_id")
     _ => fail("expected MissingField(caller_id)")
   }
+}
+
+///|
+test "validate_branch accepts slashes for feature branches and rejects common footguns" {
+  assert_true(validate_branch("main") is Ok(_))
+  assert_true(validate_branch("feature/dag-plus-problems") is Ok(_))
+  assert_true(validate_branch("release/1.2.3") is Ok(_))
+  assert_true(validate_branch("user_work/my-thing") is Ok(_))
+  assert_true(validate_branch("") is Err(_))
+  assert_true(validate_branch("/leading") is Err(_))
+  assert_true(validate_branch("trailing/") is Err(_))
+  assert_true(validate_branch("double//slash") is Err(_))
+  assert_true(validate_branch("dot..dot") is Err(_))
+  assert_true(validate_branch("has space") is Err(_))
 }
