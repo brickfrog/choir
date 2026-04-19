@@ -115,6 +115,9 @@ fn skill_help() -> Unit {
       #|  list           List all built-in and user skills.
       #|  remove <name>  Remove the user skill <name>.
       #|
+      #|Example:
+      #|  choir skill add ./my-skill
+      #|
     ),
   )
 }
@@ -164,12 +167,14 @@ fn skill_list(skills_dir : String) -> Unit {
     entries.sort()
     for entry in entries {
       let skill_path = skills_dir + "/" + entry
-      if @sys.path_entry_exists(skill_path) && !@sys.path_exists(skill_path) {
+      if @sys.path_entry_exists(skill_path) {
         let md_path = skill_path + "/SKILL.md"
         if @sys.path_exists(md_path) {
           let content = @sys.read_file(md_path)
           let desc = extract_description(content)
           user_skills.push({ name: entry, description: desc })
+        } else {
+          user_skills.push({ name: entry, description: "<missing SKILL.md>" })
         }
       }
     }
@@ -235,6 +240,9 @@ pub fn skill_subcommand_run() -> Unit {
           #|
           #|  Add a user skill from <dir>. The directory must contain a SKILL.md file.
           #|
+          #|Example:
+          #|  choir skill add ./my-skill
+          #|
         ),
       )
       if args.length() < 4 {
@@ -251,6 +259,9 @@ pub fn skill_subcommand_run() -> Unit {
           #|
           #|  List all built-in and user skills.
           #|
+          #|Example:
+          #|  choir skill list
+          #|
         ),
       )
       return
@@ -263,6 +274,9 @@ pub fn skill_subcommand_run() -> Unit {
           #|Usage: choir skill remove <name>
           #|
           #|  Remove the user skill <name>.
+          #|
+          #|Example:
+          #|  choir skill remove my-skill
           #|
         ),
       )
