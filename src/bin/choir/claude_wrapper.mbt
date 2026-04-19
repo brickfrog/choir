@@ -88,10 +88,54 @@ fn hooks_json_scaffold() -> String {
 }
 
 ///|
+fn merge_user_skills_into_plugin(
+  plugin_dir : String,
+  home : String,
+) -> Result[Unit, @types.ChoirError] {
+  let skills_dir = match user_skills_dir_for(home) {
+    Ok(d) => d
+    Err(_) => return Ok(())
+  }
+  if !@sys.path_entry_exists(skills_dir) {
+    return Ok(())
+  }
+  let entries = @sys.list_dir(skills_dir)
+  for entry in entries {
+    if entry == "audit" || entry == "decompose" {
+      let msg = "choir claude: user skill '" +
+        entry +
+        "' clashes with builtin; rename or remove ~/.config/choir/skills/" +
+        entry
+      @sys.write_stderr(msg + "\n")
+      return Err(@types.ChoirError::workspace_error(msg))
+    }
+    let src = skills_dir + "/" + entry
+    let skill_md = src + "/SKILL.md"
+    if !@sys.path_exists(skill_md) {
+      let msg = "choir claude: user skill '" +
+        entry +
+        "' missing SKILL.md at " +
+        skill_md
+      @sys.write_stderr(msg + "\n")
+      return Err(@types.ChoirError::workspace_error(msg))
+    }
+    let dst = plugin_dir + "/skills/" + entry
+    if !@sys.copy_dir_recursive(src, dst) {
+      return Err(
+        @types.ChoirError::workspace_error("failed to copy user skill " + entry),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
 fn synthesize_plugin_dir(
   project_dir : String,
+  home : String,
 ) -> Result[Unit, @types.ChoirError] {
   let plugin_dir = project_dir + "/.choir/plugin"
+  ignore(@sys.rm_rf(plugin_dir))
 
   if !@sys.create_dir_all(plugin_dir + "/.claude-plugin") {
     return Err(
@@ -149,7 +193,7 @@ fn synthesize_plugin_dir(
     )
   }
 
-  Ok(())
+  merge_user_skills_into_plugin(plugin_dir, home)
 }
 
 ///|
@@ -158,22 +202,119 @@ fn synthesize_plugin_dir(
 fn build_claude_settings_json(
   role : @types.Role,
   session_name : String,
+  user_mcp_path? : String? = None,
 ) -> String {
   let role_str = @config.role_to_string(role)
-  let mcp = {
+  let mcp : Map[String, Json] = {
     "choir": {
       "type": "stdio".to_json(),
       "command": "choir".to_json(),
       "args": ["mcp-stdio", "--role", role_str, "--name", session_name].to_json(),
     }.to_json(),
   }
+
+  let merged_mcp = match user_mcp_path {
+    Some(p) =>
+      if @sys.path_exists(p) {
+        let content = @sys.read_file(p)
+        if content != "" {
+          match parse_mcp_config_json(content) {
+            Ok(user_servers) => {
+              let user_json : Map[String, Json] = {}
+              for k, v in user_servers {
+                let srv_obj : Map[String, Json] = {
+                  "type": mcp_transport_to_string(v.transport).to_json(),
+                  "command": v.command.to_json(),
+                }
+                let args_json : Array[Json] = []
+                for a in v.args {
+                  args_json.push(a.to_json())
+                }
+                srv_obj.set("args", args_json.to_json())
+                user_json.set(k, srv_obj.to_json())
+              }
+              match merge_mcp_maps(mcp, user_json) {
+                Ok(m) => m
+                Err(e) => {
+                  @sys.write_stderr("choir claude: " + e.message() + "\n")
+                  @sys.exit(1)
+                  mcp
+                }
+              }
+            }
+            Err(e) => {
+              @sys.write_stderr(
+                "choir claude: error parsing " + p + ": " + e.message() + "\n",
+              )
+              @sys.exit(1)
+              mcp
+            }
+          }
+        } else {
+          mcp
+        }
+      } else {
+        mcp
+      }
+    None =>
+      match user_mcp_json_path() {
+        Ok(p) =>
+          if @sys.path_exists(p) {
+            let content = @sys.read_file(p)
+            if content != "" {
+              match parse_mcp_config_json(content) {
+                Ok(user_servers) => {
+                  let user_json : Map[String, Json] = {}
+                  for k, v in user_servers {
+                    let srv_obj : Map[String, Json] = {
+                      "type": mcp_transport_to_string(v.transport).to_json(),
+                      "command": v.command.to_json(),
+                    }
+                    let args_json : Array[Json] = []
+                    for a in v.args {
+                      args_json.push(a.to_json())
+                    }
+                    srv_obj.set("args", args_json.to_json())
+                    user_json.set(k, srv_obj.to_json())
+                  }
+                  match merge_mcp_maps(mcp, user_json) {
+                    Ok(m) => m
+                    Err(e) => {
+                      @sys.write_stderr("choir claude: " + e.message() + "\n")
+                      @sys.exit(1)
+                      mcp
+                    }
+                  }
+                }
+                Err(e) => {
+                  @sys.write_stderr(
+                    "choir claude: error parsing " +
+                    p +
+                    ": " +
+                    e.message() +
+                    "\n",
+                  )
+                  @sys.exit(1)
+                  mcp
+                }
+              }
+            } else {
+              mcp
+            }
+          } else {
+            mcp
+          }
+        Err(_) => mcp
+      }
+  }
+
   let enabled_plugins : Map[String, Json] = { "choir@local": true.to_json() }
   let settings : Map[String, Json] = {
     "statusLine": {
       "type": "command".to_json(),
       "command": "choir statusline".to_json(),
     }.to_json(),
-    "mcpServers": mcp.to_json(),
+    "mcpServers": merged_mcp.to_json(),
     "enabledPlugins": enabled_plugins.to_json(),
   }
   settings.to_json().stringify()
@@ -230,7 +371,12 @@ fn claude_wrapper_run() -> Unit {
       }
   }
 
-  match synthesize_plugin_dir(cwd) {
+  let home = match @sys.getenv("HOME") {
+    Some(h) => if h == "" { "" } else { h }
+    None => ""
+  }
+
+  match synthesize_plugin_dir(cwd, home) {
     Ok(_) => ()
     Err(e) => {
       @sys.write_stderr(
@@ -329,10 +475,13 @@ test "hooks_json_scaffold() parses as empty object" {
 test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   let tmp = "/tmp/choir-plugin-test-" +
     @env.now().reinterpret_as_int64().to_string()
+  let fake_home = "/tmp/choir-plugin-fake-home-" +
+    @env.now().reinterpret_as_int64().to_string()
   ignore(@sys.rm_rf(tmp))
+  ignore(@sys.rm_rf(fake_home))
   ignore(@sys.create_dir_all(tmp))
 
-  match synthesize_plugin_dir(tmp) {
+  match synthesize_plugin_dir(tmp, fake_home) {
     Ok(_) => ()
     Err(e) => {
       fail("synthesize_plugin_dir failed: " + e.message())
@@ -357,7 +506,7 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   assert_true(hooks != "")
 
   // Run again, must be identical
-  match synthesize_plugin_dir(tmp) {
+  match synthesize_plugin_dir(tmp, fake_home) {
     Ok(_) => ()
     Err(e) => {
       fail("synthesize_plugin_dir (rerun) failed: " + e.message())
@@ -373,8 +522,107 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
 }
 
 ///|
+test "synthesize_plugin_dir removes stale user skill on rerun" {
+  let tmp = "/tmp/choir-plugin-stale-test-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let fake_home = "/tmp/choir-plugin-stale-home-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(tmp))
+  ignore(@sys.rm_rf(fake_home))
+  ignore(@sys.create_dir_all(tmp + "/.choir/plugin/skills/stale"))
+  ignore(
+    @sys.write_file_sync(tmp + "/.choir/plugin/skills/stale/SKILL.md", "stale"),
+  )
+
+  match synthesize_plugin_dir(tmp, fake_home) {
+    Ok(_) => ()
+    Err(e) => fail("synthesize_plugin_dir failed: " + e.message())
+  }
+
+  assert_false(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/stale"))
+
+  ignore(@sys.rm_rf(tmp))
+  ignore(@sys.rm_rf(fake_home))
+}
+
+///|
+test "merge_user_skills_into_plugin copies valid user skills" {
+  let home = "/tmp/choir-plugin-test-home-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let plugin_dir = "/tmp/choir-plugin-test-dir-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+
+  let skills_dir = home + "/.config/choir/skills"
+  ignore(@sys.create_dir_all(skills_dir + "/my-skill"))
+  ignore(@sys.write_file_sync(skills_dir + "/my-skill/SKILL.md", "hello"))
+
+  match merge_user_skills_into_plugin(plugin_dir, home) {
+    Ok(_) => ()
+    Err(e) => fail("merge failed: " + e.message())
+  }
+
+  assert_eq(@sys.read_file(plugin_dir + "/skills/my-skill/SKILL.md"), "hello")
+
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+}
+
+///|
+test "merge_user_skills_into_plugin returns Err on clash" {
+  let home = "/tmp/choir-plugin-test-home-clash-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let plugin_dir = "/tmp/choir-plugin-test-dir-clash-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+
+  let skills_dir = home + "/.config/choir/skills"
+  ignore(@sys.create_dir_all(skills_dir + "/audit"))
+  ignore(@sys.write_file_sync(skills_dir + "/audit/SKILL.md", "hello"))
+
+  match merge_user_skills_into_plugin(plugin_dir, home) {
+    Ok(_) => fail("merge should have failed")
+    Err(e) => assert_true(e.message().contains("clashes with builtin"))
+  }
+
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+}
+
+///|
+test "merge_user_skills_into_plugin returns Err when SKILL.md is missing" {
+  let home = "/tmp/choir-plugin-test-home-missing-skill-md-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let plugin_dir = "/tmp/choir-plugin-test-dir-missing-skill-md-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+
+  let skills_dir = home + "/.config/choir/skills"
+  ignore(@sys.create_dir_all(skills_dir + "/broken"))
+
+  match merge_user_skills_into_plugin(plugin_dir, home) {
+    Ok(_) => fail("merge should have failed")
+    Err(e) => assert_true(e.message().contains("missing SKILL.md"))
+  }
+
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+}
+
+///|
 test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
-  let body = build_claude_settings_json(@types.Role::TL, "user-123-456")
+  let tmp = "/tmp/choir-settings-empty-mcp-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(tmp))
+  ignore(@sys.create_dir_all(tmp))
+  let body = build_claude_settings_json(
+    @types.Role::TL,
+    "user-123-456",
+    user_mcp_path=Some(tmp + "/missing-mcp.json"),
+  )
   let parsed = @json.parse(body) catch {
     _ => {
       fail("settings json did not parse")
@@ -416,6 +664,53 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
     return
   }
   assert_eq(plugins.get("choir@local"), Some(true.to_json()))
+  ignore(@sys.rm_rf(tmp))
+}
+
+///|
+test "build_claude_settings_json merges user MCP from injected path" {
+  let tmp = "/tmp/choir-settings-user-mcp-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(tmp))
+  ignore(@sys.create_dir_all(tmp))
+  let path = tmp + "/mcp.json"
+  ignore(
+    @sys.write_file_sync(
+      path, "{\"servers\":{\"linear\":{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@linear/mcp-server\"]}}}",
+    ),
+  )
+
+  let body = build_claude_settings_json(
+    @types.Role::TL,
+    "user-123-456",
+    user_mcp_path=Some(path),
+  )
+  let parsed = @json.parse(body) catch {
+    _ => {
+      fail("settings json did not parse")
+      return
+    }
+  }
+  guard parsed is Object(top) else {
+    fail("settings json root is not an object")
+    return
+  }
+  guard top.get("mcpServers") is Some(Object(servers)) else {
+    fail("mcpServers missing or not an object")
+    return
+  }
+  guard servers.get("linear") is Some(Object(linear)) else {
+    fail("mcpServers.linear missing or not an object")
+    return
+  }
+  assert_eq(linear.get("command"), Some("npx".to_json()))
+  guard servers.get("choir") is Some(Object(choir)) else {
+    fail("mcpServers.choir missing or not an object")
+    return
+  }
+  assert_eq(choir.get("command"), Some("choir".to_json()))
+
+  ignore(@sys.rm_rf(tmp))
 }
 
 ///|

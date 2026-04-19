@@ -475,7 +475,11 @@ fn init_run() -> Unit {
       init_bootstrap_ensure_choir_dir_and_config_if_absent(
         init_config_toml_content(default_session),
       )
-      match synthesize_plugin_dir(project_dir) {
+      let home = match @sys.getenv("HOME") {
+        Some(h) => if h == "" { "" } else { h }
+        None => ""
+      }
+      match synthesize_plugin_dir(project_dir, home) {
         Ok(_) => ()
         Err(e) =>
           @sys.write_stderr(
