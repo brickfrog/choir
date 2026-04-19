@@ -500,29 +500,49 @@ pub fn pending_waves_naming_dep(
 }
 
 ///|
-/// True when `dep_id` is known to KV state — either present in the registry
-/// or has a lifecycle file on disk. Used by `validate_pending_wave_deps`.
-pub fn dep_id_exists(
+/// Role of `dep_id` per KV state, preferring the registry (live truth) and
+/// falling back to the on-disk lifecycle file. `None` means no record exists.
+pub fn lookup_dep_role(
   project_dir : String,
   registry : @registry.AgentRegistry?,
   dep_id : String,
-) -> Bool {
+) -> @types.Role? {
   match registry {
     Some(reg) =>
       try {
-        ignore(reg.get(dep_id))
-        return true
+        return Some(reg.get(dep_id).role)
       } catch {
         _ => ()
       }
     None => ()
   }
-  @phase.read_lifecycle(project_dir, dep_id) is Some(_)
+  match @phase.read_lifecycle(project_dir, dep_id) {
+    Some(lc) => Some(lc.role)
+    None => None
+  }
+}
+
+///|
+/// Leaves own branches and file PRs, so only their `Merged` signal can move a
+/// pending wave forward. TLs and Root supervisors never transition to
+/// `Dev(Done(Merged))`; a TL-id dep would stay `Pending` forever with no
+/// watchdog to reap it. Workers are allowed through: they don't file PRs
+/// either, but the server only spawns them inline and no real fork_wave call
+/// site names one, so rejecting them would add noise without fixing a bug.
+fn is_valid_dep_role(role : @types.Role) -> Bool {
+  match role {
+    @types.Role::Dev => true
+    @types.Role::Worker => true
+    @types.Role::TL => false
+    @types.Role::Root => false
+  }
 }
 
 ///|
 /// Validate every entry in `depends_on` is an existing leaf agent id (per the
-/// spec). Returns `ConfigError` naming the first unknown id.
+/// spec). Rejects unknown ids, empty entries, and non-leaf roles (TL / Root)
+/// since those never transition to the `Merged` state the pending-wave
+/// dispatcher waits on. Returns a `ConfigError` naming the first offender.
 pub fn validate_pending_wave_deps(
   project_dir : String,
   registry : @registry.AgentRegistry?,
@@ -534,10 +554,23 @@ pub fn validate_pending_wave_deps(
         @types.ChoirError::config_error("depends_on contains empty entry"),
       )
     }
-    if !dep_id_exists(project_dir, registry, dep) {
-      return Err(
-        @types.ChoirError::config_error("unknown depends_on agent_id: " + dep),
-      )
+    match lookup_dep_role(project_dir, registry, dep) {
+      None =>
+        return Err(
+          @types.ChoirError::config_error("unknown depends_on agent_id: " + dep),
+        )
+      Some(role) =>
+        if !is_valid_dep_role(role) {
+          return Err(
+            @types.ChoirError::config_error(
+              "depends_on agent_id is not a leaf: " +
+              dep +
+              " (role=" +
+              role.to_wire_string() +
+              ")",
+            ),
+          )
+        }
     }
   }
   Ok(())
