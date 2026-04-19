@@ -143,10 +143,12 @@ fn provider_launch_command(
     Claude => {
       let program = cmd_program.unwrap_or("claude")
       if tl_init_mode {
+        let plugin_dir = workspace_path + "/.choir/plugin"
         {
           program,
           args: [
-            ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp,
+            ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp, "--plugin-dir",
+            plugin_dir,
           ],
           workdir: Some(workspace_path),
         }
