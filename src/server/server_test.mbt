@@ -204,6 +204,57 @@ test "notify_parent synthesizes user root TL parent when lifecycle is absent" {
 }
 
 ///|
+fn assert_notify_parent_does_not_synthesize_parent_id(
+  parent_id : String,
+) -> Unit raise {
+  let project_dir = "/tmp/choir-notify-parent-test-" +
+    "no-root-synthesis-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+
+  let caller_id = parent_id + ".worker"
+  ignore(
+    state.registry.upsert({
+      agent_id: caller_id,
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Gemini,
+      parent: Some(parent_id),
+      workspace: project_dir,
+      branch: caller_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  let res = try? state.notify_parent(
+    caller_id,
+    "should not synthesize",
+    @types.Status::Success,
+  )
+  match res {
+    Ok(_) => fail("expected Err AgentNotFound for " + parent_id + ", got Ok")
+    Err(e) => assert_eq(e.message(), "agent not found: " + parent_id)
+  }
+}
+
+///|
+test "notify_parent does not synthesize non-root-TL no-dot parent ids" {
+  assert_notify_parent_does_not_synthesize_parent_id("agent-dev-12345")
+  assert_notify_parent_does_not_synthesize_parent_id("agent-worker-12345")
+  assert_notify_parent_does_not_synthesize_parent_id("user-")
+  assert_notify_parent_does_not_synthesize_parent_id("user-abc-xyz")
+  assert_notify_parent_does_not_synthesize_parent_id("user-123")
+}
+
+///|
 test "notify_parent returns clear error when parent cannot be resolved" {
   let project_dir = "/tmp/choir-notify-parent-test-" +
     "cannot-resolve-" +

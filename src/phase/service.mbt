@@ -485,7 +485,34 @@ pub fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
 
 ///|
 fn is_root_tl_shaped_agent_id(agent_id : String) -> Bool {
-  agent_id != "" && !agent_id.contains(".")
+  if !agent_id.has_prefix("user-") || agent_id.contains(".") {
+    return false
+  }
+  let parts : Array[String] = []
+  for part in agent_id["user-".length():].to_string().split("-") {
+    parts.push(part.to_string())
+  }
+  if parts.length() != 2 || parts[0] == "" || parts[1] == "" {
+    return false
+  }
+  let pid = Some(@string.parse_int(parts[0])) catch { _ => None }
+  let nanos = Some(@string.parse_int(parts[1])) catch { _ => None }
+  pid is Some(_) && nanos is Some(_)
+}
+
+///|
+test "is_root_tl_shaped_agent_id matches only known root TL id patterns" {
+  assert_true(is_root_tl_shaped_agent_id("user-12345-67890"))
+  assert_false(is_root_tl_shaped_agent_id(""))
+  assert_false(is_root_tl_shaped_agent_id("   "))
+  assert_false(is_root_tl_shaped_agent_id("agent-dev-12345"))
+  assert_false(is_root_tl_shaped_agent_id("agent-worker-12345"))
+  assert_false(is_root_tl_shaped_agent_id("agent-tl-12345"))
+  assert_false(is_root_tl_shaped_agent_id("main.worker"))
+  assert_false(is_root_tl_shaped_agent_id("user-"))
+  assert_false(is_root_tl_shaped_agent_id("user-12345"))
+  assert_false(is_root_tl_shaped_agent_id("user-not-a-pid-67890"))
+  assert_false(is_root_tl_shaped_agent_id("user-abc-xyz"))
 }
 
 ///|
