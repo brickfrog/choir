@@ -482,6 +482,12 @@ fn init_run() -> Unit {
             "warning: failed to synthesize .choir/plugin: " + e.message() + "\n",
           )
       }
+      ignore(
+        @sys.write_file_sync(
+          ".choir/claude-settings.json",
+          @workspace.init_tl_claude_settings_json(),
+        ),
+      )
       let maybe_patch_config = @sys.read_file(".choir/config.toml")
       if maybe_patch_config != "" &&
         !init_config_has_terminal_session(maybe_patch_config) {

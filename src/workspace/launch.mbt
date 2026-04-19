@@ -144,11 +144,12 @@ fn provider_launch_command(
       let program = cmd_program.unwrap_or("claude")
       if tl_init_mode {
         let plugin_dir = workspace_path + "/.choir/plugin"
+        let settings_path = workspace_path + "/.choir/claude-settings.json"
         {
           program,
           args: [
             ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp, "--plugin-dir",
-            plugin_dir,
+            plugin_dir, "--settings", settings_path,
           ],
           workdir: Some(workspace_path),
         }
@@ -263,6 +264,13 @@ pub fn agent_launch_command(
 /// MCP JSON for TL init Claude only; matches legacy `choir init` (`mcp-stdio` + `--name root`, no `--role`).
 pub fn init_tl_claude_mcp_config_json() -> String {
   "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\"]}}}"
+}
+
+///|
+/// Claude settings JSON for TL init — statusLine + plugin enablement.
+/// MCP registration stays separate via `--mcp-config` / `--strict-mcp-config`.
+pub fn init_tl_claude_settings_json() -> String {
+  "{\"statusLine\":{\"type\":\"command\",\"command\":\"choir statusline\"},\"enabledPlugins\":{\"choir@local\":true}}"
 }
 
 ///|
