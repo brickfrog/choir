@@ -391,6 +391,9 @@ pub fn is_dir(path : String) -> Bool {
 
 ///|
 pub fn copy_dir_recursive(src : String, dst : String) -> Bool {
+  if !is_dir(src) {
+    return false
+  }
   if !create_dir_all(dst) {
     return false
   }
@@ -424,6 +427,7 @@ test "copy_dir_recursive copies files and directories correctly" {
   assert_true(create_dir_all(src + "/subdir"))
   assert_true(write_file_sync(src + "/file.txt", "hello"))
   assert_true(write_file_sync(src + "/subdir/subfile.txt", "world"))
+  assert_true(write_file_sync(src + "/.dotfile", "dot"))
 
   if !copy_dir_recursive(src, dst) {
     fail("copy_dir_recursive returned false")
@@ -435,8 +439,14 @@ test "copy_dir_recursive copies files and directories correctly" {
   if !path_exists(dst + "/subdir/subfile.txt") {
     fail("dst/subdir/subfile.txt does not exist")
   }
+  if !path_exists(dst + "/.dotfile") {
+    fail("dst/.dotfile does not exist")
+  }
   assert_eq(read_file(dst + "/file.txt"), "hello")
   assert_eq(read_file(dst + "/subdir/subfile.txt"), "world")
+  assert_eq(read_file(dst + "/.dotfile"), "dot")
+
+  assert_false(copy_dir_recursive(src + "/file.txt", dst + "/invalid"))
 
   ignore(rm_rf(src))
   ignore(rm_rf(dst))
