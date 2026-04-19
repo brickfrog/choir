@@ -296,8 +296,15 @@ fn render_common_prompt(
   add_section(sections, "SCOPE", render_bullets(spec.task_contract.scope))
   add_section(sections, "BOUNDARY", render_bullets(spec.boundary))
 
-  let read_first = spec.read_first
+  // Structural context (resolved via `@workspace.resolve_context_paths`, which
+  // iterates `problems`, `common`, `role` in that order) lands before
+  // task-specific reads so every leaf sees problems.md first regardless of
+  // what the TL put in `spec.read_first`.
+  let read_first : Array[String] = []
   for path in default_read_first {
+    push_unique(read_first, path)
+  }
+  for path in spec.read_first {
     push_unique(read_first, path)
   }
   add_section(sections, "READ FIRST", render_bullets(read_first))

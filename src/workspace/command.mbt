@@ -362,7 +362,7 @@ pub fn resolve_context_paths(
   role : String,
 ) -> Array[String] {
   let paths : Array[String] = []
-  for name in ["common", role] {
+  for name in ["problems", "common", role] {
     match resolve_named_context_path(project_dir, name) {
       Some(path) => if !paths.contains(path) { paths.push(path) }
       None => ()

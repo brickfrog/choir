@@ -198,6 +198,33 @@ fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
 }
 
 ///|
+test "statusline_kv_files_with_prefix detects pending-wave entries" {
+  let project_dir = "/tmp/choir-statusline-pending-wave-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/pending-wave--w1",
+      "{\"wave_id\":\"w1\"}",
+    ),
+  )
+  ignore(
+    @sys.write_file_sync(
+      project_dir + "/.choir/kv/pending-wave--w2",
+      "{\"wave_id\":\"w2\"}",
+    ),
+  )
+  ignore(
+    @sys.write_file_sync(project_dir + "/.choir/kv/lifecycle--main--leaf", "{}"),
+  )
+  let paths = statusline_kv_files_with_prefix(project_dir, "pending-wave--")
+  ignore(@sys.rm_rf(project_dir))
+  assert_eq(paths.length(), 2)
+}
+
+///|
 test "statusline_count_agents matches child ids using lifecycle content agent_id" {
   let project_dir = "/tmp/choir-statusline-agent-id-" +
     @sys.get_pid().to_string() +
@@ -452,8 +479,11 @@ fn statusline_run() -> Unit {
   let (working, review, changes, failed, _done) = statusline_count_agents(
     project_dir,
   )
+  let pending_waves = statusline_kv_files_with_prefix(
+    project_dir, "pending-wave--",
+  ).length()
   let total = working + review + changes + failed
-  if total > 0 {
+  if total > 0 || pending_waves > 0 {
     out.write_string(sep)
     let mut need_sep = false
     if working > 0 {
@@ -486,6 +516,16 @@ fn statusline_run() -> Unit {
       }
       out.write_string("\u001b[31m✗")
       out.write_string(failed.to_string())
+      out.write_string("\u001b[0m")
+      need_sep = true
+    }
+    if pending_waves > 0 {
+      if need_sep {
+        out.write_string(" ")
+      }
+      // Dim blue ⧗ — queued waves waiting on dep merges (Feature 1).
+      out.write_string("\u001b[2;34m⧗")
+      out.write_string(pending_waves.to_string())
       out.write_string("\u001b[0m")
     }
   }
