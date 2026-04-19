@@ -243,7 +243,11 @@ pub fn save_wave_index(
     return Err(@types.ChoirError::workspace_error("failed to create " + dir))
   }
   let path = wave_index_path(project_dir, idx.wave_id)
-  let tmp_path = path + ".tmp"
+  let tmp_path = path +
+    ".tmp." +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
   let body = render_wave_index_json(idx)
   if !@sys.write_file_sync(tmp_path, body) {
     return Err(
@@ -251,7 +255,12 @@ pub fn save_wave_index(
     )
   }
   if !@sys.rename_file_sync(tmp_path, path) {
-    return Err(@types.ChoirError::workspace_error("failed to rename " + path))
+    ignore(@sys.rm_rf(tmp_path))
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to rename " + tmp_path + " -> " + path,
+      ),
+    )
   }
   Ok(())
 }
