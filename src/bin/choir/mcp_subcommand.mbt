@@ -1,8 +1,27 @@
 ///|
+pub(all) enum McpTransport {
+  Stdio
+} derive(Debug, Eq)
+
+///|
 pub(all) struct McpServer {
-  kind : String
+  transport : McpTransport
   command : String
   args : Array[String]
+}
+
+///|
+fn mcp_transport_to_string(transport : McpTransport) -> String {
+  match transport {
+    Stdio => "stdio"
+  }
+}
+
+///|
+fn show_json_parse_error(e : @json.ParseError) -> String {
+  let buf = StringBuilder::new()
+  buf.write_object(e)
+  buf.to_string()
 }
 
 ///|
@@ -42,6 +61,20 @@ fn print_mcp_help() -> Unit {
 
 ///|
 fn add_mcp(args : Array[String]) -> Unit {
+  if args.length() >= 4 && (args[3] == "--help" || args[3] == "-h") {
+    @sys.write_stdout(
+      (
+        #|Usage: choir mcp add <name> -- <command> [args...]
+        #|
+        #|  Register a user MCP server.
+        #|
+        #|Example:
+        #|  choir mcp add linear -- npx -y @linear/mcp-server
+        #|
+      ),
+    )
+    return
+  }
   if args.length() < 6 || args[4] != "--" {
     @sys.write_stderr("usage: choir mcp add <name> -- <command> [args...]\n")
     @sys.exit(1)
@@ -70,8 +103,8 @@ fn add_mcp(args : Array[String]) -> Unit {
 
   match add_mcp_inner(mcp_path, name, command, srv_args) {
     Ok(_) => ()
-    Err(msg) => {
-      @sys.write_stderr(msg)
+    Err(e) => {
+      @sys.write_stderr(e.message() + "\n")
       @sys.exit(1)
     }
   }
@@ -83,9 +116,13 @@ fn add_mcp_inner(
   name : String,
   command : String,
   srv_args : Array[String],
-) -> Result[Unit, String] {
+) -> Result[Unit, @types.ChoirError] {
   if name == "choir" {
-    return Err("choir mcp: cannot add builtin 'choir' server\n")
+    return Err(
+      @types.ChoirError::validation_error(
+        "choir mcp: cannot add builtin 'choir' server",
+      ),
+    )
   }
 
   let mut current_servers : Map[String, McpServer] = {}
@@ -95,17 +132,21 @@ fn add_mcp_inner(
       match parse_mcp_config_json(content) {
         Ok(m) => current_servers = m
         Err(e) =>
-          return Err("error parsing " + mcp_path + ": " + e.message() + "\n")
+          return Err(
+            @types.ChoirError::config_error(
+              "error parsing " + mcp_path + ": " + e.message(),
+            ),
+          )
       }
     }
   }
 
-  current_servers.set(name, { kind: "stdio", command, args: srv_args })
+  current_servers.set(name, { transport: Stdio, command, args: srv_args })
 
   let servers_obj : Map[String, Json] = {}
   for k, v in current_servers {
     let srv_obj : Map[String, Json] = {
-      "type": v.kind.to_json(),
+      "type": mcp_transport_to_string(v.transport).to_json(),
       "command": v.command.to_json(),
     }
     let args_json : Array[Json] = []
@@ -118,7 +159,7 @@ fn add_mcp_inner(
   let root : Map[String, Json] = { "servers": servers_obj.to_json() }
 
   if !@sys.write_file_sync(mcp_path, root.to_json().stringify()) {
-    return Err("error writing " + mcp_path + "\n")
+    return Err(@types.ChoirError::config_error("error writing " + mcp_path))
   }
 
   Ok(())
@@ -126,6 +167,21 @@ fn add_mcp_inner(
 
 ///|
 fn list_mcp() -> Unit {
+  let args = @env.args()
+  if args.length() >= 4 && (args[3] == "--help" || args[3] == "-h") {
+    @sys.write_stdout(
+      (
+        #|Usage: choir mcp list
+        #|
+        #|  Show built-in and user MCP servers.
+        #|
+        #|Example:
+        #|  choir mcp list
+        #|
+      ),
+    )
+    return
+  }
   @sys.write_stdout("builtin:\n")
   @sys.write_stdout(
     "  choir      — choir mcp-stdio --role <role> --name <session>\n",
@@ -149,6 +205,7 @@ fn list_mcp() -> Unit {
           for k, _ in servers {
             keys.push(k)
           }
+          keys.sort()
           if keys.length() > 0 {
             @sys.write_stdout("user:\n")
             for k in keys {
@@ -180,6 +237,20 @@ fn list_mcp() -> Unit {
 
 ///|
 fn remove_mcp(args : Array[String]) -> Unit {
+  if args.length() >= 4 && (args[3] == "--help" || args[3] == "-h") {
+    @sys.write_stdout(
+      (
+        #|Usage: choir mcp remove <name>
+        #|
+        #|  Delete a user MCP server.
+        #|
+        #|Example:
+        #|  choir mcp remove linear
+        #|
+      ),
+    )
+    return
+  }
   if args.length() < 4 {
     @sys.write_stderr("usage: choir mcp remove <name>\n")
     @sys.exit(1)
@@ -198,37 +269,60 @@ fn remove_mcp(args : Array[String]) -> Unit {
 
   match remove_mcp_inner(mcp_path, name) {
     Ok(_) => ()
-    Err(msg) => {
-      @sys.write_stderr(msg)
+    Err(e) => {
+      @sys.write_stderr(e.message() + "\n")
       @sys.exit(1)
     }
   }
 }
 
 ///|
-fn remove_mcp_inner(mcp_path : String, name : String) -> Result[Unit, String] {
+fn remove_mcp_inner(
+  mcp_path : String,
+  name : String,
+) -> Result[Unit, @types.ChoirError] {
   if name == "choir" {
-    return Err("choir mcp: cannot remove builtin 'choir' server\n")
+    return Err(
+      @types.ChoirError::validation_error(
+        "choir mcp: cannot remove builtin 'choir' server",
+      ),
+    )
   }
 
   if !@sys.path_exists(mcp_path) {
-    return Err("choir mcp: user entry does not exist\n")
+    return Err(
+      @types.ChoirError::validation_error(
+        "choir mcp: user entry does not exist",
+      ),
+    )
   }
 
   let content = @sys.read_file(mcp_path)
   if content == "" {
-    return Err("choir mcp: user entry does not exist\n")
+    return Err(
+      @types.ChoirError::validation_error(
+        "choir mcp: user entry does not exist",
+      ),
+    )
   }
 
   let mut current_servers : Map[String, McpServer] = {}
   match parse_mcp_config_json(content) {
     Ok(m) => current_servers = m
     Err(e) =>
-      return Err("error parsing " + mcp_path + ": " + e.message() + "\n")
+      return Err(
+        @types.ChoirError::config_error(
+          "error parsing " + mcp_path + ": " + e.message(),
+        ),
+      )
   }
 
   if !current_servers.contains(name) {
-    return Err("choir mcp: user entry does not exist\n")
+    return Err(
+      @types.ChoirError::validation_error(
+        "choir mcp: user entry does not exist",
+      ),
+    )
   }
 
   current_servers.remove(name)
@@ -236,7 +330,7 @@ fn remove_mcp_inner(mcp_path : String, name : String) -> Result[Unit, String] {
   let servers_obj : Map[String, Json] = {}
   for k, v in current_servers {
     let srv_obj : Map[String, Json] = {
-      "type": v.kind.to_json(),
+      "type": mcp_transport_to_string(v.transport).to_json(),
       "command": v.command.to_json(),
     }
     let args_json : Array[Json] = []
@@ -249,7 +343,7 @@ fn remove_mcp_inner(mcp_path : String, name : String) -> Result[Unit, String] {
   let root : Map[String, Json] = { "servers": servers_obj.to_json() }
 
   if !@sys.write_file_sync(mcp_path, root.to_json().stringify()) {
-    return Err("error writing " + mcp_path + "\n")
+    return Err(@types.ChoirError::config_error("error writing " + mcp_path))
   }
 
   Ok(())
@@ -260,9 +354,11 @@ pub fn parse_mcp_config_json(
   s : String,
 ) -> Result[Map[String, McpServer], @types.ChoirError] {
   let parsed = @json.parse(s) catch {
-    _ =>
+    e =>
       return Err(
-        @types.ChoirError::config_error("malformed JSON in mcp config"),
+        @types.ChoirError::config_error(
+          "malformed JSON in mcp config: " + show_json_parse_error(e),
+        ),
       )
   }
   guard parsed is Json::Object(top) else {
@@ -284,8 +380,14 @@ pub fn parse_mcp_config_json(
         ),
       )
     }
-    let kind = match srv.get("type") {
-      Some(Json::String(t)) => t
+    let transport = match srv.get("type") {
+      Some(Json::String("stdio")) => McpTransport::Stdio
+      Some(Json::String(t)) =>
+        return Err(
+          @types.ChoirError::config_error(
+            "server " + k + " has unsupported type " + t,
+          ),
+        )
       _ =>
         return Err(
           @types.ChoirError::config_error(
@@ -324,7 +426,7 @@ pub fn parse_mcp_config_json(
         )
       None => ()
     }
-    result.set(k, { kind, command, args })
+    result.set(k, { transport, command, args })
   }
   Ok(result)
 }
@@ -352,84 +454,6 @@ pub fn merge_mcp_maps(
 }
 
 ///|
-test "parse_mcp_config_json valid" {
-  let s = "{\"servers\":{\"linear\":{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@linear/mcp-server\"]}}}"
-  let m = parse_mcp_config_json(s).unwrap()
-  assert_eq(m.length(), 1)
-  let srv = m.get("linear").unwrap()
-  assert_eq(srv.kind, "stdio")
-  assert_eq(srv.command, "npx")
-  assert_eq(srv.args, ["-y", "@linear/mcp-server"])
-}
-
-///|
-test "parse_mcp_config_json missing command" {
-  let s = "{\"servers\":{\"linear\":{\"type\":\"stdio\"}}}"
-  let res = parse_mcp_config_json(s)
-  match res {
-    Err(e) => assert_true(e.message().contains("missing or invalid command"))
-    Ok(_) => fail("expected error")
-  }
-}
-
-///|
-test "parse_mcp_config_json missing type" {
-  let s = "{\"servers\":{\"linear\":{\"command\":\"npx\"}}}"
-  let res = parse_mcp_config_json(s)
-  match res {
-    Err(e) => assert_true(e.message().contains("missing or invalid type"))
-    Ok(_) => fail("expected error")
-  }
-}
-
-///|
-test "parse_mcp_config_json malformed JSON" {
-  let res = parse_mcp_config_json("{ malformed }")
-  match res {
-    Err(e) => assert_true(e.message().contains("malformed JSON"))
-    Ok(_) => fail("expected error")
-  }
-}
-
-///|
-test "parse_mcp_config_json missing servers" {
-  let res = parse_mcp_config_json("{}")
-  match res {
-    Err(e) => assert_true(e.message().contains("missing or invalid .servers"))
-    Ok(_) => fail("expected error")
-  }
-}
-
-///|
-test "parse_mcp_config_json non-object entry" {
-  let res = parse_mcp_config_json("{\"servers\":{\"a\":1}}")
-  match res {
-    Err(e) => assert_true(e.message().contains("must be an object"))
-    Ok(_) => fail("expected error")
-  }
-}
-
-///|
-test "merge_mcp_maps clean merge" {
-  let b : Map[String, Json] = { "a": "1".to_json() }
-  let u : Map[String, Json] = { "b": "2".to_json() }
-  let m = merge_mcp_maps(b, u).unwrap()
-  assert_eq(m.get("a"), Some("1".to_json()))
-  assert_eq(m.get("b"), Some("2".to_json()))
-}
-
-///|
-test "merge_mcp_maps choir collision" {
-  let b : Map[String, Json] = { "choir": "1".to_json() }
-  let u : Map[String, Json] = { "choir": "2".to_json() }
-  let res = merge_mcp_maps(b, u)
-  match res {
-    Err(e) => assert_true(e.message().contains("clashes with builtin"))
-    Ok(_) => fail("expected error")
-  }
-}
-
-///|
 test "add_mcp_inner writes new server to empty file" {
   let tmp = "/tmp/choir-mcp-add-" +
     @env.now().reinterpret_as_int64().to_string()
@@ -438,7 +462,10 @@ test "add_mcp_inner writes new server to empty file" {
   let path = tmp + "/mcp.json"
 
   let res = add_mcp_inner(path, "linear", "npx", ["-y", "@linear/mcp-server"])
-  assert_eq(res, Ok(()))
+  match res {
+    Ok(_) => ()
+    Err(e) => fail("unexpected err: " + e.message())
+  }
 
   let content = @sys.read_file(path)
   let m = parse_mcp_config_json(content).unwrap()
@@ -452,7 +479,7 @@ test "add_mcp_inner writes new server to empty file" {
 test "add_mcp_inner rejects choir" {
   let res = add_mcp_inner("/some/path", "choir", "cmd", [])
   match res {
-    Err(e) => assert_true(e.contains("builtin 'choir' server"))
+    Err(e) => assert_true(e.message().contains("builtin 'choir' server"))
     Ok(_) => fail("expected err")
   }
 }
@@ -467,7 +494,10 @@ test "remove_mcp_inner removes server" {
   ignore(add_mcp_inner(path, "linear", "npx", []))
 
   let res = remove_mcp_inner(path, "linear")
-  assert_eq(res, Ok(()))
+  match res {
+    Ok(_) => ()
+    Err(e) => fail("unexpected err: " + e.message())
+  }
 
   let content = @sys.read_file(path)
   let m = parse_mcp_config_json(content).unwrap()
@@ -480,7 +510,7 @@ test "remove_mcp_inner removes server" {
 test "remove_mcp_inner errors on missing" {
   let res = remove_mcp_inner("/tmp/missing-mcp.json", "linear")
   match res {
-    Err(e) => assert_true(e.contains("user entry does not exist"))
+    Err(e) => assert_true(e.message().contains("user entry does not exist"))
     Ok(_) => fail("expected err")
   }
 }

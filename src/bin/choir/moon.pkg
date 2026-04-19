@@ -33,6 +33,7 @@ options(
     "main.mbt": [ "native" ],
     "mcp_mode.mbt": [ "native" ],
     "mcp_subcommand.mbt": [ "native" ],
+    "mcp_subcommand_test.mbt": [ "native" ],
     "runtime_commands.mbt": [ "native" ],
     "skill_subcommand.mbt": [ "native" ],
     "statusline.mbt": [ "native" ],
