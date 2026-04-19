@@ -102,6 +102,37 @@ fn statusline_collect_child_ids(project_dir : String) -> Map[String, Bool] {
 }
 
 ///|
+/// Append a 10-char block bar for the given percentage with a dim label.
+/// Green < 50%, yellow 50-79%, red >= 80%.
+fn statusline_render_bar(
+  out : StringBuilder,
+  pct : Int,
+  label : String,
+) -> Unit {
+  let filled = pct / 10
+  let color = if pct >= 80 {
+    "\u001b[31m"
+  } else if pct >= 50 {
+    "\u001b[33m"
+  } else {
+    "\u001b[32m"
+  }
+  out.write_string(color)
+  for i = 0; i < 10; i = i + 1 {
+    if i < filled {
+      out.write_string("▓")
+    } else {
+      out.write_string("░")
+    }
+  }
+  out.write_string("\u001b[0m ")
+  out.write_string(pct.to_string())
+  out.write_string("\u001b[2m% ")
+  out.write_string(label)
+  out.write_string("\u001b[0m")
+}
+
+///|
 /// Parse `.git/HEAD` synchronously. Returns the branch name (e.g. `main`,
 /// `feature/xyz`) or a short 7-char hash when HEAD is detached. Empty string
 /// if `.git/HEAD` is unreadable.
@@ -381,6 +412,8 @@ fn statusline_run() -> Unit {
   let rate_obj = statusline_json_object(root, "rate_limits")
   let week_obj = statusline_json_object(rate_obj, "seven_day")
   let week_pct = statusline_json_number(week_obj, "used_percentage").to_int()
+  let five_obj = statusline_json_object(rate_obj, "five_hour")
+  let five_pct = statusline_json_number(five_obj, "used_percentage").to_int()
   let cwd = match root.get("cwd") {
     Some(String(s)) => s
     _ => "."
@@ -403,28 +436,10 @@ fn statusline_run() -> Unit {
     }
   }
 
-  // Context bar: 20-char block with color based on severity.
-  let filled = week_pct / 5
-  let bar = StringBuilder::new()
-  for i = 0; i < 20; i = i + 1 {
-    if i < filled {
-      bar.write_string("▓")
-    } else {
-      bar.write_string("░")
-    }
-  }
-  let bar_color = if week_pct >= 80 {
-    "\u001b[31m"
-  } else if week_pct >= 50 {
-    "\u001b[33m"
-  } else {
-    "\u001b[32m"
-  }
-  out.write_string(bar_color)
-  out.write_string(bar.to_string())
-  out.write_string("\u001b[0m ")
-  out.write_string(week_pct.to_string())
-  out.write_string("\u001b[2m% 7d\u001b[0m")
+  // Context bars: 5h and 7d windows, 10-char block bars side by side.
+  statusline_render_bar(out, five_pct, "5h")
+  out.write_string("  ")
+  statusline_render_bar(out, week_pct, "7d")
   if !has_choir {
     @sys.write_stdout(out.to_string())
     return
