@@ -345,6 +345,10 @@ pub async fn dispatch(
               Err(e) => @types.Response::Err(e.message())
               Ok(_) =>
                 if !write_pending_wave(project_dir, pw) {
+                  // Rollback the wave-index reservation so a failed pending
+                  // fork doesn't leave an orphan empty row visible to
+                  // `choir stats` with no path to reap it.
+                  ignore(@sys.rm_rf(wave_index_path(project_dir, wave_id)))
                   @types.Response::Err(
                     "failed to write pending wave: " + wave_id,
                   )
@@ -397,7 +401,7 @@ pub async fn dispatch(
         // still observes the wave id as consumed.
         if resp.is_ok() && spawn_plan.spawned_count > 0 {
           match
-            save_fresh_spawned_wave_index(
+            append_spawned_agents_to_wave_index(
               project_dir,
               wave_id,
               fork_wave_args.parent_branch,

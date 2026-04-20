@@ -141,6 +141,12 @@ members: user-ext-audit-fix-0 (codex), user-ext-audit-fix-1 (codex)
 15:09:02  [audit-fix-1]  lifecycle: Dev(Done(Merged))
 ```
 
+The sample is **illustrative**, not an exhaustive contract. Known event
+types (`lifecycle.transition`, `evidence.ci_observed`,
+`evidence.review_observed`) render cleanly as shown; any other event
+type falls back to `<category>: <subtype> <json-dump>`. Extending
+clean rendering to more subtypes is a follow-up, not a bug.
+
 ## MCP tool: `report_usage`
 
 ```
@@ -179,8 +185,13 @@ write, no recomputation). Missing rate table = `cost_usd` stays
 
 - **Idempotency:** writing the same `report_usage` twice overwrites
   the entry. No accumulation.
-- **Atomicity:** wave index writes go via temp-file + rename (reuse
-  existing KV write pattern).
+- **Atomicity:** wave index writes go via unique-suffix temp-file
+  (`.tmp.<pid>-<nanos>`) + POSIX `rename(2)`. This is atomic against a
+  concurrent reader — readers see either the old content or the new,
+  never a truncated body — but it is **not** crash-safe across power
+  loss: `write_file_sync` does not fsync the file or the directory
+  before rename. If crash-durability is needed later, add fsync before
+  rename and add a directory fsync after.
 - **Concurrent forks:** if two waves are forked in parallel, each
   gets its own `.choir/waves/<wave_id>.json`. Wave-id collision
   safety is already handled by `allocate_pending_wave_id` at

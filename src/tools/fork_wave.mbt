@@ -301,25 +301,6 @@ pub fn allocate_wave_id(
 }
 
 ///|
-pub fn save_fresh_spawned_wave_index(
-  project_dir : String,
-  wave_id : String,
-  parent_branch : String,
-  fork_ts_ms : Int64,
-  agent_ids_csv : String,
-) -> Result[Unit, @types.ChoirError] {
-  save_wave_index(
-    project_dir,
-    WaveIndex::new(
-      wave_id,
-      parent_branch,
-      fork_ts_ms,
-      split_spawned_agent_ids(agent_ids_csv),
-    ),
-  )
-}
-
-///|
 pub fn append_spawned_agents_to_wave_index(
   project_dir : String,
   wave_id : String,

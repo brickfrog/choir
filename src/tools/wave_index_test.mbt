@@ -99,9 +99,12 @@ test "save/load/list round-trip on a tmp project dir" {
   let ids = @tools.list_wave_ids(tmp)
   assert_eq(ids.length(), 1)
   assert_eq(ids[0], "wv-a")
-  assert_false(
-    @sys.path_entry_exists(@tools.wave_index_path(tmp, "wv-a") + ".tmp"),
-  )
+  // Implementation writes `path + ".tmp.<pid>-<nanos>"` then atomic-renames;
+  // no tmp file of any suffix should survive after save.
+  let entries = @sys.list_dir(@tools.wave_index_dir(tmp))
+  for entry in entries {
+    assert_false(entry.contains(".tmp."))
+  }
   match @tools.load_wave_index(tmp, "wv-a") {
     Ok(parsed) => assert_eq(parsed.agent_ids[0], "feature-z.leaf-0")
     Err(e) => fail("load failed: " + e.message())
