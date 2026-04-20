@@ -191,7 +191,11 @@ fn init_config_toml_content(default_session : String) -> String {
   "listen_uds = \".choir/server.sock\"\n" +
   "terminal_session = \"" +
   default_session +
-  "\"\n"
+  "\"\n" +
+  "\n" +
+  "# [pricing.codex]\n" +
+  "# rate_in = 0.0\n" +
+  "# rate_out = 0.0\n"
 }
 
 ///|
@@ -366,6 +370,7 @@ fn init_companion_commands(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
   let env_z = @workspace.launch_env_assignments(
     spec, session, workspace, terminal_target,

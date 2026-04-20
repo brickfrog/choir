@@ -7,6 +7,7 @@ pub(all) enum ToolRequest {
   MergePr(MergePrArgs)
   TrackPr(TrackPrArgs)
   NotifyParent(CallerMessageArgs)
+  ReportUsage(ReportUsageArgs)
   SendMessage(SendMessageArgs)
   Reply(ReplyArgs)
   Shutdown(ShutdownArgs)
@@ -43,6 +44,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     MergePr(_) => "merge_pr"
     TrackPr(_) => "track_pr"
     NotifyParent(_) => "notify_parent"
+    ReportUsage(_) => "report_usage"
     SendMessage(_) => "send_message"
     Reply(_) => "reply"
     Shutdown(_) => "shutdown"

@@ -29,6 +29,33 @@ test "fork_wave_spawn_plan embeds review_context in each leaf task" {
 }
 
 ///|
+test "allocate_wave_id sees an existing reservation index" {
+  let project_dir = "/tmp/choir-wave-id-reservation-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  ignore(@sys.create_dir_all(project_dir))
+  let now = 1776000000000L
+  let pid = 4242
+  let first = allocate_wave_id(project_dir, "audit-fix", now, pid)
+  match
+    save_wave_index(
+      project_dir,
+      WaveIndex::new(first, "feature-wave-telemetry", now, []),
+    ) {
+    Ok(_) => ()
+    Err(e) => {
+      ignore(@sys.rm_rf(project_dir))
+      fail(e.message())
+      return
+    }
+  }
+  let second = allocate_wave_id(project_dir, "audit-fix", now, pid)
+  assert_true(second != first)
+  assert_true(second.has_prefix(first + "-"))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async fn mock_runner_expect_copilot_reviewer_only(
   cmds : Array[@workspace.Command],
 ) -> Array[Int] {

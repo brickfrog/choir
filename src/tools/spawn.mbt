@@ -48,6 +48,7 @@ pub fn spawn_worker_plan(
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
   let agent_id = @workspace.canonical_agent_id(spec)
   let terminal_target = @workspace.local_target_for(
@@ -154,6 +155,7 @@ pub fn spawn_remote_plan(args : RemoteSpawnArgs) -> SpawnRemotePlan {
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
   let ok_response = @types.Response::ok_values({
     "status": String::to_json("spawned"),
@@ -222,6 +224,7 @@ pub fn spawn_gemini_plan(args : SpawnGeminiArgs) -> SpawnGeminiPlan {
     spawn_depth: 0,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
   let ok_response = @types.Response::ok_values({
     "status": String::to_json("spawned"),

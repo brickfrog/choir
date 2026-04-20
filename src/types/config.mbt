@@ -19,7 +19,15 @@ pub(all) struct Config {
   automerge : Bool
   /// Review loop behavior after fixes are pushed for review comments.
   review_mode : ReviewMode
+  /// Per-agent-type token pricing, keyed by canonical AgentType wire string.
+  pricing : Map[String, PricingRate]
 } derive(Debug)
+
+///|
+pub(all) struct PricingRate {
+  rate_in : Double
+  rate_out : Double
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct LocalConfig {
@@ -37,6 +45,8 @@ pub(all) struct LocalConfig {
   automerge : Bool?
   /// Per-wave review-mode override. `None` inherits global config.
   review_mode : ReviewMode?
+  /// Wave telemetry id assigned by `fork_wave`. `None` for root/pre-scaffold agents.
+  wave_id : String?
 } derive(Debug)
 
 ///|
@@ -58,6 +68,7 @@ pub fn Config::default() -> Config {
     pr_review: true,
     automerge: false,
     review_mode: SinglePass,
+    pricing: {},
   }
 }
 
@@ -76,5 +87,6 @@ pub fn LocalConfig::default() -> LocalConfig {
     task_contract: None,
     automerge: None,
     review_mode: None,
+    wave_id: None,
   }
 }

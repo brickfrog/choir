@@ -122,6 +122,86 @@ fn parse_bool_config_value(raw : String) -> Result[Bool, String] {
 }
 
 ///|
+fn parse_double_config_value(
+  key : String,
+  raw : String,
+) -> Result[Double, @types.ChoirError] {
+  let stripped = strip_toml_inline_comment(raw)
+  let parsed = @json.parse(stripped) catch {
+    e =>
+      return Err(
+        @types.ChoirError::config_error(
+          key + ": invalid number: " + e.to_string(),
+        ),
+      )
+  }
+  match parsed {
+    Number(n, ..) => Ok(n)
+    _ => Err(@types.ChoirError::config_error(key + ": expected number"))
+  }
+}
+
+///|
+fn parse_pricing_config(
+  doc : TomlDoc,
+) -> Result[Map[String, @types.PricingRate], @types.ChoirError] {
+  let pricing : Map[String, @types.PricingRate] = {}
+  for full_key, _ in doc.to_map() {
+    if full_key.has_prefix("pricing.") {
+      let rest = full_key["pricing.".length():].to_string()
+      let agent_type_key = match rest.split_once(".") {
+        Some((agent_type, _)) => agent_type.to_string()
+        None => rest
+      }
+      match @types.AgentType::try_parse_wire(agent_type_key) {
+        Ok(@types.AgentType::Unknown) | Err(_) =>
+          return Err(
+            @types.ChoirError::config_error(
+              "unknown pricing agent_type: " + agent_type_key,
+            ),
+          )
+        Ok(_) => ()
+      }
+    }
+  }
+  for
+    agent_type in [
+      @types.AgentType::Gemini,
+      @types.AgentType::Claude,
+      @types.AgentType::Codex,
+      @types.AgentType::MoonPilot,
+      @types.AgentType::CursorAgent,
+    ] {
+    let key = agent_type.to_wire_string()
+    let rate_in_key = "pricing." + key + ".rate_in"
+    let rate_out_key = "pricing." + key + ".rate_out"
+    match (doc.get(rate_in_key), doc.get(rate_out_key)) {
+      (None, None) => ()
+      (Some(_), None) =>
+        return Err(
+          @types.ChoirError::config_error(rate_out_key + ": missing rate_out"),
+        )
+      (None, Some(_)) =>
+        return Err(
+          @types.ChoirError::config_error(rate_in_key + ": missing rate_in"),
+        )
+      (Some(raw_in), Some(raw_out)) => {
+        let rate_in = match parse_double_config_value(rate_in_key, raw_in) {
+          Ok(v) => v
+          Err(e) => return Err(e)
+        }
+        let rate_out = match parse_double_config_value(rate_out_key, raw_out) {
+          Ok(v) => v
+          Err(e) => return Err(e)
+        }
+        pricing.set(key, { rate_in, rate_out })
+      }
+    }
+  }
+  Ok(pricing)
+}
+
+///|
 /// Parses project config.toml
 pub fn parse_config(
   content : String,
@@ -202,6 +282,10 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let pricing = match parse_pricing_config(doc) {
+    Ok(p) => p
+    Err(e) => return Err(e)
+  }
 
   Ok({
     default_role,
@@ -219,6 +303,7 @@ pub fn parse_config(
     pr_review,
     automerge,
     review_mode,
+    pricing,
   })
 }
 
@@ -332,6 +417,7 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let wave_id = doc.get_optional_nonempty("wave_id")
   Ok({
     role,
     agent_id,
@@ -345,6 +431,7 @@ pub fn parse_local_config(
     task_contract,
     automerge,
     review_mode,
+    wave_id,
   })
 }
 

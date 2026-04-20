@@ -13,6 +13,7 @@ import {
   "choir/src/runtime",
   "choir/src/policy",
   "choir/src/phase",
+  "choir/src/tools",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
@@ -20,6 +21,7 @@ import {
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
   "brickfrog/moontrace",
+  "brickfrog/tempo",
 }
 
 options(
@@ -30,12 +32,16 @@ options(
     "init.mbt": [ "native" ],
     "init_bootstrap.mbt": [ "native" ],
     "leaf_tool.mbt": [ "native" ],
+    "log_subcommand.mbt": [ "native" ],
+    "log_subcommand_test.mbt": [ "native" ],
     "main.mbt": [ "native" ],
     "mcp_mode.mbt": [ "native" ],
     "mcp_subcommand.mbt": [ "native" ],
     "mcp_subcommand_test.mbt": [ "native" ],
     "runtime_commands.mbt": [ "native" ],
     "skill_subcommand.mbt": [ "native" ],
+    "stats_subcommand.mbt": [ "native" ],
+    "stats_subcommand_test.mbt": [ "native" ],
     "statusline.mbt": [ "native" ],
     "stub_main.mbt": [ "not", "native" ],
     "tcp_reader.mbt": [ "native" ],

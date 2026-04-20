@@ -58,9 +58,12 @@ test "parse_toml_doc optional helpers" {
     (
       #|shell_command = "bash"
       #|empty_value = ""
+      #|[pricing.codex]
+      #|rate_in = 0.001
     ),
   )
   assert_eq(doc.get("shell_command"), Some("bash"))
+  assert_eq(doc.get("pricing.codex.rate_in"), Some("0.001"))
   assert_eq(doc.get_or("missing", "fallback"), "fallback")
   assert_eq(doc.get_optional_nonempty("shell_command"), Some("bash"))
   assert_eq(doc.get_optional_nonempty("empty_value"), None)
@@ -181,6 +184,39 @@ test "parse_config review_mode invalid is error" {
 }
 
 ///|
+test "parse_config pricing tables are typed" {
+  let cfg = parse_config(
+    (
+      #|[pricing.codex]
+      #|rate_in = 0.001
+      #|rate_out = 0.002
+    ),
+  ).unwrap()
+  match cfg.pricing.get("codex") {
+    Some(rate) => {
+      assert_eq(rate.rate_in, 0.001)
+      assert_eq(rate.rate_out, 0.002)
+    }
+    None => fail("missing codex pricing")
+  }
+}
+
+///|
+test "parse_config pricing invalid number reports key" {
+  match
+    parse_config(
+      (
+        #|[pricing.codex]
+        #|rate_in = nope
+        #|rate_out = 0.002
+      ),
+    ) {
+    Ok(_) => fail("invalid pricing number should fail")
+    Err(e) => assert_true(e.message().contains("pricing.codex.rate_in"))
+  }
+}
+
+///|
 test "parse config with tcp_auth_token" {
   let content =
     #|default_role = "tl"
@@ -227,6 +263,7 @@ test "parse_local_config - metadata" {
     #|workspace = "/tmp/worktree"
     #|terminal_target = "zellij-tab:choir:child"
     #|agent_type = "gemini"
+    #|wave_id = "wv-demo"
   let local_cfg = parse_local_config(content).unwrap()
   assert_eq(local_cfg.role, Some(@types.Role::Dev))
   assert_eq(local_cfg.agent_id, Some("main.child"))
@@ -239,6 +276,7 @@ test "parse_local_config - metadata" {
     @types.LocalTarget::parse("zellij-tab:choir:child"),
   )
   assert_eq(local_cfg.agent_type, Some(@types.AgentType::Gemini))
+  assert_eq(local_cfg.wave_id, Some("wv-demo"))
 }
 
 ///|

@@ -330,19 +330,57 @@ pub async fn dispatch(
               @env.now().reinterpret_as_int64(),
               @sys.get_pid(),
             )
+            let fork_ts_ms = @env.now().reinterpret_as_int64()
             let pw : PendingWave = { wave_id, args: resolved_args }
-            if !write_pending_wave(project_dir, pw) {
-              @types.Response::Err("failed to write pending wave: " + wave_id)
-            } else {
-              @types.Response::ok_values({
-                "status": String::to_json("pending"),
-                "wave_id": String::to_json(wave_id),
-                "depends_on": resolved_args.depends_on.to_json(),
-              })
+            match
+              save_wave_index(
+                project_dir,
+                WaveIndex::new(
+                  wave_id,
+                  resolved_args.parent_branch,
+                  fork_ts_ms,
+                  [],
+                ),
+              ) {
+              Err(e) => @types.Response::Err(e.message())
+              Ok(_) =>
+                if !write_pending_wave(project_dir, pw) {
+                  // Rollback the wave-index reservation so a failed pending
+                  // fork doesn't leave an orphan empty row visible to
+                  // `choir stats` with no path to reap it.
+                  ignore(@sys.rm_rf(wave_index_path(project_dir, wave_id)))
+                  @types.Response::Err(
+                    "failed to write pending wave: " + wave_id,
+                  )
+                } else {
+                  @types.Response::ok_values({
+                    "status": String::to_json("pending"),
+                    "wave_id": String::to_json(wave_id),
+                    "depends_on": resolved_args.depends_on.to_json(),
+                  })
+                }
             }
           }
         }
       } else {
+        let fork_ts_ms = @env.now().reinterpret_as_int64()
+        let wave_id = allocate_wave_id(
+          project_dir,
+          fork_wave_args.slug_prefix,
+          fork_ts_ms,
+          @sys.get_pid(),
+        )
+        let fork_wave_args = fork_wave_resolve_args_parent_branch(
+          fork_wave_args, project_dir, capture,
+        )
+        match
+          save_wave_index(
+            project_dir,
+            WaveIndex::new(wave_id, fork_wave_args.parent_branch, fork_ts_ms, []),
+          ) {
+          Err(e) => return @types.Response::Err(e.message())
+          Ok(_) => ()
+        }
         let (resp, fork_wave_args, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
           fork_wave_args,
           project_dir,
@@ -356,9 +394,23 @@ pub async fn dispatch(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          wave_id=Some(wave_id),
         )
-        // Post-spawn side effects: only run if spawn succeeded.
+        // Post-spawn side effects: only run if spawn succeeded. If spawn fails,
+        // the reservation remains as an empty orphan so concurrent allocation
+        // still observes the wave id as consumed.
         if resp.is_ok() && spawn_plan.spawned_count > 0 {
+          match
+            append_spawned_agents_to_wave_index(
+              project_dir,
+              wave_id,
+              fork_wave_args.parent_branch,
+              fork_ts_ms,
+              spawn_plan.agent_ids,
+            ) {
+            Err(e) => return @types.Response::Err(e.message())
+            Ok(_) => ()
+          }
           interpret_fork_wave_post_spawn(
             fork_wave_args,
             spawn_plan,
@@ -368,7 +420,14 @@ pub async fn dispatch(
             capture~,
           )
         }
-        resp
+        match resp.ok_payload() {
+          Some(fields) => {
+            let payload = fields.to_json_map()
+            payload.set("wave_id", wave_id.to_json())
+            @types.Response::ok_values(payload)
+          }
+          None => resp
+        }
       }
     ToolRequest::ForkSession(session_args) => {
       let session_dir = project_dir + "/.choir/sessions/" + session_args.name
@@ -519,6 +578,8 @@ pub async fn dispatch(
           }
       }
     }
+    ToolRequest::ReportUsage(report_args) =>
+      interpret_report_usage(report_args, project_dir, registry)
     ToolRequest::SendMessage(send_args) => {
       let registry_lookup = match registry {
         Some(reg) => Some(try? reg.get(send_args.target_id))

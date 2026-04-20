@@ -348,6 +348,13 @@ pub fn write_file_sync(path : String, content : String) -> Bool {
 }
 
 ///|
+pub fn rename_file_sync(from_path : String, to_path : String) -> Bool {
+  let from_bytes = string_to_null_terminated_bytes(from_path)
+  let to_bytes = string_to_null_terminated_bytes(to_path)
+  c_rename_file_sync(from_bytes, to_bytes) == 0
+}
+
+///|
 pub fn write_file_atomic(path : String, content : String) -> Bool {
   let tmp_path = path + ".tmp." + c_getpid().to_string()
   if !write_file_sync(tmp_path, content) {
