@@ -44,6 +44,11 @@ code.
 - Test placement: a blackbox test importing `@<pkg>` cannot reach private
   helpers — if the test only calls `pub fn`, it belongs in `_test.mbt`;
   otherwise it must be a `test` block in the source file.
+- No shell-harness tests. CLAUDE.md §Test Boundaries forbids tests that
+  drive `sh` scripts, spin up temp git repos, or mutate the working tree
+  for coverage. Cover parser/formatter logic with narrow MoonBit tests;
+  if the CLI surface genuinely needs integration, pick a smaller boundary
+  (inject the capability) rather than shelling out.
 
 ## Verification
 ```
