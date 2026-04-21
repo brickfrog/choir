@@ -34,9 +34,11 @@ You are adding a new MCP tool that an agent can call (e.g. `report_usage`,
    least one `ChoirError` path.
 
 ## Gotchas
-- Return `Result[T, @types.ChoirError]`, not `Result[T, String]` — see
-  CLAUDE.md Effect Architecture; the `Response::Err` call is the ONLY place
-  you collapse to a string.
+- Core/internal helpers should return `Result[T, @types.ChoirError]`, not
+  `Result[T, String]` — see CLAUDE.md Effect Architecture. The public
+  `interpret_<tool>` handler still returns `@types.Response`, and the
+  `Response::Err(e.message())` call there is the ONLY place you collapse to
+  a string.
 - Args drawn from a fixed domain (agent_type, role, status) must be enums;
   use `AgentType::try_parse_wire` during parse, never raw string compare.
 - No direct `@sys.*` or `@process.*` in the handler unless you follow an

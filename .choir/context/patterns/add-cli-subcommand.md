@@ -15,8 +15,8 @@ code.
 - Error path: same file — `fn log_subcommand_error` (`@sys.write_stderr` + `@sys.exit(1)`)
 - `moon.pkg` entry: `src/bin/choir/moon.pkg` — both `log_subcommand.mbt` and
   `log_subcommand_test.mbt` marked `[ "native" ]`
-- Tests: `src/bin/choir/log_subcommand_test.mbt` (pure helpers), source-file
-  inline tests (arg parser internals)
+- Tests: `src/bin/choir/log_subcommand_test.mbt` — blackbox coverage for the
+  `choir log` reference implementation lives here
 
 ## Steps
 1. Create `src/bin/choir/<name>_subcommand.mbt` with `pub fn <name>_subcommand_run() -> Unit`.

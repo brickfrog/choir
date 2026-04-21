@@ -27,8 +27,8 @@ wires into the TL workflow.
    pattern cites a merged PR by number and the short commit sha.
 2. Use the six-section format exactly (`# title`, `## When to use`,
    `## Reference implementation`, `## Steps`, `## Gotchas`, `## Verification`).
-   Keep each section under ~10 lines. A pattern that balloons past one
-   screen has become a design doc and belongs in `.choir/context/` proper.
+   Aim to keep each section around ~10 lines. A pattern that balloons past
+   one screen has become a design doc and belongs in `.choir/context/` proper.
 3. Every `src/...` path and every function name in `## Reference
    implementation` must resolve — grep before committing.
 4. Update this README with a one-line hook summarizing the change shape.
