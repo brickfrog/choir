@@ -159,7 +159,19 @@ pub async fn interpret_kill_agent(
       // any live process whose cwd resolves under the agent's workspace —
       // including the "(deleted)" variant left behind once `git worktree
       // remove` unlinks the directory — and SIGTERM/SIGKILL each one.
-      let victims = list_pids(agent.workspace)
+      //
+      // Gate the scan on the same "choir-managed worktree" predicate used to
+      // decide whether to `git worktree remove` just above. `register` lets
+      // an agent join with an arbitrary or empty `workspace`, and running
+      // `list_pids_with_cwd_prefix` on "" or "/" would match essentially
+      // every process on the host — which then all get SIGKILLed. Skipping
+      // the fallback for non-choir paths keeps `kill_agent` scoped to the
+      // worktree layout we actually own.
+      let victims = if shutdown_intent_remove_choir_worktree(agent.workspace) {
+        list_pids(agent.workspace)
+      } else {
+        []
+      }
       for pid in victims {
         kill_pid(pid)
       }

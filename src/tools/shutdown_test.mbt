@@ -208,16 +208,50 @@ async test "interpret_kill_agent runs process-kill fallback after pane close and
 }
 
 ///|
-async test "interpret_kill_agent still scans /proc when pane/worktree are absent" {
+async test "interpret_kill_agent skips /proc scan for non-choir workspaces" {
+  // An agent that `register`ed with an arbitrary workspace (including `""`)
+  // must not trigger a system-wide /proc scan — that would match nearly
+  // every process and SIGKILL them. The fallback is gated on the same
+  // choir-worktree predicate we use for `git worktree remove`.
+  for workspace in ["", "/", "/home/user/proj", "/proj/not-a-choir-worktree"] {
+    let reg = @registry.AgentRegistry::new()
+    let agent = kill_agent_test_agent(None, workspace)
+    ignore(reg.upsert(agent))
+    let scanned : Array[String] = []
+    let killed : Array[Int] = []
+    let spy_list_pids = fn(prefix : String) -> Array[Int] {
+      scanned.push(prefix)
+      [99]
+    }
+    let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
+    let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
+    let got = interpret_kill_agent(
+      args,
+      Some(reg),
+      mock_runner_all_ok,
+      list_pids=spy_list_pids,
+      kill_pid=spy_kill_pid,
+    )
+    match got {
+      @types.Response::Ok(_) => ()
+      _ => fail("expected ok for workspace=" + workspace)
+    }
+    assert_eq(scanned, [])
+    assert_eq(killed, [])
+  }
+}
+
+///|
+async test "interpret_kill_agent runs /proc scan when workspace is a choir worktree" {
   let reg = @registry.AgentRegistry::new()
-  let workspace = "/proj/not-a-choir-worktree"
+  let workspace = "/proj/.choir/worktrees/slug-0"
   let agent = kill_agent_test_agent(None, workspace)
   ignore(reg.upsert(agent))
   let scanned : Array[String] = []
   let killed : Array[Int] = []
   let spy_list_pids = fn(prefix : String) -> Array[Int] {
     scanned.push(prefix)
-    [99]
+    [7]
   }
   let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
   let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
@@ -233,7 +267,7 @@ async test "interpret_kill_agent still scans /proc when pane/worktree are absent
     _ => fail("expected ok")
   }
   assert_eq(scanned, [workspace])
-  assert_eq(killed, [99])
+  assert_eq(killed, [7])
 }
 
 ///|

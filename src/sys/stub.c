@@ -225,7 +225,16 @@ int choir_pid_is_alive(int pid) {
  * bytes written, capped at `max_size`; returns -1 if `/proc` cannot be opened.
  */
 int choir_list_pids_with_cwd_prefix(const char *prefix, char *buf, int max_size) {
-    if (!prefix || !buf || max_size <= 0) {
+    /* An empty prefix would match via the vacuous `memcmp(_, _, 0) == 0`
+     * branch and `target[0] == '/'` for almost every cwd on the system,
+     * turning the helper into an enumerate-everything primitive. Reject
+     * it at the FFI boundary (with a graceful zero-match) so MoonBit
+     * callers that pass a stale or default-constructed workspace cannot
+     * trigger a system-wide kill sweep. */
+    if (!prefix || prefix[0] == '\0') {
+        return 0;
+    }
+    if (!buf || max_size <= 0) {
         return -1;
     }
     DIR *d = opendir("/proc");
