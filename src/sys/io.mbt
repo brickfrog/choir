@@ -50,6 +50,14 @@ extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_serv
 extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
 
 ///|
+#borrow(prefix, buf)
+extern "C" fn c_list_pids_with_cwd_prefix(
+  prefix : Bytes,
+  buf : Bytes,
+  max_size : Int,
+) -> Int = "choir_list_pids_with_cwd_prefix"
+
+///|
 #borrow(exe)
 extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
 
@@ -250,6 +258,45 @@ pub fn kill_server_pid_sequence_best_effort(pid : Int) -> Unit {
 /// True when `kill(pid, 0)` succeeds (process exists for signaling).
 pub fn pid_is_alive(pid : Int) -> Bool {
   c_pid_is_alive(pid) != 0
+}
+
+///|
+/// Linux-only: PIDs of live processes whose `/proc/{pid}/cwd` symlink resolves
+/// under `prefix`. Matches exact, `prefix + "/..."`, and the `" (deleted)"`
+/// variants of both (the kernel appends `" (deleted)"` when the inode has been
+/// unlinked — e.g., after `git worktree remove`). Self-PID is always skipped.
+///
+/// Capped at `max` entries; a 16-byte-per-PID buffer is used internally so the
+/// helper never allocates unbounded memory. Returns an empty array when `/proc`
+/// cannot be opened (non-Linux host, chroot without /proc, etc.).
+pub fn list_pids_with_cwd_prefix(
+  prefix : String,
+  max? : Int = 64,
+) -> Array[Int] {
+  if max <= 0 {
+    return []
+  }
+  let prefix_bytes = string_to_null_terminated_bytes(prefix)
+  let buf_size = max * 16
+  let buf = Bytes::new(buf_size)
+  let n = c_list_pids_with_cwd_prefix(prefix_bytes, buf, buf_size)
+  if n <= 0 {
+    return []
+  }
+  let content = @utf8.decode_lossy(buf[:n])
+  let pids : Array[Int] = []
+  for raw in content.split("\n") {
+    let trimmed = raw.trim().to_string()
+    if trimmed == "" {
+      continue
+    }
+    let parsed = Some(@string.parse_int(trimmed)) catch { _ => None }
+    match parsed {
+      Some(v) => pids.push(v)
+      None => ()
+    }
+  }
+  pids
 }
 
 ///|
@@ -588,4 +635,71 @@ pub fn shell_quote(s : String) -> String {
   }
   buf.write_char('\'')
   buf.to_string()
+}
+
+///|
+/// Integration smoke test for `list_pids_with_cwd_prefix`: spawn a `sleep` in
+/// a fresh `/tmp` directory, verify the helper returns its PID, then kill it.
+/// Linux-only — auto-skips when `/proc/self` is unavailable.
+test "list_pids_with_cwd_prefix finds a live child by cwd" {
+  if !path_exists("/proc/self") {
+    return
+  }
+  let pid_str = get_pid().to_string()
+  let dir = "/tmp/choir-sys-proc-scan-" + pid_str
+  let pid_path = dir + "/child.pid"
+  ignore(rm_rf(dir))
+  assert_true(create_dir_all(dir))
+  // Use `setsid` so the sleep survives the invoking shell closing and is
+  // reparented to init with its cwd still set under `dir` — matching the
+  // real-world "agent's CLI keeps running after kill_agent" scenario.
+  let cmd = "cd " +
+    shell_quote(dir) +
+    " && setsid sh -c 'sleep 60 & echo $! > " +
+    shell_quote(pid_path) +
+    "' </dev/null >/dev/null 2>&1"
+  let rc = system(cmd)
+  assert_true(rc == 0)
+  // Wait briefly for the pidfile to appear (background child takes a moment).
+  let mut child_pid = 0
+  for attempt = 0; attempt < 50; attempt = attempt + 1 {
+    if path_exists(pid_path) {
+      let raw = read_file(pid_path).trim().to_string()
+      if raw != "" {
+        let parsed = Some(@string.parse_int(raw)) catch { _ => None }
+        match parsed {
+          Some(v) => child_pid = v
+          None => ()
+        }
+        if child_pid > 0 {
+          break
+        }
+      }
+    }
+    ignore(system("sleep 0.02"))
+  }
+  if child_pid <= 0 {
+    ignore(rm_rf(dir))
+    fail("test scaffold failed: could not read child pid")
+  }
+  let victims = list_pids_with_cwd_prefix(dir)
+  // The scan must at least include our spawned sleep.
+  let mut found = false
+  for v in victims {
+    if v == child_pid {
+      found = true
+    }
+  }
+  // Clean up regardless of the assertion outcome.
+  kill_server_pid_sequence_best_effort(child_pid)
+  ignore(rm_rf(dir))
+  if !found {
+    fail(
+      "expected PID " +
+      child_pid.to_string() +
+      " in scan; got " +
+      victims.length().to_string() +
+      " PIDs",
+    )
+  }
 }
