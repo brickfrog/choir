@@ -50,6 +50,14 @@ extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_serv
 extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
 
 ///|
+#borrow(prefix, buf)
+extern "C" fn c_list_pids_with_cwd_prefix(
+  prefix : Bytes,
+  buf : Bytes,
+  max_size : Int,
+) -> Int = "choir_list_pids_with_cwd_prefix"
+
+///|
 #borrow(exe)
 extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
 
@@ -250,6 +258,63 @@ pub fn kill_server_pid_sequence_best_effort(pid : Int) -> Unit {
 /// True when `kill(pid, 0)` succeeds (process exists for signaling).
 pub fn pid_is_alive(pid : Int) -> Bool {
   c_pid_is_alive(pid) != 0
+}
+
+///|
+/// Upper bound on the per-call PID-scan cap. 1024 matching processes is far
+/// beyond anything a real kill_agent invocation could produce and keeps the
+/// internal buffer allocation to 16 KiB.
+const LIST_PIDS_WITH_CWD_PREFIX_HARD_CAP : Int = 1024
+
+///|
+/// Linux-only: PIDs of live processes whose `/proc/{pid}/cwd` symlink resolves
+/// under `prefix`. Matches exact, `prefix + "/..."`, and the `" (deleted)"`
+/// variants of both (the kernel appends `" (deleted)"` when the inode has been
+/// unlinked — e.g., after `git worktree remove`). Self-PID is always skipped,
+/// and an empty `prefix` is rejected (returning `[]`) since it would otherwise
+/// match nearly every cwd on the system.
+///
+/// The returned array is capped at `min(max, 1024)` entries — the C helper
+/// writes decimal PIDs into a 16-byte-per-entry buffer, and this wrapper
+/// additionally stops parsing once the cap is reached so short PIDs (e.g.
+/// "1\n") cannot exceed it. Returns an empty array when `/proc` cannot be
+/// opened (non-Linux host, chroot without /proc, etc.).
+pub fn list_pids_with_cwd_prefix(
+  prefix : String,
+  max? : Int = 64,
+) -> Array[Int] {
+  if max <= 0 || prefix == "" {
+    return []
+  }
+  let effective_max = if max > LIST_PIDS_WITH_CWD_PREFIX_HARD_CAP {
+    LIST_PIDS_WITH_CWD_PREFIX_HARD_CAP
+  } else {
+    max
+  }
+  let prefix_bytes = string_to_null_terminated_bytes(prefix)
+  let buf_size = effective_max * 16
+  let buf = Bytes::new(buf_size)
+  let n = c_list_pids_with_cwd_prefix(prefix_bytes, buf, buf_size)
+  if n <= 0 {
+    return []
+  }
+  let content = @utf8.decode_lossy(buf[:n])
+  let pids : Array[Int] = []
+  for raw in content.split("\n") {
+    if pids.length() >= effective_max {
+      break
+    }
+    let trimmed = raw.trim().to_string()
+    if trimmed == "" {
+      continue
+    }
+    let parsed = Some(@string.parse_int(trimmed)) catch { _ => None }
+    match parsed {
+      Some(v) => pids.push(v)
+      None => ()
+    }
+  }
+  pids
 }
 
 ///|
@@ -588,4 +653,12 @@ pub fn shell_quote(s : String) -> String {
   }
   buf.write_char('\'')
   buf.to_string()
+}
+
+///|
+/// Empty-prefix guard: the C helper bails out before touching `/proc`, and
+/// the MoonBit wrapper rejects the empty string up front. A buggy caller
+/// that leaks a blank workspace must never trigger a system-wide scan.
+test "list_pids_with_cwd_prefix rejects empty prefix" {
+  assert_eq(list_pids_with_cwd_prefix(""), [])
 }

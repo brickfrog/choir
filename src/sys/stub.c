@@ -210,6 +210,102 @@ int choir_pid_is_alive(int pid) {
     return kill((pid_t)pid, 0) == 0 ? 1 : 0;
 }
 
+/**
+ * Linux-only: walk `/proc/{pid}/cwd` symlinks and write decimal PIDs for every
+ * process whose cwd matches `prefix` as newline-separated text into `buf`.
+ *
+ * A match requires `readlink(target)` to satisfy one of:
+ *   - target == prefix                  (cwd is the workspace itself)
+ *   - target == prefix + " (deleted)"   (workspace removed, cwd inode gone)
+ *   - target starts with prefix + "/"   (cwd is nested inside the workspace)
+ *   - target starts with prefix + "/"   and has the " (deleted)" suffix
+ *
+ * Skips the caller's own PID so choir never kills itself. Entries whose cwd
+ * readlink fails (EACCES, ESRCH race, etc.) are silently ignored. Returns the
+ * bytes written, capped at `max_size`; returns -1 if `/proc` cannot be opened.
+ */
+int choir_list_pids_with_cwd_prefix(const char *prefix, char *buf, int max_size) {
+    /* An empty prefix would match via the vacuous `memcmp(_, _, 0) == 0`
+     * branch and `target[0] == '/'` for almost every cwd on the system,
+     * turning the helper into an enumerate-everything primitive. Reject
+     * it at the FFI boundary (with a graceful zero-match) so MoonBit
+     * callers that pass a stale or default-constructed workspace cannot
+     * trigger a system-wide kill sweep. */
+    if (!prefix || prefix[0] == '\0') {
+        return 0;
+    }
+    if (!buf || max_size <= 0) {
+        return -1;
+    }
+    DIR *d = opendir("/proc");
+    if (!d) {
+        return -1;
+    }
+    size_t plen = strlen(prefix);
+    pid_t self_pid = getpid();
+    struct dirent *ent;
+    int total = 0;
+    char link_path[64];
+    char target[4096];
+    static const char DELETED[] = " (deleted)";
+    size_t del_len = sizeof(DELETED) - 1;
+    while ((ent = readdir(d)) != NULL) {
+        const char *name = ent->d_name;
+        if (name[0] == '\0') {
+            continue;
+        }
+        int is_num = 1;
+        for (const char *p = name; *p; p++) {
+            if (*p < '0' || *p > '9') { is_num = 0; break; }
+        }
+        if (!is_num) {
+            continue;
+        }
+        pid_t pid = (pid_t)atoi(name);
+        if (pid <= 0 || pid == self_pid) {
+            continue;
+        }
+        int n = snprintf(link_path, sizeof(link_path), "/proc/%s/cwd", name);
+        if (n < 0 || (size_t)n >= sizeof(link_path)) {
+            continue;
+        }
+        ssize_t tlen = readlink(link_path, target, sizeof(target) - 1);
+        if (tlen <= 0) {
+            continue;
+        }
+        target[tlen] = '\0';
+        size_t tlen_eff = (size_t)tlen;
+        if (tlen_eff >= del_len &&
+            memcmp(target + tlen_eff - del_len, DELETED, del_len) == 0) {
+            tlen_eff -= del_len;
+            target[tlen_eff] = '\0';
+        }
+        int match = 0;
+        if (tlen_eff == plen && memcmp(target, prefix, plen) == 0) {
+            match = 1;
+        } else if (tlen_eff > plen &&
+                   memcmp(target, prefix, plen) == 0 &&
+                   target[plen] == '/') {
+            match = 1;
+        }
+        if (!match) {
+            continue;
+        }
+        char pidbuf[16];
+        int pnlen = snprintf(pidbuf, sizeof(pidbuf), "%d\n", (int)pid);
+        if (pnlen < 0) {
+            continue;
+        }
+        if (total + pnlen > max_size) {
+            break;
+        }
+        memcpy(buf + total, pidbuf, (size_t)pnlen);
+        total += pnlen;
+    }
+    closedir(d);
+    return total;
+}
+
 int choir_spawn_serve(const char* exe, int exe_len) {
     (void)exe_len; // Ensure unused param warning is avoided
     pid_t pid = fork();

@@ -200,6 +200,15 @@ pub fn pid_is_alive(_pid : Int) -> Bool {
 }
 
 ///|
+pub fn list_pids_with_cwd_prefix(
+  _prefix : String,
+  max? : Int = 64,
+) -> Array[Int] {
+  ignore(max)
+  []
+}
+
+///|
 pub fn realpath_native(path : String) -> String? {
   Some(path)
 }

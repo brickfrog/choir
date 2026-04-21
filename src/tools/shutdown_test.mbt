@@ -97,11 +97,12 @@ test "kill_agent_ok_response matches killed envelope" {
 }
 
 ///|
-test "kill_agent_adapter_host_steps is pane close then worktree remove" {
+test "kill_agent_adapter_host_steps is pane close, worktree remove, process-kill fallback" {
   let steps = kill_agent_adapter_host_steps()
-  assert_eq(steps.length(), 2)
+  assert_eq(steps.length(), 3)
   assert_eq(steps[0], KillAgentAdapterHostStep::PaneClose)
   assert_eq(steps[1], KillAgentAdapterHostStep::WorktreeRemove)
+  assert_eq(steps[2], KillAgentAdapterHostStep::ProcessKillFallback)
 }
 
 ///|
@@ -148,6 +149,200 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
     _ => fail("expected agent in registry")
   } noraise {
     a => assert_eq(a.state, @types.AgentState::Failed)
+  }
+}
+
+///|
+async test "interpret_kill_agent runs process-kill fallback after pane close and worktree remove" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let workspace = "/proj/.choir/worktrees/slug-0"
+  let agent = kill_agent_test_agent(Some(t), workspace)
+  ignore(reg.upsert(agent))
+  let events : Array[String] = []
+  let spy_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      let program = cmd.program
+      let first_arg = if cmd.args.length() > 0 { cmd.args[0] } else { "" }
+      events.push("run:" + program + " " + first_arg)
+      statuses.push(0)
+    }
+    statuses
+  }
+  let spy_list_pids = fn(prefix : String) -> Array[Int] {
+    events.push("list_pids:" + prefix)
+    [4242, 4243]
+  }
+  let spy_kill_pid = fn(pid : Int) -> Unit {
+    events.push("kill_pid:" + pid.to_string())
+  }
+  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
+  let got = interpret_kill_agent(
+    args,
+    Some(reg),
+    spy_runner,
+    list_pids=spy_list_pids,
+    kill_pid=spy_kill_pid,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  // Expected sequence: close-target pane → git worktree remove → /proc scan → kill each victim.
+  assert_eq(events.length(), 5)
+  // Step 1: pane close (program is the choir exe, first arg is "zellij-action").
+  assert_true(events[0].has_prefix("run:"))
+  assert_true(events[0].contains("zellij-action"))
+  // Step 2: git worktree remove.
+  assert_eq(events[1], "run:git worktree")
+  // Step 3: /proc scan with the agent's workspace.
+  assert_eq(events[2], "list_pids:" + workspace)
+  // Step 4/5: SIGTERM-SIGKILL sequence per PID, in scan order.
+  assert_eq(events[3], "kill_pid:4242")
+  assert_eq(events[4], "kill_pid:4243")
+}
+
+///|
+async test "interpret_kill_agent skips /proc scan for non-choir workspaces" {
+  // An agent that `register`ed with an arbitrary workspace (including `""`)
+  // must not trigger a system-wide /proc scan — that would match nearly
+  // every process and SIGKILL them. The fallback is gated on the same
+  // choir-worktree predicate we use for `git worktree remove`.
+  for workspace in ["", "/", "/home/user/proj", "/proj/not-a-choir-worktree"] {
+    let reg = @registry.AgentRegistry::new()
+    let agent = kill_agent_test_agent(None, workspace)
+    ignore(reg.upsert(agent))
+    let scanned : Array[String] = []
+    let killed : Array[Int] = []
+    let spy_list_pids = fn(prefix : String) -> Array[Int] {
+      scanned.push(prefix)
+      [99]
+    }
+    let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
+    let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
+    let got = interpret_kill_agent(
+      args,
+      Some(reg),
+      mock_runner_all_ok,
+      list_pids=spy_list_pids,
+      kill_pid=spy_kill_pid,
+    )
+    match got {
+      @types.Response::Ok(_) => ()
+      _ => fail("expected ok for workspace=" + workspace)
+    }
+    assert_eq(scanned, [])
+    assert_eq(killed, [])
+  }
+}
+
+///|
+async test "interpret_kill_agent runs /proc scan when workspace is a choir worktree" {
+  let reg = @registry.AgentRegistry::new()
+  let workspace = "/proj/.choir/worktrees/slug-0"
+  let agent = kill_agent_test_agent(None, workspace)
+  ignore(reg.upsert(agent))
+  let scanned : Array[String] = []
+  let killed : Array[Int] = []
+  let spy_list_pids = fn(prefix : String) -> Array[Int] {
+    scanned.push(prefix)
+    [7]
+  }
+  let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
+  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
+  let got = interpret_kill_agent(
+    args,
+    Some(reg),
+    mock_runner_all_ok,
+    list_pids=spy_list_pids,
+    kill_pid=spy_kill_pid,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  assert_eq(scanned, [workspace])
+  assert_eq(killed, [7])
+}
+
+///|
+async test "interpret_kill_agent pane-close warning reflects kill outcome" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let pane_close_fails = async fn(
+    cmds : Array[@workspace.Command],
+  ) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for _ in cmds {
+      statuses.push(1)
+    }
+    statuses
+  }
+  // Case A: pane close failed, no victims found → legacy warning.
+  let reg_a = @registry.AgentRegistry::new()
+  let agent_a = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-0")
+  ignore(reg_a.upsert(agent_a))
+  let no_pids = fn(_p : String) -> Array[Int] { [] }
+  let noop_kill = fn(_pid : Int) -> Unit {  }
+  let args : KillAgentArgs = { agent_id: "main.leaf", reason: "r" }
+  let got_a = interpret_kill_agent(
+    args,
+    Some(reg_a),
+    pane_close_fails,
+    list_pids=no_pids,
+    kill_pid=noop_kill,
+  )
+  match got_a {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      match map.get("warning") {
+        Some(w) =>
+          assert_eq(
+            w,
+            String::to_json(
+              "pane close failed — zellij tab/pane may still be open",
+            ),
+          )
+        None => fail("expected warning on failed pane close")
+      }
+    }
+    _ => fail("expected ok")
+  }
+  // Case B: pane close failed, but /proc fallback killed the process.
+  let reg_b = @registry.AgentRegistry::new()
+  let agent_b = kill_agent_test_agent(Some(t), "/proj/.choir/worktrees/slug-1")
+  ignore(reg_b.upsert(agent_b))
+  let some_pids = fn(_p : String) -> Array[Int] { [1234] }
+  let got_b = interpret_kill_agent(
+    args,
+    Some(reg_b),
+    pane_close_fails,
+    list_pids=some_pids,
+    kill_pid=noop_kill,
+  )
+  match got_b {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      match map.get("warning") {
+        Some(w) =>
+          assert_eq(
+            w,
+            String::to_json(
+              "pane close failed — zellij tab/pane may still linger, but the agent process was killed",
+            ),
+          )
+        None => fail("expected warning when pane close failed")
+      }
+    }
+    _ => fail("expected ok")
   }
 }
 
