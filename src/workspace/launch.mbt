@@ -129,6 +129,7 @@ fn provider_launch_command(
   cmd_extra_args? : Array[String] = [],
   extra_mcp_servers_json? : String? = None,
   tl_init_mode? : Bool = false,
+  lean? : Bool = false,
 ) -> Command {
   let claude_mcp = if tl_init_mode {
     ["--mcp-config", init_tl_claude_mcp_config_json(), "--strict-mcp-config"]
@@ -145,11 +146,16 @@ fn provider_launch_command(
       if tl_init_mode {
         let plugin_dir = workspace_path + "/.choir/plugin"
         let settings_path = workspace_path + "/.choir/claude-settings.json"
+        let lean_args : Array[String] = if lean {
+          ["--system-prompt", "."]
+        } else {
+          []
+        }
         {
           program,
           args: [
             ..cmd_extra_args, "--dangerously-skip-permissions", ..claude_mcp, "--plugin-dir",
-            plugin_dir, "--settings", settings_path,
+            plugin_dir, "--settings", settings_path, ..lean_args,
           ],
           workdir: Some(workspace_path),
         }
@@ -276,13 +282,18 @@ pub fn init_tl_claude_settings_json() -> String {
 ///|
 /// Inner TL agent command for the init zellij tab (no post-exit trailer; that lives only in
 /// [`init_tl_zellij_tab_command`]).
-pub fn init_tl_agent_command(tl_type : String, project_dir : String) -> Command {
+pub fn init_tl_agent_command(
+  tl_type : String,
+  project_dir : String,
+  lean? : Bool = false,
+) -> Command {
   let cmd = provider_launch_command(
     tl_type_agent_type(tl_type),
     @types.Role::TL,
     "root",
     project_dir,
     tl_init_mode=true,
+    lean~,
   )
   { ..cmd, workdir: None }
 }

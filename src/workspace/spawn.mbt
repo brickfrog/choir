@@ -654,9 +654,10 @@ pub fn init_tl_zellij_tab_command(
   project_dir : String,
   tl_type : String,
   branch : String,
+  lean? : Bool = false,
 ) -> Command {
   let inner = zellij_launch_inner_command(
-    init_tl_agent_command(tl_type, project_dir),
+    init_tl_agent_command(tl_type, project_dir, lean~),
   )
   let env_exports = export_assignment("CHOIR_AGENT_ID", "root") +
     export_assignment("CHOIR_BRANCH", branch) +

@@ -204,6 +204,16 @@ fn init_config_has_terminal_session(content : String) -> Bool {
 }
 
 ///|
+/// `--lean` on `choir init` makes the TL's own Claude session skip Claude
+/// Code's default system prompt (via `--system-prompt .`). Only affects
+/// the Claude TL; Gemini/Codex/Cursor ignore it. One-shot per init
+/// invocation — re-run `choir init --recreate --lean` to change the TL's
+/// mode.
+fn init_parse_lean_flag(args : Array[String]) -> Bool {
+  args.contains("--lean")
+}
+
+///|
 fn init_parse_tl_type(args : Array[String]) -> String {
   for i = 0; i < args.length() - 1; i = i + 1 {
     if args[i] == "--tl" {
@@ -264,6 +274,38 @@ test "init TL launch command supports agent alias" {
   assert_true(s.contains("--workspace"))
   assert_true(s.contains("/tmp/choir repo"))
   assert_false(s.contains("--mcp-config"))
+}
+
+///|
+test "init parse_lean_flag detects --lean" {
+  assert_true(init_parse_lean_flag(["choir", "init", "--lean"]))
+  assert_true(init_parse_lean_flag(["choir", "init", "--recreate", "--lean"]))
+  assert_false(init_parse_lean_flag(["choir", "init"]))
+  assert_false(init_parse_lean_flag(["choir", "init", "--recreate"]))
+}
+
+///|
+test "init TL launch command adds --system-prompt . when lean" {
+  let cmd = @workspace.init_tl_agent_command("claude", ".", lean=true)
+  let s = cmd.to_string()
+  assert_true(s.contains("--system-prompt"))
+  assert_true(s.contains("claude"))
+  assert_true(s.contains("--dangerously-skip-permissions"))
+}
+
+///|
+test "init TL launch command omits --system-prompt by default" {
+  let cmd = @workspace.init_tl_agent_command("claude", ".")
+  let s = cmd.to_string()
+  assert_false(s.contains("--system-prompt"))
+}
+
+///|
+test "init TL launch command ignores lean for non-claude agents" {
+  let cmd_codex = @workspace.init_tl_agent_command("codex", ".", lean=true)
+  assert_false(cmd_codex.to_string().contains("--system-prompt"))
+  let cmd_gemini = @workspace.init_tl_agent_command("gemini", ".", lean=true)
+  assert_false(cmd_gemini.to_string().contains("--system-prompt"))
 }
 
 ///|
@@ -464,6 +506,7 @@ fn init_run() -> Unit {
       let purge = args.contains("--purge")
       let no_attach = init_no_attach(args)
       let tl_type = init_parse_tl_type(args)
+      let lean = init_parse_lean_flag(args)
       let project_dir = @env.current_dir().unwrap_or(".")
       let default_session = init_default_terminal_session(project_dir)
       let use_dev = init_is_choir_source_tree(project_dir)
@@ -617,7 +660,11 @@ fn init_run() -> Unit {
         }
         init_run_or_exit(
           @workspace.init_tl_zellij_tab_command(
-            session, project_dir, tl_type, current_branch,
+            session,
+            project_dir,
+            tl_type,
+            current_branch,
+            lean~,
           ),
         )
       } else {
