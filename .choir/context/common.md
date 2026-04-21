@@ -13,8 +13,7 @@ Choir is a MoonBit native orchestration server for coding-agent teams.
 ## Repository Rules
 
 - `moon fmt` before commit.
-- Use `./scripts/verify-fast.sh` for normal iteration.
-- Use `./scripts/verify-strict.sh` when full confidence is required.
+- Verify with `moon test --target native`. Bare `moon test` includes wasm-gc/js targets with pre-existing failures unrelated to your change; CI only runs the native target.
 - Do not weaken tests to make a change pass.
 - Keep MoonBit code idiomatic: pattern matching, immutable-by-default, `Result[T, E]`.
 
