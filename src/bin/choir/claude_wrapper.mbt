@@ -348,14 +348,34 @@ fn claude_wrapper_session_name(pid : Int, nanos : Int64) -> String {
 }
 
 ///|
+/// Extract the `--lean` flag from forwarded args. When set, the wrapper
+/// prepends `--system-prompt .` so Claude Code runs without its bloated
+/// default system prompt — a workaround for Opus 4.7 performing better
+/// without the tone/coding-style injections. Tool schemas, CLAUDE.md
+/// loading, MCP servers, and skills are unaffected.
+fn extract_lean_flag(args : Array[String]) -> (Bool, Array[String]) {
+  let rest : Array[String] = []
+  let mut lean = false
+  for a in args {
+    if a == "--lean" {
+      lean = true
+    } else {
+      rest.push(a)
+    }
+  }
+  (lean, rest)
+}
+
+///|
 /// Spawn `claude` with a freshly synthesized `--settings <tempfile>` so statusline and choir MCP
 /// wiring only apply to this invocation. Stops polluting project `.claude/settings.json`.
 fn claude_wrapper_run() -> Unit {
   let args = @env.args()
-  let forward : Array[String] = []
+  let forward_raw : Array[String] = []
   for i = 2; i < args.length(); i = i + 1 {
-    forward.push(args[i])
+    forward_raw.push(args[i])
   }
+  let (lean, forward) = extract_lean_flag(forward_raw)
   let pid = @sys.get_pid()
   let nanos = @env.now().reinterpret_as_int64()
   let tmpdir = claude_wrapper_tmpdir()
@@ -407,6 +427,10 @@ fn claude_wrapper_run() -> Unit {
   let claude_args : Array[String] = [
     "--settings", settings_path, "--plugin-dir", plugin_dir,
   ]
+  if lean {
+    claude_args.push("--system-prompt")
+    claude_args.push(".")
+  }
   for a in forward {
     claude_args.push(a)
   }
@@ -729,4 +753,29 @@ test "claude_wrapper_settings_tempfile_path is distinct for distinct inputs" {
 test "claude_wrapper_tmpdir falls back to /tmp when TMPDIR is unset or empty" {
   let dir = claude_wrapper_tmpdir()
   assert_true(dir != "")
+}
+
+///|
+test "extract_lean_flag strips --lean and preserves order of other args" {
+  let (lean, rest) = extract_lean_flag(["--print", "--lean", "hello", "--foo"])
+  assert_true(lean)
+  assert_eq(rest.length(), 3)
+  assert_eq(rest[0], "--print")
+  assert_eq(rest[1], "hello")
+  assert_eq(rest[2], "--foo")
+}
+
+///|
+test "extract_lean_flag returns false when --lean absent" {
+  let (lean, rest) = extract_lean_flag(["--print", "hello"])
+  assert_false(lean)
+  assert_eq(rest.length(), 2)
+}
+
+///|
+test "extract_lean_flag handles multiple --lean occurrences idempotently" {
+  let (lean, rest) = extract_lean_flag(["--lean", "x", "--lean"])
+  assert_true(lean)
+  assert_eq(rest.length(), 1)
+  assert_eq(rest[0], "x")
 }
