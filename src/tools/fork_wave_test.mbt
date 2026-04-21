@@ -767,6 +767,58 @@ async test "fork_wave_response_from_interpret_result CommandFailed empty detail"
 }
 
 ///|
+test "fork_wave_spawn_plan skips Failed agents after kill_agent" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.wave-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/w",
+      branch: "main.wave-0",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Failed,
+    }),
+  )
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
+  assert_eq(plan.skipped_count, 1)
+  assert_eq(plan.spawned_count, 1)
+  assert_eq(plan.skipped_ids, "main.wave-0")
+  assert_eq(plan.agent_ids, "main.wave-1")
+  assert_eq(plan.spawned_slugs, ["wave-1"])
+}
+
+///|
+test "fork_wave_spawn_plan skips Done agents" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.wave-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/w",
+      branch: "main.wave-0",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Done,
+    }),
+  )
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
+  assert_eq(plan.skipped_count, 1)
+  assert_eq(plan.spawned_count, 1)
+  assert_eq(plan.skipped_ids, "main.wave-0")
+  assert_eq(plan.agent_ids, "main.wave-1")
+  assert_eq(plan.spawned_slugs, ["wave-1"])
+}
+
+///|
 async test "fork_wave_response_from_interpret_result CommandFailed no cmd" {
   let err = @tools.ForkWaveError::CommandFailed(
     status=2,
