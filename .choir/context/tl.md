@@ -60,14 +60,16 @@ Every leaf spawn benefits from high-leverage shortcuts. During Spec
 Crystallization, actively probe for these — don't wait for the user to
 remember:
 
-- **Reference by analog.** Before writing a leaf task, ask the user (or
-  search the codebase yourself) for an existing function/file that the new
-  thing should mirror. Example: "mirror the shape of
+- **Reference by analog or pattern library.** Before writing a leaf task,
+  check `.choir/context/patterns/README.md` for a named recipe that fits.
+  If a pattern exists, cite it by name ("mirror pattern `add-mcp-tool`") and
+  the leaf knows exactly which merged example to read. Otherwise, find a
+  specific function/file analog as before — e.g. "mirror the shape of
   `write_gemini_settings()` in `src/workspace/command.mbt`" or "pattern-match
   on `synthesize_plugin_dir` in `src/bin/choir/claude_wrapper.mbt`." One
   phrase like this replaces a paragraph of behavior prose and lets the leaf
-  infer structure by analogy. If no analog exists, note that explicitly in
-  the spec so the leaf knows it's greenfield.
+  infer structure by analogy. If neither a pattern nor an analog exists,
+  note that explicitly in the spec so the leaf knows it's greenfield.
 
 - **External reference codebases via /tmp.** When a feature ports a pattern
   from another repo (e.g., dere's `claude --settings` wrapper, someone's
