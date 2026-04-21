@@ -199,6 +199,49 @@ on the README without buying parallelism.
 - PR numbers for "Shipped in" anchors come from `git log --oneline main`
   scanning for the merge commit — the leaf does that lookup itself.
 
+## Prior Art (considered, not adopted)
+
+Surveyed existing MCP servers in this space before speccing. The concept is
+well-explored; the execution-as-a-server is not, and adopting any of them
+would be net-negative for Choir's scope.
+
+- **`mcp-cookbook`** (mikevalstar) — exact concept match: TS MCP server
+  serving step-by-step recipes. Zero stars, last push June 2025,
+  effectively abandoned.
+- **`MarkdownLM/mcp`** — "persistent memory + governance" layer with
+  categories (architecture, patterns, decisions). Broader than a pattern
+  library; would entangle our Choir-specific guidance with a generic
+  governance model.
+- **Moderne MCP** — refactoring recipes via OpenRewrite LSTs. Java/Spring
+  shaped; wrong tool for MoonBit orchestration patterns.
+- **Serena** (23K stars) — semantic code toolkit with filesystem-backed
+  `read_memory` / `write_memory`. Issue
+  [oraios/serena#994](https://github.com/oraios/serena/issues/994) (Feb
+  2026) explicitly says the markdown-files-on-disk approach doesn't scale
+  and proposes semantic search. Serena's memory substrate today is
+  structurally identical to what this spec proposes (markdown in a known
+  directory), with no curation discipline.
+- **Generic agent-memory MCPs** — `agentmemory` (rohitg00), `Recallium`,
+  `Trevec`, `repomemory`, `claude-memory-compiler` — all auto-capture
+  from hooks or session traces. That takes curation out of the TL's hands,
+  which is precisely the opposite of what a pattern library needs.
+
+**Why we don't adopt any:**
+
+1. The spec is four markdown files. Adding an MCP server dependency to
+   serve them would be strict negative ROI.
+2. The value of the library is Choir-specific guidance (`AgentType`,
+   `ChoirError`, MoonBit idioms, effect boundary). Generic tools dilute
+   this.
+3. Auto-capture systems remove the "earned a recipe after shipping PR
+   #NNN" curation rule, which is the primary anti-stale mechanism.
+4. Serena's own users have hit the scaling wall at dozens of memories. We
+   cap at ~15 patterns before considering substrates; a years-off problem.
+
+If the library grows past ~15 entries and manual grep-discovery becomes
+painful, revisit Serena or a minimal in-tree index rather than inventing
+new infrastructure.
+
 ## Follow-Ups (not in this plan)
 
 - Additional patterns as features validate them: `add-evidence-event`,
