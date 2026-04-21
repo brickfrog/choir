@@ -58,19 +58,17 @@ pub fn fork_wave_spawn_plan(
       }
     }
     let agent_id = fork_wave_args.parent_branch + "." + slug
-    let already_alive = match registry {
+    let already_registered = match registry {
       Some(reg) =>
         try {
-          match reg.get(agent_id).state {
-            @types.AgentState::Active | @types.AgentState::Completing => true
-            _ => false
-          }
+          let _ = reg.get(agent_id)
+          true
         } catch {
           _ => false
         }
       None => false
     }
-    if already_alive {
+    if already_registered {
       if skipped_count > 0 {
         skipped_ids.write_string(",")
       }

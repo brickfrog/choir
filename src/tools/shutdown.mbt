@@ -54,10 +54,13 @@ pub fn kill_agent_ok_response(agent_id : String) -> @types.Response {
 
 ///|
 /// Adapter-side ordering for `kill_agent`: pane close attempt, then worktree
-/// remove attempt (each may be skipped when the corresponding command is absent).
+/// remove attempt, then /proc-based process-kill fallback (each may be skipped
+/// when the corresponding input is absent; the fallback always runs once the
+/// agent has been resolved).
 pub(all) enum KillAgentAdapterHostStep {
   PaneClose
   WorktreeRemove
+  ProcessKillFallback
 } derive(Debug, Eq)
 
 ///|
@@ -70,6 +73,7 @@ pub fn kill_agent_adapter_host_steps() -> Array[KillAgentAdapterHostStep] {
   [
     KillAgentAdapterHostStep::PaneClose,
     KillAgentAdapterHostStep::WorktreeRemove,
+    KillAgentAdapterHostStep::ProcessKillFallback,
   ]
 }
 
@@ -98,6 +102,10 @@ pub async fn interpret_kill_agent(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   project_dir? : String = ".",
+  list_pids? : (String) -> Array[Int] = fn(p) {
+    @sys.list_pids_with_cwd_prefix(p)
+  },
+  kill_pid? : (Int) -> Unit = @sys.kill_server_pid_sequence_best_effort,
 ) -> @types.Response {
   // File existence is the source of truth for "is this id a pending wave"
   // — delete the entry whether or not its JSON parses. A partial/corrupt
@@ -145,6 +153,32 @@ pub async fn interpret_kill_agent(
         }
         None => ()
       }
+      // Belt-and-suspenders process kill: zellij's close-tab + SIGHUP chain
+      // through `sh -lc` does not reliably terminate the grandchild CLI
+      // runtime (e.g., `moon_pilot`, `node/claude`). Scan `/proc/*/cwd` for
+      // any live process whose cwd resolves under the agent's workspace —
+      // including the "(deleted)" variant left behind once `git worktree
+      // remove` unlinks the directory — and SIGTERM/SIGKILL each one.
+      //
+      // Gate the scan on the same "choir-managed worktree" predicate used to
+      // decide whether to `git worktree remove` just above. `register` lets
+      // an agent join with an arbitrary or empty `workspace`, and running
+      // `list_pids_with_cwd_prefix` on "" or "/" would match essentially
+      // every process on the host — which then all get SIGKILLed. Skipping
+      // the fallback for non-choir paths keeps `kill_agent` scoped to the
+      // worktree layout we actually own.
+      let victims = if shutdown_intent_remove_choir_worktree(agent.workspace) {
+        list_pids(agent.workspace)
+      } else {
+        []
+      }
+      for pid in victims {
+        kill_pid(pid)
+      }
+      @moontrace.warn("kill_agent process-kill fallback", fields=[
+        @moontrace.field("agent_id", args.agent_id),
+        @moontrace.field("victims", victims.length()),
+      ])
       ignore(reg.set_state(args.agent_id, @types.AgentState::Failed)) catch {
         _ => ()
       }
@@ -154,9 +188,12 @@ pub async fn interpret_kill_agent(
       ])
       let response = kill_agent_ok_response(args.agent_id)
       if pane_close_failed {
-        response.with_warning(
-          "pane close failed — zellij tab/pane may still be open",
-        )
+        let warning = if victims.length() > 0 {
+          "pane close failed — zellij tab/pane may still linger, but the agent process was killed"
+        } else {
+          "pane close failed — zellij tab/pane may still be open"
+        }
+        response.with_warning(warning)
       } else {
         response
       }
