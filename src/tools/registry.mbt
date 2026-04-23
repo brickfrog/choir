@@ -57,7 +57,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "merge_pr",
-      description: "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id, force (bypass ChangesRequested guard)",
+      description: "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id, force (bypass poller/threads/policy guard — force=true requires `choir tl-parent-override on` for the calling agent)",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
