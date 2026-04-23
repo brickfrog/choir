@@ -1,8 +1,8 @@
 # Choir Roadmap
 
-## Current state: Merge Audit and Operator UX (2026-04-10)
+## Current state: Server-Enforced Orchestration Gates (2026-04-23)
 
-Choir now has typed task contracts, a typed evidence ledger, a pure merge policy, an explicit automerge control plane, hard TL parent-branch enforcement, a durable outbox for server-originated human notifications, a unified external-merge reconciliation path, and operator-facing merge audit surfaces. Parent notifications, wave rollups, and the statusline now distinguish manual merge, server automerge, force override, and external observation without relying on ad hoc wording. The codebase remains idiomatic MoonBit with strict effect boundaries and pure planners, and the PR workflow is reliable through official Reviewer Requests and contextualized Copilot guidance.
+Choir now exposes `wave_state` as the TL's authoritative per-child state query (typed supervisor + Dev leaves + Worker agents with PR review / CI / thread snapshots), rejects `notify_parent` from leaves in `ReviewOwned | ExitRequestedDeferred | ChangesRequested` while unresolved Copilot threads remain (status-agnostic), and requires `tl-parent-override` before `merge_pr force=true` is honored so every force-merge leaves an auditable trail. Three TL-facing prose rules in `src/mcp/translate.mbt` that duplicated these enforcements have been deleted; the TL reads wave state by querying rather than by parsing notification prose. The paradigm shift is from "ask the TL nicely in prose" to "server rejects bad transitions with the offending state in the rejection." Everything built previously (typed task contracts, typed evidence ledger, pure merge policy, automerge control plane, TL parent-branch enforcement, durable outbox, external-merge reconciliation, merge-audit surfaces) remains intact; this layer rests on top of it.
 
 ---
 
@@ -26,6 +26,14 @@ Explore parallel `moon test` execution during wave reconciliation to reduce the 
 ---
 
 ## ✅ Completed
+
+### Server-Enforced Orchestration Gates (2026-04-23)
+- **`wave_state` MCP tool**: Authoritative typed snapshot of wave participants — supervisor lifecycle, Dev leaves, Worker agents, PR review/CI/thread state, plus a `merge_gate_ready` field that mirrors the exact predicate `merge_pr` uses so the TL cannot drift from server truth. Registered for `[Root, TL]` only. Fail-loud on graphql failure (None + error string, never blocks the snapshot).
+- **`notify_parent` threads gate broadening**: Existing gate extended to `Dev(ExitRequestedDeferred)` and `Dev(ChangesRequested)` alongside `Dev(ReviewOwned)`. Leaves can no longer exit-notify or iterate-notify while Copilot threads remain open. Gate is status-agnostic — fires regardless of `Status::Completed | Failure`.
+- **`merge_pr force` audit gate**: `force=true` is rejected unless the caller has `tl-parent-override on` in KV. Every force-merge now has a paper trail; existing override mechanism reused, no new KV keys.
+- **Prose cleanup**: Three TL-facing instructions in `translate.mbt` that duplicated the above enforcements have been deleted; replaced with a single pointer to `wave_state`. Leaf-facing rules in CLAUDE.md preserved (still useful as in-context guidance even when server also enforces).
+- **Validated in-flight**: The merge_pr gate caught 2 unresolved Copilot threads on PR #259 during its own rollout when the leaf reported `[MERGE READY]` prematurely — the exact bug class the rollout targeted, fired in real time. Prose could not have caught it.
+- **Coverage**: `moon test --target native` green across all four PRs; ~980 tests passing.
 
 ### Merge Audit and Operator UX (2026-04-10)
 - **Explicit Merge Provenance**: Authoritative `[PR MERGED]` notifications now identify whether the merge came from manual `merge_pr`, server automerge, `force=true`, or external observation.
