@@ -83,12 +83,11 @@ fn crystallize_spec_default_path_exists(path : String) -> Bool {
 fn crystallize_spec_default_fs_writer(path : String, content : String) -> Bool {
   // AUDIT: `@sys.path_exists` and `@sys.write_file_atomic` are synchronous C
   // FFI calls, and `interpret_crystallize_spec` is not async, so there is no
-  // cooperative in-process scheduler interleaving between the planner's
-  // existence check and this write. This does not eliminate inter-process
-  // TOCTOU: another process can create `path` after the planner check, and
-  // the atomic rename used here may replace an existing destination on
-  // POSIX rather than fail-if-exists. The refusal is a workflow guardrail
-  // against re-running the skill, not a cross-process lock.
+  // cooperative in-process scheduler interleaving between the existence
+  // check and this write. That does not eliminate inter-process TOCTOU:
+  // another process can create `path` after the planner check, and the
+  // atomic rename performed by `@sys.write_file_atomic` may replace an
+  // existing destination on POSIX rather than fail-if-exists.
   @sys.write_file_atomic(path, content)
 }
 
