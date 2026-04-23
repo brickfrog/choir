@@ -343,6 +343,18 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["caller_id"],
     },
     {
+      name: "crystallize_spec",
+      description: "Scaffold a canonical eight-section spec template (Context, Clarifications, Goals, Non-Goals, Design, Verify, Boundary, Follow-Ups) at .choir/context/<feature_slug>-spec.md. Refuses if the spec file already exists.",
+      props: [
+        {
+          name: "feature_slug",
+          desc: "Kebab-case slug. The spec file is written to .choir/context/<feature_slug>-spec.md",
+        },
+        { name: "caller_id", desc: "ID of the calling supervisor" },
+      ],
+      required: ["feature_slug", "caller_id"],
+    },
+    {
       name: "send_message",
       description: "Send a message to another agent",
       props: [

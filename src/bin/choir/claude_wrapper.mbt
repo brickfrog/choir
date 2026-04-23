@@ -44,7 +44,7 @@ fn audit_skill_body() -> String {
     #|   - Review surface (the diff command from step 1).
     #|   - CLAUDE.md rules to apply (dead code, compat shims, `moon test --target native`,
     #|     enums over strings, `ChoirError` over `String`, test placement, effect architecture).
-    #|   - Any relevant spec file from `.choir/spec/<name>.md`.
+    #|   - Any relevant spec file from `.choir/context/<name>-spec.md`.
     #|
     #|   (c) Deliverable: findings with file:line, categorized however Sarcasmotron
     #|   sees fit. No balanced "overall" summary. Explicit "nothing wrong" with
@@ -57,26 +57,56 @@ fn audit_skill_body() -> String {
 }
 
 ///|
+fn crystallize_skill_body() -> String {
+  (
+    #|---
+    #|name: crystallize
+    #|description: Crystallize an idea into a canonical spec via structured clarifying questions.
+    #|---
+    #|1. Pick a kebab-case feature slug. Confirm with the user.
+    #|2. Call `crystallize_spec(feature_slug: <slug>)` MCP tool. It writes the
+    #|   template at `.choir/context/<slug>-spec.md` with empty sections.
+    #|3. Read the written file. Identify genuine blanks that would change the spec
+    #|   (not "should I proceed?" — real ambiguities: error behavior, purity
+    #|   boundary, scope forks, ordering constraints).
+    #|4. Target 3–5 questions, absolute max 7. If you can't form 3 sharp questions,
+    #|   you may not understand the task — read more source before asking.
+    #|5. Ask them in ONE batch via `AskUserQuestion`. Each question: 2–4 options,
+    #|   mark one `(Recommended)` where applicable, always allow "Other".
+    #|6. Write the Q&A verbatim into the `## Clarifications` section of the spec
+    #|   file. Format: `**Q: <question>?**\nA: <answer>`.
+    #|7. Draft the remaining sections (Context, Goals, Non-Goals, Design, Verify,
+    #|   Boundary, Follow-Ups) based on the clarifications. If a section needs
+    #|   further user input, ask a second small batch — do not spawn with blanks.
+    #|8. Print: "Spec crystallized at `.choir/context/<slug>-spec.md`. Run
+    #|   `/decompose` to create the integration branch."
+    #|
+  )
+}
+
+///|
 fn decompose_skill_body() -> String {
   (
     #|---
     #|name: decompose
-    #|description: Crystallize a feature spec and create the integration branch.
+    #|description: Create the integration branch from an existing crystallized spec.
     #|---
-    #|1. Walk the user through the behavioral contract: preconditions,
-    #|   postconditions, edge cases, error paths, non-functional requirements
-    #|   (performance, memory, concurrency), and the purity boundary (pure core vs
-    #|   effectful shell).
-    #|2. Name the feature in kebab-case. Confirm with user.
-    #|3. Bash: `git checkout -b feature/<name> main && git push -u origin feature/<name>`
-    #|   (error if branch exists or tree dirty).
-    #|4. Seed `.choir/spec/<name>.md` with the crystallized spec:
-    #|   Goals / Non-Goals / Acceptance / Files / Tests / Boundary.
-    #|5. Remind the TL about decomposition principles: vertical slices not horizontal
+    #|1. Confirm the feature slug with the user (or infer from conversation if
+    #|   crystallize was just run).
+    #|2. Read `.choir/context/<slug>-spec.md`. Verify it exists; if not, print
+    #|   "Run /crystallize first" and stop.
+    #|3. Verify the `## Clarifications` section has at least one `**Q:...**\nA:...`
+    #|   block. If empty, print "Spec has no Clarifications — run /crystallize first
+    #|   to populate" and stop.
+    #|4. Verify the `## Goals`, `## Non-Goals`, `## Design`, and `## Verify` sections
+    #|   are non-empty. If any are empty, ask the TL to fill them before continuing.
+    #|5. Bash: `git checkout -b feature/<slug> main && git push -u origin
+    #|   feature/<slug>` (error if branch exists or tree dirty).
+    #|6. Remind about decomposition principles: vertical slices not horizontal
     #|   layers, scaffold-as-interface-contract, independence as the goal,
     #|   merge-conflict-as-design-smell, smallest correct leaf.
-    #|6. Print next step: "Ready. `fork_wave` with `parent_branch=feature/<name>`
-    #|   and `automerge=true`."
+    #|7. Print: "Ready. `fork_wave` with `parent_branch=feature/<slug>` and
+    #|   `automerge=true`."
     #|
   )
 }
@@ -101,7 +131,7 @@ fn merge_user_skills_into_plugin(
   }
   let entries = @sys.list_dir(skills_dir)
   for entry in entries {
-    if entry == "audit" || entry == "decompose" {
+    if entry == "audit" || entry == "crystallize" || entry == "decompose" {
       let msg = "choir claude: user skill '" +
         entry +
         "' clashes with builtin; rename or remove ~/.config/choir/skills/" +
@@ -162,6 +192,22 @@ fn synthesize_plugin_dir(
     ) {
     return Err(
       @types.ChoirError::workspace_error("failed to write audit/SKILL.md"),
+    )
+  }
+
+  if !@sys.create_dir_all(plugin_dir + "/skills/crystallize") {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to create skills/crystallize dir",
+      ),
+    )
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/skills/crystallize/SKILL.md",
+      crystallize_skill_body(),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write crystallize/SKILL.md"),
     )
   }
 
@@ -471,6 +517,47 @@ test "skill bodies start with --- and have body" {
   let decompose = decompose_skill_body()
   assert_true(decompose.has_prefix("---\n"))
   assert_true(decompose.length() > 20)
+
+  let crystallize = crystallize_skill_body()
+  assert_true(crystallize.has_prefix("---\n"))
+  assert_true(crystallize.length() > 20)
+}
+
+///|
+test "crystallize_skill_body starts with frontmatter and has body" {
+  let body = crystallize_skill_body()
+  assert_true(body.has_prefix("---\nname: crystallize\n"))
+  assert_true(body.contains("description:"))
+  // Body exists after the closing ---
+  let parts = body.split("---").to_array()
+  // There should be a frontmatter block and content after the closing ---
+  assert_true(parts.length() >= 3)
+  let after_frontmatter = parts[2]
+  assert_true(after_frontmatter.trim_start().length() > 0)
+}
+
+///|
+test "decompose_skill_body does not contain .choir/spec/" {
+  let body = decompose_skill_body()
+  assert_false(body.contains(".choir/spec/"))
+}
+
+///|
+test "decompose_skill_body contains .choir/context/" {
+  let body = decompose_skill_body()
+  assert_true(body.contains(".choir/context/"))
+}
+
+///|
+test "audit_skill_body does not contain .choir/spec/" {
+  let body = audit_skill_body()
+  assert_false(body.contains(".choir/spec/"))
+}
+
+///|
+test "audit_skill_body contains .choir/context/" {
+  let body = audit_skill_body()
+  assert_true(body.contains(".choir/context/"))
 }
 
 ///|
@@ -521,6 +608,11 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   let review = @sys.read_file(tmp + "/.choir/plugin/skills/audit/SKILL.md")
   assert_true(review != "")
 
+  let crystallize = @sys.read_file(
+    tmp + "/.choir/plugin/skills/crystallize/SKILL.md",
+  )
+  assert_true(crystallize != "")
+
   let decompose = @sys.read_file(
     tmp + "/.choir/plugin/skills/decompose/SKILL.md",
   )
@@ -540,6 +632,41 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   assert_eq(
     @sys.read_file(tmp + "/.choir/plugin/.claude-plugin/plugin.json"),
     manifest,
+  )
+
+  ignore(@sys.rm_rf(tmp))
+}
+
+///|
+test "synthesize_plugin_dir produces all three skill directories" {
+  let tmp = "/tmp/choir-plugin-three-skills-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let fake_home = "/tmp/choir-plugin-three-home-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(tmp))
+  ignore(@sys.rm_rf(fake_home))
+  ignore(@sys.create_dir_all(tmp))
+
+  match synthesize_plugin_dir(tmp, fake_home) {
+    Ok(_) => ()
+    Err(e) => {
+      fail("synthesize_plugin_dir failed: " + e.message())
+      return
+    }
+  }
+
+  // Verify all three builtin skill dirs exist
+  assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/audit"))
+  assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/crystallize"))
+  assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/decompose"))
+
+  // Each has a SKILL.md
+  assert_true(@sys.path_exists(tmp + "/.choir/plugin/skills/audit/SKILL.md"))
+  assert_true(
+    @sys.path_exists(tmp + "/.choir/plugin/skills/crystallize/SKILL.md"),
+  )
+  assert_true(
+    @sys.path_exists(tmp + "/.choir/plugin/skills/decompose/SKILL.md"),
   )
 
   ignore(@sys.rm_rf(tmp))
@@ -608,6 +735,28 @@ test "merge_user_skills_into_plugin returns Err on clash" {
 
   match merge_user_skills_into_plugin(plugin_dir, home) {
     Ok(_) => fail("merge should have failed")
+    Err(e) => assert_true(e.message().contains("clashes with builtin"))
+  }
+
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+}
+
+///|
+test "merge_user_skills_into_plugin returns Err on crystallize clash" {
+  let home = "/tmp/choir-plugin-test-home-crystallize-clash-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let plugin_dir = "/tmp/choir-plugin-test-dir-crystallize-clash-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(home))
+  ignore(@sys.rm_rf(plugin_dir))
+
+  let skills_dir = home + "/.config/choir/skills"
+  ignore(@sys.create_dir_all(skills_dir + "/crystallize"))
+  ignore(@sys.write_file_sync(skills_dir + "/crystallize/SKILL.md", "hello"))
+
+  match merge_user_skills_into_plugin(plugin_dir, home) {
+    Ok(_) => fail("merge should have failed for crystallize clash")
     Err(e) => assert_true(e.message().contains("clashes with builtin"))
   }
 

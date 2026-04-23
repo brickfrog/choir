@@ -7,6 +7,8 @@ leaf knows exactly which merged example to read and follow.
 See `.choir/context/tl.md` §Spec Hygiene → Reference-by-analog for how this
 wires into the TL workflow.
 
+*(Note: For the canonical eight-section spec template used during crystallization, see `.choir/context/crystallize-spec-spec.md`.)*
+
 ## Seeded patterns
 
 - [add-mcp-tool](add-mcp-tool.md) — new MCP tool with typed args, parser,

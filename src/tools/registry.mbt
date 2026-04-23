@@ -81,6 +81,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "crystallize_spec",
+      description: "Scaffold a canonical eight-section spec template at .choir/context/<feature_slug>-spec.md. Refuses if the spec file already exists.",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "send_message",
       description: "Send message to any agent by ID",
       allowed_roles: all_roles,

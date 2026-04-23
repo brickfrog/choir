@@ -105,11 +105,11 @@ Out-of-scope-but-related. Recorded so they're not lost.
 
 **Approach:**
 
-`plan_crystallize_spec(args, now_ms, fs_reader) -> Result[CrystallizeSpecPlan, ChoirError]`:
-- Validate `feature_slug` matches `^[a-z0-9][a-z0-9-]*$` (kebab-case only, no slashes, no leading dash).
+`plan_crystallize_spec(args, fs_reader) -> Result[CrystallizeSpecPlan, ChoirError]`:
+- Validate `feature_slug` is kebab-case: lowercase letters, digits, and hyphens only; must start with a letter or digit; no trailing hyphen; no consecutive hyphens; reject the `-spec` suffix since the tool already appends `-spec.md`.
 - Compute target path `.choir/context/<slug>-spec.md`.
 - If path exists (via injected `path_exists: String -> Bool` capability), return `Err(ChoirError::validation_error("spec already exists at <path>; delete or choose a new slug"))`.
-- Return `Ok(Plan::Write { path, content: canonical_spec_template(slug) })`.
+- Return `Ok(CrystallizeSpecPlan { path, content: canonical_spec_template(slug) })`.
 
 `interpret_crystallize_spec(args, project_dir, fs_writer, capability...) -> Response`:
 - Calls `plan_crystallize_spec`. On Ok, writes file via injected writer. On Err, returns the error.

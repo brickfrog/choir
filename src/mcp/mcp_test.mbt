@@ -94,6 +94,9 @@ test "tools_list_response" {
           assert_true(t.contains("automerge"))
           assert_true(t.contains("wave_state"))
           assert_true(t.contains("merge_gate_ready"))
+          assert_true(t.contains("crystallize_spec"))
+          assert_true(t.contains("feature_slug"))
+          assert_true(t.contains("already exists"))
         }
         _ => fail("expected tools array")
       }
@@ -111,6 +114,7 @@ test "tools_list_response dev role includes file_pr" {
         Some(Array(tools)) => {
           let t = tools.to_json().stringify()
           assert_true(t.contains("file_pr"))
+          assert_false(t.contains("crystallize_spec"))
         }
         _ => fail("expected tools array")
       }

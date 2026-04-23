@@ -1346,6 +1346,21 @@ fn parse_wave_state_args(args : ToolArgs) -> Result[WaveStateArgs, ParseError] {
 }
 
 ///|
+fn parse_crystallize_spec_args(
+  args : ToolArgs,
+) -> Result[CrystallizeSpecArgs, ParseError] {
+  let caller_id = tool_args_get(args, "caller_id").unwrap_or("")
+  if caller_id == "" {
+    return Err(ParseError::MissingField(field="caller_id"))
+  }
+  let feature_slug = tool_args_get(args, "feature_slug").unwrap_or("")
+  if feature_slug == "" {
+    return Err(ParseError::MissingField(field="feature_slug"))
+  }
+  Ok({ caller_id, feature_slug })
+}
+
+///|
 fn parse_send_message_args(
   args : ToolArgs,
 ) -> Result[SendMessageArgs, ParseError] {
@@ -1474,6 +1489,10 @@ fn parse_tool_request(
       parse_report_usage_args(args).map(fn(a) { ToolRequest::ReportUsage(a) })
     "wave_state" =>
       parse_wave_state_args(args).map(fn(a) { ToolRequest::WaveState(a) })
+    "crystallize_spec" =>
+      parse_crystallize_spec_args(args).map(fn(a) {
+        ToolRequest::CrystallizeSpec(a)
+      })
     "send_message" =>
       parse_send_message_args(args).map(fn(a) { ToolRequest::SendMessage(a) })
     "reply" => parse_reply_args(args).map(fn(a) { ToolRequest::Reply(a) })
