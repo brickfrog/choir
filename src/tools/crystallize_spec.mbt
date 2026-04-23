@@ -73,7 +73,15 @@ fn crystallize_spec_default_path_exists(path : String) -> Bool {
 
 ///|
 fn crystallize_spec_default_fs_writer(path : String, content : String) -> Bool {
-  @sys.write_file_sync(path, content)
+  // AUDIT: `write_file_atomic` (tmp-write + rename) matches the idiom used by
+  // `kv_set` / `task_create` and avoids partial files on crash. A residual
+  // TOCTOU window remains between the planner's `path_exists` check and the
+  // rename — the rename would silently clobber a file that appears in the
+  // interim. That is acceptable for this tool: the MCP server processes
+  // requests serially over UDS and `crystallize_spec` has a single human
+  // caller (TL/Root). The "refuses overwrite" guarantee is a workflow
+  // guardrail against re-running the skill, not a cross-process lock.
+  @sys.write_file_atomic(path, content)
 }
 
 ///|
