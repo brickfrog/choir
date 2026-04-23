@@ -352,7 +352,7 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         { name: "caller_id", desc: "ID of the calling supervisor" },
       ],
-      required: ["feature_slug"],
+      required: ["feature_slug", "caller_id"],
     },
     {
       name: "send_message",

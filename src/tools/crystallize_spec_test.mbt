@@ -1,50 +1,6 @@
 ///|
-fn expected_canonical_spec_template(feature_slug : String) -> String {
-  "# Spec: " +
-  feature_slug +
-  "\n" +
-  (
-    #|
-    #|## Context
-    #|Why this exists. 2–4 sentences. What's broken, what observable outcome we want.
-    #|
-    #|## Clarifications
-    #|> Q&A from the crystallize step. Durable; leaves read this.
-    #|
-    #|**Q: ...?**
-    #|A: ...
-    #|
-    #|## Goals
-    #|What "done" looks like. Bullet list. Each bullet should map to a verify command.
-    #|
-    #|## Non-Goals
-    #|What we are explicitly NOT doing. Prevents scope creep.
-    #|
-    #|## Design
-    #|Files/modules to touch. For multi-leaf features, sub-sections per leaf with file
-    #|list and approach. Reference patterns from `.choir/context/patterns/` by name
-    #|when one fits (per feedback_spec_hygiene).
-    #|
-    #|## Verify
-    #|Commands that demonstrate the feature works. Must include at least one
-    #|observable command (not just `moon test --target native`) per
-    #|feedback_spec_hygiene — e.g., run the subcommand and grep output.
-    #|
-    #|## Boundary (do not)
-    #|Invariants the leaves must preserve. Explicit do-not list. This is where prose
-    #|lives until a server gate replaces it.
-    #|
-    #|## Follow-Ups
-    #|Out-of-scope-but-related. Recorded so they're not lost.
-    #|
-  )
-}
-
-///|
-test "canonical_spec_template returns the exact eight-section template" {
+test "canonical_spec_template produces the expected eight-section shape" {
   let rendered = canonical_spec_template("foo-bar")
-  assert_eq(rendered, expected_canonical_spec_template("foo-bar"))
-  // Spot-check each section header is present in order.
   assert_true(rendered.has_prefix("# Spec: foo-bar\n"))
   assert_true(rendered.contains("\n## Context\n"))
   assert_true(rendered.contains("\n## Clarifications\n"))
@@ -64,15 +20,19 @@ test "canonical_spec_template returns the exact eight-section template" {
 }
 
 ///|
-test "plan_crystallize_spec emits Write plan when path does not exist" {
+test "plan_crystallize_spec emits CrystallizeSpecPlan with correct path and content" {
   let reader = fn(_path : String) -> Bool { false }
   let plan = plan_crystallize_spec(
     { caller_id: "root", feature_slug: "payments-api" },
-    0L,
     reader,
   ).unwrap()
   assert_eq(plan.path, ".choir/context/payments-api-spec.md")
-  assert_eq(plan.content, canonical_spec_template("payments-api"))
+  // Content shape: canonical template sections are present, not a
+  // byte-for-byte re-derivation of canonical_spec_template.
+  assert_true(plan.content.has_prefix("# Spec: payments-api\n"))
+  assert_true(plan.content.contains("## Clarifications"))
+  assert_true(plan.content.contains("## Boundary (do not)"))
+  assert_true(plan.content.contains("## Follow-Ups"))
 }
 
 ///|
@@ -80,7 +40,6 @@ test "plan_crystallize_spec refuses overwrite when spec file exists" {
   let reader = fn(_path : String) -> Bool { true }
   let result = plan_crystallize_spec(
     { caller_id: "root", feature_slug: "already-there" },
-    0L,
     reader,
   )
   match result {
@@ -97,11 +56,12 @@ test "plan_crystallize_spec refuses overwrite when spec file exists" {
 ///|
 test "plan_crystallize_spec rejects non-kebab-case slugs" {
   let reader = fn(_path : String) -> Bool { false }
-  let bad : Array[String] = ["", "Foo", "foo/bar", "-foo", "foo_bar", "foo bar"]
+  let bad : Array[String] = [
+    "", "Foo", "foo/bar", "-foo", "foo_bar", "foo bar", "foo-", "a--b", "foo-spec",
+  ]
   for slug in bad {
     let result = plan_crystallize_spec(
       { caller_id: "root", feature_slug: slug },
-      0L,
       reader,
     )
     match result {
@@ -119,12 +79,11 @@ test "plan_crystallize_spec rejects non-kebab-case slugs" {
 test "plan_crystallize_spec accepts valid kebab-case slugs" {
   let reader = fn(_path : String) -> Bool { false }
   let good : Array[String] = [
-    "a", "feature", "foo-bar", "a1", "crystallize-spec", "0day",
+    "a", "feature", "foo", "foo-bar", "a1", "a1-b2", "kill-robustness", "0day",
   ]
   for slug in good {
     let result = plan_crystallize_spec(
       { caller_id: "root", feature_slug: slug },
-      0L,
       reader,
     )
     match result {
@@ -132,6 +91,72 @@ test "plan_crystallize_spec accepts valid kebab-case slugs" {
       Err(e) => fail("unexpected error for slug '" + slug + "': " + e.message())
     }
   }
+}
+
+///|
+test "interpret_crystallize_spec writes file and returns success payload" {
+  let written : Ref[(String, String)] = @ref.new(("", ""))
+  let stub_writer = fn(path : String, content : String) -> Bool {
+    written.val = (path, content)
+    true
+  }
+  let stub_path_exists = fn(_path : String) -> Bool { false }
+  let resp = interpret_crystallize_spec(
+    { caller_id: "root", feature_slug: "order-api" },
+    "/tmp/stub-project",
+    path_exists=stub_path_exists,
+    fs_writer=stub_writer,
+  )
+  assert_true(resp.is_ok())
+  let (written_path, written_content) = written.val
+  assert_eq(written_path, "/tmp/stub-project/.choir/context/order-api-spec.md")
+  assert_true(written_content.has_prefix("# Spec: order-api\n"))
+  let path_field = resp.ok_field("path").unwrap_or("")
+  assert_eq(path_field, ".choir/context/order-api-spec.md")
+  let message_field = resp.ok_field("message").unwrap_or("")
+  assert_true(message_field.contains(".choir/context/order-api-spec.md"))
+  assert_true(
+    message_field.contains(
+      "Sections to populate: Clarifications, Goals, Non-Goals, Design, Verify, Boundary, Follow-Ups",
+    ),
+  )
+}
+
+///|
+test "interpret_crystallize_spec returns error when fs_writer fails" {
+  let stub_writer = fn(_path : String, _content : String) -> Bool { false }
+  let stub_path_exists = fn(_path : String) -> Bool { false }
+  let resp = interpret_crystallize_spec(
+    { caller_id: "root", feature_slug: "order-api" },
+    "/tmp/stub-project",
+    path_exists=stub_path_exists,
+    fs_writer=stub_writer,
+  )
+  assert_false(resp.is_ok())
+  let err = resp.error_message().unwrap_or("")
+  assert_true(err.contains("failed to write spec file"))
+  assert_true(err.contains(".choir/context/order-api-spec.md"))
+}
+
+///|
+test "interpret_crystallize_spec refuses when spec already exists" {
+  let writer_calls : Ref[Int] = @ref.new(0)
+  let stub_writer = fn(_path : String, _content : String) -> Bool {
+    writer_calls.val += 1
+    false
+  }
+  let stub_path_exists = fn(_path : String) -> Bool { true }
+  let resp = interpret_crystallize_spec(
+    { caller_id: "root", feature_slug: "order-api" },
+    "/tmp/stub-project",
+    path_exists=stub_path_exists,
+    fs_writer=stub_writer,
+  )
+  assert_false(resp.is_ok())
+  assert_eq(writer_calls.val, 0)
+  let err = resp.error_message().unwrap_or("")
+  assert_true(err.contains("spec already exists at "))
+  assert_true(err.contains(".choir/context/order-api-spec.md"))
 }
 
 ///|

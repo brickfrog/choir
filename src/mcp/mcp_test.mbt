@@ -114,6 +114,7 @@ test "tools_list_response dev role includes file_pr" {
         Some(Array(tools)) => {
           let t = tools.to_json().stringify()
           assert_true(t.contains("file_pr"))
+          assert_false(t.contains("crystallize_spec"))
         }
         _ => fail("expected tools array")
       }
