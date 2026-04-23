@@ -8,6 +8,7 @@ pub(all) enum ToolRequest {
   TrackPr(TrackPrArgs)
   NotifyParent(CallerMessageArgs)
   ReportUsage(ReportUsageArgs)
+  WaveState(WaveStateArgs)
   SendMessage(SendMessageArgs)
   Reply(ReplyArgs)
   Shutdown(ShutdownArgs)
@@ -45,6 +46,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     TrackPr(_) => "track_pr"
     NotifyParent(_) => "notify_parent"
     ReportUsage(_) => "report_usage"
+    WaveState(_) => "wave_state"
     SendMessage(_) => "send_message"
     Reply(_) => "reply"
     Shutdown(_) => "shutdown"

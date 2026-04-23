@@ -580,6 +580,14 @@ pub async fn dispatch(
     }
     ToolRequest::ReportUsage(report_args) =>
       interpret_report_usage(report_args, project_dir, registry)
+    ToolRequest::WaveState(wave_state_args) =>
+      interpret_wave_state(
+        wave_state_args,
+        project_dir,
+        registry,
+        poller_state,
+        capture~,
+      )
     ToolRequest::SendMessage(send_args) => {
       let registry_lookup = match registry {
         Some(reg) => Some(try? reg.get(send_args.target_id))

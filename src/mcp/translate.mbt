@@ -337,6 +337,12 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["caller_id", "tokens_in", "tokens_out", "elapsed_s"],
     },
     {
+      name: "wave_state",
+      description: "Return a typed per-child snapshot (supervisor + leaves + workers) with each tracked PR's review state, CI rollup, unresolved thread count, and server-computed merge_gate_ready. Use instead of inferring merge/review status from notification prose. Root/TL only.",
+      props: [{ name: "caller_id", desc: "ID of the calling supervisor" }],
+      required: ["caller_id"],
+    },
+    {
       name: "send_message",
       description: "Send a message to another agent",
       props: [

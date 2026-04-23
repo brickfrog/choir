@@ -150,3 +150,8 @@ pub fn AgentState::to_wire_string(self : AgentState) -> String {
     Suspended => "suspended"
   }
 }
+
+///|
+pub impl ToJson for AgentState with to_json(self) -> Json {
+  self.to_wire_string().to_json()
+}

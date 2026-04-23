@@ -194,6 +194,11 @@ pub(all) struct ReportUsageArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct WaveStateArgs {
+  caller_id : String
+} derive(Debug, Eq)
+
+///|
 struct SendMessageArgs {
   target_id : String
   sender_id : String

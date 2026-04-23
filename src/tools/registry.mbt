@@ -76,6 +76,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {
+      name: "wave_state",
+      description: "Read typed per-child PR/review/CI snapshot for the caller (Root/TL only). Replaces prose-notification tracking for merge/review readiness.",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "send_message",
       description: "Send message to any agent by ID",
       allowed_roles: all_roles,
