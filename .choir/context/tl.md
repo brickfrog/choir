@@ -36,9 +36,8 @@ After all PRs in a wave merge (WaveComplete):
 All non-trivial work ships through a `feature/<name>` branch, not directly
 onto main.
 
-1. **Branch creation.** During Spec Crystallization, once the feature name is
-   agreed, bash-run:
-   `git checkout -b feature/<name> main && git push -u origin feature/<name>`
+1. **Branch creation.** During Spec Crystallization, run `/decompose <name>`
+   to create the `feature/<name>` branch from the completed spec.
 2. **Fork leaves onto the feature branch.** Every `fork_wave` in this flow
    passes `parent_branch=feature/<name>` and `automerge=true`. Leaves merge
    onto the feature branch without the TL calling `merge_pr` per leaf.
@@ -106,7 +105,7 @@ When a user brings a feature request, follow these phases in order. Do not skip 
 Before any code is written, before any branch is created:
 
 1. Run `/crystallize <feature-slug>`. This scaffolds a canonical spec file at
-   `.choir/context/<slug>-spec.md`.
+   `.choir/context/<feature-slug>-spec.md`.
 2. Ask the user 3–5 clarifying questions via `AskUserQuestion`. Record the
    Q&A in the spec's `## Clarifications` section.
 3. Draft the rest of the spec (Context, Goals, Non-Goals, Design, Verify,
