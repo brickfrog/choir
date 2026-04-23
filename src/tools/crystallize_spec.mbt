@@ -16,7 +16,13 @@ fn crystallize_spec_slug_is_valid(s : String) -> Bool {
   if s == "" {
     return false
   }
+  // Reject the "-spec" suffix; the tool already appends "-spec.md" to the
+  // slug, so "foo-spec" would produce ".choir/context/foo-spec-spec.md".
+  if s.has_suffix("-spec") {
+    return false
+  }
   let mut first = true
+  let mut prev_hyphen = false
   for c in s {
     let is_lower = c >= 'a' && c <= 'z'
     let is_digit = c >= '0' && c <= '9'
@@ -28,7 +34,13 @@ fn crystallize_spec_slug_is_valid(s : String) -> Bool {
       first = false
     } else if !(is_lower || is_digit || is_hyphen) {
       return false
+    } else if is_hyphen && prev_hyphen {
+      return false
     }
+    prev_hyphen = is_hyphen
+  }
+  if prev_hyphen {
+    return false
   }
   true
 }
@@ -42,12 +54,8 @@ fn crystallize_spec_target_path(feature_slug : String) -> String {
 /// Pure planner for `crystallize_spec`. Validates the kebab-case slug,
 /// computes the target path, and refuses if the spec already exists via the
 /// injected `path_exists_reader`.
-///
-/// `_now_ms` is currently unused; accepted for parity with other supervisor
-/// planners so a future timestamped variant is a drop-in change.
 pub fn plan_crystallize_spec(
   args : CrystallizeSpecArgs,
-  _now_ms : Int64,
   path_exists_reader : (String) -> Bool,
 ) -> Result[CrystallizeSpecPlan, @types.ChoirError] {
   if !crystallize_spec_slug_is_valid(args.feature_slug) {
@@ -73,14 +81,10 @@ fn crystallize_spec_default_path_exists(path : String) -> Bool {
 
 ///|
 fn crystallize_spec_default_fs_writer(path : String, content : String) -> Bool {
-  // AUDIT: `write_file_atomic` (tmp-write + rename) matches the idiom used by
-  // `kv_set` / `task_create` and avoids partial files on crash. A residual
-  // TOCTOU window remains between the planner's `path_exists` check and the
-  // rename — the rename would silently clobber a file that appears in the
-  // interim. That is acceptable for this tool: the MCP server processes
-  // requests serially over UDS and `crystallize_spec` has a single human
-  // caller (TL/Root). The "refuses overwrite" guarantee is a workflow
-  // guardrail against re-running the skill, not a cross-process lock.
+  // AUDIT: `@sys.path_exists` + `@sys.write_file_atomic` are synchronous C
+  // FFI calls with no cooperative yield points between the check and the
+  // atomic rename. `interpret_crystallize_spec` is not async. No scheduler
+  // swap can occur between the check and the write regardless of transport.
   @sys.write_file_atomic(path, content)
 }
 
@@ -97,12 +101,7 @@ pub fn interpret_crystallize_spec(
   let project_relative_exists = fn(rel : String) -> Bool {
     path_exists(project_dir + "/" + rel)
   }
-  let plan = match
-    plan_crystallize_spec(
-      args,
-      @env.now().reinterpret_as_int64(),
-      project_relative_exists,
-    ) {
+  let plan = match plan_crystallize_spec(args, project_relative_exists) {
     Ok(p) => p
     Err(e) => return @types.Response::Err(e.message())
   }
