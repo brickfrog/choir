@@ -602,6 +602,8 @@ pub async fn dispatch(
         poller_state,
         capture~,
       )
+    ToolRequest::CrystallizeSpec(crystallize_args) =>
+      interpret_crystallize_spec(crystallize_args, project_dir)
     ToolRequest::SendMessage(send_args) => {
       let registry_lookup = match registry {
         Some(reg) => Some(try? reg.get(send_args.target_id))

@@ -94,6 +94,9 @@ test "tools_list_response" {
           assert_true(t.contains("automerge"))
           assert_true(t.contains("wave_state"))
           assert_true(t.contains("merge_gate_ready"))
+          assert_true(t.contains("crystallize_spec"))
+          assert_true(t.contains("feature_slug"))
+          assert_true(t.contains("already exists"))
         }
         _ => fail("expected tools array")
       }

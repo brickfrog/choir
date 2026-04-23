@@ -199,6 +199,12 @@ pub(all) struct WaveStateArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct CrystallizeSpecArgs {
+  caller_id : String
+  feature_slug : String
+} derive(Debug, Eq)
+
+///|
 struct SendMessageArgs {
   target_id : String
   sender_id : String
