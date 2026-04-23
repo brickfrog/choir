@@ -27,6 +27,13 @@ Explore parallel `moon test` execution during wave reconciliation to reduce the 
 
 ## ✅ Completed
 
+### Spec Crystallization Pipeline (2026-04-23)
+- New `/crystallize` skill and `crystallize_spec` MCP tool coordinate the structured Idea → Spec pipeline.
+- Eight-section canonical spec template ensures completeness.
+- `/decompose` reworked to read-instead-of-seed; pipeline is now Idea → crystallize → decompose → fork_wave.
+- Path drift fix for `.choir/spec` → `.choir/context`.
+- TL Phase 0 documentation aligned with the new flow.
+
 ### Server-Enforced Orchestration Gates (2026-04-23)
 - **`wave_state` MCP tool**: Authoritative typed snapshot of wave participants — supervisor lifecycle, Dev leaves, Worker agents, PR review/CI/thread state, plus a `merge_gate_ready` field that mirrors the exact predicate `merge_pr` uses so the TL cannot drift from server truth. Registered for `[Root, TL]` only. Fail-loud on graphql failure (None + error string, never blocks the snapshot).
 - **`notify_parent` threads gate broadening**: Existing gate extended to `Dev(ExitRequestedDeferred)` and `Dev(ChangesRequested)` alongside `Dev(ReviewOwned)`. Leaves can no longer exit-notify or iterate-notify while Copilot threads remain open. Gate is status-agnostic — fires regardless of `Status::Completed | Failure`.
