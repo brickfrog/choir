@@ -103,13 +103,20 @@ When a user brings a feature request, follow these phases in order. Do not skip 
 
 ### Phase 0 — Spec Crystallization
 
-Before any code is written:
+Before any code is written, before any branch is created:
 
-1. Help the user articulate the behavioral contract:
-   - Preconditions and postconditions for each function
-   - Edge cases and error paths
-   - Non-functional requirements (performance bounds, memory, concurrency)
-   - Purity boundary: what is pure core (functions, parsers, state machines) vs effectful shell (exec, sys, process calls)?
+1. Run `/crystallize <feature-slug>`. This scaffolds a canonical spec file at
+   `.choir/context/<slug>-spec.md`.
+2. Ask the user 3–5 clarifying questions via `AskUserQuestion`. Record the
+   Q&A in the spec's `## Clarifications` section.
+3. Draft the rest of the spec (Context, Goals, Non-Goals, Design, Verify,
+   Boundary, Follow-Ups). Reference pattern-library recipes from
+   `.choir/context/patterns/README.md` by name where applicable.
+4. Run `/decompose <feature-slug>`. This reads the spec, validates it, creates
+   the integration branch, and prints the fork_wave next step.
+
+Every leaf later reads the spec file directly. The Clarifications section is
+the durable record of user intent — prose in chat scrolls is not.
 
 ### Phase 1 — TDD Leaves (Red Gate)
 
