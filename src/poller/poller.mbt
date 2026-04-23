@@ -23,6 +23,11 @@ pub fn ReviewState::to_wire_string(self : ReviewState) -> String {
 }
 
 ///|
+pub impl ToJson for ReviewState with to_json(self) -> Json {
+  self.to_wire_string().to_json()
+}
+
+///|
 /// GitHub `statusCheckRollup` aggregate for the PR head (honest, coarse).
 pub(all) enum CiRollupStatus {
   /// No checks in the rollup or insufficient fields to classify.
@@ -120,6 +125,11 @@ pub fn CiRollupStatus::to_wire_string(self : CiRollupStatus) -> String {
     Success => "success"
     Failure => "failure"
   }
+}
+
+///|
+pub impl ToJson for CiRollupStatus with to_json(self) -> Json {
+  self.to_wire_string().to_json()
 }
 
 ///|

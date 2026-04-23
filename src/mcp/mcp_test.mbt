@@ -92,6 +92,8 @@ test "tools_list_response" {
           assert_true(t.contains("per-leaf task"))
           assert_true(t.contains("research/review"))
           assert_true(t.contains("automerge"))
+          assert_true(t.contains("wave_state"))
+          assert_true(t.contains("merge_gate_ready"))
         }
         _ => fail("expected tools array")
       }

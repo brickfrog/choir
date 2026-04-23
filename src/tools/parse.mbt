@@ -1337,6 +1337,15 @@ fn parse_report_usage_args(
 }
 
 ///|
+fn parse_wave_state_args(args : ToolArgs) -> Result[WaveStateArgs, ParseError] {
+  let caller_id = tool_args_get(args, "caller_id").unwrap_or("")
+  if caller_id == "" {
+    return Err(ParseError::MissingField(field="caller_id"))
+  }
+  Ok({ caller_id, })
+}
+
+///|
 fn parse_send_message_args(
   args : ToolArgs,
 ) -> Result[SendMessageArgs, ParseError] {
@@ -1463,6 +1472,8 @@ fn parse_tool_request(
       parse_caller_message_args(args).map(fn(a) { ToolRequest::NotifyParent(a) })
     "report_usage" =>
       parse_report_usage_args(args).map(fn(a) { ToolRequest::ReportUsage(a) })
+    "wave_state" =>
+      parse_wave_state_args(args).map(fn(a) { ToolRequest::WaveState(a) })
     "send_message" =>
       parse_send_message_args(args).map(fn(a) { ToolRequest::SendMessage(a) })
     "reply" => parse_reply_args(args).map(fn(a) { ToolRequest::Reply(a) })
