@@ -462,6 +462,13 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
   let parent_id = "main.tl"
   let child_id = "main.claude-leaf"
   let pr_number = 88
+  // force=true requires the tl-parent-override sentinel to be ON for the caller.
+  assert_true(
+    @sys.write_file_atomic(
+      project_dir + "/.choir/kv/tl-parent-override--" + parent_id,
+      "1\n",
+    ),
+  )
   let parent_target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":TL") {
     Some(t) => t

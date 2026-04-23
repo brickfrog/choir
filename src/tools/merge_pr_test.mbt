@@ -249,8 +249,10 @@ async test "interpret_merge_pr_preflight review gate force true still blocks cha
     42,
     None,
     "/tmp",
+    "main.tl",
     mock_preflight_capture_changes_requested_reviews,
     None,
+    override_check=fn(_project_dir, _caller_id) { true },
   )
   match got {
     Err(e) => assert_true(e.message().contains("requesting changes"))
@@ -265,6 +267,7 @@ async test "interpret_merge_pr_preflight review gate passes without approval" {
     42,
     None,
     "/tmp",
+    "main.tl",
     mock_preflight_capture_empty_reviews,
     None,
   )
@@ -275,18 +278,79 @@ async test "interpret_merge_pr_preflight review gate passes without approval" {
 }
 
 ///|
-async test "interpret_merge_pr_preflight force bypass skips poller and thread checks" {
+async test "interpret_merge_pr_preflight force bypass skips poller and thread checks when override ON" {
   let got = interpret_merge_pr_preflight(
     true,
     1,
     None,
     "/tmp",
+    "main.tl",
     mock_preflight_capture_approved_no_graphql,
     None,
+    override_check=fn(_project_dir, _caller_id) { true },
   )
   match got {
     Ok(_) => ()
     Err(e) => fail(e.message())
+  }
+}
+
+///|
+async test "interpret_merge_pr_preflight force rejected when tl-parent-override off" {
+  let got = interpret_merge_pr_preflight(
+    true,
+    1,
+    None,
+    "/tmp",
+    "main.tl",
+    mock_preflight_capture_approved_no_graphql,
+    None,
+    override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("force=true"))
+      assert_true(msg.contains("choir tl-parent-override on"))
+      assert_true(msg.contains("main.tl"))
+    }
+    Ok(_) => fail("expected Err: force=true without override must be rejected")
+  }
+}
+
+///|
+async test "interpret_merge_pr_preflight force honored when tl-parent-override on (parity)" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    9,
+    "main.leaf",
+    "main.topic",
+    "main",
+    "https://github.com/o/r/pull/9",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "",
+    "",
+    @poller.CiRollupStatus::Unknown,
+    false,
+  )
+  let got = interpret_merge_pr_preflight(
+    true,
+    9,
+    Some(ps),
+    "/tmp",
+    "main.tl",
+    mock_preflight_capture_approved_no_graphql,
+    None,
+    override_check=fn(_project_dir, _caller_id) { true },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) =>
+      fail(
+        "expected Ok: force=true with override ON must bypass poller and thread checks, got " +
+        e.message(),
+      )
   }
 }
 
@@ -323,6 +387,7 @@ async test "interpret_merge_pr_preflight ok when no poller block and no threads"
     7,
     None,
     project_dir,
+    "main.tl",
     mock_preflight_capture_no_unresolved_threads,
     None,
   )
@@ -366,6 +431,7 @@ async test "interpret_merge_pr_preflight err when review threads unresolved" {
     3,
     None,
     project_dir,
+    "main.tl",
     mock_preflight_capture_one_unresolved_thread,
     None,
   )
@@ -403,6 +469,7 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     9,
     Some(ps),
     project_dir,
+    "main.tl",
     mock_preflight_capture_no_unresolved_threads,
     None,
   )
@@ -858,6 +925,13 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
     review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let project_dir = "/tmp/choir-mpr-host-err-" + @sys.get_pid().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(
+    @sys.write_file_atomic(
+      project_dir + "/.choir/kv/tl-parent-override--main.tl",
+      "1\n",
+    ),
+  )
   let got = interpret_merge_pr(
     args,
     project_dir,
@@ -883,7 +957,13 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
 ///|
 async test "interpret_merge_pr ok response matches merged envelope" {
   let project_dir = "/tmp/choir-mpr-interpret-" + @sys.get_pid().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(
+    @sys.write_file_atomic(
+      project_dir + "/.choir/kv/tl-parent-override--main.tl",
+      "1\n",
+    ),
+  )
   let args : MergePrArgs = {
     pr_number: 77,
     parent_branch: "main",

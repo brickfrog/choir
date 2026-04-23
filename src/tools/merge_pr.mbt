@@ -287,19 +287,41 @@ async fn enforce_merge_pr_github_review_gate(
 }
 
 ///|
+/// Default capability for `interpret_merge_pr_preflight`'s `override_check`:
+/// reads `.choir/kv/tl-parent-override--<sanitized caller_id>` and returns true
+/// iff the trimmed, lowercased content is one of `1`/`true`/`on`/`yes`. Matches
+/// `tl_policy_override_enabled` in `src/bin/choir/tl_policy.mbt` so the
+/// `choir tl-parent-override <on|off>` CLI is the single source of truth.
+pub fn merge_pr_override_enabled_default(
+  project_dir : String,
+  caller_id : String,
+) -> Bool {
+  let path = project_dir +
+    "/.choir/kv/tl-parent-override--" +
+    @types.sanitize_agent_id(caller_id)
+  let content = @sys.read_file(path).trim().to_lower()
+  content == "1" || content == "true" || content == "on" || content == "yes"
+}
+
+///|
 /// `merge_pr` preflight: GitHub changes-requested reviews are checked first and
-/// are never bypassed by `force`. When `force` is false, poller snapshot,
+/// are never bypassed by `force`. When `force` is true it additionally requires
+/// the caller's `tl-parent-override` flag (set via `choir tl-parent-override on`)
+/// to be ON; otherwise the merge is rejected with a validation error so every
+/// force merge leaves a KV paper trail. When `force` is false, poller snapshot,
 /// unresolved review-thread fetch, then `merge_pr_preflight_block_message`.
-/// When `force` is true, those checks are skipped after the GitHub review gate
-/// (historical inline `force` behavior for poller/threads only).
+/// When `force` is true and the override is ON, the poller/threads/policy checks
+/// are skipped after the GitHub review gate (historical inline `force` behavior).
 pub async fn interpret_merge_pr_preflight(
   force : Bool,
   pr_number : Int,
   poller_state : @poller.PollerState?,
   project_dir : String,
+  caller_id : String,
   capture : async (@workspace.Command) -> (Int, String),
   registry : @registry.AgentRegistry?,
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
+  override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
 ) -> Result[Unit, @types.ChoirError] {
   match
     enforce_merge_pr_github_review_gate(
@@ -307,6 +329,14 @@ pub async fn interpret_merge_pr_preflight(
     ) {
     Err(e) => return Err(e)
     Ok(_) => ()
+  }
+  if force && !override_check(project_dir, caller_id) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "merge_pr force=true requires `choir tl-parent-override on` for caller " +
+        caller_id,
+      ),
+    )
   }
   if force {
     return Ok(())
@@ -731,6 +761,7 @@ pub async fn interpret_merge_pr(
       merge_args.pr_number,
       poller_state,
       project_dir,
+      merge_args.caller_id,
       capture,
       registry,
       review_mode=merge_args.review_mode.unwrap_or(
