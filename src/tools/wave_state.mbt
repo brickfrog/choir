@@ -93,21 +93,24 @@ fn supervisor_wave(lifecycle : @phase.SupervisorLifecycle) -> Int? {
 }
 
 ///|
-fn child_tracked_pr_for_agent(
+/// Build a single `agent_id -> TrackedPR` index from the poller state in one
+/// linear pass. Callers then do O(1) lookups per child instead of rescanning
+/// `ps.tracked.values()` on every child (which is O(children × trackedPRs)).
+/// If multiple tracked PRs share an agent_id, the last one in iteration order
+/// wins — matches the previous per-child scan, which also returned whichever
+/// hit first.
+fn index_tracked_by_agent(
   poller_state : @poller.PollerState?,
-  agent_id : String,
-) -> @poller.TrackedPR? {
+) -> Map[String, @poller.TrackedPR] {
+  let by_agent : Map[String, @poller.TrackedPR] = {}
   match poller_state {
-    Some(ps) => {
+    Some(ps) =>
       for tracked in ps.tracked.values() {
-        if tracked.agent_id == agent_id {
-          return Some(tracked)
-        }
+        by_agent.set(tracked.agent_id, tracked)
       }
-      None
-    }
-    None => None
+    None => ()
   }
+  by_agent
 }
 
 ///|
@@ -170,6 +173,7 @@ pub fn plan_wave_state(
       }
     None => None
   }
+  let tracked_by_agent = index_tracked_by_agent(poller_state)
   let children : Array[WaveStateChild] = []
   for child in registry.children(caller_id) {
     let child_id = child.agent_id.to_string()
@@ -178,7 +182,7 @@ pub fn plan_wave_state(
       Some(lc) => lc.workflow
       None => @phase.default_workflow_state(child.role)
     }
-    let pr = match child_tracked_pr_for_agent(poller_state, child_id) {
+    let pr = match tracked_by_agent.get(child_id) {
       Some(tracked) => {
         let (threads, err) = threads_lookup(tracked.pr_number)
         Some(wave_state_pr_from_tracked(tracked, threads, err, review_mode))
@@ -235,6 +239,12 @@ pub async fn interpret_wave_state(
     Some(r) => r
     None => return @types.Response::Err("wave_state requires an agent registry")
   }
+  // Single index of tracked PRs keyed by agent_id; shared by PR-number
+  // collection below and by `plan_wave_state` (which calls it again — but the
+  // build is a fixed O(trackedPRs) cost and we'd have to re-run it anyway on
+  // the pure side, so duplicated work is bounded by the size of poller state,
+  // not the child fan-out).
+  let tracked_by_agent = index_tracked_by_agent(poller_state)
   // Collect distinct PR numbers we need threads for: the supervisor's own PR
   // and every child's tracked PR.
   let pr_numbers : Array[Int] = []
@@ -250,30 +260,53 @@ pub async fn interpret_wave_state(
   }
   for child in reg.children(args.caller_id) {
     let child_id = child.agent_id.to_string()
-    match child_tracked_pr_for_agent(poller_state, child_id) {
+    match tracked_by_agent.get(child_id) {
       Some(tracked) => add_pr(tracked.pr_number)
       None => ()
     }
   }
+  // Resolve owner/repo once per snapshot so the per-PR graphql loop does not
+  // spawn `gh repo view` N times. If resolution fails, every PR reports
+  // fail-loud without further gh calls.
+  let owner_repo = if pr_numbers.length() > 0 {
+    fetch_gh_repo_owner_name(project_dir, capture)
+  } else {
+    None
+  }
   // Fetch threads for each PR; fail-loud on gh failure.
   let threads_map : Map[Int, (Int?, String?)] = {}
   for pr_number in pr_numbers {
-    let (count, thread_text) = fetch_unresolved_review_threads(
-      pr_number, project_dir, capture,
-    )
-    if thread_text == review_thread_fetch_failed_marker {
-      threads_map.set(
-        pr_number,
-        (
-          None,
-          Some(
-            "gh unavailable (could not fetch review thread state) for PR #" +
-            pr_number.to_string(),
+    match owner_repo {
+      Some((owner, repo)) => {
+        let (count, thread_text) = fetch_unresolved_review_threads_with_repo(
+          pr_number, owner, repo, project_dir, capture,
+        )
+        if thread_text == review_thread_fetch_failed_marker {
+          threads_map.set(
+            pr_number,
+            (
+              None,
+              Some(
+                "gh unavailable (could not fetch review thread state) for PR #" +
+                pr_number.to_string(),
+              ),
+            ),
+          )
+        } else {
+          threads_map.set(pr_number, (Some(count), None))
+        }
+      }
+      None =>
+        threads_map.set(
+          pr_number,
+          (
+            None,
+            Some(
+              "gh unavailable (could not resolve owner/repo) for PR #" +
+              pr_number.to_string(),
+            ),
           ),
-        ),
-      )
-    } else {
-      threads_map.set(pr_number, (Some(count), None))
+        )
     }
   }
   let threads_lookup = fn(pr_number : Int) -> (Int?, String?) {

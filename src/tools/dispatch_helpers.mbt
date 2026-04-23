@@ -533,7 +533,7 @@ pub fn parse_gh_repo_view_output(json_str : String) -> (String, String)? {
 }
 
 ///|
-async fn fetch_gh_repo_owner_name(
+pub async fn fetch_gh_repo_owner_name(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> (String, String)? {
@@ -629,19 +629,17 @@ pub async fn fetch_inline_comments(
 pub let review_thread_fetch_failed_marker : String = "[thread-fetch-failed: treating as unresolved]"
 
 ///|
-/// Fetch unresolved review threads for a PR via GitHub GraphQL.
-/// Returns `(count, formatted_text_with_thread_ids)`.
-/// On the fail-closed paths above, returns `(1, review_thread_fetch_failed_marker)`.
-/// Owner/repo are resolved via `gh repo view`.
-pub async fn fetch_unresolved_review_threads(
+/// Fetch unresolved review threads for a PR via GitHub GraphQL, given a
+/// pre-resolved `(owner, repo)` pair. Prefer this variant when making
+/// multiple calls in a single snapshot (e.g. `wave_state`) so `gh repo view`
+/// is invoked once rather than once per PR.
+pub async fn fetch_unresolved_review_threads_with_repo(
   pr_number : Int,
+  owner : String,
+  repo : String,
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> (Int, String) {
-  let (owner, repo) = match fetch_gh_repo_owner_name(project_dir, capture) {
-    Some(pair) => pair
-    None => return (1, review_thread_fetch_failed_marker)
-  }
   let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved isOutdated path comments(first: 1) { nodes { body } } } } } } }"
   let cmd : @workspace.Command = {
     program: "gh",
@@ -664,6 +662,25 @@ pub async fn fetch_unresolved_review_threads(
     return (1, review_thread_fetch_failed_marker)
   }
   parse_unresolved_threads_response(output)
+}
+
+///|
+/// Fetch unresolved review threads for a PR via GitHub GraphQL.
+/// Returns `(count, formatted_text_with_thread_ids)`.
+/// On the fail-closed paths above, returns `(1, review_thread_fetch_failed_marker)`.
+/// Owner/repo are resolved via `gh repo view`.
+pub async fn fetch_unresolved_review_threads(
+  pr_number : Int,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> (Int, String) {
+  let (owner, repo) = match fetch_gh_repo_owner_name(project_dir, capture) {
+    Some(pair) => pair
+    None => return (1, review_thread_fetch_failed_marker)
+  }
+  fetch_unresolved_review_threads_with_repo(
+    pr_number, owner, repo, project_dir, capture,
+  )
 }
 
 ///|
