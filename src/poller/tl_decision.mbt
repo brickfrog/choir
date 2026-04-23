@@ -7,6 +7,10 @@ pub(all) enum TlTrackedPrWorkflowCategory {
   AttentionRequiredCopilotSilentAfterTimeout
   AttentionRequiredCIFailed
   WaitingOnReviewOrCI
+  /// Leaf pushed fixes after Copilot review. Copilot does not re-review — the
+  /// only gates left are thread resolution (leaf or TL via GraphQL) and CI on
+  /// the new head. TL must NOT wait for a second Copilot review.
+  FixesPushedAwaitingGates
   /// No Copilot issue comment observed yet on the PR issue thread (REST).
   WaitingOnCopilotIssueComment
   /// Copilot issue comment seen; other snapshot gates may still block merge.
@@ -239,6 +243,7 @@ fn tl_category_rollup_header_bucket(
     AttentionRequiredCopilotSilentAfterTimeout | AttentionRequiredCIFailed =>
       "attention required"
     WaitingOnReviewOrCI
+    | FixesPushedAwaitingGates
     | WaitingOnCopilotIssueComment
     | CopilotIssueCommentSeenRecheckRemainingGates
     | ReadyForTLRecheck => "waiting or re-check"
@@ -255,6 +260,8 @@ fn tl_category_rollup_pr_line(cat : TlTrackedPrWorkflowCategory) -> String {
       "Attention required: Copilot review silent after timeout"
     AttentionRequiredCIFailed => "Attention required: CI failing"
     WaitingOnReviewOrCI => "Waiting on review or CI"
+    FixesPushedAwaitingGates =>
+      "Fixes pushed; awaiting thread resolution + CI (Copilot does not re-review)"
     WaitingOnCopilotIssueComment => "Waiting on Copilot issue comment"
     CopilotIssueCommentSeenRecheckRemainingGates =>
       "Copilot issue comment seen; re-check gates"
@@ -602,6 +609,8 @@ pub fn tl_tracked_pr_workflow_category_sentence(
       "ACTION REQUIRED: no review appeared after timeout. Run: gh pr edit --add-reviewer @copilot"
     AttentionRequiredCIFailed => "BLOCKED: CI failing. Do not merge."
     WaitingOnReviewOrCI => "Waiting on review or CI. No action needed yet."
+    FixesPushedAwaitingGates =>
+      "FIXES PUSHED: Copilot does not re-review. Only remaining gates are thread resolution and CI on the new head. Verify threads via GraphQL (resolve them yourself if the leaf hasn't) and wait for CI green, then merge_pr. Do NOT wait for a second Copilot review."
     WaitingOnCopilotIssueComment =>
       "Waiting on Copilot review. No action needed yet."
     CopilotIssueCommentSeenRecheckRemainingGates =>
@@ -653,7 +662,7 @@ pub fn plan_tl_poll_event_parent(
       if merge_ready {
         MergeGateOpenPendingPolicyConfirmation
       } else {
-        WaitingOnReviewOrCI
+        FixesPushedAwaitingGates
       }
     ReviewReceived(_, _) =>
       if tracked.last_review_state == ChangesRequested {

@@ -699,7 +699,8 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_true(message.contains("(not merged yet)"))
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("TLDecision:"))
-      assert_true(message.contains("Waiting on review or CI"))
+      assert_true(message.contains("FIXES PUSHED: Copilot does not re-review"))
+      assert_false(message.contains("Waiting on review or CI"))
     }
     None => fail("expected FixesPushed message")
   }
