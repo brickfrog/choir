@@ -75,6 +75,41 @@ fn write_notify_gate_leaf_review_owned(
 }
 
 ///|
+fn write_notify_gate_leaf_exit_requested_deferred(
+  project_dir : String,
+  agent_id : String,
+  pr_number : Int,
+) -> Unit {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id,
+    role: @types.Role::Dev,
+    process: @phase.Connected,
+    workflow: @phase.Dev(
+      @phase.ExitRequestedDeferred(
+        pr_number~,
+        state=@phase.OpenUnreviewed(url=""),
+      ),
+    ),
+  }
+  ignore(@phase.write_lifecycle(project_dir, lifecycle))
+}
+
+///|
+fn write_notify_gate_leaf_changes_requested(
+  project_dir : String,
+  agent_id : String,
+  pr_number : Int,
+) -> Unit {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id,
+    role: @types.Role::Dev,
+    process: @phase.Connected,
+    workflow: @phase.Dev(@phase.ChangesRequested(pr_number~, next_round=1)),
+  }
+  ignore(@phase.write_lifecycle(project_dir, lifecycle))
+}
+
+///|
 async test "dispatch NotifyParent blocked attempts local zellij send with NOTIFY BLOCKED" {
   let project_dir = "/tmp/choir-test-notify-blocked-send-" +
     @sys.get_pid().to_string()
@@ -251,6 +286,191 @@ async test "dispatch NotifyParent blocks on unresolved threads" {
       assert_true(msg.contains("could not fetch review thread state"))
     }
     Ok(_) => fail("expected block when gh repo view unavailable")
+  }
+
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "dispatch NotifyParent blocks ExitRequestedDeferred on unresolved threads" {
+  let project_dir = "/tmp/choir-test-notify-gate-erd-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+
+  let agent_id = "leaf-erd"
+  let pr_number = 201
+
+  let reg = @registry.AgentRegistry::new()
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("parent-erd"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Remote("test"),
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let child : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent-erd"),
+    workspace: project_dir,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
+
+  write_notify_gate_leaf_exit_requested_deferred(
+    project_dir, agent_id, pr_number,
+  )
+  let req = ToolRequest::NotifyParent({
+    caller_id: agent_id,
+    message: "done",
+    status: @types.Status::Success,
+  })
+  let resp = dispatch(
+    req,
+    project_dir~,
+    registry=Some(reg),
+    capture=mock_capture_threads_one,
+  )
+  match resp {
+    Err(msg) => {
+      assert_true(msg.contains("notify_parent blocked"))
+      assert_true(msg.contains("1 unresolved review thread"))
+      assert_true(msg.contains("PR #\{pr_number}"))
+    }
+    Ok(_) =>
+      fail("expected block on unresolved threads in ExitRequestedDeferred")
+  }
+
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "dispatch NotifyParent blocks ChangesRequested on unresolved threads" {
+  let project_dir = "/tmp/choir-test-notify-gate-cr-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+
+  let agent_id = "leaf-cr"
+  let pr_number = 202
+
+  let reg = @registry.AgentRegistry::new()
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("parent-cr"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Remote("test"),
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let child : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent-cr"),
+    workspace: project_dir,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
+
+  write_notify_gate_leaf_changes_requested(project_dir, agent_id, pr_number)
+  let req = ToolRequest::NotifyParent({
+    caller_id: agent_id,
+    message: "done",
+    status: @types.Status::Success,
+  })
+  let resp = dispatch(
+    req,
+    project_dir~,
+    registry=Some(reg),
+    capture=mock_capture_threads_one,
+  )
+  match resp {
+    Err(msg) => {
+      assert_true(msg.contains("notify_parent blocked"))
+      assert_true(msg.contains("1 unresolved review thread"))
+      assert_true(msg.contains("PR #\{pr_number}"))
+    }
+    Ok(_) => fail("expected block on unresolved threads in ChangesRequested")
+  }
+
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "dispatch NotifyParent gate is status-agnostic (Failure still blocked)" {
+  let project_dir = "/tmp/choir-test-notify-gate-failure-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+
+  let agent_id = "leaf-fail"
+  let pr_number = 203
+
+  let reg = @registry.AgentRegistry::new()
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("parent-fail"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Remote("test"),
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let child : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent-fail"),
+    workspace: project_dir,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
+
+  write_notify_gate_leaf_review_owned(project_dir, agent_id, pr_number)
+  let req = ToolRequest::NotifyParent({
+    caller_id: agent_id,
+    message: "giving up",
+    status: @types.Status::Failure,
+  })
+  let resp = dispatch(
+    req,
+    project_dir~,
+    registry=Some(reg),
+    capture=mock_capture_threads_one,
+  )
+  match resp {
+    Err(msg) => {
+      assert_true(msg.contains("notify_parent blocked"))
+      assert_true(msg.contains("1 unresolved review thread"))
+    }
+    Ok(_) => fail("expected block on unresolved threads regardless of status")
   }
 
   ignore(@sys.rm_rf(project_dir))
