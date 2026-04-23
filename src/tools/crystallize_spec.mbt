@@ -9,7 +9,7 @@ pub(all) struct CrystallizeSpecPlan {
 ///|
 /// Exact message returned on a malformed `feature_slug`. Kept as a single
 /// constant so tests and callers match byte-for-byte.
-let crystallize_spec_slug_error_message : String = "feature_slug must be kebab-case (lowercase letters, digits, hyphens; starts with letter/digit)"
+let crystallize_spec_slug_error_message : String = "feature_slug must be kebab-case: lowercase letters, digits, and hyphens only; starts with a letter or digit; no trailing hyphen; no consecutive hyphens; must not end in \"-spec\" (the tool already appends \"-spec.md\")"
 
 ///|
 fn crystallize_spec_slug_is_valid(s : String) -> Bool {
@@ -81,10 +81,14 @@ fn crystallize_spec_default_path_exists(path : String) -> Bool {
 
 ///|
 fn crystallize_spec_default_fs_writer(path : String, content : String) -> Bool {
-  // AUDIT: `@sys.path_exists` + `@sys.write_file_atomic` are synchronous C
-  // FFI calls with no cooperative yield points between the check and the
-  // atomic rename. `interpret_crystallize_spec` is not async. No scheduler
-  // swap can occur between the check and the write regardless of transport.
+  // AUDIT: `@sys.path_exists` and `@sys.write_file_atomic` are synchronous C
+  // FFI calls, and `interpret_crystallize_spec` is not async, so there is no
+  // cooperative in-process scheduler interleaving between the planner's
+  // existence check and this write. This does not eliminate inter-process
+  // TOCTOU: another process can create `path` after the planner check, and
+  // the atomic rename used here may replace an existing destination on
+  // POSIX rather than fail-if-exists. The refusal is a workflow guardrail
+  // against re-running the skill, not a cross-process lock.
   @sys.write_file_atomic(path, content)
 }
 
