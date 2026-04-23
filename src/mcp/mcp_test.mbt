@@ -250,14 +250,18 @@ test "from_internal_response Err" {
 }
 
 ///|
-test "initialize MCP instructions forbid premature merge claims" {
+test "initialize MCP instructions point TL at wave_state for merge/review state" {
   let rpc = @mcp.initialize_response(Number(21))
   match rpc.result {
     Some(Object(res)) =>
       match res.get("instructions") {
         Some(String(s)) => {
-          assert_true(s.contains("[PR READY]"))
-          assert_true(s.contains("[FIXES PUSHED]"))
+          assert_true(s.contains("wave_state"))
+          assert_true(
+            s.contains(
+              "do not track merge/review status from notification prose",
+            ),
+          )
           assert_true(s.contains("merge_pr"))
           assert_true(s.contains("[PR MERGED]"))
           assert_true(s.contains("directly verified"))
