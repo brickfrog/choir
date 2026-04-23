@@ -490,6 +490,20 @@ pub async fn dispatch(
           match @phase.read_lifecycle(project_dir, notify_args.caller_id) {
             Some(
               { workflow: @phase.Dev(@phase.ReviewOwned(pr_number~, ..)), .. }
+            )
+            | Some(
+              {
+                workflow: @phase.Dev(
+                  @phase.ExitRequestedDeferred(pr_number~, ..)
+                ),
+                ..,
+              }
+            )
+            | Some(
+              {
+                workflow: @phase.Dev(@phase.ChangesRequested(pr_number~, ..)),
+                ..,
+              }
             ) => {
               let (count, thread_text) = fetch_unresolved_review_threads(
                 pr_number, project_dir, capture,
