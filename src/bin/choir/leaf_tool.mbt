@@ -312,24 +312,85 @@ fn leaf_tool_emit(resp : @types.Response) -> Unit {
 }
 
 ///|
+fn leaf_tool_default_path_exists(path : String) -> Bool {
+  @sys.path_exists(path)
+}
+
+///|
+fn leaf_tool_default_env_get(key : String) -> String? {
+  @sys.getenv(key)
+}
+
+///|
+fn leaf_tool_default_read_file(path : String) -> String {
+  @sys.read_file(path)
+}
+
+///|
+/// Synthesize a minimal `LocalConfig` from `CHOIR_*` env vars that
+/// `spawn_worker`/`shared_env_pairs` already exports at process start. Returns
+/// `None` when `CHOIR_AGENT_ID` is absent or empty — the caller surfaces a
+/// missing-config error in that case. This is the env-fallback path for inline
+/// workers that have no per-agent `.choir/config.local.toml` in their cwd.
+fn synthesize_config_from_env(
+  env_get : (String) -> String?,
+) -> @types.LocalConfig? {
+  let cfg = local_cfg_from_env_lookup(env_get)
+  match cfg.agent_id {
+    Some(_) => Some(cfg)
+    None => None
+  }
+}
+
+///|
+/// Resolve the leaf agent's `LocalConfig`: read
+/// `.choir/config.local.toml` when present, otherwise synthesize from
+/// `CHOIR_*` env vars. Env fallback never overrides an existing config file.
+fn resolve_leaf_local_cfg(
+  path_exists_fn : (String) -> Bool,
+  read_file_fn : (String) -> String,
+  env_get : (String) -> String?,
+) -> Result[@types.LocalConfig, @types.ChoirError] {
+  if path_exists_fn(".choir/config.local.toml") {
+    let content = read_file_fn(".choir/config.local.toml")
+    @config.parse_local_config(content)
+  } else {
+    match synthesize_config_from_env(env_get) {
+      Some(cfg) => {
+        @moontrace.info("leaf_tool using env-synthesized config", fields=[
+          @moontrace.field("agent_id", cfg.agent_id.unwrap_or("")),
+        ])
+        Ok(cfg)
+      }
+      None =>
+        Err(
+          @types.ChoirError::workspace_error(
+            "missing .choir/config.local.toml and CHOIR_AGENT_ID not set",
+          ),
+        )
+    }
+  }
+}
+
+///|
 fn leaf_tool_load_config(
   args : Array[String],
-) -> Result[(@types.Role, @types.Config, @types.LocalConfig), String] {
-  let config_content = @sys.read_file(".choir/config.toml")
+  env_get? : (String) -> String? = leaf_tool_default_env_get,
+  path_exists? : (String) -> Bool = leaf_tool_default_path_exists,
+  read_file? : (String) -> String = leaf_tool_default_read_file,
+) -> Result[(@types.Role, @types.Config, @types.LocalConfig), @types.ChoirError] {
+  let config_content = read_file(".choir/config.toml")
   if config_content == "" {
-    return Err("missing .choir/config.toml")
+    return Err(@types.ChoirError::workspace_error("missing .choir/config.toml"))
   }
   let base_config = match @config.parse_config(config_content) {
     Ok(cfg) => cfg
-    Err(e) => return Err(e.message())
+    Err(e) => return Err(e)
   }
-  let local_content = @sys.read_file(".choir/config.local.toml")
-  if local_content == "" {
-    return Err("missing .choir/config.local.toml")
-  }
-  let local_cfg = match @config.parse_local_config(local_content) {
+  let local_cfg = match
+    resolve_leaf_local_cfg(path_exists, read_file, env_get) {
     Ok(cfg) => cfg
-    Err(e) => return Err(e.message())
+    Err(e) => return Err(e)
   }
   let config = mcp_config_with_cli_overrides(base_config, local_cfg, args)
   let role = match mcp_cli_override_role(args) {
@@ -715,7 +776,7 @@ fn leaf_tool_run() -> Unit {
   let (role, config, local_cfg) = match leaf_tool_load_config(args) {
     Ok(loaded) => loaded
     Err(err) => {
-      leaf_tool_emit(@types.Response::Err(err))
+      leaf_tool_emit(@types.Response::Err(err.message()))
       return
     }
   }
@@ -919,4 +980,166 @@ test "tool env fallback preserves root control plane when env is empty" {
   let config = tool_effective_config(@types.Config::default(), local_cfg)
   assert_false(tool_should_register(local_cfg))
   assert_eq(config.agent_id, Some("root"))
+}
+
+///|
+test "synthesize_config_from_env populates every field when all CHOIR_* vars set" {
+  let env : Map[String, String] = {
+    "CHOIR_ROLE": "worker",
+    "CHOIR_AGENT_ID": "main.sarcasmotron",
+    "CHOIR_PARENT_ID": "root",
+    "CHOIR_BRANCH": "main.sarcasmotron",
+    "CHOIR_PARENT_BRANCH": "main",
+    "CHOIR_WORKSPACE": "/proj",
+    "CHOIR_TERMINAL_TARGET": "zellij-pane:choir:sarcasmotron",
+    "CHOIR_AGENT_TYPE": "claude",
+  }
+  let cfg = synthesize_config_from_env(fn(key) { env.get(key) }).unwrap()
+  assert_eq(cfg.role, Some(@types.Role::Worker))
+  assert_eq(cfg.agent_id, Some("main.sarcasmotron"))
+  assert_eq(cfg.parent_id, Some("root"))
+  assert_eq(cfg.branch, Some("main.sarcasmotron"))
+  assert_eq(cfg.parent_branch, Some("main"))
+  assert_eq(cfg.workspace, Some("/proj"))
+  assert_eq(cfg.agent_type, Some(@types.AgentType::Claude))
+  assert_true(cfg.terminal_target is Some(_))
+  assert_eq(cfg.spawn_depth, None)
+  assert_true(cfg.task_contract is None)
+  assert_eq(cfg.automerge, None)
+  assert_true(cfg.review_mode is None)
+  assert_eq(cfg.wave_id, None)
+}
+
+///|
+test "synthesize_config_from_env defaults missing optional fields when only CHOIR_AGENT_ID set" {
+  let env : Map[String, String] = { "CHOIR_AGENT_ID": "main.lonely-worker" }
+  let cfg = synthesize_config_from_env(fn(key) { env.get(key) }).unwrap()
+  assert_eq(cfg.agent_id, Some("main.lonely-worker"))
+  assert_eq(cfg.role, None)
+  assert_eq(cfg.parent_id, None)
+  assert_eq(cfg.branch, None)
+  assert_eq(cfg.parent_branch, None)
+  assert_eq(cfg.workspace, None)
+  assert_eq(cfg.terminal_target, None)
+  assert_eq(cfg.agent_type, None)
+  assert_eq(cfg.spawn_depth, None)
+}
+
+///|
+test "synthesize_config_from_env returns None when CHOIR_AGENT_ID is absent or empty" {
+  assert_true(synthesize_config_from_env(fn(_) { None }) is None)
+  let empty_env : Map[String, String] = { "CHOIR_AGENT_ID": "" }
+  assert_true(
+    synthesize_config_from_env(fn(key) { empty_env.get(key) }) is None,
+  )
+  let whitespace_env : Map[String, String] = { "CHOIR_AGENT_ID": "   " }
+  assert_true(
+    synthesize_config_from_env(fn(key) { whitespace_env.get(key) }) is None,
+  )
+}
+
+///|
+test "synthesize_config_from_env tolerates bogus CHOIR_ROLE by leaving role None" {
+  // Documented choice: an unparseable role degrades gracefully to `None`
+  // rather than failing the whole synthesis. The server's `resolve_role`
+  // path then applies the default-role fallback from `.choir/config.toml`.
+  let env : Map[String, String] = {
+    "CHOIR_AGENT_ID": "main.bogus-role",
+    "CHOIR_ROLE": "overlord",
+  }
+  let cfg = synthesize_config_from_env(fn(key) { env.get(key) }).unwrap()
+  assert_eq(cfg.agent_id, Some("main.bogus-role"))
+  assert_eq(cfg.role, None)
+}
+
+///|
+test "leaf_tool_load_config falls back to env when config.local.toml is missing" {
+  let env : Map[String, String] = {
+    "CHOIR_ROLE": "worker",
+    "CHOIR_AGENT_ID": "main.fallback-worker",
+    "CHOIR_PARENT_ID": "root",
+    "CHOIR_BRANCH": "main.fallback-worker",
+    "CHOIR_PARENT_BRANCH": "main",
+    "CHOIR_WORKSPACE": "/proj",
+    "CHOIR_AGENT_TYPE": "claude",
+  }
+  let stub_read = fn(path : String) -> String {
+    if path == ".choir/config.toml" {
+      "default_role = \"worker\"\n"
+    } else {
+      ""
+    }
+  }
+  let stub_path_exists = fn(path : String) -> Bool {
+    path == ".choir/config.toml"
+  }
+  let (role, _config, local_cfg) = leaf_tool_load_config(
+    [],
+    env_get=fn(key) { env.get(key) },
+    path_exists=stub_path_exists,
+    read_file=stub_read,
+  ).unwrap()
+  assert_eq(role, @types.Role::Worker)
+  assert_eq(local_cfg.agent_id, Some("main.fallback-worker"))
+  assert_eq(local_cfg.parent_id, Some("root"))
+}
+
+///|
+test "leaf_tool_load_config never overrides an existing config.local.toml" {
+  // Env supplies a different agent_id; the on-disk file must win.
+  let env : Map[String, String] = { "CHOIR_AGENT_ID": "from-env" }
+  let local_toml =
+    #|role = "dev"
+    #|agent_id = "from-file"
+    #|parent_id = "root"
+    #|branch = "main.from-file"
+    #|parent_branch = "main"
+    #|workspace = "/proj"
+    #|agent_type = "claude"
+    #|
+  let stub_read = fn(path : String) -> String {
+    if path == ".choir/config.toml" {
+      "default_role = \"tl\"\n"
+    } else if path == ".choir/config.local.toml" {
+      local_toml
+    } else {
+      ""
+    }
+  }
+  let stub_path_exists = fn(_path : String) -> Bool { true }
+  let (_role, _config, local_cfg) = leaf_tool_load_config(
+    [],
+    env_get=fn(key) { env.get(key) },
+    path_exists=stub_path_exists,
+    read_file=stub_read,
+  ).unwrap()
+  assert_eq(local_cfg.agent_id, Some("from-file"))
+}
+
+///|
+test "leaf_tool_load_config errors when both file and CHOIR_AGENT_ID are absent" {
+  let stub_read = fn(path : String) -> String {
+    if path == ".choir/config.toml" {
+      "default_role = \"tl\"\n"
+    } else {
+      ""
+    }
+  }
+  let stub_path_exists = fn(path : String) -> Bool {
+    path == ".choir/config.toml"
+  }
+  match
+    leaf_tool_load_config(
+      [],
+      env_get=fn(_) { None },
+      path_exists=stub_path_exists,
+      read_file=stub_read,
+    ) {
+    Ok(_) => fail("expected missing-config error")
+    Err(err) => {
+      let msg = err.message()
+      assert_true(msg.contains("missing .choir/config.local.toml"))
+      assert_true(msg.contains("CHOIR_AGENT_ID not set"))
+    }
+  }
 }
