@@ -10,5 +10,6 @@ options(
   targets: {
     "exec_native.mbt": [ "native" ],
     "exec_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+    "worktree_gitexclude_test.mbt": [ "native" ],
   },
 )

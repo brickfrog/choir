@@ -69,6 +69,16 @@ test "git_worktree_add args" {
 }
 
 ///|
+test "agent_runtime_gitexclude_snippet lists agent runtime dirs" {
+  let s = @workspace.agent_runtime_gitexclude_snippet()
+  assert_true(s.contains(".cursor/"))
+  assert_true(s.contains(".codex/"))
+  assert_true(s.contains(".gemini/"))
+  assert_false(s.contains(".claude/"))
+  assert_true(s.contains("# choir: agent-runtime junk"))
+}
+
+///|
 test "git_fetch_origin_branch_best_effort runs fetch in project dir" {
   let cmd = @workspace.git_fetch_origin_branch_best_effort("/repo", "main")
   assert_eq(
@@ -598,8 +608,8 @@ test "spawn_commands for worktree mode returns zellij tab" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  // cleanup, fetch parent, git worktree add from origin/<parent>, configs, helpers, zellij
-  assert_eq(cmds.length(), 7)
+  // cleanup, fetch parent, git worktree add, seed info/exclude, configs, helpers, zellij
+  assert_eq(cmds.length(), 8)
   assert_eq(
     cmds[0].program,
     @workspace.native_worktree_bootstrap_cleanup_program,
@@ -617,10 +627,16 @@ test "spawn_commands for worktree mode returns zellij tab" {
     "worktree", "add", "/project/.choir/worktrees/test-slug", "-b", "main.test-slug",
     "origin/main",
   ])
-  assert_eq(cmds[5].program, @workspace.native_leaf_helpers_program)
-  assert_eq(cmds[5].args, ["/project/.choir/worktrees/test-slug"])
-  assert_eq(cmds[6].program, "zellij")
-  assert_eq(cmds[6].args[3], "new-tab")
+  assert_eq(
+    cmds[3].program,
+    @workspace.native_worktree_seed_agent_runtime_gitexclude_program,
+  )
+  assert_eq(cmds[3].args[0], "/project/.choir/worktrees/test-slug")
+  assert_true(cmds[3].args[1].contains(".cursor/"))
+  assert_eq(cmds[6].program, @workspace.native_leaf_helpers_program)
+  assert_eq(cmds[6].args, ["/project/.choir/worktrees/test-slug"])
+  assert_eq(cmds[7].program, "zellij")
+  assert_eq(cmds[7].args[3], "new-tab")
 }
 
 ///|
@@ -643,24 +659,24 @@ test "spawn_commands worktree config write content" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "exo")
-  assert_eq(cmds.length(), 7)
-  assert_eq(cmds[3].program, @workspace.native_write_choir_file_program)
-  assert_true(cmds[3].args[0].contains("feature-a"))
-  assert_eq(cmds[3].args[1], "config.toml")
-  assert_true(cmds[3].args[2].contains("default_role = \"dev\""))
-  assert_true(
-    cmds[3].args[2].contains("listen_uds = \"/proj/.choir/server.sock\""),
-  )
-  assert_true(cmds[3].args[2].contains("terminal_session = \"exo\""))
+  assert_eq(cmds.length(), 8)
   assert_eq(cmds[4].program, @workspace.native_write_choir_file_program)
-  assert_eq(cmds[4].args[1], "config.local.toml")
-  assert_true(cmds[4].args[2].contains("agent_id = \"main.feature-a\""))
-  assert_true(cmds[4].args[2].contains("parent_id = \"root\""))
+  assert_true(cmds[4].args[0].contains("feature-a"))
+  assert_eq(cmds[4].args[1], "config.toml")
+  assert_true(cmds[4].args[2].contains("default_role = \"dev\""))
   assert_true(
-    cmds[4].args[2].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
+    cmds[4].args[2].contains("listen_uds = \"/proj/.choir/server.sock\""),
   )
-  assert_eq(cmds[5].program, @workspace.native_leaf_helpers_program)
-  assert_eq(cmds[6].program, "zellij")
+  assert_true(cmds[4].args[2].contains("terminal_session = \"exo\""))
+  assert_eq(cmds[5].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[5].args[1], "config.local.toml")
+  assert_true(cmds[5].args[2].contains("agent_id = \"main.feature-a\""))
+  assert_true(cmds[5].args[2].contains("parent_id = \"root\""))
+  assert_true(
+    cmds[5].args[2].contains("terminal_target = \"zellij-tab:exo:feature-a\""),
+  )
+  assert_eq(cmds[6].program, @workspace.native_leaf_helpers_program)
+  assert_eq(cmds[7].program, "zellij")
 }
 
 ///|
@@ -715,14 +731,14 @@ test "spawn_commands gemini worktree adds trust and settings" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  assert_eq(cmds.length(), 9)
-  assert_eq(cmds[6].program, "choir")
-  assert_eq(cmds[7].program, @workspace.native_write_choir_file_program)
-  assert_eq(cmds[7].args[1], "gemini-settings.json")
-  assert_eq(cmds[8].program, "zellij")
-  assert_eq(cmds[8].args[3], "new-tab")
+  assert_eq(cmds.length(), 10)
+  assert_eq(cmds[7].program, "choir")
+  assert_eq(cmds[8].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[8].args[1], "gemini-settings.json")
+  assert_eq(cmds[9].program, "zellij")
+  assert_eq(cmds[9].args[3], "new-tab")
   assert_true(
-    cmds[4].args[2].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
+    cmds[5].args[2].contains("terminal_target = \"zellij-tab:howdy:feature-z\""),
   )
 }
 
@@ -785,15 +801,15 @@ test "spawn_commands adds Gemini trust bootstrap" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
-  assert_eq(cmds.length(), 9)
-  assert_eq(cmds[6].program, "choir")
-  assert_eq(cmds[6].args, [
+  assert_eq(cmds.length(), 10)
+  assert_eq(cmds[7].program, "choir")
+  assert_eq(cmds[7].args, [
     "trust-gemini-folder", "/project/.choir/worktrees/gemini-slug",
   ])
-  assert_eq(cmds[7].program, @workspace.native_write_choir_file_program)
-  assert_eq(cmds[7].args[1], "gemini-settings.json")
-  assert_true(cmds[7].args[2].contains("mcpServers"))
-  assert_true(cmds[7].args[2].contains("main.gemini-slug"))
+  assert_eq(cmds[8].program, @workspace.native_write_choir_file_program)
+  assert_eq(cmds[8].args[1], "gemini-settings.json")
+  assert_true(cmds[8].args[2].contains("mcpServers"))
+  assert_true(cmds[8].args[2].contains("main.gemini-slug"))
 }
 
 ///|
@@ -816,14 +832,14 @@ test "spawn_commands cursor_agent worktree adds mcp json" {
     wave_id: None,
   }
   let cmds = @workspace.spawn_commands(spec, "/proj", "howdy")
-  // cleanup, fetch parent, worktree add from origin/<parent>, configs, helpers, mcp json, zellij
-  assert_eq(cmds.length(), 8)
-  assert_eq(cmds[6].program, @workspace.native_write_workspace_rel_file_program)
-  assert_eq(cmds[6].args[1], ".cursor/mcp.json")
-  assert_true(cmds[6].args[2].contains("mcpServers"))
-  assert_true(cmds[6].args[2].contains("main.feature-c"))
-  assert_eq(cmds[7].program, "zellij")
-  assert_eq(cmds[7].args[3], "new-tab")
+  // cleanup, fetch, worktree add, seed exclude, configs, helpers, mcp json, zellij
+  assert_eq(cmds.length(), 9)
+  assert_eq(cmds[7].program, @workspace.native_write_workspace_rel_file_program)
+  assert_eq(cmds[7].args[1], ".cursor/mcp.json")
+  assert_true(cmds[7].args[2].contains("mcpServers"))
+  assert_true(cmds[7].args[2].contains("main.feature-c"))
+  assert_eq(cmds[8].program, "zellij")
+  assert_eq(cmds[8].args[3], "new-tab")
 }
 
 ///|
