@@ -1560,6 +1560,23 @@ async test "test_close_terminal_no_warn_on_zero_exit" {
 }
 
 ///|
+/// Post-merge teardown may close a zellij tab that already self-closed; the
+/// close helper exits 0 idempotently, so the runner reports success and no WARN.
+async test "test_close_terminal_no_warn_idempotent_absent_zellij_tab" {
+  let state = handler_auto_close_test_state("close-tab-idempotent")
+  let target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijTab,
+    session: "test-session",
+    name: "already-closed-tab",
+  }
+  let captured : Array[@moontrace.Event] = []
+  handler_with_moontrace_capture(captured, async fn() {
+    state.interpret_teardown_effects([CloseTerminal(target)], _cmds => [0])
+  })
+  assert_eq(handler_close_terminal_warn_count(captured), 0)
+}
+
+///|
 async test "test_close_terminal_warns_on_error" {
   let state = handler_auto_close_test_state("close-error")
   let target = handler_auto_close_target("leaf-pane")
