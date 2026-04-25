@@ -352,6 +352,7 @@ pub fn spawn_commands(
         cmds.push(
           git_worktree_add(workspace, branch, "origin/" + spec.parent_branch),
         )
+        cmds.push(command_seed_worktree_agent_runtime_gitexclude(workspace))
       }
       cmds.push(
         write_spawn_config(

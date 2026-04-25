@@ -376,6 +376,12 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   if native_fetch >= 0 {
     return native_fetch
   }
+  let native_seed = @workspace.run_native_worktree_seed_agent_runtime_gitexclude_command(
+    cmd,
+  )
+  if native_seed >= 0 {
+    return native_seed
+  }
   let prog = cmd.program
   let args = cmd.args[:]
   match cmd.workdir {

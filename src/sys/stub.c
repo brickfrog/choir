@@ -686,3 +686,148 @@ void choir_git_fetch_origin_branch_best_effort(const char *project_dir, const ch
         fprintf(stderr, "choir: warning: git fetch origin %s failed\n", branch);
     }
 }
+
+static int choir_git_one_line_stdout(char *argv[], char *out, int outsz) {
+    if (outsz <= 1) {
+        return -1;
+    }
+    int p[2];
+    if (pipe(p) != 0) {
+        return -1;
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(p[0]);
+        close(p[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        close(p[0]);
+        dup2(p[1], STDOUT_FILENO);
+        int dn = open("/dev/null", O_WRONLY);
+        if (dn >= 0) {
+            dup2(dn, STDERR_FILENO);
+            close(dn);
+        }
+        close(p[1]);
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    close(p[1]);
+    FILE *in = fdopen(p[0], "r");
+    if (!in) {
+        close(p[0]);
+        waitpid(pid, NULL, 0);
+        return -1;
+    }
+    if (!fgets(out, outsz, in)) {
+        fclose(in);
+        waitpid(pid, NULL, 0);
+        return -1;
+    }
+    fclose(in);
+    int st = 0;
+    if (waitpid(pid, &st, 0) < 0) {
+        return -1;
+    }
+    if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+        return -1;
+    }
+    size_t n = strlen(out);
+    while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r')) {
+        out[--n] = '\0';
+    }
+    return 0;
+}
+
+int choir_worktree_seed_agent_runtime_gitexclude(const char *workspace, const char *snippet) {
+    if (!workspace || workspace[0] == '\0' || !snippet || snippet[0] == '\0') {
+        return 1;
+    }
+    char *argv[] = {
+        "git", "-C", (char *)workspace, "rev-parse", "--git-path", "info/exclude", NULL,
+    };
+    char pathbuf[8192];
+    memset(pathbuf, 0, sizeof(pathbuf));
+    if (choir_git_one_line_stdout(argv, pathbuf, (int)sizeof(pathbuf)) != 0) {
+        return 1;
+    }
+    if (pathbuf[0] == '\0') {
+        return 1;
+    }
+
+    char *old = NULL;
+    size_t oldlen = 0;
+    FILE *ef = fopen(pathbuf, "rb");
+    if (ef) {
+        if (fseek(ef, 0, SEEK_END) != 0) {
+            fclose(ef);
+            return 1;
+        }
+        long sz = ftell(ef);
+        if (sz < 0) {
+            fclose(ef);
+            return 1;
+        }
+        if (sz > 1048576) {
+            fclose(ef);
+            return 1;
+        }
+        rewind(ef);
+        if (sz == 0) {
+            fclose(ef);
+            old = strdup("");
+            if (!old) {
+                return 1;
+            }
+            oldlen = 0;
+        } else {
+            old = malloc((size_t)sz + 1);
+            if (!old) {
+                fclose(ef);
+                return 1;
+            }
+            size_t got = fread(old, 1, (size_t)sz, ef);
+            fclose(ef);
+            if (got != (size_t)sz) {
+                free(old);
+                return 1;
+            }
+            old[sz] = '\0';
+            oldlen = (size_t)sz;
+        }
+    } else {
+        old = strdup("");
+        if (!old) {
+            return 1;
+        }
+        oldlen = 0;
+    }
+
+    const char *marker = "# choir: agent-runtime junk";
+    if (strstr(old, marker)) {
+        free(old);
+        return 0;
+    }
+
+    size_t sniplen = strlen(snippet);
+    int need_nl = (oldlen > 0 && old[oldlen - 1] != '\n');
+    size_t newlen = oldlen + (need_nl ? 1u : 0u) + sniplen;
+    char *merged = malloc(newlen + 1);
+    if (!merged) {
+        free(old);
+        return 1;
+    }
+    memcpy(merged, old, oldlen);
+    if (need_nl) {
+        merged[oldlen] = '\n';
+        memcpy(merged + oldlen + 1, snippet, sniplen);
+    } else {
+        memcpy(merged + oldlen, snippet, sniplen);
+    }
+    merged[newlen] = '\0';
+    int w = choir_write_file_sync(pathbuf, merged, (int)newlen);
+    free(merged);
+    free(old);
+    return w == 0 ? 0 : 1;
+}

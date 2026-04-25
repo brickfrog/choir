@@ -12,6 +12,18 @@ pub fn git_worktree_add(
 }
 
 ///|
+/// Lines appended to a new worktree's `.git/info/exclude` so agent IDEs can drop
+/// `.cursor/`, `.codex/`, `.gemini/` without dirtying `git status` (see `command_seed_worktree_agent_runtime_gitexclude`).
+pub fn agent_runtime_gitexclude_snippet() -> String {
+  (
+    #|# choir: agent-runtime junk
+    #|.cursor/
+    #|.codex/
+    #|.gemini/
+  )
+}
+
+///|
 pub fn git_worktree_remove(path : String) -> Command {
   {
     program: "git",

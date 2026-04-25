@@ -140,6 +140,14 @@ pub fn git_fetch_origin_branch_best_effort_native(
 }
 
 ///|
+pub fn worktree_seed_agent_runtime_gitexclude_native(
+  _workspace : String,
+  _snippet : String,
+) -> Int {
+  0
+}
+
+///|
 pub fn init_cleanup_runtime_artifacts_native() -> Unit {
 
 }

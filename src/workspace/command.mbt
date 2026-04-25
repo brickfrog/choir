@@ -34,6 +34,11 @@ pub let native_worktree_bootstrap_cleanup_program : String = "__choir_native_wor
 pub let native_git_fetch_origin_branch_best_effort_program : String = "__choir_native_git_fetch_origin_branch_best_effort__"
 
 ///|
+/// Args: `[worktree_path, exclude_snippet]` — resolve `info/exclude` via `git rev-parse --git-path`,
+/// then append `exclude_snippet` when the choir marker is not already present.
+pub let native_worktree_seed_agent_runtime_gitexclude_program : String = "__choir_native_worktree_seed_agent_runtime_gitexclude__"
+
+///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
@@ -219,6 +224,33 @@ pub fn run_native_git_fetch_origin_branch_best_effort_command(
   }
   @sys.git_fetch_origin_branch_best_effort_native(cmd.args[0], cmd.args[1])
   0
+}
+
+///|
+/// Append agent-runtime ignore rules to the worktree's `info/exclude`. Returns `0` on success,
+/// `1` on failure, `-1` if `cmd` is not this native command.
+pub fn run_native_worktree_seed_agent_runtime_gitexclude_command(
+  cmd : Command,
+) -> Int {
+  if cmd.program != native_worktree_seed_agent_runtime_gitexclude_program {
+    return -1
+  }
+  if cmd.args.length() != 2 {
+    return 1
+  }
+  @sys.worktree_seed_agent_runtime_gitexclude_native(cmd.args[0], cmd.args[1])
+}
+
+///|
+/// After `git worktree add`, keep `git status` clean when agent CLIs write under `.cursor/`, etc.
+pub fn command_seed_worktree_agent_runtime_gitexclude(
+  worktree_path : String,
+) -> Command {
+  {
+    program: native_worktree_seed_agent_runtime_gitexclude_program,
+    args: [worktree_path, agent_runtime_gitexclude_snippet()],
+    workdir: None,
+  }
 }
 
 ///|

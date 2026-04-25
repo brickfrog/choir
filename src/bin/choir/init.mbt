@@ -431,6 +431,7 @@ fn init_companion_commands(
       project_dir, workspace, branch,
     ),
     @workspace.git_worktree_add(workspace, branch, current_branch),
+    @workspace.command_seed_worktree_agent_runtime_gitexclude(workspace),
     @workspace.write_spawn_config(
       workspace,
       @workspace.child_config_content(

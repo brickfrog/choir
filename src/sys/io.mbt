@@ -596,6 +596,13 @@ extern "C" fn c_register_cleanup_runtime_artifacts() = "choir_register_cleanup_r
 extern "C" fn c_git_fetch_origin_branch_best_effort(pd : Bytes, br : Bytes) = "choir_git_fetch_origin_branch_best_effort"
 
 ///|
+#borrow(ws, sn)
+extern "C" fn c_worktree_seed_agent_runtime_gitexclude(
+  ws : Bytes,
+  sn : Bytes,
+) -> Int = "choir_worktree_seed_agent_runtime_gitexclude"
+
+///|
 /// Best-effort worktree cleanup before spawn (`git -C` / `rm` via `execvp`, stderr discarded).
 pub fn worktree_bootstrap_cleanup_native(
   project_dir : String,
@@ -618,6 +625,18 @@ pub fn git_fetch_origin_branch_best_effort_native(
   c_git_fetch_origin_branch_best_effort(
     string_to_null_terminated_bytes(project_dir),
     string_to_null_terminated_bytes(branch),
+  )
+}
+
+///|
+/// Append agent-runtime `info/exclude` rules under the worktree's resolved Git directory.
+pub fn worktree_seed_agent_runtime_gitexclude_native(
+  workspace : String,
+  snippet : String,
+) -> Int {
+  c_worktree_seed_agent_runtime_gitexclude(
+    string_to_null_terminated_bytes(workspace),
+    string_to_null_terminated_bytes(snippet),
   )
 }
 
