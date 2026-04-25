@@ -34,8 +34,10 @@ pub let native_worktree_bootstrap_cleanup_program : String = "__choir_native_wor
 pub let native_git_fetch_origin_branch_best_effort_program : String = "__choir_native_git_fetch_origin_branch_best_effort__"
 
 ///|
-/// Args: `[worktree_path, exclude_snippet]` — resolve `info/exclude` via `git rev-parse --git-path`,
-/// then append `exclude_snippet` when the choir marker is not already present.
+/// Args: `[worktree_path, exclude_snippet]` — best-effort: resolve `info/exclude` via
+/// `git rev-parse --git-path`, append `exclude_snippet` when its first line is not already present.
+/// Native implementation always returns `0` (warnings on stderr when skipped), like other
+/// `*_best_effort` helpers, so `run_strict` spawn sequences are not aborted by QoL failures.
 pub let native_worktree_seed_agent_runtime_gitexclude_program : String = "__choir_native_worktree_seed_agent_runtime_gitexclude__"
 
 ///|
@@ -227,8 +229,8 @@ pub fn run_native_git_fetch_origin_branch_best_effort_command(
 }
 
 ///|
-/// Append agent-runtime ignore rules to the worktree's `info/exclude`. Returns `0` on success,
-/// `1` on failure, `-1` if `cmd` is not this native command.
+/// Best-effort append of agent-runtime ignore rules. Returns `1` only on bad args, `0` after
+/// attempting (native layer always reports success to the runner), `-1` if not this command.
 pub fn run_native_worktree_seed_agent_runtime_gitexclude_command(
   cmd : Command,
 ) -> Int {
@@ -238,7 +240,10 @@ pub fn run_native_worktree_seed_agent_runtime_gitexclude_command(
   if cmd.args.length() != 2 {
     return 1
   }
-  @sys.worktree_seed_agent_runtime_gitexclude_native(cmd.args[0], cmd.args[1])
+  ignore(
+    @sys.worktree_seed_agent_runtime_gitexclude_native(cmd.args[0], cmd.args[1]),
+  )
+  0
 }
 
 ///|

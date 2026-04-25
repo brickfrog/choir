@@ -740,9 +740,27 @@ static int choir_git_one_line_stdout(char *argv[], char *out, int outsz) {
     return 0;
 }
 
+static int choir_exclude_snippet_first_line_present(
+    const char *old,
+    size_t oldlen,
+    const char *snippet
+) {
+    size_t marker_len = strcspn(snippet, "\n");
+    if (marker_len == 0 || oldlen < marker_len) {
+        return 0;
+    }
+    for (size_t i = 0; i + marker_len <= oldlen; ++i) {
+        if (memcmp(old + i, snippet, marker_len) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int choir_worktree_seed_agent_runtime_gitexclude(const char *workspace, const char *snippet) {
     if (!workspace || workspace[0] == '\0' || !snippet || snippet[0] == '\0') {
-        return 1;
+        fprintf(stderr, "choir: warning: worktree seed gitexclude: missing workspace or snippet\n");
+        return 0;
     }
     char *argv[] = {
         "git", "-C", (char *)workspace, "rev-parse", "--git-path", "info/exclude", NULL,
@@ -750,10 +768,12 @@ int choir_worktree_seed_agent_runtime_gitexclude(const char *workspace, const ch
     char pathbuf[8192];
     memset(pathbuf, 0, sizeof(pathbuf));
     if (choir_git_one_line_stdout(argv, pathbuf, (int)sizeof(pathbuf)) != 0) {
-        return 1;
+        fprintf(stderr, "choir: warning: worktree seed gitexclude: git rev-parse failed for %s\n", workspace);
+        return 0;
     }
     if (pathbuf[0] == '\0') {
-        return 1;
+        fprintf(stderr, "choir: warning: worktree seed gitexclude: empty exclude path for %s\n", workspace);
+        return 0;
     }
 
     char *old = NULL;
@@ -762,36 +782,42 @@ int choir_worktree_seed_agent_runtime_gitexclude(const char *workspace, const ch
     if (ef) {
         if (fseek(ef, 0, SEEK_END) != 0) {
             fclose(ef);
-            return 1;
+            fprintf(stderr, "choir: warning: worktree seed gitexclude: seek failed on %s\n", pathbuf);
+            return 0;
         }
         long sz = ftell(ef);
         if (sz < 0) {
             fclose(ef);
-            return 1;
+            fprintf(stderr, "choir: warning: worktree seed gitexclude: size failed on %s\n", pathbuf);
+            return 0;
         }
         if (sz > 1048576) {
             fclose(ef);
-            return 1;
+            fprintf(stderr, "choir: warning: worktree seed gitexclude: exclude file too large %s\n", pathbuf);
+            return 0;
         }
         rewind(ef);
         if (sz == 0) {
             fclose(ef);
             old = strdup("");
             if (!old) {
-                return 1;
+                fprintf(stderr, "choir: warning: worktree seed gitexclude: out of memory\n");
+                return 0;
             }
             oldlen = 0;
         } else {
             old = malloc((size_t)sz + 1);
             if (!old) {
                 fclose(ef);
-                return 1;
+                fprintf(stderr, "choir: warning: worktree seed gitexclude: out of memory\n");
+                return 0;
             }
             size_t got = fread(old, 1, (size_t)sz, ef);
             fclose(ef);
             if (got != (size_t)sz) {
                 free(old);
-                return 1;
+                fprintf(stderr, "choir: warning: worktree seed gitexclude: short read on %s\n", pathbuf);
+                return 0;
             }
             old[sz] = '\0';
             oldlen = (size_t)sz;
@@ -799,13 +825,13 @@ int choir_worktree_seed_agent_runtime_gitexclude(const char *workspace, const ch
     } else {
         old = strdup("");
         if (!old) {
-            return 1;
+            fprintf(stderr, "choir: warning: worktree seed gitexclude: out of memory\n");
+            return 0;
         }
         oldlen = 0;
     }
 
-    const char *marker = "# choir: agent-runtime junk";
-    if (strstr(old, marker)) {
+    if (choir_exclude_snippet_first_line_present(old, oldlen, snippet)) {
         free(old);
         return 0;
     }
@@ -816,7 +842,8 @@ int choir_worktree_seed_agent_runtime_gitexclude(const char *workspace, const ch
     char *merged = malloc(newlen + 1);
     if (!merged) {
         free(old);
-        return 1;
+        fprintf(stderr, "choir: warning: worktree seed gitexclude: out of memory\n");
+        return 0;
     }
     memcpy(merged, old, oldlen);
     if (need_nl) {
@@ -829,5 +856,8 @@ int choir_worktree_seed_agent_runtime_gitexclude(const char *workspace, const ch
     int w = choir_write_file_sync(pathbuf, merged, (int)newlen);
     free(merged);
     free(old);
-    return w == 0 ? 0 : 1;
+    if (w != 0) {
+        fprintf(stderr, "choir: warning: worktree seed gitexclude: could not write %s\n", pathbuf);
+    }
+    return 0;
 }

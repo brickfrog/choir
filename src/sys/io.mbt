@@ -629,7 +629,8 @@ pub fn git_fetch_origin_branch_best_effort_native(
 }
 
 ///|
-/// Append agent-runtime `info/exclude` rules under the worktree's resolved Git directory.
+/// Best-effort append of agent-runtime `info/exclude` rules (resolved under the worktree's Git
+/// directory). Always returns `0`; failures are logged to stderr and the append is skipped.
 pub fn worktree_seed_agent_runtime_gitexclude_native(
   workspace : String,
   snippet : String,
