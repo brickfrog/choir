@@ -259,3 +259,99 @@ async test "interpret_spawn_gemini returns err when run_strict fails" {
 }
 
 ///|
+test "ensure_caller_can_spawn rejects callers in Failed state" {
+  // Regression: a worker spawned against a Failed parent has no live terminal
+  // to receive `notify_parent`; the work output dies in the worker's pane.
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("root"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/proj",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Failed,
+    }),
+  )
+  match ensure_caller_can_spawn("root", Some(reg)) {
+    Ok(_) => fail("expected Err for caller in Failed state")
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("root"))
+      assert_true(msg.contains("terminal state"))
+      assert_true(msg.contains("notify_parent"))
+    }
+  }
+}
+
+///|
+test "ensure_caller_can_spawn rejects callers in Done state" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/proj",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Done,
+    }),
+  )
+  match ensure_caller_can_spawn("main.tl", Some(reg)) {
+    Ok(_) => fail("expected Err for caller in Done state")
+    Err(_) => ()
+  }
+}
+
+///|
+test "ensure_caller_can_spawn allows callers in Active state" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/proj",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  match ensure_caller_can_spawn("main.tl", Some(reg)) {
+    Ok(_) => ()
+    Err(e) => fail("expected Ok for Active caller, got: " + e.message())
+  }
+}
+
+///|
+test "ensure_caller_can_spawn allows callers not in registry (synthesized root path)" {
+  // The synthesized root TL agent isn't in the registry until it registers.
+  // Pre-registration spawns from a freshly-launched TL session (or test
+  // harnesses without a registry) must still go through.
+  let reg = @registry.AgentRegistry::new()
+  match ensure_caller_can_spawn("user-12345-67890", Some(reg)) {
+    Ok(_) => ()
+    Err(e) => fail("expected Ok for unregistered caller, got: " + e.message())
+  }
+}
+
+///|
+test "ensure_caller_can_spawn allows None registry (test/non-orchestration paths)" {
+  match ensure_caller_can_spawn("anyone", None) {
+    Ok(_) => ()
+    Err(e) => fail("expected Ok for None registry, got: " + e.message())
+  }
+}
+
+///|

@@ -1,4 +1,47 @@
 ///|
+/// Reject spawn calls whose caller is in a terminal lifecycle state. A worker
+/// or leaf spawned against a `Failed` / `Done` parent has no live terminal to
+/// receive `notify_parent`; the worker runs to completion, calls
+/// `notify_parent`, the server can't deliver, the message dies in the worker's
+/// pane, and the orchestration layer never sees the result. Catch it at spawn
+/// time so the caller fails loud instead of losing work silently.
+///
+/// Allowed states: `Spawning`, `Active`, `Completing`, `Suspended`. The synthesized
+/// root TL agent (no on-disk lifecycle) is `Active` by construction so it passes.
+/// `None` registry means tests / non-orchestration paths — passes.
+pub fn ensure_caller_can_spawn(
+  caller_id : String,
+  registry : @registry.AgentRegistry?,
+) -> Result[Unit, @types.ChoirError] {
+  match registry {
+    None => Ok(())
+    Some(reg) =>
+      try {
+        let agent = reg.get(caller_id)
+        match agent.state {
+          @types.AgentState::Failed | @types.AgentState::Done =>
+            Err(
+              @types.ChoirError::validation_error(
+                "cannot spawn: caller '" +
+                caller_id +
+                "' is in terminal state '" +
+                agent.state.to_wire_string() +
+                "'. The spawned child would have no live parent to deliver `notify_parent` results to. Re-establish the parent (e.g. by restarting the TL session and re-registering) or pick a live caller before spawning.",
+              ),
+            )
+          _ => Ok(())
+        }
+      } catch {
+        // Caller not in registry: synthesized root TL or unregistered fresh
+        // session — both are legitimate spawn paths today; let them through.
+        _ => Ok(())
+      } noraise {
+        result => result
+      }
+  }
+}
+
+///|
 /// Pure plan for `spawn_worker` after default-branch resolution: spawn spec,
 /// canonical id, terminal target, registry upsert row, and success response.
 pub(all) struct SpawnWorkerPlan {

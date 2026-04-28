@@ -311,7 +311,11 @@ pub async fn dispatch(
         None =>
           @types.Response::ok_values({ "status": String::to_json("registered") })
       }
-    ToolRequest::ForkWave(fork_wave_args) =>
+    ToolRequest::ForkWave(fork_wave_args) => {
+      match ensure_caller_can_spawn(fork_wave_args.caller_id, registry) {
+        Err(e) => return @types.Response::Err(e.message())
+        Ok(_) => ()
+      }
       if fork_wave_args.depends_on.length() > 0 {
         match
           validate_pending_wave_deps(
@@ -429,6 +433,7 @@ pub async fn dispatch(
           None => resp
         }
       }
+    }
     ToolRequest::ForkSession(session_args) => {
       let session_dir = project_dir + "/.choir/sessions/" + session_args.name
       let context_path = session_dir + "/context.json"
@@ -800,18 +805,22 @@ pub async fn dispatch(
       }
     }
     ToolRequest::SpawnGemini(spawn_args) =>
-      interpret_spawn_gemini(
-        spawn_args,
-        project_dir,
-        session,
-        runner,
-        capture,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
-      )
+      match ensure_caller_can_spawn(spawn_args.caller_id, registry) {
+        Err(e) => @types.Response::Err(e.message())
+        Ok(_) =>
+          interpret_spawn_gemini(
+            spawn_args,
+            project_dir,
+            session,
+            runner,
+            capture,
+            extra_mcp_servers_json~,
+            shell_command~,
+            listen_uds~,
+            listen_tcp~,
+            tcp_auth_token~,
+          )
+      }
     ToolRequest::RescueLeaf(rescue_args) =>
       interpret_rescue_leaf(
         rescue_args,
@@ -828,26 +837,34 @@ pub async fn dispatch(
         tcp_auth_token~,
       )
     ToolRequest::SpawnRemote(spawn_args) =>
-      interpret_spawn_remote(
-        spawn_args,
-        runner,
-        capture,
-        extra_mcp_servers_json~,
-      )
+      match ensure_caller_can_spawn(spawn_args.caller_id, registry) {
+        Err(e) => @types.Response::Err(e.message())
+        Ok(_) =>
+          interpret_spawn_remote(
+            spawn_args,
+            runner,
+            capture,
+            extra_mcp_servers_json~,
+          )
+      }
     ToolRequest::SpawnWorker(worker_args) =>
-      interpret_spawn_worker(
-        worker_args,
-        project_dir,
-        session,
-        runner,
-        capture,
-        registry,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
-      )
+      match ensure_caller_can_spawn(worker_args.caller_id, registry) {
+        Err(e) => @types.Response::Err(e.message())
+        Ok(_) =>
+          interpret_spawn_worker(
+            worker_args,
+            project_dir,
+            session,
+            runner,
+            capture,
+            registry,
+            extra_mcp_servers_json~,
+            shell_command~,
+            listen_uds~,
+            listen_tcp~,
+            tcp_auth_token~,
+          )
+      }
     ToolRequest::Reply(reply_args) => {
       let id = reply_args.id
       let cancel = reply_args.cancel
