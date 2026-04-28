@@ -251,11 +251,17 @@ fn build_claude_settings_json(
   user_mcp_path? : String? = None,
 ) -> String {
   let role_str = @config.role_to_string(role)
+  // `alwaysLoad: true` opts out of Claude Code's tool-search deferral so the
+  // TL has fork_wave / file_pr / merge_pr / wave_state / send_message / kv_*
+  // / mutex_* etc. resolved up-front instead of paying a ToolSearch round-trip
+  // on first use of each. Choir's MCP surface is the orchestration loop's hot
+  // path; deferral was net cost, never net win.
   let mcp : Map[String, Json] = {
     "choir": {
       "type": "stdio".to_json(),
       "command": "choir".to_json(),
       "args": ["mcp-stdio", "--role", role_str, "--name", session_name].to_json(),
+      "alwaysLoad": true.to_json(),
     }.to_json(),
   }
 
@@ -832,6 +838,10 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
   assert_eq(args_json[2], "tl".to_json())
   assert_eq(args_json[3], "--name".to_json())
   assert_eq(args_json[4], "user-123-456".to_json())
+  // Claude Code's tool-search deferral is opt-out via `alwaysLoad: true`. The
+  // TL hits choir's orchestration tools constantly; deferring them costs more
+  // than it saves.
+  assert_eq(choir.get("alwaysLoad"), Some(true.to_json()))
   guard top.get("enabledPlugins") is Some(Object(plugins)) else {
     fail("enabledPlugins missing or not an object")
     return

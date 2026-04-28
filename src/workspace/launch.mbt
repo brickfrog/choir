@@ -268,8 +268,11 @@ pub fn agent_launch_command(
 
 ///|
 /// MCP JSON for TL init Claude only; matches legacy `choir init` (`mcp-stdio` + `--name root`, no `--role`).
+/// `alwaysLoad: true` keeps choir's orchestration tools out of Claude Code's
+/// tool-search deferral so the TL doesn't pay a ToolSearch round-trip on first
+/// use of every fork_wave / file_pr / merge_pr / wave_state call.
 pub fn init_tl_claude_mcp_config_json() -> String {
-  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\"]}}}"
+  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\"],\"alwaysLoad\":true}}}"
 }
 
 ///|

@@ -303,11 +303,15 @@ pub fn mcp_json_content(
     @types.Role::Dev => "dev"
     @types.Role::Worker => "worker"
   }
+  // `alwaysLoad: true` is Claude-Code-specific. Cursor / Gemini / Codex ignore
+  // unknown MCP-entry keys, so it's safe to ship in the shared `.mcp.json` —
+  // claude leaves get their orchestration tools resolved up-front, others are
+  // unaffected.
   let base = "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--role\",\"" +
     role_str +
     "\",\"--name\",\"" +
     agent_id +
-    "\"]}}"
+    "\"],\"alwaysLoad\":true}}"
   match extra_mcp_servers_json {
     Some(extra) =>
       match strip_json_object_braces(extra) {

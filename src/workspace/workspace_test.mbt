@@ -1105,6 +1105,22 @@ test "mcp_json_content merges extra servers" {
 }
 
 ///|
+test "mcp_json_content sets alwaysLoad on the choir MCP entry" {
+  // Claude Code's tool-search deferral was a measurable round-trip cost on
+  // every fork_wave / file_pr / merge_pr first-use. `alwaysLoad: true` opts
+  // out. Other agent runtimes ignore the unknown key.
+  let json = @workspace.mcp_json_content(@types.Role::Dev, "agent-a")
+  assert_true(json.contains("\"alwaysLoad\":true"))
+}
+
+///|
+test "init_tl_claude_mcp_config_json sets alwaysLoad on the choir MCP entry" {
+  let json = @workspace.init_tl_claude_mcp_config_json()
+  assert_true(json.contains("\"alwaysLoad\":true"))
+  assert_true(json.contains("\"choir\""))
+}
+
+///|
 test "remote_spawn_commands produces 3 ssh commands and includes spawn_depth" {
   let spec = @types.SpawnSpec::{
     slug: "remote-worker",
