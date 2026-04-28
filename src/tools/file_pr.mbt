@@ -412,26 +412,42 @@ pub fn file_pr_preflight_create_inputs(
 }
 
 ///|
-/// Tracked-agent workspace for `file_pr` git/push operations: use the agent's
-/// `workspace` when present in the registry, else the project root.
+/// Tracked-agent workspace for `file_pr` git/push operations.
+///
+/// - When the registry has the tracked agent and its `workspace` is non-empty:
+///   use that worktree path.
+/// - When the registry has the tracked agent but its `workspace` is empty: fail
+///   loud with a [`@types.ChoirError::workspace_error`]. Silent fallback to the
+///   project root would otherwise run `git status --porcelain` against the user's
+///   main checkout and surface unrelated edits as the leaf's "uncommitted
+///   changes" — exactly the false [`FilePrPreflightError::UncommittedChanges`]
+///   that has burned us before.
+/// - When the registry is absent or the tracked agent is not found (e.g.
+///   TL/root-driven `file_pr` outside any wave): fall back to the project root.
 pub fn file_pr_workdir(
   root_project_dir : String,
   tracked_agent_id : String,
   reg : @registry.AgentRegistry?,
-) -> String {
+) -> Result[String, @types.ChoirError] {
   match reg {
     Some(agent_reg) =>
       try {
         let agent = agent_reg.get(tracked_agent_id)
         if agent.workspace != "" {
-          agent.workspace
+          Ok(agent.workspace)
         } else {
-          root_project_dir
+          Err(
+            @types.ChoirError::workspace_error(
+              "cannot file PR: agent '" +
+              tracked_agent_id +
+              "' is registered with an empty workspace; re-register with the worktree path before filing a PR (running git in the project root would report unrelated edits as your worktree's uncommitted changes)",
+            ),
+          )
         }
       } catch {
-        _ => root_project_dir
+        _ => Ok(root_project_dir)
       }
-    None => root_project_dir
+    None => Ok(root_project_dir)
   }
 }
 
@@ -572,7 +588,11 @@ pub async fn interpret_file_pr(
     None => detect_default_branch_with_capture(project_dir, capture)
   }
   let tracked_agent_id = file_pr_args.tracked_agent_id
-  let file_pr_dir = file_pr_workdir(project_dir, tracked_agent_id, registry)
+  let file_pr_dir = match
+    file_pr_workdir(project_dir, tracked_agent_id, registry) {
+    Ok(d) => d
+    Err(e) => return @types.Response::Err(e.message())
+  }
   let preflight_inputs = file_pr_preflight_create_inputs(
     file_pr_args, parent_branch, file_pr_dir,
   )

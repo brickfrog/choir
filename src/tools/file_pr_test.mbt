@@ -677,3 +677,78 @@ test "file_pr_copilot_review_comment_body uses @copilot review prefix" {
 }
 
 ///|
+test "file_pr_workdir returns the agent's worktree when registered" {
+  let leaf : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::CursorAgent,
+    parent: Some("root"),
+    workspace: "/proj/.choir/worktrees/main.leaf",
+    branch: "main.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let reg = @registry.AgentRegistry::new()
+  ignore(reg.upsert(leaf))
+  match file_pr_workdir("/proj", "main.leaf", Some(reg)) {
+    Ok(d) => assert_eq(d, "/proj/.choir/worktrees/main.leaf")
+    Err(e) => fail("expected Ok worktree, got Err: " + e.message())
+  }
+}
+
+///|
+test "file_pr_workdir errors instead of falling back when registered workspace is empty" {
+  // Regression: silent fallback to project_dir made `git status --porcelain`
+  // run against the user's main checkout and surface unrelated edits as the
+  // leaf's "uncommitted changes". Now `file_pr_workdir` must fail loud.
+  let leaf : @types.Agent = {
+    agent_id: @types.AgentId("master.graph-batched-extract-0"),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::CursorAgent,
+    parent: Some("root"),
+    workspace: "",
+    branch: "master.graph-batched-extract-0",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let reg = @registry.AgentRegistry::new()
+  ignore(reg.upsert(leaf))
+  match file_pr_workdir("/proj", "master.graph-batched-extract-0", Some(reg)) {
+    Ok(d) =>
+      fail(
+        "expected workspace_error for empty registered workspace, got Ok: " + d,
+      )
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("master.graph-batched-extract-0"))
+      assert_true(msg.contains("empty workspace"))
+    }
+  }
+}
+
+///|
+test "file_pr_workdir falls back to project root when agent is not in the registry" {
+  let reg = @registry.AgentRegistry::new()
+  match file_pr_workdir("/proj", "unknown.leaf", Some(reg)) {
+    Ok(d) => assert_eq(d, "/proj")
+    Err(e) =>
+      fail(
+        "expected Ok fallback for unregistered agent, got Err: " + e.message(),
+      )
+  }
+}
+
+///|
+test "file_pr_workdir falls back to project root when registry is None" {
+  match file_pr_workdir("/proj", "main.leaf", None) {
+    Ok(d) => assert_eq(d, "/proj")
+    Err(e) =>
+      fail("expected Ok fallback for no registry, got Err: " + e.message())
+  }
+}
+
+///|
