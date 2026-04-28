@@ -954,6 +954,61 @@ test "run_native_leaf_helpers_command ignores foreign programs" {
 }
 
 ///|
+test "gh_shim_script_body hard-blocks gh pr create and passes other subcommands through" {
+  let body = @workspace.gh_shim_script_body()
+  // shebang and routing message
+  assert_true(body.has_prefix("#!/bin/sh"))
+  // Hard-blocks `gh pr create` (the exact pattern cursor_agent hits when it
+  // bypasses file_pr).
+  assert_true(body.contains("\"$1\" = \"pr\" ] && [ \"$2\" = \"create\""))
+  assert_true(body.contains("blocked for leaves"))
+  assert_true(body.contains("file_pr"))
+  // Passthrough fallback walks PATH and excludes the shim's own directory so
+  // it does not recurse on itself.
+  assert_true(body.contains("for d in $PATH"))
+  assert_true(body.contains("[ \"$d\" = \"$this_dir\" ] && continue"))
+  assert_true(body.contains("exec \"$d/gh\""))
+  // Every other gh subcommand stays usable -- no other early `exit 1` branch.
+  let exit_one = "exit 1\n"
+  let mut count = 0
+  let mut i = body.find(exit_one)
+  while i is Some(_) {
+    count = count + 1
+    let from = match i {
+      Some(idx) => idx + exit_one.length()
+      None => body.length()
+    }
+    i = body[from:].to_string().find(exit_one)
+  }
+  assert_eq(count, 1)
+}
+
+///|
+test "run_native_leaf_helpers_command installs gh shim alongside leaf-tool" {
+  let dir = "/tmp/choir-gh-shim-install-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let bin_dir = dir + "/.choir/bin"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(dir))
+  let rc = @workspace.run_native_leaf_helpers_command({
+    program: @workspace.native_leaf_helpers_program,
+    args: [dir],
+    workdir: None,
+  })
+  assert_eq(rc, 0)
+  // gh shim exists and matches the canonical body.
+  let gh_path = bin_dir + "/gh"
+  assert_true(@sys.path_exists(gh_path))
+  assert_eq(@sys.read_file(gh_path), @workspace.gh_shim_script_body())
+  // Leaf-tool symlinks still installed -- shim is additive, not a replacement.
+  assert_true(@sys.path_exists(bin_dir + "/file_pr"))
+  assert_true(@sys.path_exists(bin_dir + "/choir-leaf-tool"))
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
 test "gemini settings and cursor mcp json use native file commands" {
   let gem = @workspace.write_gemini_settings("/wt", "main.leaf", "dev")
   assert_eq(gem.program, @workspace.native_write_choir_file_program)

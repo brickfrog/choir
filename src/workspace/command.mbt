@@ -160,6 +160,40 @@ fn leaf_helper_script_body() -> String {
 }
 
 ///|
+/// Body of the `gh` shim installed under `worktree_path/.choir/bin/gh`. Hard-
+/// blocks `gh pr create` so leaves must go through the `file_pr` MCP tool —
+/// raw `gh pr create` bypasses choir's auto-Copilot-reviewer wiring and PR
+/// tracking, which has burned us before (cursor_agent in particular slips
+/// past the prompt-level guidance and fires `gh pr create` directly). Every
+/// other `gh` subcommand passes through to the next `gh` on `PATH` after the
+/// shim's own directory.
+pub fn gh_shim_script_body() -> String {
+  (
+    #|#!/bin/sh
+    #|# choir gh shim: route PR creation through `file_pr`; pass everything else through.
+    #|if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+    #|  echo "choir: 'gh pr create' is blocked for leaves." >&2
+    #|  echo "choir: use the 'file_pr' MCP tool instead -- it auto-requests @copilot review and tracks the PR for the parent TL." >&2
+    #|  echo "choir: raw 'gh pr create' here would skip both, leaving the PR uncovered." >&2
+    #|  exit 1
+    #|fi
+    #|this_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || this_dir=
+    #|IFS=:
+    #|for d in $PATH; do
+    #|  [ -z "$d" ] && continue
+    #|  [ "$d" = "$this_dir" ] && continue
+    #|  if [ -x "$d/gh" ]; then
+    #|    unset IFS
+    #|    exec "$d/gh" "$@"
+    #|  fi
+    #|done
+    #|unset IFS
+    #|echo "choir gh shim: real 'gh' not found on PATH (excluding $this_dir)" >&2
+    #|exit 127
+  )
+}
+
+///|
 /// Install leaf helper scripts under `worktree_path/.choir/bin` without shell heredocs.
 /// Returns `0` on success, `1` on failure, `-1` if `cmd` is not this native command.
 pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
@@ -193,6 +227,13 @@ pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
     if !@sys.symlink_force("choir-leaf-tool", link_path) {
       return 1
     }
+  }
+  let gh_shim_path = bin_dir + "/gh"
+  if !@sys.write_file_sync(gh_shim_path, gh_shim_script_body()) {
+    return 1
+  }
+  if !@sys.chmod_mode(gh_shim_path, 0o755) {
+    return 1
   }
   0
 }
