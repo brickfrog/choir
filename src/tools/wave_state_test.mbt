@@ -181,7 +181,7 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
   ).unwrap()
   assert_eq(snap.taken_at_ms, 9_999_999L)
   assert_eq(snap.supervisor.agent_id, "tl")
-  assert_eq(snap.supervisor.wave, Some(7))
+  @debug.assert_eq(snap.supervisor.wave, Some(7))
   assert_true(snap.supervisor.own_pr is None)
   assert_eq(snap.children.length(), 2)
   let leaf_row = snap.children
@@ -189,14 +189,14 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
     .find_first(fn(c) { c.agent_id == "tl.leaf-a" })
     .unwrap()
   assert_eq(leaf_row.agent_type, @types.AgentType::Gemini)
-  assert_eq(leaf_row.last_heartbeat_ms, None)
+  @debug.assert_eq(leaf_row.last_heartbeat_ms, None)
   match leaf_row.pr {
     Some(pr) => {
       assert_eq(pr.pr_number, 42)
       assert_eq(pr.review_state, @poller.ReviewState::None_)
       assert_eq(pr.ci_rollup, @poller.CiRollupStatus::Unknown)
-      assert_eq(pr.unresolved_threads, Some(0))
-      assert_eq(pr.threads_fetch_error, None)
+      @debug.assert_eq(pr.unresolved_threads, Some(0))
+      @debug.assert_eq(pr.threads_fetch_error, None)
       assert_eq(pr.merge_gate_ready, false)
     }
     None => fail("expected tracked PR for dev leaf")
@@ -206,7 +206,7 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
     .find_first(fn(c) { c.agent_id == "tl.worker-b" })
     .unwrap()
   assert_true(worker_row.pr is None)
-  assert_eq(worker_row.last_heartbeat_ms, Some(1_700_000_000_000L))
+  @debug.assert_eq(worker_row.last_heartbeat_ms, Some(1_700_000_000_000L))
   assert_eq(worker_row.agent_type, @types.AgentType::Claude)
   match worker_row.workflow {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
@@ -431,7 +431,7 @@ test "plan_wave_state merge_gate_ready false when unresolved threads > 0" {
     0L,
   ).unwrap()
   let pr = snap.children[0].pr.unwrap()
-  assert_eq(pr.unresolved_threads, Some(2))
+  @debug.assert_eq(pr.unresolved_threads, Some(2))
   assert_eq(pr.merge_gate_ready, false)
 }
 
@@ -485,8 +485,8 @@ test "plan_wave_state reports threads_fetch_error on fail-loud path" {
     0L,
   ).unwrap()
   let pr = snap.children[0].pr.unwrap()
-  assert_eq(pr.unresolved_threads, None)
-  assert_eq(pr.threads_fetch_error, Some("gh unavailable"))
+  @debug.assert_eq(pr.unresolved_threads, None)
+  @debug.assert_eq(pr.threads_fetch_error, Some("gh unavailable"))
   // fail-loud: snapshot is NOT blocked.
   assert_eq(pr.merge_gate_ready, false)
 }
@@ -551,7 +551,7 @@ test "plan_wave_state worker with stale heartbeat appears in snapshot" {
   let row = snap.children[0]
   assert_eq(row.agent_id, "tl.sarcasmotron")
   assert_true(row.pr is None)
-  assert_eq(row.last_heartbeat_ms, Some(1_600_000_000_000L))
+  @debug.assert_eq(row.last_heartbeat_ms, Some(1_600_000_000_000L))
   match row.workflow {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
     _ => fail("expected Worker(Working) for silent worker")

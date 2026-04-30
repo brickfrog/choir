@@ -73,7 +73,7 @@ fn basename(path : String) -> String {
   let parts = path.split("/")
   let mut last = ""
   for p in parts {
-    let ps = p.to_string()
+    let ps = p.to_owned()
     if ps != "" {
       last = ps
     }
@@ -103,8 +103,8 @@ pub fn extract_description(content : String) -> String {
   let mut collecting_block = false
   let folded_parts : Array[String] = []
   for line in lines {
-    let line_s = line.to_string()
-    let trimmed = line_s.trim().to_string()
+    let line_s = line.to_owned()
+    let trimmed = line_s.trim().to_owned()
     if trimmed == "---" {
       if in_frontmatter {
         break
@@ -126,16 +126,16 @@ pub fn extract_description(content : String) -> String {
     }
     if trimmed.has_prefix("description:") {
       let desc_len = "description:".length()
-      let desc = trimmed[desc_len:].to_string().trim().to_string()
+      let desc = trimmed[desc_len:].to_owned().trim().to_owned()
       if desc == ">" || desc == "|" {
         collecting_block = true
         continue
       }
       if desc.has_prefix("\"") && desc.has_suffix("\"") && desc.length() >= 2 {
-        return desc[1:desc.length() - 1].to_string()
+        return desc[1:desc.length() - 1].to_owned()
       }
       if desc.has_prefix("'") && desc.has_suffix("'") && desc.length() >= 2 {
-        return desc[1:desc.length() - 1].to_string()
+        return desc[1:desc.length() - 1].to_owned()
       }
       return desc
     }

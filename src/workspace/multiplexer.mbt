@@ -52,7 +52,7 @@ fn strip_ansi_csi_sgr(s : String) -> String {
 ///|
 /// First whitespace-delimited field after trim (awk `$1` on default FS).
 fn zellij_list_first_field(line : String) -> String {
-  let t = line.trim().to_string()
+  let t = line.trim().to_owned()
   let len = t.length()
   let mut end = len
   for k = 0; k < len; k = k + 1 {
@@ -62,7 +62,7 @@ fn zellij_list_first_field(line : String) -> String {
       break
     }
   }
-  t[:end].to_string()
+  t[:end].to_owned()
 }
 
 ///|
@@ -85,7 +85,7 @@ pub fn zellij_session_exists_in_list_output(
 ) -> Bool {
   let text = strip_ansi_csi_sgr(output)
   for raw in text.split("\n") {
-    let line = raw.to_string()
+    let line = raw.to_owned()
     if line.contains("(EXITED") {
       continue
     }
@@ -118,7 +118,7 @@ pub fn zellij_tab_name_exists_in_query_output(
 ) -> Bool {
   let text = strip_ansi_csi_sgr(output)
   for raw in text.split("\n") {
-    let line = raw.to_string()
+    let line = raw.to_owned()
     if line == tab_name {
       return true
     }

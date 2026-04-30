@@ -122,7 +122,7 @@ fn merge_user_skills_into_plugin(
   plugin_dir : String,
   home : String,
 ) -> Result[Unit, @types.ChoirError] {
-  let skills_dir = match user_skills_dir_for(home) {
+  let skills_dir = match @choir_commands.user_skills_dir_for(home) {
     Ok(d) => d
     Err(_) => return Ok(())
   }
@@ -270,12 +270,12 @@ fn build_claude_settings_json(
       if @sys.path_exists(p) {
         let content = @sys.read_file(p)
         if content != "" {
-          match parse_mcp_config_json(content) {
+          match @choir_commands.parse_mcp_config_json(content) {
             Ok(user_servers) => {
               let user_json : Map[String, Json] = {}
               for k, v in user_servers {
                 let srv_obj : Map[String, Json] = {
-                  "type": mcp_transport_to_string(v.transport).to_json(),
+                  "type": @choir_commands.mcp_transport_to_string(v.transport).to_json(),
                   "command": v.command.to_json(),
                 }
                 let args_json : Array[Json] = []
@@ -285,7 +285,7 @@ fn build_claude_settings_json(
                 srv_obj.set("args", args_json.to_json())
                 user_json.set(k, srv_obj.to_json())
               }
-              match merge_mcp_maps(mcp, user_json) {
+              match @choir_commands.merge_mcp_maps(mcp, user_json) {
                 Ok(m) => m
                 Err(e) => {
                   @sys.write_stderr("choir claude: " + e.message() + "\n")
@@ -309,17 +309,19 @@ fn build_claude_settings_json(
         mcp
       }
     None =>
-      match user_mcp_json_path() {
+      match @choir_commands.user_mcp_json_path() {
         Ok(p) =>
           if @sys.path_exists(p) {
             let content = @sys.read_file(p)
             if content != "" {
-              match parse_mcp_config_json(content) {
+              match @choir_commands.parse_mcp_config_json(content) {
                 Ok(user_servers) => {
                   let user_json : Map[String, Json] = {}
                   for k, v in user_servers {
                     let srv_obj : Map[String, Json] = {
-                      "type": mcp_transport_to_string(v.transport).to_json(),
+                      "type": @choir_commands.mcp_transport_to_string(
+                        v.transport,
+                      ).to_json(),
                       "command": v.command.to_json(),
                     }
                     let args_json : Array[Json] = []
@@ -329,7 +331,7 @@ fn build_claude_settings_json(
                     srv_obj.set("args", args_json.to_json())
                     user_json.set(k, srv_obj.to_json())
                   }
-                  match merge_mcp_maps(mcp, user_json) {
+                  match @choir_commands.merge_mcp_maps(mcp, user_json) {
                     Ok(m) => m
                     Err(e) => {
                       @sys.write_stderr("choir claude: " + e.message() + "\n")
@@ -511,7 +513,7 @@ test "build_plugin_manifest_json()" {
     fail("manifest is not an object")
     return
   }
-  assert_eq(top.get("name"), Some("choir".to_json()))
+  @debug.assert_eq(top.get("name"), Some("choir".to_json()))
 }
 
 ///|
@@ -816,8 +818,8 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
     fail("statusLine missing or not an object")
     return
   }
-  assert_eq(status.get("type"), Some("command".to_json()))
-  assert_eq(status.get("command"), Some("choir statusline".to_json()))
+  @debug.assert_eq(status.get("type"), Some("command".to_json()))
+  @debug.assert_eq(status.get("command"), Some("choir statusline".to_json()))
   guard top.get("mcpServers") is Some(Object(servers)) else {
     fail("mcpServers missing or not an object")
     return
@@ -826,8 +828,8 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
     fail("mcpServers.choir missing or not an object")
     return
   }
-  assert_eq(choir.get("type"), Some("stdio".to_json()))
-  assert_eq(choir.get("command"), Some("choir".to_json()))
+  @debug.assert_eq(choir.get("type"), Some("stdio".to_json()))
+  @debug.assert_eq(choir.get("command"), Some("choir".to_json()))
   guard choir.get("args") is Some(Array(args_json)) else {
     fail("mcpServers.choir.args missing or not an array")
     return
@@ -841,12 +843,12 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
   // Claude Code's tool-search deferral is opt-out via `alwaysLoad: true`. The
   // TL hits choir's orchestration tools constantly; deferring them costs more
   // than it saves.
-  assert_eq(choir.get("alwaysLoad"), Some(true.to_json()))
+  @debug.assert_eq(choir.get("alwaysLoad"), Some(true.to_json()))
   guard top.get("enabledPlugins") is Some(Object(plugins)) else {
     fail("enabledPlugins missing or not an object")
     return
   }
-  assert_eq(plugins.get("choir@local"), Some(true.to_json()))
+  @debug.assert_eq(plugins.get("choir@local"), Some(true.to_json()))
   ignore(@sys.rm_rf(tmp))
 }
 
@@ -886,12 +888,12 @@ test "build_claude_settings_json merges user MCP from injected path" {
     fail("mcpServers.linear missing or not an object")
     return
   }
-  assert_eq(linear.get("command"), Some("npx".to_json()))
+  @debug.assert_eq(linear.get("command"), Some("npx".to_json()))
   guard servers.get("choir") is Some(Object(choir)) else {
     fail("mcpServers.choir missing or not an object")
     return
   }
-  assert_eq(choir.get("command"), Some("choir".to_json()))
+  @debug.assert_eq(choir.get("command"), Some("choir".to_json()))
 
   ignore(@sys.rm_rf(tmp))
 }

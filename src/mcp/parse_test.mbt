@@ -3,8 +3,8 @@ test "parse_flat_json_object extracts string key-value pairs" {
   let m = parse_flat_json_object(
     "{\"key\":\"test\",\"value\":\"hello from claude\"}",
   )
-  assert_eq(m.get("key"), Some("test"))
-  assert_eq(m.get("value"), Some("hello from claude"))
+  @debug.assert_eq(m.get("key"), Some("test"))
+  @debug.assert_eq(m.get("value"), Some("hello from claude"))
 }
 
 ///|
@@ -12,8 +12,8 @@ test "parse_flat_json_object unescapes newlines and quotes" {
   let m = parse_flat_json_object(
     "{\"task\":\"line one\\nline two\",\"note\":\"say \\\"hi\\\"\"}",
   )
-  assert_eq(m.get("task"), Some("line one\nline two"))
-  assert_eq(m.get("note"), Some("say \"hi\""))
+  @debug.assert_eq(m.get("task"), Some("line one\nline two"))
+  @debug.assert_eq(m.get("note"), Some("say \"hi\""))
 }
 
 ///|
@@ -27,9 +27,9 @@ test "parse_flat_json_object preserves primitive literals as strings" {
   let m = parse_flat_json_object(
     "{\"count\":3,\"enabled\":true,\"empty\":null}",
   )
-  assert_eq(m.get("count"), Some("3"))
-  assert_eq(m.get("enabled"), Some("true"))
-  assert_eq(m.get("empty"), Some("null"))
+  @debug.assert_eq(m.get("count"), Some("3"))
+  @debug.assert_eq(m.get("enabled"), Some("true"))
+  @debug.assert_eq(m.get("empty"), Some("null"))
 }
 
 ///|
@@ -38,7 +38,7 @@ test "parse valid jsonrpc request with tools/call" {
   match parse_jsonrpc_request(line) {
     Ok(req) => {
       assert_eq(req.jsonrpc, "2.0")
-      assert_eq(req.id, Some(Number(1)))
+      @debug.assert_eq(req.id, Some(Number(1)))
       assert_eq(req.req_method, "tools/call")
       match req.params {
         Some(Object(params)) =>
@@ -64,7 +64,7 @@ test "parse valid jsonrpc request with tools/call" {
 test "parse request with missing id returns notification (id=-1)" {
   let line = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
   match parse_jsonrpc_request(line) {
-    Ok(rpc) => assert_eq(rpc.id, None)
+    Ok(rpc) => @debug.assert_eq(rpc.id, None)
     Err(e) => fail("should have succeeded, got: \{e.message}")
   }
 }
@@ -73,7 +73,7 @@ test "parse request with missing id returns notification (id=-1)" {
 test "parse request with string id" {
   let line = "{\"jsonrpc\":\"2.0\",\"id\":\"abc123\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"text\":\"hello\"}}}"
   match parse_jsonrpc_request(line) {
-    Ok(rpc) => assert_eq(rpc.id, Some(String("abc123")))
+    Ok(rpc) => @debug.assert_eq(rpc.id, Some(String("abc123")))
     Err(e) => fail("should have succeeded, got: \{e.message}")
   }
 }
@@ -98,9 +98,9 @@ test "translate numeric and boolean MCP arguments into internal string args" {
   let result = @mcp.to_internal_request(rpc, @types.Role::TL)
   match result {
     Ok(req) => {
-      assert_eq(req.args.get("task"), Some("build feature"))
-      assert_eq(req.args.get("count"), Some("3"))
-      assert_eq(req.args.get("fork_session"), Some("true"))
+      @debug.assert_eq(req.args.get("task"), Some("build feature"))
+      @debug.assert_eq(req.args.get("count"), Some("3"))
+      @debug.assert_eq(req.args.get("fork_session"), Some("true"))
     }
     Err(e) => fail("expected Ok, got: " + e.message)
   }

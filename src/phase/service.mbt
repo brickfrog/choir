@@ -489,8 +489,8 @@ fn is_root_tl_shaped_agent_id(agent_id : String) -> Bool {
     return false
   }
   let parts : Array[String] = []
-  for part in agent_id["user-".length():].to_string().split("-") {
-    parts.push(part.to_string())
+  for part in agent_id["user-".length():].to_owned().split("-") {
+    parts.push(part.to_owned())
   }
   if parts.length() != 2 || parts[0] == "" || parts[1] == "" {
     return false

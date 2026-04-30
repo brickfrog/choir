@@ -21,6 +21,7 @@ import {
   "moonbitlang/core/json",
   "brickfrog/moontrace",
   "brickfrog/moontrace/otlp",
+  "moonbitlang/core/debug",
 }
 
 options(

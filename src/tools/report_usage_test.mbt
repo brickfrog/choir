@@ -6,7 +6,7 @@ test "configured_usage_cost_usd reads pricing section" {
     #|rate_out = 0.002
   match
     @tools.configured_usage_cost_usd(cfg, @types.AgentType::Codex, 100, 50) {
-    Ok(cost) => assert_eq(cost, Some(0.2))
+    Ok(cost) => @debug.assert_eq(cost, Some(0.2))
     Err(e) => fail(e.message())
   }
 }
@@ -25,7 +25,7 @@ test "interpret_report_usage no-ops when caller has no wave_id" {
     None,
     config_content=Some(""),
   )
-  assert_eq(resp.ok_field("recorded"), Some("false"))
+  @debug.assert_eq(resp.ok_field("recorded"), Some("false"))
 }
 
 ///|
@@ -69,14 +69,14 @@ test "interpret_report_usage records usage for wave caller config" {
       ),
     ),
   )
-  assert_eq(resp.ok_field("recorded"), Some("true"))
+  @debug.assert_eq(resp.ok_field("recorded"), Some("true"))
   match @tools.load_wave_index(tmp, "wv-usage") {
     Ok(idx) =>
       match idx.usage.get("main.leaf") {
         Some(u) => {
           assert_eq(u.tokens_in, 100)
           assert_eq(u.agent_type, @types.AgentType::Codex)
-          assert_eq(u.cost_usd, Some(0.2))
+          @debug.assert_eq(u.cost_usd, Some(0.2))
         }
         None => fail("usage missing")
       }

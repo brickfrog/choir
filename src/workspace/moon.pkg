@@ -4,6 +4,7 @@ import {
   "choir/src/types",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
+  "moonbitlang/core/debug",
 }
 
 options(

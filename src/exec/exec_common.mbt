@@ -77,7 +77,7 @@ pub fn resolve_executable_in_path_from_path_var(
   path_var : String,
 ) -> String? {
   for raw in path_var.split(":") {
-    let dir = raw.trim().to_string()
+    let dir = raw.trim().to_owned()
     if dir == "" {
       continue
     }
@@ -139,7 +139,7 @@ fn first_token_is_env_assignment(argv0 : String) -> Bool {
   if eq <= 0 {
     return false
   }
-  let name = argv0[:eq].to_string()
+  let name = argv0[:eq].to_owned()
   is_valid_shell_var_name(name)
 }
 
@@ -241,7 +241,7 @@ fn plugin_shell_global_heuristic(s : String) -> Bool {
 /// conservative); multi-line commands; unbalanced or ambiguous quotes (parse fails); leading env
 /// assignment.
 pub fn plugin_capture_uses_shell(plugin_command : String) -> Bool {
-  let s = plugin_command.trim().to_string()
+  let s = plugin_command.trim().to_owned()
   if s == "" {
     return true
   }
@@ -292,7 +292,7 @@ fn parse_plugin_argv_line(raw : String) -> Array[String]? {
       if i >= n {
         return None
       }
-      out.push(s[wstart:i].to_string())
+      out.push(s[wstart:i].to_owned())
       i = i + 1
     } else if s[i] == '"' {
       i = i + 1
@@ -332,7 +332,7 @@ fn parse_plugin_argv_line(raw : String) -> Array[String]? {
         }
         i = i + 1
       }
-      out.push(s[wstart:i].to_string())
+      out.push(s[wstart:i].to_owned())
     }
   }
   Some(out)
@@ -365,7 +365,7 @@ test "parse_plugin_argv_line respects double quotes" {
 
 ///|
 test "parse_plugin_argv_line returns None on unclosed quote" {
-  assert_eq(parse_plugin_argv_line("echo \""), None)
+  @debug.assert_eq(parse_plugin_argv_line("echo \""), None)
 }
 
 ///|

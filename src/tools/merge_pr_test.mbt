@@ -30,10 +30,16 @@ test "interpret_track_pr ensure_tracked writes state and returns tracked envelop
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("tracked")))
-      assert_eq(map.get("branch"), Some(String::to_json("feat-x")))
-      assert_eq(map.get("parent_branch"), Some(String::to_json("develop")))
-      assert_eq(map.get("pr_url"), Some(String::to_json("https://gh/pr/99")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("tracked")))
+      @debug.assert_eq(map.get("branch"), Some(String::to_json("feat-x")))
+      @debug.assert_eq(
+        map.get("parent_branch"),
+        Some(String::to_json("develop")),
+      )
+      @debug.assert_eq(
+        map.get("pr_url"),
+        Some(String::to_json("https://gh/pr/99")),
+      )
     }
     _ => fail("expected ok")
   }
@@ -88,11 +94,11 @@ test "merge_pr_preflight_host_steps is poller snapshot then thread fetch" {
 
 ///|
 test "parse_github_owner_repo_from_url accepts pr and git remotes" {
-  assert_eq(
+  @debug.assert_eq(
     parse_github_owner_repo_from_url("https://github.com/o/r/pull/7"),
     Some(("o", "r")),
   )
-  assert_eq(
+  @debug.assert_eq(
     parse_github_owner_repo_from_url("git@github.com:o/r.git\n"),
     Some(("o", "r")),
   )
@@ -531,7 +537,10 @@ test "merge_pr_preflight_block_message gh thread fetch failed marker" {
 ///|
 test "merge_pr_preflight_block_message allows Approved with no threads" {
   let t = merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf")
-  assert_eq(merge_pr_preflight_block_message(9, Some(t), 0, "", None), None)
+  @debug.assert_eq(
+    merge_pr_preflight_block_message(9, Some(t), 0, "", None),
+    None,
+  )
 }
 
 ///|
@@ -701,7 +710,7 @@ test "merge_pr_post_success_plan uses tracked branch slug when poller available"
   match plan.response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("merged")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("merged")))
     }
     _ => fail("expected OK merged response")
   }
@@ -983,7 +992,7 @@ async test "interpret_merge_pr ok response matches merged envelope" {
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("merged")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("merged")))
     }
     _ => fail("expected ok merged")
   }
@@ -992,20 +1001,20 @@ async test "interpret_merge_pr ok response matches merged envelope" {
 
 ///|
 test "merge_pr_tracked_branch_for_post_success is None without poller" {
-  assert_eq(merge_pr_tracked_branch_for_post_success(None, 1), None)
+  @debug.assert_eq(merge_pr_tracked_branch_for_post_success(None, 1), None)
 }
 
 ///|
 test "merge_pr_tracked_branch_for_post_success is None when PR not tracked" {
   let ps = @poller.PollerState::new()
-  assert_eq(merge_pr_tracked_branch_for_post_success(Some(ps), 7), None)
+  @debug.assert_eq(merge_pr_tracked_branch_for_post_success(Some(ps), 7), None)
 }
 
 ///|
 test "merge_pr_tracked_branch_for_post_success returns branch when tracked" {
   let ps = @poller.PollerState::new()
   ps.track(4, "main.leaf", "main.topic", "main", "https://ex/4", 0L)
-  assert_eq(
+  @debug.assert_eq(
     merge_pr_tracked_branch_for_post_success(Some(ps), 4),
     Some("main.topic"),
   )
@@ -1015,7 +1024,7 @@ test "merge_pr_tracked_branch_for_post_success returns branch when tracked" {
 test "resolve_review_thread_gh_command matches graphql argv and workdir" {
   let cmd = resolve_review_thread_gh_command("/repo/root", "PRRT_kwDOabc")
   assert_eq(cmd.program, "gh")
-  assert_eq(cmd.workdir, Some("/repo/root"))
+  @debug.assert_eq(cmd.workdir, Some("/repo/root"))
   assert_eq(cmd.args, [
     "api",
     "graphql",
@@ -1118,9 +1127,9 @@ test "interpret_resolve_review_thread_result success envelope" {
   match r {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("ok")))
-      assert_eq(map.get("thread_id"), Some(String::to_json("PRRT_ok")))
-      assert_eq(map.get("resolved"), Some(Bool::to_json(true)))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("ok")))
+      @debug.assert_eq(map.get("thread_id"), Some(String::to_json("PRRT_ok")))
+      @debug.assert_eq(map.get("resolved"), Some(Bool::to_json(true)))
     }
     _ => fail("expected Ok")
   }

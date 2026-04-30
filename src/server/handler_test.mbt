@@ -986,7 +986,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     stall_notified: false,
     fixes_pushed_at: 0L,
   }
-  assert_eq(
+  @debug.assert_eq(
     parent_poll_event_message(
       tracked,
       "/repo",
@@ -1272,7 +1272,7 @@ test "parent_poll_event_message PRMerged is handled by canonical teardown delive
     stall_notified: false,
     fixes_pushed_at: 0L,
   }
-  assert_eq(
+  @debug.assert_eq(
     parent_poll_event_message(
       tracked,
       "/repo",
@@ -1316,14 +1316,14 @@ test "evidence_events_for_poll_snapshot emits normalized snapshot events" {
   match events[0] {
     @evidence.EvidenceEvent::ReviewObserved(state~, body~) => {
       assert_eq(state, @evidence.EvidenceReviewState::Approved)
-      assert_eq(body, Some("looks good"))
+      @debug.assert_eq(body, Some("looks good"))
     }
     _ => fail("expected review evidence")
   }
   match events[1] {
     @evidence.EvidenceEvent::CiObserved(status~, head_sha~) => {
       assert_eq(status, @evidence.EvidenceCiStatus::Success)
-      assert_eq(head_sha, Some("sha64"))
+      @debug.assert_eq(head_sha, Some("sha64"))
     }
     _ => fail("expected ci evidence")
   }
@@ -1370,7 +1370,7 @@ test "evidence_events_for_poll_snapshot includes merge observed on PRMerged" {
   match events[4] {
     @evidence.EvidenceEvent::MergeObserved(pr_number~, pr_url~) => {
       assert_eq(pr_number, 65)
-      assert_eq(pr_url, Some("https://ex/pr/65"))
+      @debug.assert_eq(pr_url, Some("https://ex/pr/65"))
     }
     _ => fail("expected merge evidence")
   }

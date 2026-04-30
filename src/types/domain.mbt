@@ -124,7 +124,7 @@ pub impl Show for ReviewMode with output(self, logger) -> Unit {
 pub fn ReviewMode::try_parse_wire(
   raw : String,
 ) -> Result[ReviewMode, ChoirError] {
-  let normalized = raw.trim().to_lower().to_string()
+  let normalized = raw.trim().to_lower().to_owned()
   match normalized {
     "single_pass" => Ok(SinglePass)
     "iterative" => Ok(Iterative)
@@ -233,7 +233,7 @@ pub fn LocalTarget::parse(target : String) -> LocalTarget? {
       Some(rest) =>
         match rest.split_once(":") {
           Some((session, name)) if session != "" && name != "" =>
-            Some({ kind, session: session.to_string(), name: name.to_string() })
+            Some({ kind, session: session.to_owned(), name: name.to_owned() })
           _ => None
         }
     }
@@ -443,7 +443,7 @@ pub fn TaskContract::empty() -> TaskContract {
 
 ///|
 pub fn TaskContract::is_empty(self : TaskContract) -> Bool {
-  self.goal.trim().to_string() == "" &&
+  self.goal.trim().to_owned() == "" &&
   self.scope.length() == 0 &&
   self.acceptance_checks.length() == 0 &&
   self.constraints.length() == 0 &&

@@ -95,13 +95,13 @@ fn stale_pr_close_command(
 
 ///|
 fn stale_pr_close_failure_detail(output : String) -> String {
-  let trimmed = output.trim().to_string()
+  let trimmed = output.trim().to_owned()
   if trimmed == "" {
     ""
   } else if trimmed.length() <= 160 {
     trimmed
   } else {
-    trimmed[:160].to_string() + "..."
+    trimmed[:160].to_owned() + "..."
   }
 }
 

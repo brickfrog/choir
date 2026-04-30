@@ -141,11 +141,11 @@ fn statusline_git_branch(project_dir : String) -> String {
   if head == "" {
     return ""
   }
-  let trimmed = head.trim().to_string()
+  let trimmed = head.trim().to_owned()
   if trimmed.has_prefix("ref: refs/heads/") {
-    trimmed[16:].to_string()
+    trimmed[16:].to_owned()
   } else if trimmed.length() >= 7 {
-    trimmed[0:7].to_string()
+    trimmed[0:7].to_owned()
   } else {
     trimmed
   }

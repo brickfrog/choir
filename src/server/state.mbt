@@ -41,7 +41,7 @@ fn persist_run_id(project_dir : String, run_id : String) -> Unit {
 
 ///|
 fn normalize_run_id(content : String) -> String? {
-  let run_id = content.trim().to_string()
+  let run_id = content.trim().to_owned()
   if run_id == "" {
     None
   } else {

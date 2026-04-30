@@ -159,7 +159,7 @@ pub fn PaneWatcher::check_idle(
     None => return None
   }
   let snapshot = self.read_viewport(agent_id)
-  if snapshot.trim().to_string() == "" {
+  if snapshot.trim().to_owned() == "" {
     return None
   }
   let screen = extract_viewport_text(snapshot)

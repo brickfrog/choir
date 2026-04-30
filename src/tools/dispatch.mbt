@@ -51,7 +51,7 @@ fn json_string_list(value : Json?) -> Array[String] {
       for item in items {
         match item {
           String(s) => {
-            let trimmed = s.trim().to_string()
+            let trimmed = s.trim().to_owned()
             if trimmed != "" {
               out.push(trimmed)
             }
@@ -70,7 +70,7 @@ fn json_string_list(value : Json?) -> Array[String] {
 fn json_optional_trimmed_string(value : Json?) -> String? {
   match value {
     Some(String(s)) => {
-      let trimmed = s.trim().to_string()
+      let trimmed = s.trim().to_owned()
       if trimmed == "" {
         None
       } else {
@@ -107,7 +107,7 @@ fn task_contract_from_json_object(value : Json?) -> @types.TaskContract {
         _ => {
           let preview_end = if s.length() < 120 { s.length() } else { 120 }
           @moontrace.warn("task contract inner parse failed", fields=[
-            @moontrace.field("payload_prefix", s[:preview_end].to_string()),
+            @moontrace.field("payload_prefix", s[:preview_end].to_owned()),
           ])
           return @types.TaskContract::empty()
         }

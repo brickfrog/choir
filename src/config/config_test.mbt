@@ -16,22 +16,22 @@ test "parse_config - full" {
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
   assert_eq(cfg.project_dir, "/tmp")
-  assert_eq(cfg.shell_command, Some("bash"))
+  @debug.assert_eq(cfg.shell_command, Some("bash"))
   assert_eq(cfg.listen_uds, "/tmp/sock")
-  assert_eq(cfg.listen_tcp, Some("127.0.0.1:9000"))
-  assert_eq(cfg.tcp_auth_token, Some("secret-token-abc"))
-  assert_eq(cfg.otlp_endpoint, Some("http://localhost:4318"))
-  assert_eq(
+  @debug.assert_eq(cfg.listen_tcp, Some("127.0.0.1:9000"))
+  @debug.assert_eq(cfg.tcp_auth_token, Some("secret-token-abc"))
+  @debug.assert_eq(cfg.otlp_endpoint, Some("http://localhost:4318"))
+  @debug.assert_eq(
     cfg.extra_mcp_servers_json,
     Some("{\"notebook\":{\"type\":\"stdio\",\"command\":\"node\"}}"),
   )
-  assert_eq(
+  @debug.assert_eq(
     cfg.companions_json,
     Some(
       "[{\"name\":\"monitor\",\"role\":\"worker\",\"command\":\"claude\",\"task\":\"Monitor the build\"}]",
     ),
   )
-  assert_eq(
+  @debug.assert_eq(
     cfg.plugins_json,
     Some(
       "[{\"name\":\"plugin\",\"command\":\"./plugin\",\"tools\":\"search\"}]",
@@ -45,7 +45,7 @@ test "parse_config - minimal" {
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Worker)
   assert_eq(cfg.project_dir, ".")
-  assert_eq(cfg.shell_command, None)
+  @debug.assert_eq(cfg.shell_command, None)
   assert_eq(cfg.terminal_session, "choir")
   assert_eq(cfg.pr_review, true)
   assert_eq(cfg.automerge, false)
@@ -62,12 +62,12 @@ test "parse_toml_doc optional helpers" {
       #|rate_in = 0.001
     ),
   )
-  assert_eq(doc.get("shell_command"), Some("bash"))
-  assert_eq(doc.get("pricing.codex.rate_in"), Some("0.001"))
+  @debug.assert_eq(doc.get("shell_command"), Some("bash"))
+  @debug.assert_eq(doc.get("pricing.codex.rate_in"), Some("0.001"))
   assert_eq(doc.get_or("missing", "fallback"), "fallback")
-  assert_eq(doc.get_optional_nonempty("shell_command"), Some("bash"))
-  assert_eq(doc.get_optional_nonempty("empty_value"), None)
-  assert_eq(doc.get_optional_nonempty("missing"), None)
+  @debug.assert_eq(doc.get_optional_nonempty("shell_command"), Some("bash"))
+  @debug.assert_eq(doc.get_optional_nonempty("empty_value"), None)
+  @debug.assert_eq(doc.get_optional_nonempty("missing"), None)
 }
 
 ///|
@@ -75,8 +75,8 @@ test "parse_toml_doc unescapes double-quoted strings" {
   let doc = parse_toml_doc(
     "json = \"{\\\"goal\\\":\\\"ship feature\\\"}\"\npath = \"line\\\\two\"",
   )
-  assert_eq(doc.get("json"), Some("{\"goal\":\"ship feature\"}"))
-  assert_eq(doc.get("path"), Some("line\\two"))
+  @debug.assert_eq(doc.get("json"), Some("{\"goal\":\"ship feature\"}"))
+  @debug.assert_eq(doc.get("path"), Some("line\\two"))
 }
 
 ///|
@@ -91,29 +91,29 @@ test "parse_config - empty string defaults" {
     #|plugins_json = ""
 
   let cfg = parse_config(content).unwrap()
-  assert_eq(cfg.shell_command, None)
-  assert_eq(cfg.listen_tcp, None)
-  assert_eq(cfg.tcp_auth_token, None)
-  assert_eq(cfg.otlp_endpoint, None)
-  assert_eq(cfg.agent_id, None)
-  assert_eq(cfg.extra_mcp_servers_json, None)
-  assert_eq(cfg.companions_json, None)
-  assert_eq(cfg.plugins_json, None)
+  @debug.assert_eq(cfg.shell_command, None)
+  @debug.assert_eq(cfg.listen_tcp, None)
+  @debug.assert_eq(cfg.tcp_auth_token, None)
+  @debug.assert_eq(cfg.otlp_endpoint, None)
+  @debug.assert_eq(cfg.agent_id, None)
+  @debug.assert_eq(cfg.extra_mcp_servers_json, None)
+  @debug.assert_eq(cfg.companions_json, None)
+  @debug.assert_eq(cfg.plugins_json, None)
 }
 
 ///|
 test "parse_config - agent_id set" {
   let cfg = parse_config("agent_id = \"my-agent\"").unwrap()
-  assert_eq(cfg.agent_id, Some("my-agent"))
+  @debug.assert_eq(cfg.agent_id, Some("my-agent"))
 }
 
 ///|
 test "parse_config - agent_id defaults to None" {
   let cfg = parse_config("").unwrap()
-  assert_eq(cfg.agent_id, None)
-  assert_eq(cfg.extra_mcp_servers_json, None)
-  assert_eq(cfg.companions_json, None)
-  assert_eq(cfg.plugins_json, None)
+  @debug.assert_eq(cfg.agent_id, None)
+  @debug.assert_eq(cfg.extra_mcp_servers_json, None)
+  @debug.assert_eq(cfg.companions_json, None)
+  @debug.assert_eq(cfg.plugins_json, None)
   assert_eq(cfg.pr_review, true)
 }
 
@@ -228,7 +228,7 @@ test "parse config with tcp_auth_token" {
       @types.Config::default()
     }
   }
-  assert_eq(cfg.tcp_auth_token, Some("secret-token-abc"))
+  @debug.assert_eq(cfg.tcp_auth_token, Some("secret-token-abc"))
 }
 
 ///|
@@ -242,7 +242,7 @@ test "parse config with empty tcp_auth_token treated as None" {
       @types.Config::default()
     }
   }
-  assert_eq(cfg.tcp_auth_token, None)
+  @debug.assert_eq(cfg.tcp_auth_token, None)
 }
 
 ///|
@@ -265,18 +265,18 @@ test "parse_local_config - metadata" {
     #|agent_type = "gemini"
     #|wave_id = "wv-demo"
   let local_cfg = parse_local_config(content).unwrap()
-  assert_eq(local_cfg.role, Some(@types.Role::Dev))
-  assert_eq(local_cfg.agent_id, Some("main.child"))
-  assert_eq(local_cfg.parent_id, Some("main"))
-  assert_eq(local_cfg.branch, Some("main.child"))
-  assert_eq(local_cfg.parent_branch, Some("main"))
-  assert_eq(local_cfg.workspace, Some("/tmp/worktree"))
-  assert_eq(
+  @debug.assert_eq(local_cfg.role, Some(@types.Role::Dev))
+  @debug.assert_eq(local_cfg.agent_id, Some("main.child"))
+  @debug.assert_eq(local_cfg.parent_id, Some("main"))
+  @debug.assert_eq(local_cfg.branch, Some("main.child"))
+  @debug.assert_eq(local_cfg.parent_branch, Some("main"))
+  @debug.assert_eq(local_cfg.workspace, Some("/tmp/worktree"))
+  @debug.assert_eq(
     local_cfg.terminal_target,
     @types.LocalTarget::parse("zellij-tab:choir:child"),
   )
-  assert_eq(local_cfg.agent_type, Some(@types.AgentType::Gemini))
-  assert_eq(local_cfg.wave_id, Some("wv-demo"))
+  @debug.assert_eq(local_cfg.agent_type, Some(@types.AgentType::Gemini))
+  @debug.assert_eq(local_cfg.wave_id, Some("wv-demo"))
 }
 
 ///|
@@ -286,7 +286,7 @@ test "parse_local_config spawn_depth" {
     #|spawn_depth = 1
     #|agent_id = "main.sub"
   let local_cfg = parse_local_config(with_depth).unwrap()
-  assert_eq(local_cfg.spawn_depth, Some(1))
+  @debug.assert_eq(local_cfg.spawn_depth, Some(1))
 }
 
 ///|
@@ -295,7 +295,7 @@ test "parse_local_config automerge override" {
     #|role = "dev"
     #|automerge = true
   let local_cfg = parse_local_config(content).unwrap()
-  assert_eq(local_cfg.automerge, Some(true))
+  @debug.assert_eq(local_cfg.automerge, Some(true))
 }
 
 ///|
@@ -304,7 +304,7 @@ test "parse_local_config review_mode override" {
     #|role = "dev"
     #|review_mode = "iterative"
   let local_cfg = parse_local_config(content).unwrap()
-  assert_eq(local_cfg.review_mode, Some(@types.ReviewMode::Iterative))
+  @debug.assert_eq(local_cfg.review_mode, Some(@types.ReviewMode::Iterative))
 }
 
 ///|
@@ -368,12 +368,12 @@ test "hook_command_path ignores empty values" {
   let content =
     #|hook.session_start = "/tmp/hook-start"
     #|hook.pre_tool_use = ""
-  assert_eq(
+  @debug.assert_eq(
     hook_command_path(content, "hook.session_start"),
     Some("/tmp/hook-start"),
   )
-  assert_eq(hook_command_path(content, "hook.pre_tool_use"), None)
-  assert_eq(hook_command_path(content, "hook.unknown"), None)
+  @debug.assert_eq(hook_command_path(content, "hook.pre_tool_use"), None)
+  @debug.assert_eq(hook_command_path(content, "hook.unknown"), None)
 }
 
 ///|

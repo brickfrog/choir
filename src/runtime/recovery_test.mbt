@@ -8,12 +8,12 @@ test "parse_open_prs extracts branch base and url" {
   assert_eq(prs[0].branch, "main.leaf-a")
   assert_eq(prs[0].base, "main")
   assert_eq(prs[0].url, "https://example.test/pr/12")
-  assert_eq(prs[0].created_sec, Some(1773968523L))
+  @debug.assert_eq(prs[0].created_sec, Some(1773968523L))
   assert_eq(prs[1].pr_number, 13)
   assert_eq(prs[1].branch, "main.subtl.leaf-b")
   assert_eq(prs[1].base, "main.subtl")
   assert_eq(prs[1].url, "https://example.test/pr/13")
-  assert_eq(prs[1].created_sec, Some(1774051200L))
+  @debug.assert_eq(prs[1].created_sec, Some(1774051200L))
 }
 
 ///|
@@ -107,9 +107,9 @@ async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
     },
   }
   let agent_id = find_agent_for_pr_in_lifecycle(mock_provider, "/tmp", 123)
-  assert_eq(agent_id, Some("agent1"))
+  @debug.assert_eq(agent_id, Some("agent1"))
   let agent_id_none = find_agent_for_pr_in_lifecycle(mock_provider, "/tmp", 999)
-  assert_eq(agent_id_none, None)
+  @debug.assert_eq(agent_id_none, None)
 }
 
 ///|
@@ -155,23 +155,23 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
     },
   }
   let res = find_pr_for_branch_in_provider(mock_provider, "/tmp", "feat/x")
-  assert_eq(res, Some((123, "https://gh.test/123")))
+  @debug.assert_eq(res, Some((123, "https://gh.test/123")))
   let res_none = find_pr_for_branch_in_provider(mock_provider, "/tmp", "feat/y")
-  assert_eq(res_none, None)
+  @debug.assert_eq(res_none, None)
 }
 
 ///|
 test "parse_github_time_utc_sec handles valid and invalid timestamps" {
-  assert_eq(
+  @debug.assert_eq(
     parse_github_time_utc_sec("2026-03-20T01:02:03Z"),
     Some(1773968523L),
   )
-  assert_eq(
+  @debug.assert_eq(
     parse_github_time_utc_sec("2026-03-20T01:02:03.456Z"),
     Some(1773968523L),
   )
-  assert_eq(parse_github_time_utc_sec("2026-02-30T01:02:03Z"), None)
-  assert_eq(parse_github_time_utc_sec("2026-03-20 01:02:03Z"), None)
+  @debug.assert_eq(parse_github_time_utc_sec("2026-02-30T01:02:03Z"), None)
+  @debug.assert_eq(parse_github_time_utc_sec("2026-03-20 01:02:03Z"), None)
 }
 
 ///|

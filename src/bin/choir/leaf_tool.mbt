@@ -30,12 +30,12 @@ fn parse_leaf_cli_args(args : Array[String]) -> LeafCliArgs {
         None => -1
       }
       if eq_idx > 2 {
-        let key = normalize_cli_key(arg[2:eq_idx].to_string())
-        let value = arg[eq_idx + 1:arg.length()].to_string()
+        let key = normalize_cli_key(arg[2:eq_idx].to_owned())
+        let value = arg[eq_idx + 1:arg.length()].to_owned()
         flags.set(key, value)
         i = i + 1
       } else {
-        let key = normalize_cli_key(arg[2:arg.length()].to_string())
+        let key = normalize_cli_key(arg[2:arg.length()].to_owned())
         if i + 1 < args.length() && !args[i + 1].has_prefix("--") {
           flags.set(key, args[i + 1])
           i = i + 2
@@ -81,7 +81,7 @@ fn is_status_word(s : String) -> Bool {
 
 ///|
 fn looks_like_branch_token(s : String) -> Bool {
-  let trimmed = s.trim().to_string()
+  let trimmed = s.trim().to_owned()
   if trimmed == "" {
     return false
   }
@@ -163,7 +163,7 @@ fn leaf_tool_request_args(
       if !flags.contains("status") &&
         positionals.length() > 0 &&
         is_status_word(positionals[0]) {
-        flags.set("status", positionals[0].trim().to_lower().to_string())
+        flags.set("status", positionals[0].trim().to_lower().to_owned())
       }
       if !flags.contains("message") {
         let message_start = if flags.contains("status") &&
@@ -175,7 +175,7 @@ fn leaf_tool_request_args(
         }
         let message = join_positionals(positionals, message_start)
           .trim()
-          .to_string()
+          .to_owned()
         if message != "" {
           flags.set("message", message)
         }
@@ -474,7 +474,7 @@ fn tool_should_register(local_cfg : @types.LocalConfig) -> Bool {
 fn local_cfg_env_value(getenv : (String) -> String?, key : String) -> String? {
   match getenv(key) {
     Some(value) => {
-      let trimmed = value.trim().to_string()
+      let trimmed = value.trim().to_owned()
       if trimmed == "" {
         None
       } else {
@@ -798,8 +798,8 @@ test "leaf tool parser supports notify_parent positional message and status" {
     "notify_parent",
     parse_leaf_cli_args(["failure", "[BLOCKED]", "need", "help"]),
   ).unwrap()
-  assert_eq(parsed.get("status"), Some("failure"))
-  assert_eq(parsed.get("message"), Some("[BLOCKED] need help"))
+  @debug.assert_eq(parsed.get("status"), Some("failure"))
+  @debug.assert_eq(parsed.get("message"), Some("[BLOCKED] need help"))
 }
 
 ///|
@@ -808,8 +808,8 @@ test "leaf tool parser accepts legacy file_pr positional triplet" {
     "file_pr",
     parse_leaf_cli_args(["main.gemini-leaf", "main.gemini-leaf", "main"]),
   ).unwrap()
-  assert_eq(parsed.get("branch"), Some("main.gemini-leaf"))
-  assert_eq(parsed.get("parent_branch"), Some("main"))
+  @debug.assert_eq(parsed.get("branch"), Some("main.gemini-leaf"))
+  @debug.assert_eq(parsed.get("parent_branch"), Some("main"))
 }
 
 ///|
@@ -819,11 +819,11 @@ test "leaf tool parser ignores prose positionals for file_pr" {
     parse_leaf_cli_args(["Add", "pytest", "integration", "tests"]),
   ).unwrap()
   // Prose must not be interpreted as the legacy branch triplet (ambient CHOIR_* may still set branch).
-  assert_not_eq(parsed.get("branch"), Some("Add"))
-  assert_not_eq(parsed.get("branch"), Some("pytest"))
-  assert_not_eq(parsed.get("parent_branch"), Some("Add"))
-  assert_not_eq(parsed.get("parent_branch"), Some("pytest"))
-  assert_not_eq(parsed.get("parent_branch"), Some("integration"))
+  assert_true(parsed.get("branch") != Some("Add"))
+  assert_true(parsed.get("branch") != Some("pytest"))
+  assert_true(parsed.get("parent_branch") != Some("Add"))
+  assert_true(parsed.get("parent_branch") != Some("pytest"))
+  assert_true(parsed.get("parent_branch") != Some("integration"))
 }
 
 ///|
@@ -861,14 +861,14 @@ test "leaf tool parser supports task_create positionals" {
     "task_create",
     parse_leaf_cli_args(["task-1", "Write", "better", "tests"]),
   ).unwrap()
-  assert_eq(parsed.get("id"), Some("task-1"))
-  assert_eq(parsed.get("title"), Some("Write better tests"))
+  @debug.assert_eq(parsed.get("id"), Some("task-1"))
+  @debug.assert_eq(parsed.get("title"), Some("Write better tests"))
 }
 
 ///|
 test "tool request args preserve name as a tool field" {
   let parsed = tool_request_args(parse_leaf_cli_args(["--name", "lock-a"])).unwrap()
-  assert_eq(parsed.get("name"), Some("lock-a".to_json()))
+  @debug.assert_eq(parsed.get("name"), Some("lock-a".to_json()))
 }
 
 ///|
@@ -887,8 +887,8 @@ test "tool request args merge json payload with flags" {
     Some(json) => assert_eq(json.stringify(), "2")
     None => fail("expected count field")
   }
-  assert_eq(parsed.get("force"), Some("true".to_json()))
-  assert_eq(parsed.get("caller_id"), Some("root".to_json()))
+  @debug.assert_eq(parsed.get("force"), Some("true".to_json()))
+  @debug.assert_eq(parsed.get("caller_id"), Some("root".to_json()))
 }
 
 ///|
@@ -913,7 +913,7 @@ test "tool root control plane uses stable root caller without registration" {
   let local_cfg = @types.LocalConfig::default()
   let config = tool_effective_config(@types.Config::default(), local_cfg)
   assert_false(tool_should_register(local_cfg))
-  assert_eq(config.agent_id, Some("root"))
+  @debug.assert_eq(config.agent_id, Some("root"))
   let req : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::TL,
@@ -935,7 +935,7 @@ test "tool local agent context keeps registration path" {
   }
   let config = tool_effective_config(@types.Config::default(), local_cfg)
   assert_true(tool_should_register(local_cfg))
-  assert_eq(config.agent_id, None)
+  @debug.assert_eq(config.agent_id, None)
   let req : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::Dev,
@@ -964,13 +964,13 @@ test "tool env fallback synthesizes inline worker identity" {
     "CHOIR_AGENT_TYPE": "claude",
   }
   let local_cfg = local_cfg_from_env_lookup(fn(key) { env.get(key) })
-  assert_eq(local_cfg.role, Some(@types.Role::Worker))
-  assert_eq(local_cfg.agent_id, Some("main.claude-worker"))
-  assert_eq(local_cfg.parent_id, Some("root"))
-  assert_eq(local_cfg.branch, Some("main.claude-worker"))
-  assert_eq(local_cfg.parent_branch, Some("main"))
-  assert_eq(local_cfg.workspace, Some("/proj"))
-  assert_eq(local_cfg.agent_type, Some(@types.AgentType::Claude))
+  @debug.assert_eq(local_cfg.role, Some(@types.Role::Worker))
+  @debug.assert_eq(local_cfg.agent_id, Some("main.claude-worker"))
+  @debug.assert_eq(local_cfg.parent_id, Some("root"))
+  @debug.assert_eq(local_cfg.branch, Some("main.claude-worker"))
+  @debug.assert_eq(local_cfg.parent_branch, Some("main"))
+  @debug.assert_eq(local_cfg.workspace, Some("/proj"))
+  @debug.assert_eq(local_cfg.agent_type, Some(@types.AgentType::Claude))
   assert_true(tool_should_register(local_cfg))
 }
 
@@ -979,7 +979,7 @@ test "tool env fallback preserves root control plane when env is empty" {
   let local_cfg = local_cfg_from_env_lookup(fn(_) { None })
   let config = tool_effective_config(@types.Config::default(), local_cfg)
   assert_false(tool_should_register(local_cfg))
-  assert_eq(config.agent_id, Some("root"))
+  @debug.assert_eq(config.agent_id, Some("root"))
 }
 
 ///|
@@ -995,34 +995,34 @@ test "synthesize_config_from_env populates every field when all CHOIR_* vars set
     "CHOIR_AGENT_TYPE": "claude",
   }
   let cfg = synthesize_config_from_env(fn(key) { env.get(key) }).unwrap()
-  assert_eq(cfg.role, Some(@types.Role::Worker))
-  assert_eq(cfg.agent_id, Some("main.sarcasmotron"))
-  assert_eq(cfg.parent_id, Some("root"))
-  assert_eq(cfg.branch, Some("main.sarcasmotron"))
-  assert_eq(cfg.parent_branch, Some("main"))
-  assert_eq(cfg.workspace, Some("/proj"))
-  assert_eq(cfg.agent_type, Some(@types.AgentType::Claude))
+  @debug.assert_eq(cfg.role, Some(@types.Role::Worker))
+  @debug.assert_eq(cfg.agent_id, Some("main.sarcasmotron"))
+  @debug.assert_eq(cfg.parent_id, Some("root"))
+  @debug.assert_eq(cfg.branch, Some("main.sarcasmotron"))
+  @debug.assert_eq(cfg.parent_branch, Some("main"))
+  @debug.assert_eq(cfg.workspace, Some("/proj"))
+  @debug.assert_eq(cfg.agent_type, Some(@types.AgentType::Claude))
   assert_true(cfg.terminal_target is Some(_))
-  assert_eq(cfg.spawn_depth, None)
+  @debug.assert_eq(cfg.spawn_depth, None)
   assert_true(cfg.task_contract is None)
-  assert_eq(cfg.automerge, None)
+  @debug.assert_eq(cfg.automerge, None)
   assert_true(cfg.review_mode is None)
-  assert_eq(cfg.wave_id, None)
+  @debug.assert_eq(cfg.wave_id, None)
 }
 
 ///|
 test "synthesize_config_from_env defaults missing optional fields when only CHOIR_AGENT_ID set" {
   let env : Map[String, String] = { "CHOIR_AGENT_ID": "main.lonely-worker" }
   let cfg = synthesize_config_from_env(fn(key) { env.get(key) }).unwrap()
-  assert_eq(cfg.agent_id, Some("main.lonely-worker"))
-  assert_eq(cfg.role, None)
-  assert_eq(cfg.parent_id, None)
-  assert_eq(cfg.branch, None)
-  assert_eq(cfg.parent_branch, None)
-  assert_eq(cfg.workspace, None)
-  assert_eq(cfg.terminal_target, None)
-  assert_eq(cfg.agent_type, None)
-  assert_eq(cfg.spawn_depth, None)
+  @debug.assert_eq(cfg.agent_id, Some("main.lonely-worker"))
+  @debug.assert_eq(cfg.role, None)
+  @debug.assert_eq(cfg.parent_id, None)
+  @debug.assert_eq(cfg.branch, None)
+  @debug.assert_eq(cfg.parent_branch, None)
+  @debug.assert_eq(cfg.workspace, None)
+  @debug.assert_eq(cfg.terminal_target, None)
+  @debug.assert_eq(cfg.agent_type, None)
+  @debug.assert_eq(cfg.spawn_depth, None)
 }
 
 ///|
@@ -1048,8 +1048,8 @@ test "synthesize_config_from_env tolerates bogus CHOIR_ROLE by leaving role None
     "CHOIR_ROLE": "overlord",
   }
   let cfg = synthesize_config_from_env(fn(key) { env.get(key) }).unwrap()
-  assert_eq(cfg.agent_id, Some("main.bogus-role"))
-  assert_eq(cfg.role, None)
+  @debug.assert_eq(cfg.agent_id, Some("main.bogus-role"))
+  @debug.assert_eq(cfg.role, None)
 }
 
 ///|
@@ -1080,8 +1080,8 @@ test "leaf_tool_load_config falls back to env when config.local.toml is missing"
     read_file=stub_read,
   ).unwrap()
   assert_eq(role, @types.Role::Worker)
-  assert_eq(local_cfg.agent_id, Some("main.fallback-worker"))
-  assert_eq(local_cfg.parent_id, Some("root"))
+  @debug.assert_eq(local_cfg.agent_id, Some("main.fallback-worker"))
+  @debug.assert_eq(local_cfg.parent_id, Some("root"))
 }
 
 ///|
@@ -1113,7 +1113,7 @@ test "leaf_tool_load_config never overrides an existing config.local.toml" {
     path_exists=stub_path_exists,
     read_file=stub_read,
   ).unwrap()
-  assert_eq(local_cfg.agent_id, Some("from-file"))
+  @debug.assert_eq(local_cfg.agent_id, Some("from-file"))
 }
 
 ///|

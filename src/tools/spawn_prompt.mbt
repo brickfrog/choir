@@ -22,8 +22,8 @@ fn split_nonempty_lines(s : String) -> Array[String] {
   let mut start = 0
   for i = 0; i <= s.length(); i = i + 1 {
     if i == s.length() || s[i] == '\n' {
-      let raw = s[start:i].to_string()
-      let line = raw.trim().to_string()
+      let raw = s[start:i].to_owned()
+      let line = raw.trim().to_owned()
       if line != "" {
         items.push(line)
       }
@@ -46,7 +46,7 @@ fn merge_unique_lines(
   more : Array[String],
 ) -> Array[String] {
   for value in more {
-    push_unique(items, value.trim().to_string())
+    push_unique(items, value.trim().to_owned())
   }
   items
 }
@@ -55,7 +55,7 @@ fn merge_unique_lines(
 fn parse_optional_trimmed(value : String?) -> String? {
   match value {
     Some(v) => {
-      let trimmed = v.trim().to_string()
+      let trimmed = v.trim().to_owned()
       if trimmed == "" {
         None
       } else {
@@ -92,7 +92,7 @@ fn render_numbered(items : Array[String]) -> String {
 
 ///|
 fn add_section(sections : Array[String], title : String, body : String) -> Unit {
-  let trimmed = body.trim().to_string()
+  let trimmed = body.trim().to_owned()
   if trimmed != "" {
     sections.push("## " + title + "\n" + trimmed)
   }
@@ -140,7 +140,7 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
   let scope = split_nonempty_lines(args.get("scope").unwrap_or(""))
   let review_context = parse_optional_trimmed(args.get("review_context"))
   {
-    prompt: args.get("prompt").unwrap_or("").trim().to_string(),
+    prompt: args.get("prompt").unwrap_or("").trim().to_owned(),
     task,
     task_contract: {
       goal: task,
@@ -157,7 +157,7 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
     verify,
     done_criteria: acceptance_checks,
     constraints,
-    context: args.get("context").unwrap_or("").trim().to_string(),
+    context: args.get("context").unwrap_or("").trim().to_owned(),
     key_decisions: split_nonempty_lines(args.get("key_decisions").unwrap_or("")),
     non_goals,
     worker_type: args
@@ -165,7 +165,7 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
     .unwrap_or("research")
     .trim()
     .to_lower()
-    .to_string(),
+    .to_owned(),
     no_commit: parse_truthy_flag(args.get("no_commit").unwrap_or("false")),
   }
 }

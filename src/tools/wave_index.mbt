@@ -289,7 +289,7 @@ pub fn list_wave_ids(project_dir : String) -> Array[String] {
   }
   for entry in @sys.list_dir(dir) {
     if entry.has_suffix(".json") {
-      let stem = entry[0:entry.length() - 5].to_string()
+      let stem = entry[0:entry.length() - 5].to_owned()
       out.push(stem)
     }
   }

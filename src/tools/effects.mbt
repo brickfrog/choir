@@ -18,10 +18,10 @@ pub fn ForkWaveError::message(self : ForkWaveError) -> String {
   match self {
     UncommittedChanges(output~) =>
       "Working tree has uncommitted changes. Commit and push your scaffold work first, then call fork_wave.\n" +
-      output.trim().to_string()
+      output.trim().to_owned()
     UnpushedCommits(output~) =>
       "Unpushed commits exist. Run 'git push' first, then call fork_wave.\n" +
-      output.trim().to_string()
+      output.trim().to_owned()
     CommandFailed(status~, ..) =>
       "command failed with status " + status.to_string()
   }
@@ -93,15 +93,15 @@ pub fn fork_wave_plan(
   GitCapture(program="git", args=["-C", project_dir, "status", "--porcelain"], cont=fn(
     status_out,
   ) {
-    if status_out.trim().to_string() != "" {
-      Pure(Err(UncommittedChanges(output=status_out.trim().to_string())))
+    if status_out.trim().to_owned() != "" {
+      Pure(Err(UncommittedChanges(output=status_out.trim().to_owned())))
     } else {
       GitCapture(
         program="git",
         args=["-C", project_dir, "log", "--oneline", "@{u}..HEAD"],
         cont=fn(unpushed_out) {
-          if unpushed_out.trim().to_string() != "" {
-            Pure(Err(UnpushedCommits(output=unpushed_out.trim().to_string())))
+          if unpushed_out.trim().to_owned() != "" {
+            Pure(Err(UnpushedCommits(output=unpushed_out.trim().to_owned())))
           } else if spawned_count == 0 && skipped_count > 0 {
             Pure(
               Ok(

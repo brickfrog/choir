@@ -450,19 +450,19 @@ async test "dispatch returns correct stub for each tool name" {
     match res {
       Ok(map) =>
         if name == "kv_get" {
-          assert_eq(map.get("value"), Some("null"))
+          @debug.assert_eq(map.get("value"), Some("null"))
         } else if name == "mutex_status" {
-          assert_eq(map.get("holder"), Some(""))
-          assert_eq(map.get("queue_length"), Some("0"))
-          assert_eq(map.get_json("queue_length"), Some((0).to_json()))
+          @debug.assert_eq(map.get("holder"), Some(""))
+          @debug.assert_eq(map.get("queue_length"), Some("0"))
+          @debug.assert_eq(map.get_json("queue_length"), Some((0).to_json()))
         } else if name == "track_pr" {
-          assert_eq(map.get("status"), Some("tracked"))
-          assert_eq(map.get("branch"), Some("agent-1"))
-          assert_eq(map.get("parent_branch"), Some("main"))
-          assert_eq(map.get("pr_url"), Some(""))
-          assert_eq(map.get_json("status"), Some("tracked".to_json()))
+          @debug.assert_eq(map.get("status"), Some("tracked"))
+          @debug.assert_eq(map.get("branch"), Some("agent-1"))
+          @debug.assert_eq(map.get("parent_branch"), Some("main"))
+          @debug.assert_eq(map.get("pr_url"), Some(""))
+          @debug.assert_eq(map.get_json("status"), Some("tracked".to_json()))
         } else {
-          assert_eq(map.get("status"), Some(expected_status))
+          @debug.assert_eq(map.get("status"), Some(expected_status))
         }
       Err(msg) => {
         println(name + ": " + msg)
@@ -500,8 +500,8 @@ async test "dispatch_call reply then kv_get round trip reply-- key" {
       poller_state=Some(@poller.PollerState::new()),
     ) {
     Ok(map) => {
-      assert_eq(map.get("status"), Some("ok"))
-      assert_eq(map.get("id"), Some(reply_id))
+      @debug.assert_eq(map.get("status"), Some("ok"))
+      @debug.assert_eq(map.get("id"), Some(reply_id))
     }
     Err(m) => fail("reply dispatch: " + m)
   }
@@ -522,7 +522,7 @@ async test "dispatch_call reply then kv_get round trip reply-- key" {
       mutex_registry=Some(@registry.MutexRegistry::new()),
       poller_state=Some(@poller.PollerState::new()),
     ) {
-    Ok(map) => assert_eq(map.get("value"), Some(payload))
+    Ok(map) => @debug.assert_eq(map.get("value"), Some(payload))
     Err(m) => fail("kv_get: " + m)
   }
   ignore(@sys.rm_rf(project_dir))
@@ -561,9 +561,9 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
   )
   match res {
     Ok(map) => {
-      assert_eq(map.get("status"), Some("spawned"))
-      assert_eq(map.get("agent_id"), Some("main.claude-worker"))
-      assert_eq(map.get("agent_ids"), Some("main.claude-worker"))
+      @debug.assert_eq(map.get("status"), Some("spawned"))
+      @debug.assert_eq(map.get("agent_id"), Some("main.claude-worker"))
+      @debug.assert_eq(map.get("agent_ids"), Some("main.claude-worker"))
     }
     Err(msg) => fail("spawn_worker failed: " + msg)
   }
@@ -577,9 +577,9 @@ async test "dispatch spawn_worker registers inline worker with stable agent id" 
     agent => {
       assert_eq(agent.role, @types.Role::Worker)
       assert_eq(agent.agent_type, @types.AgentType::Claude)
-      assert_eq(agent.parent, Some("root"))
+      @debug.assert_eq(agent.parent, Some("root"))
       assert_eq(agent.workspace, project_dir)
-      assert_eq(
+      @debug.assert_eq(
         agent.terminal_target,
         @types.LocalTarget::parse("zellij-pane:choir:claude-worker"),
       )
@@ -636,8 +636,8 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
   )
   match res {
     Ok(map) => {
-      assert_eq(map.get("status"), Some("spawned"))
-      assert_eq(map.get("agent_ids"), Some("master.claude-smoke-leaf-0"))
+      @debug.assert_eq(map.get("status"), Some("spawned"))
+      @debug.assert_eq(map.get("agent_ids"), Some("master.claude-smoke-leaf-0"))
     }
     Err(msg) => fail("fork_wave failed: " + msg)
   }
@@ -651,12 +651,12 @@ async test "dispatch fork_wave preregisters spawned child for immediate agent_li
     agent => {
       assert_eq(agent.role, @types.Role::Dev)
       assert_eq(agent.agent_type, @types.AgentType::Claude)
-      assert_eq(agent.parent, Some("root"))
+      @debug.assert_eq(agent.parent, Some("root"))
       assert_eq(agent.state, @types.AgentState::Spawning)
       assert_true(
         agent.workspace.contains("/.choir/worktrees/claude-smoke-leaf-0"),
       )
-      assert_eq(
+      @debug.assert_eq(
         agent.terminal_target,
         @types.LocalTarget::parse("zellij-tab:choir:claude-smoke-leaf-0"),
       )
@@ -712,7 +712,7 @@ async test "dispatch fork_wave post-spawn pane resolution uses injected capture"
     poller_state=Some(@poller.PollerState::new()),
   )
   match res {
-    Ok(map) => assert_eq(map.get("status"), Some("spawned"))
+    Ok(map) => @debug.assert_eq(map.get("status"), Some("spawned"))
     Err(msg) => fail("fork_wave failed: " + msg)
   }
   try agent_reg.get("master.claude-pane-leaf-0") catch {
@@ -723,7 +723,7 @@ async test "dispatch fork_wave post-spawn pane resolution uses injected capture"
       )
   } noraise {
     agent =>
-      assert_eq(
+      @debug.assert_eq(
         agent.terminal_target,
         @types.LocalTarget::parse("zellij-pane:choir:terminal_17"),
       )
@@ -774,7 +774,7 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
     poller_state=Some(@poller.PollerState::new()),
   )
   match res {
-    Ok(map) => assert_eq(map.get("status"), Some("pr_created"))
+    Ok(map) => @debug.assert_eq(map.get("status"), Some("pr_created"))
     Err(msg) => fail("expected file_pr success: " + msg)
   }
 }
@@ -842,7 +842,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
     poller_state=Some(@poller.PollerState::new()),
   )
   match res {
-    Ok(map) => assert_eq(map.get("pr_number"), Some("99"))
+    Ok(map) => @debug.assert_eq(map.get("pr_number"), Some("99"))
     Err(msg) => fail("expected file_pr success: " + msg)
   }
   let log = @sys.read_file(project_dir + "/.choir/delivery.log")
@@ -896,7 +896,7 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
     poller_state=Some(@poller.PollerState::new()),
   )
   match res {
-    Ok(map) => assert_eq(map.get("status"), Some("pr_created"))
+    Ok(map) => @debug.assert_eq(map.get("status"), Some("pr_created"))
     Err(msg) => fail("expected file_pr success: " + msg)
   }
   let log = @sys.read_file(project_dir + "/.choir/delivery.log")
@@ -1062,7 +1062,7 @@ async test "dispatch agent_list defaults to active agents only" {
   )
   match res {
     Ok(map) => {
-      assert_eq(map.get("status"), Some("ok"))
+      @debug.assert_eq(map.get("status"), Some("ok"))
       match map.get_json("agents") {
         Some(Array(arr)) => {
           assert_eq(arr.length(), 1)
@@ -1119,7 +1119,7 @@ async test "dispatch agent_list include_inactive returns full registry view" {
   )
   match res {
     Ok(map) => {
-      assert_eq(map.get("status"), Some("ok"))
+      @debug.assert_eq(map.get("status"), Some("ok"))
       match map.get_json("agents") {
         Some(Array(arr)) => assert_eq(arr.length(), 2)
         _ => fail("expected agents array")
@@ -1187,7 +1187,7 @@ async test "dispatch agent_list filters by parent_id before include_inactive han
   )
   match res {
     Ok(map) => {
-      assert_eq(map.get("status"), Some("ok"))
+      @debug.assert_eq(map.get("status"), Some("ok"))
       match map.get_json("agents") {
         Some(Array(arr)) => {
           assert_eq(arr.length(), 1)

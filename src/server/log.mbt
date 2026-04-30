@@ -1,7 +1,7 @@
 ///|
 pub fn normalize_trace_id(run_id : String) -> String {
   if run_id.length() >= 32 {
-    run_id[run_id.length() - 32:].to_string()
+    run_id[run_id.length() - 32:].to_owned()
   } else {
     "0".repeat(32 - run_id.length()) + run_id
   }

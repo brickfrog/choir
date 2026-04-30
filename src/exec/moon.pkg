@@ -3,6 +3,7 @@ import {
   "choir/src/workspace",
   "moonbitlang/async/process",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/debug",
 }
 
 options(

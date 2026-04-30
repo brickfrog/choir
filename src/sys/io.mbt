@@ -134,7 +134,7 @@ pub fn list_dir(path : String) -> Array[String] {
   let content = @utf8.decode_lossy(buf[:n])
   let entries : Array[String] = []
   for raw in content.split("\n") {
-    let name = raw.trim().to_string()
+    let name = raw.trim().to_owned()
     if name != "" {
       entries.push(name)
     }
@@ -304,7 +304,7 @@ pub fn list_pids_with_cwd_prefix(
     if pids.length() >= effective_max {
       break
     }
-    let trimmed = raw.trim().to_string()
+    let trimmed = raw.trim().to_owned()
     if trimmed == "" {
       continue
     }

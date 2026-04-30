@@ -297,7 +297,10 @@ test "cancel_wave_preflight_block_message force skips gate" {
     @poller.CiRollupStatus::Unknown,
     false,
   )
-  assert_eq(cancel_wave_preflight_block_message(true, [agent], Some(ps)), None)
+  @debug.assert_eq(
+    cancel_wave_preflight_block_message(true, [agent], Some(ps)),
+    None,
+  )
 }
 
 ///|
@@ -314,7 +317,10 @@ test "cancel_wave_preflight_block_message none without poller" {
     spawn_depth: 0,
     state: @types.AgentState::Active,
   }
-  assert_eq(cancel_wave_preflight_block_message(false, [agent], None), None)
+  @debug.assert_eq(
+    cancel_wave_preflight_block_message(false, [agent], None),
+    None,
+  )
 }
 
 ///|
@@ -381,8 +387,8 @@ test "cancel_wave_ok_response shape" {
   match cancel_wave_ok_response(3) {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("ok")))
-      assert_eq(map.get("cancelled"), Some(Int::to_json(3)))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("ok")))
+      @debug.assert_eq(map.get("cancelled"), Some(Int::to_json(3)))
     }
     _ => fail("expected ok")
   }

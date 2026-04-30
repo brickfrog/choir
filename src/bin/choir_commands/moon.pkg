@@ -1,0 +1,25 @@
+import {
+  "choir/src/sys",
+  "choir/src/tools",
+  "choir/src/types",
+  "brickfrog/tempo",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+
+options(
+  "is-main": false,
+  targets: {
+    "log_subcommand.mbt": [ "native" ],
+    "log_subcommand_test.mbt": [ "native" ],
+    "mcp_subcommand.mbt": [ "native" ],
+    "mcp_subcommand_test.mbt": [ "native" ],
+    "skill_subcommand.mbt": [ "native" ],
+    "skill_subcommand_test.mbt": [ "native" ],
+    "stats_subcommand.mbt": [ "native" ],
+    "stats_subcommand_test.mbt": [ "native" ],
+    "user_config.mbt": [ "native" ],
+  },
+)

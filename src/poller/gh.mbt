@@ -30,10 +30,10 @@ fn parse_head_ref_oid(json : Json) -> String {
 
 ///|
 fn review_body_noise_subject(body : String) -> String {
-  let trimmed = body.trim().to_string()
+  let trimmed = body.trim().to_owned()
   if trimmed.has_prefix("[") {
     match trimmed.find("]") {
-      Some(idx) => trimmed[idx + 1:].trim().to_string()
+      Some(idx) => trimmed[idx + 1:].trim().to_owned()
       None => trimmed
     }
   } else {
@@ -56,7 +56,7 @@ fn review_body_is_noise(body : String) -> Bool {
 
 ///|
 fn push_review_body(bodies : Array[String], body : String) -> Unit {
-  let trimmed = body.trim().to_string()
+  let trimmed = body.trim().to_owned()
   if trimmed == "" || review_body_is_noise(trimmed) || bodies.contains(trimmed) {
     return
   }
@@ -298,17 +298,4 @@ pub fn parse_gh_pr_view_output(
     parse_review_bodies(json),
     parse_pr_is_open(json),
   )
-}
-
-///|
-fn merge_inline_comments(pr_json : String, inline_json : String) -> String {
-  if inline_json == "" {
-    return pr_json
-  }
-  let inline = @json.parse(inline_json) catch { _ => return pr_json }
-  guard inline is Array(_) else { return pr_json }
-  let main = @json.parse(pr_json) catch { _ => return pr_json }
-  guard main is Object(obj) else { return pr_json }
-  obj.set("inline_comments", inline)
-  main.stringify()
 }

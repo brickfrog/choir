@@ -128,7 +128,7 @@ fn slug_from_branch(branch : String) -> String {
     None => -1
   }
   if last_dot >= 0 {
-    branch[last_dot + 1:].to_string()
+    branch[last_dot + 1:].to_owned()
   } else {
     branch
   }
@@ -170,14 +170,14 @@ pub fn gh_pr_view_command(branch : String) -> @workspace.Command {
 
 ///|
 fn parse_non_negative_int(s : String) -> Int? {
-  Some(@string.parse_int(s.trim().to_string())) catch {
+  Some(@string.parse_int(s.trim().to_owned())) catch {
     _ => None
   }
 }
 
 ///|
 pub fn parse_left_right_counts(output : String) -> (Int, Int)? {
-  let trimmed = output.trim().to_string()
+  let trimmed = output.trim().to_owned()
   let mut tab_index = -1
   for i = 0; i < trimmed.length(); i = i + 1 {
     if trimmed[i] == '\t' {
@@ -188,8 +188,8 @@ pub fn parse_left_right_counts(output : String) -> (Int, Int)? {
   if tab_index <= 0 || tab_index >= trimmed.length() - 1 {
     return None
   }
-  let left = trimmed[:tab_index].to_string()
-  let right = trimmed[tab_index + 1:].to_string()
+  let left = trimmed[:tab_index].to_owned()
+  let right = trimmed[tab_index + 1:].to_owned()
   match (parse_non_negative_int(left), parse_non_negative_int(right)) {
     (Some(left), Some(right)) => Some((left, right))
     _ => None
@@ -200,7 +200,7 @@ pub fn parse_left_right_counts(output : String) -> (Int, Int)? {
 
 ///|
 fn preflight_spawn_or_wait_failure_detail(output : String) -> String {
-  let trimmed = output.trim().to_string()
+  let trimmed = output.trim().to_owned()
   if trimmed != "" {
     "failed to run command (process error): " + trimmed
   } else {
@@ -250,7 +250,7 @@ async fn rev_list_left_right_counts_with_capture(
     )
   }
   if exit_code != 0 {
-    let message = output.trim().to_string()
+    let message = output.trim().to_owned()
     if message != "" {
       return Err(FilePrPreflightError::BranchRangeUnreadable(message))
     }
@@ -332,7 +332,7 @@ pub async fn file_pr_preflight_with_capture(
   }
   if vcode != 0 {
     return Err(
-      FilePrPreflightError::BranchMissing(branch, vout.trim().to_string()),
+      FilePrPreflightError::BranchMissing(branch, vout.trim().to_owned()),
     )
   }
   let head_cmd : @workspace.Command = {
@@ -350,9 +350,9 @@ pub async fn file_pr_preflight_with_capture(
     )
   }
   if hcode != 0 {
-    return Err(FilePrPreflightError::HeadUnreadable(hout.trim().to_string()))
+    return Err(FilePrPreflightError::HeadUnreadable(hout.trim().to_owned()))
   }
-  let current = hout.trim().to_string()
+  let current = hout.trim().to_owned()
   if current != branch {
     return Err(FilePrPreflightError::WrongBranchCheckedOut(branch, current))
   }
@@ -374,11 +374,11 @@ pub async fn file_pr_preflight_with_capture(
     return Err(
       FilePrPreflightError::GitCommandFailed(
         "git status --porcelain",
-        sout.trim().to_string(),
+        sout.trim().to_owned(),
       ),
     )
   }
-  let pending = sout.trim().to_string()
+  let pending = sout.trim().to_owned()
   if pending != "" {
     return Err(FilePrPreflightError::UncommittedChanges(pending))
   }
@@ -398,7 +398,7 @@ pub async fn file_pr_preflight_with_capture(
   }
   if ocode != 0 {
     return Err(
-      FilePrPreflightError::MissingOriginGitRemote(oout.trim().to_string()),
+      FilePrPreflightError::MissingOriginGitRemote(oout.trim().to_owned()),
     )
   }
   match
@@ -435,7 +435,7 @@ pub async fn file_pr_preflight_with_capture(
     return Err(FilePrPreflightError::EmptyDiffVsParent(branch, parent_branch))
   }
   if dcode != 1 {
-    let trimmed = dout.trim().to_string()
+    let trimmed = dout.trim().to_owned()
     let tail = if trimmed != "" {
       "unexpected exit code " + dcode.to_string() + ": " + trimmed
     } else {
@@ -458,7 +458,7 @@ pub async fn file_pr_preflight_with_capture(
     )
   }
   if gcode != 0 {
-    return Err(FilePrPreflightError::GhAuthFailed(gout.trim().to_string()))
+    return Err(FilePrPreflightError::GhAuthFailed(gout.trim().to_owned()))
   }
   Ok(())
 }
@@ -538,7 +538,7 @@ pub async fn ensure_pull_request_with_capture(
   }
   let (create_exit, create_output) = capture(create_cmd)
   if create_exit != 0 {
-    let message = create_output.trim().to_string()
+    let message = create_output.trim().to_owned()
     if message != "" {
       return Err(@types.ChoirError::git_error(message))
     } else {
@@ -597,11 +597,11 @@ pub async fn detect_default_branch_with_capture(
   }
   let (exit_code, output) = capture(cmd)
   if exit_code == 0 {
-    let trimmed = output.trim().to_string()
+    let trimmed = output.trim().to_owned()
     // Output is "origin/main" or "origin/master" — strip the "origin/" prefix
     let prefix = "origin/"
     if trimmed.has_prefix(prefix) {
-      trimmed[prefix.length():].to_string()
+      trimmed[prefix.length():].to_owned()
     } else if trimmed != "" {
       trimmed
     } else {

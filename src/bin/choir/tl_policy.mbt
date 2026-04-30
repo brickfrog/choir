@@ -59,11 +59,11 @@ fn tl_policy_agent_id(
 
 ///|
 fn trim_wrapped_double_quotes(s : String) -> String {
-  let trimmed = s.trim().to_string()
+  let trimmed = s.trim().to_owned()
   if trimmed.length() >= 2 &&
     trimmed[0] == '"' &&
     trimmed[trimmed.length() - 1] == '"' {
-    trimmed[1:trimmed.length() - 1].to_string()
+    trimmed[1:trimmed.length() - 1].to_owned()
   } else {
     trimmed
   }
@@ -74,12 +74,12 @@ fn git_status_changed_path(line : String) -> String {
   if line.length() < 4 {
     return ""
   }
-  let body = line[3:].trim().to_string()
+  let body = line[3:].trim().to_owned()
   if body == "" {
     return ""
   }
   let path = match body.split_once(" -> ") {
-    Some((_, to)) => to.to_string()
+    Some((_, to)) => to.to_owned()
     None => body
   }
   trim_wrapped_double_quotes(path)
@@ -89,7 +89,7 @@ fn git_status_changed_path(line : String) -> String {
 fn git_status_changed_paths(output : String) -> Array[String] {
   let paths : Array[String] = []
   for raw_line in output.split("\n") {
-    let line = raw_line.trim().to_string()
+    let line = raw_line.trim().to_owned()
     if line == "" {
       continue
     }
@@ -348,7 +348,7 @@ test "tl_policy_live_wave_info requires a non terminal child" {
       ),
     }),
   )
-  assert_eq(live, (true, Some(2)))
+  @debug.assert_eq(live, (true, Some(2)))
   let done = tl_policy_live_wave_info(
     Some({
       agent_id: "root",
@@ -367,5 +367,5 @@ test "tl_policy_live_wave_info requires a non terminal child" {
       ),
     }),
   )
-  assert_eq(done, (false, Some(2)))
+  @debug.assert_eq(done, (false, Some(2)))
 }

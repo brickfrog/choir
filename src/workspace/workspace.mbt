@@ -32,7 +32,7 @@ pub fn parent_branch(branch : String) -> String? {
   if last_dot <= 0 {
     None
   } else {
-    Some(branch[:last_dot].to_string())
+    Some(branch[:last_dot].to_owned())
   }
 }
 
@@ -234,14 +234,14 @@ pub fn config_local_content(
 
 ///|
 fn strip_json_object_braces(s : String) -> String? {
-  let trimmed = s.trim().to_string()
+  let trimmed = s.trim().to_owned()
   if trimmed.length() < 2 {
     return None
   }
   if trimmed[0] != '{' || trimmed[trimmed.length() - 1] != '}' {
     return None
   }
-  Some(trimmed[1:trimmed.length() - 1].to_string())
+  Some(trimmed[1:trimmed.length() - 1].to_owned())
 }
 
 ///|

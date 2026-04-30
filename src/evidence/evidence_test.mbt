@@ -13,7 +13,7 @@ test "evidence jsonl round trip for typed event" {
   match record.event {
     ReviewObserved(state~, body~) => {
       assert_eq(state, EvidenceReviewState::ChangesRequested)
-      assert_eq(body, Some("please add tests"))
+      @debug.assert_eq(body, Some("please add tests"))
     }
     _ => fail("expected ReviewObserved")
   }
@@ -76,7 +76,7 @@ test "evidence append load replay file" {
   match replayed[0] {
     CiObserved(status~, head_sha~) => {
       assert_eq(status, EvidenceCiStatus::Success)
-      assert_eq(head_sha, Some("abc123"))
+      @debug.assert_eq(head_sha, Some("abc123"))
     }
     _ => fail("expected CiObserved")
   }
@@ -92,7 +92,7 @@ test "evidence append load replay file" {
   match replayed[3] {
     UserOverrideObserved(scope~, reason~) => {
       assert_eq(scope, "merge_pr.force")
-      assert_eq(reason, Some("manual approval"))
+      @debug.assert_eq(reason, Some("manual approval"))
     }
     _ => fail("expected UserOverrideObserved")
   }
@@ -114,7 +114,7 @@ test "evidence load skips blank and invalid lines" {
   match records[1].event {
     MergeObserved(pr_number~, pr_url~) => {
       assert_eq(pr_number, 9)
-      assert_eq(pr_url, None)
+      @debug.assert_eq(pr_url, None)
     }
     _ => fail("expected merge observed")
   }

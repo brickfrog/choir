@@ -37,7 +37,7 @@ test "rollup_stats counts missing usage without inference" {
   assert_eq(got.missing_usage, 1)
   assert_eq(got.waves[0].missing_usage, 1)
   assert_eq(got.waves[0].totals.tokens_in, 5)
-  assert_eq(got.waves[0].totals.cost_usd, None)
+  @debug.assert_eq(got.waves[0].totals.cost_usd, None)
 }
 
 ///|
@@ -45,11 +45,11 @@ test "parse_stats_cli_args supports filters and limit" {
   let got = parse_stats_cli_args([
     "choir", "stats", "--agent-type", "codex", "--limit", "3",
   ]).unwrap()
-  assert_eq(got.agent_type, Some(@types.AgentType::Codex))
+  @debug.assert_eq(got.agent_type, Some(@types.AgentType::Codex))
   assert_eq(got.limit, 3)
-  assert_eq(got.wave_id, None)
+  @debug.assert_eq(got.wave_id, None)
   let wave = parse_stats_cli_args(["choir", "stats", "--wave", "wv-demo"]).unwrap()
-  assert_eq(wave.wave_id, Some("wv-demo"))
+  @debug.assert_eq(wave.wave_id, Some("wv-demo"))
 }
 
 ///|

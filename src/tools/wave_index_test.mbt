@@ -39,7 +39,7 @@ test "render_wave_index_json + parse_wave_index_json round-trips" {
   assert_eq(parsed.fork_ts_ms, 1776000000000L)
   assert_eq(parsed.agent_ids.length(), 2)
   assert_eq(parsed.agent_ids[0], "feature-x.leaf-0")
-  assert_eq(
+  @debug.assert_eq(
     parsed.rescued.get("feature-x.leaf-0-old"),
     Some("feature-x.leaf-0"),
   )
@@ -49,7 +49,7 @@ test "render_wave_index_json + parse_wave_index_json round-trips" {
       assert_eq(u.tokens_in, 100)
       assert_eq(u.tokens_out, 50)
       assert_eq(u.elapsed_s, 60)
-      assert_eq(u.cost_usd, Some(0.12))
+      @debug.assert_eq(u.cost_usd, Some(0.12))
       assert_eq(u.reported_at_ms, 1776000120000L)
     }
     None => fail("missing usage entry")
@@ -128,7 +128,10 @@ test "append_agent_id is idempotent and record_rescue updates map" {
   match @tools.load_wave_index(tmp, "wv-b") {
     Ok(parsed) => {
       assert_eq(parsed.agent_ids.length(), 3)
-      assert_eq(parsed.rescued.get("feature-y.a-old"), Some("feature-y.a-new"))
+      @debug.assert_eq(
+        parsed.rescued.get("feature-y.a-old"),
+        Some("feature-y.a-new"),
+      )
     }
     Err(e) => fail("load after mutations: " + e.message())
   }
@@ -152,7 +155,7 @@ test "record_usage overwrites on repeat call" {
       match parsed.usage.get("feature-u.a") {
         Some(u) => {
           assert_eq(u.tokens_in, 20)
-          assert_eq(u.cost_usd, Some(0.02))
+          @debug.assert_eq(u.cost_usd, Some(0.02))
         }
         None => fail("usage missing")
       }

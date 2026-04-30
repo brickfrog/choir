@@ -5,7 +5,7 @@ fn wrap_with_shell(cmd : Command, shell : String) -> Command {
   for i = 0; i <= shell.length(); i = i + 1 {
     if i == shell.length() || shell[i] == ' ' {
       if i > start {
-        parts.push(shell[start:i].to_string())
+        parts.push(shell[start:i].to_owned())
       }
       start = i + 1
     }
@@ -82,12 +82,12 @@ fn claude_mcp_args(
 ///|
 fn split_words(s : String) -> Array[String] {
   let parts : Array[String] = []
-  let trimmed = s.trim().to_string()
+  let trimmed = s.trim().to_owned()
   let mut start = 0
   for i = 0; i <= trimmed.length(); i = i + 1 {
     if i == trimmed.length() || trimmed[i] == ' ' {
       if i > start {
-        parts.push(trimmed[start:i].to_string())
+        parts.push(trimmed[start:i].to_owned())
       }
       start = i + 1
     }
@@ -99,7 +99,7 @@ fn split_words(s : String) -> Array[String] {
 pub fn normalize_tl_type(tl_type : String) -> String {
   match tl_type.trim().to_lower() {
     "agent" => "cursor_agent"
-    other => other.to_string()
+    other => other.to_owned()
   }
 }
 

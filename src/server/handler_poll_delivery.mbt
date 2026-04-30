@@ -423,7 +423,7 @@ pub fn clamp_review_summary_for_pane(body : String) -> String {
   if body.length() <= review_summary_pane_max_chars {
     body
   } else {
-    body[0:review_summary_pane_max_chars].to_string() + suffix
+    body[0:review_summary_pane_max_chars].to_owned() + suffix
   }
 }
 
@@ -1117,7 +1117,7 @@ fn poller_sanitize_event_for_log(raw : String) -> String {
   if escaped.length() <= max_len {
     escaped
   } else {
-    escaped[0:max_len].to_string() + "..."
+    escaped[0:max_len].to_owned() + "..."
   }
 }
 

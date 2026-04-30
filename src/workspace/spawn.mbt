@@ -205,12 +205,12 @@ test "launch env serializers agree on the non-PATH key set" {
   let prefix = launch_env_prefix(spec, "sess", "/ws", target)
   let prefix_keys : Array[String] = []
   for token in prefix.split(" ") {
-    let s = token.to_string()
+    let s = token.to_owned()
     if s == "" || s.has_prefix("PATH=") {
       continue
     }
     match s.split_once("=") {
-      Some((k, _)) => prefix_keys.push(k.to_string())
+      Some((k, _)) => prefix_keys.push(k.to_owned())
       None => ()
     }
   }
@@ -219,16 +219,16 @@ test "launch env serializers agree on the non-PATH key set" {
   let exports = launch_env_exports(spec, "sess", "/ws", target)
   let export_keys : Array[String] = []
   for stmt in exports.split(";") {
-    let s = stmt.trim().to_string()
+    let s = stmt.trim().to_owned()
     if !s.has_prefix("export ") {
       continue
     }
-    let rhs = s["export ".length():].to_string()
+    let rhs = s["export ".length():].to_owned()
     if rhs.has_prefix("PATH=") {
       continue
     }
     match rhs.split_once("=") {
-      Some((k, _)) => export_keys.push(k.to_string())
+      Some((k, _)) => export_keys.push(k.to_owned())
       None => ()
     }
   }
@@ -241,7 +241,7 @@ test "launch env serializers agree on the non-PATH key set" {
       continue
     }
     match s.split_once("=") {
-      Some((k, _)) => argv_keys.push(k.to_string())
+      Some((k, _)) => argv_keys.push(k.to_owned())
       None => ()
     }
   }

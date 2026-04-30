@@ -138,7 +138,7 @@ fn mcp_response_wire(resp : @mcp.JsonRpcResponse, raw_stdio : Bool) -> String {
 
 ///|
 fn mcp_parse_content_length(line : String) -> Int? {
-  let trimmed = line.trim().to_string()
+  let trimmed = line.trim().to_owned()
   let prefix = if trimmed.has_prefix("Content-Length:") {
     "Content-Length:"
   } else if trimmed.has_prefix("content-length:") {
@@ -146,7 +146,7 @@ fn mcp_parse_content_length(line : String) -> Int? {
   } else {
     return None
   }
-  let value_str = trimmed[prefix.length():].trim().to_string()
+  let value_str = trimmed[prefix.length():].trim().to_owned()
   Some(@string.parse_int(value_str)) catch {
     _ => None
   }
@@ -164,7 +164,7 @@ fn mcp_read_next_message(
       Some(line) => line
       None => return None
     }
-    let trimmed = line.trim().to_string()
+    let trimmed = line.trim().to_owned()
     if trimmed == "" {
       if !saw_headers {
         continue
@@ -594,7 +594,7 @@ test "mcp config applies CLI agent id when local config is unset" {
     @types.LocalConfig::default(),
     ["choir", "mcp-stdio", "--name", "smoke-test"],
   )
-  assert_eq(cfg.agent_id, Some("smoke-test"))
+  @debug.assert_eq(cfg.agent_id, Some("smoke-test"))
   assert_eq(
     mcp_resolved_agent_id(@types.Role::TL, cfg, @types.LocalConfig::default()),
     "smoke-test",
@@ -610,7 +610,7 @@ test "mcp config keeps local agent id over CLI agent id" {
   let cfg = mcp_config_with_cli_overrides(@types.Config::default(), local_cfg, [
     "choir", "mcp-stdio", "--name", "cli-agent",
   ])
-  assert_eq(cfg.agent_id, Some("local-agent"))
+  @debug.assert_eq(cfg.agent_id, Some("local-agent"))
   assert_eq(
     mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg),
     "local-agent",

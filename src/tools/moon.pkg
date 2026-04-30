@@ -21,6 +21,7 @@ import {
   "moonbitlang/core/encoding/utf8",
   "brickfrog/moontrace",
   "brickfrog/tempo",
+  "moonbitlang/core/debug",
 }
 
 options(

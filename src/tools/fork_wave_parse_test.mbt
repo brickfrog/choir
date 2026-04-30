@@ -49,7 +49,8 @@ test "parse_fork_wave_args captures review_context" {
     "review_context": " plan/interpret split ",
   })
   match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.review_context, Some("plan/interpret split"))
+    Ok(fork) =>
+      @debug.assert_eq(fork.review_context, Some("plan/interpret split"))
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
@@ -63,7 +64,7 @@ test "parse_fork_wave_args defaults automerge override to None" {
     "caller_id": "root",
   })
   match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.automerge, None)
+    Ok(fork) => @debug.assert_eq(fork.automerge, None)
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
@@ -77,7 +78,7 @@ test "parse_fork_wave_args defaults review_mode override to None" {
     "caller_id": "root",
   })
   match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.review_mode, None)
+    Ok(fork) => @debug.assert_eq(fork.review_mode, None)
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
@@ -92,7 +93,8 @@ test "parse_fork_wave_args parses review_mode iterative" {
     "review_mode": "iterative",
   })
   match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.review_mode, Some(@types.ReviewMode::Iterative))
+    Ok(fork) =>
+      @debug.assert_eq(fork.review_mode, Some(@types.ReviewMode::Iterative))
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
@@ -119,7 +121,7 @@ test "parse_fork_wave_args parses automerge true" {
     "automerge": "true",
   })
   match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.automerge, Some(true))
+    Ok(fork) => @debug.assert_eq(fork.automerge, Some(true))
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
@@ -134,7 +136,7 @@ test "parse_fork_wave_args parses automerge false" {
     "automerge": "false",
   })
   match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.automerge, Some(false))
+    Ok(fork) => @debug.assert_eq(fork.automerge, Some(false))
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }

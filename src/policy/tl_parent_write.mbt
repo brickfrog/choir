@@ -23,7 +23,7 @@ fn path_has_doc_extension(path : String) -> Bool {
 
 ///|
 pub fn is_doc_only_parent_branch_path(path : String) -> Bool {
-  let trimmed = path.trim().to_string()
+  let trimmed = path.trim().to_owned()
   if trimmed == "" {
     return true
   }
@@ -38,7 +38,7 @@ pub fn classify_tl_parent_branch_paths(
 ) -> TLParentBranchChangeClass {
   let mut saw_path = false
   for path in changed_paths {
-    let trimmed = path.trim().to_string()
+    let trimmed = path.trim().to_owned()
     if trimmed == "" {
       continue
     }

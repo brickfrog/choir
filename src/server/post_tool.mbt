@@ -562,7 +562,7 @@ pub fn plan_post_tool_actions(
     match resp.ok_field("agent_ids") {
       Some(ids) =>
         for part in ids.split(",") {
-          let agent_id = part.to_string().trim().to_string()
+          let agent_id = part.to_owned().trim().to_owned()
           if agent_id != "" {
             watch_ids.push(agent_id)
           }
@@ -572,7 +572,7 @@ pub fn plan_post_tool_actions(
     if req.name == "rescue_leaf" {
       match resp.ok_field("agent_id") {
         Some(agent_id) => {
-          let aid = agent_id.trim().to_string()
+          let aid = agent_id.trim().to_owned()
           if aid != "" {
             watch_ids.push(aid)
           }

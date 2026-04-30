@@ -76,8 +76,8 @@ test "merge_mcp_maps clean merge" {
   let b : Map[String, Json] = { "a": "1".to_json() }
   let u : Map[String, Json] = { "b": "2".to_json() }
   let m = merge_mcp_maps(b, u).unwrap()
-  assert_eq(m.get("a"), Some("1".to_json()))
-  assert_eq(m.get("b"), Some("2".to_json()))
+  @debug.assert_eq(m.get("a"), Some("1".to_json()))
+  @debug.assert_eq(m.get("b"), Some("2".to_json()))
 }
 
 ///|

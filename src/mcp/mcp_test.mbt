@@ -15,7 +15,7 @@ test "translate tools/call to internal request" {
     Ok(req) => {
       assert_eq(req.name, "fork_wave")
       assert_eq(req.role, @types.Role::TL)
-      assert_eq(req.args.get("task"), Some("build feature"))
+      @debug.assert_eq(req.args.get("task"), Some("build feature"))
     }
     Err(_) => fail("expected Ok")
   }
@@ -163,7 +163,7 @@ test "translate missing name returns error" {
 ///|
 test "from_internal_response Ok" {
   let resp = @types.Response::ok({ "url": "https://github.com/pr/1" })
-  assert_eq(resp.ok_field("url"), Some("https://github.com/pr/1"))
+  @debug.assert_eq(resp.ok_field("url"), Some("https://github.com/pr/1"))
   let rpc = @mcp.from_internal_response(Number(5), resp)
   assert_eq(rpc.jsonrpc, "2.0")
   assert_eq(rpc.id, Number(5))
@@ -222,7 +222,7 @@ test "from_internal_response preserves raw primitives" {
 ///|
 test "from_internal_response Err" {
   let resp = @types.Response::Err("tool not found")
-  assert_eq(resp.error_message(), Some("tool not found"))
+  @debug.assert_eq(resp.error_message(), Some("tool not found"))
   let rpc = @mcp.from_internal_response(Number(6), resp)
   assert_eq(rpc.id, Number(6))
   assert_true(rpc.error is None)

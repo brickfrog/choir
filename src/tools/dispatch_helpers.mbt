@@ -15,7 +15,7 @@ pub async fn run_strict(
       // Re-run the failing command with stderr capture for a useful error message
       let cmd = cmds[i]
       let (_, stderr) = capture(cmd)
-      let detail = stderr.trim().to_string()
+      let detail = stderr.trim().to_owned()
       let msg = if detail != "" {
         cmd.program + " failed (exit " + status.to_string() + "): " + detail
       } else {
@@ -170,7 +170,7 @@ pub async fn resolve_zellij_pane_id(
 fn resolve_home_path(path : String) -> String {
   if path.length() >= 2 && path[0] == '~' && path[1] == '/' {
     match @sys.getenv("HOME") {
-      Some(home) => home + "/" + path[2:path.length()].to_string()
+      Some(home) => home + "/" + path[2:path.length()].to_owned()
       None => path
     }
   } else {
@@ -188,7 +188,7 @@ fn path_dirname(path : String) -> String {
   while end > 1 && path[end - 1] == '/' {
     end = end - 1
   }
-  let trimmed = path[:end].to_string()
+  let trimmed = path[:end].to_owned()
   if trimmed == "/" {
     return "/"
   }
@@ -208,7 +208,7 @@ fn path_dirname(path : String) -> String {
   while d_end > 1 && trimmed[d_end - 1] == '/' {
     d_end = d_end - 1
   }
-  trimmed[:d_end].to_string()
+  trimmed[:d_end].to_owned()
 }
 
 ///|
@@ -543,7 +543,7 @@ pub async fn fetch_gh_repo_owner_name(
     workdir: Some(project_dir),
   }
   let (exit_code, output) = capture(cmd)
-  if exit_code != 0 || output.trim().to_string() == "" {
+  if exit_code != 0 || output.trim().to_owned() == "" {
     return None
   }
   parse_gh_repo_view_output(output)
@@ -582,7 +582,7 @@ pub async fn fetch_inline_comments(
   if exit_code != 0 {
     return (0, "")
   }
-  let trimmed = output.trim().to_string()
+  let trimmed = output.trim().to_owned()
   if trimmed == "" || trimmed == "[]" {
     return (0, "")
   }
@@ -658,7 +658,7 @@ pub async fn fetch_unresolved_review_threads_with_repo(
     workdir: Some(project_dir),
   }
   let (exit_code, output) = capture(cmd)
-  if exit_code != 0 || output.trim().to_string() == "" {
+  if exit_code != 0 || output.trim().to_owned() == "" {
     return (1, review_thread_fetch_failed_marker)
   }
   parse_unresolved_threads_response(output)
@@ -825,7 +825,7 @@ async fn list_task_files(
   }
   let paths = []
   for line in output.split("\n") {
-    let path = line.to_string().trim().to_string()
+    let path = line.to_owned().trim().to_owned()
     if path != "" {
       paths.push(path)
     }
@@ -899,7 +899,7 @@ async fn handle_kv_list(
   let prefix = project_dir + "/.choir/kv/"
   let paths : Array[String] = []
   for line in output.split("\n") {
-    let path = line.to_string().trim().to_string()
+    let path = line.to_owned().trim().to_owned()
     if path == "" {
       continue
     }
@@ -908,11 +908,11 @@ async fn handle_kv_list(
   sort_strings_lex(paths)
   let keys : Array[Json] = []
   for path in paths {
-    let actual_prefix = path[:prefix.length()].to_string()
+    let actual_prefix = path[:prefix.length()].to_owned()
     if actual_prefix != prefix {
       return @types.Response::Err("invalid kv file path: " + path)
     }
-    let key = path[prefix.length():].to_string()
+    let key = path[prefix.length():].to_owned()
     keys.push(key.to_json())
   }
   @types.Response::ok_values({
@@ -943,7 +943,7 @@ test "parse_zellij_list_panes_json skips plugin panes" {
 
 ///|
 test "parse_zellij_list_panes_json returns None when tab missing" {
-  assert_eq(
+  @debug.assert_eq(
     parse_zellij_list_panes_json(
       "[{\"id\":1,\"tab_name\":\"x\",\"is_plugin\":false}]", "missing",
     ),
@@ -977,7 +977,7 @@ async fn mock_zellij_nonzero(_cmd : @workspace.Command) -> (Int, String) {
 
 ///|
 async test "resolve_zellij_pane_id returns None when zellij exits non-zero" {
-  assert_eq(
+  @debug.assert_eq(
     resolve_zellij_pane_id("choir", "x", capture=mock_zellij_nonzero),
     None,
   )

@@ -22,24 +22,24 @@ pub fn merge_pr_preflight_host_steps() -> Array[MergePrPreflightHostStep] {
 
 ///|
 pub fn parse_github_owner_repo_from_url(raw : String) -> (String, String)? {
-  let value = raw.trim().to_string()
+  let value = raw.trim().to_owned()
   let mut path = if value.has_prefix("https://github.com/") {
-    value["https://github.com/".length():].to_string()
+    value["https://github.com/".length():].to_owned()
   } else if value.has_prefix("http://github.com/") {
-    value["http://github.com/".length():].to_string()
+    value["http://github.com/".length():].to_owned()
   } else if value.has_prefix("git@github.com:") {
-    value["git@github.com:".length():].to_string()
+    value["git@github.com:".length():].to_owned()
   } else if value.has_prefix("ssh://git@github.com/") {
-    value["ssh://git@github.com/".length():].to_string()
+    value["ssh://git@github.com/".length():].to_owned()
   } else {
     return None
   }
   if path.has_suffix(".git") {
-    path = path[:path.length() - ".git".length()].to_string()
+    path = path[:path.length() - ".git".length()].to_owned()
   }
   let parts = []
   for part in path.split("/") {
-    parts.push(part.to_string())
+    parts.push(part.to_owned())
   }
   if parts.length() < 2 {
     return None
@@ -84,7 +84,7 @@ async fn merge_pr_owner_repo(
         workdir: Some(project_dir),
       }
       let (exit_code, output) = capture(cmd)
-      if exit_code != 0 || output.trim().to_string() == "" {
+      if exit_code != 0 || output.trim().to_owned() == "" {
         return Err(
           @types.ChoirError::validation_error(
             "merge blocked: could not resolve GitHub repository owner/name from tracked PR URL or origin remote",
@@ -271,7 +271,7 @@ async fn enforce_merge_pr_github_review_gate(
   }
   let cmd = merge_pr_reviews_command(owner, repo, pr_number, project_dir)
   let (exit_code, output) = capture(cmd)
-  if exit_code != 0 || output.trim().to_string() == "" {
+  if exit_code != 0 || output.trim().to_owned() == "" {
     return Err(
       @types.ChoirError::validation_error(
         "merge blocked: could not fetch GitHub review state for PR #" +
@@ -676,7 +676,7 @@ pub async fn interpret_merge_pr_merge_host(
   match merge_result {
     Err(_) => {
       let (_, output) = capture(merge_pr_command(pr_number))
-      let trimmed = output.trim().to_string()
+      let trimmed = output.trim().to_owned()
       Err(
         @types.ChoirError::git_error(
           merge_pr_merge_failure_message(pr_number, trimmed),
@@ -830,7 +830,7 @@ pub fn interpret_resolve_review_thread_result(
   thread_id : String,
 ) -> @types.Response {
   if exit_code != 0 {
-    let trimmed = output.trim().to_string()
+    let trimmed = output.trim().to_owned()
     return @types.Response::Err(
       if trimmed != "" {
         "resolve_review_thread failed: " + trimmed
@@ -839,7 +839,7 @@ pub fn interpret_resolve_review_thread_result(
       },
     )
   }
-  if output.trim().to_string() == "" {
+  if output.trim().to_owned() == "" {
     return @types.Response::Err(
       "resolve_review_thread failed: empty response from gh",
     )

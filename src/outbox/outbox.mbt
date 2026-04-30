@@ -331,7 +331,7 @@ pub fn load_recipient_outbox_from_content(
 ) -> Array[OutboxMessage] {
   let latest : Map[String, OutboxMessage] = {}
   for line in content.split("\n") {
-    let trimmed = line.to_string().trim().to_string()
+    let trimmed = line.to_owned().trim().to_owned()
     if trimmed == "" {
       continue
     }

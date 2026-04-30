@@ -406,7 +406,7 @@ pub fn load_agent_evidence_records_from_content(
 ) -> Array[EvidenceRecord] {
   let records : Array[EvidenceRecord] = []
   for line in content.split("\n") {
-    let trimmed = line.to_string().trim().to_string()
+    let trimmed = line.to_owned().trim().to_owned()
     if trimmed == "" {
       continue
     }

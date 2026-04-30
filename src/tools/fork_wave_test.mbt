@@ -153,7 +153,7 @@ async test "interpret_file_pr_post_success posts copilot review comment then req
           cmds[0].args[4],
           file_pr_copilot_review_comment_body("plan/interpret split"),
         )
-        assert_eq(cmds[0].workdir, Some(project_dir))
+        @debug.assert_eq(cmds[0].workdir, Some(project_dir))
       } else if n == 1 {
         assert_eq(cmds[0], file_pr_copilot_reviewer_gh_command(55, project_dir))
       } else {
@@ -522,7 +522,7 @@ test "fork_wave_spawned_registry_agent matches fork_wave spawn upsert shape" {
   assert_eq(agent.role, @types.Role::Dev)
   assert_eq(agent.agent_type, @types.AgentType::Claude)
   assert_eq(agent.state, @types.AgentState::Spawning)
-  assert_eq(agent.parent, Some("main.tl"))
+  @debug.assert_eq(agent.parent, Some("main.tl"))
   assert_eq(agent.host, @types.Host::Local)
   assert_eq(agent.spawn_depth, 0)
   assert_eq(agent.branch, "main.wave-0")
@@ -532,7 +532,7 @@ test "fork_wave_spawned_registry_agent matches fork_wave spawn upsert shape" {
     "wave-0",
     @types.IsolationMode::Worktree,
   )
-  assert_eq(agent.terminal_target, Some(expected_tt))
+  @debug.assert_eq(agent.terminal_target, Some(expected_tt))
 }
 
 ///|
@@ -564,9 +564,9 @@ test "fork_wave_child_spawn_depth copies depth for non-TL" {
 
 ///|
 test "fork_wave_caller_spawn_depth_from_registry matches dispatch lookup" {
-  assert_eq(fork_wave_caller_spawn_depth_from_registry(None, "x"), None)
+  @debug.assert_eq(fork_wave_caller_spawn_depth_from_registry(None, "x"), None)
   let reg = @registry.AgentRegistry::new()
-  assert_eq(
+  @debug.assert_eq(
     fork_wave_caller_spawn_depth_from_registry(Some(reg), "missing"),
     None,
   )
@@ -584,7 +584,7 @@ test "fork_wave_caller_spawn_depth_from_registry matches dispatch lookup" {
       state: @types.AgentState::Active,
     }),
   )
-  assert_eq(
+  @debug.assert_eq(
     fork_wave_caller_spawn_depth_from_registry(Some(reg), "main.tl"),
     Some(5),
   )
@@ -670,9 +670,9 @@ async test "interpret_fork_wave_spawn_effect_phase resolves parent branch and re
   match resp {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("spawned")))
-      assert_eq(map.get("count"), Some(Int::to_json(2)))
-      assert_eq(
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(map.get("count"), Some(Int::to_json(2)))
+      @debug.assert_eq(
         map.get("agent_ids"),
         Some(String::to_json("topic.wave-0,topic.wave-1")),
       )
@@ -688,7 +688,7 @@ async test "fork_wave_response_from_interpret_result passes Ok through" {
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("x"), Some(String::to_json("y")))
+      @debug.assert_eq(map.get("x"), Some(String::to_json("y")))
     }
     _ => fail("expected ok passthrough")
   }

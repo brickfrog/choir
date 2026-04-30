@@ -384,7 +384,7 @@ pub fn reap_unparseable_pending_waves(project_dir : String) -> Array[String] {
     if !parseable {
       ignore(@sys.delete_file_sync(path))
       let basename = match path.rev_find("/") {
-        Some(idx) => path[idx + 1:].to_string()
+        Some(idx) => path[idx + 1:].to_owned()
         None => path
       }
       @sys.write_stderr(

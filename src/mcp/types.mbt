@@ -2,7 +2,7 @@
 pub(all) enum JsonRpcId {
   Number(Int)
   String(String)
-} derive(Eq)
+} derive(Debug, Eq)
 
 ///|
 pub impl Show for JsonRpcId with output(self, logger) -> Unit {

@@ -26,7 +26,7 @@ async fn init_tab_exists(session : String, tab_name : String) -> Bool {
 
 ///|
 fn init_parse_server_pid_line(s : String) -> Int? {
-  Some(@string.parse_int(s.trim().to_string())) catch {
+  Some(@string.parse_int(s.trim().to_owned())) catch {
     _ => None
   }
 }
@@ -113,10 +113,10 @@ test "cleanup paths separate runtime restart from purge" {
 
 ///|
 test "init server cleanup commands separate runtime restart from purge" {
-  assert_eq(init_parse_server_pid_line("123"), Some(123))
-  assert_eq(init_parse_server_pid_line(" 42 \n"), Some(42))
-  assert_eq(init_parse_server_pid_line(""), None)
-  assert_eq(init_parse_server_pid_line("12a"), None)
+  @debug.assert_eq(init_parse_server_pid_line("123"), Some(123))
+  @debug.assert_eq(init_parse_server_pid_line(" 42 \n"), Some(42))
+  @debug.assert_eq(init_parse_server_pid_line(""), None)
+  @debug.assert_eq(init_parse_server_pid_line("12a"), None)
   assert_true(@sys.pid_is_alive(@sys.get_pid()))
   assert_true(init_should_launch_server_tab(false))
   assert_false(init_should_launch_server_tab(true))
@@ -142,7 +142,7 @@ fn init_default_terminal_session(project_dir : String) -> String {
   while end > 1 && project_dir[end - 1] == '/' {
     end = end - 1
   }
-  let trimmed = project_dir[:end].to_string()
+  let trimmed = project_dir[:end].to_owned()
   let base = if trimmed == "" {
     "project"
   } else {
@@ -155,7 +155,7 @@ fn init_default_terminal_session(project_dir : String) -> String {
     if last_slash < 0 || last_slash + 1 >= trimmed.length() {
       trimmed
     } else {
-      trimmed[last_slash + 1:].to_string()
+      trimmed[last_slash + 1:].to_owned()
     }
   }
   let buf = StringBuilder::new()
@@ -179,7 +179,7 @@ fn init_default_terminal_session(project_dir : String) -> String {
   while finish > start && normalized_raw[finish - 1] == '-' {
     finish = finish - 1
   }
-  let suffix = normalized_raw[start:finish].to_string()
+  let suffix = normalized_raw[start:finish].to_owned()
   let normalized = if suffix == "" { "project" } else { suffix }
   "choir-" + normalized
 }
@@ -326,12 +326,12 @@ test "init parse_tl_type extracts --tl flag" {
 ///|
 fn init_split_words(s : String) -> Array[String] {
   let parts : Array[String] = []
-  let trimmed = s.trim().to_string()
+  let trimmed = s.trim().to_owned()
   let mut start = 0
   for i = 0; i <= trimmed.length(); i = i + 1 {
     if i == trimmed.length() || trimmed[i] == ' ' {
       if i > start {
-        parts.push(trimmed[start:i].to_string())
+        parts.push(trimmed[start:i].to_owned())
       }
       start = i + 1
     }
@@ -564,7 +564,7 @@ fn init_run() -> Unit {
       let current_branch_raw = @exec.capture_stdout("git", [
         "branch", "--show-current",
       ])
-      let current_branch_trimmed = current_branch_raw.trim().to_string()
+      let current_branch_trimmed = current_branch_raw.trim().to_owned()
       let current_branch = if current_branch_trimmed == "" ||
         current_branch_trimmed == "HEAD" {
         "main"

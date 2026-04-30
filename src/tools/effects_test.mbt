@@ -80,7 +80,7 @@ test "all skipped with no spawned yields already_running" {
   }
   match after_both_checks {
     Pure(Ok(@types.Response::Ok(vals))) =>
-      assert_eq(vals.get("status"), Some("already_running"))
+      @debug.assert_eq(vals.get("status"), Some("already_running"))
     _ => fail("expected Pure(Ok(already_running))")
   }
 }
@@ -131,8 +131,8 @@ test "successful commands yield spawned response" {
   }
   match after_run {
     Pure(Ok(@types.Response::Ok(vals))) => {
-      assert_eq(vals.get("status"), Some("spawned"))
-      assert_eq(vals.get("count"), Some("1"))
+      @debug.assert_eq(vals.get("status"), Some("spawned"))
+      @debug.assert_eq(vals.get("count"), Some("1"))
     }
     _ => fail("expected Pure(Ok(spawned))")
   }

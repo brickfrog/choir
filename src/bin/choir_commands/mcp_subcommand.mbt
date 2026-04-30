@@ -11,7 +11,7 @@ pub(all) struct McpServer {
 }
 
 ///|
-fn mcp_transport_to_string(transport : McpTransport) -> String {
+pub fn mcp_transport_to_string(transport : McpTransport) -> String {
   match transport {
     Stdio => "stdio"
   }

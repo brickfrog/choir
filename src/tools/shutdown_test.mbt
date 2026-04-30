@@ -4,7 +4,7 @@ test "shutdown_missing_caller_response is best-effort ok" {
   match r {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
     }
     _ => fail("expected ok")
   }
@@ -48,7 +48,7 @@ fn kill_agent_test_agent(
 ///|
 test "kill_agent_pane_close_command is none without terminal_target" {
   let a = kill_agent_test_agent(None, "/repo")
-  assert_eq(kill_agent_pane_close_command(a), None)
+  @debug.assert_eq(kill_agent_pane_close_command(a), None)
 }
 
 ///|
@@ -81,7 +81,7 @@ test "kill_agent_worktree_remove_command follows choir worktree path rule" {
     None => fail("expected worktree remove")
   }
   let no_wt = kill_agent_test_agent(None, "/proj")
-  assert_eq(kill_agent_worktree_remove_command(no_wt), None)
+  @debug.assert_eq(kill_agent_worktree_remove_command(no_wt), None)
 }
 
 ///|
@@ -89,8 +89,8 @@ test "kill_agent_ok_response matches killed envelope" {
   match kill_agent_ok_response("main.topic") {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("killed")))
-      assert_eq(map.get("agent_id"), Some(String::to_json("main.topic")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("killed")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.topic")))
     }
     _ => fail("expected ok")
   }
@@ -140,8 +140,8 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("killed")))
-      assert_eq(map.get("agent_id"), Some(String::to_json("main.leaf")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("killed")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.leaf")))
     }
     _ => fail("expected ok")
   }
@@ -384,8 +384,8 @@ test "shutdown_exit_plan deferred dev applies exit and skips cleanup" {
   match plan.response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("deferred")))
-      assert_eq(
+      @debug.assert_eq(map.get("status"), Some(String::to_json("deferred")))
+      @debug.assert_eq(
         map.get("warning"),
         Some("PR filed (7) at https://ex/7".to_json()),
       )
@@ -408,7 +408,7 @@ test "shutdown_exit_plan allowed dev allows cleanup and exit" {
   match plan.response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
     }
     _ => fail("expected shutdown ok")
   }
@@ -430,7 +430,7 @@ test "shutdown_exit_plan allowed tl skips dev exit but may cleanup worktree" {
   match plan.response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
     }
     _ => fail("expected shutdown ok")
   }
@@ -449,7 +449,7 @@ test "shutdown_adapter_host_steps lists poller through cleanup" {
 
 ///|
 test "shutdown_poller_block_pr_number is none without poller" {
-  assert_eq(shutdown_poller_block_pr_number(None, "main.leaf"), None)
+  @debug.assert_eq(shutdown_poller_block_pr_number(None, "main.leaf"), None)
 }
 
 ///|
@@ -468,7 +468,10 @@ test "shutdown_poller_block_pr_number matches critical phase" {
     @poller.CiRollupStatus::Unknown,
     false,
   )
-  assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), Some(77))
+  @debug.assert_eq(
+    shutdown_poller_block_pr_number(Some(ps), "main.leaf"),
+    Some(77),
+  )
 }
 
 ///|
@@ -487,7 +490,7 @@ test "shutdown_poller_block_pr_number is none when agent not in critical phase" 
     @poller.CiRollupStatus::Unknown,
     false,
   )
-  assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), None)
+  @debug.assert_eq(shutdown_poller_block_pr_number(Some(ps), "main.leaf"), None)
 }
 
 ///|
@@ -579,7 +582,7 @@ async test "interpret_shutdown ok when caller missing uses best-effort" {
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
     }
     _ => fail("expected missing-caller ok")
   }
@@ -591,13 +594,13 @@ test "dev_lifecycle_pr_number extracts from ReviewOwned" {
     pr_number=10,
     state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/10"),
   )
-  assert_eq(dev_lifecycle_pr_number(lc), Some(10))
+  @debug.assert_eq(dev_lifecycle_pr_number(lc), Some(10))
 }
 
 ///|
 test "dev_lifecycle_pr_number extracts from ChangesRequested" {
   let lc = @phase.DevLifecycle::ChangesRequested(pr_number=5, next_round=2)
-  assert_eq(dev_lifecycle_pr_number(lc), Some(5))
+  @debug.assert_eq(dev_lifecycle_pr_number(lc), Some(5))
 }
 
 ///|
@@ -606,17 +609,17 @@ test "dev_lifecycle_pr_number extracts from ExitRequestedDeferred" {
     pr_number=3,
     state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
   )
-  assert_eq(dev_lifecycle_pr_number(lc), Some(3))
+  @debug.assert_eq(dev_lifecycle_pr_number(lc), Some(3))
 }
 
 ///|
 test "dev_lifecycle_pr_number returns None for Working" {
-  assert_eq(dev_lifecycle_pr_number(@phase.DevLifecycle::Working), None)
+  @debug.assert_eq(dev_lifecycle_pr_number(@phase.DevLifecycle::Working), None)
 }
 
 ///|
 test "dev_lifecycle_pr_number returns None for Exitable" {
-  assert_eq(dev_lifecycle_pr_number(@phase.DevLifecycle::Exitable), None)
+  @debug.assert_eq(dev_lifecycle_pr_number(@phase.DevLifecycle::Exitable), None)
 }
 
 ///|
@@ -627,7 +630,7 @@ test "workflow_state_pr_number extracts from Dev workflow" {
       state=@phase.ReviewOwnership::OpenUnreviewed(url=""),
     ),
   )
-  assert_eq(workflow_state_pr_number(ws), Some(15))
+  @debug.assert_eq(workflow_state_pr_number(ws), Some(15))
 }
 
 ///|
@@ -635,7 +638,7 @@ test "workflow_state_pr_number extracts from Supervisor OwnPRFiled" {
   let ws = @phase.WorkflowState::Supervisor(
     @phase.SupervisorLifecycle::OwnPRFiled(number=22, url="https://ex/22"),
   )
-  assert_eq(workflow_state_pr_number(ws), Some(22))
+  @debug.assert_eq(workflow_state_pr_number(ws), Some(22))
 }
 
 ///|
@@ -643,5 +646,5 @@ test "workflow_state_pr_number returns None for Supervisor Planning" {
   let ws = @phase.WorkflowState::Supervisor(
     @phase.SupervisorLifecycle::Planning,
   )
-  assert_eq(workflow_state_pr_number(ws), None)
+  @debug.assert_eq(workflow_state_pr_number(ws), None)
 }

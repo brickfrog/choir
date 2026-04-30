@@ -3,9 +3,9 @@ test "spawn_worker_ok_response matches spawned envelope" {
   match spawn_worker_ok_response("main.w1") {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("spawned")))
-      assert_eq(map.get("agent_id"), Some(String::to_json("main.w1")))
-      assert_eq(map.get("agent_ids"), Some(String::to_json("main.w1")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.w1")))
+      @debug.assert_eq(map.get("agent_ids"), Some(String::to_json("main.w1")))
     }
     _ => fail("expected ok")
   }
@@ -46,7 +46,7 @@ test "spawn_worker_plan builds inline worker spec registry row and response" {
   match plan.ok_response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("agent_id"), Some(String::to_json("develop.w1")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("develop.w1")))
     }
     _ => fail("expected ok")
   }
@@ -79,7 +79,7 @@ async test "interpret_spawn_worker registers agent on success" {
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
     }
     _ => fail("expected ok")
   }
@@ -115,16 +115,22 @@ test "spawn_remote_plan builds dev claude worktree spec and spawned response" {
   assert_eq(plan.spec.parent_id, "main.tl")
   assert_eq(plan.spec.parent_branch, "main")
   assert_eq(plan.spec.reuse_workspace, false)
-  assert_eq(plan.spec.workspace_slug, None)
-  assert_eq(plan.spec.reuse_git_branch, None)
+  @debug.assert_eq(plan.spec.workspace_slug, None)
+  @debug.assert_eq(plan.spec.reuse_git_branch, None)
   assert_eq(plan.spec.spawn_depth, 0)
   match plan.ok_response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("spawned")))
-      assert_eq(map.get("agent_id"), Some(String::to_json("main.leaf-a")))
-      assert_eq(map.get("slug"), Some(String::to_json("leaf-a")))
-      assert_eq(map.get("host"), Some(String::to_json("user@remote.example")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(
+        map.get("agent_id"),
+        Some(String::to_json("main.leaf-a")),
+      )
+      @debug.assert_eq(map.get("slug"), Some(String::to_json("leaf-a")))
+      @debug.assert_eq(
+        map.get("host"),
+        Some(String::to_json("user@remote.example")),
+      )
     }
     _ => fail("expected ok response")
   }
@@ -149,10 +155,10 @@ async test "interpret_spawn_remote returns plan ok when runner succeeds" {
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("spawned")))
-      assert_eq(map.get("agent_id"), Some(String::to_json("pb.s1")))
-      assert_eq(map.get("slug"), Some(String::to_json("s1")))
-      assert_eq(map.get("host"), Some(String::to_json("h")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("pb.s1")))
+      @debug.assert_eq(map.get("slug"), Some(String::to_json("s1")))
+      @debug.assert_eq(map.get("host"), Some(String::to_json("h")))
     }
     _ => fail("expected ok")
   }
@@ -200,15 +206,15 @@ test "spawn_gemini_plan builds dev gemini worktree spec and spawned response" {
   assert_eq(plan.spec.parent_id, "main.tl")
   assert_eq(plan.spec.parent_branch, "main")
   assert_eq(plan.spec.reuse_workspace, false)
-  assert_eq(plan.spec.workspace_slug, None)
-  assert_eq(plan.spec.reuse_git_branch, None)
+  @debug.assert_eq(plan.spec.workspace_slug, None)
+  @debug.assert_eq(plan.spec.reuse_git_branch, None)
   assert_eq(plan.spec.spawn_depth, 0)
   match plan.ok_response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("spawned")))
-      assert_eq(map.get("agent_id"), Some(String::to_json("main.g1")))
-      assert_eq(map.get("slug"), Some(String::to_json("g1")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.g1")))
+      @debug.assert_eq(map.get("slug"), Some(String::to_json("g1")))
     }
     _ => fail("expected ok response")
   }
@@ -230,9 +236,9 @@ async test "interpret_spawn_gemini returns plan ok when runner succeeds" {
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("spawned")))
-      assert_eq(map.get("agent_id"), Some(String::to_json("pb.gem")))
-      assert_eq(map.get("slug"), Some(String::to_json("gem")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("pb.gem")))
+      @debug.assert_eq(map.get("slug"), Some(String::to_json("gem")))
     }
     _ => fail("expected ok")
   }

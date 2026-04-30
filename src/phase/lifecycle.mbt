@@ -741,7 +741,7 @@ pub fn failure_reason_message(reason : FailureReason) -> String {
 pub fn classify_failure(message : String) -> FailureReason {
   let lower = message.to_lower()
   let first_line = match lower.find("\n") {
-    Some(i) => lower[:i].to_string()
+    Some(i) => lower[:i].to_owned()
     None => lower
   }
   if lower.contains("model at capacity") ||
@@ -807,7 +807,7 @@ pub fn last_segment_after_dot(value : String) -> String {
   if last_dot == -1 {
     value
   } else {
-    value[last_dot + 1:].to_string()
+    value[last_dot + 1:].to_owned()
   }
 }
 

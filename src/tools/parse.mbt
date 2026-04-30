@@ -26,14 +26,14 @@ pub fn ParseError::message(self : ParseError) -> String {
 
 ///|
 fn parse_int(s : String) -> Int? {
-  Some(@string.parse_int(s.trim().to_string())) catch {
+  Some(@string.parse_int(s.trim().to_owned())) catch {
     _ => None
   }
 }
 
 ///|
 fn parse_double_arg(s : String) -> Double? {
-  let parsed = @json.parse(s.trim().to_string()) catch { _ => return None }
+  let parsed = @json.parse(s.trim().to_owned()) catch { _ => return None }
   match parsed {
     Number(n, ..) => Some(n)
     _ => None
@@ -106,7 +106,7 @@ fn parse_optional_spawn_flag(
 ///|
 fn lookup_parent_session_id(project_dir : String, args : ToolArgs) -> String? {
   match tool_args_get(args, "parent_session_id") {
-    Some(v) => if v.trim() != "" { return Some(v.trim().to_string()) }
+    Some(v) => if v.trim() != "" { return Some(v.trim().to_owned()) }
     None => ()
   }
   if !tool_args_get_bool(args, "fork_session") {
@@ -126,7 +126,7 @@ fn lookup_parent_session_id(project_dir : String, args : ToolArgs) -> String? {
     "/.choir/sessions/claude/" +
     caller_id +
     ".session_id"
-  let session_id = @sys.read_file(path).trim().to_string()
+  let session_id = @sys.read_file(path).trim().to_owned()
   if session_id == "" {
     None
   } else {
@@ -244,7 +244,7 @@ pub fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
   }
   let review_context = match tool_args_get(args, "review_context") {
     Some(v) => {
-      let t = v.trim().to_string()
+      let t = v.trim().to_owned()
       if t == "" {
         None
       } else {
@@ -320,7 +320,7 @@ fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, ParseError] {
 /// Split a "tasks" value into individual task strings.
 /// Accepts JSON array format ["task1","task2"] or newline-separated.
 fn parse_tasks_array(raw : String) -> Array[String] {
-  let trimmed = raw.trim().to_string()
+  let trimmed = raw.trim().to_owned()
   if trimmed.length() > 0 && trimmed[0] == '[' {
     // JSON array — extract quoted strings
     let tasks : Array[String] = []
@@ -334,7 +334,7 @@ fn parse_tasks_array(raw : String) -> Array[String] {
           }
           j = j + 1
         }
-        let task = trimmed[i + 1:j].to_string()
+        let task = trimmed[i + 1:j].to_owned()
         if task != "" {
           tasks.push(task)
         }
@@ -350,7 +350,7 @@ fn parse_tasks_array(raw : String) -> Array[String] {
     let buf = StringBuilder::new()
     for c in trimmed {
       if c == '\n' {
-        let part = buf.to_string().trim().to_string()
+        let part = buf.to_string().trim().to_owned()
         if part != "" {
           parts.push(part)
         }
@@ -359,7 +359,7 @@ fn parse_tasks_array(raw : String) -> Array[String] {
         buf.write_char(c)
       }
     }
-    let last = buf.to_string().trim().to_string()
+    let last = buf.to_string().trim().to_owned()
     if last != "" {
       parts.push(last)
     }
@@ -399,7 +399,7 @@ pub fn slugify_task(task : String, index : Int) -> String {
     "leaf-" + index.to_string()
     // Trim trailing hyphen
   } else if result.has_suffix("-") {
-    result[0:result.length() - 1].to_string()
+    result[0:result.length() - 1].to_owned()
   } else {
     result
   }
@@ -407,7 +407,7 @@ pub fn slugify_task(task : String, index : Int) -> String {
 
 ///|
 fn prompt_spec_with_task(spec : PromptSpec, task : String) -> PromptSpec {
-  let trimmed = task.trim().to_string()
+  let trimmed = task.trim().to_owned()
   {
     ..spec,
     task: trimmed,
@@ -555,7 +555,7 @@ fn parse_depends_on(args : ToolArgs) -> Result[Array[String], ParseError] {
       for item in items {
         match item {
           String(s) => {
-            let trimmed = s.trim().to_string()
+            let trimmed = s.trim().to_owned()
             if trimmed != "" {
               out.push(trimmed)
             }
@@ -572,7 +572,7 @@ fn parse_depends_on(args : ToolArgs) -> Result[Array[String], ParseError] {
       Ok(out)
     }
     Some(String(raw)) => {
-      let trimmed = raw.trim().to_string()
+      let trimmed = raw.trim().to_owned()
       if trimmed == "" {
         return Ok([])
       }
@@ -595,7 +595,7 @@ fn parse_depends_on(args : ToolArgs) -> Result[Array[String], ParseError] {
           for item in items {
             match item {
               String(s) => {
-                let item_trimmed = s.trim().to_string()
+                let item_trimmed = s.trim().to_owned()
                 if item_trimmed != "" {
                   out.push(item_trimmed)
                 }
@@ -728,7 +728,7 @@ pub fn parse_fork_wave_args(
   // intentional (not an error). Explicit "tl" is required when forking sub-TL
   // waves. Unknown values still hard-error below.
   let role_raw = tool_args_get(args, "role").unwrap_or("dev")
-  let normalized_role = role_raw.trim().to_lower().to_string()
+  let normalized_role = role_raw.trim().to_lower().to_owned()
   let role_norm = if normalized_role == "" { "dev" } else { normalized_role }
   let child_role = match role_norm {
     "dev" => @types.Role::Dev
@@ -737,7 +737,7 @@ pub fn parse_fork_wave_args(
   }
   let review_context = match tool_args_get(args, "review_context") {
     Some(v) => {
-      let t = v.trim().to_string()
+      let t = v.trim().to_owned()
       if t == "" {
         None
       } else {
@@ -756,7 +756,7 @@ pub fn parse_fork_wave_args(
   }
   let review_mode = match tool_args_get(args, "review_mode") {
     Some(v) => {
-      let t = v.trim().to_string()
+      let t = v.trim().to_owned()
       if t == "" {
         None
       } else {
@@ -1027,7 +1027,7 @@ fn parse_register_args(
   let spawn_depth = match tool_args_get(args, "spawn_depth") {
     None => 0
     Some(s) => {
-      let t = s.trim().to_string()
+      let t = s.trim().to_owned()
       if t == "" {
         0
       } else {
@@ -1239,7 +1239,7 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
     },
     review_mode: match tool_args_get(args, "review_mode") {
       Some(v) => {
-        let trimmed = v.trim().to_string()
+        let trimmed = v.trim().to_owned()
         if trimmed == "" {
           None
         } else {
@@ -1322,7 +1322,7 @@ fn parse_report_usage_args(
   }
   let cost_usd = match tool_args_get(args, "cost_usd") {
     Some(raw) =>
-      if raw.trim().to_string() == "" {
+      if raw.trim().to_owned() == "" {
         None
       } else {
         match parse_double_arg(raw) {
@@ -1533,12 +1533,7 @@ fn parse_tool_request(
     }
     "agent_list" => {
       let parent_id = match tool_args_get(args, "parent_id") {
-        Some(v) =>
-          if v.trim() == "" {
-            None
-          } else {
-            Some(v.trim().to_string())
-          }
+        Some(v) => if v.trim() == "" { None } else { Some(v.trim().to_owned()) }
         None => None
       }
       let include_inactive = tool_args_get_bool(args, "include_inactive")
@@ -1609,18 +1604,18 @@ test "lookup_parent_session_id rejects traversal caller_id" {
     "/tmp/irrelevant",
     tool_args_from_map({ "fork_session": "true", "caller_id": "../../etc" }),
   )
-  assert_eq(traversal, None)
+  @debug.assert_eq(traversal, None)
   let slash = lookup_parent_session_id(
     "/tmp/irrelevant",
     tool_args_from_map({ "fork_session": "true", "caller_id": "a/b" }),
   )
-  assert_eq(slash, None)
+  @debug.assert_eq(slash, None)
   let ok_shape = lookup_parent_session_id(
     "/tmp/choir-no-such-dir-xyz",
     tool_args_from_map({ "fork_session": "true", "caller_id": "main.tl" }),
   )
   // Valid slug, but file doesn't exist — read_file returns "" → None.
-  assert_eq(ok_shape, None)
+  @debug.assert_eq(ok_shape, None)
 }
 
 ///|
@@ -1713,7 +1708,7 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
 ///|
 test "parse_merge_pr_args leaves absent review_mode unset" {
   match parse_merge_pr_args(tool_args_from_map({ "pr_number": "229" })) {
-    Ok(args) => assert_eq(args.review_mode, None)
+    Ok(args) => @debug.assert_eq(args.review_mode, None)
     Err(e) => fail("unexpected error: " + e.message())
   }
 }
@@ -1724,7 +1719,8 @@ test "parse_merge_pr_args trims review_mode" {
     parse_merge_pr_args(
       tool_args_from_map({ "pr_number": "229", "review_mode": " iterative " }),
     ) {
-    Ok(args) => assert_eq(args.review_mode, Some(@types.ReviewMode::Iterative))
+    Ok(args) =>
+      @debug.assert_eq(args.review_mode, Some(@types.ReviewMode::Iterative))
     Err(e) => fail("unexpected error: " + e.message())
   }
 }
@@ -1735,7 +1731,7 @@ test "parse_merge_pr_args treats empty review_mode as unset" {
     parse_merge_pr_args(
       tool_args_from_map({ "pr_number": "229", "review_mode": "  " }),
     ) {
-    Ok(args) => assert_eq(args.review_mode, None)
+    Ok(args) => @debug.assert_eq(args.review_mode, None)
     Err(e) => fail("unexpected error: " + e.message())
   }
 }

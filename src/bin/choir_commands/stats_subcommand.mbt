@@ -248,7 +248,7 @@ pub(all) struct StatsCliArgs {
 
 ///|
 fn parse_limit(raw : String) -> Int? {
-  Some(@string.parse_int(raw.trim().to_string())) catch {
+  Some(@string.parse_int(raw.trim().to_owned())) catch {
     _ => None
   }
 }

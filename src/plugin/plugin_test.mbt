@@ -85,10 +85,11 @@ test "parse_response ok" {
   let resp = "{\"ok\":true,\"status\":\"done\",\"branch\":\"feat-x\",\"count\":3}"
   match @plugin.parse_response(resp) {
     Ok(parsed) => {
-      assert_eq(parsed.ok_field("status"), Some("done"))
-      assert_eq(parsed.ok_field("branch"), Some("feat-x"))
+      @debug.assert_eq(parsed.ok_field("status"), Some("done"))
+      @debug.assert_eq(parsed.ok_field("branch"), Some("feat-x"))
       match parsed.ok_payload() {
-        Some(fields) => assert_eq(fields.get_json("count"), Some((3).to_json()))
+        Some(fields) =>
+          @debug.assert_eq(fields.get_json("count"), Some((3).to_json()))
         None => fail("expected payload")
       }
     }

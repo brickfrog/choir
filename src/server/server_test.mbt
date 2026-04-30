@@ -586,7 +586,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
   }
   let resp = state.handle_with_runner_and_capture(req, runner~, capture~)
   assert_true(resp.is_ok())
-  assert_eq(resp.ok_field("status"), Some("merged"))
+  @debug.assert_eq(resp.ok_field("status"), Some("merged"))
   assert_true(state.poller.get(pr_number) == None)
   match @phase.read_lifecycle(project_dir, child_id) {
     Some(lifecycle) => {
@@ -782,8 +782,8 @@ async test "replay_pending_outbox_with replays pending message and marks it deli
   let message = messages[0]
   assert_eq(message.delivery_state, @outbox.OutboxDeliveryState::Delivered)
   assert_eq(message.delivery_attempts, 1)
-  assert_eq(message.last_attempt_at, Some(150L))
-  assert_eq(message.last_error, None)
+  @debug.assert_eq(message.last_attempt_at, Some(150L))
+  @debug.assert_eq(message.last_error, None)
 }
 
 ///|
@@ -835,8 +835,8 @@ async test "replay_pending_outbox_with replays pending root delivery before root
   assert_eq(messages.length(), 1)
   assert_eq(messages[0].delivery_state, @outbox.OutboxDeliveryState::Delivered)
   assert_eq(messages[0].delivery_attempts, 1)
-  assert_eq(messages[0].last_attempt_at, Some(150L))
-  assert_eq(messages[0].last_error, None)
+  @debug.assert_eq(messages[0].last_attempt_at, Some(150L))
+  @debug.assert_eq(messages[0].last_error, None)
 }
 
 ///|
@@ -899,7 +899,7 @@ async test "sweep_outbox marks expired pending messages and compacts recipient f
   )
   let mut nonempty_lines = 0
   for line in content.split("\n") {
-    if line.to_string().trim().to_string() != "" {
+    if line.to_owned().trim().to_owned() != "" {
       nonempty_lines = nonempty_lines + 1
     }
   }
@@ -1031,7 +1031,7 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
 
   assert_true(sent_parent_merge)
   assert_true(closed_leaf)
-  assert_eq(state.poller.get(21), None)
+  @debug.assert_eq(state.poller.get(21), None)
   match @phase.read_lifecycle(project_dir, leaf_id) {
     Some(lifecycle) => {
       assert_eq(

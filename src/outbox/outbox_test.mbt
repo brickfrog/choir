@@ -26,8 +26,8 @@ test "load_recipient_outbox_from_content keeps latest snapshot per message id" {
   assert_eq(message.message_id, "msg-1")
   assert_eq(message.delivery_state, Pending)
   assert_eq(message.delivery_attempts, 1)
-  assert_eq(message.last_attempt_at, Some(101L))
-  assert_eq(message.last_error, Some("temporary failure"))
+  @debug.assert_eq(message.last_attempt_at, Some(101L))
+  @debug.assert_eq(message.last_error, Some("temporary failure"))
 }
 
 ///|
@@ -50,7 +50,7 @@ test "compact_recipient_outbox rewrites latest snapshots only" {
   let content = @sys.read_file(recipient_outbox_path(project_dir, "recipient"))
   let mut nonempty_lines = 0
   for line in content.split("\n") {
-    if line.to_string().trim().to_string() != "" {
+    if line.to_owned().trim().to_owned() != "" {
       nonempty_lines = nonempty_lines + 1
     }
   }

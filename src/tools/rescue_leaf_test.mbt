@@ -48,8 +48,8 @@ test "rescue_leaf_spawn_plan builds reuse spec and ids" {
       assert_eq(plan.spec.parent_branch, "main")
       assert_eq(plan.spec.parent_id, "main.tl")
       assert_eq(plan.spec.reuse_workspace, true)
-      assert_eq(plan.spec.workspace_slug, Some("old-leaf"))
-      assert_eq(plan.spec.reuse_git_branch, Some("main.old-leaf"))
+      @debug.assert_eq(plan.spec.workspace_slug, Some("old-leaf"))
+      @debug.assert_eq(plan.spec.reuse_git_branch, Some("main.old-leaf"))
       assert_eq(plan.spec.agent_type, @types.AgentType::MoonPilot)
       assert_eq(plan.spec.spawn_depth, 0)
     }
@@ -167,10 +167,13 @@ test "rescue_leaf_ok_response matches spawned envelope" {
   match rescue_leaf_ok_response("main.new", "main.old", "new") {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("spawned")))
-      assert_eq(map.get("agent_id"), Some(String::to_json("main.new")))
-      assert_eq(map.get("from_agent_id"), Some(String::to_json("main.old")))
-      assert_eq(map.get("slug"), Some(String::to_json("new")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.new")))
+      @debug.assert_eq(
+        map.get("from_agent_id"),
+        Some(String::to_json("main.old")),
+      )
+      @debug.assert_eq(map.get("slug"), Some(String::to_json("new")))
     }
     _ => fail("expected ok")
   }

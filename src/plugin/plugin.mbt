@@ -43,11 +43,11 @@ pub fn parse_plugins_json(s : String) -> Array[PluginDef] {
 /// Returns true if this plugin handles the given tool name.
 /// A plugin with an empty tools string is a catch-all.
 pub fn PluginDef::handles(self : PluginDef, tool_name : String) -> Bool {
-  if self.tools.trim().to_string() == "" {
+  if self.tools.trim().to_owned() == "" {
     return true
   }
   for part in self.tools.split(",") {
-    if part.trim().to_string() == tool_name {
+    if part.trim().to_owned() == tool_name {
       return true
     }
   }

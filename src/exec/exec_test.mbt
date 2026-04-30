@@ -36,13 +36,13 @@ test "resolve_executable_in_path_from_path_var misses when absent" {
   let got = resolve_executable_in_path_from_path_var(
     "___choir_test_nonexistent_tool___", "/__nope_choir__/bin:/__also_bad_choir__",
   )
-  assert_eq(got, None)
+  @debug.assert_eq(got, None)
 }
 
 ///|
 test "resolve_executable_in_path_from_path_var finds sh under /bin when present" {
   let got = resolve_executable_in_path_from_path_var("sh", "/bin")
-  assert_eq(got, Some("/bin/sh"))
+  @debug.assert_eq(got, Some("/bin/sh"))
 }
 
 ///|
@@ -65,7 +65,7 @@ test "dev_entr_find_src_mbt_command matches former pipeline first find" {
   let c = dev_entr_find_src_mbt_command()
   assert_eq(c.program, "find")
   assert_eq(c.args, ["src", "-name", "*.mbt"])
-  assert_eq(c.workdir, None)
+  @debug.assert_eq(c.workdir, None)
 }
 
 ///|

@@ -72,9 +72,9 @@ test "pending_wave_to_json_string round-trip preserves args" {
       assert_eq(round_tripped.args.tasks, ["work"])
       assert_eq(round_tripped.args.has_per_leaf_tasks, false)
       assert_eq(round_tripped.args.count, 1)
-      assert_eq(round_tripped.args.review_context, Some("ctx"))
-      assert_eq(round_tripped.args.automerge, Some(true))
-      assert_eq(
+      @debug.assert_eq(round_tripped.args.review_context, Some("ctx"))
+      @debug.assert_eq(round_tripped.args.automerge, Some(true))
+      @debug.assert_eq(
         round_tripped.args.review_mode,
         Some(@types.ReviewMode::SinglePass),
       )
@@ -88,9 +88,9 @@ test "pending_wave_to_json_string round-trip preserves args" {
 
 ///|
 test "parse_pending_wave returns None on garbage input" {
-  assert_eq(@tools.parse_pending_wave(""), None)
-  assert_eq(@tools.parse_pending_wave("not json"), None)
-  assert_eq(@tools.parse_pending_wave("[1,2,3]"), None)
+  @debug.assert_eq(@tools.parse_pending_wave(""), None)
+  @debug.assert_eq(@tools.parse_pending_wave("not json"), None)
+  @debug.assert_eq(@tools.parse_pending_wave("[1,2,3]"), None)
 }
 
 ///|
@@ -574,8 +574,11 @@ async test "interpret_kill_agent deletes a malformed pending wave file" {
   match resp {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("killed_pending_wave")))
-      assert_eq(map.get("wave_id"), Some(String::to_json(wave_id)))
+      @debug.assert_eq(
+        map.get("status"),
+        Some(String::to_json("killed_pending_wave")),
+      )
+      @debug.assert_eq(map.get("wave_id"), Some(String::to_json(wave_id)))
     }
     _ => fail("expected killed_pending_wave ok response")
   }
@@ -605,7 +608,10 @@ async test "interpret_kill_agent deletes a parseable pending wave file" {
   match resp {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("killed_pending_wave")))
+      @debug.assert_eq(
+        map.get("status"),
+        Some(String::to_json("killed_pending_wave")),
+      )
     }
     _ => fail("expected killed_pending_wave ok response")
   }

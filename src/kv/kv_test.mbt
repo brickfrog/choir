@@ -108,7 +108,7 @@ test "KvStore_get returns none_for_missing_valid_key" {
   let project_dir = "/tmp/choir-kv-missing-" + @sys.get_pid().to_string()
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let kv = KvStore::new(project_dir)
-  assert_eq(kv.get("missing-key"), None)
+  @debug.assert_eq(kv.get("missing-key"), None)
 }
 
 ///|
@@ -118,7 +118,7 @@ test "KvStore_get returns none_for_empty_file" {
   ignore(@sys.create_dir_all(kv_dir))
   ignore(@sys.write_file_sync(kv_dir + "/my-empty-key", ""))
   let kv = KvStore::new(project_dir)
-  assert_eq(kv.get("my-empty-key"), None)
+  @debug.assert_eq(kv.get("my-empty-key"), None)
 }
 
 ///|
@@ -128,7 +128,7 @@ test "KvStore_get trims surrounding whitespace including newline" {
   ignore(@sys.create_dir_all(kv_dir))
   ignore(@sys.write_file_sync(kv_dir + "/review-state", "true\n"))
   let kv = KvStore::new(project_dir)
-  assert_eq(kv.get("review-state"), Some("true"))
+  @debug.assert_eq(kv.get("review-state"), Some("true"))
 }
 
 ///|

@@ -73,7 +73,7 @@ pub fn KvStore::get(self : KvStore, key : String) -> String? {
       let path = self.project_dir + "/.choir/kv/" + key
       // @sys.read_file returns "" for missing/unreadable files (see sys/io.mbt); None is returned for empty result.
       // KvStore::get trims for internal gate comparisons; kv_get returns raw contents (see dispatch.mbt).
-      let raw = @sys.read_file(path).trim().to_string()
+      let raw = @sys.read_file(path).trim().to_owned()
       if raw == "" {
         None
       } else {

@@ -27,9 +27,9 @@ test "HookInput::from_json_string parses valid SessionStart" {
   match HookInput::from_json_string(json) {
     Some(input) => {
       assert_eq(input.event, HookEvent::SessionStart)
-      assert_eq(input.session_id, Some("sess-1"))
-      assert_eq(input.agent_id, Some("agent-123"))
-      assert_eq(input.role, Some(@types.Role::Dev))
+      @debug.assert_eq(input.session_id, Some("sess-1"))
+      @debug.assert_eq(input.agent_id, Some("agent-123"))
+      @debug.assert_eq(input.role, Some(@types.Role::Dev))
     }
     None => panic()
   }
@@ -41,7 +41,7 @@ test "HookInput::from_json_string parses valid PreToolUse" {
   match HookInput::from_json_string(json) {
     Some(input) => {
       assert_eq(input.event, HookEvent::PreToolUse)
-      assert_eq(input.tool_name, Some("read_file"))
+      @debug.assert_eq(input.tool_name, Some("read_file"))
     }
     None => panic()
   }
@@ -52,7 +52,7 @@ test "HookInput::from_json_string maps unknown exit_reason to Shutdown" {
   let json = "{\"event\":\"AgentExit\",\"agent_id\":\"a1\",\"exit_reason\":\"future_reason\"}"
   match HookInput::from_json_string(json) {
     Some(input) =>
-      assert_eq(input.exit_reason, Some(@types.ExitReason::Shutdown))
+      @debug.assert_eq(input.exit_reason, Some(@types.ExitReason::Shutdown))
     None => panic()
   }
 }

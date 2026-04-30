@@ -21,7 +21,7 @@ fn read_counter(path : String) -> Int {
   let content = @sys.read_file(path)
   let mut count = 0
   for line in content.split("\n") {
-    if line.to_string().trim().to_string() != "" {
+    if line.to_owned().trim().to_owned() != "" {
       count = count + 1
     }
   }
@@ -215,7 +215,7 @@ test "parse_gh_repo_view_output extracts owner and repo" {
 
 ///|
 test "parse_gh_repo_view_output returns None on malformed json" {
-  assert_eq(parse_gh_repo_view_output("{\"owner\":{},\"name\":1}"), None)
+  @debug.assert_eq(parse_gh_repo_view_output("{\"owner\":{},\"name\":1}"), None)
 }
 
 ///|

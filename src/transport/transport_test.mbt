@@ -6,8 +6,8 @@ test "parse_request success" {
       assert_eq(req.req_method, "tools/call")
       assert_eq(req.role, @types.Role::TL)
       assert_eq(req.name, "fork_wave")
-      assert_eq(req.args.get("slug"), Some("feat-a"))
-      assert_eq(req.args.get("count"), Some("3"))
+      @debug.assert_eq(req.args.get("slug"), Some("feat-a"))
+      @debug.assert_eq(req.args.get("count"), Some("3"))
     }
     Err(e) => fail("Parse failed: \{e}")
   }
@@ -21,7 +21,7 @@ test "parse_request whitespace tolerance" {
       assert_eq(req.req_method, "tools/call")
       assert_eq(req.role, @types.Role::Dev)
       assert_eq(req.name, "test")
-      assert_eq(req.args.get("k"), Some("v"))
+      @debug.assert_eq(req.args.get("k"), Some("v"))
     }
     Err(e) => fail("Parse failed: \{e}")
   }
@@ -32,8 +32,8 @@ test "parse_args with commas and colons in values" {
   let input = "{\"method\":\"call\",\"role\":\"tl\",\"name\":\"test\",\"args\":{\"msg\":\"hello, world: how are you?\",\"key\":\"val\"}}"
   match parse_request(input) {
     Ok(req) => {
-      assert_eq(req.args.get("msg"), Some("hello, world: how are you?"))
-      assert_eq(req.args.get("key"), Some("val"))
+      @debug.assert_eq(req.args.get("msg"), Some("hello, world: how are you?"))
+      @debug.assert_eq(req.args.get("key"), Some("val"))
     }
     Err(e) => fail("Parse failed: \{e}")
   }
@@ -44,11 +44,11 @@ test "parse_request preserves primitive arg literals" {
   let input = "{\"method\":\"tools/call\",\"role\":\"tl\",\"name\":\"fork_wave\",\"args\":{\"count\":3,\"fork_session\":true,\"empty\":null}}"
   match parse_request(input) {
     Ok(req) => {
-      assert_eq(req.args.get("count"), Some("3"))
-      assert_eq(req.args.get("fork_session"), Some("true"))
-      assert_eq(req.args.get("empty"), Some("null"))
-      assert_eq(req.args.get_json("count"), Some((3).to_json()))
-      assert_eq(req.args.get_json("fork_session"), Some(true.to_json()))
+      @debug.assert_eq(req.args.get("count"), Some("3"))
+      @debug.assert_eq(req.args.get("fork_session"), Some("true"))
+      @debug.assert_eq(req.args.get("empty"), Some("null"))
+      @debug.assert_eq(req.args.get_json("count"), Some((3).to_json()))
+      @debug.assert_eq(req.args.get_json("fork_session"), Some(true.to_json()))
     }
     Err(e) => fail("Parse failed: \{e}")
   }
@@ -79,7 +79,7 @@ test "format_response ok" {
   let resp = @types.Response::ok(result)
   assert_true(resp.is_ok())
   assert_eq(resp.status_tag(), "ok")
-  assert_eq(resp.ok_field("agent_id"), Some("main.feat-a"))
+  @debug.assert_eq(resp.ok_field("agent_id"), Some("main.feat-a"))
   let output = format_response(resp)
   // Json key order may vary, so check fields individually
   let json = @json.parse(output) catch {
@@ -92,12 +92,12 @@ test "format_response ok" {
     fail("expected object")
     return
   }
-  assert_eq(obj.get("ok"), Some(true.to_json()))
+  @debug.assert_eq(obj.get("ok"), Some(true.to_json()))
   guard obj.get("result") is Some(Object(res)) else {
     fail("expected result")
     return
   }
-  assert_eq(res.get("agent_id"), Some("main.feat-a".to_json()))
+  @debug.assert_eq(res.get("agent_id"), Some("main.feat-a".to_json()))
 }
 
 ///|
@@ -182,7 +182,7 @@ test "format_response err" {
   let resp = @types.Response::Err("agent not found")
   assert_false(resp.is_ok())
   assert_eq(resp.status_tag(), "error")
-  assert_eq(resp.error_message(), Some("agent not found"))
+  @debug.assert_eq(resp.error_message(), Some("agent not found"))
   let output = format_response(resp)
   let json = @json.parse(output) catch {
     _ => {
@@ -194,8 +194,8 @@ test "format_response err" {
     fail("expected object")
     return
   }
-  assert_eq(obj.get("ok"), Some(false.to_json()))
-  assert_eq(obj.get("error"), Some("agent not found".to_json()))
+  @debug.assert_eq(obj.get("ok"), Some(false.to_json()))
+  @debug.assert_eq(obj.get("error"), Some("agent not found".to_json()))
 }
 
 ///|
@@ -203,11 +203,11 @@ test "parse_response preserves primitive result values" {
   let input = "{\"ok\": true, \"result\": {\"status\":\"ok\",\"tracked\":true,\"pr_number\":22}}"
   match parse_response(input) {
     Ok(resp) => {
-      assert_eq(resp.ok_field("status"), Some("ok"))
+      @debug.assert_eq(resp.ok_field("status"), Some("ok"))
       match resp.ok_payload() {
         Some(fields) => {
-          assert_eq(fields.get_json("tracked"), Some(true.to_json()))
-          assert_eq(fields.get_json("pr_number"), Some((22).to_json()))
+          @debug.assert_eq(fields.get_json("tracked"), Some(true.to_json()))
+          @debug.assert_eq(fields.get_json("pr_number"), Some((22).to_json()))
         }
         None => fail("expected payload")
       }

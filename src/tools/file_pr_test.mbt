@@ -39,8 +39,8 @@ test "file_pr_plan builds tracked result when tracking enabled" {
   match plan.response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("pr_created")))
-      assert_eq(map.get("tracked"), Some(Bool::to_json(true)))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("pr_created")))
+      @debug.assert_eq(map.get("tracked"), Some(Bool::to_json(true)))
     }
     _ => fail("expected OK response")
   }
@@ -62,12 +62,12 @@ test "file_pr_plan omits tracked PR when tracking disabled" {
     state: "OPEN",
   }
   let plan = file_pr_plan(args, "main", pr, false)
-  assert_eq(plan.tracked_pr, None)
+  @debug.assert_eq(plan.tracked_pr, None)
   match plan.response {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("tracked"), Some(Bool::to_json(false)))
-      assert_eq(map.get("pr_number"), Some(Int::to_json(9)))
+      @debug.assert_eq(map.get("tracked"), Some(Bool::to_json(false)))
+      @debug.assert_eq(map.get("pr_number"), Some(Int::to_json(9)))
     }
     _ => fail("expected OK response")
   }
@@ -100,10 +100,10 @@ test "file_pr_post_success_effects gates poller track and parent notify on capab
   }
   let plan_no_poller = file_pr_plan(args, "main", pr, true)
   let no_poller = file_pr_post_success_effects(plan_no_poller, false, true)
-  assert_eq(no_poller.poller_track, None)
+  @debug.assert_eq(no_poller.poller_track, None)
   let plan_no_reg = file_pr_plan(args, "main", pr, true)
   let no_registry = file_pr_post_success_effects(plan_no_reg, true, false)
-  assert_eq(no_registry.notify_message_for_parent, None)
+  @debug.assert_eq(no_registry.notify_message_for_parent, None)
 }
 
 ///|
@@ -215,8 +215,8 @@ async test "interpret_file_pr_post_success returns plan ok without poller or reg
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("pr_created")))
-      assert_eq(map.get("pr_number"), Some(Int::to_json(21)))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("pr_created")))
+      @debug.assert_eq(map.get("pr_number"), Some(Int::to_json(21)))
     }
     _ => fail("expected ok")
   }
@@ -333,7 +333,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("pr_number"), Some(Int::to_json(88)))
+      @debug.assert_eq(map.get("pr_number"), Some(Int::to_json(88)))
     }
     _ => fail("expected ok")
   }
@@ -401,7 +401,7 @@ async test "interpret_file_pr_post_success parent missing appends resolve failur
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("pr_number"), Some(Int::to_json(3)))
+      @debug.assert_eq(map.get("pr_number"), Some(Int::to_json(3)))
     }
     _ => fail("expected ok")
   }
@@ -425,8 +425,8 @@ test "file_pr_preflight_create_inputs copies branch paths and title/body" {
   assert_eq(ins.branch, "main.leaf")
   assert_eq(ins.parent_branch, "main")
   assert_eq(ins.file_pr_dir, "/tmp/wt")
-  assert_eq(ins.title, Some("title"))
-  assert_eq(ins.body, Some("body"))
+  @debug.assert_eq(ins.title, Some("title"))
+  @debug.assert_eq(ins.body, Some("body"))
 }
 
 ///|
@@ -643,13 +643,13 @@ async test "interpret_file_pr ok response matches full pipeline" {
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("pr_created")))
-      assert_eq(map.get("pr_number"), Some(Int::to_json(42)))
-      assert_eq(
+      @debug.assert_eq(map.get("status"), Some(String::to_json("pr_created")))
+      @debug.assert_eq(map.get("pr_number"), Some(Int::to_json(42)))
+      @debug.assert_eq(
         map.get("pr_url"),
         Some(String::to_json("https://example.test/pr/42")),
       )
-      assert_eq(map.get("tracked"), Some(Bool::to_json(false)))
+      @debug.assert_eq(map.get("tracked"), Some(Bool::to_json(false)))
     }
     _ => fail("expected ok")
   }
@@ -659,7 +659,7 @@ async test "interpret_file_pr ok response matches full pipeline" {
 test "file_pr_copilot_reviewer_gh_command requests @copilot reviewer" {
   let cmd = file_pr_copilot_reviewer_gh_command(44, "/wt/agent-checkout")
   assert_eq(cmd.program, "gh")
-  assert_eq(cmd.workdir, Some("/wt/agent-checkout"))
+  @debug.assert_eq(cmd.workdir, Some("/wt/agent-checkout"))
   assert_eq(cmd.args.length(), 5)
   assert_eq(cmd.args[0], "pr")
   assert_eq(cmd.args[1], "edit")

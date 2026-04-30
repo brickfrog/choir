@@ -243,7 +243,7 @@ pub fn parse_open_prs(output : String) -> Array[OpenPR] raise {
 ///|
 fn known_pr_state_from_fields(fields : Map[String, Json]) -> KnownPRState {
   let merged_at = match fields.get("mergedAt") {
-    Some(String(v)) => v.trim().to_string()
+    Some(String(v)) => v.trim().to_owned()
     _ => ""
   }
   if merged_at != "" {
@@ -650,7 +650,7 @@ pub fn make_shell_recovery_provider(
       let ids = []
       for name in @sys.list_dir(project_dir + "/.choir/kv") {
         if name.has_prefix(prefix) && name.length() > prefix.length() {
-          ids.push(name[prefix.length():].to_string())
+          ids.push(name[prefix.length():].to_owned())
         }
       }
       ids
@@ -1191,7 +1191,7 @@ pub async fn discover_recovery_input(
 pub fn split_lines(output : String) -> Array[String] {
   let lines = []
   for raw in output.split("\n") {
-    let line = raw.to_string().trim().to_string()
+    let line = raw.to_owned().trim().to_owned()
     if line != "" {
       lines.push(line)
     }

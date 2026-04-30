@@ -104,7 +104,7 @@ fn strip_toml_inline_comment(s : String) -> String {
     }
     i = i + 1
   }
-  s[0:cut].to_string().trim().to_string()
+  s[0:cut].to_owned().trim().to_owned()
 }
 
 ///|
@@ -148,9 +148,9 @@ fn parse_pricing_config(
   let pricing : Map[String, @types.PricingRate] = {}
   for full_key, _ in doc.to_map() {
     if full_key.has_prefix("pricing.") {
-      let rest = full_key["pricing.".length():].to_string()
+      let rest = full_key["pricing.".length():].to_owned()
       let agent_type_key = match rest.split_once(".") {
-        Some((agent_type, _)) => agent_type.to_string()
+        Some((agent_type, _)) => agent_type.to_owned()
         None => rest
       }
       match @types.AgentType::try_parse_wire(agent_type_key) {
@@ -309,7 +309,7 @@ pub fn parse_config(
 
 ///|
 fn parse_spawn_depth_value(raw : String) -> Result[Int, @types.ChoirError] {
-  let s = raw.trim().to_string()
+  let s = raw.trim().to_owned()
   let n_opt = Some(@string.parse_int(s)) catch { _ => None }
   match n_opt {
     Some(n) => {

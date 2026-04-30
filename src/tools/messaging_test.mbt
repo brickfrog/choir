@@ -11,7 +11,7 @@ test "notify_parent_plan no registry records success event and ok response" {
       match response {
         @types.Response::Ok(fields) => {
           let map = fields.to_json_map()
-          assert_eq(map.get("status"), Some(String::to_json("notified")))
+          @debug.assert_eq(map.get("status"), Some(String::to_json("notified")))
         }
         _ => fail("expected ok response")
       }
@@ -70,7 +70,7 @@ test "notify_parent_plan deliver matches plan_delivery and success response" {
       match response_ok {
         @types.Response::Ok(fields) => {
           let map = fields.to_json_map()
-          assert_eq(map.get("status"), Some(String::to_json("notified")))
+          @debug.assert_eq(map.get("status"), Some(String::to_json("notified")))
         }
         _ => fail("expected ok response")
       }
@@ -141,7 +141,7 @@ test "send_message_plan no registry returns best-effort sent" {
       match response {
         @types.Response::Ok(fields) => {
           let map = fields.to_json_map()
-          assert_eq(map.get("status"), Some(String::to_json("sent")))
+          @debug.assert_eq(map.get("status"), Some(String::to_json("sent")))
         }
         _ => fail("expected ok")
       }
@@ -203,7 +203,7 @@ test "send_message_plan deliver matches plan_delivery and log append" {
       match response_ok {
         @types.Response::Ok(fields) => {
           let map = fields.to_json_map()
-          assert_eq(map.get("status"), Some(String::to_json("sent")))
+          @debug.assert_eq(map.get("status"), Some(String::to_json("sent")))
         }
         _ => fail("expected ok")
       }
@@ -221,7 +221,7 @@ async test "interpret_send_message no registry skips delivery" {
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("sent")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("sent")))
     }
     _ => fail("expected ok")
   }
@@ -297,7 +297,7 @@ async test "interpret_send_message deliver tcp success appends send_message log"
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
-      assert_eq(map.get("status"), Some(String::to_json("sent")))
+      @debug.assert_eq(map.get("status"), Some(String::to_json("sent")))
     }
     _ => fail("expected ok")
   }

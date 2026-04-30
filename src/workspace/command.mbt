@@ -106,7 +106,7 @@ fn parent_dir_for_file(full_path : String) -> String {
   if last_slash <= 0 {
     return "."
   }
-  full_path[0:last_slash].to_string()
+  full_path[0:last_slash].to_owned()
 }
 
 ///|

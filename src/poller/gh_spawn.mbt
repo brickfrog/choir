@@ -58,6 +58,19 @@ async fn fetch_issue_comment_logins(pr_number : Int) -> (Int, String) {
 }
 
 ///|
+fn merge_inline_comments(pr_json : String, inline_json : String) -> String {
+  if inline_json == "" {
+    return pr_json
+  }
+  let inline = @json.parse(inline_json) catch { _ => return pr_json }
+  guard inline is Array(_) else { return pr_json }
+  let main = @json.parse(pr_json) catch { _ => return pr_json }
+  guard main is Object(obj) else { return pr_json }
+  obj.set("inline_comments", inline)
+  main.stringify()
+}
+
+///|
 /// When `skip_issue_comment_fetch` is true (Copilot already seen on this PR), skips the extra
 /// `gh api .../issues/{n}/comments` call to reduce rate-limit load.
 pub async fn gh_poll_pr(
@@ -116,7 +129,7 @@ pub async fn gh_poll_pr(
       " stdout=" +
       total.to_string() +
       "b stderr=" +
-      err_text.trim().to_string() +
+      err_text.trim().to_owned() +
       "\n",
     )
     if total == 0 {

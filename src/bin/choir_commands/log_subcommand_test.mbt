@@ -68,8 +68,8 @@ test "format_log_json renders streaming jsonl event shape" {
   let idx = fixture_wave()
   let events = [lifecycle_event(1776000002000L, "feature-x.a", "Dev(Red)")]
   let lines : Array[String] = []
-  for line in format_log_json(idx, events).trim().to_string().split("\n") {
-    lines.push(line.to_string())
+  for line in format_log_json(idx, events).trim().to_owned().split("\n") {
+    lines.push(line.to_owned())
   }
   assert_eq(lines.length(), 1)
   let parsed = @json.parse(lines[0]) catch {

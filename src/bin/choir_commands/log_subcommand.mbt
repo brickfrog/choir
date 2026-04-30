@@ -8,7 +8,7 @@ pub(all) struct Event {
 
 ///|
 pub fn parse_event_jsonl_line(line : String) -> Event? {
-  let trimmed = line.trim().to_string()
+  let trimmed = line.trim().to_owned()
   if trimmed == "" {
     return None
   }
@@ -55,7 +55,7 @@ pub fn read_agent_events(
     return out
   }
   for line in content.split("\n") {
-    match parse_event_jsonl_line(line.to_string()) {
+    match parse_event_jsonl_line(line.to_owned()) {
       Some(event) => out.push(event)
       None => ()
     }
@@ -101,7 +101,7 @@ fn utc_datetime_from_ms(ms : Int64) -> @tempo.DateTime {
 fn utc_datetime_text(ms : Int64) -> String {
   let formatted = utc_datetime_from_ms(ms).format()
   let without_z = if formatted.has_suffix("Z") {
-    formatted[0:formatted.length() - 1].to_string()
+    formatted[0:formatted.length() - 1].to_owned()
   } else {
     formatted
   }
@@ -118,7 +118,7 @@ fn last_dot_segment(s : String) -> String {
   let parts = s.split(".")
   let mut last = s
   for part in parts {
-    last = part.to_string()
+    last = part.to_owned()
   }
   last
 }
@@ -152,7 +152,7 @@ fn event_summary(event : Event) -> String {
 ///|
 fn event_category_and_subtype(type_ : String) -> (String, String) {
   match type_.split_once(".") {
-    Some((category, subtype)) => (category.to_string(), subtype.to_string())
+    Some((category, subtype)) => (category.to_owned(), subtype.to_owned())
     None => (type_, "")
   }
 }

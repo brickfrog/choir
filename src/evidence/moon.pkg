@@ -2,6 +2,7 @@ import {
   "choir/src/types",
   "choir/src/sys",
   "moonbitlang/core/json",
+  "moonbitlang/core/debug",
 }
 
 options(

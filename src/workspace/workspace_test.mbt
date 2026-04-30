@@ -24,7 +24,7 @@ test "inline agent metadata dir sanitizes agent id" {
 
 ///|
 test "parent branch extracts from nested branch" {
-  assert_eq(
+  @debug.assert_eq(
     @workspace.parent_branch("main.subtl.leaf-task"),
     Some("main.subtl"),
   )
@@ -32,7 +32,7 @@ test "parent branch extracts from nested branch" {
 
 ///|
 test "parent branch returns none for root branch" {
-  assert_eq(@workspace.parent_branch("main"), None)
+  @debug.assert_eq(@workspace.parent_branch("main"), None)
 }
 
 ///|
@@ -272,15 +272,15 @@ test "agent_launch_command for each AgentType" {
   assert_true(cmd_claude.args[2].contains("\"--name\",\"main.test-slug\""))
   assert_eq(cmd_claude.args[3], "--strict-mcp-config")
   assert_eq(cmd_claude.args[4], "fix bugs")
-  assert_eq(cmd_claude.workdir, Some("/path"))
+  @debug.assert_eq(cmd_claude.workdir, Some("/path"))
 
   assert_eq(cmd_gemini.program, "gemini")
   assert_eq(cmd_gemini.args, ["--yolo", "--prompt-interactive", "fix bugs"])
-  assert_eq(cmd_gemini.workdir, Some("/path"))
+  @debug.assert_eq(cmd_gemini.workdir, Some("/path"))
 
   assert_eq(cmd_moon.program, "moon")
   assert_eq(cmd_moon.args, ["pilot", "fix bugs"])
-  assert_eq(cmd_moon.workdir, Some("/path"))
+  @debug.assert_eq(cmd_moon.workdir, Some("/path"))
 
   assert_eq(cmd_codex.program, "codex")
   assert_eq(cmd_codex.args[0], "--dangerously-bypass-approvals-and-sandbox")
@@ -303,7 +303,7 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_codex.args[8], "-C")
   assert_eq(cmd_codex.args[9], "/path")
   assert_eq(cmd_codex.args[10], "fix bugs")
-  assert_eq(cmd_codex.workdir, Some("/path"))
+  @debug.assert_eq(cmd_codex.workdir, Some("/path"))
 
   let spec_cursor = { ..spec_claude, agent_type: @types.AgentType::CursorAgent }
   let cmd_cursor = @workspace.agent_launch_command(spec_cursor, "/path")
@@ -313,7 +313,7 @@ test "agent_launch_command for each AgentType" {
   assert_eq(cmd_cursor.args[2], "--workspace")
   assert_eq(cmd_cursor.args[3], "/path")
   assert_eq(cmd_cursor.args[4], "fix bugs")
-  assert_eq(cmd_cursor.workdir, Some("/path"))
+  @debug.assert_eq(cmd_cursor.workdir, Some("/path"))
 }
 
 ///|
@@ -349,7 +349,7 @@ test "agent_launch_command wraps with shell_command" {
   assert_true(cmd.args[5].contains("\"mcpServers\""))
   assert_eq(cmd.args[6], "--strict-mcp-config")
   assert_eq(cmd.args[7], "fix bugs")
-  assert_eq(cmd.workdir, Some("/path"))
+  @debug.assert_eq(cmd.workdir, Some("/path"))
 }
 
 ///|
@@ -419,7 +419,7 @@ test "agent_launch_command supports command_override" {
   )
   assert_eq(cmd.program, "my-gemini")
   assert_eq(cmd.args[0], "--flag")
-  assert_eq(cmd.workdir, Some("/path"))
+  @debug.assert_eq(cmd.workdir, Some("/path"))
 }
 
 ///|
@@ -978,7 +978,7 @@ test "gh_shim_script_body hard-blocks gh pr create and passes other subcommands 
       Some(idx) => idx + exit_one.length()
       None => body.length()
     }
-    i = body[from:].to_string().find(exit_one)
+    i = body[from:].to_owned().find(exit_one)
   }
   assert_eq(count, 1)
 }
@@ -1227,7 +1227,7 @@ test "remote_spawn_commands local side is direct ssh argv (no local shell wrappe
   assert_eq(cmds.length(), 3)
   for cmd in cmds {
     assert_eq(cmd.program, "ssh")
-    assert_eq(cmd.workdir, None)
+    @debug.assert_eq(cmd.workdir, None)
     assert_eq(cmd.args.length(), 4)
     assert_eq(cmd.args[0], "-o")
     assert_eq(cmd.args[1], "StrictHostKeyChecking=no")

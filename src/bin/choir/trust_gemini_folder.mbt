@@ -53,6 +53,6 @@ test "trusted_folders_json preserves existing paths and adds workspace" {
   )
   let json = @json.parse(updated) catch { _ => ().to_json() }
   guard json is Object(parsed) else { panic() }
-  assert_eq(parsed.get("/existing"), Some("TRUST_FOLDER".to_json()))
-  assert_eq(parsed.get("/new/worktree"), Some("TRUST_FOLDER".to_json()))
+  @debug.assert_eq(parsed.get("/existing"), Some("TRUST_FOLDER".to_json()))
+  @debug.assert_eq(parsed.get("/new/worktree"), Some("TRUST_FOLDER".to_json()))
 }

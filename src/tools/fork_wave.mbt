@@ -6,7 +6,7 @@ pub fn fork_wave_leaf_task_with_review_context(
   match review_context {
     None => base_task
     Some(rc) => {
-      let t = rc.trim().to_string()
+      let t = rc.trim().to_owned()
       if t == "" {
         base_task
       } else {
@@ -188,7 +188,7 @@ pub async fn fork_wave_response_from_interpret_result(
       let detail = match failing_cmd {
         Some(cmd) => {
           let (_, output) = capture_output(cmd)
-          output.trim().to_string()
+          output.trim().to_owned()
         }
         None => ""
       }
@@ -267,7 +267,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
 fn split_spawned_agent_ids(agent_ids : String) -> Array[String] {
   let out : Array[String] = []
   for part in agent_ids.split(",") {
-    let trimmed = part.trim().to_string()
+    let trimmed = part.trim().to_owned()
     if trimmed != "" {
       out.push(trimmed)
     }

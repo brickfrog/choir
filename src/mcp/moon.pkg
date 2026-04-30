@@ -3,6 +3,7 @@ import {
   "choir/src/types",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
+  "moonbitlang/core/debug",
 }
 
 options(
