@@ -85,6 +85,82 @@ fn merge_pr_test_tracked(
 }
 
 ///|
+fn merge_pr_test_write_verify_contract(
+  project_dir : String,
+  verify : Array[String],
+) -> String {
+  let worktree = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.create_dir_all(worktree + "/.choir"))
+  let target : @types.LocalTarget = {
+    kind: ZellijTab,
+    session: "choir",
+    name: "leaf",
+  }
+  let spec : @types.SpawnSpec = {
+    slug: "leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "merge verified work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "merge verified work",
+      verify,
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main.tl",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  ignore(
+    @sys.write_file_sync(
+      worktree + "/.choir/config.local.toml",
+      @workspace.config_local_content(spec, worktree, target),
+    ),
+  )
+  worktree
+}
+
+///|
+fn merge_pr_test_registry(worktree : String) -> @registry.AgentRegistry {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/repo",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.leaf"),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main.tl"),
+      workspace: worktree,
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  reg
+}
+
+///|
 test "merge_pr_preflight_host_steps is poller snapshot then thread fetch" {
   let steps = merge_pr_preflight_host_steps()
   assert_eq(steps.length(), 2)
@@ -405,6 +481,94 @@ async test "interpret_merge_pr_preflight ok when no poller block and no threads"
 }
 
 ///|
+async test "interpret_merge_pr_preflight accepts required verify evidence" {
+  let project_dir = "/tmp/choir-mpf-verify-evidence-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let worktree = merge_pr_test_write_verify_contract(project_dir, [
+    "moon test --target native",
+  ])
+  let reg = merge_pr_test_registry(worktree)
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon test --target native",
+        ok=true,
+        details=Some("exit: 0"),
+      ),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  })
+  let got = interpret_merge_pr_preflight(
+    false,
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    Some(reg),
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected verify evidence to satisfy policy: " + e.message())
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr_preflight rejects stale verify evidence" {
+  let project_dir = "/tmp/choir-mpf-stale-verify-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let worktree = merge_pr_test_write_verify_contract(project_dir, [
+    "moon test --target native",
+  ])
+  let reg = merge_pr_test_registry(worktree)
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon test --target native",
+        ok=true,
+        details=Some("cwd: /wt\nexit: 0\nhead: old-sha"),
+      ),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "new-sha",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  })
+  let got = interpret_merge_pr_preflight(
+    false,
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    Some(reg),
+  )
+  match got {
+    Err(e) => assert_true(e.message().contains("local verify not observed"))
+    Ok(_) => fail("expected stale verify evidence to block")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async fn mock_preflight_capture_one_unresolved_thread(
   cmd : @workspace.Command,
 ) -> (Int, String) {
@@ -658,6 +822,45 @@ test "format_tl_pr_recheck_summary policy needs human when required verify is mi
   assert_true(s.contains("Advisory evaluation verdict: needs_human"))
   assert_true(s.contains("Merge policy decision: needs_human"))
   assert_true(s.contains("local verify not observed"))
+}
+
+///|
+test "format_tl_pr_recheck_summary reads verify evidence from ledger" {
+  let project_dir = "/tmp/choir-recheck-verify-evidence-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon test --target native",
+        ok=true,
+        details=Some("exit: 0"),
+      ),
+    ),
+  )
+  let s = format_tl_pr_recheck_summary(
+    t,
+    project_dir,
+    Some(0),
+    task_contract=Some(contract),
+  )
+  assert_true(s.contains("Advisory evaluation verdict: ready"))
+  assert_true(s.contains("Merge policy decision: merge_now"))
+  assert_true(s.contains("local verify passed"))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

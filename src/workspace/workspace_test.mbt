@@ -1325,11 +1325,11 @@ test "task_contract_for_agent_workspace falls back when first config lacks task_
   let project_dir = "/tmp/choir-ws-task-contract-" + @sys.get_pid().to_string()
   let agent_workspace = project_dir + "/alt-workspace"
   let fallback_workspace = @workspace.worktree_path(project_dir, "leaf")
-  assert_true(@sys.create_dir_all(agent_workspace))
-  assert_true(@sys.create_dir_all(fallback_workspace))
+  assert_true(@sys.create_dir_all(agent_workspace + "/.choir"))
+  assert_true(@sys.create_dir_all(fallback_workspace + "/.choir"))
   ignore(
     @sys.write_file_sync(
-      agent_workspace + "/config.local.toml",
+      agent_workspace + "/.choir/config.local.toml",
       (
         #|automerge = true
       ),
@@ -1337,7 +1337,7 @@ test "task_contract_for_agent_workspace falls back when first config lacks task_
   )
   ignore(
     @sys.write_file_sync(
-      fallback_workspace + "/config.local.toml",
+      fallback_workspace + "/.choir/config.local.toml",
       "task_contract_json = \"" +
       escape_workspace_test_toml_string(
         { ..@types.TaskContract::empty(), goal: "restore fallback" }.to_json_string(),

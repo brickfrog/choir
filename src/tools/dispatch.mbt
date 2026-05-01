@@ -285,6 +285,20 @@ pub async fn dispatch(
         ensure_pull_request_with_capture(b, pb, pd, t, bo, capture)
       }
   }
+  let record_verify_event = fn(
+    agent_id : String,
+    event : @evidence.EvidenceEvent,
+  ) -> Unit {
+    ignore(
+      @evidence.append_agent_evidence_event(
+        @sys.append_file_sync,
+        project_dir,
+        agent_id,
+        @env.now().reinterpret_as_int64(),
+        event,
+      ),
+    )
+  }
   match req {
     ToolRequest::Register(register_args) =>
       match registry {
@@ -456,8 +470,17 @@ pub async fn dispatch(
     }
     ToolRequest::FilePr(file_pr_args) =>
       interpret_file_pr(
-        file_pr_args, project_dir, session, poller_state, registry, pr_review, ensure_branch_ready,
-        runner, capture, ensure_pr,
+        file_pr_args,
+        project_dir,
+        session,
+        poller_state,
+        registry,
+        pr_review,
+        ensure_branch_ready,
+        runner,
+        capture,
+        ensure_pr,
+        record_verify_event~,
       )
     ToolRequest::MergePr(merge_args) => {
       let resp = interpret_merge_pr(

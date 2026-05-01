@@ -460,6 +460,7 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  verify_results? : Array[@types.VerifyCheckResult] = [],
 ) -> @types.EvaluationBundle {
   let single_pass_fixed = review_mode == @types.ReviewMode::SinglePass &&
     tracked.last_review_state == ChangesRequested &&
@@ -489,6 +490,9 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
   } else {
     signals.push(@types.EvaluationSignal::CopilotIssueCommentUnobserved)
   }
+  for result in verify_results {
+    signals.push(@types.EvaluationSignal::Verify(result~))
+  }
   { task_contract, signals }
 }
 
@@ -498,6 +502,7 @@ pub fn advisory_evaluation_result_for_tracked_pr(
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  verify_results? : Array[@types.VerifyCheckResult] = [],
 ) -> @types.EvaluationResult {
   @types.advisory_evaluation_result(
     advisory_evaluation_bundle_for_tracked_pr(
@@ -505,6 +510,7 @@ pub fn advisory_evaluation_result_for_tracked_pr(
       unresolved_threads,
       task_contract~,
       review_mode~,
+      verify_results~,
     ),
   )
 }
@@ -515,12 +521,14 @@ pub fn advisory_evaluation_summary_line(
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  verify_results? : Array[@types.VerifyCheckResult] = [],
 ) -> String {
   let result = advisory_evaluation_result_for_tracked_pr(
     tracked,
     unresolved_threads,
     task_contract~,
     review_mode~,
+    verify_results~,
   )
   "Advisory evaluation verdict: " +
   result.verdict.label() +
@@ -535,6 +543,7 @@ pub fn merge_policy_decision_for_tracked_pr(
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  verify_results? : Array[@types.VerifyCheckResult] = [],
 ) -> @policy.MergeDecision {
   @policy.decide_merge(
     task_contract,
@@ -543,6 +552,7 @@ pub fn merge_policy_decision_for_tracked_pr(
       unresolved_threads,
       task_contract~,
       review_mode~,
+      verify_results~,
     ),
   )
 }
@@ -553,12 +563,14 @@ pub fn merge_policy_summary_line(
   unresolved_threads : Int?,
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  verify_results? : Array[@types.VerifyCheckResult] = [],
 ) -> String {
   let decision = merge_policy_decision_for_tracked_pr(
     tracked,
     unresolved_threads,
     task_contract~,
     review_mode~,
+    verify_results~,
   )
   "Merge policy decision: " + decision.label() + " (" + decision.reason() + ")."
 }

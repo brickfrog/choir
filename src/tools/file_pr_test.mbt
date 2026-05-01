@@ -502,6 +502,126 @@ async fn mock_ensure_pr_err(
 }
 
 ///|
+fn file_pr_test_local_target() -> @types.LocalTarget {
+  { kind: ZellijTab, session: "choir", name: "leaf" }
+}
+
+///|
+fn file_pr_test_write_verify_config(
+  file_pr_dir : String,
+  verify : Array[String],
+) -> Unit {
+  ignore(@sys.create_dir_all(file_pr_dir + "/.choir"))
+  let spec : @types.SpawnSpec = {
+    slug: "leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "verify before PR",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "verify before PR",
+      verify,
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main.tl",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  ignore(
+    @sys.write_file_sync(
+      file_pr_dir + "/.choir/config.local.toml",
+      @workspace.config_local_content(
+        spec,
+        file_pr_dir,
+        file_pr_test_local_target(),
+      ),
+    ),
+  )
+}
+
+///|
+fn file_pr_test_registry(file_pr_dir : String) -> @registry.AgentRegistry {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: "/proj",
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.leaf"),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main.tl"),
+      workspace: file_pr_dir,
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  reg
+}
+
+///|
+fn file_pr_test_record_verify_event(
+  project_dir : String,
+) -> (String, @evidence.EvidenceEvent) -> Unit {
+  fn(agent_id : String, event : @evidence.EvidenceEvent) -> Unit {
+    ignore(
+      @evidence.append_agent_evidence_event(
+        @sys.append_file_sync, project_dir, agent_id, 1L, event,
+      ),
+    )
+  }
+}
+
+///|
+fn file_pr_test_record_verify_outcome(
+  project_dir : String,
+  agent_id : String,
+  _file_pr_dir : String,
+) -> (FilePrVerifyOutcome) -> Unit {
+  let record_event = file_pr_test_record_verify_event(project_dir)
+  fn(outcome : FilePrVerifyOutcome) -> Unit {
+    let head_line = match outcome.head_sha {
+      Some(sha) => "\nhead: " + sha
+      None => ""
+    }
+    record_event(
+      agent_id,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name=outcome.command,
+        ok=outcome.exit_code == 0,
+        details=Some(
+          "exit: " +
+          outcome.exit_code.to_string() +
+          head_line +
+          "\n" +
+          outcome.output_tail,
+        ),
+      ),
+    )
+  }
+}
+
+///|
 async test "interpret_file_pr_preflight_create returns preflight error and skips push" {
   let inputs : FilePrPreflightCreateInputs = {
     branch: "main.leaf",
@@ -589,6 +709,109 @@ async test "interpret_file_pr_preflight_create yields PR on happy path" {
 }
 
 ///|
+async test "file_pr_run_required_verify appends trusted evidence" {
+  let project_dir = "/tmp/choir-fpr-verify-evidence-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir))
+  let mut seen_workdir = ""
+  let got = file_pr_run_required_verify(
+    "/tmp/leaf-wt",
+    ["moon test --target native"],
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      seen_workdir = cmd.workdir.unwrap_or("")
+      if cmd.program == "git" {
+        (0, "sha-verify\n")
+      } else {
+        (0, "Total tests: 1, passed: 1\n")
+      }
+    },
+    record_verify_outcome=file_pr_test_record_verify_outcome(
+      project_dir, "main.leaf", "/tmp/leaf-wt",
+    ),
+  )
+  assert_eq(seen_workdir, "/tmp/leaf-wt")
+  match got {
+    Ok(outcomes) => {
+      assert_eq(outcomes.length(), 1)
+      assert_eq(outcomes[0].command, "moon test --target native")
+      assert_eq(outcomes[0].exit_code, 0)
+      assert_true(outcomes[0].output_tail.contains("passed: 1"))
+    }
+    Err(e) => fail("expected verify success: " + e.message())
+  }
+  let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
+  assert_eq(records.length(), 1)
+  match records[0].event {
+    @evidence.EvidenceEvent::VerifyResultObserved(name~, ok~, details~) => {
+      assert_eq(name, "moon test --target native")
+      assert_true(ok)
+      assert_true(details.unwrap_or("").contains("Total tests: 1"))
+    }
+    _ => fail("expected VerifyResultObserved")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "file_pr_run_required_verify stops on failed command" {
+  let project_dir = "/tmp/choir-fpr-verify-fail-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir))
+  let got = file_pr_run_required_verify(
+    "/tmp/leaf-wt",
+    ["npm run typecheck"],
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" {
+        (0, "sha-fail\n")
+      } else {
+        (2, "src/index.ts(10,3): error TS2322\n")
+      }
+    },
+    record_verify_outcome=file_pr_test_record_verify_outcome(
+      project_dir, "main.leaf", "/tmp/leaf-wt",
+    ),
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("npm run typecheck"))
+      assert_true(msg.contains("TS2322"))
+    }
+    Ok(_) => fail("expected verify failure")
+  }
+  let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
+  assert_eq(records.length(), 1)
+  match records[0].event {
+    @evidence.EvidenceEvent::VerifyResultObserved(name~, ok~, details~) => {
+      assert_eq(name, "npm run typecheck")
+      assert_false(ok)
+      assert_true(details.unwrap_or("").contains("exit: 2"))
+    }
+    _ => fail("expected VerifyResultObserved")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "file_pr_body_with_verify_summary appends compact generated section" {
+  let body = file_pr_body_with_verify_summary(Some("Changes schema wiring."), [
+    {
+      command: "npm run typecheck",
+      exit_code: 0,
+      output_tail: "typecheck ok",
+      head_sha: Some("sha-pr"),
+    },
+  ]).unwrap()
+  assert_true(body.contains("Changes schema wiring."))
+  assert_true(body.contains("## Verification"))
+  assert_true(body.contains("Generated by Choir"))
+  assert_true(body.contains("`npm run typecheck`"))
+  assert_true(body.contains("head: sha-pr"))
+  assert_true(body.contains("typecheck ok"))
+}
+
+///|
 async test "interpret_file_pr returns preflight error without post-success" {
   let args : FilePrArgs = {
     branch: "main.leaf",
@@ -614,6 +837,186 @@ async test "interpret_file_pr returns preflight error without post-success" {
     @types.Response::Err(msg) => assert_true(msg.contains("missing locally"))
     _ => fail("expected Err")
   }
+}
+
+///|
+async test "interpret_file_pr skips required verify when branch preflight fails" {
+  let project_dir = "/tmp/choir-fpr-preflight-before-verify-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let reg = file_pr_test_registry(file_pr_dir)
+  let mut verify_capture_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("main"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_err,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "sh" {
+        verify_capture_called = true
+      }
+      (0, "")
+    },
+    mock_ensure_pr_ok,
+  )
+  match got {
+    @types.Response::Err(msg) => assert_true(msg.contains("missing locally"))
+    _ => fail("expected preflight Err")
+  }
+  assert_false(verify_capture_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr runs required verify and injects generated PR body" {
+  let project_dir = "/tmp/choir-fpr-verify-pr-body-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let reg = file_pr_test_registry(file_pr_dir)
+  let bodies : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("main"),
+      tracked_agent_id: "main.leaf",
+      title: Some("schema wiring"),
+      body: Some("Implements claim schema wiring."),
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" {
+        (0, "sha-pr-body\n")
+      } else if cmd.program == "sh" {
+        (0, "typecheck ok\n")
+      } else {
+        (0, "")
+      }
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      bodies.push(body.unwrap_or(""))
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    record_verify_event=file_pr_test_record_verify_event(project_dir),
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected file_pr success: " + msg)
+  }
+  assert_eq(bodies.length(), 1)
+  assert_true(bodies[0].contains("Implements claim schema wiring."))
+  assert_true(bodies[0].contains("## Verification"))
+  assert_true(bodies[0].contains("`npm run typecheck`"))
+  assert_true(bodies[0].contains("typecheck ok"))
+  let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
+  assert_eq(records.length(), 1)
+  match records[0].event {
+    @evidence.EvidenceEvent::VerifyResultObserved(name~, ok~, details~) => {
+      assert_eq(name, "npm run typecheck")
+      assert_true(ok)
+      let detail_text = details.unwrap_or("")
+      assert_true(detail_text.contains("cwd: " + file_pr_dir))
+      assert_true(detail_text.contains("head: sha-pr-body"))
+      assert_true(detail_text.contains("typecheck ok"))
+    }
+    _ => fail("expected VerifyResultObserved")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr blocks before PR creation when required verify fails" {
+  let project_dir = "/tmp/choir-fpr-verify-block-" + @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let reg = file_pr_test_registry(file_pr_dir)
+  let mut ensure_pr_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("main"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" {
+        (0, "sha-pr-fail\n")
+      } else if cmd.program == "sh" {
+        (2, "src/index.ts(10,3): error TS2322\n")
+      } else {
+        (0, "")
+      }
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    record_verify_event=file_pr_test_record_verify_event(project_dir),
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("npm run typecheck"))
+      assert_true(msg.contains("TS2322"))
+    }
+    _ => fail("expected verify failure")
+  }
+  assert_false(ensure_pr_called)
+  let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
+  assert_eq(records.length(), 1)
+  match records[0].event {
+    @evidence.EvidenceEvent::VerifyResultObserved(name~, ok~, details~) => {
+      assert_eq(name, "npm run typecheck")
+      assert_false(ok)
+      let detail_text = details.unwrap_or("")
+      assert_true(detail_text.contains("exit: 2"))
+      assert_true(detail_text.contains("head: sha-pr-fail"))
+    }
+    _ => fail("expected VerifyResultObserved")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

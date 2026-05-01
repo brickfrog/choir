@@ -8,6 +8,7 @@ import {
   "moonbitlang/core/ref",
   "moonbitlang/core/string",
   "choir/src/exec",
+  "choir/src/evidence",
   "choir/src/workspace",
   "choir/src/registry",
   "choir/src/message",

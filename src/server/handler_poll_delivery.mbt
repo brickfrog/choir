@@ -34,17 +34,29 @@ fn parent_poll_tl_decision_suffix(
 
 ///|
 fn parent_merge_policy_line(
+  project_dir : String,
   tracked : @poller.TrackedPR,
   unresolved_threads_for_recheck : Int?,
   task_contract? : @types.TaskContract? = None,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> String {
+  let verify_results = match task_contract {
+    Some(contract) =>
+      @evidence.verify_results_for_required_at_head(
+        project_dir,
+        tracked.agent_id,
+        contract.verify,
+        tracked.last_sha,
+      )
+    None => []
+  }
   "\n" +
   @poller.merge_policy_summary_line(
     tracked,
     unresolved_threads_for_recheck,
     task_contract~,
     review_mode~,
+    verify_results~,
   )
 }
 
@@ -320,6 +332,7 @@ pub fn parent_poll_event_message(
         "\n" +
         @poller.merge_mode_line(merge_mode) +
         parent_merge_policy_line(
+          project_dir,
           tracked,
           unresolved_threads_for_recheck,
           task_contract~,

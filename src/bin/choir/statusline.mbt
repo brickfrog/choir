@@ -285,7 +285,9 @@ test "statusline_pr_summary distinguishes manual and automerge merge-ready PRs" 
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/worktrees/leaf-auto"))
+  assert_true(
+    @sys.create_dir_all(project_dir + "/.choir/worktrees/leaf-auto/.choir"),
+  )
   ignore(
     @sys.write_file_sync(
       project_dir + "/.choir/config.toml",
@@ -294,7 +296,8 @@ test "statusline_pr_summary distinguishes manual and automerge merge-ready PRs" 
   )
   ignore(
     @sys.write_file_sync(
-      @workspace.worktree_path(project_dir, "leaf-auto") + "/config.local.toml",
+      @workspace.worktree_path(project_dir, "leaf-auto") +
+      "/.choir/config.local.toml",
       "automerge = true\n",
     ),
   )
@@ -331,7 +334,7 @@ fn statusline_local_config(
       project_dir,
       @phase.extract_slug(agent_id),
     ) +
-    "/config.local.toml"
+    "/.choir/config.local.toml"
   let content = @sys.read_file(path)
   if content == "" {
     return None

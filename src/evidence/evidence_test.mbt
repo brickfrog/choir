@@ -96,6 +96,72 @@ test "evidence append load replay file" {
     }
     _ => fail("expected UserOverrideObserved")
   }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "verify_results_for_required replays latest observed verify state" {
+  let project_dir = "/tmp/choir-evidence-verify-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(
+    append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      100L,
+      EvidenceEvent::VerifyResultObserved(
+        name="moon test --target native",
+        ok=true,
+        details=Some("exit: 0"),
+      ),
+    ),
+  )
+  let results = verify_results_for_required(project_dir, "main.leaf", [
+    "moon test --target native", "moon build --target native --release",
+  ])
+  assert_eq(results.length(), 2)
+  assert_eq(results[0].name, "moon test --target native")
+  assert_true(results[0].status == @types.VerifyStatus::Passed)
+  assert_eq(results[1].name, "moon build --target native --release")
+  assert_true(results[1].status == @types.VerifyStatus::NotObserved)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "verify_results_for_required_at_head treats stale evidence as unobserved" {
+  let project_dir = "/tmp/choir-evidence-verify-head-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(
+    append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      100L,
+      EvidenceEvent::VerifyResultObserved(
+        name="moon test --target native",
+        ok=true,
+        details=Some("cwd: /wt\nexit: 0\nhead: old-sha"),
+      ),
+    ),
+  )
+  let stale = verify_results_for_required_at_head(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "new-sha",
+  )
+  assert_eq(stale.length(), 1)
+  assert_true(stale[0].status == @types.VerifyStatus::NotObserved)
+  let current = verify_results_for_required_at_head(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "old-sha",
+  )
+  assert_eq(current.length(), 1)
+  assert_true(current[0].status == @types.VerifyStatus::Passed)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

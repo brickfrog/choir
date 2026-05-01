@@ -252,11 +252,14 @@ fn local_config_candidate_paths_for_agent_workspace(
 ) -> Array[String] {
   let candidate_paths : Array[String] = []
   match agent_workspace {
-    Some(w) => if w != "" { candidate_paths.push(w + "/config.local.toml") }
+    Some(w) =>
+      if w != "" {
+        candidate_paths.push(w + "/.choir/config.local.toml")
+      }
     None => ()
   }
   let fallback_path = worktree_path(project_dir, agent_slug) +
-    "/config.local.toml"
+    "/.choir/config.local.toml"
   if !candidate_paths.contains(fallback_path) {
     candidate_paths.push(fallback_path)
   }

@@ -449,6 +449,70 @@ pub fn replay_agent_evidence_records(
 }
 
 ///|
+pub fn verify_results_for_required(
+  project_dir : String,
+  agent_id : String,
+  required : Array[String],
+) -> Array[@types.VerifyCheckResult] {
+  if required.length() == 0 {
+    return []
+  }
+  let bundle = evaluation_bundle_from_evidence(
+    replay_agent_evidence_records(project_dir, agent_id),
+  )
+  @types.evaluation_verify_results_for_required(required, bundle.signals)
+}
+
+///|
+fn verify_details_head_matches(details : String, head_sha : String) -> Bool {
+  if head_sha == "" {
+    return true
+  }
+  let stamped = "head: " + head_sha
+  for line in details.split("\n") {
+    let trimmed = line.to_owned().trim().to_owned()
+    if trimmed == "output_tail:" {
+      return false
+    }
+    if trimmed == stamped {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn verify_result_for_head(
+  result : @types.VerifyCheckResult,
+  head_sha : String,
+) -> @types.VerifyCheckResult {
+  if result.status == @types.VerifyStatus::NotObserved ||
+    verify_details_head_matches(result.details, head_sha) {
+    result
+  } else {
+    { ..result, status: @types.VerifyStatus::NotObserved }
+  }
+}
+
+///|
+pub fn verify_results_for_required_at_head(
+  project_dir : String,
+  agent_id : String,
+  required : Array[String],
+  head_sha : String,
+) -> Array[@types.VerifyCheckResult] {
+  let results = verify_results_for_required(project_dir, agent_id, required)
+  if head_sha == "" {
+    return results
+  }
+  let stamped : Array[@types.VerifyCheckResult] = []
+  for result in results {
+    stamped.push(verify_result_for_head(result, head_sha))
+  }
+  stamped
+}
+
+///|
 pub impl Show for EvidenceRecord with output(self, logger) -> Unit {
   logger.write_string(
     self.ts.to_string() + " " + self.agent_id + " " + self.event.type_name(),

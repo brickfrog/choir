@@ -65,14 +65,17 @@ fn local_config_for_agent(
   }
   let candidate_paths : Array[String] = []
   match agent_workspace {
-    Some(w) => if w != "" { candidate_paths.push(w + "/config.local.toml") }
+    Some(w) =>
+      if w != "" {
+        candidate_paths.push(w + "/.choir/config.local.toml")
+      }
     None => ()
   }
   let fallback_path = @workspace.worktree_path(
       project_dir,
       @phase.extract_slug(agent_id),
     ) +
-    "/config.local.toml"
+    "/.choir/config.local.toml"
   if !candidate_paths.contains(fallback_path) {
     candidate_paths.push(fallback_path)
   }
@@ -241,11 +244,22 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     state.registry,
     tracked.agent_id,
   )
+  let verify_results = match task_contract {
+    Some(contract) =>
+      @evidence.verify_results_for_required_at_head(
+        state.config.project_dir,
+        tracked.agent_id,
+        contract.verify,
+        tracked.last_sha,
+      )
+    None => []
+  }
   let decision = @poller.merge_policy_decision_for_tracked_pr(
     tracked,
     unresolved_threads,
     task_contract~,
     review_mode~,
+    verify_results~,
   )
   guard decision is @policy.MergeDecision::MergeNow(_) else { return false }
   let caller_id = match

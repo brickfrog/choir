@@ -236,6 +236,30 @@ test "merge_policy_summary_line reflects missing verify evidence" {
 }
 
 ///|
+test "merge_policy_summary_line accepts observed verify evidence" {
+  let t = sample_tracked(Approved, Success, 14)
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let line = merge_policy_summary_line(
+    t,
+    Some(0),
+    task_contract=Some(contract),
+    verify_results=[
+      {
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Passed,
+        details: "exit: 0",
+      },
+    ],
+  )
+  assert_true(line.contains("merge_now"))
+  assert_true(line.contains("local verify passed"))
+}
+
+///|
 test "detect_stalled_on_review fires when threshold exceeded and agent active" {
   let t = {
     ..sample_tracked(ChangesRequested, Success, 50),

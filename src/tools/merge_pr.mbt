@@ -304,6 +304,24 @@ pub fn merge_pr_override_enabled_default(
 }
 
 ///|
+fn merge_pr_verify_results_for_tracked(
+  project_dir : String,
+  tracked : @poller.TrackedPR,
+  task_contract : @types.TaskContract?,
+) -> Array[@types.VerifyCheckResult] {
+  match task_contract {
+    Some(contract) =>
+      @evidence.verify_results_for_required_at_head(
+        project_dir,
+        tracked.agent_id,
+        contract.verify,
+        tracked.last_sha,
+      )
+    None => []
+  }
+}
+
+///|
 /// `merge_pr` preflight: GitHub changes-requested reviews are checked first and
 /// are never bypassed by `force`. When `force` is true it additionally requires
 /// the caller's `tl-parent-override` flag (set via `choir tl-parent-override on`)
@@ -361,12 +379,16 @@ pub async fn interpret_merge_pr_preflight(
           )
         None => None
       }
+      let verify_results = merge_pr_verify_results_for_tracked(
+        project_dir, tracked, task_contract,
+      )
       Some(
         @poller.merge_policy_decision_for_tracked_pr(
           tracked,
           Some(thread_count),
           task_contract~,
           review_mode~,
+          verify_results~,
         ),
       )
     }
@@ -460,11 +482,11 @@ pub fn merge_pr_preflight_block_message(
 /// `unresolved_thread_count` is `None` when the GraphQL fetch was not performed.
 pub fn format_tl_pr_recheck_summary(
   tracked : @poller.TrackedPR,
-  _project_dir : String,
+  project_dir : String,
   unresolved_thread_count : Int?,
   task_contract? : @types.TaskContract? = None,
+  verify_results? : Array[@types.VerifyCheckResult] = [],
 ) -> String {
-  ignore(task_contract)
   let review = match tracked.last_review_state {
     None_ => "none"
     Commented => "commented"
@@ -490,15 +512,22 @@ pub fn format_tl_pr_recheck_summary(
     tracked, unresolved_thread_count,
   )
 
+  let verify_results = if verify_results.length() > 0 {
+    verify_results
+  } else {
+    merge_pr_verify_results_for_tracked(project_dir, tracked, task_contract)
+  }
   let advisory = @poller.advisory_evaluation_summary_line(
     tracked,
     unresolved_thread_count,
     task_contract~,
+    verify_results~,
   )
   let policy = @poller.merge_policy_summary_line(
     tracked,
     unresolved_thread_count,
     task_contract~,
+    verify_results~,
   )
 
   "PR re-check summary (Choir snapshot; not merge approval):\n" +

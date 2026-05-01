@@ -68,7 +68,7 @@ fn mcp_local_cfg_with_agent_metadata_fallback(
     Some(agent_id) => {
       let metadata_path = ".choir/inline/" +
         @types.sanitize_agent_id(agent_id) +
-        "/config.local.toml"
+        "/.choir/config.local.toml"
       match @config.parse_local_config(read_file(metadata_path)) {
         Ok(cfg) =>
           if local_cfg_has_registration_identity(cfg) {
@@ -673,7 +673,7 @@ test "mcp local cfg falls back to inline worker metadata when env is stripped" {
     },
   )
   assert_eq(
-    requested_path, ".choir/inline/master.sarcasmotron-claim-schema/config.local.toml",
+    requested_path, ".choir/inline/master.sarcasmotron-claim-schema/.choir/config.local.toml",
   )
   @debug.assert_eq(cfg.role, Some(@types.Role::Worker))
   @debug.assert_eq(cfg.agent_id, Some("master.sarcasmotron-claim-schema"))
