@@ -51,6 +51,39 @@ fn mcp_config_with_cli_overrides(
 }
 
 ///|
+fn mcp_local_cfg_with_agent_metadata_fallback(
+  local_cfg : @types.LocalConfig,
+  args : Array[String],
+  env_get? : (String) -> String? = fn(key) { @sys.getenv(key) },
+  read_file? : (String) -> String = fn(path) { @sys.read_file(path) },
+) -> @types.LocalConfig {
+  if local_cfg_has_registration_identity(local_cfg) {
+    return local_cfg
+  }
+  let env_cfg = local_cfg_from_env_lookup(env_get)
+  if local_cfg_has_registration_identity(env_cfg) {
+    return env_cfg
+  }
+  match mcp_cli_override_agent_id(args) {
+    Some(agent_id) => {
+      let metadata_path = ".choir/inline/" +
+        @types.sanitize_agent_id(agent_id) +
+        "/config.local.toml"
+      match @config.parse_local_config(read_file(metadata_path)) {
+        Ok(cfg) =>
+          if local_cfg_has_registration_identity(cfg) {
+            cfg
+          } else {
+            env_cfg
+          }
+        Err(_) => env_cfg
+      }
+    }
+    None => env_cfg
+  }
+}
+
+///|
 fn mcp_build_registration_message(
   role : @types.Role,
   config : @types.Config,
@@ -444,11 +477,12 @@ fn mcp_run() -> Unit {
   }
 
   let local_content = @sys.read_file(".choir/config.local.toml")
-  let local_cfg = tool_local_cfg_with_env_fallback(
+  let local_cfg = mcp_local_cfg_with_agent_metadata_fallback(
     match @config.parse_local_config(local_content) {
       Ok(cfg) => cfg
       Err(_) => @types.LocalConfig::default()
     },
+    args,
   )
   let config = mcp_config_with_cli_overrides(base_config, local_cfg, args)
   let raw_stdio = mcp_cli_raw_stdio(args)
@@ -615,6 +649,37 @@ test "mcp config keeps local agent id over CLI agent id" {
     mcp_resolved_agent_id(@types.Role::TL, cfg, local_cfg),
     "local-agent",
   )
+}
+
+///|
+test "mcp local cfg falls back to inline worker metadata when env is stripped" {
+  let metadata =
+    #|role = "worker"
+    #|agent_id = "master.sarcasmotron-claim-schema"
+    #|parent_id = "master.tl"
+    #|branch = "master.sarcasmotron-claim-schema"
+    #|parent_branch = "master"
+    #|workspace = "/repo"
+    #|agent_type = "codex"
+    #|
+  let mut requested_path = ""
+  let cfg = mcp_local_cfg_with_agent_metadata_fallback(
+    @types.LocalConfig::default(),
+    ["choir", "mcp-stdio", "--name", "master.sarcasmotron-claim-schema"],
+    env_get=fn(_) { None },
+    read_file=fn(path) {
+      requested_path = path
+      metadata
+    },
+  )
+  assert_eq(
+    requested_path, ".choir/inline/master.sarcasmotron-claim-schema/config.local.toml",
+  )
+  @debug.assert_eq(cfg.role, Some(@types.Role::Worker))
+  @debug.assert_eq(cfg.agent_id, Some("master.sarcasmotron-claim-schema"))
+  @debug.assert_eq(cfg.parent_id, Some("master.tl"))
+  @debug.assert_eq(cfg.parent_branch, Some("master"))
+  @debug.assert_eq(cfg.agent_type, Some(@types.AgentType::Codex))
 }
 
 ///|
