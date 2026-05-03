@@ -51,36 +51,36 @@ fn mcp_config_with_cli_overrides(
 }
 
 ///|
+/// Resolve the `LocalConfig` used to register an MCP-stdio session, preferring
+/// the spawn-written inline metadata file when CLI `--name` declares a child
+/// agent. Inline workers run in the parent's cwd, so cwd
+/// `.choir/config.local.toml` belongs to the parent and would clobber the
+/// worker's `parent_id` on register (see `master.sarcasmotron-*` notify_parent
+/// failures). Child agent ids contain a `.`; root TL ids ("root", "user-...")
+/// do not, so this guard does not affect TL bring-up.
 fn mcp_local_cfg_with_agent_metadata_fallback(
   local_cfg : @types.LocalConfig,
   args : Array[String],
   env_get? : (String) -> String? = fn(key) { @sys.getenv(key) },
   read_file? : (String) -> String = fn(path) { @sys.read_file(path) },
 ) -> @types.LocalConfig {
+  match mcp_cli_override_agent_id(args) {
+    Some(agent_id) =>
+      if agent_id.contains(".") {
+        let metadata_path = ".choir/inline/" +
+          @types.sanitize_agent_id(agent_id) +
+          "/.choir/config.local.toml"
+        match @config.parse_local_config(read_file(metadata_path)) {
+          Ok(cfg) => if local_cfg_has_registration_identity(cfg) { return cfg }
+          Err(_) => ()
+        }
+      }
+    None => ()
+  }
   if local_cfg_has_registration_identity(local_cfg) {
     return local_cfg
   }
-  let env_cfg = local_cfg_from_env_lookup(env_get)
-  if local_cfg_has_registration_identity(env_cfg) {
-    return env_cfg
-  }
-  match mcp_cli_override_agent_id(args) {
-    Some(agent_id) => {
-      let metadata_path = ".choir/inline/" +
-        @types.sanitize_agent_id(agent_id) +
-        "/.choir/config.local.toml"
-      match @config.parse_local_config(read_file(metadata_path)) {
-        Ok(cfg) =>
-          if local_cfg_has_registration_identity(cfg) {
-            cfg
-          } else {
-            env_cfg
-          }
-        Err(_) => env_cfg
-      }
-    }
-    None => env_cfg
-  }
+  local_cfg_from_env_lookup(env_get)
 }
 
 ///|
@@ -680,6 +680,63 @@ test "mcp local cfg falls back to inline worker metadata when env is stripped" {
   @debug.assert_eq(cfg.parent_id, Some("master.tl"))
   @debug.assert_eq(cfg.parent_branch, Some("master"))
   @debug.assert_eq(cfg.agent_type, Some(@types.AgentType::Codex))
+}
+
+///|
+test "mcp local cfg prefers inline metadata over parent's cwd config for child --name" {
+  // Inline worker layout: cwd `.choir/config.local.toml` is the parent TL's
+  // file (no parent_id). The worker's own metadata at
+  // `.choir/inline/<sanitized>/.choir/config.local.toml` carries `parent_id`.
+  // Without the inline lookup the worker would register with `parent: None`,
+  // which breaks notify_parent.
+  let parent_cwd_cfg = {
+    ..@types.LocalConfig::default(),
+    role: Some(@types.Role::TL),
+    agent_id: Some("root"),
+    workspace: Some("/repo"),
+  }
+  let worker_metadata =
+    #|role = "worker"
+    #|agent_id = "master.sarcasmotron-agenda-signals"
+    #|parent_id = "root"
+    #|branch = "master.sarcasmotron-agenda-signals"
+    #|parent_branch = "master"
+    #|workspace = "/repo"
+    #|agent_type = "claude"
+    #|
+  let cfg = mcp_local_cfg_with_agent_metadata_fallback(
+    parent_cwd_cfg,
+    ["choir", "mcp-stdio", "--name", "master.sarcasmotron-agenda-signals"],
+    env_get=fn(_) { None },
+    read_file=fn(_) { worker_metadata },
+  )
+  @debug.assert_eq(cfg.role, Some(@types.Role::Worker))
+  @debug.assert_eq(cfg.agent_id, Some("master.sarcasmotron-agenda-signals"))
+  @debug.assert_eq(cfg.parent_id, Some("root"))
+}
+
+///|
+test "mcp local cfg keeps cwd config for root TL (no inline lookup)" {
+  // `--name root` (no dot) must not trigger the inline-metadata path; the TL
+  // writes its own `.choir/config.local.toml` in cwd and that is authoritative.
+  let mut read_calls = 0
+  let tl_cfg = {
+    ..@types.LocalConfig::default(),
+    role: Some(@types.Role::TL),
+    agent_id: Some("root"),
+  }
+  let cfg = mcp_local_cfg_with_agent_metadata_fallback(
+    tl_cfg,
+    ["choir", "mcp-stdio", "--name", "root"],
+    env_get=fn(_) { None },
+    read_file=fn(_) {
+      read_calls = read_calls + 1
+      ""
+    },
+  )
+  assert_eq(read_calls, 0)
+  @debug.assert_eq(cfg.agent_id, Some("root"))
+  @debug.assert_eq(cfg.role, Some(@types.Role::TL))
 }
 
 ///|

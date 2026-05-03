@@ -993,6 +993,54 @@ async test "fork_wave scaffold gate blocks unpushed commits" {
 }
 
 ///|
+async test "re-register without parent preserves prior parent metadata" {
+  // Inline workers can re-register with a missing parent_id when their MCP
+  // session reads the parent's cwd config instead of their own inline
+  // metadata. Make sure the registry does not lose the parent link in that
+  // case so notify_parent can still resolve.
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "master.sarcasmotron-agenda",
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Claude,
+      state: @types.AgentState::Active,
+      parent: Some("root"),
+      terminal_target: None,
+      host: @types.Host::Local,
+      workspace: "/repo",
+      branch: "master.sarcasmotron-agenda",
+      spawn_depth: 0,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::Worker,
+    name: "register",
+    args: {
+      "agent_id": "master.sarcasmotron-agenda",
+      "role": "worker",
+      "workspace": "/repo",
+      "branch": "master.sarcasmotron-agenda",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/tmp/choir-test-noop",
+    registry=Some(reg),
+    capture=mock_registry_capture,
+  )
+  match res {
+    Ok(_) => ()
+    Err(e) => fail("register failed: " + e)
+  }
+  try reg.get("master.sarcasmotron-agenda") catch {
+    _ => fail("expected registered agent")
+  } noraise {
+    agent => @debug.assert_eq(agent.parent, Some("root"))
+  }
+}
+
+///|
 async test "register accepts whitespace-trimmed spawn_depth" {
   let reg = @registry.AgentRegistry::new()
   let call = ToolCall::{

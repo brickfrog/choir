@@ -303,12 +303,27 @@ pub async fn dispatch(
     ToolRequest::Register(register_args) =>
       match registry {
         Some(reg) => {
+          // Re-register must not lose the parent link: if a worker re-registers
+          // with `parent: None` (e.g. its MCP session reads the parent's cwd
+          // config instead of its own inline metadata), keep the parent we
+          // already had so notify_parent can still resolve.
+          let prior_parent : String? = try
+            reg.get(register_args.agent_id)
+          catch {
+            _ => None
+          } noraise {
+            prior => prior.parent
+          }
+          let parent = match register_args.parent {
+            Some(p) => Some(p)
+            None => prior_parent
+          }
           let agent = @types.Agent::{
             agent_id: register_args.agent_id,
             role: register_args.role,
             agent_type: register_args.agent_type,
             state: @types.AgentState::Active,
-            parent: register_args.parent,
+            parent,
             terminal_target: register_args.terminal_target,
             host: @types.Host::Local,
             workspace: register_args.workspace,
