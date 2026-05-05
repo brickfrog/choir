@@ -71,6 +71,12 @@ test "should_fetch_unresolved_threads_for_pending_event widens for automerge" {
       false,
     ),
   )
+  assert_true(
+    should_fetch_unresolved_threads_for_pending_event(
+      @poller.PollEvent::FixesPushed(7),
+      false,
+    ),
+  )
 }
 
 ///|
@@ -697,6 +703,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
       assert_eq(status, @types.Status::Info)
       assert_true(message.contains("[FIXES PUSHED]"))
       assert_true(message.contains("(not merged yet)"))
+      assert_true(message.contains("Unresolved inline review threads"))
       assert_true(message.contains("Pre-merge:"))
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("FIXES PUSHED: Copilot does not re-review"))
@@ -740,6 +747,9 @@ test "parent_poll_event_message FixesPushed single_pass avoids re-review wording
     ) {
     Some((message, status)) => {
       assert_eq(status, @types.Status::Info)
+      assert_true(
+        message.contains("Unresolved inline review threads (GraphQL): 0"),
+      )
       assert_true(message.contains("resolving threads and checking gates"))
       assert_true(message.contains("MERGE NOW"))
       assert_false(message.contains("awaiting re-review"))

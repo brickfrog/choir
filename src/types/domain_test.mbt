@@ -171,6 +171,25 @@ test "advisory_evaluation_result ready when review CI and threads are clear" {
 }
 
 ///|
+test "advisory_evaluation_result ready when GitHub reports no CI checks" {
+  let bundle : @types.EvaluationBundle = {
+    task_contract: None,
+    signals: [
+      @types.EvaluationSignal::Review(
+        state=@types.EvaluationReviewState::Approved,
+        body="",
+      ),
+      @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::NoChecks),
+      @types.EvaluationSignal::ThreadsObserved(count=0),
+      @types.EvaluationSignal::CopilotIssueCommentObserved,
+    ],
+  }
+  let result = @types.advisory_evaluation_result(bundle)
+  assert_eq(result.verdict, @types.EvaluationVerdict::Ready)
+  assert_true(result.summary.contains("ready"))
+}
+
+///|
 test "advisory_evaluation_result ready for comment-only review when CI and threads are clear" {
   let bundle : @types.EvaluationBundle = {
     task_contract: None,

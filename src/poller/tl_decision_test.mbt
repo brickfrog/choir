@@ -223,6 +223,13 @@ test "merge_policy_decision_for_tracked_pr returns merge_now for approved succes
 }
 
 ///|
+test "merge_policy_decision_for_tracked_pr returns merge_now when no CI checks exist" {
+  let t = sample_tracked(Approved, NoChecks, 12)
+  let decision = merge_policy_decision_for_tracked_pr(t, Some(0))
+  assert_eq(decision.label(), "merge_now")
+}
+
+///|
 test "merge_policy_summary_line reflects missing verify evidence" {
   let t = sample_tracked(Approved, Success, 13)
   let contract = {

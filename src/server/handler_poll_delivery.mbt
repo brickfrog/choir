@@ -61,6 +61,15 @@ fn parent_merge_policy_line(
 }
 
 ///|
+fn parent_thread_recheck_line(unresolved_threads_for_recheck : Int?) -> String {
+  match unresolved_threads_for_recheck {
+    Some(count) =>
+      "Unresolved inline review threads (GraphQL): " + count.to_string() + "\n"
+    None => "Unresolved inline review threads (GraphQL): not fetched\n"
+  }
+}
+
+///|
 pub fn parent_poll_event_message(
   tracked : @poller.TrackedPR,
   project_dir : String,
@@ -135,6 +144,7 @@ pub fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
+        parent_thread_recheck_line(unresolved_threads_for_recheck) +
         premerge_line +
         next_action +
         parent_poll_tl_decision_suffix(
@@ -920,12 +930,16 @@ async fn deliver_pending_poll_events(
         automerge_enabled,
         review_mode~,
       ) {
-      let (count, _) = @tools.fetch_unresolved_review_threads(
+      let (count, thread_text) = @tools.fetch_unresolved_review_threads(
         poll_event_pr_number(event),
         state.config.project_dir,
         capture,
       )
-      Some(count)
+      if thread_text == @tools.review_thread_fetch_failed_marker {
+        None
+      } else {
+        Some(count)
+      }
     } else {
       None
     }

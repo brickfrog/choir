@@ -20,9 +20,9 @@ fn effective_task_contract(
 ///|
 fn ready_reason(required_verify : Array[String]) -> String {
   if required_verify.length() > 0 {
-    "ready: review received, CI passed, threads clear, local verify passed"
+    "ready: review received, CI passed/no checks, threads clear, local verify passed"
   } else {
-    "ready: review received, CI passed, threads clear"
+    "ready: review received, CI passed/no checks, threads clear"
   }
 }
 

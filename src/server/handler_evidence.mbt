@@ -17,6 +17,7 @@ fn evidence_ci_status_from_snapshot(
 ) -> @evidence.EvidenceCiStatus {
   match ci {
     @poller.CiRollupStatus::Unknown => @evidence.EvidenceCiStatus::Unknown
+    @poller.CiRollupStatus::NoChecks => @evidence.EvidenceCiStatus::NoChecks
     @poller.CiRollupStatus::InProgress => @evidence.EvidenceCiStatus::InProgress
     @poller.CiRollupStatus::Success => @evidence.EvidenceCiStatus::Success
     @poller.CiRollupStatus::Failure => @evidence.EvidenceCiStatus::Failure

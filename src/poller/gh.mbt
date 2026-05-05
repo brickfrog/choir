@@ -147,7 +147,7 @@ fn parse_ci_rollup(json : Json) -> CiRollupStatus {
     return Unknown
   }
   if checks.length() == 0 {
-    return Unknown
+    return NoChecks
   }
   let mut any_failure = false
   let mut any_pending = false

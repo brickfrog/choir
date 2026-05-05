@@ -456,6 +456,36 @@ test "fork_wave_spawn_plan disambiguates duplicate raw slugs" {
 }
 
 ///|
+test "fork_wave_spawn_plan honors custom slug_prefix for per-leaf tasks" {
+  let args : ForkWaveArgs = {
+    count: 2,
+    tasks: ["Implement Leaf A", "Implement Leaf B"],
+    task_contracts: [
+      { ..@types.TaskContract::empty(), goal: "Implement Leaf A" },
+      { ..@types.TaskContract::empty(), goal: "Implement Leaf B" },
+    ],
+    has_per_leaf_tasks: true,
+    parent_branch: "pb",
+    caller_id: "pb.tl",
+    slug_prefix: "sandbox",
+    agent_type: @types.AgentType::MoonPilot,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    review_mode: None,
+    depends_on: [],
+  }
+  let plan = fork_wave_spawn_plan(args, 0, None, "/p", "sess")
+  assert_eq(plan.spawned_slugs[0], "sandbox-implement-leaf-a")
+  assert_eq(plan.spawned_slugs[1], "sandbox-implement-leaf-b")
+  assert_eq(
+    plan.agent_ids,
+    "pb.sandbox-implement-leaf-a,pb.sandbox-implement-leaf-b",
+  )
+}
+
+///|
 test "fork_wave_spawn_plan skips active agents and records skipped_ids" {
   let reg = @registry.AgentRegistry::new()
   ignore(

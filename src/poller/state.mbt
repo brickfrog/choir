@@ -18,6 +18,7 @@ fn review_state_name(review : ReviewState) -> String {
 fn ci_rollup_name(rollup : CiRollupStatus) -> String {
   match rollup {
     Unknown => "unknown"
+    NoChecks => "no_checks"
     InProgress => "in_progress"
     Success => "success"
     Failure => "failure"
@@ -28,6 +29,7 @@ fn ci_rollup_name(rollup : CiRollupStatus) -> String {
 fn parse_ci_rollup_name(s : String) -> CiRollupStatus? {
   match s {
     "unknown" => Some(Unknown)
+    "no_checks" => Some(NoChecks)
     "in_progress" => Some(InProgress)
     "success" => Some(Success)
     "failure" => Some(Failure)

@@ -25,7 +25,7 @@ test "parse_gh_pr_view_output empty reviews yields None_" {
   assert_true(ok)
   assert_eq(review, None_)
   assert_eq(sha, "")
-  assert_eq(ci_rollup, Unknown)
+  assert_eq(ci_rollup, NoChecks)
   assert_eq(bodies, "")
   assert_true(open)
 }

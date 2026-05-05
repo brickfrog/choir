@@ -424,7 +424,7 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   if !review_ok {
     return false
   }
-  if tracked.last_ci_rollup != Success {
+  if tracked.last_ci_rollup != Success && tracked.last_ci_rollup != NoChecks {
     return false
   }
   threads_clear
@@ -448,6 +448,7 @@ fn evaluation_ci_rollup_from_snapshot(
 ) -> @types.EvaluationCiRollup {
   match ci {
     Unknown => @types.EvaluationCiRollup::Unknown
+    NoChecks => @types.EvaluationCiRollup::NoChecks
     InProgress => @types.EvaluationCiRollup::InProgress
     Success => @types.EvaluationCiRollup::Success
     Failure => @types.EvaluationCiRollup::Failure
@@ -702,9 +703,9 @@ pub fn tl_tracked_pr_recheck_gate_line(
   )
   if snapshot_ready {
     if tracked.copilot_issue_comment_seen {
-      "Choir snapshot: no tracked blockers (reviewed, CI success, zero unresolved threads). Copilot issue comment observed. Confirm repo policy, then merge_pr if appropriate. Does not merge."
+      "Choir snapshot: no tracked blockers (reviewed, CI success/no checks, zero unresolved threads). Copilot issue comment observed. Confirm repo policy, then merge_pr if appropriate. Does not merge."
     } else {
-      "Choir snapshot: no tracked blockers (reviewed, CI success, zero unresolved threads), but no Copilot issue comment observed on this PR yet — confirm policy before merge_pr. Does not merge."
+      "Choir snapshot: no tracked blockers (reviewed, CI success/no checks, zero unresolved threads), but no Copilot issue comment observed on this PR yet — confirm policy before merge_pr. Does not merge."
     }
   } else {
     let parts : Array[String] = []
@@ -731,7 +732,7 @@ pub fn tl_tracked_pr_recheck_gate_line(
         }
       None => ()
     }
-    if tracked.last_ci_rollup != Success {
+    if tracked.last_ci_rollup != Success && tracked.last_ci_rollup != NoChecks {
       parts.push("latest head CI rollup is not all-success")
     }
     if parts.length() == 0 {

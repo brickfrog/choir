@@ -156,13 +156,8 @@ pub fn should_fetch_unresolved_threads_for_pending_event(
   match event {
     @poller.PollEvent::CIFailureCleared(_)
     | @poller.PollEvent::CILatestHeadRollupSucceeded(_)
-    | @poller.PollEvent::ReviewThreadsResolved(_) => true
-    @poller.PollEvent::FixesPushed(_) =>
-      review_mode == @types.ReviewMode::SinglePass ||
-      (
-        automerge_enabled &&
-        automerge_candidate_event_for_review_mode(event, review_mode)
-      )
+    | @poller.PollEvent::ReviewThreadsResolved(_)
+    | @poller.PollEvent::FixesPushed(_) => true
     _ =>
       automerge_enabled &&
       automerge_candidate_event_for_review_mode(event, review_mode)

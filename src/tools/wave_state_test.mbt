@@ -20,6 +20,17 @@ fn make_agent(
 }
 
 ///|
+fn make_agent_with_state(
+  id : String,
+  role : @types.Role,
+  parent : String?,
+  agent_type : @types.AgentType,
+  state : @types.AgentState,
+) -> @types.Agent {
+  { ..make_agent(id, role, parent, agent_type), state, }
+}
+
+///|
 fn make_dev_lifecycle(
   agent_id : String,
   workflow : @phase.DevLifecycle,
@@ -556,6 +567,82 @@ test "plan_wave_state worker with stale heartbeat appears in snapshot" {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
     _ => fail("expected Worker(Working) for silent worker")
   }
+}
+
+///|
+test "plan_wave_state filters terminal children outside the current wave" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent_with_state(
+        "tl.current",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Gemini,
+        @types.AgentState::Done,
+      ),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent_with_state(
+        "tl.old-failed",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Gemini,
+        @types.AgentState::Failed,
+      ),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent(
+        "tl.active-orphan",
+        @types.Role::Worker,
+        Some("tl"),
+        @types.AgentType::Claude,
+      ),
+    ),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle(
+      "tl",
+      @phase.SupervisorLifecycle::WaveComplete(wave=3, children=[
+        {
+          child_id: "tl.current",
+          slug: "current",
+          branch: "tl.current",
+          agent_type: @types.AgentType::Gemini,
+          summary: @phase.ChildLifecycleSummary::Done,
+        },
+      ]),
+    ),
+  )
+  let snap = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    None,
+    threads_zero_lookup,
+    no_heartbeat,
+    @types.ReviewMode::Iterative,
+    0L,
+  ).unwrap()
+  assert_eq(snap.children.length(), 2)
+  assert_true(snap.children.iter().any(fn(c) { c.agent_id == "tl.current" }))
+  assert_true(
+    snap.children.iter().any(fn(c) { c.agent_id == "tl.active-orphan" }),
+  )
+  assert_false(
+    snap.children.iter().any(fn(c) { c.agent_id == "tl.old-failed" }),
+  )
 }
 
 ///|

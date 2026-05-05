@@ -42,7 +42,7 @@ pub(all) struct WaveStateSupervisor {
 } derive(Debug, Eq, ToJson)
 
 ///|
-/// Authoritative typed snapshot of the caller's supervisor + all children.
+/// Authoritative typed snapshot of the caller's supervisor + relevant children.
 pub(all) struct WaveStateSnapshot {
   supervisor : WaveStateSupervisor
   children : Array[WaveStateChild]
@@ -93,6 +93,43 @@ fn supervisor_wave(lifecycle : @phase.SupervisorLifecycle) -> Int? {
 }
 
 ///|
+fn supervisor_child_id_set(
+  lifecycle : @phase.SupervisorLifecycle,
+) -> Map[String, Bool]? {
+  match lifecycle {
+    Supervising(children~, ..) | WaveComplete(children~, ..) => {
+      let ids : Map[String, Bool] = {}
+      for child in children {
+        ids.set(child.child_id, true)
+      }
+      Some(ids)
+    }
+    _ => None
+  }
+}
+
+///|
+fn agent_state_is_terminal(state : @types.AgentState) -> Bool {
+  state == @types.AgentState::Done || state == @types.AgentState::Failed
+}
+
+///|
+fn wave_state_should_include_child(
+  child : @types.Agent,
+  current_child_ids : Map[String, Bool]?,
+) -> Bool {
+  let child_id = child.agent_id.to_string()
+  match current_child_ids {
+    Some(ids) =>
+      match ids.get(child_id) {
+        Some(true) => true
+        _ => !agent_state_is_terminal(child.state)
+      }
+    None => !agent_state_is_terminal(child.state)
+  }
+}
+
+///|
 /// Build a single `agent_id -> TrackedPR` index from the poller state in one
 /// linear pass. Callers then do O(1) lookups per child instead of rescanning
 /// `ps.tracked.values()` on every child (which is O(children × trackedPRs)).
@@ -121,6 +158,9 @@ fn index_tracked_by_agent(
 ///   `@phase.read_lifecycle(project_dir, id)`).
 /// - `threads_lookup`: `(pr_number) -> (unresolved_count?, error?)` — fail-loud.
 /// - `heartbeat_reader`: `(agent_id) -> Int64?` — surfaces silent workers.
+///
+/// Children are limited to the current supervisor wave plus any nonterminal
+/// registry children, so old Done/Failed rows do not dominate the snapshot.
 ///
 /// Rejects callers whose registry entry is missing and callers that are not a
 /// supervisor role (Root or TL); the registry guards role at the transport
@@ -174,8 +214,12 @@ pub fn plan_wave_state(
     None => None
   }
   let tracked_by_agent = index_tracked_by_agent(poller_state)
+  let current_child_ids = supervisor_child_id_set(supervisor_workflow)
   let children : Array[WaveStateChild] = []
   for child in registry.children(caller_id) {
+    if !wave_state_should_include_child(child, current_child_ids) {
+      continue
+    }
     let child_id = child.agent_id.to_string()
     let child_lifecycle = lifecycle_reader(child_id)
     let workflow : @phase.WorkflowState = match child_lifecycle {
@@ -250,15 +294,21 @@ pub async fn interpret_wave_state(
   let pr_numbers : Array[Int] = []
   let add_pr = fn(n : Int) { if !pr_numbers.contains(n) { pr_numbers.push(n) } }
   let caller_lifecycle = @phase.read_lifecycle(project_dir, args.caller_id)
-  match caller_lifecycle {
-    Some({ workflow: @phase.Supervisor(sl), .. }) =>
-      match supervisor_own_pr_number(sl) {
-        Some(n) => add_pr(n)
-        None => ()
-      }
-    _ => ()
+  let supervisor_workflow_for_filter = match caller_lifecycle {
+    Some({ workflow: @phase.Supervisor(sl), .. }) => sl
+    _ => @phase.SupervisorLifecycle::Planning
   }
+  match supervisor_own_pr_number(supervisor_workflow_for_filter) {
+    Some(n) => add_pr(n)
+    None => ()
+  }
+  let current_child_ids = supervisor_child_id_set(
+    supervisor_workflow_for_filter,
+  )
   for child in reg.children(args.caller_id) {
+    if !wave_state_should_include_child(child, current_child_ids) {
+      continue
+    }
     let child_id = child.agent_id.to_string()
     match tracked_by_agent.get(child_id) {
       Some(tracked) => add_pr(tracked.pr_number)

@@ -43,7 +43,12 @@ pub fn fork_wave_spawn_plan(
   let seen_slugs : Map[String, Int] = {}
   for i = 0; i < fork_wave_args.count; i = i + 1 {
     let raw_slug = if fork_wave_args.has_per_leaf_tasks {
-      slugify_task(fork_wave_args.tasks[i], i)
+      let task_slug = slugify_task(fork_wave_args.tasks[i], i)
+      if fork_wave_args.slug_prefix == "wave" {
+        task_slug
+      } else {
+        fork_wave_args.slug_prefix + "-" + task_slug
+      }
     } else {
       fork_wave_args.slug_prefix + "-" + i.to_string()
     }

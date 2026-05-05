@@ -30,8 +30,10 @@ pub impl ToJson for ReviewState with to_json(self) -> Json {
 ///|
 /// GitHub `statusCheckRollup` aggregate for the PR head (honest, coarse).
 pub(all) enum CiRollupStatus {
-  /// No checks in the rollup or insufficient fields to classify.
+  /// Insufficient fields to classify the rollup.
   Unknown
+  /// GitHub reported an empty statusCheckRollup; there are no checks to wait on.
+  NoChecks
   /// At least one check is pending, queued, or in progress.
   InProgress
   /// Rollup shows all checks completed successfully (or skipped); not a merge/review verdict.
@@ -121,6 +123,7 @@ pub(all) enum PollEvent {
 pub fn CiRollupStatus::to_wire_string(self : CiRollupStatus) -> String {
   match self {
     Unknown => "unknown"
+    NoChecks => "no_checks"
     InProgress => "in_progress"
     Success => "success"
     Failure => "failure"

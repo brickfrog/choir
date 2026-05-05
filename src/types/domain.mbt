@@ -372,6 +372,7 @@ pub(all) enum EvaluationReviewState {
 /// Normalized CI rollup used by evaluation helpers.
 pub(all) enum EvaluationCiRollup {
   Unknown
+  NoChecks
   InProgress
   Success
   Failure

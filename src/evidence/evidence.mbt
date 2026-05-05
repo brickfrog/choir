@@ -1,6 +1,7 @@
 ///|
 pub(all) enum EvidenceCiStatus {
   Unknown
+  NoChecks
   InProgress
   Success
   Failure
@@ -10,6 +11,7 @@ pub(all) enum EvidenceCiStatus {
 pub fn EvidenceCiStatus::to_wire_string(self : EvidenceCiStatus) -> String {
   match self {
     Unknown => "unknown"
+    NoChecks => "no_checks"
     InProgress => "in_progress"
     Success => "success"
     Failure => "failure"
@@ -25,6 +27,7 @@ pub impl Show for EvidenceCiStatus with output(self, logger) -> Unit {
 fn parse_evidence_ci_status(s : String) -> EvidenceCiStatus? {
   match s {
     "unknown" => Some(Unknown)
+    "no_checks" => Some(NoChecks)
     "in_progress" => Some(InProgress)
     "success" => Some(Success)
     "failure" => Some(Failure)
@@ -547,6 +550,7 @@ pub fn evaluation_bundle_from_evidence(
       CiObserved(status~, ..) =>
         latest_ci = match status {
           Unknown => @types.EvaluationCiRollup::Unknown
+          NoChecks => @types.EvaluationCiRollup::NoChecks
           InProgress => @types.EvaluationCiRollup::InProgress
           Success => @types.EvaluationCiRollup::Success
           Failure => @types.EvaluationCiRollup::Failure

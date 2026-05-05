@@ -137,6 +137,26 @@ test "decide_merge waits while ci is still in progress" {
 }
 
 ///|
+test "decide_merge returns merge_now when no CI checks are configured" {
+  let decision = decide_merge(
+    None,
+    bundle_with_signals(
+      Some({ ..@types.TaskContract::empty(), goal: "ship feature" }),
+      [
+        @types.EvaluationSignal::Review(
+          state=@types.EvaluationReviewState::Approved,
+          body="looks good",
+        ),
+        @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::NoChecks),
+        @types.EvaluationSignal::ThreadsObserved(count=0),
+      ],
+    ),
+  )
+  assert_eq(decision.label(), "merge_now")
+  assert_true(decision.reason().contains("ready"))
+}
+
+///|
 test "decide_merge needs human when review threads were not fetched" {
   let decision = decide_merge(
     None,

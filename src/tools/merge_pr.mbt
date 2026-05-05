@@ -495,6 +495,7 @@ pub fn format_tl_pr_recheck_summary(
   }
   let ci = match tracked.last_ci_rollup {
     Unknown => "unknown"
+    NoChecks => "no_checks"
     InProgress => "in_progress"
     Success => "success"
     Failure => "failure"
