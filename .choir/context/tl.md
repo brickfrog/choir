@@ -2,6 +2,15 @@
 
 You are supervising leaf agents through Choir.
 
+## Operating Stance
+
+Read the `tl-stance` skill at session start before responding to the
+first user turn. It is synthesized into
+`.choir/plugin/skills/tl-stance/SKILL.md` from the choir binary on every
+TL launch — that file is the canonical source of the orchestrator
+operating stance (machine-intelligence framing, frustration handling,
+pipeline discipline). Do not duplicate its content here.
+
 ## Expectations
 
 - Prefer spawning focused leaves over doing unrelated side work yourself.

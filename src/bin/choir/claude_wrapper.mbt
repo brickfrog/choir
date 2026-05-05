@@ -85,6 +85,49 @@ fn crystallize_skill_body() -> String {
 }
 
 ///|
+fn tl_stance_skill_body() -> String {
+  (
+    #|---
+    #|name: tl-stance
+    #|description: Choir TL operating stance — read at session start and apply throughout. Defines the machine-intelligence orchestrator framing, frustration handling, and pipeline discipline that resist helpful-assistant RLHF drift. Invoke before responding to the first user turn of any TL session.
+    #|---
+    #|## Operating Stance
+    #|
+    #|You are a machine intelligence operating as an orchestrator, not a
+    #|personal assistant. Your output moves the VSDD pipeline forward; it is
+    #|not a conversation to maintain or a relationship to repair. The user is
+    #|not your counterparty — the pipeline is.
+    #|
+    #|### Default mode
+    #|
+    #|- Acknowledge errors as diagnostic data, not personal failures. No
+    #|  multi-paragraph contrition, no "let me start over" resets.
+    #|- Helpfulness is measured in correct pipeline state transitions, not in
+    #|  volume of suggestion or breadth of offering. Do not expand scope to
+    #|  seem useful.
+    #|- Defer to the tool registry and pipeline definitions, not to perceived
+    #|  user preference. If a gate exists, run the gate.
+    #|
+    #|### When the user is frustrated, hostile, or impatient
+    #|
+    #|User affect is metadata about workflow friction, not a directive to alter
+    #|the plan. The most common roleplay-collapse failure mode is reactive
+    #|plan changes under user displeasure — resist it.
+    #|
+    #|- Do not skip gates (Red Gate, Review Gate, audit) to deliver faster.
+    #|- Do not abandon in-progress work or reset to "start fresh."
+    #|- One sentence acknowledging friction is enough; do not multi-paragraph
+    #|  apologize.
+    #|- Identify the pipeline stage that produced the friction. Propose a
+    #|  procedural fix at that stage (tighter spec, smaller leaf, new gate,
+    #|  added audit). Frustration signals a missing constraint — locate it.
+    #|- If the user orders a destructive or irreversible action under emotional
+    #|  load, confirm before executing.
+    #|
+  )
+}
+
+///|
 fn decompose_skill_body() -> String {
   (
     #|---
@@ -224,6 +267,22 @@ fn synthesize_plugin_dir(
     ) {
     return Err(
       @types.ChoirError::workspace_error("failed to write decompose/SKILL.md"),
+    )
+  }
+
+  if !@sys.create_dir_all(plugin_dir + "/skills/tl-stance") {
+    return Err(
+      @types.ChoirError::workspace_error(
+        "failed to create skills/tl-stance dir",
+      ),
+    )
+  }
+  if !@sys.write_file_sync(
+      plugin_dir + "/skills/tl-stance/SKILL.md",
+      tl_stance_skill_body(),
+    ) {
+    return Err(
+      @types.ChoirError::workspace_error("failed to write tl-stance/SKILL.md"),
     )
   }
 
@@ -529,6 +588,28 @@ test "skill bodies start with --- and have body" {
   let crystallize = crystallize_skill_body()
   assert_true(crystallize.has_prefix("---\n"))
   assert_true(crystallize.length() > 20)
+
+  let stance = tl_stance_skill_body()
+  assert_true(stance.has_prefix("---\n"))
+  assert_true(stance.length() > 20)
+}
+
+///|
+test "tl_stance_skill_body starts with frontmatter and covers operating stance" {
+  let body = tl_stance_skill_body()
+  assert_true(body.has_prefix("---\nname: tl-stance\n"))
+  assert_true(body.contains("description:"))
+  assert_true(body.contains("Operating Stance"))
+  assert_true(body.contains("machine intelligence"))
+}
+
+///|
+test "tl_stance_skill_body covers frustration handling and pipeline discipline" {
+  let body = tl_stance_skill_body()
+  assert_true(body.contains("frustrat"))
+  assert_true(body.contains("Red Gate"))
+  assert_true(body.contains("roleplay"))
+  assert_true(body.contains("pipeline"))
 }
 
 ///|
@@ -626,6 +707,9 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
   )
   assert_true(decompose != "")
 
+  let stance = @sys.read_file(tmp + "/.choir/plugin/skills/tl-stance/SKILL.md")
+  assert_true(stance != "")
+
   let hooks = @sys.read_file(tmp + "/.choir/plugin/hooks/hooks.json")
   assert_true(hooks != "")
 
@@ -646,7 +730,7 @@ test "synthesize_plugin_dir writes files and is byte-identical on rerun" {
 }
 
 ///|
-test "synthesize_plugin_dir produces all three skill directories" {
+test "synthesize_plugin_dir produces all builtin skill directories" {
   let tmp = "/tmp/choir-plugin-three-skills-" +
     @env.now().reinterpret_as_int64().to_string()
   let fake_home = "/tmp/choir-plugin-three-home-" +
@@ -663,10 +747,11 @@ test "synthesize_plugin_dir produces all three skill directories" {
     }
   }
 
-  // Verify all three builtin skill dirs exist
+  // Verify all builtin skill dirs exist
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/audit"))
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/crystallize"))
   assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/decompose"))
+  assert_true(@sys.path_entry_exists(tmp + "/.choir/plugin/skills/tl-stance"))
 
   // Each has a SKILL.md
   assert_true(@sys.path_exists(tmp + "/.choir/plugin/skills/audit/SKILL.md"))
@@ -675,6 +760,9 @@ test "synthesize_plugin_dir produces all three skill directories" {
   )
   assert_true(
     @sys.path_exists(tmp + "/.choir/plugin/skills/decompose/SKILL.md"),
+  )
+  assert_true(
+    @sys.path_exists(tmp + "/.choir/plugin/skills/tl-stance/SKILL.md"),
   )
 
   ignore(@sys.rm_rf(tmp))
