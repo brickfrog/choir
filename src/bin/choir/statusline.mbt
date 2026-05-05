@@ -133,11 +133,40 @@ fn statusline_render_bar(
 }
 
 ///|
-/// Parse `.git/HEAD` synchronously. Returns the branch name (e.g. `main`,
-/// `feature/xyz`) or a short 7-char hash when HEAD is detached. Empty string
-/// if `.git/HEAD` is unreadable.
+/// Resolve and read HEAD for `project_dir`. Returns the branch name (e.g.
+/// `main`, `feature/xyz`), a short 7-char hash for detached HEAD, or empty
+/// string when no resolvable git state is found.
+///
+/// Handles both layouts:
+///   - main checkout: `<project>/.git/HEAD`
+///   - linked worktree: `<project>/.git` is a regular file containing
+///     `gitdir: <path-to-real-gitdir>` and HEAD lives at `<gitdir>/HEAD`
+///
+/// The worktree case is what the choir TL hits whenever its session is
+/// rooted in `.choir/worktrees/<slug>/`. Without this, the entire branch
+/// segment silently disappears from the statusline in any worktree session.
 fn statusline_git_branch(project_dir : String) -> String {
-  let head = @sys.read_file(project_dir + "/.git/HEAD")
+  let git_path = project_dir + "/.git"
+  if !@sys.path_entry_exists(git_path) {
+    return ""
+  }
+  // Try the worktree pointer form first. `path_exists` is unreliable here —
+  // on Linux `fopen` succeeds on directories, so it can't be used to
+  // distinguish a regular file from a `.git` directory. Read first; the
+  // `gitdir:` prefix is the unambiguous signal of the linked-worktree layout.
+  let raw = @sys.read_file(git_path)
+  let head_path = if raw.has_prefix("gitdir: ") {
+    let trimmed = raw.trim().to_owned()
+    let gitdir = trimmed[8:].to_owned()
+    if gitdir.has_prefix("/") {
+      gitdir + "/HEAD"
+    } else {
+      project_dir + "/" + gitdir + "/HEAD"
+    }
+  } else {
+    git_path + "/HEAD"
+  }
+  let head = @sys.read_file(head_path)
   if head == "" {
     return ""
   }
@@ -195,6 +224,76 @@ fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
     }
   }
   (working, review, changes, failed, done)
+}
+
+///|
+test "statusline_git_branch reads HEAD from a regular .git directory" {
+  let project = "/tmp/choir-statusline-git-dir-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project))
+  ignore(@sys.create_dir_all(project + "/.git"))
+  ignore(@sys.write_file_sync(project + "/.git/HEAD", "ref: refs/heads/main\n"))
+  let branch = statusline_git_branch(project)
+  ignore(@sys.rm_rf(project))
+  assert_eq(branch, "main")
+}
+
+///|
+test "statusline_git_branch resolves a worktree .git pointer file" {
+  let project = "/tmp/choir-statusline-worktree-branch-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project))
+  let main_repo = project + "/main"
+  let worktree = project + "/wt"
+  let real_gitdir = main_repo + "/.git/worktrees/foo"
+  ignore(@sys.create_dir_all(real_gitdir))
+  ignore(@sys.create_dir_all(worktree))
+  ignore(
+    @sys.write_file_sync(real_gitdir + "/HEAD", "ref: refs/heads/feature/foo\n"),
+  )
+  // .git as a regular file pointing at the linked gitdir (absolute path form).
+  ignore(
+    @sys.write_file_sync(worktree + "/.git", "gitdir: " + real_gitdir + "\n"),
+  )
+  let branch = statusline_git_branch(worktree)
+  ignore(@sys.rm_rf(project))
+  assert_eq(branch, "feature/foo")
+}
+
+///|
+test "statusline_git_branch returns short hash on detached HEAD" {
+  let project = "/tmp/choir-statusline-detached-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project))
+  ignore(@sys.create_dir_all(project + "/.git"))
+  ignore(
+    @sys.write_file_sync(
+      project + "/.git/HEAD",
+      "abc1234deadbeefcafebabe0123456789abcdef0\n",
+    ),
+  )
+  let branch = statusline_git_branch(project)
+  ignore(@sys.rm_rf(project))
+  assert_eq(branch, "abc1234")
+}
+
+///|
+test "statusline_git_branch returns empty when .git is missing" {
+  let project = "/tmp/choir-statusline-no-git-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project))
+  ignore(@sys.create_dir_all(project))
+  let branch = statusline_git_branch(project)
+  ignore(@sys.rm_rf(project))
+  assert_eq(branch, "")
 }
 
 ///|
