@@ -56,6 +56,19 @@ test "render_worker_spawn_prompt uses research profile" {
 }
 
 ///|
+test "render_leaf_spawn_prompt includes beads issue section" {
+  let prompt = render_leaf_spawn_prompt(
+    PromptSpec::from_map({
+      "task": "Fix race",
+      "beads_issue_id": " choir-poller-state-race ",
+    }),
+  )
+  assert_true(prompt.contains("## BEADS ISSUE"))
+  assert_true(prompt.contains("- choir-poller-state-race"))
+  assert_true(prompt.contains("bd show choir-poller-state-race --json"))
+}
+
+///|
 test "render_worker_spawn_prompt respects prompt override" {
   let prompt = render_worker_spawn_prompt(
     PromptSpec::from_map({

@@ -325,6 +325,7 @@ test "parse_local_config task_contract_json" {
   let contract = {
     ..@types.TaskContract::empty(),
     goal: "ship feature",
+    beads_issue_id: Some("choir-beads-contract-propagation"),
     verify: ["moon test --target native"],
   }
   let with_contract = "role = \"dev\"\n" +
@@ -335,6 +336,10 @@ test "parse_local_config task_contract_json" {
   match local_cfg.task_contract {
     Some(parsed) => {
       assert_eq(parsed.goal, "ship feature")
+      @debug.assert_eq(
+        parsed.beads_issue_id,
+        Some("choir-beads-contract-propagation"),
+      )
       assert_eq(parsed.verify, ["moon test --target native"])
     }
     None => fail("expected task_contract")

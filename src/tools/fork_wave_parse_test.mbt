@@ -13,6 +13,20 @@ test "parse_fork_wave_args defaults child_role to Dev" {
 }
 
 ///|
+test "parse_fork_wave_args defaults agent_type to Codex" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => assert_eq(fork.agent_type, @types.AgentType::Codex)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
 test "parse_fork_wave_args role tl" {
   let args = @tools.tool_args_from_map({
     "count": "1",
@@ -154,15 +168,22 @@ test "parse_fork_wave_args rejects invalid automerge value" {
 }
 
 ///|
-test "parse_fork_wave_args parses issue_id" {
+test "parse_fork_wave_args parses issue_id into task contract" {
   let args = @tools.tool_args_from_map({
     "count": "1",
     "task": "work",
     "parent_branch": "main",
     "caller_id": "root",
-    "issue_id": " 42 ",
+    "issue_id": " choir-42 ",
   })
-  assert_true(@tools.parse_fork_wave_args(".", args) is Ok(_))
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => {
+      @debug.assert_eq(fork.task_contracts[0].beads_issue_id, Some("choir-42"))
+      assert_true(fork.tasks[0].contains("## BEADS ISSUE"))
+      assert_true(fork.tasks[0].contains("bd show choir-42 --json"))
+    }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
 }
 
 ///|
@@ -174,7 +195,10 @@ test "parse_fork_wave_args ignores empty issue_id" {
     "caller_id": "root",
     "issue_id": "   ",
   })
-  assert_true(@tools.parse_fork_wave_args(".", args) is Ok(_))
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => @debug.assert_eq(fork.task_contracts[0].beads_issue_id, None)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
 }
 
 ///|

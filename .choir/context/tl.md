@@ -36,7 +36,8 @@ not the orchestration authority: `wave_state`, lifecycle state, evidence, and
 - During Spec Crystallization, link feature beads to `.choir/context/<slug>-spec.md`
   with `--spec-id` or issue notes.
 - During decomposition, create child beads for durable leaf-sized work when it
-  helps future tracking; pass the bead ID in the leaf task text or review context.
+  helps future tracking; pass `beads_issue_id=<id>` to `fork_wave` or
+  `spawn_worker` so the prompt carries a dedicated Beads issue section.
 - Prefer TL-owned Beads mutation. Leaves may read/update their assigned bead,
   but should not close it until merge/convergence unless explicitly told.
 - The `task_list`, `task_get`, `task_create`, and `task_update` Choir tools are

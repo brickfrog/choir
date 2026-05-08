@@ -82,6 +82,18 @@ fn json_optional_trimmed_string(value : Json?) -> String? {
 }
 
 ///|
+fn json_optional_issue_id(obj : Map[String, Json]) -> String? {
+  match json_optional_trimmed_string(obj.get("beads_issue_id")) {
+    Some(value) => Some(value)
+    None =>
+      match json_optional_trimmed_string(obj.get("bead_id")) {
+        Some(value) => Some(value)
+        None => json_optional_trimmed_string(obj.get("issue_id"))
+      }
+  }
+}
+
+///|
 fn task_contract_from_json_object(value : Json?) -> @types.TaskContract {
   match value {
     Some(Object(obj)) => {
@@ -98,6 +110,7 @@ fn task_contract_from_json_object(value : Json?) -> @types.TaskContract {
         acceptance_checks,
         constraints: json_string_list(obj.get("constraints")),
         non_goals: json_string_list(obj.get("non_goals")),
+        beads_issue_id: json_optional_issue_id(obj),
         review_context: json_optional_trimmed_string(obj.get("review_context")),
         verify: json_string_list(obj.get("verify")),
       }
@@ -136,6 +149,10 @@ fn merge_task_contracts(
     ),
     constraints: merge_unique_lines(nested.constraints, top_level.constraints),
     non_goals: merge_unique_lines(nested.non_goals, top_level.non_goals),
+    beads_issue_id: match top_level.beads_issue_id {
+      Some(value) => Some(value)
+      None => nested.beads_issue_id
+    },
     review_context: match top_level.review_context {
       Some(value) => Some(value)
       None => nested.review_context

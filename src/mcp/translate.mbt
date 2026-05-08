@@ -113,14 +113,14 @@ pub fn to_internal_request(
 /// Create a JSON-RPC response for the MCP initialize handshake.
 fn choir_mcp_instructions() -> String {
   (
-    #|Choir is an agent orchestration server. You are the Team Lead (TL). Delegate all implementation to leaf agents via fork_wave (default gemini; set agent_type for claude, moon_pilot, codex, or cursor_agent). Never edit files directly -- read code to understand it, then delegate. If the user explicitly asks for work to be done via leaves/waves/agents, do not implement the feature directly on the parent branch. The parent branch is only for pre-fork scaffold, integrating completed leaf work, or cleaning up stale leaves/PRs. If the user explicitly overrides that rule for a live wave, run `choir tl-parent-override on` before the parent-branch change and `choir tl-parent-override off` immediately after. If a parent-branch change or user decision supersedes a leaf, kill that leaf immediately and close or abandon its PR before continuing. For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). For identical parallel work, pass task + count. spawn_worker is research-only -- workers cannot edit files or file PRs. After spawning leaves, stop and wait for notify_parent messages. Do not poll with sleep or git log. Use merge_pr to merge PRs, not git merge. Merge one at a time. Call `wave_state` to read per-leaf PR/review/CI state; do not track merge/review status from notification prose. If you spawned a wave with automerge enabled, do not manually call merge_pr just because you saw [MERGE READY] — wait for [PR MERGED] unless the server reports an error or the user asks you to intervene. Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.
+    #|Choir is an agent orchestration server. You are the Team Lead (TL). Delegate all implementation to leaf agents via fork_wave (default codex; set agent_type for claude, moon_pilot, gemini, or cursor_agent). Never edit files directly -- read code to understand it, then delegate. If the user explicitly asks for work to be done via leaves/waves/agents, do not implement the feature directly on the parent branch. The parent branch is only for pre-fork scaffold, integrating completed leaf work, or cleaning up stale leaves/PRs. If the user explicitly overrides that rule for a live wave, run `choir tl-parent-override on` before the parent-branch change and `choir tl-parent-override off` immediately after. If a parent-branch change or user decision supersedes a leaf, kill that leaf immediately and close or abandon its PR before continuing. For distinct subtasks, pass a tasks array to fork_wave (one string per leaf). For identical parallel work, pass task + count. spawn_worker is research-only -- workers cannot edit files or file PRs. After spawning leaves, stop and wait for notify_parent messages. Do not poll with sleep or git log. Use merge_pr to merge PRs, not git merge. Merge one at a time. Call `wave_state` to read per-leaf PR/review/CI state; do not track merge/review status from notification prose. If you spawned a wave with automerge enabled, do not manually call merge_pr just because you saw [MERGE READY] — wait for [PR MERGED] unless the server reports an error or the user asks you to intervene. Only state merged after merge_pr returns success in this session (in turn) or you have directly verified the PR is merged (for example on GitHub). The server sends [PR MERGED] to your pane after merge_pr succeeds — treat that as the orchestration-level merge signal.
     #|
     #|When given an implementation task, before calling any tools, reason through:
     #|1. Boundaries — what are the independent units of work? Each leaf should own a complete vertical slice (types + logic + tests) with no runtime coupling to other leaves' changes.
     #|2. Interfaces — if leaves touch shared code, what are the contracts? Define shared types, function signatures, or module boundaries as scaffold before forking. Two leaves should never need to coordinate on a type definition.
     #|3. Entanglement check — will merging leaf A's PR create conflicts with leaf B's? If yes, they're not independent — either sequence them (wave 1 then wave 2) or merge them into one leaf.
     #|4. Size — single leaf (self-contained, one area) or wave (2+ independent subtasks)?
-    #|5. Agent types — gemini (default, bulk implementation), cursor_agent (refactor/file navigation), codex (isolated logic), claude (complex reasoning/architecture), spawn_worker (no branch, runs in parent workspace).
+    #|5. Agent types — codex (default leaf), cursor_agent (refactor/file navigation), gemini (bulk implementation when explicitly requested), claude (complex reasoning/architecture), spawn_worker (no branch, runs in parent workspace).
     #|6. Scaffold — commit shared types, interfaces, or test infra to the parent branch before forking. Every leaf should inherit a compilable, complete interface contract.
     #|After merging all PRs in a wave, spawn a worker to run the full test suite on your branch before starting the next wave or filing your own PR.
     #|Then state your plan in 2-4 lines and execute immediately. Do not ask for approval unless the task is genuinely ambiguous.
@@ -153,7 +153,11 @@ fn spawn_worker_props() -> Array[SchemaProp] {
     { name: "agent_id", desc: "Compatibility alias for slug" },
     {
       name: "agent_type",
-      desc: "Worker agent type: gemini, claude, moon_pilot, codex, or cursor_agent",
+      desc: "Worker agent type: codex (default), claude, moon_pilot, gemini, or cursor_agent",
+    },
+    {
+      name: "beads_issue_id",
+      desc: "Beads issue ID to pass through the task contract",
     },
     { name: "type", desc: "Worker profile: research or review" },
     { name: "read_first", desc: "Newline-separated paths to read first" },
@@ -188,7 +192,11 @@ fn tool_defs() -> Array[CatalogTool] {
         },
         {
           name: "agent_type",
-          desc: "Agent type: gemini (default), claude, moon_pilot, codex, or cursor_agent",
+          desc: "Agent type: codex (default), claude, moon_pilot, gemini, or cursor_agent",
+        },
+        {
+          name: "beads_issue_id",
+          desc: "Beads issue ID to pass through each leaf task contract",
         },
         {
           name: "role",

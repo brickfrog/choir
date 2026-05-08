@@ -352,9 +352,17 @@ pub fn default_agent_type(role : @types.Role) -> @types.AgentType {
   match role {
     @types.Role::Root => @types.AgentType::Claude
     @types.Role::TL => @types.AgentType::Claude
-    @types.Role::Dev => @types.AgentType::Gemini
-    @types.Role::Worker => @types.AgentType::Gemini
+    @types.Role::Dev => @types.AgentType::Codex
+    @types.Role::Worker => @types.AgentType::Codex
   }
+}
+
+///|
+test "default_agent_type keeps TL on Claude and leaves on Codex" {
+  assert_eq(default_agent_type(@types.Role::Root), @types.AgentType::Claude)
+  assert_eq(default_agent_type(@types.Role::TL), @types.AgentType::Claude)
+  assert_eq(default_agent_type(@types.Role::Dev), @types.AgentType::Codex)
+  assert_eq(default_agent_type(@types.Role::Worker), @types.AgentType::Codex)
 }
 
 ///|

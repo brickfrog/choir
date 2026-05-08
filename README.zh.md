@@ -6,7 +6,7 @@
 > 这个主要是给我自己的工作流程用的，所以可能会随着它们或者这个领域的发展而改变。
 
 用 MoonBit 编写的本地多代理编排器。用昂贵的模型来思考（Claude 担任 TL），
-用更便宜或更专业的模型来实现（Gemini、Codex、Moon Pilot、Cursor Agent 作为叶子代理）。
+默认用 Codex 作为叶子代理，也可以按需选择 Gemini、Moon Pilot 或 Cursor Agent。
 每个叶子在独立的 git worktree 中工作，完成后向 TL 分支提交 PR。内置 poller 自动请求
 Copilot review、将 GitHub PR review/CI 反馈路由到对应面板、在 Copilot 批准 PR 后通知 TL。
 核心循环是 **scaffold → fork → converge**：TL 提交共享类型，派生一波并行叶子，
@@ -80,7 +80,8 @@ bd close <id> --reason "Merged in PR #N"
 ```
 
 `task_list`、`task_get`、`task_create`、`task_update` 这些 Choir 工具现在是
-Beads-backed 的兼容入口。
+Beads-backed 的兼容入口。`fork_wave` 和 `spawn_worker` 也接受 `beads_issue_id`，
+用于把一个已跟踪的 issue 放进派生代理的提示中。
 
 ## 构建
 
@@ -99,7 +100,7 @@ git config core.hooksPath .githooks   # 运行 moon fmt + moon check
 ## 运行依赖
 
 - `git`、`gh`（PR 工作流）、`zellij` 0.44+（会话管理）、`bd`（Beads issue 跟踪）
-- 你使用的代理 CLI：`claude`、`gemini`、`moon`、`codex`、`agent`（Cursor）
+- 你使用的代理 CLI：`claude`、`codex`、`gemini`、`moon`、`agent`（Cursor）
 - Nix dev shell 提供开源依赖；专有 CLI 需单独安装
 
 ## CLI 工具访问

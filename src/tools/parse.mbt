@@ -704,9 +704,9 @@ pub fn parse_fork_wave_args(
   } else {
     slug_prefix
   }
-  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("gemini")
+  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("codex")
   let normalized_agent_type_str = if agent_type_str == "" {
-    "gemini"
+    "codex"
   } else {
     agent_type_str
   }
@@ -875,9 +875,9 @@ fn parse_worker_spawn_args(
         ),
       )
   }
-  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("gemini")
+  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or("codex")
   let normalized_agent_type_str = if agent_type_str == "" {
-    "gemini"
+    "codex"
   } else {
     agent_type_str
   }
@@ -1020,8 +1020,8 @@ fn parse_register_args(
       match role {
         @types.Role::Root => @types.AgentType::Claude
         @types.Role::TL => @types.AgentType::Claude
-        @types.Role::Dev => @types.AgentType::Gemini
-        @types.Role::Worker => @types.AgentType::Gemini
+        @types.Role::Dev => @types.AgentType::Codex
+        @types.Role::Worker => @types.AgentType::Codex
       }
   }
   let spawn_depth = match tool_args_get(args, "spawn_depth") {
@@ -1650,10 +1650,12 @@ test "parse_fork_wave_args merges nested contract object with top-level task" {
       "parent_branch": "main".to_json(),
       "task": "Ship feature".to_json(),
       "contract": {
+        "bead_id": "choir-core-v2-audit".to_json(),
         "scope": ["src/tools", "src/poller"].to_json(),
         "acceptance_checks": ["All tests pass"].to_json(),
         "verify": ["moon test --target native"].to_json(),
       }.to_json(),
+      "beads_issue_id": "choir-poller-state-race".to_json(),
     },
   }
   match parse_fork_wave_args(".", args) {
@@ -1661,10 +1663,62 @@ test "parse_fork_wave_args merges nested contract object with top-level task" {
       assert_eq(parsed.task_contracts.length(), 1)
       assert_eq(parsed.task_contracts[0].goal, "Ship feature")
       assert_eq(parsed.task_contracts[0].scope, ["src/tools", "src/poller"])
+      @debug.assert_eq(
+        parsed.task_contracts[0].beads_issue_id,
+        Some("choir-poller-state-race"),
+      )
       assert_eq(parsed.task_contracts[0].verify, ["moon test --target native"])
+      assert_true(parsed.tasks[0].contains("## BEADS ISSUE"))
+      assert_true(parsed.tasks[0].contains("choir-poller-state-race"))
       assert_true(parsed.tasks[0].contains("## SCOPE"))
       assert_true(parsed.tasks[0].contains("All tests pass"))
     }
+    Err(e) => fail("unexpected parse error: " + e.message())
+  }
+}
+
+///|
+test "parse_worker_spawn_args propagates beads issue and defaults codex" {
+  let parsed = parse_worker_spawn_args(
+    ".",
+    tool_args_from_map({
+      "task": "Investigate issue",
+      "caller_id": "root",
+      "beads_issue_id": "choir-standardized-error-context",
+    }),
+  )
+  match parsed {
+    Ok(worker) => {
+      assert_eq(worker.agent_type, @types.AgentType::Codex)
+      @debug.assert_eq(
+        worker.task_contract.beads_issue_id,
+        Some("choir-standardized-error-context"),
+      )
+      assert_true(worker.task.contains("## BEADS ISSUE"))
+      assert_true(
+        worker.task.contains("bd show choir-standardized-error-context --json"),
+      )
+    }
+    Err(e) => fail("unexpected parse error: " + e.message())
+  }
+}
+
+///|
+test "parse_register_args defaults dev and worker to codex" {
+  match
+    parse_register_args(
+      @types.Role::Dev,
+      tool_args_from_map({ "agent_id": "main.dev-a" }),
+    ) {
+    Ok(reg) => assert_eq(reg.agent_type, @types.AgentType::Codex)
+    Err(e) => fail("unexpected parse error: " + e.message())
+  }
+  match
+    parse_register_args(
+      @types.Role::Worker,
+      tool_args_from_map({ "agent_id": "main.worker-a" }),
+    ) {
+    Ok(reg) => assert_eq(reg.agent_type, @types.AgentType::Codex)
     Err(e) => fail("unexpected parse error: " + e.message())
   }
 }

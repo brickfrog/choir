@@ -67,6 +67,18 @@ fn parse_optional_trimmed(value : String?) -> String? {
 }
 
 ///|
+fn parse_issue_id(args : Map[String, String]) -> String? {
+  match parse_optional_trimmed(args.get("beads_issue_id")) {
+    Some(value) => Some(value)
+    None =>
+      match parse_optional_trimmed(args.get("bead_id")) {
+        Some(value) => Some(value)
+        None => parse_optional_trimmed(args.get("issue_id"))
+      }
+  }
+}
+
+///|
 fn render_bullets(items : Array[String]) -> String {
   let buf = StringBuilder::new()
   for i = 0; i < items.length(); i = i + 1 {
@@ -138,6 +150,7 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
     [],
   )
   let scope = split_nonempty_lines(args.get("scope").unwrap_or(""))
+  let beads_issue_id = parse_issue_id(args)
   let review_context = parse_optional_trimmed(args.get("review_context"))
   {
     prompt: args.get("prompt").unwrap_or("").trim().to_owned(),
@@ -148,6 +161,7 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
       acceptance_checks,
       constraints,
       non_goals,
+      beads_issue_id,
       review_context,
       verify,
     },
@@ -183,6 +197,16 @@ fn render_context_block(spec : PromptSpec) -> String {
     sections.push("Non-goals:\n" + render_bullets(spec.task_contract.non_goals))
   }
   join_sections(sections)
+}
+
+///|
+fn render_beads_issue(id : String) -> String {
+  render_bullets([
+    id,
+    "Use `task_get` or `bd show " +
+    id +
+    " --json` before implementation if the prompt does not include enough issue context.",
+  ])
 }
 
 ///|
@@ -294,6 +318,10 @@ fn render_common_prompt(
 
   let sections : Array[String] = []
   add_section(sections, "TASK", spec.task_contract.goal)
+  match spec.task_contract.beads_issue_id {
+    Some(id) => add_section(sections, "BEADS ISSUE", render_beads_issue(id))
+    None => ()
+  }
   add_section(sections, "SCOPE", render_bullets(spec.task_contract.scope))
   add_section(sections, "BOUNDARY", render_bullets(spec.boundary))
 

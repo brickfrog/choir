@@ -6,8 +6,8 @@ English | [简体中文](README.zh.md)
 > This is primarily used for my own workflows, so may change as they / the space evolves.
 
 A local agent orchestrator built in MoonBit. One expensive model thinks
-(Claude as team lead), cheaper models implement (Gemini, Codex, Moon Pilot,
-Cursor Agent as leaves). Each leaf gets its own git worktree, files a PR
+(Claude as team lead), Codex is the default leaf, and Gemini, Moon Pilot, or
+Cursor Agent can be selected for specialized leaves. Each leaf gets its own git worktree, files a PR
 targeting the TL's branch, and a built-in poller automates Copilot review
 requests, routes GitHub PR review/CI feedback to the right pane, and tells
 the TL when Copilot has approved the PR. The core loop is **scaffold → fork
@@ -85,7 +85,8 @@ bd close <id> --reason "Merged in PR #N"
 ```
 
 The `task_list`, `task_get`, `task_create`, and `task_update` Choir tools are
-Beads-backed compatibility surfaces.
+Beads-backed compatibility surfaces. `fork_wave` and `spawn_worker` also accept
+`beads_issue_id` to pass a tracked issue into the spawned prompt.
 
 ## Build
 
@@ -104,7 +105,7 @@ git config core.hooksPath .githooks   # runs moon fmt + moon check
 ## Runtime Dependencies
 
 - `git`, `gh` (PR workflow), `zellij` 0.44+ (session management), `bd` (Beads issue tracking)
-- Agent CLIs you use: `claude`, `gemini`, `moon`, `codex`, `agent` (Cursor)
+- Agent CLIs you use: `claude`, `codex`, `gemini`, `moon`, `agent` (Cursor)
 - Nix dev shell provides the open-source deps; proprietary CLIs need separate install
 
 ## CLI Tool Access

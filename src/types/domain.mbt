@@ -354,6 +354,7 @@ pub(all) struct TaskContract {
   acceptance_checks : Array[String]
   constraints : Array[String]
   non_goals : Array[String]
+  beads_issue_id : String?
   review_context : String?
   verify : Array[String]
 } derive(Debug, Eq, ToJson, FromJson)
@@ -437,6 +438,7 @@ pub fn TaskContract::empty() -> TaskContract {
     acceptance_checks: [],
     constraints: [],
     non_goals: [],
+    beads_issue_id: None,
     review_context: None,
     verify: [],
   }
@@ -449,6 +451,7 @@ pub fn TaskContract::is_empty(self : TaskContract) -> Bool {
   self.acceptance_checks.length() == 0 &&
   self.constraints.length() == 0 &&
   self.non_goals.length() == 0 &&
+  self.beads_issue_id is None &&
   self.review_context is None &&
   self.verify.length() == 0
 }

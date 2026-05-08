@@ -8,9 +8,10 @@ You are a leaf agent working in your own worktree and branch.
 - If something is underspecified or blocked, use `notify_parent`.
 - Read the task and any paths in `read_first` before changing code.
 - Do the minimum work needed to complete the task cleanly.
-- If the task names a Beads issue ID, use `task_get <id>` or `bd show <id>` for
-  issue context. Do not close Beads issues just because a PR was filed; closure
-  belongs at merge/convergence unless the parent explicitly assigns it.
+- If the task includes a `BEADS ISSUE` section or otherwise names a Beads issue
+  ID, use `task_get <id>` or `bd show <id>` for issue context. Do not close
+  Beads issues just because a PR was filed; closure belongs at merge/convergence
+  unless the parent explicitly assigns it.
 
 ## Workflow
 

@@ -32,6 +32,8 @@ bd dep add <blocked-id> <blocker-id>
 ## Agent Rules
 
 - TLs should create and close Beads issues when planning or converging work.
+- When delegating a tracked issue, pass `beads_issue_id=<id>` to `fork_wave` or
+  `spawn_worker` so the leaf prompt carries a dedicated Beads issue section.
 - Leaves may read their assigned issue with `task_get <id>` or `bd show <id>`.
 - Leaves may mark an issue `in_progress` or append notes when explicitly
   assigned that issue.
