@@ -80,6 +80,58 @@ test "should_fetch_unresolved_threads_for_pending_event widens for automerge" {
 }
 
 ///|
+test "poll_event_beads_note_and_state maps review and ci events" {
+  match poll_event_beads_note_and_state(@poller.PollEvent::CIFailed(12)) {
+    Some((note, dimension, value)) => {
+      assert_true(note.contains("PR #12"))
+      assert_eq(dimension, "ci")
+      assert_eq(value, "failing")
+    }
+    None => fail("expected ci state")
+  }
+  match poll_event_beads_note_and_state(@poller.PollEvent::PRReady(13)) {
+    Some((note, dimension, value)) => {
+      assert_true(note.contains("review gate ready"))
+      assert_eq(dimension, "review")
+      assert_eq(value, "ready")
+    }
+    None => fail("expected review state")
+  }
+  match
+    poll_event_beads_note_and_state(
+      @poller.PollEvent::PRMerged({
+        pr_number: 14,
+        agent_id: "main.leaf",
+        branch: "main.leaf",
+        parent_branch: "main",
+        pr_url: "https://example.test/pr/14",
+        first_seen: 0L,
+        consecutive_failures: 0,
+        backoff_until: 0L,
+        last_review_state: @poller.ReviewState::Approved,
+        last_review_bodies: "",
+        last_sha: "sha",
+        notified_parent: false,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_timeout_at: 0L,
+        copilot_issue_comment_seen: false,
+        orphan_notified: false,
+        orphan_reconciling: false,
+        changes_requested_since: 0L,
+        stall_notified: false,
+        fixes_pushed_at: 0L,
+      }),
+    ) {
+    Some((note, dimension, value)) => {
+      assert_true(note.contains("merged externally"))
+      assert_eq(dimension, "merge")
+      assert_eq(value, "merged")
+    }
+    None => fail("expected merge state")
+  }
+}
+
+///|
 test "automerge_enabled_for_agent respects local override" {
   let global_true = { ..@types.Config::default(), automerge: true }
   assert_true(automerge_enabled_for_agent(global_true, None))

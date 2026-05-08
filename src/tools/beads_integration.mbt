@@ -770,3 +770,38 @@ pub async fn mirror_beads_note_for_agent(
   )
   note_ok
 }
+
+///|
+pub async fn mirror_beads_state_for_agent(
+  project_dir : String,
+  registry : @registry.AgentRegistry?,
+  agent_id : String,
+  dimension : String,
+  value : String,
+  reason : String,
+  tool_name : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Bool {
+  let issue_id = match
+    beads_issue_id_for_agent(project_dir, registry, agent_id) {
+    Some(id) => id
+    None => return true
+  }
+  let state_ok = run_beads_best_effort(
+    beads_set_state_command(project_dir, issue_id, dimension, value, reason),
+    capture,
+  )
+  ignore(
+    run_beads_best_effort(
+      beads_audit_record_command(
+        project_dir,
+        Some(issue_id),
+        "tool_call",
+        tool_name,
+        reason,
+      ),
+      capture,
+    ),
+  )
+  state_ok
+}

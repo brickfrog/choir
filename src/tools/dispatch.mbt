@@ -727,7 +727,7 @@ pub async fn dispatch(
         shutdown_args, project_dir, poller_state, registry, runner,
       )
     ToolRequest::KillAgent(kill_args) =>
-      interpret_kill_agent(kill_args, registry, runner, project_dir~)
+      interpret_kill_agent(kill_args, registry, runner, project_dir~, capture~)
     ToolRequest::Suspend(suspend_args) =>
       interpret_suspend(suspend_args, registry, project_dir, hook_capture~)
     ToolRequest::Resume(resume_args) =>
@@ -769,7 +769,13 @@ pub async fn dispatch(
       }
     ToolRequest::CancelWave(cancel_args) =>
       interpret_cancel_wave(
-        cancel_args, caller_id, project_dir, poller_state, registry, runner,
+        cancel_args,
+        caller_id,
+        project_dir,
+        poller_state,
+        registry,
+        runner,
+        capture~,
       )
     // KvStore::get trims for internal gate comparisons; the kv_get MCP tool returns
     // raw bytes so agents see the exact stored value (see kv.mbt).

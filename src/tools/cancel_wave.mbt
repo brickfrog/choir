@@ -104,6 +104,7 @@ pub async fn interpret_cancel_wave(
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> @types.Response {
   match registry {
     None => @types.Response::Err("no agent registry available")
@@ -137,6 +138,18 @@ pub async fn interpret_cancel_wave(
           ()
         }
         let _ = reg.set_state(agent_id_str, @types.AgentState::Failed)
+        ignore(
+          mirror_beads_state_for_agent(
+            project_dir,
+            registry,
+            agent_id_str,
+            "lifecycle",
+            "cancelled",
+            "Choir cancel_wave cancelled " + agent_id_str,
+            "cancel_wave",
+            capture,
+          ),
+        )
         match poller_state {
           Some(ps) => {
             let untracked = ps.untrack_by_agent_id(agent_id_str)

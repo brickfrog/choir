@@ -878,6 +878,173 @@ async fn deliver_poller_stall_notifications(
 }
 
 ///|
+pub fn poll_event_beads_note_and_state(
+  event : @poller.PollEvent,
+) -> (String, String, String)? {
+  match event {
+    ReviewReceived(n, _) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " review requested changes",
+          "review",
+          "changes_requested",
+        ),
+      )
+    ReviewCommented(n, _) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " received review comments",
+          "review",
+          "commented",
+        ),
+      )
+    PRReady(n) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " review gate ready",
+          "review",
+          "ready",
+        ),
+      )
+    FixesPushed(n) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " fixes pushed after review",
+          "review",
+          "fixes_pushed",
+        ),
+      )
+    ReviewTimeout(n) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " review timeout",
+          "review",
+          "timeout",
+        ),
+      )
+    CIFailed(n) =>
+      Some(
+        ("Choir poller: PR #" + n.to_string() + " CI failing", "ci", "failing"),
+      )
+    CIFailureCleared(n) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " CI failure cleared",
+          "ci",
+          "cleared",
+        ),
+      )
+    CILatestHeadRollupSucceeded(n) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " CI latest head succeeded",
+          "ci",
+          "success",
+        ),
+      )
+    CopilotIssueCommentSeen(n) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " Copilot issue comment seen",
+          "review",
+          "copilot_seen",
+        ),
+      )
+    MergeReady(n) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " merge gate open",
+          "merge",
+          "ready",
+        ),
+      )
+    ReviewThreadsResolved(n) =>
+      Some(
+        (
+          "Choir poller: PR #" + n.to_string() + " review threads resolved",
+          "review",
+          "threads_resolved",
+        ),
+      )
+    PRMerged(pr) =>
+      Some(
+        (
+          "Choir poller: PR #" +
+          pr.pr_number.to_string() +
+          " observed merged externally",
+          "merge",
+          "merged",
+        ),
+      )
+  }
+}
+
+///|
+async fn mirror_poll_event_to_beads(
+  state : ServerState,
+  tracked : @poller.TrackedPR,
+  event : @poller.PollEvent,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let issue_id = match
+    @tools.beads_issue_id_for_agent(
+      state.config.project_dir,
+      Some(state.registry),
+      tracked.agent_id,
+    ) {
+    Some(id) => id
+    None => return
+  }
+  match event {
+    PRMerged(pr) =>
+      ignore(
+        runner([
+          @tools.beads_close_merged_command(
+            state.config.project_dir,
+            issue_id,
+            pr.pr_number,
+          ),
+          @tools.beads_audit_record_command(
+            state.config.project_dir,
+            Some(issue_id),
+            "tool_call",
+            "poller",
+            "observed merged PR #" + pr.pr_number.to_string(),
+          ),
+        ]),
+      )
+    _ =>
+      match poll_event_beads_note_and_state(event) {
+        Some((note, dimension, value)) =>
+          ignore(
+            runner([
+              @tools.beads_note_command(
+                state.config.project_dir,
+                issue_id,
+                note,
+              ),
+              @tools.beads_set_state_command(
+                state.config.project_dir,
+                issue_id,
+                dimension,
+                value,
+                note,
+              ),
+              @tools.beads_audit_record_command(
+                state.config.project_dir,
+                Some(issue_id),
+                "tool_call",
+                "poller",
+                note,
+              ),
+            ]),
+          )
+        None => ()
+      }
+  }
+}
+
+///|
 async fn deliver_pending_poll_events(
   state : ServerState,
   pending_events : Array[@poller.PollEvent],
@@ -967,6 +1134,7 @@ async fn deliver_pending_poll_events(
     match tracked_before_delivery {
       Some(pr) => {
         append_poll_snapshot_evidence(state, pr, event, unresolved_threads)
+        mirror_poll_event_to_beads(state, pr, event, runner)
         if poll_event_is_external_merge(event) {
           continue
         }

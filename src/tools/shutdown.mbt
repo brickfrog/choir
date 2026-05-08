@@ -102,6 +102,7 @@ pub async fn interpret_kill_agent(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   project_dir? : String = ".",
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   list_pids? : (String) -> Array[Int] = fn(p) {
     @sys.list_pids_with_cwd_prefix(p)
   },
@@ -182,6 +183,18 @@ pub async fn interpret_kill_agent(
       ignore(reg.set_state(args.agent_id, @types.AgentState::Failed)) catch {
         _ => ()
       }
+      ignore(
+        mirror_beads_state_for_agent(
+          project_dir,
+          registry,
+          args.agent_id,
+          "lifecycle",
+          "killed",
+          "Choir kill_agent: " + args.reason,
+          "kill_agent",
+          capture,
+        ),
+      )
       @moontrace.warn("agent killed", fields=[
         @moontrace.field("agent_id", args.agent_id),
         @moontrace.field("reason", args.reason),
