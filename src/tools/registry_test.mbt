@@ -461,6 +461,7 @@ async test "dispatch returns correct stub for each tool name" {
       runner=mock_registry_runner,
       git_capture=mock_clean_git,
       capture=mock_registry_capture,
+      bd_capture=mock_registry_capture,
       ensure_branch_ready=Some(mock_registry_branch_ready),
       ensure_pr=Some(mock_registry_ensure_pr),
       mutex_registry=Some(@registry.MutexRegistry::new()),

@@ -1279,6 +1279,120 @@ async test "handle_task_create creates explicit Beads id with force" {
 }
 
 ///|
+async fn mock_beads_create_in_progress_capture(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  assert_eq(cmd.program, "bd")
+  @debug.assert_eq(cmd.workdir, Some("/proj"))
+  if cmd.args == ["show", "progress-task", "--json"] {
+    return (1, "")
+  }
+  if cmd.args ==
+    [
+      "create", "Progress task", "--id", "progress-task", "--force", "--type", "task",
+      "--priority", "2", "--json", "--notes", "details",
+    ] {
+    let output =
+      #|{"id":"progress-task","title":"Progress task","status":"open","notes":"details"}
+    return (0, output)
+  }
+  assert_eq(cmd.args, [
+    "update", "progress-task", "--status", "in_progress", "--json",
+  ])
+  let output =
+    #|[{"id":"progress-task","title":"Progress task","status":"in_progress","notes":"details"}]
+  (0, output)
+}
+
+///|
+async test "handle_task_create updates new Beads task to in_progress" {
+  match
+    handle_task_create(
+      "/proj",
+      {
+        id: "progress-task",
+        title: "Progress task",
+        status: @types.TaskStatus::InProgress,
+        assignee: "",
+        notes: "details",
+      },
+      capture=mock_beads_create_in_progress_capture,
+    ) {
+    @types.Response::Ok(fields) => {
+      @debug.assert_eq(fields.get_bool("created"), Some(true))
+      match fields.get_json("task") {
+        Some(Object(task)) => {
+          @debug.assert_eq(
+            @types.json_field_string(task, "id"),
+            Some("progress-task"),
+          )
+          @debug.assert_eq(
+            @types.json_field_string(task, "status"),
+            Some("in_progress"),
+          )
+        }
+        _ => fail("expected task")
+      }
+    }
+    @types.Response::Err(e) => fail(e)
+  }
+}
+
+///|
+async fn poison_beads_dispatch_capture(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  let poisoned_output =
+    #|Warning: auto-export: git add failed: exit status 1
+    #|{"id":"progress-task","title":"Progress task","status":"in_progress","notes":"details"}
+  if cmd.program == "bd" {
+    return (0, poisoned_output)
+  }
+  (0, "")
+}
+
+///|
+async test "dispatch_call routes task_create Beads commands through bd_capture" {
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "task_create",
+    args: {
+      "id": "progress-task",
+      "title": "Progress task",
+      "status": "in_progress",
+      "notes": "details",
+    },
+  }
+  match
+    dispatch_call(
+      call,
+      project_dir="/proj",
+      capture=poison_beads_dispatch_capture,
+      bd_capture=mock_beads_create_in_progress_capture,
+    ) {
+    @types.Response::Ok(fields) => {
+      @debug.assert_eq(fields.get_bool("created"), Some(true))
+      match fields.get_json("task") {
+        Some(Object(task)) => {
+          @debug.assert_eq(
+            @types.json_field_string(task, "id"),
+            Some("progress-task"),
+          )
+          @debug.assert_eq(
+            @types.json_field_string(task, "status"),
+            Some("in_progress"),
+          )
+        }
+        _ => fail("expected task")
+      }
+    }
+    @types.Response::Err(e) => fail(e)
+  }
+}
+
+///|
 async fn mock_beads_update_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   assert_eq(cmd.program, "bd")
