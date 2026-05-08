@@ -16,6 +16,8 @@ import {
 options(
   "is-main": false,
   targets: {
+    "beads_subcommand.mbt": [ "native" ],
+    "beads_subcommand_test.mbt": [ "native" ],
     "log_subcommand.mbt": [ "native" ],
     "log_subcommand_test.mbt": [ "native" ],
     "mcp_subcommand.mbt": [ "native" ],
