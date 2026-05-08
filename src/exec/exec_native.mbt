@@ -252,6 +252,62 @@ pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+/// Capture stdout for successful JSON protocols, but include stderr in the returned
+/// text when the command fails so error responses keep useful diagnostics.
+pub async fn capture_command_stdout_with_stderr_on_error(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  let (stdout_reader, stdout_writer) = @process.read_from_process() catch {
+    _ => return (-1, "")
+  }
+  let (stderr_reader, stderr_writer) = @process.read_from_process() catch {
+    _ => {
+      stdout_reader.close()
+      return (-1, "")
+    }
+  }
+  let prog = cmd.program
+  let args = cmd.args[:]
+  let pid = match cmd.workdir {
+    Some(dir) =>
+      @process.spawn_orphan(
+        prog,
+        args,
+        stdout=stdout_writer,
+        stderr=stderr_writer,
+        cwd=dir,
+      ) catch {
+        _ => {
+          stdout_reader.close()
+          stderr_reader.close()
+          return (-1, "")
+        }
+      }
+    None =>
+      @process.spawn_orphan(
+        prog,
+        args,
+        stdout=stdout_writer,
+        stderr=stderr_writer,
+      ) catch {
+        _ => {
+          stdout_reader.close()
+          stderr_reader.close()
+          return (-1, "")
+        }
+      }
+  }
+  let (stdout, _) = drain_process_stdout(stdout_reader, capture_max_bytes)
+  let (stderr, _) = drain_process_stdout(stderr_reader, capture_max_bytes)
+  let exit_code = @process.wait_pid(pid) catch { _ => -1 }
+  if exit_code == 0 {
+    (exit_code, stdout)
+  } else {
+    (exit_code, stdout + "\n--- stderr ---\n" + stderr)
+  }
+}
+
+///|
 /// Run `plugin_command` under `timeout` (seconds), write `request_line` plus newline on stdin,
 /// capture up to `capture_max_bytes` of stdout (stderr discarded). When the command is a simple argv list
 /// (no shell-only syntax), runs `timeout <sec> <argv...>` directly; otherwise falls back to

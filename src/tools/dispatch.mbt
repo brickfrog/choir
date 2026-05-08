@@ -276,6 +276,7 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
@@ -846,13 +847,13 @@ pub async fn dispatch(
         }
         None => @types.Response::Err("mutex registry unavailable")
       }
-    ToolRequest::TaskList => handle_task_list(project_dir, capture~)
+    ToolRequest::TaskList => handle_task_list(project_dir, capture=bd_capture)
     ToolRequest::TaskGet(id_args) =>
-      handle_task_get(project_dir, id_args.id, capture~)
+      handle_task_get(project_dir, id_args.id, capture=bd_capture)
     ToolRequest::TaskCreate(task_args) =>
-      handle_task_create(project_dir, task_args, capture~)
+      handle_task_create(project_dir, task_args, capture=bd_capture)
     ToolRequest::TaskUpdate(update_args) =>
-      handle_task_update(project_dir, update_args, capture~)
+      handle_task_update(project_dir, update_args, capture=bd_capture)
     ToolRequest::SpawnGemini(spawn_args) =>
       match ensure_caller_can_spawn(spawn_args.caller_id, registry) {
         Err(e) => @types.Response::Err(e.message())
@@ -1106,6 +1107,7 @@ pub async fn dispatch_call(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -1136,6 +1138,7 @@ pub async fn dispatch_call(
           runner~,
           git_capture~,
           capture~,
+          bd_capture~,
           ensure_branch_ready~,
           ensure_pr~,
           extra_mcp_servers_json~,
