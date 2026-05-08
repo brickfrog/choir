@@ -24,11 +24,12 @@ fn main {
       "mcp" => @choir_commands.mcp_subcommand_run()
       "log" => @choir_commands.log_subcommand_run()
       "stats" => @choir_commands.stats_subcommand_run()
+      "smoke" => @choir_commands.smoke_subcommand_run()
       "tl-policy-watch" => tl_policy_watch_run()
       "tl-parent-override" => tl_parent_override_run()
       _ => {
         @sys.write_stdout(
-          "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|agent] [--lean]|claude [--lean] [args...]|stop [--purge]|reply|watch|statusline|skill <add|list|remove>|mcp <add|list|remove>|log --wave <wave_id>|stats [--wave <wave_id>|--agent-type <type>]|tl-policy-watch --pid <pid>|tl-parent-override <on|off>>\n",
+          "usage: choir <serve|dev|tool <tool>|leaf-tool <tool>|mcp-stdio|trust-gemini-folder <path>|zellij-action <send|close>|hook|init [--recreate] [--purge] [--tl claude|codex|gemini|cursor_agent|agent] [--lean]|claude [--lean] [args...]|stop [--purge]|reply|watch|statusline|skill <add|list|remove>|mcp <add|list|remove>|log --wave <wave_id>|stats [--wave <wave_id>|--agent-type <type>]|smoke beads-handoff|tl-policy-watch --pid <pid>|tl-parent-override <on|off>>\n",
         )
         @sys.exit(1)
       }
