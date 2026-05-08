@@ -780,68 +780,11 @@ pub async fn dispatch(
       }
     ToolRequest::TaskList => handle_task_list(project_dir, capture~)
     ToolRequest::TaskGet(id_args) =>
-      match read_task_file(project_dir, id_args.id) {
-        Ok(task) =>
-          @types.Response::ok_values({
-            "status": String::to_json("ok"),
-            "task": task_to_json(task),
-          })
-        Err(e) => @types.Response::Err(e.message())
-      }
-    ToolRequest::TaskCreate(task_args) => {
-      let existing = @sys.read_file(task_file_path(project_dir, task_args.id))
-      if existing != "" {
-        return match read_task_file(project_dir, task_args.id) {
-          Ok(task) =>
-            @types.Response::ok_values({
-              "status": String::to_json("ok"),
-              "created": Bool::to_json(false),
-              "task": task_to_json(task),
-            })
-          Err(e) => @types.Response::Err(e.message())
-        }
-      }
-      let task = TaskFile::{
-        id: task_args.id,
-        title: task_args.title,
-        status: task_args.status,
-        assignee: task_args.assignee,
-        notes: task_args.notes,
-      }
-      let task_json = task_to_json(task)
-      let path = task_file_path(project_dir, task_args.id)
-      if @sys.write_file_atomic(path, task_json.stringify()) {
-        @types.Response::ok_values({
-          "status": String::to_json("ok"),
-          "created": Bool::to_json(true),
-          "task": task_json,
-        })
-      } else {
-        @types.Response::Err("failed to write task file: " + path)
-      }
-    }
-    ToolRequest::TaskUpdate(update_args) => {
-      let task = match read_task_file(project_dir, update_args.id) {
-        Ok(value) => value
-        Err(e) => return @types.Response::Err(e.message())
-      }
-      let updated = {
-        ..task,
-        status: update_args.status.unwrap_or(task.status),
-        assignee: update_args.assignee.unwrap_or(task.assignee),
-        notes: update_args.notes.unwrap_or(task.notes),
-      }
-      let updated_json = task_to_json(updated)
-      let path = task_file_path(project_dir, update_args.id)
-      if @sys.write_file_atomic(path, updated_json.stringify()) {
-        @types.Response::ok_values({
-          "status": String::to_json("ok"),
-          "task": updated_json,
-        })
-      } else {
-        @types.Response::Err("failed to write task file: " + path)
-      }
-    }
+      handle_task_get(project_dir, id_args.id, capture~)
+    ToolRequest::TaskCreate(task_args) =>
+      handle_task_create(project_dir, task_args, capture~)
+    ToolRequest::TaskUpdate(update_args) =>
+      handle_task_update(project_dir, update_args, capture~)
     ToolRequest::SpawnGemini(spawn_args) =>
       match ensure_caller_can_spawn(spawn_args.caller_id, registry) {
         Err(e) => @types.Response::Err(e.message())

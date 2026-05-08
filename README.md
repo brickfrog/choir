@@ -67,6 +67,26 @@ choir stats [--wave <id>|--agent-type <type>]    # tokens / cost / duration roll
 The TL also has the `wave_state` MCP tool for typed per-leaf PR / review / CI snapshots
 during a live wave — read that instead of inferring from notification prose.
 
+## Issue Tracking
+
+Choir uses [Beads](https://github.com/gastownhall/beads) (`bd`) for durable
+issue, backlog, and dependency tracking. Beads is the planning/backlog layer;
+Choir remains the orchestration layer for spawning agents, tracking lifecycle,
+filing and merging PRs, and enforcing review/CI/thread/verify gates.
+
+Useful commands:
+
+```bash
+bd prime                  # Choir-specific Beads workflow reminder
+bd ready --json           # dependency-aware ready work
+bd show <id> --json       # issue detail
+bd update <id> --claim    # claim work
+bd close <id> --reason "Merged in PR #N"
+```
+
+The `task_list`, `task_get`, `task_create`, and `task_update` Choir tools are
+Beads-backed compatibility surfaces.
+
 ## Build
 
 ```bash
@@ -83,7 +103,7 @@ git config core.hooksPath .githooks   # runs moon fmt + moon check
 
 ## Runtime Dependencies
 
-- `git`, `gh` (PR workflow), `zellij` 0.44+ (session management)
+- `git`, `gh` (PR workflow), `zellij` 0.44+ (session management), `bd` (Beads issue tracking)
 - Agent CLIs you use: `claude`, `gemini`, `moon`, `codex`, `agent` (Cursor)
 - Nix dev shell provides the open-source deps; proprietary CLIs need separate install
 

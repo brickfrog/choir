@@ -5,6 +5,8 @@ Choir is a MoonBit native orchestration server for coding-agent teams.
 ## Working Model
 
 - The server owns lifecycle, PR tracking, review routing, and workspace isolation.
+- Beads (`bd`) owns durable issue/backlog/dependency tracking; Choir tools remain
+  authoritative for orchestration and PR lifecycle.
 - Agents make implementation decisions, but they do not invent new orchestration flows.
 - Prefer Choir tools over ad hoc shell work when a Choir tool exists.
 - Treat `.choir/` as Choir-owned runtime and guidance state.

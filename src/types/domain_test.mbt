@@ -64,6 +64,18 @@ test "Role parse_wire raises on unknown strings matching try_parse_wire error" {
 }
 
 ///|
+test "TaskStatus accepts Beads status aliases" {
+  match @types.TaskStatus::try_parse_wire("open") {
+    Ok(status) => @debug.assert_eq(status, @types.TaskStatus::Todo)
+    Err(e) => fail(e.message())
+  }
+  match @types.TaskStatus::try_parse_wire("closed") {
+    Ok(status) => @debug.assert_eq(status, @types.TaskStatus::Done)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "AgentType try_parse_wire accepts legacy aliases" {
   match @types.AgentType::try_parse_wire("moonpilot") {
     Ok(t) => assert_eq(t, @types.AgentType::MoonPilot)

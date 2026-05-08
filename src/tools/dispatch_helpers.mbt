@@ -684,13 +684,35 @@ pub async fn fetch_unresolved_review_threads(
 }
 
 ///|
-fn parse_task_file(content : String) -> Result[TaskFile, @types.ChoirError] {
-  let json = @json.parse(content) catch {
-    _ => return Err(@types.ChoirError::validation_error("invalid task json"))
+fn task_status_from_beads(
+  status : String,
+) -> Result[@types.TaskStatus, @types.ChoirError] {
+  match status {
+    "open" | "todo" => Ok(@types.TaskStatus::Todo)
+    "in_progress" => Ok(@types.TaskStatus::InProgress)
+    "closed" | "done" => Ok(@types.TaskStatus::Done)
+    _ =>
+      Err(
+        @types.ChoirError::validation_error(
+          "missing or invalid status: " + status,
+        ),
+      )
   }
-  guard json is Object(fields) else {
-    return Err(@types.ChoirError::validation_error("invalid task json"))
+}
+
+///|
+fn task_status_to_beads(status : @types.TaskStatus) -> String {
+  match status {
+    Todo => "open"
+    InProgress => "in_progress"
+    Done => "closed"
   }
+}
+
+///|
+fn parse_beads_issue_object(
+  fields : Map[String, Json],
+) -> Result[TaskFile, @types.ChoirError] {
   let id = match @types.json_field_string(fields, "id") {
     Some(v) => v
     None =>
@@ -710,30 +732,58 @@ fn parse_task_file(content : String) -> Result[TaskFile, @types.ChoirError] {
         @types.ChoirError::validation_error("missing or invalid status"),
       )
   }
-  let status = match @types.TaskStatus::try_parse_wire(status_str) {
+  let status = match task_status_from_beads(status_str) {
     Ok(s) => s
-    Err(_) =>
-      return Err(
-        @types.ChoirError::validation_error(
-          "missing or invalid status: " + status_str,
-        ),
-      )
+    Err(e) => return Err(e)
   }
-  let assignee = match @types.json_field_string(fields, "assignee") {
-    Some(v) => v
-    None =>
-      return Err(
-        @types.ChoirError::validation_error("missing or invalid assignee"),
-      )
-  }
-  let notes = match @types.json_field_string(fields, "notes") {
-    Some(v) => v
-    None =>
-      return Err(
-        @types.ChoirError::validation_error("missing or invalid notes"),
-      )
-  }
+  let assignee = @types.json_field_string(fields, "assignee").unwrap_or("")
+  let notes = @types.json_field_string(fields, "notes").unwrap_or("")
   Ok({ id, title, status, assignee, notes })
+}
+
+///|
+fn parse_beads_issue_json_array(
+  content : String,
+) -> Result[Array[TaskFile], @types.ChoirError] {
+  let json = @json.parse(content) catch {
+    _ => return Err(@types.ChoirError::validation_error("invalid beads json"))
+  }
+  guard json is Array(items) else {
+    return Err(@types.ChoirError::validation_error("invalid beads json"))
+  }
+  let tasks : Array[TaskFile] = []
+  for item in items {
+    guard item is Object(fields) else {
+      return Err(@types.ChoirError::validation_error("invalid beads issue"))
+    }
+    match parse_beads_issue_object(fields) {
+      Ok(task) => tasks.push(task)
+      Err(e) => return Err(e)
+    }
+  }
+  Ok(tasks)
+}
+
+///|
+fn parse_beads_issue_json_single(
+  content : String,
+) -> Result[TaskFile, @types.ChoirError] {
+  let json = @json.parse(content) catch {
+    _ => return Err(@types.ChoirError::validation_error("invalid beads json"))
+  }
+  match json {
+    Object(fields) => parse_beads_issue_object(fields)
+    Array(items) => {
+      if items.length() == 0 {
+        return Err(@types.ChoirError::validation_error("task not found"))
+      }
+      match items[0] {
+        Object(fields) => parse_beads_issue_object(fields)
+        _ => Err(@types.ChoirError::validation_error("invalid beads issue"))
+      }
+    }
+    _ => Err(@types.ChoirError::validation_error("invalid beads json"))
+  }
 }
 
 ///|
@@ -748,11 +798,6 @@ fn task_to_json(task : TaskFile) -> Json {
 }
 
 ///|
-fn task_file_path(project_dir : String, id : String) -> String {
-  project_dir + "/.choir/tasks/" + id + ".json"
-}
-
-///|
 fn kv_file_path(project_dir : String, key : String) -> String {
   project_dir + "/.choir/kv/" + key
 }
@@ -764,74 +809,40 @@ fn sort_strings_lex(paths : Array[String]) -> Unit {
 }
 
 ///|
-fn read_task_file(
-  project_dir : String,
-  id : String,
-) -> Result[TaskFile, @types.ChoirError] {
-  match validate_slug(id) {
-    Err(e) =>
-      return Err(
-        @types.ChoirError::validation_error(
-          "invalid id: " + e.validation_detail_or_message(),
-        ),
-      )
-    Ok(_) => ()
-  }
-  let content = @sys.read_file(task_file_path(project_dir, id))
-  if content == "" {
-    return Err(@types.ChoirError::validation_error("task not found: " + id))
-  }
-  match parse_task_file(content) {
-    Ok(task) => Ok(task)
-    Err(e) =>
-      Err(
-        @types.ChoirError::validation_error(
-          "invalid task file for " +
-          id +
-          ": " +
-          e.validation_detail_or_message(),
-        ),
-      )
+fn beads_error(command : String, exit_code : Int, output : String) -> String {
+  let detail = output.trim().to_owned()
+  if detail == "" {
+    "bd " + command + " failed with status " + exit_code.to_string()
+  } else {
+    "bd " +
+    command +
+    " failed with status " +
+    exit_code.to_string() +
+    ": " +
+    detail
   }
 }
 
 ///|
-async fn list_task_files(
+async fn capture_beads_json(
   project_dir : String,
+  command : String,
+  args : Array[String],
   capture : async (@workspace.Command) -> (Int, String),
-) -> Result[Array[String], @types.ChoirError] {
-  let tasks_dir = project_dir + "/.choir/tasks"
-  let test_cmd : @workspace.Command = {
-    program: "test",
-    args: ["-d", tasks_dir],
-    workdir: None,
-  }
-  let (test_status, _) = capture(test_cmd)
-  if test_status != 0 {
-    return Ok([])
-  }
-  let find_cmd : @workspace.Command = {
-    program: "find",
-    args: [tasks_dir, "-maxdepth", "1", "-type", "f", "-name", "*.json"],
-    workdir: None,
-  }
-  let (find_status, output) = capture(find_cmd)
-  if find_status != 0 {
+) -> Result[String, @types.ChoirError] {
+  let (exit_code, output) = capture({
+    program: "bd",
+    args,
+    workdir: Some(project_dir),
+  })
+  if exit_code != 0 {
     return Err(
       @types.ChoirError::transport_error(
-        "command failed with status " + find_status.to_string(),
+        beads_error(command, exit_code, output),
       ),
     )
   }
-  let paths = []
-  for line in output.split("\n") {
-    let path = line.to_owned().trim().to_owned()
-    if path != "" {
-      paths.push(path)
-    }
-  }
-  sort_strings_lex(paths)
-  Ok(paths)
+  Ok(output)
 }
 
 ///|
@@ -839,32 +850,175 @@ async fn handle_task_list(
   project_dir : String,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> @types.Response {
-  let task_paths = match list_task_files(project_dir, capture) {
-    Ok(paths) => paths
+  let output = match
+    capture_beads_json(
+      project_dir,
+      "list",
+      ["list", "--json", "--all"],
+      capture,
+    ) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  let parsed = match parse_beads_issue_json_array(output) {
+    Ok(tasks) => tasks
     Err(e) => return @types.Response::Err(e.message())
   }
   let tasks : Array[Json] = []
-  for path in task_paths {
-    let content = @sys.read_file(path)
-    if content == "" {
-      return @types.Response::Err("failed to read task file: " + path)
-    }
-    let task = match parse_task_file(content) {
-      Ok(value) => value
-      Err(e) =>
-        return @types.Response::Err(
-          "invalid task file at " +
-          path +
-          ": " +
-          e.validation_detail_or_message(),
-        )
-    }
+  for task in parsed {
     tasks.push(task_to_json(task))
   }
   @types.Response::ok_values({
     "status": "ok".to_json(),
     "tasks": tasks.to_json(),
   })
+}
+
+///|
+async fn handle_task_get(
+  project_dir : String,
+  id : String,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+) -> @types.Response {
+  let output = match
+    capture_beads_json(project_dir, "show", ["show", id, "--json"], capture) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  match parse_beads_issue_json_single(output) {
+    Ok(task) =>
+      @types.Response::ok_values({
+        "status": String::to_json("ok"),
+        "task": task_to_json(task),
+      })
+    Err(e) => @types.Response::Err(e.message())
+  }
+}
+
+///|
+async fn handle_task_create(
+  project_dir : String,
+  task_args : TaskCreateArgs,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+) -> @types.Response {
+  let existing = capture({
+    program: "bd",
+    args: ["show", task_args.id, "--json"],
+    workdir: Some(project_dir),
+  })
+  if existing.0 == 0 {
+    return match parse_beads_issue_json_single(existing.1) {
+      Ok(task) =>
+        @types.Response::ok_values({
+          "status": String::to_json("ok"),
+          "created": Bool::to_json(false),
+          "task": task_to_json(task),
+        })
+      Err(e) => @types.Response::Err(e.message())
+    }
+  }
+  let create_args : Array[String] = [
+    "create",
+    task_args.title,
+    "--id",
+    task_args.id,
+    "--force",
+    "--type",
+    "task",
+    "--priority",
+    "2",
+    "--json",
+  ]
+  if task_args.assignee != "" {
+    create_args.push("--assignee")
+    create_args.push(task_args.assignee)
+  }
+  if task_args.notes != "" {
+    create_args.push("--notes")
+    create_args.push(task_args.notes)
+  }
+  let created_output = match
+    capture_beads_json(project_dir, "create", create_args, capture) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  let task = match parse_beads_issue_json_single(created_output) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  let final_task = if task_args.status == @types.TaskStatus::Todo {
+    task
+  } else {
+    let update_args = [
+      "update",
+      task_args.id,
+      "--status",
+      task_status_to_beads(task_args.status),
+      "--json",
+    ]
+    let updated_output = match
+      capture_beads_json(project_dir, "update", update_args, capture) {
+      Ok(value) => value
+      Err(e) => return @types.Response::Err(e.message())
+    }
+    match parse_beads_issue_json_single(updated_output) {
+      Ok(value) => value
+      Err(e) => return @types.Response::Err(e.message())
+    }
+  }
+  @types.Response::ok_values({
+    "status": String::to_json("ok"),
+    "created": Bool::to_json(true),
+    "task": task_to_json(final_task),
+  })
+}
+
+///|
+async fn handle_task_update(
+  project_dir : String,
+  update_args : TaskUpdateArgs,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+) -> @types.Response {
+  if update_args.status is None &&
+    update_args.assignee is None &&
+    update_args.notes is None {
+    return handle_task_get(project_dir, update_args.id, capture~)
+  }
+  let args : Array[String] = ["update", update_args.id]
+  match update_args.status {
+    Some(status) => {
+      args.push("--status")
+      args.push(task_status_to_beads(status))
+    }
+    None => ()
+  }
+  match update_args.assignee {
+    Some(assignee) => {
+      args.push("--assignee")
+      args.push(assignee)
+    }
+    None => ()
+  }
+  match update_args.notes {
+    Some(notes) => {
+      args.push("--notes")
+      args.push(notes)
+    }
+    None => ()
+  }
+  args.push("--json")
+  let output = match capture_beads_json(project_dir, "update", args, capture) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  match parse_beads_issue_json_single(output) {
+    Ok(task) =>
+      @types.Response::ok_values({
+        "status": String::to_json("ok"),
+        "task": task_to_json(task),
+      })
+    Err(e) => @types.Response::Err(e.message())
+  }
 }
 
 ///|
@@ -1022,49 +1176,145 @@ test "sort_strings_lex orders paths lexicographically" {
 }
 
 ///|
-async fn mock_list_task_capture_ordered(
-  cmd : @workspace.Command,
-) -> (Int, String) {
+async fn mock_beads_list_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "test" {
-    assert_eq(cmd.args, ["-d", "/proj/.choir/tasks"])
-    return (0, "")
-  }
-  if cmd.program == "find" {
-    assert_eq(cmd.args, [
-      "/proj/.choir/tasks", "-maxdepth", "1", "-type", "f", "-name", "*.json",
-    ])
-    return (0, "/proj/.choir/tasks/two.json\n/proj/.choir/tasks/one.json\n")
-  }
-  (-1, "")
+  assert_eq(cmd.program, "bd")
+  assert_eq(cmd.args, ["list", "--json", "--all"])
+  @debug.assert_eq(cmd.workdir, Some("/proj"))
+  let output =
+    #|[
+    #|  {"id":"choir-a","title":"A","status":"open","assignee":"claude","notes":"n"},
+    #|  {"id":"choir-b","title":"B","status":"closed"}
+    #|]
+  (0, output)
 }
 
 ///|
-async test "list_task_files runs test and find argv and sorts paths" {
-  match list_task_files("/proj", mock_list_task_capture_ordered) {
-    Ok(paths) => {
-      assert_eq(paths.length(), 2)
-      assert_eq(paths[0], "/proj/.choir/tasks/one.json")
-      assert_eq(paths[1], "/proj/.choir/tasks/two.json")
+async test "handle_task_list reads Beads JSON through capture" {
+  match handle_task_list("/proj", capture=mock_beads_list_capture) {
+    @types.Response::Ok(fields) =>
+      match fields.get_json("tasks") {
+        Some(Array(tasks)) => {
+          assert_eq(tasks.length(), 2)
+          match tasks[0] {
+            Object(task) => {
+              @debug.assert_eq(
+                @types.json_field_string(task, "id"),
+                Some("choir-a"),
+              )
+              @debug.assert_eq(
+                @types.json_field_string(task, "status"),
+                Some("todo"),
+              )
+              @debug.assert_eq(
+                @types.json_field_string(task, "assignee"),
+                Some("claude"),
+              )
+              @debug.assert_eq(
+                @types.json_field_string(task, "notes"),
+                Some("n"),
+              )
+            }
+            _ => fail("expected task object")
+          }
+          match tasks[1] {
+            Object(task) =>
+              @debug.assert_eq(
+                @types.json_field_string(task, "status"),
+                Some("done"),
+              )
+            _ => fail("expected task object")
+          }
+        }
+        _ => fail("expected tasks array")
+      }
+    @types.Response::Err(e) => fail(e)
+  }
+}
+
+///|
+async fn mock_beads_create_capture(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  assert_eq(cmd.program, "bd")
+  @debug.assert_eq(cmd.workdir, Some("/proj"))
+  if cmd.args == ["show", "local-task", "--json"] {
+    return (1, "{\"error\":\"not found\"}")
+  }
+  assert_eq(cmd.args, [
+    "create", "Local task", "--id", "local-task", "--force", "--type", "task", "--priority",
+    "2", "--json", "--assignee", "codex", "--notes", "details",
+  ])
+  let output =
+    #|{"id":"local-task","title":"Local task","status":"open","assignee":"codex","notes":"details"}
+  (0, output)
+}
+
+///|
+async test "handle_task_create creates explicit Beads id with force" {
+  match
+    handle_task_create(
+      "/proj",
+      {
+        id: "local-task",
+        title: "Local task",
+        status: @types.TaskStatus::Todo,
+        assignee: "codex",
+        notes: "details",
+      },
+      capture=mock_beads_create_capture,
+    ) {
+    @types.Response::Ok(fields) => {
+      @debug.assert_eq(fields.get_bool("created"), Some(true))
+      match fields.get_json("task") {
+        Some(Object(task)) =>
+          @debug.assert_eq(
+            @types.json_field_string(task, "id"),
+            Some("local-task"),
+          )
+        _ => fail("expected task")
+      }
     }
-    Err(e) => fail(e.message())
+    @types.Response::Err(e) => fail(e)
   }
 }
 
 ///|
-async fn mock_test_only_missing_dir(cmd : @workspace.Command) -> (Int, String) {
+async fn mock_beads_update_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "test" {
-    return (1, "")
-  }
-  (-1, "")
+  assert_eq(cmd.program, "bd")
+  @debug.assert_eq(cmd.workdir, Some("/proj"))
+  assert_eq(cmd.args, [
+    "update", "choir-a", "--status", "closed", "--assignee", "claude", "--notes",
+    "merged", "--json",
+  ])
+  let output =
+    #|[{"id":"choir-a","title":"A","status":"closed","assignee":"claude","notes":"merged"}]
+  (0, output)
 }
 
 ///|
-async test "list_task_files returns empty when test -d fails" {
-  match list_task_files("/proj", mock_test_only_missing_dir) {
-    Ok(paths) => assert_eq(paths.length(), 0)
-    Err(e) => fail(e.message())
+async test "handle_task_update maps done to Beads closed" {
+  match
+    handle_task_update(
+      "/proj",
+      {
+        id: "choir-a",
+        status: Some(@types.TaskStatus::Done),
+        assignee: Some("claude"),
+        notes: Some("merged"),
+      },
+      capture=mock_beads_update_capture,
+    ) {
+    @types.Response::Ok(fields) =>
+      match fields.get_json("task") {
+        Some(Object(task)) =>
+          @debug.assert_eq(
+            @types.json_field_string(task, "status"),
+            Some("done"),
+          )
+        _ => fail("expected task")
+      }
+    @types.Response::Err(e) => fail(e)
   }
 }
 

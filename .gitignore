@@ -17,3 +17,7 @@ bisect.coverage
 .cursor
 .claude/
 CHANGELOG.md
+
+# Beads / Dolt files (added by bd init)
+/.dolt/
+/.beads-credential-key

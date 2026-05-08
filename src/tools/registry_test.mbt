@@ -62,6 +62,9 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
     }
     return (0, "")
   }
+  if cmd.program == "bd" && cmd.args == ["list", "--json", "--all"] {
+    return (0, "[]")
+  }
   (0, "")
 }
 

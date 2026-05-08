@@ -95,9 +95,9 @@ pub fn TaskStatus::to_wire_string(self : TaskStatus) -> String {
 ///|
 pub fn TaskStatus::try_parse_wire(s : String) -> Result[TaskStatus, ChoirError] {
   match s {
-    "todo" => Ok(Todo)
+    "todo" | "open" => Ok(Todo)
     "in_progress" => Ok(InProgress)
-    "done" => Ok(Done)
+    "done" | "closed" => Ok(Done)
     _ => Err(ChoirError::config_error("unknown task status: " + s))
   }
 }

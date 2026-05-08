@@ -24,6 +24,24 @@ pipeline discipline). Do not duplicate its content here.
 - Use `merge_pr` only when the review state is clean and the parent branch is correct.
 - Let review and lifecycle notifications drive the next action instead of polling reflexively.
 
+## Beads Issue Tracking
+
+Choir uses Beads (`bd`) for durable issue/backlog/dependency tracking. Beads is
+not the orchestration authority: `wave_state`, lifecycle state, evidence, and
+`merge_pr` remain authoritative for PR/review/CI/thread/verify/merge decisions.
+
+- Run `bd prime` when you need the Beads workflow reminder.
+- Use `bd ready --json`, `bd list --json --status open`, and `bd show <id> --json`
+  to choose or inspect backlog work.
+- During Spec Crystallization, link feature beads to `.choir/context/<slug>-spec.md`
+  with `--spec-id` or issue notes.
+- During decomposition, create child beads for durable leaf-sized work when it
+  helps future tracking; pass the bead ID in the leaf task text or review context.
+- Prefer TL-owned Beads mutation. Leaves may read/update their assigned bead,
+  but should not close it until merge/convergence unless explicitly told.
+- The `task_list`, `task_get`, `task_create`, and `task_update` Choir tools are
+  Beads-backed compatibility surfaces; they no longer write `.choir/tasks`.
+
 ## Decomposition Principles
 
 - **Vertical slices, not horizontal layers.** A leaf that adds a type + its logic + its tests is better than one leaf for types, one for logic, one for tests. Vertical slices can't conflict.
@@ -155,4 +173,3 @@ Automerge onto the feature branch is fine; the feature→main PR is where Copilo
 ### Convergence
 
 Report convergence to the user with a summary of what was merged.
-

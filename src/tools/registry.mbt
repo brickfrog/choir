@@ -142,17 +142,22 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "task_list",
-      description: "List tasks from shared task list",
+      description: "List Beads-backed shared tasks",
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {
       name: "task_get",
-      description: "Get task by ID",
+      description: "Get a Beads-backed shared task by ID",
+      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
+    },
+    {
+      name: "task_create",
+      description: "Create a Beads-backed shared task",
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {
       name: "task_update",
-      description: "Update task status/owner",
+      description: "Update a Beads-backed shared task status/owner",
       allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
     },
     {

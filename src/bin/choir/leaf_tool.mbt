@@ -279,12 +279,12 @@ fn leaf_tool_usage(tool : String) -> String {
     "report_usage" =>
       "usage: report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds> [--cost-usd <usd>]"
     "shutdown" => "usage: shutdown [--caller-id <caller_id>]"
-    "task_list" => "usage: task_list"
-    "task_get" => "usage: task_get <id>"
+    "task_list" => "usage: task_list  # lists Beads-backed shared tasks"
+    "task_get" => "usage: task_get <id>  # reads a Beads issue"
     "task_create" =>
-      "usage: task_create <id> <title...> [--status <status>] [--assignee <assignee>] [--notes <notes>]"
+      "usage: task_create <id> <title...> [--status <status>] [--assignee <assignee>] [--notes <notes>]  # creates a Beads issue"
     "task_update" =>
-      "usage: task_update <id> [--status <status>] [--assignee <assignee>] [--notes <notes>]"
+      "usage: task_update <id> [--status <status>] [--assignee <assignee>] [--notes <notes>]  # updates a Beads issue"
     _ => "usage: choir leaf-tool <tool> [args...]"
   }
 }

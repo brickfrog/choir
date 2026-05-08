@@ -63,6 +63,25 @@ choir stats [--wave <id>|--agent-type <type>]    # token / 成本 / 时长汇总
 TL 还可以通过 `wave_state` MCP 工具拿到每个叶子的 PR / review / CI 类型化快照——
 直接读它，不要从通知文本里推断。
 
+## 问题跟踪
+
+Choir 使用 [Beads](https://github.com/gastownhall/beads)（`bd`）做持久化
+issue、backlog 和依赖跟踪。Beads 是规划/backlog 层；Choir 仍然负责代理
+派生、生命周期、PR、review/CI/thread/verify gate 和合并策略。
+
+常用命令：
+
+```bash
+bd prime                  # Choir 定制的 Beads 工作流提示
+bd ready --json           # 依赖感知的可执行工作
+bd show <id> --json       # issue 详情
+bd update <id> --claim    # 认领工作
+bd close <id> --reason "Merged in PR #N"
+```
+
+`task_list`、`task_get`、`task_create`、`task_update` 这些 Choir 工具现在是
+Beads-backed 的兼容入口。
+
 ## 构建
 
 ```bash
@@ -79,7 +98,7 @@ git config core.hooksPath .githooks   # 运行 moon fmt + moon check
 
 ## 运行依赖
 
-- `git`、`gh`（PR 工作流）、`zellij` 0.44+（会话管理）
+- `git`、`gh`（PR 工作流）、`zellij` 0.44+（会话管理）、`bd`（Beads issue 跟踪）
 - 你使用的代理 CLI：`claude`、`gemini`、`moon`、`codex`、`agent`（Cursor）
 - Nix dev shell 提供开源依赖；专有 CLI 需单独安装
 
