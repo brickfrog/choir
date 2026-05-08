@@ -276,7 +276,7 @@ pub async fn dispatch(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
@@ -1107,7 +1107,7 @@ pub async fn dispatch_call(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   git_capture? : async (String, Array[String]) -> String = @exec.capture_stdout,
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
-  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,

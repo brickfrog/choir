@@ -1393,6 +1393,72 @@ async test "dispatch_call routes task_create Beads commands through bd_capture" 
 }
 
 ///|
+async fn fail_on_beads_dispatch_capture(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "bd" {
+    fail("bd command used default capture: " + cmd.to_string())
+  }
+  (0, "")
+}
+
+///|
+async fn clean_beads_show_capture(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  assert_eq(cmd.program, "bd")
+  @debug.assert_eq(cmd.workdir, Some("/proj"))
+  assert_eq(cmd.args, ["show", "shown-task", "--json"])
+  let output =
+    #|{"id":"shown-task","title":"Shown task","status":"in_progress","assignee":"codex","notes":"visible"}
+  (0, output)
+}
+
+///|
+async test "dispatch_call routes task_get Beads commands through bd_capture" {
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "task_get",
+    args: { "id": "shown-task" },
+  }
+  match
+    dispatch_call(
+      call,
+      project_dir="/proj",
+      capture=fail_on_beads_dispatch_capture,
+      bd_capture=clean_beads_show_capture,
+    ) {
+    @types.Response::Ok(fields) =>
+      match fields.get_json("task") {
+        Some(Object(task)) => {
+          @debug.assert_eq(
+            @types.json_field_string(task, "id"),
+            Some("shown-task"),
+          )
+          @debug.assert_eq(
+            @types.json_field_string(task, "title"),
+            Some("Shown task"),
+          )
+          @debug.assert_eq(
+            @types.json_field_string(task, "status"),
+            Some("in_progress"),
+          )
+          @debug.assert_eq(
+            @types.json_field_string(task, "assignee"),
+            Some("codex"),
+          )
+          @debug.assert_eq(
+            @types.json_field_string(task, "notes"),
+            Some("visible"),
+          )
+        }
+        _ => fail("expected task")
+      }
+    @types.Response::Err(e) => fail(e)
+  }
+}
+
+///|
 async fn mock_beads_update_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   assert_eq(cmd.program, "bd")

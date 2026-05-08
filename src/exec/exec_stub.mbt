@@ -27,6 +27,13 @@ pub async fn capture_command_stdout(_cmd : @workspace.Command) -> (Int, String) 
 }
 
 ///|
+pub async fn capture_command_stdout_with_stderr_on_error(
+  _cmd : @workspace.Command,
+) -> (Int, String) {
+  (-1, "")
+}
+
+///|
 pub async fn capture_plugin_shell_command(
   _plugin_command : String,
   _request_line : String,
