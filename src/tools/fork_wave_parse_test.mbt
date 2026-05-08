@@ -187,6 +187,48 @@ test "parse_fork_wave_args parses issue_id into task contract" {
 }
 
 ///|
+test "parse_fork_wave_args supports per leaf task contracts" {
+  let args = @tools.tool_args_from_map({
+    "tasks": "[\"Implement A\",\"Implement B\"]",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "task_contracts": "[{\"beads_issue_id\":\"choir-leaf-a\"},{\"beads_issue_id\":\"choir-leaf-b\"}]",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => {
+      assert_eq(fork.count, 2)
+      @debug.assert_eq(
+        fork.task_contracts[0].beads_issue_id,
+        Some("choir-leaf-a"),
+      )
+      @debug.assert_eq(
+        fork.task_contracts[1].beads_issue_id,
+        Some("choir-leaf-b"),
+      )
+      assert_true(fork.tasks[0].contains("bd show choir-leaf-a --json"))
+      assert_true(fork.tasks[1].contains("bd show choir-leaf-b --json"))
+      assert_false(fork.tasks[0].contains("choir-leaf-b"))
+      assert_false(fork.tasks[1].contains("choir-leaf-a"))
+    }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args rejects mismatched task contracts" {
+  let args = @tools.tool_args_from_map({
+    "tasks": "[\"Implement A\",\"Implement B\"]",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "task_contracts": "[{\"beads_issue_id\":\"choir-leaf-a\"}]",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Err(e) => assert_true(e.message().contains("task_contracts"))
+    Ok(_) => fail("expected task_contracts length error")
+  }
+}
+
+///|
 test "parse_fork_wave_args ignores empty issue_id" {
   let args = @tools.tool_args_from_map({
     "count": "1",

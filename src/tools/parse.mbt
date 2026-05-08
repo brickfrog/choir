@@ -631,6 +631,67 @@ fn parse_depends_on(args : ToolArgs) -> Result[Array[String], ParseError] {
 }
 
 ///|
+fn parse_task_contracts_json_items(
+  items : Array[Json],
+  field : String,
+) -> Result[Array[@types.TaskContract], ParseError] {
+  let contracts : Array[@types.TaskContract] = []
+  for item in items {
+    match item {
+      Object(_) => contracts.push(task_contract_from_json_object(Some(item)))
+      _ =>
+        return Err(
+          ParseError::InvalidFormat(field~, message="entries must be objects"),
+        )
+    }
+  }
+  Ok(contracts)
+}
+
+///|
+fn parse_task_contracts_json_value(
+  value : Json?,
+  field : String,
+) -> Result[Array[@types.TaskContract], ParseError] {
+  match value {
+    None => Ok([])
+    Some(Array(items)) => parse_task_contracts_json_items(items, field)
+    Some(String(raw)) => {
+      let trimmed = raw.trim().to_owned()
+      if trimmed == "" {
+        return Ok([])
+      }
+      let parsed : Json = @json.parse(trimmed) catch {
+        _ =>
+          return Err(ParseError::InvalidFormat(field~, message="invalid JSON"))
+      }
+      match parsed {
+        Array(items) => parse_task_contracts_json_items(items, field)
+        _ =>
+          Err(ParseError::InvalidFormat(field~, message="must be a JSON array"))
+      }
+    }
+    Some(_) =>
+      Err(ParseError::InvalidFormat(field~, message="must be a JSON array"))
+  }
+}
+
+///|
+fn parse_task_contracts_array(
+  args : ToolArgs,
+) -> Result[Array[@types.TaskContract], ParseError] {
+  match tool_args_get_json(args, "task_contracts") {
+    Some(value) =>
+      parse_task_contracts_json_value(Some(value), "task_contracts")
+    None =>
+      parse_task_contracts_json_value(
+        tool_args_get_json(args, "contracts"),
+        "contracts",
+      )
+  }
+}
+
+///|
 pub fn parse_fork_wave_args(
   project_dir : String,
   args : ToolArgs,
@@ -663,27 +724,56 @@ pub fn parse_fork_wave_args(
   }
   let default_read_first = @workspace.resolve_context_paths(project_dir, "dev")
   let base_spec = prompt_spec_from_tool_args(args)
+  let explicit_task_contracts = match parse_task_contracts_array(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  if explicit_task_contracts.length() > 0 &&
+    explicit_task_contracts.length() != count {
+    return Err(
+      ParseError::InvalidFormat(
+        field="task_contracts",
+        message="length must match count/tasks length",
+      ),
+    )
+  }
   let task_contracts : Array[@types.TaskContract] = []
   let tasks = if per_leaf_tasks.length() > 0 {
     // Render each per-leaf task through the prompt builder
     let rendered : Array[String] = []
-    for task in per_leaf_tasks {
-      let spec = prompt_spec_with_task(base_spec, task)
+    for i = 0; i < per_leaf_tasks.length(); i = i + 1 {
+      let task = per_leaf_tasks[i]
+      let base_leaf_spec = prompt_spec_with_task(base_spec, task)
+      let task_contract = if explicit_task_contracts.length() > 0 {
+        merge_task_contracts(
+          base_leaf_spec.task_contract,
+          explicit_task_contracts[i],
+        )
+      } else {
+        base_leaf_spec.task_contract
+      }
+      let spec = { ..base_leaf_spec, task_contract, }
       rendered.push(
         render_leaf_spawn_prompt_with_defaults(spec, default_read_first),
       )
-      task_contracts.push(spec.task_contract)
+      task_contracts.push(task_contract)
     }
     rendered
   } else {
     // Shared task — same prompt for all leaves
-    let shared = render_leaf_spawn_prompt_with_defaults(
-      base_spec, default_read_first,
-    )
     let arr : Array[String] = []
     for i = 0; i < count; i = i + 1 {
-      arr.push(shared)
-      task_contracts.push(base_spec.task_contract)
+      let task_contract = if explicit_task_contracts.length() > 0 {
+        merge_task_contracts(
+          base_spec.task_contract,
+          explicit_task_contracts[i],
+        )
+      } else {
+        base_spec.task_contract
+      }
+      let spec = { ..base_spec, task_contract, }
+      arr.push(render_leaf_spawn_prompt_with_defaults(spec, default_read_first))
+      task_contracts.push(task_contract)
     }
     arr
   }

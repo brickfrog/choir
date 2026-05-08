@@ -22,7 +22,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "fork_wave",
-      description: "Spawn one or more agents in worktrees; optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional role (dev|tl, default dev) for sub-TL children; optional beads_issue_id and review_context appended to each leaf task for file_pr / Copilot review; optional automerge and review_mode override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
+      description: "Spawn one or more agents in worktrees. For nontrivial decomposition, create child Beads issues first and pass per-leaf task_contracts with beads_issue_id for each child; single-child waves may pass beads_issue_id directly. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge and review_mode override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
@@ -47,7 +47,7 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     },
     {
       name: "spawn_worker",
-      description: "Spawn an inline worker for research/review; optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional beads_issue_id. Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
+      description: "Spawn an inline worker for research/review; create a worker Beads issue first for durable nontrivial work and pass beads_issue_id. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex). Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {

@@ -941,6 +941,7 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
     def => {
       assert_true(def.description.contains("research/review"))
       assert_true(def.description.contains("do not own a branch or PR"))
+      assert_true(def.description.contains("pass beads_issue_id"))
     }
   }
   try reg.lookup(@types.Role::TL, "fork_wave") catch {
@@ -949,7 +950,8 @@ test "tool registry spawn descriptions distinguish leaves from workers" {
     def =>
       assert_true(
         def.description.contains("worktrees") &&
-        def.description.contains("optional role"),
+        def.description.contains("optional role") &&
+        def.description.contains("per-leaf task_contracts"),
       )
   }
 }
