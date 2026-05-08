@@ -129,6 +129,49 @@ async test "interpret_spawn_worker registers agent on success" {
 }
 
 ///|
+async test "interpret_spawn_worker mirrors assigned beads on success" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: {
+      ..@types.TaskContract::empty(),
+      goal: "unit",
+      beads_issue_id: Some("choir-worker"),
+    },
+    caller_id: "main.tl",
+    slug: "w1",
+    agent_type: @types.AgentType::Codex,
+  }
+  let seen : Array[String] = []
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "bd" {
+        seen.push(cmd.args.join(" "))
+      }
+      if cmd.program == "git" {
+        (0, "origin/main\n")
+      } else {
+        (0, "")
+      }
+    },
+    None,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  let rendered = seen.join("\n")
+  assert_true(rendered.contains("update choir-worker"))
+  assert_true(rendered.contains("--status in_progress"))
+  assert_true(rendered.contains("--assignee main.w1"))
+  assert_true(rendered.contains("choir_agent_type=codex"))
+}
+
+///|
 test "spawn_remote_plan builds dev claude worktree spec and spawned response" {
   let spawn_args : RemoteSpawnArgs = {
     task: "remote-task",

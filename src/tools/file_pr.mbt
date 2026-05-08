@@ -633,6 +633,43 @@ fn file_pr_task_contract_for_agent(
 }
 
 ///|
+async fn file_pr_mirror_beads_created(
+  project_dir : String,
+  tracked_agent_id : String,
+  file_pr_dir : String,
+  pr_number : Int,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Unit {
+  let issue_id = match
+    file_pr_task_contract_for_agent(project_dir, tracked_agent_id, file_pr_dir) {
+    Some(contract) =>
+      match contract.beads_issue_id {
+        Some(id) => id
+        None => return
+      }
+    None => return
+  }
+  ignore(
+    run_beads_best_effort(
+      beads_pr_note_command(project_dir, issue_id, pr_number),
+      capture,
+    ),
+  )
+  ignore(
+    run_beads_best_effort(
+      beads_audit_record_command(
+        project_dir,
+        Some(issue_id),
+        "tool_call",
+        "file_pr",
+        "pr_created #" + pr_number.to_string(),
+      ),
+      capture,
+    ),
+  )
+}
+
+///|
 /// Ordered host steps for `file_pr` before post-success effects. The
 /// interpreter runs this exact sequence; kept as data for tests and docs.
 pub(all) enum FilePrPreflightHostStep {
@@ -843,7 +880,7 @@ pub async fn interpret_file_pr(
         poller_state is Some(_),
         registry is Some(_),
       )
-      interpret_file_pr_post_success(
+      let resp = interpret_file_pr_post_success(
         project_dir,
         session,
         branch,
@@ -856,6 +893,16 @@ pub async fn interpret_file_pr(
         registry,
         runner,
       )
+      if resp.is_ok() {
+        file_pr_mirror_beads_created(
+          project_dir,
+          tracked_agent_id,
+          file_pr_dir,
+          pr.number,
+          capture,
+        )
+      }
+      resp
     }
   }
 }

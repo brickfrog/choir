@@ -156,3 +156,77 @@ test "beads_usage_note includes optional cost" {
   assert_true(text.contains("tokens_in=10"))
   assert_true(text.contains("cost_usd=0.42"))
 }
+
+///|
+async test "mirror_beads_note_for_agent appends note and audit for assigned bead" {
+  let tmp = "/tmp/choir-beads-note-mirror-" + @sys.get_pid().to_string()
+  let worktree = tmp + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(worktree + "/.choir"))
+  let target : @types.LocalTarget = {
+    kind: ZellijTab,
+    session: "choir",
+    name: "leaf",
+  }
+  let spec : @types.SpawnSpec = {
+    slug: "leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "assigned work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "assigned work",
+      beads_issue_id: Some("choir-assigned"),
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main.tl",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  ignore(
+    @sys.write_file_sync(
+      worktree + "/.choir/config.local.toml",
+      @workspace.config_local_content(spec, worktree, target),
+    ),
+  )
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.leaf"),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main.tl"),
+      workspace: worktree,
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let seen : Array[String] = []
+  let ok = @tools.mirror_beads_note_for_agent(
+    tmp,
+    Some(reg),
+    "main.leaf",
+    "Choir notify_parent: done",
+    "notify_parent",
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd.args.join(" "))
+      (0, "")
+    },
+  )
+  assert_true(ok)
+  let rendered = seen.join("\n")
+  assert_true(rendered.contains("note choir-assigned"))
+  assert_true(rendered.contains("audit record"))
+  assert_true(rendered.contains("--issue-id choir-assigned"))
+  ignore(@sys.rm_rf(tmp))
+}

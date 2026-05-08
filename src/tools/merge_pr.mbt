@@ -735,6 +735,24 @@ pub fn merge_pr_tracked_branch_for_post_success(
 }
 
 ///|
+fn merge_pr_beads_issue_id_for_tracked(
+  project_dir : String,
+  poller_state : @poller.PollerState?,
+  registry : @registry.AgentRegistry?,
+  pr_number : Int,
+) -> String? {
+  match poller_state {
+    Some(ps) =>
+      match ps.get(pr_number) {
+        Some(tracked) =>
+          beads_issue_id_for_agent(project_dir, registry, tracked.agent_id)
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
 /// After `interpret_merge_pr_merge_host` succeeds: resolve tracked branch,
 /// build `merge_pr_post_success_plan`, apply the TL lifecycle event, optionally
 /// untrack and persist poller state, return the tool response.
@@ -811,14 +829,50 @@ pub async fn interpret_merge_pr(
           capture,
         ) {
         Err(e) => @types.Response::Err(e.message())
-        Ok(_) =>
-          interpret_merge_pr_post_success(
+        Ok(_) => {
+          let issue_id = merge_pr_beads_issue_id_for_tracked(
+            project_dir,
+            poller_state,
+            registry,
+            merge_args.pr_number,
+          )
+          let resp = interpret_merge_pr_post_success(
             project_dir,
             merge_args.caller_id,
             merge_args.pr_number,
             poller_state,
             registry,
           )
+          match issue_id {
+            Some(id) =>
+              if resp.is_ok() {
+                ignore(
+                  run_beads_best_effort(
+                    beads_close_merged_command(
+                      project_dir,
+                      id,
+                      merge_args.pr_number,
+                    ),
+                    capture,
+                  ),
+                )
+                ignore(
+                  run_beads_best_effort(
+                    beads_audit_record_command(
+                      project_dir,
+                      Some(id),
+                      "tool_call",
+                      "merge_pr",
+                      "merged PR #" + merge_args.pr_number.to_string(),
+                    ),
+                    capture,
+                  ),
+                )
+              }
+            None => ()
+          }
+          resp
+        }
       }
   }
 }

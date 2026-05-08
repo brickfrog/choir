@@ -542,4 +542,7 @@ pub async fn interpret_fork_wave_post_spawn(
       }
     None => ()
   }
+  for spec in spawn_plan.spawned_specs {
+    ignore(mirror_beads_spawn_for_spec(project_dir, spec, capture))
+  }
 }

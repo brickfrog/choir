@@ -737,3 +737,36 @@ pub fn beads_issue_id_for_agent(
     None => None
   }
 }
+
+///|
+pub async fn mirror_beads_note_for_agent(
+  project_dir : String,
+  registry : @registry.AgentRegistry?,
+  agent_id : String,
+  note : String,
+  tool_name : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Bool {
+  let issue_id = match
+    beads_issue_id_for_agent(project_dir, registry, agent_id) {
+    Some(id) => id
+    None => return true
+  }
+  let note_ok = run_beads_best_effort(
+    beads_note_command(project_dir, issue_id, note),
+    capture,
+  )
+  ignore(
+    run_beads_best_effort(
+      beads_audit_record_command(
+        project_dir,
+        Some(issue_id),
+        "tool_call",
+        tool_name,
+        note,
+      ),
+      capture,
+    ),
+  )
+  note_ok
+}

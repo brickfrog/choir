@@ -210,6 +210,7 @@ pub async fn interpret_spawn_worker(
         Some(reg) => ignore(reg.upsert(plan.registry_agent))
         None => ()
       }
+      ignore(mirror_beads_spawn_for_spec(project_dir, plan.spec, capture))
       plan.ok_response
     }
     Err(e) => @types.Response::Err(e.message())

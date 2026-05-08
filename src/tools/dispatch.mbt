@@ -657,14 +657,44 @@ pub async fn dispatch(
                 dev_event_on_success,
                 registry~,
               )
+              ignore(
+                mirror_beads_note_for_agent(
+                  project_dir,
+                  registry,
+                  notify_args.caller_id,
+                  "Choir notify_parent: " + notify_args.message,
+                  "notify_parent",
+                  capture,
+                ),
+              )
               response_ok
             }
             Err(e) => @types.Response::Err(e.message())
           }
       }
     }
-    ToolRequest::ReportUsage(report_args) =>
-      interpret_report_usage(report_args, project_dir, registry)
+    ToolRequest::ReportUsage(report_args) => {
+      let resp = interpret_report_usage(report_args, project_dir, registry)
+      if resp.ok_field("recorded") == Some("true") {
+        ignore(
+          mirror_beads_note_for_agent(
+            project_dir,
+            registry,
+            report_args.caller_id,
+            beads_usage_note(
+              report_args.caller_id,
+              report_args.tokens_in,
+              report_args.tokens_out,
+              report_args.elapsed_s,
+              report_args.cost_usd,
+            ),
+            "report_usage",
+            capture,
+          ),
+        )
+      }
+      resp
+    }
     ToolRequest::WaveState(wave_state_args) =>
       interpret_wave_state(
         wave_state_args,
