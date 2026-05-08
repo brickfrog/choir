@@ -78,7 +78,9 @@ fn crystallize_skill_body() -> String {
     #|7. Draft the remaining sections (Context, Goals, Non-Goals, Design, Verify,
     #|   Boundary, Follow-Ups) based on the clarifications. If a section needs
     #|   further user input, ask a second small batch — do not spawn with blanks.
-    #|8. Print: "Spec crystallized at `.choir/context/<slug>-spec.md`. Run
+    #|8. If a parent Beads issue exists, run `choir beads spec-link <issue-id>
+    #|   <slug>` so the bead points at `.choir/context/<slug>-spec.md`.
+    #|9. Print: "Spec crystallized at `.choir/context/<slug>-spec.md`. Run
     #|   `/decompose` to create the integration branch."
     #|
   )
@@ -148,8 +150,12 @@ fn decompose_skill_body() -> String {
     #|6. Remind about decomposition principles: vertical slices not horizontal
     #|   layers, scaffold-as-interface-contract, independence as the goal,
     #|   merge-conflict-as-design-smell, smallest correct leaf.
-    #|7. Print: "Ready. `fork_wave` with `parent_branch=feature/<slug>` and
-    #|   `automerge=true`."
+    #|7. Create child Beads issues for the leaf slices unless they already exist.
+    #|8. Print: "Ready. Use `choir beads wave-from <parent-bead-id>
+    #|   --parent-branch feature/<slug> --slug-prefix <slug>` to inspect the
+    #|   generated fork_wave payload, or call `fork_wave` manually with
+    #|   per-leaf `task_contracts=[{"beads_issue_id":"<child-id>"}, ...]`,
+    #|   `parent_branch=feature/<slug>`, and `automerge=true`."
     #|
   )
 }
@@ -623,6 +629,7 @@ test "crystallize_skill_body starts with frontmatter and has body" {
   assert_true(parts.length() >= 3)
   let after_frontmatter = parts[2]
   assert_true(after_frontmatter.trim_start().length() > 0)
+  assert_true(body.contains("choir beads spec-link"))
 }
 
 ///|
@@ -635,6 +642,7 @@ test "decompose_skill_body does not contain .choir/spec/" {
 test "decompose_skill_body contains .choir/context/" {
   let body = decompose_skill_body()
   assert_true(body.contains(".choir/context/"))
+  assert_true(body.contains("choir beads wave-from"))
 }
 
 ///|

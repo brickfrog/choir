@@ -65,7 +65,16 @@ test "render_leaf_spawn_prompt includes beads issue section" {
   )
   assert_true(prompt.contains("## BEADS ISSUE"))
   assert_true(prompt.contains("- choir-poller-state-race"))
-  assert_true(prompt.contains("bd show choir-poller-state-race --json"))
+  assert_true(
+    prompt.contains("bd --readonly show choir-poller-state-race --json"),
+  )
+  let worker = render_worker_spawn_prompt(
+    PromptSpec::from_map({
+      "task": "Read issue only",
+      "beads_issue_id": "choir-poller-state-race",
+    }),
+  )
+  assert_true(worker.contains("do not mutate Beads unless"))
 }
 
 ///|

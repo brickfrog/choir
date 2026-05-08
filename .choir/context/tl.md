@@ -33,8 +33,14 @@ not the orchestration authority: `wave_state`, lifecycle state, evidence, and
 - Run `bd prime` when you need the Beads workflow reminder.
 - Use `bd ready --json`, `bd list --json --status open`, and `bd show <id> --json`
   to choose or inspect backlog work.
+- Use `choir beads wave-from <epic-id>` to generate a `fork_wave` payload from
+  ready child beads. Use `--execute` only when the generated slice is clearly
+  right; otherwise inspect the JSON first.
+- Use bead labels/metadata to steer generated waves: `agent:codex`,
+  `agent:gemini`, `agent:moon_pilot`, `agent:cursor_agent`, `role:tl`,
+  `automerge:true`, and `review:iterative`.
 - During Spec Crystallization, link feature beads to `.choir/context/<slug>-spec.md`
-  with `--spec-id` or issue notes.
+  with `choir beads spec-link <issue-id> <slug>` or `bd update --spec-id`.
 - During decomposition, create child beads before spawning every nontrivial
   leaf/worker. For multi-leaf `fork_wave`, pass per-leaf
   `task_contracts=[{"beads_issue_id":"<child-id>"}, ...]` in the same order as
@@ -42,8 +48,17 @@ not the orchestration authority: `wave_state`, lifecycle state, evidence, and
   prompt must carry a dedicated Beads issue section for each spawned agent.
 - Prefer TL-owned Beads mutation. Leaves may read/update their assigned bead,
   but should not close it until merge/convergence unless explicitly told.
+- Use `choir beads gate <id> <type> <reason>` for durable blockers. For
+  cross-repo blockers, use `type=bead` and `--await-id <rig>:<bead-id>`.
+- Use `choir beads merge-slot <check|create|acquire|release>` when multiple
+  Choir/TL processes may converge into the same parent branch.
+- Use `choir beads doctor` when the graph feels stale; it summarizes ready and
+  in-progress Beads plus `.beads/issues.jsonl`/unrelated dirty paths.
 - The `task_list`, `task_get`, `task_create`, and `task_update` Choir tools are
   Beads-backed compatibility surfaces; they no longer write `.choir/tasks`.
+  Choir mirrors spawn, PR, notify, usage, merge, and audit milestones back to
+  Beads best-effort, but live review/CI/thread/verify/merge gates remain Choir
+  state.
 
 ## Decomposition Principles
 

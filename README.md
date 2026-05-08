@@ -79,14 +79,25 @@ Useful commands:
 ```bash
 bd prime                  # Choir-specific Beads workflow reminder
 bd ready --json           # dependency-aware ready work
-bd show <id> --json       # issue detail
+bd --readonly show <id> --json  # issue detail from workers/read-only flows
 bd update <id> --claim    # claim work
 bd close <id> --reason "Merged in PR #N"
+choir beads wave-from <epic-id> --parent-branch feature/<slug>
+choir beads wave-from <epic-id> --execute
+choir beads gate <id> bead "waiting on API" --await-id api:api-123
+choir beads merge-slot acquire
+choir beads doctor
 ```
 
 The `task_list`, `task_get`, `task_create`, and `task_update` Choir tools are
 Beads-backed compatibility surfaces. `fork_wave` and `spawn_worker` also accept
 `beads_issue_id` to pass a tracked issue into the spawned prompt.
+
+Choir mirrors live orchestration milestones back to Beads on a best-effort
+basis: spawn claims/metadata, `file_pr` PR notes, `notify_parent` handoff
+notes, `report_usage` telemetry, `merge_pr` closure, and compact audit records.
+Choir remains authoritative for live lifecycle, PR, review, CI, thread, verify,
+and merge decisions; Beads is the durable backlog and handoff log.
 
 ## Build
 

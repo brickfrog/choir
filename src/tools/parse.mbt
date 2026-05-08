@@ -1786,7 +1786,9 @@ test "parse_worker_spawn_args propagates beads issue and defaults codex" {
       )
       assert_true(worker.task.contains("## BEADS ISSUE"))
       assert_true(
-        worker.task.contains("bd show choir-standardized-error-context --json"),
+        worker.task.contains(
+          "bd --readonly show choir-standardized-error-context --json",
+        ),
       )
     }
     Err(e) => fail("unexpected parse error: " + e.message())

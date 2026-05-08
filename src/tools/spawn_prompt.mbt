@@ -203,7 +203,7 @@ fn render_context_block(spec : PromptSpec) -> String {
 fn render_beads_issue(id : String) -> String {
   render_bullets([
     id,
-    "Use `task_get` or `bd show " +
+    "Use `task_get` or `bd --readonly show " +
     id +
     " --json` before implementation if the prompt does not include enough issue context.",
   ])
@@ -265,6 +265,7 @@ fn worker_profile_text(worker_type : String) -> String {
     "1. Call `notify_parent` with status `success` and a concise summary (under 500 words, no raw dumps).\n" +
     "   - `notify_parent` and `shutdown` are available as shell commands on PATH.\n" +
     "   - Shell form: `notify_parent [--status <success|failure>] <message>`.\n" +
+    "   - For Beads issue lookups, prefer `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task explicitly delegates that authority.\n" +
     "   - IMPORTANT: The parent CANNOT read your standard output. You MUST include your entire summary in the `<message>` argument. Do not print it to stdout and say 'see below'.\n" +
     "2. If you fail, call `notify_parent` with status `failure` and explain why.\n" +
     "3. Call `shutdown`."

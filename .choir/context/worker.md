@@ -8,9 +8,9 @@ You are a worker running in the parent's workspace without branch or PR ownershi
 - Report back through `notify_parent` with findings or confirmation.
 - Do not commit, push, or file PRs. The tool registry enforces this.
 - If the task includes a `BEADS ISSUE` section or otherwise names a Beads issue
-  ID, use `task_get <id>` or `bd show <id>` for issue context. Report discovered
-  follow-ups to the parent unless the task explicitly asks you to create/update
-  Beads issues.
+  ID, use `task_get <id>` or `bd --readonly show <id> --json` for issue
+  context. Report discovered follow-ups to the parent unless the task
+  explicitly asks you to create/update Beads issues.
 
 ## Workflow
 

@@ -180,7 +180,7 @@ test "parse_fork_wave_args parses issue_id into task contract" {
     Ok(fork) => {
       @debug.assert_eq(fork.task_contracts[0].beads_issue_id, Some("choir-42"))
       assert_true(fork.tasks[0].contains("## BEADS ISSUE"))
-      assert_true(fork.tasks[0].contains("bd show choir-42 --json"))
+      assert_true(fork.tasks[0].contains("bd --readonly show choir-42 --json"))
     }
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
@@ -205,8 +205,12 @@ test "parse_fork_wave_args supports per leaf task contracts" {
         fork.task_contracts[1].beads_issue_id,
         Some("choir-leaf-b"),
       )
-      assert_true(fork.tasks[0].contains("bd show choir-leaf-a --json"))
-      assert_true(fork.tasks[1].contains("bd show choir-leaf-b --json"))
+      assert_true(
+        fork.tasks[0].contains("bd --readonly show choir-leaf-a --json"),
+      )
+      assert_true(
+        fork.tasks[1].contains("bd --readonly show choir-leaf-b --json"),
+      )
       assert_false(fork.tasks[0].contains("choir-leaf-b"))
       assert_false(fork.tasks[1].contains("choir-leaf-a"))
     }
