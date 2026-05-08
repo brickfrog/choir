@@ -82,6 +82,22 @@ fn heartbeat_map_reader(map : Map[String, Int64]) -> (String) -> Int64? {
 }
 
 ///|
+fn escape_wave_state_test_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
 fn threads_zero_lookup(_pr : Int) -> (Int?, String?) {
   (Some(0), None)
 }
@@ -180,6 +196,9 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
   ps.track(42, "tl.leaf-a", "tl.leaf-a", "main", "https://x/pr/42", 0L)
   let hb : Map[String, Int64] = {}
   hb.set("tl.worker-b", 1_700_000_000_000L)
+  let bead_ids : Map[String, String] = {}
+  bead_ids.set("tl.leaf-a", "choir-poller-state-race")
+  bead_ids.set("tl.worker-b", "choir-beads-live-smoke")
   let snap = plan_wave_state(
     "tl",
     reg,
@@ -189,6 +208,7 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
     heartbeat_map_reader(hb),
     @types.ReviewMode::Iterative,
     9_999_999L,
+    beads_issue_reader=fn(agent) { bead_ids.get(agent.agent_id.to_string()) },
   ).unwrap()
   assert_eq(snap.taken_at_ms, 9_999_999L)
   assert_eq(snap.supervisor.agent_id, "tl")
@@ -200,6 +220,7 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
     .find_first(fn(c) { c.agent_id == "tl.leaf-a" })
     .unwrap()
   assert_eq(leaf_row.agent_type, @types.AgentType::Gemini)
+  @debug.assert_eq(leaf_row.beads_issue_id, Some("choir-poller-state-race"))
   @debug.assert_eq(leaf_row.last_heartbeat_ms, None)
   match leaf_row.pr {
     Some(pr) => {
@@ -219,6 +240,7 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
   assert_true(worker_row.pr is None)
   @debug.assert_eq(worker_row.last_heartbeat_ms, Some(1_700_000_000_000L))
   assert_eq(worker_row.agent_type, @types.AgentType::Claude)
+  @debug.assert_eq(worker_row.beads_issue_id, Some("choir-beads-live-smoke"))
   match worker_row.workflow {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
     _ => fail("expected worker Working")
@@ -764,6 +786,22 @@ async test "interpret_wave_state unresolved_threads=Some(0) on clean graphql" {
       "abc",
     ),
   )
+  let leaf_worktree = @workspace.worktree_path(project_dir, "leaf")
+  assert_true(@sys.create_dir_all(leaf_worktree + "/.choir"))
+  ignore(
+    @sys.write_file_sync(
+      leaf_worktree + "/.choir/config.local.toml",
+      "task_contract_json = \"" +
+      escape_wave_state_test_toml_string(
+        {
+          ..@types.TaskContract::empty(),
+          goal: "fix poller",
+          beads_issue_id: Some("choir-poller-state-race"),
+        }.to_json_string(),
+      ) +
+      "\"\n",
+    ),
+  )
   let resp = interpret_wave_state(
     { caller_id: "tl" },
     project_dir,
@@ -775,6 +813,7 @@ async test "interpret_wave_state unresolved_threads=Some(0) on clean graphql" {
   let body = resp.ok_field("snapshot").unwrap()
   assert_true(body.contains("\"unresolved_threads\":0"))
   assert_true(body.contains("\"merge_gate_ready\":true"))
+  assert_true(body.contains("\"beads_issue_id\":\"choir-poller-state-race\""))
   ignore(@sys.rm_rf(project_dir))
 }
 

@@ -82,6 +82,22 @@ async fn mock_registry_capture_with_pane(
 }
 
 ///|
+fn escape_registry_test_toml_string(s : String) -> String {
+  let buf = StringBuilder::new()
+  for c in s {
+    match c {
+      '"' => buf.write_string("\\\"")
+      '\\' => buf.write_string("\\\\")
+      '\n' => buf.write_string("\\n")
+      '\r' => buf.write_string("\\r")
+      '\t' => buf.write_string("\\t")
+      _ => buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
 async fn mock_clean_git(program : String, args : Array[String]) -> String {
   @async.sleep(0)
   if args.contains("rev-parse") {
@@ -1176,6 +1192,64 @@ async test "dispatch agent_list include_inactive returns full registry view" {
         _ => fail("expected agents array")
       }
     }
+    Err(e) => fail("agent_list failed: " + e)
+  }
+}
+
+///|
+async test "dispatch agent_list surfaces beads_issue_id from inline metadata" {
+  let project_dir = "/tmp/choir-agent-list-beads-" + @sys.get_pid().to_string()
+  let agent_id = "main.beads-smoke"
+  let metadata_dir = @workspace.inline_agent_metadata_dir(project_dir, agent_id)
+  assert_true(@sys.create_dir_all(metadata_dir + "/.choir"))
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "read bead",
+    beads_issue_id: Some("choir-beads-live-smoke"),
+  }
+  ignore(
+    @sys.write_file_sync(
+      metadata_dir + "/.choir/config.local.toml",
+      "task_contract_json = \"" +
+      escape_registry_test_toml_string(contract.to_json_string()) +
+      "\"\n",
+    ),
+  )
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id,
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("root"),
+      workspace: project_dir,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let call = ToolCall::{ role: @types.Role::TL, name: "agent_list", args: {} }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir~,
+    registry=Some(reg),
+    capture=mock_registry_capture,
+  )
+  ignore(@sys.rm_rf(project_dir))
+  match res {
+    Ok(map) =>
+      match map.get_json("agents") {
+        Some(Array(arr)) => {
+          assert_eq(arr.length(), 1)
+          let rendered = arr[0].stringify()
+          if !rendered.contains("\"beads_issue_id\":\"choir-beads-live-smoke\"") {
+            fail(rendered)
+          }
+        }
+        _ => fail("expected agents array")
+      }
     Err(e) => fail("agent_list failed: " + e)
   }
 }

@@ -216,6 +216,14 @@ fn agent_list_includes_by_default(agent : @types.Agent) -> Bool {
 }
 
 ///|
+fn optional_string_json(value : String?) -> Json {
+  match value {
+    Some(v) => String::to_json(v)
+    None => @json.parse("null") catch { _ => String::to_json("") }
+  }
+}
+
+///|
 fn resolve_parent_for_notify(
   project_dir : String,
   session : String,
@@ -702,11 +710,15 @@ pub async fn dispatch(
           })
           let agents_json : Array[Json] = []
           for agent in agents {
+            let beads_issue_id = @workspace.beads_issue_id_for_agent(
+              project_dir, agent,
+            )
             agents_json.push(
               {
                 "agent_id": agent.agent_id.0.to_json(),
                 "role": agent.role.to_wire_string().to_json(),
                 "agent_type": agent.agent_type.to_wire_string().to_json(),
+                "beads_issue_id": optional_string_json(beads_issue_id),
                 "state": agent.state.to_wire_string().to_json(),
                 "parent": agent.parent.to_json(),
                 "branch": agent.branch.to_json(),

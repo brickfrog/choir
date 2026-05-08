@@ -24,6 +24,7 @@ pub(all) struct WaveStateChild {
   agent_id : String
   slug : String
   agent_type : @types.AgentType
+  beads_issue_id : String?
   workspace : String
   branch : String
   workflow : @phase.WorkflowState
@@ -36,6 +37,7 @@ pub(all) struct WaveStateChild {
 /// Typed per-supervisor snapshot used by `wave_state`.
 pub(all) struct WaveStateSupervisor {
   agent_id : String
+  beads_issue_id : String?
   workflow : @phase.SupervisorLifecycle
   own_pr : WaveStatePR?
   wave : Int?
@@ -151,6 +153,11 @@ fn index_tracked_by_agent(
 }
 
 ///|
+fn wave_state_default_beads_issue_reader(_agent : @types.Agent) -> String? {
+  None
+}
+
+///|
 /// Pure planner for `wave_state`. Assembles a typed snapshot from injected
 /// reader capabilities:
 ///
@@ -175,6 +182,7 @@ pub fn plan_wave_state(
   heartbeat_reader : (String) -> Int64?,
   review_mode : @types.ReviewMode,
   now_ms : Int64,
+  beads_issue_reader? : (@types.Agent) -> String? = wave_state_default_beads_issue_reader,
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
   let caller_agent = try? registry.get(caller_id)
   guard caller_agent is Ok(agent) else {
@@ -237,6 +245,7 @@ pub fn plan_wave_state(
       agent_id: child_id,
       slug: @phase.extract_slug(child_id),
       agent_type: child.agent_type,
+      beads_issue_id: beads_issue_reader(child),
       workspace: child.workspace,
       branch: child.branch,
       workflow,
@@ -248,6 +257,7 @@ pub fn plan_wave_state(
   Ok({
     supervisor: {
       agent_id: caller_id,
+      beads_issue_id: beads_issue_reader(agent),
       workflow: supervisor_workflow,
       own_pr,
       wave: supervisor_wave(supervisor_workflow),
@@ -368,6 +378,9 @@ pub async fn interpret_wave_state(
   let lifecycle_reader = fn(agent_id : String) -> @phase.AgentLifecycle? {
     @phase.read_lifecycle(project_dir, agent_id)
   }
+  let beads_issue_reader = fn(agent : @types.Agent) -> String? {
+    @workspace.beads_issue_id_for_agent(project_dir, agent)
+  }
   let snapshot = match
     plan_wave_state(
       args.caller_id,
@@ -378,6 +391,7 @@ pub async fn interpret_wave_state(
       heartbeat_reader,
       review_mode,
       @env.now().reinterpret_as_int64(),
+      beads_issue_reader~,
     ) {
     Ok(s) => s
     Err(e) => return @types.Response::Err(e.message())

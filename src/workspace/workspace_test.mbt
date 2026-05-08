@@ -1355,3 +1355,49 @@ test "task_contract_for_agent_workspace falls back when first config lacks task_
     None => fail("expected fallback task contract")
   }
 }
+
+///|
+test "task_contract_for_agent finds inline worker metadata" {
+  let project_dir = "/tmp/choir-ws-inline-task-contract-" +
+    @sys.get_pid().to_string()
+  let agent_id = "main.worker-a"
+  let metadata_dir = @workspace.inline_agent_metadata_dir(project_dir, agent_id)
+  assert_true(@sys.create_dir_all(metadata_dir + "/.choir"))
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "read bead",
+    beads_issue_id: Some("choir-beads-live-smoke"),
+  }
+  ignore(
+    @sys.write_file_sync(
+      metadata_dir + "/.choir/config.local.toml",
+      "task_contract_json = \"" +
+      escape_workspace_test_toml_string(contract.to_json_string()) +
+      "\"\n",
+    ),
+  )
+  let agent : @types.Agent = {
+    agent_id,
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("main"),
+    workspace: project_dir,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  match @workspace.task_contract_for_agent(project_dir, agent) {
+    Some(parsed) => {
+      assert_eq(parsed.goal, "read bead")
+      @debug.assert_eq(parsed.beads_issue_id, Some("choir-beads-live-smoke"))
+    }
+    None => fail("expected inline task contract")
+  }
+  @debug.assert_eq(
+    @workspace.beads_issue_id_for_agent(project_dir, agent),
+    Some("choir-beads-live-smoke"),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}

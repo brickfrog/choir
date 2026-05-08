@@ -24,6 +24,15 @@ pub fn inline_agent_metadata_dir(
 }
 
 ///|
+fn agent_slug_from_id(agent_id : String) -> String {
+  match agent_id.rev_find(".") {
+    Some(i) if i + 1 < agent_id.length() =>
+      agent_id[i + 1:agent_id.length()].to_owned()
+    _ => agent_id
+  }
+}
+
+///|
 pub fn parent_branch(branch : String) -> String? {
   let last_dot = match branch.rev_find(".") {
     Some(i) => i
@@ -249,6 +258,7 @@ fn local_config_candidate_paths_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,
   agent_slug : String,
+  agent_id? : String? = None,
 ) -> Array[String] {
   let candidate_paths : Array[String] = []
   match agent_workspace {
@@ -262,6 +272,16 @@ fn local_config_candidate_paths_for_agent_workspace(
     "/.choir/config.local.toml"
   if !candidate_paths.contains(fallback_path) {
     candidate_paths.push(fallback_path)
+  }
+  match agent_id {
+    Some(id) => {
+      let inline_path = inline_agent_metadata_dir(project_dir, id) +
+        "/.choir/config.local.toml"
+      if !candidate_paths.contains(inline_path) {
+        candidate_paths.push(inline_path)
+      }
+    }
+    None => ()
   }
   candidate_paths
 }
@@ -291,6 +311,47 @@ pub fn task_contract_for_agent_workspace(
     }
   }
   None
+}
+
+///|
+pub fn task_contract_for_agent(
+  project_dir : String,
+  agent : @types.Agent,
+) -> @types.TaskContract? {
+  let agent_id = agent.agent_id.to_string()
+  let agent_slug = agent_slug_from_id(agent_id)
+  for
+    path in local_config_candidate_paths_for_agent_workspace(
+      project_dir,
+      Some(agent.workspace),
+      agent_slug,
+      agent_id=Some(agent_id),
+    ) {
+    let content = @sys.read_file(path)
+    if content == "" {
+      continue
+    }
+    match @config.parse_local_config(content) {
+      Ok(local_cfg) =>
+        match local_cfg.task_contract {
+          Some(contract) => return Some(contract)
+          None => ()
+        }
+      Err(_) => ()
+    }
+  }
+  None
+}
+
+///|
+pub fn beads_issue_id_for_agent(
+  project_dir : String,
+  agent : @types.Agent,
+) -> String? {
+  match task_contract_for_agent(project_dir, agent) {
+    Some(contract) => contract.beads_issue_id
+    None => None
+  }
 }
 
 ///|
