@@ -593,6 +593,84 @@ test "fork_wave_child_spawn_depth copies depth for non-TL" {
 }
 
 ///|
+test "fork_wave beads policy warning is quiet for trivial main fork" {
+  let args = {
+    ..fork_wave_args_base(),
+    count: 1,
+    tasks: ["single"],
+    task_contracts: [{ ..@types.TaskContract::empty(), goal: "single" }],
+    parent_branch: "main",
+  }
+  @debug.assert_eq(fork_wave_missing_beads_policy_warning(args), None)
+}
+
+///|
+test "fork_wave beads policy warns for multi leaf missing ids" {
+  let warning = fork_wave_missing_beads_policy_warning(fork_wave_args_base())
+  match warning {
+    Some(msg) => {
+      assert_true(msg.contains("multi-leaf fork_wave"))
+      assert_true(msg.contains("leaf 1"))
+      assert_true(msg.contains("leaf 2"))
+      assert_true(msg.contains("task_contracts"))
+    }
+    None => fail("expected missing beads warning")
+  }
+}
+
+///|
+test "fork_wave beads policy warns for feature branch single leaf" {
+  let args = {
+    ..fork_wave_args_base(),
+    count: 1,
+    tasks: ["single"],
+    task_contracts: [{ ..@types.TaskContract::empty(), goal: "single" }],
+    parent_branch: "feature/beads",
+  }
+  let warning = fork_wave_missing_beads_policy_warning(args)
+  match warning {
+    Some(msg) => assert_true(msg.contains("feature-branch fork_wave"))
+    None => fail("expected feature branch warning")
+  }
+}
+
+///|
+test "fork_wave beads policy accepts per leaf ids" {
+  let args = {
+    ..fork_wave_args_base(),
+    task_contracts: [
+      {
+        ..@types.TaskContract::empty(),
+        goal: "a",
+        beads_issue_id: Some("choir-leaf-a"),
+      },
+      {
+        ..@types.TaskContract::empty(),
+        goal: "b",
+        beads_issue_id: Some("choir-leaf-b"),
+      },
+    ],
+  }
+  @debug.assert_eq(fork_wave_missing_beads_policy_warning(args), None)
+}
+
+///|
+test "fork_wave response carries beads policy warning" {
+  let resp = fork_wave_response_with_beads_policy_warning(
+    @types.Response::ok_values({ "status": "spawned".to_json() }),
+    fork_wave_args_base(),
+  )
+  match resp {
+    @types.Response::Ok(fields) =>
+      match fields.get("warning") {
+        Some(msg) => assert_true(msg.contains("beads policy warning"))
+        None => fail("expected warning field")
+      }
+    @types.Response::Err(msg) => fail("unexpected err: " + msg)
+  }
+}
+
+///|
 test "fork_wave_caller_spawn_depth_from_registry matches dispatch lookup" {
   @debug.assert_eq(fork_wave_caller_spawn_depth_from_registry(None, "x"), None)
   let reg = @registry.AgentRegistry::new()

@@ -411,11 +411,14 @@ pub async fn dispatch(
                     "failed to write pending wave: " + wave_id,
                   )
                 } else {
-                  @types.Response::ok_values({
-                    "status": String::to_json("pending"),
-                    "wave_id": String::to_json(wave_id),
-                    "depends_on": resolved_args.depends_on.to_json(),
-                  })
+                  fork_wave_response_with_beads_policy_warning(
+                    @types.Response::ok_values({
+                      "status": String::to_json("pending"),
+                      "wave_id": String::to_json(wave_id),
+                      "depends_on": resolved_args.depends_on.to_json(),
+                    }),
+                    resolved_args,
+                  )
                 }
             }
           }

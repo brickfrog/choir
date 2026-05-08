@@ -179,6 +179,54 @@ pub fn fork_wave_child_spawn_depth(
 }
 
 ///|
+pub fn fork_wave_missing_beads_policy_warning(
+  fork_wave_args : ForkWaveArgs,
+) -> String? {
+  let requires_beads = fork_wave_args.count > 1 ||
+    fork_wave_args.parent_branch.has_prefix("feature/")
+  if !requires_beads {
+    return None
+  }
+  let missing : Array[String] = []
+  for i = 0; i < fork_wave_args.count; i = i + 1 {
+    let missing_issue = if i < fork_wave_args.task_contracts.length() {
+      fork_wave_args.task_contracts[i].beads_issue_id is None
+    } else {
+      true
+    }
+    if missing_issue {
+      missing.push("leaf " + (i + 1).to_string())
+    }
+  }
+  if missing.length() == 0 {
+    return None
+  }
+  let scope = if fork_wave_args.parent_branch.has_prefix("feature/") {
+    "feature-branch fork_wave"
+  } else {
+    "multi-leaf fork_wave"
+  }
+  Some(
+    "beads policy warning: " +
+    scope +
+    " is missing beads_issue_id for " +
+    missing.join(", ") +
+    ". Create child Beads issues first and pass per-leaf task_contracts=[{\"beads_issue_id\":\"<child-id>\"}, ...].",
+  )
+}
+
+///|
+pub fn fork_wave_response_with_beads_policy_warning(
+  resp : @types.Response,
+  fork_wave_args : ForkWaveArgs,
+) -> @types.Response {
+  match fork_wave_missing_beads_policy_warning(fork_wave_args) {
+    Some(warning) => resp.with_warning(warning)
+    None => resp
+  }
+}
+
+///|
 /// Map `interpret fork_wave_plan` result to the tool response. On
 /// [`ForkWaveError::CommandFailed`], re-runs capture on the failing command
 /// (typically merged stdout/stderr via `capture_command_output`, not stderr-only).
@@ -309,7 +357,10 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   let interpret_result = interpret(plan, git_capture~, runner~)
   let resp = fork_wave_response_from_interpret_result(interpret_result, capture)
   (
-    fork_wave_response_with_spawn_metadata(resp, spawn_plan.spawned_specs),
+    fork_wave_response_with_beads_policy_warning(
+      fork_wave_response_with_spawn_metadata(resp, spawn_plan.spawned_specs),
+      fork_wave_args,
+    ),
     fork_wave_args,
     spawn_plan,
   )
