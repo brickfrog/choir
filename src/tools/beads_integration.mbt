@@ -707,7 +707,7 @@ pub async fn mirror_beads_spawn_for_spec(
       }
     None => return true
   }
-  run_beads_best_effort(
+  let update_ok = run_beads_best_effort(
     beads_update_spawn_command(
       project_dir,
       issue_id,
@@ -720,6 +720,19 @@ pub async fn mirror_beads_spawn_for_spec(
     ),
     capture,
   )
+  ignore(
+    run_beads_best_effort(
+      beads_audit_record_command(
+        project_dir,
+        Some(issue_id),
+        "tool_call",
+        "spawn",
+        "spawned " + @workspace.canonical_agent_id(spec),
+      ),
+      capture,
+    ),
+  )
+  update_ok
 }
 
 ///|

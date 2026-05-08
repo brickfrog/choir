@@ -169,6 +169,8 @@ async test "interpret_spawn_worker mirrors assigned beads on success" {
   assert_true(rendered.contains("--status in_progress"))
   assert_true(rendered.contains("--assignee main.w1"))
   assert_true(rendered.contains("choir_agent_type=codex"))
+  assert_true(rendered.contains("audit record"))
+  assert_true(rendered.contains("spawned main.w1"))
 }
 
 ///|
