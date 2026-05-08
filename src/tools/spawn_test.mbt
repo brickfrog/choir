@@ -1,11 +1,33 @@
 ///|
 test "spawn_worker_ok_response matches spawned envelope" {
-  match spawn_worker_ok_response("main.w1") {
+  match
+    spawn_worker_ok_response(
+      "main.w1",
+      @types.AgentType::Codex,
+      Some("choir-beads-live-smoke"),
+    ) {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
       @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
       @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.w1")))
       @debug.assert_eq(map.get("agent_ids"), Some(String::to_json("main.w1")))
+      @debug.assert_eq(map.get("role"), Some(String::to_json("worker")))
+      @debug.assert_eq(map.get("agent_type"), Some(String::to_json("codex")))
+      @debug.assert_eq(
+        map.get("beads_issue_id"),
+        Some(String::to_json("choir-beads-live-smoke")),
+      )
+      match map.get("agents") {
+        Some(Array(agents)) => {
+          assert_eq(agents.length(), 1)
+          assert_true(
+            agents[0]
+            .stringify()
+            .contains("\"beads_issue_id\":\"choir-beads-live-smoke\""),
+          )
+        }
+        _ => fail("expected agents array")
+      }
     }
     _ => fail("expected ok")
   }
@@ -15,7 +37,11 @@ test "spawn_worker_ok_response matches spawned envelope" {
 test "spawn_worker_plan builds inline worker spec registry row and response" {
   let worker_args : WorkerSpawnArgs = {
     task: "t",
-    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
+    task_contract: {
+      ..@types.TaskContract::empty(),
+      goal: "t",
+      beads_issue_id: Some("choir-issue-1"),
+    },
     caller_id: "main.tl",
     slug: "w1",
     agent_type: @types.AgentType::MoonPilot,
@@ -47,6 +73,15 @@ test "spawn_worker_plan builds inline worker spec registry row and response" {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
       @debug.assert_eq(map.get("agent_id"), Some(String::to_json("develop.w1")))
+      @debug.assert_eq(
+        map.get("agent_type"),
+        Some(String::to_json("moon_pilot")),
+      )
+      @debug.assert_eq(map.get("role"), Some(String::to_json("worker")))
+      @debug.assert_eq(
+        map.get("beads_issue_id"),
+        Some(String::to_json("choir-issue-1")),
+      )
     }
     _ => fail("expected ok")
   }

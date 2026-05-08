@@ -210,6 +210,49 @@ pub async fn fork_wave_response_from_interpret_result(
 }
 
 ///|
+fn fork_wave_response_with_spawn_metadata(
+  resp : @types.Response,
+  spawned_specs : Array[@types.SpawnSpec],
+) -> @types.Response {
+  if spawned_specs.length() == 0 {
+    return resp
+  }
+  match resp {
+    @types.Response::Ok(fields) => {
+      let values = fields.to_json_map()
+      let agents : Array[Json] = []
+      for spec in spawned_specs {
+        agents.push(
+          spawn_response_agent_json(
+            @workspace.canonical_agent_id(spec),
+            spec.role,
+            spec.agent_type,
+            task_contract_beads_issue_id(spec.task_contract),
+          ),
+        )
+      }
+      let first = spawned_specs[0]
+      values.set("role", String::to_json(first.role.to_wire_string()))
+      values.set(
+        "agent_type",
+        String::to_json(first.agent_type.to_wire_string()),
+      )
+      if spawned_specs.length() == 1 {
+        values.set(
+          "beads_issue_id",
+          optional_response_string_json(
+            task_contract_beads_issue_id(first.task_contract),
+          ),
+        )
+      }
+      values.set("agents", agents.to_json())
+      @types.Response::ok_values(values)
+    }
+    _ => resp
+  }
+}
+
+///|
 /// Single entry point (from dispatch) for `fork_wave` pre-spawn / effect-phase
 /// wiring: parent-branch defaulting, caller spawn-depth resolution, spawn plan,
 /// scaffold gate + spawn via `interpret`, and spawn failure response mapping.
@@ -265,7 +308,11 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   )
   let interpret_result = interpret(plan, git_capture~, runner~)
   let resp = fork_wave_response_from_interpret_result(interpret_result, capture)
-  (resp, fork_wave_args, spawn_plan)
+  (
+    fork_wave_response_with_spawn_metadata(resp, spawn_plan.spawned_specs),
+    fork_wave_args,
+    spawn_plan,
+  )
 }
 
 ///|

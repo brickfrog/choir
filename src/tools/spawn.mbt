@@ -59,11 +59,57 @@ pub impl Show for SpawnWorkerPlan with output(self, logger) -> Unit {
 }
 
 ///|
-pub fn spawn_worker_ok_response(agent_id : String) -> @types.Response {
+fn optional_response_string_json(value : String?) -> Json {
+  match value {
+    Some(v) => String::to_json(v)
+    None => @json.parse("null") catch { _ => String::to_json("") }
+  }
+}
+
+///|
+fn task_contract_beads_issue_id(contract : @types.TaskContract?) -> String? {
+  match contract {
+    Some(c) => c.beads_issue_id
+    None => None
+  }
+}
+
+///|
+fn spawn_response_agent_json(
+  agent_id : String,
+  role : @types.Role,
+  agent_type : @types.AgentType,
+  beads_issue_id : String?,
+) -> Json {
+  {
+    "agent_id": String::to_json(agent_id),
+    "role": String::to_json(role.to_wire_string()),
+    "agent_type": String::to_json(agent_type.to_wire_string()),
+    "beads_issue_id": optional_response_string_json(beads_issue_id),
+  }.to_json()
+}
+
+///|
+pub fn spawn_worker_ok_response(
+  agent_id : String,
+  agent_type : @types.AgentType,
+  beads_issue_id : String?,
+) -> @types.Response {
   @types.Response::ok_values({
     "status": String::to_json("spawned"),
     "agent_id": String::to_json(agent_id),
     "agent_ids": String::to_json(agent_id),
+    "role": String::to_json("worker"),
+    "agent_type": String::to_json(agent_type.to_wire_string()),
+    "beads_issue_id": optional_response_string_json(beads_issue_id),
+    "agents": [
+      spawn_response_agent_json(
+        agent_id,
+        @types.Role::Worker,
+        agent_type,
+        beads_issue_id,
+      ),
+    ].to_json(),
   })
 }
 
@@ -116,7 +162,11 @@ pub fn spawn_worker_plan(
     agent_id,
     terminal_target,
     registry_agent,
-    ok_response: spawn_worker_ok_response(agent_id),
+    ok_response: spawn_worker_ok_response(
+      agent_id,
+      worker_args.agent_type,
+      worker_args.task_contract.beads_issue_id,
+    ),
   }
 }
 

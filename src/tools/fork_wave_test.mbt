@@ -683,7 +683,21 @@ async test "interpret_fork_wave_spawn_effect_phase resolves parent branch and re
       state: @types.AgentState::Active,
     }),
   )
-  let args = fork_wave_args_base()
+  let args = {
+    ..fork_wave_args_base(),
+    task_contracts: [
+      {
+        ..@types.TaskContract::empty(),
+        goal: "shared task",
+        beads_issue_id: Some("choir-leaf-a"),
+      },
+      {
+        ..@types.TaskContract::empty(),
+        goal: "shared task",
+        beads_issue_id: Some("choir-leaf-b"),
+      },
+    ],
+  }
   let (resp, resolved_args, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
     { ..args, parent_branch: "main" },
     "/proj",
@@ -706,6 +720,28 @@ async test "interpret_fork_wave_spawn_effect_phase resolves parent branch and re
         map.get("agent_ids"),
         Some(String::to_json("topic.wave-0,topic.wave-1")),
       )
+      @debug.assert_eq(map.get("role"), Some(String::to_json("dev")))
+      @debug.assert_eq(map.get("agent_type"), Some(String::to_json("claude")))
+      match map.get("agents") {
+        Some(Array(agents)) => {
+          assert_eq(agents.length(), 2)
+          let first = agents[0].stringify()
+          let second = agents[1].stringify()
+          if !first.contains("\"agent_id\":\"topic.wave-0\"") {
+            fail(first)
+          }
+          if !first.contains("\"beads_issue_id\":\"choir-leaf-a\"") {
+            fail(first)
+          }
+          if !second.contains("\"agent_id\":\"topic.wave-1\"") {
+            fail(second)
+          }
+          if !second.contains("\"beads_issue_id\":\"choir-leaf-b\"") {
+            fail(second)
+          }
+        }
+        _ => fail("expected agents metadata")
+      }
     }
     _ => fail("expected spawned ok response")
   }
