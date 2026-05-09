@@ -95,9 +95,17 @@ async fn mock_capture_origin_main(_cmd : @workspace.Command) -> (Int, String) {
 
 ///|
 fn upsert_spawn_test_root(reg : @registry.AgentRegistry) -> Unit {
+  upsert_spawn_test_parent(reg, "root")
+}
+
+///|
+fn upsert_spawn_test_parent(
+  reg : @registry.AgentRegistry,
+  agent_id : String,
+) -> Unit {
   ignore(
     reg.upsert({
-      agent_id: @types.AgentId("root"),
+      agent_id: @types.AgentId(agent_id),
       role: @types.Role::TL,
       agent_type: @types.AgentType::Claude,
       parent: None,
@@ -216,6 +224,37 @@ async test "interpret_spawn_worker preserves registered caller_id as parent" {
     _ => fail("expected ok")
   }
   assert_registry_parent(reg, "main.w-registered", "root")
+}
+
+///|
+async test "interpret_spawn_worker rejects unregistered caller_id when parent registry is ambiguous" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main",
+    slug: "w-ambiguous",
+    agent_type: @types.AgentType::Claude,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent(reg, "tl-a")
+  upsert_spawn_test_parent(reg, "tl-b")
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_origin_main,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(
+        msg.contains("spawn_worker caller_id 'main' is not registered"),
+      )
+      assert_true(msg.contains("agent registry"))
+    }
+    _ => fail("expected err")
+  }
 }
 
 ///|

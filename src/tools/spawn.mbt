@@ -62,9 +62,9 @@ fn spawn_worker_parent_candidate(agent : @types.Agent) -> Bool {
 }
 
 ///|
-fn fallback_spawn_worker_parent_id(reg : @registry.AgentRegistry) -> String? {
+fn fallback_spawn_worker_parent_id(agents : Array[@types.Agent]) -> String? {
   let candidates : Array[String] = []
-  for agent in reg.list() {
+  for agent in agents {
     if spawn_worker_parent_candidate(agent) {
       let id = agent.agent_id.to_string()
       if id == "root" {
@@ -94,10 +94,12 @@ fn resolve_spawn_worker_parent_id(
     Some(reg) =>
       if registry_has_agent(reg, caller_id) {
         Ok(caller_id)
-      } else if reg.list().length() == 0 {
-        Ok(caller_id)
       } else {
-        match fallback_spawn_worker_parent_id(reg) {
+        let agents = reg.list()
+        if agents.length() == 0 {
+          return Ok(caller_id)
+        }
+        match fallback_spawn_worker_parent_id(agents) {
           Some(parent_id) => Ok(parent_id)
           None =>
             Err(
@@ -258,12 +260,12 @@ pub async fn interpret_spawn_worker(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
 ) -> @types.Response {
-  let worker_args = match
+  let normalized_args = match
     resolve_spawn_worker_parent_id(worker_args.caller_id, registry) {
     Ok(parent_id) => { ..worker_args, caller_id: parent_id }
     Err(e) => return @types.Response::Err(e.message())
   }
-  match ensure_caller_can_spawn(worker_args.caller_id, registry) {
+  match ensure_caller_can_spawn(normalized_args.caller_id, registry) {
     Ok(_) => ()
     Err(e) => return @types.Response::Err(e.message())
   }
@@ -271,7 +273,7 @@ pub async fn interpret_spawn_worker(
     project_dir, capture,
   )
   let plan = spawn_worker_plan(
-    worker_args, resolved_parent_branch, session, project_dir,
+    normalized_args, resolved_parent_branch, session, project_dir,
   )
   let cmds = @workspace.spawn_commands(
     plan.spec,
