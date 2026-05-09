@@ -11,6 +11,195 @@ test "poller_backoff_delay_after_failure exponential ladder capped at 900s" {
 }
 
 ///|
+fn assert_generation_increased(
+  ps : @poller.PollerState,
+  before : Int,
+  label : String,
+) -> Int raise {
+  let after = ps.write_generation
+  if after <= before {
+    fail(label + " did not bump write_generation")
+  }
+  after
+}
+
+///|
+async fn poller_test_poll_failure(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (
+  Bool,
+  @poller.ReviewState,
+  String,
+  @poller.CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+) {
+  @async.sleep(0)
+  (false, None_, "", Unknown, "", true, false)
+}
+
+///|
+async fn poller_test_poll_success_open(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (
+  Bool,
+  @poller.ReviewState,
+  String,
+  @poller.CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+) {
+  @async.sleep(0)
+  (true, Commented, "sha-open", Success, "body", true, false)
+}
+
+///|
+async fn poller_test_poll_success_closed(
+  _pr_number : Int,
+  _skip_issue : Bool,
+) -> (
+  Bool,
+  @poller.ReviewState,
+  String,
+  @poller.CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+) {
+  @async.sleep(0)
+  (true, Approved, "sha-closed", Success, "", false, false)
+}
+
+///|
+fn parsed_state_has_pr(content : String, pr_number : Int) -> Bool raise {
+  @poller.parse_tracked_prs_json(content).any(fn(pr) {
+    pr.pr_number == pr_number
+  })
+}
+
+///|
+async test "PollerState mutations bump write_generation" {
+  let ps = @poller.PollerState::new()
+  let mut generation = ps.write_generation
+
+  ps.track(1, "agent-1", "branch-1", "main", "url-1", 10L)
+  generation = assert_generation_increased(ps, generation, "track")
+
+  ps.ensure_tracked(1, "agent-1b", "branch-1b", "main", "url-1b", 11L)
+  generation = assert_generation_increased(
+    ps, generation, "ensure_tracked update",
+  )
+
+  ps.ensure_tracked(2, "agent-2", "branch-2", "main", "url-2", 12L)
+  generation = assert_generation_increased(
+    ps, generation, "ensure_tracked insert",
+  )
+
+  ignore(ps.transfer_owner("agent-2", "agent-2b", "branch-2b", "main"))
+  generation = assert_generation_increased(ps, generation, "transfer_owner")
+
+  ps.track_recovered(
+    3,
+    "agent-3",
+    "branch-3",
+    "main",
+    "url-3",
+    13L,
+    Approved,
+    "",
+    "sha-3",
+    Success,
+    true,
+  )
+  generation = assert_generation_increased(ps, generation, "track_recovered")
+
+  let recovered = match ps.get(3) {
+    Some(value) => value
+    None => fail("expected recovered PR 3")
+  }
+  ps.restore({ ..recovered, last_review_state: ChangesRequested })
+  generation = assert_generation_increased(ps, generation, "restore")
+
+  ignore(ps.untrack_by_agent_id("agent-2b"))
+  generation = assert_generation_increased(
+    ps, generation, "untrack_by_agent_id",
+  )
+
+  ps.untrack(1)
+  generation = assert_generation_increased(ps, generation, "untrack")
+
+  ps.track(4, "agent-4", "branch-4", "main", "url-4", 14L)
+  generation = assert_generation_increased(ps, generation, "track before tick")
+
+  let noop_ev = fn(_e : @poller.PollEvent, _a : String) -> Unit { () }
+  let noop_log = fn(_l : @poller.PollerPrTickLog) -> Unit { () }
+  ps.tick_pr_with(4, 100L, 900L, poller_test_poll_failure, noop_ev, noop_log)
+  generation = assert_generation_increased(
+    ps, generation, "tick failure update",
+  )
+
+  ps.tick_pr_with(
+    4, 200L, 900L, poller_test_poll_success_open, noop_ev, noop_log,
+  )
+  generation = assert_generation_increased(
+    ps, generation, "tick success update",
+  )
+
+  ps.tick_pr_with(
+    4, 300L, 900L, poller_test_poll_success_closed, noop_ev, noop_log,
+  )
+  ignore(assert_generation_increased(ps, generation, "tick closed untrack"))
+}
+
+///|
+test "Persist sees mutation between read and write and retries" {
+  let ps = @poller.PollerState::new()
+  ps.track(10, "agent-a", "branch-a", "main", "url-a", 1L)
+  let writes : Array[String] = []
+  let mut injected = false
+  let writer = fn(_path : String, content : String) -> Bool {
+    writes.push(content)
+    if !injected {
+      injected = true
+      ps.ensure_tracked(11, "agent-b", "branch-b", "main", "url-b", 2L)
+    }
+    true
+  }
+
+  assert_true(ps.write_state_file("/project", write_file=writer))
+  assert_eq(writes.length(), 2)
+  assert_true(parsed_state_has_pr(writes[0], 10))
+  assert_false(parsed_state_has_pr(writes[0], 11))
+  assert_true(parsed_state_has_pr(writes[1], 10))
+  assert_true(parsed_state_has_pr(writes[1], 11))
+}
+
+///|
+test "Untracked PR via concurrent ensure_tracked and persist does not silently disappear" {
+  let ps = @poller.PollerState::new()
+  ps.track(20, "agent-a", "branch-a", "main", "url-a", 1L)
+  let writes : Array[String] = []
+  let mut interleaved = false
+  let writer = fn(_path : String, content : String) -> Bool {
+    writes.push(content)
+    if !interleaved {
+      interleaved = true
+      ps.ensure_tracked(21, "agent-b", "branch-b", "main", "url-b", 2L)
+    }
+    true
+  }
+
+  assert_true(ps.write_state_file("/project", write_file=writer))
+  let final_persisted = writes[writes.length() - 1]
+  assert_true(parsed_state_has_pr(final_persisted, 20))
+  assert_true(parsed_state_has_pr(final_persisted, 21))
+}
+
+///|
 test "transfer_owner reassigns all tracked PRs to replacement leaf" {
   let ps = @poller.PollerState::new()
   let now = @poller.now_sec()
