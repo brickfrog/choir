@@ -1,6 +1,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@
 #include <unistd.h>
 
 static int choir_cleanup_runtime_native = 0;
+#define CHOIR_MAX_SLEEP_MS_FOR_USLEEP (INT_MAX / 1000)
 
 static void choir_sigterm_handler(int sig) {
     (void)sig;
@@ -371,7 +373,7 @@ int choir_wait_for_socket(const char* path, int max_tries) {
 
 void choir_sleep_milliseconds(int ms) {
     if (ms <= 0) return;
-    if (ms > 2147483) ms = 2147483;
+    if (ms > CHOIR_MAX_SLEEP_MS_FOR_USLEEP) ms = CHOIR_MAX_SLEEP_MS_FOR_USLEEP;
     usleep((useconds_t)ms * 1000);
 }
 
