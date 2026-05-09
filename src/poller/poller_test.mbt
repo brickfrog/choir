@@ -96,10 +96,12 @@ fn retry_exhausted_warn_event(
   events : Array[@moontrace.Event],
 ) -> @moontrace.Event? {
   for event in events {
-    if event.level == @moontrace.Level::Warn &&
-      event.message ==
-      "poller state persist exhausted retries; on-disk state may be stale, in-memory state retained" {
-      return Some(event)
+    if event.level == @moontrace.Level::Warn {
+      match field_value(event.fields, "event") {
+        Some(Json::String("poller_persist_retry_exhausted")) =>
+          return Some(event)
+        _ => ()
+      }
     }
   }
   None
