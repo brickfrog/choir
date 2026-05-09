@@ -665,6 +665,24 @@ async test "capture_hook_script_merged_once does NOT retry on permanent EACCES" 
 }
 
 ///|
+#cfg(not(platform="windows"))
+async test "capture_hook_script_merged_once maps real EACCES to permanent failure" {
+  let dir = "/tmp/choir-eacces-classify-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(dir))
+  let script = dir + "/hook.sh"
+  assert_true(@sys.write_file_sync(script, "#!/bin/sh\necho no\n"))
+
+  let result = capture_hook_script_merged_once(script, "{}", Some(dir))
+
+  match result {
+    Failed(kind) => @debug.assert_eq(kind, SpawnPermanentEacces)
+    _ => fail("expected non-executable hook to fail with permanent EACCES")
+  }
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
 async test "capture_hook_script_merged_once retries on pipe-creation failure" {
   let mut attempts = 0
   let mut sleeps = 0
