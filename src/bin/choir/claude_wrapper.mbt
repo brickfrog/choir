@@ -18,6 +18,10 @@ fn audit_skill_body() -> String {
     #|1. Determine the review surface.
     #|   - If HEAD is on a `feature/*` branch: review target is `git diff main...HEAD`.
     #|   - Otherwise: review target is `git diff $(git merge-base HEAD main)...HEAD`.
+    #|   - Run the resulting `git diff <range>` and check that the output is non-empty.
+    #|   - If the diff is empty (no files changed in the review surface), STOP. Print:
+    #|     `Audit skill invoked but review surface (git diff <range>) is empty. Switch to a feature branch with diff vs main, or pass an explicit comparison base. Refusing to spawn a no-op review.`
+    #|     Do NOT proceed to step 2 (`spawn_worker`).
     #|2. Call `spawn_worker` with a task that includes:
     #|
     #|   (a) The Sarcasmotron persona, verbatim. The body must contain the
@@ -655,6 +659,15 @@ test "audit_skill_body does not contain .choir/spec/" {
 test "audit_skill_body contains .choir/context/" {
   let body = audit_skill_body()
   assert_true(body.contains(".choir/context/"))
+}
+
+///|
+test "audit_skill_body refuses empty review surface" {
+  let body = audit_skill_body()
+  assert_true(body.contains("STOP"))
+  assert_true(body.contains("review surface (git diff <range>) is empty"))
+  assert_true(body.contains("Refusing to spawn a no-op review."))
+  assert_true(body.contains("Do NOT proceed to step 2 (`spawn_worker`)."))
 }
 
 ///|
