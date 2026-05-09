@@ -589,7 +589,7 @@ pub fn plan_post_tool_actions(
   if req.name == "resolve_review_thread" {
     match request_agent_id(req) {
       Some(agent_id) =>
-        for pr in poller.tracked.values() {
+        for pr in poller.tracked_prs() {
           if pr.agent_id == agent_id {
             effects.push(RefreshPR(pr.pr_number))
           }

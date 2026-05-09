@@ -16,7 +16,7 @@ fn assert_generation_increased(
   before : Int,
   label : String,
 ) -> Int raise {
-  let after = ps.write_generation
+  let after = ps.current_write_generation()
   if after <= before {
     fail(label + " did not bump write_generation")
   }
@@ -84,7 +84,7 @@ fn parsed_state_has_pr(content : String, pr_number : Int) -> Bool raise {
 ///|
 async test "PollerState mutations bump write_generation" {
   let ps = @poller.PollerState::new()
-  let mut generation = ps.write_generation
+  let mut generation = ps.current_write_generation()
 
   ps.track(1, "agent-1", "branch-1", "main", "url-1", 10L)
   generation = assert_generation_increased(ps, generation, "track")
@@ -179,24 +179,21 @@ test "Persist sees mutation between read and write and retries" {
 }
 
 ///|
-test "Untracked PR via concurrent ensure_tracked and persist does not silently disappear" {
+test "write_state_file returns false after bounded stale retries" {
   let ps = @poller.PollerState::new()
   ps.track(20, "agent-a", "branch-a", "main", "url-a", 1L)
   let writes : Array[String] = []
-  let mut interleaved = false
   let writer = fn(_path : String, content : String) -> Bool {
     writes.push(content)
-    if !interleaved {
-      interleaved = true
-      ps.ensure_tracked(21, "agent-b", "branch-b", "main", "url-b", 2L)
-    }
+    let n = 20 + writes.length()
+    ps.ensure_tracked(n, "agent-" + n.to_string(), "branch", "main", "url", 2L)
     true
   }
 
-  assert_true(ps.write_state_file("/project", write_file=writer))
-  let final_persisted = writes[writes.length() - 1]
-  assert_true(parsed_state_has_pr(final_persisted, 20))
-  assert_true(parsed_state_has_pr(final_persisted, 21))
+  assert_false(
+    ps.write_state_file("/project", write_file=writer, max_attempts=3),
+  )
+  assert_eq(writes.length(), 3)
 }
 
 ///|

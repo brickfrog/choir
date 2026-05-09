@@ -59,11 +59,11 @@ fn tracked_prs_for_agent(
   agent_id : String,
 ) -> Array[@poller.TrackedPR] {
   let prs : Array[@poller.TrackedPR] = []
-  state.poller.tracked.each(fn(_k, pr) {
+  for pr in state.poller.tracked_prs() {
     if pr.agent_id == agent_id {
       prs.push(pr)
     }
-  })
+  }
   prs
 }
 

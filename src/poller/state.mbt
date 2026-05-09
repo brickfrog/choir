@@ -4,8 +4,9 @@
 ///   `set_tracked` or `remove_tracked`, so `write_generation` advances.
 /// - `write_state_file` snapshots JSON with the current generation, writes it,
 ///   then retries if another mutation advanced the generation during the write.
-/// - Do not call `self.tracked.set/remove` directly outside these helpers.
-pub(all) struct PollerState {
+/// - The tracked map is private. External packages must use accessors and
+///   mutator methods instead of editing map entries directly.
+pub struct PollerState {
   tracked : Map[Int, TrackedPR]
   mut write_generation : Int
 }
@@ -241,6 +242,25 @@ pub fn PollerState::new() -> PollerState {
 }
 
 ///|
+pub fn PollerState::current_write_generation(self : PollerState) -> Int {
+  self.write_generation
+}
+
+///|
+pub fn PollerState::tracked_len(self : PollerState) -> Int {
+  self.tracked.length()
+}
+
+///|
+pub fn PollerState::tracked_prs(self : PollerState) -> Array[TrackedPR] {
+  let prs : Array[TrackedPR] = []
+  for tracked in self.tracked.values() {
+    prs.push(tracked)
+  }
+  prs
+}
+
+///|
 pub fn PollerState::track(
   self : PollerState,
   pr_number : Int,
@@ -441,9 +461,13 @@ pub fn PollerState::write_state_file(
   self : PollerState,
   project_dir : String,
   write_file? : (String, String) -> Bool = @sys.write_file_atomic,
+  max_attempts? : Int = 8,
 ) -> Bool {
   let path = poller_state_path(project_dir)
-  while true {
+  let attempts_limit = if max_attempts < 1 { 1 } else { max_attempts }
+  let mut attempts = 0
+  while attempts < attempts_limit {
+    attempts = attempts + 1
     let generation = self.write_generation
     let content = self.to_json()
     if !write_file(path, content) {

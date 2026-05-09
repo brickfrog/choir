@@ -281,8 +281,7 @@ test "plan_wave_state merge_gate_ready: approved + threads=0 + CI success" {
     ),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    10,
+  ps.restore(
     tracked_pr_with(
       10,
       "tl.leaf",
@@ -331,8 +330,7 @@ test "plan_wave_state merge_gate_ready SinglePass: ChangesRequested + fixes_push
     make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    20,
+  ps.restore(
     tracked_pr_with(
       20,
       "tl.leaf",
@@ -391,8 +389,7 @@ test "plan_wave_state merge_gate_ready false when CI is not success" {
     make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    30,
+  ps.restore(
     tracked_pr_with(
       30,
       "tl.leaf",
@@ -440,8 +437,7 @@ test "plan_wave_state merge_gate_ready false when unresolved threads > 0" {
     make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    40,
+  ps.restore(
     tracked_pr_with(
       40,
       "tl.leaf",
@@ -492,8 +488,7 @@ test "plan_wave_state reports threads_fetch_error on fail-loud path" {
     make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    50,
+  ps.restore(
     tracked_pr_with(
       50,
       "tl.leaf",
@@ -774,8 +769,7 @@ async test "interpret_wave_state unresolved_threads=Some(0) on clean graphql" {
     ),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    99,
+  ps.restore(
     tracked_pr_with(
       99,
       "tl.leaf",
@@ -843,8 +837,7 @@ async test "interpret_wave_state unresolved_threads=Some(N) blocks merge_gate_re
     ),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    101,
+  ps.restore(
     tracked_pr_with(
       101,
       "tl.leaf",
@@ -894,8 +887,7 @@ async test "interpret_wave_state fail-loud when gh graphql fails" {
     ),
   )
   let ps = @poller.PollerState::new()
-  ps.tracked.set(
-    202,
+  ps.restore(
     tracked_pr_with(
       202,
       "tl.leaf",

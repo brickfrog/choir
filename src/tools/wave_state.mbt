@@ -134,7 +134,7 @@ fn wave_state_should_include_child(
 ///|
 /// Build a single `agent_id -> TrackedPR` index from the poller state in one
 /// linear pass. Callers then do O(1) lookups per child instead of rescanning
-/// `ps.tracked.values()` on every child (which is O(children × trackedPRs)).
+/// the tracked PR set on every child (which is O(children × trackedPRs)).
 /// If multiple tracked PRs share an agent_id, the last one in iteration order
 /// wins — matches the previous per-child scan, which also returned whichever
 /// hit first.
@@ -144,7 +144,7 @@ fn index_tracked_by_agent(
   let by_agent : Map[String, @poller.TrackedPR] = {}
   match poller_state {
     Some(ps) =>
-      for tracked in ps.tracked.values() {
+      for tracked in ps.tracked_prs() {
         by_agent.set(tracked.agent_id, tracked)
       }
     None => ()
