@@ -696,30 +696,24 @@ pub async fn interpret_merge_pr_merge_host(
   }
   let cmds = merge_pr_commands(pr_number)
   let merge_result = run_strict(runner, cmds, capture~)
-  let failure_output = match merge_result {
+  let final_result = match merge_result {
     Err(_) => {
       let (_, output) = capture(merge_pr_command(pr_number))
-      Some(output.trim().to_owned())
+      let trimmed = output.trim().to_owned()
+      Err(
+        @types.ChoirError::git_error(
+          merge_pr_merge_failure_message(pr_number, trimmed),
+        ),
+      )
     }
-    Ok(_) => None
+    Ok(_) => Ok(())
   }
   // Hold the mutex across failure-capture so a concurrent caller cannot interleave a merge against the same parent branch while we examine the previous failure.
   match mutex_registry {
     Some(reg) => ignore(reg.release(mutex_name, caller_id, now_sec))
     None => ()
   }
-  match merge_result {
-    Err(_) =>
-      Err(
-        @types.ChoirError::git_error(
-          merge_pr_merge_failure_message(
-            pr_number,
-            failure_output.unwrap_or(""),
-          ),
-        ),
-      )
-    Ok(_) => Ok(())
-  }
+  final_result
 }
 
 ///|
