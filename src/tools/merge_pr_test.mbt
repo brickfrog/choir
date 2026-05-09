@@ -1079,6 +1079,159 @@ async test "interpret_merge_pr_merge_host returns busy when mutex held" {
 }
 
 ///|
+async test "interpret_merge_pr_merge_host holds mutex across failure capture" {
+  let reg = @registry.MutexRegistry::new()
+  let name = merge_pr_mutex_name("main")
+  let events : Array[String] = []
+  let capture_count : Ref[Int] = @ref.new(0)
+  let failure_capture_saw_holder : Ref[Bool] = @ref.new(false)
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let (holder, _) = reg.status(name)
+    @debug.assert_eq(holder, Some("main.tl"))
+    events.push("mutex_acquire")
+    events.push("merge")
+    let statuses = []
+    for i = 0; i < cmds.length(); i = i + 1 {
+      statuses.push(if i == 0 { 1 } else { 0 })
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" && cmd.args == ["pr", "merge", "4", "--merge"] {
+      capture_count.val += 1
+      let (holder, _) = reg.status(name)
+      @debug.assert_eq(holder, Some("main.tl"))
+      if capture_count.val == 1 {
+        events.push("strict_failure_capture")
+      } else if capture_count.val == 2 {
+        failure_capture_saw_holder.val = holder == Some("main.tl")
+        events.push("failure_capture")
+      } else {
+        fail("unexpected extra merge capture")
+      }
+      return (1, "permission denied\n")
+    }
+    (0, "")
+  }
+  let got = interpret_merge_pr_merge_host(
+    "main",
+    4,
+    "main.tl",
+    Some(reg),
+    50L,
+    runner,
+    capture,
+  )
+  match got {
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::git_error(
+          merge_pr_merge_failure_message(4, "permission denied"),
+        ).message(),
+      )
+    Ok(_) => fail("expected Err")
+  }
+  let (holder, queue) = reg.status(name)
+  @debug.assert_eq(holder, None)
+  assert_eq(queue.length(), 0)
+  events.push("mutex_release")
+  assert_eq(capture_count.val, 2)
+  assert_true(failure_capture_saw_holder.val)
+  assert_eq(events.length(), 5)
+  assert_eq(events[0], "mutex_acquire")
+  assert_eq(events[1], "merge")
+  assert_eq(events[2], "strict_failure_capture")
+  assert_eq(events[3], "failure_capture")
+  assert_eq(events[4], "mutex_release")
+}
+
+///|
+async test "interpret_merge_pr_merge_host returns busy for overlapping failure-capture merge" {
+  let reg = @registry.MutexRegistry::new()
+  let name = merge_pr_mutex_name("main")
+  let capture_count : Ref[Int] = @ref.new(0)
+  let second_runner_calls : Ref[Int] = @ref.new(0)
+  let second_message : Ref[String] = @ref.new("")
+  let second_runner = async fn(
+    _cmds : Array[@workspace.Command],
+  ) -> Array[Int] {
+    @async.sleep(0)
+    second_runner_calls.val += 1
+    fail(
+      "second merge should not run while the first merge is inspecting failure",
+    )
+    []
+  }
+  let second_capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    (0, "")
+  }
+  let first_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let statuses = []
+    for i = 0; i < cmds.length(); i = i + 1 {
+      statuses.push(if i == 0 { 1 } else { 0 })
+    }
+    statuses
+  }
+  let first_capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" && cmd.args == ["pr", "merge", "4", "--merge"] {
+      capture_count.val += 1
+      if capture_count.val == 2 {
+        let second = interpret_merge_pr_merge_host(
+          "main",
+          5,
+          "second",
+          Some(reg),
+          50L,
+          second_runner,
+          second_capture,
+        )
+        match second {
+          Err(e) => second_message.val = e.message()
+          Ok(_) => fail("expected second merge to be busy")
+        }
+      }
+      return (1, "permission denied\n")
+    }
+    (0, "")
+  }
+  let first = interpret_merge_pr_merge_host(
+    "main",
+    4,
+    "first",
+    Some(reg),
+    50L,
+    first_runner,
+    first_capture,
+  )
+  match first {
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        @types.ChoirError::git_error(
+          merge_pr_merge_failure_message(4, "permission denied"),
+        ).message(),
+      )
+    Ok(_) => fail("expected first merge Err")
+  }
+  assert_eq(
+    second_message.val,
+    @types.ChoirError::validation_error(
+      merge_pr_serialization_busy_message_with_position(1),
+    ).message(),
+  )
+  assert_eq(second_runner_calls.val, 0)
+  let (holder, queue) = reg.status(name)
+  @debug.assert_eq(holder, None)
+  assert_eq(queue.length(), 0)
+}
+
+///|
 async fn mock_runner_merge_pr_must_not_run(
   _cmds : Array[@workspace.Command],
 ) -> Array[Int] {
