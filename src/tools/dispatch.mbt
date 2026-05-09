@@ -725,7 +725,12 @@ pub async fn dispatch(
     }
     ToolRequest::Shutdown(shutdown_args) =>
       interpret_shutdown(
-        shutdown_args, project_dir, poller_state, registry, runner,
+        shutdown_args,
+        project_dir,
+        poller_state,
+        registry,
+        runner,
+        capture=bd_capture,
       )
     ToolRequest::KillAgent(kill_args) =>
       interpret_kill_agent(kill_args, registry, runner, project_dir~, capture~)

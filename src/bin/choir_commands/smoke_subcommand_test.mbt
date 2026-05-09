@@ -26,6 +26,12 @@ test "parse_smoke_beads_args supports explicit canary knobs" {
 }
 
 ///|
+test "parse_smoke_beads_args defaults timeout to 300 seconds" {
+  let got = parse_smoke_beads_args(["choir", "smoke", "beads-handoff"]).unwrap()
+  assert_eq(got.timeout_sec, 300)
+}
+
+///|
 test "smoke_beads_spawn_args passes beads issue id without agent_type override" {
   let args = smoke_args()
   let got = smoke_beads_spawn_args(args)
@@ -69,28 +75,18 @@ fn event_line(tool : String) -> Event {
 }
 
 ///|
-fn shutdown_event() -> Event {
-  {
-    ts_ms: 2L,
-    agent_id: "main.beads-smoke",
-    type_: "lifecycle.transition",
-    data: {
-      "trigger": "FinalizeComplete".to_json(),
-      "to": "{\"process\":[\"Finalized\",{\"reason\":\"Shutdown\"}],\"workflow\":[\"Worker\",[\"Done\",{\"reason\":\"Shutdown\"}]]}".to_json(),
-    }.to_json(),
-  }
-}
-
-///|
-test "smoke_beads_events_pass requires task_get notify_parent and shutdown" {
-  assert_false(smoke_beads_events_pass([event_line("task_get")]))
+test "smoke_beads_events_pass accepts task_get and notify_parent without shutdown" {
   assert_true(
     smoke_beads_events_pass([
       event_line("task_get"),
       event_line("notify_parent"),
-      shutdown_event(),
     ]),
   )
+}
+
+///|
+test "smoke_beads_events_pass rejects task_get without notify_parent" {
+  assert_false(smoke_beads_events_pass([event_line("task_get")]))
 }
 
 ///|
@@ -108,7 +104,9 @@ test "render_smoke_beads_report includes observed metadata" {
   assert_true(rendered.contains("worker_id: main.beads-smoke"))
   assert_true(rendered.contains("agent_type: codex"))
   assert_true(
-    rendered.contains("task_get ok, notify_parent ok, shutdown finalized"),
+    rendered.contains(
+      "task_get ok, notify_parent ok; shutdown observability-only after notify_parent",
+    ),
   )
 }
 

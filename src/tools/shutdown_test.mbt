@@ -439,12 +439,13 @@ test "shutdown_exit_plan allowed tl skips dev exit but may cleanup worktree" {
 ///|
 test "shutdown_adapter_host_steps lists poller through cleanup" {
   let steps = shutdown_adapter_host_steps()
-  assert_eq(steps.length(), 5)
+  assert_eq(steps.length(), 6)
   assert_eq(steps[0], ShutdownAdapterHostStep::PollerCriticalPhaseRead)
   assert_eq(steps[1], ShutdownAdapterHostStep::RegistryRoleLookup)
   assert_eq(steps[2], ShutdownAdapterHostStep::LifecycleRead)
   assert_eq(steps[3], ShutdownAdapterHostStep::DevExitEventApply)
   assert_eq(steps[4], ShutdownAdapterHostStep::WorktreeCleanupAttempt)
+  assert_eq(steps[5], ShutdownAdapterHostStep::BeadsLifecycleMirror)
 }
 
 ///|
@@ -586,6 +587,94 @@ async test "interpret_shutdown ok when caller missing uses best-effort" {
     }
     _ => fail("expected missing-caller ok")
   }
+}
+
+///|
+async test "interpret_shutdown mirrors lifecycle state to Beads on graceful exit" {
+  let tmp = "/tmp/choir-shutdown-beads-mirror-" + @sys.get_pid().to_string()
+  let workspace = tmp + "/worker"
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(workspace + "/.choir"))
+  let target : @types.LocalTarget = {
+    kind: ZellijTab,
+    session: "choir",
+    name: "leaf",
+  }
+  let spec : @types.SpawnSpec = {
+    slug: "leaf",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Codex,
+    task: "assigned work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "assigned work",
+      beads_issue_id: Some("choir-shutdown"),
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  ignore(
+    @sys.write_file_sync(
+      workspace + "/.choir/config.local.toml",
+      @workspace.config_local_content(spec, workspace, target),
+    ),
+  )
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.leaf"),
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main"),
+      workspace,
+      branch: "main.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let seen : Array[String] = []
+  let args : ShutdownArgs = { caller_id: Some("main.leaf") }
+  let got = interpret_shutdown(
+    args,
+    tmp,
+    None,
+    Some(reg),
+    mock_shutdown_runner_record_worktree,
+    capture=async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd.program + " " + cmd.args.join(" "))
+      (0, "")
+    },
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected shutdown ok")
+  }
+  let rendered = seen.join("\n")
+  assert_true(
+    rendered.contains(
+      "bd set-state choir-shutdown lifecycle=shutdown --reason Choir agent shutdown",
+    ),
+  )
+  assert_true(
+    rendered.contains(
+      "bd audit record --kind tool_call --tool-name shutdown --response Choir agent shutdown --issue-id choir-shutdown",
+    ),
+  )
+  ignore(@sys.rm_rf(tmp))
 }
 
 ///|
