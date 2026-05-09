@@ -369,6 +369,12 @@ int choir_wait_for_socket(const char* path, int max_tries) {
     return -1;
 }
 
+void choir_sleep_milliseconds(int ms) {
+    if (ms <= 0) return;
+    if (ms > 2147483) ms = 2147483;
+    usleep((useconds_t)ms * 1000);
+}
+
 int choir_redirect_stderr_append(const char* path) {
     int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (fd < 0) {

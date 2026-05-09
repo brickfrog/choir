@@ -272,7 +272,7 @@ pub fn agent_launch_command(
 /// tool-search deferral so the TL doesn't pay a ToolSearch round-trip on first
 /// use of every fork_wave / file_pr / merge_pr / wave_state call.
 pub fn init_tl_claude_mcp_config_json() -> String {
-  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\"],\"alwaysLoad\":true}}}"
+  "{\"mcpServers\":{\"choir\":{\"type\":\"stdio\",\"command\":\"choir\",\"args\":[\"mcp-stdio\",\"--name\",\"root\",\"--stderr-append-log\",\".choir/mcp-stdio.stderr.log\"],\"alwaysLoad\":true}}}"
 }
 
 ///|
