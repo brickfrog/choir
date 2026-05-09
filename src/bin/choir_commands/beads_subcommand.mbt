@@ -19,6 +19,7 @@ pub(all) struct BeadsGateCliArgs {
 pub(all) struct BeadsSpecLinkCliArgs {
   issue_id : String
   feature_slug : String
+  force : Bool
 } derive(Debug, Eq)
 
 ///|
@@ -43,8 +44,8 @@ fn beads_help() -> String {
     #|      Create a Beads gate blocking an issue. Use type=bead and await-id=<rig>:<bead-id> for cross-repo blockers.
     #|  merge-slot <check|create|acquire|release>
     #|      Proxy Beads merge-slot coordination.
-    #|  spec-link <issue-id> <feature-slug>
-    #|      Link a bead to .choir/context/<feature-slug>-spec.md.
+    #|  spec-link <issue-id> <feature-slug> [--force]
+    #|      Link a bead to .choir/context/<feature-slug>-spec.md. Refuses missing or empty spec files unless forced.
     #|  doctor
     #|      Print Beads/Choir consistency counts and dirty export status.
     #|
@@ -153,6 +154,38 @@ fn parse_beads_gate_args(
 }
 
 ///|
+fn parse_beads_spec_link_args(
+  args : Array[String],
+) -> Result[BeadsSpecLinkCliArgs, @types.ChoirError] {
+  if args.length() < 5 {
+    return Err(
+      @types.ChoirError::validation_error(
+        "spec-link requires <issue-id> <feature-slug>",
+      ),
+    )
+  }
+  let issue_id = args[3]
+  let feature_slug = args[4]
+  let mut force = false
+  let mut i = 5
+  while i < args.length() {
+    match args[i] {
+      "--force" => {
+        force = true
+        i = i + 1
+      }
+      other =>
+        return Err(
+          @types.ChoirError::validation_error(
+            "unknown beads spec-link flag: " + other,
+          ),
+        )
+    }
+  }
+  Ok({ issue_id, feature_slug, force })
+}
+
+///|
 pub fn parse_beads_cli_args(
   args : Array[String],
 ) -> Result[BeadsCliRequest, @types.ChoirError] {
@@ -182,18 +215,7 @@ pub fn parse_beads_cli_args(
           ),
         )
       }
-    "spec-link" =>
-      if args.length() == 5 {
-        Ok(
-          BeadsCliRequest::SpecLink({ issue_id: args[3], feature_slug: args[4] }),
-        )
-      } else {
-        Err(
-          @types.ChoirError::validation_error(
-            "spec-link requires <issue-id> <feature-slug>",
-          ),
-        )
-      }
+    "spec-link" => parse_beads_spec_link_args(args).map(fn(a) { SpecLink(a) })
     "doctor" => Ok(BeadsCliRequest::Doctor)
     other =>
       Err(
@@ -299,7 +321,7 @@ fn spec_link_command(
   project_dir : String,
   args : BeadsSpecLinkCliArgs,
 ) -> @workspace.Command {
-  let path = ".choir/context/" + args.feature_slug + "-spec.md"
+  let path = spec_link_spec_path(args)
   {
     program: "bd",
     args: [
@@ -312,6 +334,42 @@ fn spec_link_command(
     ],
     workdir: Some(project_dir),
   }
+}
+
+///|
+fn spec_link_spec_path(args : BeadsSpecLinkCliArgs) -> String {
+  ".choir/context/" + args.feature_slug + "-spec.md"
+}
+
+///|
+fn project_relative_path(project_dir : String, rel_path : String) -> String {
+  if project_dir == "" || project_dir == "." {
+    rel_path
+  } else if project_dir.has_suffix("/") {
+    project_dir + rel_path
+  } else {
+    project_dir + "/" + rel_path
+  }
+}
+
+///|
+pub async fn run_beads_spec_link(
+  project_dir : String,
+  args : BeadsSpecLinkCliArgs,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[String, @types.ChoirError] {
+  let path = spec_link_spec_path(args)
+  if !args.force {
+    let full_path = project_relative_path(project_dir, path)
+    if @sys.read_file(full_path) == "" {
+      return Err(
+        @types.ChoirError::validation_error(
+          "spec file " + path + " does not exist (or is empty); refuse to link",
+        ),
+      )
+    }
+  }
+  run_passthrough(spec_link_command(project_dir, args), capture)
 }
 
 ///|
@@ -358,11 +416,14 @@ pub fn build_beads_doctor_report(
   in_progress_json : String,
   git_status : String,
 ) -> Result[BeadsDoctorReport, @types.ChoirError] {
-  let ready = match @tools.parse_beads_issues_json(ready_json) {
+  let ready = match parse_beads_doctor_issues("bd ready --json", ready_json) {
     Ok(items) => items
     Err(e) => return Err(e)
   }
-  let in_progress = match @tools.parse_beads_issues_json(in_progress_json) {
+  let in_progress = match
+    parse_beads_doctor_issues(
+      "bd list --json --status in_progress", in_progress_json,
+    ) {
     Ok(items) => items
     Err(e) => return Err(e)
   }
@@ -385,6 +446,52 @@ pub fn build_beads_doctor_report(
     beads_export_dirty: export_dirty,
     unrelated_dirty_paths: unrelated,
   })
+}
+
+///|
+fn beads_json_payload_from_output(output : String) -> String {
+  let direct = output.trim().to_owned()
+  if direct.has_prefix("[") || direct.has_prefix("{") {
+    return direct
+  }
+  let payload = StringBuilder::new()
+  let mut found = false
+  for raw in output.split("\n") {
+    let line = raw.to_owned()
+    let trimmed = line.trim().to_owned()
+    if found {
+      payload.write_string("\n")
+      payload.write_string(line)
+    } else if trimmed.has_prefix("[") || trimmed.has_prefix("{") {
+      found = true
+      payload.write_string(line)
+    }
+  }
+  if found {
+    payload.to_string().trim().to_owned()
+  } else {
+    direct
+  }
+}
+
+///|
+fn parse_beads_doctor_issues(
+  source : String,
+  output : String,
+) -> Result[Array[@tools.BeadsIssue], @types.ChoirError] {
+  let payload = beads_json_payload_from_output(output)
+  match @tools.parse_beads_issues_json(payload) {
+    Ok(items) => Ok(items)
+    Err(_) =>
+      Err(
+        @types.ChoirError::validation_error(
+          "invalid beads json from " +
+          source +
+          "; raw output: " +
+          output.trim().to_owned(),
+        ),
+      )
+  }
 }
 
 ///|
@@ -473,7 +580,7 @@ pub async fn run_beads_cli_request(
         capture,
       )
     BeadsCliRequest::SpecLink(args) =>
-      run_passthrough(spec_link_command(project_dir, args), capture)
+      run_beads_spec_link(project_dir, args, capture)
     BeadsCliRequest::Doctor => run_beads_doctor(project_dir, capture)
   }
 }
@@ -493,10 +600,20 @@ pub fn beads_subcommand_run() -> Unit {
   let choir_exe = if argv.length() > 0 { argv[0] } else { "choir" }
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
-      match
-        run_beads_cli_request(
-          parsed, ".", choir_exe, @exec.capture_command_merged,
-        ) {
+      let result = match parsed {
+        BeadsCliRequest::Doctor =>
+          run_beads_cli_request(
+            BeadsCliRequest::Doctor,
+            ".",
+            choir_exe,
+            @exec.capture_command_stdout_with_stderr_on_error,
+          )
+        other =>
+          run_beads_cli_request(
+            other, ".", choir_exe, @exec.capture_command_merged,
+          )
+      }
+      match result {
         Ok(output) => @sys.write_stdout(output)
         Err(e) => {
           @sys.write_stderr("choir beads: " + e.message() + "\n")
