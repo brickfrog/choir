@@ -357,14 +357,37 @@ pub async fn run_beads_spec_link(
   project_dir : String,
   args : BeadsSpecLinkCliArgs,
   capture : async (@workspace.Command) -> (Int, String),
+  path_entry_exists? : (String) -> Bool = fn(path) {
+    @sys.path_entry_exists(path)
+  },
+  path_readable? : (String) -> Bool = fn(path) { @sys.path_exists(path) },
+  read_file? : (String) -> String = fn(path) { @sys.read_file(path) },
 ) -> Result[String, @types.ChoirError] {
   let path = spec_link_spec_path(args)
   if !args.force {
     let full_path = project_relative_path(project_dir, path)
-    if @sys.read_file(full_path) == "" {
+    if !path_entry_exists(full_path) {
       return Err(
         @types.ChoirError::validation_error(
-          "spec file " + path + " does not exist (or is empty); refuse to link",
+          "spec file " +
+          path +
+          " does not exist; refuse to link without --force",
+        ),
+      )
+    }
+    if !path_readable(full_path) {
+      return Err(
+        @types.ChoirError::validation_error(
+          "spec file " + path + " exists but is unreadable; check permissions",
+        ),
+      )
+    }
+    if read_file(full_path) == "" {
+      return Err(
+        @types.ChoirError::validation_error(
+          "spec file " +
+          path +
+          " exists but is empty; refuse to link without --force (typically means the spec was scaffolded but not yet written)",
         ),
       )
     }
@@ -451,27 +474,87 @@ pub fn build_beads_doctor_report(
 ///|
 fn beads_json_payload_from_output(output : String) -> String {
   let direct = output.trim().to_owned()
-  if direct.has_prefix("[") || direct.has_prefix("{") {
+  if beads_json_payload_parses(direct) {
     return direct
   }
-  let payload = StringBuilder::new()
-  let mut found = false
+  let mut offset = 0
   for raw in output.split("\n") {
     let line = raw.to_owned()
-    let trimmed = line.trim().to_owned()
-    if found {
-      payload.write_string("\n")
-      payload.write_string(line)
-    } else if trimmed.has_prefix("[") || trimmed.has_prefix("{") {
-      found = true
-      payload.write_string(line)
+    match beads_json_line_payload_offset(line) {
+      Some(line_offset) => {
+        let start = offset + line_offset
+        match beads_json_payload_end(output, start) {
+          Some(end) => {
+            let payload = output[start:end].trim().to_owned()
+            if beads_json_payload_parses(payload) {
+              return payload
+            }
+          }
+          None => ()
+        }
+      }
+      None => ()
     }
+    offset = offset + line.length() + 1
   }
-  if found {
-    payload.to_string().trim().to_owned()
+  direct
+}
+
+///|
+fn beads_json_payload_parses(payload : String) -> Bool {
+  ignore(@json.parse(payload) catch { _ => return false })
+  true
+}
+
+///|
+fn beads_json_line_payload_offset(line : String) -> Int? {
+  let mut i = 0
+  while i < line.length() &&
+        (line[i] == ' ' || line[i] == '\t' || line[i] == '\r') {
+    i = i + 1
+  }
+  if i < line.length() && (line[i] == '[' || line[i] == '{') {
+    Some(i)
   } else {
-    direct
+    None
   }
+}
+
+///|
+fn beads_json_payload_end(output : String, start : Int) -> Int? {
+  let mut i = start
+  let mut depth = 0
+  let mut in_string = false
+  let mut escaped = false
+  while i < output.length() {
+    let c = output[i]
+    if in_string {
+      if escaped {
+        escaped = false
+      } else if c == '\\' {
+        escaped = true
+      } else if c == '"' {
+        in_string = false
+      }
+    } else {
+      match c {
+        '"' => in_string = true
+        '[' | '{' => depth = depth + 1
+        ']' | '}' => {
+          depth = depth - 1
+          if depth == 0 {
+            return Some(i + 1)
+          }
+          if depth < 0 {
+            return None
+          }
+        }
+        _ => ()
+      }
+    }
+    i = i + 1
+  }
+  None
 }
 
 ///|
@@ -600,19 +683,9 @@ pub fn beads_subcommand_run() -> Unit {
   let choir_exe = if argv.length() > 0 { argv[0] } else { "choir" }
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
-      let result = match parsed {
-        BeadsCliRequest::Doctor =>
-          run_beads_cli_request(
-            BeadsCliRequest::Doctor,
-            ".",
-            choir_exe,
-            @exec.capture_command_stdout_with_stderr_on_error,
-          )
-        other =>
-          run_beads_cli_request(
-            other, ".", choir_exe, @exec.capture_command_merged,
-          )
-      }
+      let result = run_beads_cli_request(
+        parsed, ".", choir_exe, @exec.capture_command_stdout_with_stderr_on_error,
+      )
       match result {
         Ok(output) => @sys.write_stdout(output)
         Err(e) => {
