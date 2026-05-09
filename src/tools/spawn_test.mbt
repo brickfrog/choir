@@ -95,7 +95,7 @@ async fn mock_capture_origin_main(_cmd : @workspace.Command) -> (Int, String) {
 
 ///|
 fn upsert_spawn_test_root(reg : @registry.AgentRegistry) -> Unit {
-  upsert_spawn_test_parent(reg, "root")
+  upsert_spawn_test_parent_with_role(reg, "root", @types.Role::Root)
 }
 
 ///|
@@ -103,10 +103,19 @@ fn upsert_spawn_test_parent(
   reg : @registry.AgentRegistry,
   agent_id : String,
 ) -> Unit {
+  upsert_spawn_test_parent_with_role(reg, agent_id, @types.Role::TL)
+}
+
+///|
+fn upsert_spawn_test_parent_with_role(
+  reg : @registry.AgentRegistry,
+  agent_id : String,
+  role : @types.Role,
+) -> Unit {
   ignore(
     reg.upsert({
       agent_id: @types.AgentId(agent_id),
-      role: @types.Role::TL,
+      role,
       agent_type: @types.AgentType::Claude,
       parent: None,
       workspace: "/tmp/root",
@@ -201,6 +210,33 @@ async test "interpret_spawn_worker normalizes unregistered caller_id to register
 }
 
 ///|
+async test "interpret_spawn_worker prefers Role::Root over root name-match" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main",
+    slug: "w-role-root",
+    agent_type: @types.AgentType::Claude,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent_with_role(reg, "primary", @types.Role::Root)
+  upsert_spawn_test_parent_with_role(reg, "root", @types.Role::TL)
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_origin_main,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  assert_registry_parent(reg, "main.w-role-root", "primary")
+}
+
+///|
 async test "interpret_spawn_worker preserves registered caller_id as parent" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
@@ -227,7 +263,7 @@ async test "interpret_spawn_worker preserves registered caller_id as parent" {
 }
 
 ///|
-async test "interpret_spawn_worker rejects unregistered caller_id when parent registry is ambiguous" {
+async test "interpret_spawn_worker rejects ambiguous multi-TL with no root" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
     task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
@@ -255,6 +291,63 @@ async test "interpret_spawn_worker rejects unregistered caller_id when parent re
     }
     _ => fail("expected err")
   }
+}
+
+///|
+async test "interpret_spawn_worker rejects ambiguous multiple Role::Root agents" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main",
+    slug: "w-multi-root",
+    agent_type: @types.AgentType::Claude,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent_with_role(reg, "root-a", @types.Role::Root)
+  upsert_spawn_test_parent_with_role(reg, "root-b", @types.Role::Root)
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_origin_main,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(
+        msg.contains("spawn_worker caller_id 'main' is not registered"),
+      )
+      assert_true(msg.contains("agent registry"))
+    }
+    _ => fail("expected err")
+  }
+}
+
+///|
+async test "interpret_spawn_worker normalizes unregistered caller_id to single non-root TL" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main",
+    slug: "w-single-tl",
+    agent_type: @types.AgentType::Claude,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent(reg, "only-tl")
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_origin_main,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  assert_registry_parent(reg, "main.w-single-tl", "only-tl")
 }
 
 ///|

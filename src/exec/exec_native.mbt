@@ -93,9 +93,21 @@ async fn drain_process_stdout(
 }
 
 ///|
+priv enum HookCaptureFailureKind {
+  PipeCreateFailed
+  SpawnPermanentEnoent
+  SpawnPermanentEacces
+  SpawnPermanentEperm
+  SpawnTransientNonblocking
+  SpawnTransientEmfile
+  SpawnUnknownOS
+  SpawnUnclassified
+} derive(Debug, Eq)
+
+///|
 priv enum HookCaptureAttemptResult {
   Done(Int, String)
-  SpawnFailed
+  Failed(HookCaptureFailureKind)
 }
 
 ///|
@@ -103,6 +115,116 @@ let hook_capture_spawn_retry_delay_ms : Int = 25
 
 ///|
 let hook_capture_spawn_max_attempts : Int = 3
+
+///|
+fn HookCaptureFailureKind::to_wire_string(
+  self : HookCaptureFailureKind,
+) -> String {
+  match self {
+    PipeCreateFailed => "pipe_create_failed"
+    SpawnPermanentEnoent => "spawn_permanent_enoent"
+    SpawnPermanentEacces => "spawn_permanent_eacces"
+    SpawnPermanentEperm => "spawn_permanent_eperm"
+    SpawnTransientNonblocking => "spawn_transient_nonblocking"
+    SpawnTransientEmfile => "spawn_transient_emfile"
+    SpawnUnknownOS => "spawn_unknown_os"
+    SpawnUnclassified => "spawn_unclassified"
+  }
+}
+
+///|
+fn HookCaptureFailureKind::is_retryable(self : HookCaptureFailureKind) -> Bool {
+  match self {
+    PipeCreateFailed
+    | SpawnTransientNonblocking
+    | SpawnTransientEmfile
+    | SpawnUnknownOS
+    | SpawnUnclassified => true
+    SpawnPermanentEnoent | SpawnPermanentEacces | SpawnPermanentEperm => false
+  }
+}
+
+///|
+fn HookCaptureFailureKind::retry_attempt_limit(
+  self : HookCaptureFailureKind,
+) -> Int {
+  match self {
+    PipeCreateFailed | SpawnTransientNonblocking | SpawnTransientEmfile =>
+      hook_capture_spawn_max_attempts
+    SpawnUnknownOS | SpawnUnclassified => 2
+    SpawnPermanentEnoent | SpawnPermanentEacces | SpawnPermanentEperm => 1
+  }
+}
+
+///|
+/// POSIX EPERM ("Operation not permitted") — errno 1 on Linux/macOS/BSD.
+/// `@os_error` does not expose a typed predicate for EPERM, so the value
+/// is referenced by name here rather than scattered as a magic number.
+const POSIX_EPERM : Int = 1
+
+///|
+/// POSIX EMFILE ("Too many open files") — errno 24 on Linux/macOS/BSD.
+/// `@os_error.is_nonblocking_io_error` covers EAGAIN/EWOULDBLOCK but not
+/// EMFILE, so we classify it explicitly as a transient retry candidate.
+const POSIX_EMFILE : Int = 24
+
+///|
+#cfg(not(platform="windows"))
+fn hook_capture_errno_is_eperm(errno : Int) -> Bool {
+  errno == POSIX_EPERM
+}
+
+///|
+#cfg(platform="windows")
+fn hook_capture_errno_is_eperm(_errno : Int) -> Bool {
+  false
+}
+
+///|
+#cfg(not(platform="windows"))
+fn hook_capture_errno_is_emfile(errno : Int) -> Bool {
+  errno == POSIX_EMFILE
+}
+
+///|
+#cfg(platform="windows")
+fn hook_capture_errno_is_emfile(_errno : Int) -> Bool {
+  false
+}
+
+///|
+fn hook_capture_spawn_failure_kind(
+  err : @os_error.OSError,
+) -> HookCaptureFailureKind {
+  let @os_error.OSError(errno, ..) = err
+  if err.is_ENOENT() {
+    SpawnPermanentEnoent
+  } else if err.is_EACCES() {
+    SpawnPermanentEacces
+  } else if hook_capture_errno_is_eperm(errno) {
+    SpawnPermanentEperm
+  } else if err.is_nonblocking_io_error() {
+    SpawnTransientNonblocking
+  } else if hook_capture_errno_is_emfile(errno) {
+    SpawnTransientEmfile
+  } else {
+    SpawnUnknownOS
+  }
+}
+
+///|
+fn hook_capture_log_retry_exhausted(
+  hook_path : String,
+  attempts : Int,
+  final_error : HookCaptureFailureKind,
+) -> Unit {
+  @moontrace.warn("hook capture retry exhausted", fields=[
+    @moontrace.field("event", "hook_capture_retry_exhausted"),
+    @moontrace.field("hook_path", hook_path),
+    @moontrace.field("attempts", attempts),
+    @moontrace.field("final_error", final_error.to_wire_string()),
+  ])
+}
 
 ///|
 /// Stream one `find` stdout into `out` until EOF (no total size cap), then wait for the child.
@@ -203,8 +325,11 @@ async fn capture_hook_script_merged_with_retry(
     attempts = attempts + 1
     match attempt(hook_path, stdin_body, cwd) {
       Done(code, output) => return (code, output)
-      SpawnFailed =>
-        if attempts >= hook_capture_spawn_max_attempts {
+      Failed(kind) =>
+        if !kind.is_retryable() {
+          return (-1, "")
+        } else if attempts >= kind.retry_attempt_limit() {
+          hook_capture_log_retry_exhausted(hook_path, attempts, kind)
           return (-1, "")
         } else {
           sleep_fn(hook_capture_spawn_retry_delay_ms)
@@ -214,21 +339,35 @@ async fn capture_hook_script_merged_with_retry(
 }
 
 ///|
-async fn capture_hook_script_merged_once(
+fn hook_capture_make_stdin_pipe() -> Result[
+  (&@process.ProcessInput, @process.WriteToProcess),
+  HookCaptureFailureKind,
+] {
+  let pipe = @process.write_to_process() catch {
+    _ => return Err(PipeCreateFailed)
+  }
+  Ok(pipe)
+}
+
+///|
+fn hook_capture_make_stdout_pipe() -> Result[
+  (@process.ReadFromProcess, &@process.ProcessOutput),
+  HookCaptureFailureKind,
+] {
+  let pipe = @process.read_from_process() catch {
+    _ => return Err(PipeCreateFailed)
+  }
+  Ok(pipe)
+}
+
+///|
+async fn hook_capture_spawn_hook_process(
   hook_path : String,
-  stdin_body : String,
+  argv : Array[String],
+  stdin_read : &@process.ProcessInput,
+  stdout_write : &@process.ProcessOutput,
   cwd : String?,
-) -> HookCaptureAttemptResult {
-  let (stdin_read, stdin_write) = @process.write_to_process() catch {
-    _ => return Done(-1, "")
-  }
-  let (stdout_read, stdout_write) = @process.read_from_process() catch {
-    _ => {
-      stdin_write.close()
-      return Done(-1, "")
-    }
-  }
-  let argv : Array[String] = []
+) -> Result[Int, HookCaptureFailureKind] {
   let pid = match cwd {
     Some(dir) =>
       @process.spawn_orphan(
@@ -239,11 +378,9 @@ async fn capture_hook_script_merged_once(
         stderr=stdout_write,
         cwd=dir,
       ) catch {
-        _ => {
-          stdin_write.close()
-          stdout_read.close()
-          return SpawnFailed
-        }
+        @os_error.OSError(_) as err =>
+          return Err(hook_capture_spawn_failure_kind(err))
+        _ => return Err(SpawnUnclassified)
       }
     None =>
       @process.spawn_orphan(
@@ -253,12 +390,54 @@ async fn capture_hook_script_merged_once(
         stdout=stdout_write,
         stderr=stdout_write,
       ) catch {
-        _ => {
-          stdin_write.close()
-          stdout_read.close()
-          return SpawnFailed
-        }
+        @os_error.OSError(_) as err =>
+          return Err(hook_capture_spawn_failure_kind(err))
+        _ => return Err(SpawnUnclassified)
       }
+  }
+  Ok(pid)
+}
+
+///|
+async fn capture_hook_script_merged_once_with_adapters(
+  hook_path : String,
+  stdin_body : String,
+  cwd : String?,
+  make_stdin_pipe : () -> Result[
+    (&@process.ProcessInput, @process.WriteToProcess),
+    HookCaptureFailureKind,
+  ],
+  make_stdout_pipe : () -> Result[
+    (@process.ReadFromProcess, &@process.ProcessOutput),
+    HookCaptureFailureKind,
+  ],
+  spawn_hook : async (
+    String,
+    Array[String],
+    &@process.ProcessInput,
+    &@process.ProcessOutput,
+    String?,
+  ) -> Result[Int, HookCaptureFailureKind],
+) -> HookCaptureAttemptResult {
+  let (stdin_read, stdin_write) = match make_stdin_pipe() {
+    Ok(pipe) => pipe
+    Err(kind) => return Failed(kind)
+  }
+  let (stdout_read, stdout_write) = match make_stdout_pipe() {
+    Ok(pipe) => pipe
+    Err(kind) => {
+      stdin_write.close()
+      return Failed(kind)
+    }
+  }
+  let argv : Array[String] = []
+  let pid = match spawn_hook(hook_path, argv, stdin_read, stdout_write, cwd) {
+    Ok(pid) => pid
+    Err(kind) => {
+      stdin_write.close()
+      stdout_read.close()
+      return Failed(kind)
+    }
   }
   ignore(stdin_write.write(stdin_body) catch { _ => () })
   stdin_write.close()
@@ -268,9 +447,74 @@ async fn capture_hook_script_merged_once(
 }
 
 ///|
-async test "capture_hook_script_merged retries transient spawn failure" {
+async fn capture_hook_script_merged_once(
+  hook_path : String,
+  stdin_body : String,
+  cwd : String?,
+) -> HookCaptureAttemptResult {
+  capture_hook_script_merged_once_with_adapters(
+    hook_path, stdin_body, cwd, hook_capture_make_stdin_pipe, hook_capture_make_stdout_pipe,
+    hook_capture_spawn_hook_process,
+  )
+}
+
+///|
+fn hook_capture_field_value(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> Json? {
+  for field in fields {
+    if field.key == key {
+      return Some(field.value)
+    }
+  }
+  None
+}
+
+///|
+fn hook_capture_retry_exhausted_warn_event(
+  events : Array[@moontrace.Event],
+) -> @moontrace.Event? {
+  for event in events {
+    if event.level == @moontrace.Level::Warn {
+      match hook_capture_field_value(event.fields, "event") {
+        Some(Json::String("hook_capture_retry_exhausted")) => return Some(event)
+        _ => ()
+      }
+    }
+  }
+  None
+}
+
+///|
+fn assert_hook_capture_string_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  expected : String,
+) -> Unit raise {
+  match hook_capture_field_value(fields, key) {
+    Some(Json::String(value)) => assert_eq(value, expected)
+    _ => fail("expected string moontrace field " + key)
+  }
+}
+
+///|
+fn assert_hook_capture_number_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  expected : Double,
+) -> Unit raise {
+  match hook_capture_field_value(fields, key) {
+    Some(Json::Number(value, ..)) => assert_eq(value, expected)
+    _ => fail("expected number moontrace field " + key)
+  }
+}
+
+///|
+async test "capture_hook_script_merged_once exhausts after N attempts and logs warn" {
   let mut attempts = 0
-  let mut slept_ms = -1
+  let mut sleeps = 0
+  let captured : Array[@moontrace.Event] = []
   let attempt = async fn(
     _hook_path : String,
     _stdin_body : String,
@@ -278,16 +522,15 @@ async test "capture_hook_script_merged retries transient spawn failure" {
   ) -> HookCaptureAttemptResult {
     @async.sleep(0)
     attempts = attempts + 1
-    if attempts == 1 {
-      SpawnFailed
-    } else {
-      Done(0, "ok")
-    }
+    Failed(SpawnTransientEmfile)
   }
   let sleep_fn = async fn(ms : Int) -> Unit {
-    slept_ms = ms
+    assert_eq(ms, hook_capture_spawn_retry_delay_ms)
+    sleeps = sleeps + 1
     @async.sleep(0)
   }
+
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
   let (code, output) = capture_hook_script_merged_with_retry(
     "/tmp/hook.sh",
     "{}",
@@ -295,10 +538,204 @@ async test "capture_hook_script_merged retries transient spawn failure" {
     attempt,
     sleep_fn,
   )
+  @moontrace.clear_subscriber()
+
+  assert_eq(code, -1)
+  assert_eq(output, "")
+  assert_eq(attempts, hook_capture_spawn_max_attempts)
+  assert_eq(sleeps, hook_capture_spawn_max_attempts - 1)
+  let warn_event = match hook_capture_retry_exhausted_warn_event(captured) {
+    Some(event) => event
+    None => fail("expected hook capture retry exhaustion warning")
+  }
+  assert_hook_capture_string_field(
+    warn_event.fields,
+    "event",
+    "hook_capture_retry_exhausted",
+  )
+  assert_hook_capture_string_field(
+    warn_event.fields,
+    "hook_path",
+    "/tmp/hook.sh",
+  )
+  assert_hook_capture_number_field(
+    warn_event.fields,
+    "attempts",
+    hook_capture_spawn_max_attempts.to_double(),
+  )
+  assert_hook_capture_string_field(
+    warn_event.fields,
+    "final_error",
+    "spawn_transient_emfile",
+  )
+}
+
+///|
+async test "capture_hook_script_merged_once does NOT retry on permanent ENOENT" {
+  let missing = "/tmp/choir-missing-hook-" +
+    @sys.get_pid().to_string() +
+    "-enoent"
+  ignore(@sys.rm_rf(missing))
+  let mut attempts = 0
+  let mut sleeps = 0
+  let mut final_kind = SpawnUnclassified
+  let attempt = async fn(
+    hook_path : String,
+    stdin_body : String,
+    cwd : String?,
+  ) -> HookCaptureAttemptResult {
+    attempts = attempts + 1
+    let result = capture_hook_script_merged_once(hook_path, stdin_body, cwd)
+    match result {
+      Failed(kind) => final_kind = kind
+      _ => ()
+    }
+    result
+  }
+  let sleep_fn = async fn(_ms : Int) -> Unit {
+    sleeps = sleeps + 1
+    @async.sleep(0)
+  }
+
+  let (code, output) = capture_hook_script_merged_with_retry(
+    missing,
+    "{}",
+    None,
+    attempt,
+    sleep_fn,
+  )
+
+  assert_eq(code, -1)
+  assert_eq(output, "")
+  assert_eq(attempts, 1)
+  assert_eq(sleeps, 0)
+  @debug.assert_eq(final_kind, SpawnPermanentEnoent)
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "capture_hook_script_merged_once does NOT retry on permanent EACCES" {
+  let mut attempts = 0
+  let mut sleeps = 0
+  let mut final_kind = SpawnUnclassified
+  let fail_spawn_hook = async fn(
+    _hook_path : String,
+    _argv : Array[String],
+    _stdin : &@process.ProcessInput,
+    _stdout : &@process.ProcessOutput,
+    _cwd : String?,
+  ) -> Result[Int, HookCaptureFailureKind] {
+    @async.sleep(0)
+    Err(SpawnPermanentEacces)
+  }
+  let attempt = async fn(
+    hook_path : String,
+    stdin_body : String,
+    cwd : String?,
+  ) -> HookCaptureAttemptResult {
+    attempts = attempts + 1
+    let result = capture_hook_script_merged_once_with_adapters(
+      hook_path, stdin_body, cwd, hook_capture_make_stdin_pipe, hook_capture_make_stdout_pipe,
+      fail_spawn_hook,
+    )
+    match result {
+      Failed(kind) => final_kind = kind
+      _ => ()
+    }
+    result
+  }
+  let sleep_fn = async fn(_ms : Int) -> Unit {
+    sleeps = sleeps + 1
+    @async.sleep(0)
+  }
+
+  let (code, output) = capture_hook_script_merged_with_retry(
+    "eacces-hook.sh",
+    "{}",
+    None,
+    attempt,
+    sleep_fn,
+  )
+
+  assert_eq(code, -1)
+  assert_eq(output, "")
+  assert_eq(attempts, 1)
+  assert_eq(sleeps, 0)
+  @debug.assert_eq(final_kind, SpawnPermanentEacces)
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "capture_hook_script_merged_once maps real EACCES to permanent failure" {
+  let dir = "/tmp/choir-eacces-classify-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(dir))
+  let script = dir + "/hook.sh"
+  assert_true(@sys.write_file_sync(script, "#!/bin/sh\necho no\n"))
+
+  let result = capture_hook_script_merged_once(script, "{}", Some(dir))
+
+  match result {
+    Failed(kind) => @debug.assert_eq(kind, SpawnPermanentEacces)
+    _ => fail("expected non-executable hook to fail with permanent EACCES")
+  }
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+async test "capture_hook_script_merged_once retries on pipe-creation failure" {
+  let mut attempts = 0
+  let mut sleeps = 0
+  let fail_stdin_pipe = fn() -> Result[
+    (&@process.ProcessInput, @process.WriteToProcess),
+    HookCaptureFailureKind,
+  ] {
+    Err(PipeCreateFailed)
+  }
+  let fail_stdout_pipe = fn() -> Result[
+    (@process.ReadFromProcess, &@process.ProcessOutput),
+    HookCaptureFailureKind,
+  ] {
+    Err(PipeCreateFailed)
+  }
+  let attempt = async fn(
+    hook_path : String,
+    stdin_body : String,
+    cwd : String?,
+  ) -> HookCaptureAttemptResult {
+    attempts = attempts + 1
+    match attempts {
+      1 =>
+        capture_hook_script_merged_once_with_adapters(
+          hook_path, stdin_body, cwd, fail_stdin_pipe, hook_capture_make_stdout_pipe,
+          hook_capture_spawn_hook_process,
+        )
+      2 =>
+        capture_hook_script_merged_once_with_adapters(
+          hook_path, stdin_body, cwd, hook_capture_make_stdin_pipe, fail_stdout_pipe,
+          hook_capture_spawn_hook_process,
+        )
+      _ => Done(0, "ok")
+    }
+  }
+  let sleep_fn = async fn(ms : Int) -> Unit {
+    assert_eq(ms, hook_capture_spawn_retry_delay_ms)
+    sleeps = sleeps + 1
+    @async.sleep(0)
+  }
+
+  let (code, output) = capture_hook_script_merged_with_retry(
+    "/tmp/hook.sh",
+    "{}",
+    None,
+    attempt,
+    sleep_fn,
+  )
+
   assert_eq(code, 0)
   assert_eq(output, "ok")
-  assert_eq(attempts, 2)
-  assert_eq(slept_ms, hook_capture_spawn_retry_delay_ms)
+  assert_eq(attempts, 3)
+  assert_eq(sleeps, 2)
 }
 
 ///|
