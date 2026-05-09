@@ -157,9 +157,21 @@ fn HookCaptureFailureKind::retry_attempt_limit(
 }
 
 ///|
+/// POSIX EPERM ("Operation not permitted") — errno 1 on Linux/macOS/BSD.
+/// `@os_error` does not expose a typed predicate for EPERM, so the value
+/// is referenced by name here rather than scattered as a magic number.
+const POSIX_EPERM : Int = 1
+
+///|
+/// POSIX EMFILE ("Too many open files") — errno 24 on Linux/macOS/BSD.
+/// `@os_error.is_nonblocking_io_error` covers EAGAIN/EWOULDBLOCK but not
+/// EMFILE, so we classify it explicitly as a transient retry candidate.
+const POSIX_EMFILE : Int = 24
+
+///|
 #cfg(not(platform="windows"))
 fn hook_capture_errno_is_eperm(errno : Int) -> Bool {
-  errno == 1
+  errno == POSIX_EPERM
 }
 
 ///|
@@ -171,7 +183,7 @@ fn hook_capture_errno_is_eperm(_errno : Int) -> Bool {
 ///|
 #cfg(not(platform="windows"))
 fn hook_capture_errno_is_emfile(errno : Int) -> Bool {
-  errno == 24
+  errno == POSIX_EMFILE
 }
 
 ///|
@@ -206,8 +218,8 @@ fn hook_capture_log_retry_exhausted(
   attempts : Int,
   final_error : HookCaptureFailureKind,
 ) -> Unit {
-  @moontrace.warn("hook capture spawn retry exhausted", fields=[
-    @moontrace.field("event", "hook_capture_spawn_exhausted"),
+  @moontrace.warn("hook capture retry exhausted", fields=[
+    @moontrace.field("event", "hook_capture_retry_exhausted"),
     @moontrace.field("script_name", hook_path),
     @moontrace.field("attempts", attempts),
     @moontrace.field("final_error", final_error.to_wire_string()),
@@ -466,7 +478,7 @@ fn hook_capture_retry_exhausted_warn_event(
   for event in events {
     if event.level == @moontrace.Level::Warn {
       match hook_capture_field_value(event.fields, "event") {
-        Some(Json::String("hook_capture_spawn_exhausted")) => return Some(event)
+        Some(Json::String("hook_capture_retry_exhausted")) => return Some(event)
         _ => ()
       }
     }
@@ -539,7 +551,7 @@ async test "capture_hook_script_merged_once exhausts after N attempts and logs w
   assert_hook_capture_string_field(
     warn_event.fields,
     "event",
-    "hook_capture_spawn_exhausted",
+    "hook_capture_retry_exhausted",
   )
   assert_hook_capture_string_field(
     warn_event.fields,
