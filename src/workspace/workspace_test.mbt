@@ -1118,6 +1118,8 @@ test "init_tl_claude_mcp_config_json sets alwaysLoad on the choir MCP entry" {
   let json = @workspace.init_tl_claude_mcp_config_json()
   assert_true(json.contains("\"alwaysLoad\":true"))
   assert_true(json.contains("\"choir\""))
+  assert_true(json.contains("\"--stderr-append-log\""))
+  assert_true(json.contains("\".choir/mcp-stdio.stderr.log\""))
 }
 
 ///|

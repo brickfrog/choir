@@ -79,6 +79,11 @@ pub fn wait_for_socket(_path : String, _max_tries : Int) -> Bool {
 }
 
 ///|
+pub fn sleep_milliseconds(_ms : Int) -> Unit {
+
+}
+
+///|
 pub fn redirect_stderr_append(_path : String) -> Bool {
   false
 }
