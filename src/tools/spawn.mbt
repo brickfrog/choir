@@ -63,18 +63,24 @@ fn spawn_worker_parent_candidate(agent : @types.Agent) -> Bool {
 
 ///|
 fn fallback_spawn_worker_parent_id(agents : Array[@types.Agent]) -> String? {
-  let candidates : Array[String] = []
+  let roots : Array[String] = []
+  let tls : Array[String] = []
   for agent in agents {
     if spawn_worker_parent_candidate(agent) {
       let id = agent.agent_id.to_string()
-      if id == "root" {
-        return Some(id)
+      match agent.role {
+        @types.Role::Root => roots.push(id)
+        @types.Role::TL => tls.push(id)
+        _ => ()
       }
-      candidates.push(id)
     }
   }
-  if candidates.length() == 1 {
-    Some(candidates[0])
+  if roots.length() == 1 {
+    Some(roots[0])
+  } else if roots.length() > 1 {
+    None
+  } else if tls.length() == 1 {
+    Some(tls[0])
   } else {
     None
   }
