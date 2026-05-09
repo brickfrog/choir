@@ -683,6 +683,10 @@ pub fn beads_subcommand_run() -> Unit {
   let choir_exe = if argv.length() > 0 { argv[0] } else { "choir" }
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(_root) {
+      // All bd dispatches use stdout-only capture on success so JSON parsers see
+      // clean payloads, while failing commands still include stderr context.
+      // Doctor used this first; choir-dxh consolidated bd commands because each
+      // emits success JSON and benefits from stderr-on-failure diagnostics.
       let result = run_beads_cli_request(
         parsed, ".", choir_exe, @exec.capture_command_stdout_with_stderr_on_error,
       )

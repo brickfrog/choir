@@ -220,7 +220,7 @@ fn hook_capture_log_retry_exhausted(
 ) -> Unit {
   @moontrace.warn("hook capture retry exhausted", fields=[
     @moontrace.field("event", "hook_capture_retry_exhausted"),
-    @moontrace.field("script_name", hook_path),
+    @moontrace.field("hook_path", hook_path),
     @moontrace.field("attempts", attempts),
     @moontrace.field("final_error", final_error.to_wire_string()),
   ])
@@ -555,7 +555,7 @@ async test "capture_hook_script_merged_once exhausts after N attempts and logs w
   )
   assert_hook_capture_string_field(
     warn_event.fields,
-    "script_name",
+    "hook_path",
     "/tmp/hook.sh",
   )
   assert_hook_capture_number_field(
@@ -615,22 +615,29 @@ async test "capture_hook_script_merged_once does NOT retry on permanent ENOENT" 
 ///|
 #cfg(not(platform="windows"))
 async test "capture_hook_script_merged_once does NOT retry on permanent EACCES" {
-  let dir = "/tmp/choir-eacces-hook-" + @sys.get_pid().to_string()
-  ignore(@sys.rm_rf(dir))
-  assert_true(@sys.create_dir_all(dir))
-  let script = dir + "/hook.sh"
-  assert_true(@sys.write_file_sync(script, "#!/bin/sh\necho no\n"))
-  assert_true(@sys.chmod_mode(script, 0o644))
   let mut attempts = 0
   let mut sleeps = 0
   let mut final_kind = SpawnUnclassified
+  let fail_spawn_hook = async fn(
+    _hook_path : String,
+    _argv : Array[String],
+    _stdin : &@process.ProcessInput,
+    _stdout : &@process.ProcessOutput,
+    _cwd : String?,
+  ) -> Result[Int, HookCaptureFailureKind] {
+    @async.sleep(0)
+    Err(SpawnPermanentEacces)
+  }
   let attempt = async fn(
     hook_path : String,
     stdin_body : String,
     cwd : String?,
   ) -> HookCaptureAttemptResult {
     attempts = attempts + 1
-    let result = capture_hook_script_merged_once(hook_path, stdin_body, cwd)
+    let result = capture_hook_script_merged_once_with_adapters(
+      hook_path, stdin_body, cwd, hook_capture_make_stdin_pipe, hook_capture_make_stdout_pipe,
+      fail_spawn_hook,
+    )
     match result {
       Failed(kind) => final_kind = kind
       _ => ()
@@ -643,9 +650,9 @@ async test "capture_hook_script_merged_once does NOT retry on permanent EACCES" 
   }
 
   let (code, output) = capture_hook_script_merged_with_retry(
-    script,
+    "eacces-hook.sh",
     "{}",
-    Some(dir),
+    None,
     attempt,
     sleep_fn,
   )
@@ -655,6 +662,23 @@ async test "capture_hook_script_merged_once does NOT retry on permanent EACCES" 
   assert_eq(attempts, 1)
   assert_eq(sleeps, 0)
   @debug.assert_eq(final_kind, SpawnPermanentEacces)
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "capture_hook_script_merged_once maps real EACCES to permanent failure" {
+  let dir = "/tmp/choir-eacces-classify-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(dir))
+  let script = dir + "/hook.sh"
+  assert_true(@sys.write_file_sync(script, "#!/bin/sh\necho no\n"))
+
+  let result = capture_hook_script_merged_once(script, "{}", Some(dir))
+
+  match result {
+    Failed(kind) => @debug.assert_eq(kind, SpawnPermanentEacces)
+    _ => fail("expected non-executable hook to fail with permanent EACCES")
+  }
   ignore(@sys.rm_rf(dir))
 }
 
