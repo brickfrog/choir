@@ -34,6 +34,21 @@ test "parse_beads_cli_args parses cross bead gate" {
 }
 
 ///|
+test "parse_beads_cli_args parses spec link force flag" {
+  let got = parse_beads_cli_args([
+    "choir", "beads", "spec-link", "choir-a", "beads-glue", "--force",
+  ])
+  match got {
+    Ok(BeadsCliRequest::SpecLink(args)) => {
+      assert_eq(args.issue_id, "choir-a")
+      assert_eq(args.feature_slug, "beads-glue")
+      assert_true(args.force)
+    }
+    _ => fail("expected spec-link args")
+  }
+}
+
+///|
 async test "run_beads_wave_from renders fork_wave plan from ready children" {
   let seen : Array[String] = []
   let output = run_beads_wave_from(
@@ -128,6 +143,145 @@ test "build_beads_doctor_report flags export and unrelated dirty paths" {
 }
 
 ///|
+async test "run_beads_spec_link refuses missing spec file" {
+  let tmp = "/tmp/choir-beads-spec-link-missing-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/context"))
+  let seen : Array[String] = []
+  let got = run_beads_spec_link(
+    tmp,
+    { issue_id: "choir-a", feature_slug: "missing", force: false },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd.args.join(" "))
+      (0, "ok\n")
+    },
+  )
+  ignore(@sys.rm_rf(tmp))
+  match got {
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        "validation error: spec file .choir/context/missing-spec.md does not exist (or is empty); refuse to link",
+      )
+    Ok(_) => fail("expected missing spec error")
+  }
+  assert_eq(seen.length(), 0)
+}
+
+///|
+async test "run_beads_spec_link force allows missing spec file" {
+  let tmp = "/tmp/choir-beads-spec-link-force-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(tmp))
+  let seen : Array[String] = []
+  let got = run_beads_spec_link(
+    tmp,
+    { issue_id: "choir-a", feature_slug: "future", force: true },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd.args.join(" "))
+      (0, "ok\n")
+    },
+  )
+  ignore(@sys.rm_rf(tmp))
+  match got {
+    Ok(text) => assert_eq(text, "ok\n")
+    Err(e) => fail(e.message())
+  }
+  assert_eq(seen.length(), 1)
+  assert_true(
+    seen[0].contains("update choir-a --spec-id .choir/context/future-spec.md"),
+  )
+}
+
+///|
+async test "run_beads_spec_link succeeds for existing spec file" {
+  let tmp = "/tmp/choir-beads-spec-link-existing-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(tmp))
+  assert_true(@sys.create_dir_all(tmp + "/.choir/context"))
+  assert_true(
+    @sys.write_file_sync(tmp + "/.choir/context/beads-glue-spec.md", "# Spec\n"),
+  )
+  let seen : Array[String] = []
+  let got = run_beads_spec_link(
+    tmp,
+    { issue_id: "choir-a", feature_slug: "beads-glue", force: false },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd.args.join(" "))
+      (0, "linked\n")
+    },
+  )
+  ignore(@sys.rm_rf(tmp))
+  match got {
+    Ok(text) => assert_eq(text, "linked\n")
+    Err(e) => fail(e.message())
+  }
+  assert_eq(seen.length(), 1)
+  assert_true(
+    seen[0].contains(
+      "update choir-a --spec-id .choir/context/beads-glue-spec.md",
+    ),
+  )
+}
+
+///|
+async test "run_beads_doctor parses warning-prefixed ready json" {
+  let got = run_beads_doctor("/repo", async fn(
+    cmd : @workspace.Command,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "ready" {
+      (0, "Warning: auto-export in progress\n[]")
+    } else if cmd.program == "bd" {
+      (0, "[]")
+    } else {
+      (0, "")
+    }
+  })
+  match got {
+    Ok(text) => {
+      assert_true(text.contains("ready_count: 0"))
+      assert_true(text.contains("in_progress_count: 0"))
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+async test "run_beads_doctor parses clean valid json" {
+  let got = run_beads_doctor("/repo", async fn(
+    cmd : @workspace.Command,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "ready" {
+      (
+        0,
+        (
+          #|[{"id":"choir-ready","title":"Ready","status":"open"}]
+        ),
+      )
+    } else if cmd.program == "bd" {
+      (
+        0,
+        (
+          #|[{"id":"choir-progress","title":"Busy","status":"in_progress"}]
+        ),
+      )
+    } else {
+      (0, "")
+    }
+  })
+  match got {
+    Ok(text) => {
+      assert_true(text.contains("ready_count: 1"))
+      assert_true(text.contains("in_progress_count: 1"))
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 async test "run_beads_cli_request proxies gate merge slot and spec link commands" {
   let seen : Array[String] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -161,6 +315,7 @@ async test "run_beads_cli_request proxies gate merge slot and spec link commands
       BeadsCliRequest::SpecLink({
         issue_id: "choir-a",
         feature_slug: "beads-glue",
+        force: true,
       }),
       "/repo",
       "choir",
