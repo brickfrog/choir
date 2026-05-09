@@ -393,11 +393,13 @@ pub async fn interpret_shutdown(
       None => ()
     }
   }
-  ignore(
-    mirror_beads_state_for_agent(
-      project_dir, registry, caller_id, "lifecycle", "shutdown", "Choir agent shutdown",
-      "shutdown", capture,
-    ),
-  )
+  if plan.attempt_worktree_cleanup {
+    ignore(
+      mirror_beads_state_for_agent(
+        project_dir, registry, caller_id, "lifecycle", "shutdown", "Choir agent shutdown",
+        "shutdown", capture,
+      ),
+    )
+  }
   plan.response
 }
