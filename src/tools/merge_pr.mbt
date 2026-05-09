@@ -664,10 +664,11 @@ pub fn merge_pr_host_step_sequence() -> Array[MergePrHostStep] {
 }
 
 ///|
-/// Mutex bracket + strict command run + failure capture/mapping. Preserves the
-/// historical sequence: acquire (optional) → `run_strict(merge_pr_commands)` →
-/// release → on `run_strict` failure, ignore its string and derive the user
-/// error from a fresh `capture(merge_pr_command)` only.
+/// If the mutex is busy, returns before running the merge. Otherwise acquires
+/// the mutex, runs the merge, and on either success or failure releases the
+/// mutex after capturing any failure output. Holding the mutex across failure
+/// capture prevents a concurrent caller from interleaving a merge against the
+/// same parent_branch while we examine the previous failure.
 pub async fn interpret_merge_pr_merge_host(
   parent_branch : String,
   pr_number : Int,
@@ -696,14 +697,7 @@ pub async fn interpret_merge_pr_merge_host(
   }
   let cmds = merge_pr_commands(pr_number)
   let merge_result = run_strict(runner, cmds, capture~)
-  // Release before result inspection so the failure-capture path below
-  // does not hold the lock across another `gh` call; failure-capture
-  // does not mutate the remote.
-  match mutex_registry {
-    Some(reg) => ignore(reg.release(mutex_name, caller_id, now_sec))
-    None => ()
-  }
-  match merge_result {
+  let final_result = match merge_result {
     Err(_) => {
       let (_, output) = capture(merge_pr_command(pr_number))
       let trimmed = output.trim().to_owned()
@@ -715,6 +709,12 @@ pub async fn interpret_merge_pr_merge_host(
     }
     Ok(_) => Ok(())
   }
+  // Hold the mutex across failure-capture so a concurrent caller cannot interleave a merge against the same parent branch while we examine the previous failure.
+  match mutex_registry {
+    Some(reg) => ignore(reg.release(mutex_name, caller_id, now_sec))
+    None => ()
+  }
+  final_result
 }
 
 ///|

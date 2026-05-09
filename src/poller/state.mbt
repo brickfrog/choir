@@ -1,7 +1,38 @@
 ///|
+/// Poller state mutation/persist discipline:
+/// - Every mutation of `tracked` or a stored `TrackedPR` must go through
+///   `set_tracked` or `remove_tracked`, so `write_generation` advances.
+/// - `write_state_file` snapshots JSON with the current generation, writes it,
+///   then retries if another mutation advanced the generation during the write.
+// AUDIT: Visibility tightening (pub(all) -> pub + accessors) is a separate
+// concern from the generation-checked persist discipline introduced here.
+// Tracked as a follow-up; not in scope for choir-poller-state-race.
 pub(all) struct PollerState {
   tracked : Map[Int, TrackedPR]
   mut write_generation : Int
+}
+
+///|
+fn PollerState::bump_write_generation(self : PollerState) -> Unit {
+  self.write_generation = self.write_generation + 1
+}
+
+///|
+fn PollerState::set_tracked(
+  self : PollerState,
+  pr_number : Int,
+  tracked : TrackedPR,
+) -> Unit {
+  self.tracked.set(pr_number, tracked)
+  self.bump_write_generation()
+}
+
+///|
+fn PollerState::remove_tracked(self : PollerState, pr_number : Int) -> Unit {
+  if self.tracked.get(pr_number) is Some(_) {
+    self.tracked.remove(pr_number)
+    self.bump_write_generation()
+  }
 }
 
 ///|
@@ -243,7 +274,7 @@ pub fn PollerState::track(
     stall_notified: false,
     fixes_pushed_at: 0L,
   }
-  self.tracked.set(pr_number, pr)
+  self.set_tracked(pr_number, pr)
 }
 
 ///|
@@ -258,7 +289,7 @@ pub fn PollerState::ensure_tracked(
 ) -> Unit {
   match self.tracked.get(pr_number) {
     Some(existing) =>
-      self.tracked.set(pr_number, {
+      self.set_tracked(pr_number, {
         ..existing,
         agent_id,
         branch,
@@ -286,7 +317,7 @@ pub fn PollerState::transfer_owner(
   for pr_number in pr_numbers {
     match self.tracked.get(pr_number) {
       Some(tracked) =>
-        self.tracked.set(pr_number, {
+        self.set_tracked(pr_number, {
           ..tracked,
           agent_id: to_agent_id,
           branch: if to_branch == "" {
@@ -351,12 +382,12 @@ pub fn PollerState::track_recovered(
     stall_notified: false,
     fixes_pushed_at: 0L,
   }
-  self.tracked.set(pr_number, pr)
+  self.set_tracked(pr_number, pr)
 }
 
 ///|
 pub fn PollerState::restore(self : PollerState, tracked : TrackedPR) -> Unit {
-  self.tracked.set(tracked.pr_number, tracked)
+  self.set_tracked(tracked.pr_number, tracked)
 }
 
 ///|
@@ -411,8 +442,34 @@ pub fn poller_state_path(project_dir : String) -> String {
 pub fn PollerState::write_state_file(
   self : PollerState,
   project_dir : String,
+  write_file? : (String, String) -> Bool = @sys.write_file_atomic,
+  max_attempts? : Int = 8,
 ) -> Bool {
-  @sys.write_file_atomic(poller_state_path(project_dir), self.to_json())
+  let path = poller_state_path(project_dir)
+  let attempts_limit = if max_attempts < 1 { 1 } else { max_attempts }
+  let mut attempts = 0
+  while attempts < attempts_limit {
+    attempts = attempts + 1
+    let generation = self.write_generation
+    let content = self.to_json()
+    if !write_file(path, content) {
+      return false
+    }
+    if self.write_generation == generation {
+      return true
+    }
+  }
+  @moontrace.warn(
+    "poller state persist exhausted retries; on-disk state may be stale, in-memory state retained",
+    fields=[
+      @moontrace.field("event", "poller_persist_retry_exhausted"),
+      @moontrace.field("path", path),
+      @moontrace.field("tracked_count", self.tracked.length()),
+      @moontrace.field("final_generation", self.write_generation),
+      @moontrace.field("attempts", attempts_limit),
+    ],
+  )
+  false
 }
 
 ///|
@@ -445,7 +502,7 @@ pub fn read_state_file(project_dir : String) -> Array[TrackedPR] {
 
 ///|
 pub fn PollerState::untrack(self : PollerState, pr_number : Int) -> Unit {
-  self.tracked.remove(pr_number)
+  self.remove_tracked(pr_number)
 }
 
 ///|
@@ -619,7 +676,7 @@ pub async fn PollerState::tick_pr_with(
     let failures = clamp_consecutive_failures(tracked.consecutive_failures + 1)
     let delay = backoff_delay_seconds(failures)
     let until = now + delay
-    self.tracked.set(pr_number, {
+    self.set_tracked(pr_number, {
       ..tracked,
       consecutive_failures: failures,
       backoff_until: until,
@@ -657,7 +714,7 @@ pub async fn PollerState::tick_pr_with(
       consecutive_failures: 0,
       previous_consecutive_failures: prev_failures,
     })
-    self.tracked.remove(pr_number)
+    self.remove_tracked(pr_number)
     return
   }
   let copilot_effective = tracked_ok.copilot_issue_comment_seen || copilot_now
@@ -755,7 +812,7 @@ pub async fn PollerState::tick_pr_with(
       fixes_pushed_at: fpa,
     }
   }
-  self.tracked.set(pr_number, updated)
+  self.set_tracked(pr_number, updated)
   log_pr({
     pr_number,
     agent_id,

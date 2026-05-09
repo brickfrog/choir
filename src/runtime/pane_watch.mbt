@@ -24,11 +24,18 @@ pub fn PaneWatchHost::native() -> PaneWatchHost {
 }
 
 ///|
+// AUDIT: Visibility kept at pub(all) for blackbox test field reads. Tightening
+// would require moving tests inline (whitebox).
+pub(all) struct WatchObservation {
+  last_change_at : Int64
+  last_hash : Int
+  last_len : Int
+}
+
+///|
 pub(all) struct WatchState {
   pid : Int
-  mut last_change_at : Int64
-  mut last_hash : Int
-  mut last_len : Int
+  mut observation : WatchObservation
 }
 
 ///|
@@ -63,9 +70,7 @@ pub fn PaneWatcher::watch_pane(
   if pid > 0 {
     self.watches.set(agent_id, {
       pid,
-      last_change_at: now,
-      last_hash: 0,
-      last_len: 0,
+      observation: { last_change_at: now, last_hash: 0, last_len: 0 },
     })
   }
 }
@@ -77,8 +82,8 @@ pub fn PaneWatcher::stop_subscribe(
 ) -> Unit {
   match self.watches.get(agent_id) {
     Some(watch) => {
-      (self.host.kill_pid_best_effort)(watch.pid)
       self.watches.remove(agent_id)
+      (self.host.kill_pid_best_effort)(watch.pid)
     }
     None => ()
   }
@@ -147,6 +152,27 @@ pub fn simple_hash(s : String) -> Int {
 }
 
 ///|
+fn PaneWatcher::record_observation(
+  self : PaneWatcher,
+  agent_id : String,
+  hash : Int,
+  len : Int,
+  now : Int64,
+) -> Bool {
+  match self.watches.get(agent_id) {
+    Some(watch) => {
+      watch.observation = {
+        last_change_at: now,
+        last_hash: hash,
+        last_len: len,
+      }
+      true
+    }
+    None => false
+  }
+}
+
+///|
 /// Checks if the agent's pane has been idle. Returns `Some(screen_text)` if idle, `None` if not idle or not being watched.
 pub fn PaneWatcher::check_idle(
   self : PaneWatcher,
@@ -155,7 +181,7 @@ pub fn PaneWatcher::check_idle(
   timeout : Int64,
 ) -> String? {
   let watch = match self.watches.get(agent_id) {
-    Some(w) => w
+    Some(watch) => watch
     None => return None
   }
   let snapshot = self.read_viewport(agent_id)
@@ -165,15 +191,14 @@ pub fn PaneWatcher::check_idle(
   let screen = extract_viewport_text(snapshot)
   let hash = simple_hash(screen)
   let len = screen.length()
+  let observation = watch.observation
 
-  if hash != watch.last_hash || len != watch.last_len {
-    watch.last_change_at = now
-    watch.last_hash = hash
-    watch.last_len = len
+  if hash != observation.last_hash || len != observation.last_len {
+    ignore(self.record_observation(agent_id, hash, len, now))
     return None
   }
 
-  let elapsed = now - watch.last_change_at
+  let elapsed = now - observation.last_change_at
   if elapsed >= timeout {
     Some(screen)
   } else {
