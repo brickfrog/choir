@@ -152,6 +152,35 @@ test "format_registration_request includes local config metadata" {
     output.contains("\"terminal_target\":\"zellij-tab:choir:leaf-1\""),
   )
   assert_true(output.contains("\"spawn_depth\":\"1\""))
+  assert_true(output.contains("\"connection_lifetime\":\"session\""))
+}
+
+///|
+test "format_registration_request can mark one-shot clients" {
+  let output = format_registration_request(
+    @types.Role::Dev,
+    "leaf-1",
+    @types.LocalConfig::default(),
+    connection_lifetime=ConnectionLifetime::OneShot,
+  )
+  assert_true(output.contains("\"connection_lifetime\":\"oneshot\""))
+}
+
+///|
+test "parse_connection_lifetime recognizes wire values" {
+  @debug.assert_eq(
+    parse_connection_lifetime("session"),
+    Some(ConnectionLifetime::Session),
+  )
+  @debug.assert_eq(
+    parse_connection_lifetime("one-shot"),
+    Some(ConnectionLifetime::OneShot),
+  )
+  @debug.assert_eq(
+    parse_connection_lifetime("tool_call"),
+    Some(ConnectionLifetime::OneShot),
+  )
+  @debug.assert_eq(parse_connection_lifetime("bogus"), None)
 }
 
 ///|

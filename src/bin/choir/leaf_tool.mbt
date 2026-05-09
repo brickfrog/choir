@@ -579,7 +579,7 @@ fn client_register_if_needed(
   config : @types.Config,
   local_cfg : @types.LocalConfig,
 ) -> Result[Unit, String] {
-  let reg_msg = mcp_build_registration_message(role, config, local_cfg)
+  let reg_msg = leaf_tool_registration_message(role, config, local_cfg)
   if !mcp_write_all_uds(uds_fd, @utf8.encode(reg_msg)) {
     return Err("failed to write registration request")
   }
@@ -601,6 +601,20 @@ fn client_register_if_needed(
       }
     Err(err) => Err("failed to parse registration response: " + err)
   }
+}
+
+///|
+fn leaf_tool_registration_message(
+  role : @types.Role,
+  config : @types.Config,
+  local_cfg : @types.LocalConfig,
+) -> String {
+  mcp_build_registration_message(
+    role,
+    config,
+    local_cfg,
+    connection_lifetime=@transport.ConnectionLifetime::OneShot,
+  )
 }
 
 ///|
@@ -949,6 +963,22 @@ test "tool local agent context keeps registration path" {
     local_cfg,
   )
   assert_true(wire_req.contains("\"caller_id\":\"main.child\""))
+}
+
+///|
+test "leaf tool registration is one-shot transport" {
+  let local_cfg = {
+    ..@types.LocalConfig::default(),
+    role: Some(@types.Role::Dev),
+    agent_id: Some("main.child"),
+    parent_id: Some("root"),
+  }
+  let msg = leaf_tool_registration_message(
+    @types.Role::Dev,
+    @types.Config::default(),
+    local_cfg,
+  )
+  assert_true(msg.contains("\"connection_lifetime\":\"oneshot\""))
 }
 
 ///|

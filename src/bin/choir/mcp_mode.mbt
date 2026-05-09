@@ -88,6 +88,7 @@ fn mcp_build_registration_message(
   role : @types.Role,
   config : @types.Config,
   local_cfg : @types.LocalConfig,
+  connection_lifetime? : @transport.ConnectionLifetime = @transport.ConnectionLifetime::Session,
 ) -> String {
   let agent_id = mcp_resolved_agent_id(role, config, local_cfg)
   let registration_local_cfg = if local_cfg.terminal_target is None &&
@@ -107,7 +108,12 @@ fn mcp_build_registration_message(
   } else {
     local_cfg
   }
-  @transport.format_registration_request(role, agent_id, registration_local_cfg) +
+  @transport.format_registration_request(
+    role,
+    agent_id,
+    registration_local_cfg,
+    connection_lifetime~,
+  ) +
   "\n"
 }
 
@@ -751,9 +757,24 @@ test "mcp registration infers zellij TL terminal target for top-level session" {
     @types.LocalConfig::default(),
   )
   assert_true(output.contains("\"name\":\"register\""))
+  assert_true(output.contains("\"connection_lifetime\":\"session\""))
   assert_true(
     output.contains("\"terminal_target\":\"zellij-tab:choir-resorter-py:TL\""),
   )
+}
+
+///|
+test "mcp registration can mark one-shot helper connections" {
+  let output = mcp_build_registration_message(
+    @types.Role::Dev,
+    @types.Config::default(),
+    @types.LocalConfig::{
+      ..@types.LocalConfig::default(),
+      agent_id: Some("main.leaf"),
+    },
+    connection_lifetime=@transport.ConnectionLifetime::OneShot,
+  )
+  assert_true(output.contains("\"connection_lifetime\":\"oneshot\""))
 }
 
 ///|

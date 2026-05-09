@@ -42,12 +42,40 @@ pub fn format_request(req : @types.Request) -> String {
 }
 
 ///|
+pub(all) enum ConnectionLifetime {
+  Session
+  OneShot
+} derive(Debug, Eq)
+
+///|
+pub fn ConnectionLifetime::to_wire_string(self : ConnectionLifetime) -> String {
+  match self {
+    Session => "session"
+    OneShot => "oneshot"
+  }
+}
+
+///|
+pub fn parse_connection_lifetime(raw : String) -> ConnectionLifetime? {
+  match raw.trim().to_lower().to_owned() {
+    "session" => Some(Session)
+    "oneshot" | "one_shot" | "one-shot" | "tool_call" | "tool-call" =>
+      Some(OneShot)
+    _ => None
+  }
+}
+
+///|
 pub fn format_registration_request(
   role : @types.Role,
   agent_id : String,
   local_cfg : @types.LocalConfig,
+  connection_lifetime? : ConnectionLifetime = Session,
 ) -> String {
-  let args : Map[String, String] = { "agent_id": agent_id }
+  let args : Map[String, String] = {
+    "agent_id": agent_id,
+    "connection_lifetime": connection_lifetime.to_wire_string(),
+  }
   match local_cfg.parent_id {
     Some(v) => args.set("parent_id", v)
     None => ()

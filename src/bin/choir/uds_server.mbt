@@ -39,6 +39,51 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
 }
 
 ///|
+fn lifecycle_agent_id_for_register(req : @types.Request) -> String? {
+  if req.req_method != "register" {
+    return None
+  }
+  match req.args.get("connection_lifetime") {
+    Some(raw) =>
+      match @transport.parse_connection_lifetime(raw) {
+        Some(@transport.ConnectionLifetime::OneShot) => return None
+        Some(@transport.ConnectionLifetime::Session) => ()
+        None => ()
+      }
+    None => ()
+  }
+  req.args.get("agent_id")
+}
+
+///|
+test "lifecycle_agent_id_for_register ignores one-shot clients" {
+  let req : @types.Request = {
+    req_method: "register",
+    role: @types.Role::Dev,
+    name: "register",
+    args: @types.RequestArgs::new({
+      "agent_id": "main.leaf",
+      "connection_lifetime": "oneshot",
+    }),
+  }
+  @debug.assert_eq(lifecycle_agent_id_for_register(req), None)
+}
+
+///|
+test "lifecycle_agent_id_for_register keeps session clients" {
+  let req : @types.Request = {
+    req_method: "register",
+    role: @types.Role::Dev,
+    name: "register",
+    args: @types.RequestArgs::new({
+      "agent_id": "main.leaf",
+      "connection_lifetime": "session",
+    }),
+  }
+  @debug.assert_eq(lifecycle_agent_id_for_register(req), Some("main.leaf"))
+}
+
+///|
 async fn serve_handle_connection(
   conn : @socket.Tcp,
   state : @server.ServerState,
@@ -87,7 +132,7 @@ async fn serve_handle_connection(
         match req_res {
           Ok(req) => {
             if req.req_method == "register" {
-              connected_agent_id = req.args.get("agent_id")
+              connected_agent_id = lifecycle_agent_id_for_register(req)
             }
             let resp = state.handle(req) catch {
               e => {
@@ -167,7 +212,7 @@ async fn serve_handle_uds_connection(
         match req_res {
           Ok(req) => {
             if req.req_method == "register" {
-              client.connected_agent_id = req.args.get("agent_id")
+              client.connected_agent_id = lifecycle_agent_id_for_register(req)
             }
             let resp = state.handle(req) catch {
               e => {
