@@ -664,10 +664,11 @@ pub fn merge_pr_host_step_sequence() -> Array[MergePrHostStep] {
 }
 
 ///|
-/// Mutex bracket + strict command run + failure capture/mapping. Preserves the
-/// historical sequence: acquire (optional) → `run_strict(merge_pr_commands)` →
-/// on `run_strict` failure, derive the user error from a fresh
-/// `capture(merge_pr_command)` while still holding the mutex → release.
+/// If the mutex is busy, returns before running the merge. Otherwise acquires
+/// the mutex, runs the merge, and on either success or failure releases the
+/// mutex after capturing any failure output. Holding the mutex across failure
+/// capture prevents a concurrent caller from interleaving a merge against the
+/// same parent_branch while we examine the previous failure.
 pub async fn interpret_merge_pr_merge_host(
   parent_branch : String,
   pr_number : Int,
