@@ -600,7 +600,7 @@ fn build_agent_wave_map(
   project_dir : String,
 ) -> Map[String, (String, Int)] {
   let m : Map[String, (String, Int)] = {}
-  for tracked in poller.tracked_prs() {
+  for tracked in poller.tracked.values() {
     try {
       let parent = registry.get_parent(tracked.agent_id)
       let parent_id = parent.agent_id.to_string()
@@ -870,7 +870,8 @@ async fn deliver_poller_stall_notifications(
   now : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
-  let prs = state.poller.tracked_prs()
+  let prs : Array[@poller.TrackedPR] = []
+  state.poller.tracked.each(fn(_k, pr) { prs.push(pr) })
   for pr in prs {
     deliver_poller_stall_notification_for(state, pr, now, runner)
   }
@@ -1387,7 +1388,8 @@ async fn deliver_orphaned_pr_notifications(
   state : ServerState,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
-  let prs = state.poller.tracked_prs()
+  let prs : Array[@poller.TrackedPR] = []
+  state.poller.tracked.each(fn(_k, pr) { prs.push(pr) })
   for pr in prs {
     deliver_orphaned_pr_notification_for(state, pr, runner)
   }
@@ -1522,7 +1524,7 @@ pub async fn ServerState::process_poller_tick(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
   self.mutex_registry.expire(now)
-  let tracked_before = self.poller.tracked_len()
+  let tracked_before = self.poller.tracked.length()
   let pending_events = []
   let pending_agent_ids = []
   let mut tick_event_total = 0
@@ -1549,7 +1551,7 @@ pub async fn ServerState::process_poller_tick(
       log_poller_pr_tick(append_file, project_dir, log)
     },
   )
-  let tracked_after = self.poller.tracked_len()
+  let tracked_after = self.poller.tracked.length()
   @moontrace.info("poller tick end", fields=[
     @moontrace.field("events_generated", tick_event_total),
     @moontrace.field("tracked_after", tracked_after),

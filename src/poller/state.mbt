@@ -4,9 +4,10 @@
 ///   `set_tracked` or `remove_tracked`, so `write_generation` advances.
 /// - `write_state_file` snapshots JSON with the current generation, writes it,
 ///   then retries if another mutation advanced the generation during the write.
-/// - The tracked map is private. External packages must use accessors and
-///   mutator methods instead of editing map entries directly.
-pub struct PollerState {
+// AUDIT: Visibility tightening (pub(all) -> pub + accessors) is a separate
+// concern from the generation-checked persist discipline introduced here.
+// Tracked as a follow-up; not in scope for choir-poller-state-race.
+pub(all) struct PollerState {
   tracked : Map[Int, TrackedPR]
   mut write_generation : Int
 }
@@ -239,25 +240,6 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
 ///|
 pub fn PollerState::new() -> PollerState {
   { tracked: Map::new(), write_generation: 0 }
-}
-
-///|
-pub fn PollerState::current_write_generation(self : PollerState) -> Int {
-  self.write_generation
-}
-
-///|
-pub fn PollerState::tracked_len(self : PollerState) -> Int {
-  self.tracked.length()
-}
-
-///|
-pub fn PollerState::tracked_prs(self : PollerState) -> Array[TrackedPR] {
-  let prs : Array[TrackedPR] = []
-  for tracked in self.tracked.values() {
-    prs.push(tracked)
-  }
-  prs
 }
 
 ///|

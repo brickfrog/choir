@@ -503,7 +503,7 @@ async test "interpret_merge_pr_preflight accepts required verify evidence" {
     ),
   )
   let ps = @poller.PollerState::new()
-  ps.restore({
+  ps.tracked.set(7, {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     pr_number: 7,
     last_ci_rollup: @poller.CiRollupStatus::Success,
@@ -546,7 +546,7 @@ async test "interpret_merge_pr_preflight rejects stale verify evidence" {
     ),
   )
   let ps = @poller.PollerState::new()
-  ps.restore({
+  ps.tracked.set(7, {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     pr_number: 7,
     last_sha: "new-sha",

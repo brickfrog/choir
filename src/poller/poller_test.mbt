@@ -16,7 +16,7 @@ fn assert_generation_increased(
   before : Int,
   label : String,
 ) -> Int raise {
-  let after = ps.current_write_generation()
+  let after = ps.write_generation
   if after <= before {
     fail(label + " did not bump write_generation")
   }
@@ -84,7 +84,7 @@ fn parsed_state_has_pr(content : String, pr_number : Int) -> Bool raise {
 ///|
 async test "PollerState mutations bump write_generation" {
   let ps = @poller.PollerState::new()
-  let mut generation = ps.current_write_generation()
+  let mut generation = ps.write_generation
 
   ps.track(1, "agent-1", "branch-1", "main", "url-1", 10L)
   generation = assert_generation_increased(ps, generation, "track")
@@ -185,6 +185,8 @@ test "write_state_file returns false after bounded stale retries" {
   let writes : Array[String] = []
   let writer = fn(_path : String, content : String) -> Bool {
     writes.push(content)
+    // Unlike the prior one-shot interleaving test, this mutates on every write
+    // attempt so `write_state_file` must stop at its bounded retry limit.
     let n = 20 + writes.length()
     ps.ensure_tracked(n, "agent-" + n.to_string(), "branch", "main", "url", 2L)
     true
