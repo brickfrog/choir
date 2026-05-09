@@ -26,9 +26,17 @@ test "parse_smoke_beads_args supports explicit canary knobs" {
 }
 
 ///|
-test "parse_smoke_beads_args defaults timeout to 300 seconds" {
+test "parse_smoke_beads_args defaults timeout to 600 seconds" {
   let got = parse_smoke_beads_args(["choir", "smoke", "beads-handoff"]).unwrap()
-  assert_eq(got.timeout_sec, 300)
+  assert_eq(got.timeout_sec, 600)
+}
+
+///|
+test "smoke_beads_worker_task requires task_get and forbids bd show" {
+  let got = smoke_beads_worker_task("choir-beads-live-smoke")
+  assert_true(got.contains("task_get choir-beads-live-smoke"))
+  assert_true(got.contains("do NOT use"))
+  assert_false(got.contains("bd show"))
 }
 
 ///|
@@ -87,6 +95,11 @@ test "smoke_beads_events_pass accepts task_get and notify_parent without shutdow
 ///|
 test "smoke_beads_events_pass rejects task_get without notify_parent" {
   assert_false(smoke_beads_events_pass([event_line("task_get")]))
+}
+
+///|
+test "smoke_beads_events_pass rejects notify_parent without task_get" {
+  assert_false(smoke_beads_events_pass([event_line("notify_parent")]))
 }
 
 ///|
