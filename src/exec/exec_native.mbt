@@ -93,6 +93,18 @@ async fn drain_process_stdout(
 }
 
 ///|
+priv enum HookCaptureAttemptResult {
+  Done(Int, String)
+  SpawnFailed
+}
+
+///|
+let hook_capture_spawn_retry_delay_ms : Int = 25
+
+///|
+let hook_capture_spawn_max_attempts : Int = 3
+
+///|
 /// Stream one `find` stdout into `out` until EOF (no total size cap), then wait for the child.
 async fn run_find_and_pump_to(
   program : String,
@@ -173,13 +185,47 @@ pub async fn capture_hook_script_merged(
   stdin_body : String,
   cwd : String?,
 ) -> (Int, String) {
+  capture_hook_script_merged_with_retry(
+    hook_path, stdin_body, cwd, capture_hook_script_merged_once, @async.sleep,
+  )
+}
+
+///|
+async fn capture_hook_script_merged_with_retry(
+  hook_path : String,
+  stdin_body : String,
+  cwd : String?,
+  attempt : async (String, String, String?) -> HookCaptureAttemptResult,
+  sleep_fn : async (Int) -> Unit,
+) -> (Int, String) {
+  let mut attempts = 0
+  for ;; {
+    attempts = attempts + 1
+    match attempt(hook_path, stdin_body, cwd) {
+      Done(code, output) => return (code, output)
+      SpawnFailed =>
+        if attempts >= hook_capture_spawn_max_attempts {
+          return (-1, "")
+        } else {
+          sleep_fn(hook_capture_spawn_retry_delay_ms)
+        }
+    }
+  }
+}
+
+///|
+async fn capture_hook_script_merged_once(
+  hook_path : String,
+  stdin_body : String,
+  cwd : String?,
+) -> HookCaptureAttemptResult {
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
-    _ => return (-1, "")
+    _ => return Done(-1, "")
   }
   let (stdout_read, stdout_write) = @process.read_from_process() catch {
     _ => {
       stdin_write.close()
-      return (-1, "")
+      return Done(-1, "")
     }
   }
   let argv : Array[String] = []
@@ -196,7 +242,7 @@ pub async fn capture_hook_script_merged(
         _ => {
           stdin_write.close()
           stdout_read.close()
-          return (-1, "")
+          return SpawnFailed
         }
       }
     None =>
@@ -210,7 +256,7 @@ pub async fn capture_hook_script_merged(
         _ => {
           stdin_write.close()
           stdout_read.close()
-          return (-1, "")
+          return SpawnFailed
         }
       }
   }
@@ -218,7 +264,41 @@ pub async fn capture_hook_script_merged(
   stdin_write.close()
   let (output, _) = drain_process_stdout(stdout_read, capture_max_bytes)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
-  (exit_code, output)
+  Done(exit_code, output)
+}
+
+///|
+async test "capture_hook_script_merged retries transient spawn failure" {
+  let mut attempts = 0
+  let mut slept_ms = -1
+  let attempt = async fn(
+    _hook_path : String,
+    _stdin_body : String,
+    _cwd : String?,
+  ) -> HookCaptureAttemptResult {
+    @async.sleep(0)
+    attempts = attempts + 1
+    if attempts == 1 {
+      SpawnFailed
+    } else {
+      Done(0, "ok")
+    }
+  }
+  let sleep_fn = async fn(ms : Int) -> Unit {
+    slept_ms = ms
+    @async.sleep(0)
+  }
+  let (code, output) = capture_hook_script_merged_with_retry(
+    "/tmp/hook.sh",
+    "{}",
+    None,
+    attempt,
+    sleep_fn,
+  )
+  assert_eq(code, 0)
+  assert_eq(output, "ok")
+  assert_eq(attempts, 2)
+  assert_eq(slept_ms, hook_capture_spawn_retry_delay_ms)
 }
 
 ///|
