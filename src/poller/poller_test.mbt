@@ -82,6 +82,54 @@ fn parsed_state_has_pr(content : String, pr_number : Int) -> Bool raise {
 }
 
 ///|
+fn field_value(fields : Array[@moontrace.Field], key : String) -> Json? {
+  for field in fields {
+    if field.key == key {
+      return Some(field.value)
+    }
+  }
+  None
+}
+
+///|
+fn retry_exhausted_warn_event(
+  events : Array[@moontrace.Event],
+) -> @moontrace.Event? {
+  for event in events {
+    if event.level == @moontrace.Level::Warn &&
+      event.message ==
+      "poller state persist exhausted retries; on-disk state may be stale, in-memory state retained" {
+      return Some(event)
+    }
+  }
+  None
+}
+
+///|
+fn assert_string_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  expected : String,
+) -> Unit raise {
+  match field_value(fields, key) {
+    Some(Json::String(value)) => assert_eq(value, expected)
+    _ => fail("expected string moontrace field " + key)
+  }
+}
+
+///|
+fn assert_number_field(
+  fields : Array[@moontrace.Field],
+  key : String,
+  expected : Double,
+) -> Unit raise {
+  match field_value(fields, key) {
+    Some(Json::Number(value, ..)) => assert_eq(value, expected)
+    _ => fail("expected number moontrace field " + key)
+  }
+}
+
+///|
 async test "PollerState mutations bump write_generation" {
   let ps = @poller.PollerState::new()
   let mut generation = ps.write_generation
@@ -196,6 +244,39 @@ test "write_state_file returns false after bounded stale retries" {
     ps.write_state_file("/project", write_file=writer, max_attempts=3),
   )
   assert_eq(writes.length(), 3)
+}
+
+///|
+test "write_state_file logs warn on retry exhaustion" {
+  let ps = @poller.PollerState::new()
+  ps.track(30, "agent-a", "branch-a", "main", "url-a", 1L)
+  let writer = fn(_path : String, _content : String) -> Bool {
+    let n = 30 + ps.write_generation
+    ps.ensure_tracked(n, "agent-" + n.to_string(), "branch", "main", "url", 2L)
+    true
+  }
+  let captured : Array[@moontrace.Event] = []
+
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  let result = ps.write_state_file(
+    "/project",
+    write_file=writer,
+    max_attempts=2,
+  )
+  @moontrace.clear_subscriber()
+
+  assert_false(result)
+  let warn_event = match retry_exhausted_warn_event(captured) {
+    Some(event) => event
+    None => fail("expected retry exhaustion warning")
+  }
+  assert_string_field(
+    warn_event.fields,
+    "event",
+    "poller_persist_retry_exhausted",
+  )
+  assert_number_field(warn_event.fields, "tracked_count", 3.0)
+  assert_number_field(warn_event.fields, "attempts", 2.0)
 }
 
 ///|

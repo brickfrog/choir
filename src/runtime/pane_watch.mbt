@@ -24,6 +24,8 @@ pub fn PaneWatchHost::native() -> PaneWatchHost {
 }
 
 ///|
+// AUDIT: Visibility kept at pub(all) for blackbox test field reads. Tightening
+// would require moving tests inline (whitebox).
 pub(all) struct WatchObservation {
   last_change_at : Int64
   last_hash : Int
@@ -150,7 +152,7 @@ pub fn simple_hash(s : String) -> Int {
 }
 
 ///|
-pub fn PaneWatcher::record_observation(
+fn PaneWatcher::record_observation(
   self : PaneWatcher,
   agent_id : String,
   hash : Int,
@@ -178,8 +180,8 @@ pub fn PaneWatcher::check_idle(
   now : Int64,
   timeout : Int64,
 ) -> String? {
-  match self.watches.get(agent_id) {
-    Some(_) => ()
+  let watch = match self.watches.get(agent_id) {
+    Some(watch) => watch
     None => return None
   }
   let snapshot = self.read_viewport(agent_id)
@@ -189,10 +191,6 @@ pub fn PaneWatcher::check_idle(
   let screen = extract_viewport_text(snapshot)
   let hash = simple_hash(screen)
   let len = screen.length()
-  let watch = match self.watches.get(agent_id) {
-    Some(w) => w
-    None => return None
-  }
   let observation = watch.observation
 
   if hash != observation.last_hash || len != observation.last_len {

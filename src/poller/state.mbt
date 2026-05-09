@@ -459,6 +459,16 @@ pub fn PollerState::write_state_file(
       return true
     }
   }
+  @moontrace.warn(
+    "poller state persist exhausted retries; on-disk state may be stale, in-memory state retained",
+    fields=[
+      @moontrace.field("event", "poller_persist_retry_exhausted"),
+      @moontrace.field("path", path),
+      @moontrace.field("tracked_count", self.tracked.length()),
+      @moontrace.field("final_generation", self.write_generation),
+      @moontrace.field("attempts", attempts_limit),
+    ],
+  )
   false
 }
 
