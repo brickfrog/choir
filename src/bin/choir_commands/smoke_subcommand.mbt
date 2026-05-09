@@ -51,7 +51,7 @@ pub fn parse_smoke_beads_args(
   let mut issue_id = "choir-beads-handoff-smoke-" + suffix
   let mut slug = "beads-handoff-smoke-" + suffix
   let mut caller_id = "main"
-  let mut timeout_sec = 300
+  let mut timeout_sec = 600
   let mut poll_interval_ms = 1000
   let mut help = false
   let mut i = 3
@@ -151,6 +151,9 @@ fn smoke_beads_help() -> String {
     #|  export .beads/issues.jsonl, and reject unrelated git mutations.
     #|  Worker shutdown is observability-only after notify_parent.
     #|
+    #|Defaults:
+    #|  --timeout-sec 600
+    #|
   )
 }
 
@@ -172,11 +175,9 @@ fn json_obj(fields : Map[String, Json]) -> Json {
 
 ///|
 pub fn smoke_beads_worker_task(issue_id : String) -> String {
-  "Read the assigned Beads issue via `task_get " +
+  "Read the assigned Beads issue via the `task_get " +
   issue_id +
-  "` or `bd show " +
-  issue_id +
-  " --json`, then `notify_parent` with only the issue id, title, and status. Do not edit files, commit, create branches, file PRs, or close the issue."
+  "` Choir MCP tool -- do NOT use any direct bd CLI invocation, since the smoke harness specifically observes `task_get` to verify the MCP surface is exercised. After `task_get`, call `notify_parent` with only the issue id, title, and status. Do not edit files, commit, create branches, file PRs, or close the issue."
 }
 
 ///|
