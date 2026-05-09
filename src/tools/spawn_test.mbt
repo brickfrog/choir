@@ -294,6 +294,37 @@ async test "interpret_spawn_worker rejects ambiguous multi-TL with no root" {
 }
 
 ///|
+async test "interpret_spawn_worker rejects ambiguous multiple Role::Root agents" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main",
+    slug: "w-multi-root",
+    agent_type: @types.AgentType::Claude,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent_with_role(reg, "root-a", @types.Role::Root)
+  upsert_spawn_test_parent_with_role(reg, "root-b", @types.Role::Root)
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_origin_main,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(
+        msg.contains("spawn_worker caller_id 'main' is not registered"),
+      )
+      assert_true(msg.contains("agent registry"))
+    }
+    _ => fail("expected err")
+  }
+}
+
+///|
 async test "interpret_spawn_worker normalizes unregistered caller_id to single non-root TL" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
