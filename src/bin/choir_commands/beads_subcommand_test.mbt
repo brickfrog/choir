@@ -144,51 +144,151 @@ test "build_beads_doctor_report flags export and unrelated dirty paths" {
 
 ///|
 async test "run_beads_spec_link refuses missing spec file" {
-  let tmp = "/tmp/choir-beads-spec-link-missing-" + @sys.get_pid().to_string()
-  ignore(@sys.rm_rf(tmp))
-  assert_true(@sys.create_dir_all(tmp + "/.choir/context"))
   let seen : Array[String] = []
+  let file_checks : Array[String] = []
   let got = run_beads_spec_link(
-    tmp,
+    "/repo",
     { issue_id: "choir-a", feature_slug: "missing", force: false },
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
       seen.push(cmd.args.join(" "))
       (0, "ok\n")
     },
+    path_entry_exists=fn(path) {
+      file_checks.push("entry:" + path)
+      false
+    },
+    path_readable=fn(path) {
+      file_checks.push("readable:" + path)
+      false
+    },
+    read_file=fn(path) {
+      file_checks.push("read:" + path)
+      ""
+    },
   )
-  ignore(@sys.rm_rf(tmp))
   match got {
     Err(e) =>
       assert_eq(
         e.message(),
-        "validation error: spec file .choir/context/missing-spec.md does not exist (or is empty); refuse to link",
+        "validation error: spec file .choir/context/missing-spec.md does not exist; refuse to link without --force",
       )
     Ok(_) => fail("expected missing spec error")
   }
   assert_eq(seen.length(), 0)
+  assert_eq(file_checks, ["entry:/repo/.choir/context/missing-spec.md"])
+}
+
+///|
+async test "run_beads_spec_link refuses empty spec file" {
+  let seen : Array[String] = []
+  let file_checks : Array[String] = []
+  let got = run_beads_spec_link(
+    "/repo",
+    { issue_id: "choir-a", feature_slug: "empty", force: false },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd.args.join(" "))
+      (0, "ok\n")
+    },
+    path_entry_exists=fn(path) {
+      file_checks.push("entry:" + path)
+      true
+    },
+    path_readable=fn(path) {
+      file_checks.push("readable:" + path)
+      true
+    },
+    read_file=fn(path) {
+      file_checks.push("read:" + path)
+      ""
+    },
+  )
+  match got {
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        "validation error: spec file .choir/context/empty-spec.md exists but is empty; refuse to link without --force (typically means the spec was scaffolded but not yet written)",
+      )
+    Ok(_) => fail("expected empty spec error")
+  }
+  assert_eq(seen.length(), 0)
+  assert_eq(file_checks, [
+    "entry:/repo/.choir/context/empty-spec.md", "readable:/repo/.choir/context/empty-spec.md",
+    "read:/repo/.choir/context/empty-spec.md",
+  ])
+}
+
+///|
+async test "run_beads_spec_link refuses unreadable spec file" {
+  let seen : Array[String] = []
+  let file_checks : Array[String] = []
+  let got = run_beads_spec_link(
+    "/repo",
+    { issue_id: "choir-a", feature_slug: "locked", force: false },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd.args.join(" "))
+      (0, "ok\n")
+    },
+    path_entry_exists=fn(path) {
+      file_checks.push("entry:" + path)
+      true
+    },
+    path_readable=fn(path) {
+      file_checks.push("readable:" + path)
+      false
+    },
+    read_file=fn(path) {
+      file_checks.push("read:" + path)
+      ""
+    },
+  )
+  match got {
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        "validation error: spec file .choir/context/locked-spec.md exists but is unreadable; check permissions",
+      )
+    Ok(_) => fail("expected unreadable spec error")
+  }
+  assert_eq(seen.length(), 0)
+  assert_eq(file_checks, [
+    "entry:/repo/.choir/context/locked-spec.md", "readable:/repo/.choir/context/locked-spec.md",
+  ])
 }
 
 ///|
 async test "run_beads_spec_link force allows missing spec file" {
-  let tmp = "/tmp/choir-beads-spec-link-force-" + @sys.get_pid().to_string()
-  ignore(@sys.rm_rf(tmp))
   let seen : Array[String] = []
+  let file_checks : Array[String] = []
   let got = run_beads_spec_link(
-    tmp,
+    "/repo",
     { issue_id: "choir-a", feature_slug: "future", force: true },
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
       seen.push(cmd.args.join(" "))
       (0, "ok\n")
     },
+    path_entry_exists=fn(path) {
+      file_checks.push("entry:" + path)
+      false
+    },
+    path_readable=fn(path) {
+      file_checks.push("readable:" + path)
+      false
+    },
+    read_file=fn(path) {
+      file_checks.push("read:" + path)
+      ""
+    },
   )
-  ignore(@sys.rm_rf(tmp))
   match got {
     Ok(text) => assert_eq(text, "ok\n")
     Err(e) => fail(e.message())
   }
   assert_eq(seen.length(), 1)
+  assert_eq(file_checks.length(), 0)
   assert_true(
     seen[0].contains("update choir-a --spec-id .choir/context/future-spec.md"),
   )
@@ -196,28 +296,38 @@ async test "run_beads_spec_link force allows missing spec file" {
 
 ///|
 async test "run_beads_spec_link succeeds for existing spec file" {
-  let tmp = "/tmp/choir-beads-spec-link-existing-" + @sys.get_pid().to_string()
-  ignore(@sys.rm_rf(tmp))
-  assert_true(@sys.create_dir_all(tmp + "/.choir/context"))
-  assert_true(
-    @sys.write_file_sync(tmp + "/.choir/context/beads-glue-spec.md", "# Spec\n"),
-  )
   let seen : Array[String] = []
+  let file_checks : Array[String] = []
   let got = run_beads_spec_link(
-    tmp,
+    "/repo",
     { issue_id: "choir-a", feature_slug: "beads-glue", force: false },
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
       seen.push(cmd.args.join(" "))
       (0, "linked\n")
     },
+    path_entry_exists=fn(path) {
+      file_checks.push("entry:" + path)
+      true
+    },
+    path_readable=fn(path) {
+      file_checks.push("readable:" + path)
+      true
+    },
+    read_file=fn(path) {
+      file_checks.push("read:" + path)
+      "# Spec\n"
+    },
   )
-  ignore(@sys.rm_rf(tmp))
   match got {
     Ok(text) => assert_eq(text, "linked\n")
     Err(e) => fail(e.message())
   }
   assert_eq(seen.length(), 1)
+  assert_eq(file_checks, [
+    "entry:/repo/.choir/context/beads-glue-spec.md", "readable:/repo/.choir/context/beads-glue-spec.md",
+    "read:/repo/.choir/context/beads-glue-spec.md",
+  ])
   assert_true(
     seen[0].contains(
       "update choir-a --spec-id .choir/context/beads-glue-spec.md",
@@ -226,13 +336,36 @@ async test "run_beads_spec_link succeeds for existing spec file" {
 }
 
 ///|
-async test "run_beads_doctor parses warning-prefixed ready json" {
+test "build_beads_doctor_report parses trailing ready json noise" {
+  let report = build_beads_doctor_report(
+    (
+      #|[{"id":"choir-ready","title":"Ready","status":"open"}]
+      #|warning: auto-export finished after stdout
+    ),
+    "[]",
+    "",
+  ).unwrap()
+  assert_eq(report.ready_count, 1)
+  assert_eq(report.in_progress_count, 0)
+}
+
+///|
+async test "run_beads_doctor parses warning-wrapped ready json" {
   let got = run_beads_doctor("/repo", async fn(
     cmd : @workspace.Command,
   ) -> (Int, String) {
     @async.sleep(0)
     if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "ready" {
-      (0, "Warning: auto-export in progress\n[]")
+      (
+        0,
+        (
+          #|Warning: auto-export in progress
+          #|[
+          #|  {"id":"choir-ready","title":"Ready {inside string}","status":"open"}
+          #|]
+          #|Warning: auto-export finished after stdout
+        ),
+      )
     } else if cmd.program == "bd" {
       (0, "[]")
     } else {
@@ -241,7 +374,39 @@ async test "run_beads_doctor parses warning-prefixed ready json" {
   })
   match got {
     Ok(text) => {
-      assert_true(text.contains("ready_count: 0"))
+      assert_true(text.contains("ready_count: 1"))
+      assert_true(text.contains("in_progress_count: 0"))
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+async test "run_beads_doctor parses multi-line prefix warning before ready json" {
+  let got = run_beads_doctor("/repo", async fn(
+    cmd : @workspace.Command,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "ready" {
+      (
+        0,
+        (
+          #|[beads] auto-export already running
+          #|warning: .beads/issues.jsonl changed while reading
+          #|[
+          #|  {"id":"choir-ready","title":"Ready","status":"open"}
+          #|]
+        ),
+      )
+    } else if cmd.program == "bd" {
+      (0, "[]")
+    } else {
+      (0, "")
+    }
+  })
+  match got {
+    Ok(text) => {
+      assert_true(text.contains("ready_count: 1"))
       assert_true(text.contains("in_progress_count: 0"))
     }
     Err(e) => fail(e.message())
