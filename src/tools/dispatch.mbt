@@ -903,23 +903,19 @@ pub async fn dispatch(
           )
       }
     ToolRequest::SpawnWorker(worker_args) =>
-      match ensure_caller_can_spawn(worker_args.caller_id, registry) {
-        Err(e) => @types.Response::Err(e.message())
-        Ok(_) =>
-          interpret_spawn_worker(
-            worker_args,
-            project_dir,
-            session,
-            runner,
-            capture,
-            registry,
-            extra_mcp_servers_json~,
-            shell_command~,
-            listen_uds~,
-            listen_tcp~,
-            tcp_auth_token~,
-          )
-      }
+      interpret_spawn_worker(
+        worker_args,
+        project_dir,
+        session,
+        runner,
+        capture,
+        registry,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
+      )
     ToolRequest::Reply(reply_args) => {
       let id = reply_args.id
       let cancel = reply_args.cancel
