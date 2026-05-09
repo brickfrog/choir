@@ -42,6 +42,79 @@ pub fn ensure_caller_can_spawn(
 }
 
 ///|
+fn registry_has_agent(reg : @registry.AgentRegistry, agent_id : String) -> Bool {
+  try {
+    ignore(reg.get(agent_id))
+    true
+  } catch {
+    _ => false
+  } noraise {
+    result => result
+  }
+}
+
+///|
+fn spawn_worker_parent_candidate(agent : @types.Agent) -> Bool {
+  match agent.role {
+    @types.Role::Root | @types.Role::TL => true
+    _ => false
+  }
+}
+
+///|
+fn fallback_spawn_worker_parent_id(agents : Array[@types.Agent]) -> String? {
+  let candidates : Array[String] = []
+  for agent in agents {
+    if spawn_worker_parent_candidate(agent) {
+      let id = agent.agent_id.to_string()
+      if id == "root" {
+        return Some(id)
+      }
+      candidates.push(id)
+    }
+  }
+  if candidates.length() == 1 {
+    Some(candidates[0])
+  } else {
+    None
+  }
+}
+
+///|
+/// Resolve the parent recorded for an inline worker before launching it. Fresh
+/// test/non-orchestration paths with an empty registry keep the requested id;
+/// live server paths normalize an unregistered caller to the registered TL/root
+/// when there is one unambiguous parent.
+fn resolve_spawn_worker_parent_id(
+  caller_id : String,
+  registry : @registry.AgentRegistry?,
+) -> Result[String, @types.ChoirError] {
+  match registry {
+    None => Ok(caller_id)
+    Some(reg) =>
+      if registry_has_agent(reg, caller_id) {
+        Ok(caller_id)
+      } else {
+        let agents = reg.list()
+        if agents.length() == 0 {
+          return Ok(caller_id)
+        }
+        match fallback_spawn_worker_parent_id(agents) {
+          Some(parent_id) => Ok(parent_id)
+          None =>
+            Err(
+              @types.ChoirError::validation_error(
+                "spawn_worker caller_id '" +
+                caller_id +
+                "' is not registered; pass an agent_id that exists in the agent registry",
+              ),
+            )
+        }
+      }
+  }
+}
+
+///|
 /// Pure plan for `spawn_worker` after default-branch resolution: spawn spec,
 /// canonical id, terminal target, registry upsert row, and success response.
 pub(all) struct SpawnWorkerPlan {
@@ -187,11 +260,20 @@ pub async fn interpret_spawn_worker(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
 ) -> @types.Response {
+  let normalized_args = match
+    resolve_spawn_worker_parent_id(worker_args.caller_id, registry) {
+    Ok(parent_id) => { ..worker_args, caller_id: parent_id }
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  match ensure_caller_can_spawn(normalized_args.caller_id, registry) {
+    Ok(_) => ()
+    Err(e) => return @types.Response::Err(e.message())
+  }
   let resolved_parent_branch = detect_default_branch_with_capture(
     project_dir, capture,
   )
   let plan = spawn_worker_plan(
-    worker_args, resolved_parent_branch, session, project_dir,
+    normalized_args, resolved_parent_branch, session, project_dir,
   )
   let cmds = @workspace.spawn_commands(
     plan.spec,

@@ -50,7 +50,7 @@ pub fn parse_smoke_beads_args(
   let suffix = default_smoke_suffix()
   let mut issue_id = "choir-beads-handoff-smoke-" + suffix
   let mut slug = "beads-handoff-smoke-" + suffix
-  let mut caller_id = "main"
+  let mut caller_id = "root"
   let mut timeout_sec = 600
   let mut poll_interval_ms = 1000
   let mut help = false
@@ -152,6 +152,7 @@ fn smoke_beads_help() -> String {
     #|  Worker shutdown is observability-only after notify_parent.
     #|
     #|Defaults:
+    #|  --caller-id root
     #|  --timeout-sec 600
     #|
   )

@@ -3,7 +3,7 @@ fn smoke_args() -> SmokeBeadsArgs {
   {
     issue_id: "choir-beads-live-smoke",
     slug: "beads-smoke",
-    caller_id: "main",
+    caller_id: "root",
     timeout_sec: 30,
     poll_interval_ms: 10,
     help: false,
@@ -32,6 +32,12 @@ test "parse_smoke_beads_args defaults timeout to 600 seconds" {
 }
 
 ///|
+test "parse_smoke_beads_args defaults caller_id to root" {
+  let got = parse_smoke_beads_args(["choir", "smoke", "beads-handoff"]).unwrap()
+  assert_eq(got.caller_id, "root")
+}
+
+///|
 test "smoke_beads_worker_task requires task_get and forbids bd show" {
   let got = smoke_beads_worker_task("choir-beads-live-smoke")
   assert_true(got.contains("task_get choir-beads-live-smoke"))
@@ -43,7 +49,7 @@ test "smoke_beads_worker_task requires task_get and forbids bd show" {
 test "smoke_beads_spawn_args passes beads issue id without agent_type override" {
   let args = smoke_args()
   let got = smoke_beads_spawn_args(args)
-  @debug.assert_eq(got.get("caller_id"), Some("main".to_json()))
+  @debug.assert_eq(got.get("caller_id"), Some("root".to_json()))
   @debug.assert_eq(got.get("slug"), Some("beads-smoke".to_json()))
   @debug.assert_eq(got.get("worker_type"), Some("research".to_json()))
   @debug.assert_eq(
