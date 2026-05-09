@@ -261,13 +261,15 @@ pub fn shutdown_exit_plan(
 
 ///|
 /// Adapter-side ordering for `shutdown`: poller gate, registry role, lifecycle
-/// read, optional dev exit event, optional worktree removal (matches dispatch).
+/// read, optional dev exit event, optional worktree removal, and Beads mirror
+/// (matches dispatch).
 pub(all) enum ShutdownAdapterHostStep {
   PollerCriticalPhaseRead
   RegistryRoleLookup
   LifecycleRead
   DevExitEventApply
   WorktreeCleanupAttempt
+  BeadsLifecycleMirror
 } derive(Debug, Eq)
 
 ///|
@@ -283,6 +285,7 @@ pub fn shutdown_adapter_host_steps() -> Array[ShutdownAdapterHostStep] {
     ShutdownAdapterHostStep::LifecycleRead,
     ShutdownAdapterHostStep::DevExitEventApply,
     ShutdownAdapterHostStep::WorktreeCleanupAttempt,
+    ShutdownAdapterHostStep::BeadsLifecycleMirror,
   ]
 }
 
@@ -344,13 +347,14 @@ pub fn workflow_state_pr_number(workflow : @phase.WorkflowState) -> Int? {
 
 ///|
 /// Effectful shutdown adapter: poller gate, lifecycle + `shutdown_exit_plan`,
-/// dev exit event, worktree cleanup.
+/// dev exit event, worktree cleanup, Beads lifecycle mirror.
 pub async fn interpret_shutdown(
   args : ShutdownArgs,
   project_dir : String,
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
 ) -> @types.Response {
   let caller_id = match args.caller_id {
     Some(v) => v
@@ -388,6 +392,14 @@ pub async fn interpret_shutdown(
         }
       None => ()
     }
+  }
+  if plan.attempt_worktree_cleanup {
+    ignore(
+      mirror_beads_state_for_agent(
+        project_dir, registry, caller_id, "lifecycle", "shutdown", "Choir agent shutdown",
+        "shutdown", capture,
+      ),
+    )
   }
   plan.response
 }

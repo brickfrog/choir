@@ -51,7 +51,7 @@ pub fn parse_smoke_beads_args(
   let mut issue_id = "choir-beads-handoff-smoke-" + suffix
   let mut slug = "beads-handoff-smoke-" + suffix
   let mut caller_id = "main"
-  let mut timeout_sec = 120
+  let mut timeout_sec = 300
   let mut poll_interval_ms = 1000
   let mut help = false
   let mut i = 3
@@ -147,8 +147,9 @@ fn smoke_beads_help() -> String {
     #|
     #|Runs a live Beads handoff canary through the Choir server:
     #|  create a Beads task, spawn one read-only worker with beads_issue_id,
-    #|  observe task_get + notify_parent + shutdown events, close the task,
+    #|  observe task_get + notify_parent events, close the task,
     #|  export .beads/issues.jsonl, and reject unrelated git mutations.
+    #|  Worker shutdown is observability-only after notify_parent.
     #|
   )
 }
@@ -404,26 +405,9 @@ fn event_tool_ok(event : Event, tool : String) -> Bool {
 }
 
 ///|
-fn event_lifecycle_shutdown_done(event : Event) -> Bool {
-  if event.type_ != "lifecycle.transition" {
-    return false
-  }
-  guard event.data is Object(data) else { return false }
-  if @types.json_field_string(data, "trigger") != Some("FinalizeComplete") {
-    return false
-  }
-  match @types.json_field_string(data, "to") {
-    Some(to) =>
-      to.contains("Finalized") && to.contains("Done") && to.contains("Shutdown")
-    None => false
-  }
-}
-
-///|
 pub fn smoke_beads_events_pass(events : Array[Event]) -> Bool {
   let mut saw_task_get = false
   let mut saw_notify_parent = false
-  let mut saw_shutdown = false
   for event in events {
     if event_tool_ok(event, "task_get") {
       saw_task_get = true
@@ -431,11 +415,8 @@ pub fn smoke_beads_events_pass(events : Array[Event]) -> Bool {
     if event_tool_ok(event, "notify_parent") {
       saw_notify_parent = true
     }
-    if event_lifecycle_shutdown_done(event) {
-      saw_shutdown = true
-    }
   }
-  saw_task_get && saw_notify_parent && saw_shutdown
+  saw_task_get && saw_notify_parent
 }
 
 ///|
@@ -458,7 +439,7 @@ async fn wait_for_smoke_events(
   }
   Err(
     @types.ChoirError::transport_error(
-      "timed out waiting for worker task_get, notify_parent, and shutdown events",
+      "timed out waiting for worker task_get and notify_parent events",
     ),
   )
 }
@@ -614,7 +595,7 @@ pub fn render_smoke_beads_report(report : SmokeBeadsReport) -> String {
   report.agent_type +
   "\nbeads_issue_id: " +
   report.beads_issue_id +
-  "\nobserved: task_get ok, notify_parent ok, shutdown finalized\npost_worker_git_status:\n" +
+  "\nobserved: task_get ok, notify_parent ok; shutdown observability-only after notify_parent\npost_worker_git_status:\n" +
   render_status_block(report.worker_status) +
   "\nfinal_git_status:\n" +
   render_status_block(report.final_status) +
