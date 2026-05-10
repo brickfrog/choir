@@ -39,6 +39,61 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
 }
 
 ///|
+fn serve_inherited_uds_fd() -> Int? {
+  match @sys.getenv("CHOIR_INHERIT_UDS_FD") {
+    Some(raw) => {
+      let parsed = @string.parse_int(raw.trim()) catch { _ => -1 }
+      if parsed >= 0 {
+        Some(parsed)
+      } else {
+        None
+      }
+    }
+    None => None
+  }
+}
+
+///|
+fn serve_is_reload_request(req : @types.Request) -> Bool {
+  req.req_method == "tools/call" && req.name == "server_reload"
+}
+
+///|
+fn serve_reload_binary_path_for_request(
+  state : @server.ServerState,
+  req : @types.Request,
+) -> String {
+  req.args
+  .get("binary_path")
+  .unwrap_or(@exec.reload_binary_path(state.config.project_dir))
+}
+
+///|
+fn serve_replace_self_after_reload_ack(
+  server_fd : Int,
+  state : @server.ServerState,
+  req : @types.Request,
+) -> Unit {
+  if !@uds.clear_cloexec(server_fd) {
+    @moontrace.error("server reload failed to clear FD_CLOEXEC", fields=[
+      @moontrace.field("fd", server_fd),
+    ])
+    return
+  }
+  let binary_path = serve_reload_binary_path_for_request(state, req)
+  match @exec.replace_self(binary_path, server_fd) {
+    Ok(_) => ()
+    Err(e) => {
+      @moontrace.error("server reload exec failed", fields=[
+        @moontrace.field("binary_path", binary_path),
+        @moontrace.field("error", e.message()),
+      ])
+      @sys.write_stderr("[server_reload] exec failed: " + e.message() + "\n")
+    }
+  }
+}
+
+///|
 fn lifecycle_agent_id_for_register(req : @types.Request) -> String? {
   if req.req_method != "register" {
     return None
@@ -131,6 +186,13 @@ async fn serve_handle_connection(
         let req_res = @transport.parse_request(line)
         match req_res {
           Ok(req) => {
+            if serve_is_reload_request(req) {
+              let resp = @types.Response::Err(
+                "server_reload requires the UDS transport",
+              )
+              conn.write(@utf8.encode(@transport.format_response(resp) + "\n"))
+              continue
+            }
             if req.req_method == "register" {
               connected_agent_id = lifecycle_agent_id_for_register(req)
             }
@@ -186,6 +248,7 @@ fn serve_write_all_uds(fd : Int, data : Bytes) -> Unit {
 async fn serve_handle_uds_connection(
   client : ServeUDSClient,
   state : @server.ServerState,
+  server_fd : Int,
 ) -> Bool {
   for ;; {
     if client.read_pos == client.buf.length() {
@@ -228,6 +291,9 @@ async fn serve_handle_uds_connection(
               @moontrace.field("body", resp_str),
             ])
             serve_write_all_uds(client.fd, @utf8.encode(resp_str))
+            if serve_is_reload_request(req) && resp.is_ok() {
+              serve_replace_self_after_reload_ack(server_fd, state, req)
+            }
           }
           Err(err) => {
             @moontrace.warn("parse error", fields=[
@@ -275,13 +341,18 @@ fn serve_run() -> Unit {
     Ok(cfg) => cfg
     Err(_) => @types.Config::default()
   }
+  let inherited_uds_fd = serve_inherited_uds_fd()
   @moontrace.set_subscriber(fn(event) { println(event.format(color=true)) })
   @moontrace.set_min_level(@moontrace.Level::Debug)
   @sys.write_pid_file(".choir/server.pid")
   @sys.register_cleanup_runtime_artifacts()
-  // Clean stale runtime markers from previous sessions, but preserve recoverable
-  // worktrees/lifecycle/poller state so restart recovery can rehydrate agents.
-  @sys.init_cleanup_runtime_artifacts_native()
+  match inherited_uds_fd {
+    Some(_) => ()
+    None =>
+      // Clean stale runtime markers from previous sessions, but preserve recoverable
+      // worktrees/lifecycle/poller state so restart recovery can rehydrate agents.
+      @sys.init_cleanup_runtime_artifacts_native()
+  }
   let provider = @server.make_recovery_provider()
   let state = @server.ServerState::new(config, provider)
   @moontrace.set_global_field("service", "choir".to_json())
@@ -294,6 +365,21 @@ fn serve_run() -> Unit {
         config.terminal_session,
       )
       @server.recover_state(state, config.terminal_session, recovery_input)
+      match inherited_uds_fd {
+        Some(fd) =>
+          match state.restore_reload_snapshot() {
+            Ok(_) => {
+              let line = "[server_reload] resumed run_id=" + state.run_id
+              @moontrace.info(line, fields=[@moontrace.field("fd", fd)])
+              @sys.write_stdout(line + "\n")
+            }
+            Err(e) =>
+              @moontrace.error("server reload resume failed", fields=[
+                @moontrace.field("error", e.message()),
+              ])
+          }
+        None => ()
+      }
       state.replay_pending_outbox(runner=@exec.run_sequence)
       root.spawn_bg(async fn() {
         let timeout_sec = 900L
@@ -319,7 +405,10 @@ fn serve_run() -> Unit {
         }
       })
       root.spawn_bg(async fn() {
-        let server_fd = @uds.server_create(config.listen_uds)
+        let server_fd = match inherited_uds_fd {
+          Some(fd) => fd
+          None => @uds.server_create(config.listen_uds)
+        }
         if server_fd < 0 {
           @moontrace.error("failed to bind UDS server", fields=[
             @moontrace.field("path", config.listen_uds),
@@ -327,9 +416,17 @@ fn serve_run() -> Unit {
           return
         }
         ignore(@uds.set_nonblocking(server_fd))
-        @moontrace.info("UDS server listening", fields=[
-          @moontrace.field("path", config.listen_uds),
-        ])
+        match inherited_uds_fd {
+          Some(fd) =>
+            @moontrace.info("UDS server inherited listener", fields=[
+              @moontrace.field("path", config.listen_uds),
+              @moontrace.field("fd", fd),
+            ])
+          None =>
+            @moontrace.info("UDS server listening", fields=[
+              @moontrace.field("path", config.listen_uds),
+            ])
+        }
         let clients : Array[ServeUDSClient] = []
         for ;; {
           for ;; {
@@ -346,7 +443,11 @@ fn serve_run() -> Unit {
           }
           let mut i = 0
           while i < clients.length() {
-            let alive = serve_handle_uds_connection(clients[i], state) catch {
+            let alive = serve_handle_uds_connection(
+              clients[i],
+              state,
+              server_fd,
+            ) catch {
               _ => false
             }
             if alive {

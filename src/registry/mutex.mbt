@@ -154,3 +154,151 @@ pub fn MutexRegistry::is_waiting(
     Some(entry) => queue_contains(entry.queue, agent_id)
   }
 }
+
+///|
+pub fn MutexRegistry::clear(self : MutexRegistry) -> Unit {
+  let names : Array[String] = []
+  self.locks.each(fn(name, _entry) { names.push(name) })
+  for name in names {
+    self.locks.remove(name)
+  }
+}
+
+///|
+fn mutex_optional_string_json(value : String?) -> Json {
+  match value {
+    Some(v) => v.to_json()
+    None => @json.parse("null") catch { _ => "".to_json() }
+  }
+}
+
+///|
+fn mutex_entry_snapshot_json(name : String, entry : MutexEntry) -> Json {
+  {
+    "name": name.to_json(),
+    "holder": mutex_optional_string_json(entry.holder),
+    "acquired_sec": entry.acquired_sec.to_json(),
+    "ttl_sec": entry.ttl_sec.to_json(),
+    "queue": entry.queue.to_json(),
+  }.to_json()
+}
+
+///|
+pub fn MutexRegistry::to_snapshot_json(self : MutexRegistry) -> Json {
+  let locks : Array[Json] = []
+  self.locks.each(fn(name, entry) {
+    locks.push(mutex_entry_snapshot_json(name, entry))
+  })
+  { "version": (1).to_json(), "locks": locks.to_json() }.to_json()
+}
+
+///|
+fn mutex_parse_error(message : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "mutex registry snapshot parse error: " + message,
+  )
+}
+
+///|
+fn mutex_string_field(
+  obj : Map[String, Json],
+  key : String,
+) -> Result[String, @types.ChoirError] {
+  match obj.get(key) {
+    Some(String(value)) => Ok(value)
+    _ => Err(mutex_parse_error("missing string field: " + key))
+  }
+}
+
+///|
+fn mutex_optional_string_field(
+  obj : Map[String, Json],
+  key : String,
+) -> Result[String?, @types.ChoirError] {
+  match obj.get(key) {
+    Some(String(value)) => Ok(Some(value))
+    Some(_) | None => Ok(None)
+  }
+}
+
+///|
+fn mutex_int64_field(
+  obj : Map[String, Json],
+  key : String,
+) -> Result[Int64, @types.ChoirError] {
+  match @types.json_field_int64(obj, key) {
+    Some(value) => Ok(value)
+    None => Err(mutex_parse_error("missing numeric field: " + key))
+  }
+}
+
+///|
+fn mutex_string_array_field(
+  obj : Map[String, Json],
+  key : String,
+) -> Result[Array[String], @types.ChoirError] {
+  match obj.get(key) {
+    Some(Array(items)) => {
+      let out : Array[String] = []
+      for item in items {
+        match item {
+          String(value) => out.push(value)
+          _ => return Err(mutex_parse_error(key + " contains non-string"))
+        }
+      }
+      Ok(out)
+    }
+    _ => Err(mutex_parse_error("missing string array field: " + key))
+  }
+}
+
+///|
+fn mutex_parse_entry(
+  obj : Map[String, Json],
+) -> Result[(String, MutexEntry), @types.ChoirError] {
+  let name = match mutex_string_field(obj, "name") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let holder = match mutex_optional_string_field(obj, "holder") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let acquired_sec = match mutex_int64_field(obj, "acquired_sec") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let ttl_sec = match mutex_int64_field(obj, "ttl_sec") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let queue = match mutex_string_array_field(obj, "queue") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  Ok((name, { holder, acquired_sec, ttl_sec, queue }))
+}
+
+///|
+pub fn MutexRegistry::restore_snapshot_json(
+  self : MutexRegistry,
+  json : Json,
+) -> Result[Unit, @types.ChoirError] {
+  guard json is Object(root) else {
+    return Err(mutex_parse_error("expected object"))
+  }
+  guard root.get("locks") is Some(Array(items)) else {
+    return Err(mutex_parse_error("missing locks array"))
+  }
+  self.clear()
+  for item in items {
+    guard item is Object(obj) else {
+      return Err(mutex_parse_error("lock entry is not an object"))
+    }
+    match mutex_parse_entry(obj) {
+      Ok((name, entry)) => self.locks.set(name, entry)
+      Err(e) => return Err(e)
+    }
+  }
+  Ok(())
+}

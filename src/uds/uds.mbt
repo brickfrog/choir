@@ -46,6 +46,9 @@ extern "C" fn uds_close_ffi(fd : Int) = "choir_uds_close"
 extern "C" fn uds_set_nonblocking_ffi(fd : Int) -> Int = "choir_uds_set_nonblocking"
 
 ///|
+extern "C" fn uds_clear_cloexec_ffi(fd : Int) -> Int = "choir_uds_clear_cloexec"
+
+///|
 #borrow(path, body)
 extern "C" fn uds_http_post_ffi(
   path : Bytes,
@@ -116,6 +119,11 @@ pub fn write_bytes(fd : Int, buf : Bytes, offset : Int, len : Int) -> Int {
 ///|
 pub fn set_nonblocking(fd : Int) -> Bool {
   uds_set_nonblocking_ffi(fd) == 0
+}
+
+///|
+pub fn clear_cloexec(fd : Int) -> Bool {
+  uds_clear_cloexec_ffi(fd) == 0
 }
 
 ///|

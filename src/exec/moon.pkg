@@ -1,9 +1,11 @@
 import {
   "choir/src/sys",
+  "choir/src/types",
   "choir/src/workspace",
   "moonbitlang/async",
   "moonbitlang/async/os_error",
   "moonbitlang/async/process",
+  "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonbitlang/core/debug",
@@ -12,6 +14,7 @@ import {
 
 options(
   "is-main": false,
+  "native-stub": [ "stub.c" ],
   targets: {
     "exec_native.mbt": [ "native" ],
     "exec_stub.mbt": [ "js", "wasm", "wasm-gc" ],

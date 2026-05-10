@@ -132,6 +132,14 @@ int choir_uds_set_nonblocking(int fd) {
     return choir_set_nonblocking(fd);
 }
 
+int choir_uds_clear_cloexec(int fd) {
+    int flags = fcntl(fd, F_GETFD, 0);
+    if (flags < 0) {
+        return -1;
+    }
+    return fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC);
+}
+
 /* Fire-and-forget HTTP POST to a Unix domain socket.
    Returns 0 on success, -1 on failure.
    5-second send/recv timeout so a dead agent never blocks the server. */

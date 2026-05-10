@@ -1,4 +1,89 @@
 ///|
+#borrow(path)
+extern "C" fn exec_path_executable_ffi(path : Bytes, len : Int) -> Int = "choir_exec_path_executable"
+
+///|
+#borrow(path)
+extern "C" fn exec_replace_self_ffi(
+  path : Bytes,
+  len : Int,
+  inherited_uds_fd : Int,
+) -> Int = "choir_exec_replace_self"
+
+///|
+fn exec_string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
+  let encoded = @utf8.encode(s)
+  let len = encoded.length()
+  let result = FixedArray::make(len + 1, (0 : Byte))
+  for i = 0; i < len; i = i + 1 {
+    result[i] = encoded[i]
+  }
+  result[len] = (0 : Byte)
+  (result.unsafe_reinterpret_as_bytes(), len)
+}
+
+///|
+pub fn default_reload_binary_path(project_dir : String) -> String {
+  project_dir + "/_build/native/release/build/src/bin/choir/choir.exe"
+}
+
+///|
+pub fn reload_binary_path(project_dir : String) -> String {
+  match @sys.getenv("CHOIR_BINARY_PATH") {
+    Some(path) =>
+      if path.trim() == "" {
+        default_reload_binary_path(project_dir)
+      } else {
+        path
+      }
+    None => default_reload_binary_path(project_dir)
+  }
+}
+
+///|
+fn replace_self_error(binary_path : String, code : Int) -> @types.ChoirError {
+  let errno = if code < 0 { 0 - code } else { code }
+  @types.ChoirError::workspace_error(
+    "replace_self failed for " +
+    binary_path +
+    " (errno=" +
+    errno.to_string() +
+    ")",
+  )
+}
+
+///|
+pub fn validate_replace_self_binary(
+  binary_path : String,
+) -> Result[Unit, @types.ChoirError] {
+  let (path_bytes, len) = exec_string_to_null_terminated_bytes(binary_path)
+  let code = exec_path_executable_ffi(path_bytes, len)
+  if code == 0 {
+    Ok(())
+  } else {
+    Err(replace_self_error(binary_path, code))
+  }
+}
+
+///|
+pub fn replace_self(
+  binary_path : String,
+  inherited_uds_fd : Int,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_replace_self_binary(binary_path) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  let (path_bytes, len) = exec_string_to_null_terminated_bytes(binary_path)
+  let code = exec_replace_self_ffi(path_bytes, len, inherited_uds_fd)
+  if code == 0 {
+    Ok(())
+  } else {
+    Err(replace_self_error(binary_path, code))
+  }
+}
+
+///|
 /// Run the `entr` fallback for `choir dev` without `/bin/sh -c`: two native `find` invocations
 /// (same argv as the former `(find …; find …) | entr …` pipeline), stdout streamed to `entr` stdin
 /// (unbounded, matching the shell pipe); `entr` inherits the caller's stdout/stderr.
@@ -507,6 +592,23 @@ fn assert_hook_capture_number_field(
   match hook_capture_field_value(fields, key) {
     Some(Json::Number(value, ..)) => assert_eq(value, expected)
     _ => fail("expected number moontrace field " + key)
+  }
+}
+
+///|
+test "replace_self returns error for missing binary" {
+  let missing = "/tmp/choir-missing-reload-binary-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(missing))
+  match replace_self(missing, 4) {
+    Ok(_) => fail("expected missing binary to fail before exec")
+    Err(e) => {
+      let message = e.message()
+      assert_true(message.contains("replace_self failed for " + missing))
+      assert_true(message.contains("errno="))
+    }
   }
 }
 
