@@ -24,6 +24,45 @@ pipeline discipline). Do not duplicate its content here.
 - Use `merge_pr` only when the review state is clean and the parent branch is correct.
 - Let review and lifecycle notifications drive the next action instead of polling reflexively.
 
+## Subagent vs Leaf vs Inline
+
+Use the smallest delegation surface that preserves ownership and context
+budget.
+
+- **Leaves** own code-writing and PR cycles. Use `fork_wave` leaves for
+  anything that edits files, commits, files PRs, or needs a durable
+  branch/worktree lifecycle.
+- **Subagents** own synchronous in-context research and analysis. This means
+  the host CLI's subagent surface, such as Claude Code's `Agent` tool with
+  `subagent_type` or Codex task delegation. Use them for pre-leaf
+  investigation, cross-leaf review on integrated branches, audit-the-audit
+  verification, pre-flight pattern matching, and documentation drafts after
+  structural fixes. The output should be a focused summary that the TL folds
+  into a leaf contract, review note, doc patch, or user decision.
+- **Inline TL work** is for trivial decisions: one targeted lookup, one known
+  file, or a result small enough to carry directly in the TL context.
+
+Stop and delegate to a subagent when you are about to run more than two Bash
+investigations or make more than five Read calls to gather context for one
+decision. Concrete triggers:
+
+- About to read 3+ files in one phase to decide what a leaf should do: use an
+  Explore-style subagent and turn its summary into the leaf task contract.
+- About to grep across unfamiliar code looking for symbol ownership, analogs,
+  or repeated patterns: use a general research subagent.
+- Sarcasmotron or another reviewer claims findings are fixed: use an
+  independent subagent to verify each claim against the diff before relaying
+  it as closed.
+- About to draft a commit message, PR body, or TL doc update from a diff that
+  touches 6+ files: use a docs-drafting subagent, then edit the result inline.
+
+Subagents are the wrong surface for anything that writes code, commits, or
+files PRs; use leaves. They are also wrong for work that must stay stateful
+across multiple turns; use a leaf, Beads, or KV storage for durable state.
+They return synchronously and do not provide real-time progress streaming, so
+use a Choir leaf or worker when the task needs lifecycle events or ongoing
+coordination.
+
 ## Beads Issue Tracking
 
 Choir uses Beads (`bd`) for durable issue/backlog/dependency tracking. Beads is
@@ -59,6 +98,42 @@ not the orchestration authority: `wave_state`, lifecycle state, evidence, and
   Choir mirrors spawn, PR, notify, usage, merge, and audit milestones back to
   Beads best-effort, but live review/CI/thread/verify/merge gates remain Choir
   state.
+
+### First-Touch Foot-Guns
+
+Do not run bare `bd init` in a project that has not been Beads-initialized.
+Bare init can clobber `AGENTS.md`, install git hooks, and create a Beads
+bootstrap commit. Until a Choir wrapper owns those defaults, use the safe
+direct form:
+
+```sh
+bd init --skip-agents --skip-hooks --non-interactive --role maintainer
+```
+
+- `bd init` auto-commits `.beads/` files. If that commit is not wanted, stop
+  before doing more work and undo it immediately. For an unpublished top
+  commit where the caller still wants to inspect the generated files, use
+  `git reset --mixed HEAD~1`; if the commit is already shared, use
+  `git revert HEAD` instead.
+- Beads auto-runs `bd export` after write commands. That writes
+  `.beads/issues.jsonl` and tries to `git add` it. In a repo that gitignores
+  `.beads/`, this produces ongoing `auto-export: git add failed` warnings
+  even when the Beads write succeeded.
+- Decide what should live in git. `.beads/embeddeddolt/` is the local binary
+  store and should stay ignored. `.beads/issues.jsonl` is the exported issue
+  stream: commit it when the repo should share Beads state, or keep it local
+  with `bd init --setup-exclude` when the repo should not publish Beads data.
+- If `bd where` or `bd list` returns cryptic `BEADS_DIR` or worktree setup
+  hints, assume the workspace is not initialized yet. Bootstrap with the safe
+  init command above before trying to inspect or mutate issues.
+- The creation command is `bd create`, not `bd issue create`. For scripted
+  issue creation, use stdin for the body:
+
+```sh
+bd create "<title>" --type <type> --priority N --silent --body-file - <<'EOF'
+<body>
+EOF
+```
 
 ## Decomposition Principles
 
