@@ -239,6 +239,13 @@ fn leaf_profile_text() -> String {
   "   - Only notify_parent once you have verified zero unresolved threads.\n" +
   "8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.\n" +
   "9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
+  "## Do not exit voluntarily after file_pr\n\n" +
+  "After `file_pr` succeeds, your task is NOT complete. Copilot's inline review can take 30s-3min to arrive. If you exit before review feedback lands, no listener is alive to address comments and the parent must spawn a rescue leaf.\n\n" +
+  "You may exit ONLY when one of these is true:\n" +
+  "- The parent explicitly sends a shutdown directive in your pane.\n" +
+  "- You receive a `[PR MERGED]` notification for your PR.\n" +
+  "- The parent sends `[PARENT RELEASE]` (review/merge owned by parent).\n\n" +
+  "Any voluntary exit before one of those signals is a leaf failure. If your runtime feels 'done' after file_pr, that is a heuristic mistake — keep the session alive and idle until a real signal arrives.\n\n" +
   "Execution discipline:\n" +
   "- Run requested verification once per code change.\n" +
   "- Do not rerun the same tests repeatedly without new code changes.\n" +
