@@ -1100,6 +1100,316 @@ test "disconnect PR recovery only applies to branch-owning dev agents" {
 }
 
 ///|
+test "disconnect auto-rescue decision fires for review-owned unresolved threads" {
+  let agent_id = "main.leaf"
+  let agent : @types.Agent = {
+    agent_id,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("main.tl"),
+    workspace: "/tmp/proj/.choir/worktrees/leaf",
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id,
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=77,
+        state=@phase.ReviewOwnership::OpenUnreviewed(
+          url="https://github.com/o/r/pull/77",
+        ),
+      ),
+    ),
+  }
+  let tracked : @poller.TrackedPR = {
+    pr_number: 77,
+    agent_id,
+    branch: agent_id,
+    parent_branch: "main",
+    pr_url: "https://github.com/o/r/pull/77",
+    first_seen: 1000L,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::ChangesRequested,
+    last_review_bodies: "fix this",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 1001L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+  }
+  match
+    disconnect_auto_rescue_decision(agent, lifecycle, Some(tracked), 2, 2000L) {
+    Rescue(plan~) => {
+      assert_eq(plan.pr_number, 77)
+      assert_eq(plan.new_slug, "auto-rescue-pr-77")
+      assert_eq(plan.agent_type, @types.AgentType::Codex)
+      assert_eq(
+        plan.task,
+        "PR 77: address Copilot review threads then notify_parent",
+      )
+    }
+    NoRescue => fail("expected auto-rescue decision")
+  }
+}
+
+///|
+test "disconnect auto-rescue decision fires while Copilot review is pending" {
+  let agent_id = "main.leaf"
+  let agent : @types.Agent = {
+    agent_id,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("main.tl"),
+    workspace: "/tmp/proj/.choir/worktrees/leaf",
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id,
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=77,
+        state=@phase.ReviewOwnership::OpenUnreviewed(
+          url="https://github.com/o/r/pull/77",
+        ),
+      ),
+    ),
+  }
+  let tracked : @poller.TrackedPR = {
+    pr_number: 77,
+    agent_id,
+    branch: agent_id,
+    parent_branch: "main",
+    pr_url: "https://github.com/o/r/pull/77",
+    first_seen: 1000L,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Commented,
+    last_review_bodies: "human comment before copilot",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+  }
+  match
+    disconnect_auto_rescue_decision(agent, lifecycle, Some(tracked), 0, 1100L) {
+    Rescue(plan~) => {
+      assert_eq(plan.pr_number, 77)
+      assert_eq(
+        plan.task,
+        "PR 77: address Copilot review threads then notify_parent",
+      )
+    }
+    NoRescue => fail("expected auto-rescue decision")
+  }
+}
+
+///|
+test "disconnect auto-rescue decision is one-shot for auto-rescue leaves" {
+  let agent_id = "main.auto-rescue-pr-77"
+  let agent : @types.Agent = {
+    agent_id,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("main.tl"),
+    workspace: "/tmp/proj/.choir/worktrees/leaf",
+    branch: "main.leaf",
+    terminal_target: None,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id,
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=77,
+        state=@phase.ReviewOwnership::OpenUnreviewed(
+          url="https://github.com/o/r/pull/77",
+        ),
+      ),
+    ),
+  }
+  let tracked : @poller.TrackedPR = {
+    pr_number: 77,
+    agent_id,
+    branch: "main.leaf",
+    parent_branch: "main",
+    pr_url: "https://github.com/o/r/pull/77",
+    first_seen: 1000L,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::ChangesRequested,
+    last_review_bodies: "fix this",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 1001L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+  }
+  match
+    disconnect_auto_rescue_decision(agent, lifecycle, Some(tracked), 2, 2000L) {
+    NoRescue => ()
+    Rescue(_) => fail("auto-rescue leaf must not auto-rescue again")
+  }
+}
+
+///|
+async test "disconnect auto-rescue spawns replacement for unresolved threads" {
+  let project_dir = "/tmp/choir-auto-rescue-disconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  let parent_id = "main.tl"
+  let old_id = "main.leaf"
+  let pr_number = 78
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: old_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/leaf",
+      branch: old_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: old_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::OpenUnreviewed(
+            url="https://github.com/o/r/pull/78",
+          ),
+        ),
+      ),
+    }),
+  )
+  state.poller.track(
+    pr_number, old_id, old_id, "main", "https://github.com/o/r/pull/78", 1000L,
+  )
+
+  let task = "PR 78: address Copilot review threads then notify_parent"
+  let mut spawn_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "zellij" && cmd.args.join(" ").contains(task) {
+        spawn_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args == ["repo", "view", "--json", "owner,name"] {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1] == "graphql" {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"T1\",\"isResolved\":false,\"isOutdated\":false,\"path\":\"src/server/handler_disconnect.mbt\",\"comments\":{\"nodes\":[{\"body\":\"fix\"}]}}]}}}}}",
+      )
+    }
+    (1, "")
+  }
+
+  state.handle_disconnect_with_runner(old_id, runner~, capture~)
+
+  assert_true(spawn_seen)
+  match state.poller.get(pr_number) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, "main.auto-rescue-pr-78")
+      assert_eq(tracked.branch, old_id)
+    }
+    None => fail("expected tracked PR to transfer to rescue leaf")
+  }
+  match @phase.read_lifecycle(project_dir, old_id) {
+    Some(lifecycle) =>
+      match lifecycle.process {
+        @phase.ProcessState::Finalized(
+          reason=@phase.FinalizeReason::RescuedByReplacement
+        ) => ()
+        other => fail("expected rescued finalization, got " + other.to_string())
+      }
+    None => fail("expected old lifecycle to remain as rescued")
+  }
+  match @phase.read_lifecycle(project_dir, "main.auto-rescue-pr-78") {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(pr_number=78, ..)
+        ) => ()
+        other =>
+          fail(
+            "expected review-owned rescue lifecycle, got " + other.to_string(),
+          )
+      }
+    None => fail("expected rescue lifecycle")
+  }
+}
+
+///|
 async test "fail_agent_with_runner injects failure to parent terminal" {
   let project_dir = "/tmp/choir-watchdog-test-" +
     @sys.get_pid().to_string() +
