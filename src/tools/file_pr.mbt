@@ -541,6 +541,155 @@ async fn file_pr_current_head_sha(
 }
 
 ///|
+pub fn file_pr_audit_receipt_required(parent_branch : String) -> Bool {
+  parent_branch == "main"
+}
+
+///|
+pub fn file_pr_short_sha(sha : String) -> String {
+  if sha.length() <= 12 {
+    sha
+  } else {
+    sha[0:12].to_owned()
+  }
+}
+
+///|
+pub fn file_pr_audit_receipt_path_for_head(sha : String) -> String {
+  ".choir/audit-receipts/" + file_pr_short_sha(sha) + ".json"
+}
+
+///|
+fn file_pr_missing_audit_receipt_error(short_sha : String) -> @types.ChoirError {
+  // The gate keys solely on `parent_branch == "main"`, so any PR targeting
+  // main (feature→main, hotfix→main, release→main, hand-rolled topic →
+  // main) must have a fresh audit receipt — not just feature branches. The
+  // wording reflects that.
+  @types.ChoirError::validation_error(
+    "file_pr: PRs targeting main require a recent audit on HEAD " +
+    short_sha +
+    "; run `/audit` (choir:audit skill) on this branch first, then retry.",
+  )
+}
+
+///|
+fn file_pr_stale_audit_receipt_error(
+  audited_sha : String,
+  current_sha : String,
+) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "file_pr: audit receipt is stale (audit ran on " +
+    audited_sha +
+    ", current HEAD is " +
+    current_sha +
+    "); re-run /audit",
+  )
+}
+
+///|
+fn file_pr_invalid_audit_receipt_error(short_sha : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "file_pr: audit receipt for HEAD " +
+    short_sha +
+    " is malformed (missing or invalid `sha` / `branch` / `audited_at` field); re-run `/audit` to regenerate.",
+  )
+}
+
+///|
+struct FilePrAuditReceipt {
+  sha : String
+  branch : String
+  audited_at : Int64
+}
+
+///|
+/// Parse the JSON body the audit skill writes to
+/// `.choir/audit-receipts/<short_sha>.json`. All three fields (`sha`,
+/// `branch`, `audited_at`) must be present and well-typed; any missing or
+/// invalid field returns None so the caller emits an "invalid receipt" error
+/// rather than silently accepting a partial payload (a receipt with only
+/// `sha` would otherwise pass the gate).
+fn file_pr_parse_audit_receipt(receipt_body : String) -> FilePrAuditReceipt? {
+  let parsed = @json.parse(receipt_body.trim().to_owned()) catch {
+    _ => return None
+  }
+  guard parsed is Object(fields) else { return None }
+  let sha = match @types.json_field_string(fields, "sha") {
+    Some(s) if s != "" => s
+    _ => return None
+  }
+  let branch = match @types.json_field_string(fields, "branch") {
+    Some(b) if b != "" => b
+    _ => return None
+  }
+  let audited_at : Int64 = match fields.get("audited_at") {
+    Some(Number(n)) if n > 0.0 => n.to_int64()
+    _ => return None
+  }
+  Some({ sha, branch, audited_at })
+}
+
+///|
+pub fn file_pr_validate_audit_receipt(
+  parent_branch : String,
+  current_head : String,
+  receipt_body : String?,
+) -> Result[Unit, @types.ChoirError] {
+  if !file_pr_audit_receipt_required(parent_branch) {
+    return Ok(())
+  }
+  let short_sha = file_pr_short_sha(current_head)
+  let receipt = match receipt_body {
+    Some(body) if body.trim() != "" => body
+    _ => return Err(file_pr_missing_audit_receipt_error(short_sha))
+  }
+  match file_pr_parse_audit_receipt(receipt) {
+    Some(parsed) if parsed.sha == current_head => Ok(())
+    Some(parsed) =>
+      Err(file_pr_stale_audit_receipt_error(parsed.sha, current_head))
+    // Receipt JSON missing required fields (`sha` / `branch` / `audited_at`)
+    // or not parseable as JSON. Distinct from "stale" (where a well-formed
+    // earlier audit's sha is on disk).
+    None => Err(file_pr_invalid_audit_receipt_error(short_sha))
+  }
+}
+
+///|
+async fn file_pr_require_audit_receipt(
+  parent_branch : String,
+  file_pr_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[Unit, @types.ChoirError] {
+  if !file_pr_audit_receipt_required(parent_branch) {
+    return Ok(())
+  }
+  let head_sha = match file_pr_current_head_sha(file_pr_dir, capture) {
+    Some(sha) => sha
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "file_pr: cannot determine current HEAD for audit receipt gate",
+        ),
+      )
+  }
+  let receipt_path = file_pr_audit_receipt_path_for_head(head_sha)
+  let (exit_code, receipt_body) = capture({
+    program: "cat",
+    args: [receipt_path],
+    workdir: Some(file_pr_dir),
+  })
+  file_pr_validate_audit_receipt(
+    parent_branch,
+    head_sha,
+    if exit_code == 0 {
+      Some(receipt_body)
+    } else {
+      None
+    },
+  )
+}
+
+///|
 pub async fn file_pr_run_required_verify(
   file_pr_dir : String,
   verify_commands : Array[String],
@@ -674,6 +823,7 @@ async fn file_pr_mirror_beads_created(
 /// interpreter runs this exact sequence; kept as data for tests and docs.
 pub(all) enum FilePrPreflightHostStep {
   EnsureBranchReady
+  RequireAuditReceipt
   RunRequiredVerify
   GitPush
   EnsurePullRequest
@@ -683,6 +833,7 @@ pub(all) enum FilePrPreflightHostStep {
 pub fn file_pr_preflight_host_steps() -> Array[FilePrPreflightHostStep] {
   [
     FilePrPreflightHostStep::EnsureBranchReady,
+    FilePrPreflightHostStep::RequireAuditReceipt,
     FilePrPreflightHostStep::RunRequiredVerify,
     FilePrPreflightHostStep::GitPush,
     FilePrPreflightHostStep::EnsurePullRequest,
@@ -843,6 +994,15 @@ pub async fn interpret_file_pr(
       preflight_inputs.file_pr_dir,
     ) {
     Err(e) => return @types.Response::Err(e.message())
+    Ok(_) => ()
+  }
+  match
+    file_pr_require_audit_receipt(
+      preflight_inputs.parent_branch,
+      preflight_inputs.file_pr_dir,
+      capture,
+    ) {
+    Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()
   }
   let verify_outcomes = match

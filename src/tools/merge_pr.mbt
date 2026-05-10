@@ -735,20 +735,714 @@ pub fn merge_pr_tracked_branch_for_post_success(
 }
 
 ///|
-fn merge_pr_beads_issue_id_for_tracked(
-  project_dir : String,
+fn merge_pr_tracked_for_post_success(
   poller_state : @poller.PollerState?,
-  registry : @registry.AgentRegistry?,
   pr_number : Int,
-) -> String? {
+) -> @poller.TrackedPR? {
   match poller_state {
     Some(ps) =>
       match ps.get(pr_number) {
-        Some(tracked) =>
-          beads_issue_id_for_agent(project_dir, registry, tracked.agent_id)
+        Some(tracked) => Some(tracked)
         None => None
       }
     None => None
+  }
+}
+
+///|
+/// Bound the `gh pr view --json body` invocation in 30s of `timeout(1)`. The
+/// repo's gh-discipline (choir-vj3) flags `gh pr view --json` as a known
+/// indefinite-hang surface; wrapping with `timeout` ensures a stalled call
+/// surfaces as a non-zero exit instead of blocking merge_pr's post-success
+/// side effects (and the tool response).
+pub fn merge_pr_pr_body_command(
+  project_dir : String,
+  pr_number : Int,
+) -> @workspace.Command {
+  {
+    program: "timeout",
+    args: ["30s", "gh", "pr", "view", pr_number.to_string(), "--json", "body"],
+    workdir: Some(project_dir),
+  }
+}
+
+///|
+pub fn merge_pr_pr_body_from_view_json(output : String) -> String? {
+  let json = @json.parse(output) catch { _ => return None }
+  guard json is Object(fields) else { return None }
+  match fields.get("body") {
+    Some(String(body)) => Some(body)
+    _ => Some("")
+  }
+}
+
+///|
+fn merge_pr_closes_literal_at(s : String, i : Int) -> Bool {
+  let len = "Closes".length()
+  if i < 0 || i + len > s.length() {
+    false
+  } else {
+    let token = s[i:i + len].to_owned()
+    token == "Closes" || token == "closes"
+  }
+}
+
+///|
+fn merge_pr_regex_whitespace(c : UInt16) -> Bool {
+  c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+///|
+fn merge_pr_issue_id_char(c : UInt16) -> Bool {
+  (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.'
+}
+
+///|
+fn merge_pr_push_unique_issue_id(ids : Array[String], id : String) -> Unit {
+  if id != "" && !ids.contains(id) {
+    ids.push(id)
+  }
+}
+
+///|
+/// Extract issue ids matching the task's literal regex
+/// `[Cc]loses\s+(choir-[a-z0-9.-]+)`, plus any additional ids that follow on
+/// the same line separated by commas or whitespace
+/// (`Closes choir-a, choir-b choir-c`). Stops collecting when a non-id,
+/// non-separator character is encountered (e.g. end of line, prose).
+pub fn merge_pr_closes_issue_ids_from_body(body : String) -> Array[String] {
+  let ids : Array[String] = []
+  let closes_len = "Closes".length()
+  let prefix = "choir-"
+  let prefix_len = prefix.length()
+  let mut i = 0
+  while i < body.length() {
+    if merge_pr_closes_literal_at(body, i) {
+      let mut j = i + closes_len
+      if j < body.length() && merge_pr_regex_whitespace(body[j]) {
+        while j < body.length() && merge_pr_regex_whitespace(body[j]) {
+          j = j + 1
+        }
+        if j + prefix_len < body.length() &&
+          body[j:j + prefix_len].to_owned() == prefix {
+          let mut k = j + prefix_len
+          while k < body.length() && merge_pr_issue_id_char(body[k]) {
+            k = k + 1
+          }
+          if k > j + prefix_len {
+            merge_pr_push_unique_issue_id(ids, body[j:k].to_owned())
+            // Continue scanning the same Closes line for additional ids
+            // separated by `,` and/or whitespace until we hit something
+            // that is not a separator and not the start of a `choir-` id.
+            let mut cursor = k
+            while cursor < body.length() {
+              while cursor < body.length() &&
+                    (
+                      merge_pr_regex_whitespace(body[cursor]) ||
+                      body[cursor] == ','
+                    ) {
+                cursor = cursor + 1
+              }
+              if cursor + prefix_len <= body.length() &&
+                body[cursor:cursor + prefix_len].to_owned() == prefix {
+                let mut m = cursor + prefix_len
+                while m < body.length() && merge_pr_issue_id_char(body[m]) {
+                  m = m + 1
+                }
+                if m > cursor + prefix_len {
+                  merge_pr_push_unique_issue_id(ids, body[cursor:m].to_owned())
+                  cursor = m
+                  continue
+                }
+              }
+              break
+            }
+            i = cursor
+            continue
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  ids
+}
+
+///|
+pub fn merge_pr_beads_close_completed_via_pr_command(
+  project_dir : String,
+  issue_id : String,
+  pr_number : Int,
+) -> @workspace.Command {
+  {
+    program: "bd",
+    args: [
+      "close",
+      issue_id,
+      "--reason",
+      "completed via PR #" + pr_number.to_string(),
+    ],
+    workdir: Some(project_dir),
+  }
+}
+
+///|
+pub fn merge_pr_git_checkout_command(
+  project_dir : String,
+  branch : String,
+) -> @workspace.Command {
+  { program: "git", args: ["checkout", branch], workdir: Some(project_dir) }
+}
+
+///|
+pub fn merge_pr_git_delete_local_branch_command(
+  project_dir : String,
+  branch : String,
+) -> @workspace.Command {
+  { program: "git", args: ["branch", "-D", branch], workdir: Some(project_dir) }
+}
+
+///|
+fn merge_pr_delivery_log_line(
+  append_file : (String, String) -> Bool,
+  project_dir : String,
+  line : String,
+) -> Unit {
+  ignore(
+    append_file(project_dir + "/.choir/delivery.log", "[poller] " + line + "\n"),
+  )
+}
+
+///|
+pub fn merge_pr_beads_show_status_and_open_children(
+  output : String,
+) -> Result[(String, Bool), @types.ChoirError] {
+  let json = @json.parse(output) catch {
+    _ =>
+      return Err(@types.ChoirError::validation_error("invalid beads show JSON"))
+  }
+  let fields = match json {
+    Array(items) =>
+      if items.length() == 0 {
+        return Err(@types.ChoirError::validation_error("empty beads show JSON"))
+      } else {
+        match items[0] {
+          Object(obj) => obj
+          _ =>
+            return Err(
+              @types.ChoirError::validation_error(
+                "unexpected beads show JSON shape",
+              ),
+            )
+        }
+      }
+    Object(obj) => obj
+    _ =>
+      return Err(
+        @types.ChoirError::validation_error("unexpected beads show JSON shape"),
+      )
+  }
+  let status = match fields.get("status") {
+    Some(String(s)) => s
+    _ => ""
+  }
+  let mut has_open_children = false
+  match fields.get("epic_closeable") {
+    Some(False) => has_open_children = true
+    _ => ()
+  }
+  match fields.get("dependents") {
+    Some(Array(children)) =>
+      for child in children {
+        match child {
+          Object(child_fields) => {
+            let child_status = match child_fields.get("status") {
+              Some(String(s)) => s
+              _ => ""
+            }
+            if child_status != "" && child_status != "closed" {
+              has_open_children = true
+            }
+          }
+          _ => ()
+        }
+      }
+    _ => ()
+  }
+  Ok((status, has_open_children))
+}
+
+///|
+fn merge_pr_agent_branch_for_wave_scan(
+  registry : @registry.AgentRegistry?,
+  agent_id : String,
+) -> String {
+  match registry {
+    Some(reg) =>
+      match (Some(reg.get(agent_id)) catch { _ => None }) {
+        Some(agent) => agent.branch
+        None => agent_id
+      }
+    None => agent_id
+  }
+}
+
+///|
+fn merge_pr_beads_issue_id_for_wave_agent(
+  project_dir : String,
+  registry : @registry.AgentRegistry?,
+  agent_id : String,
+) -> String? {
+  match registry {
+    Some(reg) =>
+      match (Some(reg.get(agent_id)) catch { _ => None }) {
+        Some(agent) => @workspace.beads_issue_id_for_agent(project_dir, agent)
+        None =>
+          match
+            @workspace.task_contract_for_agent_workspace(
+              project_dir,
+              None,
+              @phase.extract_slug(agent_id),
+            ) {
+            Some(contract) => contract.beads_issue_id
+            None => None
+          }
+      }
+    None =>
+      match
+        @workspace.task_contract_for_agent_workspace(
+          project_dir,
+          None,
+          @phase.extract_slug(agent_id),
+        ) {
+        Some(contract) => contract.beads_issue_id
+        None => None
+      }
+  }
+}
+
+///|
+fn merge_pr_wave_beads_issue_ids_for_feature_branch(
+  project_dir : String,
+  registry : @registry.AgentRegistry?,
+  feature_branch : String,
+) -> Array[String] {
+  let ids : Array[String] = []
+  if feature_branch == "" {
+    return ids
+  }
+  let branch_prefix = feature_branch + "."
+  for wave_id in list_wave_ids(project_dir) {
+    match load_wave_index(project_dir, wave_id) {
+      Ok(idx) =>
+        for agent_id in idx.agent_ids {
+          let agent_branch = merge_pr_agent_branch_for_wave_scan(
+            registry, agent_id,
+          )
+          if agent_branch.has_prefix(branch_prefix) {
+            match
+              merge_pr_beads_issue_id_for_wave_agent(
+                project_dir, registry, agent_id,
+              ) {
+              Some(id) => merge_pr_push_unique_issue_id(ids, id)
+              None => ()
+            }
+          }
+        }
+      Err(_) => ()
+    }
+  }
+  ids
+}
+
+///|
+async fn merge_pr_body_closing_issue_ids(
+  project_dir : String,
+  pr_number : Int,
+  capture : async (@workspace.Command) -> (Int, String),
+  append_file : (String, String) -> Bool,
+) -> Array[String] {
+  let ids : Array[String] = []
+  let (exit_code, output) = capture(
+    merge_pr_pr_body_command(project_dir, pr_number),
+  )
+  if exit_code != 0 {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr beads body_scan failed pr=" +
+      pr_number.to_string() +
+      " exit=" +
+      exit_code.to_string(),
+    )
+    return ids
+  }
+  match merge_pr_pr_body_from_view_json(output) {
+    Some(body) =>
+      for id in merge_pr_closes_issue_ids_from_body(body) {
+        merge_pr_push_unique_issue_id(ids, id)
+      }
+    None =>
+      merge_pr_delivery_log_line(
+        append_file,
+        project_dir,
+        "merge_pr beads body_scan invalid_json pr=" + pr_number.to_string(),
+      )
+  }
+  ids
+}
+
+///|
+async fn merge_pr_close_bead_if_not_closed_without_open_children(
+  project_dir : String,
+  pr_number : Int,
+  issue_id : String,
+  capture : async (@workspace.Command) -> (Int, String),
+  append_file : (String, String) -> Bool,
+) -> Unit {
+  let (show_exit, show_output) = capture(
+    beads_readonly_show_command(project_dir, issue_id),
+  )
+  if show_exit != 0 {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr beads close skipped issue=" +
+      issue_id +
+      " outcome=show_failed exit=" +
+      show_exit.to_string(),
+    )
+    return
+  }
+  match merge_pr_beads_show_status_and_open_children(show_output) {
+    Ok((status, has_open_children)) => {
+      if status == "closed" {
+        merge_pr_delivery_log_line(
+          append_file,
+          project_dir,
+          "merge_pr beads close skipped issue=" +
+          issue_id +
+          " outcome=already_closed",
+        )
+        return
+      }
+      if has_open_children {
+        merge_pr_delivery_log_line(
+          append_file,
+          project_dir,
+          "merge_pr beads close skipped issue=" +
+          issue_id +
+          " outcome=open_children",
+        )
+        return
+      }
+    }
+    Err(_) => {
+      merge_pr_delivery_log_line(
+        append_file,
+        project_dir,
+        "merge_pr beads close skipped issue=" +
+        issue_id +
+        " outcome=show_parse_failed",
+      )
+      return
+    }
+  }
+  let (close_exit, _) = capture(
+    merge_pr_beads_close_completed_via_pr_command(
+      project_dir, issue_id, pr_number,
+    ),
+  )
+  if close_exit == 0 {
+    let audit_ok = run_beads_best_effort(
+      beads_audit_record_command(
+        project_dir,
+        Some(issue_id),
+        "tool_call",
+        "merge_pr",
+        "closed via PR #" + pr_number.to_string(),
+      ),
+      capture,
+    )
+    if !audit_ok {
+      merge_pr_delivery_log_line(
+        append_file,
+        project_dir,
+        "merge_pr beads audit issue=" +
+        issue_id +
+        " outcome=audit_failed pr=" +
+        pr_number.to_string(),
+      )
+    }
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr beads close issue=" +
+      issue_id +
+      " outcome=closed pr=" +
+      pr_number.to_string(),
+    )
+  } else {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr beads close issue=" +
+      issue_id +
+      " outcome=close_failed exit=" +
+      close_exit.to_string(),
+    )
+  }
+}
+
+///|
+async fn merge_pr_close_feature_beads(
+  project_dir : String,
+  pr_number : Int,
+  feature_branch : String?,
+  registry : @registry.AgentRegistry?,
+  capture : async (@workspace.Command) -> (Int, String),
+  append_file : (String, String) -> Bool,
+) -> Unit {
+  let issue_ids : Array[String] = []
+  match feature_branch {
+    Some(branch) =>
+      for
+        id in merge_pr_wave_beads_issue_ids_for_feature_branch(
+          project_dir, registry, branch,
+        ) {
+        merge_pr_push_unique_issue_id(issue_ids, id)
+      }
+    None => ()
+  }
+  for
+    id in merge_pr_body_closing_issue_ids(
+      project_dir, pr_number, capture, append_file,
+    ) {
+    merge_pr_push_unique_issue_id(issue_ids, id)
+  }
+  if issue_ids.length() == 0 {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr beads close skipped pr=" +
+      pr_number.to_string() +
+      " outcome=no_issue_ids",
+    )
+    return
+  }
+  for issue_id in issue_ids {
+    merge_pr_close_bead_if_not_closed_without_open_children(
+      project_dir, pr_number, issue_id, capture, append_file,
+    )
+  }
+}
+
+///|
+async fn merge_pr_run_cleanup_command(
+  project_dir : String,
+  label : String,
+  cmd : @workspace.Command,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  append_file : (String, String) -> Bool,
+) -> Bool {
+  let statuses = runner([cmd]) catch {
+    e => {
+      merge_pr_delivery_log_line(
+        append_file,
+        project_dir,
+        "merge_pr cleanup " + label + " failed exception=" + e.to_string(),
+      )
+      return false
+    }
+  }
+  let status = if statuses.length() > 0 { statuses[0] } else { -1 }
+  if status == 0 {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup " + label + " outcome=ok",
+    )
+    true
+  } else {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup " + label + " outcome=failed exit=" + status.to_string(),
+    )
+    false
+  }
+}
+
+///|
+fn merge_pr_leaf_cleanup_worktree_path(
+  project_dir : String,
+  tracked : @poller.TrackedPR?,
+  registry : @registry.AgentRegistry?,
+  branch : String,
+) -> String {
+  match tracked {
+    Some(t) =>
+      match registry {
+        Some(reg) =>
+          match (Some(reg.get(t.agent_id)) catch { _ => None }) {
+            Some(agent) =>
+              if agent.workspace.contains(".choir/worktrees/") {
+                return agent.workspace
+              }
+            None => ()
+          }
+        None => ()
+      }
+    None => ()
+  }
+  project_dir + "/.choir/worktrees/" + @phase.extract_slug(branch)
+}
+
+///|
+async fn merge_pr_cleanup_leaf_success(
+  project_dir : String,
+  tracked : @poller.TrackedPR?,
+  registry : @registry.AgentRegistry?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  append_file : (String, String) -> Bool,
+  path_exists : (String) -> Bool,
+) -> Unit {
+  let branch = match tracked {
+    Some(t) => t.branch
+    None => ""
+  }
+  if branch == "" {
+    merge_pr_delivery_log_line(
+      append_file, project_dir, "merge_pr cleanup leaf skipped outcome=no_branch",
+    )
+    return
+  }
+  let worktree_path = merge_pr_leaf_cleanup_worktree_path(
+    project_dir, tracked, registry, branch,
+  )
+  if path_exists(worktree_path) {
+    ignore(
+      merge_pr_run_cleanup_command(
+        project_dir,
+        "leaf_worktree path=" + worktree_path,
+        @workspace.git_worktree_remove(worktree_path),
+        runner,
+        append_file,
+      ),
+    )
+  } else {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup leaf_worktree skipped path=" +
+      worktree_path +
+      " outcome=missing",
+    )
+  }
+  ignore(
+    merge_pr_run_cleanup_command(
+      project_dir,
+      "leaf_branch branch=" + branch,
+      merge_pr_git_delete_local_branch_command(project_dir, branch),
+      runner,
+      append_file,
+    ),
+  )
+}
+
+///|
+async fn merge_pr_cleanup_feature_success(
+  project_dir : String,
+  feature_branch : String?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  append_file : (String, String) -> Bool,
+) -> Unit {
+  let branch = feature_branch.unwrap_or("")
+  if branch == "" || branch == "main" {
+    merge_pr_delivery_log_line(
+      append_file, project_dir, "merge_pr cleanup feature_branch skipped outcome=no_feature_branch",
+    )
+    return
+  }
+  // If the parent worktree is currently on the feature branch, git refuses to
+  // delete the branch we're standing on. Check out main first; if that fails
+  // (dirty working tree, network issue, anything), skip the branch-delete —
+  // a noisy "cannot delete current branch" failure is not the cleanup we
+  // want to ship.
+  let checkout_ok = merge_pr_run_cleanup_command(
+    project_dir,
+    "checkout_main",
+    merge_pr_git_checkout_command(project_dir, "main"),
+    runner,
+    append_file,
+  )
+  if !checkout_ok {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup feature_branch skipped outcome=checkout_main_failed branch=" +
+      branch,
+    )
+    return
+  }
+  ignore(
+    merge_pr_run_cleanup_command(
+      project_dir,
+      "feature_branch branch=" + branch,
+      merge_pr_git_delete_local_branch_command(project_dir, branch),
+      runner,
+      append_file,
+    ),
+  )
+}
+
+///|
+async fn interpret_merge_pr_post_success_side_effects(
+  project_dir : String,
+  parent_branch : String,
+  pr_number : Int,
+  tracked : @poller.TrackedPR?,
+  registry : @registry.AgentRegistry?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+  append_file : (String, String) -> Bool,
+  path_exists : (String) -> Bool,
+) -> Unit {
+  if parent_branch == "main" {
+    let feature_branch = match tracked {
+      Some(t) => Some(t.branch)
+      None => None
+    }
+    // Only treat this as an integration merge when the source side actually
+    // is a `feature/*` branch. A non-feature → main PR (hotfix/*, release/*,
+    // some hand-rolled topic branch) might still contain `Closes choir-XXX`
+    // lines, but we should not auto-close beads or delete the wrong branch
+    // based on that — the wave-registry semantics only apply to feature/*.
+    let is_feature_integration = match feature_branch {
+      Some(b) => b.has_prefix("feature/")
+      None => false
+    }
+    if is_feature_integration {
+      merge_pr_close_feature_beads(
+        project_dir, pr_number, feature_branch, registry, capture, append_file,
+      )
+      merge_pr_cleanup_feature_success(
+        project_dir, feature_branch, runner, append_file,
+      )
+    } else {
+      merge_pr_delivery_log_line(
+        append_file,
+        project_dir,
+        "merge_pr cleanup integration skipped outcome=non_feature_source pr=" +
+        pr_number.to_string() +
+        " source=" +
+        feature_branch.unwrap_or("<unknown>"),
+      )
+    }
+  } else if parent_branch.has_prefix("feature/") {
+    merge_pr_cleanup_leaf_success(
+      project_dir, tracked, registry, runner, append_file, path_exists,
+    )
   }
 }
 
@@ -802,6 +1496,8 @@ pub async fn interpret_merge_pr(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
+  append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
 ) -> @types.Response {
   match
     interpret_merge_pr_preflight(
@@ -830,10 +1526,8 @@ pub async fn interpret_merge_pr(
         ) {
         Err(e) => @types.Response::Err(e.message())
         Ok(_) => {
-          let issue_id = merge_pr_beads_issue_id_for_tracked(
-            project_dir,
+          let tracked = merge_pr_tracked_for_post_success(
             poller_state,
-            registry,
             merge_args.pr_number,
           )
           let resp = interpret_merge_pr_post_success(
@@ -843,33 +1537,18 @@ pub async fn interpret_merge_pr(
             poller_state,
             registry,
           )
-          match issue_id {
-            Some(id) =>
-              if resp.is_ok() {
-                ignore(
-                  run_beads_best_effort(
-                    beads_close_merged_command(
-                      project_dir,
-                      id,
-                      merge_args.pr_number,
-                    ),
-                    capture,
-                  ),
-                )
-                ignore(
-                  run_beads_best_effort(
-                    beads_audit_record_command(
-                      project_dir,
-                      Some(id),
-                      "tool_call",
-                      "merge_pr",
-                      "merged PR #" + merge_args.pr_number.to_string(),
-                    ),
-                    capture,
-                  ),
-                )
-              }
-            None => ()
+          if resp.is_ok() {
+            interpret_merge_pr_post_success_side_effects(
+              project_dir,
+              merge_args.parent_branch,
+              merge_args.pr_number,
+              tracked,
+              registry,
+              runner,
+              capture,
+              append_file,
+              path_exists,
+            )
           }
           resp
         }
