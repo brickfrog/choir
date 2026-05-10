@@ -549,6 +549,40 @@ async test "kill_agent with empty caller_id does not auto-close tracked PRs" {
 }
 
 ///|
+fn parent_poll_test_ready_tracked(pr_number : Int) -> @poller.TrackedPR {
+  {
+    pr_number,
+    agent_id: "main.dev-ready",
+    branch: "work/ready",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/" + pr_number.to_string(),
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+  }
+}
+
+///|
+fn assert_next_action_line(
+  message : String,
+  action : @poller.NextAction,
+) -> Unit raise {
+  assert_true(message.contains("next_action: " + action.to_wire_string()))
+}
+
+///|
 test "parent_poll_event_message PR READY stresses not merged" {
   let tracked : @poller.TrackedPR = {
     pr_number: 7,
@@ -717,6 +751,76 @@ test "parent_poll_event_message MergeReady is informational in automerge mode" {
       assert_false(message.contains("`merge_pr("))
     }
     None => fail("expected automerge MergeReady message")
+  }
+}
+
+///|
+test "parent PR-state notifications emit typed next_action" {
+  let tracked = parent_poll_test_ready_tracked(73)
+  let events = [
+    @poller.PollEvent::PRReady(73),
+    @poller.PollEvent::FixesPushed(73),
+    @poller.PollEvent::CILatestHeadRollupSucceeded(73),
+    @poller.PollEvent::CopilotIssueCommentSeen(73),
+    @poller.PollEvent::MergeReady(73),
+  ]
+  for event in events {
+    match
+      parent_poll_event_message(
+        tracked,
+        "/repo",
+        event,
+        Some(0),
+        merge_mode=@poller.MergeOperatorMode::Manual,
+      ) {
+      Some((message, _)) =>
+        assert_next_action_line(message, @poller.NextAction::MergeNow)
+      None => fail("expected parent PR-state notification")
+    }
+  }
+  let merged = merged_pr_parent_message(
+    73,
+    "main.dev-ready",
+    "work/ready",
+    "main",
+    "https://ex/pr/73",
+    MergedDeliverySource::MergePrTool,
+    merge_execution_mode=Some(@evidence.MergeExecutionMode::Manual),
+  )
+  assert_true(merged.contains("[PR MERGED]"))
+  assert_next_action_line(merged, @poller.NextAction::Wait)
+}
+
+///|
+test "parent_poll_event_message MergeReady never says auto ready when policy is blocked" {
+  let tracked = parent_poll_test_ready_tracked(74)
+  let modes = [
+    @poller.MergeOperatorMode::Manual,
+    @poller.MergeOperatorMode::Automerge,
+    @poller.MergeOperatorMode::Mixed,
+  ]
+  for mode in modes {
+    match
+      parent_poll_event_message(
+        tracked,
+        "/repo",
+        @poller.PollEvent::MergeReady(74),
+        Some(2),
+        merge_mode=mode,
+      ) {
+      Some((message, _)) => {
+        assert_true(message.contains("[MERGE READY]"))
+        assert_true(
+          message.contains(
+            "Merge policy decision: blocked (2 unresolved inline review thread(s))",
+          ),
+        )
+        assert_next_action_line(message, @poller.NextAction::AddressThreads)
+        assert_false(message.contains("AUTO-MERGE READY"))
+        assert_false(message.contains("MERGE NOW:"))
+      }
+      None => fail("expected MergeReady message")
+    }
   }
 }
 

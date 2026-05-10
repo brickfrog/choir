@@ -625,6 +625,7 @@ pub fn merged_pr_parent_message(
     " is merged on the remote.",
     "branch: " + branch_disp,
     "parent_branch: " + parent_disp,
+    @poller.next_action_line(@poller.NextAction::Wait),
     "merge_provenance: " + merged_provenance_label(source, merge_execution_mode),
     merged_summary_line(source, merge_execution_mode),
   ]
