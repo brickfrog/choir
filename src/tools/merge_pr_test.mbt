@@ -1477,6 +1477,21 @@ test "merge_pr_closes_issue_ids_from_body matches literal closes regex" {
 }
 
 ///|
+test "merge_pr_closes_issue_ids_from_body captures all ids on a comma- or space-separated Closes line" {
+  // PR descriptions often list multiple beads after a single `Closes` keyword.
+  // The previous parser stopped after the first id, leaving the rest open.
+  let ids = merge_pr_closes_issue_ids_from_body(
+    "Closes choir-aaa, choir-bbb,choir-ccc choir-ddd\nThen prose continues choir-not-counted\n",
+  )
+  assert_eq(ids.length(), 4)
+  assert_true(ids.contains("choir-aaa"))
+  assert_true(ids.contains("choir-bbb"))
+  assert_true(ids.contains("choir-ccc"))
+  assert_true(ids.contains("choir-ddd"))
+  assert_false(ids.contains("choir-not-counted"))
+}
+
+///|
 test "merge_pr_beads_show_status_and_open_children detects epic children" {
   let show =
     #|[{"id":"choir-parent","status":"open","epic_closeable":false,"dependents":[{"id":"choir-child","status":"open"}]}]

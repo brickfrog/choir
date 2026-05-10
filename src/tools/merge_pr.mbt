@@ -800,8 +800,11 @@ fn merge_pr_push_unique_issue_id(ids : Array[String], id : String) -> Unit {
 }
 
 ///|
-/// Extract issue ids matching the task's literal regex:
-/// `[Cc]loses\s+(choir-[a-z0-9.-]+)`.
+/// Extract issue ids matching the task's literal regex
+/// `[Cc]loses\s+(choir-[a-z0-9.-]+)`, plus any additional ids that follow on
+/// the same line separated by commas or whitespace
+/// (`Closes choir-a, choir-b choir-c`). Stops collecting when a non-id,
+/// non-separator character is encountered (e.g. end of line, prose).
 pub fn merge_pr_closes_issue_ids_from_body(body : String) -> Array[String] {
   let ids : Array[String] = []
   let closes_len = "Closes".length()
@@ -823,7 +826,33 @@ pub fn merge_pr_closes_issue_ids_from_body(body : String) -> Array[String] {
           }
           if k > j + prefix_len {
             merge_pr_push_unique_issue_id(ids, body[j:k].to_owned())
-            i = k
+            // Continue scanning the same Closes line for additional ids
+            // separated by `,` and/or whitespace until we hit something
+            // that is not a separator and not the start of a `choir-` id.
+            let mut cursor = k
+            while cursor < body.length() {
+              while cursor < body.length() &&
+                    (
+                      merge_pr_regex_whitespace(body[cursor]) ||
+                      body[cursor] == ','
+                    ) {
+                cursor = cursor + 1
+              }
+              if cursor + prefix_len <= body.length() &&
+                body[cursor:cursor + prefix_len].to_owned() == prefix {
+                let mut m = cursor + prefix_len
+                while m < body.length() && merge_pr_issue_id_char(body[m]) {
+                  m = m + 1
+                }
+                if m > cursor + prefix_len {
+                  merge_pr_push_unique_issue_id(ids, body[cursor:m].to_owned())
+                  cursor = m
+                  continue
+                }
+              }
+              break
+            }
+            i = cursor
             continue
           }
         }
@@ -1210,7 +1239,7 @@ async fn merge_pr_run_cleanup_command(
   cmd : @workspace.Command,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   append_file : (String, String) -> Bool,
-) -> Unit {
+) -> Bool {
   let statuses = runner([cmd]) catch {
     e => {
       merge_pr_delivery_log_line(
@@ -1218,7 +1247,7 @@ async fn merge_pr_run_cleanup_command(
         project_dir,
         "merge_pr cleanup " + label + " failed exception=" + e.to_string(),
       )
-      return
+      return false
     }
   }
   let status = if statuses.length() > 0 { statuses[0] } else { -1 }
@@ -1228,12 +1257,14 @@ async fn merge_pr_run_cleanup_command(
       project_dir,
       "merge_pr cleanup " + label + " outcome=ok",
     )
+    true
   } else {
     merge_pr_delivery_log_line(
       append_file,
       project_dir,
       "merge_pr cleanup " + label + " outcome=failed exit=" + status.to_string(),
     )
+    false
   }
 }
 
@@ -1285,12 +1316,14 @@ async fn merge_pr_cleanup_leaf_success(
     project_dir, tracked, registry, branch,
   )
   if path_exists(worktree_path) {
-    merge_pr_run_cleanup_command(
-      project_dir,
-      "leaf_worktree path=" + worktree_path,
-      @workspace.git_worktree_remove(worktree_path),
-      runner,
-      append_file,
+    ignore(
+      merge_pr_run_cleanup_command(
+        project_dir,
+        "leaf_worktree path=" + worktree_path,
+        @workspace.git_worktree_remove(worktree_path),
+        runner,
+        append_file,
+      ),
     )
   } else {
     merge_pr_delivery_log_line(
@@ -1301,12 +1334,14 @@ async fn merge_pr_cleanup_leaf_success(
       " outcome=missing",
     )
   }
-  merge_pr_run_cleanup_command(
-    project_dir,
-    "leaf_branch branch=" + branch,
-    merge_pr_git_delete_local_branch_command(project_dir, branch),
-    runner,
-    append_file,
+  ignore(
+    merge_pr_run_cleanup_command(
+      project_dir,
+      "leaf_branch branch=" + branch,
+      merge_pr_git_delete_local_branch_command(project_dir, branch),
+      runner,
+      append_file,
+    ),
   )
 }
 
@@ -1324,19 +1359,35 @@ async fn merge_pr_cleanup_feature_success(
     )
     return
   }
-  merge_pr_run_cleanup_command(
+  // If the parent worktree is currently on the feature branch, git refuses to
+  // delete the branch we're standing on. Check out main first; if that fails
+  // (dirty working tree, network issue, anything), skip the branch-delete —
+  // a noisy "cannot delete current branch" failure is not the cleanup we
+  // want to ship.
+  let checkout_ok = merge_pr_run_cleanup_command(
     project_dir,
     "checkout_main",
     merge_pr_git_checkout_command(project_dir, "main"),
     runner,
     append_file,
   )
-  merge_pr_run_cleanup_command(
-    project_dir,
-    "feature_branch branch=" + branch,
-    merge_pr_git_delete_local_branch_command(project_dir, branch),
-    runner,
-    append_file,
+  if !checkout_ok {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup feature_branch skipped outcome=checkout_main_failed branch=" +
+      branch,
+    )
+    return
+  }
+  ignore(
+    merge_pr_run_cleanup_command(
+      project_dir,
+      "feature_branch branch=" + branch,
+      merge_pr_git_delete_local_branch_command(project_dir, branch),
+      runner,
+      append_file,
+    ),
   )
 }
 
@@ -1357,12 +1408,32 @@ async fn interpret_merge_pr_post_success_side_effects(
       Some(t) => Some(t.branch)
       None => None
     }
-    merge_pr_close_feature_beads(
-      project_dir, pr_number, feature_branch, registry, capture, append_file,
-    )
-    merge_pr_cleanup_feature_success(
-      project_dir, feature_branch, runner, append_file,
-    )
+    // Only treat this as an integration merge when the source side actually
+    // is a `feature/*` branch. A non-feature → main PR (hotfix/*, release/*,
+    // some hand-rolled topic branch) might still contain `Closes choir-XXX`
+    // lines, but we should not auto-close beads or delete the wrong branch
+    // based on that — the wave-registry semantics only apply to feature/*.
+    let is_feature_integration = match feature_branch {
+      Some(b) => b.has_prefix("feature/")
+      None => false
+    }
+    if is_feature_integration {
+      merge_pr_close_feature_beads(
+        project_dir, pr_number, feature_branch, registry, capture, append_file,
+      )
+      merge_pr_cleanup_feature_success(
+        project_dir, feature_branch, runner, append_file,
+      )
+    } else {
+      merge_pr_delivery_log_line(
+        append_file,
+        project_dir,
+        "merge_pr cleanup integration skipped outcome=non_feature_source pr=" +
+        pr_number.to_string() +
+        " source=" +
+        feature_branch.unwrap_or("<unknown>"),
+      )
+    }
   } else if parent_branch.has_prefix("feature/") {
     merge_pr_cleanup_leaf_success(
       project_dir, tracked, registry, runner, append_file, path_exists,

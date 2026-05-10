@@ -1114,12 +1114,17 @@ test "file_pr_validate_audit_receipt distinguishes stale vs malformed receipts" 
   let head = "fedcba654321fedcba654321fedcba654321fedc"
   let short = file_pr_short_sha(head)
   // Stale: well-formed receipt JSON pointing at a different audited sha.
+  // All three required fields (sha / branch / audited_at) present.
   let other_sha = "1111111111112222222222223333333333334444"
   match
     file_pr_validate_audit_receipt(
       "main",
       head,
-      Some("{\"sha\":\"" + other_sha + "\"}"),
+      Some(
+        "{\"sha\":\"" +
+        other_sha +
+        "\",\"branch\":\"feature/x\",\"audited_at\":1700000000}",
+      ),
     ) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt is stale"))
@@ -1128,11 +1133,30 @@ test "file_pr_validate_audit_receipt distinguishes stale vs malformed receipts" 
     }
     Ok(_) => fail("expected stale audit receipt error")
   }
-  // Malformed: receipt JSON missing the `sha` field. Must NOT call this
-  // 'stale' (which would imply a known earlier sha) and must NOT leak the
-  // '<missing>' sentinel into the user-facing message.
+  // Malformed: receipt JSON has only the `sha` field, missing `branch` and
+  // `audited_at`. Must NOT pass the gate just because sha matches HEAD —
+  // a partial payload is not a valid audit record.
   match
-    file_pr_validate_audit_receipt("main", head, Some("{\"branch\":\"x\"}")) {
+    file_pr_validate_audit_receipt(
+      "main",
+      head,
+      Some("{\"sha\":\"" + head + "\"}"),
+    ) {
+    Err(e) => {
+      assert_true(e.message().contains("malformed"))
+      assert_true(e.message().contains(short))
+      assert_false(e.message().contains("audit receipt is stale"))
+    }
+    Ok(_) =>
+      fail("expected malformed receipt error for missing branch/audited_at")
+  }
+  // Malformed: receipt JSON missing the `sha` field entirely.
+  match
+    file_pr_validate_audit_receipt(
+      "main",
+      head,
+      Some("{\"branch\":\"x\",\"audited_at\":1}"),
+    ) {
     Err(e) => {
       assert_true(e.message().contains("malformed"))
       assert_true(e.message().contains(short))
@@ -1148,6 +1172,20 @@ test "file_pr_validate_audit_receipt distinguishes stale vs malformed receipts" 
       assert_false(e.message().contains("<missing>"))
     }
     Ok(_) => fail("expected malformed receipt error")
+  }
+  // Happy path: all three fields present and sha matches HEAD.
+  match
+    file_pr_validate_audit_receipt(
+      "main",
+      head,
+      Some(
+        "{\"sha\":\"" +
+        head +
+        "\",\"branch\":\"feature/x\",\"audited_at\":1700000000}",
+      ),
+    ) {
+    Ok(_) => ()
+    Err(e) => fail("expected validation to pass: " + e.message())
   }
 }
 
