@@ -516,6 +516,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
   self : ServerState,
   agent_id : String,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> Unit {
   let agent = self.registry.get(agent_id) catch { _ => return }
   match agent.state {
@@ -600,7 +601,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
             None => {
               let snapshot = self.pane_watcher.read_viewport(agent_id)
               let screen = @runtime.extract_viewport_text(snapshot)
-              let (reason, msg) = if screen != "" {
+              let (reason, msg, exit_code) = if screen != "" {
                 let classified = @phase.classify_failure(screen)
                 match classified {
                   @phase.FailureReason::ChildFailure(_) =>
@@ -609,6 +610,9 @@ pub async fn ServerState::handle_disconnect_with_runner(
                       "[FAILED: " +
                       agent_id +
                       "] disconnected unexpectedly - agent may have crashed or run out of context",
+                      // No specific failure pattern detected — closest analog
+                      // to a clean exit, eligible for auto-rescue evaluation.
+                      0,
                     )
                   _ =>
                     (
@@ -617,6 +621,7 @@ pub async fn ServerState::handle_disconnect_with_runner(
                       agent_id +
                       "] " +
                       @phase.failure_reason_message(classified),
+                      1,
                     )
                 }
               } else {
@@ -625,15 +630,23 @@ pub async fn ServerState::handle_disconnect_with_runner(
                   "[FAILED: " +
                   agent_id +
                   "] disconnected unexpectedly - agent may have crashed or run out of context",
+                  // Empty viewport on disconnect is consistent with codex's
+                  // premature clean-exit pattern; eligible for auto-rescue.
+                  0,
                 )
               }
-              self.fail_agent_with_runner(
-                agent_id,
-                reason,
-                msg,
-                @types.ExitReason::Disconnected,
-                runner,
+              let auto_rescued = self.try_auto_rescue_review_owned(
+                agent_id, agent, exit_code, runner, capture,
               )
+              if !auto_rescued {
+                self.fail_agent_with_runner(
+                  agent_id,
+                  reason,
+                  msg,
+                  @types.ExitReason::Disconnected,
+                  runner,
+                )
+              }
             }
           }
         }
@@ -646,7 +659,11 @@ pub async fn ServerState::handle_disconnect(
   self : ServerState,
   agent_id : String,
 ) -> Unit {
-  self.handle_disconnect_with_runner(agent_id, runner=@exec.run_sequence)
+  self.handle_disconnect_with_runner(
+    agent_id,
+    runner=@exec.run_sequence,
+    capture=@exec.capture_command_stdout,
+  )
 }
 
 ///|
@@ -676,6 +693,7 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
   now : Int64,
   grace_seconds : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> Unit {
   let stale : Array[String] = []
   for agent_id, disconnect_time in self.pending_disconnects {
@@ -685,7 +703,7 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
   }
   for agent_id in stale {
     self.pending_disconnects.remove(agent_id)
-    self.handle_disconnect_with_runner(agent_id, runner~)
+    self.handle_disconnect_with_runner(agent_id, runner~, capture~)
   }
 }
 
@@ -699,6 +717,7 @@ pub async fn ServerState::process_pending_disconnects(
     now,
     grace_seconds,
     runner=@exec.run_sequence,
+    capture=@exec.capture_command_stdout,
   )
 }
 

@@ -99,6 +99,10 @@ pub(all) enum LifecycleTrigger {
   ExitDisconnected
   ExitShutdown
   FinalizeComplete
+  /// Disconnect handler observed a clean exit while the leaf still owned an
+  /// unreviewed PR with unresolved Copilot threads; auto-spawned `rescue_leaf`
+  /// instead of failing the agent.
+  AutoRescueTriggered
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -160,6 +164,7 @@ pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
     ExitDisconnected => "ExitDisconnected"
     ExitShutdown => "ExitShutdown"
     FinalizeComplete => "FinalizeComplete"
+    AutoRescueTriggered => "AutoRescueTriggered"
   }
 }
 
