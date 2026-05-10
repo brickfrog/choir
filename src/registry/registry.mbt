@@ -411,10 +411,17 @@ fn registry_parse_agent_snapshot(
 }
 
 ///|
-pub fn AgentRegistry::restore_snapshot_json(
-  self : AgentRegistry,
+pub(all) struct RegistrySnapshot {
+  agents : Array[(@types.Agent, Bool)]
+}
+
+///|
+/// Parse a registry snapshot JSON payload into a staging value without
+/// touching any live registry. Caller commits via `apply_parsed_snapshot`
+/// only after every required field has parsed cleanly.
+pub fn parse_registry_snapshot_json(
   content : String,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[RegistrySnapshot, @types.ChoirError] {
   let json = @json.parse(content) catch {
     _ => return Err(registry_parse_error("invalid JSON"))
   }
@@ -424,21 +431,47 @@ pub fn AgentRegistry::restore_snapshot_json(
   guard root.get("agents") is Some(Array(items)) else {
     return Err(registry_parse_error("missing agents array"))
   }
-  self.clear()
+  let parsed : Array[(@types.Agent, Bool)] = []
   for item in items {
     guard item is Object(obj) else {
       return Err(registry_parse_error("agent entry is not an object"))
     }
     match registry_parse_agent_snapshot(obj) {
-      Ok((agent, alive)) => {
-        let id = agent.agent_id.to_string()
-        self.agents.set(id, agent)
-        self.alive.set(id, alive)
-      }
+      Ok(pair) => parsed.push(pair)
       Err(e) => return Err(e)
     }
   }
+  Ok({ agents: parsed })
+}
+
+///|
+/// Replace the registry contents with a previously-parsed snapshot. The
+/// caller is responsible for parse+validation; this is the commit step. The
+/// old behavior of `restore_snapshot_json` (parse + apply in one call) is
+/// preserved as a thin wrapper.
+pub fn AgentRegistry::apply_parsed_snapshot(
+  self : AgentRegistry,
+  snapshot : RegistrySnapshot,
+) -> Result[Unit, @types.ChoirError] {
+  self.clear()
+  for pair in snapshot.agents {
+    let (agent, alive) = pair
+    let id = agent.agent_id.to_string()
+    self.agents.set(id, agent)
+    self.alive.set(id, alive)
+  }
   Ok(())
+}
+
+///|
+pub fn AgentRegistry::restore_snapshot_json(
+  self : AgentRegistry,
+  content : String,
+) -> Result[Unit, @types.ChoirError] {
+  match parse_registry_snapshot_json(content) {
+    Ok(snapshot) => self.apply_parsed_snapshot(snapshot)
+    Err(e) => Err(e)
+  }
 }
 
 ///|

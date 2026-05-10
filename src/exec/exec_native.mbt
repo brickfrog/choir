@@ -596,23 +596,6 @@ fn assert_hook_capture_number_field(
 }
 
 ///|
-test "replace_self returns error for missing binary" {
-  let missing = "/tmp/choir-missing-reload-binary-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.rm_rf(missing))
-  match replace_self(missing, 4) {
-    Ok(_) => fail("expected missing binary to fail before exec")
-    Err(e) => {
-      let message = e.message()
-      assert_true(message.contains("replace_self failed for " + missing))
-      assert_true(message.contains("errno="))
-    }
-  }
-}
-
-///|
 async test "capture_hook_script_merged_once exhausts after N attempts and logs warn" {
   let mut attempts = 0
   let mut sleeps = 0

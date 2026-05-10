@@ -157,13 +157,13 @@ fn server_reload_bool_field(
 }
 
 ///|
-fn server_reload_restore_int64_map(
-  target : Map[String, Int64],
+fn server_reload_parse_int64_map(
   json : Json?,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[Map[String, Int64], @types.ChoirError] {
   guard json is Some(Array(items)) else {
     return Err(server_reload_parse_error("missing int64 map array"))
   }
+  let out : Map[String, Int64] = {}
   for item in items {
     guard item is Object(obj) else {
       return Err(server_reload_parse_error("int64 map entry is not an object"))
@@ -176,19 +176,19 @@ fn server_reload_restore_int64_map(
       Ok(v) => v
       Err(e) => return Err(e)
     }
-    target.set(key, value)
+    out.set(key, value)
   }
-  Ok(())
+  Ok(out)
 }
 
 ///|
-fn server_reload_restore_bool_map(
-  target : Map[String, Bool],
+fn server_reload_parse_bool_map(
   json : Json?,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[Map[String, Bool], @types.ChoirError] {
   guard json is Some(Array(items)) else {
     return Err(server_reload_parse_error("missing bool map array"))
   }
+  let out : Map[String, Bool] = {}
   for item in items {
     guard item is Object(obj) else {
       return Err(server_reload_parse_error("bool map entry is not an object"))
@@ -201,19 +201,19 @@ fn server_reload_restore_bool_map(
       Ok(v) => v
       Err(e) => return Err(e)
     }
-    target.set(key, value)
+    out.set(key, value)
   }
-  Ok(())
+  Ok(out)
 }
 
 ///|
-fn server_reload_restore_int_map(
-  target : Map[String, Int],
+fn server_reload_parse_int_map(
   json : Json?,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[Map[String, Int], @types.ChoirError] {
   guard json is Some(Array(items)) else {
     return Err(server_reload_parse_error("missing int map array"))
   }
+  let out : Map[String, Int] = {}
   for item in items {
     guard item is Object(obj) else {
       return Err(server_reload_parse_error("int map entry is not an object"))
@@ -226,15 +226,39 @@ fn server_reload_restore_int_map(
       Ok(v) => v
       Err(e) => return Err(e)
     }
-    target.set(key, value)
+    out.set(key, value)
   }
-  Ok(())
+  Ok(out)
+}
+
+///|
+/// Replace every entry in `target` with the entries from `source`. Drops any
+/// pre-existing keys not in `source`. Used to atomically commit a parsed
+/// snapshot into the live in-memory map.
+fn[V] server_reload_replace_map_contents(
+  target : Map[String, V],
+  source : Map[String, V],
+) -> Unit {
+  let existing_keys : Array[String] = []
+  for k, _ in target {
+    existing_keys.push(k)
+  }
+  for k in existing_keys {
+    target.remove(k)
+  }
+  for k, v in source {
+    target.set(k, v)
+  }
 }
 
 ///|
 pub fn ServerState::restore_reload_snapshot(
   self : ServerState,
 ) -> Result[Unit, @types.ChoirError] {
+  // Phase 1: load and parse everything into staging values. No live state
+  // mutates until every field parses cleanly. A corrupt or partial snapshot
+  // returns an error and leaves the server's in-memory state untouched,
+  // rather than half-restored.
   let registry_content = (self.read_file)(
     @registry.registry_snapshot_path(self.config.project_dir),
   )
@@ -243,8 +267,9 @@ pub fn ServerState::restore_reload_snapshot(
       @types.ChoirError::workspace_error("missing registry snapshot for reload"),
     )
   }
-  match self.registry.restore_snapshot_json(registry_content) {
-    Ok(_) => ()
+  let registry_snapshot = match
+    @registry.parse_registry_snapshot_json(registry_content) {
+    Ok(v) => v
     Err(e) => return Err(e)
   }
   let content = (self.read_file)(
@@ -261,38 +286,41 @@ pub fn ServerState::restore_reload_snapshot(
   guard json is Object(root) else {
     return Err(server_reload_parse_error("expected object"))
   }
-  match
-    server_reload_restore_int64_map(
-      self.pending_disconnects,
-      root.get("pending_disconnects"),
-    ) {
-    Ok(_) => ()
+  let parsed_pending = match
+    server_reload_parse_int64_map(root.get("pending_disconnects")) {
+    Ok(v) => v
     Err(e) => return Err(e)
   }
-  match
-    server_reload_restore_bool_map(
-      self.pending_disconnect_soft_notified,
-      root.get("pending_disconnect_soft_notified"),
-    ) {
-    Ok(_) => ()
+  let parsed_soft = match
+    server_reload_parse_bool_map(root.get("pending_disconnect_soft_notified")) {
+    Ok(v) => v
     Err(e) => return Err(e)
   }
-  match
-    server_reload_restore_int_map(
-      self.delivery_failures,
-      root.get("delivery_failures"),
-    ) {
-    Ok(_) => ()
+  let parsed_failures = match
+    server_reload_parse_int_map(root.get("delivery_failures")) {
+    Ok(v) => v
     Err(e) => return Err(e)
   }
-  match root.get("mutex_registry") {
-    Some(json) =>
-      match self.mutex_registry.restore_snapshot_json(json) {
-        Ok(_) => ()
+  let parsed_mutex = match root.get("mutex_registry") {
+    Some(j) =>
+      match @registry.parse_mutex_registry_snapshot_json(j) {
+        Ok(v) => v
         Err(e) => return Err(e)
       }
     None => return Err(server_reload_parse_error("missing mutex_registry"))
   }
+  // Phase 2: commit. Every parse succeeded; now bulk-apply.
+  match self.registry.apply_parsed_snapshot(registry_snapshot) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  server_reload_replace_map_contents(self.pending_disconnects, parsed_pending)
+  server_reload_replace_map_contents(
+    self.pending_disconnect_soft_notified,
+    parsed_soft,
+  )
+  server_reload_replace_map_contents(self.delivery_failures, parsed_failures)
+  self.mutex_registry.apply_parsed_snapshot(parsed_mutex)
   Ok(())
 }
 

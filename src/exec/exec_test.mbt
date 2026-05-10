@@ -115,3 +115,20 @@ test "plugin_capture_uses_shell requires shell for env assignment prefix" {
 test "plugin_capture_uses_shell requires shell when parse fails" {
   assert_true(plugin_capture_uses_shell("echo \""))
 }
+
+///|
+test "replace_self returns error for missing binary" {
+  let missing = "/tmp/choir-missing-reload-binary-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(missing))
+  match @exec.replace_self(missing, 4) {
+    Ok(_) => fail("expected missing binary to fail before exec")
+    Err(e) => {
+      let message = e.message()
+      assert_true(message.contains("replace_self failed for " + missing))
+      assert_true(message.contains("errno="))
+    }
+  }
+}

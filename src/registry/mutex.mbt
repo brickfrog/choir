@@ -280,25 +280,59 @@ fn mutex_parse_entry(
 }
 
 ///|
-pub fn MutexRegistry::restore_snapshot_json(
-  self : MutexRegistry,
+pub(all) struct MutexRegistrySnapshot {
+  locks : Array[(String, MutexEntry)]
+}
+
+///|
+/// Parse a mutex-registry snapshot JSON into a staging value without
+/// touching the live registry. Commit via `apply_parsed_snapshot`.
+pub fn parse_mutex_registry_snapshot_json(
   json : Json,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[MutexRegistrySnapshot, @types.ChoirError] {
   guard json is Object(root) else {
     return Err(mutex_parse_error("expected object"))
   }
   guard root.get("locks") is Some(Array(items)) else {
     return Err(mutex_parse_error("missing locks array"))
   }
-  self.clear()
+  let parsed : Array[(String, MutexEntry)] = []
   for item in items {
     guard item is Object(obj) else {
       return Err(mutex_parse_error("lock entry is not an object"))
     }
     match mutex_parse_entry(obj) {
-      Ok((name, entry)) => self.locks.set(name, entry)
+      Ok(pair) => parsed.push(pair)
       Err(e) => return Err(e)
     }
   }
-  Ok(())
+  Ok({ locks: parsed })
+}
+
+///|
+/// Replace the mutex registry contents with a previously-parsed snapshot.
+/// Caller-owned parse+validation; this is the commit step.
+pub fn MutexRegistry::apply_parsed_snapshot(
+  self : MutexRegistry,
+  snapshot : MutexRegistrySnapshot,
+) -> Unit {
+  self.clear()
+  for pair in snapshot.locks {
+    let (name, entry) = pair
+    self.locks.set(name, entry)
+  }
+}
+
+///|
+pub fn MutexRegistry::restore_snapshot_json(
+  self : MutexRegistry,
+  json : Json,
+) -> Result[Unit, @types.ChoirError] {
+  match parse_mutex_registry_snapshot_json(json) {
+    Ok(snapshot) => {
+      self.apply_parsed_snapshot(snapshot)
+      Ok(())
+    }
+    Err(e) => Err(e)
+  }
 }
