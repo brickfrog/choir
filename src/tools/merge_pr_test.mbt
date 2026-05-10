@@ -1537,6 +1537,7 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     true,
   )
   let closed : Array[String] = []
+  let audited : Array[String] = []
   let ran : Array[@workspace.Command] = []
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
@@ -1563,6 +1564,25 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
       closed.push(cmd.args[1])
       assert_eq(cmd.args[2], "--reason")
       assert_eq(cmd.args[3], "completed via PR #77")
+      return (0, "")
+    }
+    if cmd.program == "bd" &&
+      cmd.args.length() >= 10 &&
+      cmd.args[0] == "audit" &&
+      cmd.args[1] == "record" {
+      assert_true(cmd.args.contains("--tool-name"))
+      assert_true(cmd.args.contains("merge_pr"))
+      assert_true(cmd.args.contains("--response"))
+      assert_true(cmd.args.contains("closed via PR #77"))
+      assert_true(cmd.args.contains("--issue-id"))
+      let mut issue_index = -1
+      for i = 0; i < cmd.args.length(); i = i + 1 {
+        if cmd.args[i] == "--issue-id" {
+          issue_index = i
+        }
+      }
+      assert_true(issue_index >= 0 && issue_index + 1 < cmd.args.length())
+      audited.push(cmd.args[issue_index + 1])
       return (0, "")
     }
     (0, "")
@@ -1601,6 +1621,10 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
   assert_true(closed.contains("choir-a"))
   assert_true(closed.contains("choir-b"))
   assert_true(closed.contains("choir-body"))
+  assert_eq(audited.length(), 3)
+  assert_true(audited.contains("choir-a"))
+  assert_true(audited.contains("choir-b"))
+  assert_true(audited.contains("choir-body"))
   assert_true(
     ran
     .iter()

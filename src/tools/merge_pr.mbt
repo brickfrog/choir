@@ -1059,7 +1059,7 @@ async fn merge_pr_body_closing_issue_ids(
 }
 
 ///|
-async fn merge_pr_close_bead_if_leaf(
+async fn merge_pr_close_bead_if_not_closed_without_open_children(
   project_dir : String,
   pr_number : Int,
   issue_id : String,
@@ -1120,6 +1120,26 @@ async fn merge_pr_close_bead_if_leaf(
     ),
   )
   if close_exit == 0 {
+    let audit_ok = run_beads_best_effort(
+      beads_audit_record_command(
+        project_dir,
+        Some(issue_id),
+        "tool_call",
+        "merge_pr",
+        "closed via PR #" + pr_number.to_string(),
+      ),
+      capture,
+    )
+    if !audit_ok {
+      merge_pr_delivery_log_line(
+        append_file,
+        project_dir,
+        "merge_pr beads audit issue=" +
+        issue_id +
+        " outcome=audit_failed pr=" +
+        pr_number.to_string(),
+      )
+    }
     merge_pr_delivery_log_line(
       append_file,
       project_dir,
@@ -1177,7 +1197,7 @@ async fn merge_pr_close_feature_beads(
     return
   }
   for issue_id in issue_ids {
-    merge_pr_close_bead_if_leaf(
+    merge_pr_close_bead_if_not_closed_without_open_children(
       project_dir, pr_number, issue_id, capture, append_file,
     )
   }
