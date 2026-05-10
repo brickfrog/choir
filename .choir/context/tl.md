@@ -43,8 +43,8 @@ budget.
   file, or a result small enough to carry directly in the TL context.
 
 Stop and delegate to a subagent when you are about to run more than two Bash
-investigations or make more than five Read calls to gather context for one
-decision. Concrete triggers:
+investigations or read more than five files/context chunks to gather context
+for one decision. Concrete triggers:
 
 - About to read 3+ files in one phase to decide what a leaf should do: use an
   Explore-style subagent and turn its summary into the leaf task contract.
@@ -116,7 +116,7 @@ bd init --skip-agents --skip-hooks --non-interactive --role maintainer
   `git reset --mixed HEAD~1`; if the commit is already shared, use
   `git revert HEAD` instead.
 - Beads auto-runs `bd export` after write commands. That writes
-  `.beads/issues.jsonl` and tries to `git add` it. In a repo that gitignores
+  `.beads/issues.jsonl` and tries to `git add` it. In a repo that git ignores
   `.beads/`, this produces ongoing `auto-export: git add failed` warnings
   even when the Beads write succeeded.
 - Decide what should live in git. `.beads/embeddeddolt/` is the local binary
@@ -126,14 +126,21 @@ bd init --skip-agents --skip-hooks --non-interactive --role maintainer
 - If `bd where` or `bd list` returns cryptic `BEADS_DIR` or worktree setup
   hints, assume the workspace is not initialized yet. Bootstrap with the safe
   init command above before trying to inspect or mutate issues.
-- The creation command is `bd create`, not `bd issue create`. For scripted
-  issue creation, use stdin for the body:
+- The creation command is `bd create`, not `bd issue create`. For ordinary
+  spec-linked work, match `.beads/PRIME.md`:
 
-```sh
-bd create "<title>" --type <type> --priority N --silent --body-file - <<'EOF'
-<body>
-EOF
-```
+  ```sh
+  bd create "Title" -t task -p 2 --spec-id .choir/context/<slug>-spec.md
+  ```
+
+  For scripted issue creation, keep the same `-t`/`-p` shape and use stdin for
+  the body. Include `--spec-id` when the issue has a spec:
+
+  ```sh
+  bd create "<title>" -t <type> -p N --spec-id .choir/context/<slug>-spec.md --silent --body-file - <<'EOF'
+  <body>
+  EOF
+  ```
 
 ## Decomposition Principles
 
