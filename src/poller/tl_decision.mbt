@@ -46,6 +46,15 @@ pub(all) enum NextAction {
   AddressThreads
   /// Parent verifies via GitHub GraphQL/CI; the poll snapshot may be advisory.
   CrossCheckThreads
+  /// Mixed merge mode in a wave: parent must confirm the leaf's per-leaf
+  /// merge mode (manual vs automerge) before running merge_pr. Wave-level
+  /// `Mixed` no longer collapses to MergeNow — that asserted a merge that
+  /// the parent can't safely fire without checking the leaf's local config.
+  CrossCheckMergeMode
+  /// Review timeout: poller saw no Copilot review within the window.
+  /// Parent escalates (e.g., re-add the reviewer). Distinct from `Wait`
+  /// because the prose tells the parent to act, not sit idle.
+  EscalateReview
 } derive(Debug, Eq)
 
 ///|
@@ -61,6 +70,8 @@ pub fn NextAction::to_wire_string(self : NextAction) -> String {
     MergeNow => "merge_now"
     AddressThreads => "address_threads"
     CrossCheckThreads => "cross_check_threads"
+    CrossCheckMergeMode => "cross_check_merge_mode"
+    EscalateReview => "escalate_review"
   }
 }
 
@@ -114,8 +125,9 @@ pub fn merge_ready_next_action(
   mode : MergeOperatorMode,
 ) -> String {
   let action = match mode {
-    Manual | Mixed => NextAction::MergeNow
+    Manual => NextAction::MergeNow
     Automerge => NextAction::Wait
+    Mixed => NextAction::CrossCheckMergeMode
   }
   next_action_detail_line(action, pr_number, parent_branch, mode)
 }
@@ -164,6 +176,10 @@ pub fn next_action_detail_line(
       "Next action: leaf addresses Copilot review threads; parent waits."
     CrossCheckThreads =>
       "Next action: verify review threads via GitHub GraphQL plus CI/policy, then merge_pr only if clear."
+    CrossCheckMergeMode =>
+      "Next action: wave merge mode is mixed — confirm this leaf's per-leaf merge mode (manual vs automerge) before running merge_pr."
+    EscalateReview =>
+      "Next action: gh pr edit --add-reviewer @copilot (Copilot has not reviewed within the timeout window)."
   }
 }
 
@@ -691,7 +707,8 @@ fn merge_gate_next_action(
     MergeNow(_) =>
       match mode {
         Automerge => Wait
-        Manual | Mixed => MergeNow
+        Manual => MergeNow
+        Mixed => CrossCheckMergeMode
       }
     NeedsHuman(_) => ForceMerge
     Blocked(reason~) =>
@@ -715,7 +732,8 @@ fn recheck_next_action(
     MergeNow(_) =>
       match mode {
         Automerge => Wait
-        Manual | Mixed => MergeNow
+        Manual => MergeNow
+        Mixed => CrossCheckMergeMode
       }
     Blocked(reason~) =>
       if policy_block_is_review_work(tracked, unresolved_threads, reason) {
@@ -744,9 +762,9 @@ pub fn next_action_for_pr_state_notification(
     | CopilotIssueCommentSeenRecheckRemainingGates =>
       recheck_next_action(decision, tracked, unresolved_threads, mode)
     OrphanedPRNeedsManualAction => CrossCheckThreads
+    AttentionRequiredCopilotSilentAfterTimeout => EscalateReview
     WaitingOnReviewOrCI
     | WaitingOnCopilotIssueComment
-    | AttentionRequiredCopilotSilentAfterTimeout
     | AttentionRequiredCIFailed
     | ObservedMergedExternal => Wait
   }
@@ -804,7 +822,11 @@ pub fn tl_pr_state_notification_sentence(
           } else {
             tl_tracked_pr_workflow_category_sentence(decision.category)
           }
-        MergeNow => tl_merge_gate_sentence(Manual)
+        MergeNow => tl_merge_gate_sentence(merge_mode)
+        // Mixed-mode merge gate: render the Mixed sentence directly so the
+        // category fall-through doesn't drop us back onto the hardcoded
+        // Manual "MERGE NOW: ... Run merge_pr." prose.
+        CrossCheckMergeMode => tl_merge_gate_sentence(Mixed)
         _ => tl_tracked_pr_workflow_category_sentence(decision.category)
       }
     NeedsHuman(reason~) =>

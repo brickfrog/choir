@@ -1430,6 +1430,48 @@ test "parent_poll_event_message MergeReady never says auto ready when policy is 
 }
 
 ///|
+test "parent_poll_event_message MergeReady on Mixed mode says MERGE READY (not MERGE NOW) and emits cross_check_merge_mode" {
+  let tracked = parent_poll_test_ready_tracked(76)
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::MergeReady(76),
+      Some(0),
+      merge_mode=@poller.MergeOperatorMode::Mixed,
+    ) {
+    Some((message, _)) => {
+      assert_true(message.contains("[MERGE READY]"))
+      // Mixed must NOT collapse to a Manual-style 'MERGE NOW: Run merge_pr.'
+      assert_false(message.contains("MERGE NOW: reviewed"))
+      assert_true(message.contains("MERGE READY: reviewed"))
+      assert_true(message.contains("Check per-leaf merge mode"))
+      assert_next_action_line(message, @poller.NextAction::CrossCheckMergeMode)
+    }
+    None => fail("expected MergeReady message for Mixed mode")
+  }
+}
+
+///|
+test "parent_poll_event_message ReviewTimeout emits EscalateReview next_action with reviewer-add detail" {
+  let tracked = parent_poll_test_ready_tracked(77)
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::ReviewTimeout(77),
+      Some(0),
+      merge_mode=@poller.MergeOperatorMode::Manual,
+    ) {
+    Some((message, _)) => {
+      assert_next_action_line(message, @poller.NextAction::EscalateReview)
+      assert_true(message.contains("gh pr edit --add-reviewer @copilot"))
+    }
+    None => fail("expected ReviewTimeout message")
+  }
+}
+
+///|
 test "parent_poll_event_message FixesPushed stresses not merged" {
   let tracked : @poller.TrackedPR = {
     pr_number: 8,

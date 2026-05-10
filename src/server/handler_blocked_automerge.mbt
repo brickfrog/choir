@@ -129,17 +129,22 @@ fn blocked_gh_automerge_parent_caller_id(
 fn blocked_gh_automerge_merge_pr_request(
   tracked : @poller.TrackedPR,
   caller_id : String,
+  review_mode : @types.ReviewMode,
 ) -> @types.Request {
   let parent_branch = if tracked.parent_branch == "" {
     "main"
   } else {
     tracked.parent_branch
   }
+  // Pass the leaf's effective review_mode through to merge_pr; without it
+  // the tool defaults to SinglePass, which can diverge from the snapshot
+  // gating that just decided this PR is ready to merge.
   let args : Map[String, Json] = {
     "pr_number": tracked.pr_number.to_json(),
     "caller_id": caller_id.to_json(),
     "parent_branch": parent_branch.to_json(),
     "automerge": true.to_json(),
+    "review_mode": review_mode.to_wire_string().to_json(),
   }
   {
     req_method: "tools/call",
@@ -194,7 +199,9 @@ async fn ServerState::maybe_trigger_automerge_for_blocked_gh_notify(
     tracked.agent_id,
   )
   let resp = self.handle_with_runner_and_capture(
-    blocked_gh_automerge_merge_pr_request(tracked, parent_caller_id),
+    blocked_gh_automerge_merge_pr_request(
+      tracked, parent_caller_id, review_mode,
+    ),
     runner~,
     capture~,
   )
