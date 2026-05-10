@@ -160,6 +160,7 @@ fn ServerState::gc_dead_pane_delivery_recipient(
     _ => ()
   }
   self.pending_disconnects.remove(recipient_id)
+  self.delivery_failures.remove(recipient_id)
   self.expire_pending_outbox_for_recipient(recipient_id)
   ignore(
     (self.append_file)(
