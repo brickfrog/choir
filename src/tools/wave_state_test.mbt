@@ -251,7 +251,51 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
 }
 
 ///|
-test "plan_wave_state treats stale active root supervisor as planning" {
+test "plan_wave_state masks UnexpectedDisconnect on active root with unknown heartbeat" {
+  // last_updated_unix_sec == 0 means "no heartbeat info" (legacy lifecycle KV
+  // from before this field existed, or a fresh struct). For an Active root we
+  // give the benefit of the doubt and treat it as Planning.
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      make_agent("root", @types.Role::Root, None, @types.AgentType::Codex),
+    ),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set("root", {
+    agent_id: "root",
+    role: @types.Role::Root,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Supervisor(
+      @phase.SupervisorLifecycle::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect,
+      ),
+    ),
+    last_updated_unix_sec: 0L,
+  })
+  let snap = plan_wave_state(
+    "root",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    None,
+    threads_zero_lookup,
+    no_heartbeat,
+    @types.ReviewMode::Iterative,
+    1_700_000_000_000L,
+  ).unwrap()
+  assert_eq(snap.supervisor.agent_id, "root")
+  match snap.supervisor.workflow {
+    @phase.SupervisorLifecycle::Planning => ()
+    @phase.SupervisorLifecycle::Failed(reason~) =>
+      fail("expected non-failed root supervisor, got " + reason.to_string())
+    _ => fail("expected Planning")
+  }
+}
+
+///|
+test "plan_wave_state preserves UnexpectedDisconnect on active root with stale heartbeat" {
+  // A positive but very-old last_updated says the root really has gone
+  // silent — don't mask the disconnect just because role==Root.
   let reg = @registry.AgentRegistry::new()
   ignore(
     try? reg.insert(
@@ -280,12 +324,11 @@ test "plan_wave_state treats stale active root supervisor as planning" {
     @types.ReviewMode::Iterative,
     1_700_000_000_000L,
   ).unwrap()
-  assert_eq(snap.supervisor.agent_id, "root")
   match snap.supervisor.workflow {
-    @phase.SupervisorLifecycle::Planning => ()
-    @phase.SupervisorLifecycle::Failed(reason~) =>
-      fail("expected non-failed root supervisor, got " + reason.to_string())
-    _ => fail("expected Planning")
+    @phase.SupervisorLifecycle::Failed(
+      reason=@phase.FailureReason::UnexpectedDisconnect
+    ) => ()
+    _ => fail("expected stale-heartbeat root to keep UnexpectedDisconnect")
   }
 }
 

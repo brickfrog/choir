@@ -205,17 +205,22 @@ fn ServerState::disconnect_no_recent_heartbeat(
   agent_id : String,
   now : Int64,
 ) -> Bool {
+  // Treat a positive `last_updated_unix_sec` as the authoritative heartbeat
+  // and compare it to the staleness threshold. Treat 0 (or a missing field
+  // on an old on-disk payload) as "unknown" and fall back to the pane-watch
+  // idle proxy — never as "always stale", because that would mark every
+  // freshly-spawned agent as no-heartbeat the moment its lifecycle KV
+  // exists but hasn't been re-persisted yet by this wave's
+  // `write_lifecycle`.
   match
     raw_lifecycle_last_updated_unix_sec(
       self.config.project_dir,
       self.read_file,
       agent_id,
     ) {
-    Some(last_updated) =>
+    Some(last_updated) if last_updated > 0L =>
       now - last_updated >= disconnect_confirmation_stale_heartbeat_sec
-    None =>
-      // Leaf B adds a typed lifecycle timestamp. Until that field is present,
-      // use the existing pane-watch idle proxy as the heartbeat signal.
+    _ =>
       match
         self.pane_watcher.check_idle(
           agent_id, now, disconnect_confirmation_stale_heartbeat_sec,

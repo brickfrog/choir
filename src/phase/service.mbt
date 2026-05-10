@@ -486,7 +486,7 @@ pub fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
 }
 
 ///|
-fn is_root_tl_shaped_agent_id(agent_id : String) -> Bool {
+pub fn is_root_tl_shaped_agent_id(agent_id : String) -> Bool {
   if !agent_id.has_prefix("user-") || agent_id.contains(".") {
     return false
   }

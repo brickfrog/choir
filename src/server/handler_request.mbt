@@ -160,7 +160,15 @@ fn ServerState::gc_dead_pane_delivery_recipient(
     _ => ()
   }
   self.pending_disconnects.remove(recipient_id)
+  // Clear soft-notified state too — without this, a re-registered agent with
+  // the same id would have its first POSSIBLY DISCONNECTED suppressed by a
+  // stale entry left from the prior GC episode (handler_disconnect.mbt
+  // suppresses the soft notice when this map already contains the agent).
+  self.pending_disconnect_soft_notified.remove(recipient_id)
   self.delivery_failures.remove(recipient_id)
+  // Stop watching the dead pane; otherwise the watcher's heartbeat would
+  // continue against a removed agent.
+  self.stop_subscribe(recipient_id)
   self.expire_pending_outbox_for_recipient(recipient_id)
   ignore(
     (self.append_file)(

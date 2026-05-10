@@ -116,6 +116,14 @@ fn supervisor_workflow_for_wave_state(
   lifecycle : @phase.AgentLifecycle?,
 ) -> @phase.SupervisorLifecycle {
   match lifecycle {
+    // Long-running root TL kept Active by the choir-serve process — the
+    // Connected + UnexpectedDisconnect combination is the kqv.4 mislabel,
+    // not a real failure. Two refinements vs the previous unconditional
+    // fix: (a) match synthesized root TLs (Role::TL with a user-<pid>-<nanos>
+    // id) in addition to literal Role::Root, and (b) only mask the
+    // UnexpectedDisconnect when last_updated_unix_sec is recent or
+    // unknown — if the heartbeat is genuinely stale, the disconnect
+    // labelling is probably accurate and we should not suppress it.
     Some(
       {
         process: @phase.ProcessState::Connected,
@@ -124,16 +132,43 @@ fn supervisor_workflow_for_wave_state(
             reason=@phase.FailureReason::UnexpectedDisconnect
           )
         ),
+        last_updated_unix_sec: last_updated,
         ..,
       }
-    ) if agent.role == @types.Role::Root &&
-      agent.state == @types.AgentState::Active =>
+    ) if agent.state == @types.AgentState::Active &&
+      (
+        agent.role == @types.Role::Root ||
+        @phase.is_root_tl_shaped_agent_id(agent.agent_id.to_string())
+      ) &&
+      wave_state_root_tl_heartbeat_is_recent_or_unknown(last_updated) =>
       @phase.SupervisorLifecycle::Planning
     Some({ workflow: @phase.WorkflowState::Supervisor(sl), .. }) => sl
     // No persisted lifecycle yet -> default to Planning; same fallback as
     // read_or_default_lifecycle for a fresh Root/TL.
     _ => @phase.SupervisorLifecycle::Planning
   }
+}
+
+///|
+/// Threshold (in seconds) beyond which the wave_state long-running-root
+/// exemption no longer applies — if last_updated_unix_sec is older than this,
+/// the UnexpectedDisconnect labelling is probably real and should not be
+/// masked. Generous (1 hour) because root TLs idle for long stretches between
+/// waves and we don't want to mis-flag a quiet but live root.
+let wave_state_root_tl_recent_heartbeat_sec : Int64 = 3600L
+
+///|
+/// Returns true when the root TL's heartbeat is either unknown
+/// (`last_updated_unix_sec == 0`, e.g. legacy lifecycle KV from before this
+/// field landed) or recent enough that we trust the agent is alive.
+fn wave_state_root_tl_heartbeat_is_recent_or_unknown(
+  last_updated_unix_sec : Int64,
+) -> Bool {
+  if last_updated_unix_sec <= 0L {
+    return true
+  }
+  let now = @env.now().reinterpret_as_int64() / 1000L
+  now - last_updated_unix_sec <= wave_state_root_tl_recent_heartbeat_sec
 }
 
 ///|
