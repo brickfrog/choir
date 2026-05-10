@@ -241,7 +241,8 @@ fn leaf_profile_text() -> String {
   "9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
   "Do not exit voluntarily after file_pr:\n" +
   "- After `file_pr` succeeds, your task is NOT complete, even though it auto-notifies the parent. Copilot's inline review can take 30s-3min to arrive. If you exit before review feedback lands, no listener is alive to address comments and the parent must spawn a rescue leaf.\n" +
-  "- Authorized exit signals: parent sends a shutdown directive in your pane, you receive a `[PR MERGED]` notification for your PR, parent sends `[PARENT RELEASE]` (review/merge owned by parent), or the persistent-error path in step 9.\n" +
+  "- Step 8 is the shutdown rule: keep the session alive until the parent explicitly tells you to stop after review/merge handling. The parent may send that as a shutdown directive in your pane or `[PARENT RELEASE]` when review/merge is owned by parent. `[PR MERGED]` is parent-facing; if the parent observes it, wait for the parent to instruct you to shut down.\n" +
+  "- The only non-parent exception is the persistent-error path in step 9.\n" +
   "- Any other voluntary exit is a leaf failure. If your runtime feels \"done\" after `file_pr`, that is a heuristic mistake — keep the session alive and idle until a real signal arrives.\n\n" +
   "Execution discipline:\n" +
   "- Run requested verification once per code change.\n" +
