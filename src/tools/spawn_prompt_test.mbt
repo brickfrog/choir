@@ -55,7 +55,8 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
   assert_true(
     prompt.contains("Do NOT call `resolveReviewThread` directly from a leaf"),
   )
-  assert_true(prompt.contains("pkill -f \"gh api\""))
+  assert_true(prompt.contains("do NOT use a global `pkill -f \"gh api\"`"))
+  assert_true(prompt.contains("kill only the specific PID you launched"))
 
   let file_pr_exit = match
     prompt.find("Do not exit voluntarily after file_pr:") {

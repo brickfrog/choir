@@ -248,7 +248,7 @@ fn leaf_profile_text() -> String {
   "- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.\n" +
   "- Prefer REST endpoints (`gh api repos/{owner}/{repo}/pulls/{n}/comments`, `gh api repos/{owner}/{repo}/pulls/{n}/reviews`) over GraphQL when querying review state. REST returns instantly even when GraphQL stalls.\n" +
   "- Do NOT call `resolveReviewThread` directly from a leaf. The poller and parent will resolve threads from the working GraphQL path. Push your code fixes; let the orchestration close the threads.\n" +
-  "- If a `gh` call appears stuck, kill it (`pkill -f \"gh api\"`) and report state to the parent rather than waiting indefinitely.\n\n" +
+  "- If a `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f \"gh api\"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.\n\n" +
   "Execution discipline:\n" +
   "- Run requested verification once per code change.\n" +
   "- Do not rerun the same tests repeatedly without new code changes.\n" +
