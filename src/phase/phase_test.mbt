@@ -234,6 +234,7 @@ test "lifecycle policy preserves deferred review ownership on disconnect" {
     workflow: Dev(
       ExitRequestedDeferred(pr_number=99, state=FixesAwaitingReview(round=2)),
     ),
+    last_updated_unix_sec: 0L,
   }
   assert_eq(
     lifecycle_exit_policy(lifecycle),
@@ -249,6 +250,7 @@ test "lifecycle policy preserves changes-requested on disconnect" {
     role: @types.Role::Dev,
     process: Connected,
     workflow: Dev(ChangesRequested(pr_number=99, next_round=1)),
+    last_updated_unix_sec: 0L,
   }
   assert_eq(lifecycle_disconnect_policy(lifecycle), Preserve)
 }
@@ -283,10 +285,24 @@ test "lifecycle json round-trip covers supervisor children" {
         wave=1,
       ),
     ),
+    last_updated_unix_sec: 1234L,
   }
-  match lifecycle_from_json(lifecycle_to_json(lifecycle)) {
+  let json = lifecycle_to_json(lifecycle)
+  assert_true(json.contains("\"last_updated_unix_sec\""))
+  assert_true(json.contains("\"1234\""))
+  match lifecycle_from_json(json) {
     Some(restored) => assert_eq(restored, lifecycle)
     None => fail("expected lifecycle round-trip")
+  }
+}
+
+///|
+test "lifecycle json read defaults missing last_updated_unix_sec" {
+  let legacy_json =
+    #|{"agent_id":"main","role":["TL"],"process":["Connected"],"workflow":["Supervisor",["Planning"]]}
+  match lifecycle_from_json(legacy_json) {
+    Some(restored) => assert_eq(restored.last_updated_unix_sec, 0L)
+    None => fail("expected legacy lifecycle read")
   }
 }
 
@@ -501,6 +517,7 @@ test "plan_tl_lifecycle_effects ChildSpawned emits persist then append" {
     role: @types.Role::TL,
     process: Connected,
     workflow: Supervisor(Planning),
+    last_updated_unix_sec: 0L,
   }
   let effects = plan_tl_lifecycle_effects(
     lifecycle,
@@ -532,6 +549,7 @@ test "plan_tl_lifecycle_effects unsupported event yields no effects" {
     role: @types.Role::TL,
     process: Connected,
     workflow: Supervisor(Planning),
+    last_updated_unix_sec: 0L,
   }
   let effects = plan_tl_lifecycle_effects(lifecycle, TLEvent::AllChildrenDone)
   assert_eq(effects.length(), 0)
@@ -544,6 +562,7 @@ test "plan_dev_event_checked PRCreated emits two lifecycle effects" {
     role: @types.Role::Dev,
     process: Connected,
     workflow: Dev(Working),
+    last_updated_unix_sec: 0L,
   }
   match
     plan_dev_event_checked(
@@ -581,6 +600,7 @@ test "plan_dev_event_checked NotifyParentSuccess has empty effects" {
     role: @types.Role::Dev,
     process: Connected,
     workflow: Dev(Working),
+    last_updated_unix_sec: 0L,
   }
   match
     plan_dev_event_checked(
@@ -631,7 +651,13 @@ test "interpret_lifecycle_effects writes lifecycle and event log" {
   ]
   interpret_lifecycle_effects(project_dir, effects, registry=None)
   match read_lifecycle(project_dir, "leaf.z") {
-    Some(lc) => assert_eq(lc, to_lc)
+    Some(lc) => {
+      assert_eq(lc.agent_id, to_lc.agent_id)
+      assert_eq(lc.role, to_lc.role)
+      assert_eq(lc.process, to_lc.process)
+      assert_eq(lc.workflow, to_lc.workflow)
+      assert_true(lc.last_updated_unix_sec > 0L)
+    }
     None => fail("expected persisted lifecycle")
   }
   let ev_path = project_dir +

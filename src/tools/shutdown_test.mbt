@@ -355,6 +355,7 @@ test "shutdown_exit_plan blocked dev changes requested" {
     workflow: @phase.WorkflowState::Dev(
       @phase.DevLifecycle::ChangesRequested(pr_number=3, next_round=1),
     ),
+    last_updated_unix_sec: 0L,
   }
   let plan = shutdown_exit_plan(lifecycle)
   assert_false(plan.apply_dev_exit_requested)
@@ -377,6 +378,7 @@ test "shutdown_exit_plan deferred dev applies exit and skips cleanup" {
         state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/7"),
       ),
     ),
+    last_updated_unix_sec: 0L,
   }
   let plan = shutdown_exit_plan(lifecycle)
   assert_true(plan.apply_dev_exit_requested)
@@ -401,6 +403,7 @@ test "shutdown_exit_plan allowed dev allows cleanup and exit" {
     role: @types.Role::Dev,
     process: @phase.ProcessState::Connected,
     workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+    last_updated_unix_sec: 0L,
   }
   let plan = shutdown_exit_plan(lifecycle)
   assert_true(plan.apply_dev_exit_requested)
@@ -423,6 +426,7 @@ test "shutdown_exit_plan allowed tl skips dev exit but may cleanup worktree" {
     workflow: @phase.WorkflowState::Supervisor(
       @phase.SupervisorLifecycle::Planning,
     ),
+    last_updated_unix_sec: 0L,
   }
   let plan = shutdown_exit_plan(lifecycle)
   assert_false(plan.apply_dev_exit_requested)
@@ -704,6 +708,7 @@ async test "interpret_shutdown skips Beads shutdown mirror when exit is deferred
           state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/272"),
         ),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   let seen : Array[String] = []

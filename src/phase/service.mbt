@@ -294,23 +294,30 @@ pub fn interpret_lifecycle_effects(
   let mut last_persisted : AgentLifecycle? = None
   for effect in effects {
     match effect {
-      PersistLifecycle(lifecycle~) =>
-        if write_lifecycle(project_dir, lifecycle) {
-          last_persisted = Some(lifecycle)
+      PersistLifecycle(lifecycle~) => {
+        // Compute the timestamp once and share it between the on-disk write
+        // and the in-memory `last_persisted` so the AppendLifecycleEvent
+        // 'to' value cannot drift by a wall-clock second from what was
+        // actually persisted.
+        let now_sec = @env.now().reinterpret_as_int64() / 1000L
+        let stamped = { ..lifecycle, last_updated_unix_sec: now_sec }
+        if write_lifecycle(project_dir, stamped, now_sec~) {
+          last_persisted = Some(stamped)
           match registry {
-            Some(reg) => sync_registry_after_persist(reg, lifecycle)
+            Some(reg) => sync_registry_after_persist(reg, stamped)
             None => ()
           }
         } else {
           last_persisted = None
         }
-      AppendLifecycleEvent(agent_id~, from_lc~, to_lc~, trigger~) => {
+      }
+      AppendLifecycleEvent(agent_id~, from_lc~, trigger~, ..) => {
         match last_persisted {
           Some(lc) =>
             if lc.agent_id == agent_id {
               ignore(
                 append_lifecycle_event(
-                  project_dir, agent_id, from_lc, to_lc, trigger,
+                  project_dir, agent_id, from_lc, lc, trigger,
                 ),
               )
             }
@@ -484,7 +491,7 @@ pub fn synthesized_parent_agent_type(_role : @types.Role) -> @types.AgentType {
 }
 
 ///|
-fn is_root_tl_shaped_agent_id(agent_id : String) -> Bool {
+pub fn is_root_tl_shaped_agent_id(agent_id : String) -> Bool {
   if !agent_id.has_prefix("user-") || agent_id.contains(".") {
     return false
   }
@@ -598,10 +605,12 @@ pub fn persist_lifecycle(
   registry : @registry.AgentRegistry,
   lifecycle : AgentLifecycle,
 ) -> Bool {
-  let ok = write_lifecycle(project_dir, lifecycle)
+  let now_sec = @env.now().reinterpret_as_int64() / 1000L
+  let stamped = { ..lifecycle, last_updated_unix_sec: now_sec }
+  let ok = write_lifecycle(project_dir, stamped, now_sec~)
   try {
-    let agent = registry.get(lifecycle.agent_id)
-    ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+    let agent = registry.get(stamped.agent_id)
+    ignore(registry.upsert({ ..agent, state: stamped.to_agent_state() }))
   } catch {
     _ => ()
   }

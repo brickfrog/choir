@@ -70,6 +70,7 @@ fn write_notify_gate_leaf_review_owned(
     workflow: @phase.Dev(
       @phase.ReviewOwned(pr_number~, state=@phase.OpenUnreviewed(url="")),
     ),
+    last_updated_unix_sec: 0L,
   }
   ignore(@phase.write_lifecycle(project_dir, lifecycle))
 }
@@ -90,6 +91,7 @@ fn write_notify_gate_leaf_exit_requested_deferred(
         state=@phase.OpenUnreviewed(url=""),
       ),
     ),
+    last_updated_unix_sec: 0L,
   }
   ignore(@phase.write_lifecycle(project_dir, lifecycle))
 }
@@ -105,6 +107,7 @@ fn write_notify_gate_leaf_changes_requested(
     role: @types.Role::Dev,
     process: @phase.Connected,
     workflow: @phase.Dev(@phase.ChangesRequested(pr_number~, next_round=1)),
+    last_updated_unix_sec: 0L,
   }
   ignore(@phase.write_lifecycle(project_dir, lifecycle))
 }

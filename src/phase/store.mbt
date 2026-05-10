@@ -17,14 +17,27 @@ pub fn read_lifecycle(
 }
 
 ///|
+/// Persist a lifecycle and stamp `last_updated_unix_sec` so consumers of
+/// staleness can trust the field. The optional `now_sec` lets a caller share
+/// the exact timestamp used for the on-disk payload with their in-memory
+/// tracking (so persisted-vs-tracked never diverge by a wall-clock second);
+/// if omitted, defaults to the current time. Returns true when the file
+/// write succeeded.
 pub fn write_lifecycle(
   project_dir : String,
   lifecycle : AgentLifecycle,
+  now_sec? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
 ) -> Bool {
+  let stamped = { ..lifecycle, last_updated_unix_sec: now_sec }
   @sys.write_file_atomic(
-    lifecycle_path(project_dir, lifecycle.agent_id),
-    lifecycle_to_json(lifecycle),
+    lifecycle_path(project_dir, stamped.agent_id),
+    lifecycle_to_json(stamped),
   )
+}
+
+///|
+pub fn delete_lifecycle(project_dir : String, agent_id : String) -> Bool {
+  @sys.delete_file_sync(lifecycle_path(project_dir, agent_id))
 }
 
 ///|

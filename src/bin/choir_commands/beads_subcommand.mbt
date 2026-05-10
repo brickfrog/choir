@@ -483,6 +483,9 @@ let stalled_bead_threshold_hours : Int = 4
 let seconds_per_hour : Int64 = 3600L
 
 ///|
+let active_lifecycle_stale_after_sec : Int64 = 600L
+
+///|
 pub fn build_beads_doctor_report(
   ready_json : String,
   in_progress_json : String,
@@ -750,6 +753,7 @@ fn detect_stalled_beads(
 fn active_agent_ids_from_lifecycle(
   project_dir : String,
   in_progress_json : String,
+  now_sec? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
   kv_exists? : (String) -> Bool = fn(path) { @sys.path_entry_exists(path) },
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = fn(dir, id) {
     @phase.read_lifecycle(dir, id)
@@ -773,7 +777,9 @@ fn active_agent_ids_from_lifecycle(
     }
     match read_lifecycle(project_dir, assignee) {
       Some(lifecycle) =>
-        if lifecycle.to_agent_state() == @types.AgentState::Active {
+        if lifecycle.to_agent_state() == @types.AgentState::Active &&
+          now_sec - lifecycle.last_updated_unix_sec <
+          active_lifecycle_stale_after_sec {
           ids.push(assignee)
         }
       None => ()
@@ -786,8 +792,78 @@ fn active_agent_ids_from_lifecycle(
 fn default_active_agent_ids_from_lifecycle(
   project_dir : String,
   in_progress_json : String,
+  now_sec : Int64,
 ) -> Array[String]? {
-  active_agent_ids_from_lifecycle(project_dir, in_progress_json)
+  active_agent_ids_from_lifecycle(project_dir, in_progress_json, now_sec~)
+}
+
+///|
+test "active_agent_ids_from_lifecycle drops stale Active lifecycle" {
+  let now_sec = @tempo.DateTime::parse("2026-05-10T06:30:00Z").to_unix_seconds()
+  let in_progress_json =
+    #|[{"id":"choir-stalled","title":"Stalled","status":"in_progress","assignee":"main.dead-leaf","started_at":"2026-05-10T00:00:00Z"}]
+  let active_ids = active_agent_ids_from_lifecycle(
+    "/repo",
+    in_progress_json,
+    now_sec~,
+    kv_exists=fn(_) { true },
+    read_lifecycle=fn(_, _) {
+      Some({
+        agent_id: "main.dead-leaf",
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+        last_updated_unix_sec: now_sec - 1200L,
+      })
+    },
+  )
+  match active_ids {
+    Some(ids) => assert_false(ids.contains("main.dead-leaf"))
+    None => fail("expected active id list")
+  }
+  let report = build_beads_doctor_report(
+    "[]",
+    in_progress_json,
+    "",
+    active_agent_ids=active_ids,
+    now_sec~,
+  ).unwrap()
+  assert_eq(report.stalled_beads.length(), 1)
+  assert_eq(report.stalled_beads[0].id, "choir-stalled")
+}
+
+///|
+test "active_agent_ids_from_lifecycle keeps fresh Active lifecycle" {
+  let now_sec = @tempo.DateTime::parse("2026-05-10T06:30:00Z").to_unix_seconds()
+  let in_progress_json =
+    #|[{"id":"choir-fresh","title":"Fresh","status":"in_progress","assignee":"main.live-leaf","started_at":"2026-05-10T00:00:00Z"}]
+  let active_ids = active_agent_ids_from_lifecycle(
+    "/repo",
+    in_progress_json,
+    now_sec~,
+    kv_exists=fn(_) { true },
+    read_lifecycle=fn(_, _) {
+      Some({
+        agent_id: "main.live-leaf",
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+        last_updated_unix_sec: now_sec,
+      })
+    },
+  )
+  match active_ids {
+    Some(ids) => assert_true(ids.contains("main.live-leaf"))
+    None => fail("expected active id list")
+  }
+  let report = build_beads_doctor_report(
+    "[]",
+    in_progress_json,
+    "",
+    active_agent_ids=active_ids,
+    now_sec~,
+  ).unwrap()
+  assert_eq(report.stalled_beads.length(), 0)
 }
 
 ///|
@@ -839,7 +915,7 @@ pub fn render_beads_doctor_report(report : BeadsDoctorReport) -> String {
       bead.age_hours.to_string() +
       "h ago, assignee " +
       bead.assignee +
-      " has no Active lifecycle entry)\n",
+      " has no fresh Active lifecycle entry)\n",
     )
     out.write_string(
       "  → bd update " + bead.id + " --status open --assignee \"\"\n",
@@ -853,7 +929,7 @@ pub async fn run_beads_doctor(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
   now_sec? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
-  active_agent_ids? : (String, String) -> Array[String]? = default_active_agent_ids_from_lifecycle,
+  active_agent_ids? : (String, String, Int64) -> Array[String]? = default_active_agent_ids_from_lifecycle,
 ) -> Result[String, @types.ChoirError] {
   let (ready_code, ready_json) = capture({
     program: "bd",
@@ -879,7 +955,7 @@ pub async fn run_beads_doctor(
   if status_code != 0 {
     return Err(@types.ChoirError::git_error("git status failed"))
   }
-  let active_agent_ids = active_agent_ids(project_dir, progress_json)
+  let active_agent_ids = active_agent_ids(project_dir, progress_json, now_sec)
   match
     build_beads_doctor_report(
       ready_json,
