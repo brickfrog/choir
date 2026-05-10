@@ -161,6 +161,117 @@ fn merge_pr_test_registry(worktree : String) -> @registry.AgentRegistry {
 }
 
 ///|
+fn merge_pr_test_enable_force_override(project_dir : String) -> Unit {
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(
+    @sys.write_file_atomic(
+      project_dir + "/.choir/kv/tl-parent-override--main.tl",
+      "1\n",
+    ),
+  )
+}
+
+///|
+fn merge_pr_test_write_beads_contract(
+  project_dir : String,
+  parent_branch : String,
+  slug : String,
+  issue_id : String?,
+) -> String {
+  let worktree = project_dir + "/.choir/worktrees/" + slug
+  ignore(@sys.create_dir_all(worktree + "/.choir"))
+  let target : @types.LocalTarget = {
+    kind: ZellijTab,
+    session: "choir",
+    name: slug,
+  }
+  let spec : @types.SpawnSpec = {
+    slug,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "assigned leaf",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "assigned leaf",
+      beads_issue_id: issue_id,
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main.tl",
+    parent_branch,
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: Some("wv-feature"),
+  }
+  ignore(
+    @sys.write_file_sync(
+      worktree + "/.choir/config.local.toml",
+      @workspace.config_local_content(spec, worktree, target),
+    ),
+  )
+  worktree
+}
+
+///|
+fn merge_pr_test_registry_for_feature(
+  project_dir : String,
+  feature_branch : String,
+  leaves : Array[(String, String)],
+) -> @registry.AgentRegistry {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.tl"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: feature_branch,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  for leaf in leaves {
+    let (slug, worktree) = leaf
+    let branch = feature_branch + "." + slug
+    ignore(
+      reg.upsert({
+        agent_id: @types.AgentId(branch),
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Codex,
+        parent: Some("main.tl"),
+        workspace: worktree,
+        branch,
+        terminal_target: None,
+        host: @types.Host::Local,
+        spawn_depth: 0,
+        state: @types.AgentState::Active,
+      }),
+    )
+  }
+  reg
+}
+
+///|
+async fn merge_pr_test_runner_record_ok(
+  cmds : Array[@workspace.Command],
+  seen : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses = []
+  for cmd in cmds {
+    seen.push(cmd)
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
 test "merge_pr_preflight_host_steps is poller snapshot then thread fetch" {
   let steps = merge_pr_preflight_host_steps()
   assert_eq(steps.length(), 2)
@@ -1352,6 +1463,428 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     }
     _ => fail("expected ok merged")
   }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "merge_pr_closes_issue_ids_from_body matches literal closes regex" {
+  let ids = merge_pr_closes_issue_ids_from_body(
+    "prefix Closes choir-a.1\ncloses\tchoir-b-2\nCLOSES choir-nope\nCloses not-choir\n",
+  )
+  assert_eq(ids.length(), 2)
+  assert_true(ids.contains("choir-a.1"))
+  assert_true(ids.contains("choir-b-2"))
+}
+
+///|
+test "merge_pr_beads_show_status_and_open_children detects epic children" {
+  let show =
+    #|[{"id":"choir-parent","status":"open","epic_closeable":false,"dependents":[{"id":"choir-child","status":"open"}]}]
+  match merge_pr_beads_show_status_and_open_children(show) {
+    Ok((status, has_open_children)) => {
+      assert_eq(status, "open")
+      assert_true(has_open_children)
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+async test "interpret_merge_pr feature main closes wave and body beads then deletes feature branch" {
+  let project_dir = "/tmp/choir-mpr-feature-beads-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_enable_force_override(project_dir)
+  let feature_branch = "feature/demo"
+  let leaf_a = merge_pr_test_write_beads_contract(
+    project_dir,
+    feature_branch,
+    "leaf-a",
+    Some("choir-a"),
+  )
+  let leaf_b = merge_pr_test_write_beads_contract(
+    project_dir,
+    feature_branch,
+    "leaf-b",
+    Some("choir-b"),
+  )
+  match
+    save_wave_index(
+      project_dir,
+      WaveIndex::new("wv-feature", feature_branch, 1L, [
+        feature_branch + ".leaf-a",
+        feature_branch + ".leaf-b",
+      ]),
+    ) {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  let reg = merge_pr_test_registry_for_feature(project_dir, feature_branch, [
+    ("leaf-a", leaf_a),
+    ("leaf-b", leaf_b),
+  ])
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    77,
+    "main.tl",
+    feature_branch,
+    "main",
+    "https://github.com/o/r/pull/77",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let closed : Array[String] = []
+  let ran : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.program == "gh" && cmd.args == ["pr", "view", "77", "--json", "body"] {
+      return (0, "{\"body\":\"Closes choir-body\\ncloses choir-a\\n\"}")
+    }
+    if cmd.program == "bd" &&
+      cmd.args.length() == 4 &&
+      cmd.args[0] == "--readonly" &&
+      cmd.args[1] == "show" {
+      let id = cmd.args[2]
+      return (
+        0,
+        "[{\"id\":\"" + id + "\",\"title\":\"t\",\"status\":\"open\"}]",
+      )
+    }
+    if cmd.program == "bd" && cmd.args.length() == 4 && cmd.args[0] == "close" {
+      closed.push(cmd.args[1])
+      assert_eq(cmd.args[2], "--reason")
+      assert_eq(cmd.args[3], "completed via PR #77")
+      return (0, "")
+    }
+    (0, "")
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    merge_pr_test_runner_record_ok(cmds, ran)
+  }
+  let logs : Array[String] = []
+  let append_file = fn(_path : String, content : String) -> Bool {
+    logs.push(content)
+    true
+  }
+  let args : MergePrArgs = {
+    pr_number: 77,
+    parent_branch: "main",
+    caller_id: "main.tl",
+    force: true,
+    review_mode: Some(@types.ReviewMode::SinglePass),
+  }
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    Some(ps),
+    None,
+    Some(reg),
+    runner,
+    capture,
+    append_file~,
+    path_exists=fn(_path) { false },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail(msg)
+  }
+  assert_eq(closed.length(), 3)
+  assert_true(closed.contains("choir-a"))
+  assert_true(closed.contains("choir-b"))
+  assert_true(closed.contains("choir-body"))
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["checkout", "main"] &&
+      cmd.workdir == Some(project_dir)
+    }),
+  )
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["branch", "-D", feature_branch] &&
+      cmd.workdir == Some(project_dir)
+    }),
+  )
+  assert_true(logs.length() > 0)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr feature main with no issue ids does not call bd close" {
+  let project_dir = "/tmp/choir-mpr-feature-no-beads-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_enable_force_override(project_dir)
+  let feature_branch = "feature/no-beads"
+  let leaf = merge_pr_test_write_beads_contract(
+    project_dir,
+    feature_branch,
+    "leaf-a",
+    None,
+  )
+  match
+    save_wave_index(
+      project_dir,
+      WaveIndex::new("wv-feature", feature_branch, 1L, [
+        feature_branch + ".leaf-a",
+      ]),
+    ) {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  let reg = merge_pr_test_registry_for_feature(project_dir, feature_branch, [
+    ("leaf-a", leaf),
+  ])
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    78,
+    "main.tl",
+    feature_branch,
+    "main",
+    "https://github.com/o/r/pull/78",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let closed : Array[String] = []
+  let ran : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.program == "gh" && cmd.args == ["pr", "view", "78", "--json", "body"] {
+      return (0, "{\"body\":\"No closing lines here.\"}")
+    }
+    if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "close" {
+      closed.push(cmd.args[1])
+    }
+    (0, "")
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    merge_pr_test_runner_record_ok(cmds, ran)
+  }
+  let args : MergePrArgs = {
+    pr_number: 78,
+    parent_branch: "main",
+    caller_id: "main.tl",
+    force: true,
+    review_mode: Some(@types.ReviewMode::SinglePass),
+  }
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    Some(ps),
+    None,
+    Some(reg),
+    runner,
+    capture,
+    append_file=fn(_path, _content) { true },
+    path_exists=fn(_path) { false },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail(msg)
+  }
+  assert_eq(closed.length(), 0)
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["branch", "-D", feature_branch] &&
+      cmd.workdir == Some(project_dir)
+    }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr leaf merge removes worktree and deletes local branch" {
+  let project_dir = "/tmp/choir-mpr-leaf-cleanup-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_enable_force_override(project_dir)
+  let feature_branch = "feature/demo"
+  let leaf_branch = feature_branch + ".leaf-a"
+  let leaf = merge_pr_test_write_beads_contract(
+    project_dir,
+    feature_branch,
+    "leaf-a",
+    Some("choir-a"),
+  )
+  let reg = merge_pr_test_registry_for_feature(project_dir, feature_branch, [
+    ("leaf-a", leaf),
+  ])
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    79,
+    leaf_branch,
+    leaf_branch,
+    feature_branch,
+    "https://github.com/o/r/pull/79",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let ran : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "close" {
+      fail("leaf PR merge must not close beads")
+    }
+    (0, "")
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    merge_pr_test_runner_record_ok(cmds, ran)
+  }
+  let args : MergePrArgs = {
+    pr_number: 79,
+    parent_branch: feature_branch,
+    caller_id: "main.tl",
+    force: true,
+    review_mode: Some(@types.ReviewMode::SinglePass),
+  }
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    Some(ps),
+    None,
+    Some(reg),
+    runner,
+    capture,
+    append_file=fn(_path, _content) { true },
+    path_exists=fn(path) { path == leaf },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail(msg)
+  }
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["worktree", "remove", "--force", leaf]
+    }),
+  )
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["branch", "-D", leaf_branch] &&
+      cmd.workdir == Some(project_dir)
+    }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr leaf merge skips missing worktree and still deletes branch" {
+  let project_dir = "/tmp/choir-mpr-leaf-no-worktree-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_enable_force_override(project_dir)
+  let feature_branch = "feature/no-worktree"
+  let leaf_branch = feature_branch + ".leaf-a"
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    80,
+    leaf_branch,
+    leaf_branch,
+    feature_branch,
+    "https://github.com/o/r/pull/80",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let ran : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    (0, "")
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    merge_pr_test_runner_record_ok(cmds, ran)
+  }
+  let args : MergePrArgs = {
+    pr_number: 80,
+    parent_branch: feature_branch,
+    caller_id: "main.tl",
+    force: true,
+    review_mode: Some(@types.ReviewMode::SinglePass),
+  }
+  let got = interpret_merge_pr(
+    args,
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    runner,
+    capture,
+    append_file=fn(_path, _content) { true },
+    path_exists=fn(_path) { false },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail(msg)
+  }
+  assert_false(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "worktree" &&
+      cmd.args[1] == "remove"
+    }),
+  )
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["branch", "-D", leaf_branch] &&
+      cmd.workdir == Some(project_dir)
+    }),
+  )
   ignore(@sys.rm_rf(project_dir))
 }
 
