@@ -579,7 +579,12 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
     automerge_capture=capture,
   )
   assert_eq(merge_seen_count, 1)
-  assert_true(graphql_calls > 0)
+  // The earlier [FIXES PUSHED] dispatch already raised graphql_calls to 2
+  // (assert_eq above at the first refresh). Asserting > 0 here would pass
+  // even if the third pending-event pass never touched GraphQL. Assert the
+  // counter actually advanced past 2 so the merge-ready dispatch is proven
+  // to have re-fetched unresolved threads through the production path.
+  assert_true(graphql_calls > 2)
   assert_true(review_gate_calls > 0)
   assert_eq(parent_messages.length(), 3)
   assert_true(parent_messages[2].contains("[PR MERGED]"))
