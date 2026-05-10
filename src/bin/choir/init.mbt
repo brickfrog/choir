@@ -72,17 +72,15 @@ fn init_wait_for_server_socket_before_tl(
     @sys.wait_for_socket(path, tries)
   },
   write_stdout? : (String) -> Unit = fn(msg) { @sys.write_stdout(msg) },
-) -> Bool {
+) -> Unit {
   let tries = init_server_socket_wait_tries()
   write_stdout("Waiting for server socket...\n")
   if wait_for_socket(listen_uds, tries) {
     write_stdout("Server ready.\n")
-    true
   } else {
     write_stdout(
       "Warning: server socket not ready after \{init_server_socket_wait_budget_seconds(tries)}s; launching TL anyway.\n",
     )
-    false
   }
 }
 
@@ -171,7 +169,7 @@ test "init server cleanup commands separate runtime restart from purge" {
 test "init waits for server socket before TL launch" {
   let events : Array[String] = []
   events.push("server-tab")
-  let ready = init_wait_for_server_socket_before_tl(
+  init_wait_for_server_socket_before_tl(
     ".choir/server.sock",
     wait_for_socket=fn(path, tries) {
       events.push("wait:" + path + ":" + tries.to_string())
@@ -180,7 +178,6 @@ test "init waits for server socket before TL launch" {
     write_stdout=fn(_) {  },
   )
   events.push("tl-tab")
-  assert_true(ready)
   assert_eq(events, ["server-tab", "wait:.choir/server.sock:100", "tl-tab"])
 }
 
@@ -696,7 +693,7 @@ fn init_run() -> Unit {
       } else {
         @sys.write_stdout("Reusing existing Server tab.\n")
       }
-      ignore(init_wait_for_server_socket_before_tl(config.listen_uds))
+      init_wait_for_server_socket_before_tl(config.listen_uds)
       let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
       if !tl_tab_exists {
         let tl_agent_type = @workspace.tl_type_agent_type(tl_type)
