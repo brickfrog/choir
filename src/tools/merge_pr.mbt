@@ -750,13 +750,18 @@ fn merge_pr_tracked_for_post_success(
 }
 
 ///|
+/// Bound the `gh pr view --json body` invocation in 30s of `timeout(1)`. The
+/// repo's gh-discipline (choir-vj3) flags `gh pr view --json` as a known
+/// indefinite-hang surface; wrapping with `timeout` ensures a stalled call
+/// surfaces as a non-zero exit instead of blocking merge_pr's post-success
+/// side effects (and the tool response).
 pub fn merge_pr_pr_body_command(
   project_dir : String,
   pr_number : Int,
 ) -> @workspace.Command {
   {
-    program: "gh",
-    args: ["pr", "view", pr_number.to_string(), "--json", "body"],
+    program: "timeout",
+    args: ["30s", "gh", "pr", "view", pr_number.to_string(), "--json", "body"],
     workdir: Some(project_dir),
   }
 }

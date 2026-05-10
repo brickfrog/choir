@@ -561,8 +561,12 @@ pub fn file_pr_audit_receipt_path_for_head(sha : String) -> String {
 
 ///|
 fn file_pr_missing_audit_receipt_error(short_sha : String) -> @types.ChoirError {
+  // The gate keys solely on `parent_branch == "main"`, so any PR targeting
+  // main (feature→main, hotfix→main, release→main, hand-rolled topic →
+  // main) must have a fresh audit receipt — not just feature branches. The
+  // wording reflects that.
   @types.ChoirError::validation_error(
-    "file_pr: feature→main PR requires a recent audit on HEAD " +
+    "file_pr: PRs targeting main require a recent audit on HEAD " +
     short_sha +
     "; run `/audit` (choir:audit skill) on this branch first, then retry.",
   )

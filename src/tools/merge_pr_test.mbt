@@ -1562,7 +1562,8 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
     }
-    if cmd.program == "gh" && cmd.args == ["pr", "view", "77", "--json", "body"] {
+    if cmd.program == "timeout" &&
+      cmd.args == ["30s", "gh", "pr", "view", "77", "--json", "body"] {
       return (0, "{\"body\":\"Closes choir-body\\ncloses choir-a\\n\"}")
     }
     if cmd.program == "bd" &&

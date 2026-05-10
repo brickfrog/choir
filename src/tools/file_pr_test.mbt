@@ -934,7 +934,7 @@ async test "interpret_file_pr feature main fails without audit receipt" {
     @types.Response::Err(msg) =>
       assert_eq(
         msg,
-        "file_pr: feature→main PR requires a recent audit on HEAD " +
+        "file_pr: PRs targeting main require a recent audit on HEAD " +
         file_pr_short_sha(head) +
         "; run `/audit` (choir:audit skill) on this branch first, then retry.",
       )
