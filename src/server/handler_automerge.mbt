@@ -126,6 +126,7 @@ pub fn review_mode_for_agent(
 fn automerge_candidate_event(event : @poller.PollEvent) -> Bool {
   match event {
     @poller.PollEvent::PRReady(_)
+    | @poller.PollEvent::FixesPushed(_)
     | @poller.PollEvent::CIFailureCleared(_)
     | @poller.PollEvent::CILatestHeadRollupSucceeded(_)
     | @poller.PollEvent::CopilotIssueCommentSeen(_)
@@ -138,13 +139,9 @@ fn automerge_candidate_event(event : @poller.PollEvent) -> Bool {
 ///|
 fn automerge_candidate_event_for_review_mode(
   event : @poller.PollEvent,
-  review_mode : @types.ReviewMode,
+  _review_mode : @types.ReviewMode,
 ) -> Bool {
-  match event {
-    @poller.PollEvent::FixesPushed(_) =>
-      review_mode == @types.ReviewMode::SinglePass
-    _ => automerge_candidate_event(event)
-  }
+  automerge_candidate_event(event)
 }
 
 ///|

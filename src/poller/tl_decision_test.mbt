@@ -118,6 +118,18 @@ test "merge operator helpers distinguish manual and automerge" {
 }
 
 ///|
+test "NextAction wire strings are stable" {
+  assert_eq(NextAction::Wait.to_wire_string(), "wait")
+  assert_eq(NextAction::ForceMerge.to_wire_string(), "force_merge")
+  assert_eq(NextAction::MergeNow.to_wire_string(), "merge_now")
+  assert_eq(NextAction::AddressThreads.to_wire_string(), "address_threads")
+  assert_eq(
+    NextAction::CrossCheckThreads.to_wire_string(),
+    "cross_check_threads",
+  )
+}
+
+///|
 test "plan_tl_poll_event_parent PRReady waits when snapshot is not merge-ready" {
   let t = sample_tracked(Approved, InProgress, 5)
   let cat = plan_tl_poll_event_parent(PRReady(5), t, None)

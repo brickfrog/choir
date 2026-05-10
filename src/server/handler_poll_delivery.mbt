@@ -1,45 +1,30 @@
 ///|
 fn render_parent_next_action(
+  decision : @poller.PrStateNotificationDecision,
   pr_number : Int,
   parent_branch : String?,
   merge_mode : @poller.MergeOperatorMode,
 ) -> String {
-  @poller.merge_ready_next_action(pr_number, parent_branch, merge_mode)
+  @poller.next_action_line(decision.next_action) +
+  "\n" +
+  @poller.next_action_detail_line(
+    decision.next_action,
+    pr_number,
+    parent_branch,
+    merge_mode,
+  )
 }
 
 ///|
-fn parent_poll_tl_decision_suffix(
+fn parent_pr_state_notification_decision(
+  project_dir : String,
   tracked : @poller.TrackedPR,
   event : @poller.PollEvent,
   unresolved_threads_for_recheck : Int?,
-  merge_mode : @poller.MergeOperatorMode,
-  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
-) -> String {
-  let category = @poller.plan_tl_poll_event_parent(
-    event,
-    tracked,
-    unresolved_threads_for_recheck,
-    review_mode~,
-  )
-  let sentence = match category {
-    @poller.TlTrackedPrWorkflowCategory::MergeGateOpenPendingPolicyConfirmation =>
-      @poller.tl_merge_gate_sentence(merge_mode)
-    _ => @poller.tl_tracked_pr_workflow_category_sentence(category)
-  }
-  match event {
-    PRMerged(_) => ""
-    _ => "\nTLDecision: " + sentence
-  }
-}
-
-///|
-fn parent_merge_policy_line(
-  project_dir : String,
-  tracked : @poller.TrackedPR,
-  unresolved_threads_for_recheck : Int?,
   task_contract? : @types.TaskContract? = None,
+  merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
-) -> String {
+) -> @poller.PrStateNotificationDecision {
   let verify_results = match task_contract {
     Some(contract) =>
       @evidence.verify_results_for_required_at_head(
@@ -50,14 +35,32 @@ fn parent_merge_policy_line(
       )
     None => []
   }
-  "\n" +
-  @poller.merge_policy_summary_line(
+  @poller.pr_state_notification_decision_for_tracked_pr(
+    event,
     tracked,
     unresolved_threads_for_recheck,
     task_contract~,
     review_mode~,
     verify_results~,
+    merge_mode~,
   )
+}
+
+///|
+fn parent_poll_tl_decision_suffix(
+  decision : @poller.PrStateNotificationDecision,
+  merge_mode : @poller.MergeOperatorMode,
+) -> String {
+  "\nTLDecision: " +
+  @poller.tl_pr_state_notification_sentence(decision, merge_mode)
+}
+
+///|
+fn parent_merge_policy_line(
+  decision : @poller.PrStateNotificationDecision,
+) -> String {
+  "\n" +
+  @poller.merge_policy_summary_line_for_decision(decision.policy_decision)
 }
 
 ///|
@@ -92,6 +95,19 @@ pub fn parent_poll_event_message(
     "\npr_url: " + tracked.pr_url
   }
   match event {
+    ReviewCommented(_, _) | PRMerged(_) => return None
+    _ => ()
+  }
+  let notification_decision = parent_pr_state_notification_decision(
+    project_dir,
+    tracked,
+    event,
+    unresolved_threads_for_recheck,
+    task_contract~,
+    merge_mode~,
+    review_mode~,
+  )
+  match event {
     PRReady(n) => {
       let message = "[PR READY] " +
         agent_id +
@@ -109,14 +125,10 @@ pub fn parent_poll_event_message(
         "\n" +
         @poller.premerge_wait_line(merge_mode) +
         "\n" +
-        render_parent_next_action(n, parent_branch, merge_mode) +
-        parent_poll_tl_decision_suffix(
-          tracked,
-          event,
-          unresolved_threads_for_recheck,
-          merge_mode,
-          review_mode~,
-        )
+        render_parent_next_action(
+          notification_decision, n, parent_branch, merge_mode,
+        ) +
+        parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @types.Status::Success))
     }
     FixesPushed(n) => {
@@ -125,12 +137,6 @@ pub fn parent_poll_event_message(
           "Pre-merge: resolving threads and checking gates; merge only after threads are resolved, CI is green, and merge_pr succeeds.\n"
         @types.ReviewMode::Iterative =>
           "Pre-merge: re-check the PR; merge only after review is clear and merge_pr succeeds.\n"
-      }
-      let next_action = match review_mode {
-        @types.ReviewMode::SinglePass =>
-          "Next action: resolve review threads and check gates."
-        @types.ReviewMode::Iterative =>
-          "Next action: re-check the PR and merge when ready."
       }
       let message = "[FIXES PUSHED] " +
         agent_id +
@@ -146,14 +152,10 @@ pub fn parent_poll_event_message(
         "\n" +
         parent_thread_recheck_line(unresolved_threads_for_recheck) +
         premerge_line +
-        next_action +
-        parent_poll_tl_decision_suffix(
-          tracked,
-          event,
-          unresolved_threads_for_recheck,
-          merge_mode,
-          review_mode~,
-        )
+        render_parent_next_action(
+          notification_decision, n, parent_branch, merge_mode,
+        ) +
+        parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @types.Status::Info))
     }
     ReviewTimeout(n) => {
@@ -169,10 +171,10 @@ pub fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "Next action: gh pr edit --add-reviewer @copilot" +
-        parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck, merge_mode,
-        )
+        render_parent_next_action(
+          notification_decision, n, parent_branch, merge_mode,
+        ) +
+        parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @types.Status::Failure))
     }
     ReviewReceived(n, comments) =>
@@ -190,9 +192,11 @@ pub fn parent_poll_event_message(
             "parent_branch: " +
             parent_branch.unwrap_or("<unknown>") +
             pr_url +
-            parent_poll_tl_decision_suffix(
-              tracked, event, unresolved_threads_for_recheck, merge_mode,
-            ),
+            "\n" +
+            render_parent_next_action(
+              notification_decision, n, parent_branch, merge_mode,
+            ) +
+            parent_poll_tl_decision_suffix(notification_decision, merge_mode),
             @types.Status::Info,
           ),
         )
@@ -205,9 +209,11 @@ pub fn parent_poll_event_message(
             n.to_string() +
             " has review comments:\n" +
             comments +
-            parent_poll_tl_decision_suffix(
-              tracked, event, unresolved_threads_for_recheck, merge_mode,
-            ),
+            "\n" +
+            render_parent_next_action(
+              notification_decision, n, parent_branch, merge_mode,
+            ) +
+            parent_poll_tl_decision_suffix(notification_decision, merge_mode),
             @types.Status::Info,
           ),
         )
@@ -227,9 +233,11 @@ pub fn parent_poll_event_message(
           "parent_branch: " +
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
-          parent_poll_tl_decision_suffix(
-            tracked, event, unresolved_threads_for_recheck, merge_mode,
-          ),
+          "\n" +
+          render_parent_next_action(
+            notification_decision, n, parent_branch, merge_mode,
+          ) +
+          parent_poll_tl_decision_suffix(notification_decision, merge_mode),
           @types.Status::Failure,
         ),
       )
@@ -256,11 +264,12 @@ pub fn parent_poll_event_message(
           pr_url +
           "\n" +
           prefix +
-          "Next action: re-check the PR thread and full CI status on GitHub before merging or requesting review.\n\n" +
+          render_parent_next_action(
+            notification_decision, n, parent_branch, merge_mode,
+          ) +
+          "\n\n" +
           summary +
-          parent_poll_tl_decision_suffix(
-            tracked, event, unresolved_threads_for_recheck, merge_mode,
-          ),
+          parent_poll_tl_decision_suffix(notification_decision, merge_mode),
           @types.Status::Info,
         ),
       )
@@ -288,11 +297,12 @@ pub fn parent_poll_event_message(
           pr_url +
           "\n" +
           prefix +
-          "Next action: re-check Copilot/review thread and branch policy, then merge_pr only if appropriate.\n\n" +
+          render_parent_next_action(
+            notification_decision, n, parent_branch, merge_mode,
+          ) +
+          "\n\n" +
           summary +
-          parent_poll_tl_decision_suffix(
-            tracked, event, unresolved_threads_for_recheck, merge_mode,
-          ),
+          parent_poll_tl_decision_suffix(notification_decision, merge_mode),
           @types.Status::Info,
         ),
       )
@@ -317,22 +327,29 @@ pub fn parent_poll_event_message(
           "parent_branch: " +
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
+          "\n" +
+          render_parent_next_action(
+            notification_decision, n, parent_branch, merge_mode,
+          ) +
           "\n\n" +
           summary +
-          parent_poll_tl_decision_suffix(
-            tracked, event, unresolved_threads_for_recheck, merge_mode,
-          ),
+          parent_poll_tl_decision_suffix(notification_decision, merge_mode),
           @types.Status::Info,
         ),
       )
     }
     PRMerged(_) => None
     MergeReady(n) => {
+      let readiness_summary = match notification_decision.policy_decision {
+        @policy.MergeDecision::MergeNow(_) =>
+          " — reviewed, CI green, merge gate open\n"
+        _ => " — merge readiness re-check required\n"
+      }
       let message = "[MERGE READY] " +
         agent_id +
         " PR #" +
         n.to_string() +
-        " — reviewed, CI green, merge gate open\n" +
+        readiness_summary +
         "branch: " +
         branch +
         "\n" +
@@ -341,22 +358,12 @@ pub fn parent_poll_event_message(
         pr_url +
         "\n" +
         @poller.merge_mode_line(merge_mode) +
-        parent_merge_policy_line(
-          project_dir,
-          tracked,
-          unresolved_threads_for_recheck,
-          task_contract~,
-          review_mode~,
-        ) +
+        parent_merge_policy_line(notification_decision) +
         "\n" +
-        render_parent_next_action(n, parent_branch, merge_mode) +
-        parent_poll_tl_decision_suffix(
-          tracked,
-          event,
-          unresolved_threads_for_recheck,
-          merge_mode,
-          review_mode~,
-        )
+        render_parent_next_action(
+          notification_decision, n, parent_branch, merge_mode,
+        ) +
+        parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @poller.merge_ready_status(merge_mode)))
     }
     ReviewThreadsResolved(n) => {
@@ -377,11 +384,13 @@ pub fn parent_poll_event_message(
         "parent_branch: " +
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
+        "\n" +
+        render_parent_next_action(
+          notification_decision, n, parent_branch, merge_mode,
+        ) +
         "\n\n" +
         summary +
-        parent_poll_tl_decision_suffix(
-          tracked, event, unresolved_threads_for_recheck, merge_mode,
-        )
+        parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @types.Status::Info))
     }
   }

@@ -334,6 +334,586 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
 }
 
 ///|
+async test "maybe_trigger_automerge_for_pending_event fires on iterative fixes pushed when policy is merge_now" {
+  let project_dir = "/tmp/choir-automerge-fixes-pushed-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session,
+    automerge: true,
+    review_mode: @types.ReviewMode::Iterative,
+  }
+  let state = ServerState::new(config, make_recovery_provider())
+  let parent_id = "main.tl"
+  let child_id = "main.auto-leaf"
+  let pr_number = 91
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some(
+        @workspace.local_target_for(
+          terminal_session,
+          "TL",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::MoonPilot,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/auto-leaf",
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let parent_child : @phase.ChildLifecycle = {
+    child_id,
+    slug: @phase.extract_slug(child_id),
+    branch: child_id,
+    agent_type: @types.AgentType::MoonPilot,
+    summary: @phase.ChildLifecycleSummary::ReviewOwned(
+      pr_number~,
+      state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+    ),
+  }
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
+      ),
+    }),
+  )
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        ),
+      ),
+    }),
+  )
+  state.poller.track(
+    pr_number, child_id, child_id, "main", "https://github.com/brickfrog/choir/pull/91",
+    100L,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::Commented,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_sha: "old-sha",
+        copilot_issue_comment_seen: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let review_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.program == "gh" &&
+      cmd.args == ["repo", "view", "--json", "owner,name"] {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1] == "graphql" {
+      return (0, review_threads_json)
+    }
+    (0, "")
+  }
+  let blocked_tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let blocked_decision = @poller.merge_policy_decision_for_tracked_pr(
+    blocked_tracked,
+    Some(1),
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_eq(blocked_decision.label(), "blocked")
+  let blocked = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    blocked_tracked,
+    Some(1),
+    runner,
+    capture~,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_false(blocked)
+  assert_false(merge_seen)
+  state.poller.restore({ ..blocked_tracked, last_sha: "fix-sha" })
+  let fixed_tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let fixed_decision = @poller.merge_policy_decision_for_tracked_pr(
+    fixed_tracked,
+    Some(0),
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_eq(fixed_decision.label(), "merge_now")
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::FixesPushed(pr_number),
+    fixed_tracked,
+    Some(0),
+    runner,
+    capture~,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_true(merged)
+  assert_true(merge_seen)
+  assert_true(state.poller.get(pr_number) == None)
+  match @phase.read_lifecycle(project_dir, child_id) {
+    Some(lifecycle) =>
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+      )
+    None => fail("expected merged child lifecycle")
+  }
+}
+
+///|
+fn blocked_gh_automerge_fixture(
+  label : String,
+  pr_number : Int,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
+) -> (ServerState, String, String) raise {
+  let project_dir = "/tmp/choir-blocked-gh-automerge-" +
+    label +
+    "-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session,
+    automerge: true,
+    review_mode,
+  }
+  let state = ServerState::new(config, make_recovery_provider())
+  let parent_id = "main.tl-" + label
+  let child_id = "main.blocked-gh-" + label
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some(
+        @workspace.local_target_for(
+          terminal_session,
+          "TL",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/" + label,
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let parent_child : @phase.ChildLifecycle = {
+    child_id,
+    slug: @phase.extract_slug(child_id),
+    branch: child_id,
+    agent_type: @types.AgentType::Codex,
+    summary: @phase.ChildLifecycleSummary::ReviewOwned(
+      pr_number~,
+      state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+    ),
+  }
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Supervisor(
+        @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
+      ),
+    }),
+  )
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        ),
+      ),
+    }),
+  )
+  state.poller.track(
+    pr_number,
+    child_id,
+    child_id,
+    "main",
+    "https://github.com/brickfrog/choir/pull/" + pr_number.to_string(),
+    100L,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::Approved,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_sha: "sha-" + label,
+        copilot_issue_comment_seen: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  match state.poller.get(pr_number) {
+    Some(_) => {
+      ignore(
+        @evidence.append_agent_evidence_event(
+          @sys.append_file_sync,
+          project_dir,
+          child_id,
+          @poller.now_sec(),
+          @evidence.EvidenceEvent::ReviewObserved(
+            state=@evidence.EvidenceReviewState::Approved,
+            body=Some("looks good"),
+          ),
+        ),
+      )
+      ignore(
+        @evidence.append_agent_evidence_event(
+          @sys.append_file_sync,
+          project_dir,
+          child_id,
+          @poller.now_sec(),
+          @evidence.EvidenceEvent::CiObserved(
+            status=@evidence.EvidenceCiStatus::Success,
+            head_sha=Some("sha-" + label),
+          ),
+        ),
+      )
+      ignore(
+        @evidence.append_agent_evidence_event(
+          @sys.append_file_sync,
+          project_dir,
+          child_id,
+          @poller.now_sec(),
+          @evidence.EvidenceEvent::ThreadsObserved(count=0),
+        ),
+      )
+      ignore(
+        @evidence.append_agent_evidence_event(
+          @sys.append_file_sync,
+          project_dir,
+          child_id,
+          @poller.now_sec(),
+          @evidence.EvidenceEvent::CopilotIssueCommentObserved,
+        ),
+      )
+    }
+    None => fail("expected tracked PR")
+  }
+  (state, child_id, project_dir)
+}
+
+///|
+fn blocked_gh_notify_request(
+  caller_id : String,
+  message : String,
+) -> @types.Request {
+  let args : Map[String, Json] = {
+    "caller_id": caller_id.to_json(),
+    "message": message.to_json(),
+    "status": "failure".to_json(),
+  }
+  {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "notify_parent",
+    args: @types.RequestArgs::from_values(args),
+  }
+}
+
+///|
+async test "blocked gh notify auto-merges when latest poller snapshot is clear" {
+  let pr_number = 92
+  let (state, child_id, _) = blocked_gh_automerge_fixture(
+    "fires",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let review_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+    if cmd.program == "gh" &&
+      cmd.args == ["repo", "view", "--json", "owner,name"] {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1] == "graphql" {
+      return (0, review_threads_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      let reviews_json =
+        #|[{"state":"APPROVED","user":{"login":"copilot-pull-request-reviewer[bot]"},"submitted_at":"2026-05-10T00:00:00Z"}]
+      return (0, reviews_json)
+    }
+    (0, "")
+  }
+  let resp = state.handle_with_runner_and_capture(
+    blocked_gh_notify_request(
+      child_id, "[BLOCKED] bounded GraphQL review-thread check timed out (exit 124). I cannot confirm zero unresolved review threads, so I am not reporting review-complete.",
+    ),
+    runner~,
+    capture~,
+  )
+  assert_true(resp.is_ok())
+  assert_true(merge_seen)
+  assert_true(state.poller.get(pr_number) == None)
+}
+
+///|
+async test "blocked gh notify honors single-pass review mode for fixes pushed" {
+  let pr_number = 94
+  let (state, child_id, _) = blocked_gh_automerge_fixture(
+    "singlepass",
+    pr_number,
+    review_mode=@types.ReviewMode::SinglePass,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::ChangesRequested,
+        last_sha: "fix-sha-singlepass",
+        changes_requested_since: 0L,
+        fixes_pushed_at: 999L,
+      })
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let review_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+    if cmd.program == "gh" &&
+      cmd.args == ["repo", "view", "--json", "owner,name"] {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1] == "graphql" {
+      return (0, review_threads_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      let reviews_json =
+        #|[{"state":"APPROVED","user":{"login":"copilot-pull-request-reviewer[bot]"},"submitted_at":"2026-05-10T00:00:00Z"}]
+      return (0, reviews_json)
+    }
+    (0, "")
+  }
+  let resp = state.handle_with_runner_and_capture(
+    blocked_gh_notify_request(
+      child_id, "[BLOCKED] bounded GraphQL review-thread check timed out (exit 124). I cannot confirm zero unresolved review threads, so I am not reporting review-complete.",
+    ),
+    runner~,
+    capture~,
+  )
+  assert_true(resp.is_ok())
+  assert_true(merge_seen)
+  assert_true(state.poller.get(pr_number) == None)
+}
+
+///|
+async test "blocked gh notify does not auto-merge unrelated blocked reasons" {
+  let pr_number = 93
+  let (state, child_id, _) = blocked_gh_automerge_fixture(
+    "nofire",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let review_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+    if cmd.program == "gh" &&
+      cmd.args == ["repo", "view", "--json", "owner,name"] {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1] == "graphql" {
+      return (0, review_threads_json)
+    }
+    (0, "")
+  }
+  let resp = state.handle_with_runner_and_capture(
+    blocked_gh_notify_request(
+      child_id, "[BLOCKED] compile error in src/server/handler_test.mbt",
+    ),
+    runner~,
+    capture~,
+  )
+  assert_true(resp.is_ok())
+  assert_false(merge_seen)
+  match state.poller.get(pr_number) {
+    Some(_) => ()
+    None => fail("unrelated BLOCKED reason must not untrack or merge the PR")
+  }
+  // Adversarial reason: hits three of the four matcher gates but is missing
+  // the `bounded` discipline keyword — it's a real CI/network failure, not a
+  // bounded-gh-discipline timeout. Must not auto-merge.
+  let resp_partial = state.handle_with_runner_and_capture(
+    blocked_gh_notify_request(
+      child_id, "[BLOCKED] github action runner timed out fetching a sibling review thread; see actions log",
+    ),
+    runner~,
+    capture~,
+  )
+  assert_true(resp_partial.is_ok())
+  assert_false(merge_seen)
+  match state.poller.get(pr_number) {
+    Some(_) => ()
+    None =>
+      fail(
+        "BLOCKED reason missing the `bounded` discipline keyword must not auto-merge",
+      )
+  }
+}
+
+///|
 fn kill_agent_reconciliation_fixture(
   label : String,
   pr_number : Int,
@@ -549,6 +1129,40 @@ async test "kill_agent with empty caller_id does not auto-close tracked PRs" {
 }
 
 ///|
+fn parent_poll_test_ready_tracked(pr_number : Int) -> @poller.TrackedPR {
+  {
+    pr_number,
+    agent_id: "main.dev-ready",
+    branch: "work/ready",
+    parent_branch: "main",
+    pr_url: "https://ex/pr/" + pr_number.to_string(),
+    first_seen: 0,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "sha",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+  }
+}
+
+///|
+fn assert_next_action_line(
+  message : String,
+  action : @poller.NextAction,
+) -> Unit raise {
+  assert_true(message.contains("next_action: " + action.to_wire_string()))
+}
+
+///|
 test "parent_poll_event_message PR READY stresses not merged" {
   let tracked : @poller.TrackedPR = {
     pr_number: 7,
@@ -717,6 +1331,143 @@ test "parent_poll_event_message MergeReady is informational in automerge mode" {
       assert_false(message.contains("`merge_pr("))
     }
     None => fail("expected automerge MergeReady message")
+  }
+}
+
+///|
+test "parent PR-state notifications emit typed next_action" {
+  let tracked = parent_poll_test_ready_tracked(73)
+  let events = [
+    @poller.PollEvent::PRReady(73),
+    @poller.PollEvent::FixesPushed(73),
+    @poller.PollEvent::CILatestHeadRollupSucceeded(73),
+    @poller.PollEvent::CopilotIssueCommentSeen(73),
+    @poller.PollEvent::MergeReady(73),
+  ]
+  for event in events {
+    match
+      parent_poll_event_message(
+        tracked,
+        "/repo",
+        event,
+        Some(0),
+        merge_mode=@poller.MergeOperatorMode::Manual,
+      ) {
+      Some((message, _)) =>
+        assert_next_action_line(message, @poller.NextAction::MergeNow)
+      None => fail("expected parent PR-state notification")
+    }
+  }
+  let merged = merged_pr_parent_message(
+    73,
+    "main.dev-ready",
+    "work/ready",
+    "main",
+    "https://ex/pr/73",
+    MergedDeliverySource::MergePrTool,
+    merge_execution_mode=Some(@evidence.MergeExecutionMode::Manual),
+  )
+  assert_true(merged.contains("[PR MERGED]"))
+  assert_next_action_line(merged, @poller.NextAction::Wait)
+}
+
+///|
+test "parent PR-state notifications also emit next_action for ReviewTimeout / ReviewReceived / CIFailed / ReviewThreadsResolved" {
+  let tracked = parent_poll_test_ready_tracked(75)
+  let events = [
+    @poller.PollEvent::ReviewTimeout(75),
+    @poller.PollEvent::ReviewReceived(75, ""),
+    @poller.PollEvent::ReviewReceived(75, "looks fine"),
+    @poller.PollEvent::CIFailed(75),
+    @poller.PollEvent::ReviewThreadsResolved(75),
+  ]
+  for event in events {
+    match
+      parent_poll_event_message(
+        tracked,
+        "/repo",
+        event,
+        Some(0),
+        merge_mode=@poller.MergeOperatorMode::Manual,
+      ) {
+      Some((message, _)) => assert_true(message.contains("\nnext_action: "))
+      None => fail("expected parent PR-state notification for event")
+    }
+  }
+}
+
+///|
+test "parent_poll_event_message MergeReady never says auto ready when policy is blocked" {
+  let tracked = parent_poll_test_ready_tracked(74)
+  let modes = [
+    @poller.MergeOperatorMode::Manual,
+    @poller.MergeOperatorMode::Automerge,
+    @poller.MergeOperatorMode::Mixed,
+  ]
+  for mode in modes {
+    match
+      parent_poll_event_message(
+        tracked,
+        "/repo",
+        @poller.PollEvent::MergeReady(74),
+        Some(2),
+        merge_mode=mode,
+      ) {
+      Some((message, _)) => {
+        assert_true(message.contains("[MERGE READY]"))
+        assert_true(
+          message.contains(
+            "Merge policy decision: blocked (2 unresolved inline review thread(s))",
+          ),
+        )
+        assert_next_action_line(message, @poller.NextAction::AddressThreads)
+        assert_false(message.contains("AUTO-MERGE READY"))
+        assert_false(message.contains("MERGE NOW:"))
+      }
+      None => fail("expected MergeReady message")
+    }
+  }
+}
+
+///|
+test "parent_poll_event_message MergeReady on Mixed mode says MERGE READY (not MERGE NOW) and emits cross_check_merge_mode" {
+  let tracked = parent_poll_test_ready_tracked(76)
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::MergeReady(76),
+      Some(0),
+      merge_mode=@poller.MergeOperatorMode::Mixed,
+    ) {
+    Some((message, _)) => {
+      assert_true(message.contains("[MERGE READY]"))
+      // Mixed must NOT collapse to a Manual-style 'MERGE NOW: Run merge_pr.'
+      assert_false(message.contains("MERGE NOW: reviewed"))
+      assert_true(message.contains("MERGE READY: reviewed"))
+      assert_true(message.contains("Check per-leaf merge mode"))
+      assert_next_action_line(message, @poller.NextAction::CrossCheckMergeMode)
+    }
+    None => fail("expected MergeReady message for Mixed mode")
+  }
+}
+
+///|
+test "parent_poll_event_message ReviewTimeout emits EscalateReview next_action with reviewer-add detail" {
+  let tracked = parent_poll_test_ready_tracked(77)
+  match
+    parent_poll_event_message(
+      tracked,
+      "/repo",
+      @poller.PollEvent::ReviewTimeout(77),
+      Some(0),
+      merge_mode=@poller.MergeOperatorMode::Manual,
+    ) {
+    Some((message, _)) => {
+      assert_next_action_line(message, @poller.NextAction::EscalateReview)
+      assert_true(message.contains("gh pr edit --add-reviewer @copilot"))
+    }
+    None => fail("expected ReviewTimeout message")
   }
 }
 
