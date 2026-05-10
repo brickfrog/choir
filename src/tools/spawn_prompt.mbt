@@ -271,6 +271,11 @@ fn worker_profile_text(worker_type : String) -> String {
   let completion = "## Completion Protocol (Worker)\n" +
     role_line +
     "\nYou can read and edit files but do not own a branch — no commits, PRs, or pushes.\n\n" +
+    "Shell command discipline:\n" +
+    "- Search only the project tree (`src/`, `tests/`, anything committed). Do NOT walk `~/.moon`, `_build/`, `.choir/`, `node_modules/`, or other toolchain/cache paths; they are huge and unindexed for review/audit purposes.\n" +
+    "- All `find` / `grep -r` / `xargs` invocations must be bounded with `timeout 30s` prefix and scoped to `.` or a specific subdirectory. Unbounded walks against `/`, `~`, or `~/.moon` are forbidden.\n" +
+    "- A `bash-bounded` wrapper is provided in the worker's worktree when one exists; prefer it for shell pipelines.\n" +
+    "- Concrete failure mode this prevents: a Sarcasmotron worker walked `~/.moon` for 17 minutes before user intervention. Worker context wasted; wave stalled.\n\n" +
     "When you are done:\n\n" +
     "1. Call `notify_parent` with status `success` and a concise summary (under 500 words, no raw dumps).\n" +
     "   - `notify_parent` and `shutdown` are available as shell commands on PATH.\n" +

@@ -92,6 +92,35 @@ test "render_worker_spawn_prompt uses research profile" {
 }
 
 ///|
+test "render_worker_spawn_prompt includes shell command discipline" {
+  let prompt = render_worker_spawn_prompt(
+    PromptSpec::from_map({ "task": "Review command wrappers", "type": "review" }),
+  )
+  assert_true(prompt.contains("Shell command discipline:"))
+  assert_true(prompt.contains("Search only the project tree"))
+  assert_true(prompt.contains("`src/`, `tests/`, anything committed"))
+  assert_true(prompt.contains("Do NOT walk `~/.moon`, `_build/`, `.choir/`"))
+  assert_true(prompt.contains("`node_modules/`"))
+  assert_true(
+    prompt.contains(
+      "All `find` / `grep -r` / `xargs` invocations must be bounded with `timeout 30s`",
+    ),
+  )
+  assert_true(prompt.contains("scoped to `.` or a specific subdirectory"))
+  assert_true(
+    prompt.contains(
+      "Unbounded walks against `/`, `~`, or `~/.moon` are forbidden",
+    ),
+  )
+  assert_true(prompt.contains("`bash-bounded` wrapper"))
+  assert_true(
+    prompt.contains("Sarcasmotron worker walked `~/.moon` for 17 minutes"),
+  )
+  assert_true(prompt.contains("Worker context wasted; wave stalled."))
+  assert_false(prompt.contains("## Shell command discipline"))
+}
+
+///|
 test "render_leaf_spawn_prompt includes beads issue section" {
   let prompt = render_leaf_spawn_prompt(
     PromptSpec::from_map({
