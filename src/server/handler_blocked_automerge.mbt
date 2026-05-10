@@ -1,30 +1,34 @@
 ///|
 /// Conservative matcher for the leaf-side gh timeout discipline.
 ///
-/// Keep this intentionally substring-based and narrow: it requires the
-/// explicit `[BLOCKED]` marker, a gh/review-thread term, and one of the stable
-/// bounded-timeout signatures. Real work blockers such as compile failures
-/// must not auto-merge just because the latest poller snapshot is clean.
+/// Keep this intentionally narrow. Auto-merge on a [BLOCKED] notify only when
+/// the leaf's own message simultaneously names: (a) the [BLOCKED]/blocked-on-gh
+/// marker, (b) the `bounded` discipline keyword from the gh-discipline prompt,
+/// (c) a timeout signature (`timed out` / `timeout 30s` / `exit 124`), AND
+/// (d) a review/gh context term. Real work blockers — compile failures,
+/// unresolved merge conflicts, work-correctness issues — must not match just
+/// because the latest poller snapshot looks clean. Loosening any of these
+/// gates is how we false-positive auto-merge a broken PR.
 fn blocked_gh_automerge_reason_matches(message : String) -> Bool {
   let lower = message.to_lower()
-  let blocked_marker = lower.contains("[blocked]") ||
-    lower.contains("blocked-on-gh")
-  if !blocked_marker {
+  if !(lower.contains("[blocked]") || lower.contains("blocked-on-gh")) {
     return false
   }
-  let bounded_timeout = lower.contains("bounded") ||
+  if !lower.contains("bounded") {
+    return false
+  }
+  if !(lower.contains("timed out") ||
     lower.contains("timeout 30s") ||
-    lower.contains("exit 124")
-  if !bounded_timeout {
+    lower.contains("exit 124")) {
     return false
   }
-  lower.contains("bounded-gh") ||
-  lower.contains("gh api") ||
-  lower.contains("`gh") ||
-  lower.contains(" github") ||
-  lower.contains("graphql") ||
+  lower.contains("review-state") ||
   lower.contains("review-thread") ||
-  lower.contains("review thread")
+  lower.contains("review thread") ||
+  lower.contains("gh api") ||
+  lower.contains("gh pr") ||
+  lower.contains("github") ||
+  lower.contains("graphql")
 }
 
 ///|
@@ -80,8 +84,14 @@ fn blocked_gh_poll_snapshot_ready(
   let bundle = blocked_gh_latest_evidence_bundle(project_dir, tracked.agent_id)
   let threads = @types.evaluation_latest_threads(bundle.signals)
   let latest_ci = @types.evaluation_latest_ci_rollup(bundle.signals)
-  latest_ci == @types.EvaluationCiRollup::Success &&
-  tracked.last_ci_rollup == @poller.CiRollupStatus::Success &&
+  // Match the normal merge gate: clear if rollup is Success or NoChecks.
+  let evidence_ci_clear = latest_ci == @types.EvaluationCiRollup::Success ||
+    latest_ci == @types.EvaluationCiRollup::NoChecks
+  let tracked_ci_clear = tracked.last_ci_rollup ==
+    @poller.CiRollupStatus::Success ||
+    tracked.last_ci_rollup == @poller.CiRollupStatus::NoChecks
+  evidence_ci_clear &&
+  tracked_ci_clear &&
   @poller.tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     threads,

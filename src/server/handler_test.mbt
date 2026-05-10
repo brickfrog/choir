@@ -892,6 +892,25 @@ async test "blocked gh notify does not auto-merge unrelated blocked reasons" {
     Some(_) => ()
     None => fail("unrelated BLOCKED reason must not untrack or merge the PR")
   }
+  // Adversarial reason: hits three of the four matcher gates but is missing
+  // the `bounded` discipline keyword — it's a real CI/network failure, not a
+  // bounded-gh-discipline timeout. Must not auto-merge.
+  let resp_partial = state.handle_with_runner_and_capture(
+    blocked_gh_notify_request(
+      child_id, "[BLOCKED] github action runner timed out fetching a sibling review thread; see actions log",
+    ),
+    runner~,
+    capture~,
+  )
+  assert_true(resp_partial.is_ok())
+  assert_false(merge_seen)
+  match state.poller.get(pr_number) {
+    Some(_) => ()
+    None =>
+      fail(
+        "BLOCKED reason missing the `bounded` discipline keyword must not auto-merge",
+      )
+  }
 }
 
 ///|
@@ -1350,6 +1369,31 @@ test "parent PR-state notifications emit typed next_action" {
   )
   assert_true(merged.contains("[PR MERGED]"))
   assert_next_action_line(merged, @poller.NextAction::Wait)
+}
+
+///|
+test "parent PR-state notifications also emit next_action for ReviewTimeout / ReviewReceived / CIFailed / ReviewThreadsResolved" {
+  let tracked = parent_poll_test_ready_tracked(75)
+  let events = [
+    @poller.PollEvent::ReviewTimeout(75),
+    @poller.PollEvent::ReviewReceived(75, ""),
+    @poller.PollEvent::ReviewReceived(75, "looks fine"),
+    @poller.PollEvent::CIFailed(75),
+    @poller.PollEvent::ReviewThreadsResolved(75),
+  ]
+  for event in events {
+    match
+      parent_poll_event_message(
+        tracked,
+        "/repo",
+        event,
+        Some(0),
+        merge_mode=@poller.MergeOperatorMode::Manual,
+      ) {
+      Some((message, _)) => assert_true(message.contains("\nnext_action: "))
+      None => fail("expected parent PR-state notification for event")
+    }
+  }
 }
 
 ///|

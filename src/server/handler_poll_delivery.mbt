@@ -171,7 +171,9 @@ pub fn parent_poll_event_message(
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
         "\n" +
-        "Next action: gh pr edit --add-reviewer @copilot" +
+        render_parent_next_action(
+          notification_decision, n, parent_branch, merge_mode,
+        ) +
         parent_poll_tl_decision_suffix(notification_decision, merge_mode)
       Some((message, @types.Status::Failure))
     }
@@ -190,6 +192,10 @@ pub fn parent_poll_event_message(
             "parent_branch: " +
             parent_branch.unwrap_or("<unknown>") +
             pr_url +
+            "\n" +
+            render_parent_next_action(
+              notification_decision, n, parent_branch, merge_mode,
+            ) +
             parent_poll_tl_decision_suffix(notification_decision, merge_mode),
             @types.Status::Info,
           ),
@@ -203,6 +209,10 @@ pub fn parent_poll_event_message(
             n.to_string() +
             " has review comments:\n" +
             comments +
+            "\n" +
+            render_parent_next_action(
+              notification_decision, n, parent_branch, merge_mode,
+            ) +
             parent_poll_tl_decision_suffix(notification_decision, merge_mode),
             @types.Status::Info,
           ),
@@ -223,6 +233,10 @@ pub fn parent_poll_event_message(
           "parent_branch: " +
           parent_branch.unwrap_or("<unknown>") +
           pr_url +
+          "\n" +
+          render_parent_next_action(
+            notification_decision, n, parent_branch, merge_mode,
+          ) +
           parent_poll_tl_decision_suffix(notification_decision, merge_mode),
           @types.Status::Failure,
         ),
@@ -370,6 +384,10 @@ pub fn parent_poll_event_message(
         "parent_branch: " +
         parent_branch.unwrap_or("<unknown>") +
         pr_url +
+        "\n" +
+        render_parent_next_action(
+          notification_decision, n, parent_branch, merge_mode,
+        ) +
         "\n\n" +
         summary +
         parent_poll_tl_decision_suffix(notification_decision, merge_mode)
