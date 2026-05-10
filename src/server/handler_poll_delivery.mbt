@@ -1331,6 +1331,9 @@ pub async fn deliver_orphaned_pr_notification_for(
   pr : @poller.TrackedPR,
   runner : async (Array[@workspace.Command]) -> Array[Int],
 ) -> Unit {
+  // Poll delivery's stale-registry read emits `[ORPHANED PR]` only. The hard
+  // `[FAILED: ...] disconnected unexpectedly` banner is gated in
+  // `handler_disconnect.mbt`.
   if lifecycle_suppresses_poller_followups(state.current_lifecycle(pr.agent_id)) {
     return
   }

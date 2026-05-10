@@ -116,6 +116,7 @@ fn ServerState::clear_agent_runtime_tracking(
 ) -> Unit {
   self.stop_subscribe(agent_id)
   self.pending_disconnects.remove(agent_id)
+  self.pending_disconnect_soft_notified.remove(agent_id)
 }
 
 ///|
@@ -123,6 +124,186 @@ pub let disconnect_auto_rescue_review_grace_sec : Int64 = 300L
 
 ///|
 pub let disconnect_auto_rescue_slug_prefix : String = "auto-rescue-pr-"
+
+///|
+pub let disconnect_confirmation_min_signals : Int = 2
+
+///|
+pub let disconnect_confirmation_stale_heartbeat_sec : Int64 = 300L
+
+///|
+/// Disconnect-signal inventory for the hard `[FAILED: ...] disconnected unexpectedly` path:
+/// - `handler_disconnect` / pending UDS close: session/registry timeout after grace.
+/// - `pane_watch.check_idle`: no-heartbeat fallback proxy via unchanged pane output.
+/// - `handler_poll_delivery`: stale registry reads emit `[ORPHANED PR]`, not `[FAILED]`.
+/// A hard failure requires at least two independent signals; single-signal cases
+/// are kept soft so a live leaf is not killed by a phantom UDS close.
+pub(all) enum DisconnectConfirmationSignal {
+  RegistryTimeout
+  PaneClosed
+  NoRecentHeartbeat
+} derive(Debug, Eq)
+
+///|
+pub(all) struct DisconnectConfirmation {
+  signals : Array[DisconnectConfirmationSignal]
+} derive(Debug, Eq)
+
+///|
+pub(all) enum DisconnectHandlingResult {
+  Handled
+  AwaitingConfirmation
+} derive(Debug, Eq)
+
+///|
+fn disconnect_confirmation_signal_label(
+  signal : DisconnectConfirmationSignal,
+) -> String {
+  match signal {
+    RegistryTimeout => "registry_timeout"
+    PaneClosed => "pane_closed"
+    NoRecentHeartbeat => "no_recent_heartbeat"
+  }
+}
+
+///|
+fn disconnect_confirmation_signal_summary(
+  signals : Array[DisconnectConfirmationSignal],
+) -> String {
+  if signals.length() == 0 {
+    return "none"
+  }
+  signals.map(disconnect_confirmation_signal_label).join(",")
+}
+
+///|
+pub fn DisconnectConfirmation::is_confirmed(
+  self : DisconnectConfirmation,
+) -> Bool {
+  self.signals.length() >= disconnect_confirmation_min_signals
+}
+
+///|
+fn raw_lifecycle_last_updated_unix_sec(
+  project_dir : String,
+  read_file : (String) -> String,
+  agent_id : String,
+) -> Int64? {
+  let path = project_dir + "/.choir/kv/" + @phase.lifecycle_key(agent_id)
+  let content = read_file(path)
+  if content == "" {
+    return None
+  }
+  let parsed = @json.parse(content) catch { _ => return None }
+  guard parsed is Object(fields) else { return None }
+  @types.json_field_int64(fields, "last_updated_unix_sec")
+}
+
+///|
+fn ServerState::disconnect_no_recent_heartbeat(
+  self : ServerState,
+  agent_id : String,
+  now : Int64,
+) -> Bool {
+  match
+    raw_lifecycle_last_updated_unix_sec(
+      self.config.project_dir,
+      self.read_file,
+      agent_id,
+    ) {
+    Some(last_updated) =>
+      now - last_updated >= disconnect_confirmation_stale_heartbeat_sec
+    None =>
+      // Leaf B adds a typed lifecycle timestamp. Until that field is present,
+      // use the existing pane-watch idle proxy as the heartbeat signal.
+      match
+        self.pane_watcher.check_idle(
+          agent_id, now, disconnect_confirmation_stale_heartbeat_sec,
+        ) {
+        Some(_) => true
+        None => false
+      }
+  }
+}
+
+///|
+async fn ServerState::disconnect_pane_closed(
+  self : ServerState,
+  agent : @types.Agent,
+) -> Bool {
+  let target = match agent.terminal_target {
+    Some(t) => t
+    None => return false
+  }
+  let live = (self.recovery_provider.zellij_live)(
+    self.config.project_dir,
+    target.session,
+  ) catch {
+    _ => return false
+  }
+  !@runtime.is_local_target_alive(Some(target), target.session, live)
+}
+
+///|
+async fn ServerState::disconnect_confirmation_signals(
+  self : ServerState,
+  agent : @types.Agent,
+  now : Int64,
+  registry_timeout_signal : Bool,
+) -> DisconnectConfirmation {
+  let signals : Array[DisconnectConfirmationSignal] = []
+  if registry_timeout_signal {
+    signals.push(RegistryTimeout)
+  }
+  if self.disconnect_pane_closed(agent) {
+    signals.push(PaneClosed)
+  }
+  if self.disconnect_no_recent_heartbeat(agent.agent_id.to_string(), now) {
+    signals.push(NoRecentHeartbeat)
+  }
+  { signals, }
+}
+
+///|
+fn possible_disconnect_message(
+  agent_id : String,
+  confirmation : DisconnectConfirmation,
+) -> String {
+  "[POSSIBLY DISCONNECTED: " +
+  agent_id +
+  "] disconnect signal observed but not confirmed; waiting for another independent signal before marking the agent failed\nsignals: " +
+  disconnect_confirmation_signal_summary(confirmation.signals)
+}
+
+///|
+async fn ServerState::notify_possible_disconnect(
+  self : ServerState,
+  agent : @types.Agent,
+  confirmation : DisconnectConfirmation,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  match agent.parent {
+    Some(parent_id) =>
+      try {
+        let parent = self.resolve_parent_by_id(parent_id)
+        ignore(
+          self.durable_deliver_to_agent(
+            parent,
+            agent.agent_id.to_string(),
+            possible_disconnect_message(
+              agent.agent_id.to_string(),
+              confirmation,
+            ),
+            @types.Status::Info,
+            runner,
+          ),
+        )
+      } catch {
+        _ => ()
+      }
+    None => ()
+  }
+}
 
 ///|
 pub(all) struct DisconnectAutoRescuePlan {
@@ -736,13 +917,21 @@ pub fn disconnect_pr_recovery_candidate(agent : @types.Agent) -> Bool {
 }
 
 ///|
-pub async fn ServerState::handle_disconnect_with_runner(
+async fn ServerState::handle_disconnect_confirming_with_runner(
   self : ServerState,
   agent_id : String,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
-) -> Unit {
-  let agent = self.registry.get(agent_id) catch { _ => return }
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+  now : Int64,
+  registry_timeout_signal? : Bool = true,
+  emit_possible_disconnect? : Bool = true,
+) -> DisconnectHandlingResult {
+  let agent = self.registry.get(agent_id) catch {
+    _ => {
+      self.clear_agent_runtime_tracking(agent_id)
+      return Handled
+    }
+  }
   let lifecycle = self.current_lifecycle(agent_id)
   match agent.state {
     Done | Failed =>
@@ -788,6 +977,15 @@ pub async fn ServerState::handle_disconnect_with_runner(
             )
           @phase.LifecycleDisconnectPolicy::Ignore => ()
           @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
+            let confirmation = self.disconnect_confirmation_signals(
+              agent, now, registry_timeout_signal,
+            )
+            if !confirmation.is_confirmed() {
+              if emit_possible_disconnect {
+                self.notify_possible_disconnect(agent, confirmation, runner)
+              }
+              return AwaitingConfirmation
+            }
             // Before failing: check if a dev leaf filed a PR via raw `gh pr create`
             // (bypassing file_pr). Restrict this to branch-owning dev agents so
             // top-level TLs/workers with empty branches cannot steal tracked PR ownership.
@@ -870,6 +1068,27 @@ pub async fn ServerState::handle_disconnect_with_runner(
         }
       }
   }
+  Handled
+}
+
+///|
+pub async fn ServerState::handle_disconnect_with_runner(
+  self : ServerState,
+  agent_id : String,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+) -> Unit {
+  let now = @poller.now_sec()
+  match
+    self.handle_disconnect_confirming_with_runner(
+      agent_id, runner, capture, now,
+    ) {
+    Handled => ()
+    AwaitingConfirmation => {
+      self.pending_disconnects.set(agent_id, now)
+      self.pending_disconnect_soft_notified.set(agent_id, true)
+    }
+  }
 }
 
 ///|
@@ -898,6 +1117,7 @@ pub fn ServerState::clear_pending_disconnect(
   agent_id : String,
 ) -> Unit {
   self.pending_disconnects.remove(agent_id)
+  self.pending_disconnect_soft_notified.remove(agent_id)
 }
 
 ///|
@@ -916,8 +1136,24 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
     }
   }
   for agent_id in stale {
-    self.pending_disconnects.remove(agent_id)
-    self.handle_disconnect_with_runner(agent_id, runner~, capture~)
+    let result = self.handle_disconnect_confirming_with_runner(
+      agent_id,
+      runner,
+      capture,
+      now,
+      registry_timeout_signal=true,
+      emit_possible_disconnect=!self.pending_disconnect_soft_notified.contains(
+        agent_id,
+      ),
+    )
+    match result {
+      Handled => {
+        self.pending_disconnects.remove(agent_id)
+        self.pending_disconnect_soft_notified.remove(agent_id)
+      }
+      AwaitingConfirmation =>
+        self.pending_disconnect_soft_notified.set(agent_id, true)
+    }
   }
 }
 

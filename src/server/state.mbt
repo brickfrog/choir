@@ -24,6 +24,7 @@ pub struct ServerState {
   kv_store : @kv.KvStore
   run_id : String
   pending_disconnects : Map[String, Int64]
+  pending_disconnect_soft_notified : Map[String, Bool]
   delivery_failures : Map[String, Int]
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
@@ -81,6 +82,7 @@ pub fn ServerState::new(
     kv_store: @kv.KvStore::new(config.project_dir),
     run_id,
     pending_disconnects: {},
+    pending_disconnect_soft_notified: {},
     delivery_failures: {},
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
