@@ -35,6 +35,46 @@ pub(all) enum MergeOperatorMode {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum NextAction {
+  /// Parent does nothing; server delivers the next event.
+  Wait
+  /// Parent calls merge_pr with force=true for a needs_human gate.
+  ForceMerge
+  /// Parent calls merge_pr; gates are clear and the server cannot auto-fire.
+  MergeNow
+  /// Leaf addresses Copilot review threads; parent waits.
+  AddressThreads
+  /// Parent verifies via GitHub GraphQL/CI; the poll snapshot may be advisory.
+  CrossCheckThreads
+} derive(Debug, Eq)
+
+///|
+pub impl Show for NextAction with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+pub fn NextAction::to_wire_string(self : NextAction) -> String {
+  match self {
+    Wait => "wait"
+    ForceMerge => "force_merge"
+    MergeNow => "merge_now"
+    AddressThreads => "address_threads"
+    CrossCheckThreads => "cross_check_threads"
+  }
+}
+
+///|
+pub impl ToJson for NextAction with to_json(self) -> Json {
+  self.to_wire_string().to_json()
+}
+
+///|
+pub fn next_action_line(action : NextAction) -> String {
+  "next_action: " + action.to_wire_string()
+}
+
+///|
 pub fn merge_operator_mode_from_automerge(
   automerge_enabled : Bool,
 ) -> MergeOperatorMode {
@@ -73,8 +113,22 @@ pub fn merge_ready_next_action(
   parent_branch : String?,
   mode : MergeOperatorMode,
 ) -> String {
-  match mode {
-    Manual =>
+  let action = match mode {
+    Manual | Mixed => NextAction::MergeNow
+    Automerge => NextAction::Wait
+  }
+  next_action_detail_line(action, pr_number, parent_branch, mode)
+}
+
+///|
+pub fn next_action_detail_line(
+  action : NextAction,
+  pr_number : Int,
+  parent_branch : String?,
+  mode : MergeOperatorMode,
+) -> String {
+  match action {
+    MergeNow =>
       match parent_branch {
         Some(branch) =>
           "Next action: `merge_pr(pr_number: \"" +
@@ -87,9 +141,29 @@ pub fn merge_ready_next_action(
           pr_number.to_string() +
           " once the parent branch is confirmed."
       }
-    Automerge =>
-      "Next action: informational only. The server will attempt merge automatically; wait for [PR MERGED] unless intervention is needed."
-    Mixed => "Next action: check the leaf's merge mode before merging manually."
+    ForceMerge =>
+      match parent_branch {
+        Some(branch) =>
+          "Next action: `merge_pr(pr_number: \"" +
+          pr_number.to_string() +
+          "\", parent_branch: \"" +
+          branch +
+          "\", force: true)`"
+        None =>
+          "Next action: force-merge PR #" +
+          pr_number.to_string() +
+          " once the parent branch is confirmed."
+      }
+    Wait =>
+      match mode {
+        Automerge =>
+          "Next action: informational only. The server will attempt merge automatically; wait for [PR MERGED] unless intervention is needed."
+        _ => "Next action: wait for the next poller event."
+      }
+    AddressThreads =>
+      "Next action: leaf addresses Copilot review threads; parent waits."
+    CrossCheckThreads =>
+      "Next action: verify review threads via GitHub GraphQL plus CI/policy, then merge_pr only if clear."
   }
 }
 
@@ -559,6 +633,13 @@ pub fn merge_policy_decision_for_tracked_pr(
 }
 
 ///|
+pub fn merge_policy_summary_line_for_decision(
+  decision : @policy.MergeDecision,
+) -> String {
+  "Merge policy decision: " + decision.label() + " (" + decision.reason() + ")."
+}
+
+///|
 pub fn merge_policy_summary_line(
   tracked : TrackedPR,
   unresolved_threads : Int?,
@@ -573,7 +654,175 @@ pub fn merge_policy_summary_line(
     review_mode~,
     verify_results~,
   )
-  "Merge policy decision: " + decision.label() + " (" + decision.reason() + ")."
+  merge_policy_summary_line_for_decision(decision)
+}
+
+///|
+pub(all) struct PrStateNotificationDecision {
+  next_action : NextAction
+  policy_decision : @policy.MergeDecision
+  category : TlTrackedPrWorkflowCategory
+} derive(Debug, Eq)
+
+///|
+fn policy_block_is_review_work(
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  reason : String,
+) -> Bool {
+  if tracked.last_review_state == ChangesRequested {
+    return true
+  }
+  match unresolved_threads {
+    Some(n) => if n > 0 { return true }
+    None => ()
+  }
+  reason.contains("review") || reason.contains("thread")
+}
+
+///|
+fn merge_gate_next_action(
+  decision : @policy.MergeDecision,
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  mode : MergeOperatorMode,
+) -> NextAction {
+  match decision {
+    MergeNow(_) =>
+      match mode {
+        Automerge => Wait
+        Manual | Mixed => MergeNow
+      }
+    NeedsHuman(_) => ForceMerge
+    Blocked(reason~) =>
+      if policy_block_is_review_work(tracked, unresolved_threads, reason) {
+        AddressThreads
+      } else {
+        Wait
+      }
+    Wait(_) => Wait
+  }
+}
+
+///|
+fn recheck_next_action(
+  decision : @policy.MergeDecision,
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  mode : MergeOperatorMode,
+) -> NextAction {
+  match decision {
+    MergeNow(_) =>
+      match mode {
+        Automerge => Wait
+        Manual | Mixed => MergeNow
+      }
+    Blocked(reason~) =>
+      if policy_block_is_review_work(tracked, unresolved_threads, reason) {
+        AddressThreads
+      } else {
+        Wait
+      }
+    NeedsHuman(_) | Wait(_) => CrossCheckThreads
+  }
+}
+
+///|
+pub fn next_action_for_pr_state_notification(
+  category : TlTrackedPrWorkflowCategory,
+  decision : @policy.MergeDecision,
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  mode : MergeOperatorMode,
+) -> NextAction {
+  match category {
+    MergeGateOpenPendingPolicyConfirmation =>
+      merge_gate_next_action(decision, tracked, unresolved_threads, mode)
+    BlockedOnChanges | StalledOnChangesRequested => AddressThreads
+    FixesPushedAwaitingGates
+    | ReadyForTLRecheck
+    | CopilotIssueCommentSeenRecheckRemainingGates =>
+      recheck_next_action(decision, tracked, unresolved_threads, mode)
+    OrphanedPRNeedsManualAction => CrossCheckThreads
+    WaitingOnReviewOrCI
+    | WaitingOnCopilotIssueComment
+    | AttentionRequiredCopilotSilentAfterTimeout
+    | AttentionRequiredCIFailed
+    | ObservedMergedExternal => Wait
+  }
+}
+
+///|
+pub fn pr_state_notification_decision_for_tracked_pr(
+  event : PollEvent,
+  tracked : TrackedPR,
+  unresolved_threads : Int?,
+  task_contract? : @types.TaskContract? = None,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  verify_results? : Array[@types.VerifyCheckResult] = [],
+  merge_mode? : MergeOperatorMode = MergeOperatorMode::Manual,
+) -> PrStateNotificationDecision {
+  let category = plan_tl_poll_event_parent(
+    event,
+    tracked,
+    unresolved_threads,
+    review_mode~,
+  )
+  let policy_decision = merge_policy_decision_for_tracked_pr(
+    tracked,
+    unresolved_threads,
+    task_contract~,
+    review_mode~,
+    verify_results~,
+  )
+  let next_action = next_action_for_pr_state_notification(
+    category, policy_decision, tracked, unresolved_threads, merge_mode,
+  )
+  { next_action, policy_decision, category }
+}
+
+///|
+fn blocked_tl_sentence(reason : String, action : NextAction) -> String {
+  match action {
+    AddressThreads =>
+      "BLOCKED: " + reason + ". Wait for the leaf to address review threads."
+    _ => "BLOCKED: " + reason + ". Do not merge."
+  }
+}
+
+///|
+pub fn tl_pr_state_notification_sentence(
+  decision : PrStateNotificationDecision,
+  merge_mode : MergeOperatorMode,
+) -> String {
+  match decision.policy_decision {
+    MergeNow(_) =>
+      match decision.next_action {
+        Wait =>
+          if merge_mode == Automerge {
+            tl_merge_gate_sentence(Automerge)
+          } else {
+            tl_tracked_pr_workflow_category_sentence(decision.category)
+          }
+        MergeNow => tl_merge_gate_sentence(Manual)
+        _ => tl_tracked_pr_workflow_category_sentence(decision.category)
+      }
+    NeedsHuman(reason~) =>
+      match decision.next_action {
+        ForceMerge =>
+          "FORCE MERGE: merge policy requires human confirmation (" +
+          reason +
+          "). Run merge_pr with force=true."
+        _ => tl_tracked_pr_workflow_category_sentence(decision.category)
+      }
+    Blocked(reason~) =>
+      if decision.category == BlockedOnChanges {
+        tl_tracked_pr_workflow_category_sentence(decision.category)
+      } else {
+        blocked_tl_sentence(reason, decision.next_action)
+      }
+    Wait(_) => tl_tracked_pr_workflow_category_sentence(decision.category)
+  }
 }
 
 ///|
@@ -686,7 +935,7 @@ pub fn plan_tl_poll_event_parent(
     ReviewCommented(_, _) => tl_snapshot_workflow_category(tracked, merge_ready)
     CopilotIssueCommentSeen(_) =>
       tl_snapshot_workflow_category(tracked, merge_ready)
-    MergeReady(_) => MergeGateOpenPendingPolicyConfirmation
+    MergeReady(_) => tl_snapshot_workflow_category(tracked, merge_ready)
     ReviewThreadsResolved(_) => ReadyForTLRecheck
   }
 }
