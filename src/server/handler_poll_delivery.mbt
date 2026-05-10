@@ -94,6 +94,10 @@ pub fn parent_poll_event_message(
   } else {
     "\npr_url: " + tracked.pr_url
   }
+  match event {
+    ReviewCommented(_, _) | PRMerged(_) => return None
+    _ => ()
+  }
   let notification_decision = parent_pr_state_notification_decision(
     project_dir,
     tracked,
