@@ -57,6 +57,8 @@ fn init_should_launch_server_tab(server_alive : Bool) -> Bool {
 
 ///|
 fn init_server_socket_wait_tries() -> Int {
+  // `choir init` is a foreground flow with the user watching the terminal, so
+  // keep the pre-TL socket wait to about 20s and warn before launching anyway.
   100
 }
 

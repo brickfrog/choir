@@ -34,10 +34,13 @@ pub fn codex_mcp_override_args(
 ) -> Array[String] {
   // Codex MCP stdio: direct `choir` argv (no `sh -lc`). Socket wait and stderr log
   // are handled inside `mcp-stdio` via `--wait-socket-tries` / `--stderr-append-log`.
+  // Codex starts the MCP process during its own CLI initialization, so give
+  // each socket wait a wider ~60s budget than direct `choir mcp-stdio`.
+  let codex_wait_socket_tries = "300"
   let elems : Array[String] = match role {
     @types.Role::TL =>
       [
-        "mcp-stdio", "--raw-stdio", "--name", agent_id, "--wait-socket-tries", "300",
+        "mcp-stdio", "--raw-stdio", "--name", agent_id, "--wait-socket-tries", codex_wait_socket_tries,
         "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
       ]
     _ =>
@@ -49,12 +52,11 @@ pub fn codex_mcp_override_args(
         "--name",
         agent_id,
         "--wait-socket-tries",
-        "300",
+        codex_wait_socket_tries,
         "--stderr-append-log",
         ".choir/mcp-stdio.stderr.log",
       ]
   }
-  // ~60s max wait: native poll is 200ms/tick (see `choir_wait_for_socket`).
   let args_lit = toml_string_array_literal(elems)
   [
     "-c",
