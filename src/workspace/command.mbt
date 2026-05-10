@@ -194,6 +194,18 @@ pub fn gh_shim_script_body() -> String {
 }
 
 ///|
+/// Body of the `gh-bounded` wrapper installed under
+/// `worktree_path/.choir/bin/gh-bounded`. Wraps any `gh` invocation in a 30s
+/// `timeout` so leaves can't hang indefinitely on stalled GitHub network
+/// calls (the `gh` CLI has no built-in network timeout, see choir-vj3).
+pub fn gh_bounded_script_body() -> String {
+  (
+    #|#!/bin/sh
+    #|exec timeout 30s gh "$@"
+  )
+}
+
+///|
 /// Install leaf helper scripts under `worktree_path/.choir/bin` without shell heredocs.
 /// Returns `0` on success, `1` on failure, `-1` if `cmd` is not this native command.
 pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
@@ -236,10 +248,7 @@ pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
     return 1
   }
   let gh_bounded_path = bin_dir + "/gh-bounded"
-  let gh_bounded_body =
-    #|#!/bin/sh
-    #|exec timeout 30s gh "$@"
-  if !@sys.write_file_sync(gh_bounded_path, gh_bounded_body) {
+  if !@sys.write_file_sync(gh_bounded_path, gh_bounded_script_body()) {
     return 1
   }
   if !@sys.chmod_mode(gh_bounded_path, 0o755) {
