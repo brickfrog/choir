@@ -234,9 +234,9 @@ fn leaf_profile_text() -> String {
   "   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.\n" +
   "6. Wait for review feedback — it arrives automatically via the poller.\n" +
   "7. If review feedback arrives, address every comment and push fixes.\n" +
-  "   - Resolve each thread on GitHub after addressing it: use the GraphQL mutation `resolveReviewThread(input: {threadId: \"<id>\"})` for each thread ID.\n" +
-  "   - Confirm zero unresolved threads with `gh api graphql` before notifying parent.\n" +
-  "   - Only notify_parent once you have verified zero unresolved threads.\n" +
+  "   - Do not resolve GitHub review threads yourself; the poller and parent own thread resolution from the working GraphQL path.\n" +
+  "   - After fixes are pushed, wait for review state from the parent/poller or use bounded review-state checks only when explicitly needed.\n" +
+  "   - Only notify_parent once zero unresolved threads have been confirmed.\n" +
   "8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.\n" +
   "9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
   "Do not exit voluntarily after file_pr:\n" +
@@ -244,6 +244,11 @@ fn leaf_profile_text() -> String {
   "- Step 8 is the shutdown rule: keep the session alive until the parent explicitly tells you to stop after review/merge handling. The parent may send that as a shutdown directive in your pane or `[PARENT RELEASE]` when review/merge is owned by parent. `[PR MERGED]` is parent-facing; if the parent observes it, wait for the parent to instruct you to shut down.\n" +
   "- The only non-parent exception is the persistent-error path in step 9.\n" +
   "- Any other voluntary exit is a leaf failure. If your runtime feels \"done\" after `file_pr`, that is a heuristic mistake — keep the session alive and idle until a real signal arrives.\n\n" +
+  "gh discipline:\n" +
+  "- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.\n" +
+  "- Prefer REST endpoints (`gh api repos/{owner}/{repo}/pulls/{n}/comments`, `gh api repos/{owner}/{repo}/pulls/{n}/reviews`) over GraphQL when querying review state. REST returns instantly even when GraphQL stalls.\n" +
+  "- Do NOT call `resolveReviewThread` directly from a leaf. The poller and parent will resolve threads from the working GraphQL path. Push your code fixes; let the orchestration close the threads.\n" +
+  "- If a `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f \"gh api\"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.\n\n" +
   "Execution discipline:\n" +
   "- Run requested verification once per code change.\n" +
   "- Do not rerun the same tests repeatedly without new code changes.\n" +
