@@ -85,17 +85,56 @@ fn init_wait_for_server_socket_before_tl(
 }
 
 ///|
-/// Relative paths removed by runtime-only cleanup (mirrors native `choir_init_cleanup_runtime_artifacts`).
+/// Relative paths and prefixes removed by `choir init --recreate`.
 fn init_runtime_cleanup_paths() -> Array[String] {
-  [".choir/server.pid", ".choir/server.sock", ".choir/run_id"]
+  [
+    ".choir/server.pid", ".choir/server.sock", ".choir/run_id", ".choir/kv/lifecycle--",
+    ".choir/kv/children--", ".choir/kv/phase-dev--", ".choir/kv/phase-tl--", ".choir/kv/pending-wave--",
+    ".choir/outbox/", ".choir/waves/", ".choir/inline/",
+  ]
+}
+
+///|
+fn init_runtime_cleanup_kv_prefixes() -> Array[String] {
+  ["lifecycle--", "children--", "phase-dev--", "phase-tl--", "pending-wave--"]
+}
+
+///|
+fn init_runtime_cleanup_recursive_dirs() -> Array[String] {
+  [".choir/outbox", ".choir/waves", ".choir/inline"]
+}
+
+///|
+fn init_cleanup_kv_prefixes(prefixes : Array[String]) -> Unit {
+  let kv_dir = ".choir/kv"
+  for name in @sys.list_dir(kv_dir) {
+    let mut should_delete = false
+    for prefix in prefixes {
+      if name.has_prefix(prefix) {
+        should_delete = true
+      }
+    }
+    if should_delete {
+      ignore(@sys.delete_file_sync(kv_dir + "/" + name))
+    }
+  }
+}
+
+///|
+fn init_cleanup_recreate_artifacts() -> Unit {
+  @sys.init_cleanup_runtime_artifacts_native()
+  init_cleanup_kv_prefixes(init_runtime_cleanup_kv_prefixes())
+  for dir in init_runtime_cleanup_recursive_dirs() {
+    ignore(@sys.rm_rf(dir))
+  }
 }
 
 ///|
 /// Markers for purge-only cleanup (mirrors native `choir_init_cleanup_purge_artifacts`).
 fn init_purge_cleanup_marker_substrings() -> Array[String] {
   [
-    ".choir/worktrees", ".choir/inline", ".choir/poller_state.json", "lifecycle--",
-    "children--", "phase-dev--", "phase-tl--",
+    ".choir/worktrees", ".choir/inline", ".choir/outbox", ".choir/waves", ".choir/poller_state.json",
+    "lifecycle--", "children--", "phase-dev--", "phase-tl--", "pending-wave--",
   ]
 }
 
@@ -118,12 +157,19 @@ test "init session lifecycle commands use zellij" {
 ///|
 test "cleanup paths separate runtime restart from purge" {
   let rt = init_runtime_cleanup_paths()
-  assert_eq(rt.length(), 3)
+  assert_true(rt.length() >= 11)
   for p in rt {
     assert_false(p.contains("worktrees"))
     assert_false(p.contains("poller"))
-    assert_false(p.contains("inline"))
   }
+  assert_true(rt.contains(".choir/kv/lifecycle--"))
+  assert_true(rt.contains(".choir/kv/children--"))
+  assert_true(rt.contains(".choir/kv/phase-dev--"))
+  assert_true(rt.contains(".choir/kv/phase-tl--"))
+  assert_true(rt.contains(".choir/kv/pending-wave--"))
+  assert_true(rt.contains(".choir/outbox/"))
+  assert_true(rt.contains(".choir/waves/"))
+  assert_true(rt.contains(".choir/inline/"))
   let purge = init_purge_cleanup_marker_substrings()
   assert_true(purge.length() >= 4)
   let mut has_wt = false
@@ -150,7 +196,7 @@ test "init server cleanup commands separate runtime restart from purge" {
   assert_true(init_should_launch_server_tab(false))
   assert_false(init_should_launch_server_tab(true))
   let rt = init_runtime_cleanup_paths()
-  assert_eq(rt.length(), 3)
+  assert_true(rt.length() >= 11)
   for p in rt {
     assert_false(p.contains("worktrees"))
     assert_false(p.contains("poller"))
@@ -625,11 +671,11 @@ fn init_run() -> Unit {
         if pid_str != "" {
           @sys.write_stdout("Stopping server (PID \{pid_str})...\n")
           init_kill_server_pid_string(pid_str)
-          if purge {
-            @sys.init_cleanup_purge_artifacts_native()
-          } else {
-            @sys.init_cleanup_runtime_artifacts_native()
-          }
+        }
+        if purge {
+          @sys.init_cleanup_purge_artifacts_native()
+        } else {
+          init_cleanup_recreate_artifacts()
         }
         @sys.write_stdout("Killing session \{session}...\n")
         ignore(@exec.run(init_kill_session_command(session)) catch { _ => 0 })

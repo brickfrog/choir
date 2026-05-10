@@ -150,11 +150,79 @@ pub(all) struct AgentLifecycle {
   role : @types.Role
   process : ProcessState
   workflow : WorkflowState
-} derive(Debug, Eq, ToJson, FromJson)
+  last_updated_unix_sec : Int64
+} derive(Debug, Eq, ToJson)
+
+///|
+pub impl FromJson for AgentLifecycle with from_json(json, path) {
+  match json {
+    Object(fields) => {
+      let agent_id : String = match fields.get("agent_id") {
+        Some(value) => @json.from_json(value, path=path.add_key("agent_id"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("agent_id"),
+              "AgentLifecycle::from_json: missing field agent_id",
+            ),
+          )
+      }
+      let role : @types.Role = match fields.get("role") {
+        Some(value) => @json.from_json(value, path=path.add_key("role"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("role"),
+              "AgentLifecycle::from_json: missing field role",
+            ),
+          )
+      }
+      let process : ProcessState = match fields.get("process") {
+        Some(value) => @json.from_json(value, path=path.add_key("process"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("process"),
+              "AgentLifecycle::from_json: missing field process",
+            ),
+          )
+      }
+      let workflow : WorkflowState = match fields.get("workflow") {
+        Some(value) => @json.from_json(value, path=path.add_key("workflow"))
+        None =>
+          raise @json.JsonDecodeError(
+            (
+              path.add_key("workflow"),
+              "AgentLifecycle::from_json: missing field workflow",
+            ),
+          )
+      }
+      let last_updated_unix_sec : Int64 = match
+        fields.get("last_updated_unix_sec") {
+        Some(value) =>
+          @json.from_json(value, path=path.add_key("last_updated_unix_sec"))
+        None => 0L
+      }
+      { agent_id, role, process, workflow, last_updated_unix_sec }
+    }
+    _ =>
+      raise @json.JsonDecodeError(
+        (path, "AgentLifecycle::from_json: expected object"),
+      )
+  }
+}
 
 ///|
 pub impl Show for AgentLifecycle with output(self, logger) -> Unit {
   self.to_repr().output(logger)
+}
+
+///|
+pub fn stamp_lifecycle_updated(
+  lifecycle : AgentLifecycle,
+  now_sec? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
+) -> AgentLifecycle {
+  { ..lifecycle, last_updated_unix_sec: now_sec }
 }
 
 ///|
@@ -280,6 +348,7 @@ pub fn lifecycle_for_agent(agent : @types.Agent) -> AgentLifecycle {
     role: agent.role,
     process,
     workflow: default_workflow_state(agent.role),
+    last_updated_unix_sec: 0L,
   }
 }
 
@@ -288,7 +357,13 @@ pub fn lifecycle_for_role(
   agent_id : String,
   role : @types.Role,
 ) -> AgentLifecycle {
-  { agent_id, role, process: Connected, workflow: default_workflow_state(role) }
+  {
+    agent_id,
+    role,
+    process: Connected,
+    workflow: default_workflow_state(role),
+    last_updated_unix_sec: 0L,
+  }
 }
 
 ///|
@@ -833,6 +908,7 @@ pub fn handoff_dev_workflow_to_new_agent(
             role: to_role,
             process: Connected,
             workflow: Dev(dev),
+            last_updated_unix_sec: 0L,
           }
           if write_lifecycle(project_dir, next) {
             Ok(())

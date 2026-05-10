@@ -647,6 +647,8 @@ void choir_init_cleanup_purge_artifacts(void) {
     }
     choir_rm_rf_best_effort(".choir/worktrees");
     choir_rm_rf_best_effort(".choir/inline");
+    choir_rm_rf_best_effort(".choir/outbox");
+    choir_rm_rf_best_effort(".choir/waves");
     unlink(".choir/server.pid");
     unlink(".choir/server.sock");
     unlink(".choir/poller_state.json");
@@ -661,7 +663,8 @@ void choir_init_cleanup_purge_artifacts(void) {
             }
             const char *n = ent->d_name;
             if (strncmp(n, "lifecycle--", 11) != 0 && strncmp(n, "children--", 10) != 0 &&
-                strncmp(n, "phase-dev--", 11) != 0 && strncmp(n, "phase-tl--", 10) != 0) {
+                strncmp(n, "phase-dev--", 11) != 0 && strncmp(n, "phase-tl--", 10) != 0 &&
+                strncmp(n, "pending-wave--", 14) != 0) {
                 continue;
             }
             snprintf(kp, sizeof(kp), ".choir/kv/%s", n);

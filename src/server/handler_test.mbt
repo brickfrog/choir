@@ -241,6 +241,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       workflow: @phase.WorkflowState::Supervisor(
         @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   assert_true(
@@ -254,6 +255,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
           state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
         ),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   state.poller.track(
@@ -404,6 +406,7 @@ async test "maybe_trigger_automerge_for_pending_event fires on iterative fixes p
       workflow: @phase.WorkflowState::Supervisor(
         @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   assert_true(
@@ -417,6 +420,7 @@ async test "maybe_trigger_automerge_for_pending_event fires on iterative fixes p
           state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
         ),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   state.poller.track(
@@ -603,6 +607,7 @@ fn blocked_gh_automerge_fixture(
       workflow: @phase.WorkflowState::Supervisor(
         @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   assert_true(
@@ -616,6 +621,7 @@ fn blocked_gh_automerge_fixture(
           state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
         ),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   state.poller.track(
@@ -1877,6 +1883,7 @@ test "disconnect auto-rescue decision fires for review-owned unresolved threads"
         ),
       ),
     ),
+    last_updated_unix_sec: 0L,
   }
   let tracked : @poller.TrackedPR = {
     pr_number: 77,
@@ -1942,6 +1949,7 @@ test "disconnect auto-rescue decision fires while Copilot review is pending" {
         ),
       ),
     ),
+    last_updated_unix_sec: 0L,
   }
   let tracked : @poller.TrackedPR = {
     pr_number: 77,
@@ -2005,6 +2013,7 @@ test "disconnect auto-rescue decision is one-shot for auto-rescue leaves" {
         ),
       ),
     ),
+    last_updated_unix_sec: 0L,
   }
   let tracked : @poller.TrackedPR = {
     pr_number: 77,
@@ -2089,6 +2098,7 @@ async test "disconnect auto-rescue skips thread fetch during Copilot grace windo
           ),
         ),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   state.poller.track(
@@ -2186,6 +2196,7 @@ async test "disconnect auto-rescue spawns replacement for unresolved threads" {
           ),
         ),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   state.poller.track(

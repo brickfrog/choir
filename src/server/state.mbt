@@ -25,6 +25,7 @@ pub struct ServerState {
   run_id : String
   pending_disconnects : Map[String, Int64]
   pending_disconnect_soft_notified : Map[String, Bool]
+  delivery_failures : Map[String, Int]
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
   append_file : (String, String) -> Bool
@@ -82,6 +83,7 @@ pub fn ServerState::new(
     run_id,
     pending_disconnects: {},
     pending_disconnect_soft_notified: {},
+    delivery_failures: {},
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
     append_file: default_append_file_sync,
