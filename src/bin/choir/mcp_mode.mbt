@@ -305,7 +305,24 @@ fn mcp_cli_positive_int_arg(args : Array[String], flag : String) -> Int? {
 fn mcp_cli_wait_socket_tries(args : Array[String]) -> Int {
   match mcp_cli_positive_int_arg(args, "--wait-socket-tries") {
     Some(n) => n
-    None => 60
+    // Native wait_for_socket polls every 200ms; default budget is 30s.
+    None => 150
+  }
+}
+
+///|
+fn mcp_cli_startup_attempts(args : Array[String]) -> Int {
+  match mcp_cli_positive_int_arg(args, "--mcp-startup-attempts") {
+    Some(n) => n
+    None => 3
+  }
+}
+
+///|
+fn mcp_cli_startup_backoff_base_ms(args : Array[String]) -> Int {
+  match mcp_cli_positive_int_arg(args, "--mcp-startup-backoff-base-ms") {
+    Some(n) => n
+    None => 1000
   }
 }
 
@@ -332,11 +349,105 @@ priv enum McpUdsLoopExit {
 }
 
 ///|
+priv enum McpStartupConnectResult {
+  Connected(Int)
+  Exhausted(Int)
+}
+
+///|
+priv enum McpStartupTransport {
+  Uds(Int)
+  Tcp(String)
+  FailedUds(Int)
+}
+
+///|
 fn mcp_should_reconnect_after_uds_loop(exit : McpUdsLoopExit) -> Bool {
   match exit {
     InputClosed => false
     Reconnect => true
   }
+}
+
+///|
+fn mcp_startup_backoff_max_ms() -> Int {
+  30000
+}
+
+///|
+fn mcp_startup_backoff_ms(base_ms : Int, retry_index : Int) -> Int {
+  let cap = mcp_startup_backoff_max_ms()
+  let mut value = if base_ms > cap { cap } else { base_ms }
+  let mut i = 0
+  while i < retry_index && value < cap {
+    if value > cap / 2 {
+      value = cap
+    } else {
+      value = value * 2
+    }
+    i = i + 1
+  }
+  value
+}
+
+///|
+fn mcp_startup_exhausted_message(path : String, attempts : Int) -> String {
+  "error: failed to connect to UDS " +
+  path +
+  " after " +
+  attempts.to_string() +
+  " startup attempts"
+}
+
+///|
+fn mcp_startup_transport(
+  result : McpStartupConnectResult,
+  listen_tcp : String?,
+) -> McpStartupTransport {
+  match result {
+    Connected(fd) => Uds(fd)
+    Exhausted(attempts) =>
+      match listen_tcp {
+        Some(addr) => Tcp(addr)
+        None => FailedUds(attempts)
+      }
+  }
+}
+
+///|
+fn mcp_connect_uds_startup(
+  path : String,
+  wait_tries : Int,
+  max_attempts : Int,
+  backoff_base_ms : Int,
+  connect_uds? : (String) -> Int = fn(socket_path) {
+    @uds.client_connect(socket_path)
+  },
+  wait_for_socket? : (String, Int) -> Bool = fn(socket_path, tries) {
+    @sys.wait_for_socket(socket_path, tries)
+  },
+  sleep_ms? : (Int) -> Unit = fn(ms) { @sys.sleep_milliseconds(ms) },
+) -> McpStartupConnectResult {
+  // Default cold-start budget is about 93s: 3 outer attempts * 150
+  // wait_for_socket tries * 200ms, plus 1s and 2s retry sleeps.
+  let attempts = if max_attempts < 1 { 1 } else { max_attempts }
+  let mut outer_attempt = 0
+  while outer_attempt < attempts {
+    let mut uds_fd = connect_uds(path)
+    if uds_fd < 0 {
+      if wait_for_socket(path, wait_tries) {
+        uds_fd = connect_uds(path)
+      }
+    }
+    if uds_fd >= 0 {
+      return Connected(uds_fd)
+    }
+    outer_attempt = outer_attempt + 1
+    if outer_attempt < attempts {
+      sleep_ms(mcp_startup_backoff_ms(backoff_base_ms, outer_attempt - 1))
+    }
+  }
+  Exhausted(attempts)
 }
 
 ///|
@@ -492,139 +603,269 @@ fn mcp_run() -> Unit {
   )
   let config = mcp_config_with_cli_overrides(base_config, local_cfg, args)
   let raw_stdio = mcp_cli_raw_stdio(args)
+  let max_startup_attempts = mcp_cli_startup_attempts(args)
+  let startup_backoff_base_ms = mcp_cli_startup_backoff_base_ms(args)
   let role = match mcp_cli_override_role(args) {
     Some(role) => role
     None => @config.resolve_role(local_cfg.role, config)
   }
 
-  let mut uds_fd = @uds.client_connect(config.listen_uds)
-  if uds_fd < 0 {
-    // Server may still be starting - wait for the UDS socket
-    if @sys.wait_for_socket(config.listen_uds, wait_tries) {
-      uds_fd = @uds.client_connect(config.listen_uds)
-    }
-  }
-  if uds_fd >= 0 {
-    // Run loop; on server restart, wait and reconnect automatically
-    for ;; {
-      let exit_reason = mcp_run_uds_loop(
-        uds_fd, raw_stdio, role, config, local_cfg,
-      )
-      @uds.close(uds_fd)
-      if !mcp_should_reconnect_after_uds_loop(exit_reason) {
-        break
-      }
-      if !@sys.wait_for_socket(config.listen_uds, wait_tries) {
-        break
-      }
-      uds_fd = @uds.client_connect(config.listen_uds)
-      if uds_fd < 0 {
-        break
-      }
-    }
-    return
-  }
-
-  @async.run_async_main(async fn() {
-    @async.with_task_group(async fn(_root) {
-      let addr_str = match config.listen_tcp {
-        Some(addr) => addr
-        None => {
-          println("error: listen_tcp not configured in .choir/config.toml")
-          @sys.exit(1)
-          ""
-        }
-      }
-
-      let conn = @socket.Tcp::connect(@socket.Addr::parse(addr_str)) catch {
-        err => {
-          println("error: failed to connect to \{addr_str}: \{err}")
-          @sys.exit(1)
-          raise err
-        }
-      }
-
-      let reader = TcpLineReader::new(conn)
-
-      let reg_msg = mcp_build_registration_message(role, config, local_cfg)
-      try {
-        match config.tcp_auth_token {
-          Some(token) => conn.write(@utf8.encode(token + "\n"))
-          None => ()
-        }
-        conn.write(@utf8.encode(reg_msg))
-        let _ = reader.read_line()
-      } catch {
-        err => {
-          println("error: registration failed: \{err}")
-          @sys.exit(1)
-        }
-      }
-
+  let startup_transport = mcp_startup_transport(
+    mcp_connect_uds_startup(
+      config.listen_uds,
+      wait_tries,
+      max_startup_attempts,
+      startup_backoff_base_ms,
+    ),
+    config.listen_tcp,
+  )
+  match startup_transport {
+    Uds(fd) => {
+      let mut uds_fd = fd
+      // Run loop; on server restart, wait and reconnect automatically
       for ;; {
-        let line = match
-          mcp_read_next_message(fn() { @sys.read_stdin_line(8192) }, fn(size) {
-            @sys.read_stdin_exact(size)
-          }) {
-          Some(line) => line
-          None => break
+        let exit_reason = mcp_run_uds_loop(
+          uds_fd, raw_stdio, role, config, local_cfg,
+        )
+        @uds.close(uds_fd)
+        if !mcp_should_reconnect_after_uds_loop(exit_reason) {
+          break
         }
-        match @mcp.parse_jsonrpc_request(line) {
-          Ok(rpc) => {
-            let id = match rpc.id {
-              Some(id) => id
-              None => continue
+        if !@sys.wait_for_socket(config.listen_uds, wait_tries) {
+          break
+        }
+        uds_fd = @uds.client_connect(config.listen_uds)
+        if uds_fd < 0 {
+          break
+        }
+      }
+      return
+    }
+    FailedUds(attempts) => {
+      @sys.write_stderr(
+        mcp_startup_exhausted_message(config.listen_uds, attempts) + "\n",
+      )
+      @sys.exit(1)
+      return
+    }
+    Tcp(addr_str) =>
+      @async.run_async_main(async fn() {
+        @async.with_task_group(async fn(_root) {
+          let conn = @socket.Tcp::connect(@socket.Addr::parse(addr_str)) catch {
+            err => {
+              println("error: failed to connect to \{addr_str}: \{err}")
+              @sys.exit(1)
+              raise err
             }
-            if rpc.req_method == @mcp.method_initialize {
-              let resp = @mcp.initialize_response(id)
-              @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
-            } else if rpc.req_method == @mcp.method_tools_list {
-              let resp = @mcp.tools_list_response(id, role)
-              @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
-            } else {
-              match @mcp.to_internal_request(rpc, role) {
-                Ok(internal_req) => {
-                  let wire_req = mcp_build_wire_request(
-                    internal_req, role, config, local_cfg,
-                  )
+          }
 
-                  try {
-                    conn.write(@utf8.encode(wire_req))
-                    let resp_line = reader.read_line()
-                    mcp_write_server_response(id, resp_line, raw_stdio)
-                  } catch {
-                    err => {
-                      let err_resp = @mcp.error_response(
-                        id,
-                        @mcp.err_internal,
-                        "TCP error: \{err}",
+          let reader = TcpLineReader::new(conn)
+
+          let reg_msg = mcp_build_registration_message(role, config, local_cfg)
+          try {
+            match config.tcp_auth_token {
+              Some(token) => conn.write(@utf8.encode(token + "\n"))
+              None => ()
+            }
+            conn.write(@utf8.encode(reg_msg))
+            let _ = reader.read_line()
+          } catch {
+            err => {
+              println("error: registration failed: \{err}")
+              @sys.exit(1)
+            }
+          }
+
+          for ;; {
+            let line = match
+              mcp_read_next_message(fn() { @sys.read_stdin_line(8192) }, fn(
+                size,
+              ) {
+                @sys.read_stdin_exact(size)
+              }) {
+              Some(line) => line
+              None => break
+            }
+            match @mcp.parse_jsonrpc_request(line) {
+              Ok(rpc) => {
+                let id = match rpc.id {
+                  Some(id) => id
+                  None => continue
+                }
+                if rpc.req_method == @mcp.method_initialize {
+                  let resp = @mcp.initialize_response(id)
+                  @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
+                } else if rpc.req_method == @mcp.method_tools_list {
+                  let resp = @mcp.tools_list_response(id, role)
+                  @sys.write_stdout(mcp_response_wire(resp, raw_stdio))
+                } else {
+                  match @mcp.to_internal_request(rpc, role) {
+                    Ok(internal_req) => {
+                      let wire_req = mcp_build_wire_request(
+                        internal_req, role, config, local_cfg,
                       )
+
+                      try {
+                        conn.write(@utf8.encode(wire_req))
+                        let resp_line = reader.read_line()
+                        mcp_write_server_response(id, resp_line, raw_stdio)
+                      } catch {
+                        err => {
+                          let err_resp = @mcp.error_response(
+                            id,
+                            @mcp.err_internal,
+                            "TCP error: \{err}",
+                          )
+                          @sys.write_stdout(
+                            mcp_response_wire(err_resp, raw_stdio),
+                          )
+                        }
+                      }
+                    }
+                    Err(e) => {
+                      let err_resp = @mcp.error_response(id, e.code, e.message)
                       @sys.write_stdout(mcp_response_wire(err_resp, raw_stdio))
                     }
                   }
                 }
-                Err(e) => {
-                  let err_resp = @mcp.error_response(id, e.code, e.message)
-                  @sys.write_stdout(mcp_response_wire(err_resp, raw_stdio))
-                }
+              }
+              Err(e) => {
+                let err_resp = @mcp.error_response(Number(0), e.code, e.message)
+                @sys.write_stdout(mcp_response_wire(err_resp, raw_stdio))
               }
             }
           }
-          Err(e) => {
-            let err_resp = @mcp.error_response(Number(0), e.code, e.message)
-            @sys.write_stdout(mcp_response_wire(err_resp, raw_stdio))
-          }
-        }
-      }
-      conn.close()
-    })
-  })
+          conn.close()
+        })
+      })
+  }
 }
 
 ///|
 test "mcp UDS reconnect policy stops after stdin EOF" {
   assert_false(mcp_should_reconnect_after_uds_loop(InputClosed))
   assert_true(mcp_should_reconnect_after_uds_loop(Reconnect))
+}
+
+///|
+test "mcp startup CLI defaults and overrides are bounded" {
+  assert_eq(mcp_cli_wait_socket_tries(["choir", "mcp-stdio"]), 150)
+  assert_eq(mcp_cli_startup_attempts(["choir", "mcp-stdio"]), 3)
+  assert_eq(mcp_cli_startup_backoff_base_ms(["choir", "mcp-stdio"]), 1000)
+  assert_eq(
+    mcp_cli_wait_socket_tries(["choir", "mcp-stdio", "--wait-socket-tries", "9"]),
+    9,
+  )
+  assert_eq(
+    mcp_cli_startup_attempts([
+      "choir", "mcp-stdio", "--mcp-startup-attempts", "4",
+    ]),
+    4,
+  )
+  assert_eq(
+    mcp_cli_startup_backoff_base_ms([
+      "choir", "mcp-stdio", "--mcp-startup-backoff-base-ms", "250",
+    ]),
+    250,
+  )
+}
+
+///|
+test "mcp startup retries UDS connect until success" {
+  let sleeps : Array[Int] = []
+  let waits : Array[String] = []
+  let connect_paths : Array[String] = []
+  let mut connect_calls = 0
+  let result = mcp_connect_uds_startup(
+    ".choir/server.sock",
+    150,
+    3,
+    1000,
+    connect_uds=fn(path) {
+      connect_paths.push(path)
+      connect_calls = connect_calls + 1
+      if connect_calls < 3 {
+        -1
+      } else {
+        42
+      }
+    },
+    wait_for_socket=fn(path, tries) {
+      waits.push(path + ":" + tries.to_string())
+      false
+    },
+    sleep_ms=fn(ms) { sleeps.push(ms) },
+  )
+  match result {
+    Connected(fd) => assert_eq(fd, 42)
+    Exhausted(_) => fail("expected startup connect to succeed")
+  }
+  assert_eq(connect_calls, 3)
+  assert_eq(connect_paths, [
+    ".choir/server.sock", ".choir/server.sock", ".choir/server.sock",
+  ])
+  assert_eq(waits, [".choir/server.sock:150", ".choir/server.sock:150"])
+  assert_eq(sleeps, [1000, 2000])
+  match mcp_startup_transport(result, None) {
+    Uds(fd) => assert_eq(fd, 42)
+    Tcp(_) => fail("expected UDS transport")
+    FailedUds(_) => fail("expected UDS transport")
+  }
+}
+
+///|
+test "mcp startup exits after exhausting UDS attempts with no TCP fallback" {
+  let sleeps : Array[Int] = []
+  let mut connect_calls = 0
+  let mut wait_calls = 0
+  let result = mcp_connect_uds_startup(
+    ".choir/server.sock",
+    150,
+    3,
+    250,
+    connect_uds=fn(_) {
+      connect_calls = connect_calls + 1
+      -1
+    },
+    wait_for_socket=fn(_, _) {
+      wait_calls = wait_calls + 1
+      false
+    },
+    sleep_ms=fn(ms) { sleeps.push(ms) },
+  )
+  match result {
+    Connected(_) => fail("expected startup connect to exhaust attempts")
+    Exhausted(attempts) => {
+      assert_eq(attempts, 3)
+      let message = mcp_startup_exhausted_message(
+        ".choir/server.sock", attempts,
+      )
+      assert_true(message.contains("failed to connect to UDS"))
+      assert_true(message.contains(".choir/server.sock"))
+      assert_true(message.contains("3 startup attempts"))
+    }
+  }
+  assert_eq(connect_calls, 3)
+  assert_eq(wait_calls, 3)
+  assert_eq(sleeps, [250, 500])
+  match mcp_startup_transport(result, None) {
+    Uds(_) => fail("expected startup failure")
+    Tcp(_) => fail("expected startup failure without listen_tcp")
+    FailedUds(attempts) => assert_eq(attempts, 3)
+  }
+  match mcp_startup_transport(result, Some("127.0.0.1:7777")) {
+    Uds(_) => fail("expected TCP fallback")
+    Tcp(addr) => assert_eq(addr, "127.0.0.1:7777")
+    FailedUds(_) => fail("expected TCP fallback when listen_tcp is configured")
+  }
+}
+
+///|
+test "mcp startup backoff caps per-attempt sleeps" {
+  assert_eq(mcp_startup_backoff_ms(1000, 0), 1000)
+  assert_eq(mcp_startup_backoff_ms(1000, 1), 2000)
+  assert_eq(mcp_startup_backoff_ms(20000, 1), 30000)
+  assert_eq(mcp_startup_backoff_ms(60000, 0), 30000)
 }
 
 ///|

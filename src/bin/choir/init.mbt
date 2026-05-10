@@ -56,6 +56,35 @@ fn init_should_launch_server_tab(server_alive : Bool) -> Bool {
 }
 
 ///|
+fn init_server_socket_wait_tries() -> Int {
+  100
+}
+
+///|
+fn init_server_socket_wait_budget_seconds(tries : Int) -> Int {
+  tries * 200 / 1000
+}
+
+///|
+fn init_wait_for_server_socket_before_tl(
+  listen_uds : String,
+  wait_for_socket? : (String, Int) -> Bool = fn(path, tries) {
+    @sys.wait_for_socket(path, tries)
+  },
+  write_stdout? : (String) -> Unit = fn(msg) { @sys.write_stdout(msg) },
+) -> Unit {
+  let tries = init_server_socket_wait_tries()
+  write_stdout("Waiting for server socket...\n")
+  if wait_for_socket(listen_uds, tries) {
+    write_stdout("Server ready.\n")
+  } else {
+    write_stdout(
+      "Warning: server socket not ready after \{init_server_socket_wait_budget_seconds(tries)}s; launching TL anyway.\n",
+    )
+  }
+}
+
+///|
 /// Relative paths removed by runtime-only cleanup (mirrors native `choir_init_cleanup_runtime_artifacts`).
 fn init_runtime_cleanup_paths() -> Array[String] {
   [".choir/server.pid", ".choir/server.sock", ".choir/run_id"]
@@ -134,6 +163,22 @@ test "init server cleanup commands separate runtime restart from purge" {
     }
   }
   assert_true(has_inline)
+}
+
+///|
+test "init waits for server socket before TL launch" {
+  let events : Array[String] = []
+  events.push("server-tab")
+  init_wait_for_server_socket_before_tl(
+    ".choir/server.sock",
+    wait_for_socket=fn(path, tries) {
+      events.push("wait:" + path + ":" + tries.to_string())
+      true
+    },
+    write_stdout=fn(_) {  },
+  )
+  events.push("tl-tab")
+  assert_eq(events, ["server-tab", "wait:.choir/server.sock:100", "tl-tab"])
 }
 
 ///|
@@ -233,6 +278,8 @@ test "init TL launch command defaults to claude" {
   assert_true(s.contains("mcp-stdio"))
   assert_true(s.contains("--name"))
   assert_true(s.contains("root"))
+  assert_true(s.contains("--stderr-append-log"))
+  assert_true(s.contains(".choir/mcp-stdio.stderr.log"))
 }
 
 ///|
@@ -646,6 +693,7 @@ fn init_run() -> Unit {
       } else {
         @sys.write_stdout("Reusing existing Server tab.\n")
       }
+      init_wait_for_server_socket_before_tl(config.listen_uds)
       let tl_tab_exists = init_tab_exists(session, "TL") catch { _ => false }
       if !tl_tab_exists {
         let tl_agent_type = @workspace.tl_type_agent_type(tl_type)
@@ -704,13 +752,6 @@ fn init_run() -> Unit {
           }
         }
         None => ()
-      }
-
-      @sys.write_stdout("Waiting for server socket...\n")
-      if !@sys.wait_for_socket(config.listen_uds, 60) {
-        @sys.write_stdout("Warning: server socket not ready after 30s\n")
-      } else {
-        @sys.write_stdout("Server ready.\n")
       }
 
       if no_attach {

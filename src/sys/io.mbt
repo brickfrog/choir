@@ -66,6 +66,9 @@ extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_se
 extern "C" fn c_wait_for_socket(path : Bytes, max_tries : Int) -> Int = "choir_wait_for_socket"
 
 ///|
+extern "C" fn c_sleep_milliseconds(ms : Int) = "choir_sleep_milliseconds"
+
+///|
 #borrow(cmd)
 extern "C" fn c_system(cmd : Bytes) -> Int = "choir_system"
 
@@ -361,6 +364,13 @@ pub fn spawn_serve(self_exe : String) -> Bool {
 pub fn wait_for_socket(path : String, max_tries : Int) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_wait_for_socket(path_bytes, max_tries) == 0
+}
+
+///|
+pub fn sleep_milliseconds(ms : Int) -> Unit {
+  if ms > 0 {
+    c_sleep_milliseconds(ms)
+  }
 }
 
 ///|

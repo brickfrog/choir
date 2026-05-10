@@ -1102,6 +1102,8 @@ test "mcp_json_content merges extra servers" {
   assert_true(json.contains("\"choir\""))
   assert_true(json.contains("\"notebook\""))
   assert_true(json.contains("\"agent-a\""))
+  assert_true(json.contains("\"--stderr-append-log\""))
+  assert_true(json.contains("\".choir/mcp-stdio-agent-a.stderr.log\""))
 }
 
 ///|
@@ -1114,10 +1116,26 @@ test "mcp_json_content sets alwaysLoad on the choir MCP entry" {
 }
 
 ///|
+test "mcp_json_content uses a per-agent stderr append log" {
+  let json = @workspace.mcp_json_content(
+    @types.Role::Dev,
+    "feature/mcp-startup-race.leaf-a",
+  )
+  assert_true(json.contains("\"--stderr-append-log\""))
+  assert_true(
+    json.contains(
+      "\".choir/mcp-stdio-feature_mcp-startup-race.leaf-a.stderr.log\"",
+    ),
+  )
+}
+
+///|
 test "init_tl_claude_mcp_config_json sets alwaysLoad on the choir MCP entry" {
   let json = @workspace.init_tl_claude_mcp_config_json()
   assert_true(json.contains("\"alwaysLoad\":true"))
   assert_true(json.contains("\"choir\""))
+  assert_true(json.contains("\"--stderr-append-log\""))
+  assert_true(json.contains("\".choir/mcp-stdio.stderr.log\""))
 }
 
 ///|
