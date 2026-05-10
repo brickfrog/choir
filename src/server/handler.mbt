@@ -181,6 +181,11 @@ pub async fn ServerState::handle_with_runner_and_capture(
       }
     }
   }
+  ignore(
+    self.maybe_trigger_automerge_for_blocked_gh_notify(
+      effective_req, runner, capture,
+    ),
+  )
 
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp)
