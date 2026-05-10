@@ -294,23 +294,25 @@ pub fn interpret_lifecycle_effects(
   let mut last_persisted : AgentLifecycle? = None
   for effect in effects {
     match effect {
-      PersistLifecycle(lifecycle~) =>
-        if write_lifecycle(project_dir, lifecycle) {
-          last_persisted = Some(lifecycle)
+      PersistLifecycle(lifecycle~) => {
+        let stamped = stamp_lifecycle_updated(lifecycle)
+        if write_lifecycle(project_dir, stamped) {
+          last_persisted = Some(stamped)
           match registry {
-            Some(reg) => sync_registry_after_persist(reg, lifecycle)
+            Some(reg) => sync_registry_after_persist(reg, stamped)
             None => ()
           }
         } else {
           last_persisted = None
         }
-      AppendLifecycleEvent(agent_id~, from_lc~, to_lc~, trigger~) => {
+      }
+      AppendLifecycleEvent(agent_id~, from_lc~, trigger~, ..) => {
         match last_persisted {
           Some(lc) =>
             if lc.agent_id == agent_id {
               ignore(
                 append_lifecycle_event(
-                  project_dir, agent_id, from_lc, to_lc, trigger,
+                  project_dir, agent_id, from_lc, lc, trigger,
                 ),
               )
             }
@@ -598,10 +600,11 @@ pub fn persist_lifecycle(
   registry : @registry.AgentRegistry,
   lifecycle : AgentLifecycle,
 ) -> Bool {
-  let ok = write_lifecycle(project_dir, lifecycle)
+  let stamped = stamp_lifecycle_updated(lifecycle)
+  let ok = write_lifecycle(project_dir, stamped)
   try {
-    let agent = registry.get(lifecycle.agent_id)
-    ignore(registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+    let agent = registry.get(stamped.agent_id)
+    ignore(registry.upsert({ ..agent, state: stamped.to_agent_state() }))
   } catch {
     _ => ()
   }

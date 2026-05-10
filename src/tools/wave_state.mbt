@@ -111,6 +111,32 @@ fn supervisor_child_id_set(
 }
 
 ///|
+fn supervisor_workflow_for_wave_state(
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle?,
+) -> @phase.SupervisorLifecycle {
+  match lifecycle {
+    Some(
+      {
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Failed(
+            reason=@phase.FailureReason::UnexpectedDisconnect
+          )
+        ),
+        ..,
+      }
+    ) if agent.role == @types.Role::Root &&
+      agent.state == @types.AgentState::Active =>
+      @phase.SupervisorLifecycle::Planning
+    Some({ workflow: @phase.WorkflowState::Supervisor(sl), .. }) => sl
+    // No persisted lifecycle yet -> default to Planning; same fallback as
+    // read_or_default_lifecycle for a fresh Root/TL.
+    _ => @phase.SupervisorLifecycle::Planning
+  }
+}
+
+///|
 fn agent_state_is_terminal(state : @types.AgentState) -> Bool {
   state == @types.AgentState::Done || state == @types.AgentState::Failed
 }
@@ -197,13 +223,9 @@ pub fn plan_wave_state(
     )
   }
   let caller_lifecycle = lifecycle_reader(caller_id)
-  let supervisor_workflow : @phase.SupervisorLifecycle = match
-    caller_lifecycle {
-    Some({ workflow: @phase.Supervisor(sl), .. }) => sl
-    // No persisted lifecycle yet → default to Planning; same fallback as
-    // read_or_default_lifecycle for a fresh Root/TL.
-    _ => @phase.SupervisorLifecycle::Planning
-  }
+  let supervisor_workflow = supervisor_workflow_for_wave_state(
+    agent, caller_lifecycle,
+  )
   let own_pr = match supervisor_own_pr_number(supervisor_workflow) {
     Some(pr_number) =>
       match poller_state {
@@ -304,9 +326,10 @@ pub async fn interpret_wave_state(
   let pr_numbers : Array[Int] = []
   let add_pr = fn(n : Int) { if !pr_numbers.contains(n) { pr_numbers.push(n) } }
   let caller_lifecycle = @phase.read_lifecycle(project_dir, args.caller_id)
-  let supervisor_workflow_for_filter = match caller_lifecycle {
-    Some({ workflow: @phase.Supervisor(sl), .. }) => sl
+  let supervisor_workflow_for_filter = try reg.get(args.caller_id) catch {
     _ => @phase.SupervisorLifecycle::Planning
+  } noraise {
+    agent => supervisor_workflow_for_wave_state(agent, caller_lifecycle)
   }
   match supervisor_own_pr_number(supervisor_workflow_for_filter) {
     Some(n) => add_pr(n)

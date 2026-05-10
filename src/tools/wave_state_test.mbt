@@ -40,6 +40,7 @@ fn make_dev_lifecycle(
     role: @types.Role::Dev,
     process: @phase.Connected,
     workflow: @phase.Dev(workflow),
+    last_updated_unix_sec: 0L,
   }
 }
 
@@ -53,6 +54,7 @@ fn make_worker_lifecycle(
     role: @types.Role::Worker,
     process: @phase.Connected,
     workflow: @phase.Worker(workflow),
+    last_updated_unix_sec: 0L,
   }
 }
 
@@ -66,6 +68,7 @@ fn make_supervisor_lifecycle(
     role: @types.Role::TL,
     process: @phase.Connected,
     workflow: @phase.Supervisor(workflow),
+    last_updated_unix_sec: 0L,
   }
 }
 
@@ -244,6 +247,45 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
   match worker_row.workflow {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
     _ => fail("expected worker Working")
+  }
+}
+
+///|
+test "plan_wave_state treats stale active root supervisor as planning" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      make_agent("root", @types.Role::Root, None, @types.AgentType::Codex),
+    ),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set("root", {
+    agent_id: "root",
+    role: @types.Role::Root,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Supervisor(
+      @phase.SupervisorLifecycle::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect,
+      ),
+    ),
+    last_updated_unix_sec: 1L,
+  })
+  let snap = plan_wave_state(
+    "root",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    None,
+    threads_zero_lookup,
+    no_heartbeat,
+    @types.ReviewMode::Iterative,
+    1_700_000_000_000L,
+  ).unwrap()
+  assert_eq(snap.supervisor.agent_id, "root")
+  match snap.supervisor.workflow {
+    @phase.SupervisorLifecycle::Planning => ()
+    @phase.SupervisorLifecycle::Failed(reason~) =>
+      fail("expected non-failed root supervisor, got " + reason.to_string())
+    _ => fail("expected Planning")
   }
 }
 

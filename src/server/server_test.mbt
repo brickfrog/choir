@@ -342,6 +342,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
         ),
       ),
     ),
+    last_updated_unix_sec: 0L,
   }
   assert_true(@phase.write_lifecycle(project_dir, old_lc))
   ignore(
@@ -506,6 +507,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
       workflow: @phase.WorkflowState::Supervisor(
         @phase.SupervisorLifecycle::Supervising(children=[parent_child], wave=1),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   assert_true(
@@ -521,6 +523,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
           state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
         ),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   ignore(
