@@ -206,6 +206,17 @@ pub fn gh_bounded_script_body() -> String {
 }
 
 ///|
+/// Body of the `bash-bounded` wrapper installed under
+/// `worktree_path/.choir/bin/bash-bounded`. Wraps shell pipelines in a 60s
+/// timeout so leaf-local helpers can bound broad shell commands consistently.
+pub fn bash_bounded_script_body() -> String {
+  (
+    #|#!/bin/sh
+    #|exec timeout 60s bash "$@"
+  )
+}
+
+///|
 /// Install leaf helper scripts under `worktree_path/.choir/bin` without shell heredocs.
 /// Returns `0` on success, `1` on failure, `-1` if `cmd` is not this native command.
 pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
@@ -252,6 +263,13 @@ pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
     return 1
   }
   if !@sys.chmod_mode(gh_bounded_path, 0o755) {
+    return 1
+  }
+  let bash_bounded_path = bin_dir + "/bash-bounded"
+  if !@sys.write_file_sync(bash_bounded_path, bash_bounded_script_body()) {
+    return 1
+  }
+  if !@sys.chmod_mode(bash_bounded_path, 0o755) {
     return 1
   }
   0
