@@ -346,6 +346,7 @@ test "tl_policy_live_wave_info requires a non terminal child" {
           wave=2,
         ),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   @debug.assert_eq(live, (true, Some(2)))
@@ -365,6 +366,7 @@ test "tl_policy_live_wave_info requires a non terminal child" {
           },
         ]),
       ),
+      last_updated_unix_sec: 0L,
     }),
   )
   @debug.assert_eq(done, (false, Some(2)))

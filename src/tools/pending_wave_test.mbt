@@ -51,6 +51,7 @@ fn pending_wave_test_dev_lifecycle(
     role: @types.Role::Dev,
     process,
     workflow: @phase.WorkflowState::Dev(workflow),
+    last_updated_unix_sec: 0L,
   }
 }
 
@@ -297,6 +298,7 @@ test "validate_pending_wave_deps: rejects TL-id dep via lifecycle file" {
     workflow: @phase.WorkflowState::Supervisor(
       @phase.SupervisorLifecycle::Planning,
     ),
+    last_updated_unix_sec: 0L,
   }
   ignore(@phase.write_lifecycle(project_dir, lc))
   let got = @tools.validate_pending_wave_deps(project_dir, None, ["main.tl"])

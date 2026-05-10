@@ -388,7 +388,7 @@ async test "run_beads_doctor reports stalled in progress bead assigned to inacti
       }
     },
     now_sec=@tempo.DateTime::parse("2026-05-10T06:30:00Z").to_unix_seconds(),
-    active_agent_ids=fn(_project_dir, _in_progress_json) {
+    active_agent_ids=fn(_project_dir, _in_progress_json, _now_sec) {
       Some(["main.live-leaf"])
     },
   )
@@ -396,7 +396,7 @@ async test "run_beads_doctor reports stalled in progress bead assigned to inacti
     Ok(text) => {
       assert_true(
         text.contains(
-          "STALLED: choir-stalled (started 6h ago, assignee main.dead-leaf has no Active lifecycle entry)",
+          "STALLED: choir-stalled (started 6h ago, assignee main.dead-leaf has no fresh Active lifecycle entry)",
         ),
       )
       assert_true(
