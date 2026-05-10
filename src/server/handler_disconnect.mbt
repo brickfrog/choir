@@ -139,6 +139,13 @@ pub(all) enum DisconnectAutoRescueDecision {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum DisconnectAutoRescuePrecheck {
+  RescueWithoutThreadFetch(plan~ : DisconnectAutoRescuePlan)
+  FetchThreads(plan~ : DisconnectAutoRescuePlan)
+  Ineligible
+} derive(Debug, Eq)
+
+///|
 fn disconnect_auto_rescue_pr_number(lifecycle : @phase.AgentLifecycle) -> Int? {
   match lifecycle.workflow {
     @phase.WorkflowState::Dev(@phase.DevLifecycle::ReviewOwned(pr_number~, ..))
@@ -170,6 +177,65 @@ fn disconnect_auto_rescue_task(pr_number : Int) -> String {
 }
 
 ///|
+pub fn disconnect_auto_rescue_pending_copilot_review(
+  tracked : @poller.TrackedPR,
+  now : Int64,
+) -> Bool {
+  !tracked.copilot_issue_comment_seen &&
+  now - tracked.first_seen < disconnect_auto_rescue_review_grace_sec
+}
+
+///|
+fn disconnect_auto_rescue_plan(
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  tracked : @poller.TrackedPR?,
+) -> DisconnectAutoRescuePlan? {
+  if agent.role != @types.Role::Dev {
+    return None
+  }
+  let agent_id = agent.agent_id.to_string()
+  if @phase.extract_slug(agent_id).has_prefix(
+      disconnect_auto_rescue_slug_prefix,
+    ) {
+    return None
+  }
+  let pr_number = match disconnect_auto_rescue_pr_number(lifecycle) {
+    Some(n) => n
+    None => return None
+  }
+  match tracked {
+    Some(t) if t.agent_id == agent_id && t.pr_number == pr_number => ()
+    _ => return None
+  }
+  let new_slug = disconnect_auto_rescue_slug_prefix + pr_number.to_string()
+  Some({
+    pr_number,
+    new_slug,
+    task: disconnect_auto_rescue_task(pr_number),
+    agent_type: disconnect_auto_rescue_agent_type(agent.agent_type),
+  })
+}
+
+///|
+pub fn disconnect_auto_rescue_precheck(
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  tracked : @poller.TrackedPR?,
+  now : Int64,
+) -> DisconnectAutoRescuePrecheck {
+  let plan = match disconnect_auto_rescue_plan(agent, lifecycle, tracked) {
+    Some(p) => p
+    None => return Ineligible
+  }
+  match tracked {
+    Some(t) if disconnect_auto_rescue_pending_copilot_review(t, now) =>
+      RescueWithoutThreadFetch(plan~)
+    _ => FetchThreads(plan~)
+  }
+}
+
+///|
 pub fn disconnect_auto_rescue_decision(
   agent : @types.Agent,
   lifecycle : @phase.AgentLifecycle,
@@ -177,35 +243,16 @@ pub fn disconnect_auto_rescue_decision(
   unresolved_thread_count : Int,
   now : Int64,
 ) -> DisconnectAutoRescueDecision {
-  if agent.role != @types.Role::Dev {
-    return NoRescue
+  match disconnect_auto_rescue_precheck(agent, lifecycle, tracked, now) {
+    RescueWithoutThreadFetch(plan~) => Rescue(plan~)
+    FetchThreads(plan~) =>
+      if unresolved_thread_count > 0 {
+        Rescue(plan~)
+      } else {
+        NoRescue
+      }
+    Ineligible => NoRescue
   }
-  let agent_id = agent.agent_id.to_string()
-  if @phase.extract_slug(agent_id).has_prefix(
-      disconnect_auto_rescue_slug_prefix,
-    ) {
-    return NoRescue
-  }
-  let pr_number = match disconnect_auto_rescue_pr_number(lifecycle) {
-    Some(n) => n
-    None => return NoRescue
-  }
-  let tracked = match tracked {
-    Some(t) if t.agent_id == agent_id && t.pr_number == pr_number => t
-    _ => return NoRescue
-  }
-  let copilot_review_still_pending = !tracked.copilot_issue_comment_seen &&
-    now - tracked.first_seen < disconnect_auto_rescue_review_grace_sec
-  if unresolved_thread_count <= 0 && !copilot_review_still_pending {
-    return NoRescue
-  }
-  let new_slug = disconnect_auto_rescue_slug_prefix + pr_number.to_string()
-  Rescue(plan={
-    pr_number,
-    new_slug,
-    task: disconnect_auto_rescue_task(pr_number),
-    agent_type: disconnect_auto_rescue_agent_type(agent.agent_type),
-  })
 }
 
 ///|
@@ -238,59 +285,60 @@ async fn ServerState::auto_rescue_disconnected_review_leaf(
     None => return false
   }
   let tracked = self.poller.get(pr_number)
-  let (thread_count, _) = @tools.fetch_unresolved_review_threads(
-    pr_number,
-    self.config.project_dir,
-    capture,
-  )
-  let decision = disconnect_auto_rescue_decision(
+  let precheck = disconnect_auto_rescue_precheck(
     agent,
     lifecycle,
     tracked,
-    thread_count,
     @poller.now_sec(),
   )
-  match decision {
-    NoRescue => false
-    Rescue(plan~) => {
-      let from_agent_id = agent.agent_id.to_string()
-      let caller_id = match agent.parent {
-        Some(parent_id) => parent_id
-        None => return false
-      }
-      let resp = @tools.interpret_rescue_leaf(
-        disconnect_auto_rescue_args(plan, caller_id, from_agent_id),
+  let plan = match precheck {
+    Ineligible => return false
+    RescueWithoutThreadFetch(plan~) => plan
+    FetchThreads(plan~) => {
+      let (thread_count, _) = @tools.fetch_unresolved_review_threads(
+        plan.pr_number,
         self.config.project_dir,
-        self.config.terminal_session,
-        runner,
         capture,
-        Some(self.registry),
-        Some(self.poller),
-        extra_mcp_servers_json=self.config.extra_mcp_servers_json,
-        shell_command=self.config.shell_command,
-        listen_uds=self.config.listen_uds,
-        listen_tcp=self.config.listen_tcp,
-        tcp_auth_token=self.config.tcp_auth_token,
       )
-      if resp.is_ok() {
-        self.clear_agent_runtime_tracking(from_agent_id)
-        match resp.ok_field("agent_id") {
-          Some(new_agent_id) => self.watch_pane(new_agent_id)
-          None => ()
-        }
-        true
-      } else {
-        @moontrace.warn("auto rescue failed", fields=[
-          @moontrace.field("agent_id", from_agent_id),
-          @moontrace.field("pr_number", pr_number),
-          @moontrace.field(
-            "error",
-            resp.error_message().unwrap_or("unknown error"),
-          ),
-        ])
-        false
+      if thread_count <= 0 {
+        return false
       }
+      plan
     }
+  }
+  let from_agent_id = agent.agent_id.to_string()
+  let caller_id = match agent.parent {
+    Some(parent_id) => parent_id
+    None => return false
+  }
+  let resp = @tools.interpret_rescue_leaf(
+    disconnect_auto_rescue_args(plan, caller_id, from_agent_id),
+    self.config.project_dir,
+    self.config.terminal_session,
+    runner,
+    capture,
+    Some(self.registry),
+    Some(self.poller),
+    extra_mcp_servers_json=self.config.extra_mcp_servers_json,
+    shell_command=self.config.shell_command,
+    listen_uds=self.config.listen_uds,
+    listen_tcp=self.config.listen_tcp,
+    tcp_auth_token=self.config.tcp_auth_token,
+  )
+  if resp.is_ok() {
+    self.clear_agent_runtime_tracking(from_agent_id)
+    match resp.ok_field("agent_id") {
+      Some(new_agent_id) => self.watch_pane(new_agent_id)
+      None => ()
+    }
+    true
+  } else {
+    @moontrace.warn("auto rescue failed", fields=[
+      @moontrace.field("agent_id", from_agent_id),
+      @moontrace.field("pr_number", plan.pr_number),
+      @moontrace.field("error", resp.error_message().unwrap_or("unknown error")),
+    ])
+    false
   }
 }
 

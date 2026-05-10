@@ -1285,6 +1285,103 @@ test "disconnect auto-rescue decision is one-shot for auto-rescue leaves" {
 }
 
 ///|
+async test "disconnect auto-rescue skips thread fetch during Copilot grace window" {
+  let project_dir = "/tmp/choir-auto-rescue-grace-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  let parent_id = "main.tl"
+  let old_id = "main.leaf"
+  let pr_number = 79
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: old_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/leaf",
+      branch: old_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id: old_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::OpenUnreviewed(
+            url="https://github.com/o/r/pull/79",
+          ),
+        ),
+      ),
+    }),
+  )
+  state.poller.track(
+    pr_number,
+    old_id,
+    old_id,
+    "main",
+    "https://github.com/o/r/pull/79",
+    @poller.now_sec(),
+  )
+
+  let task = "PR 79: address Copilot review threads then notify_parent"
+  let mut spawn_seen = false
+  let mut gh_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "zellij" && cmd.args.join(" ").contains(task) {
+        spawn_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" {
+      gh_seen = true
+    }
+    (1, "")
+  }
+
+  state.handle_disconnect_with_runner(old_id, runner~, capture~)
+
+  assert_true(spawn_seen)
+  assert_false(gh_seen)
+  match state.poller.get(pr_number) {
+    Some(tracked) => assert_eq(tracked.agent_id, "main.auto-rescue-pr-79")
+    None => fail("expected tracked PR to transfer to rescue leaf")
+  }
+}
+
+///|
 async test "disconnect auto-rescue spawns replacement for unresolved threads" {
   let project_dir = "/tmp/choir-auto-rescue-disconnect-" +
     @sys.get_pid().to_string() +
