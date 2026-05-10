@@ -119,6 +119,230 @@ fn ServerState::clear_agent_runtime_tracking(
 }
 
 ///|
+pub let disconnect_auto_rescue_review_grace_sec : Int64 = 300L
+
+///|
+pub let disconnect_auto_rescue_slug_prefix : String = "auto-rescue-pr-"
+
+///|
+pub(all) struct DisconnectAutoRescuePlan {
+  pr_number : Int
+  new_slug : String
+  task : String
+  agent_type : @types.AgentType
+} derive(Debug, Eq)
+
+///|
+pub(all) enum DisconnectAutoRescueDecision {
+  Rescue(plan~ : DisconnectAutoRescuePlan)
+  NoRescue
+} derive(Debug, Eq)
+
+///|
+pub(all) enum DisconnectAutoRescuePrecheck {
+  RescueWithoutThreadFetch(plan~ : DisconnectAutoRescuePlan)
+  FetchThreads(plan~ : DisconnectAutoRescuePlan)
+  Ineligible
+} derive(Debug, Eq)
+
+///|
+fn disconnect_auto_rescue_pr_number(lifecycle : @phase.AgentLifecycle) -> Int? {
+  match lifecycle.workflow {
+    @phase.WorkflowState::Dev(@phase.DevLifecycle::ReviewOwned(pr_number~, ..))
+    | @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ChangesRequested(pr_number~, ..)
+    )
+    | @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(pr_number~, ..)
+    ) => Some(pr_number)
+    _ => None
+  }
+}
+
+///|
+fn disconnect_auto_rescue_agent_type(
+  agent_type : @types.AgentType,
+) -> @types.AgentType {
+  match agent_type {
+    @types.AgentType::Unknown => @types.AgentType::CursorAgent
+    other => other
+  }
+}
+
+///|
+fn disconnect_auto_rescue_task(pr_number : Int) -> String {
+  "PR " +
+  pr_number.to_string() +
+  ": address Copilot review threads then notify_parent"
+}
+
+///|
+pub fn disconnect_auto_rescue_pending_copilot_review(
+  tracked : @poller.TrackedPR,
+  now : Int64,
+) -> Bool {
+  !tracked.copilot_issue_comment_seen &&
+  now - tracked.first_seen < disconnect_auto_rescue_review_grace_sec
+}
+
+///|
+fn disconnect_auto_rescue_plan(
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  tracked : @poller.TrackedPR?,
+) -> DisconnectAutoRescuePlan? {
+  if agent.role != @types.Role::Dev {
+    return None
+  }
+  let agent_id = agent.agent_id.to_string()
+  if @phase.extract_slug(agent_id).has_prefix(
+      disconnect_auto_rescue_slug_prefix,
+    ) {
+    return None
+  }
+  let pr_number = match disconnect_auto_rescue_pr_number(lifecycle) {
+    Some(n) => n
+    None => return None
+  }
+  match tracked {
+    Some(t) if t.agent_id == agent_id && t.pr_number == pr_number => ()
+    _ => return None
+  }
+  let new_slug = disconnect_auto_rescue_slug_prefix + pr_number.to_string()
+  Some({
+    pr_number,
+    new_slug,
+    task: disconnect_auto_rescue_task(pr_number),
+    agent_type: disconnect_auto_rescue_agent_type(agent.agent_type),
+  })
+}
+
+///|
+pub fn disconnect_auto_rescue_precheck(
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  tracked : @poller.TrackedPR?,
+  now : Int64,
+) -> DisconnectAutoRescuePrecheck {
+  let plan = match disconnect_auto_rescue_plan(agent, lifecycle, tracked) {
+    Some(p) => p
+    None => return Ineligible
+  }
+  match tracked {
+    Some(t) if disconnect_auto_rescue_pending_copilot_review(t, now) =>
+      RescueWithoutThreadFetch(plan~)
+    _ => FetchThreads(plan~)
+  }
+}
+
+///|
+pub fn disconnect_auto_rescue_decision(
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  tracked : @poller.TrackedPR?,
+  unresolved_thread_count : Int,
+  now : Int64,
+) -> DisconnectAutoRescueDecision {
+  match disconnect_auto_rescue_precheck(agent, lifecycle, tracked, now) {
+    RescueWithoutThreadFetch(plan~) => Rescue(plan~)
+    FetchThreads(plan~) =>
+      if unresolved_thread_count > 0 {
+        Rescue(plan~)
+      } else {
+        NoRescue
+      }
+    Ineligible => NoRescue
+  }
+}
+
+///|
+fn disconnect_auto_rescue_args(
+  plan : DisconnectAutoRescuePlan,
+  caller_id : String,
+  from_agent_id : String,
+) -> @tools.RescueLeafArgs {
+  {
+    task: plan.task,
+    task_contract: { ..@types.TaskContract::empty(), goal: plan.task },
+    caller_id,
+    from_agent_id,
+    new_slug: plan.new_slug,
+    agent_type: plan.agent_type,
+    parent_session_id: None,
+  }
+}
+
+///|
+async fn ServerState::auto_rescue_disconnected_review_leaf(
+  self : ServerState,
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Bool {
+  let pr_number = match disconnect_auto_rescue_pr_number(lifecycle) {
+    Some(n) => n
+    None => return false
+  }
+  let tracked = self.poller.get(pr_number)
+  let precheck = disconnect_auto_rescue_precheck(
+    agent,
+    lifecycle,
+    tracked,
+    @poller.now_sec(),
+  )
+  let plan = match precheck {
+    Ineligible => return false
+    RescueWithoutThreadFetch(plan~) => plan
+    FetchThreads(plan~) => {
+      let (thread_count, _) = @tools.fetch_unresolved_review_threads(
+        plan.pr_number,
+        self.config.project_dir,
+        capture,
+      )
+      if thread_count <= 0 {
+        return false
+      }
+      plan
+    }
+  }
+  let from_agent_id = agent.agent_id.to_string()
+  let caller_id = match agent.parent {
+    Some(parent_id) => parent_id
+    None => return false
+  }
+  let resp = @tools.interpret_rescue_leaf(
+    disconnect_auto_rescue_args(plan, caller_id, from_agent_id),
+    self.config.project_dir,
+    self.config.terminal_session,
+    runner,
+    capture,
+    Some(self.registry),
+    Some(self.poller),
+    extra_mcp_servers_json=self.config.extra_mcp_servers_json,
+    shell_command=self.config.shell_command,
+    listen_uds=self.config.listen_uds,
+    listen_tcp=self.config.listen_tcp,
+    tcp_auth_token=self.config.tcp_auth_token,
+  )
+  if resp.is_ok() {
+    self.clear_agent_runtime_tracking(from_agent_id)
+    match resp.ok_field("agent_id") {
+      Some(new_agent_id) => self.watch_pane(new_agent_id)
+      None => ()
+    }
+    true
+  } else {
+    @moontrace.warn("auto rescue failed", fields=[
+      @moontrace.field("agent_id", from_agent_id),
+      @moontrace.field("pr_number", plan.pr_number),
+      @moontrace.field("error", resp.error_message().unwrap_or("unknown error")),
+    ])
+    false
+  }
+}
+
+///|
 async fn ServerState::reconcile_external_merge_with_runner(
   self : ServerState,
   agent_id : String,
@@ -516,8 +740,10 @@ pub async fn ServerState::handle_disconnect_with_runner(
   self : ServerState,
   agent_id : String,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> Unit {
   let agent = self.registry.get(agent_id) catch { _ => return }
+  let lifecycle = self.current_lifecycle(agent_id)
   match agent.state {
     Done | Failed =>
       match agent.terminal_target {
@@ -526,7 +752,6 @@ pub async fn ServerState::handle_disconnect_with_runner(
         None => ()
       }
     Completing => {
-      let lifecycle = self.current_lifecycle(agent_id)
       let exit_reason = match lifecycle.process {
         @phase.ProcessState::Finalizing(reason=@phase.FinalizeReason::Merged) =>
           @types.ExitReason::Merged
@@ -545,95 +770,101 @@ pub async fn ServerState::handle_disconnect_with_runner(
       )
     }
     _ =>
-      match
-        @phase.lifecycle_disconnect_policy(self.current_lifecycle(agent_id)) {
-        @phase.LifecycleDisconnectPolicy::Preserve => ()
-        @phase.LifecycleDisconnectPolicy::FinalizeDone(..) =>
-          self.finalize_agent_with_runner(
-            agent_id,
-            @types.ExitReason::Disconnected,
-            runner,
-            notify_parent=false,
-            close_target=false,
-            remove_worktree=false,
-          )
-        @phase.LifecycleDisconnectPolicy::Ignore => ()
-        @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
-          // Before failing: check if a dev leaf filed a PR via raw `gh pr create`
-          // (bypassing file_pr). Restrict this to branch-owning dev agents so
-          // top-level TLs/workers with empty branches cannot steal tracked PR ownership.
-          let recovered_pr = if disconnect_pr_recovery_candidate(agent) {
-            @runtime.find_pr_for_branch_in_provider(
-              self.recovery_provider,
-              self.config.project_dir,
-              agent.branch,
+      if self.auto_rescue_disconnected_review_leaf(
+          agent, lifecycle, runner, capture,
+        ) {
+        ()
+      } else {
+        match @phase.lifecycle_disconnect_policy(lifecycle) {
+          @phase.LifecycleDisconnectPolicy::Preserve => ()
+          @phase.LifecycleDisconnectPolicy::FinalizeDone(..) =>
+            self.finalize_agent_with_runner(
+              agent_id,
+              @types.ExitReason::Disconnected,
+              runner,
+              notify_parent=false,
+              close_target=false,
+              remove_worktree=false,
             )
-          } else {
-            None
-          }
-          match recovered_pr {
-            Some((pr_number, pr_url)) => {
-              let parent_branch = match @workspace.parent_branch(agent.branch) {
-                Some(pb) => pb
-                None => "main"
-              }
-              @tools.apply_dev_event(
+          @phase.LifecycleDisconnectPolicy::Ignore => ()
+          @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
+            // Before failing: check if a dev leaf filed a PR via raw `gh pr create`
+            // (bypassing file_pr). Restrict this to branch-owning dev agents so
+            // top-level TLs/workers with empty branches cannot steal tracked PR ownership.
+            let recovered_pr = if disconnect_pr_recovery_candidate(agent) {
+              @runtime.find_pr_for_branch_in_provider(
+                self.recovery_provider,
                 self.config.project_dir,
-                agent_id,
-                @phase.DevEvent::PRCreated(
-                  pr_number~,
-                  url=pr_url,
-                  branch=agent.branch,
-                ),
-                registry=Some(self.registry),
-              )
-              self.poller.ensure_tracked(
-                pr_number,
-                agent_id,
                 agent.branch,
-                parent_branch,
-                pr_url,
-                @poller.now_sec(),
               )
-              ignore(self.poller.write_state_file(self.config.project_dir))
+            } else {
+              None
             }
-            None => {
-              let snapshot = self.pane_watcher.read_viewport(agent_id)
-              let screen = @runtime.extract_viewport_text(snapshot)
-              let (reason, msg) = if screen != "" {
-                let classified = @phase.classify_failure(screen)
-                match classified {
-                  @phase.FailureReason::ChildFailure(_) =>
-                    (
-                      default_reason,
-                      "[FAILED: " +
-                      agent_id +
-                      "] disconnected unexpectedly - agent may have crashed or run out of context",
-                    )
-                  _ =>
-                    (
-                      classified,
-                      "[FAILED: " +
-                      agent_id +
-                      "] " +
-                      @phase.failure_reason_message(classified),
-                    )
+            match recovered_pr {
+              Some((pr_number, pr_url)) => {
+                let parent_branch = match
+                  @workspace.parent_branch(agent.branch) {
+                  Some(pb) => pb
+                  None => "main"
                 }
-              } else {
-                (
-                  default_reason,
-                  "[FAILED: " +
-                  agent_id +
-                  "] disconnected unexpectedly - agent may have crashed or run out of context",
+                @tools.apply_dev_event(
+                  self.config.project_dir,
+                  agent_id,
+                  @phase.DevEvent::PRCreated(
+                    pr_number~,
+                    url=pr_url,
+                    branch=agent.branch,
+                  ),
+                  registry=Some(self.registry),
+                )
+                self.poller.ensure_tracked(
+                  pr_number,
+                  agent_id,
+                  agent.branch,
+                  parent_branch,
+                  pr_url,
+                  @poller.now_sec(),
+                )
+                ignore(self.poller.write_state_file(self.config.project_dir))
+              }
+              None => {
+                let snapshot = self.pane_watcher.read_viewport(agent_id)
+                let screen = @runtime.extract_viewport_text(snapshot)
+                let (reason, msg) = if screen != "" {
+                  let classified = @phase.classify_failure(screen)
+                  match classified {
+                    @phase.FailureReason::ChildFailure(_) =>
+                      (
+                        default_reason,
+                        "[FAILED: " +
+                        agent_id +
+                        "] disconnected unexpectedly - agent may have crashed or run out of context",
+                      )
+                    _ =>
+                      (
+                        classified,
+                        "[FAILED: " +
+                        agent_id +
+                        "] " +
+                        @phase.failure_reason_message(classified),
+                      )
+                  }
+                } else {
+                  (
+                    default_reason,
+                    "[FAILED: " +
+                    agent_id +
+                    "] disconnected unexpectedly - agent may have crashed or run out of context",
+                  )
+                }
+                self.fail_agent_with_runner(
+                  agent_id,
+                  reason,
+                  msg,
+                  @types.ExitReason::Disconnected,
+                  runner,
                 )
               }
-              self.fail_agent_with_runner(
-                agent_id,
-                reason,
-                msg,
-                @types.ExitReason::Disconnected,
-                runner,
-              )
             }
           }
         }
@@ -676,6 +907,7 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
   now : Int64,
   grace_seconds : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> Unit {
   let stale : Array[String] = []
   for agent_id, disconnect_time in self.pending_disconnects {
@@ -685,7 +917,7 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
   }
   for agent_id in stale {
     self.pending_disconnects.remove(agent_id)
-    self.handle_disconnect_with_runner(agent_id, runner~)
+    self.handle_disconnect_with_runner(agent_id, runner~, capture~)
   }
 }
 
