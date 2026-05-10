@@ -541,6 +541,126 @@ async fn file_pr_current_head_sha(
 }
 
 ///|
+pub fn file_pr_audit_receipt_required(parent_branch : String) -> Bool {
+  parent_branch == "main"
+}
+
+///|
+pub fn file_pr_short_sha(sha : String) -> String {
+  if sha.length() <= 12 {
+    sha
+  } else {
+    sha[0:12].to_owned()
+  }
+}
+
+///|
+pub fn file_pr_audit_receipt_path_for_head(sha : String) -> String {
+  ".choir/audit-receipts/" + file_pr_short_sha(sha) + ".json"
+}
+
+///|
+fn file_pr_missing_audit_receipt_error(short_sha : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "file_pr: feature→main PR requires a recent audit on HEAD " +
+    short_sha +
+    "; run `/audit` (choir:audit skill) on this branch first, then retry.",
+  )
+}
+
+///|
+fn file_pr_stale_audit_receipt_error(
+  audited_sha : String,
+  current_sha : String,
+) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "file_pr: audit receipt is stale (audit ran on " +
+    audited_sha +
+    ", current HEAD is " +
+    current_sha +
+    "); re-run /audit",
+  )
+}
+
+///|
+fn file_pr_invalid_audit_receipt_error(short_sha : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "file_pr: audit receipt for HEAD " +
+    short_sha +
+    " is malformed (missing or invalid `sha` field); re-run `/audit` to regenerate.",
+  )
+}
+
+///|
+fn file_pr_receipt_sha(receipt_body : String) -> String? {
+  let parsed = @json.parse(receipt_body.trim().to_owned()) catch {
+    _ => return None
+  }
+  guard parsed is Object(fields) else { return None }
+  @types.json_field_string(fields, "sha")
+}
+
+///|
+pub fn file_pr_validate_audit_receipt(
+  parent_branch : String,
+  current_head : String,
+  receipt_body : String?,
+) -> Result[Unit, @types.ChoirError] {
+  if !file_pr_audit_receipt_required(parent_branch) {
+    return Ok(())
+  }
+  let short_sha = file_pr_short_sha(current_head)
+  let receipt = match receipt_body {
+    Some(body) if body.trim() != "" => body
+    _ => return Err(file_pr_missing_audit_receipt_error(short_sha))
+  }
+  match file_pr_receipt_sha(receipt) {
+    Some(audited_sha) if audited_sha == current_head => Ok(())
+    Some(audited_sha) =>
+      Err(file_pr_stale_audit_receipt_error(audited_sha, current_head))
+    // Malformed receipt JSON or missing `sha` field — distinct from "stale"
+    // (where the audit ran on a known earlier SHA). Tell the user the
+    // receipt is corrupt and they should regenerate it.
+    None => Err(file_pr_invalid_audit_receipt_error(short_sha))
+  }
+}
+
+///|
+async fn file_pr_require_audit_receipt(
+  parent_branch : String,
+  file_pr_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[Unit, @types.ChoirError] {
+  if !file_pr_audit_receipt_required(parent_branch) {
+    return Ok(())
+  }
+  let head_sha = match file_pr_current_head_sha(file_pr_dir, capture) {
+    Some(sha) => sha
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "file_pr: cannot determine current HEAD for audit receipt gate",
+        ),
+      )
+  }
+  let receipt_path = file_pr_audit_receipt_path_for_head(head_sha)
+  let (exit_code, receipt_body) = capture({
+    program: "cat",
+    args: [receipt_path],
+    workdir: Some(file_pr_dir),
+  })
+  file_pr_validate_audit_receipt(
+    parent_branch,
+    head_sha,
+    if exit_code == 0 {
+      Some(receipt_body)
+    } else {
+      None
+    },
+  )
+}
+
+///|
 pub async fn file_pr_run_required_verify(
   file_pr_dir : String,
   verify_commands : Array[String],
@@ -674,6 +794,7 @@ async fn file_pr_mirror_beads_created(
 /// interpreter runs this exact sequence; kept as data for tests and docs.
 pub(all) enum FilePrPreflightHostStep {
   EnsureBranchReady
+  RequireAuditReceipt
   RunRequiredVerify
   GitPush
   EnsurePullRequest
@@ -683,6 +804,7 @@ pub(all) enum FilePrPreflightHostStep {
 pub fn file_pr_preflight_host_steps() -> Array[FilePrPreflightHostStep] {
   [
     FilePrPreflightHostStep::EnsureBranchReady,
+    FilePrPreflightHostStep::RequireAuditReceipt,
     FilePrPreflightHostStep::RunRequiredVerify,
     FilePrPreflightHostStep::GitPush,
     FilePrPreflightHostStep::EnsurePullRequest,
@@ -843,6 +965,15 @@ pub async fn interpret_file_pr(
       preflight_inputs.file_pr_dir,
     ) {
     Err(e) => return @types.Response::Err(e.message())
+    Ok(_) => ()
+  }
+  match
+    file_pr_require_audit_receipt(
+      preflight_inputs.parent_branch,
+      preflight_inputs.file_pr_dir,
+      capture,
+    ) {
+    Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()
   }
   let verify_outcomes = match
