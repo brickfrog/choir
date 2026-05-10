@@ -2919,3 +2919,186 @@ async test "test_disconnect_completing_agent_no_close" {
   }
   assert_eq(agent.state, Done)
 }
+
+///|
+fn disconnect_confirmation_provider(
+  live_tabs : Array[String],
+  live_panes : Array[String],
+) -> @runtime.RecoveryProvider {
+  {
+    ..make_recovery_provider(),
+    zellij_live: async fn(_, _) {
+      @async.sleep(0)
+      { tabs: live_tabs, panes: live_panes }
+    },
+    find_prs_by_head: async fn(_, _) {
+      @async.sleep(0)
+      []
+    },
+  }
+}
+
+///|
+fn disconnect_confirmation_test_state(
+  label : String,
+  live_tabs : Array[String],
+  live_panes : Array[String],
+) -> ServerState {
+  let project_dir = "/tmp/choir-disconnect-confirm-" +
+    label +
+    "-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "test-session",
+  }
+  ServerState::new(
+    config,
+    disconnect_confirmation_provider(live_tabs, live_panes),
+  )
+}
+
+///|
+fn disconnect_confirmation_parent(parent_id : String) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(parent_id),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: "/tmp/choir-disconnect-confirm-parent",
+    branch: "main",
+    terminal_target: Some(handler_auto_close_target("parent-pane")),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+}
+
+///|
+fn disconnect_confirmation_leaf(
+  agent_id : String,
+  parent_id : String,
+  target_name : String,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some(parent_id),
+    workspace: "/tmp/choir-disconnect-confirm-leaf",
+    branch: agent_id,
+    terminal_target: Some(handler_auto_close_target(target_name)),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+}
+
+///|
+fn texts_contain(texts : Array[String], needle : String) -> Bool {
+  for text in texts {
+    if text.contains(needle) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+async test "disconnect confirmation keeps single registry-timeout signal soft" {
+  let parent_id = "main.confirm-parent"
+  let agent_id = "main.confirm-leaf"
+  let state = disconnect_confirmation_test_state("single-signal", [], [
+    "leaf-pane",
+  ])
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      disconnect_confirmation_leaf(agent_id, parent_id, "leaf-pane"),
+    ),
+  )
+  state.schedule_disconnect(agent_id, 0L)
+  let delivered : Array[String] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.contains("zellij-action") &&
+        cmd.args.contains("send") {
+        delivered.push(cmd.args[cmd.args.length() - 1])
+      }
+    }
+    [0]
+  }
+  let capture = async fn(_ : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    (1, "")
+  }
+
+  state.process_pending_disconnects_with_runner(61L, 60L, runner~, capture~)
+  state.process_pending_disconnects_with_runner(91L, 60L, runner~, capture~)
+
+  assert_true(
+    texts_contain(delivered, "[POSSIBLY DISCONNECTED: " + agent_id + "]"),
+  )
+  assert_false(texts_contain(delivered, "[FAILED: " + agent_id + "]"))
+  assert_eq(delivered.length(), 1)
+  let agent = state.registry.get(agent_id) catch {
+    _ => fail("expected active agent to remain in registry")
+  }
+  assert_eq(agent.state, @types.AgentState::Active)
+  assert_true(state.pending_disconnects.contains(agent_id))
+}
+
+///|
+async test "disconnect confirmation hard-fails after registry-timeout and closed-pane signals" {
+  let parent_id = "main.confirm-parent"
+  let agent_id = "main.confirm-leaf"
+  let state = disconnect_confirmation_test_state("two-signal", [], [])
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      disconnect_confirmation_leaf(agent_id, parent_id, "leaf-pane"),
+    ),
+  )
+  state.schedule_disconnect(agent_id, 0L)
+  let delivered : Array[String] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.contains("zellij-action") &&
+        cmd.args.contains("send") {
+        delivered.push(cmd.args[cmd.args.length() - 1])
+      }
+    }
+    [0]
+  }
+  let capture = async fn(_ : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    (1, "")
+  }
+
+  state.process_pending_disconnects_with_runner(61L, 60L, runner~, capture~)
+
+  assert_true(
+    texts_contain(
+      delivered,
+      "[FAILED: " +
+      agent_id +
+      "] disconnected unexpectedly - agent may have crashed or run out of context",
+    ),
+  )
+  assert_false(
+    texts_contain(delivered, "[POSSIBLY DISCONNECTED: " + agent_id + "]"),
+  )
+  let agent = state.registry.get(agent_id) catch {
+    _ => fail("expected failed agent to remain in registry")
+  }
+  assert_eq(agent.state, @types.AgentState::Failed)
+  assert_false(state.pending_disconnects.contains(agent_id))
+}

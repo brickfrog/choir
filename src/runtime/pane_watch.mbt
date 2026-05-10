@@ -174,6 +174,8 @@ fn PaneWatcher::record_observation(
 
 ///|
 /// Checks if the agent's pane has been idle. Returns `Some(screen_text)` if idle, `None` if not idle or not being watched.
+/// This is the pane-watch idle/no-heartbeat proxy signal; it emits no hard
+/// disconnect notification by itself.
 pub fn PaneWatcher::check_idle(
   self : PaneWatcher,
   agent_id : String,
