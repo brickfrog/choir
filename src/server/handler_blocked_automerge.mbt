@@ -75,13 +75,18 @@ fn blocked_gh_latest_evidence_bundle(
 fn blocked_gh_poll_snapshot_ready(
   project_dir : String,
   tracked : @poller.TrackedPR,
+  review_mode : @types.ReviewMode,
 ) -> Bool {
   let bundle = blocked_gh_latest_evidence_bundle(project_dir, tracked.agent_id)
   let threads = @types.evaluation_latest_threads(bundle.signals)
   let latest_ci = @types.evaluation_latest_ci_rollup(bundle.signals)
   latest_ci == @types.EvaluationCiRollup::Success &&
   tracked.last_ci_rollup == @poller.CiRollupStatus::Success &&
-  @poller.tl_tracked_pr_merge_gate_snapshot_ready(tracked, threads)
+  @poller.tl_tracked_pr_merge_gate_snapshot_ready(
+    tracked,
+    threads,
+    review_mode~,
+  )
 }
 
 ///|
@@ -149,13 +154,20 @@ async fn ServerState::maybe_trigger_automerge_for_blocked_gh_notify(
     Some(value) => value
     None => return false
   }
-  if !automerge_enabled_for_agent(
-      self.config,
-      local_config_for_agent(self.config.project_dir, self.registry, caller_id),
-    ) {
+  let local_cfg = local_config_for_agent(
+    self.config.project_dir,
+    self.registry,
+    caller_id,
+  )
+  if !automerge_enabled_for_agent(self.config, local_cfg) {
     return false
   }
-  if !blocked_gh_poll_snapshot_ready(self.config.project_dir, tracked) {
+  let review_mode = review_mode_for_agent(self.config, local_cfg)
+  if !blocked_gh_poll_snapshot_ready(
+      self.config.project_dir,
+      tracked,
+      review_mode,
+    ) {
     return false
   }
   let parent_caller_id = match
