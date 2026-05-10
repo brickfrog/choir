@@ -148,7 +148,7 @@ test "render_beads_doctor_report adds dirty export hint only when non clean" {
   let dirty_rendered = render_beads_doctor_report(dirty)
   assert_true(
     dirty_rendered.contains(
-      "beads_export_dirty: true\n  ↳ run `bd dolt commit -am \"sync issues\"` to commit bd state\n",
+      "beads_export_dirty: true\n  ↳ run `bd dolt commit -m \"sync issues\"` to commit bd state\n",
     ),
   )
   let clean = build_beads_doctor_report("[]", "[]", "").unwrap()
@@ -396,7 +396,7 @@ async test "run_beads_doctor reports stalled in progress bead assigned to inacti
     Ok(text) => {
       assert_true(
         text.contains(
-          "STALLED: choir-stalled (started 6h ago, assignee main.dead-leaf not in registry)",
+          "STALLED: choir-stalled (started 6h ago, assignee main.dead-leaf has no Active lifecycle entry)",
         ),
       )
       assert_true(

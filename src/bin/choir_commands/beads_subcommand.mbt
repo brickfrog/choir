@@ -435,9 +435,36 @@ pub(all) struct BeadsDoctorReport {
 } derive(Debug, Eq)
 
 ///|
+/// Status values that `bd list --json` emits for an issue. Fixed domain — the
+/// Beads CLI only reports these five.
+pub(all) enum BeadsIssueStatus {
+  Open
+  InProgress
+  Blocked
+  Closed
+  Deferred
+  /// Anything else the Beads CLI starts emitting we treat as unknown rather
+  /// than crashing the doctor; the original raw string is preserved for
+  /// diagnostics.
+  Unknown(raw~ : String)
+} derive(Debug, Eq)
+
+///|
+pub fn parse_beads_issue_status(raw : String) -> BeadsIssueStatus {
+  match raw.trim().to_lower() {
+    "open" => Open
+    "in_progress" => InProgress
+    "blocked" => Blocked
+    "closed" => Closed
+    "deferred" => Deferred
+    other => Unknown(raw=other.to_owned())
+  }
+}
+
+///|
 pub(all) struct BeadsDoctorIssueSnapshot {
   id : String
-  status : String
+  status : BeadsIssueStatus
   assignee : String
   started_at : String
 } derive(Debug, Eq)
@@ -623,7 +650,9 @@ fn parse_beads_doctor_issue_snapshot(
   }
   Ok({
     id,
-    status: @types.json_field_string(fields, "status").unwrap_or(""),
+    status: parse_beads_issue_status(
+      @types.json_field_string(fields, "status").unwrap_or(""),
+    ),
     assignee: @types.json_field_string(fields, "assignee").unwrap_or(""),
     started_at: @types.json_field_string(fields, "started_at").unwrap_or(""),
   })
@@ -695,7 +724,7 @@ fn detect_stalled_beads(
   let threshold_sec = threshold_hours.to_int64() * seconds_per_hour
   for issue in issues {
     let assignee = issue.assignee.trim().to_owned()
-    if issue.status != "in_progress" || assignee == "" {
+    if issue.status != InProgress || assignee == "" {
       continue
     }
     if active_ids.contains(assignee) {
@@ -788,7 +817,7 @@ pub fn render_beads_doctor_report(report : BeadsDoctorReport) -> String {
   )
   if report.beads_export_dirty {
     render_recovery_hint(
-      out, "run `bd dolt commit -am \"sync issues\"` to commit bd state",
+      out, "run `bd dolt commit -m \"sync issues\"` to commit bd state",
     )
   }
   if report.unrelated_dirty_paths.length() == 0 {
@@ -810,7 +839,7 @@ pub fn render_beads_doctor_report(report : BeadsDoctorReport) -> String {
       bead.age_hours.to_string() +
       "h ago, assignee " +
       bead.assignee +
-      " not in registry)\n",
+      " has no Active lifecycle entry)\n",
     )
     out.write_string(
       "  → bd update " + bead.id + " --status open --assignee \"\"\n",
