@@ -4,6 +4,7 @@ import {
   "choir/src/types",
   "choir/src/workspace",
   "choir/src/exec",
+  "choir/src/phase",
   "choir/src/transport",
   "brickfrog/tempo",
   "moonbitlang/async",

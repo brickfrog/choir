@@ -431,13 +431,65 @@ pub(all) struct BeadsDoctorReport {
   in_progress_count : Int
   beads_export_dirty : Bool
   unrelated_dirty_paths : Array[String]
+  stalled_beads : Array[StalledBead]
 } derive(Debug, Eq)
+
+///|
+/// Status values that `bd list --json` emits for an issue. Fixed domain — the
+/// Beads CLI only reports these five.
+pub(all) enum BeadsIssueStatus {
+  Open
+  InProgress
+  Blocked
+  Closed
+  Deferred
+  /// Anything else the Beads CLI starts emitting we treat as unknown rather
+  /// than crashing the doctor; the original raw string is preserved for
+  /// diagnostics.
+  Unknown(raw~ : String)
+} derive(Debug, Eq)
+
+///|
+pub fn parse_beads_issue_status(raw : String) -> BeadsIssueStatus {
+  match raw.trim().to_lower() {
+    "open" => Open
+    "in_progress" => InProgress
+    "blocked" => Blocked
+    "closed" => Closed
+    "deferred" => Deferred
+    other => Unknown(raw=other.to_owned())
+  }
+}
+
+///|
+pub(all) struct BeadsDoctorIssueSnapshot {
+  id : String
+  status : BeadsIssueStatus
+  assignee : String
+  started_at : String
+} derive(Debug, Eq)
+
+///|
+pub(all) struct StalledBead {
+  id : String
+  assignee : String
+  age_hours : Int64
+} derive(Debug, Eq)
+
+///|
+let stalled_bead_threshold_hours : Int = 4
+
+///|
+let seconds_per_hour : Int64 = 3600L
 
 ///|
 pub fn build_beads_doctor_report(
   ready_json : String,
   in_progress_json : String,
   git_status : String,
+  active_agent_ids? : Array[String]? = None,
+  now_sec? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
+  stalled_threshold_hours? : Int = stalled_bead_threshold_hours,
 ) -> Result[BeadsDoctorReport, @types.ChoirError] {
   let ready = match parse_beads_doctor_issues("bd ready --json", ready_json) {
     Ok(items) => items
@@ -445,6 +497,13 @@ pub fn build_beads_doctor_report(
   }
   let in_progress = match
     parse_beads_doctor_issues(
+      "bd list --json --status in_progress", in_progress_json,
+    ) {
+    Ok(items) => items
+    Err(e) => return Err(e)
+  }
+  let in_progress_snapshots = match
+    parse_beads_doctor_issue_snapshots(
       "bd list --json --status in_progress", in_progress_json,
     ) {
     Ok(items) => items
@@ -463,11 +522,15 @@ pub fn build_beads_doctor_report(
       unrelated.push(path)
     }
   }
+  let stalled_beads = detect_stalled_beads(
+    in_progress_snapshots, active_agent_ids, now_sec, stalled_threshold_hours,
+  )
   Ok({
     ready_count: ready.length(),
     in_progress_count: in_progress.length(),
     beads_export_dirty: export_dirty,
     unrelated_dirty_paths: unrelated,
+    stalled_beads,
   })
 }
 
@@ -578,17 +641,185 @@ fn parse_beads_doctor_issues(
 }
 
 ///|
+fn parse_beads_doctor_issue_snapshot(
+  fields : Map[String, Json],
+) -> Result[BeadsDoctorIssueSnapshot, @types.ChoirError] {
+  let id = @types.json_field_string(fields, "id").unwrap_or("")
+  if id == "" {
+    return Err(@types.ChoirError::validation_error("beads issue missing id"))
+  }
+  Ok({
+    id,
+    status: parse_beads_issue_status(
+      @types.json_field_string(fields, "status").unwrap_or(""),
+    ),
+    assignee: @types.json_field_string(fields, "assignee").unwrap_or(""),
+    started_at: @types.json_field_string(fields, "started_at").unwrap_or(""),
+  })
+}
+
+///|
+fn parse_beads_doctor_issue_snapshots(
+  source : String,
+  output : String,
+) -> Result[Array[BeadsDoctorIssueSnapshot], @types.ChoirError] {
+  let payload = beads_json_payload_from_output(output)
+  let json = @json.parse(payload) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "invalid beads json from " +
+          source +
+          "; raw output: " +
+          output.trim().to_owned(),
+        ),
+      )
+  }
+  match json {
+    Array(items) => {
+      let out : Array[BeadsDoctorIssueSnapshot] = []
+      for item in items {
+        match item {
+          Object(fields) =>
+            match parse_beads_doctor_issue_snapshot(fields) {
+              Ok(issue) => out.push(issue)
+              Err(e) => return Err(e)
+            }
+          _ =>
+            return Err(
+              @types.ChoirError::validation_error("invalid beads issue"),
+            )
+        }
+      }
+      Ok(out)
+    }
+    Object(fields) =>
+      match parse_beads_doctor_issue_snapshot(fields) {
+        Ok(issue) => Ok([issue])
+        Err(e) => Err(e)
+      }
+    _ => Err(@types.ChoirError::validation_error("invalid beads json"))
+  }
+}
+
+///|
+fn parse_beads_started_at_utc_sec(value : String) -> Int64? {
+  Some(@tempo.DateTime::parse(value).to_unix_seconds()) catch {
+    _ => None
+  }
+}
+
+///|
+fn detect_stalled_beads(
+  issues : Array[BeadsDoctorIssueSnapshot],
+  active_agent_ids : Array[String]?,
+  now_sec : Int64,
+  threshold_hours : Int,
+) -> Array[StalledBead] {
+  let stalled : Array[StalledBead] = []
+  let active_ids = match active_agent_ids {
+    Some(ids) => ids
+    None => return stalled
+  }
+  let threshold_sec = threshold_hours.to_int64() * seconds_per_hour
+  for issue in issues {
+    let assignee = issue.assignee.trim().to_owned()
+    if issue.status != InProgress || assignee == "" {
+      continue
+    }
+    if active_ids.contains(assignee) {
+      continue
+    }
+    let started_sec = match parse_beads_started_at_utc_sec(issue.started_at) {
+      Some(sec) => sec
+      None => continue
+    }
+    let age_sec = now_sec - started_sec
+    if age_sec > threshold_sec {
+      stalled.push({
+        id: issue.id,
+        assignee,
+        age_hours: age_sec / seconds_per_hour,
+      })
+    }
+  }
+  stalled
+}
+
+///|
+fn active_agent_ids_from_lifecycle(
+  project_dir : String,
+  in_progress_json : String,
+  kv_exists? : (String) -> Bool = fn(path) { @sys.path_entry_exists(path) },
+  read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = fn(dir, id) {
+    @phase.read_lifecycle(dir, id)
+  },
+) -> Array[String]? {
+  if !kv_exists(project_relative_path(project_dir, ".choir/kv")) {
+    return None
+  }
+  let issues = match
+    parse_beads_doctor_issue_snapshots(
+      "bd list --json --status in_progress", in_progress_json,
+    ) {
+    Ok(items) => items
+    Err(_) => return None
+  }
+  let ids : Array[String] = []
+  for issue in issues {
+    let assignee = issue.assignee.trim().to_owned()
+    if assignee == "" || ids.contains(assignee) {
+      continue
+    }
+    match read_lifecycle(project_dir, assignee) {
+      Some(lifecycle) =>
+        if lifecycle.to_agent_state() == @types.AgentState::Active {
+          ids.push(assignee)
+        }
+      None => ()
+    }
+  }
+  Some(ids)
+}
+
+///|
+fn default_active_agent_ids_from_lifecycle(
+  project_dir : String,
+  in_progress_json : String,
+) -> Array[String]? {
+  active_agent_ids_from_lifecycle(project_dir, in_progress_json)
+}
+
+///|
+fn render_recovery_hint(out : StringBuilder, hint : String) -> Unit {
+  out.write_string("  ↳ " + hint + "\n")
+}
+
+///|
 pub fn render_beads_doctor_report(report : BeadsDoctorReport) -> String {
   let out = StringBuilder::new()
   out.write_string("ready_count: " + report.ready_count.to_string() + "\n")
+  if report.ready_count > 0 {
+    render_recovery_hint(out, "run `bd ready` to inspect dispatchable beads")
+  }
   out.write_string(
     "in_progress_count: " + report.in_progress_count.to_string() + "\n",
   )
+  if report.in_progress_count > 0 {
+    render_recovery_hint(
+      out, "check assigned leaves are still active in the registry",
+    )
+  }
   out.write_string(
     "beads_export_dirty: " +
     (if report.beads_export_dirty { "true" } else { "false" }) +
     "\n",
   )
+  if report.beads_export_dirty {
+    render_recovery_hint(
+      out, "run `bd dolt commit -m \"sync issues\"` to commit bd state",
+    )
+  }
   if report.unrelated_dirty_paths.length() == 0 {
     out.write_string("unrelated_dirty_paths: <none>\n")
   } else {
@@ -596,6 +827,23 @@ pub fn render_beads_doctor_report(report : BeadsDoctorReport) -> String {
     for path in report.unrelated_dirty_paths {
       out.write_string("- " + path + "\n")
     }
+    render_recovery_hint(
+      out, "commit or stash these before continuing wave work",
+    )
+  }
+  for bead in report.stalled_beads {
+    out.write_string(
+      "STALLED: " +
+      bead.id +
+      " (started " +
+      bead.age_hours.to_string() +
+      "h ago, assignee " +
+      bead.assignee +
+      " has no Active lifecycle entry)\n",
+    )
+    out.write_string(
+      "  → bd update " + bead.id + " --status open --assignee \"\"\n",
+    )
   }
   out.to_string()
 }
@@ -604,6 +852,8 @@ pub fn render_beads_doctor_report(report : BeadsDoctorReport) -> String {
 pub async fn run_beads_doctor(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
+  now_sec? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
+  active_agent_ids? : (String, String) -> Array[String]? = default_active_agent_ids_from_lifecycle,
 ) -> Result[String, @types.ChoirError] {
   let (ready_code, ready_json) = capture({
     program: "bd",
@@ -629,7 +879,15 @@ pub async fn run_beads_doctor(
   if status_code != 0 {
     return Err(@types.ChoirError::git_error("git status failed"))
   }
-  match build_beads_doctor_report(ready_json, progress_json, status) {
+  let active_agent_ids = active_agent_ids(project_dir, progress_json)
+  match
+    build_beads_doctor_report(
+      ready_json,
+      progress_json,
+      status,
+      active_agent_ids~,
+      now_sec~,
+    ) {
     Ok(report) => Ok(render_beads_doctor_report(report))
     Err(e) => Err(e)
   }
