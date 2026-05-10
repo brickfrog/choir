@@ -814,6 +814,48 @@ test "mcp startup retries UDS connect until success" {
 }
 
 ///|
+test "wait_for_socket_returns_success_mid_attempt_breaks_outer_retry" {
+  let sleeps : Array[Int] = []
+  let waits : Array[String] = []
+  let connect_paths : Array[String] = []
+  let mut connect_calls = 0
+  let result = mcp_connect_uds_startup(
+    ".choir/server.sock",
+    150,
+    3,
+    1000,
+    connect_uds=fn(path) {
+      connect_paths.push(path)
+      connect_calls = connect_calls + 1
+      if connect_calls == 1 {
+        -1
+      } else {
+        42
+      }
+    },
+    wait_for_socket=fn(path, tries) {
+      waits.push(path + ":" + tries.to_string())
+      true
+    },
+    sleep_ms=fn(ms) { sleeps.push(ms) },
+  )
+  match result {
+    Connected(fd) => assert_eq(fd, 42)
+    Exhausted(_) =>
+      fail("expected startup connect to succeed after socket wait")
+  }
+  assert_eq(connect_calls, 2)
+  assert_eq(connect_paths, [".choir/server.sock", ".choir/server.sock"])
+  assert_eq(waits, [".choir/server.sock:150"])
+  assert_eq(sleeps, [])
+  match mcp_startup_transport(result, None) {
+    Uds(fd) => assert_eq(fd, 42)
+    Tcp(_) => fail("expected UDS transport")
+    FailedUds(_) => fail("expected UDS transport")
+  }
+}
+
+///|
 test "mcp startup exits after exhausting UDS attempts with no TCP fallback" {
   let sleeps : Array[Int] = []
   let mut connect_calls = 0

@@ -228,6 +228,26 @@ test "init waits for server socket before TL launch" {
 }
 
 ///|
+test "init_wait_timeout_warns_and_proceeds" {
+  let events : Array[String] = []
+  let output : Array[String] = []
+  events.push("server-tab")
+  init_wait_for_server_socket_before_tl(
+    ".choir/server.sock",
+    wait_for_socket=fn(path, tries) {
+      events.push("wait:" + path + ":" + tries.to_string())
+      false
+    },
+    write_stdout=fn(msg) { output.push(msg) },
+  )
+  events.push("tl-tab")
+  assert_eq(events, ["server-tab", "wait:.choir/server.sock:100", "tl-tab"])
+  assert_eq(output, [
+    "Waiting for server socket...\n", "Warning: server socket not ready after 20s; launching TL anyway.\n",
+  ])
+}
+
+///|
 fn init_default_terminal_session(project_dir : String) -> String {
   let mut end = project_dir.length()
   while end > 1 && project_dir[end - 1] == '/' {
