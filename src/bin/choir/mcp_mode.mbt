@@ -305,7 +305,8 @@ fn mcp_cli_positive_int_arg(args : Array[String], flag : String) -> Int? {
 fn mcp_cli_wait_socket_tries(args : Array[String]) -> Int {
   match mcp_cli_positive_int_arg(args, "--wait-socket-tries") {
     Some(n) => n
-    // Native wait_for_socket polls every 200ms; default budget is 30s.
+    // Direct `choir mcp-stdio` defaults to about 30s per socket wait; the
+    // outer startup attempts already stretch cold-start handling to about 93s.
     None => 150
   }
 }
