@@ -295,8 +295,13 @@ pub fn interpret_lifecycle_effects(
   for effect in effects {
     match effect {
       PersistLifecycle(lifecycle~) => {
-        let stamped = stamp_lifecycle_updated(lifecycle)
-        if write_lifecycle(project_dir, stamped) {
+        // Compute the timestamp once and share it between the on-disk write
+        // and the in-memory `last_persisted` so the AppendLifecycleEvent
+        // 'to' value cannot drift by a wall-clock second from what was
+        // actually persisted.
+        let now_sec = @env.now().reinterpret_as_int64() / 1000L
+        let stamped = { ..lifecycle, last_updated_unix_sec: now_sec }
+        if write_lifecycle(project_dir, stamped, now_sec~) {
           last_persisted = Some(stamped)
           match registry {
             Some(reg) => sync_registry_after_persist(reg, stamped)
@@ -600,8 +605,9 @@ pub fn persist_lifecycle(
   registry : @registry.AgentRegistry,
   lifecycle : AgentLifecycle,
 ) -> Bool {
-  let stamped = stamp_lifecycle_updated(lifecycle)
-  let ok = write_lifecycle(project_dir, stamped)
+  let now_sec = @env.now().reinterpret_as_int64() / 1000L
+  let stamped = { ..lifecycle, last_updated_unix_sec: now_sec }
+  let ok = write_lifecycle(project_dir, stamped, now_sec~)
   try {
     let agent = registry.get(stamped.agent_id)
     ignore(registry.upsert({ ..agent, state: stamped.to_agent_state() }))

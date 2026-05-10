@@ -17,20 +17,18 @@ pub fn read_lifecycle(
 }
 
 ///|
-/// Persist a lifecycle and stamp `last_updated_unix_sec` to now. Every write
-/// site (including raw `write_lifecycle` callers in lifecycle.mbt and any
-/// rescue/handoff path that explicitly set 0L) gets the same monotonic
-/// timestamp without each call having to remember to compute it. Consumers
-/// of staleness (`active_agent_ids_from_lifecycle`, the wave_state long-
-/// running-root check) can therefore trust this field.
+/// Persist a lifecycle and stamp `last_updated_unix_sec` so consumers of
+/// staleness can trust the field. The optional `now_sec` lets a caller share
+/// the exact timestamp used for the on-disk payload with their in-memory
+/// tracking (so persisted-vs-tracked never diverge by a wall-clock second);
+/// if omitted, defaults to the current time. Returns true when the file
+/// write succeeded.
 pub fn write_lifecycle(
   project_dir : String,
   lifecycle : AgentLifecycle,
+  now_sec? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
 ) -> Bool {
-  let stamped = {
-    ..lifecycle,
-    last_updated_unix_sec: @env.now().reinterpret_as_int64() / 1000L,
-  }
+  let stamped = { ..lifecycle, last_updated_unix_sec: now_sec }
   @sys.write_file_atomic(
     lifecycle_path(project_dir, stamped.agent_id),
     lifecycle_to_json(stamped),

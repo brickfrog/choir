@@ -218,14 +218,6 @@ pub impl Show for AgentLifecycle with output(self, logger) -> Unit {
 }
 
 ///|
-pub fn stamp_lifecycle_updated(
-  lifecycle : AgentLifecycle,
-  now_sec? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
-) -> AgentLifecycle {
-  { ..lifecycle, last_updated_unix_sec: now_sec }
-}
-
-///|
 /// Side effects produced by lifecycle orchestration; interpreted by the host
 /// (`interpret_lifecycle_effects`) to perform persistence. When `registry` is
 /// provided to the interpreter, a successful `PersistLifecycle` also updates

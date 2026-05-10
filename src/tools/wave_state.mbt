@@ -114,6 +114,7 @@ fn supervisor_child_id_set(
 fn supervisor_workflow_for_wave_state(
   agent : @types.Agent,
   lifecycle : @phase.AgentLifecycle?,
+  now_sec : Int64,
 ) -> @phase.SupervisorLifecycle {
   match lifecycle {
     // Long-running root TL kept Active by the choir-serve process — the
@@ -140,7 +141,7 @@ fn supervisor_workflow_for_wave_state(
         agent.role == @types.Role::Root ||
         @phase.is_root_tl_shaped_agent_id(agent.agent_id.to_string())
       ) &&
-      wave_state_root_tl_heartbeat_is_recent_or_unknown(last_updated) =>
+      wave_state_root_tl_heartbeat_is_recent_or_unknown(last_updated, now_sec) =>
       @phase.SupervisorLifecycle::Planning
     Some({ workflow: @phase.WorkflowState::Supervisor(sl), .. }) => sl
     // No persisted lifecycle yet -> default to Planning; same fallback as
@@ -163,12 +164,12 @@ let wave_state_root_tl_recent_heartbeat_sec : Int64 = 3600L
 /// field landed) or recent enough that we trust the agent is alive.
 fn wave_state_root_tl_heartbeat_is_recent_or_unknown(
   last_updated_unix_sec : Int64,
+  now_sec : Int64,
 ) -> Bool {
   if last_updated_unix_sec <= 0L {
     return true
   }
-  let now = @env.now().reinterpret_as_int64() / 1000L
-  now - last_updated_unix_sec <= wave_state_root_tl_recent_heartbeat_sec
+  now_sec - last_updated_unix_sec <= wave_state_root_tl_recent_heartbeat_sec
 }
 
 ///|
@@ -258,8 +259,9 @@ pub fn plan_wave_state(
     )
   }
   let caller_lifecycle = lifecycle_reader(caller_id)
+  let now_sec = now_ms / 1000L
   let supervisor_workflow = supervisor_workflow_for_wave_state(
-    agent, caller_lifecycle,
+    agent, caller_lifecycle, now_sec,
   )
   let own_pr = match supervisor_own_pr_number(supervisor_workflow) {
     Some(pr_number) =>
@@ -361,10 +363,14 @@ pub async fn interpret_wave_state(
   let pr_numbers : Array[Int] = []
   let add_pr = fn(n : Int) { if !pr_numbers.contains(n) { pr_numbers.push(n) } }
   let caller_lifecycle = @phase.read_lifecycle(project_dir, args.caller_id)
+  let now_sec_for_filter = @env.now().reinterpret_as_int64() / 1000L
   let supervisor_workflow_for_filter = try reg.get(args.caller_id) catch {
     _ => @phase.SupervisorLifecycle::Planning
   } noraise {
-    agent => supervisor_workflow_for_wave_state(agent, caller_lifecycle)
+    agent =>
+      supervisor_workflow_for_wave_state(
+        agent, caller_lifecycle, now_sec_for_filter,
+      )
   }
   match supervisor_own_pr_number(supervisor_workflow_for_filter) {
     Some(n) => add_pr(n)
