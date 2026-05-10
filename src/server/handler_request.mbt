@@ -115,6 +115,129 @@ pub(all) struct PlannedDelivery {
 } derive(Debug, Eq)
 
 ///|
+fn stale_pane_delivery_gc_threshold() -> Int {
+  3
+}
+
+///|
+fn delivery_targets_local_terminal(delivery : @message.DeliveryMethod) -> Bool {
+  match delivery {
+    @message.DeliveryMethod::LocalTerminalInput(_, _) => true
+    _ => false
+  }
+}
+
+///|
+fn delivery_failure_log_error(error : String) -> String {
+  let buf = StringBuilder::new()
+  for c in error {
+    if c == '\n' || c == '\r' {
+      buf.write_char(' ')
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+fn ServerState::gc_dead_pane_delivery_recipient(
+  self : ServerState,
+  recipient_id : String,
+  error : String,
+) -> Unit {
+  @moontrace.warn("delivery recipient exceeded stale pane failure threshold", fields=[
+    @moontrace.field("agent_id", recipient_id),
+    @moontrace.field("error", error),
+  ])
+  @phase.remove_parent_child_lifecycle(
+    self.config.project_dir,
+    self.registry,
+    recipient_id,
+  )
+  ignore(@phase.delete_lifecycle(self.config.project_dir, recipient_id))
+  ignore(self.registry.remove(recipient_id)) catch {
+    _ => ()
+  }
+  self.pending_disconnects.remove(recipient_id)
+  self.delivery_failures.remove(recipient_id)
+  self.expire_pending_outbox_for_recipient(recipient_id)
+  ignore(
+    (self.append_file)(
+      self.config.project_dir + "/.choir/delivery.log",
+      "[delivery-gc] recipient=" +
+      recipient_id +
+      " reason=stale-pane failures=" +
+      stale_pane_delivery_gc_threshold().to_string() +
+      " error=" +
+      delivery_failure_log_error(error) +
+      "\n",
+    ),
+  )
+}
+
+///|
+fn ServerState::expire_pending_outbox_for_recipient(
+  self : ServerState,
+  recipient_id : String,
+) -> Unit {
+  let messages = @outbox.load_recipient_outbox(
+    self.read_file,
+    self.config.project_dir,
+    recipient_id,
+  )
+  if messages.length() == 0 {
+    return
+  }
+  let updated : Array[@outbox.OutboxMessage] = []
+  let mut changed = false
+  for message in messages {
+    if message.delivery_state == @outbox.OutboxDeliveryState::Pending {
+      updated.push(message.mark_expired())
+      changed = true
+    } else {
+      updated.push(message)
+    }
+  }
+  if changed {
+    ignore(self.write_recipient_outbox_snapshots(recipient_id, updated))
+  }
+}
+
+///|
+fn ServerState::record_delivery_success(
+  self : ServerState,
+  recipient_id : String,
+) -> Unit {
+  self.delivery_failures.remove(recipient_id)
+}
+
+///|
+fn ServerState::record_delivery_failure(
+  self : ServerState,
+  message : @outbox.OutboxMessage,
+) -> Bool {
+  if !delivery_targets_local_terminal(message.delivery_method) {
+    return false
+  }
+  let recipient_id = message.recipient_id
+  let runtime_failures = self.delivery_failures.get(recipient_id).unwrap_or(0) +
+    1
+  self.delivery_failures.set(recipient_id, runtime_failures)
+  if runtime_failures >= stale_pane_delivery_gc_threshold() ||
+    message.delivery_attempts >= stale_pane_delivery_gc_threshold() {
+    self.gc_dead_pane_delivery_recipient(
+      recipient_id,
+      message.last_error.unwrap_or("delivery failed"),
+    )
+    self.delivery_failures.remove(recipient_id)
+    true
+  } else {
+    false
+  }
+}
+
+///|
 fn durable_delivery_message_id(
   state : ServerState,
   recipient_id : String,
@@ -184,6 +307,7 @@ async fn ServerState::durable_dispatch_planned(
   self : ServerState,
   planned : PlannedDelivery,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, @types.ChoirError] {
   let created_at = @poller.now_sec()
   let initial = @outbox.OutboxMessage::new(
@@ -212,9 +336,11 @@ async fn ServerState::durable_dispatch_planned(
       planned.delivery,
       runner,
       project_dir=self.config.project_dir,
+      sleep_fn~,
     ) {
     Ok(_) => {
       let delivered = initial.mark_delivered(@poller.now_sec())
+      self.record_delivery_success(planned.recipient_id)
       match self.append_outbox_snapshot(delivered) {
         Ok(_) => Ok(())
         Err(e) => Err(e)
@@ -222,7 +348,12 @@ async fn ServerState::durable_dispatch_planned(
     }
     Err(e) => {
       let failed = initial.record_failed_attempt(@poller.now_sec(), e.message())
-      match self.append_outbox_snapshot(failed) {
+      let next = if self.record_delivery_failure(failed) {
+        failed.mark_expired()
+      } else {
+        failed
+      }
+      match self.append_outbox_snapshot(next) {
         Ok(_) => Err(e)
         Err(write_err) => Err(write_err)
       }
@@ -238,6 +369,7 @@ async fn ServerState::durable_deliver_to_agent(
   body : String,
   status : @types.Status,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, @types.ChoirError] {
   let delivery = @message.plan_delivery(recipient, sender_id, body, status)
   self.durable_dispatch_planned(
@@ -249,6 +381,7 @@ async fn ServerState::durable_deliver_to_agent(
       delivery,
     },
     runner,
+    sleep_fn~,
   )
 }
 
@@ -259,6 +392,7 @@ async fn ServerState::durable_deliver_to_parent(
   body : String,
   status : @types.Status,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, @types.ChoirError] {
   try self.resolve_parent_for_delivery(sender_id) catch {
     e =>
@@ -269,7 +403,14 @@ async fn ServerState::durable_deliver_to_parent(
       )
   } noraise {
     parent =>
-      self.durable_deliver_to_agent(parent, sender_id, body, status, runner)
+      self.durable_deliver_to_agent(
+        parent,
+        sender_id,
+        body,
+        status,
+        runner,
+        sleep_fn~,
+      )
   }
 }
 
@@ -436,6 +577,7 @@ pub async fn ServerState::replay_pending_outbox_with(
   self : ServerState,
   now : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   for recipient_id in self.replay_outbox_recipient_ids() {
     let messages = @outbox.load_recipient_outbox(
@@ -447,10 +589,21 @@ pub async fn ServerState::replay_pending_outbox_with(
       continue
     }
     let updated : Array[@outbox.OutboxMessage] = []
+    let mut recipient_gc = false
     for message in messages {
-      let next = if message.delivery_state !=
-        @outbox.OutboxDeliveryState::Pending {
+      let next = if recipient_gc &&
+        message.delivery_state == @outbox.OutboxDeliveryState::Pending {
+        message.mark_expired()
+      } else if message.delivery_state != @outbox.OutboxDeliveryState::Pending {
         message
+      } else if delivery_targets_local_terminal(message.delivery_method) &&
+        message.delivery_attempts >= stale_pane_delivery_gc_threshold() {
+        self.gc_dead_pane_delivery_recipient(
+          message.recipient_id,
+          message.last_error.unwrap_or("delivery failed"),
+        )
+        recipient_gc = true
+        message.mark_expired()
       } else if now >= message.expires_at {
         message.mark_expired()
       } else {
@@ -459,9 +612,21 @@ pub async fn ServerState::replay_pending_outbox_with(
             message.delivery_method,
             runner,
             project_dir=self.config.project_dir,
+            sleep_fn~,
           ) {
-          Ok(_) => message.mark_delivered(now)
-          Err(e) => message.record_failed_attempt(now, e.message())
+          Ok(_) => {
+            self.record_delivery_success(message.recipient_id)
+            message.mark_delivered(now)
+          }
+          Err(e) => {
+            let failed = message.record_failed_attempt(now, e.message())
+            if self.record_delivery_failure(failed) {
+              recipient_gc = true
+              failed.mark_expired()
+            } else {
+              failed
+            }
+          }
         }
       }
       updated.push(next)

@@ -843,6 +843,177 @@ async test "replay_pending_outbox_with replays pending root delivery before root
 }
 
 ///|
+async test "replay_pending_outbox_with GC's stale pane lifecycle after repeated failures" {
+  let project_dir = "/tmp/choir-outbox-stale-pane-gc-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  let agent_id = "main.dead-pane"
+  let target = match
+    @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":dead-pane") {
+    Some(t) => t
+    None => fail("expected parseable local target")
+  }
+  let agent = @types.Agent::{
+    agent_id,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: None,
+    workspace: project_dir,
+    branch: "main.dead-pane",
+    terminal_target: Some(target),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  ignore(state.register_agent(agent))
+  assert_true(@phase.read_lifecycle(project_dir, agent_id) is Some(_))
+  let pending = @outbox.OutboxMessage::new(
+    "msg-stale-pane-gc",
+    "poller",
+    agent_id,
+    "stale pane ping",
+    @types.Status::Info,
+    @message.DeliveryMethod::LocalTerminalInput(
+      target, "[from: poller] stale pane ping",
+    ),
+    100L,
+    500L,
+  )
+  assert_true(
+    @outbox.append_outbox_snapshot(@sys.append_file_sync, project_dir, pending),
+  )
+  let mut runner_calls = 0
+  let no_sleep = async fn(_ms : Int) -> Unit { @async.sleep(0) }
+  let failing_runner = async fn(
+    cmds : Array[@workspace.Command],
+  ) -> Array[Int] {
+    @async.sleep(0)
+    runner_calls = runner_calls + cmds.length()
+    let statuses = []
+    for _ in cmds {
+      statuses.push(1)
+    }
+    statuses
+  }
+  state.replay_pending_outbox_with(
+    150L,
+    runner=failing_runner,
+    sleep_fn=no_sleep,
+  )
+  assert_true(@phase.read_lifecycle(project_dir, agent_id) is Some(_))
+  state.replay_pending_outbox_with(
+    151L,
+    runner=failing_runner,
+    sleep_fn=no_sleep,
+  )
+  assert_true(@phase.read_lifecycle(project_dir, agent_id) is Some(_))
+  state.replay_pending_outbox_with(
+    152L,
+    runner=failing_runner,
+    sleep_fn=no_sleep,
+  )
+  assert_eq(runner_calls, 12)
+  assert_true(@phase.read_lifecycle(project_dir, agent_id) == None)
+  let removed = try {
+    ignore(state.registry.get(agent_id))
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(removed)
+  let messages = @outbox.load_recipient_outbox(
+    @sys.read_file, project_dir, agent_id,
+  )
+  assert_eq(messages.length(), 1)
+  assert_eq(messages[0].delivery_state, @outbox.OutboxDeliveryState::Expired)
+  assert_eq(messages[0].delivery_attempts, 3)
+  assert_true(
+    messages[0].last_error.unwrap_or("").contains("delivery command failed"),
+  )
+}
+
+///|
+async test "replay_pending_outbox_with clears stale failure counter on exhausted-message GC" {
+  let project_dir = "/tmp/choir-outbox-exhausted-pane-gc-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "test-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  let agent_id = "main.exhausted-pane"
+  let target = match
+    @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":exhausted") {
+    Some(t) => t
+    None => fail("expected parseable local target")
+  }
+  ignore(
+    state.register_agent(@types.Agent::{
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main.exhausted-pane",
+      terminal_target: Some(target),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pending = @outbox.OutboxMessage::new(
+    "msg-exhausted-pane-gc",
+    "poller",
+    agent_id,
+    "already exhausted pane ping",
+    @types.Status::Info,
+    @message.DeliveryMethod::LocalTerminalInput(
+      target, "[from: poller] already exhausted pane ping",
+    ),
+    100L,
+    500L,
+  )
+  let failed_once = pending.record_failed_attempt(
+    101L, "zellij target not found",
+  )
+  let failed_twice = failed_once.record_failed_attempt(
+    102L, "zellij target not found",
+  )
+  let exhausted = failed_twice.record_failed_attempt(
+    103L, "zellij target not found",
+  )
+  assert_true(
+    @outbox.append_outbox_snapshot(
+      @sys.append_file_sync, project_dir, exhausted,
+    ),
+  )
+  state.delivery_failures.set(agent_id, 2)
+  let mut runner_calls = 0
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    runner_calls = runner_calls + cmds.length()
+    []
+  }
+  let no_sleep = async fn(_ms : Int) -> Unit { @async.sleep(0) }
+  state.replay_pending_outbox_with(150L, runner~, sleep_fn=no_sleep)
+  assert_eq(runner_calls, 0)
+  assert_true(@phase.read_lifecycle(project_dir, agent_id) == None)
+  assert_true(state.delivery_failures.get(agent_id) == None)
+  let messages = @outbox.load_recipient_outbox(
+    @sys.read_file, project_dir, agent_id,
+  )
+  assert_eq(messages.length(), 1)
+  assert_eq(messages[0].delivery_state, @outbox.OutboxDeliveryState::Expired)
+  assert_eq(messages[0].delivery_attempts, 3)
+}
+
+///|
 async test "sweep_outbox marks expired pending messages and compacts recipient file" {
   let project_dir = "/tmp/choir-outbox-sweep-" +
     @sys.get_pid().to_string() +

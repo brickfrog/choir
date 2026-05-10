@@ -28,6 +28,11 @@ pub fn write_lifecycle(
 }
 
 ///|
+pub fn delete_lifecycle(project_dir : String, agent_id : String) -> Bool {
+  @sys.delete_file_sync(lifecycle_path(project_dir, agent_id))
+}
+
+///|
 pub fn read_or_default_lifecycle(
   project_dir : String,
   agent_id : String,

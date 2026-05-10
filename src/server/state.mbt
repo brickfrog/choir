@@ -24,6 +24,7 @@ pub struct ServerState {
   kv_store : @kv.KvStore
   run_id : String
   pending_disconnects : Map[String, Int64]
+  delivery_failures : Map[String, Int]
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
   append_file : (String, String) -> Bool
@@ -80,6 +81,7 @@ pub fn ServerState::new(
     kv_store: @kv.KvStore::new(config.project_dir),
     run_id,
     pending_disconnects: {},
+    delivery_failures: {},
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
     append_file: default_append_file_sync,
