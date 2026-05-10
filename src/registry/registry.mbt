@@ -284,7 +284,17 @@ fn registry_optional_string_field(
 ) -> Result[String?, @types.ChoirError] {
   match obj.get(key) {
     Some(String(value)) => Ok(Some(value))
-    Some(_) | None => Ok(None)
+    // Absent OR explicit JSON `null` both encode "no value" — the encoder
+    // (registry_optional_string_json) writes `null` for None, so accept
+    // it on read.
+    None | Some(Null) => Ok(None)
+    // Present-but-malformed (a non-string, non-null value) must NOT
+    // silently drop to None — that would let a corrupt snapshot apply
+    // cleanly with the field's semantics quietly lost. Reject as a parse
+    // error so the caller's transactional restore aborts and the live
+    // state is preserved.
+    Some(_) =>
+      Err(registry_parse_error("optional field is not a string: " + key))
   }
 }
 

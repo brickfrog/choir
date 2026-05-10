@@ -4,6 +4,22 @@ pub fn server_reload_runtime_snapshot_path(project_dir : String) -> String {
 }
 
 ///|
+/// Typed status returned in the `server_reload` response. Fixed domain —
+/// per CLAUDE.md (use enums, not strings, for fixed domains). `ReloadScheduled`
+/// is the only success-path value; the response field is named `status` for
+/// caller ergonomics and serialized via `to_wire_string`.
+pub(all) enum ServerReloadStatus {
+  ReloadScheduled
+} derive(Debug, Eq)
+
+///|
+pub fn ServerReloadStatus::to_wire_string(self : ServerReloadStatus) -> String {
+  match self {
+    ReloadScheduled => "reload_scheduled"
+  }
+}
+
+///|
 fn server_reload_null_json() -> Json {
   @json.parse("null") catch {
     _ => "".to_json()
@@ -78,11 +94,21 @@ pub fn ServerState::persist_reload_snapshot(
   self : ServerState,
   binary_path : String,
 ) -> Result[Unit, @types.ChoirError] {
-  match self.registry.write_snapshot_file(self.config.project_dir) {
+  // Route all three writes through the injected write_file_atomic so the
+  // orchestration path is hermetic (testable with a mock writer, and the
+  // effect-architecture rule for src/server holds end-to-end).
+  match
+    self.registry.write_snapshot_file(
+      self.config.project_dir,
+      write_file=self.write_file_atomic,
+    ) {
     Ok(_) => ()
     Err(e) => return Err(e)
   }
-  if !self.poller.write_state_file(self.config.project_dir) {
+  if !self.poller.write_state_file(
+      self.config.project_dir,
+      write_file=self.write_file_atomic,
+    ) {
     return Err(
       @types.ChoirError::workspace_error(
         "failed to write poller state before reload",
@@ -320,7 +346,19 @@ pub fn ServerState::restore_reload_snapshot(
     parsed_soft,
   )
   server_reload_replace_map_contents(self.delivery_failures, parsed_failures)
-  self.mutex_registry.apply_parsed_snapshot(parsed_mutex)
+  // Release any mutex whose holder isn't in the just-restored registry —
+  // otherwise a stale lock would block unrelated callers until TTL.
+  let registry = self.registry
+  self.mutex_registry.apply_parsed_snapshot(parsed_mutex, is_known_agent=fn(
+    id,
+  ) {
+    try {
+      ignore(registry.get(id))
+      true
+    } catch {
+      _ => false
+    }
+  })
   Ok(())
 }
 
@@ -354,7 +392,7 @@ pub fn ServerState::handle_server_reload_request(
   match self.persist_reload_snapshot(binary_path) {
     Ok(_) =>
       @types.Response::ok_values({
-        "status": "reload_scheduled".to_json(),
+        "status": ServerReloadStatus::ReloadScheduled.to_wire_string().to_json(),
         "binary_path": binary_path.to_json(),
         "in_flight_requests": "active tool calls during exec may be dropped; retry after reload".to_json(),
         "note": "Snapshots persisted and exec scheduled. The exec itself happens after this response is written; if exec fails (clear_cloexec or execve error), the original server keeps running and a new attempt is required. Verify the reload landed by probing the server (e.g. wave_state) after a brief delay.".to_json(),

@@ -125,6 +125,21 @@ test "reload snapshot restores registry pending state and mutexes" {
     spawn_depth: 1,
     state: @types.AgentState::Active,
   }
+  let root_agent : @types.Agent = {
+    agent_id: "root",
+    role: @types.Role::Root,
+    agent_type: @types.AgentType::Codex,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: @types.LocalTarget::parse(
+      "zellij-tab:choir-reload-test:root",
+    ),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  ignore(state.registry.upsert(root_agent))
   ignore(state.registry.upsert(agent))
   ignore(try? state.registry.set_alive("root.leaf", false))
   state.pending_disconnects.set("root.leaf", 1234L)
@@ -165,6 +180,40 @@ test "reload snapshot restores registry pending state and mutexes" {
     }
     Err(e) => fail(e.message())
   }
+}
+
+///|
+/// Stale-holder release on reload: if the mutex snapshot names a holder that
+/// is NOT in the restored registry, the lock must be released — otherwise the
+/// lock blocks unrelated callers until TTL expires.
+test "reload snapshot releases mutex whose holder is not in restored registry" {
+  let project_dir = "/tmp/choir-reload-stale-holder-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "choir-reload-stale-holder",
+  }
+  let state = ServerState::new(config, make_recovery_provider())
+  // Acquire the lock with a holder that we then DON'T register, so on
+  // restore the holder won't be found in the registry.
+  ignore(state.mutex_registry.acquire("build", "ghost-holder", 300L, 10L))
+  match state.persist_reload_snapshot("/tmp/choir.exe") {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  let restored = ServerState::new(config, make_recovery_provider())
+  match restored.restore_reload_snapshot() {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  let (holder, _) = restored.mutex_registry.status("build")
+  ignore(@sys.rm_rf(project_dir))
+  @debug.assert_eq(holder, None)
 }
 
 ///|

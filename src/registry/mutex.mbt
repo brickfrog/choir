@@ -217,7 +217,14 @@ fn mutex_optional_string_field(
 ) -> Result[String?, @types.ChoirError] {
   match obj.get(key) {
     Some(String(value)) => Ok(Some(value))
-    Some(_) | None => Ok(None)
+    // Absent or explicit JSON `null` both mean "no value"; the encoder
+    // writes `null` for None on a released lock, so accept it on read.
+    None | Some(Null) => Ok(None)
+    // Present-but-malformed (a non-string, non-null value) must reject
+    // rather than silently coerce to None — a corrupt holder field would
+    // otherwise drop the lock owner and the lock would appear unheld
+    // after restore.
+    Some(_) => Err(mutex_parse_error("optional field is not a string: " + key))
   }
 }
 
@@ -312,14 +319,33 @@ pub fn parse_mutex_registry_snapshot_json(
 ///|
 /// Replace the mutex registry contents with a previously-parsed snapshot.
 /// Caller-owned parse+validation; this is the commit step.
+///
+/// When `is_known_agent` is provided, any held lock whose holder is NOT in
+/// that set is RELEASED on restore rather than persisted as held. Without
+/// this, a snapshot from before a re-exec can leave a lock held by an
+/// agent id that doesn't exist in the new process's registry — the lock
+/// would only clear when TTL expires, blocking unrelated callers for the
+/// TTL window. The caller (server reload path) populates the registry
+/// first, then passes `is_known_agent` from the live registry so this
+/// runs against fresh state.
 pub fn MutexRegistry::apply_parsed_snapshot(
   self : MutexRegistry,
   snapshot : MutexRegistrySnapshot,
+  is_known_agent? : (String) -> Bool = fn(_id) { true },
 ) -> Unit {
   self.clear()
   for pair in snapshot.locks {
     let (name, entry) = pair
-    self.locks.set(name, entry)
+    let entry_to_restore = match entry.holder {
+      Some(holder) =>
+        if is_known_agent(holder) {
+          entry
+        } else {
+          { ..entry, holder: None, acquired_sec: 0L }
+        }
+      None => entry
+    }
+    self.locks.set(name, entry_to_restore)
   }
 }
 
