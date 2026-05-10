@@ -53,6 +53,20 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
   assert_true(prompt.contains("`gh-bounded` wrapper"))
   assert_true(prompt.contains("Prefer REST endpoints"))
   assert_true(
+    prompt.contains(
+      "After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops",
+    ),
+  )
+  assert_true(
+    prompt.contains(
+      "The choir poller pushes [REVIEW], [COPILOT ISSUE COMMENT], [FIXES PUSHED], [MERGE READY], [PR MERGED] events into your pane automatically after file_pr",
+    ),
+  )
+  assert_true(
+    prompt.contains("sit idle and let those push events drive your next action"),
+  )
+  assert_true(prompt.contains("doubles GitHub API hits"))
+  assert_true(
     prompt.contains("Do NOT call `resolveReviewThread` directly from a leaf"),
   )
   assert_true(prompt.contains("do NOT use a global `pkill -f \"gh api\"`"))
