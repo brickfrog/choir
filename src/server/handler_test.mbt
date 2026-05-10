@@ -3052,6 +3052,11 @@ async test "disconnect confirmation keeps single registry-timeout signal soft" {
   }
   assert_eq(agent.state, @types.AgentState::Active)
   assert_true(state.pending_disconnects.contains(agent_id))
+  assert_true(state.pending_disconnect_soft_notified.contains(agent_id))
+
+  state.clear_pending_disconnect(agent_id)
+  assert_false(state.pending_disconnects.contains(agent_id))
+  assert_false(state.pending_disconnect_soft_notified.contains(agent_id))
 }
 
 ///|
@@ -3101,4 +3106,48 @@ async test "disconnect confirmation hard-fails after registry-timeout and closed
   }
   assert_eq(agent.state, @types.AgentState::Failed)
   assert_false(state.pending_disconnects.contains(agent_id))
+}
+
+///|
+async test "direct disconnect wrapper buffers awaiting-confirmation result" {
+  let parent_id = "main.confirm-parent"
+  let agent_id = "main.confirm-leaf"
+  let state = disconnect_confirmation_test_state("direct-wrapper", [], [
+    "leaf-pane",
+  ])
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      disconnect_confirmation_leaf(agent_id, parent_id, "leaf-pane"),
+    ),
+  )
+  let delivered : Array[String] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.contains("zellij-action") &&
+        cmd.args.contains("send") {
+        delivered.push(cmd.args[cmd.args.length() - 1])
+      }
+    }
+    [0]
+  }
+  let capture = async fn(_ : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    (1, "")
+  }
+
+  state.handle_disconnect_with_runner(agent_id, runner~, capture~)
+
+  assert_true(
+    texts_contain(delivered, "[POSSIBLY DISCONNECTED: " + agent_id + "]"),
+  )
+  assert_false(texts_contain(delivered, "[FAILED: " + agent_id + "]"))
+  assert_true(state.pending_disconnects.contains(agent_id))
+  assert_true(state.pending_disconnect_soft_notified.contains(agent_id))
+  let agent = state.registry.get(agent_id) catch {
+    _ => fail("expected active agent to remain in registry")
+  }
+  assert_eq(agent.state, @types.AgentState::Active)
 }

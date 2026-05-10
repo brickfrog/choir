@@ -1078,14 +1078,17 @@ pub async fn ServerState::handle_disconnect_with_runner(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> Unit {
-  ignore(
+  let now = @poller.now_sec()
+  match
     self.handle_disconnect_confirming_with_runner(
-      agent_id,
-      runner,
-      capture,
-      @poller.now_sec(),
-    ),
-  )
+      agent_id, runner, capture, now,
+    ) {
+    Handled => ()
+    AwaitingConfirmation => {
+      self.pending_disconnects.set(agent_id, now)
+      self.pending_disconnect_soft_notified.set(agent_id, true)
+    }
+  }
 }
 
 ///|
@@ -1114,6 +1117,7 @@ pub fn ServerState::clear_pending_disconnect(
   agent_id : String,
 ) -> Unit {
   self.pending_disconnects.remove(agent_id)
+  self.pending_disconnect_soft_notified.remove(agent_id)
 }
 
 ///|
