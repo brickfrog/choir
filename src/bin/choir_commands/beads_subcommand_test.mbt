@@ -143,6 +143,21 @@ test "build_beads_doctor_report flags export and unrelated dirty paths" {
 }
 
 ///|
+test "render_beads_doctor_report adds dirty export hint only when non clean" {
+  let dirty = build_beads_doctor_report("[]", "[]", " M .beads/issues.jsonl\n").unwrap()
+  let dirty_rendered = render_beads_doctor_report(dirty)
+  assert_true(
+    dirty_rendered.contains(
+      "beads_export_dirty: true\n  ↳ run `bd dolt commit -am \"sync issues\"` to commit bd state\n",
+    ),
+  )
+  let clean = build_beads_doctor_report("[]", "[]", "").unwrap()
+  let clean_rendered = render_beads_doctor_report(clean)
+  assert_true(clean_rendered.contains("beads_export_dirty: false\n"))
+  assert_false(clean_rendered.contains("↳"))
+}
+
+///|
 async test "run_beads_spec_link refuses missing spec file" {
   let seen : Array[String] = []
   let file_checks : Array[String] = []
@@ -347,6 +362,51 @@ test "build_beads_doctor_report parses trailing ready json noise" {
   ).unwrap()
   assert_eq(report.ready_count, 1)
   assert_eq(report.in_progress_count, 0)
+}
+
+///|
+async test "run_beads_doctor reports stalled in progress bead assigned to inactive agent" {
+  let got = run_beads_doctor(
+    "/repo",
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "ready" {
+        (0, "[]")
+      } else if cmd.program == "bd" &&
+        cmd.args.length() > 0 &&
+        cmd.args[0] == "list" {
+        (
+          0,
+          (
+            #|[{"id":"choir-stalled","title":"Stalled","status":"in_progress","assignee":"main.dead-leaf","started_at":"2026-05-10T00:00:00Z"}]
+          ),
+        )
+      } else if cmd.program == "git" {
+        (0, "")
+      } else {
+        (1, "unexpected command")
+      }
+    },
+    now_sec=@tempo.DateTime::parse("2026-05-10T06:30:00Z").to_unix_seconds(),
+    active_agent_ids=fn(_project_dir, _in_progress_json) {
+      Some(["main.live-leaf"])
+    },
+  )
+  match got {
+    Ok(text) => {
+      assert_true(
+        text.contains(
+          "STALLED: choir-stalled (started 6h ago, assignee main.dead-leaf not in registry)",
+        ),
+      )
+      assert_true(
+        text.contains(
+          "  → bd update choir-stalled --status open --assignee \"\"",
+        ),
+      )
+    }
+    Err(e) => fail(e.message())
+  }
 }
 
 ///|
