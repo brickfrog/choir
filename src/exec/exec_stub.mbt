@@ -1,5 +1,38 @@
 ///|
 /// Non-native: `moonbitlang/async/process` is native-only; stubs keep wasm/js type-check clean.
+pub fn default_reload_binary_path(project_dir : String) -> String {
+  project_dir + "/_build/native/release/build/src/bin/choir/choir.exe"
+}
+
+///|
+pub fn reload_binary_path(project_dir : String) -> String {
+  default_reload_binary_path(project_dir)
+}
+
+///|
+pub fn validate_replace_self_binary(
+  binary_path : String,
+) -> Result[Unit, @types.ChoirError] {
+  Err(
+    @types.ChoirError::workspace_error(
+      "replace_self is native-only: " + binary_path,
+    ),
+  )
+}
+
+///|
+pub fn replace_self(
+  binary_path : String,
+  _inherited_uds_fd : Int,
+) -> Result[Unit, @types.ChoirError] {
+  Err(
+    @types.ChoirError::workspace_error(
+      "replace_self is native-only: " + binary_path,
+    ),
+  )
+}
+
+///|
 pub async fn run_dev_entr_watcher(
   _entr_path : String,
   _choir_exe : String,

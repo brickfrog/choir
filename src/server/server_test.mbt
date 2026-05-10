@@ -98,6 +98,76 @@ test "init_run_id persists generated run_id via native write" {
 }
 
 ///|
+test "reload snapshot restores registry pending state and mutexes" {
+  let project_dir = "/tmp/choir-reload-snapshot-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "choir-reload-test",
+  }
+  let state = ServerState::new(config, make_recovery_provider())
+  let agent : @types.Agent = {
+    agent_id: "root.leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("root"),
+    workspace: project_dir + "/.choir/worktrees/leaf",
+    branch: "feature/hot-reload.leaf",
+    terminal_target: @types.LocalTarget::parse(
+      "zellij-tab:choir-reload-test:leaf",
+    ),
+    host: @types.Host::Local,
+    spawn_depth: 1,
+    state: @types.AgentState::Active,
+  }
+  ignore(state.registry.upsert(agent))
+  ignore(try? state.registry.set_alive("root.leaf", false))
+  state.pending_disconnects.set("root.leaf", 1234L)
+  state.pending_disconnect_soft_notified.set("root.leaf", true)
+  state.delivery_failures.set("root.leaf", 2)
+  ignore(state.mutex_registry.acquire("build", "root", 300L, 10L))
+  ignore(state.mutex_registry.acquire("build", "root.leaf", 300L, 11L))
+
+  match state.persist_reload_snapshot("/tmp/choir.exe") {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+
+  let restored = ServerState::new(config, make_recovery_provider())
+  match restored.restore_reload_snapshot() {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  let restored_agent = try? restored.registry.get("root.leaf")
+  ignore(@sys.rm_rf(project_dir))
+  match restored_agent {
+    Ok(agent) => {
+      assert_eq(agent.branch, "feature/hot-reload.leaf")
+      @debug.assert_eq(restored.registry.is_alive("root.leaf"), Some(false))
+      @debug.assert_eq(
+        restored.pending_disconnects.get("root.leaf"),
+        Some(1234L),
+      )
+      @debug.assert_eq(
+        restored.pending_disconnect_soft_notified.get("root.leaf"),
+        Some(true),
+      )
+      @debug.assert_eq(restored.delivery_failures.get("root.leaf"), Some(2))
+      let (holder, queue) = restored.mutex_registry.status("build")
+      @debug.assert_eq(holder, Some("root"))
+      assert_eq(queue.length(), 1)
+      assert_eq(queue[0], "root.leaf")
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "notify_parent falls back to persisted lifecycle when parent missing from registry" {
   let project_dir = "/tmp/choir-notify-parent-test-" +
     "fallback-lifecycle-" +

@@ -54,6 +54,11 @@ pub fn set_nonblocking(_fd : Int) -> Bool {
 }
 
 ///|
+pub fn clear_cloexec(_fd : Int) -> Bool {
+  false
+}
+
+///|
 pub fn close(_fd : Int) -> Unit {
   ignore(_fd)
 }
