@@ -96,6 +96,42 @@ fn dev_run() -> Unit {
 }
 
 ///|
+fn reload_run() -> Unit {
+  let config_content = @sys.read_file(".choir/config.toml")
+  if config_content == "" {
+    client_emit(@types.Response::Err("missing .choir/config.toml"))
+    return
+  }
+  let config = match @config.parse_config(config_content) {
+    Ok(cfg) => cfg
+    Err(e) => {
+      client_emit(@types.Response::Err(e.message()))
+      return
+    }
+  }
+  let binary_path = @exec.reload_binary_path(config.project_dir)
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Root,
+    name: "server_reload",
+    args: @types.RequestArgs::from_values({
+      "binary_path": binary_path.to_json(),
+    }),
+  }
+  match
+    client_call_uds(
+      @types.Role::Root,
+      { ..config, agent_id: Some("root") },
+      @types.LocalConfig::default(),
+      req,
+      register_if_needed=false,
+    ) {
+    Ok(resp) => client_emit(resp)
+    Err(err) => client_emit(@types.Response::Err(err))
+  }
+}
+
+///|
 fn reply_run() -> Unit {
   let args = @env.args()
 

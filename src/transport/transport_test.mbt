@@ -14,6 +14,20 @@ test "parse_request success" {
 }
 
 ///|
+test "parse_request accepts server_reload tool call shape" {
+  let input = "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"server_reload\",\"args\":{\"binary_path\":\"/tmp/choir.exe\"}}"
+  match parse_request(input) {
+    Ok(req) => {
+      assert_eq(req.req_method, "tools/call")
+      assert_eq(req.role, @types.Role::Root)
+      assert_eq(req.name, "server_reload")
+      @debug.assert_eq(req.args.get("binary_path"), Some("/tmp/choir.exe"))
+    }
+    Err(e) => fail("Parse failed: \{e}")
+  }
+}
+
+///|
 test "parse_request whitespace tolerance" {
   let input = " {  \"method\"  :  \"tools/call\" , \"role\":\"dev\" , \"name\" : \"test\" , \"args\" : { \"k\" : \"v\" } } "
   match parse_request(input) {

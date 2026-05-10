@@ -98,6 +98,9 @@ test "tools_list_response" {
           assert_true(t.contains("crystallize_spec"))
           assert_true(t.contains("feature_slug"))
           assert_true(t.contains("already exists"))
+          assert_true(t.contains("server_reload"))
+          assert_true(t.contains("re-exec choir-serve"))
+          assert_true(t.contains("binary_path"))
         }
         _ => fail("expected tools array")
       }

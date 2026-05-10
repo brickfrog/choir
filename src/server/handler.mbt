@@ -124,25 +124,30 @@ pub async fn ServerState::handle_with_runner_and_capture(
   } else {
     None
   }
-  let resp = @tools.handle_request(
-    self.tool_registry,
-    effective_req,
-    project_dir=self.config.project_dir,
-    session=self.config.terminal_session,
-    runner~,
-    capture~,
-    extra_mcp_servers_json=self.config.extra_mcp_servers_json,
-    shell_command=self.config.shell_command,
-    listen_uds=self.config.listen_uds,
-    listen_tcp=self.config.listen_tcp,
-    tcp_auth_token=self.config.tcp_auth_token,
-    agent_registry=Some(self.registry),
-    mutex_registry=Some(self.mutex_registry),
-    poller_state=Some(self.poller),
-    plugins_json=self.config.plugins_json,
-    pr_review=self.config.pr_review,
-  ) catch {
-    e => @tools.tool_response_err_from_caught(e)
+  let resp = if effective_req.req_method == "tools/call" &&
+    effective_req.name == "server_reload" {
+    self.handle_server_reload_request(effective_req)
+  } else {
+    @tools.handle_request(
+      self.tool_registry,
+      effective_req,
+      project_dir=self.config.project_dir,
+      session=self.config.terminal_session,
+      runner~,
+      capture~,
+      extra_mcp_servers_json=self.config.extra_mcp_servers_json,
+      shell_command=self.config.shell_command,
+      listen_uds=self.config.listen_uds,
+      listen_tcp=self.config.listen_tcp,
+      tcp_auth_token=self.config.tcp_auth_token,
+      agent_registry=Some(self.registry),
+      mutex_registry=Some(self.mutex_registry),
+      poller_state=Some(self.poller),
+      plugins_json=self.config.plugins_json,
+      pr_review=self.config.pr_review,
+    ) catch {
+      e => @tools.tool_response_err_from_caught(e)
+    }
   }
 
   let effects = plan_post_tool_actions(

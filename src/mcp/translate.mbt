@@ -513,6 +513,17 @@ fn tool_defs() -> Array[CatalogTool] {
       ],
       required: ["agent_id"],
     },
+    {
+      name: "server_reload",
+      description: "Persist server runtime state and re-exec choir-serve in place using the freshly built binary. Active tool calls in flight at re-exec time may be dropped; retry after the new process resumes.",
+      props: [
+        {
+          name: "binary_path",
+          desc: "Optional absolute path to the choir binary to exec into. Defaults to the project's release build under _build/native/release.",
+        },
+      ],
+      required: [],
+    },
   ]
 }
 

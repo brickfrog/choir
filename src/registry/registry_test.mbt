@@ -252,6 +252,78 @@ test "registry set alive" {
 }
 
 ///|
+test "registry snapshot write read round trip" {
+  let project_dir = "/tmp/choir-registry-snapshot-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+
+  let reg = @registry.AgentRegistry::new()
+  let root : @types.Agent = {
+    agent_id: "root",
+    role: @types.Role::Root,
+    agent_type: @types.AgentType::Codex,
+    parent: None,
+    workspace: ".",
+    branch: "feature/hot-reload",
+    terminal_target: @types.LocalTarget::parse("zellij-tab:choir:TL"),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+  let worker : @types.Agent = {
+    agent_id: "root.worker",
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("root"),
+    workspace: ".choir/inline/root.worker",
+    branch: "feature/hot-reload",
+    terminal_target: @types.LocalTarget::parse("zellij-pane:choir:worker"),
+    host: @types.Host::Remote("127.0.0.1"),
+    spawn_depth: 1,
+    state: @types.AgentState::Suspended,
+  }
+  ignore(try? reg.insert(root))
+  ignore(try? reg.insert(worker))
+  ignore(try? reg.set_alive("root.worker", false))
+
+  match reg.write_snapshot_file(project_dir) {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  let restored = match @registry.read_registry_snapshot_file(project_dir) {
+    Ok(value) => value
+    Err(e) => fail(e.message())
+  }
+
+  let restored_root = try? restored.get("root")
+  let restored_worker = try? restored.get("root.worker")
+  ignore(@sys.rm_rf(project_dir))
+  match (restored_root, restored_worker) {
+    (Ok(r), Ok(w)) => {
+      assert_eq(r.role, @types.Role::Root)
+      assert_eq(r.agent_type, @types.AgentType::Codex)
+      assert_eq(r.branch, "feature/hot-reload")
+      @debug.assert_eq(
+        r.terminal_target,
+        @types.LocalTarget::parse("zellij-tab:choir:TL"),
+      )
+      assert_eq(w.role, @types.Role::Worker)
+      assert_eq(w.agent_type, @types.AgentType::Claude)
+      @debug.assert_eq(w.parent, Some("root"))
+      assert_eq(w.workspace, ".choir/inline/root.worker")
+      assert_eq(w.host, @types.Host::Remote("127.0.0.1"))
+      assert_eq(w.state, @types.AgentState::Suspended)
+      assert_eq(w.spawn_depth, 1)
+      @debug.assert_eq(restored.is_alive("root.worker"), Some(false))
+    }
+    _ => fail("expected restored agents")
+  }
+}
+
+///|
 test "registry active agents" {
   let reg = @registry.AgentRegistry::new()
   let a1 : @types.Agent = {

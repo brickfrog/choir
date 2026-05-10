@@ -152,6 +152,27 @@ pub fn AgentState::to_wire_string(self : AgentState) -> String {
 }
 
 ///|
+pub fn AgentState::try_parse_wire(s : String) -> Result[AgentState, ChoirError] {
+  match s {
+    "spawning" => Ok(Spawning)
+    "active" => Ok(Active)
+    "completing" => Ok(Completing)
+    "done" => Ok(Done)
+    "failed" => Ok(Failed)
+    "suspended" => Ok(Suspended)
+    _ => Err(ChoirError::config_error("unknown agent_state: " + s))
+  }
+}
+
+///|
+pub fn AgentState::parse_wire(s : String) -> AgentState raise ChoirError {
+  match AgentState::try_parse_wire(s) {
+    Ok(state) => state
+    Err(e) => raise e
+  }
+}
+
+///|
 pub impl ToJson for AgentState with to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
