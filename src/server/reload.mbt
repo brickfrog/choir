@@ -342,12 +342,22 @@ pub fn ServerState::handle_server_reload_request(
     Ok(_) => ()
     Err(e) => return @types.Response::Err(e.message())
   }
+  // Snapshots have been persisted and the binary has been validated as
+  // executable. The actual `execve` happens AFTER this response is written
+  // (the runtime loop reads the post-response signal). Exec can still fail
+  // — `clear_cloexec` on the listener fd, or `execve` itself returning. On
+  // that failure the original server keeps running with the snapshots it
+  // just wrote; callers that depended on the reload landing will need to
+  // observe via a follow-up probe (e.g. `wave_state` against the new
+  // version's build identity). Reflect this honestly in the status so a
+  // success response is not read as "the new binary is now running".
   match self.persist_reload_snapshot(binary_path) {
     Ok(_) =>
       @types.Response::ok_values({
-        "status": "reloading".to_json(),
+        "status": "reload_scheduled".to_json(),
         "binary_path": binary_path.to_json(),
         "in_flight_requests": "active tool calls during exec may be dropped; retry after reload".to_json(),
+        "note": "Snapshots persisted and exec scheduled. The exec itself happens after this response is written; if exec fails (clear_cloexec or execve error), the original server keeps running and a new attempt is required. Verify the reload landed by probing the server (e.g. wave_state) after a brief delay.".to_json(),
       })
     Err(e) => @types.Response::Err(e.message())
   }
