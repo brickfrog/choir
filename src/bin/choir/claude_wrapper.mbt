@@ -54,8 +54,23 @@ fn audit_skill_body() -> String {
     #|   sees fit. No balanced "overall" summary. Explicit "nothing wrong" with
     #|   justification if applicable.
     #|
-    #|3. Wait for the worker to return. Relay the full review output to the user
-    #|   for discussion. Do not filter or soften.
+    #|3. Wait for the worker to return. If the worker fails, STOP and report the
+    #|   failure without writing an audit receipt.
+    #|4. After the worker returns successfully, write an audit receipt for the
+    #|   audited HEAD. Run this bash step exactly:
+    #|
+    #|   ```bash
+    #|   mkdir -p .choir/audit-receipts
+    #|   sha="$(git rev-parse HEAD)"
+    #|   short_sha="${sha:0:12}"
+    #|   branch="$(git rev-parse --abbrev-ref HEAD)"
+    #|   audited_at="$(date +%s)"
+    #|   agent_id="${CHOIR_AGENT_ID:-unknown}"
+    #|   printf '{ "sha": "%s", "branch": "%s", "audited_at": %s, "agent_id": "%s" }\n' "$sha" "$branch" "$audited_at" "$agent_id" > ".choir/audit-receipts/${short_sha}.json"
+    #|   ```
+    #|
+    #|5. Relay the full review output to the user for discussion. Do not filter
+    #|   or soften.
     #|
   )
 }
@@ -674,6 +689,17 @@ test "audit_skill_body refuses empty review surface" {
 test "audit_skill_body contains Sarcasmotron persona" {
   let review = audit_skill_body()
   assert_true(review.contains("You are Sarcasmotron"))
+}
+
+///|
+test "audit_skill_body writes receipt after successful worker" {
+  let body = audit_skill_body()
+  assert_true(body.contains("After the worker returns successfully"))
+  assert_true(body.contains("mkdir -p .choir/audit-receipts"))
+  assert_true(body.contains("git rev-parse HEAD"))
+  assert_true(body.contains("CHOIR_AGENT_ID"))
+  assert_true(body.contains("\"sha\""))
+  assert_true(body.contains(".choir/audit-receipts/${short_sha}.json"))
 }
 
 ///|

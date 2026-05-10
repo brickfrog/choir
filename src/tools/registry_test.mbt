@@ -37,8 +37,18 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
     cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
     return (0, "origin/main\n")
   }
+  if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+    return (0, "hash\n")
+  }
   if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
     return (0, "https://github.com/brickfrog/choir.git\n")
+  }
+  if cmd.program == "cat" &&
+    cmd.args.length() == 1 &&
+    cmd.args[0] == ".choir/audit-receipts/hash.json" {
+    return (
+      0, "{ \"sha\": \"hash\", \"branch\": \"test\", \"audited_at\": 1770000000, \"agent_id\": \"main.tl\" }\n",
+    )
   }
   if cmd.program == "zellij" {
     return (1, "")

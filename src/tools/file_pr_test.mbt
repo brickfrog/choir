@@ -478,6 +478,13 @@ async fn mock_capture_empty(_cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+fn file_pr_test_audit_receipt(sha : String) -> String {
+  "{ \"sha\": \"" +
+  sha +
+  "\", \"branch\": \"feature/discipline-gates\", \"audited_at\": 1770000000, \"agent_id\": \"main.tl\" }\n"
+}
+
+///|
 async fn mock_ensure_pr_ok(
   _branch : String,
   _parent_branch : String,
@@ -881,6 +888,228 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
 }
 
 ///|
+async test "interpret_file_pr feature main fails without audit receipt" {
+  let project_dir = "/tmp/choir-fpr-audit-missing-" + @sys.get_pid().to_string()
+  let head = "123456789abcdef0123456789abcdef012345678"
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let mut ensure_pr_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/discipline-gates",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/discipline-gates",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" {
+        (0, head + "\n")
+      } else if cmd.program == "cat" {
+        (1, "")
+      } else {
+        (0, "")
+      }
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(
+        msg,
+        "file_pr: feature→main PR requires a recent audit on HEAD " +
+        file_pr_short_sha(head) +
+        "; run `/audit` (choir:audit skill) on this branch first, then retry.",
+      )
+    _ => fail("expected audit receipt gate failure")
+  }
+  assert_false(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr feature main succeeds with fresh audit receipt" {
+  let project_dir = "/tmp/choir-fpr-audit-fresh-" + @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let mut receipt_path_seen = ""
+  let mut ensure_pr_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/discipline-gates",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/discipline-gates",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" {
+        (0, head + "\n")
+      } else if cmd.program == "cat" {
+        if cmd.args.length() > 0 {
+          receipt_path_seen = cmd.args[0]
+        }
+        (0, file_pr_test_audit_receipt(head))
+      } else {
+        (0, "")
+      }
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected fresh audit receipt: " + msg)
+  }
+  assert_eq(receipt_path_seen, ".choir/audit-receipts/abcdef123456.json")
+  assert_true(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr leaf to feature does not require audit receipt" {
+  let project_dir = "/tmp/choir-fpr-audit-leaf-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let mut audit_receipt_read = false
+  let mut ensure_pr_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/discipline-gates.leaf-0",
+      parent_branch: Some("feature/discipline-gates"),
+      tracked_agent_id: "feature/discipline-gates.leaf-0",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "cat" {
+        audit_receipt_read = true
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected leaf PR success: " + msg)
+  }
+  assert_false(audit_receipt_read)
+  assert_true(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr feature main fails with stale audit receipt" {
+  let project_dir = "/tmp/choir-fpr-audit-stale-" + @sys.get_pid().to_string()
+  let current = "fedcba654321fedcba654321fedcba654321fedc"
+  let audited = "1111111111112222222222223333333333334444"
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let mut ensure_pr_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/discipline-gates",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/discipline-gates",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" {
+        (0, current + "\n")
+      } else if cmd.program == "cat" {
+        (0, file_pr_test_audit_receipt(audited))
+      } else {
+        (0, "")
+      }
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(
+        msg,
+        "file_pr: audit receipt is stale (audit ran on " +
+        audited +
+        ", current HEAD is " +
+        current +
+        "); re-run /audit",
+      )
+    _ => fail("expected stale audit receipt gate failure")
+  }
+  assert_false(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_file_pr runs required verify and injects generated PR body" {
   let project_dir = "/tmp/choir-fpr-verify-pr-body-" +
     @sys.get_pid().to_string()
@@ -892,7 +1121,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
   let got = interpret_file_pr(
     {
       branch: "main.leaf",
-      parent_branch: Some("main"),
+      parent_branch: Some("feature/verify-pr-body"),
       tracked_agent_id: "main.leaf",
       title: Some("schema wiring"),
       body: Some("Implements claim schema wiring."),
@@ -962,7 +1191,7 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
   let got = interpret_file_pr(
     {
       branch: "main.leaf",
-      parent_branch: Some("main"),
+      parent_branch: Some("feature/verify-block"),
       tracked_agent_id: "main.leaf",
       title: None,
       body: None,
@@ -1025,7 +1254,7 @@ async test "interpret_file_pr ok response matches full pipeline" {
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let args : FilePrArgs = {
     branch: "main.leaf",
-    parent_branch: Some("main"),
+    parent_branch: Some("feature/interpret"),
     tracked_agent_id: "main.leaf",
     title: None,
     body: None,
