@@ -1110,6 +1110,48 @@ async test "interpret_file_pr feature main fails with stale audit receipt" {
 }
 
 ///|
+test "file_pr_validate_audit_receipt distinguishes stale vs malformed receipts" {
+  let head = "fedcba654321fedcba654321fedcba654321fedc"
+  let short = file_pr_short_sha(head)
+  // Stale: well-formed receipt JSON pointing at a different audited sha.
+  let other_sha = "1111111111112222222222223333333333334444"
+  match
+    file_pr_validate_audit_receipt(
+      "main",
+      head,
+      Some("{\"sha\":\"" + other_sha + "\"}"),
+    ) {
+    Err(e) => {
+      assert_true(e.message().contains("audit receipt is stale"))
+      assert_true(e.message().contains(other_sha))
+      assert_false(e.message().contains("malformed"))
+    }
+    Ok(_) => fail("expected stale audit receipt error")
+  }
+  // Malformed: receipt JSON missing the `sha` field. Must NOT call this
+  // 'stale' (which would imply a known earlier sha) and must NOT leak the
+  // '<missing>' sentinel into the user-facing message.
+  match
+    file_pr_validate_audit_receipt("main", head, Some("{\"branch\":\"x\"}")) {
+    Err(e) => {
+      assert_true(e.message().contains("malformed"))
+      assert_true(e.message().contains(short))
+      assert_false(e.message().contains("<missing>"))
+      assert_false(e.message().contains("audit receipt is stale"))
+    }
+    Ok(_) => fail("expected malformed receipt error")
+  }
+  // Malformed: receipt body is not valid JSON at all.
+  match file_pr_validate_audit_receipt("main", head, Some("{not json")) {
+    Err(e) => {
+      assert_true(e.message().contains("malformed"))
+      assert_false(e.message().contains("<missing>"))
+    }
+    Ok(_) => fail("expected malformed receipt error")
+  }
+}
+
+///|
 async test "interpret_file_pr runs required verify and injects generated PR body" {
   let project_dir = "/tmp/choir-fpr-verify-pr-body-" +
     @sys.get_pid().to_string()

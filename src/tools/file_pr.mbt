@@ -583,6 +583,15 @@ fn file_pr_stale_audit_receipt_error(
 }
 
 ///|
+fn file_pr_invalid_audit_receipt_error(short_sha : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "file_pr: audit receipt for HEAD " +
+    short_sha +
+    " is malformed (missing or invalid `sha` field); re-run `/audit` to regenerate.",
+  )
+}
+
+///|
 fn file_pr_receipt_sha(receipt_body : String) -> String? {
   let parsed = @json.parse(receipt_body.trim().to_owned()) catch {
     _ => return None
@@ -609,7 +618,10 @@ pub fn file_pr_validate_audit_receipt(
     Some(audited_sha) if audited_sha == current_head => Ok(())
     Some(audited_sha) =>
       Err(file_pr_stale_audit_receipt_error(audited_sha, current_head))
-    None => Err(file_pr_stale_audit_receipt_error("<missing>", current_head))
+    // Malformed receipt JSON or missing `sha` field — distinct from "stale"
+    // (where the audit ran on a known earlier SHA). Tell the user the
+    // receipt is corrupt and they should regenerate it.
+    None => Err(file_pr_invalid_audit_receipt_error(short_sha))
   }
 }
 
