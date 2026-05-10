@@ -40,6 +40,41 @@ test "render_leaf_spawn_prompt builds structured sections and completion protoco
 }
 
 ///|
+test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
+  let prompt = render_leaf_spawn_prompt(
+    PromptSpec::from_map({ "task": "Fix review feedback" }),
+  )
+  assert_true(prompt.contains("gh discipline:"))
+  assert_true(
+    prompt.contains(
+      "Always bound `gh api` and `gh pr view` calls with `timeout 30s`",
+    ),
+  )
+  assert_true(prompt.contains("`gh-bounded` wrapper"))
+  assert_true(prompt.contains("Prefer REST endpoints"))
+  assert_true(
+    prompt.contains("Do NOT call `resolveReviewThread` directly from a leaf"),
+  )
+  assert_true(prompt.contains("pkill -f \"gh api\""))
+
+  let file_pr_exit = match
+    prompt.find("Do not exit voluntarily after file_pr:") {
+    Some(i) => i
+    None => fail("missing file_pr exit block")
+  }
+  let gh_discipline = match prompt.find("gh discipline:") {
+    Some(i) => i
+    None => fail("missing gh discipline block")
+  }
+  let execution_discipline = match prompt.find("Execution discipline:") {
+    Some(i) => i
+    None => fail("missing execution discipline block")
+  }
+  assert_true(file_pr_exit < gh_discipline)
+  assert_true(gh_discipline < execution_discipline)
+}
+
+///|
 test "render_worker_spawn_prompt uses research profile" {
   let prompt = render_worker_spawn_prompt(
     PromptSpec::from_map({

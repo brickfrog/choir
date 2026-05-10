@@ -235,6 +235,16 @@ pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
   if !@sys.chmod_mode(gh_shim_path, 0o755) {
     return 1
   }
+  let gh_bounded_path = bin_dir + "/gh-bounded"
+  let gh_bounded_body =
+    #|#!/bin/sh
+    #|exec timeout 30s gh "$@"
+  if !@sys.write_file_sync(gh_bounded_path, gh_bounded_body) {
+    return 1
+  }
+  if !@sys.chmod_mode(gh_bounded_path, 0o755) {
+    return 1
+  }
   0
 }
 
