@@ -336,7 +336,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
 }
 
 ///|
-async test "maybe_trigger_automerge_for_pending_event fires on iterative fixes pushed when policy is merge_now" {
+async test "refresh_pr_with pending events fires automerge after fixes and CI clear" {
   let project_dir = "/tmp/choir-automerge-fixes-pushed-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -382,7 +382,13 @@ async test "maybe_trigger_automerge_for_pending_event fires on iterative fixes p
       parent: Some(parent_id),
       workspace: project_dir + "/.choir/worktrees/auto-leaf",
       branch: child_id,
-      terminal_target: None,
+      terminal_target: Some(
+        @workspace.local_target_for(
+          terminal_session,
+          "auto-leaf",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
       host: @types.Host::Local,
       spawn_depth: 0,
       state: @types.AgentState::Active,
@@ -434,11 +440,18 @@ async test "maybe_trigger_automerge_for_pending_event fires on iterative fixes p
         last_review_state: @poller.ReviewState::Commented,
         last_ci_rollup: @poller.CiRollupStatus::Success,
         last_sha: "old-sha",
+        last_review_bodies: "comment!",
         copilot_issue_comment_seen: true,
       })
     None => fail("expected tracked PR")
   }
-  let mut merge_seen = false
+  let parent_target = @workspace.local_target_for(
+    terminal_session,
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let mut merge_seen_count = 0
   let runner = async fn(cmds : Array[@workspace.Command]) {
     @async.sleep(0)
     let statuses = []
@@ -447,22 +460,34 @@ async test "maybe_trigger_automerge_for_pending_event fires on iterative fixes p
         cmd.args.length() >= 3 &&
         cmd.args[0] == "pr" &&
         cmd.args[1] == "merge" {
-        merge_seen = true
+        merge_seen_count = merge_seen_count + 1
+      }
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
       }
       statuses.push(0)
     }
     statuses
   }
+  let mut graphql_calls = 0
+  let mut review_gate_calls = 0
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
     let repo_view_json =
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let blocked_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_blocked","isResolved":false,"path":"src/x.mbt","comments":{"nodes":[{"body":"fix it"}]}}]}}}}}
     let review_threads_json =
       #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
     if cmd.program == "gh" &&
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&
       cmd.args[1].has_suffix("/reviews") {
+      review_gate_calls = review_gate_calls + 1
       return (0, "[{\"state\":\"APPROVED\"}]")
     }
     if cmd.program == "gh" &&
@@ -473,53 +498,92 @@ async test "maybe_trigger_automerge_for_pending_event fires on iterative fixes p
       cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&
       cmd.args[1] == "graphql" {
+      graphql_calls = graphql_calls + 1
+      if graphql_calls == 1 {
+        return (0, blocked_threads_json)
+      }
       return (0, review_threads_json)
     }
     (0, "")
   }
-  let blocked_tracked = match state.poller.get(pr_number) {
-    Some(value) => value
-    None => fail("expected tracked PR")
-  }
-  let blocked_decision = @poller.merge_policy_decision_for_tracked_pr(
-    blocked_tracked,
-    Some(1),
-    review_mode=@types.ReviewMode::Iterative,
-  )
-  assert_eq(blocked_decision.label(), "blocked")
-  let blocked = maybe_trigger_automerge_for_pending_event(
-    state,
-    @poller.PollEvent::MergeReady(pr_number),
-    blocked_tracked,
-    Some(1),
-    runner,
+
+  state.refresh_pr_with(
+    pr_number,
+    200L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Commented,
+        "old-sha",
+        @poller.CiRollupStatus::Success,
+        "comment!",
+        true,
+        false,
+      )
+    },
+    runner~,
     capture~,
-    review_mode=@types.ReviewMode::Iterative,
+    automerge_capture=capture,
   )
-  assert_false(blocked)
-  assert_false(merge_seen)
-  state.poller.restore({ ..blocked_tracked, last_sha: "fix-sha" })
-  let fixed_tracked = match state.poller.get(pr_number) {
-    Some(value) => value
-    None => fail("expected tracked PR")
-  }
-  let fixed_decision = @poller.merge_policy_decision_for_tracked_pr(
-    fixed_tracked,
-    Some(0),
-    review_mode=@types.ReviewMode::Iterative,
-  )
-  assert_eq(fixed_decision.label(), "merge_now")
-  let merged = maybe_trigger_automerge_for_pending_event(
-    state,
-    @poller.PollEvent::FixesPushed(pr_number),
-    fixed_tracked,
-    Some(0),
-    runner,
+  assert_eq(merge_seen_count, 0)
+  assert_eq(graphql_calls, 1)
+  assert_eq(parent_messages.length(), 1)
+  assert_true(parent_messages[0].contains("[MERGE READY]"))
+  assert_true(parent_messages[0].contains("Merge policy decision: blocked"))
+
+  state.refresh_pr_with(
+    pr_number,
+    300L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Commented,
+        "fix-sha",
+        @poller.CiRollupStatus::InProgress,
+        "comment!",
+        true,
+        false,
+      )
+    },
+    runner~,
     capture~,
-    review_mode=@types.ReviewMode::Iterative,
+    automerge_capture=capture,
   )
-  assert_true(merged)
-  assert_true(merge_seen)
+  assert_eq(merge_seen_count, 0)
+  assert_eq(graphql_calls, 2)
+  assert_eq(parent_messages.length(), 2)
+  assert_true(parent_messages[1].contains("[FIXES PUSHED]"))
+
+  state.refresh_pr_with(
+    pr_number,
+    400L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Commented,
+        "fix-sha",
+        @poller.CiRollupStatus::Success,
+        "comment!",
+        true,
+        false,
+      )
+    },
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_eq(merge_seen_count, 1)
+  assert_true(graphql_calls > 0)
+  assert_true(review_gate_calls > 0)
+  assert_eq(parent_messages.length(), 3)
+  assert_true(parent_messages[2].contains("[PR MERGED]"))
+  assert_false(parent_messages.join("\n").contains("[CI LATEST HEAD]"))
   assert_true(state.poller.get(pr_number) == None)
   match @phase.read_lifecycle(project_dir, child_id) {
     Some(lifecycle) =>
