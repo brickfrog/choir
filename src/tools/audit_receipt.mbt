@@ -10,13 +10,16 @@ pub fn plan_write_audit_receipt(
   args : WriteAuditReceiptArgs,
   audited_at : Int64,
 ) -> Result[AuditReceiptWritePlan, @types.ChoirError] {
-  if args.sha.trim() == "" {
+  let sha = args.sha.trim().to_owned()
+  let branch = args.branch.trim().to_owned()
+  let caller_id = args.caller_id.trim().to_owned()
+  if sha == "" {
     return Err(@types.ChoirError::validation_error("sha cannot be empty"))
   }
-  if args.branch.trim() == "" {
+  if branch == "" {
     return Err(@types.ChoirError::validation_error("branch cannot be empty"))
   }
-  if args.caller_id.trim() == "" {
+  if caller_id == "" {
     return Err(@types.ChoirError::validation_error("caller_id cannot be empty"))
   }
   if audited_at <= 0L {
@@ -31,14 +34,14 @@ pub fn plan_write_audit_receipt(
       ),
     )
   }
+  let path = file_pr_audit_receipt_path_for_head(sha)
   let receipt : @types.AuditReceipt = {
-    sha: args.sha,
-    branch: args.branch,
+    sha,
+    branch,
     audited_at,
-    agent_id: args.caller_id,
+    agent_id: caller_id,
     findings_count: args.findings_count,
   }
-  let path = file_pr_audit_receipt_path_for_head(args.sha)
   Ok({ path, receipt, content: receipt.to_json().stringify() + "\n" })
 }
 

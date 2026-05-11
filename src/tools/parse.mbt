@@ -1467,6 +1467,9 @@ fn parse_write_audit_receipt_args(
     return Err(ParseError::MissingField(field="branch"))
   }
   let findings_count_raw = tool_args_get(args, "findings_count").unwrap_or("")
+  if findings_count_raw == "" {
+    return Err(ParseError::MissingField(field="findings_count"))
+  }
   let findings_count = match parse_int(findings_count_raw) {
     Some(v) if v >= 0 => v
     _ =>
@@ -1882,6 +1885,21 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
       assert_eq(args.caller_id, "agent-1")
     }
     Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_write_audit_receipt_args requires findings_count" {
+  match
+    parse_write_audit_receipt_args(
+      tool_args_from_map({
+        "caller_id": "main.tl",
+        "sha": "abcdef1234567890abcdef1234567890abcdef12",
+        "branch": "feature/workflow-gates",
+      }),
+    ) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "findings_count")
+    _ => fail("expected MissingField(findings_count)")
   }
 }
 

@@ -29,6 +29,23 @@ test "plan_write_audit_receipt emits typed JSON payload" {
 }
 
 ///|
+test "plan_write_audit_receipt trims identity fields before writing" {
+  let plan = plan_write_audit_receipt(
+    {
+      caller_id: " main.tl ",
+      sha: " abcdef1234567890abcdef1234567890abcdef12 ",
+      branch: " feature/workflow-gates ",
+      findings_count: 0,
+    },
+    1770000000L,
+  ).unwrap()
+  assert_eq(plan.path, ".choir/audit-receipts/abcdef123456.json")
+  assert_eq(plan.receipt.sha, "abcdef1234567890abcdef1234567890abcdef12")
+  assert_eq(plan.receipt.branch, "feature/workflow-gates")
+  assert_eq(plan.receipt.agent_id, "main.tl")
+}
+
+///|
 test "interpret_write_audit_receipt writes typed receipt through injected fs" {
   let writes : Array[(String, String)] = []
   let mut mkdir_path = ""
