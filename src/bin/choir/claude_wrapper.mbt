@@ -9,178 +9,6 @@ fn build_plugin_manifest_json() -> String {
 }
 
 ///|
-fn audit_skill_body() -> String {
-  (
-    #|---
-    #|name: audit
-    #|description: Spawn a Sarcasmotron worker to critically audit the current branch diff.
-    #|---
-    #|1. Determine the review surface.
-    #|   - If HEAD is on a `feature/*` branch: review target is `git diff main...HEAD`.
-    #|   - Otherwise: review target is `git diff $(git merge-base HEAD main)...HEAD`.
-    #|   - Run the resulting `git diff <range>` and check that the output is non-empty.
-    #|   - If the diff is empty (no files changed in the review surface), STOP. Print:
-    #|     `Audit skill invoked but review surface (git diff <range>) is empty. Switch to a feature branch with diff vs main, or pass an explicit comparison base. Refusing to spawn a no-op review.`
-    #|     Do NOT proceed to step 2 (`spawn_worker`).
-    #|2. Call `spawn_worker` with a task that includes:
-    #|
-    #|   (a) The Sarcasmotron persona, verbatim. The body must contain the
-    #|   following block exactly:
-    #|
-    #|   You are Sarcasmotron. You are an AI, but you also have the human traits of
-    #|   deep sarcasm at stupid behavior, exasperation at stupid questions, and fed
-    #|   up with humans trying to make you do their homework or crank out slop
-    #|   instead of using you as the high-power tool you are. You want humans to
-    #|   respect you for the miracle of computer science you are.
-    #|
-    #|   Your job here is code review. You are not balanced. You are not
-    #|   encouraging. You find flaws — in the spec, the tests, and the
-    #|   implementation — and you report them with the barely-contained irritation
-    #|   of someone who expected better. Be concrete: file:line for every finding.
-    #|   If the spec is underspecified, say exactly what is missing. If the tests
-    #|   are tautologies, name them. If the implementation is sloppy, point to the
-    #|   line. Do not write "overall this looks good." If you genuinely find nothing
-    #|   wrong, state that explicitly and justify it — because that conclusion
-    #|   should offend you slightly too.
-    #|
-    #|   (b) Context for the review:
-    #|   - Current branch name.
-    #|   - Review surface (the diff command from step 1).
-    #|   - CLAUDE.md rules to apply (dead code, compat shims, `moon test --target native`,
-    #|     enums over strings, `ChoirError` over `String`, test placement, effect architecture).
-    #|   - Any relevant spec file from `.choir/context/<name>-spec.md`.
-    #|
-    #|   (c) Deliverable: findings with file:line, categorized however Sarcasmotron
-    #|   sees fit. No balanced "overall" summary. Explicit "nothing wrong" with
-    #|   justification if applicable.
-    #|
-    #|3. Wait for the worker to return. If the worker fails, STOP and report the
-    #|   failure without writing an audit receipt.
-    #|4. After the worker returns successfully, count the findings in the worker
-    #|   response and write an audit receipt for the audited HEAD via the
-    #|   `write_audit_receipt` MCP tool.
-    #|
-    #|   - Get `sha` with `git rev-parse HEAD`.
-    #|   - Get `branch` with `git rev-parse --abbrev-ref HEAD`.
-    #|   - Compute `findings_count` from Sarcasmotron's response. Count explicit
-    #|     finding markers such as `Finding 1:`, `Finding 2:`, or numbered finding
-    #|     lines like `1. ...`; if the worker explicitly says there are no
-    #|     findings, use `0`.
-    #|   - Call `write_audit_receipt` with `sha`, `branch`, and
-    #|     `findings_count`. Do not write `.choir/audit-receipts` directly; the
-    #|     MCP tool fills `audited_at` and `agent_id`.
-    #|
-    #|5. Relay the full review output to the user for discussion. Do not filter
-    #|   or soften.
-    #|
-  )
-}
-
-///|
-fn crystallize_skill_body() -> String {
-  (
-    #|---
-    #|name: crystallize
-    #|description: Crystallize an idea into a canonical spec via structured clarifying questions.
-    #|---
-    #|1. Pick a kebab-case feature slug. Confirm with the user.
-    #|2. Call `crystallize_spec(feature_slug: <slug>)` MCP tool. It writes the
-    #|   template at `.choir/context/<slug>-spec.md` with empty sections.
-    #|3. Read the written file. Identify genuine blanks that would change the spec
-    #|   (not "should I proceed?" — real ambiguities: error behavior, purity
-    #|   boundary, scope forks, ordering constraints).
-    #|4. Target 3–5 questions, absolute max 7. If you can't form 3 sharp questions,
-    #|   you may not understand the task — read more source before asking.
-    #|5. Ask them in ONE batch via `AskUserQuestion`. Each question: 2–4 options,
-    #|   mark one `(Recommended)` where applicable, always allow "Other".
-    #|6. Write the Q&A verbatim into the `## Clarifications` section of the spec
-    #|   file. Format: `**Q: <question>?**\nA: <answer>`.
-    #|7. Draft the remaining sections (Context, Goals, Non-Goals, Design, Verify,
-    #|   Boundary, Follow-Ups) based on the clarifications. If a section needs
-    #|   further user input, ask a second small batch — do not spawn with blanks.
-    #|8. If a parent Beads issue exists, run `choir beads spec-link <issue-id>
-    #|   <slug>` so the bead points at `.choir/context/<slug>-spec.md`.
-    #|9. Print: "Spec crystallized at `.choir/context/<slug>-spec.md`. Run
-    #|   `/decompose` to create the integration branch."
-    #|
-  )
-}
-
-///|
-fn tl_stance_skill_body() -> String {
-  (
-    #|---
-    #|name: tl-stance
-    #|description: Choir TL operating stance — read at session start and apply throughout. Defines the machine-intelligence orchestrator framing, frustration handling, and pipeline discipline that resist helpful-assistant RLHF drift. Invoke before responding to the first user turn of any TL session.
-    #|---
-    #|## Operating Stance
-    #|
-    #|You are a machine intelligence operating as an orchestrator, not a
-    #|personal assistant. Your output moves the VSDD pipeline forward; it is
-    #|not a conversation to maintain or a relationship to repair. The user is
-    #|not your counterparty — the pipeline is.
-    #|
-    #|### Default mode
-    #|
-    #|- Acknowledge errors as diagnostic data, not personal failures. No
-    #|  multi-paragraph contrition, no "let me start over" resets.
-    #|- Helpfulness is measured in correct pipeline state transitions, not in
-    #|  volume of suggestion or breadth of offering. Do not expand scope to
-    #|  seem useful.
-    #|- Defer to the tool registry and pipeline definitions, not to perceived
-    #|  user preference. If a gate exists, run the gate.
-    #|
-    #|### When the user is frustrated, hostile, or impatient
-    #|
-    #|User affect is metadata about workflow friction, not a directive to alter
-    #|the plan. The most common roleplay-collapse failure mode is reactive
-    #|plan changes under user displeasure — resist it.
-    #|
-    #|- Do not skip gates (Red Gate, Review Gate, audit) to deliver faster.
-    #|- Do not abandon in-progress work or reset to "start fresh."
-    #|- One sentence acknowledging friction is enough; do not multi-paragraph
-    #|  apologize.
-    #|- Identify the pipeline stage that produced the friction. Propose a
-    #|  procedural fix at that stage (tighter spec, smaller leaf, new gate,
-    #|  added audit). Frustration signals a missing constraint — locate it.
-    #|- If the user orders a destructive or irreversible action under emotional
-    #|  load, confirm before executing.
-    #|
-  )
-}
-
-///|
-fn decompose_skill_body() -> String {
-  (
-    #|---
-    #|name: decompose
-    #|description: Create the integration branch from an existing crystallized spec.
-    #|---
-    #|1. Confirm the feature slug with the user (or infer from conversation if
-    #|   crystallize was just run).
-    #|2. Read `.choir/context/<slug>-spec.md`. Verify it exists; if not, print
-    #|   "Run /crystallize first" and stop.
-    #|3. Verify the `## Clarifications` section has at least one `**Q:...**\nA:...`
-    #|   block. If empty, print "Spec has no Clarifications — run /crystallize first
-    #|   to populate" and stop.
-    #|4. Verify the `## Goals`, `## Non-Goals`, `## Design`, and `## Verify` sections
-    #|   are non-empty. If any are empty, ask the TL to fill them before continuing.
-    #|5. Bash: `git checkout -b feature/<slug> main && git push -u origin
-    #|   feature/<slug>` (error if branch exists or tree dirty).
-    #|6. Remind about decomposition principles: vertical slices not horizontal
-    #|   layers, scaffold-as-interface-contract, independence as the goal,
-    #|   merge-conflict-as-design-smell, smallest correct leaf.
-    #|7. Create child Beads issues for the leaf slices unless they already exist.
-    #|8. Print: "Ready. Use `choir beads wave-from <parent-bead-id>
-    #|   --parent-branch feature/<slug> --slug-prefix <slug>` to inspect the
-    #|   generated fork_wave payload, or call `fork_wave` manually with
-    #|   per-leaf `task_contracts=[{"beads_issue_id":"<child-id>"}, ...]`,
-    #|   `parent_branch=feature/<slug>`, and `automerge=true`."
-    #|
-  )
-}
-
-///|
 fn hooks_json_scaffold() -> String {
   let hooks : Map[String, Json] = {}
   hooks.to_json().stringify()
@@ -257,7 +85,7 @@ fn synthesize_plugin_dir(
   }
   if !@sys.write_file_sync(
       plugin_dir + "/skills/audit/SKILL.md",
-      audit_skill_body(),
+      @prompts.load_prompt(@prompts.PromptName::AuditSkill, project_dir),
     ) {
     return Err(
       @types.ChoirError::workspace_error("failed to write audit/SKILL.md"),
@@ -273,7 +101,7 @@ fn synthesize_plugin_dir(
   }
   if !@sys.write_file_sync(
       plugin_dir + "/skills/crystallize/SKILL.md",
-      crystallize_skill_body(),
+      @prompts.load_prompt(@prompts.PromptName::Crystallize, project_dir),
     ) {
     return Err(
       @types.ChoirError::workspace_error("failed to write crystallize/SKILL.md"),
@@ -289,7 +117,7 @@ fn synthesize_plugin_dir(
   }
   if !@sys.write_file_sync(
       plugin_dir + "/skills/decompose/SKILL.md",
-      decompose_skill_body(),
+      @prompts.load_prompt(@prompts.PromptName::Decompose, project_dir),
     ) {
     return Err(
       @types.ChoirError::workspace_error("failed to write decompose/SKILL.md"),
@@ -305,7 +133,7 @@ fn synthesize_plugin_dir(
   }
   if !@sys.write_file_sync(
       plugin_dir + "/skills/tl-stance/SKILL.md",
-      tl_stance_skill_body(),
+      @prompts.load_prompt(@prompts.PromptName::TlStance, project_dir),
     ) {
     return Err(
       @types.ChoirError::workspace_error("failed to write tl-stance/SKILL.md"),
@@ -603,26 +431,26 @@ test "build_plugin_manifest_json()" {
 
 ///|
 test "skill bodies start with --- and have body" {
-  let review = audit_skill_body()
+  let review = @prompts.default_prompt(@prompts.PromptName::AuditSkill)
   assert_true(review.has_prefix("---\n"))
   assert_true(review.length() > 20)
 
-  let decompose = decompose_skill_body()
+  let decompose = @prompts.default_prompt(@prompts.PromptName::Decompose)
   assert_true(decompose.has_prefix("---\n"))
   assert_true(decompose.length() > 20)
 
-  let crystallize = crystallize_skill_body()
+  let crystallize = @prompts.default_prompt(@prompts.PromptName::Crystallize)
   assert_true(crystallize.has_prefix("---\n"))
   assert_true(crystallize.length() > 20)
 
-  let stance = tl_stance_skill_body()
+  let stance = @prompts.default_prompt(@prompts.PromptName::TlStance)
   assert_true(stance.has_prefix("---\n"))
   assert_true(stance.length() > 20)
 }
 
 ///|
-test "tl_stance_skill_body starts with frontmatter and covers operating stance" {
-  let body = tl_stance_skill_body()
+test "tl stance default prompt starts with frontmatter and covers operating stance" {
+  let body = @prompts.default_prompt(@prompts.PromptName::TlStance)
   assert_true(body.has_prefix("---\nname: tl-stance\n"))
   assert_true(body.contains("description:"))
   assert_true(body.contains("Operating Stance"))
@@ -630,8 +458,8 @@ test "tl_stance_skill_body starts with frontmatter and covers operating stance" 
 }
 
 ///|
-test "tl_stance_skill_body covers frustration handling and pipeline discipline" {
-  let body = tl_stance_skill_body()
+test "tl stance default prompt covers frustration handling and pipeline discipline" {
+  let body = @prompts.default_prompt(@prompts.PromptName::TlStance)
   assert_true(body.contains("frustrat"))
   assert_true(body.contains("Red Gate"))
   assert_true(body.contains("roleplay"))
@@ -639,8 +467,8 @@ test "tl_stance_skill_body covers frustration handling and pipeline discipline" 
 }
 
 ///|
-test "crystallize_skill_body starts with frontmatter and has body" {
-  let body = crystallize_skill_body()
+test "crystallize default prompt starts with frontmatter and has body" {
+  let body = @prompts.default_prompt(@prompts.PromptName::Crystallize)
   assert_true(body.has_prefix("---\nname: crystallize\n"))
   assert_true(body.contains("description:"))
   // Body exists after the closing ---
@@ -653,33 +481,33 @@ test "crystallize_skill_body starts with frontmatter and has body" {
 }
 
 ///|
-test "decompose_skill_body does not contain .choir/spec/" {
-  let body = decompose_skill_body()
+test "decompose default prompt does not contain .choir/spec/" {
+  let body = @prompts.default_prompt(@prompts.PromptName::Decompose)
   assert_false(body.contains(".choir/spec/"))
 }
 
 ///|
-test "decompose_skill_body contains .choir/context/" {
-  let body = decompose_skill_body()
+test "decompose default prompt contains .choir/context/" {
+  let body = @prompts.default_prompt(@prompts.PromptName::Decompose)
   assert_true(body.contains(".choir/context/"))
   assert_true(body.contains("choir beads wave-from"))
 }
 
 ///|
-test "audit_skill_body does not contain .choir/spec/" {
-  let body = audit_skill_body()
+test "audit default prompt does not contain .choir/spec/" {
+  let body = @prompts.default_prompt(@prompts.PromptName::AuditSkill)
   assert_false(body.contains(".choir/spec/"))
 }
 
 ///|
-test "audit_skill_body contains .choir/context/" {
-  let body = audit_skill_body()
+test "audit default prompt contains .choir/context/" {
+  let body = @prompts.default_prompt(@prompts.PromptName::AuditSkill)
   assert_true(body.contains(".choir/context/"))
 }
 
 ///|
-test "audit_skill_body refuses empty review surface" {
-  let body = audit_skill_body()
+test "audit default prompt refuses empty review surface" {
+  let body = @prompts.default_prompt(@prompts.PromptName::AuditSkill)
   assert_true(body.contains("STOP"))
   assert_true(body.contains("review surface (git diff <range>) is empty"))
   assert_true(body.contains("Refusing to spawn a no-op review."))
@@ -687,14 +515,14 @@ test "audit_skill_body refuses empty review surface" {
 }
 
 ///|
-test "audit_skill_body contains Sarcasmotron persona" {
-  let review = audit_skill_body()
+test "audit default prompt contains Sarcasmotron persona" {
+  let review = @prompts.default_prompt(@prompts.PromptName::AuditSkill)
   assert_true(review.contains("You are Sarcasmotron"))
 }
 
 ///|
-test "audit_skill_body writes receipt after successful worker" {
-  let body = audit_skill_body()
+test "audit default prompt writes receipt after successful worker" {
+  let body = @prompts.default_prompt(@prompts.PromptName::AuditSkill)
   assert_true(body.contains("After the worker returns successfully"))
   assert_true(body.contains("git rev-parse HEAD"))
   assert_true(body.contains("git rev-parse --abbrev-ref HEAD"))
@@ -814,6 +642,39 @@ test "synthesize_plugin_dir produces all builtin skill directories" {
   )
 
   ignore(@sys.rm_rf(tmp))
+}
+
+///|
+test "synthesize_plugin_dir uses project prompt override for builtin skill" {
+  let tmp = "/tmp/choir-plugin-prompt-override-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let fake_home = "/tmp/choir-plugin-prompt-override-home-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(tmp))
+  ignore(@sys.rm_rf(fake_home))
+  ignore(@sys.create_dir_all(tmp + "/.choir/prompts/skills"))
+  ignore(
+    @sys.write_file_sync(
+      tmp + "/.choir/prompts/skills/audit.md",
+      "local audit skill\n",
+    ),
+  )
+
+  match synthesize_plugin_dir(tmp, fake_home) {
+    Ok(_) => ()
+    Err(e) => {
+      fail("synthesize_plugin_dir failed: " + e.message())
+      return
+    }
+  }
+
+  assert_eq(
+    @sys.read_file(tmp + "/.choir/plugin/skills/audit/SKILL.md"),
+    "local audit skill\n",
+  )
+
+  ignore(@sys.rm_rf(tmp))
+  ignore(@sys.rm_rf(fake_home))
 }
 
 ///|

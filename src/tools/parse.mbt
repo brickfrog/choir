@@ -889,7 +889,11 @@ pub fn parse_fork_wave_args(
       }
       let spec = { ..base_leaf_spec, task_contract, }
       rendered.push(
-        render_leaf_spawn_prompt_with_defaults(spec, default_read_first),
+        render_leaf_spawn_prompt_with_defaults(
+          spec,
+          default_read_first,
+          project_dir~,
+        ),
       )
       task_contracts.push(task_contract)
     }
@@ -907,7 +911,13 @@ pub fn parse_fork_wave_args(
         base_spec.task_contract
       }
       let spec = { ..base_spec, task_contract, }
-      arr.push(render_leaf_spawn_prompt_with_defaults(spec, default_read_first))
+      arr.push(
+        render_leaf_spawn_prompt_with_defaults(
+          spec,
+          default_read_first,
+          project_dir~,
+        ),
+      )
       task_contracts.push(task_contract)
     }
     arr
@@ -1069,6 +1079,7 @@ fn parse_leaf_spawn_args(
     task: render_leaf_spawn_prompt_with_defaults(
       prompt_spec,
       @workspace.resolve_context_paths(project_dir, "dev"),
+      project_dir~,
     ),
     task_contract: prompt_spec.task_contract,
     caller_id,
@@ -1123,6 +1134,7 @@ fn parse_worker_spawn_args(
     task: render_worker_spawn_prompt_with_defaults(
       prompt_spec,
       @workspace.resolve_context_paths(project_dir, "worker"),
+      project_dir~,
     ),
     task_contract: prompt_spec.task_contract,
     caller_id,
