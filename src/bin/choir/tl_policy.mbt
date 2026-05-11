@@ -58,50 +58,6 @@ fn tl_policy_agent_id(
 }
 
 ///|
-fn trim_wrapped_double_quotes(s : String) -> String {
-  let trimmed = s.trim().to_owned()
-  if trimmed.length() >= 2 &&
-    trimmed[0] == '"' &&
-    trimmed[trimmed.length() - 1] == '"' {
-    trimmed[1:trimmed.length() - 1].to_owned()
-  } else {
-    trimmed
-  }
-}
-
-///|
-fn git_status_changed_path(line : String) -> String {
-  if line.length() < 4 {
-    return ""
-  }
-  let body = line[3:].trim().to_owned()
-  if body == "" {
-    return ""
-  }
-  let path = match body.split_once(" -> ") {
-    Some((_, to)) => to.to_owned()
-    None => body
-  }
-  trim_wrapped_double_quotes(path)
-}
-
-///|
-fn git_status_changed_paths(output : String) -> Array[String] {
-  let paths : Array[String] = []
-  for raw_line in output.split("\n") {
-    let line = raw_line.trim().to_owned()
-    if line == "" {
-      continue
-    }
-    let path = git_status_changed_path(line)
-    if path != "" {
-      paths.push(path)
-    }
-  }
-  paths
-}
-
-///|
 async fn tl_policy_status_paths(repo_dir : String) -> Array[String] {
   let cmd : @workspace.Command = {
     program: "git",
@@ -112,7 +68,10 @@ async fn tl_policy_status_paths(repo_dir : String) -> Array[String] {
   if exit_code != 0 {
     return []
   }
-  git_status_changed_paths(output)
+  // Use the shared, fixed parser (@policy): it doesn't left-trim porcelain
+  // lines before slicing column 3 (the local copy here used to corrupt
+  // ` M src/foo.mbt` -> `rc/foo.mbt`) and returns both sides of a rename.
+  @policy.git_status_changed_paths(output)
 }
 
 ///|
@@ -329,16 +288,6 @@ fn tl_parent_override_run() -> Unit {
       "TL parent-branch override cleared for " + agent_id + "\n",
     )
   }
-}
-
-///|
-test "git_status_changed_path parses plain and rename lines" {
-  assert_eq(git_status_changed_path(" M src/main.mbt"), "src/main.mbt")
-  assert_eq(git_status_changed_path("R  old.md -> docs/new.md"), "docs/new.md")
-  assert_eq(
-    git_status_changed_path("?? \"notes with space.md\""),
-    "notes with space.md",
-  )
 }
 
 ///|
