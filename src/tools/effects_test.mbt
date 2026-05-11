@@ -68,20 +68,45 @@ test "unpushed commits yields UnpushedCommits after log capture" {
 }
 
 ///|
-test "all skipped with no spawned yields already_running" {
+test "all skipped with no spawned yields already_running without git probes" {
+  // The already-running path must short-circuit BEFORE the clean gate so
+  // a no-op fork_wave call doesn't mutate or push the parent branch.
+  // Asserting Pure(...) directly proves no GitCaptures happened.
   let plan = @tools.fork_wave_plan(".", [], 0, 1, "", "main.leaf-0")
-  let after_both_checks = match plan {
-    GitCapture(cont~, ..) =>
-      match cont("") {
-        GitCapture(cont~, ..) => cont("")
-        other => other
-      }
-    _ => fail("expected two GitCaptures")
-  }
-  match after_both_checks {
+  match plan {
     Pure(Ok(@types.Response::Ok(vals))) =>
       @debug.assert_eq(vals.get("status"), Some("already_running"))
-    _ => fail("expected Pure(Ok(already_running))")
+    _ =>
+      fail(
+        "expected Pure(Ok(already_running)) with no git probes for a no-op fork_wave",
+      )
+  }
+}
+
+///|
+test "all skipped with scaffold_commit still short-circuits without running scaffold" {
+  // The pre-scaffold check must also fire for the scaffold path: if every
+  // leaf is deduped, we must not push a scaffold commit for a no-op call.
+  let scaffold = @tools.ForkWaveScaffoldCommit::{
+    message: "scaffold: shared struct field",
+    paths: ["src/server/state.mbt"],
+  }
+  let plan = @tools.fork_wave_plan(
+    ".",
+    [],
+    0,
+    1,
+    "",
+    "main.leaf-0",
+    scaffold_commit=Some(scaffold),
+  )
+  match plan {
+    Pure(Ok(@types.Response::Ok(vals))) =>
+      @debug.assert_eq(vals.get("status"), Some("already_running"))
+    _ =>
+      fail(
+        "expected Pure(Ok(already_running)) — scaffold must not run for a no-op fork_wave",
+      )
   }
 }
 

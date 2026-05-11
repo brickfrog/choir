@@ -9,6 +9,8 @@ pub(all) enum ForkWaveError {
   /// Local commits exist that haven't been pushed.
   /// `output` is the raw `git log @{u}..HEAD` output.
   UnpushedCommits(output~ : String)
+  /// Dirty paths outside scaffold_commit.paths exist before scaffold commit.
+  ScaffoldCommitUnrelatedChanges(output~ : String)
   /// A scaffold_commit path has no working-tree/index change to commit.
   ScaffoldCommitPathUnchanged(path~ : String)
   /// A scaffold_commit git command exited with a non-zero status.
@@ -25,6 +27,9 @@ pub fn ForkWaveError::message(self : ForkWaveError) -> String {
       output.trim().to_owned()
     UnpushedCommits(output~) =>
       "Unpushed commits exist. Run 'git push' first, then call fork_wave.\n" +
+      output.trim().to_owned()
+    ScaffoldCommitUnrelatedChanges(output~) =>
+      "scaffold_commit requires only scaffold paths to be dirty. Unrelated changes:\n" +
       output.trim().to_owned()
     ScaffoldCommitPathUnchanged(path~) =>
       "scaffold_commit path has no changes or does not exist: " + path
@@ -260,6 +265,68 @@ fn fork_wave_scaffold_commit_phase(
 }
 
 ///|
+/// Preflight check before scaffold_commit runs git add/commit/push. Ensures:
+/// (a) the parent branch has no unpushed commits (otherwise scaffold's push
+///     would silently ship pre-existing local work the operator hadn't
+///     reviewed), and
+/// (b) the working tree is clean OUTSIDE the scaffold paths (otherwise the
+///     scaffold commit goes through but the post-scaffold clean_gate then
+///     fails, leaving a pushed commit behind that's now hard to back out).
+/// Dirty entries that match `scaffold.paths` are expected and allowed —
+/// they're what the scaffold is going to commit.
+fn fork_wave_scaffold_preflight_phase(
+  project_dir : String,
+  scaffold : ForkWaveScaffoldCommit,
+  cmds : Array[@workspace.Command],
+  spawned_count : Int,
+  skipped_count : Int,
+  agent_ids : String,
+  skipped_ids : String,
+) -> Eff[Result[@types.Response, ForkWaveError]] {
+  GitCapture(
+    program="git",
+    args=["-C", project_dir, "log", "--oneline", "@{u}..HEAD"],
+    cont=fn(unpushed_out) {
+      if unpushed_out.trim().to_owned() != "" {
+        Pure(Err(UnpushedCommits(output=unpushed_out.trim().to_owned())))
+      } else {
+        GitCapture(
+          program="git",
+          args=["-C", project_dir, "status", "--porcelain"],
+          cont=fn(status_out) {
+            let scaffold_paths : Map[String, Bool] = {}
+            for p in scaffold.paths {
+              scaffold_paths.set(p, true)
+            }
+            let unrelated : Array[String] = []
+            for line in status_out.split("\n") {
+              let trimmed = line.to_owned()
+              if trimmed.length() < 4 {
+                continue
+              }
+              // `git status --porcelain` line shape: 'XY path' where XY is
+              // the two-char status code. Path starts at index 3.
+              let path = trimmed[3:].to_owned()
+              if !scaffold_paths.contains(path) {
+                unrelated.push(trimmed)
+              }
+            }
+            if unrelated.length() > 0 {
+              Pure(Err(UncommittedChanges(output=unrelated.join("\n"))))
+            } else {
+              fork_wave_scaffold_commit_phase(
+                project_dir, scaffold, cmds, spawned_count, skipped_count, agent_ids,
+                skipped_ids, 0,
+              )
+            }
+          },
+        )
+      }
+    },
+  )
+}
+
+///|
 pub fn fork_wave_plan(
   project_dir : String,
   cmds : Array[@workspace.Command],
@@ -269,15 +336,29 @@ pub fn fork_wave_plan(
   skipped_ids : String,
   scaffold_commit? : ForkWaveScaffoldCommit? = None,
 ) -> Eff[Result[@types.Response, ForkWaveError]] {
+  // Already-running short-circuit BEFORE any scaffold work: if every
+  // requested leaf was deduped, fork_wave is a no-op and must not mutate
+  // the parent branch. `fork_wave_spawn_commands_phase` already returns
+  // the already_running response without running cmds; route there
+  // directly when scaffold is present too, so a no-op fork_wave call
+  // can't accidentally push a scaffold commit.
+  if spawned_count == 0 && skipped_count > 0 {
+    return fork_wave_spawn_commands_phase(
+      cmds, spawned_count, skipped_count, agent_ids, skipped_ids,
+    )
+  }
   match scaffold_commit {
     None =>
       fork_wave_clean_gate_phase(
         project_dir, cmds, spawned_count, skipped_count, agent_ids, skipped_ids,
       )
     Some(scaffold) =>
-      fork_wave_scaffold_commit_phase(
+      // Preflight before scaffold runs: no unpushed commits AND only the
+      // scaffold paths are dirty. Without this, scaffold could push
+      // pre-existing local work OR leave a pushed scaffold commit behind
+      // when the post-scaffold clean_gate later fails.
+      fork_wave_scaffold_preflight_phase(
         project_dir, scaffold, cmds, spawned_count, skipped_count, agent_ids, skipped_ids,
-        0,
       )
   }
 }
