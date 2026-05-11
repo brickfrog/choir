@@ -237,6 +237,20 @@ fn unquote_token(token : String) -> String {
 }
 
 ///|
+/// Apply [`unquote_token`] to every token. `detect_git_command_write` does
+/// this once up front so the subcommand match and every downstream flag /
+/// subcommand comparison sees the bare text — `git "commit" -m x` and
+/// `git reset "--hard" HEAD~1` must not slip past just because the shell
+/// command happened to quote the verb or a flag.
+fn unquoted_tokens(tokens : Array[String]) -> Array[String] {
+  let out : Array[String] = []
+  for token in tokens {
+    out.push(unquote_token(token))
+  }
+  out
+}
+
+///|
 /// True if `token` invokes git — bare `git`, `\git`, `"git"`, a path ending in
 /// `/git` (`/usr/bin/git`, `./git`), or the same with a `.exe` suffix. Used
 /// both to find git invocations and as the boundary marker when scanning a
@@ -406,7 +420,7 @@ fn subcommand_args_contain_any(
 /// calls and git Bash commands; arbitrary shell mutations are out of scope by
 /// design and are the job of the post-hoc `tl-policy-watch` log, not this gate.
 fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
-  let tokens = shellish_tokens(command)
+  let tokens = unquoted_tokens(shellish_tokens(command))
   for i = 0; i < tokens.length(); i = i + 1 {
     if !is_git_invocation_token(tokens[i]) {
       continue

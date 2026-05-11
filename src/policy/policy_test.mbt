@@ -730,3 +730,31 @@ test "detect_parent_branch_write_kind exempts `git pull --dry-run`" {
     _ => fail("expected Other(git pull) for plain `git pull`")
   }
 }
+
+///|
+test "detect_parent_branch_write_kind sees through quoted subcommands and flags" {
+  // `shellish_tokens` doesn't strip shell quotes, so the subcommand verb and
+  // any flags can arrive quoted; detect_git_command_write unquotes every
+  // token first so `git "commit"` / `git reset "--hard"` / `git checkout
+  // "-b" "feat"` still classify correctly.
+  let commit = parent_write_req("bash", { "command": "git \"commit\" -m x" })
+  match detect_parent_branch_write_kind(commit) {
+    Some(ParentBranchWriteKind::GitCommit) => ()
+    _ => fail("expected GitCommit for quoted subcommand")
+  }
+  let reset_hard = parent_write_req("bash", {
+    "command": "git reset '--hard' HEAD~1",
+  })
+  match detect_parent_branch_write_kind(reset_hard) {
+    Some(ParentBranchWriteKind::GitResetHard) => ()
+    _ => fail("expected GitResetHard for quoted --hard")
+  }
+  let checkout_b = parent_write_req("bash", {
+    "command": "git checkout \"-b\" \"feat\"",
+  })
+  match detect_parent_branch_write_kind(checkout_b) {
+    Some(ParentBranchWriteKind::GitCheckout(target~)) =>
+      assert_eq(target, "feat")
+    _ => fail("expected GitCheckout(feat) for quoted -b and branch name")
+  }
+}
