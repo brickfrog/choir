@@ -337,9 +337,9 @@ test "detect_parent_branch_write_kind recognizes tracked file edit tools" {
     "file_path": "src/tools/dispatch.mbt",
   })
   match detect_parent_branch_write_kind(req) {
-    Some(ParentBranchWriteKind::FileEditOnTrackedPath(path~)) =>
+    Some(ParentBranchWriteKind::FileEditOnRepoPath(path~)) =>
       assert_eq(path, "src/tools/dispatch.mbt")
-    _ => fail("expected FileEditOnTrackedPath")
+    _ => fail("expected FileEditOnRepoPath")
   }
 }
 

@@ -4,7 +4,7 @@ pub(all) enum ParentBranchWriteKind {
   GitPush
   GitResetHard
   GitCheckout(target~ : String)
-  FileEditOnTrackedPath(path~ : String)
+  FileEditOnRepoPath(path~ : String)
   Other(detail~ : String)
 } derive(Debug, Eq)
 
@@ -26,7 +26,7 @@ pub fn ParentBranchWriteKind::to_wire_string(
     GitPush => "git_push"
     GitResetHard => "git_reset_hard"
     GitCheckout(target~) => "git_checkout:" + target
-    FileEditOnTrackedPath(path~) => "file_edit_on_tracked_path:" + path
+    FileEditOnRepoPath(path~) => "file_edit_on_repo_path:" + path
     Other(detail~) => "other:" + detail
   }
 }
@@ -534,7 +534,7 @@ pub fn detect_parent_branch_write_kind(
           if trimmed == "" {
             None
           } else {
-            Some(ParentBranchWriteKind::FileEditOnTrackedPath(path=trimmed))
+            Some(ParentBranchWriteKind::FileEditOnRepoPath(path=trimmed))
           }
         }
         None => None

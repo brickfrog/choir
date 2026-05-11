@@ -514,13 +514,12 @@ async fn parent_branch_policy_changed_paths(
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Array[String]? {
   match kind {
-    @policy.ParentBranchWriteKind::FileEditOnTrackedPath(path~) => {
-      // The variant name says "Tracked" but a brand-new file under the
-      // repo root (e.g. a Write of src/foo.mbt that doesn't yet exist) is
-      // just as much a parent-branch write as editing a tracked file —
-      // git ls-files would return nothing for it, so requiring "tracked"
-      // here would let new source files slip past the gate. Treat ANY
-      // edit whose path resolves inside the repo as a changed path; the
+    @policy.ParentBranchWriteKind::FileEditOnRepoPath(path~) => {
+      // ANY edit whose path resolves inside the repo is a changed path —
+      // including a brand-new file (a Write of src/foo.mbt that doesn't yet
+      // exist): git ls-files would return nothing for it, so a "tracked
+      // only" check would let new source files slip past the gate, which is
+      // why the variant is `FileEditOnRepoPath`, not `...TrackedPath`. The
       // doc-vs-source classification in decide_tl_parent_branch_write
       // decides whether it actually blocks. Only edits outside the repo
       // (rel_path is None) are exempt. The repo toplevel is needed because

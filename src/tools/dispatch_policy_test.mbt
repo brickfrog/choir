@@ -258,7 +258,7 @@ async test "dispatch_call refuses Write of a new untracked source file during li
   match resp {
     @types.Response::Err(msg) => {
       assert_true(msg.contains("policy refused: parent-branch write"))
-      assert_true(msg.contains("kind=file_edit_on_tracked_path"))
+      assert_true(msg.contains("kind=file_edit_on_repo_path"))
     }
     @types.Response::Ok(_) =>
       fail("expected new-untracked-source-file Write to be refused")
@@ -414,7 +414,7 @@ async test "dispatch_call refuses an absolute in-repo source Write with project_
   match resp {
     @types.Response::Err(msg) => {
       assert_true(msg.contains("policy refused: parent-branch write"))
-      assert_true(msg.contains("kind=file_edit_on_tracked_path"))
+      assert_true(msg.contains("kind=file_edit_on_repo_path"))
     }
     @types.Response::Ok(_) =>
       fail(
@@ -476,7 +476,7 @@ async test "dispatch_call refuses a `docs/..`-traversal source Write during live
   match resp {
     @types.Response::Err(msg) => {
       assert_true(msg.contains("policy refused: parent-branch write"))
-      assert_true(msg.contains("kind=file_edit_on_tracked_path"))
+      assert_true(msg.contains("kind=file_edit_on_repo_path"))
     }
     @types.Response::Ok(_) =>
       fail("a docs/.. traversal to a source path must be refused")
@@ -600,7 +600,7 @@ async test "dispatch_call refuses /repo/docs/x.svg Write with project_dir=. when
   match resp {
     @types.Response::Err(msg) => {
       assert_true(msg.contains("policy refused: parent-branch write"))
-      assert_true(msg.contains("kind=file_edit_on_tracked_path"))
+      assert_true(msg.contains("kind=file_edit_on_repo_path"))
     }
     @types.Response::Ok(_) =>
       fail(
