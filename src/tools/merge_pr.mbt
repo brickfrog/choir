@@ -1496,8 +1496,8 @@ pub async fn interpret_merge_pr(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
-  append_file? : (String, String) -> Bool = @sys.append_file_sync,
-  path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  append_file : (String, String) -> Bool,
+  path_exists : (String) -> Bool,
 ) -> @types.Response {
   match
     interpret_merge_pr_preflight(

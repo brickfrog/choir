@@ -1383,6 +1383,8 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     None,
     mock_runner_merge_pr_must_not_run,
     mock_preflight_capture_no_unresolved_threads,
+    @sys.append_file_sync,
+    @sys.path_entry_exists,
   )
   match got {
     @types.Response::Err(msg) => assert_true(msg.contains("ChangesRequested"))
@@ -1416,6 +1418,8 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
     None,
     mock_merge_host_runner_gh_fails,
     mock_merge_host_capture_for_merge,
+    @sys.append_file_sync,
+    @sys.path_entry_exists,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -1455,6 +1459,8 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     None,
     mock_merge_host_runner_ok,
     mock_preflight_capture_approved_no_graphql,
+    @sys.append_file_sync,
+    @sys.path_entry_exists,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -1626,8 +1632,8 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     Some(reg),
     runner,
     capture,
-    append_file~,
-    path_exists=fn(_path) { false },
+    append_file,
+    fn(_path) { false },
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -1739,8 +1745,8 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
     Some(reg),
     runner,
     capture,
-    append_file=fn(_path, _content) { true },
-    path_exists=fn(_path) { false },
+    fn(_path, _content) { true },
+    fn(_path) { false },
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -1821,8 +1827,8 @@ async test "interpret_merge_pr leaf merge removes worktree and deletes local bra
     Some(reg),
     runner,
     capture,
-    append_file=fn(_path, _content) { true },
-    path_exists=fn(path) { path == leaf },
+    fn(_path, _content) { true },
+    fn(path) { path == leaf },
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -1845,6 +1851,81 @@ async test "interpret_merge_pr leaf merge removes worktree and deletes local bra
       cmd.workdir == Some(project_dir)
     }),
   )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "dispatch merge_pr routes injected append_file and path_exists" {
+  let project_dir = "/tmp/choir-mpr-dispatch-inject-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_enable_force_override(project_dir)
+  let feature_branch = "feature/dispatch-cleanup"
+  let leaf_branch = feature_branch + ".leaf-a"
+  let leaf = merge_pr_test_write_beads_contract(
+    project_dir,
+    feature_branch,
+    "leaf-a",
+    Some("choir-a"),
+  )
+  let reg = merge_pr_test_registry_for_feature(project_dir, feature_branch, [
+    ("leaf-a", leaf),
+  ])
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    81,
+    leaf_branch,
+    leaf_branch,
+    feature_branch,
+    "https://github.com/o/r/pull/81",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let logs : Array[String] = []
+  let path_checks : Array[String] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    (0, "")
+  }
+  let resp = dispatch(
+    ToolRequest::MergePr({
+      pr_number: 81,
+      parent_branch: feature_branch,
+      caller_id: "main.tl",
+      force: true,
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    registry=Some(reg),
+    runner=mock_merge_host_runner_ok,
+    capture~,
+    append_file=fn(_path, content) {
+      logs.push(content)
+      true
+    },
+    path_exists=fn(path) {
+      path_checks.push(path)
+      path == leaf
+    },
+  )
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected dispatch merge success: " + msg)
+  }
+  assert_true(path_checks.contains(leaf))
+  assert_true(logs.length() > 0)
+  assert_true(logs.iter().any(fn(line) { line.contains("merge_pr cleanup") }))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1899,8 +1980,8 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
     None,
     runner,
     capture,
-    append_file=fn(_path, _content) { true },
-    path_exists=fn(_path) { false },
+    fn(_path, _content) { true },
+    fn(_path) { false },
   )
   match got {
     @types.Response::Ok(_) => ()
