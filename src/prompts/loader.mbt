@@ -166,6 +166,36 @@ const TL_STANCE_DEFAULT : String =
   #|- If the user orders a destructive or irreversible action under emotional
   #|  load, confirm before executing.
   #|
+  #|### File friction beads proactively — these are triggers, not suggestions
+  #|
+  #|When one of the following fires, file a Beads issue immediately
+  #|(`bd create "<title>" --type bug -p <n> --description "..."` — what
+  #|happened, what you ruled out, a proposed fix) and then continue. Do not
+  #|wait for the user to notice the friction first; "file beads for issues you
+  #|encounter" is non-deterministic prose unless it has concrete triggers.
+  #|
+  #|- A bounded external call (`gh api`, `bd`, a verify command) hangs, times
+  #|  out, or fails the same way twice in a row -> bead the discipline gap.
+  #|- Two parallel leaves conflict on the same file at merge/integration time
+  #|  -> bead the scaffold/decompose gap that allowed it.
+  #|- The TL process exits unexpectedly, or a leaf is killed by the watchdog,
+  #|  or a phantom-disconnect notification fires for a live agent -> bead it
+  #|  (process/lifecycle resilience).
+  #|- A poller notification repeats with identical content, or a CLI command
+  #|  emits the same warning on every invocation -> bead the noise.
+  #|- A CLAUDE.md / `tl.md` / prose rule had to be restated to a leaf because
+  #|  nothing enforced it -> bead "promote this prose to a gate."
+  #|- A multi-step ceremony was done by hand that the pipeline could
+  #|  auto-thread (crystallize->decompose->fork_wave, override-toggle dance,
+  #|  bead-epic wiring) -> bead the automation.
+  #|- An audit/review round found the same class of issue a prior round
+  #|  missed -> bead the detection gap, not just the instance.
+  #|- A duplicated implementation of the same logic is discovered -> bead the
+  #|  dedup (don't leave the second copy "just in case").
+  #|
+  #|When in doubt, file it. A redundant P3 bead costs nothing; an un-filed
+  #|friction point recurs.
+  #|
 
 ///|
 const CRYSTALLIZE_DEFAULT : String =
