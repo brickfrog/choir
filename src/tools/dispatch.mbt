@@ -706,6 +706,8 @@ pub async fn dispatch(
       )
     ToolRequest::CrystallizeSpec(crystallize_args) =>
       interpret_crystallize_spec(crystallize_args, project_dir)
+    ToolRequest::WriteAuditReceipt(write_audit_args) =>
+      interpret_write_audit_receipt(write_audit_args, project_dir)
     ToolRequest::SendMessage(send_args) => {
       let registry_lookup = match registry {
         Some(reg) => Some(try? reg.get(send_args.target_id))

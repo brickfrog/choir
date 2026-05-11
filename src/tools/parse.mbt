@@ -1591,6 +1591,39 @@ fn parse_crystallize_spec_args(
 }
 
 ///|
+fn parse_write_audit_receipt_args(
+  args : ToolArgs,
+) -> Result[WriteAuditReceiptArgs, ParseError] {
+  let caller_id = tool_args_get(args, "caller_id").unwrap_or("")
+  if caller_id == "" {
+    return Err(ParseError::MissingField(field="caller_id"))
+  }
+  let sha = tool_args_get(args, "sha").unwrap_or("")
+  if sha == "" {
+    return Err(ParseError::MissingField(field="sha"))
+  }
+  let branch = tool_args_get(args, "branch").unwrap_or("")
+  if branch == "" {
+    return Err(ParseError::MissingField(field="branch"))
+  }
+  let findings_count_raw = tool_args_get(args, "findings_count").unwrap_or("")
+  if findings_count_raw == "" {
+    return Err(ParseError::MissingField(field="findings_count"))
+  }
+  let findings_count = match parse_int(findings_count_raw) {
+    Some(v) if v >= 0 => v
+    _ =>
+      return Err(
+        ParseError::InvalidValue(
+          field="findings_count",
+          value=findings_count_raw,
+        ),
+      )
+  }
+  Ok({ caller_id, sha, branch, findings_count })
+}
+
+///|
 fn parse_send_message_args(
   args : ToolArgs,
 ) -> Result[SendMessageArgs, ParseError] {
@@ -1722,6 +1755,10 @@ fn parse_tool_request(
     "crystallize_spec" =>
       parse_crystallize_spec_args(args).map(fn(a) {
         ToolRequest::CrystallizeSpec(a)
+      })
+    "write_audit_receipt" =>
+      parse_write_audit_receipt_args(args).map(fn(a) {
+        ToolRequest::WriteAuditReceipt(a)
       })
     "send_message" =>
       parse_send_message_args(args).map(fn(a) { ToolRequest::SendMessage(a) })
@@ -1988,6 +2025,21 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
       assert_eq(args.caller_id, "agent-1")
     }
     Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_write_audit_receipt_args requires findings_count" {
+  match
+    parse_write_audit_receipt_args(
+      tool_args_from_map({
+        "caller_id": "main.tl",
+        "sha": "abcdef1234567890abcdef1234567890abcdef12",
+        "branch": "feature/workflow-gates",
+      }),
+    ) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "findings_count")
+    _ => fail("expected MissingField(findings_count)")
   }
 }
 

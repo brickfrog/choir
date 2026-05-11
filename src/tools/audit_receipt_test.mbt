@@ -1,0 +1,101 @@
+///|
+test "plan_write_audit_receipt emits typed JSON payload" {
+  let sha = "abcdef1234567890abcdef1234567890abcdef12"
+  let plan = plan_write_audit_receipt(
+    {
+      caller_id: "main.tl",
+      sha,
+      branch: "feature/workflow-gates",
+      findings_count: 0,
+    },
+    1770000000L,
+  ).unwrap()
+  assert_eq(plan.path, ".choir/audit-receipts/abcdef123456.json")
+  let decoded : @types.AuditReceipt = @json.from_json(
+    @json.parse(plan.content) catch {
+      _ => {
+        fail("receipt JSON did not parse")
+        return
+      }
+    },
+  ) catch {
+    _ => {
+      fail("receipt JSON did not decode")
+      return
+    }
+  }
+  @debug.assert_eq(decoded, plan.receipt)
+  assert_eq(decoded.findings_count, 0)
+}
+
+///|
+test "plan_write_audit_receipt trims identity fields before writing" {
+  let plan = plan_write_audit_receipt(
+    {
+      caller_id: " main.tl ",
+      sha: " abcdef1234567890abcdef1234567890abcdef12 ",
+      branch: " feature/workflow-gates ",
+      findings_count: 0,
+    },
+    1770000000L,
+  ).unwrap()
+  assert_eq(plan.path, ".choir/audit-receipts/abcdef123456.json")
+  assert_eq(plan.receipt.sha, "abcdef1234567890abcdef1234567890abcdef12")
+  assert_eq(plan.receipt.branch, "feature/workflow-gates")
+  assert_eq(plan.receipt.agent_id, "main.tl")
+}
+
+///|
+test "interpret_write_audit_receipt writes typed receipt through injected fs" {
+  let writes : Array[(String, String)] = []
+  let mut mkdir_path = ""
+  let resp = interpret_write_audit_receipt(
+    {
+      caller_id: "main.tl",
+      sha: "fedcba654321fedcba654321fedcba654321fedc",
+      branch: "feature/workflow-gates",
+      findings_count: 2,
+    },
+    "/repo",
+    now_sec=fn() { 1770000001L },
+    create_dir_all=fn(path) {
+      mkdir_path = path
+      true
+    },
+    fs_writer=fn(path, content) {
+      writes.push((path, content))
+      true
+    },
+  )
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some("ok".to_json()))
+      @debug.assert_eq(
+        map.get("path"),
+        Some(".choir/audit-receipts/fedcba654321.json".to_json()),
+      )
+      @debug.assert_eq(map.get("findings_count"), Some(Int::to_json(2)))
+    }
+    @types.Response::Err(msg) => fail("expected write response: " + msg)
+  }
+  assert_eq(mkdir_path, "/repo/.choir/audit-receipts")
+  assert_eq(writes.length(), 1)
+  let (path, content) = writes[0]
+  assert_eq(path, "/repo/.choir/audit-receipts/fedcba654321.json")
+  let decoded : @types.AuditReceipt = @json.from_json(
+    @json.parse(content) catch {
+      _ => {
+        fail("written receipt JSON did not parse")
+        return
+      }
+    },
+  ) catch {
+    _ => {
+      fail("written receipt JSON did not decode")
+      return
+    }
+  }
+  assert_eq(decoded.agent_id, "main.tl")
+  assert_eq(decoded.findings_count, 2)
+}
