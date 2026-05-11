@@ -938,11 +938,18 @@ async test "interpret_fork_wave_spawn_effect_phase fails loudly when scaffold co
     mock_git_capture_fork_wave_scaffold_changed,
     runner,
   )
+  // Runner ran exactly once. The error path must NOT re-run the failing
+  // scaffold command to capture stderr — re-execution of git
+  // add/commit/push would be side-effectful (could succeed on the second
+  // attempt while we report Err, leaving the repo mutated). Confirm the
+  // error reports the failing argv from the original execution without a
+  // second invocation.
   assert_eq(runner_seq[0], 1)
   match resp {
     @types.Response::Err(msg) => {
-      assert_true(msg.contains("scaffold_commit failed"))
-      assert_true(msg.contains("nothing to commit"))
+      assert_true(msg.contains("scaffold_commit command failed"))
+      assert_true(msg.contains("argv:"))
+      assert_true(msg.contains("commit"))
     }
     @types.Response::Ok(_) => fail("expected scaffold_commit failure")
   }

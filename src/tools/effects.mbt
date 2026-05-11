@@ -365,7 +365,13 @@ fn fork_wave_scaffold_preflight_phase(
                     }
                   }
                   if unrelated.length() > 0 {
-                    Pure(Err(UncommittedChanges(output=unrelated.join("\n"))))
+                    Pure(
+                      Err(
+                        ScaffoldCommitUnrelatedChanges(
+                          output=unrelated.join("\n"),
+                        ),
+                      ),
+                    )
                   } else {
                     fork_wave_scaffold_commit_phase(
                       project_dir, scaffold, cmds, spawned_count, skipped_count,

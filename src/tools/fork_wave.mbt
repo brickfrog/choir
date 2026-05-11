@@ -254,22 +254,21 @@ pub async fn fork_wave_response_from_interpret_result(
       }
     }
     Err(ScaffoldCommandFailed(status~, failing_cmd~)) => {
-      let detail = match failing_cmd {
-        Some(cmd) => {
-          let (_, output) = capture_output(cmd)
-          output.trim().to_owned()
-        }
+      // Do NOT re-run the failing scaffold command to capture its output:
+      // `git add` / `git commit` / `git push` are side-effectful and a
+      // second run could succeed (leaving the repo mutated unexpectedly)
+      // OR multiply state (extra commit/push). Report the failing argv
+      // and exit status without re-execution; the operator can inspect
+      // the repo state directly.
+      let argv_detail = match failing_cmd {
+        Some(cmd) => " (argv: " + cmd.program + " " + cmd.args.join(" ") + ")"
         None => ""
       }
-      if detail != "" {
-        @types.Response::Err(
-          "scaffold_commit failed (exit " + status.to_string() + "): " + detail,
-        )
-      } else {
-        @types.Response::Err(
-          "scaffold_commit command failed with status " + status.to_string(),
-        )
-      }
+      @types.Response::Err(
+        "scaffold_commit command failed with status " +
+        status.to_string() +
+        argv_detail,
+      )
     }
     Err(e) => @types.Response::Err(e.message())
   }
