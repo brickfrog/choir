@@ -364,3 +364,146 @@ async test "dispatch_call still allows a doc-only git commit during live wave" {
     @types.Response::Ok(_) => ()
   }
 }
+
+///|
+/// git capture that, unlike `dispatch_policy_git_capture`, also answers
+/// `git rev-parse --show-toplevel` with an absolute repo root. Used to prove
+/// the parent-branch gate handles the *production* shape — `init` writes
+/// `project_dir = "."` and the server forwards it unchanged, so tool-supplied
+/// absolute paths must still be reduced to repo-relative paths rather than
+/// slipping past the gate.
+async fn dispatch_policy_git_capture_with_toplevel(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "git" && cmd.args == ["rev-parse", "--show-toplevel"] {
+    return (0, "/repo\n")
+  }
+  if cmd.program == "git" && cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+    return (0, "main\n")
+  }
+  if cmd.program == "git" &&
+    cmd.args == ["status", "--porcelain", "--untracked-files=all"] {
+    return (0, "")
+  }
+  (0, "")
+}
+
+///|
+/// With `project_dir = "."` (the production value) a Write of an absolute
+/// in-repo source path must still be refused during a live wave. Before the
+/// repo-toplevel resolution, the relative-path helper compared the absolute
+/// path against the literal `"./"` prefix, failed, hit the `has_prefix("/")`
+/// branch, and returned `None` — silently bypassing the gate.
+async test "dispatch_call refuses an absolute in-repo source Write with project_dir=\".\" during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "Write",
+      args: {
+        "file_path": "/repo/src/server/state.mbt",
+        "content": "pub fn x() -> Int { 1 }",
+        "caller_id": "main.tl",
+      },
+    },
+    project_dir=".",
+    capture=dispatch_policy_git_capture_with_toplevel,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=file_edit_on_tracked_path"))
+    }
+    @types.Response::Ok(_) =>
+      fail(
+        "expected absolute in-repo Write to be refused with project_dir=\".\"",
+      )
+  }
+}
+
+///|
+/// An absolute path *outside* the repo toplevel is not a parent-branch write
+/// — writing it must not be refused even during a live wave.
+async test "dispatch_call allows an absolute out-of-repo Write during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "Write",
+      args: {
+        "file_path": "/etc/somewhere/notes.json",
+        "content": "{}",
+        "caller_id": "main.tl",
+      },
+    },
+    project_dir=".",
+    capture=dispatch_policy_git_capture_with_toplevel,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) =>
+      if msg.contains("policy refused: parent-branch write") {
+        fail("an absolute path outside the repo must not be refused")
+      }
+    @types.Response::Ok(_) => ()
+  }
+}
+
+///|
+/// `git reset --hard <ref>` moves HEAD and overwrites the working tree — it
+/// must be refused during a live wave even when the only currently-dirty path
+/// is a doc file (it does NOT get the doc-only carve-out that `git commit`
+/// does).
+async test "dispatch_call refuses git reset --hard even when only docs are dirty during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "bash",
+      args: { "command": "git reset --hard HEAD~1", "caller_id": "main.tl" },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture_doc_only_dirty,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=git_reset_hard"))
+    }
+    @types.Response::Ok(_) =>
+      fail("git reset --hard must be refused during a live wave")
+  }
+}
+
+///|
+/// `git checkout main -- src/foo.mbt` rewrites src/foo.mbt regardless of the
+/// current branch. Even though the current branch reported by the capture is
+/// `main`, this must be refused — it is a path restore, not a no-op branch
+/// checkout.
+async test "dispatch_call refuses git checkout <ref> -- <paths> during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "bash",
+      args: {
+        "command": "git checkout main -- src/tools/dispatch.mbt",
+        "caller_id": "main.tl",
+      },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=other"))
+    }
+    @types.Response::Ok(_) =>
+      fail("git checkout <ref> -- <paths> must be refused during a live wave")
+  }
+}

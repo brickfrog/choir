@@ -49,31 +49,58 @@ fn trim_wrapped_double_quotes(s : String) -> String {
 }
 
 ///|
-pub fn git_status_changed_path(line : String) -> String {
+fn strip_trailing_cr(line : String) -> String {
+  if line.length() > 0 && line[line.length() - 1] == '\r' {
+    line[0:line.length() - 1].to_owned()
+  } else {
+    line
+  }
+}
+
+///|
+/// Parse the affected path(s) from one `git status --porcelain` v1 line.
+///
+/// Format: bytes 0-1 are the staged/unstaged status codes, byte 2 is a
+/// space, bytes 3.. are the path. Leading whitespace is significant — an
+/// unstaged-modify entry is ` M path` — so the line must NOT be left-trimmed
+/// before slicing column 3. Rename/copy entries are `XY old -> new` and
+/// affect both `old` and `new`, so both are returned.
+fn parse_git_status_line(raw_line : String) -> Array[String] {
+  let line = strip_trailing_cr(raw_line)
   if line.length() < 4 {
-    return ""
+    return []
   }
   let body = line[3:].trim().to_owned()
   if body == "" {
-    return ""
+    return []
   }
-  let path = match body.split_once(" -> ") {
-    Some((_, to)) => to.to_owned()
-    None => body
+  let out : Array[String] = []
+  match body.split_once(" -> ") {
+    Some((from, to)) => {
+      let from = trim_wrapped_double_quotes(from.to_owned())
+      let to = trim_wrapped_double_quotes(to.to_owned())
+      if from != "" {
+        out.push(from)
+      }
+      if to != "" {
+        out.push(to)
+      }
+    }
+    None => {
+      let path = trim_wrapped_double_quotes(body)
+      if path != "" {
+        out.push(path)
+      }
+    }
   }
-  trim_wrapped_double_quotes(path)
+  out
 }
 
 ///|
 pub fn git_status_changed_paths(output : String) -> Array[String] {
   let paths : Array[String] = []
   for raw_line in output.split("\n") {
-    let line = raw_line.trim().to_owned()
-    if line == "" {
-      continue
-    }
-    let path = git_status_changed_path(line)
-    if path != "" {
+    for path in parse_git_status_line(raw_line.to_owned()) {
       paths.push(path)
     }
   }
@@ -169,14 +196,14 @@ fn skip_git_global_args(tokens : Array[String], start : Int) -> Int {
 }
 
 ///|
+/// Find the branch/ref a `git checkout` switches to. The caller has already
+/// ruled out `git checkout ... -- <paths>` / `git checkout -p` (path
+/// restores, not branch switches) via `checkout_args_have_path_restore`, so a
+/// bare `--` reaching here just falls through the `-` catch-all.
 fn checkout_target(tokens : Array[String], start : Int) -> String? {
   let mut i = start
   while i < tokens.length() {
     let token = tokens[i]
-    if token == "--" {
-      i = i + 1
-      continue
-    }
     if token == "-b" || token == "-B" || token == "--orphan" {
       if i + 1 < tokens.length() {
         return Some(tokens[i + 1])
@@ -190,6 +217,24 @@ fn checkout_target(tokens : Array[String], start : Int) -> String? {
     return Some(token)
   }
   None
+}
+
+///|
+/// True if a `git checkout` invocation starting at `start` is a path restore
+/// (`git checkout <ref>? -- <paths>` or `git checkout -p/--patch`) rather than
+/// a branch switch. Scanning stops at the next `git` token so a chained
+/// invocation like `git checkout main; git diff -- x` is not misread.
+fn checkout_args_have_path_restore(tokens : Array[String], start : Int) -> Bool {
+  for i = start; i < tokens.length(); i = i + 1 {
+    let token = tokens[i]
+    if token == "git" {
+      return false
+    }
+    if token == "--" || token == "-p" || token == "--patch" {
+      return true
+    }
+  }
+  false
 }
 
 ///|
@@ -220,12 +265,25 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
         if contains_token(tokens, "--hard", sub_i + 1) {
           return Some(ParentBranchWriteKind::GitResetHard)
         }
-      "checkout" =>
-        match checkout_target(tokens, sub_i + 1) {
+      "checkout" => {
+        let rest_start = sub_i + 1
+        // `git checkout <ref>? -- <paths>` and `git checkout -p` rewrite
+        // those paths in the working tree regardless of the current branch —
+        // they are path restores, not branch switches. Classify as Other so
+        // the gate uses a marker path (always blocks during a live wave)
+        // instead of the current==target no-op carve-out GitCheckout gets.
+        if checkout_args_have_path_restore(tokens, rest_start) {
+          return Some(
+            ParentBranchWriteKind::Other(detail="git checkout -- paths"),
+          )
+        }
+        match checkout_target(tokens, rest_start) {
           Some(target) =>
             return Some(ParentBranchWriteKind::GitCheckout(target~))
-          None => ()
+          None =>
+            return Some(ParentBranchWriteKind::Other(detail="git checkout"))
         }
+      }
       "rm" => return Some(ParentBranchWriteKind::Other(detail="git rm"))
       "mv" => return Some(ParentBranchWriteKind::Other(detail="git mv"))
       // Branch/worktree-mutating verbs that rewrite the working tree or

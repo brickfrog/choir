@@ -310,26 +310,94 @@ fn strip_dot_slash(path : String) -> String {
 }
 
 ///|
+fn ensure_trailing_slash(path : String) -> String {
+  if path.has_suffix("/") {
+    path
+  } else {
+    path + "/"
+  }
+}
+
+///|
+/// Reduce a tool-supplied file path to a repo-relative path, or `None` if the
+/// path is clearly outside the repository.
+///
+/// `project_dir` is whatever the caller passed (in production it is `"."`,
+/// because `init` writes `project_dir = "."` and the server forwards it
+/// unchanged), and `repo_toplevel` is the absolute repo root from
+/// `git rev-parse --show-toplevel` when it could be resolved.
+///
+/// - Relative tool paths are taken as already repo-relative (choir-serve runs
+///   with cwd == repo root); a leading `project_dir/` prefix is stripped if
+///   present.
+/// - Absolute tool paths are made repo-relative by stripping `repo_toplevel`
+///   (or `project_dir` when it is itself absolute and the toplevel could not
+///   be resolved); absolute paths outside that root return `None`.
+/// - When neither a toplevel nor an absolute `project_dir` is available we
+///   treat an absolute path conservatively as in-repo (drop the leading `/`)
+///   so source paths still block rather than silently bypassing the gate —
+///   the earlier behaviour here returned `None`, which let `/repo/src/foo.mbt`
+///   slip past whenever `project_dir` was the production `"."`.
 fn parent_branch_policy_relative_path(
   project_dir : String,
+  repo_toplevel : String?,
   path : String,
 ) -> String? {
   let trimmed = strip_dot_slash(path.trim().to_owned())
   if trimmed == "" {
     return None
   }
-  let project_prefix = project_dir + "/"
-  if trimmed.has_prefix(project_prefix) {
-    let rel = strip_dot_slash(trimmed[project_prefix.length():].to_owned())
-    if rel == "" {
-      None
-    } else {
-      Some(rel)
+  if !trimmed.has_prefix("/") {
+    let project = strip_dot_slash(project_dir.trim().to_owned())
+    if project != "" && project != "/" {
+      let project_prefix = ensure_trailing_slash(project)
+      if trimmed.has_prefix(project_prefix) {
+        let rel = strip_dot_slash(trimmed[project_prefix.length():].to_owned())
+        return if rel == "" { None } else { Some(rel) }
+      }
     }
-  } else if trimmed.has_prefix("/") {
-    None
-  } else {
-    Some(trimmed)
+    return Some(trimmed)
+  }
+  let project_dir_trimmed = project_dir.trim().to_owned()
+  let root = match repo_toplevel {
+    Some(top) => {
+      let top = top.trim().to_owned()
+      if top == "" {
+        None
+      } else {
+        Some(top)
+      }
+    }
+    None =>
+      if project_dir_trimmed.has_prefix("/") {
+        Some(project_dir_trimmed)
+      } else {
+        None
+      }
+  }
+  match root {
+    Some(root) => {
+      if trimmed == root {
+        return None
+      }
+      let root_prefix = ensure_trailing_slash(root)
+      if trimmed.has_prefix(root_prefix) {
+        let rel = strip_dot_slash(trimmed[root_prefix.length():].to_owned())
+        if rel == "" {
+          None
+        } else {
+          Some(rel)
+        }
+      } else {
+        // Absolute path outside the repo root — not a parent-branch write.
+        None
+      }
+    }
+    None =>
+      // Could not resolve the repo root and `project_dir` is relative. Be
+      // conservative: treat the path as in-repo (drop the leading `/`) so the
+      // doc-vs-source classification still runs.
+      Some(trimmed[1:].to_owned())
   }
 }
 
@@ -387,13 +455,34 @@ fn parent_branch_policy_marker_path(
 }
 
 ///|
+async fn parent_branch_policy_repo_toplevel(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let (exit_code, output) = capture(
+    parent_branch_policy_git_command(project_dir, [
+      "rev-parse", "--show-toplevel",
+    ]),
+  )
+  if exit_code != 0 {
+    return None
+  }
+  let top = output.trim().to_owned()
+  if top == "" {
+    None
+  } else {
+    Some(top)
+  }
+}
+
+///|
 async fn parent_branch_policy_changed_paths(
   project_dir : String,
   kind : @policy.ParentBranchWriteKind,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Array[String]? {
   match kind {
-    @policy.ParentBranchWriteKind::FileEditOnTrackedPath(path~) =>
+    @policy.ParentBranchWriteKind::FileEditOnTrackedPath(path~) => {
       // The variant name says "Tracked" but a brand-new file under the
       // repo root (e.g. a Write of src/foo.mbt that doesn't yet exist) is
       // just as much a parent-branch write as editing a tracked file —
@@ -402,11 +491,15 @@ async fn parent_branch_policy_changed_paths(
       // edit whose path resolves inside the repo as a changed path; the
       // doc-vs-source classification in decide_tl_parent_branch_write
       // decides whether it actually blocks. Only edits outside the repo
-      // (rel_path is None) are exempt.
-      match parent_branch_policy_relative_path(project_dir, path) {
+      // (rel_path is None) are exempt. The repo toplevel is needed because
+      // production passes project_dir = "." while tools hand us absolute
+      // paths — without it an absolute in-repo path slips past the gate.
+      let toplevel = parent_branch_policy_repo_toplevel(project_dir, capture)
+      match parent_branch_policy_relative_path(project_dir, toplevel, path) {
         Some(rel_path) => Some([rel_path])
         None => None
       }
+    }
     @policy.ParentBranchWriteKind::GitCheckout(target~) => {
       match parent_branch_policy_current_branch(project_dir, capture) {
         Some(current) => if current == target { return None }
@@ -419,21 +512,25 @@ async fn parent_branch_policy_changed_paths(
     }
     @policy.ParentBranchWriteKind::Other(_) =>
       // Worktree/ref-mutating verbs (git switch/restore/rebase/merge/
-      // cherry-pick/revert/clean/stash, plus rm/mv) act independently of
-      // what's currently dirty — `git switch other-branch` brings in
-      // arbitrary content from another branch, `git clean -fd` deletes
-      // untracked files, etc. Reusing the current `git status` paths would
-      // let a TL with only doc changes run any of these during a live
-      // wave. Use a marker path so the gate always blocks them (unless
-      // override is on), the same way GitCheckout is handled.
+      // cherry-pick/revert/clean/stash, `git checkout -- <paths>`, plus
+      // rm/mv) act independently of what's currently dirty — `git switch
+      // other-branch` brings in arbitrary content from another branch, `git
+      // clean -fd` deletes untracked files, etc. Reusing the current `git
+      // status` paths would let a TL with only doc changes run any of these
+      // during a live wave. Use a marker path so the gate always blocks them
+      // (unless override is on), the same way GitCheckout is handled.
       Some([parent_branch_policy_marker_path(kind)])
-    @policy.ParentBranchWriteKind::GitCommit
-    | @policy.ParentBranchWriteKind::GitResetHard => {
-      // In-place commit / reset-to-HEAD: the doc-only carve-out is
-      // intentional — a commit that only touches README during a live
-      // wave is harmless. Use the actual dirty paths so
-      // decide_tl_parent_branch_write can apply the doc classification;
-      // fall back to a marker path when the working tree is clean.
+    @policy.ParentBranchWriteKind::GitResetHard =>
+      // `git reset --hard <ref>` moves HEAD and overwrites the working tree
+      // with arbitrary commit content — never a doc-only operation,
+      // regardless of what is currently dirty. Always use a marker path.
+      Some([parent_branch_policy_marker_path(kind)])
+    @policy.ParentBranchWriteKind::GitCommit => {
+      // In-place commit: the doc-only carve-out is intentional — a commit
+      // that only touches README during a live wave is harmless. Use the
+      // actual dirty paths so decide_tl_parent_branch_write can apply the
+      // doc classification; fall back to a marker path when the working
+      // tree is clean.
       let paths = parent_branch_policy_status_paths(project_dir, capture)
       if paths.length() > 0 {
         Some(paths)

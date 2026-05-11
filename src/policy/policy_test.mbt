@@ -419,3 +419,99 @@ test "decide_merge explicit task_contract arg takes precedence over bundle contr
   )
   assert_eq(decision_bundle.label(), "needs_human")
 }
+
+///|
+test "git_status_changed_paths keeps leading-whitespace porcelain lines intact" {
+  // ` M src/foo.mbt` (unstaged modify) has a significant leading space:
+  // column 0 is empty, column 1 is `M`, column 2 is a space, column 3+ is
+  // the path. Left-trimming the line before slicing column 3 used to turn
+  // this into `rc/foo.mbt`.
+  let out = git_status_changed_paths(
+    " M src/foo.mbt\nMM src/bar.mbt\n?? new/file.mbt\n",
+  )
+  assert_eq(out, ["src/foo.mbt", "src/bar.mbt", "new/file.mbt"])
+}
+
+///|
+test "git_status_changed_paths returns both sides of a rename" {
+  // A rename touches both the old and the new path; the gate needs both.
+  let out = git_status_changed_paths("R  old/name.mbt -> docs/new.md\n")
+  assert_eq(out, ["old/name.mbt", "docs/new.md"])
+}
+
+///|
+test "git_status_changed_paths strips trailing CR and skips blanks" {
+  let out = git_status_changed_paths(" M src/foo.mbt\r\n\r\n M src/bar.mbt\r\n")
+  assert_eq(out, ["src/foo.mbt", "src/bar.mbt"])
+}
+
+///|
+test "git_status_changed_paths unquotes a path with spaces" {
+  let out = git_status_changed_paths("?? \"notes with space.md\"\n")
+  assert_eq(out, ["notes with space.md"])
+}
+
+///|
+test "detect_parent_branch_write_kind treats `git checkout <ref> -- <paths>` as a path restore" {
+  // `git checkout main -- src/foo.mbt` rewrites src/foo.mbt regardless of the
+  // current branch — it must NOT be classified as GitCheckout("main"), which
+  // would get the current==target no-op carve-out when the TL is on main.
+  let req = parent_write_req("bash", {
+    "command": "git checkout main -- src/foo.mbt",
+  })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::Other(detail~)) =>
+      assert_eq(detail, "git checkout -- paths")
+    _ => fail("expected Other(git checkout -- paths)")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind treats `git checkout -- <paths>` as a path restore" {
+  let req = parent_write_req("bash", {
+    "command": "git checkout -- src/foo.mbt",
+  })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::Other(detail~)) =>
+      assert_eq(detail, "git checkout -- paths")
+    _ => fail("expected Other(git checkout -- paths)")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind treats `git checkout -p` as a path restore" {
+  let req = parent_write_req("bash", { "command": "git checkout -p" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::Other(detail~)) =>
+      assert_eq(detail, "git checkout -- paths")
+    _ => fail("expected Other(git checkout -- paths)")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind still recognizes a real `git checkout <branch>` switch" {
+  // The `--`/`-p` carve-out must not swallow a plain branch switch.
+  let req = parent_write_req("bash", {
+    "command": "git checkout --quiet feature/demo",
+  })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitCheckout(target~)) =>
+      assert_eq(target, "feature/demo")
+    _ => fail("expected GitCheckout(feature/demo)")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind does not misread a chained `git diff -- x` as a checkout path restore" {
+  // `git checkout main; git diff -- x` — the `--` belongs to the chained
+  // `git diff`, not the checkout. The checkout itself is a plain branch
+  // switch.
+  let req = parent_write_req("bash", {
+    "command": "git checkout main; git diff -- src/foo.mbt",
+  })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitCheckout(target~)) =>
+      assert_eq(target, "main")
+    _ => fail("expected GitCheckout(main)")
+  }
+}
