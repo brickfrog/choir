@@ -353,6 +353,32 @@ test "detect_parent_branch_write_kind recognizes fallback git mutations" {
 }
 
 ///|
+test "detect_parent_branch_write_kind recognizes worktree-mutating git verbs" {
+  // git switch/restore/rebase/merge/cherry-pick/revert/clean/stash all
+  // mutate the worktree or move refs — they must be caught, not slip past
+  // the gate the way they did before.
+  let cases = [
+    ("git switch other-branch", "git switch"),
+    ("git restore src/foo.mbt", "git restore"),
+    ("git rebase main", "git rebase"),
+    ("git merge feature/x", "git merge"),
+    ("git cherry-pick abc123", "git cherry-pick"),
+    ("git revert HEAD", "git revert"),
+    ("git clean -fd", "git clean"),
+    ("git stash", "git stash"),
+  ]
+  for c in cases {
+    let (command, expected_detail) = c
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      Some(ParentBranchWriteKind::Other(detail~)) =>
+        assert_eq(detail, expected_detail)
+      _ => fail("expected Other(" + expected_detail + ") for: " + command)
+    }
+  }
+}
+
+///|
 test "decide_merge explicit task_contract arg takes precedence over bundle contract" {
   // The explicit first arg is Some with one verify command; the bundle's contract
   // has a different verify command. The explicit arg must win.

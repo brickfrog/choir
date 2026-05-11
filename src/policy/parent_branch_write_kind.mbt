@@ -228,6 +228,23 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
         }
       "rm" => return Some(ParentBranchWriteKind::Other(detail="git rm"))
       "mv" => return Some(ParentBranchWriteKind::Other(detail="git mv"))
+      // Branch/worktree-mutating verbs that rewrite the working tree or
+      // move refs. `git switch` / `git restore` are the modern checkout
+      // split; rebase/merge/cherry-pick/revert rewrite history or apply
+      // commits; clean/stash mutate the working tree. All of these are
+      // parent-branch writes when run on the TL's checkout during a live
+      // wave. Classified as Other (the gate's marker-path logic handles
+      // them like GitCommit — block unless override or doc-only).
+      "switch" => return Some(ParentBranchWriteKind::Other(detail="git switch"))
+      "restore" =>
+        return Some(ParentBranchWriteKind::Other(detail="git restore"))
+      "rebase" => return Some(ParentBranchWriteKind::Other(detail="git rebase"))
+      "merge" => return Some(ParentBranchWriteKind::Other(detail="git merge"))
+      "cherry-pick" =>
+        return Some(ParentBranchWriteKind::Other(detail="git cherry-pick"))
+      "revert" => return Some(ParentBranchWriteKind::Other(detail="git revert"))
+      "clean" => return Some(ParentBranchWriteKind::Other(detail="git clean"))
+      "stash" => return Some(ParentBranchWriteKind::Other(detail="git stash"))
       _ => ()
     }
   }

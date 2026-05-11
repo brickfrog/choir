@@ -380,20 +380,6 @@ async fn parent_branch_policy_status_paths(
 }
 
 ///|
-async fn parent_branch_policy_path_is_tracked(
-  project_dir : String,
-  rel_path : String,
-  capture : async (@workspace.Command) -> (Int, String),
-) -> Bool {
-  let (exit_code, _) = capture(
-    parent_branch_policy_git_command(project_dir, [
-      "ls-files", "--error-unmatch", "--", rel_path,
-    ]),
-  )
-  exit_code == 0
-}
-
-///|
 fn parent_branch_policy_marker_path(
   kind : @policy.ParentBranchWriteKind,
 ) -> String {
@@ -408,15 +394,17 @@ async fn parent_branch_policy_changed_paths(
 ) -> Array[String]? {
   match kind {
     @policy.ParentBranchWriteKind::FileEditOnTrackedPath(path~) =>
+      // The variant name says "Tracked" but a brand-new file under the
+      // repo root (e.g. a Write of src/foo.mbt that doesn't yet exist) is
+      // just as much a parent-branch write as editing a tracked file —
+      // git ls-files would return nothing for it, so requiring "tracked"
+      // here would let new source files slip past the gate. Treat ANY
+      // edit whose path resolves inside the repo as a changed path; the
+      // doc-vs-source classification in decide_tl_parent_branch_write
+      // decides whether it actually blocks. Only edits outside the repo
+      // (rel_path is None) are exempt.
       match parent_branch_policy_relative_path(project_dir, path) {
-        Some(rel_path) =>
-          if parent_branch_policy_path_is_tracked(
-              project_dir, rel_path, capture,
-            ) {
-            Some([rel_path])
-          } else {
-            None
-          }
+        Some(rel_path) => Some([rel_path])
         None => None
       }
     @policy.ParentBranchWriteKind::GitCheckout(target~) => {
@@ -1255,6 +1243,10 @@ pub async fn handle_request(
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
+  append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
   let mut ran_builtin_dispatch = false
@@ -1334,6 +1326,10 @@ pub async fn handle_request(
                   poller_state~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   pr_review~,
+                  append_file~,
+                  write_file_atomic~,
+                  path_exists~,
+                  create_dir_all~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -1417,6 +1413,10 @@ pub async fn dispatch_call(
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
+  append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
   let tool_args = tool_args_from_map(call.args)
   try {
@@ -1460,6 +1460,10 @@ pub async fn dispatch_call(
               poller_state~,
               caller_id=tool_args_get(tool_args, "caller_id"),
               pr_review~,
+              append_file~,
+              write_file_atomic~,
+              path_exists~,
+              create_dir_all~,
             )
         }
     }

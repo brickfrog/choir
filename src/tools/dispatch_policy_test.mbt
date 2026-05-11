@@ -226,3 +226,58 @@ async test "dispatch_call passes through non parent branch writes" {
       fail("expected task_get to pass through: " + msg)
   }
 }
+
+///|
+/// A Write of a NEW (untracked) source file under the repo must be refused
+/// during a live wave — the gate previously let untracked paths slip past
+/// because it required `git ls-files` to confirm tracking. Now it treats
+/// any edit whose path resolves inside the repo as a changed path.
+async test "dispatch_call refuses Write of a new untracked source file during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "Write",
+      args: {
+        "file_path": "/repo/src/server/brand_new.mbt",
+        "content": "pub fn x() -> Int { 1 }",
+        "caller_id": "main.tl",
+      },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=file_edit_on_tracked_path"))
+    }
+    @types.Response::Ok(_) =>
+      fail("expected new-untracked-source-file Write to be refused")
+  }
+}
+
+///|
+/// A worktree-mutating git verb (git switch) during a live wave must be
+/// refused — these used to slip past the bash-verb detection.
+async test "dispatch_call refuses git switch during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "bash",
+      args: { "command": "git switch other-branch", "caller_id": "main.tl" },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=other"))
+    }
+    @types.Response::Ok(_) => fail("expected git switch to be refused")
+  }
+}
