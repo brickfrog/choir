@@ -591,42 +591,45 @@ fn file_pr_invalid_audit_receipt_error(short_sha : String) -> @types.ChoirError 
   @types.ChoirError::validation_error(
     "file_pr: audit receipt for HEAD " +
     short_sha +
-    " is malformed (missing or invalid `sha` / `branch` / `audited_at` field); re-run `/audit` to regenerate.",
+    " is malformed (missing or invalid `sha` / `branch` / `audited_at` / `agent_id` / `findings_count` field); re-run `/audit` to regenerate.",
   )
 }
 
 ///|
-struct FilePrAuditReceipt {
-  sha : String
-  branch : String
-  audited_at : Int64
+fn file_pr_audit_findings_remain_error(
+  short_sha : String,
+  count : Int,
+) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "file_pr: audit on HEAD " +
+    short_sha +
+    " reported " +
+    count.to_string() +
+    " finding(s); re-run /audit until findings_count == 0 before filing.",
+  )
 }
 
 ///|
-/// Parse the JSON body the audit skill writes to
-/// `.choir/audit-receipts/<short_sha>.json`. All three fields (`sha`,
-/// `branch`, `audited_at`) must be present and well-typed; any missing or
-/// invalid field returns None so the caller emits an "invalid receipt" error
-/// rather than silently accepting a partial payload (a receipt with only
-/// `sha` would otherwise pass the gate).
-fn file_pr_parse_audit_receipt(receipt_body : String) -> FilePrAuditReceipt? {
+/// Parse the typed JSON body the audit skill writes to
+/// `.choir/audit-receipts/<short_sha>.json`. Missing legacy fields are treated
+/// as malformed so the caller re-runs `/audit` and writes the current typed
+/// shape rather than silently accepting a receipt that cannot prove zero
+/// findings.
+fn file_pr_parse_audit_receipt(receipt_body : String) -> @types.AuditReceipt? {
   let parsed = @json.parse(receipt_body.trim().to_owned()) catch {
     _ => return None
   }
-  guard parsed is Object(fields) else { return None }
-  let sha = match @types.json_field_string(fields, "sha") {
-    Some(s) if s != "" => s
+  let receipt : @types.AuditReceipt = @json.from_json(parsed) catch {
     _ => return None
   }
-  let branch = match @types.json_field_string(fields, "branch") {
-    Some(b) if b != "" => b
-    _ => return None
+  if receipt.sha == "" ||
+    receipt.branch == "" ||
+    receipt.audited_at <= 0L ||
+    receipt.agent_id == "" ||
+    receipt.findings_count < 0 {
+    return None
   }
-  let audited_at : Int64 = match fields.get("audited_at") {
-    Some(Number(n)) if n > 0.0 => n.to_int64()
-    _ => return None
-  }
-  Some({ sha, branch, audited_at })
+  Some(receipt)
 }
 
 ///|
@@ -644,11 +647,18 @@ pub fn file_pr_validate_audit_receipt(
     _ => return Err(file_pr_missing_audit_receipt_error(short_sha))
   }
   match file_pr_parse_audit_receipt(receipt) {
-    Some(parsed) if parsed.sha == current_head => Ok(())
+    Some(parsed) if parsed.sha == current_head =>
+      if parsed.findings_count == 0 {
+        Ok(())
+      } else {
+        Err(
+          file_pr_audit_findings_remain_error(short_sha, parsed.findings_count),
+        )
+      }
     Some(parsed) =>
       Err(file_pr_stale_audit_receipt_error(parsed.sha, current_head))
-    // Receipt JSON missing required fields (`sha` / `branch` / `audited_at`)
-    // or not parseable as JSON. Distinct from "stale" (where a well-formed
+    // Receipt JSON missing required typed fields, carrying invalid values, or
+    // not parseable as JSON. Distinct from "stale" (where a well-formed
     // earlier audit's sha is on disk).
     None => Err(file_pr_invalid_audit_receipt_error(short_sha))
   }

@@ -98,6 +98,44 @@ test "parse_fork_wave_args defaults review_mode override to None" {
 }
 
 ///|
+test "parse_fork_wave_args treats missing scaffold_commit as None" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) => @debug.assert_eq(fork.scaffold_commit, None)
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args parses scaffold_commit message and paths" {
+  let args = @tools.tool_args_from_map({
+    "count": "1",
+    "task": "work",
+    "parent_branch": "main",
+    "caller_id": "root",
+    "scaffold_commit": "{\"message\":\"chore: scaffold wave fields\",\"paths\":[\"src/server/state.mbt\",\"src/tools/new_file.mbt\"]}",
+  })
+  match @tools.parse_fork_wave_args(".", args) {
+    Ok(fork) =>
+      match fork.scaffold_commit {
+        Some(scaffold) => {
+          assert_eq(scaffold.message, "chore: scaffold wave fields")
+          assert_eq(scaffold.paths, [
+            "src/server/state.mbt", "src/tools/new_file.mbt",
+          ])
+        }
+        None => fail("expected scaffold_commit")
+      }
+    Err(e) => fail("parse_fork_wave_args: " + e.message())
+  }
+}
+
+///|
 test "parse_fork_wave_args parses review_mode iterative" {
   let args = @tools.tool_args_from_map({
     "count": "1",

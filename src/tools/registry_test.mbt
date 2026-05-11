@@ -31,6 +31,18 @@ async fn mock_registry_runner(cmds : Array[@workspace.Command]) -> Array[Int] {
 }
 
 ///|
+fn registry_test_audit_receipt(sha : String) -> String {
+  let receipt : @types.AuditReceipt = {
+    sha,
+    branch: "test",
+    audited_at: 1770000000L,
+    agent_id: "main.tl",
+    findings_count: 0,
+  }
+  receipt.to_json().stringify() + "\n"
+}
+
+///|
 async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   if cmd.program == "git" &&
@@ -46,9 +58,7 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
   if cmd.program == "cat" &&
     cmd.args.length() == 1 &&
     cmd.args[0] == ".choir/audit-receipts/hash.json" {
-    return (
-      0, "{ \"sha\": \"hash\", \"branch\": \"test\", \"audited_at\": 1770000000, \"agent_id\": \"main.tl\" }\n",
-    )
+    return (0, registry_test_audit_receipt("hash"))
   }
   if cmd.program == "zellij" {
     return (1, "")
@@ -460,11 +470,33 @@ async test "dispatch returns correct stub for each tool name" {
     ("mutex_status", "", { "name": "readme" }),
     ("shutdown", "shutdown", Map::new()),
     ("task_list", "ok", Map::new()),
+    (
+      "write_audit_receipt",
+      "ok",
+      {
+        "caller_id": "main.tl",
+        // Must be a 40-char lowercase-hex SHA-1; the validator rejects
+        // anything else to defend against path traversal in the on-disk
+        // receipt filename.
+        "sha": "0123456789abcdef0123456789abcdef01234567",
+        "branch": "test",
+        "findings_count": "0",
+      },
+    ),
     ("spawn_worker", "spawned", { "caller_id": "main.tl" }),
   ]
   for c in cases {
     let (name, expected_status, args) = c
-    let call = ToolCall::{ role: @types.Role::Dev, name, args }
+    // write_audit_receipt is restricted to Root/TL/Worker — Dev forging
+    // its own audit receipt would bypass the file_pr feature→main gate.
+    // Drive the dispatch with a TL role for that case; everything else
+    // stays on Dev to exercise the broader role permissions.
+    let role = if name == "write_audit_receipt" {
+      @types.Role::TL
+    } else {
+      @types.Role::Dev
+    }
+    let call = ToolCall::{ role, name, args }
     let res = @tools.dispatch_call(
       call,
       project_dir~,

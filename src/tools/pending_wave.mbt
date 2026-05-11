@@ -106,6 +106,18 @@ fn json_optional_review_mode(value : @types.ReviewMode?) -> Json {
 }
 
 ///|
+fn json_optional_scaffold_commit(value : ForkWaveScaffoldCommit?) -> Json {
+  match value {
+    Some(scaffold) =>
+      {
+        "message": scaffold.message.to_json(),
+        "paths": scaffold.paths.to_json(),
+      }.to_json()
+    None => ().to_json()
+  }
+}
+
+///|
 /// Serialize [`ForkWaveArgs`] to a JSON object keyed by field name. Enums use
 /// their `to_wire_string` form; optionals use `null`. The shape is intentionally
 /// stable across server restarts.
@@ -129,6 +141,7 @@ pub fn fork_wave_args_to_json(args : ForkWaveArgs) -> Json {
     "automerge": json_optional_bool(args.automerge),
     "review_mode": json_optional_review_mode(args.review_mode),
     "depends_on": args.depends_on.to_json(),
+    "scaffold_commit": json_optional_scaffold_commit(args.scaffold_commit),
   }
   map.to_json()
 }
@@ -165,6 +178,23 @@ fn parse_json_optional_bool(value : Json?) -> Bool? {
     Some(False) => Some(false)
     _ => None
   }
+}
+
+///|
+fn parse_json_scaffold_commit(value : Json?) -> ForkWaveScaffoldCommit? {
+  let obj = match value {
+    Some(Object(m)) => m
+    _ => return None
+  }
+  let message = match obj.get("message") {
+    Some(String(s)) => s
+    _ => return None
+  }
+  let paths = parse_json_string_array(obj.get("paths"))
+  if paths.length() == 0 {
+    return None
+  }
+  Some({ message, paths })
 }
 
 ///|
@@ -241,6 +271,7 @@ fn parse_fork_wave_args_json(j : Json) -> ForkWaveArgs? {
     None => None
   }
   let depends_on = parse_json_string_array(obj.get("depends_on"))
+  let scaffold_commit = parse_json_scaffold_commit(obj.get("scaffold_commit"))
   Some({
     count,
     tasks,
@@ -256,6 +287,7 @@ fn parse_fork_wave_args_json(j : Json) -> ForkWaveArgs? {
     automerge,
     review_mode,
     depends_on,
+    scaffold_commit,
   })
 }
 

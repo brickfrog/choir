@@ -56,18 +56,19 @@ fn audit_skill_body() -> String {
     #|
     #|3. Wait for the worker to return. If the worker fails, STOP and report the
     #|   failure without writing an audit receipt.
-    #|4. After the worker returns successfully, write an audit receipt for the
-    #|   audited HEAD. Run this bash step exactly:
+    #|4. After the worker returns successfully, count the findings in the worker
+    #|   response and write an audit receipt for the audited HEAD via the
+    #|   `write_audit_receipt` MCP tool.
     #|
-    #|   ```bash
-    #|   mkdir -p .choir/audit-receipts
-    #|   sha="$(git rev-parse HEAD)"
-    #|   short_sha="${sha:0:12}"
-    #|   branch="$(git rev-parse --abbrev-ref HEAD)"
-    #|   audited_at="$(date +%s)"
-    #|   agent_id="${CHOIR_AGENT_ID:-unknown}"
-    #|   printf '{ "sha": "%s", "branch": "%s", "audited_at": %s, "agent_id": "%s" }\n' "$sha" "$branch" "$audited_at" "$agent_id" > ".choir/audit-receipts/${short_sha}.json"
-    #|   ```
+    #|   - Get `sha` with `git rev-parse HEAD`.
+    #|   - Get `branch` with `git rev-parse --abbrev-ref HEAD`.
+    #|   - Compute `findings_count` from Sarcasmotron's response. Count explicit
+    #|     finding markers such as `Finding 1:`, `Finding 2:`, or numbered finding
+    #|     lines like `1. ...`; if the worker explicitly says there are no
+    #|     findings, use `0`.
+    #|   - Call `write_audit_receipt` with `sha`, `branch`, and
+    #|     `findings_count`. Do not write `.choir/audit-receipts` directly; the
+    #|     MCP tool fills `audited_at` and `agent_id`.
     #|
     #|5. Relay the full review output to the user for discussion. Do not filter
     #|   or soften.
@@ -695,11 +696,11 @@ test "audit_skill_body contains Sarcasmotron persona" {
 test "audit_skill_body writes receipt after successful worker" {
   let body = audit_skill_body()
   assert_true(body.contains("After the worker returns successfully"))
-  assert_true(body.contains("mkdir -p .choir/audit-receipts"))
   assert_true(body.contains("git rev-parse HEAD"))
-  assert_true(body.contains("CHOIR_AGENT_ID"))
-  assert_true(body.contains("\"sha\""))
-  assert_true(body.contains(".choir/audit-receipts/${short_sha}.json"))
+  assert_true(body.contains("git rev-parse --abbrev-ref HEAD"))
+  assert_true(body.contains("findings_count"))
+  assert_true(body.contains("write_audit_receipt"))
+  assert_true(body.contains("Do not write `.choir/audit-receipts` directly"))
 }
 
 ///|

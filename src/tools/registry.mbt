@@ -91,6 +91,19 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "write_audit_receipt",
+      description: "Write the typed audit receipt for the current audited HEAD, including findings_count.",
+      // Dev leaves MUST NOT mint their own audit receipts; that would let a
+      // dev forge findings_count=0 for its own HEAD and bypass the
+      // file_pr feature→main gate. Restrict to Root/TL (which invokes the
+      // audit skill) and Worker (Sarcasmotron's audit worker context).
+      // The forgery hole is narrowed but not closed — a Root/TL could in
+      // principle still write a stale receipt without running an audit;
+      // proper attestation requires binding the write to a spawn_worker
+      // completion token, filed as follow-up.
+      allowed_roles: [@types.Role::Root, @types.Role::TL, @types.Role::Worker],
+    },
+    {
       name: "send_message",
       description: "Send message to any agent by ID",
       allowed_roles: all_roles,

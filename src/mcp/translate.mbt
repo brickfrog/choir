@@ -363,6 +363,20 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["feature_slug", "caller_id"],
     },
     {
+      name: "write_audit_receipt",
+      description: "Write a typed audit receipt for the audited HEAD. The tool fills audited_at from server time and agent_id from caller_id.",
+      props: [
+        { name: "sha", desc: "Full audited HEAD sha" },
+        { name: "branch", desc: "Branch audited" },
+        {
+          name: "findings_count",
+          desc: "Number of findings reported by the audit worker, as a base-10 integer",
+        },
+        { name: "caller_id", desc: "ID of the calling agent" },
+      ],
+      required: ["sha", "branch", "findings_count", "caller_id"],
+    },
+    {
       name: "send_message",
       description: "Send a message to another agent",
       props: [

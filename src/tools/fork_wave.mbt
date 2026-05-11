@@ -253,6 +253,23 @@ pub async fn fork_wave_response_from_interpret_result(
         @types.Response::Err("command failed with status " + status.to_string())
       }
     }
+    Err(ScaffoldCommandFailed(status~, failing_cmd~)) => {
+      // Do NOT re-run the failing scaffold command to capture its output:
+      // `git add` / `git commit` / `git push` are side-effectful and a
+      // second run could succeed (leaving the repo mutated unexpectedly)
+      // OR multiply state (extra commit/push). Report the failing argv
+      // and exit status without re-execution; the operator can inspect
+      // the repo state directly.
+      let argv_detail = match failing_cmd {
+        Some(cmd) => " (argv: " + cmd.program + " " + cmd.args.join(" ") + ")"
+        None => ""
+      }
+      @types.Response::Err(
+        "scaffold_commit command failed with status " +
+        status.to_string() +
+        argv_detail,
+      )
+    }
     Err(e) => @types.Response::Err(e.message())
   }
 }
@@ -353,6 +370,8 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     spawn_plan.skipped_count,
     spawn_plan.agent_ids,
     spawn_plan.skipped_ids,
+    scaffold_commit=fork_wave_args.scaffold_commit,
+    parent_branch=fork_wave_args.parent_branch,
   )
   let interpret_result = interpret(plan, git_capture~, runner~)
   let resp = fork_wave_response_from_interpret_result(interpret_result, capture)
