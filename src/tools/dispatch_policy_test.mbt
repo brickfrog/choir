@@ -636,3 +636,28 @@ async test "dispatch_call refuses git checkout -B <branch> <start> during live w
       )
   }
 }
+
+///|
+/// `git pull` on the parent branch during a live wave fetches and integrates —
+/// it can fast-forward the branch HEAD — so it must be refused.
+async test "dispatch_call refuses git pull during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "bash",
+      args: { "command": "git pull origin main", "caller_id": "main.tl" },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=other"))
+    }
+    @types.Response::Ok(_) =>
+      fail("git pull must be refused during a live wave")
+  }
+}

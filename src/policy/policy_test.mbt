@@ -644,3 +644,65 @@ test "detect_parent_branch_write_kind recognizes escaped and quoted git names" {
     }
   }
 }
+
+///|
+test "detect_parent_branch_write_kind treats `git checkout -d` (short detach) as unsafe" {
+  // -d is the short form of --detach; `git checkout -d main` while on main
+  // detaches HEAD even though current==target.
+  let req = parent_write_req("bash", { "command": "git checkout -d main" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::Other(detail~)) =>
+      assert_eq(detail, "git checkout")
+    _ => fail("expected Other(git checkout) for `git checkout -d main`")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind skips --config-env's separate-word value" {
+  // --config-env <name>=<envvar> takes the following token as a value; the
+  // subcommand is behind it.
+  let req = parent_write_req("bash", {
+    "command": "BAR=false git --config-env foo.bar=BAR commit -m x",
+  })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitCommit) => ()
+    _ => fail("expected GitCommit behind --config-env")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes more mutating subcommands" {
+  let cases = [
+    ("git apply patch.diff", "git apply"),
+    ("git am mbox.eml", "git am"),
+    ("git pull", "git pull"),
+    ("git pull --rebase origin main", "git pull"),
+    ("git update-ref refs/heads/main HEAD~1", "git update-ref"),
+    ("git branch -f main HEAD~1", "git branch"),
+    ("git branch -D leaf-branch", "git branch"),
+  ]
+  for c in cases {
+    let (command, expected_detail) = c
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      Some(ParentBranchWriteKind::Other(detail~)) =>
+        assert_eq(detail, expected_detail)
+      _ => fail("expected Other(" + expected_detail + ") for: " + command)
+    }
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind ignores read-only `git branch` listing" {
+  for
+    command in [
+      "git branch", "git branch -a", "git branch --list", "git branch -vv",
+    ] {
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      None => ()
+      Some(kind) =>
+        fail("`" + command + "` is read-only, got: " + kind.to_string())
+    }
+  }
+}

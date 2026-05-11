@@ -185,22 +185,27 @@ fn shellish_tokens(command : String) -> Array[String] {
 ///|
 /// Advance past `git`'s global options to the subcommand token.
 ///
-/// `-C`/`-c`/`--git-dir`/`--work-tree`/`--namespace` take the following token
-/// as a separate-word value, so skip two. Every other leading-dash token
-/// before the subcommand is a global flag (`--no-pager`, `--paginate`, `-p`,
-/// `--bare`, `--no-replace-objects`, `--literal-pathspecs`, `--git-dir=...`,
-/// `--no-optional-locks`, ...), so skip one — the first non-dash token is the
-/// subcommand. (Skipping unknown leading-dash tokens is what stops a future
-/// git global flag from making a mutating subcommand invisible to the gate.)
+/// The global flags that take the following token as a *separate-word* value
+/// (`-C <path>`, `-c <name>=<value>`, `--config-env <name>=<envvar>`,
+/// `--git-dir <path>`, `--work-tree <path>`, `--namespace <name>`,
+/// `--super-prefix <path>`) consume two tokens. Every other leading-dash token
+/// before the subcommand is a value-less or `=`-form global flag (`--no-pager`,
+/// `--paginate`, `-p`, `--bare`, `--no-replace-objects`, `--literal-pathspecs`,
+/// `--git-dir=...`, `--exec-path[=...]`, `--no-optional-locks`, ...), so skip
+/// one — the first non-dash token is the subcommand. (Skipping unknown
+/// leading-dash tokens is what stops a future git global flag from making a
+/// mutating subcommand invisible to the gate.)
 fn skip_git_global_args(tokens : Array[String], start : Int) -> Int {
   let mut i = start
   while i < tokens.length() {
     let token = tokens[i]
     if token == "-C" ||
       token == "-c" ||
+      token == "--config-env" ||
       token == "--git-dir" ||
       token == "--work-tree" ||
-      token == "--namespace" {
+      token == "--namespace" ||
+      token == "--super-prefix" {
       i = i + 2
       continue
     }
@@ -252,10 +257,13 @@ fn is_git_invocation_token(token : String) -> Bool {
 ///   the working tree regardless of the current branch). Classified as Other
 ///   so the gate uses a marker path (always blocks during a live wave)
 ///   instead of GitCheckout's current==target no-op carve-out.
-/// - `-f`/`--force` (discards local changes on switch), `--detach` (leaves the
-///   branch), `-B` (force-RESETS the named branch — possibly the parent), or
-///   `--orphan` (rewrites HEAD) → an "unsafe switch": never a clean no-op, so
-///   classify as Other so the carve-out can't touch it.
+/// - `-f`/`--force` (discards local changes on switch), `-d`/`--detach`
+///   (leaves the branch), `-m`/`--merge` (3-way merge on switch), `-B`
+///   (force-RESETS the named branch — possibly the parent), or `--orphan`
+///   (rewrites HEAD) → an "unsafe switch": never a clean no-op, so classify as
+///   Other so the carve-out can't touch it. (Short-flag coverage here is
+///   best-effort; an unknown future checkout flag falls through to the
+///   positional logic — conservative, never a bypass.)
 /// - `-b <name>` → branch-creation switch to a NEW branch `<name>` (always
 ///   != current, so it blocks anyway, but GitCheckout is the precise kind).
 /// - exactly one positional → branch switch to that ref.
@@ -291,7 +299,12 @@ fn classify_checkout(
       i = i + 1
       continue
     }
-    if token == "-f" || token == "--force" || token == "--detach" {
+    if token == "-f" ||
+      token == "--force" ||
+      token == "-d" ||
+      token == "--detach" ||
+      token == "-m" ||
+      token == "--merge" {
       unsafe_switch = true
       i = i + 1
       continue
@@ -361,6 +374,37 @@ fn reset_names_commitish(tokens : Array[String], start : Int) -> Bool {
 }
 
 ///|
+/// True if any of `needles` appears among `git <subcommand>`'s args starting
+/// at `start` (stopping at the next git-invocation token so a chained command
+/// isn't misread).
+fn subcommand_args_contain_any(
+  tokens : Array[String],
+  needles : Array[String],
+  start : Int,
+) -> Bool {
+  for i = start; i < tokens.length(); i = i + 1 {
+    if is_git_invocation_token(tokens[i]) {
+      return false
+    }
+    for needle in needles {
+      if tokens[i] == needle {
+        return true
+      }
+    }
+  }
+  false
+}
+
+///|
+/// Detect a git command in `command` that writes to the parent branch's
+/// checkout (commits, ref moves, working-tree rewrites). This is a best-effort
+/// scan of the *common* mutating subcommands — it deliberately does NOT cover:
+/// command-local aliases (`git -c alias.x=commit x ...` — resolving aliases
+/// statically is impossible), every exotic mutating verb, or non-git shell
+/// commands that touch tracked files (`sed -i`, `tee`, `> src/foo`, `python
+/// -c ...`). The synchronous gate only inspects Edit/Write/MultiEdit tool
+/// calls and git Bash commands; arbitrary shell mutations are out of scope by
+/// design and are the job of the post-hoc `tl-policy-watch` log, not this gate.
 fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
   let tokens = shellish_tokens(command)
   for i = 0; i < tokens.length(); i = i + 1 {
@@ -400,13 +444,15 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
       "checkout" => return Some(classify_checkout(tokens, sub_i + 1))
       "rm" => return Some(ParentBranchWriteKind::Other(detail="git rm"))
       "mv" => return Some(ParentBranchWriteKind::Other(detail="git mv"))
-      // Branch/worktree-mutating verbs that rewrite the working tree or
-      // move refs. `git switch` / `git restore` are the modern checkout
-      // split; rebase/merge/cherry-pick/revert rewrite history or apply
-      // commits; clean/stash mutate the working tree. All of these are
-      // parent-branch writes when run on the TL's checkout during a live
-      // wave. Classified as Other (the gate's marker-path logic handles
-      // them like GitCommit — block unless override or doc-only).
+      // Branch/worktree-mutating verbs that rewrite the working tree, move
+      // refs, or add commits. `git switch` / `git restore` are the modern
+      // checkout split; rebase/merge/cherry-pick/revert rewrite history or
+      // apply commits; clean/stash mutate the working tree; apply/am apply
+      // patches; pull = fetch + integrate (can fast-forward the current
+      // branch); update-ref moves a ref directly. All are parent-branch
+      // writes when run on the TL's checkout during a live wave. Classified
+      // as Other (the gate's marker-path logic handles them like GitCommit —
+      // block unless override or doc-only).
       "switch" => return Some(ParentBranchWriteKind::Other(detail="git switch"))
       "restore" =>
         return Some(ParentBranchWriteKind::Other(detail="git restore"))
@@ -417,6 +463,26 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
       "revert" => return Some(ParentBranchWriteKind::Other(detail="git revert"))
       "clean" => return Some(ParentBranchWriteKind::Other(detail="git clean"))
       "stash" => return Some(ParentBranchWriteKind::Other(detail="git stash"))
+      "apply" => return Some(ParentBranchWriteKind::Other(detail="git apply"))
+      "am" => return Some(ParentBranchWriteKind::Other(detail="git am"))
+      "pull" => return Some(ParentBranchWriteKind::Other(detail="git pull"))
+      "update-ref" =>
+        return Some(ParentBranchWriteKind::Other(detail="git update-ref"))
+      // `git branch` alone lists branches (read-only); only the mutating
+      // forms (`-f`/`--force` force-move, `-m`/`-M`/`--move` rename,
+      // `-c`/`-C`/`--copy`, `-d`/`-D`/`--delete`) touch refs — and `-D` can
+      // nuke a leaf's branch.
+      "branch" =>
+        if subcommand_args_contain_any(
+            tokens,
+            [
+              "-f", "--force", "-m", "-M", "--move", "-c", "-C", "--copy", "-d",
+              "-D", "--delete",
+            ],
+            sub_i + 1,
+          ) {
+          return Some(ParentBranchWriteKind::Other(detail="git branch"))
+        }
       _ => ()
     }
   }
@@ -424,6 +490,13 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
 }
 
 ///|
+/// Classify a tool request as a parent-branch write, or `None` if it isn't one
+/// we recognize. Scope is deliberate and best-effort: Edit/Write/MultiEdit
+/// tool calls (by path) and *git* commands inside a Bash tool call. A Bash
+/// command that mutates tracked files without git (`sed -i`, `tee`, shell
+/// redirection, `python -c ...`) is NOT detected here — that would require
+/// executing arbitrary shell to know, so it is out of scope by design; the
+/// post-hoc `tl-policy-watch` log is the backstop for those.
 pub fn detect_parent_branch_write_kind(
   req : @types.Request,
 ) -> ParentBranchWriteKind? {
