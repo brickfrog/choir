@@ -28,6 +28,12 @@ pub(all) struct TrackPrArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct ForkWaveScaffoldCommit {
+  message : String
+  paths : Array[String]
+} derive(Debug, Eq)
+
+///|
 pub(all) struct ForkWaveArgs {
   count : Int
   tasks : Array[String]
@@ -50,6 +56,8 @@ pub(all) struct ForkWaveArgs {
   /// pending wave (`pending-wave--<id>`) and only spawned after every named
   /// dep reaches `Dev(Done(Merged))`. See `pending_wave.mbt`.
   depends_on : Array[String]
+  /// Optional scaffold commit applied on the parent branch before spawning leaves.
+  scaffold_commit : ForkWaveScaffoldCommit?
 } derive(Debug, Eq)
 
 ///|

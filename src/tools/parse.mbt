@@ -631,6 +631,141 @@ fn parse_depends_on(args : ToolArgs) -> Result[Array[String], ParseError] {
 }
 
 ///|
+fn parse_scaffold_commit_paths(
+  value : Json?,
+) -> Result[Array[String], ParseError] {
+  match value {
+    Some(Array(items)) => {
+      let paths : Array[String] = []
+      for item in items {
+        match item {
+          String(path) => {
+            let trimmed = path.trim().to_owned()
+            if trimmed == "" {
+              return Err(
+                ParseError::InvalidFormat(
+                  field="scaffold_commit.paths",
+                  message="entries must be non-empty strings",
+                ),
+              )
+            }
+            paths.push(trimmed)
+          }
+          _ =>
+            return Err(
+              ParseError::InvalidFormat(
+                field="scaffold_commit.paths",
+                message="entries must be strings",
+              ),
+            )
+        }
+      }
+      if paths.length() == 0 {
+        return Err(
+          ParseError::InvalidFormat(
+            field="scaffold_commit.paths",
+            message="must include at least one path",
+          ),
+        )
+      }
+      Ok(paths)
+    }
+    Some(_) =>
+      Err(
+        ParseError::InvalidFormat(
+          field="scaffold_commit.paths",
+          message="must be a JSON array",
+        ),
+      )
+    None => Err(ParseError::MissingField(field="scaffold_commit.paths"))
+  }
+}
+
+///|
+fn parse_scaffold_commit_object(
+  obj : Map[String, Json],
+) -> Result[ForkWaveScaffoldCommit, ParseError] {
+  let message = match obj.get("message") {
+    Some(String(s)) => {
+      let trimmed = s.trim().to_owned()
+      if trimmed == "" {
+        return Err(
+          ParseError::InvalidFormat(
+            field="scaffold_commit.message",
+            message="must be a non-empty string",
+          ),
+        )
+      }
+      trimmed
+    }
+    Some(_) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="scaffold_commit.message",
+          message="must be a string",
+        ),
+      )
+    None =>
+      return Err(ParseError::MissingField(field="scaffold_commit.message"))
+  }
+  let paths = match parse_scaffold_commit_paths(obj.get("paths")) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  Ok({ message, paths })
+}
+
+///|
+fn parse_scaffold_commit(
+  args : ToolArgs,
+) -> Result[ForkWaveScaffoldCommit?, ParseError] {
+  match tool_args_get_json(args, "scaffold_commit") {
+    None => Ok(None)
+    Some(Object(obj)) =>
+      match parse_scaffold_commit_object(obj) {
+        Ok(value) => Ok(Some(value))
+        Err(e) => Err(e)
+      }
+    Some(String(raw)) => {
+      let trimmed = raw.trim().to_owned()
+      if trimmed == "" {
+        return Ok(None)
+      }
+      let parsed : Json = @json.parse(trimmed) catch {
+        _ =>
+          return Err(
+            ParseError::InvalidFormat(
+              field="scaffold_commit",
+              message="invalid JSON",
+            ),
+          )
+      }
+      match parsed {
+        Object(obj) =>
+          match parse_scaffold_commit_object(obj) {
+            Ok(value) => Ok(Some(value))
+            Err(e) => Err(e)
+          }
+        _ =>
+          Err(
+            ParseError::InvalidFormat(
+              field="scaffold_commit",
+              message="must be a JSON object",
+            ),
+          )
+      }
+    }
+    Some(_) =>
+      Err(
+        ParseError::InvalidFormat(
+          field="scaffold_commit",
+          message="must be a JSON object",
+        ),
+      )
+  }
+}
+
+///|
 fn parse_task_contracts_json_items(
   items : Array[Json],
   field : String,
@@ -872,6 +1007,10 @@ pub fn parse_fork_wave_args(
     Ok(value) => value
     Err(e) => return Err(e)
   }
+  let scaffold_commit = match parse_scaffold_commit(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
   Ok({
     count,
     tasks,
@@ -887,6 +1026,7 @@ pub fn parse_fork_wave_args(
     automerge,
     review_mode,
     depends_on,
+    scaffold_commit,
   })
 }
 

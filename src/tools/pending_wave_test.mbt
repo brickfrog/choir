@@ -29,6 +29,7 @@ fn pending_wave_test_args(
     automerge: Some(true),
     review_mode: Some(@types.ReviewMode::SinglePass),
     depends_on,
+    scaffold_commit: None,
   }
 }
 
@@ -60,6 +61,13 @@ test "pending_wave_to_json_string round-trip preserves args" {
   let args = pending_wave_test_args("main.tl", "wave", [
     "main.dep-a", "main.dep-b",
   ])
+  let args = {
+    ..args,
+    scaffold_commit: Some({
+      message: "chore: scaffold shared wave surface",
+      paths: ["src/shared.mbt"],
+    }),
+  }
   let pw : @tools.PendingWave = { wave_id: "wave-100-7", args }
   let json_str = @tools.pending_wave_to_json_string(pw)
   match @tools.parse_pending_wave(json_str) {
@@ -80,6 +88,13 @@ test "pending_wave_to_json_string round-trip preserves args" {
         Some(@types.ReviewMode::SinglePass),
       )
       assert_eq(round_tripped.args.depends_on, ["main.dep-a", "main.dep-b"])
+      @debug.assert_eq(
+        round_tripped.args.scaffold_commit,
+        Some({
+          message: "chore: scaffold shared wave surface",
+          paths: ["src/shared.mbt"],
+        }),
+      )
       assert_eq(round_tripped.args.task_contracts.length(), 1)
       assert_eq(round_tripped.args.task_contracts[0].goal, "work")
     }
