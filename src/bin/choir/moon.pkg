@@ -3,6 +3,7 @@ import {
   "choir/src/types",
   "choir/src/config",
   "choir/src/server",
+  "choir/src/tools",
   "choir/src/transport",
   "choir/src/sys",
   "choir/src/uds",

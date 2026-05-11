@@ -153,6 +153,17 @@ struct KvSetArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct GoalSetArgs {
+  input : String
+  verify : Array[String]
+} derive(Debug, Eq)
+
+///|
+pub(all) struct GoalStatusArgs {
+  evaluate : Bool
+} derive(Debug, Eq)
+
+///|
 struct MutexAcquireArgs {
   name : String
   agent_id : String
