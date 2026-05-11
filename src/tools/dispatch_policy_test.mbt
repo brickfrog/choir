@@ -104,6 +104,28 @@ async test "dispatch_call refuses parent branch write during live wave" {
 }
 
 ///|
+async test "dispatch_call refuses branch checkout during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "bash",
+      args: { "command": "git checkout feature/docs", "caller_id": "main.tl" },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=git_checkout:feature/docs"))
+    }
+    @types.Response::Ok(_) => fail("expected policy refusal")
+  }
+}
+
+///|
 async test "dispatch_call lets override reach normal tool handling" {
   let resp = dispatch_call(
     ToolCall::{

@@ -424,12 +424,10 @@ async fn parent_branch_policy_changed_paths(
         Some(current) => if current == target { return None }
         None => ()
       }
-      let paths = parent_branch_policy_status_paths(project_dir, capture)
-      if paths.length() > 0 {
-        Some(paths)
-      } else {
-        Some([parent_branch_policy_marker_path(kind)])
-      }
+      // Branch switches can rewrite the worktree with arbitrary target-branch
+      // content, so classify them as non-doc even if current dirty paths are
+      // doc-only or absent.
+      Some([parent_branch_policy_marker_path(kind)])
     }
     @policy.ParentBranchWriteKind::GitCommit
     | @policy.ParentBranchWriteKind::GitResetHard
