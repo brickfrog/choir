@@ -4,6 +4,11 @@ target/
 .choir/*
 !.choir/context/
 !.choir/context/*.md
+!.choir/prompts/
+!.choir/prompts/skills/
+!.choir/prompts/skills/*.md
+!.choir/prompts/profiles/
+!.choir/prompts/profiles/*.md
 .mcp.json
 .claude/settings.local.json
 .moonagent/

@@ -643,6 +643,15 @@ fn init_run() -> Unit {
         Some(h) => if h == "" { "" } else { h }
         None => ""
       }
+      match @prompts.materialize_default_prompts(project_dir) {
+        Ok(_) => ()
+        Err(e) =>
+          @sys.write_stderr(
+            "warning: failed to materialize .choir/prompts: " +
+            e.message() +
+            "\n",
+          )
+      }
       match synthesize_plugin_dir(project_dir, home) {
         Ok(_) => ()
         Err(e) =>

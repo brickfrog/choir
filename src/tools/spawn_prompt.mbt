@@ -210,82 +210,22 @@ fn render_beads_issue(id : String) -> String {
 }
 
 ///|
-fn leaf_profile_text() -> String {
-  "## Completion Protocol (Leaf)\n" +
-  "You are a leaf agent in your own git worktree and branch.\n\n" +
-  "Scaffold-fork-converge note for TLs:\n" +
-  "- TLs can commit shared scaffold/foundation changes on the parent branch before calling `fork_wave`.\n" +
-  "- Child worktrees branch from the parent branch head at spawn time, so scaffold commits are inherited by all leaves in that wave.\n\n" +
-  "When you are done:\n\n" +
-  "1. Commit your changes with a descriptive message.\n" +
-  "   - `git add <specific files>`\n" +
-  "   - NEVER `git add .`\n" +
-  "2. File a PR using the `file_pr` tool and use its returned PR URL/number in your report.\n" +
-  "   - Pass `--title \"Short descriptive title\"` and `--body \"What this PR does and why\"` for better PR descriptions.\n" +
-  "   - If your CLI does not load MCP tools directly, `file_pr` is also available as a shell command on PATH.\n" +
-  "   - `file_pr` also starts review tracking automatically.\n" +
-  "   - Before filing, verify repo state with `git status --short`, `git log --oneline -1`, and `git rev-list --left-right --count <parent_branch>...HEAD`.\n" +
-  "   - If the branch is not ahead of the parent branch, stop and report failure instead of retrying `file_pr`.\n" +
-  "3. `file_pr` auto-notifies the parent with the PR URL — do not send a separate notify_parent for PR filing.\n" +
-  "4. Before a final success notification, call `report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds>` if usage figures are available; omit `--cost-usd` unless you have an exact provider cost.\n" +
-  "5. Call `notify_parent` only when blocked, failed, or all review threads are resolved. Do not send progress updates.\n" +
-  "   - `notify_parent` and `shutdown` are also available as shell commands on PATH.\n" +
-  "   - Shell form: `notify_parent [--status <success|failure|info>] <message>`.\n" +
-  "   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.\n" +
-  "6. Wait for review feedback — it arrives automatically via the poller.\n" +
-  "7. If review feedback arrives, address every comment and push fixes.\n" +
-  "   - Do not resolve GitHub review threads yourself; the poller and parent own thread resolution from the working GraphQL path.\n" +
-  "   - After fixes are pushed, wait for review state from the parent/poller or use bounded review-state checks only when explicitly needed.\n" +
-  "   - Only notify_parent once zero unresolved threads have been confirmed.\n" +
-  "8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.\n" +
-  "9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.\n\n" +
-  "Do not exit voluntarily after file_pr:\n" +
-  "- After `file_pr` succeeds, your task is NOT complete, even though it auto-notifies the parent. Copilot's inline review can take 30s-3min to arrive. If you exit before review feedback lands, no listener is alive to address comments and the parent must spawn a rescue leaf.\n" +
-  "- Step 8 is the shutdown rule: keep the session alive until the parent explicitly tells you to stop after review/merge handling. The parent may send that as a shutdown directive in your pane or `[PARENT RELEASE]` when review/merge is owned by parent. `[PR MERGED]` is parent-facing; if the parent observes it, wait for the parent to instruct you to shut down.\n" +
-  "- The only non-parent exception is the persistent-error path in step 9.\n" +
-  "- Any other voluntary exit is a leaf failure. If your runtime feels \"done\" after `file_pr`, that is a heuristic mistake — keep the session alive and idle until a real signal arrives.\n\n" +
-  "gh discipline:\n" +
-  "- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.\n" +
-  "- Prefer REST endpoints (`gh api repos/{owner}/{repo}/pulls/{n}/comments`, `gh api repos/{owner}/{repo}/pulls/{n}/reviews`) over GraphQL when querying review state. REST returns instantly even when GraphQL stalls.\n" +
-  "- After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops. The choir poller pushes [REVIEW], [COPILOT ISSUE COMMENT], [FIXES PUSHED], [MERGE READY], [PR MERGED] events into your pane automatically after file_pr; sit idle and let those push events drive your next action. Pulling burns context for no signal and doubles GitHub API hits.\n" +
-  "- Do NOT call `resolveReviewThread` directly from a leaf. The poller and parent will resolve threads from the working GraphQL path. Push your code fixes; let the orchestration close the threads.\n" +
-  "- If a `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f \"gh api\"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.\n\n" +
-  "Execution discipline:\n" +
-  "- Run requested verification once per code change.\n" +
-  "- Do not rerun the same tests repeatedly without new code changes.\n" +
-  "- Do not inspect wrapper scripts, help text, env dumps, or process lists unless the task explicitly requires it.\n" +
-  "- If a helper command fails, stop after one precise failure report instead of thrashing.\n\n" +
-  "Do not merge your own PR.\n" +
-  "Do not push to main.\n" +
-  "Do not create extra branches."
+fn leaf_profile_text(project_dir : String) -> String {
+  @prompts.load_prompt(@prompts.PromptName::LeafProfile, project_dir)
 }
 
 ///|
-fn worker_profile_text(worker_type : String) -> String {
-  let role_line = if worker_type == "research" {
-    "You are a research worker. Explore, read, search, and synthesize."
-  } else if worker_type == "review" {
-    "You are a review worker. Inspect code, diffs, tests, and behavior, then report findings."
+fn worker_profile_name(worker_type : String) -> @prompts.PromptName {
+  if worker_type == "review" {
+    @prompts.PromptName::WorkerReview
   } else {
-    "You are a worker running in the parent's workspace."
+    @prompts.PromptName::WorkerResearch
   }
-  let completion = "## Completion Protocol (Worker)\n" +
-    role_line +
-    "\nYou can read and edit files but do not own a branch — no commits, PRs, or pushes.\n\n" +
-    "Shell command discipline:\n" +
-    "- Search only committed project paths relevant to the task (`src/`, `tests/`, `.choir/context/` when task-relevant). Do NOT walk `~/.moon`, `_build/`, `.choir/worktrees/`, `.choir/plugin/`, `.choir/bin/`, `.choir/kv/`, `node_modules/`, or other toolchain/cache/runtime paths; they are huge and unindexed for review/audit purposes.\n" +
-    "- All `find` / `grep -r` / `xargs` invocations must be bounded with `timeout 30s` prefix and scoped to `.` or a specific subdirectory. Unbounded walks against `/`, `~`, or `~/.moon` are forbidden.\n" +
-    "- A `bash-bounded` wrapper is provided in the worker's worktree when one exists; prefer it for shell pipelines. It caps Bash at 60s, but `find` / `grep -r` / `xargs` inside that shell still need their own `timeout 30s` bound.\n" +
-    "- Concrete failure mode this prevents: a Sarcasmotron worker walked `~/.moon` for 17 minutes before user intervention. Worker context wasted; wave stalled.\n\n" +
-    "When you are done:\n\n" +
-    "1. Call `notify_parent` with status `success` and a concise summary (under 500 words, no raw dumps).\n" +
-    "   - `notify_parent` and `shutdown` are available as shell commands on PATH.\n" +
-    "   - Shell form: `notify_parent [--status <success|failure>] <message>`.\n" +
-    "   - For Beads issue lookups, prefer `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task explicitly delegates that authority.\n" +
-    "   - IMPORTANT: The parent CANNOT read your standard output. You MUST include your entire summary in the `<message>` argument. Do not print it to stdout and say 'see below'.\n" +
-    "2. If you fail, call `notify_parent` with status `failure` and explain why.\n" +
-    "3. Call `shutdown`."
-  completion
+}
+
+///|
+fn worker_profile_text(worker_type : String, project_dir : String) -> String {
+  @prompts.load_prompt(worker_profile_name(worker_type), project_dir)
 }
 
 ///|
@@ -387,8 +327,9 @@ fn render_common_prompt(
 pub fn render_leaf_spawn_prompt_with_defaults(
   spec : PromptSpec,
   default_read_first : Array[String],
+  project_dir? : String = ".",
 ) -> String {
-  render_common_prompt(spec, leaf_profile_text(), default_read_first)
+  render_common_prompt(spec, leaf_profile_text(project_dir), default_read_first)
 }
 
 ///|
@@ -402,10 +343,11 @@ pub fn render_leaf_spawn_prompt(spec : PromptSpec) -> String {
 pub fn render_worker_spawn_prompt_with_defaults(
   spec : PromptSpec,
   default_read_first : Array[String],
+  project_dir? : String = ".",
 ) -> String {
   render_common_prompt(
     spec,
-    worker_profile_text(spec.worker_type),
+    worker_profile_text(spec.worker_type, project_dir),
     default_read_first,
     sanitize_worker=true,
   )

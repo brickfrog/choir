@@ -90,6 +90,32 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
 }
 
 ///|
+test "render_leaf_spawn_prompt loads profile from project prompt file" {
+  let project_dir = "/tmp/choir-spawn-prompt-profile-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/prompts/profiles"))
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/.choir/prompts/profiles/leaf.md",
+      "LOCAL LEAF PROFILE\n",
+    ),
+  )
+
+  let prompt = render_leaf_spawn_prompt_with_defaults(
+    PromptSpec::from_map({ "task": "Use local profile" }),
+    [],
+    project_dir~,
+  )
+
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(prompt.contains("LOCAL LEAF PROFILE\n"))
+  assert_false(prompt.contains("Do not merge your own PR."))
+}
+
+///|
 test "render_worker_spawn_prompt uses research profile" {
   let prompt = render_worker_spawn_prompt(
     PromptSpec::from_map({
@@ -103,6 +129,32 @@ test "render_worker_spawn_prompt uses research profile" {
   assert_true(prompt.contains("research worker"))
   assert_true(prompt.contains("do not own a branch"))
   assert_true(prompt.contains("notify_parent"))
+}
+
+///|
+test "render_worker_spawn_prompt loads review profile from project prompt file" {
+  let project_dir = "/tmp/choir-spawn-prompt-worker-profile-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/prompts/profiles"))
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/.choir/prompts/profiles/worker-review.md",
+      "LOCAL REVIEW PROFILE\n",
+    ),
+  )
+
+  let prompt = render_worker_spawn_prompt_with_defaults(
+    PromptSpec::from_map({ "task": "Review prompt loader", "type": "review" }),
+    [],
+    project_dir~,
+  )
+
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(prompt.contains("LOCAL REVIEW PROFILE\n"))
+  assert_false(prompt.contains("research worker"))
 }
 
 ///|
