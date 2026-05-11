@@ -85,8 +85,8 @@ async test "run_beads_wave_from renders fork_wave plan from ready children" {
 }
 
 ///|
-async test "run_beads_wave_from execute invokes choir tool fork_wave" {
-  let seen : Array[String] = []
+async test "run_beads_wave_from execute reads ready children and invokes fork_wave" {
+  let seen : Array[@workspace.Command] = []
   let output = run_beads_wave_from(
     {
       parent_id: "choir-epic",
@@ -99,24 +99,77 @@ async test "run_beads_wave_from execute invokes choir tool fork_wave" {
     "/bin/choir",
     async fn(cmd : @workspace.Command) -> (Int, String) {
       @async.sleep(0)
-      seen.push(cmd.program + " " + cmd.args.join(" "))
+      seen.push(cmd)
       if cmd.program == "bd" {
         (
           0,
           (
-            #|[{"id":"choir-a","title":"A","status":"open","notes":"","labels":[]}]
+            #|[{"id":"choir-a","title":"A","status":"open","notes":"first","labels":["agent:codex","automerge:true"]},{"id":"choir-b","title":"B","status":"open","notes":"second","labels":["agent:codex","automerge:true"]}]
           ),
         )
+      } else if cmd.program == "/bin/choir" {
+        (0, "{\"wave_id\":\"wave-smoke\"}\n")
       } else {
-        (0, "{\"ok\":true}\n")
+        (1, "unexpected command: " + cmd.to_string())
       }
     },
   )
   match output {
     Ok(text) => {
-      assert_eq(text, "{\"ok\":true}\n")
-      assert_true(seen.join("\n").contains("tool fork_wave"))
-      assert_true(seen.join("\n").contains("\"beads_issue_id\":\"choir-a\""))
+      assert_eq(text, "{\"wave_id\":\"wave-smoke\"}\n")
+      assert_eq(seen.length(), 2)
+      let bd_cmd = seen[0]
+      assert_eq(bd_cmd.program, "bd")
+      assert_eq(bd_cmd.args, [
+        "ready", "--json", "--parent", "choir-epic", "--limit", "0",
+      ])
+      @debug.assert_eq(bd_cmd.workdir, Some("/repo"))
+      let fork_cmd = seen[1]
+      assert_eq(fork_cmd.program, "/bin/choir")
+      assert_eq(fork_cmd.args.length(), 6)
+      assert_eq(fork_cmd.args[0], "tool")
+      assert_eq(fork_cmd.args[1], "fork_wave")
+      assert_eq(fork_cmd.args[2], "--caller-role")
+      assert_eq(fork_cmd.args[3], "tl")
+      assert_eq(fork_cmd.args[4], "--json")
+      @debug.assert_eq(fork_cmd.workdir, Some("/repo"))
+      let fork_json = @json.parse(fork_cmd.args[5]) catch {
+        _ => fail("expected fork_wave JSON args")
+      }
+      guard fork_json is Object(fork_args) else {
+        fail("expected fork_wave args object")
+      }
+      @debug.assert_eq(fork_args.get("caller_id"), Some("main.tl".to_json()))
+      @debug.assert_eq(
+        fork_args.get("parent_branch"),
+        Some("feature/beads".to_json()),
+      )
+      @debug.assert_eq(fork_args.get("slug_prefix"), Some("beads".to_json()))
+      @debug.assert_eq(fork_args.get("count"), Some(Int::to_json(2)))
+      @debug.assert_eq(fork_args.get("agent_type"), Some("codex".to_json()))
+      @debug.assert_eq(fork_args.get("automerge"), Some(true.to_json()))
+      match fork_args.get("task_contracts") {
+        Some(Array(contracts)) => {
+          assert_eq(contracts.length(), 2)
+          match contracts[0] {
+            Object(fields) =>
+              @debug.assert_eq(
+                fields.get("beads_issue_id"),
+                Some("choir-a".to_json()),
+              )
+            _ => fail("expected first task contract object")
+          }
+          match contracts[1] {
+            Object(fields) =>
+              @debug.assert_eq(
+                fields.get("beads_issue_id"),
+                Some("choir-b".to_json()),
+              )
+            _ => fail("expected second task contract object")
+          }
+        }
+        _ => fail("expected task contracts")
+      }
     }
     Err(e) => fail(e.message())
   }

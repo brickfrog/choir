@@ -52,6 +52,15 @@ pub fn AgentRegistry::get(
 }
 
 ///|
+/// Look up an agent by ID, returning None when absent.
+pub fn AgentRegistry::get_opt(
+  self : AgentRegistry,
+  agent_id : String,
+) -> @types.Agent? {
+  self.agents.get(agent_id)
+}
+
+///|
 /// Get the parent agent for a given agent ID.
 pub fn AgentRegistry::get_parent(
   self : AgentRegistry,

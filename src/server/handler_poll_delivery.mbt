@@ -748,11 +748,7 @@ pub fn ServerState::plan_poll_event_deliveries(
     Some(pr) => pr.agent_id
     None => agent_id
   }
-  let leaf_owner = try self.registry.get(leaf_agent_id) catch {
-    _ => None
-  } noraise {
-    agent => Some(agent)
-  }
+  let leaf_owner = self.registry.get_opt(leaf_agent_id)
   let local_cfg = match tracked {
     Some(pr) =>
       local_config_for_agent(
@@ -1060,6 +1056,7 @@ async fn deliver_pending_poll_events(
   pending_agent_ids : Array[String],
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> Unit {
   let pending_parent_rows : Array[PendingPollParentRow] = []
   let automerge_attempted_prs : Map[Int, Bool] = {}
@@ -1069,8 +1066,8 @@ async fn deliver_pending_poll_events(
     // Skip suspended agents — the human is actively editing the worktree
     // and the daemon must not race against them. `resume` RPC flips
     // the agent back to Active and unblocks delivery.
-    let agent_lookup = try? state.registry.get(agent_id)
-    if agent_lookup is Ok(agent) && agent.state == @types.AgentState::Suspended {
+    if state.registry.get_opt(agent_id) is Some(agent) &&
+      agent.state == @types.AgentState::Suspended {
       continue
     }
     let tracked_before_delivery = poll_event_tracked_snapshot(
@@ -1155,7 +1152,7 @@ async fn deliver_pending_poll_events(
               pr,
               unresolved_threads,
               runner,
-              capture=@exec.capture_command_merged,
+              capture=automerge_capture,
               review_mode~,
             ) {
             continue
@@ -1337,11 +1334,7 @@ pub async fn deliver_orphaned_pr_notification_for(
   if lifecycle_suppresses_poller_followups(state.current_lifecycle(pr.agent_id)) {
     return
   }
-  let agent_opt = try state.registry.get(pr.agent_id) catch {
-    _ => None
-  } noraise {
-    a => Some(a)
-  }
+  let agent_opt = state.registry.get_opt(pr.agent_id)
   let agent_is_active = match agent_opt {
     Some(agent) =>
       agent.state == @types.AgentState::Active ||
@@ -1600,6 +1593,7 @@ pub async fn ServerState::refresh_pr_with(
   ),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> Unit {
   let pending_events : Array[@poller.PollEvent] = []
   let pending_agent_ids : Array[String] = []
@@ -1633,6 +1627,7 @@ pub async fn ServerState::refresh_pr_with(
       pending_agent_ids,
       runner,
       capture~,
+      automerge_capture~,
     )
   }
   ignore(self.poller.write_state_file(self.config.project_dir))
@@ -1644,6 +1639,7 @@ pub async fn ServerState::refresh_pr_with_runner(
   pr_number : Int,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> Unit {
   self.refresh_pr_with(
     pr_number,
@@ -1652,5 +1648,6 @@ pub async fn ServerState::refresh_pr_with_runner(
     @poller.gh_poll_pr,
     runner~,
     capture~,
+    automerge_capture~,
   )
 }

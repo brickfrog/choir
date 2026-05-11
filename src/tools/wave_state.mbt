@@ -246,8 +246,7 @@ pub fn plan_wave_state(
   now_ms : Int64,
   beads_issue_reader? : (@types.Agent) -> String? = wave_state_default_beads_issue_reader,
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
-  let caller_agent = try? registry.get(caller_id)
-  guard caller_agent is Ok(agent) else {
+  guard registry.get_opt(caller_id) is Some(agent) else {
     return Err(@types.ChoirError::agent_not_found(caller_id))
   }
   guard agent.role == @types.Role::Root || agent.role == @types.Role::TL else {
