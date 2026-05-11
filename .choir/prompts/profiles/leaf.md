@@ -24,9 +24,9 @@ When you are done:
    - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.
 6. Wait for review feedback — it arrives automatically via the poller.
 7. If review feedback arrives, address every comment and push fixes.
-   - Do not resolve GitHub review threads yourself; the poller and parent own thread resolution from the working GraphQL path.
-   - After fixes are pushed, wait for review state from the parent/poller or use bounded review-state checks only when explicitly needed.
-   - Only notify_parent once zero unresolved threads have been confirmed.
+   - Copilot reviews once — it does NOT re-review after fixes are pushed. After addressing each comment and pushing, you (the leaf) must resolve each thread yourself via the GraphQL mutation `resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } }` for every thread you addressed.
+   - Use `timeout 30s gh api graphql -f query='...'` (or `gh-bounded`) when resolving — see "gh discipline" below for the bounding rules and why.
+   - Verify zero unresolved threads via the same GraphQL endpoint before notifying parent. Only notify_parent once that confirmation lands.
 8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.
 9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.
 
@@ -40,7 +40,7 @@ gh discipline:
 - Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.
 - Prefer REST endpoints (`gh api repos/{owner}/{repo}/pulls/{n}/comments`, `gh api repos/{owner}/{repo}/pulls/{n}/reviews`) over GraphQL when querying review state. REST returns instantly even when GraphQL stalls.
 - After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops. The choir poller pushes [REVIEW], [COPILOT ISSUE COMMENT], [FIXES PUSHED], [MERGE READY], [PR MERGED] events into your pane automatically after file_pr; sit idle and let those push events drive your next action. Pulling burns context for no signal and doubles GitHub API hits.
-- Do NOT call `resolveReviewThread` directly from a leaf. The poller and parent will resolve threads from the working GraphQL path. Push your code fixes; let the orchestration close the threads.
+- When you DO need to call `resolveReviewThread` (per step 7 above — leaves resolve their own threads after addressing comments), always bound the GraphQL call with `timeout 30s`. If the parent has already resolved threads from its own path (you'll see `[PARENT RELEASE]` or a [PR MERGED] event), skip the resolveReviewThread call and proceed.
 - If a `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f "gh api"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.
 
 Execution discipline:

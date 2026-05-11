@@ -66,8 +66,13 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
     prompt.contains("sit idle and let those push events drive your next action"),
   )
   assert_true(prompt.contains("doubles GitHub API hits"))
+  // Per CLAUDE.md Leaf Agent Rules, leaves MUST resolve threads themselves
+  // after addressing comments — earlier prompt drafts said the opposite,
+  // which contradicted the source-of-truth rule. Guard against regression.
   assert_true(
-    prompt.contains("Do NOT call `resolveReviewThread` directly from a leaf"),
+    prompt.contains(
+      "When you DO need to call `resolveReviewThread` (per step 7 above",
+    ),
   )
   assert_true(prompt.contains("do NOT use a global `pkill -f \"gh api\"`"))
   assert_true(prompt.contains("kill only the specific PID you launched"))
