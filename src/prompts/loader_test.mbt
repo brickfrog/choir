@@ -50,22 +50,16 @@ fn PromptFs::read(self : PromptFs, path : String) -> String {
 }
 
 ///|
-/// Mirror `@sys.path_exists` semantics: returns true only for regular files
-/// the mock has been told about, NOT for directories. Production
-/// `@sys.path_exists` opens the path with `fopen` which fails on
-/// directories, so a directory accidentally present at a prompt file path
-/// must read as "missing" — not "exists" as the prior implementation
-/// returned. Tests that need to assert directory existence use `dir_exists`
-/// below.
+/// Match `@sys.path_exists` semantics on Linux: it's implemented as
+/// `c_get_file_size(path) >= 0` (src/sys/io.mbt:102), which calls fopen +
+/// fseek + ftell on the C side (src/sys/stub.c:41-47). On Linux fopen
+/// SUCCEEDS on directories and ftell after a failed fseek returns 0 —
+/// so production reports a directory as "exists" with size 0. The
+/// docstring on @sys.path_exists is misleading; statusline.mbt:153-155
+/// documents the real behavior. Mirror that here so tests don't catch
+/// bugs that production wouldn't, and don't miss bugs production WOULD.
 fn PromptFs::exists(self : PromptFs, path : String) -> Bool {
-  self.files.contains(path)
-}
-
-///|
-/// Separate helper for asserting directories were created. Decoupled from
-/// `exists` so the loader-facing capability stays file-only.
-fn PromptFs::dir_exists(self : PromptFs, path : String) -> Bool {
-  self.dirs.contains(path)
+  self.files.contains(path) || self.dirs.contains(path)
 }
 
 ///|
@@ -76,12 +70,12 @@ fn PromptFs::mkdir(self : PromptFs, path : String) -> Bool {
 
 ///|
 test "load_prompt returns file contents when present" {
+  // load_prompt only reads (path_exists + read_file); seed the files map
+  // directly. The PromptFs.write parent-dir check is load-bearing only for
+  // the materialize test below — exercising it here would be ceremony.
   let fs = PromptFs::new()
   let path = "/repo/.choir/prompts/skills/audit.md"
-  // Seed the parent dir; PromptFs.write refuses without it (mirrors real
-  // filesystem semantics where the parent must exist).
-  assert_true(fs.mkdir("/repo/.choir/prompts/skills"))
-  assert_true(fs.write(path, "local audit prompt\n"))
+  fs.files.set(path, "local audit prompt\n")
   let got = load_prompt(
     PromptName::AuditSkill,
     "/repo",
