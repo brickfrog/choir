@@ -417,9 +417,23 @@ async fn parent_branch_policy_changed_paths(
       // doc-only or absent.
       Some([parent_branch_policy_marker_path(kind)])
     }
+    @policy.ParentBranchWriteKind::Other(_) =>
+      // Worktree/ref-mutating verbs (git switch/restore/rebase/merge/
+      // cherry-pick/revert/clean/stash, plus rm/mv) act independently of
+      // what's currently dirty — `git switch other-branch` brings in
+      // arbitrary content from another branch, `git clean -fd` deletes
+      // untracked files, etc. Reusing the current `git status` paths would
+      // let a TL with only doc changes run any of these during a live
+      // wave. Use a marker path so the gate always blocks them (unless
+      // override is on), the same way GitCheckout is handled.
+      Some([parent_branch_policy_marker_path(kind)])
     @policy.ParentBranchWriteKind::GitCommit
-    | @policy.ParentBranchWriteKind::GitResetHard
-    | @policy.ParentBranchWriteKind::Other(_) => {
+    | @policy.ParentBranchWriteKind::GitResetHard => {
+      // In-place commit / reset-to-HEAD: the doc-only carve-out is
+      // intentional — a commit that only touches README during a live
+      // wave is harmless. Use the actual dirty paths so
+      // decide_tl_parent_branch_write can apply the doc classification;
+      // fall back to a marker path when the working tree is clean.
       let paths = parent_branch_policy_status_paths(project_dir, capture)
       if paths.length() > 0 {
         Some(paths)

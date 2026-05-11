@@ -46,7 +46,14 @@ async fn dispatch_policy_git_capture(cmd : @workspace.Command) -> (Int, String) 
     return (0, " M src/tools/dispatch.mbt\n")
   }
   if cmd.program == "git" && cmd.args.length() >= 4 && cmd.args[0] == "ls-files" {
-    return (0, "")
+    // `git ls-files --error-unmatch -- <path>` exits non-zero for an
+    // untracked path. The production gate no longer calls this (a
+    // file-edit on any in-repo path counts, tracked or not), but if a
+    // future change re-introduced a "tracked only" check, this mock would
+    // correctly report the new-file path as untracked — making the
+    // "refuses Write of a new untracked source file" regression test
+    // load-bearing instead of a tautology.
+    return (1, "")
   }
   (0, "")
 }
@@ -279,5 +286,81 @@ async test "dispatch_call refuses git switch during live wave" {
       assert_true(msg.contains("kind=other"))
     }
     @types.Response::Ok(_) => fail("expected git switch to be refused")
+  }
+}
+
+///|
+/// git-status capture that reports ONLY a doc change dirty. Used to prove
+/// the worktree-mutating-verb gate doesn't fall through to the doc-only
+/// carve-out: `git switch other-branch` rewrites the worktree regardless
+/// of what's currently dirty, so it must block even when the only dirty
+/// path is a markdown file.
+async fn dispatch_policy_git_capture_doc_only_dirty(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "git" && cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+    return (0, "main\n")
+  }
+  if cmd.program == "git" &&
+    cmd.args == ["status", "--porcelain", "--untracked-files=all"] {
+    return (0, " M README.md\n M docs/notes.md\n")
+  }
+  if cmd.program == "git" && cmd.args.length() >= 4 && cmd.args[0] == "ls-files" {
+    return (1, "")
+  }
+  (0, "")
+}
+
+///|
+async test "dispatch_call refuses git switch even when only docs are dirty during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "bash",
+      args: { "command": "git switch other-branch", "caller_id": "main.tl" },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture_doc_only_dirty,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=other"))
+    }
+    @types.Response::Ok(_) =>
+      fail(
+        "git switch must be refused during a live wave regardless of current dirty paths",
+      )
+  }
+}
+
+///|
+async test "dispatch_call still allows a doc-only git commit during live wave" {
+  // The doc-only carve-out for in-place commits is intentional and must
+  // survive the Other-vs-GitCommit split. With only README dirty, a
+  // `git commit` is harmless during a live wave.
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "bash",
+      args: { "command": "git commit -am docs", "caller_id": "main.tl" },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture_doc_only_dirty,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  // The gate returns None (no refusal) → dispatch_call proceeds to run the
+  // bash tool. We don't care about the bash result here, only that it
+  // wasn't refused with the policy message.
+  match resp {
+    @types.Response::Err(msg) =>
+      if msg.contains("policy refused: parent-branch write") {
+        fail("doc-only git commit must not be refused during a live wave")
+      }
+    @types.Response::Ok(_) => ()
   }
 }
