@@ -11,10 +11,19 @@ fn tl_policy_supervised_shell_script(
 ) -> String {
   let foreground_script = "choir tl-policy-watch --pid $$ & exec " +
     command_text_for_launch(inner)
+  // Record the TL agent's exit code with a timestamp to
+  // `.choir/tl-exits.log` so a silent crash (Node harness died, no
+  // transcript trace, etc.) is still diagnosable next time it happens.
+  // CHOIR_WORKSPACE is exported by `env_exports` above; `2>/dev/null` keeps
+  // a missing log file/dir from disturbing the rest of the post-exit
+  // handling. Tracking bead: choir-eek.
+  let exit_log_step = " printf '%s exit=%s\\n' \"$(date -Is)\" \"$status\"" +
+    " >> \"$CHOIR_WORKSPACE/.choir/tl-exits.log\" 2>/dev/null;"
   env_exports +
   "sh -lc " +
   @sys.shell_quote(foreground_script) +
   "; status=$?;" +
+  exit_log_step +
   post_exit_shell
 }
 

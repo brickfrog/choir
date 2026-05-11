@@ -151,6 +151,10 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
   assert_false(script.contains("child_pid=$!"))
   assert_true(script.contains("[TL exited]"))
   assert_true(script.contains("exec bash -l"))
+  // Every TL exit appends its timestamped exit code to .choir/tl-exits.log
+  // so a silent harness crash is still diagnosable (choir-eek).
+  assert_true(script.contains(".choir/tl-exits.log"))
+  assert_true(script.contains("exit=%s"))
 }
 
 ///|
