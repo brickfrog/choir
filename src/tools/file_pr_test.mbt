@@ -479,9 +479,22 @@ async fn mock_capture_empty(_cmd : @workspace.Command) -> (Int, String) {
 
 ///|
 fn file_pr_test_audit_receipt(sha : String) -> String {
-  "{ \"sha\": \"" +
-  sha +
-  "\", \"branch\": \"feature/discipline-gates\", \"audited_at\": 1770000000, \"agent_id\": \"main.tl\" }\n"
+  file_pr_test_audit_receipt_with_findings(sha, 0)
+}
+
+///|
+fn file_pr_test_audit_receipt_with_findings(
+  sha : String,
+  findings_count : Int,
+) -> String {
+  let receipt : @types.AuditReceipt = {
+    sha,
+    branch: "feature/discipline-gates",
+    audited_at: 1770000000L,
+    agent_id: "main.tl",
+    findings_count,
+  }
+  receipt.to_json().stringify() + "\n"
 }
 
 ///|
@@ -1114,17 +1127,13 @@ test "file_pr_validate_audit_receipt distinguishes stale vs malformed receipts" 
   let head = "fedcba654321fedcba654321fedcba654321fedc"
   let short = file_pr_short_sha(head)
   // Stale: well-formed receipt JSON pointing at a different audited sha.
-  // All three required fields (sha / branch / audited_at) present.
+  // All typed receipt fields present.
   let other_sha = "1111111111112222222222223333333333334444"
   match
     file_pr_validate_audit_receipt(
       "main",
       head,
-      Some(
-        "{\"sha\":\"" +
-        other_sha +
-        "\",\"branch\":\"feature/x\",\"audited_at\":1700000000}",
-      ),
+      Some(file_pr_test_audit_receipt(other_sha)),
     ) {
     Err(e) => {
       assert_true(e.message().contains("audit receipt is stale"))
@@ -1155,7 +1164,9 @@ test "file_pr_validate_audit_receipt distinguishes stale vs malformed receipts" 
     file_pr_validate_audit_receipt(
       "main",
       head,
-      Some("{\"branch\":\"x\",\"audited_at\":1}"),
+      Some(
+        "{\"branch\":\"x\",\"audited_at\":\"1\",\"agent_id\":\"main.tl\",\"findings_count\":0}",
+      ),
     ) {
     Err(e) => {
       assert_true(e.message().contains("malformed"))
@@ -1173,7 +1184,41 @@ test "file_pr_validate_audit_receipt distinguishes stale vs malformed receipts" 
     }
     Ok(_) => fail("expected malformed receipt error")
   }
-  // Happy path: all three fields present and sha matches HEAD.
+  // Happy path: all typed fields present, findings_count is zero, and sha matches HEAD.
+  match
+    file_pr_validate_audit_receipt(
+      "main",
+      head,
+      Some(file_pr_test_audit_receipt(head)),
+    ) {
+    Ok(_) => ()
+    Err(e) => fail("expected validation to pass: " + e.message())
+  }
+}
+
+///|
+test "file_pr_validate_audit_receipt rejects findings_count above zero" {
+  let head = "fedcba654321fedcba654321fedcba654321fedc"
+  match
+    file_pr_validate_audit_receipt(
+      "main",
+      head,
+      Some(file_pr_test_audit_receipt_with_findings(head, 3)),
+    ) {
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        "validation error: file_pr: audit on HEAD " +
+        file_pr_short_sha(head) +
+        " reported 3 finding(s); re-run /audit until findings_count == 0 before filing.",
+      )
+    Ok(_) => fail("expected findings_count gate failure")
+  }
+}
+
+///|
+test "file_pr_validate_audit_receipt rejects legacy receipts as malformed" {
+  let head = "fedcba654321fedcba654321fedcba654321fedc"
   match
     file_pr_validate_audit_receipt(
       "main",
@@ -1181,11 +1226,15 @@ test "file_pr_validate_audit_receipt distinguishes stale vs malformed receipts" 
       Some(
         "{\"sha\":\"" +
         head +
-        "\",\"branch\":\"feature/x\",\"audited_at\":1700000000}",
+        "\",\"branch\":\"feature/x\",\"audited_at\":1700000000,\"agent_id\":\"main.tl\"}",
       ),
     ) {
-    Ok(_) => ()
-    Err(e) => fail("expected validation to pass: " + e.message())
+    Err(e) => {
+      assert_true(e.message().contains("malformed"))
+      assert_true(e.message().contains("findings_count"))
+      assert_false(e.message().contains("audit receipt is stale"))
+    }
+    Ok(_) => fail("expected legacy receipt to be rejected")
   }
 }
 

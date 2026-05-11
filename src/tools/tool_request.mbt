@@ -10,6 +10,7 @@ pub(all) enum ToolRequest {
   ReportUsage(ReportUsageArgs)
   WaveState(WaveStateArgs)
   CrystallizeSpec(CrystallizeSpecArgs)
+  WriteAuditReceipt(WriteAuditReceiptArgs)
   SendMessage(SendMessageArgs)
   Reply(ReplyArgs)
   Shutdown(ShutdownArgs)
@@ -49,6 +50,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     ReportUsage(_) => "report_usage"
     WaveState(_) => "wave_state"
     CrystallizeSpec(_) => "crystallize_spec"
+    WriteAuditReceipt(_) => "write_audit_receipt"
     SendMessage(_) => "send_message"
     Reply(_) => "reply"
     Shutdown(_) => "shutdown"

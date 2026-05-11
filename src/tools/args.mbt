@@ -205,6 +205,14 @@ pub(all) struct CrystallizeSpecArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct WriteAuditReceiptArgs {
+  caller_id : String
+  sha : String
+  branch : String
+  findings_count : Int
+} derive(Debug, Eq)
+
+///|
 struct SendMessageArgs {
   target_id : String
   sender_id : String

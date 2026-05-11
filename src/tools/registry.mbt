@@ -91,6 +91,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "write_audit_receipt",
+      description: "Write the typed audit receipt for the current audited HEAD, including findings_count.",
+      allowed_roles: [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
+    },
+    {
       name: "send_message",
       description: "Send message to any agent by ID",
       allowed_roles: all_roles,
