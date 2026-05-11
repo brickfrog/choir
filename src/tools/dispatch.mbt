@@ -319,6 +319,38 @@ fn ensure_trailing_slash(path : String) -> String {
 }
 
 ///|
+/// Collapse `.` and `..` path segments so a string-prefix doc classification
+/// can't be fooled by `docs/../src/foo.mbt`. Leading `..` segments that can't
+/// be resolved are kept (the result then fails the `docs/` / `.choir/context/`
+/// doc-prefix checks, so it blocks rather than slips past).
+fn normalize_path_segments(path : String) -> String {
+  let out : Array[String] = []
+  for raw_seg in path.split("/") {
+    let seg = raw_seg.to_owned()
+    if seg == "" || seg == "." {
+      continue
+    }
+    if seg == ".." {
+      if out.length() > 0 && out[out.length() - 1] != ".." {
+        ignore(out.pop())
+      } else {
+        out.push("..")
+      }
+      continue
+    }
+    out.push(seg)
+  }
+  let mut result = ""
+  for idx = 0; idx < out.length(); idx = idx + 1 {
+    if idx > 0 {
+      result = result + "/"
+    }
+    result = result + out[idx]
+  }
+  result
+}
+
+///|
 /// Reduce a tool-supplied file path to a repo-relative path, or `None` if the
 /// path is clearly outside the repository.
 ///
@@ -329,15 +361,18 @@ fn ensure_trailing_slash(path : String) -> String {
 ///
 /// - Relative tool paths are taken as already repo-relative (choir-serve runs
 ///   with cwd == repo root); a leading `project_dir/` prefix is stripped if
-///   present.
-/// - Absolute tool paths are made repo-relative by stripping `repo_toplevel`
-///   (or `project_dir` when it is itself absolute and the toplevel could not
-///   be resolved); absolute paths outside that root return `None`.
-/// - When neither a toplevel nor an absolute `project_dir` is available we
-///   treat an absolute path conservatively as in-repo (drop the leading `/`)
-///   so source paths still block rather than silently bypassing the gate —
-///   the earlier behaviour here returned `None`, which let `/repo/src/foo.mbt`
-///   slip past whenever `project_dir` was the production `"."`.
+///   present, then `.`/`..` segments are collapsed.
+/// - Absolute tool paths under `repo_toplevel` (or under `project_dir` when it
+///   is itself absolute and the toplevel could not be resolved) are made
+///   repo-relative by stripping that root.
+/// - Any other absolute path — outside the resolved root, or with no
+///   resolvable root at all — is treated conservatively as in-repo (drop the
+///   leading `/`, collapse segments) so source paths still block rather than
+///   silently bypassing the gate. The earlier behaviour returned `None` here,
+///   which let `/repo/src/foo.mbt` slip past whenever `project_dir` was the
+///   production `"."`, and would also let a symlinked repo root slip past. The
+///   cost is over-blocking a genuine write to an absolute path outside the
+///   repo during a live wave; `choir tl-parent-override on` is the escape.
 fn parent_branch_policy_relative_path(
   project_dir : String,
   repo_toplevel : String?,
@@ -347,16 +382,23 @@ fn parent_branch_policy_relative_path(
   if trimmed == "" {
     return None
   }
+  let finish = fn(rel : String) -> String? {
+    let norm = normalize_path_segments(rel)
+    if norm == "" {
+      None
+    } else {
+      Some(norm)
+    }
+  }
   if !trimmed.has_prefix("/") {
     let project = strip_dot_slash(project_dir.trim().to_owned())
     if project != "" && project != "/" {
       let project_prefix = ensure_trailing_slash(project)
       if trimmed.has_prefix(project_prefix) {
-        let rel = strip_dot_slash(trimmed[project_prefix.length():].to_owned())
-        return if rel == "" { None } else { Some(rel) }
+        return finish(trimmed[project_prefix.length():].to_owned())
       }
     }
-    return Some(trimmed)
+    return finish(trimmed)
   }
   let project_dir_trimmed = project_dir.trim().to_owned()
   let root = match repo_toplevel {
@@ -376,28 +418,18 @@ fn parent_branch_policy_relative_path(
       }
   }
   match root {
-    Some(root) => {
-      if trimmed == root {
-        return None
-      }
-      let root_prefix = ensure_trailing_slash(root)
-      if trimmed.has_prefix(root_prefix) {
-        let rel = strip_dot_slash(trimmed[root_prefix.length():].to_owned())
-        if rel == "" {
-          None
-        } else {
-          Some(rel)
-        }
+    Some(root) =>
+      if trimmed != root && trimmed.has_prefix(ensure_trailing_slash(root)) {
+        finish(trimmed[ensure_trailing_slash(root).length():].to_owned())
       } else {
-        // Absolute path outside the repo root — not a parent-branch write.
-        None
+        // Outside the resolved root (or a symlinked-root mismatch) — be
+        // conservative and treat it as in-repo so source paths still block.
+        finish(trimmed[1:].to_owned())
       }
-    }
     None =>
-      // Could not resolve the repo root and `project_dir` is relative. Be
-      // conservative: treat the path as in-repo (drop the leading `/`) so the
-      // doc-vs-source classification still runs.
-      Some(trimmed[1:].to_owned())
+      // No resolvable root and `project_dir` is relative — same conservative
+      // in-repo treatment so source paths still block.
+      finish(trimmed[1:].to_owned())
   }
 }
 

@@ -515,3 +515,84 @@ test "detect_parent_branch_write_kind does not misread a chained `git diff -- x`
     _ => fail("expected GitCheckout(main)")
   }
 }
+
+///|
+test "detect_parent_branch_write_kind treats `git checkout <tree-ish> <pathspec>` as a path restore" {
+  // `git checkout main src/foo.mbt` (no `--`) restores src/foo.mbt from main —
+  // a path write, not a branch switch, even though the first positional looks
+  // like a branch name.
+  let req = parent_write_req("bash", {
+    "command": "git checkout main src/foo.mbt",
+  })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::Other(detail~)) =>
+      assert_eq(detail, "git checkout -- paths")
+    _ => fail("expected Other(git checkout -- paths)")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind treats `git checkout -b new start` as a branch-creation switch" {
+  // The new-branch name after `-b` is the target; the start-point positional
+  // must not push the classification into path-restore territory.
+  let req = parent_write_req("bash", {
+    "command": "git checkout -b feature/new main",
+  })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitCheckout(target~)) =>
+      assert_eq(target, "feature/new")
+    _ => fail("expected GitCheckout(feature/new)")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind catches HEAD-moving `git reset` forms" {
+  let cases = [
+    "git reset HEAD~1", "git reset --soft HEAD~1", "git reset --keep origin/main",
+    "git reset --merge abc123",
+  ]
+  for command in cases {
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      Some(ParentBranchWriteKind::Other(detail~)) =>
+        assert_eq(detail, "git reset")
+      _ => fail("expected Other(git reset) for: " + command)
+    }
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind ignores HEAD-keeping `git reset` forms" {
+  // A bare `git reset` or `git reset [--] <pathspec>` only touches the index;
+  // it does not move HEAD, so it is not a parent-branch write.
+  for command in ["git reset", "git reset -- src/foo.mbt", "git reset --mixed"] {
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      None => ()
+      Some(kind) =>
+        fail(
+          "expected no parent-branch write for: " +
+          command +
+          " got: " +
+          kind.to_string(),
+        )
+    }
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes git invoked by absolute path" {
+  let req = parent_write_req("bash", { "command": "/usr/bin/git commit -m x" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitCommit) => ()
+    _ => fail("expected GitCommit for /usr/bin/git commit")
+  }
+}
+
+///|
+test "git_status_changed_paths does not split a non-rename line on a literal arrow" {
+  // ` M "weird -> name.md"` is a plain modify of a file whose name contains
+  // ` -> `; only rename/copy lines may be split on the arrow.
+  let out = git_status_changed_paths(" M \"weird -> name.md\"\n")
+  assert_eq(out, ["weird -> name.md"])
+}

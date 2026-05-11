@@ -424,16 +424,18 @@ async test "dispatch_call refuses an absolute in-repo source Write with project_
 }
 
 ///|
-/// An absolute path *outside* the repo toplevel is not a parent-branch write
-/// — writing it must not be refused even during a live wave.
-async test "dispatch_call allows an absolute out-of-repo Write during live wave" {
+/// An absolute path outside the resolved repo toplevel is treated
+/// conservatively as in-repo (so a symlinked-root mismatch can't bypass the
+/// gate), but the doc classification still applies — a `.md` write outside
+/// the repo stays DocOnly and is allowed during a live wave.
+async test "dispatch_call allows an out-of-repo absolute doc Write during live wave" {
   let resp = dispatch_call(
     ToolCall::{
       role: @types.Role::TL,
       name: "Write",
       args: {
-        "file_path": "/etc/somewhere/notes.json",
-        "content": "{}",
+        "file_path": "/etc/somewhere/notes.md",
+        "content": "# notes",
         "caller_id": "main.tl",
       },
     },
@@ -445,9 +447,39 @@ async test "dispatch_call allows an absolute out-of-repo Write during live wave"
   match resp {
     @types.Response::Err(msg) =>
       if msg.contains("policy refused: parent-branch write") {
-        fail("an absolute path outside the repo must not be refused")
+        fail("an out-of-repo .md Write must not be refused (DocOnly)")
       }
     @types.Response::Ok(_) => ()
+  }
+}
+
+///|
+/// A path-component traversal (`docs/../src/foo.mbt`) must not be classified
+/// doc-only via the `docs/` prefix — segments are collapsed before the doc
+/// check, so this reduces to `src/foo.mbt` and is refused during a live wave.
+async test "dispatch_call refuses a `docs/..`-traversal source Write during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "Write",
+      args: {
+        "file_path": "/repo/docs/../src/server/state.mbt",
+        "content": "pub fn x() -> Int { 1 }",
+        "caller_id": "main.tl",
+      },
+    },
+    project_dir=".",
+    capture=dispatch_policy_git_capture_with_toplevel,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=file_edit_on_tracked_path"))
+    }
+    @types.Response::Ok(_) =>
+      fail("a docs/.. traversal to a source path must be refused")
   }
 }
 
