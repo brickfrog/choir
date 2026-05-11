@@ -706,3 +706,27 @@ test "detect_parent_branch_write_kind ignores read-only `git branch` listing" {
     }
   }
 }
+
+///|
+test "detect_parent_branch_write_kind exempts `git pull --dry-run`" {
+  // `git pull --dry-run` only reports what a fetch+integrate would do; it
+  // does not move the branch, so it must not be flagged as a parent-branch
+  // write — a TL legitimately uses it to check remote drift mid-wave.
+  for
+    command in [
+      "git pull --dry-run", "git pull --ff-only --dry-run origin main", "git pull origin main --dry-run",
+    ] {
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      None => ()
+      Some(kind) =>
+        fail("`" + command + "` is read-only, got: " + kind.to_string())
+    }
+  }
+  // ...but a plain `git pull` (no --dry-run) still is.
+  let req = parent_write_req("bash", { "command": "git pull" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::Other(detail~)) => assert_eq(detail, "git pull")
+    _ => fail("expected Other(git pull) for plain `git pull`")
+  }
+}

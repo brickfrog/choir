@@ -465,7 +465,14 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
       "stash" => return Some(ParentBranchWriteKind::Other(detail="git stash"))
       "apply" => return Some(ParentBranchWriteKind::Other(detail="git apply"))
       "am" => return Some(ParentBranchWriteKind::Other(detail="git am"))
-      "pull" => return Some(ParentBranchWriteKind::Other(detail="git pull"))
+      // `git pull` = fetch + integrate (can fast-forward the current branch),
+      // EXCEPT `git pull --dry-run`, which only reports what would happen and
+      // leaves the branch put — a TL legitimately uses it to check remote
+      // drift mid-wave.
+      "pull" =>
+        if !subcommand_args_contain_any(tokens, ["--dry-run"], sub_i + 1) {
+          return Some(ParentBranchWriteKind::Other(detail="git pull"))
+        }
       "update-ref" =>
         return Some(ParentBranchWriteKind::Other(detail="git update-ref"))
       // `git branch` alone lists branches (read-only); only the mutating
