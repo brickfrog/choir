@@ -57,15 +57,15 @@ test "interpret_write_audit_receipt writes typed receipt through injected fs" {
       findings_count: 2,
     },
     "/repo",
-    now_sec=fn() { 1770000001L },
-    create_dir_all=fn(path) {
+    fn(path) {
       mkdir_path = path
       true
     },
-    fs_writer=fn(path, content) {
+    fn(path, content) {
       writes.push((path, content))
       true
     },
+    now_sec=fn() { 1770000001L },
   )
   match resp {
     @types.Response::Ok(fields) => {
@@ -98,4 +98,36 @@ test "interpret_write_audit_receipt writes typed receipt through injected fs" {
   }
   assert_eq(decoded.agent_id, "main.tl")
   assert_eq(decoded.findings_count, 2)
+}
+
+///|
+async test "dispatch write_audit_receipt routes injected filesystem capabilities" {
+  let writes : Array[(String, String)] = []
+  let dirs : Array[String] = []
+  let resp = dispatch(
+    ToolRequest::WriteAuditReceipt({
+      caller_id: "main.tl",
+      sha: "abcdef1234567890abcdef1234567890abcdef12",
+      branch: "feature/dispatch",
+      findings_count: 0,
+    }),
+    project_dir="/repo",
+    create_dir_all=fn(path) {
+      dirs.push(path)
+      true
+    },
+    write_file_atomic=fn(path, content) {
+      writes.push((path, content))
+      true
+    },
+  )
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected dispatch success: " + msg)
+  }
+  assert_eq(dirs, ["/repo/.choir/audit-receipts"])
+  assert_eq(writes.length(), 1)
+  let (path, content) = writes[0]
+  assert_eq(path, "/repo/.choir/audit-receipts/abcdef123456.json")
+  assert_true(content.contains("\"findings_count\":0"))
 }

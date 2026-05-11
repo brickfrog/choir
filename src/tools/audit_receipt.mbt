@@ -78,22 +78,12 @@ pub fn plan_write_audit_receipt(
 }
 
 ///|
-fn write_audit_receipt_default_create_dir(path : String) -> Bool {
-  @sys.create_dir_all(path)
-}
-
-///|
-fn write_audit_receipt_default_writer(path : String, content : String) -> Bool {
-  @sys.write_file_atomic(path, content)
-}
-
-///|
 pub fn interpret_write_audit_receipt(
   args : WriteAuditReceiptArgs,
   project_dir : String,
+  create_dir_all : (String) -> Bool,
+  fs_writer : (String, String) -> Bool,
   now_sec? : () -> Int64 = @poller.now_sec,
-  create_dir_all? : (String) -> Bool = write_audit_receipt_default_create_dir,
-  fs_writer? : (String, String) -> Bool = write_audit_receipt_default_writer,
 ) -> @types.Response {
   let plan = match plan_write_audit_receipt(args, now_sec()) {
     Ok(p) => p

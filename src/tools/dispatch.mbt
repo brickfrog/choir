@@ -234,6 +234,406 @@ fn resolve_parent_for_notify(
 }
 
 ///|
+fn parent_branch_policy_role_applies(role : @types.Role) -> Bool {
+  role == @types.Role::Root || role == @types.Role::TL
+}
+
+///|
+fn parent_branch_policy_child_terminal(
+  summary : @phase.ChildLifecycleSummary,
+) -> Bool {
+  match summary {
+    @phase.ChildLifecycleSummary::Done => true
+    @phase.ChildLifecycleSummary::Failed(_) => true
+    _ => false
+  }
+}
+
+///|
+fn parent_branch_policy_live_wave_info(
+  lifecycle : @phase.AgentLifecycle?,
+) -> (Bool, Int?) {
+  match lifecycle {
+    Some(
+      {
+        workflow: @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::Supervising(children~, wave~)
+        ),
+        ..,
+      }
+    ) => {
+      for child in children {
+        if !parent_branch_policy_child_terminal(child.summary) {
+          return (true, Some(wave))
+        }
+      }
+      (false, Some(wave))
+    }
+    Some(
+      {
+        workflow: @phase.WorkflowState::Supervisor(
+          @phase.SupervisorLifecycle::WaveComplete(wave~, children~)
+        ),
+        ..,
+      }
+    ) => {
+      for child in children {
+        if !parent_branch_policy_child_terminal(child.summary) {
+          return (true, Some(wave))
+        }
+      }
+      (false, Some(wave))
+    }
+    _ => (false, None)
+  }
+}
+
+///|
+fn parent_branch_policy_caller_id(req : @types.Request) -> String {
+  match req.args.get("caller_id") {
+    Some(value) => value
+    None =>
+      match req.args.get("agent_id") {
+        Some(value) => value
+        None => "root"
+      }
+  }
+}
+
+///|
+fn strip_dot_slash(path : String) -> String {
+  let mut out = path
+  while out.has_prefix("./") {
+    out = out[2:].to_owned()
+  }
+  out
+}
+
+///|
+fn ensure_trailing_slash(path : String) -> String {
+  if path.has_suffix("/") {
+    path
+  } else {
+    path + "/"
+  }
+}
+
+///|
+/// Collapse `.` and `..` path segments so a string-prefix doc classification
+/// can't be fooled by `docs/../src/foo.mbt`. Leading `..` segments that can't
+/// be resolved are kept (the result then fails the `docs/` / `.choir/context/`
+/// doc-prefix checks, so it blocks rather than slips past).
+fn normalize_path_segments(path : String) -> String {
+  let out : Array[String] = []
+  for raw_seg in path.split("/") {
+    let seg = raw_seg.to_owned()
+    if seg == "" || seg == "." {
+      continue
+    }
+    if seg == ".." {
+      if out.length() > 0 && out[out.length() - 1] != ".." {
+        ignore(out.pop())
+      } else {
+        out.push("..")
+      }
+      continue
+    }
+    out.push(seg)
+  }
+  let mut result = ""
+  for idx = 0; idx < out.length(); idx = idx + 1 {
+    if idx > 0 {
+      result = result + "/"
+    }
+    result = result + out[idx]
+  }
+  result
+}
+
+///|
+/// Reduce a tool-supplied file path to a repo-relative path, or `None` if the
+/// path is clearly outside the repository.
+///
+/// `project_dir` is whatever the caller passed (in production it is `"."`,
+/// because `init` writes `project_dir = "."` and the server forwards it
+/// unchanged), and `repo_toplevel` is the absolute repo root from
+/// `git rev-parse --show-toplevel` when it could be resolved.
+///
+/// - Relative tool paths are taken as already repo-relative (choir-serve runs
+///   with cwd == repo root); a leading `project_dir/` prefix is stripped if
+///   present, then `.`/`..` segments are collapsed.
+/// - Absolute tool paths under `repo_toplevel` (or under `project_dir` when it
+///   is itself absolute and the toplevel could not be resolved) are made
+///   repo-relative by stripping that root.
+/// - Any other absolute path — outside the resolved root, or with no
+///   resolvable root at all — is treated conservatively as in-repo (drop the
+///   leading `/`, collapse segments) so source paths still block rather than
+///   silently bypassing the gate. The earlier behaviour returned `None` here,
+///   which let `/repo/src/foo.mbt` slip past whenever `project_dir` was the
+///   production `"."`, and would also let a symlinked repo root slip past. The
+///   cost is over-blocking a genuine write to an absolute path outside the
+///   repo during a live wave; `choir tl-parent-override on` is the escape.
+fn parent_branch_policy_relative_path(
+  project_dir : String,
+  repo_toplevel : String?,
+  path : String,
+) -> String? {
+  let trimmed = strip_dot_slash(path.trim().to_owned())
+  if trimmed == "" {
+    return None
+  }
+  let finish = fn(rel : String) -> String? {
+    let norm = normalize_path_segments(rel)
+    if norm == "" {
+      None
+    } else {
+      Some(norm)
+    }
+  }
+  if !trimmed.has_prefix("/") {
+    let project = strip_dot_slash(project_dir.trim().to_owned())
+    if project != "" && project != "/" {
+      let project_prefix = ensure_trailing_slash(project)
+      if trimmed.has_prefix(project_prefix) {
+        return finish(trimmed[project_prefix.length():].to_owned())
+      }
+    }
+    return finish(trimmed)
+  }
+  let project_dir_trimmed = project_dir.trim().to_owned()
+  let root = match repo_toplevel {
+    Some(top) => {
+      let top = top.trim().to_owned()
+      if top == "" {
+        None
+      } else {
+        Some(top)
+      }
+    }
+    None =>
+      if project_dir_trimmed.has_prefix("/") {
+        Some(project_dir_trimmed)
+      } else {
+        None
+      }
+  }
+  match root {
+    Some(root) =>
+      if trimmed != root && trimmed.has_prefix(ensure_trailing_slash(root)) {
+        finish(trimmed[ensure_trailing_slash(root).length():].to_owned())
+      } else {
+        // Outside the resolved root (or a symlinked-root mismatch) — be
+        // conservative and treat it as in-repo so source paths still block.
+        finish(trimmed[1:].to_owned())
+      }
+    None =>
+      // No resolvable root and `project_dir` is relative — same conservative
+      // in-repo treatment so source paths still block.
+      finish(trimmed[1:].to_owned())
+  }
+}
+
+///|
+fn parent_branch_policy_git_command(
+  project_dir : String,
+  args : Array[String],
+) -> @workspace.Command {
+  { program: "git", args, workdir: Some(project_dir) }
+}
+
+///|
+async fn parent_branch_policy_current_branch(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let (exit_code, output) = capture(
+    parent_branch_policy_git_command(project_dir, [
+      "rev-parse", "--abbrev-ref", "HEAD",
+    ]),
+  )
+  if exit_code != 0 {
+    return None
+  }
+  let branch = output.trim().to_owned()
+  if branch == "" {
+    None
+  } else {
+    Some(branch)
+  }
+}
+
+///|
+async fn parent_branch_policy_status_paths(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Array[String] {
+  let (exit_code, output) = capture(
+    parent_branch_policy_git_command(project_dir, [
+      "status", "--porcelain", "--untracked-files=all",
+    ]),
+  )
+  if exit_code != 0 {
+    []
+  } else {
+    @policy.git_status_changed_paths(output)
+  }
+}
+
+///|
+fn parent_branch_policy_marker_path(
+  kind : @policy.ParentBranchWriteKind,
+) -> String {
+  ".choir/policy/" + kind.to_wire_string()
+}
+
+///|
+async fn parent_branch_policy_repo_toplevel(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let (exit_code, output) = capture(
+    parent_branch_policy_git_command(project_dir, [
+      "rev-parse", "--show-toplevel",
+    ]),
+  )
+  if exit_code != 0 {
+    return None
+  }
+  let top = output.trim().to_owned()
+  if top == "" {
+    None
+  } else {
+    Some(top)
+  }
+}
+
+///|
+async fn parent_branch_policy_changed_paths(
+  project_dir : String,
+  kind : @policy.ParentBranchWriteKind,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Array[String]? {
+  match kind {
+    @policy.ParentBranchWriteKind::FileEditOnTrackedPath(path~) => {
+      // The variant name says "Tracked" but a brand-new file under the
+      // repo root (e.g. a Write of src/foo.mbt that doesn't yet exist) is
+      // just as much a parent-branch write as editing a tracked file —
+      // git ls-files would return nothing for it, so requiring "tracked"
+      // here would let new source files slip past the gate. Treat ANY
+      // edit whose path resolves inside the repo as a changed path; the
+      // doc-vs-source classification in decide_tl_parent_branch_write
+      // decides whether it actually blocks. Only edits outside the repo
+      // (rel_path is None) are exempt. The repo toplevel is needed because
+      // production passes project_dir = "." while tools hand us absolute
+      // paths — without it an absolute in-repo path slips past the gate; for
+      // a relative tool path the toplevel is unused, so don't pay for the
+      // `git rev-parse` then.
+      let toplevel = if path.trim().to_owned().has_prefix("/") {
+        parent_branch_policy_repo_toplevel(project_dir, capture)
+      } else {
+        None
+      }
+      match parent_branch_policy_relative_path(project_dir, toplevel, path) {
+        Some(rel_path) => Some([rel_path])
+        None => None
+      }
+    }
+    @policy.ParentBranchWriteKind::GitCheckout(target~) => {
+      match parent_branch_policy_current_branch(project_dir, capture) {
+        Some(current) => if current == target { return None }
+        None => ()
+      }
+      // Branch switches can rewrite the worktree with arbitrary target-branch
+      // content, so classify them as non-doc even if current dirty paths are
+      // doc-only or absent.
+      Some([parent_branch_policy_marker_path(kind)])
+    }
+    @policy.ParentBranchWriteKind::Other(_) =>
+      // Worktree/ref-mutating verbs (git switch/restore/rebase/merge/
+      // cherry-pick/revert/clean/stash, `git checkout -- <paths>`, plus
+      // rm/mv) act independently of what's currently dirty — `git switch
+      // other-branch` brings in arbitrary content from another branch, `git
+      // clean -fd` deletes untracked files, etc. Reusing the current `git
+      // status` paths would let a TL with only doc changes run any of these
+      // during a live wave. Use a marker path so the gate always blocks them
+      // (unless override is on), the same way GitCheckout is handled.
+      Some([parent_branch_policy_marker_path(kind)])
+    @policy.ParentBranchWriteKind::GitResetHard =>
+      // `git reset --hard <ref>` moves HEAD and overwrites the working tree
+      // with arbitrary commit content — never a doc-only operation,
+      // regardless of what is currently dirty. Always use a marker path.
+      Some([parent_branch_policy_marker_path(kind)])
+    @policy.ParentBranchWriteKind::GitCommit => {
+      // In-place commit: the doc-only carve-out is intentional — a commit
+      // that only touches README during a live wave is harmless. Use the
+      // actual dirty paths so decide_tl_parent_branch_write can apply the
+      // doc classification; fall back to a marker path when the working
+      // tree is clean.
+      let paths = parent_branch_policy_status_paths(project_dir, capture)
+      if paths.length() > 0 {
+        Some(paths)
+      } else {
+        Some([parent_branch_policy_marker_path(kind)])
+      }
+    }
+    @policy.ParentBranchWriteKind::GitPush =>
+      Some([parent_branch_policy_marker_path(kind)])
+  }
+}
+
+///|
+fn parent_branch_policy_refusal_message(
+  kind : @policy.ParentBranchWriteKind,
+  decision : @policy.TLParentBranchPolicyDecision,
+) -> String {
+  "policy refused: parent-branch write during live wave (kind=" +
+  kind.to_wire_string() +
+  "): " +
+  decision.reason() +
+  ". Use scaffold_commit or `choir tl-parent-override on` to override."
+}
+
+///|
+pub async fn parent_branch_policy_gate_response(
+  req : @types.Request,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+  policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
+  lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
+  override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
+) -> @types.Response? {
+  if policy_enforcement_mode == @policy.PolicyEnforcementMode::LogOnly {
+    return None
+  }
+  if !parent_branch_policy_role_applies(req.role) {
+    return None
+  }
+  let kind = match @policy.detect_parent_branch_write_kind(req) {
+    Some(kind) => kind
+    None => return None
+  }
+  let changed_paths = match
+    parent_branch_policy_changed_paths(project_dir, kind, capture) {
+    Some(paths) => paths
+    None => return None
+  }
+  let caller_id = parent_branch_policy_caller_id(req)
+  let lifecycle = lifecycle_reader(project_dir, caller_id)
+  let (live_wave, wave) = parent_branch_policy_live_wave_info(lifecycle)
+  let override_enabled = override_check(project_dir, caller_id)
+  let decision = @policy.decide_tl_parent_branch_write(
+    live_wave, wave, changed_paths, override_enabled,
+  )
+  if decision.is_blocked() {
+    Some(
+      @types.Response::Err(parent_branch_policy_refusal_message(kind, decision)),
+    )
+  } else {
+    None
+  }
+}
+
+///|
 /// Build a [`send_message`] plan that warns the parent TL when `notify_parent`
 /// is blocked on review threads (best-effort; used for tests and dispatch).
 fn notify_parent_blocked_parent_warn_send_plan(
@@ -278,6 +678,10 @@ pub async fn dispatch(
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
   bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   ensure_branch_ready? : (async (String, String, String) -> Result[
     Unit,
     @types.ChoirError,
@@ -317,7 +721,7 @@ pub async fn dispatch(
   ) -> Unit {
     ignore(
       @evidence.append_agent_evidence_event(
-        @sys.append_file_sync,
+        append_file,
         project_dir,
         agent_id,
         @env.now().reinterpret_as_int64(),
@@ -529,7 +933,7 @@ pub async fn dispatch(
     ToolRequest::MergePr(merge_args) => {
       let resp = interpret_merge_pr(
         merge_args, project_dir, poller_state, mutex_registry, registry, runner,
-        capture,
+        capture, append_file, path_exists,
       )
       if resp.is_ok() {
         try_dispatch_pending_waves(
@@ -707,7 +1111,9 @@ pub async fn dispatch(
     ToolRequest::CrystallizeSpec(crystallize_args) =>
       interpret_crystallize_spec(crystallize_args, project_dir)
     ToolRequest::WriteAuditReceipt(write_audit_args) =>
-      interpret_write_audit_receipt(write_audit_args, project_dir)
+      interpret_write_audit_receipt(
+        write_audit_args, project_dir, create_dir_all, write_file_atomic,
+      )
     ToolRequest::SendMessage(send_args) => {
       let registry_lookup = match registry {
         Some(reg) => Some(try? reg.get(send_args.target_id))
@@ -797,7 +1203,7 @@ pub async fn dispatch(
     }
     ToolRequest::KvSet(kv_args) => {
       let path = kv_file_path(project_dir, kv_args.key)
-      if @sys.write_file_atomic(path, kv_args.value) {
+      if write_file_atomic(path, kv_args.value) {
         @types.Response::ok({ "status": "ok" })
       } else {
         @types.Response::Err("failed to write kv file: " + path)
@@ -929,7 +1335,7 @@ pub async fn dispatch(
         Ok(_) => ()
       }
       let path = kv_file_path(project_dir, key)
-      if @sys.write_file_atomic(path, value) {
+      if write_file_atomic(path, value) {
         @types.Response::ok_values({
           "status": String::to_json("ok"),
           "id": String::to_json(id),
@@ -983,78 +1389,103 @@ pub async fn handle_request(
   poller_state? : @poller.PollerState? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
+  policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
+  parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
+  parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
+  append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
   let mut ran_builtin_dispatch = false
   let resp = try {
-    ignore(registry.lookup(req.role, req.name))
-    let hook_path = project_dir + "/.choir/hooks/pre_tool_use.sh"
-    let mut hook_early : @types.Response? = None
-    if @sys.read_file(hook_path) != "" {
-      let input = @hooks.HookInput::{
-        event: @hooks.HookEvent::PreToolUse,
-        session_id: Some(session),
-        agent_id: tool_args_get(tool_args, "caller_id"),
-        role: Some(req.role),
-        tool_name: Some(req.name),
-        tool_args: Some(tool_args_to_map(tool_args)),
-        tool_result_status: None,
-        exit_reason: None,
-        suspend_reason: None,
-      }
-      let input_json = input.to_json_string()
-      let (hook_status, output_json) = hook_capture(
-        hook_path,
-        input_json,
-        Some(project_dir),
-      )
-      if hook_status < 0 {
-        hook_early = Some(@types.Response::Err("hook execution failed"))
-      } else if hook_status == 0 {
-        match @hooks.HookResponse::from_json_string(output_json) {
-          Some(res) =>
-            if !res.continue_ {
-              let msg = match res.message {
-                Some(v) => v
-                None => "hook blocked request"
-              }
-              hook_early = Some(@types.Response::Err(msg))
+    match
+      parent_branch_policy_gate_response(
+        req,
+        project_dir,
+        capture,
+        policy_enforcement_mode~,
+        lifecycle_reader=parent_branch_lifecycle_reader,
+        override_check=parent_branch_override_check,
+      ) {
+      Some(blocked) => blocked
+      None => {
+        ignore(registry.lookup(req.role, req.name))
+        let hook_path = project_dir + "/.choir/hooks/pre_tool_use.sh"
+        let mut hook_early : @types.Response? = None
+        if path_exists(hook_path) {
+          let input = @hooks.HookInput::{
+            event: @hooks.HookEvent::PreToolUse,
+            session_id: Some(session),
+            agent_id: tool_args_get(tool_args, "caller_id"),
+            role: Some(req.role),
+            tool_name: Some(req.name),
+            tool_args: Some(tool_args_to_map(tool_args)),
+            tool_result_status: None,
+            exit_reason: None,
+            suspend_reason: None,
+          }
+          let input_json = input.to_json_string()
+          let (hook_status, output_json) = hook_capture(
+            hook_path,
+            input_json,
+            Some(project_dir),
+          )
+          if hook_status < 0 {
+            hook_early = Some(@types.Response::Err("hook execution failed"))
+          } else if hook_status == 0 {
+            match @hooks.HookResponse::from_json_string(output_json) {
+              Some(res) =>
+                if !res.continue_ {
+                  let msg = match res.message {
+                    Some(v) => v
+                    None => "hook blocked request"
+                  }
+                  hook_early = Some(@types.Response::Err(msg))
+                }
+              None => ()
             }
-          None => ()
-        }
-      }
-    }
-    match hook_early {
-      Some(r) => r
-      None =>
-        match parse_tool_request(req.name, req.role, project_dir, tool_args) {
-          Err(e) => @types.Response::Err(e.message())
-          Ok(tool_req) => {
-            let out = dispatch(
-              tool_req,
-              project_dir~,
-              session~,
-              runner~,
-              git_capture~,
-              capture~,
-              hook_capture~,
-              ensure_branch_ready~,
-              ensure_pr~,
-              extra_mcp_servers_json~,
-              shell_command~,
-              listen_uds~,
-              listen_tcp~,
-              tcp_auth_token~,
-              registry=agent_registry,
-              mutex_registry~,
-              poller_state~,
-              caller_id=tool_args_get(tool_args, "caller_id"),
-              pr_review~,
-            )
-            ran_builtin_dispatch = true
-            out
           }
         }
+        match hook_early {
+          Some(r) => r
+          None =>
+            match
+              parse_tool_request(req.name, req.role, project_dir, tool_args) {
+              Err(e) => @types.Response::Err(e.message())
+              Ok(tool_req) => {
+                let out = dispatch(
+                  tool_req,
+                  project_dir~,
+                  session~,
+                  runner~,
+                  git_capture~,
+                  capture~,
+                  hook_capture~,
+                  ensure_branch_ready~,
+                  ensure_pr~,
+                  extra_mcp_servers_json~,
+                  shell_command~,
+                  listen_uds~,
+                  listen_tcp~,
+                  tcp_auth_token~,
+                  registry=agent_registry,
+                  mutex_registry~,
+                  poller_state~,
+                  caller_id=tool_args_get(tool_args, "caller_id"),
+                  pr_review~,
+                  append_file~,
+                  write_file_atomic~,
+                  path_exists~,
+                  create_dir_all~,
+                )
+                ran_builtin_dispatch = true
+                out
+              }
+            }
+        }
+      }
     }
   } catch {
     e =>
@@ -1081,6 +1512,7 @@ pub async fn handle_request(
       },
       project_dir,
       hook_capture~,
+      path_exists~,
     )
   }
   resp
@@ -1092,9 +1524,10 @@ pub async fn fire_hook_async(
   input : @hooks.HookInput,
   project_dir : String,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
 ) -> Unit {
   let hook_path = project_dir + "/.choir/hooks/" + event.script_name() + ".sh"
-  if @sys.read_file(hook_path) == "" {
+  if !path_exists(hook_path) {
     return
   }
   let input_json = input.to_json_string()
@@ -1128,33 +1561,62 @@ pub async fn dispatch_call(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   pr_review? : Bool = true,
+  policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
+  parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
+  parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
+  append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
   let tool_args = tool_args_from_map(call.args)
   try {
-    match parse_tool_request(call.name, call.role, project_dir, tool_args) {
-      Err(e) => @types.Response::Err(e.message())
-      Ok(tool_req) =>
-        dispatch(
-          tool_req,
-          project_dir~,
-          session~,
-          runner~,
-          git_capture~,
-          capture~,
-          bd_capture~,
-          ensure_branch_ready~,
-          ensure_pr~,
-          extra_mcp_servers_json~,
-          shell_command~,
-          listen_uds~,
-          listen_tcp~,
-          tcp_auth_token~,
-          registry~,
-          mutex_registry~,
-          poller_state~,
-          caller_id=tool_args_get(tool_args, "caller_id"),
-          pr_review~,
-        )
+    let raw_req : @types.Request = {
+      req_method: "tools/call",
+      role: call.role,
+      name: call.name,
+      args: @types.RequestArgs::from_values(tool_args.values),
+    }
+    match
+      parent_branch_policy_gate_response(
+        raw_req,
+        project_dir,
+        capture,
+        policy_enforcement_mode~,
+        lifecycle_reader=parent_branch_lifecycle_reader,
+        override_check=parent_branch_override_check,
+      ) {
+      Some(blocked) => blocked
+      None =>
+        match parse_tool_request(call.name, call.role, project_dir, tool_args) {
+          Err(e) => @types.Response::Err(e.message())
+          Ok(tool_req) =>
+            dispatch(
+              tool_req,
+              project_dir~,
+              session~,
+              runner~,
+              git_capture~,
+              capture~,
+              bd_capture~,
+              ensure_branch_ready~,
+              ensure_pr~,
+              extra_mcp_servers_json~,
+              shell_command~,
+              listen_uds~,
+              listen_tcp~,
+              tcp_auth_token~,
+              registry~,
+              mutex_registry~,
+              poller_state~,
+              caller_id=tool_args_get(tool_args, "caller_id"),
+              pr_review~,
+              append_file~,
+              write_file_atomic~,
+              path_exists~,
+              create_dir_all~,
+            )
+        }
     }
   } catch {
     e => tool_response_err_from_caught(e)
