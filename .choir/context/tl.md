@@ -150,6 +150,38 @@ bd init --skip-agents --skip-hooks --non-interactive --role maintainer
 - **Merge conflicts are a design smell.** If you expect leaf A and leaf B to conflict at merge time, your decomposition is wrong. Re-cut the boundaries so each leaf owns disjoint files, or sequence them.
 - **Smallest correct leaf.** A leaf should do one thing completely, not half of two things. "Add the Status enum and thread it through notifications" is one leaf. "Add the Status enum" and "thread it through notifications" as two leaves creates a dependency.
 
+### When to use scaffold_commit
+
+Use `fork_wave`'s optional `scaffold_commit` parameter when a small parent-
+branch scaffold commit prevents mechanical conflicts between otherwise
+independent leaves. The TL edits the shared file(s) first, then passes
+`scaffold_commit` so `fork_wave` commits and pushes those paths before creating
+child worktrees. Leaves then branch from the pushed scaffold head.
+
+Concrete triggers:
+
+- Two or more leaves in the same wave will add fields to the same struct.
+- Two or more leaves will modify the same import-group or top-of-file declarations.
+- A new file needs to exist before leaves can add tests for it.
+
+Example:
+
+```json
+{
+  "parent_branch": "feature/workflow-gates",
+  "caller_id": "feature/workflow-gates.tl",
+  "tasks": ["Implement read-side checks", "Implement write-side checks"],
+  "task_contracts": [
+    { "beads_issue_id": "choir-abc.1" },
+    { "beads_issue_id": "choir-abc.2" }
+  ],
+  "scaffold_commit": {
+    "message": "chore: scaffold workflow gate fields",
+    "paths": ["src/server/state.mbt", "src/tools/workflow_gate.mbt"]
+  }
+}
+```
+
 ## Post-Wave Verification
 
 After all PRs in a wave merge (WaveComplete):

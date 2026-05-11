@@ -253,6 +253,24 @@ pub async fn fork_wave_response_from_interpret_result(
         @types.Response::Err("command failed with status " + status.to_string())
       }
     }
+    Err(ScaffoldCommandFailed(status~, failing_cmd~)) => {
+      let detail = match failing_cmd {
+        Some(cmd) => {
+          let (_, output) = capture_output(cmd)
+          output.trim().to_owned()
+        }
+        None => ""
+      }
+      if detail != "" {
+        @types.Response::Err(
+          "scaffold_commit failed (exit " + status.to_string() + "): " + detail,
+        )
+      } else {
+        @types.Response::Err(
+          "scaffold_commit command failed with status " + status.to_string(),
+        )
+      }
+    }
     Err(e) => @types.Response::Err(e.message())
   }
 }
@@ -353,6 +371,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     spawn_plan.skipped_count,
     spawn_plan.agent_ids,
     spawn_plan.skipped_ids,
+    scaffold_commit=fork_wave_args.scaffold_commit,
   )
   let interpret_result = interpret(plan, git_capture~, runner~)
   let resp = fork_wave_response_from_interpret_result(interpret_result, capture)
