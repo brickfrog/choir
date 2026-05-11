@@ -282,6 +282,77 @@ test "decide_tl_parent_branch_write allows non doc changes when no live wave exi
 }
 
 ///|
+fn parent_write_req(
+  name : String,
+  args : Map[String, String],
+) -> @types.Request {
+  {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name,
+    args: @types.RequestArgs::new(args),
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes git commit" {
+  let req = parent_write_req("bash", { "command": "git -C /repo commit -m x" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitCommit) => ()
+    _ => fail("expected GitCommit")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes git push" {
+  let req = parent_write_req("Bash", { "cmd": "set -e; git push origin main" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitPush) => ()
+    _ => fail("expected GitPush")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes git reset hard" {
+  let req = parent_write_req("bash", { "command": "git reset --hard HEAD~1" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitResetHard) => ()
+    _ => fail("expected GitResetHard")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes git checkout target" {
+  let req = parent_write_req("bash", { "command": "git checkout feature/demo" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::GitCheckout(target~)) =>
+      assert_eq(target, "feature/demo")
+    _ => fail("expected GitCheckout")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes tracked file edit tools" {
+  let req = parent_write_req("MultiEdit", {
+    "file_path": "src/tools/dispatch.mbt",
+  })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::FileEditOnTrackedPath(path~)) =>
+      assert_eq(path, "src/tools/dispatch.mbt")
+    _ => fail("expected FileEditOnTrackedPath")
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes fallback git mutations" {
+  let req = parent_write_req("bash", { "command": "git mv old.mbt new.mbt" })
+  match detect_parent_branch_write_kind(req) {
+    Some(ParentBranchWriteKind::Other(detail~)) => assert_eq(detail, "git mv")
+    _ => fail("expected Other")
+  }
+}
+
+///|
 test "decide_merge explicit task_contract arg takes precedence over bundle contract" {
   // The explicit first arg is Some with one verify command; the bundle's contract
   // has a different verify command. The explicit arg must win.

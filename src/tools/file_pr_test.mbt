@@ -1310,6 +1310,67 @@ async test "interpret_file_pr runs required verify and injects generated PR body
 }
 
 ///|
+async test "dispatch file_pr records verify evidence through injected append_file" {
+  let project_dir = "/tmp/choir-fpr-dispatch-verify-event-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let reg = file_pr_test_registry(file_pr_dir)
+  let appends : Array[(String, String)] = []
+  let resp = dispatch(
+    ToolRequest::FilePr({
+      branch: "main.leaf",
+      parent_branch: Some("feature/verify-pr-body"),
+      tracked_agent_id: "main.leaf",
+      title: Some("schema wiring"),
+      body: Some("Implements claim schema wiring."),
+      review_context: None,
+    }),
+    project_dir~,
+    session="choir",
+    registry=Some(reg),
+    pr_review=false,
+    ensure_branch_ready=Some(mock_preflight_ok),
+    runner=mock_runner_all_ok,
+    capture=async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" {
+        (0, "sha-dispatch-verify\n")
+      } else if cmd.program == "sh" {
+        (0, "typecheck ok\n")
+      } else {
+        (0, "")
+      }
+    },
+    ensure_pr=Some(async fn(
+      branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      @async.sleep(0)
+      Ok({ number: 42, url: "https://example.test/pr/" + branch, state: "OPEN" })
+    }),
+    append_file=fn(path, content) {
+      appends.push((path, content))
+      true
+    },
+  )
+  match resp {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected dispatch success: " + msg)
+  }
+  assert_eq(appends.length(), 1)
+  let (path, content) = appends[0]
+  assert_true(path.contains("/.choir/events/main.leaf.jsonl"))
+  assert_true(content.contains("npm run typecheck"))
+  assert_true(content.contains("sha-dispatch-verify"))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_file_pr blocks before PR creation when required verify fails" {
   let project_dir = "/tmp/choir-fpr-verify-block-" + @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
