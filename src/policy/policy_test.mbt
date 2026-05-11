@@ -596,3 +596,51 @@ test "git_status_changed_paths does not split a non-rename line on a literal arr
   let out = git_status_changed_paths(" M \"weird -> name.md\"\n")
   assert_eq(out, ["weird -> name.md"])
 }
+
+///|
+test "detect_parent_branch_write_kind treats checkout side-effect flags as unsafe switches" {
+  // -B force-resets the named branch (possibly the parent!), -f discards
+  // local changes, --detach leaves the branch — none is a clean no-op even
+  // when current==target, so they must not be classified GitCheckout.
+  for
+    command in [
+      "git checkout -B main HEAD~1", "git checkout -f main", "git checkout --detach main",
+      "git checkout --orphan fresh",
+    ] {
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      Some(ParentBranchWriteKind::Other(detail~)) =>
+        assert_eq(detail, "git checkout")
+      _ => fail("expected Other(git checkout) for: " + command)
+    }
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind skips git global flags before the subcommand" {
+  // --no-pager / --paginate / -p / --no-replace-objects etc. are git global
+  // flags; the subcommand still has to be found behind them.
+  for
+    command in [
+      "git --no-pager commit -m x", "git --paginate push origin main", "git -c core.pager=cat commit -m x",
+      "git --no-optional-locks reset --hard HEAD~1",
+    ] {
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      Some(_) => ()
+      None => fail("expected a parent-branch write for: " + command)
+    }
+  }
+}
+
+///|
+test "detect_parent_branch_write_kind recognizes escaped and quoted git names" {
+  for
+    command in ["\\git commit -m x", "\"git\" commit -m x", "'git' commit -m x"] {
+    let req = parent_write_req("bash", { "command": command })
+    match detect_parent_branch_write_kind(req) {
+      Some(ParentBranchWriteKind::GitCommit) => ()
+      _ => fail("expected GitCommit for: " + command)
+    }
+  }
+}

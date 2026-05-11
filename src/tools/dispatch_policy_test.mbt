@@ -539,3 +539,100 @@ async test "dispatch_call refuses git checkout <ref> -- <paths> during live wave
       fail("git checkout <ref> -- <paths> must be refused during a live wave")
   }
 }
+
+///|
+/// LOAD-BEARING for the `git rev-parse --show-toplevel` resolution: with
+/// project_dir="." and the toplevel resolving to /repo, `/repo/docs/diagram.svg`
+/// reduces to `docs/diagram.svg` — DocOnly via the `docs/` prefix (`.svg` is
+/// NOT a doc extension) → allowed. If the toplevel were NOT resolved, the
+/// conservative fallback yields `repo/docs/diagram.svg` (no `docs/` prefix, no
+/// doc extension) → NonDoc → refused. So "not refused" here proves rev-parse
+/// was actually called and the resolved root used.
+async test "dispatch_call allows /repo/docs/x.svg Write with project_dir=. only because the toplevel resolves" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "Write",
+      args: {
+        "file_path": "/repo/docs/diagram.svg",
+        "content": "<svg/>",
+        "caller_id": "main.tl",
+      },
+    },
+    project_dir=".",
+    capture=dispatch_policy_git_capture_with_toplevel,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) =>
+      if msg.contains("policy refused: parent-branch write") {
+        fail(
+          "a /repo/docs/*.svg write must reduce to docs/*.svg (DocOnly via prefix) when the toplevel resolves",
+        )
+      }
+    @types.Response::Ok(_) => ()
+  }
+}
+
+///|
+/// Complement to the above: when `git rev-parse --show-toplevel` does NOT
+/// resolve (the base capture returns ("", 0) for it), the conservative
+/// fallback treats `/repo/docs/diagram.svg` as `repo/docs/diagram.svg` — no
+/// `docs/` prefix, no doc extension → NonDoc → refused. Proves the fallback
+/// fires (and isn't a no-op).
+async test "dispatch_call refuses /repo/docs/x.svg Write with project_dir=. when the toplevel can't resolve" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "Write",
+      args: {
+        "file_path": "/repo/docs/diagram.svg",
+        "content": "<svg/>",
+        "caller_id": "main.tl",
+      },
+    },
+    project_dir=".",
+    capture=dispatch_policy_git_capture,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=file_edit_on_tracked_path"))
+    }
+    @types.Response::Ok(_) =>
+      fail(
+        "with no resolvable toplevel the conservative fallback must refuse a /repo/docs/*.svg absolute write",
+      )
+  }
+}
+
+///|
+/// `git checkout -B main HEAD~1` is `git reset --hard HEAD~1` in disguise — it
+/// force-resets the parent branch. It must be refused during a live wave even
+/// though the current branch reported by the capture is `main`.
+async test "dispatch_call refuses git checkout -B <branch> <start> during live wave" {
+  let resp = dispatch_call(
+    ToolCall::{
+      role: @types.Role::TL,
+      name: "bash",
+      args: { "command": "git checkout -B main HEAD~1", "caller_id": "main.tl" },
+    },
+    project_dir="/repo",
+    capture=dispatch_policy_git_capture,
+    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
+    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("policy refused: parent-branch write"))
+      assert_true(msg.contains("kind=other"))
+    }
+    @types.Response::Ok(_) =>
+      fail(
+        "git checkout -B <branch> <start> must be refused during a live wave",
+      )
+  }
+}

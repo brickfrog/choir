@@ -525,8 +525,14 @@ async fn parent_branch_policy_changed_paths(
       // decides whether it actually blocks. Only edits outside the repo
       // (rel_path is None) are exempt. The repo toplevel is needed because
       // production passes project_dir = "." while tools hand us absolute
-      // paths — without it an absolute in-repo path slips past the gate.
-      let toplevel = parent_branch_policy_repo_toplevel(project_dir, capture)
+      // paths — without it an absolute in-repo path slips past the gate; for
+      // a relative tool path the toplevel is unused, so don't pay for the
+      // `git rev-parse` then.
+      let toplevel = if path.trim().to_owned().has_prefix("/") {
+        parent_branch_policy_repo_toplevel(project_dir, capture)
+      } else {
+        None
+      }
       match parent_branch_policy_relative_path(project_dir, toplevel, path) {
         Some(rel_path) => Some([rel_path])
         None => None
@@ -1408,7 +1414,7 @@ pub async fn handle_request(
         ignore(registry.lookup(req.role, req.name))
         let hook_path = project_dir + "/.choir/hooks/pre_tool_use.sh"
         let mut hook_early : @types.Response? = None
-        if @sys.read_file(hook_path) != "" {
+        if path_exists(hook_path) {
           let input = @hooks.HookInput::{
             event: @hooks.HookEvent::PreToolUse,
             session_id: Some(session),
@@ -1506,6 +1512,7 @@ pub async fn handle_request(
       },
       project_dir,
       hook_capture~,
+      path_exists~,
     )
   }
   resp
@@ -1517,9 +1524,10 @@ pub async fn fire_hook_async(
   input : @hooks.HookInput,
   project_dir : String,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
 ) -> Unit {
   let hook_path = project_dir + "/.choir/hooks/" + event.script_name() + ".sh"
-  if @sys.read_file(hook_path) == "" {
+  if !path_exists(hook_path) {
     return
   }
   let input_json = input.to_json_string()

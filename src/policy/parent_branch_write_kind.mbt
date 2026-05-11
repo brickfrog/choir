@@ -183,6 +183,15 @@ fn shellish_tokens(command : String) -> Array[String] {
 }
 
 ///|
+/// Advance past `git`'s global options to the subcommand token.
+///
+/// `-C`/`-c`/`--git-dir`/`--work-tree`/`--namespace` take the following token
+/// as a separate-word value, so skip two. Every other leading-dash token
+/// before the subcommand is a global flag (`--no-pager`, `--paginate`, `-p`,
+/// `--bare`, `--no-replace-objects`, `--literal-pathspecs`, `--git-dir=...`,
+/// `--no-optional-locks`, ...), so skip one — the first non-dash token is the
+/// subcommand. (Skipping unknown leading-dash tokens is what stops a future
+/// git global flag from making a mutating subcommand invisible to the gate.)
 fn skip_git_global_args(tokens : Array[String], start : Int) -> Int {
   let mut i = start
   while i < tokens.length() {
@@ -193,34 +202,62 @@ fn skip_git_global_args(tokens : Array[String], start : Int) -> Int {
       token == "--work-tree" ||
       token == "--namespace" {
       i = i + 2
-    } else if token.has_prefix("--git-dir=") ||
-      token.has_prefix("--work-tree=") ||
-      token.has_prefix("--namespace=") {
-      i = i + 1
-    } else {
-      break
+      continue
     }
+    if token.has_prefix("-") {
+      i = i + 1
+      continue
+    }
+    break
   }
   i
 }
 
 ///|
-/// True if `token` invokes git — either bare `git` or a path ending in `/git`
-/// (`/usr/bin/git`, `./git`). Used both to find git invocations and as the
-/// boundary marker when scanning a single invocation's args in a chained
-/// command line.
+/// Strip a leading `\` (the POSIX "ignore aliases" escape, `\git commit`) and
+/// one layer of surrounding matching quotes from a token.
+fn unquote_token(token : String) -> String {
+  let mut t = token
+  while t.has_prefix("\\") {
+    t = t[1:].to_owned()
+  }
+  if t.length() >= 2 {
+    let first = t[0]
+    let last = t[t.length() - 1]
+    if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+      t = t[1:t.length() - 1].to_owned()
+    }
+  }
+  t
+}
+
+///|
+/// True if `token` invokes git — bare `git`, `\git`, `"git"`, a path ending in
+/// `/git` (`/usr/bin/git`, `./git`), or the same with a `.exe` suffix. Used
+/// both to find git invocations and as the boundary marker when scanning a
+/// single invocation's args in a chained command line. (Windows backslash path
+/// separators are not handled — choir is a POSIX tool.)
 fn is_git_invocation_token(token : String) -> Bool {
-  token == "git" || token.has_suffix("/git")
+  let t = unquote_token(token)
+  t == "git" ||
+  t == "git.exe" ||
+  t.has_suffix("/git") ||
+  t.has_suffix("/git.exe")
 }
 
 ///|
 /// Classify a `git checkout` invocation whose args start at `start`.
 ///
-/// - `-b`/`-B`/`--orphan <name>` → branch-creation switch to `<name>`.
 /// - `-p`/`--patch`, or a `--` separator → path restore (rewrites paths in
 ///   the working tree regardless of the current branch). Classified as Other
 ///   so the gate uses a marker path (always blocks during a live wave)
 ///   instead of GitCheckout's current==target no-op carve-out.
+/// - `-f`/`--force` (discards local changes on switch), `--detach` (leaves the
+///   branch), `-B` (force-RESETS the named branch — possibly the parent), or
+///   `--orphan` (rewrites HEAD) → an "unsafe switch": never a clean no-op, so
+///   classify as Other so the carve-out can't touch it.
+/// - `-b <name>` → branch-creation switch to a NEW branch `<name>` (always
+///   != current, so it blocks anyway, but GitCheckout is the precise kind).
 /// - exactly one positional → branch switch to that ref.
 /// - two or more positionals → `git checkout <tree-ish> <pathspec>...`, a
 ///   path restore (Other).
@@ -228,13 +265,16 @@ fn is_git_invocation_token(token : String) -> Bool {
 ///
 /// Scanning stops at the next git-invocation token so a chained command like
 /// `git checkout main; git diff -- x` is not misread (the `--` there belongs
-/// to `git diff`, not the checkout).
+/// to `git diff`, not the checkout). A path or ref literally named `git` (or
+/// `*/git`) is treated as a boundary here too — that yields a conservative
+/// over-block, never a bypass.
 fn classify_checkout(
   tokens : Array[String],
   start : Int,
 ) -> ParentBranchWriteKind {
   let mut new_branch : String? = None
   let mut path_restore = false
+  let mut unsafe_switch = false
   let positionals : Array[String] = []
   let mut i = start
   while i < tokens.length() {
@@ -251,7 +291,15 @@ fn classify_checkout(
       i = i + 1
       continue
     }
+    if token == "-f" || token == "--force" || token == "--detach" {
+      unsafe_switch = true
+      i = i + 1
+      continue
+    }
     if token == "-b" || token == "-B" || token == "--orphan" {
+      if token == "-B" || token == "--orphan" {
+        unsafe_switch = true
+      }
       if i + 1 < tokens.length() && !is_git_invocation_token(tokens[i + 1]) {
         new_branch = Some(tokens[i + 1])
         i = i + 2
@@ -269,6 +317,9 @@ fn classify_checkout(
   }
   if path_restore {
     return ParentBranchWriteKind::Other(detail="git checkout -- paths")
+  }
+  if unsafe_switch {
+    return ParentBranchWriteKind::Other(detail="git checkout")
   }
   match new_branch {
     Some(target) => return ParentBranchWriteKind::GitCheckout(target~)
@@ -325,7 +376,11 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
       "push" => return Some(ParentBranchWriteKind::GitPush)
       "reset" => {
         let rest_start = sub_i + 1
-        // `--hard` overwrites the working tree too — the worst case.
+        // `--hard` overwrites the working tree too — the worst case. Even a
+        // bare `git reset --hard` (= reset to HEAD, which doesn't move HEAD)
+        // discards the working tree, so treating every `--hard` as a
+        // parent-branch write is a deliberate over-block; the TL has no
+        // business running `reset --hard` mid-wave anyway.
         if contains_token(tokens, "--hard", rest_start) {
           return Some(ParentBranchWriteKind::GitResetHard)
         }
