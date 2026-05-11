@@ -372,6 +372,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     spawn_plan.agent_ids,
     spawn_plan.skipped_ids,
     scaffold_commit=fork_wave_args.scaffold_commit,
+    parent_branch=fork_wave_args.parent_branch,
   )
   let interpret_result = interpret(plan, git_capture~, runner~)
   let resp = fork_wave_response_from_interpret_result(interpret_result, capture)

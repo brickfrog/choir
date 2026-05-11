@@ -6,6 +6,29 @@ pub(all) struct AuditReceiptWritePlan {
 } derive(Debug, Eq)
 
 ///|
+
+///|
+/// Validate that `sha` looks like a git SHA — lowercase hex of length 40
+/// (SHA-1) or 64 (SHA-256). This is a defense against path traversal in
+/// `file_pr_audit_receipt_path_for_head` which derives the on-disk file
+/// name from the sha; an unvalidated `../../etc/foo` would escape the
+/// `.choir/audit-receipts/` directory with a forced .json suffix.
+fn audit_receipt_validate_sha_format(sha : String) -> Bool {
+  if sha.length() != 40 && sha.length() != 64 {
+    return false
+  }
+  for i = 0; i < sha.length(); i = i + 1 {
+    let c = sha[i]
+    let is_digit = c >= '0' && c <= '9'
+    let is_lower_hex = c >= 'a' && c <= 'f'
+    if !is_digit && !is_lower_hex {
+      return false
+    }
+  }
+  true
+}
+
+///|
 pub fn plan_write_audit_receipt(
   args : WriteAuditReceiptArgs,
   audited_at : Int64,
@@ -15,6 +38,15 @@ pub fn plan_write_audit_receipt(
   let caller_id = args.caller_id.trim().to_owned()
   if sha == "" {
     return Err(@types.ChoirError::validation_error("sha cannot be empty"))
+  }
+  if !audit_receipt_validate_sha_format(sha) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "sha must be a lowercase-hex git SHA (40 or 64 chars); got " +
+        sha.length().to_string() +
+        " chars",
+      ),
+    )
   }
   if branch == "" {
     return Err(@types.ChoirError::validation_error("branch cannot be empty"))

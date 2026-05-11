@@ -15,6 +15,9 @@ pub(all) enum ForkWaveError {
   ScaffoldCommitPathUnchanged(path~ : String)
   /// A scaffold_commit git command exited with a non-zero status.
   ScaffoldCommandFailed(status~ : Int, failing_cmd~ : @workspace.Command?)
+  /// HEAD is on a different branch than the requested parent_branch.
+  /// scaffold_commit refuses to push: it would mutate the wrong branch.
+  ScaffoldBranchMismatch(expected~ : String, actual~ : String)
   /// A spawn command exited with a non-zero status.
   CommandFailed(status~ : Int, failing_cmd~ : @workspace.Command?)
 } derive(Debug, Eq)
@@ -35,6 +38,14 @@ pub fn ForkWaveError::message(self : ForkWaveError) -> String {
       "scaffold_commit path has no changes or does not exist: " + path
     ScaffoldCommandFailed(status~, ..) =>
       "scaffold_commit command failed with status " + status.to_string()
+    ScaffoldBranchMismatch(expected~, actual~) =>
+      "scaffold_commit refused: HEAD is on '" +
+      actual +
+      "' but parent_branch is '" +
+      expected +
+      "'. Check out '" +
+      expected +
+      "' before calling fork_wave with scaffold_commit."
     CommandFailed(status~, ..) =>
       "command failed with status " + status.to_string()
   }
@@ -265,15 +276,39 @@ fn fork_wave_scaffold_commit_phase(
 }
 
 ///|
+/// Parse a `git status --porcelain` line and return the set of paths it
+/// references. Rename/copy lines (`R` / `C` status) have the shape
+/// `XY old -> new`; both `old` and `new` must be considered against
+/// scaffold paths so a rename of a scaffold path isn't mis-flagged as
+/// unrelated.
+fn scaffold_preflight_paths_in_status_line(line : String) -> Array[String] {
+  // Line shape: 'XY path' with path starting at index 3. Empty / too-short
+  // lines have no paths.
+  if line.length() < 4 {
+    return []
+  }
+  let payload = line[3:].to_owned()
+  let arrow = " -> "
+  match payload.find(arrow) {
+    Some(idx) =>
+      [payload[:idx].to_owned(), payload[idx + arrow.length():].to_owned()]
+    None => [payload]
+  }
+}
+
+///|
 /// Preflight check before scaffold_commit runs git add/commit/push. Ensures:
-/// (a) the parent branch has no unpushed commits (otherwise scaffold's push
+/// (a) HEAD is on the requested parent branch (otherwise scaffold's push
+///     could mutate the wrong branch entirely),
+/// (b) the parent branch has no unpushed commits (otherwise scaffold's push
 ///     would silently ship pre-existing local work the operator hadn't
 ///     reviewed), and
-/// (b) the working tree is clean OUTSIDE the scaffold paths (otherwise the
+/// (c) the working tree is clean OUTSIDE the scaffold paths (otherwise the
 ///     scaffold commit goes through but the post-scaffold clean_gate then
 ///     fails, leaving a pushed commit behind that's now hard to back out).
-/// Dirty entries that match `scaffold.paths` are expected and allowed —
-/// they're what the scaffold is going to commit.
+/// Dirty entries that match `scaffold.paths` (including the `new` side of a
+/// rename) are expected and allowed — they're what the scaffold is going
+/// to commit.
 fn fork_wave_scaffold_preflight_phase(
   project_dir : String,
   scaffold : ForkWaveScaffoldCommit,
@@ -282,41 +317,62 @@ fn fork_wave_scaffold_preflight_phase(
   skipped_count : Int,
   agent_ids : String,
   skipped_ids : String,
+  parent_branch : String,
 ) -> Eff[Result[@types.Response, ForkWaveError]] {
   GitCapture(
     program="git",
-    args=["-C", project_dir, "log", "--oneline", "@{u}..HEAD"],
-    cont=fn(unpushed_out) {
-      if unpushed_out.trim().to_owned() != "" {
-        Pure(Err(UnpushedCommits(output=unpushed_out.trim().to_owned())))
+    args=["-C", project_dir, "rev-parse", "--abbrev-ref", "HEAD"],
+    cont=fn(head_out) {
+      let head_branch = head_out.trim().to_owned()
+      if head_branch != parent_branch {
+        Pure(
+          Err(
+            ScaffoldBranchMismatch(expected=parent_branch, actual=head_branch),
+          ),
+        )
       } else {
         GitCapture(
           program="git",
-          args=["-C", project_dir, "status", "--porcelain"],
-          cont=fn(status_out) {
-            let scaffold_paths : Map[String, Bool] = {}
-            for p in scaffold.paths {
-              scaffold_paths.set(p, true)
-            }
-            let unrelated : Array[String] = []
-            for line in status_out.split("\n") {
-              let trimmed = line.to_owned()
-              if trimmed.length() < 4 {
-                continue
-              }
-              // `git status --porcelain` line shape: 'XY path' where XY is
-              // the two-char status code. Path starts at index 3.
-              let path = trimmed[3:].to_owned()
-              if !scaffold_paths.contains(path) {
-                unrelated.push(trimmed)
-              }
-            }
-            if unrelated.length() > 0 {
-              Pure(Err(UncommittedChanges(output=unrelated.join("\n"))))
+          args=["-C", project_dir, "log", "--oneline", "@{u}..HEAD"],
+          cont=fn(unpushed_out) {
+            if unpushed_out.trim().to_owned() != "" {
+              Pure(Err(UnpushedCommits(output=unpushed_out.trim().to_owned())))
             } else {
-              fork_wave_scaffold_commit_phase(
-                project_dir, scaffold, cmds, spawned_count, skipped_count, agent_ids,
-                skipped_ids, 0,
+              GitCapture(
+                program="git",
+                args=["-C", project_dir, "status", "--porcelain"],
+                cont=fn(status_out) {
+                  let scaffold_paths : Map[String, Bool] = {}
+                  for p in scaffold.paths {
+                    scaffold_paths.set(p, true)
+                  }
+                  let unrelated : Array[String] = []
+                  for line in status_out.split("\n") {
+                    let trimmed = line.to_owned()
+                    if trimmed.length() < 4 {
+                      continue
+                    }
+                    let paths = scaffold_preflight_paths_in_status_line(trimmed)
+                    let mut all_in_scaffold = true
+                    for p in paths {
+                      if !scaffold_paths.contains(p) {
+                        all_in_scaffold = false
+                        break
+                      }
+                    }
+                    if !all_in_scaffold {
+                      unrelated.push(trimmed)
+                    }
+                  }
+                  if unrelated.length() > 0 {
+                    Pure(Err(UncommittedChanges(output=unrelated.join("\n"))))
+                  } else {
+                    fork_wave_scaffold_commit_phase(
+                      project_dir, scaffold, cmds, spawned_count, skipped_count,
+                      agent_ids, skipped_ids, 0,
+                    )
+                  }
+                },
               )
             }
           },
@@ -335,6 +391,7 @@ pub fn fork_wave_plan(
   agent_ids : String,
   skipped_ids : String,
   scaffold_commit? : ForkWaveScaffoldCommit? = None,
+  parent_branch? : String = "",
 ) -> Eff[Result[@types.Response, ForkWaveError]] {
   // Already-running short-circuit BEFORE any scaffold work: if every
   // requested leaf was deduped, fork_wave is a no-op and must not mutate
@@ -359,6 +416,7 @@ pub fn fork_wave_plan(
       // when the post-scaffold clean_gate later fails.
       fork_wave_scaffold_preflight_phase(
         project_dir, scaffold, cmds, spawned_count, skipped_count, agent_ids, skipped_ids,
+        parent_branch,
       )
   }
 }

@@ -745,6 +745,9 @@ async fn mock_git_capture_fork_wave_scaffold_changed(
   if program != "git" {
     fail("unexpected program: " + program)
   }
+  if args == ["-C", "/proj", "rev-parse", "--abbrev-ref", "HEAD"] {
+    return "feature/parent\n"
+  }
   if args == ["-C", "/proj", "status", "--porcelain", "--", "src/shared.mbt"] {
     return " M src/shared.mbt\n"
   }
@@ -766,6 +769,15 @@ async fn mock_git_capture_fork_wave_no_scaffold_change(
   @async.sleep(0)
   if program != "git" {
     fail("unexpected program: " + program)
+  }
+  if args == ["-C", "/proj", "rev-parse", "--abbrev-ref", "HEAD"] {
+    return "feature/parent\n"
+  }
+  if args == ["-C", "/proj", "status", "--porcelain"] {
+    return ""
+  }
+  if args == ["-C", "/proj", "log", "--oneline", "@{u}..HEAD"] {
+    return ""
   }
   if args == ["-C", "/proj", "status", "--porcelain", "--", "missing.mbt"] {
     return ""
