@@ -15,7 +15,31 @@ fn PromptFs::new() -> PromptFs {
 }
 
 ///|
+/// Strip the basename to get the parent directory path, mirroring how a real
+/// filesystem requires the parent to exist before file writes succeed.
+fn prompt_fs_parent_dir(path : String) -> String {
+  let mut i = path.length() - 1
+  while i >= 0 && path[i] != '/' {
+    i = i - 1
+  }
+  if i <= 0 {
+    "/"
+  } else {
+    path[:i].to_owned()
+  }
+}
+
+///|
+/// Write a file. Refuses (returns false) if the parent directory wasn't
+/// created via `mkdir` first. This makes the create_dir_all capability seam
+/// load-bearing: if `materialize_default_prompts` ever stopped calling it,
+/// the test would fail instead of silently passing because the in-memory
+/// mock was too permissive.
 fn PromptFs::write(self : PromptFs, path : String, content : String) -> Bool {
+  let parent = prompt_fs_parent_dir(path)
+  if !self.dirs.contains(parent) {
+    return false
+  }
   self.files.set(path, content)
   true
 }
@@ -40,7 +64,10 @@ fn PromptFs::mkdir(self : PromptFs, path : String) -> Bool {
 test "load_prompt returns file contents when present" {
   let fs = PromptFs::new()
   let path = "/repo/.choir/prompts/skills/audit.md"
-  ignore(fs.write(path, "local audit prompt\n"))
+  // Seed the parent dir; PromptFs.write refuses without it (mirrors real
+  // filesystem semantics where the parent must exist).
+  assert_true(fs.mkdir("/repo/.choir/prompts/skills"))
+  assert_true(fs.write(path, "local audit prompt\n"))
   let got = load_prompt(
     PromptName::AuditSkill,
     "/repo",
