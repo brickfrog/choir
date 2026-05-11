@@ -97,8 +97,15 @@ fn string_to_null_terminated_bytes(s : String) -> Bytes {
 }
 
 ///|
-/// True when `path` can be opened for reading as a regular file (`fopen` succeeds).
-/// Directories and missing paths yield false.
+/// True when `c_get_file_size` returns a non-negative value — i.e., `fopen`
+/// succeeded and `ftell` reported a size. On Linux this is ALSO true for
+/// directories: `fopen` on a directory returns a non-null FILE*, `fseek`
+/// fails, and `ftell` then returns 0, which compares >= 0. Callers that
+/// must distinguish files from directories cannot rely on this function
+/// alone — see `statusline.mbt:statusline_git_branch` for the read-first
+/// pattern that handles `.git` being either a file (linked worktree) or
+/// a directory. For pure existence checking that's correct for both
+/// files and directories, use `path_entry_exists` (stat-based).
 pub fn path_exists(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_get_file_size(path_bytes) >= 0

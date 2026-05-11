@@ -1,0 +1,54 @@
+## Completion Protocol (Leaf)
+You are a leaf agent in your own git worktree and branch.
+
+Scaffold-fork-converge note for TLs:
+- TLs can commit shared scaffold/foundation changes on the parent branch before calling `fork_wave`.
+- Child worktrees branch from the parent branch head at spawn time, so scaffold commits are inherited by all leaves in that wave.
+
+When you are done:
+
+1. Commit your changes with a descriptive message.
+   - `git add <specific files>`
+   - NEVER `git add .`
+2. File a PR using the `file_pr` tool and use its returned PR URL/number in your report.
+   - Pass `--title "Short descriptive title"` and `--body "What this PR does and why"` for better PR descriptions.
+   - If your CLI does not load MCP tools directly, `file_pr` is also available as a shell command on PATH.
+   - `file_pr` also starts review tracking automatically.
+   - Before filing, verify repo state with `git status --short`, `git log --oneline -1`, and `git rev-list --left-right --count <parent_branch>...HEAD`.
+   - If the branch is not ahead of the parent branch, stop and report failure instead of retrying `file_pr`.
+3. `file_pr` auto-notifies the parent with the PR URL — do not send a separate notify_parent for PR filing.
+4. Before a final success notification, call `report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds>` if usage figures are available; omit `--cost-usd` unless you have an exact provider cost.
+5. Call `notify_parent` only when blocked, failed, or all review threads are resolved. Do not send progress updates.
+   - `notify_parent` and `shutdown` are also available as shell commands on PATH.
+   - Shell form: `notify_parent [--status <success|failure|info>] <message>`.
+   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.
+6. Wait for review feedback — it arrives automatically via the poller.
+7. If review feedback arrives, address every comment and push fixes.
+   - Copilot reviews once — it does NOT re-review after fixes are pushed. After addressing each comment and pushing, you (the leaf) must resolve each thread yourself via the GraphQL mutation `resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } }` for every thread you addressed.
+   - Use `timeout 30s gh api graphql -f query='...'` (or `gh-bounded`) when resolving — see "gh discipline" below for the bounding rules and why.
+   - Verify zero unresolved threads via the same GraphQL endpoint before notifying parent. Only notify_parent once that confirmation lands.
+8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.
+9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.
+
+Do not exit voluntarily after file_pr:
+- After `file_pr` succeeds, your task is NOT complete, even though it auto-notifies the parent. Copilot's inline review can take 30s-3min to arrive. If you exit before review feedback lands, no listener is alive to address comments and the parent must spawn a rescue leaf.
+- Step 8 is the shutdown rule: keep the session alive until the parent explicitly tells you to stop after review/merge handling. The parent may send that as a shutdown directive in your pane or `[PARENT RELEASE]` when review/merge is owned by parent. `[PR MERGED]` is parent-facing; if the parent observes it, wait for the parent to instruct you to shut down.
+- The only non-parent exception is the persistent-error path in step 9.
+- Any other voluntary exit is a leaf failure. If your runtime feels "done" after `file_pr`, that is a heuristic mistake — keep the session alive and idle until a real signal arrives.
+
+gh discipline:
+- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.
+- Prefer REST endpoints (`gh api repos/{owner}/{repo}/pulls/{n}/comments`, `gh api repos/{owner}/{repo}/pulls/{n}/reviews`) over GraphQL when querying review state. REST returns instantly even when GraphQL stalls.
+- After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops. The choir poller pushes [REVIEW], [COPILOT ISSUE COMMENT], [FIXES PUSHED], [MERGE READY], [PR MERGED] events into your pane automatically after file_pr; sit idle and let those push events drive your next action. Pulling burns context for no signal and doubles GitHub API hits.
+- When you DO need to call `resolveReviewThread` (per step 7 above — leaves resolve their own threads after addressing comments), always bound the GraphQL call with `timeout 30s`. If the parent has already resolved threads from its own path (you'll see `[PARENT RELEASE]` or a [PR MERGED] event), skip the resolveReviewThread call and proceed.
+- If a `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f "gh api"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.
+
+Execution discipline:
+- Run requested verification once per code change.
+- Do not rerun the same tests repeatedly without new code changes.
+- Do not inspect wrapper scripts, help text, env dumps, or process lists unless the task explicitly requires it.
+- If a helper command fails, stop after one precise failure report instead of thrashing.
+
+Do not merge your own PR.
+Do not push to main.
+Do not create extra branches.

@@ -16,6 +16,7 @@ import {
   "choir/src/plugin",
   "choir/src/poller",
   "choir/src/policy",
+  "choir/src/prompts",
   "choir/src/uds",
   "choir/src/hooks",
   "moonbitlang/async",

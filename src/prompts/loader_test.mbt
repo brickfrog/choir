@@ -1,0 +1,237 @@
+///|
+/// In-memory filesystem mock for the prompt loader. Backs all four injected
+/// capabilities (path_exists, read_file, create_dir_all, write_file) so the
+/// tests below never touch /tmp, never depend on cwd, and never race the
+/// real filesystem. Tracks created dirs and written files separately so a
+/// test can assert "this path was created" vs "this path was written".
+struct PromptFs {
+  files : Map[String, String]
+  dirs : Map[String, Bool]
+}
+
+///|
+fn PromptFs::new() -> PromptFs {
+  { files: Map::new(), dirs: Map::new() }
+}
+
+///|
+/// Strip the basename to get the parent directory path, mirroring how a real
+/// filesystem requires the parent to exist before file writes succeed.
+fn prompt_fs_parent_dir(path : String) -> String {
+  let mut i = path.length() - 1
+  while i >= 0 && path[i] != '/' {
+    i = i - 1
+  }
+  if i <= 0 {
+    "/"
+  } else {
+    path[:i].to_owned()
+  }
+}
+
+///|
+/// Write a file. Refuses (returns false) if the parent directory wasn't
+/// created via `mkdir` first. This makes the create_dir_all capability seam
+/// load-bearing: if `materialize_default_prompts` ever stopped calling it,
+/// the test would fail instead of silently passing because the in-memory
+/// mock was too permissive.
+fn PromptFs::write(self : PromptFs, path : String, content : String) -> Bool {
+  let parent = prompt_fs_parent_dir(path)
+  if !self.dirs.contains(parent) {
+    return false
+  }
+  self.files.set(path, content)
+  true
+}
+
+///|
+fn PromptFs::read(self : PromptFs, path : String) -> String {
+  self.files.get(path).unwrap_or("")
+}
+
+///|
+/// Match `@sys.path_exists` semantics on Linux: it's implemented as
+/// `c_get_file_size(path) >= 0` (src/sys/io.mbt:102), which calls fopen +
+/// fseek + ftell on the C side (src/sys/stub.c:41-47). On Linux fopen
+/// SUCCEEDS on directories and ftell after a failed fseek returns 0 —
+/// so production reports a directory as "exists" with size 0. The
+/// docstring on @sys.path_exists is misleading; statusline.mbt:153-155
+/// documents the real behavior. Mirror that here so tests don't catch
+/// bugs that production wouldn't, and don't miss bugs production WOULD.
+fn PromptFs::exists(self : PromptFs, path : String) -> Bool {
+  self.files.contains(path) || self.dirs.contains(path)
+}
+
+///|
+fn PromptFs::mkdir(self : PromptFs, path : String) -> Bool {
+  self.dirs.set(path, true)
+  true
+}
+
+///|
+test "load_prompt returns file contents when present" {
+  // load_prompt only reads (path_exists + read_file); seed the files map
+  // directly. The PromptFs.write parent-dir check is load-bearing only for
+  // the materialize test below — exercising it here would be ceremony.
+  let fs = PromptFs::new()
+  let path = "/repo/.choir/prompts/skills/audit.md"
+  fs.files.set(path, "local audit prompt\n")
+  let got = load_prompt(
+    PromptName::AuditSkill,
+    "/repo",
+    path_exists=fn(p) { fs.exists(p) },
+    read_file=fn(p) { fs.read(p) },
+  )
+  assert_eq(got, "local audit prompt\n")
+}
+
+///|
+test "load_prompt returns fallback when file is missing" {
+  let fs = PromptFs::new()
+  let got = load_prompt(
+    PromptName::AuditSkill,
+    "/repo",
+    path_exists=fn(p) { fs.exists(p) },
+    read_file=fn(p) { fs.read(p) },
+  )
+  assert_eq(got, default_prompt(PromptName::AuditSkill))
+}
+
+///|
+test "materialize_default_prompts writes missing files and preserves existing files" {
+  let fs = PromptFs::new()
+  let custom_path = "/repo/.choir/prompts/skills/audit.md"
+  ignore(fs.mkdir("/repo/.choir/prompts/skills"))
+  ignore(fs.write(custom_path, "custom audit\n"))
+  match
+    materialize_default_prompts(
+      "/repo",
+      path_exists=fn(p) { fs.exists(p) },
+      create_dir_all=fn(p) { fs.mkdir(p) },
+      write_file=fn(p, c) { fs.write(p, c) },
+    ) {
+    Ok(_) => ()
+    Err(e) => fail("materialize failed: " + e.message())
+  }
+  // Custom file preserved.
+  assert_eq(fs.read(custom_path), "custom audit\n")
+  // Every other prompt landed on disk with its baked-in default content.
+  for name in all_prompt_names() {
+    let path = prompt_path(name, "/repo")
+    assert_true(fs.exists(path))
+    if name != PromptName::AuditSkill {
+      assert_eq(fs.read(path), default_prompt(name))
+    }
+  }
+}
+
+///|
+/// Pub-API tests for default_prompt() — moved here from
+/// src/bin/choir/claude_wrapper.mbt per CLAUDE.md test placement
+/// (blackbox _test.mbt for pub-API-only tests).
+test "skill bodies start with --- and have body" {
+  let review = default_prompt(PromptName::AuditSkill)
+  assert_true(review.has_prefix("---\n"))
+  assert_true(review.length() > 20)
+  let decompose = default_prompt(PromptName::Decompose)
+  assert_true(decompose.has_prefix("---\n"))
+  assert_true(decompose.length() > 20)
+  let crystallize = default_prompt(PromptName::Crystallize)
+  assert_true(crystallize.has_prefix("---\n"))
+  assert_true(crystallize.length() > 20)
+  let stance = default_prompt(PromptName::TlStance)
+  assert_true(stance.has_prefix("---\n"))
+  assert_true(stance.length() > 20)
+}
+
+///|
+test "tl stance default prompt starts with frontmatter and covers operating stance" {
+  let body = default_prompt(PromptName::TlStance)
+  assert_true(body.has_prefix("---\nname: tl-stance\n"))
+  assert_true(body.contains("description:"))
+  assert_true(body.contains("Operating Stance"))
+  assert_true(body.contains("machine intelligence"))
+}
+
+///|
+test "tl stance default prompt covers frustration handling and pipeline discipline" {
+  let body = default_prompt(PromptName::TlStance)
+  assert_true(body.contains("frustrat"))
+  assert_true(body.contains("Red Gate"))
+  assert_true(body.contains("roleplay"))
+  assert_true(body.contains("pipeline"))
+}
+
+///|
+test "crystallize default prompt starts with frontmatter and has body" {
+  let body = default_prompt(PromptName::Crystallize)
+  assert_true(body.has_prefix("---\nname: crystallize\n"))
+  assert_true(body.contains("description:"))
+  let parts = body.split("---").to_array()
+  assert_true(parts.length() >= 3)
+  let after_frontmatter = parts[2]
+  assert_true(after_frontmatter.trim_start().length() > 0)
+  assert_true(body.contains("choir beads spec-link"))
+}
+
+///|
+test "decompose default prompt does not contain .choir/spec/" {
+  let body = default_prompt(PromptName::Decompose)
+  assert_false(body.contains(".choir/spec/"))
+}
+
+///|
+test "decompose default prompt contains .choir/context/" {
+  let body = default_prompt(PromptName::Decompose)
+  assert_true(body.contains(".choir/context/"))
+  assert_true(body.contains("choir beads wave-from"))
+}
+
+///|
+test "audit default prompt does not contain .choir/spec/" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_false(body.contains(".choir/spec/"))
+}
+
+///|
+test "audit default prompt contains .choir/context/" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_true(body.contains(".choir/context/"))
+}
+
+///|
+test "audit default prompt refuses empty review surface" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_true(body.contains("STOP"))
+  assert_true(body.contains("review surface (git diff <range>) is empty"))
+  assert_true(body.contains("Refusing to spawn a no-op review."))
+  assert_true(body.contains("Do NOT proceed to step 2 (`spawn_worker`)."))
+}
+
+///|
+test "audit default prompt contains Sarcasmotron persona" {
+  let review = default_prompt(PromptName::AuditSkill)
+  assert_true(review.contains("You are Sarcasmotron"))
+}
+
+///|
+test "audit default prompt writes receipt after successful worker" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_true(body.contains("After the worker returns successfully"))
+  assert_true(body.contains("git rev-parse HEAD"))
+  assert_true(body.contains("git rev-parse --abbrev-ref HEAD"))
+  assert_true(body.contains("findings_count"))
+  assert_true(body.contains("write_audit_receipt"))
+  assert_true(body.contains("Do not write `.choir/audit-receipts` directly"))
+}
+
+///|
+test "leaf profile default prompt instructs leaves to resolve threads after fixes" {
+  // Per CLAUDE.md Leaf Agent Rules: Copilot reviews once; the leaf MUST
+  // resolve threads itself after addressing comments. Guard against
+  // future edits that revert to the wrong contradicting variant.
+  let body = default_prompt(PromptName::LeafProfile)
+  assert_true(body.contains("you (the leaf) must resolve each thread yourself"))
+  assert_true(body.contains("resolveReviewThread(input: {threadId:"))
+  assert_false(body.contains("Do not resolve GitHub review threads yourself"))
+}

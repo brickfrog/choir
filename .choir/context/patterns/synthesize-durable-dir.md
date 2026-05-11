@@ -3,16 +3,16 @@
 ## When to use
 You need to materialize a directory tree of generated files on disk every
 time Choir runs — Claude plugin skills, hook scaffolds, leaf helper scripts.
-The content is derived from embedded string literals, must be idempotent
-(same input → identical bytes), and must live at a durable project-relative
-path the child process can read.
+The content is derived from embedded defaults or project-local prompt files,
+must be idempotent (same input → identical bytes), and must live at a durable
+project-relative path the child process can read.
 
 ## Reference implementation
 `.choir/plugin/` synthesis, shipped in PR #238 (merge `4b5b048`). Commit
 `295136a`.
 - Entry point: `src/bin/choir/claude_wrapper.mbt` — `fn synthesize_plugin_dir`
-- Body builders: same file — `fn build_plugin_manifest_json`, `fn audit_skill_body`,
-  `fn decompose_skill_body`, `fn hooks_json_scaffold`
+- Body builders/loaders: `fn build_plugin_manifest_json`, `fn hooks_json_scaffold`,
+  and `@prompts.load_prompt(...)` for builtin skill markdown
 - Invocation site: same file — `fn claude_wrapper_run` wraps the call with
   `@sys.exit(1)` on `Err`
 - Idempotence test: same file — `test "synthesize_plugin_dir writes files and is byte-identical on rerun"`
@@ -26,9 +26,9 @@ path the child process can read.
    entries from prior runs are guaranteed gone.
 3. For each subdirectory: `@sys.create_dir_all(path)`; bail out with
    `Err(ChoirError::workspace_error(...))` if it returns false.
-4. For each file: embed content as a `#|` multi-line literal body builder
-   (see `audit_skill_body`), then `@sys.write_file_sync(path, body)`; bail
-   with `workspace_error` on failure.
+4. For each file: resolve content from the appropriate default builder or
+   loader, then `@sys.write_file_sync(path, body)`; bail with
+   `workspace_error` on failure.
 5. Return `Result[Unit, @types.ChoirError]` from the synthesizer. The caller
    (`claude_wrapper_run`) prints `e.message()` to stderr and `@sys.exit(1)`.
 6. If you need a stable debug link, `ignore(@sys.symlink_force(...))` after
