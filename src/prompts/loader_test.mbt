@@ -50,8 +50,22 @@ fn PromptFs::read(self : PromptFs, path : String) -> String {
 }
 
 ///|
+/// Mirror `@sys.path_exists` semantics: returns true only for regular files
+/// the mock has been told about, NOT for directories. Production
+/// `@sys.path_exists` opens the path with `fopen` which fails on
+/// directories, so a directory accidentally present at a prompt file path
+/// must read as "missing" — not "exists" as the prior implementation
+/// returned. Tests that need to assert directory existence use `dir_exists`
+/// below.
 fn PromptFs::exists(self : PromptFs, path : String) -> Bool {
-  self.files.contains(path) || self.dirs.contains(path)
+  self.files.contains(path)
+}
+
+///|
+/// Separate helper for asserting directories were created. Decoupled from
+/// `exists` so the loader-facing capability stays file-only.
+fn PromptFs::dir_exists(self : PromptFs, path : String) -> Bool {
+  self.dirs.contains(path)
 }
 
 ///|
