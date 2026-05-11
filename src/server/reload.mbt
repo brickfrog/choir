@@ -394,8 +394,15 @@ pub fn ServerState::handle_server_reload_request(
       @types.Response::ok_values({
         "status": ServerReloadStatus::ReloadScheduled.to_wire_string().to_json(),
         "binary_path": binary_path.to_json(),
-        "in_flight_requests": "active tool calls during exec may be dropped; retry after reload".to_json(),
-        "note": "Snapshots persisted and exec scheduled. The exec itself happens after this response is written; if exec fails (clear_cloexec or execve error), the original server keeps running and a new attempt is required. Verify the reload landed by probing the server (e.g. wave_state) after a brief delay.".to_json(),
+        // Short, client-renderable tokens instead of a long English `note`
+        // — some MCP clients truncate long string values in tool responses,
+        // which would hide the "exec may fail" disclaimer (the exact thing
+        // the field was for). The prose explanation lives in the tool docs
+        // and the comment above, not the payload.
+        "warnings": [
+          "exec_happens_after_this_response", "exec_failure_keeps_original_server_running",
+          "in_flight_tool_calls_may_be_dropped_retry_after_reload", "verify_reload_landed_via_followup_probe",
+        ].to_json(),
       })
     Err(e) => @types.Response::Err(e.message())
   }
