@@ -8,6 +8,11 @@ pub(all) enum Role {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub fn is_supervisor_role(role : Role) -> Bool {
+  role == Role::Root || role == Role::TL
+}
+
+///|
 pub impl Show for Role with output(self, logger) -> Unit {
   match self {
     Root => logger.write_string("Root")
@@ -57,6 +62,91 @@ pub impl Show for AgentId with output(self, logger) -> Unit {
 ///|
 pub fn AgentId::to_string(self : AgentId) -> String {
   self.0
+}
+
+///|
+fn normalize_guard_path(path : String) -> String {
+  let trimmed = path.trim().to_owned()
+  if trimmed == "" {
+    return ""
+  }
+  let absolute = trimmed.has_prefix("/")
+  let out : Array[String] = []
+  for raw_seg in trimmed.split("/") {
+    let seg = raw_seg.to_owned()
+    if seg == "" || seg == "." {
+      continue
+    }
+    if seg == ".." {
+      if out.length() > 0 && out[out.length() - 1] != ".." {
+        ignore(out.pop())
+      } else if !absolute {
+        out.push("..")
+      }
+      continue
+    }
+    out.push(seg)
+  }
+  if absolute && out.length() == 0 {
+    return "/"
+  }
+  let mut result = if absolute { "/" } else { "" }
+  for i = 0; i < out.length(); i = i + 1 {
+    if i > 0 {
+      result = result + "/"
+    }
+    result = result + out[i]
+  }
+  result
+}
+
+///|
+fn guard_path_child_prefix(path : String) -> String {
+  if path == "/" {
+    "/"
+  } else if path.has_suffix("/") {
+    path
+  } else {
+    path + "/"
+  }
+}
+
+///|
+pub fn path_is_project_root_or_parent(
+  project_dir : String,
+  path : String,
+) -> Bool {
+  let target = normalize_guard_path(path)
+  if target == "" || target == "/" {
+    return true
+  }
+  let root = normalize_guard_path(project_dir)
+  if root == "" {
+    return target == "" || target == "."
+  }
+  target == root || root.has_prefix(guard_path_child_prefix(target))
+}
+
+///|
+pub fn is_choir_managed_worktree_path(
+  project_dir : String,
+  path : String,
+) -> Bool {
+  let target = normalize_guard_path(path)
+  if path_is_project_root_or_parent(project_dir, target) {
+    return false
+  }
+  let under_marker = target.has_prefix(".choir/worktrees/") ||
+    target.contains("/.choir/worktrees/")
+  if !under_marker {
+    return false
+  }
+  let root = normalize_guard_path(project_dir)
+  if root == "" {
+    return true
+  }
+  let project_prefix = guard_path_child_prefix(root) + ".choir/worktrees/"
+  target.has_prefix(project_prefix) || target.has_prefix(".choir/worktrees/")
 }
 
 ///|

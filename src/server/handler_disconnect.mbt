@@ -577,6 +577,12 @@ async fn ServerState::finalize_agent_with_runner(
     _ => self.clear_agent_runtime_tracking(agent_id)
   } noraise {
     agent => {
+      if @types.is_supervisor_role(agent.role) {
+        @moontrace.warn("finalize_agent refused: target is supervisor", fields=[
+          @moontrace.field("agent_id", agent_id),
+        ])
+        return
+      }
       let lifecycle = self.current_lifecycle(agent_id)
       let effects = plan_finalize(
         agent,
@@ -606,6 +612,12 @@ pub async fn ServerState::fail_agent_with_runner(
     _ => self.clear_agent_runtime_tracking(agent_id)
   } noraise {
     agent => {
+      if @types.is_supervisor_role(agent.role) {
+        @moontrace.warn("fail_agent refused: target is supervisor", fields=[
+          @moontrace.field("agent_id", agent_id),
+        ])
+        return
+      }
       let lifecycle = self.current_lifecycle(agent_id)
       let parent = match agent.parent {
         Some(pid) =>
@@ -694,7 +706,17 @@ pub async fn ServerState::interpret_teardown_effects(
           self.config.project_dir,
         )
       RemoveWorktree(path) =>
-        ignore(runner([@workspace.git_worktree_remove(path)]) catch { _ => [] })
+        if @types.is_choir_managed_worktree_path(self.config.project_dir, path) {
+          ignore(
+            runner([@workspace.git_worktree_remove(path)]) catch {
+              _ => []
+            },
+          )
+        } else {
+          @moontrace.warn("RemoveWorktree refused: unsafe path", fields=[
+            @moontrace.field("path", path),
+          ])
+        }
       CloseTerminal(target) => {
         let cmd = @workspace.local_close_target(target)
         try {
@@ -859,7 +881,7 @@ pub async fn ServerState::check_idle_agents(
       self.stop_subscribe(agent_id)
       continue
     }
-    if agent.role == @types.Role::Root || agent.role == @types.Role::TL {
+    if @types.is_supervisor_role(agent.role) {
       continue
     }
     // `ReviewOwned` devs are watchdog-exempt (idle while waiting for TL merge /
@@ -902,6 +924,78 @@ pub async fn ServerState::check_idle_agents(
 }
 
 ///|
+async test "check_idle_agents skips supervisor roles before reading panes" {
+  let project_dir = "/tmp/choir-check-idle-supervisor-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let reads : Array[String] = []
+  let spawned : Array[String] = []
+  let killed : Array[Int] = []
+  let host : @runtime.PaneWatchHost = {
+    spawn_zellij_pane_viewport_subscribe: fn(_session, name, _snapshot_path) {
+      spawned.push(name)
+      100
+    },
+    kill_pid_best_effort: fn(pid) { killed.push(pid) },
+    delete_file_sync: fn(_path) {  },
+    read_file: fn(path) {
+      reads.push(path)
+      "{\"event\":\"pane_update\",\"viewport\":[\"idle\"]}"
+    },
+  }
+  let state = {
+    ..ServerState::new(
+      { ..@types.Config::default(), project_dir, terminal_session: "s" },
+      make_recovery_provider(),
+    ),
+    pane_watcher: @runtime.PaneWatcher::with_host(host),
+  }
+  for role in [@types.Role::Root, @types.Role::TL] {
+    let agent_id = match role {
+      @types.Role::Root => "root"
+      @types.Role::TL => "main.tl"
+      _ => "main.supervisor"
+    }
+    ignore(
+      state.register_agent({
+        agent_id: @types.AgentId(agent_id),
+        role,
+        agent_type: @types.AgentType::Claude,
+        parent: None,
+        workspace: project_dir,
+        branch: "main",
+        terminal_target: Some({
+          kind: @types.TargetKind::ZellijPane,
+          session: "s",
+          name: agent_id,
+        }),
+        host: @types.Host::Local,
+        spawn_depth: 0,
+        state: @types.AgentState::Active,
+      }),
+    )
+    state.watch_pane(agent_id)
+  }
+  let calls : Array[@workspace.Command] = []
+  state.check_idle_agents(1000L, 0L, async fn(cmds) {
+    @async.sleep(0)
+    for cmd in cmds {
+      calls.push(cmd)
+    }
+    [0]
+  })
+  assert_eq(spawned.length(), 2)
+  assert_eq(reads, [])
+  assert_eq(killed, [])
+  assert_eq(calls, [])
+  assert_eq(state.registry.get("root").state, @types.AgentState::Active)
+  assert_eq(state.registry.get("main.tl").state, @types.AgentState::Active)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 pub fn ServerState::list_agents(self : ServerState) -> Array[@types.Agent] {
   self.registry.list()
 }
@@ -936,6 +1030,9 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
       self.clear_agent_runtime_tracking(agent_id)
       return Handled
     }
+  }
+  if @types.is_supervisor_role(agent.role) {
+    return Handled
   }
   let lifecycle = self.current_lifecycle(agent_id)
   match agent.state {

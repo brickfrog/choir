@@ -30,10 +30,12 @@ test "shutdown_intent_remove_choir_worktree matches choir worktree paths" {
 fn kill_agent_test_agent(
   terminal_target : @types.LocalTarget?,
   workspace : String,
+  role? : @types.Role = @types.Role::Dev,
+  agent_id? : String = "main.leaf",
 ) -> @types.Agent {
   {
-    agent_id: @types.AgentId("main.leaf"),
-    role: @types.Role::Dev,
+    agent_id: @types.AgentId(agent_id),
+    role,
     agent_type: @types.AgentType::Claude,
     parent: None,
     workspace,
@@ -82,6 +84,11 @@ test "kill_agent_worktree_remove_command follows choir worktree path rule" {
   }
   let no_wt = kill_agent_test_agent(None, "/proj")
   @debug.assert_eq(kill_agent_worktree_remove_command(no_wt), None)
+  let project_root = kill_agent_test_agent(None, "/proj")
+  @debug.assert_eq(
+    kill_agent_worktree_remove_command(project_root, project_dir="/proj"),
+    None,
+  )
 }
 
 ///|
@@ -149,6 +156,63 @@ async test "interpret_kill_agent closes pane, removes worktree, marks failed, re
     _ => fail("expected agent in registry")
   } noraise {
     a => assert_eq(a.state, @types.AgentState::Failed)
+  }
+}
+
+///|
+async test "interpret_kill_agent refuses supervisor roles without side effects" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:TL") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  for role in [@types.Role::Root, @types.Role::TL] {
+    let agent_id = match role {
+      @types.Role::Root => "root"
+      @types.Role::TL => "main.tl"
+      _ => "main.supervisor"
+    }
+    let reg = @registry.AgentRegistry::new()
+    let agent = kill_agent_test_agent(
+      Some(t),
+      "/proj/.choir/worktrees/supervisor",
+      role~,
+      agent_id~,
+    )
+    ignore(reg.upsert(agent))
+    let ran : Array[@workspace.Command] = []
+    let scanned : Array[String] = []
+    let killed : Array[Int] = []
+    let spy_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        ran.push(cmd)
+      }
+      [0]
+    }
+    let spy_list_pids = fn(prefix : String) -> Array[Int] {
+      scanned.push(prefix)
+      [99]
+    }
+    let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
+    let got = interpret_kill_agent(
+      { agent_id, reason: "cleanup" },
+      Some(reg),
+      spy_runner,
+      project_dir="/proj",
+      list_pids=spy_list_pids,
+      kill_pid=spy_kill_pid,
+    )
+    match got {
+      @types.Response::Err(msg) =>
+        assert_eq(msg, "kill_agent refused: target is supervisor")
+      _ => fail("expected supervisor refusal")
+    }
+    assert_eq(ran, [])
+    assert_eq(scanned, [])
+    assert_eq(killed, [])
+    match reg.get(agent_id) {
+      a => assert_eq(a.state, @types.AgentState::Active)
+    }
   }
 }
 
@@ -229,6 +293,37 @@ async test "interpret_kill_agent skips /proc scan for non-choir workspaces" {
       args,
       Some(reg),
       mock_runner_all_ok,
+      list_pids=spy_list_pids,
+      kill_pid=spy_kill_pid,
+    )
+    match got {
+      @types.Response::Ok(_) => ()
+      _ => fail("expected ok for workspace=" + workspace)
+    }
+    assert_eq(scanned, [])
+    assert_eq(killed, [])
+  }
+}
+
+///|
+async test "interpret_kill_agent skips /proc scan for project-root workspaces" {
+  for workspace in ["", ".", "/proj", "/"] {
+    let reg = @registry.AgentRegistry::new()
+    let agent = kill_agent_test_agent(None, workspace)
+    ignore(reg.upsert(agent))
+    let scanned : Array[String] = []
+    let killed : Array[Int] = []
+    let spy_list_pids = fn(prefix : String) -> Array[Int] {
+      scanned.push(prefix)
+      [99]
+    }
+    let spy_kill_pid = fn(pid : Int) -> Unit { killed.push(pid) }
+    let args : KillAgentArgs = { agent_id: "main.leaf", reason: "cleanup" }
+    let got = interpret_kill_agent(
+      args,
+      Some(reg),
+      mock_runner_all_ok,
+      project_dir="/proj",
       list_pids=spy_list_pids,
       kill_pid=spy_kill_pid,
     )
