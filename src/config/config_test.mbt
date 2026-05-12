@@ -12,6 +12,8 @@ test "parse_config - full" {
     #|extra_mcp_servers_json = '{"notebook":{"type":"stdio","command":"node"}}'
     #|companions_json = '[{"name":"monitor","role":"worker","command":"claude","task":"Monitor the build"}]'
     #|plugins_json = '[{"name":"plugin","command":"./plugin","tools":"search"}]'
+    #|worker_no_handoff_prod_sec = 90
+    #|worker_no_handoff_escalate_sec = 45
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
@@ -37,6 +39,8 @@ test "parse_config - full" {
       "[{\"name\":\"plugin\",\"command\":\"./plugin\",\"tools\":\"search\"}]",
     ),
   )
+  assert_eq(cfg.worker_no_handoff_prod_sec, 90L)
+  assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
 }
 
 ///|
@@ -50,6 +54,8 @@ test "parse_config - minimal" {
   assert_eq(cfg.pr_review, true)
   assert_eq(cfg.automerge, false)
   assert_eq(cfg.review_mode, @types.ReviewMode::SinglePass)
+  assert_eq(cfg.worker_no_handoff_prod_sec, 120L)
+  assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
 }
 
 ///|
@@ -127,6 +133,34 @@ test "parse_config pr_review explicit false" {
 test "parse_config pr_review explicit true" {
   let cfg = parse_config("pr_review = true").unwrap()
   assert_eq(cfg.pr_review, true)
+}
+
+///|
+test "parse_config worker no-handoff knobs accept zero disable" {
+  let cfg = parse_config(
+    (
+      #|worker_no_handoff_prod_sec = 0
+      #|worker_no_handoff_escalate_sec = 0
+    ),
+  ).unwrap()
+  assert_eq(cfg.worker_no_handoff_prod_sec, 0L)
+  assert_eq(cfg.worker_no_handoff_escalate_sec, 0L)
+}
+
+///|
+test "parse_config worker no-handoff knobs reject negatives" {
+  match parse_config("worker_no_handoff_prod_sec = -1") {
+    Err(e) => assert_true(e.message().contains("expected >= 0"))
+    Ok(_) => fail("expected negative prod config to fail")
+  }
+}
+
+///|
+test "parse_config worker no-handoff knobs reject fractional values" {
+  match parse_config("worker_no_handoff_escalate_sec = 1.5") {
+    Err(e) => assert_true(e.message().contains("expected integer"))
+    Ok(_) => fail("expected fractional escalate config to fail")
+  }
 }
 
 ///|

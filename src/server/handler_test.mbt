@@ -2910,6 +2910,319 @@ fn handler_auto_close_agent(
 }
 
 ///|
+fn worker_handoff_test_state(label : String, snapshot : String) -> ServerState {
+  let base = handler_auto_close_test_state(label)
+  let host : @runtime.PaneWatchHost = {
+    spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 101 },
+    kill_pid_best_effort: fn(_pid) {  },
+    delete_file_sync: fn(_path) {  },
+    read_file: fn(_path) { snapshot },
+  }
+  base.with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+}
+
+///|
+fn worker_handoff_parent(parent_id : String) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(parent_id),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: "/tmp/choir-worker-handoff-parent",
+    branch: "main",
+    terminal_target: Some(handler_auto_close_target("worker-parent-pane")),
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state: @types.AgentState::Active,
+  }
+}
+
+///|
+fn worker_handoff_worker(
+  agent_id : String,
+  parent_id : String,
+  state : @types.AgentState,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Worker,
+    agent_type: @types.AgentType::Codex,
+    parent: Some(parent_id),
+    workspace: "/tmp/choir-worker-handoff-worker",
+    branch: "",
+    terminal_target: Some(handler_auto_close_target("worker-pane")),
+    host: @types.Host::Local,
+    spawn_depth: 1,
+    state,
+  }
+}
+
+///|
+async fn worker_handoff_capture_runner(
+  sent : Array[String],
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let statuses : Array[Int] = []
+  for cmd in cmds {
+    if cmd.program == "choir" &&
+      cmd.args.length() >= 4 &&
+      cmd.args[0] == "zellij-action" &&
+      cmd.args[1] == "send" {
+      sent.push(cmd.args[3])
+    }
+    statuses.push(0)
+  }
+  statuses
+}
+
+///|
+fn worker_handoff_count_sent(sent : Array[String], needle : String) -> Int {
+  let mut count = 0
+  for text in sent {
+    if text.contains(needle) {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
+async test "check_idle_agents prods worker then emits one stalled no-handoff event" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"audit complete\",\"Finding 1\"]}"
+  let state = worker_handoff_test_state("worker-no-handoff-stall", snapshot)
+  let parent_id = "main.parent"
+  let worker_id = "main.sarcasmotron"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.watch_pane(worker_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 121L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "printed output is not the handoff"),
+    1,
+  )
+  assert_true(state.worker_no_handoff_prodded_at.contains(worker_id))
+
+  state.check_idle_agents(
+    start + 242L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 250L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER STALLED — no handoff] sarcasmotron",
+    ),
+    1,
+  )
+}
+
+///|
+async test "notify_parent marks handoff delivered and suppresses worker prod" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"finished report\",\"tail\"]}"
+  let state = worker_handoff_test_state("worker-handoff-delivered", snapshot)
+  let parent_id = "main.parent"
+  let worker_id = "main.reviewer"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.watch_pane(worker_id)
+
+  let sent : Array[String] = []
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Worker,
+    name: "notify_parent",
+    args: @types.RequestArgs::new({
+      "caller_id": worker_id,
+      "message": "review complete",
+      "status": "success",
+    }),
+  }
+  let resp = state.handle_with_runner(req, runner=async fn(cmds) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+  assert_true(resp.is_ok())
+  assert_true(state.handoff_delivered.contains(worker_id))
+
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 121L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "printed output is not the handoff"),
+    0,
+  )
+}
+
+///|
+async test "watchdog kill emits worker exited without notify only before handoff" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"full report\",\"last line\"]}"
+  let parent_id = "main.parent"
+  let worker_id = "main.worker-a"
+  let state = worker_handoff_test_state("worker-exit-no-notify", snapshot)
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.watch_pane(worker_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=0L,
+    worker_no_handoff_escalate_sec=0L,
+  )
+  state.check_idle_agents(
+    start + 301L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=0L,
+    worker_no_handoff_escalate_sec=0L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[WORKER EXITED WITHOUT NOTIFY] worker-a"),
+    1,
+  )
+
+  let delivered_worker_id = "main.worker-b"
+  let delivered = worker_handoff_test_state("worker-exit-delivered", snapshot)
+  ignore(delivered.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    delivered.register_agent(
+      worker_handoff_worker(
+        delivered_worker_id,
+        parent_id,
+        @types.AgentState::Active,
+      ),
+    ),
+  )
+  delivered.mark_handoff_delivered(delivered_worker_id)
+  delivered.watch_pane(delivered_worker_id)
+  let delivered_sent : Array[String] = []
+  let delivered_start = @poller.now_sec()
+  delivered.check_idle_agents(
+    delivered_start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(delivered_sent, cmds) },
+    worker_no_handoff_prod_sec=0L,
+    worker_no_handoff_escalate_sec=0L,
+  )
+  delivered.check_idle_agents(
+    delivered_start + 301L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(delivered_sent, cmds) },
+    worker_no_handoff_prod_sec=0L,
+    worker_no_handoff_escalate_sec=0L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(delivered_sent, "[WORKER EXITED WITHOUT NOTIFY]"),
+    0,
+  )
+}
+
+///|
+async test "disconnect completing worker emits exited without notify once" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"worker report\",\"tail\"]}"
+  let state = worker_handoff_test_state("worker-disconnect-no-notify", snapshot)
+  let parent_id = "main.parent"
+  let worker_id = "main.worker-disconnect"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Completing),
+    ),
+  )
+
+  let sent : Array[String] = []
+  state.handle_disconnect_with_runner(worker_id, runner=async fn(cmds) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+  state.handle_disconnect_with_runner(worker_id, runner=async fn(cmds) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+  assert_eq(
+    worker_handoff_count_sent(
+      sent, "[WORKER EXITED WITHOUT NOTIFY] worker-disconnect",
+    ),
+    1,
+  )
+
+  let delivered = worker_handoff_test_state(
+    "worker-disconnect-delivered", snapshot,
+  )
+  let delivered_worker_id = "main.worker-disconnect-delivered"
+  ignore(delivered.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    delivered.register_agent(
+      worker_handoff_worker(
+        delivered_worker_id,
+        parent_id,
+        @types.AgentState::Completing,
+      ),
+    ),
+  )
+  delivered.mark_handoff_delivered(delivered_worker_id)
+  let delivered_sent : Array[String] = []
+  delivered.handle_disconnect_with_runner(delivered_worker_id, runner=async fn(
+    cmds,
+  ) {
+    worker_handoff_capture_runner(delivered_sent, cmds)
+  })
+  assert_eq(
+    worker_handoff_count_sent(delivered_sent, "[WORKER EXITED WITHOUT NOTIFY]"),
+    0,
+  )
+}
+
+///|
 fn handler_supervisor_agent(
   agent_id : String,
   role : @types.Role,

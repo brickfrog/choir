@@ -149,6 +149,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
         self.deliver_goal_judge_message(message, status, runner)
       },
       goal_request_tick=fn() { self.request_goal_judge_tick() },
+      record_handoff_delivered=fn(agent_id) {
+        self.mark_handoff_delivered(agent_id)
+      },
     ) catch {
       e => @tools.tool_response_err_from_caught(e)
     }

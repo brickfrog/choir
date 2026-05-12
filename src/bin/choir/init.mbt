@@ -305,6 +305,8 @@ fn init_config_toml_content(default_session : String) -> String {
   "terminal_session = \"" +
   default_session +
   "\"\n" +
+  "worker_no_handoff_prod_sec = 120\n" +
+  "worker_no_handoff_escalate_sec = 120\n" +
   "\n" +
   "# [pricing.codex]\n" +
   "# rate_in = 0.0\n" +

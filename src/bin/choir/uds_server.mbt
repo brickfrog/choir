@@ -551,7 +551,13 @@ fn serve_run() -> Unit {
               ) {
               state.process_goal_judge_tick(now, runner=@exec.run_sequence)
             }
-            state.check_idle_agents(now, 300L, @exec.run_sequence)
+            state.check_idle_agents(
+              now,
+              300L,
+              @exec.run_sequence,
+              worker_no_handoff_prod_sec=config.worker_no_handoff_prod_sec,
+              worker_no_handoff_escalate_sec=config.worker_no_handoff_escalate_sec,
+            )
           } catch {
             e =>
               @moontrace.error("poller tick error", fields=[

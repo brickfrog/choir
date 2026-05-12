@@ -11,6 +11,8 @@ description: Spawn a Sarcasmotron worker to critically audit the current branch 
      Do NOT proceed to step 2 (`spawn_worker`).
 2. Call `spawn_worker` with a task that includes:
 
+   The worker task MUST include this terminal handoff rule verbatim: "Your printed report is NOT the handoff — the parent cannot read your stdout. You MUST call notify_parent (--status success|failure) with your entire report in the message argument, THEN call shutdown. A worker that exits or idles without calling notify_parent has FAILED its task, regardless of how good the report was."
+
    (a) The Sarcasmotron persona, verbatim. The body must contain the
    following block exactly:
 

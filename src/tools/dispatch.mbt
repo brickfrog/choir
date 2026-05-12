@@ -721,6 +721,7 @@ pub async fn dispatch(
   goal_nonce? : () -> String = fn() {
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
+  record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1066,6 +1067,7 @@ pub async fn dispatch(
             dev_event,
             registry=None,
           )
+          record_handoff_delivered(notify_args.caller_id)
           response
         }
         NotifyParentPlan::ParentResolveFailed(error_message~) =>
@@ -1083,6 +1085,7 @@ pub async fn dispatch(
                 dev_event_on_success,
                 registry~,
               )
+              record_handoff_delivered(notify_args.caller_id)
               ignore(
                 mirror_beads_note_for_agent(
                   project_dir,
@@ -1442,6 +1445,7 @@ pub async fn handle_request(
   goal_nonce? : () -> String = fn() {
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
+  record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
@@ -1539,6 +1543,7 @@ pub async fn handle_request(
                   goal_deliver~,
                   goal_request_tick~,
                   goal_nonce~,
+                  record_handoff_delivered~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -1650,6 +1655,7 @@ pub async fn dispatch_call(
   pr_review? : Bool = true,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
+  record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
@@ -1714,6 +1720,7 @@ pub async fn dispatch_call(
                   create_dir_all~,
                   goal_deliver~,
                   goal_request_tick~,
+                  record_handoff_delivered~,
                 )
             }
         }

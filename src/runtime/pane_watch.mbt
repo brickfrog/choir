@@ -209,6 +209,18 @@ pub fn PaneWatcher::check_idle(
 }
 
 ///|
+pub fn PaneWatcher::idle_elapsed_sec(
+  self : PaneWatcher,
+  agent_id : String,
+  now : Int64,
+) -> Int64? {
+  match self.watches.get(agent_id) {
+    Some(watch) => Some(now - watch.observation.last_change_at)
+    None => None
+  }
+}
+
+///|
 pub fn PaneWatcher::watched_agents(self : PaneWatcher) -> Array[String] {
   let ids = []
   self.watches.each(fn(agent_id, _) { ids.push(agent_id) })

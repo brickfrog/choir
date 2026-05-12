@@ -77,6 +77,16 @@ fn ServerState::reload_runtime_snapshot_json(
       self.pending_disconnect_soft_notified,
     ),
     "delivery_failures": server_reload_int_entries_json(self.delivery_failures),
+    "handoff_delivered": server_reload_bool_entries_json(self.handoff_delivered),
+    "worker_no_handoff_prodded_at": server_reload_int64_entries_json(
+      self.worker_no_handoff_prodded_at,
+    ),
+    "worker_no_handoff_stalled_emitted": server_reload_bool_entries_json(
+      self.worker_no_handoff_stalled_emitted,
+    ),
+    "worker_no_handoff_exit_emitted": server_reload_bool_entries_json(
+      self.worker_no_handoff_exit_emitted,
+    ),
     "mutex_registry": self.mutex_registry.to_snapshot_json(),
   }.to_json()
 }
@@ -208,6 +218,16 @@ fn server_reload_parse_int64_map(
 }
 
 ///|
+fn server_reload_parse_int64_map_or_empty(
+  json : Json?,
+) -> Result[Map[String, Int64], @types.ChoirError] {
+  match json {
+    None => Ok({})
+    Some(_) => server_reload_parse_int64_map(json)
+  }
+}
+
+///|
 fn server_reload_parse_bool_map(
   json : Json?,
 ) -> Result[Map[String, Bool], @types.ChoirError] {
@@ -230,6 +250,16 @@ fn server_reload_parse_bool_map(
     out.set(key, value)
   }
   Ok(out)
+}
+
+///|
+fn server_reload_parse_bool_map_or_empty(
+  json : Json?,
+) -> Result[Map[String, Bool], @types.ChoirError] {
+  match json {
+    None => Ok({})
+    Some(_) => server_reload_parse_bool_map(json)
+  }
 }
 
 ///|
@@ -327,6 +357,32 @@ pub fn ServerState::restore_reload_snapshot(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let parsed_handoff_delivered = match
+    server_reload_parse_bool_map_or_empty(root.get("handoff_delivered")) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let parsed_worker_no_handoff_prodded_at = match
+    server_reload_parse_int64_map_or_empty(
+      root.get("worker_no_handoff_prodded_at"),
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let parsed_worker_no_handoff_stalled_emitted = match
+    server_reload_parse_bool_map_or_empty(
+      root.get("worker_no_handoff_stalled_emitted"),
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let parsed_worker_no_handoff_exit_emitted = match
+    server_reload_parse_bool_map_or_empty(
+      root.get("worker_no_handoff_exit_emitted"),
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let parsed_mutex = match root.get("mutex_registry") {
     Some(j) =>
       match @registry.parse_mutex_registry_snapshot_json(j) {
@@ -346,6 +402,22 @@ pub fn ServerState::restore_reload_snapshot(
     parsed_soft,
   )
   server_reload_replace_map_contents(self.delivery_failures, parsed_failures)
+  server_reload_replace_map_contents(
+    self.handoff_delivered,
+    parsed_handoff_delivered,
+  )
+  server_reload_replace_map_contents(
+    self.worker_no_handoff_prodded_at,
+    parsed_worker_no_handoff_prodded_at,
+  )
+  server_reload_replace_map_contents(
+    self.worker_no_handoff_stalled_emitted,
+    parsed_worker_no_handoff_stalled_emitted,
+  )
+  server_reload_replace_map_contents(
+    self.worker_no_handoff_exit_emitted,
+    parsed_worker_no_handoff_exit_emitted,
+  )
   // Release any mutex whose holder isn't in the just-restored registry —
   // otherwise a stale lock would block unrelated callers until TTL.
   let registry = self.registry
