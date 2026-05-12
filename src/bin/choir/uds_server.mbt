@@ -390,19 +390,17 @@ fn serve_cleanup_stale_goal_kv(
 }
 
 ///|
-/// On `choir serve` fresh start, rotate `.choir/delivery.log` to
-/// `.choir/delivery.log.1` if it's grown past the cap. It's an unbounded
-/// append log (poller ticks, deliveries, automerge actions) — without this it
-/// just grows forever across runs (observed at 17 MB). One backup is kept; a
-/// prior `.1` is overwritten by the rename. Returns true if a rotation
-/// happened. See choir-u7v.
-fn serve_rotate_delivery_log_if_large(
+/// On `choir serve` fresh start, rotate an unbounded append log to `<path>.1`
+/// if it's grown past the cap. One backup is kept; a prior `.1` is overwritten
+/// by the rename. Returns true if a rotation happened.
+fn serve_rotate_log_if_large(
   project_dir : String,
+  rel_path : String,
   cap_bytes? : Int = 8000000,
   file_size? : (String) -> Int = @sys.file_size,
   rename? : (String, String) -> Bool = @sys.rename_file_sync,
 ) -> Bool {
-  let log_path = serve_project_path(project_dir, ".choir/delivery.log")
+  let log_path = serve_project_path(project_dir, rel_path)
   if file_size(log_path) > cap_bytes {
     rename(log_path, log_path + ".1")
   } else {
@@ -411,10 +409,11 @@ fn serve_rotate_delivery_log_if_large(
 }
 
 ///|
-test "serve rotates an oversized delivery log, leaves a small one" {
+test "serve rotates oversized logs with one shared helper" {
   let renames : Array[(String, String)] = []
-  let did_rotate = serve_rotate_delivery_log_if_large(
+  let did_rotate = serve_rotate_log_if_large(
     ".",
+    ".choir/serve.log",
     cap_bytes=1000,
     file_size=fn(_p) { 2000 },
     rename=fn(from, to) {
@@ -423,10 +422,11 @@ test "serve rotates an oversized delivery log, leaves a small one" {
     },
   )
   assert_true(did_rotate)
-  assert_eq(renames, [(".choir/delivery.log", ".choir/delivery.log.1")])
+  assert_eq(renames, [(".choir/serve.log", ".choir/serve.log.1")])
   let small_renames : Array[(String, String)] = []
-  let no_rotate = serve_rotate_delivery_log_if_large(
+  let no_rotate = serve_rotate_log_if_large(
     ".",
+    ".choir/delivery.log",
     cap_bytes=1000,
     file_size=fn(_p) { 500 },
     rename=fn(from, to) {
@@ -472,7 +472,25 @@ fn serve_run() -> Unit {
     Err(_) => @types.Config::default()
   }
   let inherited_uds_fd = serve_inherited_uds_fd()
-  @moontrace.set_subscriber(fn(event) { println(event.format(color=true)) })
+  let serve_log_path = serve_project_path(
+    config.project_dir,
+    ".choir/serve.log",
+  )
+  match inherited_uds_fd {
+    Some(_) => ()
+    None => {
+      ignore(
+        serve_rotate_log_if_large(config.project_dir, ".choir/delivery.log"),
+      )
+      ignore(serve_rotate_log_if_large(config.project_dir, ".choir/serve.log"))
+    }
+  }
+  @moontrace.set_subscriber(fn(event) {
+    println(event.format(color=true))
+    ignore(
+      @sys.append_file_sync(serve_log_path, event.format(color=false) + "\n"),
+    )
+  })
   @moontrace.set_min_level(@moontrace.Level::Debug)
   @sys.write_pid_file(".choir/server.pid")
   @sys.register_cleanup_runtime_artifacts()
@@ -483,7 +501,6 @@ fn serve_run() -> Unit {
     None => {
       @sys.init_cleanup_runtime_artifacts_native()
       ignore(serve_cleanup_stale_goal_kv(config.project_dir))
-      ignore(serve_rotate_delivery_log_if_large(config.project_dir))
     }
   }
   let provider = @server.make_recovery_provider()

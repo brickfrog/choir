@@ -118,6 +118,7 @@ pub fn file_pr_auto_notify_plan(
   parent_result : Result[@types.Agent, @types.ChoirError],
   tracked_agent_id : String,
   notify_message : String,
+  now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> FilePrAutoNotifyPlan {
   match parent_result {
     Ok(parent) => {
@@ -127,21 +128,24 @@ pub fn file_pr_auto_notify_plan(
         notify_message,
         @types.Status::Success,
       )
-      let delivery_log_append = "[auto-notify] caller=" +
+      let delivery_log_append = @poller.delivery_log_line(
+        "[auto-notify] caller=" +
         tracked_agent_id +
         " parent=" +
         parent.agent_id.to_string() +
         " delivery=" +
-        delivery.to_display_string() +
-        "\n"
+        delivery.to_display_string(),
+        now_ms~,
+      )
       Deliver(delivery~, delivery_log_append~)
     }
     Err(e) => {
       let msg = e.message()
       ParentResolutionFailed(
-        delivery_log_append="[auto-notify] resolve_parent_for_notify failed error=" +
-          msg +
-          "\n",
+        delivery_log_append=@poller.delivery_log_line(
+          "[auto-notify] resolve_parent_for_notify failed error=" + msg,
+          now_ms~,
+        ),
         parent_resolve_error=msg,
       )
     }
@@ -149,8 +153,14 @@ pub fn file_pr_auto_notify_plan(
 }
 
 ///|
-pub fn file_pr_auto_notify_delivery_failed_log_append(error : String) -> String {
-  "[auto-notify] delivery failed error=" + error + "\n"
+pub fn file_pr_auto_notify_delivery_failed_log_append(
+  error : String,
+  now_ms? : Int64 = @env.now().reinterpret_as_int64(),
+) -> String {
+  @poller.delivery_log_line(
+    "[auto-notify] delivery failed error=" + error,
+    now_ms~,
+  )
 }
 
 ///|
@@ -216,6 +226,7 @@ pub async fn interpret_file_pr_post_success(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
+  delivery_log_now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> @types.Response {
   match effects.poller_track {
     Some(tracked_pr) =>
@@ -245,6 +256,7 @@ pub async fn interpret_file_pr_post_success(
         ),
         tracked_agent_id,
         notify_message,
+        now_ms=delivery_log_now_ms,
       )
       match plan {
         FilePrAutoNotifyPlan::Deliver(delivery~, delivery_log_append~) => {
@@ -258,7 +270,10 @@ pub async fn interpret_file_pr_post_success(
               ignore(
                 @sys.append_file_sync(
                   delivery_log_path,
-                  file_pr_auto_notify_delivery_failed_log_append(e.message()),
+                  file_pr_auto_notify_delivery_failed_log_append(
+                    e.message(),
+                    now_ms=delivery_log_now_ms,
+                  ),
                 ),
               )
             }
@@ -321,10 +336,12 @@ pub async fn interpret_file_pr_post_success(
           ignore(
             @sys.append_file_sync(
               delivery_log_path,
-              "[file_pr] copilot_review_comment failed pr=" +
-              pr_number.to_string() +
-              err_part_c +
-              "\n",
+              @poller.delivery_log_line(
+                "[file_pr] copilot_review_comment failed pr=" +
+                pr_number.to_string() +
+                err_part_c,
+                now_ms=delivery_log_now_ms,
+              ),
             ),
           )
         }
@@ -367,10 +384,12 @@ pub async fn interpret_file_pr_post_success(
       ignore(
         @sys.append_file_sync(
           delivery_log_path,
-          "[file_pr] copilot_reviewer_request failed pr=" +
-          pr_number.to_string() +
-          err_part +
-          "\n",
+          @poller.delivery_log_line(
+            "[file_pr] copilot_reviewer_request failed pr=" +
+            pr_number.to_string() +
+            err_part,
+            now_ms=delivery_log_now_ms,
+          ),
         ),
       )
       review_request_failed = true

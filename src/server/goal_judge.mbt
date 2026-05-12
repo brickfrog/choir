@@ -400,13 +400,13 @@ async fn ServerState::deliver_goal_judge_message(
 ) -> Unit {
   let target_id = goal_judge_tl_agent_id(self)
   ignore(
-    (self.append_file)(
-      self.config.project_dir + "/.choir/delivery.log",
+    @poller.append_delivery_log_line(
+      self.append_file,
+      self.config.project_dir,
       "[goal-judge] target=" +
       target_id +
       " " +
-      goal_judge_delivery_log_message(message) +
-      "\n",
+      goal_judge_delivery_log_message(message),
     ),
   )
   try {

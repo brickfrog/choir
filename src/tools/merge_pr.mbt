@@ -920,7 +920,11 @@ fn merge_pr_delivery_log_line(
   line : String,
 ) -> Unit {
   ignore(
-    append_file(project_dir + "/.choir/delivery.log", "[poller] " + line + "\n"),
+    @poller.append_delivery_log_line(
+      append_file,
+      project_dir,
+      "[poller] " + line,
+    ),
   )
 }
 

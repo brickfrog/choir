@@ -57,20 +57,22 @@ pub fn notify_parent_plan(
 }
 
 ///|
-/// Exact `.choir/delivery.log` line for `send_message` (matches historical
-/// dispatch formatting).
+/// Exact `.choir/delivery.log` line for `send_message`.
 pub fn send_message_delivery_log_append(
   target_id : String,
   agent : @types.Agent,
   delivery : @message.DeliveryMethod,
+  now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> String {
-  "[send_message] target=" +
-  target_id +
-  " terminal_target=" +
-  agent.terminal_target.map(@types.LocalTarget::to_string).unwrap_or("NONE") +
-  " delivery=" +
-  delivery.to_display_string() +
-  "\n"
+  @poller.delivery_log_line(
+    "[send_message] target=" +
+    target_id +
+    " terminal_target=" +
+    agent.terminal_target.map(@types.LocalTarget::to_string).unwrap_or("NONE") +
+    " delivery=" +
+    delivery.to_display_string(),
+    now_ms~,
+  )
 }
 
 ///|
@@ -100,6 +102,7 @@ pub fn send_message_plan(
   message : String,
   status : @types.Status,
   registry_lookup : Result[@types.Agent, @types.ChoirError]?,
+  now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> SendMessagePlan {
   match registry_lookup {
     None =>
@@ -112,7 +115,10 @@ pub fn send_message_plan(
     Some(Ok(agent)) => {
       let delivery = @message.plan_delivery(agent, sender_id, message, status)
       let delivery_log_append = send_message_delivery_log_append(
-        target_id, agent, delivery,
+        target_id,
+        agent,
+        delivery,
+        now_ms~,
       )
       Deliver(
         delivery~,
