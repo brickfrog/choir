@@ -427,6 +427,81 @@ async test "interpret_file_pr_post_success parent missing appends resolve failur
 }
 
 ///|
+async test "interpret_file_pr_post_success reads the clock fresh for each delivery-log append" {
+  let project_dir = file_pr_post_success_test_dir()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let log_path = project_dir + "/.choir/delivery.log"
+  ignore(@sys.delete_file_sync(log_path))
+  let args : FilePrArgs = {
+    branch: "main.leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.leaf",
+    title: None,
+    body: None,
+    review_context: Some("ctx"),
+  }
+  let pr : PullRequestInfo = {
+    number: 55,
+    url: "https://example.test/pr/55",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(args, "main", pr, false)
+  // No registry → no auto-notify append; pr_review=true + a runner that fails
+  // both copilot commands → exactly two delivery-log appends.
+  let effects = file_pr_post_success_effects(plan, false, false)
+  let base = 1_700_000_000_000L
+  let clock_calls : Array[Int] = [0]
+  let runner_calls : Array[Int] = [0]
+  let got = interpret_file_pr_post_success(
+    project_dir,
+    "choir",
+    args.branch,
+    args.tracked_agent_id,
+    project_dir,
+    pr.number,
+    true,
+    effects,
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      assert_eq(cmds.length(), 1)
+      runner_calls[0] = runner_calls[0] + 1
+      [1]
+    },
+    now_ms_fn=fn() {
+      clock_calls[0] = clock_calls[0] + 1
+      base + clock_calls[0].to_int64() * 1000L
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok despite copilot failures")
+  }
+  assert_eq(runner_calls[0], 2)
+  assert_eq(clock_calls[0], 2)
+  let log = @sys.read_file(log_path)
+  // Distinct timestamps on the two appends: a captured-once clock would stamp
+  // both with base+1000 and the second assert would fail.
+  assert_true(
+    log.contains(
+      @poller.delivery_log_line(
+        "[file_pr] copilot_review_comment failed pr=55",
+        now_ms=base + 1000L,
+      ),
+    ),
+  )
+  assert_true(
+    log.contains(
+      @poller.delivery_log_line(
+        "[file_pr] copilot_reviewer_request failed pr=55",
+        now_ms=base + 2000L,
+      ),
+    ),
+  )
+}
+
+///|
 test "file_pr_preflight_create_inputs copies branch paths and title/body" {
   let args : FilePrArgs = {
     branch: "main.leaf",
