@@ -192,3 +192,49 @@ async test "goal judge emits superseded when kv slug changes" {
   assert_eq(clears, 0)
   assert_eq(writes.length(), 1)
 }
+
+///|
+async test "goal judge single-flight guard defers overlapping ticks" {
+  let judge = GoalJudgeState::new()
+  judge.tick_running = true
+  let mut reads = 0
+  let mut evaluations = 0
+  let mut writes = 0
+  let mut clears = 0
+  let mut deliveries = 0
+  let result = judge.tick_with(
+    10L,
+    fn() {
+      reads = reads + 1
+      Ok(Some(@types.Goal::new("x", ["false"], 1L).unwrap()))
+    },
+    fn(_updated) {
+      writes = writes + 1
+      Ok(())
+    },
+    fn() {
+      clears = clears + 1
+      Ok(())
+    },
+    async fn(_goal, now) {
+      @async.sleep(0)
+      evaluations = evaluations + 1
+      goal_judge_test_eval(0, 1, "shell failed: false", now)
+    },
+    async fn(_message, _status) {
+      @async.sleep(0)
+      deliveries = deliveries + 1
+    },
+  )
+  match result {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  assert_eq(reads, 0)
+  assert_eq(evaluations, 0)
+  assert_eq(writes, 0)
+  assert_eq(clears, 0)
+  assert_eq(deliveries, 0)
+  assert_true(judge.tick_running)
+  assert_true(judge.tick_requested)
+}

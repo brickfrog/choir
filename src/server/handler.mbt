@@ -192,7 +192,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
     ),
   )
   if goal_judge_post_tool_trigger(effective_req, resp) {
-    self.process_goal_judge_tick(@poller.now_sec(), runner~, bd_capture=capture)
+    self.request_goal_judge_tick()
   }
 
   let end_ms = @env.now()

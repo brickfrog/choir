@@ -3,11 +3,19 @@ pub(all) struct GoalJudgeState {
   mut active_slug : String?
   mut last_prod_unix_sec : Int64?
   mut last_eval : @types.GoalEvalResult?
+  mut tick_running : Bool
+  mut tick_requested : Bool
 }
 
 ///|
 pub fn GoalJudgeState::new() -> GoalJudgeState {
-  { active_slug: None, last_prod_unix_sec: None, last_eval: None }
+  {
+    active_slug: None,
+    last_prod_unix_sec: None,
+    last_eval: None,
+    tick_running: false,
+    tick_requested: false,
+  }
 }
 
 ///|
@@ -15,6 +23,28 @@ fn GoalJudgeState::reset(self : GoalJudgeState) -> Unit {
   self.active_slug = None
   self.last_prod_unix_sec = None
   self.last_eval = None
+}
+
+///|
+pub fn GoalJudgeState::request_tick(self : GoalJudgeState) -> Unit {
+  self.tick_requested = true
+}
+
+///|
+fn GoalJudgeState::begin_tick(self : GoalJudgeState) -> Bool {
+  if self.tick_running {
+    self.request_tick()
+    false
+  } else {
+    self.tick_running = true
+    self.tick_requested = false
+    true
+  }
+}
+
+///|
+fn GoalJudgeState::finish_tick(self : GoalJudgeState) -> Unit {
+  self.tick_running = false
 }
 
 ///|
@@ -64,6 +94,33 @@ fn GoalJudgeState::note_eval(
 
 ///|
 pub async fn GoalJudgeState::tick_with(
+  self : GoalJudgeState,
+  now_unix_sec : Int64,
+  read_goal : () -> Result[@types.Goal?, @types.ChoirError],
+  write_goal : (@types.Goal) -> Result[Unit, @types.ChoirError],
+  clear_goal : () -> Result[Unit, @types.ChoirError],
+  evaluator : async (@types.Goal, Int64) -> @types.GoalEvalResult,
+  deliver : async (String, @types.Status) -> Unit,
+  reminder_interval_sec? : Int64 = @types.goal_prod_reminder_interval_sec,
+) -> Result[Unit, @types.ChoirError] {
+  if !self.begin_tick() {
+    return Ok(())
+  }
+  let result = self.tick_once_with(
+    now_unix_sec,
+    read_goal,
+    write_goal,
+    clear_goal,
+    evaluator,
+    deliver,
+    reminder_interval_sec~,
+  )
+  self.finish_tick()
+  result
+}
+
+///|
+async fn GoalJudgeState::tick_once_with(
   self : GoalJudgeState,
   now_unix_sec : Int64,
   read_goal : () -> Result[@types.Goal?, @types.ChoirError],
@@ -301,6 +358,11 @@ pub async fn ServerState::process_goal_judge_tick_with(
     deliver,
     reminder_interval_sec~,
   )
+}
+
+///|
+pub fn ServerState::request_goal_judge_tick(self : ServerState) -> Unit {
+  self.goal_judge.request_tick()
 }
 
 ///|
