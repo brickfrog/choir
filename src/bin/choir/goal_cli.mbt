@@ -35,11 +35,37 @@ async fn goal_cli_local_dispatch(
   tool : String,
   values : Map[String, Json],
 ) -> @types.Response {
-  @tools.dispatch_call(
+  let resp = @tools.dispatch_call(
     { role, name: tool, args: goal_cli_string_args(values) },
     project_dir=config.project_dir,
     session=config.terminal_session,
   )
+  goal_cli_response_with_local_dispatch_warning(tool, resp)
+}
+
+///|
+fn goal_cli_response_append_warning(
+  resp : @types.Response,
+  warning : String,
+) -> @types.Response {
+  match resp.ok_field("warning") {
+    Some(existing) => resp.with_warning(existing + "\n" + warning)
+    None => resp.with_warning(warning)
+  }
+}
+
+///|
+fn goal_cli_response_with_local_dispatch_warning(
+  tool : String,
+  resp : @types.Response,
+) -> @types.Response {
+  if tool == "goal_set" && resp.is_ok() {
+    goal_cli_response_append_warning(
+      resp, "goal set, but no running `choir serve` was detected — the judge will not run until a choir server is up.",
+    )
+  } else {
+    resp
+  }
 }
 
 ///|
@@ -120,6 +146,26 @@ fn goal_cli_status_values(
     }
   }
   Ok({ "evaluate": evaluate.to_json() })
+}
+
+///|
+test "goal CLI local dispatch warning is attached to goal_set success" {
+  let resp = goal_cli_response_with_local_dispatch_warning(
+    "goal_set",
+    @types.Response::ok_values({ "status": "set".to_json() }),
+  )
+  assert_eq(
+    resp.ok_field("warning").unwrap_or(""),
+    "goal set, but no running `choir serve` was detected — the judge will not run until a choir server is up.",
+  )
+  let clear = goal_cli_response_with_local_dispatch_warning(
+    "goal_clear",
+    @types.Response::ok_values({ "status": "cleared".to_json() }),
+  )
+  match clear.ok_field("warning") {
+    None => ()
+    Some(_) => fail("goal_clear local fallback should not use goal_set warning")
+  }
 }
 
 ///|

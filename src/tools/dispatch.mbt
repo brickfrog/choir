@@ -701,6 +701,9 @@ pub async fn dispatch(
   poller_state? : @poller.PollerState? = None,
   caller_id? : String? = None,
   pr_review? : Bool = true,
+  goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
+  goal_request_tick? : () -> Unit = goal_noop_request_tick,
+  goal_note_superseded? : (String) -> Unit = goal_noop_note_superseded,
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1227,6 +1230,9 @@ pub async fn dispatch(
         write_file_atomic,
         create_dir_all,
         @poller.now_sec(),
+        goal_deliver~,
+        goal_request_tick~,
+        goal_note_superseded~,
       )
     ToolRequest::GoalClear =>
       interpret_goal_clear(project_dir, session, read_file, delete_file)
@@ -1415,6 +1421,9 @@ pub async fn handle_request(
   poller_state? : @poller.PollerState? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
+  goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
+  goal_request_tick? : () -> Unit = goal_noop_request_tick,
+  goal_note_superseded? : (String) -> Unit = goal_noop_note_superseded,
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
@@ -1509,6 +1518,9 @@ pub async fn handle_request(
                   delete_file~,
                   path_exists~,
                   create_dir_all~,
+                  goal_deliver~,
+                  goal_request_tick~,
+                  goal_note_superseded~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -1591,6 +1603,9 @@ pub async fn dispatch_call(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   pr_review? : Bool = true,
+  goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
+  goal_request_tick? : () -> Unit = goal_noop_request_tick,
+  goal_note_superseded? : (String) -> Unit = goal_noop_note_superseded,
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
@@ -1649,6 +1664,9 @@ pub async fn dispatch_call(
               delete_file~,
               path_exists~,
               create_dir_all~,
+              goal_deliver~,
+              goal_request_tick~,
+              goal_note_superseded~,
             )
         }
     }

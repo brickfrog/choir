@@ -83,6 +83,9 @@ fn validate_goal_kv_key(key : String) -> Result[Unit, ChoirError] {
 
 ///|
 pub fn goal_kv_key(session : String) -> Result[String, ChoirError] {
+  if session.trim().to_owned() == "" {
+    return Err(goal_validation_error("goal kv session cannot be empty"))
+  }
   let key = "tl-goal--" + session + ".json"
   match validate_goal_kv_key(key) {
     Ok(_) => Ok(key)
@@ -371,6 +374,13 @@ pub fn Goal::new(
     if trimmed != "" {
       checks.push(GoalCheck::ShellCommand(trimmed))
     }
+  }
+  if checks.length() == 0 {
+    return Err(
+      goal_validation_error(
+        "a freeform goal needs at least one --verify <cmd>; or pass a bead id to inherit its acceptance.",
+      ),
+    )
   }
   Ok({ slug: source.slug(), source, checks, started_unix_sec, last_eval: None })
 }

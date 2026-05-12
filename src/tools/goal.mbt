@@ -24,6 +24,22 @@ fn goal_eval_response_fields(eval : @types.GoalEvalResult) -> Map[String, Json] 
 }
 
 ///|
+async fn goal_noop_deliver(_message : String, _status : @types.Status) -> Unit {
+  @async.sleep(0)
+  ()
+}
+
+///|
+fn goal_noop_request_tick() -> Unit {
+  ()
+}
+
+///|
+fn goal_noop_note_superseded(_slug : String) -> Unit {
+  ()
+}
+
+///|
 fn goal_read_current(
   project_dir : String,
   session : String,
@@ -145,6 +161,9 @@ pub async fn interpret_goal_set(
   write_file_atomic : (String, String) -> Bool,
   create_dir_all : (String) -> Bool,
   now_unix_sec : Int64,
+  goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
+  goal_request_tick? : () -> Unit = goal_noop_request_tick,
+  goal_note_superseded? : (String) -> Unit = goal_noop_note_superseded,
 ) -> @types.Response {
   let existing = match
     goal_read_current_best_effort(project_dir, session, read_file) {
@@ -166,9 +185,19 @@ pub async fn interpret_goal_set(
     Ok(path) => path
     Err(e) => return @types.Response::Err(e.message())
   }
+  match existing.goal {
+    Some(old) =>
+      goal_deliver("[GOAL SUPERSEDED: " + old.slug + "]", @types.Status::Info)
+    None => ()
+  }
   if !write_file_atomic(path, goal.to_json_string()) {
     return @types.Response::Err("failed to write goal kv file: " + path)
   }
+  match existing.goal {
+    Some(old) => goal_note_superseded(old.slug)
+    None => ()
+  }
+  goal_request_tick()
   let kv_key = match @types.goal_kv_key(session) {
     Ok(key) => key
     Err(e) => return @types.Response::Err(e.message())
@@ -210,11 +239,15 @@ pub fn interpret_goal_clear(
     Ok(value) => value
     Err(e) => return @types.Response::Err(e.message())
   }
-  ignore(delete_file(path))
   let fields : Map[String, Json] = {
     "status": "cleared".to_json(),
     "active": false.to_json(),
     "existed": (current.goal is Some(_) || current.warning is Some(_)).to_json(),
+  }
+  if current.goal is Some(_) || current.warning is Some(_) {
+    if !delete_file(path) {
+      return @types.Response::Err("failed to delete goal kv file: " + path)
+    }
   }
   match current.goal {
     Some(goal) => fields.set("slug", goal.slug.to_json())

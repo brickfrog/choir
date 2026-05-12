@@ -187,10 +187,98 @@ async test "goal judge emits superseded when kv slug changes" {
     Err(e) => fail(e.message())
   }
   assert_eq(delivered.length(), 2)
-  assert_eq(delivered[0], "[GOAL SUPERSEDED]")
+  assert_eq(delivered[0], "[GOAL SUPERSEDED: old]")
   assert_eq(delivered[1], "[GOAL: new] 0/1 passing — shell failed: false")
   assert_eq(clears, 0)
   assert_eq(writes.length(), 1)
+}
+
+///|
+async test "goal judge does not re-emit complete after clear failure" {
+  let judge = GoalJudgeState::new()
+  let goal = @types.Goal::new("x", ["true"], 1L).unwrap()
+  let delivered : Array[String] = []
+  let mut clears = 0
+  let mut writes = 0
+  let read_goal = fn() { Ok(Some(goal)) }
+  let write_goal = fn(_updated : @types.Goal) {
+    writes = writes + 1
+    Ok(())
+  }
+  let clear_goal = fn() {
+    clears = clears + 1
+    Err(@types.ChoirError::workspace_error("delete failed"))
+  }
+  let evaluator = async fn(_goal : @types.Goal, now : Int64) {
+    @async.sleep(0)
+    goal_judge_test_eval(1, 1, "", now)
+  }
+  let deliver = async fn(message : String, _status : @types.Status) {
+    @async.sleep(0)
+    delivered.push(message)
+  }
+  let first = judge.tick_with(
+    20L, read_goal, write_goal, clear_goal, evaluator, deliver,
+  )
+  match first {
+    Err(e) => assert_true(e.message().contains("delete failed"))
+    Ok(_) => fail("expected first clear failure")
+  }
+  let second = judge.tick_with(
+    50L, read_goal, write_goal, clear_goal, evaluator, deliver,
+  )
+  match second {
+    Err(e) => assert_true(e.message().contains("delete failed"))
+    Ok(_) => fail("expected second clear failure")
+  }
+  assert_eq(delivered, ["[GOAL COMPLETE: x]"])
+  assert_eq(clears, 2)
+  assert_eq(writes, 0)
+}
+
+///|
+async test "server consumes requested goal judge tick flag" {
+  let project_dir = "/tmp/choir-goal-requested-tick-test-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "test-session",
+  }
+  let state = ServerState::new(config, make_recovery_provider())
+  state.request_goal_judge_tick()
+  assert_true(state.goal_judge.tick_requested)
+  let goal = @types.Goal::new("x", ["false"], 1L).unwrap()
+  let delivered : Array[String] = []
+  let mut reads = 0
+  let consumed = state.process_requested_goal_judge_tick_with(
+    20L,
+    fn() {
+      reads = reads + 1
+      Ok(Some(goal))
+    },
+    async fn(_goal, now) {
+      @async.sleep(0)
+      goal_judge_test_eval(0, 1, "shell failed: false", now)
+    },
+    async fn(message, _status) {
+      @async.sleep(0)
+      delivered.push(message)
+    },
+    write_goal=fn(_updated) { Ok(()) },
+    clear_goal=fn() { Ok(()) },
+  )
+  match consumed {
+    Ok(true) => ()
+    Ok(false) => fail("expected requested tick to be consumed")
+    Err(e) => fail(e.message())
+  }
+  assert_false(state.goal_judge.tick_requested)
+  assert_eq(reads, 1)
+  assert_eq(delivered, ["[GOAL: x] 0/1 passing — shell failed: false"])
 }
 
 ///|
