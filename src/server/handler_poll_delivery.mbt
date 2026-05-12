@@ -1516,6 +1516,7 @@ pub async fn ServerState::process_poller_tick_with(
   )
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+  self.process_goal_judge_tick(now, runner~)
   deliver_poller_stall_notifications(self, now, runner)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
@@ -1571,6 +1572,7 @@ pub async fn ServerState::process_poller_tick(
   )
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+  self.process_goal_judge_tick(now, runner~)
   deliver_poller_stall_notifications(self, now, runner)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
@@ -1629,6 +1631,7 @@ pub async fn ServerState::refresh_pr_with(
       capture~,
       automerge_capture~,
     )
+    self.process_goal_judge_tick(now, runner~, bd_capture=automerge_capture)
   }
   ignore(self.poller.write_state_file(self.config.project_dir))
 }

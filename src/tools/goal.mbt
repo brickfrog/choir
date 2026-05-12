@@ -68,7 +68,7 @@ fn goal_read_current_best_effort(
 }
 
 ///|
-async fn goal_evaluate_with_workspace_caps(
+pub async fn goal_evaluate_with_workspace_caps(
   goal : @types.Goal,
   project_dir : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
