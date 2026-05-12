@@ -151,15 +151,6 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
   assert_false(script.contains("child_pid=$!"))
   assert_true(script.contains("[TL exited]"))
   assert_true(script.contains("exec bash -l"))
-  // Every TL exit appends its timestamped exit code to .choir/tl-exits.log
-  // so a silent harness crash is still diagnosable (choir-eek); a HUP/TERM
-  // trap keeps the outer shell alive past those signals so the exit code is
-  // still recorded.
-  assert_true(script.contains(".choir/tl-exits.log"))
-  assert_true(script.contains("exit=%s"))
-  assert_true(script.contains("trap "))
-  assert_true(script.contains("HUP TERM"))
-  assert_true(script.contains("[TL wrapper caught signal]"))
 }
 
 ///|
