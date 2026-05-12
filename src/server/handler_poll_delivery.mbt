@@ -27,11 +27,12 @@ fn parent_pr_state_notification_decision(
 ) -> @poller.PrStateNotificationDecision {
   let verify_results = match task_contract {
     Some(contract) =>
-      @evidence.verify_results_for_required_at_head(
+      @evidence.verify_results_for_required_at_head_with_ci(
         project_dir,
         tracked.agent_id,
         contract.verify,
         tracked.last_sha,
+        @types.task_contract_verify_satisfied_by_ci(contract),
       )
     None => []
   }

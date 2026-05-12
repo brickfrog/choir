@@ -94,6 +94,16 @@ fn json_optional_issue_id(obj : Map[String, Json]) -> String? {
 }
 
 ///|
+fn task_contract_json_bool_default_true(value : Json?) -> Bool {
+  match value {
+    Some(True) => true
+    Some(False) => false
+    Some(String(s)) => parse_default_true_bool_flag(Some(s))
+    _ => true
+  }
+}
+
+///|
 fn task_contract_from_json_object(value : Json?) -> @types.TaskContract {
   match value {
     Some(Object(obj)) => {
@@ -113,6 +123,9 @@ fn task_contract_from_json_object(value : Json?) -> @types.TaskContract {
         beads_issue_id: json_optional_issue_id(obj),
         review_context: json_optional_trimmed_string(obj.get("review_context")),
         verify: json_string_list(obj.get("verify")),
+        verify_satisfied_by_ci: task_contract_json_bool_default_true(
+          obj.get("verify_satisfied_by_ci"),
+        ),
       }
     }
     Some(String(s)) => {
@@ -158,6 +171,8 @@ fn merge_task_contracts(
       None => nested.review_context
     },
     verify: merge_unique_lines(nested.verify, top_level.verify),
+    verify_satisfied_by_ci: nested.verify_satisfied_by_ci &&
+    top_level.verify_satisfied_by_ci,
   }
 }
 

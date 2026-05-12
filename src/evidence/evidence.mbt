@@ -516,6 +516,63 @@ pub fn verify_results_for_required_at_head(
 }
 
 ///|
+fn latest_ci_observed_matches_head(
+  events : Array[EvidenceEvent],
+  head_sha : String,
+) -> Bool {
+  let mut latest_status : EvidenceCiStatus? = None
+  let mut latest_head_sha : String? = None
+  for event in events {
+    match event {
+      CiObserved(status~, head_sha~) => {
+        latest_status = Some(status)
+        latest_head_sha = head_sha
+      }
+      _ => ()
+    }
+  }
+  match (latest_status, latest_head_sha) {
+    (Some(Success), Some(observed_head)) => observed_head == head_sha
+    _ => false
+  }
+}
+
+///|
+pub fn verify_results_for_required_at_head_with_ci(
+  project_dir : String,
+  agent_id : String,
+  required : Array[String],
+  head_sha : String,
+  verify_satisfied_by_ci : Bool,
+) -> Array[@types.VerifyCheckResult] {
+  let results = verify_results_for_required_at_head(
+    project_dir, agent_id, required, head_sha,
+  )
+  if !verify_satisfied_by_ci || head_sha == "" {
+    return results
+  }
+  if !latest_ci_observed_matches_head(
+      replay_agent_evidence_records(project_dir, agent_id),
+      head_sha,
+    ) {
+    return results
+  }
+  let upgraded : Array[@types.VerifyCheckResult] = []
+  for result in results {
+    if result.status == @types.VerifyStatus::NotObserved {
+      upgraded.push({
+        ..result,
+        status: @types.VerifyStatus::Passed,
+        details: "satisfied by CI rollup success at " + head_sha,
+      })
+    } else {
+      upgraded.push(result)
+    }
+  }
+  upgraded
+}
+
+///|
 pub impl Show for EvidenceRecord with output(self, logger) -> Unit {
   logger.write_string(
     self.ts.to_string() + " " + self.agent_id + " " + self.event.type_name(),

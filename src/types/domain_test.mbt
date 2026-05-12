@@ -201,6 +201,42 @@ test "TaskContract empty helper returns empty contract" {
   assert_true(contract.is_empty())
   assert_eq(contract.goal, "")
   assert_eq(contract.verify.length(), 0)
+  assert_true(@types.task_contract_verify_satisfied_by_ci(contract))
+}
+
+///|
+test "TaskContract round trips verify_satisfied_by_ci" {
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+    verify_satisfied_by_ci: false,
+  }
+  let json = @json.parse(contract.to_json_string()) catch {
+    _ => fail("expected contract JSON to parse")
+  }
+  let parsed : @types.TaskContract = @json.from_json(json) catch {
+    _ => fail("expected contract JSON to decode")
+  }
+  @debug.assert_eq(parsed, contract)
+  assert_false(@types.task_contract_verify_satisfied_by_ci(parsed))
+}
+
+///|
+test "TaskContract missing verify_satisfied_by_ci decodes as true" {
+  let parsed_json = @json.parse(
+    (
+      #|{"goal":"ship feature","scope":[],"acceptance_checks":[],"constraints":[],"non_goals":[],"beads_issue_id":null,"review_context":null,"verify":["moon test --target native"]}
+    ),
+  ) catch {
+    _ => fail("expected legacy contract JSON to parse")
+  }
+  let contract : @types.TaskContract = @json.from_json(parsed_json) catch {
+    _ => fail("expected legacy contract JSON to decode")
+  }
+  assert_eq(contract.goal, "ship feature")
+  assert_eq(contract.verify, ["moon test --target native"])
+  assert_true(@types.task_contract_verify_satisfied_by_ci(contract))
 }
 
 ///|
@@ -220,6 +256,28 @@ test "advisory_evaluation_result ready when review CI and threads are clear" {
   let result = @types.advisory_evaluation_result(bundle)
   assert_eq(result.verdict, @types.EvaluationVerdict::Ready)
   assert_true(result.summary.contains("ready"))
+}
+
+///|
+test "evaluation_cascade ready with passed required verify" {
+  let result = @types.evaluation_cascade(["moon test --target native"], [
+    @types.EvaluationSignal::Review(
+      state=@types.EvaluationReviewState::Commented,
+      body="left comments",
+    ),
+    @types.EvaluationSignal::Ci(status=@types.EvaluationCiRollup::Success),
+    @types.EvaluationSignal::ThreadsObserved(count=0),
+    @types.EvaluationSignal::CopilotIssueCommentObserved,
+    @types.EvaluationSignal::Verify(result={
+      name: "moon test --target native",
+      status: @types.VerifyStatus::Passed,
+      details: "satisfied by CI rollup success at head-sha",
+    }),
+  ])
+  match result {
+    @types.CascadeVerdict::Ready(_) => ()
+    _ => fail("expected Ready")
+  }
 }
 
 ///|

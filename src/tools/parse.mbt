@@ -1976,10 +1976,34 @@ test "parse_fork_wave_args merges nested contract object with top-level task" {
         Some("choir-poller-state-race"),
       )
       assert_eq(parsed.task_contracts[0].verify, ["moon test --target native"])
+      assert_true(parsed.task_contracts[0].verify_satisfied_by_ci)
       assert_true(parsed.tasks[0].contains("## BEADS ISSUE"))
       assert_true(parsed.tasks[0].contains("choir-poller-state-race"))
       assert_true(parsed.tasks[0].contains("## SCOPE"))
       assert_true(parsed.tasks[0].contains("All tests pass"))
+    }
+    Err(e) => fail("unexpected parse error: " + e.message())
+  }
+}
+
+///|
+test "parse_fork_wave_args propagates verify_satisfied_by_ci false" {
+  let args : ToolArgs = {
+    values: {
+      "count": (1).to_json(),
+      "caller_id": "root".to_json(),
+      "parent_branch": "main".to_json(),
+      "task": "Ship strict feature".to_json(),
+      "contract": {
+        "verify": ["moon test --target native"].to_json(),
+        "verify_satisfied_by_ci": false.to_json(),
+      }.to_json(),
+    },
+  }
+  match parse_fork_wave_args(".", args) {
+    Ok(parsed) => {
+      assert_eq(parsed.task_contracts.length(), 1)
+      assert_false(parsed.task_contracts[0].verify_satisfied_by_ci)
     }
     Err(e) => fail("unexpected parse error: " + e.message())
   }
