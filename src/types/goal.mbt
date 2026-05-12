@@ -21,6 +21,7 @@ pub(all) struct GoalEvalResult {
 ///|
 pub(all) struct Goal {
   slug : String
+  nonce : String
   source : GoalSource
   checks : Array[GoalCheck]
   started_unix_sec : Int64
@@ -37,6 +38,39 @@ pub(all) enum GoalProdDecision {
 
 ///|
 pub let goal_prod_reminder_interval_sec : Int64 = 300L
+
+///|
+let goal_nonce_counter : @ref.Ref[Int64] = @ref.new(0L)
+
+///|
+fn goal_hex_suffix(value : Int64, width : Int) -> String {
+  let digits : Array[String] = [
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f",
+  ]
+  let mut v = if value < 0L { -value } else { value }
+  let parts : Array[String] = []
+  let mut i = 0
+  while i < width {
+    parts.push(digits[(v % 16L).to_int()])
+    v = v / 16L
+    i = i + 1
+  }
+  let mut out = ""
+  let mut j = parts.length()
+  while j > 0 {
+    j = j - 1
+    out = out + parts[j]
+  }
+  out
+}
+
+///|
+pub fn next_goal_nonce(now_ticks : Int64) -> String {
+  goal_nonce_counter.val = goal_nonce_counter.val + 1L
+  goal_hex_suffix(now_ticks, 8) +
+  "-" +
+  goal_hex_suffix(goal_nonce_counter.val, 4)
+}
 
 ///|
 fn goal_validation_error(message : String) -> ChoirError {
@@ -375,10 +409,15 @@ pub fn Goal::new(
   input : String,
   verify_commands : Array[String],
   started_unix_sec : Int64,
+  nonce? : String = next_goal_nonce(started_unix_sec),
 ) -> Result[Goal, ChoirError] {
   let source = match GoalSource::from_input(input) {
     Ok(value) => value
     Err(e) => return Err(e)
+  }
+  let nonce = nonce.trim().to_owned()
+  if nonce == "" {
+    return Err(goal_validation_error("goal nonce cannot be empty"))
   }
   let checks : Array[GoalCheck] = []
   match source {
@@ -394,7 +433,14 @@ pub fn Goal::new(
   if checks.length() == 0 {
     return Err(goal_empty_checks_error())
   }
-  Ok({ slug: source.slug(), source, checks, started_unix_sec, last_eval: None })
+  Ok({
+    slug: source.slug(),
+    nonce,
+    source,
+    checks,
+    started_unix_sec,
+    last_eval: None,
+  })
 }
 
 ///|
@@ -410,6 +456,7 @@ pub fn Goal::to_json_string(self : Goal) -> String {
   }
   let obj : Map[String, Json] = {
     "slug": self.slug.to_json(),
+    "nonce": self.nonce.to_json(),
     "source": self.source.to_goal_json(),
     "checks": check_json.to_json(),
     "started_unix_sec": self.started_unix_sec.to_json(),
@@ -460,6 +507,16 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
     Some(value) => value
     None => return Err(goal_validation_error("goal missing started_unix_sec"))
   }
+  let nonce = match json_field_string(obj, "nonce") {
+    Some(value) => {
+      let trimmed = value.trim().to_owned()
+      if trimmed == "" {
+        return Err(goal_validation_error("goal nonce cannot be empty"))
+      }
+      trimmed
+    }
+    None => next_goal_nonce(started_unix_sec)
+  }
   let last_eval = match obj.get("last_eval") {
     None | Some(Null) => None
     Some(value) =>
@@ -468,7 +525,7 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
         Err(e) => return Err(e)
       }
   }
-  Ok({ slug, source, checks, started_unix_sec, last_eval })
+  Ok({ slug, nonce, source, checks, started_unix_sec, last_eval })
 }
 
 ///|
@@ -529,10 +586,7 @@ pub fn goal_prod_decision(
   reminder_interval_sec? : Int64 = goal_prod_reminder_interval_sec,
 ) -> GoalProdDecision {
   if current_eval.is_complete() {
-    return match previous_eval {
-      Some(prev) if prev.is_complete() => GoalProdDecision::Suppress
-      _ => GoalProdDecision::EmitComplete
-    }
+    return GoalProdDecision::EmitComplete
   }
   match previous_eval {
     None => GoalProdDecision::EmitProgress

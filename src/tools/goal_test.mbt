@@ -98,8 +98,15 @@ async test "goal_set writes one session KV file and evaluates shell check throug
   @debug.assert_eq(commands[0].workdir, Some("/repo"))
   let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
   match stored.last_eval {
-    Some(eval) => assert_eq(eval.progress_label(), "1/1")
-    None => fail("expected stored evaluation")
+    Some(_) => fail("goal_set must not persist last_eval")
+    None => ()
+  }
+  match resp.ok_payload() {
+    Some(fields) => {
+      assert_eq(fields.get("progress").unwrap_or(""), "1/1")
+      assert_true(fields.get_bool("complete") == Some(true))
+    }
+    None => fail("expected ok response")
   }
 }
 
@@ -137,8 +144,15 @@ async test "goal_set bead source evaluates bd show json through injected capture
     files.get(@types.goal_kv_path("/repo", "sess").unwrap()).unwrap(),
   ).unwrap()
   match stored.last_eval {
-    Some(eval) => assert_eq(eval.progress_label(), "1/1")
-    None => fail("expected stored evaluation")
+    Some(_) => fail("goal_set must not persist last_eval")
+    None => ()
+  }
+  match resp.ok_payload() {
+    Some(fields) => {
+      assert_eq(fields.get("progress").unwrap_or(""), "1/1")
+      assert_true(fields.get_bool("complete") == Some(true))
+    }
+    None => fail("expected ok response")
   }
 }
 
@@ -300,6 +314,65 @@ async test "goal_set does not emit superseded when replacement write fails" {
 }
 
 ///|
+async test "goal_set same slug same second produces distinct nonces" {
+  let files : Map[String, String] = {}
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
+  let first_nonce = @types.next_goal_nonce(123456L)
+  let first = interpret_goal_set(
+    { input: "same goal", verify: ["false"] },
+    "/repo",
+    "sess",
+    async fn(_cmds) {
+      @async.sleep(0)
+      [1]
+    },
+    async fn(_cmd) {
+      @async.sleep(0)
+      (-1, "")
+    },
+    goal_test_read_file(files),
+    fn(path, content) {
+      files.set(path, content)
+      true
+    },
+    fn(_path) { true },
+    42L,
+    first_nonce,
+  )
+  assert_true(first.is_ok())
+  let stored_first = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
+  let second_nonce = @types.next_goal_nonce(123456L)
+  let second = interpret_goal_set(
+    { input: "same goal", verify: ["false"] },
+    "/repo",
+    "sess",
+    async fn(_cmds) {
+      @async.sleep(0)
+      [1]
+    },
+    async fn(_cmd) {
+      @async.sleep(0)
+      (-1, "")
+    },
+    goal_test_read_file(files),
+    fn(path, content) {
+      files.set(path, content)
+      true
+    },
+    fn(_path) { true },
+    42L,
+    second_nonce,
+  )
+  assert_true(second.is_ok())
+  let stored_second = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
+  assert_eq(stored_first.slug, stored_second.slug)
+  assert_eq(stored_first.started_unix_sec, stored_second.started_unix_sec)
+  assert_true(stored_first.nonce != stored_second.nonce)
+  assert_eq(stored_first.nonce, first_nonce)
+  assert_eq(stored_second.nonce, second_nonce)
+}
+
+///|
 async test "goal_clear removes the exact session KV path" {
   let files : Map[String, String] = {}
   let path = @types.goal_kv_path("/repo", "sess").unwrap()
@@ -415,12 +488,63 @@ async test "goal_set maps thrown verification caps to failed checks" {
   assert_true(resp.is_ok())
   let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
   match stored.last_eval {
-    Some(eval) => {
-      assert_eq(eval.progress_label(), "0/2")
-      assert_true(eval.failing_summary.contains("bead not closed: choir-kqv"))
-      assert_true(eval.failing_summary.contains("shell failed: true"))
+    Some(_) => fail("goal_set must not persist failed eval")
+    None => ()
+  }
+  match resp.ok_payload() {
+    Some(fields) => {
+      assert_eq(fields.get("progress").unwrap_or(""), "0/2")
+      match fields.get("failing_summary") {
+        Some(summary) => {
+          assert_true(summary.contains("bead not closed: choir-kqv"))
+          assert_true(summary.contains("shell failed: true"))
+        }
+        None => fail("expected failing summary in response")
+      }
     }
-    None => fail("expected stored evaluation")
+    None => fail("expected ok response")
+  }
+}
+
+///|
+async test "goal_status evaluate returns fresh completion without writing KV" {
+  let files : Map[String, String] = {}
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
+  let goal = @types.Goal::new("x", ["true"], 10L, nonce="status-nonce").unwrap()
+  files.set(path, goal.to_json_string())
+  let mut writes = 0
+  let resp = dispatch(
+    ToolRequest::GoalStatus({ evaluate: true }),
+    project_dir="/repo",
+    session="sess",
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      [0]
+    },
+    bd_capture=async fn(_cmd) {
+      @async.sleep(0)
+      (-1, "")
+    },
+    read_file=goal_test_read_file(files),
+    write_file_atomic=fn(_path, _content) {
+      writes = writes + 1
+      true
+    },
+  )
+  assert_true(resp.is_ok())
+  assert_eq(writes, 0)
+  assert_eq(files.get(path).unwrap(), goal.to_json_string())
+  match resp.ok_payload() {
+    Some(fields) => {
+      assert_eq(fields.get("progress").unwrap_or(""), "1/1")
+      assert_true(fields.get_bool("complete") == Some(true))
+    }
+    None => fail("expected ok response")
+  }
+  let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
+  match stored.last_eval {
+    Some(_) => fail("status --evaluate must not persist last_eval")
+    None => ()
   }
 }
 

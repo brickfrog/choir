@@ -70,12 +70,12 @@ fn goal_judge_complete_message(goal : @types.Goal) -> String {
 
 ///|
 fn goal_judge_completion_key(goal : @types.Goal) -> String {
-  goal.slug + "@" + goal.started_unix_sec.to_string()
+  goal.slug + "@" + goal.nonce
 }
 
 ///|
 fn goal_judge_same_goal(a : @types.Goal, b : @types.Goal) -> Bool {
-  a.slug == b.slug && a.started_unix_sec == b.started_unix_sec
+  a.slug == b.slug && a.nonce == b.nonce
 }
 
 ///|
@@ -86,6 +86,49 @@ fn goal_judge_current_matches(
   match read_goal() {
     Ok(Some(current)) => Ok(goal_judge_same_goal(current, evaluated_goal))
     Ok(None) => Ok(false)
+    Err(e) => Err(e)
+  }
+}
+
+///|
+fn goal_judge_write_if_current(
+  read_goal : () -> Result[@types.Goal?, @types.ChoirError],
+  evaluated_goal : @types.Goal,
+  write_goal : (@types.Goal) -> Result[Unit, @types.ChoirError],
+  updated_goal : @types.Goal,
+) -> Result[Bool, @types.ChoirError] {
+  match goal_judge_current_matches(read_goal, evaluated_goal) {
+    Ok(true) =>
+      // No flock on the KV; the re-read-immediately-before-write narrows but
+      // does not eliminate the sub-ms window. The consequence is a clobbered
+      // goal the user re-issues; recoverable. A fully serialized fix would
+      // route all goal mutations through the server's loop; out of scope here.
+      match write_goal(updated_goal) {
+        Ok(_) => Ok(true)
+        Err(e) => Err(e)
+      }
+    Ok(false) => Ok(false)
+    Err(e) => Err(e)
+  }
+}
+
+///|
+fn goal_judge_clear_if_current(
+  read_goal : () -> Result[@types.Goal?, @types.ChoirError],
+  evaluated_goal : @types.Goal,
+  clear_goal : () -> Result[Unit, @types.ChoirError],
+) -> Result[Bool, @types.ChoirError] {
+  match goal_judge_current_matches(read_goal, evaluated_goal) {
+    Ok(true) =>
+      // No flock on the KV; the re-read-immediately-before-delete narrows but
+      // does not eliminate the sub-ms window. The consequence is a clobbered
+      // goal the user re-issues; recoverable. A fully serialized fix would
+      // route all goal mutations through the server's loop; out of scope here.
+      match clear_goal() {
+        Ok(_) => Ok(true)
+        Err(e) => Err(e)
+      }
+    Ok(false) => Ok(false)
     Err(e) => Err(e)
   }
 }
@@ -189,15 +232,11 @@ async fn GoalJudgeState::tick_once_with(
   }
   let current_eval = evaluator(goal, now_unix_sec)
   if current_eval.is_complete() && self.already_completed(goal) {
-    match goal_judge_current_matches(read_goal, goal) {
-      Ok(true) =>
-        match clear_goal() {
-          Ok(_) => {
-            self.forget_completed(goal)
-            return Ok(())
-          }
-          Err(e) => return Err(e)
-        }
+    match goal_judge_clear_if_current(read_goal, goal, clear_goal) {
+      Ok(true) => {
+        self.forget_completed(goal)
+        return Ok(())
+      }
       Ok(false) => {
         self.forget_completed(goal)
         return Ok(())
@@ -218,11 +257,12 @@ async fn GoalJudgeState::tick_once_with(
         Ok(true) => {
           deliver(goal_judge_complete_message(goal), @types.Status::Success)
           self.note_completed(goal)
-          match clear_goal() {
-            Ok(_) => {
+          match goal_judge_clear_if_current(read_goal, goal, clear_goal) {
+            Ok(true) => {
               self.forget_completed(goal)
               Ok(())
             }
+            Ok(false) => Ok(())
             Err(e) => Err(e)
           }
         }
@@ -238,7 +278,8 @@ async fn GoalJudgeState::tick_once_with(
             @types.Status::Info,
           )
           let updated = goal.with_last_eval(current_eval)
-          match write_goal(updated) {
+          match
+            goal_judge_write_if_current(read_goal, goal, write_goal, updated) {
             Ok(_) => Ok(())
             Err(e) => Err(e)
           }
