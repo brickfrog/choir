@@ -395,11 +395,33 @@ fn serve_run() -> Unit {
               timeout_sec,
               runner=@exec.run_sequence,
             )
-            state.process_goal_judge_tick(now, runner=@exec.run_sequence)
+            if !state.process_requested_goal_judge_tick(
+                now,
+                runner=@exec.run_sequence,
+              ) {
+              state.process_goal_judge_tick(now, runner=@exec.run_sequence)
+            }
             state.check_idle_agents(now, 300L, @exec.run_sequence)
           } catch {
             e =>
               @moontrace.error("poller tick error", fields=[
+                @moontrace.field("error", e.to_string()),
+              ])
+          }
+        }
+      })
+      root.spawn_bg(async fn() {
+        for ;; {
+          @async.sleep(1000)
+          let now = @poller.now_sec()
+          ignore(
+            state.process_requested_goal_judge_tick(
+              now,
+              runner=@exec.run_sequence,
+            ),
+          ) catch {
+            e =>
+              @moontrace.error("goal judge requested tick loop error", fields=[
                 @moontrace.field("error", e.to_string()),
               ])
           }

@@ -74,6 +74,16 @@ test "goal JSON roundtrip preserves exact KV key shape and last evaluation" {
 
 ///|
 test "goal KV path rejects invalid session-derived keys" {
+  match goal_kv_key("") {
+    Err(e) =>
+      assert_true(e.message().contains("goal kv session cannot be empty"))
+    Ok(_) => fail("expected empty session to be rejected")
+  }
+  match goal_kv_path("/repo", " \t ") {
+    Err(e) =>
+      assert_true(e.message().contains("goal kv session cannot be empty"))
+    Ok(_) => fail("expected whitespace session to be rejected")
+  }
   match goal_kv_key("../bad") {
     Err(e) => assert_true(e.message().contains("goal kv key"))
     Ok(_) => fail("expected invalid path segment to be rejected")
@@ -82,6 +92,24 @@ test "goal KV path rejects invalid session-derived keys" {
     Err(e) => assert_true(e.message().contains("goal kv key"))
     Ok(_) => fail("expected nested path segment to be rejected")
   }
+}
+
+///|
+test "freeform goal requires at least one verify command" {
+  match Goal::new("ship the dashboard", [" ", ""], 10L) {
+    Err(e) =>
+      assert_true(
+        e
+        .message()
+        .contains(
+          "a freeform goal needs at least one --verify <cmd>; or pass a bead id to inherit its acceptance.",
+        ),
+      )
+    Ok(_) => fail("expected unchecked freeform goal to be rejected")
+  }
+  let bead = Goal::new("choir-7uc.1", [], 10L).unwrap()
+  assert_eq(bead.checks.length(), 1)
+  assert_true(bead.checks[0] == GoalCheck::BeadStateClosed("choir-7uc.1"))
 }
 
 ///|
@@ -95,5 +123,17 @@ test "goal JSON reports wrong checks type separately from missing checks" {
   match Goal::from_json_string(missing) {
     Err(e) => assert_true(e.message().contains("goal missing checks"))
     Ok(_) => fail("expected missing checks error")
+  }
+  let empty = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[],\"started_unix_sec\":1,\"last_eval\":null}"
+  match Goal::from_json_string(empty) {
+    Err(e) =>
+      assert_true(
+        e
+        .message()
+        .contains(
+          "a freeform goal needs at least one --verify <cmd>; or pass a bead id to inherit its acceptance.",
+        ),
+      )
+    Ok(_) => fail("expected empty checks error")
   }
 }

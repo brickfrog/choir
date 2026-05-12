@@ -5,7 +5,12 @@ pub(all) struct GoalJudgeState {
   mut last_eval : @types.GoalEvalResult?
   mut tick_running : Bool
   mut tick_requested : Bool
+  completed_goal_keys : Map[String, Bool]
+  completed_goal_order : Array[String]
 }
+
+///|
+let goal_judge_completed_goal_key_limit : Int = 128
 
 ///|
 pub fn GoalJudgeState::new() -> GoalJudgeState {
@@ -15,6 +20,8 @@ pub fn GoalJudgeState::new() -> GoalJudgeState {
     last_eval: None,
     tick_running: false,
     tick_requested: false,
+    completed_goal_keys: {},
+    completed_goal_order: [],
   }
 }
 
@@ -28,6 +35,17 @@ fn GoalJudgeState::reset(self : GoalJudgeState) -> Unit {
 ///|
 pub fn GoalJudgeState::request_tick(self : GoalJudgeState) -> Unit {
   self.tick_requested = true
+}
+
+///|
+pub fn GoalJudgeState::note_superseded_goal(
+  self : GoalJudgeState,
+  slug : String,
+) -> Unit {
+  match self.active_slug {
+    Some(active) if active == slug => self.reset()
+    _ => ()
+  }
 }
 
 ///|
@@ -72,6 +90,52 @@ fn goal_judge_progress_message(
 ///|
 fn goal_judge_complete_message(goal : @types.Goal) -> String {
   "[GOAL COMPLETE: " + goal.slug + "]"
+}
+
+///|
+fn goal_judge_completion_key(goal : @types.Goal) -> String {
+  goal.slug + "@" + goal.started_unix_sec.to_string()
+}
+
+///|
+fn GoalJudgeState::already_completed(
+  self : GoalJudgeState,
+  goal : @types.Goal,
+) -> Bool {
+  self.completed_goal_keys.contains(goal_judge_completion_key(goal))
+}
+
+///|
+fn GoalJudgeState::note_completed(
+  self : GoalJudgeState,
+  goal : @types.Goal,
+) -> Unit {
+  let key = goal_judge_completion_key(goal)
+  if !self.completed_goal_keys.contains(key) {
+    self.completed_goal_order.push(key)
+  }
+  self.completed_goal_keys.set(key, true)
+  while self.completed_goal_order.length() > goal_judge_completed_goal_key_limit {
+    let old = self.completed_goal_order.remove(0)
+    self.completed_goal_keys.remove(old)
+  }
+}
+
+///|
+fn GoalJudgeState::forget_completed(
+  self : GoalJudgeState,
+  goal : @types.Goal,
+) -> Unit {
+  let key = goal_judge_completion_key(goal)
+  self.completed_goal_keys.remove(key)
+  let mut i = 0
+  while i < self.completed_goal_order.length() {
+    if self.completed_goal_order[i] == key {
+      ignore(self.completed_goal_order.remove(i))
+    } else {
+      i = i + 1
+    }
+  }
 }
 
 ///|
@@ -143,7 +207,8 @@ async fn GoalJudgeState::tick_once_with(
     None => false
   }
   if superseded {
-    deliver("[GOAL SUPERSEDED]", @types.Status::Info)
+    let old_slug = self.active_slug.unwrap_or("")
+    deliver("[GOAL SUPERSEDED: " + old_slug + "]", @types.Status::Info)
     self.note_prod(now_unix_sec)
     self.last_eval = None
   }
@@ -156,6 +221,16 @@ async fn GoalJudgeState::tick_once_with(
     }
   }
   let current_eval = evaluator(goal, now_unix_sec)
+  if current_eval.is_complete() && self.already_completed(goal) {
+    match clear_goal() {
+      Ok(_) => {
+        self.forget_completed(goal)
+        self.reset()
+        return Ok(())
+      }
+      Err(e) => return Err(e)
+    }
+  }
   match
     @types.goal_prod_decision(
       previous_eval,
@@ -167,8 +242,10 @@ async fn GoalJudgeState::tick_once_with(
     @types.GoalProdDecision::EmitComplete => {
       deliver(goal_judge_complete_message(goal), @types.Status::Success)
       self.note_prod(now_unix_sec)
+      self.note_completed(goal)
       match clear_goal() {
         Ok(_) => {
+          self.forget_completed(goal)
           self.reset()
           Ok(())
         }
@@ -256,8 +333,15 @@ fn goal_judge_clear_goal(
     Ok(path) => path
     Err(e) => return Err(e)
   }
-  ignore(delete_file(path))
-  Ok(())
+  if delete_file(path) {
+    Ok(())
+  } else {
+    Err(
+      @types.ChoirError::workspace_error(
+        "failed to delete goal kv file: " + path,
+      ),
+    )
+  }
 }
 
 ///|
@@ -361,8 +445,90 @@ pub async fn ServerState::process_goal_judge_tick_with(
 }
 
 ///|
+pub async fn ServerState::process_requested_goal_judge_tick_with(
+  self : ServerState,
+  now_unix_sec : Int64,
+  read_goal : () -> Result[@types.Goal?, @types.ChoirError],
+  evaluator : async (@types.Goal, Int64) -> @types.GoalEvalResult,
+  deliver : async (String, @types.Status) -> Unit,
+  write_goal? : (@types.Goal) -> Result[Unit, @types.ChoirError] = fn(goal) {
+    goal_judge_write_goal(
+      self.config.project_dir,
+      self.config.terminal_session,
+      self.write_file_atomic,
+      goal,
+    )
+  },
+  clear_goal? : () -> Result[Unit, @types.ChoirError] = fn() {
+    goal_judge_clear_goal(
+      self.config.project_dir,
+      self.config.terminal_session,
+      self.delete_file,
+    )
+  },
+  reminder_interval_sec? : Int64 = @types.goal_prod_reminder_interval_sec,
+) -> Result[Bool, @types.ChoirError] {
+  if !self.goal_judge.tick_requested || self.goal_judge.tick_running {
+    return Ok(false)
+  }
+  match
+    self.process_goal_judge_tick_with(
+      now_unix_sec,
+      read_goal,
+      evaluator,
+      deliver,
+      write_goal~,
+      clear_goal~,
+      reminder_interval_sec~,
+    ) {
+    Ok(_) => Ok(true)
+    Err(e) => Err(e)
+  }
+}
+
+///|
 pub fn ServerState::request_goal_judge_tick(self : ServerState) -> Unit {
   self.goal_judge.request_tick()
+}
+
+///|
+pub async fn ServerState::process_requested_goal_judge_tick(
+  self : ServerState,
+  now_unix_sec : Int64,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+) -> Bool {
+  match
+    self.process_requested_goal_judge_tick_with(
+      now_unix_sec,
+      fn() {
+        goal_judge_read_goal(
+          self.config.project_dir,
+          self.config.terminal_session,
+          self.read_file,
+        )
+      },
+      async fn(goal, now) {
+        goal_judge_evaluate_with_caps(
+          goal,
+          self.config.project_dir,
+          runner,
+          bd_capture,
+          now,
+        )
+      },
+      async fn(message, status) {
+        self.deliver_goal_judge_message(message, status, runner)
+      },
+    ) {
+    Ok(consumed) => consumed
+    Err(e) => {
+      @moontrace.error("goal judge requested tick failed", fields=[
+        @moontrace.field("error", e.message()),
+      ])
+      true
+    }
+  }
 }
 
 ///|

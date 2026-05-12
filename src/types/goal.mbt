@@ -44,6 +44,13 @@ fn goal_validation_error(message : String) -> ChoirError {
 }
 
 ///|
+fn goal_empty_checks_error() -> ChoirError {
+  goal_validation_error(
+    "a freeform goal needs at least one --verify <cmd>; or pass a bead id to inherit its acceptance.",
+  )
+}
+
+///|
 fn goal_json_null() -> Json {
   @json.parse("null") catch {
     _ => "".to_json()
@@ -83,6 +90,9 @@ fn validate_goal_kv_key(key : String) -> Result[Unit, ChoirError] {
 
 ///|
 pub fn goal_kv_key(session : String) -> Result[String, ChoirError] {
+  if session.trim().to_owned() == "" {
+    return Err(goal_validation_error("goal kv session cannot be empty"))
+  }
   let key = "tl-goal--" + session + ".json"
   match validate_goal_kv_key(key) {
     Ok(_) => Ok(key)
@@ -372,6 +382,9 @@ pub fn Goal::new(
       checks.push(GoalCheck::ShellCommand(trimmed))
     }
   }
+  if checks.length() == 0 {
+    return Err(goal_empty_checks_error())
+  }
   Ok({ slug: source.slug(), source, checks, started_unix_sec, last_eval: None })
 }
 
@@ -430,6 +443,9 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
       }
     Some(_) => return Err(goal_validation_error("goal checks must be an array"))
     None => return Err(goal_validation_error("goal missing checks"))
+  }
+  if checks.length() == 0 {
+    return Err(goal_empty_checks_error())
   }
   let started_unix_sec = match json_field_int64(obj, "started_unix_sec") {
     Some(value) => value

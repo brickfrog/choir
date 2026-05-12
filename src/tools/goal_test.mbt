@@ -59,6 +59,7 @@ async test "goal_set writes one session KV file and evaluates shell check throug
   let files : Map[String, String] = {}
   let dirs : Array[String] = []
   let commands : Array[@workspace.Command] = []
+  let mut requested_ticks = 0
   let resp = dispatch(
     ToolRequest::GoalSet({ input: "x", verify: ["true"] }),
     project_dir="/repo",
@@ -84,8 +85,10 @@ async test "goal_set writes one session KV file and evaluates shell check throug
       dirs.push(path)
       true
     },
+    goal_request_tick=fn() { requested_ticks = requested_ticks + 1 },
   )
   assert_true(resp.is_ok())
+  assert_eq(requested_ticks, 1)
   assert_eq(dirs, ["/repo/.choir/kv"])
   let path = @types.goal_kv_path("/repo", "sess").unwrap()
   assert_true(files.contains(path))
@@ -140,16 +143,47 @@ async test "goal_set bead source evaluates bd show json through injected capture
 }
 
 ///|
+async test "goal_set rejects freeform goals without checks" {
+  let files : Map[String, String] = {}
+  let mut requested_ticks = 0
+  let resp = dispatch(
+    ToolRequest::GoalSet({ input: "ship the dashboard", verify: [] }),
+    project_dir="/repo",
+    session="sess",
+    read_file=goal_test_read_file(files),
+    write_file_atomic=fn(path, content) {
+      files.set(path, content)
+      true
+    },
+    create_dir_all=fn(_path) { true },
+    goal_request_tick=fn() { requested_ticks = requested_ticks + 1 },
+  )
+  match resp.error_message() {
+    Some(msg) =>
+      assert_true(
+        msg.contains(
+          "a freeform goal needs at least one --verify <cmd>; or pass a bead id to inherit its acceptance.",
+        ),
+      )
+    None => fail("expected unchecked freeform goal to be rejected")
+  }
+  assert_eq(requested_ticks, 0)
+  assert_false(files.contains(@types.goal_kv_path("/repo", "sess").unwrap()))
+}
+
+///|
 async test "goal_set supersedes previous goal without stacking keys" {
   let files : Map[String, String] = {}
   let write_paths : Array[String] = []
+  let events : Array[String] = []
   let write_file = fn(path, content) {
     write_paths.push(path)
+    events.push("write")
     files.set(path, content)
     true
   }
   let first = dispatch(
-    ToolRequest::GoalSet({ input: "first goal", verify: [] }),
+    ToolRequest::GoalSet({ input: "first goal", verify: ["false"] }),
     project_dir="/repo",
     session="sess",
     runner=async fn(_cmds) {
@@ -166,7 +200,7 @@ async test "goal_set supersedes previous goal without stacking keys" {
   )
   assert_true(first.is_ok())
   let second = dispatch(
-    ToolRequest::GoalSet({ input: "second goal", verify: [] }),
+    ToolRequest::GoalSet({ input: "second goal", verify: ["false"] }),
     project_dir="/repo",
     session="sess",
     runner=async fn(_cmds) {
@@ -180,10 +214,15 @@ async test "goal_set supersedes previous goal without stacking keys" {
     read_file=goal_test_read_file(files),
     write_file_atomic=write_file,
     create_dir_all=fn(_path) { true },
+    goal_deliver=async fn(message, _status) {
+      @async.sleep(0)
+      events.push("deliver:" + message)
+    },
   )
   assert_true(second.is_ok())
   assert_eq(write_paths.length(), 2)
   assert_eq(write_paths[0], write_paths[1])
+  assert_eq(events, ["write", "deliver:[GOAL SUPERSEDED: first-goal]", "write"])
   match second.ok_payload() {
     Some(fields) =>
       match fields.get_json("superseded") {
@@ -202,7 +241,7 @@ async test "goal_set supersedes previous goal without stacking keys" {
 async test "goal_clear removes the exact session KV path" {
   let files : Map[String, String] = {}
   let path = @types.goal_kv_path("/repo", "sess").unwrap()
-  let goal = @types.Goal::new("x", [], 1L).unwrap()
+  let goal = @types.Goal::new("x", ["false"], 1L).unwrap()
   files.set(path, goal.to_json_string())
   let deleted : Array[String] = []
   let resp = dispatch(
@@ -222,12 +261,37 @@ async test "goal_clear removes the exact session KV path" {
 }
 
 ///|
+async test "goal_clear surfaces delete failures for existing goal KV" {
+  let files : Map[String, String] = {}
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
+  let goal = @types.Goal::new("x", ["false"], 1L).unwrap()
+  files.set(path, goal.to_json_string())
+  let deleted : Array[String] = []
+  let resp = dispatch(
+    ToolRequest::GoalClear,
+    project_dir="/repo",
+    session="sess",
+    read_file=goal_test_read_file(files),
+    delete_file=fn(p) {
+      deleted.push(p)
+      false
+    },
+  )
+  match resp.error_message() {
+    Some(msg) => assert_eq(msg, "failed to delete goal kv file: " + path)
+    None => fail("expected delete failure to surface")
+  }
+  assert_eq(deleted, [path])
+  assert_true(files.contains(path))
+}
+
+///|
 async test "goal_set overwrites corrupt existing goal KV" {
   let files : Map[String, String] = {}
   let path = @types.goal_kv_path("/repo", "sess").unwrap()
   files.set(path, "{\"slug\":\"old\",\"checks\":true}")
   let resp = dispatch(
-    ToolRequest::GoalSet({ input: "replacement", verify: [] }),
+    ToolRequest::GoalSet({ input: "replacement", verify: ["true"] }),
     project_dir="/repo",
     session="sess",
     runner=async fn(_cmds) {
