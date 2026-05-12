@@ -390,6 +390,55 @@ fn serve_cleanup_stale_goal_kv(
 }
 
 ///|
+/// On `choir serve` fresh start, rotate `.choir/delivery.log` to
+/// `.choir/delivery.log.1` if it's grown past the cap. It's an unbounded
+/// append log (poller ticks, deliveries, automerge actions) — without this it
+/// just grows forever across runs (observed at 17 MB). One backup is kept; a
+/// prior `.1` is overwritten by the rename. Returns true if a rotation
+/// happened. See choir-u7v.
+fn serve_rotate_delivery_log_if_large(
+  project_dir : String,
+  cap_bytes? : Int = 8000000,
+  file_size? : (String) -> Int = @sys.file_size,
+  rename? : (String, String) -> Bool = @sys.rename_file_sync,
+) -> Bool {
+  let log_path = serve_project_path(project_dir, ".choir/delivery.log")
+  if file_size(log_path) > cap_bytes {
+    rename(log_path, log_path + ".1")
+  } else {
+    false
+  }
+}
+
+///|
+test "serve rotates an oversized delivery log, leaves a small one" {
+  let renames : Array[(String, String)] = []
+  let did_rotate = serve_rotate_delivery_log_if_large(
+    ".",
+    cap_bytes=1000,
+    file_size=fn(_p) { 2000 },
+    rename=fn(from, to) {
+      renames.push((from, to))
+      true
+    },
+  )
+  assert_true(did_rotate)
+  assert_eq(renames, [(".choir/delivery.log", ".choir/delivery.log.1")])
+  let small_renames : Array[(String, String)] = []
+  let no_rotate = serve_rotate_delivery_log_if_large(
+    ".",
+    cap_bytes=1000,
+    file_size=fn(_p) { 500 },
+    rename=fn(from, to) {
+      small_renames.push((from, to))
+      true
+    },
+  )
+  assert_false(no_rotate)
+  assert_eq(small_renames, [])
+}
+
+///|
 test "serve cleanup removes stale tl goal kv files only" {
   let entries = [
     "tl-goal--old.json", "tl-goal--other.json", "tl-goal--missing.tmp", "lifecycle--root.json",
@@ -434,6 +483,7 @@ fn serve_run() -> Unit {
     None => {
       @sys.init_cleanup_runtime_artifacts_native()
       ignore(serve_cleanup_stale_goal_kv(config.project_dir))
+      ignore(serve_rotate_delivery_log_if_large(config.project_dir))
     }
   }
   let provider = @server.make_recovery_provider()

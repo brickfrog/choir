@@ -193,6 +193,11 @@ pub fn path_exists(_path : String) -> Bool {
 }
 
 ///|
+pub fn file_size(_path : String) -> Int {
+  -1
+}
+
+///|
 pub fn path_entry_exists(_path : String) -> Bool {
   false
 }

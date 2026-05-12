@@ -112,6 +112,16 @@ pub fn path_exists(path : String) -> Bool {
 }
 
 ///|
+/// Size of `path` in bytes via `fopen`+`ftell` (the same primitive as
+/// `path_exists`); `-1` if `path` can't be opened. Like `path_exists`, this
+/// reports `0` for directories on Linux — fine for the only caller (log
+/// rotation, which checks a known regular file).
+pub fn file_size(path : String) -> Int {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  c_get_file_size(path_bytes)
+}
+
+///|
 /// True when `stat(2)` succeeds (path exists as a file, directory, or other node).
 pub fn path_entry_exists(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
