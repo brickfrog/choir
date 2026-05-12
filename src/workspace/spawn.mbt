@@ -11,15 +11,29 @@ fn tl_policy_supervised_shell_script(
 ) -> String {
   let foreground_script = "choir tl-policy-watch --pid $$ & exec " +
     command_text_for_launch(inner)
-  // Record the TL agent's exit code with a timestamp to
-  // `.choir/tl-exits.log` so a silent crash (Node harness died, no
-  // transcript trace, etc.) is still diagnosable next time it happens.
-  // CHOIR_WORKSPACE is exported by `env_exports` above; `2>/dev/null` keeps
-  // a missing log file/dir from disturbing the rest of the post-exit
-  // handling. Tracking bead: choir-eek.
+  // Diagnostics for choir-eek (TL/root claude process exits unexpectedly):
+  //  - A `trap` on this OUTER shell for HUP/TERM logs that a signal arrived
+  //    AND keeps the shell alive past it, so the `status=$?` below still
+  //    runs and records the agent's exit code. Without the trap, a
+  //    pgroup-wide SIGHUP (zellij/pane teardown) kills the shell before it
+  //    can log anything. (SIGKILL — e.g. OOM — is uncatchable; that one
+  //    only shows up in `dmesg`. SIGINT/Ctrl+C is left untrapped so it stays
+  //    a normal interrupt and doesn't spam the log.)
+  //  - `exit_log_step` records `exit=<code>` after the agent exits for any
+  //    reason (clean exit, harness crash, caught signal).
+  // CHOIR_WORKSPACE is exported by `env_exports`; `2>/dev/null` keeps a
+  // missing log file/dir from disturbing the rest of the handling.
+  let exits_log = "\"$CHOIR_WORKSPACE/.choir/tl-exits.log\""
+  let signal_trap = "trap 'printf \"%s [TL wrapper caught signal]\\n\"" +
+    " \"$(date -Is)\" >> " +
+    exits_log +
+    " 2>/dev/null' HUP TERM; "
   let exit_log_step = " printf '%s exit=%s\\n' \"$(date -Is)\" \"$status\"" +
-    " >> \"$CHOIR_WORKSPACE/.choir/tl-exits.log\" 2>/dev/null;"
+    " >> " +
+    exits_log +
+    " 2>/dev/null;"
   env_exports +
+  signal_trap +
   "sh -lc " +
   @sys.shell_quote(foreground_script) +
   "; status=$?;" +
