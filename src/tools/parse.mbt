@@ -1341,31 +1341,6 @@ fn parse_kv_set_args(args : ToolArgs) -> Result[KvSetArgs, ParseError] {
 }
 
 ///|
-fn parse_goal_set_args(args : ToolArgs) -> Result[GoalSetArgs, ParseError] {
-  let input = match tool_args_get(args, "input") {
-    Some(value) => value.trim().to_owned()
-    None =>
-      match tool_args_get(args, "goal") {
-        Some(value) => value.trim().to_owned()
-        None =>
-          match tool_args_get(args, "text") {
-            Some(value) => value.trim().to_owned()
-            None => ""
-          }
-      }
-  }
-  if input == "" {
-    return Err(ParseError::MissingField(field="input"))
-  }
-  Ok({ input, verify: json_string_list(tool_args_get_json(args, "verify")) })
-}
-
-///|
-fn parse_goal_status_args(args : ToolArgs) -> GoalStatusArgs {
-  { evaluate: tool_args_get_bool(args, "evaluate") }
-}
-
-///|
 fn parse_mutex_acquire_args(
   args : ToolArgs,
 ) -> Result[MutexAcquireArgs, ParseError] {
@@ -1806,10 +1781,6 @@ fn parse_tool_request(
     "kv_delete" =>
       parse_kv_key_args(args).map(fn(a) { ToolRequest::KvDelete(a) })
     "kv_list" => Ok(ToolRequest::KvList)
-    "goal_set" =>
-      parse_goal_set_args(args).map(fn(a) { ToolRequest::GoalSet(a) })
-    "goal_clear" => Ok(ToolRequest::GoalClear)
-    "goal_status" => Ok(ToolRequest::GoalStatus(parse_goal_status_args(args)))
     "mutex_acquire" =>
       parse_mutex_acquire_args(args).map(fn(a) { ToolRequest::MutexAcquire(a) })
     "mutex_release" =>

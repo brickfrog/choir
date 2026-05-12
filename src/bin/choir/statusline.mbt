@@ -188,28 +188,6 @@ fn statusline_override_active(project_dir : String) -> Bool {
 }
 
 ///|
-fn statusline_goal_segment(project_dir : String) -> String {
-  let config = statusline_global_config(project_dir)
-  let path = match @types.goal_kv_path(project_dir, config.terminal_session) {
-    Ok(path) => path
-    Err(_) => return ""
-  }
-  let raw = @sys.read_file(path).trim().to_owned()
-  if raw == "" {
-    return ""
-  }
-  let goal = match @types.Goal::from_json_string(raw) {
-    Ok(value) => value
-    Err(_) => return ""
-  }
-  let progress = match goal.last_eval {
-    Some(eval) => eval.progress_label()
-    None => "0/" + goal.checks.length().to_string()
-  }
-  "[GOAL: " + goal.slug + " " + progress + "]"
-}
-
-///|
 fn statusline_count_agents(project_dir : String) -> (Int, Int, Int, Int, Int) {
   let child_ids = statusline_collect_child_ids(project_dir)
   let files = statusline_list_lifecycle_files(project_dir)
@@ -343,39 +321,6 @@ test "statusline_kv_files_with_prefix detects pending-wave entries" {
   let paths = statusline_kv_files_with_prefix(project_dir, "pending-wave--")
   ignore(@sys.rm_rf(project_dir))
   assert_eq(paths.length(), 2)
-}
-
-///|
-test "statusline_goal_segment renders active goal progress" {
-  let project_dir = "/tmp/choir-statusline-goal-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.rm_rf(project_dir))
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
-  ignore(
-    @sys.write_file_sync(
-      project_dir + "/.choir/config.toml",
-      "terminal_session = \"sess\"\n",
-    ),
-  )
-  let goal = @types.Goal::new("ship dashboard", ["true", "false"], 1L)
-    .unwrap()
-    .with_last_eval({
-      passing: 1,
-      total: 2,
-      failing_summary: "shell failed: false",
-      evaluated_unix_sec: 2L,
-    })
-  ignore(
-    @sys.write_file_sync(
-      @types.goal_kv_path(project_dir, "sess").unwrap(),
-      goal.to_json_string(),
-    ),
-  )
-  let segment = statusline_goal_segment(project_dir)
-  ignore(@sys.rm_rf(project_dir))
-  assert_eq(segment, "[GOAL: ship-dashboard 1/2]")
 }
 
 ///|
@@ -691,11 +636,6 @@ fn statusline_run() -> Unit {
   if statusline_override_active(project_dir) {
     out.write_string(sep)
     out.write_string("\u001b[1;31m⚠ override\u001b[0m")
-  }
-  let goal_segment = statusline_goal_segment(project_dir)
-  if goal_segment != "" {
-    out.write_string(sep)
-    out.write_string(goal_segment)
   }
   let pr_summary = statusline_pr_summary(project_dir)
   if pr_summary.body != "" {

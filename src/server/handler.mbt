@@ -145,10 +145,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
       poller_state=Some(self.poller),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
-      goal_deliver=async fn(message, status) {
-        self.deliver_goal_judge_message(message, status, runner)
-      },
-      goal_request_tick=fn() { self.request_goal_judge_tick() },
     ) catch {
       e => @tools.tool_response_err_from_caught(e)
     }
@@ -195,9 +191,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
       effective_req, runner, capture,
     ),
   )
-  if goal_judge_post_tool_trigger(effective_req, resp) {
-    self.request_goal_judge_tick()
-  }
 
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp)

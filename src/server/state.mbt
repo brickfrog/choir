@@ -26,13 +26,11 @@ pub struct ServerState {
   pending_disconnects : Map[String, Int64]
   pending_disconnect_soft_notified : Map[String, Bool]
   delivery_failures : Map[String, Int]
-  goal_judge : GoalJudgeState
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
   append_file : (String, String) -> Bool
   read_file : (String) -> String
   write_file_atomic : (String, String) -> Bool
-  delete_file : (String) -> Bool
 }
 
 ///|
@@ -86,12 +84,10 @@ pub fn ServerState::new(
     pending_disconnects: {},
     pending_disconnect_soft_notified: {},
     delivery_failures: {},
-    goal_judge: GoalJudgeState::new(),
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
     append_file: default_append_file_sync,
     read_file: default_read_file,
     write_file_atomic: default_write_file_atomic,
-    delete_file: @exec.delete_file_sync,
   }
 }

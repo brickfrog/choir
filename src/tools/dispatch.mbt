@@ -678,9 +678,7 @@ pub async fn dispatch(
   bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
-  read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
-  delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   ensure_branch_ready? : (async (String, String, String) -> Result[
@@ -701,11 +699,6 @@ pub async fn dispatch(
   poller_state? : @poller.PollerState? = None,
   caller_id? : String? = None,
   pr_review? : Bool = true,
-  goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
-  goal_request_tick? : () -> Unit = goal_noop_request_tick,
-  goal_nonce? : () -> String = fn() {
-    @types.next_goal_nonce(@env.now().reinterpret_as_int64())
-  },
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1221,33 +1214,6 @@ pub async fn dispatch(
       @types.Response::ok({ "status": "ok" })
     }
     ToolRequest::KvList => handle_kv_list(project_dir, capture~)
-    ToolRequest::GoalSet(goal_args) =>
-      interpret_goal_set(
-        goal_args,
-        project_dir,
-        session,
-        runner,
-        bd_capture,
-        read_file,
-        write_file_atomic,
-        create_dir_all,
-        @poller.now_sec(),
-        goal_nonce(),
-        goal_deliver~,
-        goal_request_tick~,
-      )
-    ToolRequest::GoalClear =>
-      interpret_goal_clear(project_dir, session, read_file, delete_file)
-    ToolRequest::GoalStatus(goal_args) =>
-      interpret_goal_status(
-        goal_args,
-        project_dir,
-        session,
-        runner,
-        bd_capture,
-        read_file,
-        @poller.now_sec(),
-      )
     ToolRequest::MutexAcquire(mutex_args) =>
       match mutex_registry {
         Some(reg) => {
@@ -1422,18 +1388,11 @@ pub async fn handle_request(
   poller_state? : @poller.PollerState? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
-  goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
-  goal_request_tick? : () -> Unit = goal_noop_request_tick,
-  goal_nonce? : () -> String = fn() {
-    @types.next_goal_nonce(@env.now().reinterpret_as_int64())
-  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
-  read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
-  delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
@@ -1516,14 +1475,9 @@ pub async fn handle_request(
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   pr_review~,
                   append_file~,
-                  read_file~,
                   write_file_atomic~,
-                  delete_file~,
                   path_exists~,
                   create_dir_all~,
-                  goal_deliver~,
-                  goal_request_tick~,
-                  goal_nonce~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -1580,33 +1534,6 @@ pub async fn fire_hook_async(
 }
 
 ///|
-fn dispatch_call_goal_gate_response(
-  role : @types.Role,
-  name : String,
-) -> @types.Response? {
-  let is_goal_tool = name == "goal_set" ||
-    name == "goal_clear" ||
-    name == "goal_status"
-  if !is_goal_tool {
-    if name.has_prefix("goal_") {
-      Some(
-        @types.Response::Err(@types.ChoirError::tool_not_found(name).message()),
-      )
-    } else {
-      None
-    }
-  } else if role == @types.Role::Root || role == @types.Role::TL {
-    None
-  } else {
-    Some(
-      @types.Response::Err(
-        @types.ChoirError::permission_denied(role.to_wire_string(), name).message(),
-      ),
-    )
-  }
-}
-
-///|
 /// CLI / test entrypoint for tool dispatch.
 pub async fn dispatch_call(
   call : ToolCall,
@@ -1633,15 +1560,11 @@ pub async fn dispatch_call(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   pr_review? : Bool = true,
-  goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
-  goal_request_tick? : () -> Unit = goal_noop_request_tick,
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
-  read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
-  delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
@@ -1664,43 +1587,34 @@ pub async fn dispatch_call(
       ) {
       Some(blocked) => blocked
       None =>
-        match dispatch_call_goal_gate_response(call.role, call.name) {
-          Some(blocked) => blocked
-          None =>
-            match
-              parse_tool_request(call.name, call.role, project_dir, tool_args) {
-              Err(e) => @types.Response::Err(e.message())
-              Ok(tool_req) =>
-                dispatch(
-                  tool_req,
-                  project_dir~,
-                  session~,
-                  runner~,
-                  git_capture~,
-                  capture~,
-                  bd_capture~,
-                  ensure_branch_ready~,
-                  ensure_pr~,
-                  extra_mcp_servers_json~,
-                  shell_command~,
-                  listen_uds~,
-                  listen_tcp~,
-                  tcp_auth_token~,
-                  registry~,
-                  mutex_registry~,
-                  poller_state~,
-                  caller_id=tool_args_get(tool_args, "caller_id"),
-                  pr_review~,
-                  append_file~,
-                  read_file~,
-                  write_file_atomic~,
-                  delete_file~,
-                  path_exists~,
-                  create_dir_all~,
-                  goal_deliver~,
-                  goal_request_tick~,
-                )
-            }
+        match parse_tool_request(call.name, call.role, project_dir, tool_args) {
+          Err(e) => @types.Response::Err(e.message())
+          Ok(tool_req) =>
+            dispatch(
+              tool_req,
+              project_dir~,
+              session~,
+              runner~,
+              git_capture~,
+              capture~,
+              bd_capture~,
+              ensure_branch_ready~,
+              ensure_pr~,
+              extra_mcp_servers_json~,
+              shell_command~,
+              listen_uds~,
+              listen_tcp~,
+              tcp_auth_token~,
+              registry~,
+              mutex_registry~,
+              poller_state~,
+              caller_id=tool_args_get(tool_args, "caller_id"),
+              pr_review~,
+              append_file~,
+              write_file_atomic~,
+              path_exists~,
+              create_dir_all~,
+            )
         }
     }
   } catch {
