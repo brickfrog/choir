@@ -149,9 +149,6 @@ pub async fn ServerState::handle_with_runner_and_capture(
         self.deliver_goal_judge_message(message, status, runner)
       },
       goal_request_tick=fn() { self.request_goal_judge_tick() },
-      goal_note_superseded=fn(slug) {
-        self.goal_judge.note_superseded_goal(slug)
-      },
     ) catch {
       e => @tools.tool_response_err_from_caught(e)
     }

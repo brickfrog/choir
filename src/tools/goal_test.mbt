@@ -222,7 +222,7 @@ async test "goal_set supersedes previous goal without stacking keys" {
   assert_true(second.is_ok())
   assert_eq(write_paths.length(), 2)
   assert_eq(write_paths[0], write_paths[1])
-  assert_eq(events, ["write", "deliver:[GOAL SUPERSEDED: first-goal]", "write"])
+  assert_eq(events, ["write", "write", "deliver:[GOAL SUPERSEDED: first-goal]"])
   match second.ok_payload() {
     Some(fields) =>
       match fields.get_json("superseded") {
@@ -235,6 +235,68 @@ async test "goal_set supersedes previous goal without stacking keys" {
     files.get(@types.goal_kv_path("/repo", "sess").unwrap()).unwrap(),
   ).unwrap()
   assert_eq(stored.slug, "second-goal")
+}
+
+///|
+async test "goal_set does not emit superseded when replacement write fails" {
+  let files : Map[String, String] = {}
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
+  let events : Array[String] = []
+  let mut writes = 0
+  let write_file = fn(path, content) {
+    writes = writes + 1
+    events.push("write")
+    if writes == 1 {
+      files.set(path, content)
+      true
+    } else {
+      false
+    }
+  }
+  let first = dispatch(
+    ToolRequest::GoalSet({ input: "first goal", verify: ["false"] }),
+    project_dir="/repo",
+    session="sess",
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    bd_capture=async fn(_cmd) {
+      @async.sleep(0)
+      (-1, "")
+    },
+    read_file=goal_test_read_file(files),
+    write_file_atomic=write_file,
+    create_dir_all=fn(_path) { true },
+  )
+  assert_true(first.is_ok())
+  let second = dispatch(
+    ToolRequest::GoalSet({ input: "second goal", verify: ["false"] }),
+    project_dir="/repo",
+    session="sess",
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    bd_capture=async fn(_cmd) {
+      @async.sleep(0)
+      (-1, "")
+    },
+    read_file=goal_test_read_file(files),
+    write_file_atomic=write_file,
+    create_dir_all=fn(_path) { true },
+    goal_deliver=async fn(message, _status) {
+      @async.sleep(0)
+      events.push("deliver:" + message)
+    },
+  )
+  match second.error_message() {
+    Some(msg) => assert_true(msg.contains("failed to write goal kv file"))
+    None => fail("expected replacement write failure")
+  }
+  assert_eq(events, ["write", "write"])
+  let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
+  assert_eq(stored.slug, "first-goal")
 }
 
 ///|

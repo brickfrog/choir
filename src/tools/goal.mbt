@@ -35,11 +35,6 @@ fn goal_noop_request_tick() -> Unit {
 }
 
 ///|
-fn goal_noop_note_superseded(_slug : String) -> Unit {
-  ()
-}
-
-///|
 fn goal_read_current(
   project_dir : String,
   session : String,
@@ -163,7 +158,6 @@ pub async fn interpret_goal_set(
   now_unix_sec : Int64,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
-  goal_note_superseded? : (String) -> Unit = goal_noop_note_superseded,
 ) -> @types.Response {
   let existing = match
     goal_read_current_best_effort(project_dir, session, read_file) {
@@ -185,16 +179,12 @@ pub async fn interpret_goal_set(
     Ok(path) => path
     Err(e) => return @types.Response::Err(e.message())
   }
-  match existing.goal {
-    Some(old) =>
-      goal_deliver("[GOAL SUPERSEDED: " + old.slug + "]", @types.Status::Info)
-    None => ()
-  }
   if !write_file_atomic(path, goal.to_json_string()) {
     return @types.Response::Err("failed to write goal kv file: " + path)
   }
   match existing.goal {
-    Some(old) => goal_note_superseded(old.slug)
+    Some(old) =>
+      goal_deliver("[GOAL SUPERSEDED: " + old.slug + "]", @types.Status::Info)
     None => ()
   }
   goal_request_tick()

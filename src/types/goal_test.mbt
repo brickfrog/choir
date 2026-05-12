@@ -137,3 +137,15 @@ test "goal JSON reports wrong checks type separately from missing checks" {
     Ok(_) => fail("expected empty checks error")
   }
 }
+
+///|
+test "goal JSON rejects empty shell command checks" {
+  let empty_shell = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"  \\t \"}],\"started_unix_sec\":1,\"last_eval\":null}"
+  match Goal::from_json_string(empty_shell) {
+    Err(e) =>
+      assert_true(
+        e.message().contains("shell goal check command cannot be empty"),
+      )
+    Ok(_) => fail("expected empty shell check command to be rejected")
+  }
+}

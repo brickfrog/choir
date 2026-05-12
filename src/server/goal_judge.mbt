@@ -1,8 +1,5 @@
 ///|
 pub(all) struct GoalJudgeState {
-  mut active_slug : String?
-  mut last_prod_unix_sec : Int64?
-  mut last_eval : @types.GoalEvalResult?
   mut tick_running : Bool
   mut tick_requested : Bool
   completed_goal_keys : Map[String, Bool]
@@ -15,9 +12,6 @@ let goal_judge_completed_goal_key_limit : Int = 128
 ///|
 pub fn GoalJudgeState::new() -> GoalJudgeState {
   {
-    active_slug: None,
-    last_prod_unix_sec: None,
-    last_eval: None,
     tick_running: false,
     tick_requested: false,
     completed_goal_keys: {},
@@ -26,26 +20,8 @@ pub fn GoalJudgeState::new() -> GoalJudgeState {
 }
 
 ///|
-fn GoalJudgeState::reset(self : GoalJudgeState) -> Unit {
-  self.active_slug = None
-  self.last_prod_unix_sec = None
-  self.last_eval = None
-}
-
-///|
 pub fn GoalJudgeState::request_tick(self : GoalJudgeState) -> Unit {
   self.tick_requested = true
-}
-
-///|
-pub fn GoalJudgeState::note_superseded_goal(
-  self : GoalJudgeState,
-  slug : String,
-) -> Unit {
-  match self.active_slug {
-    Some(active) if active == slug => self.reset()
-    _ => ()
-  }
 }
 
 ///|
@@ -98,6 +74,31 @@ fn goal_judge_completion_key(goal : @types.Goal) -> String {
 }
 
 ///|
+fn goal_judge_same_goal(a : @types.Goal, b : @types.Goal) -> Bool {
+  a.slug == b.slug && a.started_unix_sec == b.started_unix_sec
+}
+
+///|
+fn goal_judge_current_matches(
+  read_goal : () -> Result[@types.Goal?, @types.ChoirError],
+  evaluated_goal : @types.Goal,
+) -> Result[Bool, @types.ChoirError] {
+  match read_goal() {
+    Ok(Some(current)) => Ok(goal_judge_same_goal(current, evaluated_goal))
+    Ok(None) => Ok(false)
+    Err(e) => Err(e)
+  }
+}
+
+///|
+fn goal_judge_previous_eval(goal : @types.Goal) -> @types.GoalEvalResult? {
+  match goal.last_eval {
+    Some(eval) if eval.evaluated_unix_sec > goal.started_unix_sec => Some(eval)
+    _ => None
+  }
+}
+
+///|
 fn GoalJudgeState::already_completed(
   self : GoalJudgeState,
   goal : @types.Goal,
@@ -136,24 +137,6 @@ fn GoalJudgeState::forget_completed(
       i = i + 1
     }
   }
-}
-
-///|
-fn GoalJudgeState::note_prod(
-  self : GoalJudgeState,
-  now_unix_sec : Int64,
-) -> Unit {
-  self.last_prod_unix_sec = Some(now_unix_sec)
-}
-
-///|
-fn GoalJudgeState::note_eval(
-  self : GoalJudgeState,
-  goal : @types.Goal,
-  eval : @types.GoalEvalResult,
-) -> Unit {
-  self.active_slug = Some(goal.slug)
-  self.last_eval = Some(eval)
 }
 
 ///|
@@ -196,36 +179,27 @@ async fn GoalJudgeState::tick_once_with(
 ) -> Result[Unit, @types.ChoirError] {
   let goal = match read_goal() {
     Ok(Some(goal)) => goal
-    Ok(None) => {
-      self.reset()
-      return Ok(())
-    }
+    Ok(None) => return Ok(())
     Err(e) => return Err(e)
   }
-  let superseded = match self.active_slug {
-    Some(slug) => slug != goal.slug
-    None => false
-  }
-  if superseded {
-    let old_slug = self.active_slug.unwrap_or("")
-    deliver("[GOAL SUPERSEDED: " + old_slug + "]", @types.Status::Info)
-    self.note_prod(now_unix_sec)
-    self.last_eval = None
-  }
-  let previous_eval = if superseded || self.active_slug is None {
-    None
-  } else {
-    match self.last_eval {
-      Some(eval) => Some(eval)
-      None => goal.last_eval
-    }
+  let previous_eval = goal_judge_previous_eval(goal)
+  let last_prod_unix_sec = match previous_eval {
+    Some(eval) => Some(eval.evaluated_unix_sec)
+    None => None
   }
   let current_eval = evaluator(goal, now_unix_sec)
   if current_eval.is_complete() && self.already_completed(goal) {
-    match clear_goal() {
-      Ok(_) => {
+    match goal_judge_current_matches(read_goal, goal) {
+      Ok(true) =>
+        match clear_goal() {
+          Ok(_) => {
+            self.forget_completed(goal)
+            return Ok(())
+          }
+          Err(e) => return Err(e)
+        }
+      Ok(false) => {
         self.forget_completed(goal)
-        self.reset()
         return Ok(())
       }
       Err(e) => return Err(e)
@@ -235,49 +209,44 @@ async fn GoalJudgeState::tick_once_with(
     @types.goal_prod_decision(
       previous_eval,
       current_eval,
-      self.last_prod_unix_sec,
+      last_prod_unix_sec,
       now_unix_sec,
       reminder_interval_sec~,
     ) {
-    @types.GoalProdDecision::EmitComplete => {
-      deliver(goal_judge_complete_message(goal), @types.Status::Success)
-      self.note_prod(now_unix_sec)
-      self.note_completed(goal)
-      match clear_goal() {
-        Ok(_) => {
-          self.forget_completed(goal)
-          self.reset()
-          Ok(())
+    @types.GoalProdDecision::EmitComplete =>
+      match goal_judge_current_matches(read_goal, goal) {
+        Ok(true) => {
+          deliver(goal_judge_complete_message(goal), @types.Status::Success)
+          self.note_completed(goal)
+          match clear_goal() {
+            Ok(_) => {
+              self.forget_completed(goal)
+              Ok(())
+            }
+            Err(e) => Err(e)
+          }
         }
+        Ok(false) => Ok(())
         Err(e) => Err(e)
       }
-    }
     @types.GoalProdDecision::EmitProgress
-    | @types.GoalProdDecision::EmitReminder => {
-      deliver(
-        goal_judge_progress_message(goal, current_eval),
-        @types.Status::Info,
-      )
-      self.note_prod(now_unix_sec)
-      let updated = goal.with_last_eval(current_eval)
-      match write_goal(updated) {
-        Ok(_) => {
-          self.note_eval(goal, current_eval)
-          Ok(())
+    | @types.GoalProdDecision::EmitReminder =>
+      match goal_judge_current_matches(read_goal, goal) {
+        Ok(true) => {
+          deliver(
+            goal_judge_progress_message(goal, current_eval),
+            @types.Status::Info,
+          )
+          let updated = goal.with_last_eval(current_eval)
+          match write_goal(updated) {
+            Ok(_) => Ok(())
+            Err(e) => Err(e)
+          }
         }
+        Ok(false) => Ok(())
         Err(e) => Err(e)
       }
-    }
-    @types.GoalProdDecision::Suppress => {
-      let updated = goal.with_last_eval(current_eval)
-      match write_goal(updated) {
-        Ok(_) => {
-          self.note_eval(goal, current_eval)
-          Ok(())
-        }
-        Err(e) => Err(e)
-      }
-    }
+    @types.GoalProdDecision::Suppress => Ok(())
   }
 }
 
