@@ -1573,6 +1573,33 @@ pub async fn fire_hook_async(
 }
 
 ///|
+fn dispatch_call_goal_gate_response(
+  role : @types.Role,
+  name : String,
+) -> @types.Response? {
+  let is_goal_tool = name == "goal_set" ||
+    name == "goal_clear" ||
+    name == "goal_status"
+  if !is_goal_tool {
+    if name.has_prefix("goal_") {
+      Some(
+        @types.Response::Err(@types.ChoirError::tool_not_found(name).message()),
+      )
+    } else {
+      None
+    }
+  } else if role == @types.Role::Root || role == @types.Role::TL {
+    None
+  } else {
+    Some(
+      @types.Response::Err(
+        @types.ChoirError::permission_denied(role.to_wire_string(), name).message(),
+      ),
+    )
+  }
+}
+
+///|
 /// CLI / test entrypoint for tool dispatch.
 pub async fn dispatch_call(
   call : ToolCall,
@@ -1629,44 +1656,45 @@ pub async fn dispatch_call(
         override_check=parent_branch_override_check,
       ) {
       Some(blocked) => blocked
-      None => {
-        if call.name.has_prefix("goal_") {
-          ignore(ToolRegistry::new().lookup(call.role, call.name))
+      None =>
+        match dispatch_call_goal_gate_response(call.role, call.name) {
+          Some(blocked) => blocked
+          None =>
+            match
+              parse_tool_request(call.name, call.role, project_dir, tool_args) {
+              Err(e) => @types.Response::Err(e.message())
+              Ok(tool_req) =>
+                dispatch(
+                  tool_req,
+                  project_dir~,
+                  session~,
+                  runner~,
+                  git_capture~,
+                  capture~,
+                  bd_capture~,
+                  ensure_branch_ready~,
+                  ensure_pr~,
+                  extra_mcp_servers_json~,
+                  shell_command~,
+                  listen_uds~,
+                  listen_tcp~,
+                  tcp_auth_token~,
+                  registry~,
+                  mutex_registry~,
+                  poller_state~,
+                  caller_id=tool_args_get(tool_args, "caller_id"),
+                  pr_review~,
+                  append_file~,
+                  read_file~,
+                  write_file_atomic~,
+                  delete_file~,
+                  path_exists~,
+                  create_dir_all~,
+                  goal_deliver~,
+                  goal_request_tick~,
+                )
+            }
         }
-        match parse_tool_request(call.name, call.role, project_dir, tool_args) {
-          Err(e) => @types.Response::Err(e.message())
-          Ok(tool_req) =>
-            dispatch(
-              tool_req,
-              project_dir~,
-              session~,
-              runner~,
-              git_capture~,
-              capture~,
-              bd_capture~,
-              ensure_branch_ready~,
-              ensure_pr~,
-              extra_mcp_servers_json~,
-              shell_command~,
-              listen_uds~,
-              listen_tcp~,
-              tcp_auth_token~,
-              registry~,
-              mutex_registry~,
-              poller_state~,
-              caller_id=tool_args_get(tool_args, "caller_id"),
-              pr_review~,
-              append_file~,
-              read_file~,
-              write_file_atomic~,
-              delete_file~,
-              path_exists~,
-              create_dir_all~,
-              goal_deliver~,
-              goal_request_tick~,
-            )
-        }
-      }
     }
   } catch {
     e => tool_response_err_from_caught(e)
