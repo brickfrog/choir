@@ -1536,16 +1536,8 @@ pub async fn ServerState::process_poller_tick(
   let pending_events = []
   let pending_agent_ids = []
   let mut tick_event_total = 0
-  @moontrace.info("poller tick start", fields=[
-    @moontrace.field("tracked_prs", tracked_before),
-  ])
   let project_dir = self.config.project_dir
   let append_file = self.append_file
-  append_poller_delivery_line(
-    append_file,
-    project_dir,
-    "tick_start tracked_prs=" + tracked_before.to_string(),
-  )
   self.poller.tick_with(
     now,
     timeout,
@@ -1563,18 +1555,27 @@ pub async fn ServerState::process_poller_tick(
     self.request_goal_judge_tick()
   }
   let tracked_after = self.poller.tracked.length()
-  @moontrace.info("poller tick end", fields=[
-    @moontrace.field("events_generated", tick_event_total),
-    @moontrace.field("tracked_after", tracked_after),
-  ])
-  append_poller_delivery_line(
-    append_file,
-    project_dir,
-    "tick_end events_generated=" +
-    tick_event_total.to_string() +
-    " tracked_after=" +
-    tracked_after.to_string(),
-  )
+  // Only log a tick that actually did something — no two-line start/end
+  // heartbeat per tick (the steady state with nothing tracked produced two
+  // INFO lines every interval that said nothing). Empty ticks are silent;
+  // a tick that generated events or changed the tracked-PR set logs one line.
+  if tick_event_total > 0 || tracked_after != tracked_before {
+    @moontrace.info("poller tick", fields=[
+      @moontrace.field("events_generated", tick_event_total),
+      @moontrace.field("tracked_before", tracked_before),
+      @moontrace.field("tracked_after", tracked_after),
+    ])
+    append_poller_delivery_line(
+      append_file,
+      project_dir,
+      "tick events_generated=" +
+      tick_event_total.to_string() +
+      " tracked_before=" +
+      tracked_before.to_string() +
+      " tracked_after=" +
+      tracked_after.to_string(),
+    )
+  }
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   deliver_poller_stall_notifications(self, now, runner)
