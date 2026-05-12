@@ -20,6 +20,7 @@ pub(all) enum LogsSource {
 pub(all) struct LogsCliOptions {
   source : LogsSource
   tail_n : Int
+  tail_explicit : Bool
   follow : Bool
   grep : String?
   level : LogLevel?
@@ -31,6 +32,7 @@ fn default_logs_options() -> LogsCliOptions {
   {
     source: LogsSource::Merged,
     tail_n: 100,
+    tail_explicit: false,
     follow: false,
     grep: None,
     level: None,
@@ -104,7 +106,7 @@ pub fn parse_logs_cli_args(
           Ok(n) => n
           Err(e) => return Err(e)
         }
-        opts = { ..opts, tail_n: n }
+        opts = { ..opts, tail_n: n, tail_explicit: true }
         i = i + 2
       }
       "--grep" => {
@@ -258,10 +260,13 @@ fn has_iso_date_prefix(line : String) -> Bool {
 }
 
 ///|
+/// Sortable timestamp key for a log line. Lines with an ISO date prefix
+/// (delivery.log) yield "YYYY-MM-DDTHH:MM:SS.mmm" so ordering survives across
+/// dates and restarts; bare serve.log lines yield "HH:MM:SS.mmm".
 pub fn line_timestamp(line : String) -> String? {
   if has_iso_date_prefix(line) {
     match normalize_time_at(line, 11) {
-      Some(ts) => return Some(ts)
+      Some(ts) => return Some(line[0:10].to_owned() + "T" + ts)
       None => ()
     }
   }
@@ -269,7 +274,30 @@ pub fn line_timestamp(line : String) -> String? {
 }
 
 ///|
+fn timestamp_is_dated(ts : String) -> Bool {
+  ts.length() > 12 && ts[10] == 'T'
+}
+
+///|
+fn timestamp_time_only(ts : String) -> String {
+  if timestamp_is_dated(ts) {
+    ts[11:].to_owned()
+  } else {
+    ts
+  }
+}
+
+///|
 pub fn line_level(line : String) -> LogLevel? {
+  // Only serve.log lines carry a level field ("HH:MM:SS.mmm | LEVEL | choir — …").
+  // delivery.log lines start with an ISO date prefix and have no level — they
+  // must pass any --level filter rather than be matched on stray "| INFO |" text.
+  if has_iso_date_prefix(line) {
+    return None
+  }
+  if normalize_time_at(line, 0) is None {
+    return None
+  }
   let parts : Array[String] = []
   for part in line.split("|") {
     parts.push(part.to_owned())
@@ -283,7 +311,13 @@ pub fn line_level(line : String) -> LogLevel? {
 ///|
 fn compare_log_line_timestamp(left : String, right : String) -> Int {
   match (line_timestamp(left), line_timestamp(right)) {
-    (Some(a), Some(b)) => a.compare(b)
+    (Some(a), Some(b)) =>
+      if timestamp_is_dated(a) == timestamp_is_dated(b) {
+        a.compare(b)
+      } else {
+        // One side has a date, the other does not — fall back to time-of-day.
+        timestamp_time_only(a).compare(timestamp_time_only(b))
+      }
     (Some(_), None) => -1
     (None, Some(_)) => 1
     (None, None) => 0
@@ -413,12 +447,27 @@ fn read_log_lines(project_dir : String, rel : String) -> Array[String] {
 }
 
 ///|
+/// A caller-supplied `.jsonl` name is only safe to join under `.choir/events`
+/// if it has no path separators or `..` segments — otherwise it could escape
+/// the events directory.
+fn safe_jsonl_filename(name : String) -> String? {
+  if name.contains("/") || name.contains("\\") || name.contains("..") {
+    None
+  } else {
+    Some(name)
+  }
+}
+
+///|
 fn event_log_path(project_dir : String, agent_arg : String) -> String? {
   let events_dir = logs_project_path(project_dir, ".choir/events")
   let sanitized = @types.sanitize_agent_id(agent_arg)
   let candidates : Array[String] = []
   if agent_arg.has_suffix(".jsonl") {
-    candidates.push(agent_arg)
+    match safe_jsonl_filename(agent_arg) {
+      Some(name) => candidates.push(name)
+      None => ()
+    }
   }
   candidates.push(sanitized + ".jsonl")
   candidates.push("agent-" + sanitized + ".jsonl")
@@ -454,7 +503,10 @@ fn event_follow_candidate_paths(
   let sanitized = @types.sanitize_agent_id(agent_arg)
   let candidates : Array[String] = []
   if agent_arg.has_suffix(".jsonl") {
-    candidates.push(events_dir + "/" + agent_arg)
+    match safe_jsonl_filename(agent_arg) {
+      Some(name) => candidates.push(events_dir + "/" + name)
+      None => ()
+    }
   }
   candidates.push(events_dir + "/" + sanitized + ".jsonl")
   candidates.push(events_dir + "/agent-" + sanitized + ".jsonl")
@@ -591,6 +643,19 @@ fn render_lines(lines : Array[String]) -> String {
 }
 
 ///|
+
+///|
+/// The default ~100-line tail applies to the file sources (merged/serve/
+/// delivery). The events/wave sources mirror `choir log --wave` formatting,
+/// which shows the whole timeline — only an explicit `--tail N` truncates them.
+fn source_tails_by_default(source : LogsSource) -> Bool {
+  match source {
+    Merged | Serve | Delivery => true
+    Events(_) | Wave(_) => false
+  }
+}
+
+///|
 fn render_logs(
   project_dir : String,
   opts : LogsCliOptions,
@@ -600,7 +665,9 @@ fn render_logs(
     Ok(lines) => lines
     Err(e) => return Err(e)
   }
-  Ok(render_lines(apply_filters_with_tail(lines, opts, include_tail)))
+  let do_tail = include_tail &&
+    (opts.tail_explicit || source_tails_by_default(opts.source))
+  Ok(render_lines(apply_filters_with_tail(lines, opts, do_tail)))
 }
 
 ///|
@@ -685,4 +752,21 @@ pub fn logs_subcommand_run() -> Unit {
   if opts.follow {
     follow_logs(project_dir, opts)
   }
+}
+
+///|
+test "safe_jsonl_filename rejects path traversal" {
+  @debug.assert_eq(safe_jsonl_filename("agent-a.jsonl"), Some("agent-a.jsonl"))
+  @debug.assert_eq(safe_jsonl_filename("../secrets.jsonl"), None)
+  @debug.assert_eq(safe_jsonl_filename("sub/dir.jsonl"), None)
+  @debug.assert_eq(safe_jsonl_filename("..\\evil.jsonl"), None)
+}
+
+///|
+test "source_tails_by_default only for file sources" {
+  assert_true(source_tails_by_default(LogsSource::Merged))
+  assert_true(source_tails_by_default(LogsSource::Serve))
+  assert_true(source_tails_by_default(LogsSource::Delivery))
+  assert_false(source_tails_by_default(LogsSource::Events("a")))
+  assert_false(source_tails_by_default(LogsSource::Wave("wv-x")))
 }

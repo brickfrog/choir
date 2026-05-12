@@ -3,6 +3,7 @@ test "parse_logs_cli_args supports default merged tail and filters" {
   let defaults = parse_logs_cli_args(["choir", "logs"]).unwrap()
   assert_true(defaults.source == LogsSource::Merged)
   assert_eq(defaults.tail_n, 100)
+  assert_false(defaults.tail_explicit)
   assert_false(defaults.follow)
   @debug.assert_eq(defaults.grep, None)
   @debug.assert_eq(defaults.level, None)
@@ -12,6 +13,7 @@ test "parse_logs_cli_args supports default merged tail and filters" {
   ]).unwrap()
   assert_true(got.source == LogsSource::Events("agent-a"))
   assert_eq(got.tail_n, 12)
+  assert_true(got.tail_explicit)
   assert_true(got.follow)
   @debug.assert_eq(got.grep, Some("poller"))
   @debug.assert_eq(got.level, Some(LogLevel::Warn))
@@ -38,7 +40,7 @@ test "line_timestamp parses serve and iso prefixes" {
   )
   @debug.assert_eq(
     line_timestamp("2026-05-12T09:08:07Z [poller] delivered"),
-    Some("09:08:07.000"),
+    Some("2026-05-12T09:08:07.000"),
   )
   @debug.assert_eq(line_timestamp("[poller] no timestamp"), None)
 }
@@ -72,6 +74,44 @@ test "line_level parses pipe-delimited severity field" {
     Some(LogLevel::Trace),
   )
   @debug.assert_eq(line_level("[poller] no level"), None)
+  // A dated delivery line is levelless even if its text contains "| INFO |".
+  @debug.assert_eq(
+    line_level("2026-05-12T09:00:00.000Z [poller] saw ' | INFO | ' in payload"),
+    None,
+  )
+}
+
+///|
+test "merge_log_lines orders dated delivery lines across days" {
+  let got = merge_log_lines([], [
+    "2026-05-12T00:00:01.000Z [poller] day two", "2026-05-11T23:59:59.000Z [poller] day one",
+  ])
+  assert_eq(got, [
+    "2026-05-11T23:59:59.000Z [poller] day one", "2026-05-12T00:00:01.000Z [poller] day two",
+  ])
+}
+
+///|
+test "apply_filters keeps dated delivery lines under a level filter" {
+  let opts : LogsCliOptions = {
+    source: LogsSource::Merged,
+    tail_n: 10,
+    tail_explicit: true,
+    follow: false,
+    grep: None,
+    level: Some(LogLevel::Warn),
+    help: false,
+  }
+  let got = apply_filters(
+    [
+      "09:00:00.000 | INFO | choir - dropped", "09:00:01.000 | ERROR | choir - kept",
+      "2026-05-12T09:00:02.000Z [poller] kept ' | INFO | ' delivery",
+    ],
+    opts,
+  )
+  assert_eq(got, [
+    "09:00:01.000 | ERROR | choir - kept", "2026-05-12T09:00:02.000Z [poller] kept ' | INFO | ' delivery",
+  ])
 }
 
 ///|
@@ -79,6 +119,7 @@ test "apply_filters applies level grep and tail in order" {
   let opts : LogsCliOptions = {
     source: LogsSource::Merged,
     tail_n: 2,
+    tail_explicit: true,
     follow: false,
     grep: Some("keep"),
     level: Some(LogLevel::Warn),
