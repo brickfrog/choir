@@ -4,11 +4,6 @@ fn command_text_for_launch(cmd : Command) -> String {
 }
 
 ///|
-// NOTE: kept deliberately minimal. b1df769 + 5e3ed85 added exit-code logging
-// and a HUP/TERM trap to this wrapper; reverted in this commit because the
-// recurring unexplained TL exits (choir-eek) began after that change landed,
-// so the TL launch path goes back to its known-good shape. Re-add diagnostics
-// here only with a confirmed-stable baseline.
 fn tl_policy_supervised_shell_script(
   env_exports : String,
   inner : Command,
@@ -16,10 +11,33 @@ fn tl_policy_supervised_shell_script(
 ) -> String {
   let foreground_script = "choir tl-policy-watch --pid $$ & exec " +
     command_text_for_launch(inner)
+  // Diagnostics for choir-eek (TL/root claude process exits unexpectedly):
+  //  - A `trap` on this OUTER shell for HUP/TERM logs that a signal arrived
+  //    AND keeps the shell alive past it, so the `status=$?` below still
+  //    runs and records the agent's exit code. Without the trap, a
+  //    pgroup-wide SIGHUP (zellij/pane teardown) kills the shell before it
+  //    can log anything. (SIGKILL — e.g. OOM — is uncatchable; that one
+  //    only shows up in `dmesg`. SIGINT/Ctrl+C is left untrapped so it stays
+  //    a normal interrupt and doesn't spam the log.)
+  //  - `exit_log_step` records `exit=<code>` after the agent exits for any
+  //    reason (clean exit, harness crash, caught signal).
+  // CHOIR_WORKSPACE is exported by `env_exports`; `2>/dev/null` keeps a
+  // missing log file/dir from disturbing the rest of the handling.
+  let exits_log = "\"$CHOIR_WORKSPACE/.choir/tl-exits.log\""
+  let signal_trap = "trap 'printf \"%s [TL wrapper caught signal]\\n\"" +
+    " \"$(date -Is)\" >> " +
+    exits_log +
+    " 2>/dev/null' HUP TERM; "
+  let exit_log_step = " printf '%s exit=%s\\n' \"$(date -Is)\" \"$status\"" +
+    " >> " +
+    exits_log +
+    " 2>/dev/null;"
   env_exports +
+  signal_trap +
   "sh -lc " +
   @sys.shell_quote(foreground_script) +
   "; status=$?;" +
+  exit_log_step +
   post_exit_shell
 }
 
