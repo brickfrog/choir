@@ -678,7 +678,9 @@ pub async fn dispatch(
   bd_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout_with_stderr_on_error,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
+  delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   ensure_branch_ready? : (async (String, String, String) -> Result[
@@ -1214,6 +1216,31 @@ pub async fn dispatch(
       @types.Response::ok({ "status": "ok" })
     }
     ToolRequest::KvList => handle_kv_list(project_dir, capture~)
+    ToolRequest::GoalSet(goal_args) =>
+      interpret_goal_set(
+        goal_args,
+        project_dir,
+        session,
+        runner,
+        bd_capture,
+        read_file,
+        write_file_atomic,
+        create_dir_all,
+        @poller.now_sec(),
+      )
+    ToolRequest::GoalClear =>
+      interpret_goal_clear(project_dir, session, read_file, delete_file)
+    ToolRequest::GoalStatus(goal_args) =>
+      interpret_goal_status(
+        goal_args,
+        project_dir,
+        session,
+        runner,
+        bd_capture,
+        read_file,
+        write_file_atomic,
+        @poller.now_sec(),
+      )
     ToolRequest::MutexAcquire(mutex_args) =>
       match mutex_registry {
         Some(reg) => {
@@ -1392,7 +1419,9 @@ pub async fn handle_request(
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
+  delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
@@ -1475,7 +1504,9 @@ pub async fn handle_request(
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   pr_review~,
                   append_file~,
+                  read_file~,
                   write_file_atomic~,
+                  delete_file~,
                   path_exists~,
                   create_dir_all~,
                 )
@@ -1564,7 +1595,9 @@ pub async fn dispatch_call(
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
+  read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
+  delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
@@ -1611,7 +1644,9 @@ pub async fn dispatch_call(
               caller_id=tool_args_get(tool_args, "caller_id"),
               pr_review~,
               append_file~,
+              read_file~,
               write_file_atomic~,
+              delete_file~,
               path_exists~,
               create_dir_all~,
             )
