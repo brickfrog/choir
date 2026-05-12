@@ -119,8 +119,9 @@ pub async fn deliver_poller_stall_notification_for(
     try {
       let parent = state.resolve_parent_for_delivery(p.agent_id)
       ignore(
-        (state.append_file)(
-          state.config.project_dir + "/.choir/delivery.log",
+        @poller.append_delivery_log_line(
+          state.append_file,
+          state.config.project_dir,
           "[poller-parent] agent=" +
           p.agent_id +
           " parent=" +
@@ -128,8 +129,7 @@ pub async fn deliver_poller_stall_notification_for(
           " terminal_target=" +
           parent.terminal_target
           .map(@types.LocalTarget::to_string)
-          .unwrap_or("NONE") +
-          "\n",
+          .unwrap_or("NONE"),
         ),
       )
       match

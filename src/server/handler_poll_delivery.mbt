@@ -811,8 +811,9 @@ pub fn ServerState::plan_poll_event_deliveries(
             try {
               let parent = self.resolve_parent_for_delivery(leaf_agent_id)
               ignore(
-                (self.append_file)(
-                  self.config.project_dir + "/.choir/delivery.log",
+                @poller.append_delivery_log_line(
+                  self.append_file,
+                  self.config.project_dir,
                   "[poller-parent] agent=" +
                   leaf_agent_id +
                   " parent=" +
@@ -820,8 +821,7 @@ pub fn ServerState::plan_poll_event_deliveries(
                   " terminal_target=" +
                   parent.terminal_target
                   .map(@types.LocalTarget::to_string)
-                  .unwrap_or("NONE") +
-                  "\n",
+                  .unwrap_or("NONE"),
                 ),
               )
               deliveries.push({
@@ -1238,13 +1238,13 @@ async fn deliver_pending_poll_events(
       try {
         let parent = state.resolve_parent_by_id(rollup.parent_id)
         ignore(
-          (state.append_file)(
-            state.config.project_dir + "/.choir/delivery.log",
+          @poller.append_delivery_log_line(
+            state.append_file,
+            state.config.project_dir,
             "[poller-parent-wave] parent=" +
             rollup.parent_id +
             " wave=" +
-            rollup.wave.to_string() +
-            "\n",
+            rollup.wave.to_string(),
           ),
         )
         ignore(
@@ -1261,8 +1261,9 @@ async fn deliver_pending_poll_events(
       try {
         let parent = state.resolve_parent_for_delivery(row.leaf_agent_id)
         ignore(
-          (state.append_file)(
-            state.config.project_dir + "/.choir/delivery.log",
+          @poller.append_delivery_log_line(
+            state.append_file,
+            state.config.project_dir,
             "[poller-parent] agent=" +
             row.leaf_agent_id +
             " parent=" +
@@ -1270,8 +1271,7 @@ async fn deliver_pending_poll_events(
             " terminal_target=" +
             parent.terminal_target
             .map(@types.LocalTarget::to_string)
-            .unwrap_or("NONE") +
-            "\n",
+            .unwrap_or("NONE"),
           ),
         )
         ignore(
@@ -1297,7 +1297,11 @@ fn append_poller_delivery_line(
   line : String,
 ) -> Unit {
   ignore(
-    append_file(project_dir + "/.choir/delivery.log", "[poller] " + line + "\n"),
+    @poller.append_delivery_log_line(
+      append_file,
+      project_dir,
+      "[poller] " + line,
+    ),
   )
 }
 
@@ -1353,8 +1357,9 @@ pub async fn deliver_orphaned_pr_notification_for(
     try {
       let parent = state.resolve_parent_for_delivery(p.agent_id)
       ignore(
-        append_file(
-          project_dir + "/.choir/delivery.log",
+        @poller.append_delivery_log_line(
+          append_file,
+          project_dir,
           "[poller-parent] agent=" +
           p.agent_id +
           " parent=" +
@@ -1362,8 +1367,7 @@ pub async fn deliver_orphaned_pr_notification_for(
           " terminal_target=" +
           parent.terminal_target
           .map(@types.LocalTarget::to_string)
-          .unwrap_or("NONE") +
-          "\n",
+          .unwrap_or("NONE"),
         ),
       )
       match

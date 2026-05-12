@@ -21,6 +21,8 @@ options(
     "beads_subcommand_test.mbt": [ "native" ],
     "log_subcommand.mbt": [ "native" ],
     "log_subcommand_test.mbt": [ "native" ],
+    "logs_subcommand.mbt": [ "native" ],
+    "logs_subcommand_test.mbt": [ "native" ],
     "mcp_subcommand.mbt": [ "native" ],
     "mcp_subcommand_test.mbt": [ "native" ],
     "skill_subcommand.mbt": [ "native" ],

@@ -171,15 +171,15 @@ fn ServerState::gc_dead_pane_delivery_recipient(
   self.stop_subscribe(recipient_id)
   self.expire_pending_outbox_for_recipient(recipient_id)
   ignore(
-    (self.append_file)(
-      self.config.project_dir + "/.choir/delivery.log",
+    @poller.append_delivery_log_line(
+      self.append_file,
+      self.config.project_dir,
       "[delivery-gc] recipient=" +
       recipient_id +
       " reason=stale-pane failures=" +
       stale_pane_delivery_gc_threshold().to_string() +
       " error=" +
-      delivery_failure_log_error(error) +
-      "\n",
+      delivery_failure_log_error(error),
     ),
   )
 }

@@ -81,6 +81,7 @@ test "notify_parent_plan deliver matches plan_delivery and success response" {
 
 ///|
 test "send_message_delivery_log_append matches dispatch log shape" {
+  let now_ms = 1776000000123L
   let agent : @types.Agent = {
     agent_id: @types.AgentId("main.leaf"),
     role: @types.Role::Dev,
@@ -100,10 +101,12 @@ test "send_message_delivery_log_append matches dispatch log shape" {
     @types.Status::Success,
   )
   assert_eq(
-    send_message_delivery_log_append("main.leaf", agent, delivery),
-    "[send_message] target=main.leaf terminal_target=zellij-tab:choir:leaf delivery=" +
-    delivery.to_display_string() +
-    "\n",
+    send_message_delivery_log_append("main.leaf", agent, delivery, now_ms~),
+    @poller.delivery_log_line(
+      "[send_message] target=main.leaf terminal_target=zellij-tab:choir:leaf delivery=" +
+      delivery.to_display_string(),
+      now_ms~,
+    ),
   )
 }
 
@@ -168,6 +171,7 @@ test "send_message_plan maps registry lookup error" {
 
 ///|
 test "send_message_plan deliver matches plan_delivery and log append" {
+  let now_ms = 1776000000123L
   let agent : @types.Agent = {
     agent_id: @types.AgentId("main.leaf"),
     role: @types.Role::Dev,
@@ -193,12 +197,18 @@ test "send_message_plan deliver matches plan_delivery and log append" {
       "hello",
       @types.Status::Failure,
       Some(Ok(agent)),
+      now_ms~,
     ) {
     SendMessagePlan::Deliver(delivery~, delivery_log_append~, response_ok~) => {
       assert_eq(delivery, expected_delivery)
       assert_eq(
         delivery_log_append,
-        send_message_delivery_log_append("main.leaf", agent, expected_delivery),
+        send_message_delivery_log_append(
+          "main.leaf",
+          agent,
+          expected_delivery,
+          now_ms~,
+        ),
       )
       match response_ok {
         @types.Response::Ok(fields) => {
@@ -270,6 +280,7 @@ async fn runner_send_msg_always_fail(
 
 ///|
 async test "interpret_send_message deliver tcp success appends send_message log" {
+  let now_ms = 1776000000123L
   let project_dir = send_message_interpret_test_project_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let log_path = project_dir + "/.choir/delivery.log"
@@ -292,6 +303,7 @@ async test "interpret_send_message deliver tcp success appends send_message log"
     "text",
     @types.Status::Success,
     Some(Ok(agent)),
+    now_ms~,
   )
   let got = interpret_send_message(plan, project_dir, mock_runner_all_ok)
   match got {
@@ -308,13 +320,17 @@ async test "interpret_send_message deliver tcp success appends send_message log"
     @types.Status::Success,
   )
   let expected_log = send_message_delivery_log_append(
-    "main.rleaf", agent, delivery,
+    "main.rleaf",
+    agent,
+    delivery,
+    now_ms~,
   )
   assert_eq(@sys.read_file(log_path), expected_log)
 }
 
 ///|
 async test "interpret_send_message deliver local terminal failure returns err and keeps send_message log" {
+  let now_ms = 1776000000123L
   let project_dir = send_message_interpret_test_project_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let log_path = project_dir + "/.choir/delivery.log"
@@ -337,6 +353,7 @@ async test "interpret_send_message deliver local terminal failure returns err an
     "x",
     @types.Status::Info,
     Some(Ok(agent)),
+    now_ms~,
   )
   let got = interpret_send_message(
     plan,
@@ -355,7 +372,12 @@ async test "interpret_send_message deliver local terminal failure returns err an
     "x",
     @types.Status::Info,
   )
-  let send_line = send_message_delivery_log_append("main.leaf", agent, delivery)
+  let send_line = send_message_delivery_log_append(
+    "main.leaf",
+    agent,
+    delivery,
+    now_ms~,
+  )
   assert_true(@sys.read_file(log_path).contains(send_line))
 }
 
