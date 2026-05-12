@@ -796,6 +796,21 @@ fn init_run() -> Unit {
       } else {
         @sys.write_stdout("Reusing existing TL tab.\n")
       }
+      // Drop the empty default tab (id 0) that `zellij_create_background_session`
+      // creates before we add the named "Server"/"TL" tabs. This is reached only
+      // after a *fresh* session creation — the `session_alive == 0` branch above
+      // returns early — so tab 0 is always that empty default here, never a live
+      // TL/Server tab. (Do not remove again under a "don't close TL tab" guard:
+      // see choir-eek — that guard applies to teardown paths, not this one.)
+      ignore(
+        @exec.run({
+          program: "zellij",
+          args: ["--session", session, "action", "close-tab-by-id", "0"],
+          workdir: None,
+        }) catch {
+          _ => 0
+        },
+      )
       ignore(
         @exec.run({
           program: "zellij",
