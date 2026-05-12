@@ -6,6 +6,12 @@ fn goal_response_json(goal : @types.Goal) -> Json {
 }
 
 ///|
+priv struct GoalReadResult {
+  goal : @types.Goal?
+  warning : String?
+}
+
+///|
 fn goal_eval_response_fields(eval : @types.GoalEvalResult) -> Map[String, Json] {
   {
     "passing": eval.passing.to_json(),
@@ -23,15 +29,41 @@ fn goal_read_current(
   session : String,
   read_file : (String) -> String,
 ) -> Result[@types.Goal?, @types.ChoirError] {
-  let raw = read_file(@types.goal_kv_path(project_dir, session))
-    .trim()
-    .to_owned()
+  let path = match @types.goal_kv_path(project_dir, session) {
+    Ok(path) => path
+    Err(e) => return Err(e)
+  }
+  let raw = read_file(path).trim().to_owned()
   if raw == "" {
     return Ok(None)
   }
   match @types.Goal::from_json_string(raw) {
     Ok(goal) => Ok(Some(goal))
     Err(e) => Err(e)
+  }
+}
+
+///|
+fn goal_read_current_best_effort(
+  project_dir : String,
+  session : String,
+  read_file : (String) -> String,
+) -> Result[GoalReadResult, @types.ChoirError] {
+  let path = match @types.goal_kv_path(project_dir, session) {
+    Ok(path) => path
+    Err(e) => return Err(e)
+  }
+  let raw = read_file(path).trim().to_owned()
+  if raw == "" {
+    return Ok({ goal: None, warning: None })
+  }
+  match @types.Goal::from_json_string(raw) {
+    Ok(goal) => Ok({ goal: Some(goal), warning: None })
+    Err(e) =>
+      Ok({
+        goal: None,
+        warning: Some("ignored corrupt existing goal: " + e.message()),
+      })
   }
 }
 
@@ -51,7 +83,9 @@ async fn goal_evaluate_with_workspace_caps(
           args: ["-c", command],
           workdir: Some(project_dir),
         },
-      ])
+      ]) catch {
+        _ => [-1]
+      }
       if statuses.length() == 0 {
         -1
       } else {
@@ -63,7 +97,9 @@ async fn goal_evaluate_with_workspace_caps(
         program: "bd",
         args: ["show", bead_id, "--json"],
         workdir: Some(project_dir),
-      })
+      }) catch {
+        _ => (-1, "")
+      }
     },
     now_unix_sec~,
   )
@@ -110,7 +146,8 @@ pub async fn interpret_goal_set(
   create_dir_all : (String) -> Bool,
   now_unix_sec : Int64,
 ) -> @types.Response {
-  let previous = match goal_read_current(project_dir, session, read_file) {
+  let existing = match
+    goal_read_current_best_effort(project_dir, session, read_file) {
     Ok(value) => value
     Err(e) => return @types.Response::Err(e.message())
   }
@@ -125,20 +162,31 @@ pub async fn interpret_goal_set(
   if !create_dir_all(project_dir + "/.choir/kv") {
     return @types.Response::Err("failed to create goal kv directory")
   }
-  let path = @types.goal_kv_path(project_dir, session)
+  let path = match @types.goal_kv_path(project_dir, session) {
+    Ok(path) => path
+    Err(e) => return @types.Response::Err(e.message())
+  }
   if !write_file_atomic(path, goal.to_json_string()) {
     return @types.Response::Err("failed to write goal kv file: " + path)
+  }
+  let kv_key = match @types.goal_kv_key(session) {
+    Ok(key) => key
+    Err(e) => return @types.Response::Err(e.message())
   }
   let fields : Map[String, Json] = {
     "status": "set".to_json(),
     "active": true.to_json(),
     "slug": goal.slug.to_json(),
-    "kv_key": @types.goal_kv_key(session).to_json(),
-    "superseded": (previous is Some(_)).to_json(),
+    "kv_key": kv_key.to_json(),
+    "superseded": (existing.goal is Some(_) || existing.warning is Some(_)).to_json(),
     "goal": goal_response_json(goal),
   }
-  match previous {
+  match existing.goal {
     Some(old) => fields.set("superseded_slug", old.slug.to_json())
+    None => ()
+  }
+  match existing.warning {
+    Some(warning) => fields.set("warning", warning.to_json())
     None => ()
   }
   let eval_fields = goal_eval_response_fields(eval)
@@ -153,18 +201,27 @@ pub fn interpret_goal_clear(
   read_file : (String) -> String,
   delete_file : (String) -> Bool,
 ) -> @types.Response {
-  let current = match goal_read_current(project_dir, session, read_file) {
+  let path = match @types.goal_kv_path(project_dir, session) {
+    Ok(path) => path
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  let current = match
+    goal_read_current_best_effort(project_dir, session, read_file) {
     Ok(value) => value
     Err(e) => return @types.Response::Err(e.message())
   }
-  ignore(delete_file(@types.goal_kv_path(project_dir, session)))
+  ignore(delete_file(path))
   let fields : Map[String, Json] = {
     "status": "cleared".to_json(),
     "active": false.to_json(),
-    "existed": (current is Some(_)).to_json(),
+    "existed": (current.goal is Some(_) || current.warning is Some(_)).to_json(),
   }
-  match current {
+  match current.goal {
     Some(goal) => fields.set("slug", goal.slug.to_json())
+    None => ()
+  }
+  match current.warning {
+    Some(warning) => fields.set("warning", warning.to_json())
     None => ()
   }
   @types.Response::ok_values(fields)
@@ -197,7 +254,10 @@ pub async fn interpret_goal_status(
           goal, project_dir, runner, bd_capture, now_unix_sec,
         )
         let updated = goal.with_last_eval(eval)
-        let path = @types.goal_kv_path(project_dir, session)
+        let path = match @types.goal_kv_path(project_dir, session) {
+          Ok(path) => path
+          Err(e) => return @types.Response::Err(e.message())
+        }
         if !write_file_atomic(path, updated.to_json_string()) {
           return @types.Response::Err("failed to write goal kv file: " + path)
         }

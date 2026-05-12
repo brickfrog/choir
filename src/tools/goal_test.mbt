@@ -87,7 +87,7 @@ async test "goal_set writes one session KV file and evaluates shell check throug
   )
   assert_true(resp.is_ok())
   assert_eq(dirs, ["/repo/.choir/kv"])
-  let path = @types.goal_kv_path("/repo", "sess")
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
   assert_true(files.contains(path))
   assert_eq(commands.length(), 1)
   assert_eq(commands[0].program, "sh")
@@ -131,7 +131,7 @@ async test "goal_set bead source evaluates bd show json through injected capture
   assert_eq(bd_commands[0].args, ["show", "choir-kqv", "--json"])
   @debug.assert_eq(bd_commands[0].workdir, Some("/repo"))
   let stored = @types.Goal::from_json_string(
-    files.get(@types.goal_kv_path("/repo", "sess")).unwrap(),
+    files.get(@types.goal_kv_path("/repo", "sess").unwrap()).unwrap(),
   ).unwrap()
   match stored.last_eval {
     Some(eval) => assert_eq(eval.progress_label(), "1/1")
@@ -193,7 +193,7 @@ async test "goal_set supersedes previous goal without stacking keys" {
     None => fail("expected ok response")
   }
   let stored = @types.Goal::from_json_string(
-    files.get(@types.goal_kv_path("/repo", "sess")).unwrap(),
+    files.get(@types.goal_kv_path("/repo", "sess").unwrap()).unwrap(),
   ).unwrap()
   assert_eq(stored.slug, "second-goal")
 }
@@ -201,7 +201,7 @@ async test "goal_set supersedes previous goal without stacking keys" {
 ///|
 async test "goal_clear removes the exact session KV path" {
   let files : Map[String, String] = {}
-  let path = @types.goal_kv_path("/repo", "sess")
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
   let goal = @types.Goal::new("x", [], 1L).unwrap()
   files.set(path, goal.to_json_string())
   let deleted : Array[String] = []
@@ -219,4 +219,114 @@ async test "goal_clear removes the exact session KV path" {
   assert_true(resp.is_ok())
   assert_eq(deleted, [path])
   assert_false(files.contains(path))
+}
+
+///|
+async test "goal_set overwrites corrupt existing goal KV" {
+  let files : Map[String, String] = {}
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
+  files.set(path, "{\"slug\":\"old\",\"checks\":true}")
+  let resp = dispatch(
+    ToolRequest::GoalSet({ input: "replacement", verify: [] }),
+    project_dir="/repo",
+    session="sess",
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    bd_capture=async fn(_cmd) {
+      @async.sleep(0)
+      (-1, "")
+    },
+    read_file=goal_test_read_file(files),
+    write_file_atomic=fn(path, content) {
+      files.set(path, content)
+      true
+    },
+    create_dir_all=fn(_path) { true },
+  )
+  assert_true(resp.is_ok())
+  match resp.ok_payload() {
+    Some(fields) => {
+      assert_true(fields.get_bool("superseded") == Some(true))
+      match fields.get("warning") {
+        Some(warning) =>
+          assert_true(warning.contains("ignored corrupt existing goal"))
+        None => fail("expected corrupt-goal warning")
+      }
+    }
+    None => fail("expected ok response")
+  }
+  let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
+  assert_eq(stored.slug, "replacement")
+}
+
+///|
+async test "goal_set maps thrown verification caps to failed checks" {
+  let files : Map[String, String] = {}
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
+  let resp = dispatch(
+    ToolRequest::GoalSet({ input: "choir-kqv", verify: ["true"] }),
+    project_dir="/repo",
+    session="sess",
+    runner=async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      fail("runner failure should be captured")
+      []
+    },
+    bd_capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      fail("bd failure should be captured")
+      (-1, "")
+    },
+    read_file=goal_test_read_file(files),
+    write_file_atomic=fn(path, content) {
+      files.set(path, content)
+      true
+    },
+    create_dir_all=fn(_path) { true },
+  )
+  assert_true(resp.is_ok())
+  let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
+  match stored.last_eval {
+    Some(eval) => {
+      assert_eq(eval.progress_label(), "0/2")
+      assert_true(eval.failing_summary.contains("bead not closed: choir-kqv"))
+      assert_true(eval.failing_summary.contains("shell failed: true"))
+    }
+    None => fail("expected stored evaluation")
+  }
+}
+
+///|
+async test "goal_clear deletes corrupt goal KV unconditionally" {
+  let files : Map[String, String] = {}
+  let path = @types.goal_kv_path("/repo", "sess").unwrap()
+  files.set(path, "{\"slug\":\"old\",\"checks\":true}")
+  let deleted : Array[String] = []
+  let resp = dispatch(
+    ToolRequest::GoalClear,
+    project_dir="/repo",
+    session="sess",
+    read_file=goal_test_read_file(files),
+    delete_file=fn(p) {
+      deleted.push(p)
+      files.remove(p)
+      true
+    },
+  )
+  assert_true(resp.is_ok())
+  assert_eq(deleted, [path])
+  assert_false(files.contains(path))
+  match resp.ok_payload() {
+    Some(fields) => {
+      assert_true(fields.get_bool("existed") == Some(true))
+      match fields.get("warning") {
+        Some(warning) =>
+          assert_true(warning.contains("ignored corrupt existing goal"))
+        None => fail("expected corrupt-goal warning")
+      }
+    }
+    None => fail("expected ok response")
+  }
 }

@@ -51,13 +51,54 @@ fn goal_json_null() -> Json {
 }
 
 ///|
-pub fn goal_kv_key(session : String) -> String {
-  "tl-goal--" + session + ".json"
+fn validate_goal_kv_key(key : String) -> Result[Unit, ChoirError] {
+  if key == "" {
+    return Err(goal_validation_error("goal kv key cannot be empty"))
+  }
+  if key == "." {
+    return Err(goal_validation_error("goal kv key cannot be '.'"))
+  }
+  if key.contains("..") {
+    return Err(goal_validation_error("goal kv key cannot contain '..'"))
+  }
+  if key.contains("/") {
+    return Err(goal_validation_error("goal kv key cannot contain '/'"))
+  }
+  for c in key {
+    if !((c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      c == '-' ||
+      c == '_' ||
+      c == '.') {
+      return Err(
+        goal_validation_error(
+          "invalid character in goal kv key: " + c.to_string(),
+        ),
+      )
+    }
+  }
+  Ok(())
 }
 
 ///|
-pub fn goal_kv_path(project_dir : String, session : String) -> String {
-  project_dir + "/.choir/kv/" + goal_kv_key(session)
+pub fn goal_kv_key(session : String) -> Result[String, ChoirError] {
+  let key = "tl-goal--" + session + ".json"
+  match validate_goal_kv_key(key) {
+    Ok(_) => Ok(key)
+    Err(e) => Err(e)
+  }
+}
+
+///|
+pub fn goal_kv_path(
+  project_dir : String,
+  session : String,
+) -> Result[String, ChoirError] {
+  match goal_kv_key(session) {
+    Ok(key) => Ok(project_dir + "/.choir/kv/" + key)
+    Err(e) => Err(e)
+  }
 }
 
 ///|
@@ -387,7 +428,8 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
           Err(e) => return Err(e)
         }
       }
-    _ => return Err(goal_validation_error("goal missing checks"))
+    Some(_) => return Err(goal_validation_error("goal checks must be an array"))
+    None => return Err(goal_validation_error("goal missing checks"))
   }
   let started_unix_sec = match json_field_int64(obj, "started_unix_sec") {
     Some(value) => value

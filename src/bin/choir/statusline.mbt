@@ -190,11 +190,11 @@ fn statusline_override_active(project_dir : String) -> Bool {
 ///|
 fn statusline_goal_segment(project_dir : String) -> String {
   let config = statusline_global_config(project_dir)
-  let raw = @sys.read_file(
-      @types.goal_kv_path(project_dir, config.terminal_session),
-    )
-    .trim()
-    .to_owned()
+  let path = match @types.goal_kv_path(project_dir, config.terminal_session) {
+    Ok(path) => path
+    Err(_) => return ""
+  }
+  let raw = @sys.read_file(path).trim().to_owned()
   if raw == "" {
     return ""
   }
@@ -369,7 +369,7 @@ test "statusline_goal_segment renders active goal progress" {
     })
   ignore(
     @sys.write_file_sync(
-      @types.goal_kv_path(project_dir, "sess"),
+      @types.goal_kv_path(project_dir, "sess").unwrap(),
       goal.to_json_string(),
     ),
   )

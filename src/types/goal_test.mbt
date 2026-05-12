@@ -54,9 +54,9 @@ test "goal prod decision emits transitions and rate-limits unchanged open state"
 
 ///|
 test "goal JSON roundtrip preserves exact KV key shape and last evaluation" {
-  assert_eq(goal_kv_key("choir-choir"), "tl-goal--choir-choir.json")
+  assert_eq(goal_kv_key("choir-choir").unwrap(), "tl-goal--choir-choir.json")
   assert_eq(
-    goal_kv_path("/repo", "choir-choir"),
+    goal_kv_path("/repo", "choir-choir").unwrap(),
     "/repo/.choir/kv/tl-goal--choir-choir.json",
   )
   let eval = GoalEvalResult::{
@@ -70,4 +70,30 @@ test "goal JSON roundtrip preserves exact KV key shape and last evaluation" {
     .with_last_eval(eval)
   let decoded = Goal::from_json_string(goal.to_json_string()).unwrap()
   assert_true(decoded == goal)
+}
+
+///|
+test "goal KV path rejects invalid session-derived keys" {
+  match goal_kv_key("../bad") {
+    Err(e) => assert_true(e.message().contains("goal kv key"))
+    Ok(_) => fail("expected invalid path segment to be rejected")
+  }
+  match goal_kv_path("/repo", "bad/session") {
+    Err(e) => assert_true(e.message().contains("goal kv key"))
+    Ok(_) => fail("expected nested path segment to be rejected")
+  }
+}
+
+///|
+test "goal JSON reports wrong checks type separately from missing checks" {
+  let wrong_type = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":true,\"started_unix_sec\":1,\"last_eval\":null}"
+  match Goal::from_json_string(wrong_type) {
+    Err(e) => assert_true(e.message().contains("goal checks must be an array"))
+    Ok(_) => fail("expected wrong checks type error")
+  }
+  let missing = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"started_unix_sec\":1,\"last_eval\":null}"
+  match Goal::from_json_string(missing) {
+    Err(e) => assert_true(e.message().contains("goal missing checks"))
+    Ok(_) => fail("expected missing checks error")
+  }
 }
