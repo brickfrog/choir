@@ -144,6 +144,21 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: all_roles,
     },
     {
+      name: "goal_set",
+      description: "Set or supersede the active TL goal for this session",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
+      name: "goal_clear",
+      description: "Clear the active TL goal for this session",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
+      name: "goal_status",
+      description: "Inspect the active TL goal for this session",
+      allowed_roles: [@types.Role::Root, @types.Role::TL],
+    },
+    {
       name: "mutex_acquire",
       description: "Acquire an in-memory coordination mutex",
       allowed_roles: all_roles,

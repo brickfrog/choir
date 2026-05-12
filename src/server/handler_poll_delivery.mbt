@@ -1514,6 +1514,9 @@ pub async fn ServerState::process_poller_tick_with(
     },
     fn(_) { () },
   )
+  if pending_events.length() > 0 {
+    self.request_goal_judge_tick()
+  }
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   deliver_poller_stall_notifications(self, now, runner)
@@ -1556,6 +1559,9 @@ pub async fn ServerState::process_poller_tick(
       log_poller_pr_tick(append_file, project_dir, log)
     },
   )
+  if pending_events.length() > 0 {
+    self.request_goal_judge_tick()
+  }
   let tracked_after = self.poller.tracked.length()
   @moontrace.info("poller tick end", fields=[
     @moontrace.field("events_generated", tick_event_total),
@@ -1629,6 +1635,7 @@ pub async fn ServerState::refresh_pr_with(
       capture~,
       automerge_capture~,
     )
+    self.request_goal_judge_tick()
   }
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
