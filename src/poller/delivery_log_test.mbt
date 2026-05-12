@@ -8,6 +8,12 @@ test "delivery_log_timestamp formats ISO timestamp with milliseconds" {
 }
 
 ///|
+test "delivery_log_timestamp floors negative milliseconds" {
+  assert_eq(delivery_log_timestamp(-1L), "1969-12-31T23:59:59.999Z")
+  assert_eq(delivery_log_timestamp(-1001L), "1969-12-31T23:59:58.999Z")
+}
+
+///|
 test "delivery_log_line keeps tag after timestamp" {
   let base = @tempo.DateTime::parse("2026-05-10T06:30:00Z").to_unix_seconds() *
     1000L

@@ -1,8 +1,14 @@
 ///|
 pub fn delivery_log_timestamp(now_ms : Int64) -> String {
-  let base = @tempo.DateTime::from_unix_seconds(now_ms / 1000L).format()
+  let truncated_seconds = now_ms / 1000L
   let raw_ms = now_ms % 1000L
   let ms = if raw_ms < 0L { raw_ms + 1000L } else { raw_ms }
+  let seconds = if raw_ms < 0L {
+    truncated_seconds - 1L
+  } else {
+    truncated_seconds
+  }
+  let base = @tempo.DateTime::from_unix_seconds(seconds).format()
   let ms_text = if ms < 10L {
     "00" + ms.to_string()
   } else if ms < 100L {
