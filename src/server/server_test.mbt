@@ -145,6 +145,10 @@ test "reload snapshot restores registry pending state and mutexes" {
   state.pending_disconnects.set("root.leaf", 1234L)
   state.pending_disconnect_soft_notified.set("root.leaf", true)
   state.delivery_failures.set("root.leaf", 2)
+  state.handoff_delivered.set("root.leaf", true)
+  state.worker_no_handoff_prodded_at.set("root.worker", 2222L)
+  state.worker_no_handoff_stalled_emitted.set("root.worker", true)
+  state.worker_no_handoff_exit_emitted.set("root.worker", true)
   ignore(state.mutex_registry.acquire("build", "root", 300L, 10L))
   ignore(state.mutex_registry.acquire("build", "root.leaf", 300L, 11L))
 
@@ -173,6 +177,19 @@ test "reload snapshot restores registry pending state and mutexes" {
         Some(true),
       )
       @debug.assert_eq(restored.delivery_failures.get("root.leaf"), Some(2))
+      @debug.assert_eq(restored.handoff_delivered.get("root.leaf"), Some(true))
+      @debug.assert_eq(
+        restored.worker_no_handoff_prodded_at.get("root.worker"),
+        Some(2222L),
+      )
+      @debug.assert_eq(
+        restored.worker_no_handoff_stalled_emitted.get("root.worker"),
+        Some(true),
+      )
+      @debug.assert_eq(
+        restored.worker_no_handoff_exit_emitted.get("root.worker"),
+        Some(true),
+      )
       let (holder, queue) = restored.mutex_registry.status("build")
       @debug.assert_eq(holder, Some("root"))
       assert_eq(queue.length(), 1)

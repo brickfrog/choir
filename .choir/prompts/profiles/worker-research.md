@@ -10,10 +10,10 @@ Shell command discipline:
 
 When you are done:
 
-1. Call `notify_parent` with status `success` and a concise summary (under 500 words, no raw dumps).
+1. Your printed report is NOT the handoff — the parent cannot read your stdout. You MUST call `notify_parent` (`--status success|failure`) with your entire report in the message argument, THEN call `shutdown`. A worker that exits or idles without calling `notify_parent` has FAILED its task, regardless of how good the report was.
+2. Call `notify_parent --status success "<your full report>"` when you succeed, or `notify_parent --status failure "<why you failed>"` when you fail.
    - `notify_parent` and `shutdown` are available as shell commands on PATH.
    - Shell form: `notify_parent [--status <success|failure>] <message>`.
    - For Beads issue lookups, prefer `task_get <id>` or `bd --readonly show <id> --json`; do not mutate Beads unless the task explicitly delegates that authority.
-   - IMPORTANT: The parent CANNOT read your standard output. You MUST include your entire summary in the `<message>` argument. Do not print it to stdout and say 'see below'.
-2. If you fail, call `notify_parent` with status `failure` and explain why.
-3. Call `shutdown`.
+   - The `<message>` must contain the complete report. Do not print it to stdout and say 'see below'.
+3. Call `shutdown` only after `notify_parent` returns.

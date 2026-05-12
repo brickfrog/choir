@@ -142,6 +142,35 @@ fn parse_double_config_value(
 }
 
 ///|
+fn parse_nonnegative_int64_config_value(
+  key : String,
+  raw : String,
+) -> Result[Int64, @types.ChoirError] {
+  let stripped = strip_toml_inline_comment(raw)
+  let parsed = @json.parse(stripped) catch {
+    e =>
+      return Err(
+        @types.ChoirError::config_error(
+          key + ": invalid integer: " + e.to_string(),
+        ),
+      )
+  }
+  match parsed {
+    Number(n, ..) => {
+      let v = n.to_int64()
+      if v.to_double() != n {
+        Err(@types.ChoirError::config_error(key + ": expected integer"))
+      } else if v < 0L {
+        Err(@types.ChoirError::config_error(key + ": expected >= 0"))
+      } else {
+        Ok(v)
+      }
+    }
+    _ => Err(@types.ChoirError::config_error(key + ": expected integer"))
+  }
+}
+
+///|
 fn parse_pricing_config(
   doc : TomlDoc,
 ) -> Result[Map[String, @types.PricingRate], @types.ChoirError] {
@@ -282,6 +311,27 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let worker_no_handoff_prod_sec = match doc.get("worker_no_handoff_prod_sec") {
+    None => default_cfg.worker_no_handoff_prod_sec
+    Some(raw) =>
+      match
+        parse_nonnegative_int64_config_value("worker_no_handoff_prod_sec", raw) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+  }
+  let worker_no_handoff_escalate_sec = match
+    doc.get("worker_no_handoff_escalate_sec") {
+    None => default_cfg.worker_no_handoff_escalate_sec
+    Some(raw) =>
+      match
+        parse_nonnegative_int64_config_value(
+          "worker_no_handoff_escalate_sec", raw,
+        ) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+  }
   let pricing = match parse_pricing_config(doc) {
     Ok(p) => p
     Err(e) => return Err(e)
@@ -303,6 +353,8 @@ pub fn parse_config(
     pr_review,
     automerge,
     review_mode,
+    worker_no_handoff_prod_sec,
+    worker_no_handoff_escalate_sec,
     pricing,
   })
 }

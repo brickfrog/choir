@@ -215,6 +215,15 @@ test "audit default prompt contains Sarcasmotron persona" {
 }
 
 ///|
+test "audit default prompt requires worker notify_parent handoff" {
+  let body = default_prompt(PromptName::AuditSkill)
+  assert_true(body.contains("printed report is NOT the handoff"))
+  assert_true(body.contains("MUST call notify_parent"))
+  assert_true(body.contains("FAILED its task"))
+  assert_true(body.contains("Wait for the worker to return"))
+}
+
+///|
 test "audit default prompt writes receipt after successful worker" {
   let body = default_prompt(PromptName::AuditSkill)
   assert_true(body.contains("After the worker returns successfully"))
@@ -234,4 +243,20 @@ test "leaf profile default prompt instructs leaves to resolve threads after fixe
   assert_true(body.contains("you (the leaf) must resolve each thread yourself"))
   assert_true(body.contains("resolveReviewThread(input: {threadId:"))
   assert_false(body.contains("Do not resolve GitHub review threads yourself"))
+}
+
+///|
+test "worker review default prompt leads done section with mandatory handoff" {
+  let body = default_prompt(PromptName::WorkerReview)
+  let done = match body.find("When you are done:") {
+    Some(i) => body[i:].to_owned()
+    None => fail("missing done section")
+  }
+  assert_true(
+    done.has_prefix(
+      "When you are done:\n\n1. Your printed report is NOT the handoff",
+    ),
+  )
+  assert_true(done.contains("MUST call `notify_parent`"))
+  assert_true(done.contains("FAILED its task"))
 }

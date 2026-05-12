@@ -19,6 +19,10 @@ pub(all) struct Config {
   automerge : Bool
   /// Review loop behavior after fixes are pushed for review comments.
   review_mode : ReviewMode
+  /// Worker-only no-handoff prod threshold in seconds; 0 disables prod/stall.
+  worker_no_handoff_prod_sec : Int64
+  /// Worker-only no-handoff stalled-event grace after prod in seconds; 0 disables stalled event.
+  worker_no_handoff_escalate_sec : Int64
   /// Per-agent-type token pricing, keyed by canonical AgentType wire string.
   pricing : Map[String, PricingRate]
 } derive(Debug)
@@ -68,6 +72,8 @@ pub fn Config::default() -> Config {
     pr_review: true,
     automerge: false,
     review_mode: SinglePass,
+    worker_no_handoff_prod_sec: 120L,
+    worker_no_handoff_escalate_sec: 120L,
     pricing: {},
   }
 }

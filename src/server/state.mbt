@@ -26,6 +26,10 @@ pub struct ServerState {
   pending_disconnects : Map[String, Int64]
   pending_disconnect_soft_notified : Map[String, Bool]
   delivery_failures : Map[String, Int]
+  handoff_delivered : Map[String, Bool]
+  worker_no_handoff_prodded_at : Map[String, Int64]
+  worker_no_handoff_stalled_emitted : Map[String, Bool]
+  worker_no_handoff_exit_emitted : Map[String, Bool]
   goal_judge : GoalJudgeState
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
@@ -86,6 +90,10 @@ pub fn ServerState::new(
     pending_disconnects: {},
     pending_disconnect_soft_notified: {},
     delivery_failures: {},
+    handoff_delivered: {},
+    worker_no_handoff_prodded_at: {},
+    worker_no_handoff_stalled_emitted: {},
+    worker_no_handoff_exit_emitted: {},
     goal_judge: GoalJudgeState::new(),
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,
@@ -94,4 +102,12 @@ pub fn ServerState::new(
     write_file_atomic: default_write_file_atomic,
     delete_file: @exec.delete_file_sync,
   }
+}
+
+///|
+pub fn ServerState::with_pane_watcher(
+  self : ServerState,
+  pane_watcher : @runtime.PaneWatcher,
+) -> ServerState {
+  { ..self, pane_watcher, }
 }

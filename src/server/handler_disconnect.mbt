@@ -117,6 +117,29 @@ fn ServerState::clear_agent_runtime_tracking(
   self.stop_subscribe(agent_id)
   self.pending_disconnects.remove(agent_id)
   self.pending_disconnect_soft_notified.remove(agent_id)
+  self.worker_no_handoff_prodded_at.remove(agent_id)
+  self.worker_no_handoff_stalled_emitted.remove(agent_id)
+  self.handoff_delivered.remove(agent_id)
+  self.worker_no_handoff_exit_emitted.remove(agent_id)
+}
+
+///|
+pub fn ServerState::mark_handoff_delivered(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.handoff_delivered.set(agent_id, true)
+  self.worker_no_handoff_prodded_at.remove(agent_id)
+  self.worker_no_handoff_stalled_emitted.remove(agent_id)
+  self.worker_no_handoff_exit_emitted.remove(agent_id)
+}
+
+///|
+fn ServerState::handoff_was_delivered(
+  self : ServerState,
+  agent_id : String,
+) -> Bool {
+  self.handoff_delivered.contains(agent_id)
 }
 
 ///|
@@ -859,6 +882,175 @@ pub async fn ServerState::interpret_teardown_effects(
 }
 
 ///|
+fn nonnegative_elapsed(now : Int64, then : Int64) -> Int64 {
+  if now >= then {
+    now - then
+  } else {
+    0L
+  }
+}
+
+///|
+fn worker_no_handoff_terminal_process(
+  lifecycle : @phase.AgentLifecycle,
+) -> Bool {
+  match lifecycle.process {
+    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => true
+    _ => false
+  }
+}
+
+///|
+async fn ServerState::prod_worker_no_handoff(
+  self : ServerState,
+  agent : @types.Agent,
+  now : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  if self.worker_no_handoff_prodded_at.contains(agent_id) ||
+    self.handoff_was_delivered(agent_id) {
+    return
+  }
+  let target = match agent.terminal_target {
+    Some(t) => t
+    None => return
+  }
+  self.worker_no_handoff_prodded_at.set(agent_id, now)
+  ignore(
+    @tools.execute_delivery(
+      @message.DeliveryMethod::LocalTerminalInput(
+        target, worker_no_handoff_prod_text,
+      ),
+      runner,
+      project_dir=self.config.project_dir,
+    ),
+  ) catch {
+    _ => ()
+  }
+}
+
+///|
+async fn ServerState::emit_worker_stalled_no_handoff(
+  self : ServerState,
+  agent : @types.Agent,
+  idle_sec : Int64,
+  screen : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  if self.worker_no_handoff_stalled_emitted.contains(agent_id) ||
+    self.handoff_was_delivered(agent_id) {
+    return
+  }
+  self.worker_no_handoff_stalled_emitted.set(agent_id, true)
+  let message = worker_stalled_no_handoff_message(
+    @phase.extract_slug(agent_id),
+    idle_sec,
+    screen,
+  )
+  ignore(
+    self.durable_deliver_to_parent(
+      agent_id,
+      message,
+      @types.Status::Failure,
+      runner,
+    ),
+  ) catch {
+    _ => ()
+  }
+}
+
+///|
+async fn ServerState::emit_worker_exited_without_notify_if_needed(
+  self : ServerState,
+  agent : @types.Agent,
+  screen : String?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  if agent.role != @types.Role::Worker {
+    return
+  }
+  let agent_id = agent.agent_id.to_string()
+  if self.handoff_was_delivered(agent_id) ||
+    self.worker_no_handoff_exit_emitted.contains(agent_id) {
+    return
+  }
+  self.worker_no_handoff_exit_emitted.set(agent_id, true)
+  let screen_text = match screen {
+    Some(s) => s
+    None =>
+      @runtime.extract_viewport_text(self.pane_watcher.read_viewport(agent_id))
+  }
+  let message = worker_exited_without_notify_message(
+    @phase.extract_slug(agent_id),
+    screen_text,
+  )
+  ignore(
+    self.durable_deliver_to_parent(
+      agent_id,
+      message,
+      @types.Status::Failure,
+      runner,
+    ),
+  ) catch {
+    _ => ()
+  }
+}
+
+///|
+async fn ServerState::check_worker_no_handoff(
+  self : ServerState,
+  agent : @types.Agent,
+  now : Int64,
+  observation : @runtime.PaneIdleObservation,
+  prod_sec : Int64,
+  escalate_sec : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  if agent.role != @types.Role::Worker ||
+    self.handoff_was_delivered(agent_id) ||
+    prod_sec <= 0L {
+    return
+  }
+  let prodded_at = self.worker_no_handoff_prodded_at.get(agent_id)
+  let prodded = prodded_at != None
+  let idle_timeout = if prodded { escalate_sec } else { prod_sec }
+  if idle_timeout <= 0L {
+    return
+  }
+  if observation.idle_sec < idle_timeout {
+    return
+  }
+  let decision_idle_sec = match prodded_at {
+    Some(t) => nonnegative_elapsed(now, t)
+    None => observation.idle_sec
+  }
+  match
+    worker_no_handoff_decision(
+      agent.role,
+      decision_idle_sec,
+      self.handoff_was_delivered(agent_id),
+      prodded,
+      self.worker_no_handoff_stalled_emitted.contains(agent_id),
+      prod_sec,
+      escalate_sec,
+    ) {
+    WorkerNoHandoffDecision::Prod =>
+      self.prod_worker_no_handoff(agent, now, runner)
+    WorkerNoHandoffDecision::EmitStalled =>
+      self.emit_worker_stalled_no_handoff(
+        agent,
+        observation.idle_sec,
+        observation.screen,
+        runner,
+      )
+    WorkerNoHandoffDecision::DoNothing => ()
+  }
+}
+
+///|
 /// Check for idle agents by dumping pane screens and comparing hashes.
 /// If a pane's screen hasn't changed for `timeout` seconds, kill the agent.
 pub async fn ServerState::check_idle_agents(
@@ -866,6 +1058,8 @@ pub async fn ServerState::check_idle_agents(
   now : Int64,
   timeout : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  worker_no_handoff_prod_sec? : Int64 = 120L,
+  worker_no_handoff_escalate_sec? : Int64 = 120L,
 ) -> Unit {
   let agent_ids = self.pane_watcher.watched_agents()
   for agent_id in agent_ids {
@@ -895,10 +1089,21 @@ pub async fn ServerState::check_idle_agents(
       None => continue
     }
 
-    // Check if idle too long
-    match self.pane_watcher.check_idle(agent_id, now, timeout) {
-      Some(screen) => {
-        ignore(screen) // We could extract failure reason from screen if desired, but watchdog just kills it
+    // Read and parse the pane snapshot once for all idle decisions this tick.
+    match self.pane_watcher.observe_idle(agent_id, now) {
+      Some(observation) => {
+        self.check_worker_no_handoff(
+          agent, now, observation, worker_no_handoff_prod_sec, worker_no_handoff_escalate_sec,
+          runner,
+        )
+        if observation.idle_sec < timeout {
+          continue
+        }
+        self.emit_worker_exited_without_notify_if_needed(
+          agent,
+          Some(observation.screen),
+          runner,
+        )
         // Kill the agent
         @moontrace.warn("watchdog killing idle agent", fields=[
           @moontrace.field("agent", agent_id),
@@ -996,6 +1201,36 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
 }
 
 ///|
+test "clear_agent_runtime_tracking clears worker no-handoff maps" {
+  let project_dir = "/tmp/choir-clear-worker-handoff-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_recovery_provider(),
+  )
+  let agent_id = "main.worker"
+  state.pending_disconnects.set(agent_id, 1L)
+  state.pending_disconnect_soft_notified.set(agent_id, true)
+  state.handoff_delivered.set(agent_id, true)
+  state.worker_no_handoff_prodded_at.set(agent_id, 2L)
+  state.worker_no_handoff_stalled_emitted.set(agent_id, true)
+  state.worker_no_handoff_exit_emitted.set(agent_id, true)
+
+  state.clear_agent_runtime_tracking(agent_id)
+
+  assert_eq(state.pending_disconnects.contains(agent_id), false)
+  assert_eq(state.pending_disconnect_soft_notified.contains(agent_id), false)
+  assert_eq(state.handoff_delivered.contains(agent_id), false)
+  assert_eq(state.worker_no_handoff_prodded_at.contains(agent_id), false)
+  assert_eq(state.worker_no_handoff_stalled_emitted.contains(agent_id), false)
+  assert_eq(state.worker_no_handoff_exit_emitted.contains(agent_id), false)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 pub fn ServerState::list_agents(self : ServerState) -> Array[@types.Agent] {
   self.registry.list()
 }
@@ -1036,13 +1271,21 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
   }
   let lifecycle = self.current_lifecycle(agent_id)
   match agent.state {
-    Done | Failed =>
+    Done | Failed => {
+      if !worker_no_handoff_terminal_process(lifecycle) {
+        self.emit_worker_exited_without_notify_if_needed(agent, None, runner)
+      }
       match agent.terminal_target {
         Some(target) =>
           self.interpret_teardown_effects([CloseTerminal(target)], runner)
         None => ()
       }
+      self.clear_agent_runtime_tracking(agent_id)
+    }
     Completing => {
+      if !worker_no_handoff_terminal_process(lifecycle) {
+        self.emit_worker_exited_without_notify_if_needed(agent, None, runner)
+      }
       let exit_reason = match lifecycle.process {
         @phase.ProcessState::Finalizing(reason=@phase.FinalizeReason::Merged) =>
           @types.ExitReason::Merged
@@ -1068,7 +1311,12 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
       } else {
         match @phase.lifecycle_disconnect_policy(lifecycle) {
           @phase.LifecycleDisconnectPolicy::Preserve => ()
-          @phase.LifecycleDisconnectPolicy::FinalizeDone(..) =>
+          @phase.LifecycleDisconnectPolicy::FinalizeDone(..) => {
+            self.emit_worker_exited_without_notify_if_needed(
+              agent,
+              None,
+              runner,
+            )
             self.finalize_agent_with_runner(
               agent_id,
               @types.ExitReason::Disconnected,
@@ -1077,6 +1325,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
               close_target=false,
               remove_worktree=false,
             )
+          }
           @phase.LifecycleDisconnectPolicy::Ignore => ()
           @phase.LifecycleDisconnectPolicy::Fail(reason=default_reason) => {
             let confirmation = self.disconnect_confirmation_signals(
@@ -1128,6 +1377,11 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
                 ignore(self.poller.write_state_file(self.config.project_dir))
               }
               None => {
+                self.emit_worker_exited_without_notify_if_needed(
+                  agent,
+                  None,
+                  runner,
+                )
                 let snapshot = self.pane_watcher.read_viewport(agent_id)
                 let screen = @runtime.extract_viewport_text(snapshot)
                 let (reason, msg) = if screen != "" {
