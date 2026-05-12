@@ -341,7 +341,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
     None,
     Some(reg),
     mock_runner_all_ok,
-    delivery_log_now_ms=now_ms,
+    now_ms_fn=fn() { now_ms },
   )
   match got {
     @types.Response::Ok(fields) => {

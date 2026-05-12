@@ -226,7 +226,10 @@ pub async fn interpret_file_pr_post_success(
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   sleep_fn? : async (Int) -> Unit = @async.sleep,
-  delivery_log_now_ms? : Int64 = @env.now().reinterpret_as_int64(),
+  // Clock for delivery-log line timestamps. Called fresh at each append site —
+  // not captured once — so writes that happen after slow `gh`/delivery commands
+  // record their real wall-clock time rather than a stale snapshot.
+  now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
 ) -> @types.Response {
   match effects.poller_track {
     Some(tracked_pr) =>
@@ -256,7 +259,7 @@ pub async fn interpret_file_pr_post_success(
         ),
         tracked_agent_id,
         notify_message,
-        now_ms=delivery_log_now_ms,
+        now_ms=now_ms_fn(),
       )
       match plan {
         FilePrAutoNotifyPlan::Deliver(delivery~, delivery_log_append~) => {
@@ -272,7 +275,7 @@ pub async fn interpret_file_pr_post_success(
                   delivery_log_path,
                   file_pr_auto_notify_delivery_failed_log_append(
                     e.message(),
-                    now_ms=delivery_log_now_ms,
+                    now_ms=now_ms_fn(),
                   ),
                 ),
               )
@@ -340,7 +343,7 @@ pub async fn interpret_file_pr_post_success(
                 "[file_pr] copilot_review_comment failed pr=" +
                 pr_number.to_string() +
                 err_part_c,
-                now_ms=delivery_log_now_ms,
+                now_ms=now_ms_fn(),
               ),
             ),
           )
@@ -388,7 +391,7 @@ pub async fn interpret_file_pr_post_success(
             "[file_pr] copilot_reviewer_request failed pr=" +
             pr_number.to_string() +
             err_part,
-            now_ms=delivery_log_now_ms,
+            now_ms=now_ms_fn(),
           ),
         ),
       )
