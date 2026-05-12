@@ -163,6 +163,10 @@ fn spawn_worker_props() -> Array[SchemaProp] {
     { name: "read_first", desc: "Newline-separated paths to read first" },
     { name: "steps", desc: "Newline-separated implementation steps" },
     { name: "verify", desc: "Newline-separated verification commands" },
+    {
+      name: "verify_satisfied_by_ci",
+      desc: "Optional boolean: green CI on the merge HEAD satisfies required verify commands (default true)",
+    },
     { name: "done_criteria", desc: "Newline-separated acceptance criteria" },
     {
       name: "boundary",
@@ -220,6 +224,10 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "read_first", desc: "Newline-separated paths to read first" },
         { name: "steps", desc: "Newline-separated implementation steps" },
         { name: "verify", desc: "Newline-separated verification commands" },
+        {
+          name: "verify_satisfied_by_ci",
+          desc: "Optional boolean: green CI on the merge HEAD satisfies required verify commands (default true)",
+        },
         { name: "done_criteria", desc: "Newline-separated acceptance criteria" },
         {
           name: "boundary",

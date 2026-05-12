@@ -452,18 +452,27 @@ pub fn replay_agent_evidence_records(
 }
 
 ///|
-pub fn verify_results_for_required(
-  project_dir : String,
-  agent_id : String,
+fn verify_results_for_required_from_events(
+  events : Array[EvidenceEvent],
   required : Array[String],
 ) -> Array[@types.VerifyCheckResult] {
   if required.length() == 0 {
     return []
   }
-  let bundle = evaluation_bundle_from_evidence(
-    replay_agent_evidence_records(project_dir, agent_id),
-  )
+  let bundle = evaluation_bundle_from_evidence(events)
   @types.evaluation_verify_results_for_required(required, bundle.signals)
+}
+
+///|
+pub fn verify_results_for_required(
+  project_dir : String,
+  agent_id : String,
+  required : Array[String],
+) -> Array[@types.VerifyCheckResult] {
+  verify_results_for_required_from_events(
+    replay_agent_evidence_records(project_dir, agent_id),
+    required,
+  )
 }
 
 ///|
@@ -498,13 +507,12 @@ fn verify_result_for_head(
 }
 
 ///|
-pub fn verify_results_for_required_at_head(
-  project_dir : String,
-  agent_id : String,
+fn verify_results_for_required_at_head_from_events(
+  events : Array[EvidenceEvent],
   required : Array[String],
   head_sha : String,
 ) -> Array[@types.VerifyCheckResult] {
-  let results = verify_results_for_required(project_dir, agent_id, required)
+  let results = verify_results_for_required_from_events(events, required)
   if head_sha == "" {
     return results
   }
@@ -513,6 +521,75 @@ pub fn verify_results_for_required_at_head(
     stamped.push(verify_result_for_head(result, head_sha))
   }
   stamped
+}
+
+///|
+pub fn verify_results_for_required_at_head(
+  project_dir : String,
+  agent_id : String,
+  required : Array[String],
+  head_sha : String,
+) -> Array[@types.VerifyCheckResult] {
+  verify_results_for_required_at_head_from_events(
+    replay_agent_evidence_records(project_dir, agent_id),
+    required,
+    head_sha,
+  )
+}
+
+///|
+fn latest_ci_observed_matches_head(
+  events : Array[EvidenceEvent],
+  head_sha : String,
+) -> Bool {
+  let mut latest_status : EvidenceCiStatus? = None
+  let mut latest_head_sha : String? = None
+  for event in events {
+    match event {
+      CiObserved(status~, head_sha~) => {
+        latest_status = Some(status)
+        latest_head_sha = head_sha
+      }
+      _ => ()
+    }
+  }
+  match (latest_status, latest_head_sha) {
+    (Some(Success), Some(observed_head)) => observed_head == head_sha
+    _ => false
+  }
+}
+
+///|
+pub fn verify_results_for_required_at_head_with_ci(
+  project_dir : String,
+  agent_id : String,
+  required : Array[String],
+  head_sha : String,
+  verify_satisfied_by_ci : Bool,
+) -> Array[@types.VerifyCheckResult] {
+  let events = replay_agent_evidence_records(project_dir, agent_id)
+  let results = verify_results_for_required_at_head_from_events(
+    events, required, head_sha,
+  )
+  if !verify_satisfied_by_ci || head_sha == "" {
+    return results
+  }
+  if !latest_ci_observed_matches_head(events, head_sha) {
+    return results
+  }
+  let upgraded : Array[@types.VerifyCheckResult] = []
+  for result in results {
+    if result.status == @types.VerifyStatus::NotObserved {
+      upgraded.push({
+        ..result,
+        status: @types.VerifyStatus::Passed,
+        details: "satisfied by CI rollup success at " + head_sha,
+      })
+    } else {
+      upgraded.push(result)
+    }
+  }
+  upgraded
 }
 
 ///|

@@ -88,6 +88,7 @@ fn merge_pr_test_tracked(
 fn merge_pr_test_write_verify_contract(
   project_dir : String,
   verify : Array[String],
+  verify_satisfied_by_ci? : Bool = true,
 ) -> String {
   let worktree = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.create_dir_all(worktree + "/.choir"))
@@ -105,6 +106,7 @@ fn merge_pr_test_write_verify_contract(
       ..@types.TaskContract::empty(),
       goal: "merge verified work",
       verify,
+      verify_satisfied_by_ci,
     }),
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main.tl",
@@ -680,6 +682,135 @@ async test "interpret_merge_pr_preflight rejects stale verify evidence" {
 }
 
 ///|
+async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
+  let project_dir = "/tmp/choir-mpf-ci-verify-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let worktree = merge_pr_test_write_verify_contract(project_dir, [
+    "moon test --target native",
+  ])
+  let reg = merge_pr_test_registry(worktree)
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::CiObserved(
+        status=@evidence.EvidenceCiStatus::Success,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  })
+  let got = interpret_merge_pr_preflight(
+    false,
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    Some(reg),
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) =>
+      fail("expected CI evidence to satisfy verify policy: " + e.message())
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or stale" {
+  let strict_dir = "/tmp/choir-mpf-ci-verify-strict-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(strict_dir))
+  let strict_worktree = merge_pr_test_write_verify_contract(
+    strict_dir,
+    ["moon test --target native"],
+    verify_satisfied_by_ci=false,
+  )
+  let strict_reg = merge_pr_test_registry(strict_worktree)
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      strict_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::CiObserved(
+        status=@evidence.EvidenceCiStatus::Success,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let strict_ps = @poller.PollerState::new()
+  strict_ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  })
+  let strict = interpret_merge_pr_preflight(
+    false,
+    7,
+    Some(strict_ps),
+    strict_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    Some(strict_reg),
+  )
+  match strict {
+    Err(e) => assert_true(e.message().contains("local verify not observed"))
+    Ok(_) => fail("expected strict verify policy to require local evidence")
+  }
+  let stale_dir = "/tmp/choir-mpf-ci-verify-stale-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(stale_dir))
+  let stale_worktree = merge_pr_test_write_verify_contract(stale_dir, [
+    "moon test --target native",
+  ])
+  let stale_reg = merge_pr_test_registry(stale_worktree)
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      stale_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::CiObserved(
+        status=@evidence.EvidenceCiStatus::Success,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let stale_ps = @poller.PollerState::new()
+  stale_ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-y",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+  })
+  let stale = interpret_merge_pr_preflight(
+    false,
+    7,
+    Some(stale_ps),
+    stale_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    Some(stale_reg),
+  )
+  match stale {
+    Err(e) => assert_true(e.message().contains("local verify not observed"))
+    Ok(_) => fail("expected stale CI head to require local evidence")
+  }
+  ignore(@sys.rm_rf(strict_dir))
+  ignore(@sys.rm_rf(stale_dir))
+}
+
+///|
 async fn mock_preflight_capture_one_unresolved_thread(
   cmd : @workspace.Command,
 ) -> (Int, String) {
@@ -933,6 +1064,61 @@ test "format_tl_pr_recheck_summary policy needs human when required verify is mi
   assert_true(s.contains("Advisory evaluation verdict: needs_human"))
   assert_true(s.contains("Merge policy decision: needs_human"))
   assert_true(s.contains("local verify not observed"))
+}
+
+///|
+test "format_tl_pr_recheck_summary treats matching CI evidence as verify when enabled" {
+  let project_dir = "/tmp/choir-recheck-ci-verify-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    copilot_issue_comment_seen: true,
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+    verify_satisfied_by_ci: true,
+  }
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::CiObserved(
+        status=@evidence.EvidenceCiStatus::Success,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let ready = format_tl_pr_recheck_summary(
+    t,
+    project_dir,
+    Some(0),
+    task_contract=Some(contract),
+  )
+  assert_true(ready.contains("Advisory evaluation verdict: ready"))
+  assert_true(ready.contains("Merge policy decision: merge_now"))
+  let strict = format_tl_pr_recheck_summary(
+    t,
+    project_dir,
+    Some(0),
+    task_contract=Some({ ..contract, verify_satisfied_by_ci: false }),
+  )
+  assert_true(strict.contains("Advisory evaluation verdict: needs_human"))
+  assert_true(strict.contains("local verify not observed"))
+  let stale = format_tl_pr_recheck_summary(
+    { ..t, last_sha: "head-y" },
+    project_dir,
+    Some(0),
+    task_contract=Some(contract),
+  )
+  assert_true(stale.contains("Advisory evaluation verdict: needs_human"))
+  assert_true(stale.contains("local verify not observed"))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

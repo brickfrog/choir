@@ -447,7 +447,78 @@ pub(all) struct TaskContract {
   beads_issue_id : String?
   review_context : String?
   verify : Array[String]
-} derive(Debug, Eq, ToJson, FromJson)
+  verify_satisfied_by_ci : Bool
+} derive(Debug, Eq, ToJson)
+
+///|
+pub impl FromJson for TaskContract with from_json(json, path) {
+  match json {
+    Object(fields) => {
+      let goal : String = match fields.get("goal") {
+        Some(value) => @json.from_json(value, path=path.add_key("goal"))
+        None => ""
+      }
+      let scope : Array[String] = match fields.get("scope") {
+        Some(value) => @json.from_json(value, path=path.add_key("scope"))
+        None => []
+      }
+      let acceptance_checks : Array[String] = match
+        fields.get("acceptance_checks") {
+        Some(value) =>
+          @json.from_json(value, path=path.add_key("acceptance_checks"))
+        None => []
+      }
+      let constraints : Array[String] = match fields.get("constraints") {
+        Some(value) => @json.from_json(value, path=path.add_key("constraints"))
+        None => []
+      }
+      let non_goals : Array[String] = match fields.get("non_goals") {
+        Some(value) => @json.from_json(value, path=path.add_key("non_goals"))
+        None => []
+      }
+      let beads_issue_id : String? = match fields.get("beads_issue_id") {
+        None | Some(Null) => None
+        Some(value) =>
+          Some(@json.from_json(value, path=path.add_key("beads_issue_id")))
+      }
+      let review_context : String? = match fields.get("review_context") {
+        None | Some(Null) => None
+        Some(value) =>
+          Some(@json.from_json(value, path=path.add_key("review_context")))
+      }
+      let verify : Array[String] = match fields.get("verify") {
+        Some(value) => @json.from_json(value, path=path.add_key("verify"))
+        None => []
+      }
+      let verify_satisfied_by_ci : Bool = match
+        fields.get("verify_satisfied_by_ci") {
+        None | Some(Null) => true
+        Some(value) =>
+          @json.from_json(value, path=path.add_key("verify_satisfied_by_ci"))
+      }
+      {
+        goal,
+        scope,
+        acceptance_checks,
+        constraints,
+        non_goals,
+        beads_issue_id,
+        review_context,
+        verify,
+        verify_satisfied_by_ci,
+      }
+    }
+    _ =>
+      raise @json.JsonDecodeError(
+        (path, "TaskContract::from_json: expected object"),
+      )
+  }
+}
+
+///|
+pub fn task_contract_verify_satisfied_by_ci(contract : TaskContract) -> Bool {
+  contract.verify_satisfied_by_ci
+}
 
 ///|
 /// Normalized review rollup used by evaluation helpers.
@@ -531,6 +602,7 @@ pub fn TaskContract::empty() -> TaskContract {
     beads_issue_id: None,
     review_context: None,
     verify: [],
+    verify_satisfied_by_ci: true,
   }
 }
 
@@ -543,7 +615,8 @@ pub fn TaskContract::is_empty(self : TaskContract) -> Bool {
   self.non_goals.length() == 0 &&
   self.beads_issue_id is None &&
   self.review_context is None &&
-  self.verify.length() == 0
+  self.verify.length() == 0 &&
+  self.verify_satisfied_by_ci
 }
 
 ///|

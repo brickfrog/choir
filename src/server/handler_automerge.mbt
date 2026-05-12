@@ -238,11 +238,12 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   )
   let verify_results = match task_contract {
     Some(contract) =>
-      @evidence.verify_results_for_required_at_head(
+      @evidence.verify_results_for_required_at_head_with_ci(
         state.config.project_dir,
         tracked.agent_id,
         contract.verify,
         tracked.last_sha,
+        @types.task_contract_verify_satisfied_by_ci(contract),
       )
     None => []
   }

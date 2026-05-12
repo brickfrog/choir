@@ -165,6 +165,124 @@ test "verify_results_for_required_at_head treats stale evidence as unobserved" {
 }
 
 ///|
+test "verify_results_for_required_at_head_with_ci upgrades only matching CI success" {
+  let project_dir = "/tmp/choir-evidence-ci-verify-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(
+    append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      100L,
+      EvidenceEvent::CiObserved(
+        status=EvidenceCiStatus::Success,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let upgraded = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    true,
+  )
+  assert_eq(upgraded.length(), 1)
+  assert_true(upgraded[0].status == @types.VerifyStatus::Passed)
+  assert_eq(upgraded[0].details, "satisfied by CI rollup success at head-x")
+  let mismatch = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-y",
+    true,
+  )
+  assert_true(mismatch[0].status == @types.VerifyStatus::NotObserved)
+  let flag_false = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    false,
+  )
+  assert_true(flag_false[0].status == @types.VerifyStatus::NotObserved)
+  let empty_head = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "",
+    true,
+  )
+  assert_true(empty_head[0].status == @types.VerifyStatus::NotObserved)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "verify_results_for_required_at_head_with_ci preserves failures and non-success CI" {
+  let project_dir = "/tmp/choir-evidence-ci-no-upgrade-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(
+    append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      100L,
+      EvidenceEvent::VerifyResultObserved(
+        name="moon test --target native",
+        ok=false,
+        details=Some("exit: 1\nhead: head-x"),
+      ),
+    ),
+  )
+  assert_true(
+    append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      101L,
+      EvidenceEvent::CiObserved(
+        status=EvidenceCiStatus::Success,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let failed = verify_results_for_required_at_head_with_ci(
+    project_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    true,
+  )
+  assert_true(failed[0].status == @types.VerifyStatus::Failed)
+  let non_success_dir = project_dir + "-non-success"
+  ignore(@sys.rm_rf(non_success_dir))
+  assert_true(
+    append_agent_evidence_event(
+      @sys.append_file_sync,
+      non_success_dir,
+      "main.leaf",
+      100L,
+      EvidenceEvent::CiObserved(
+        status=EvidenceCiStatus::Failure,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let non_success = verify_results_for_required_at_head_with_ci(
+    non_success_dir,
+    "main.leaf",
+    ["moon test --target native"],
+    "head-x",
+    true,
+  )
+  assert_true(non_success[0].status == @types.VerifyStatus::NotObserved)
+  ignore(@sys.rm_rf(project_dir))
+  ignore(@sys.rm_rf(non_success_dir))
+}
+
+///|
 test "evidence load skips blank and invalid lines" {
   let content =
     #|{"ts":1,"type":"evidence.copilot_issue_comment_observed","agent_id":"a","data":{}}

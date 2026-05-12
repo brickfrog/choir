@@ -129,6 +129,26 @@ fn parse_truthy_flag(s : String) -> Bool {
 }
 
 ///|
+fn parse_default_true_bool_flag(value : String?) -> Bool {
+  match value {
+    None => true
+    Some(raw) => {
+      let lowered = raw.trim().to_lower()
+      if lowered == "" {
+        return true
+      }
+      if lowered == "false" ||
+        lowered == "0" ||
+        lowered == "no" ||
+        lowered == "off" {
+        return false
+      }
+      lowered == "true" || lowered == "1" || lowered == "yes" || lowered == "on"
+    }
+  }
+}
+
+///|
 pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
   let task = parse_optional_trimmed(args.get("task")).unwrap_or(
     parse_optional_trimmed(args.get("goal")).unwrap_or(""),
@@ -164,6 +184,9 @@ pub fn PromptSpec::from_map(args : Map[String, String]) -> PromptSpec {
       beads_issue_id,
       review_context,
       verify,
+      verify_satisfied_by_ci: parse_default_true_bool_flag(
+        args.get("verify_satisfied_by_ci"),
+      ),
     },
     boundary: split_nonempty_lines(args.get("boundary").unwrap_or("")),
     read_first: split_nonempty_lines(args.get("read_first").unwrap_or("")),
