@@ -515,7 +515,15 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
       }
       trimmed
     }
-    None => next_goal_nonce(started_unix_sec)
+    // A legacy KV file (written before goals carried a nonce) gets a FIXED
+    // synthetic nonce, not next_goal_nonce(): the judge re-reads the KV
+    // immediately before each write and compares slug+nonce, so a fresh
+    // counter-derived nonce on every read would never match itself and the
+    // legacy goal would stay inert forever. There is only one active goal
+    // per session, so a constant `"legacy"` is collision-free for the keying
+    // (slug + started_unix_sec + nonce). The judge's first write-back then
+    // re-persists it with this nonce, upgrading the file in place.
+    None => "legacy"
   }
   let last_eval = match obj.get("last_eval") {
     None | Some(Null) => None

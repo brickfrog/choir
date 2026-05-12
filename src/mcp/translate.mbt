@@ -512,7 +512,7 @@ fn tool_defs() -> Array[CatalogTool] {
       props: [
         {
           name: "evaluate",
-          desc: "When true, run checks now and persist the last evaluation",
+          desc: "When true, run the goal's checks now and return the fresh result (read-only — only the goal judge persists last_eval, not this call)",
         },
       ],
       required: [],

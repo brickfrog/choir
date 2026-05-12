@@ -157,15 +157,18 @@ test "goal JSON rejects empty shell command checks" {
 }
 
 ///|
-test "goal JSON synthesizes missing nonce and rejects empty nonce" {
+test "goal JSON synthesizes a STABLE legacy nonce for missing-nonce KV, rejects empty nonce" {
   let missing_nonce = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"true\"}],\"started_unix_sec\":1,\"last_eval\":null}"
-  match Goal::from_json_string(missing_nonce) {
-    Ok(goal) => {
-      assert_eq(goal.slug, "x")
-      assert_true(goal.nonce.has_prefix("00000001-"))
-    }
-    Err(e) => fail(e.message())
-  }
+  // A legacy (no-nonce) KV file must get the SAME synthetic nonce on every
+  // read — the judge re-reads the KV before each write and compares
+  // slug+nonce, so a counter-derived nonce would never match itself and the
+  // legacy goal would stay inert. One active goal per session => constant
+  // "legacy" is collision-free for the keying.
+  let g1 = Goal::from_json_string(missing_nonce).unwrap()
+  let g2 = Goal::from_json_string(missing_nonce).unwrap()
+  assert_eq(g1.slug, "x")
+  assert_eq(g1.nonce, "legacy")
+  assert_eq(g1.nonce, g2.nonce)
   let empty_nonce = "{\"slug\":\"x\",\"nonce\":\"  \",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"true\"}],\"started_unix_sec\":1,\"last_eval\":null}"
   match Goal::from_json_string(empty_nonce) {
     Err(e) => assert_true(e.message().contains("goal nonce cannot be empty"))
