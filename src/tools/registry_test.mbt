@@ -438,6 +438,22 @@ async test "handle_request with wrong role returns Err" {
 }
 
 ///|
+async test "dispatch_call rejects goal tools for non TL roles" {
+  let resp = @tools.dispatch_call(
+    ToolCall::{
+      role: @types.Role::Dev,
+      name: "goal_set",
+      args: { "input": "ship it", "verify": "true" },
+    },
+    project_dir="/repo",
+  )
+  match resp.error_message() {
+    Some(msg) => assert_eq(msg, "role dev cannot call goal_set")
+    None => fail("expected dispatch_call goal_set permission denial")
+  }
+}
+
+///|
 async test "handle_request with unknown tool returns Err" {
   let reg = @tools.ToolRegistry::new()
   let req = @types.Request::{

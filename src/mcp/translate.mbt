@@ -486,6 +486,38 @@ fn tool_defs() -> Array[CatalogTool] {
       required: [],
     },
     {
+      name: "goal_set",
+      description: "Set or supersede the active TL goal for this session",
+      props: [
+        {
+          name: "input",
+          desc: "Goal source: generated Beads issue ID (for example choir-kqv or choir-7uc.1) or freeform text",
+        },
+        {
+          name: "verify",
+          desc: "Optional JSON array or newline-separated shell commands; exit 0 means the check passes",
+        },
+      ],
+      required: ["input"],
+    },
+    {
+      name: "goal_clear",
+      description: "Clear the active TL goal for this session",
+      props: [],
+      required: [],
+    },
+    {
+      name: "goal_status",
+      description: "Inspect the active TL goal for this session",
+      props: [
+        {
+          name: "evaluate",
+          desc: "When true, run the goal's checks now and return the fresh result (read-only — only the goal judge persists last_eval, not this call)",
+        },
+      ],
+      required: [],
+    },
+    {
       name: "fork_session",
       description: "Create a new named session directory",
       props: [{ name: "name", desc: "Session name (slug)" }],
