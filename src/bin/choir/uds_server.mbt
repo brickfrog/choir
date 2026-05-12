@@ -26,6 +26,12 @@ struct ServeUDSClient {
   mut buf : FixedArray[Byte]
   mut read_pos : Int
   mut connected_agent_id : String?
+  // Set on `register`; tracked so a disconnect log line names *which* agent
+  // dropped, what it last asked for, and how long it was connected — the
+  // contentless "UDS client disconnected written=N" told us nothing when the
+  // TL claude process died. See choir-u7v.
+  connected_at_sec : Int64
+  mut last_request_name : String?
 }
 
 ///|
@@ -35,6 +41,8 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
     buf: FixedArray::make(4096, (0 : Byte)),
     read_pos: 0,
     connected_agent_id: None,
+    connected_at_sec: @poller.now_sec(),
+    last_request_name: None,
   }
 }
 
@@ -199,6 +207,7 @@ async fn serve_handle_connection(
             let resp = state.handle(req) catch {
               e => {
                 @moontrace.error("handler error", fields=[
+                  @moontrace.field("request", req.name),
                   @moontrace.field("error", e.to_string()),
                 ])
                 @types.Response::Err("internal error: " + e.to_string())
@@ -277,9 +286,11 @@ async fn serve_handle_uds_connection(
             if req.req_method == "register" {
               client.connected_agent_id = lifecycle_agent_id_for_register(req)
             }
+            client.last_request_name = Some(req.name)
             let resp = state.handle(req) catch {
               e => {
                 @moontrace.error("handler error", fields=[
+                  @moontrace.field("request", req.name),
                   @moontrace.field("error", e.to_string()),
                 ])
                 @types.Response::Err("internal error: " + e.to_string())
@@ -329,7 +340,24 @@ fn serve_close_uds_client(
 ) -> Unit {
   @uds.close(client.fd)
   match client.connected_agent_id {
-    Some(agent_id) => state.schedule_disconnect(agent_id, @poller.now_sec())
+    Some(agent_id) => {
+      // Name the agent, its last request, and how long it was connected, so
+      // a dropped session (e.g. the TL claude process dying) is identifiable
+      // in the log instead of just "UDS client disconnected written=N".
+      // One-shot CLI clients have no agent_id and stay silent here.
+      @moontrace.info("agent connection closed", fields=[
+        @moontrace.field("agent", agent_id),
+        @moontrace.field(
+          "last_request",
+          client.last_request_name.unwrap_or("(none)"),
+        ),
+        @moontrace.field(
+          "connected_sec",
+          (@poller.now_sec() - client.connected_at_sec).to_string(),
+        ),
+      ])
+      state.schedule_disconnect(agent_id, @poller.now_sec())
+    }
     None => ()
   }
 }
