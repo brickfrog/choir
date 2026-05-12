@@ -302,7 +302,16 @@ fn GoalCheck::from_goal_json(json : Json) -> Result[GoalCheck, ChoirError] {
   match tag {
     "shell" =>
       match obj.get("command") {
-        Some(String(command)) => Ok(GoalCheck::ShellCommand(command))
+        Some(String(command)) => {
+          let trimmed = command.trim().to_owned()
+          if trimmed == "" {
+            Err(
+              goal_validation_error("shell goal check command cannot be empty"),
+            )
+          } else {
+            Ok(GoalCheck::ShellCommand(trimmed))
+          }
+        }
         _ => Err(goal_validation_error("shell goal check missing command"))
       }
     "bead_closed" =>

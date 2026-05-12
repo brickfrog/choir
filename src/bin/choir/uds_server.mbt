@@ -335,6 +335,59 @@ fn serve_close_uds_client(
 }
 
 ///|
+fn serve_project_path(project_dir : String, rel : String) -> String {
+  if project_dir == "" || project_dir == "." {
+    rel
+  } else {
+    project_dir + "/" + rel
+  }
+}
+
+///|
+fn serve_cleanup_stale_goal_kv(
+  project_dir : String,
+  list_dir? : (String) -> Array[String] = @sys.list_dir,
+  delete_file? : (String) -> Bool = @sys.delete_file_sync,
+) -> Int {
+  let kv_dir = serve_project_path(project_dir, ".choir/kv")
+  let mut removed = 0
+  for name in list_dir(kv_dir) {
+    if name.has_prefix("tl-goal--") && name.has_suffix(".json") {
+      if delete_file(kv_dir + "/" + name) {
+        removed = removed + 1
+      }
+    }
+  }
+  removed
+}
+
+///|
+test "serve cleanup removes stale tl goal kv files only" {
+  let entries = [
+    "tl-goal--old.json", "tl-goal--other.json", "tl-goal--missing.tmp", "lifecycle--root.json",
+    "not-tl-goal--old.json",
+  ]
+  let listed : Array[String] = []
+  let deleted : Array[String] = []
+  let removed = serve_cleanup_stale_goal_kv(
+    ".",
+    list_dir=fn(path) {
+      listed.push(path)
+      entries
+    },
+    delete_file=fn(path) {
+      deleted.push(path)
+      true
+    },
+  )
+  assert_eq(listed, [".choir/kv"])
+  assert_eq(removed, 2)
+  assert_eq(deleted, [
+    ".choir/kv/tl-goal--old.json", ".choir/kv/tl-goal--other.json",
+  ])
+}
+
+///|
 fn serve_run() -> Unit {
   let config_content = @sys.read_file(".choir/config.toml")
   let config = match @config.parse_config(config_content) {
@@ -348,10 +401,12 @@ fn serve_run() -> Unit {
   @sys.register_cleanup_runtime_artifacts()
   match inherited_uds_fd {
     Some(_) => ()
-    None =>
-      // Clean stale runtime markers from previous sessions, but preserve recoverable
-      // worktrees/lifecycle/poller state so restart recovery can rehydrate agents.
+    // Clean stale runtime markers from previous sessions, but preserve recoverable
+    // worktrees/lifecycle/poller state so restart recovery can rehydrate agents.
+    None => {
       @sys.init_cleanup_runtime_artifacts_native()
+      ignore(serve_cleanup_stale_goal_kv(config.project_dir))
+    }
   }
   let provider = @server.make_recovery_provider()
   let state = @server.ServerState::new(config, provider)

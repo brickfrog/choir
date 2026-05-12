@@ -703,7 +703,6 @@ pub async fn dispatch(
   pr_review? : Bool = true,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
-  goal_note_superseded? : (String) -> Unit = goal_noop_note_superseded,
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1232,7 +1231,6 @@ pub async fn dispatch(
         @poller.now_sec(),
         goal_deliver~,
         goal_request_tick~,
-        goal_note_superseded~,
       )
     ToolRequest::GoalClear =>
       interpret_goal_clear(project_dir, session, read_file, delete_file)
@@ -1423,7 +1421,6 @@ pub async fn handle_request(
   pr_review? : Bool = true,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
-  goal_note_superseded? : (String) -> Unit = goal_noop_note_superseded,
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
@@ -1520,7 +1517,6 @@ pub async fn handle_request(
                   create_dir_all~,
                   goal_deliver~,
                   goal_request_tick~,
-                  goal_note_superseded~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -1577,6 +1573,33 @@ pub async fn fire_hook_async(
 }
 
 ///|
+fn dispatch_call_goal_gate_response(
+  role : @types.Role,
+  name : String,
+) -> @types.Response? {
+  let is_goal_tool = name == "goal_set" ||
+    name == "goal_clear" ||
+    name == "goal_status"
+  if !is_goal_tool {
+    if name.has_prefix("goal_") {
+      Some(
+        @types.Response::Err(@types.ChoirError::tool_not_found(name).message()),
+      )
+    } else {
+      None
+    }
+  } else if role == @types.Role::Root || role == @types.Role::TL {
+    None
+  } else {
+    Some(
+      @types.Response::Err(
+        @types.ChoirError::permission_denied(role.to_wire_string(), name).message(),
+      ),
+    )
+  }
+}
+
+///|
 /// CLI / test entrypoint for tool dispatch.
 pub async fn dispatch_call(
   call : ToolCall,
@@ -1605,7 +1628,6 @@ pub async fn dispatch_call(
   pr_review? : Bool = true,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
-  goal_note_superseded? : (String) -> Unit = goal_noop_note_superseded,
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
@@ -1635,39 +1657,43 @@ pub async fn dispatch_call(
       ) {
       Some(blocked) => blocked
       None =>
-        match parse_tool_request(call.name, call.role, project_dir, tool_args) {
-          Err(e) => @types.Response::Err(e.message())
-          Ok(tool_req) =>
-            dispatch(
-              tool_req,
-              project_dir~,
-              session~,
-              runner~,
-              git_capture~,
-              capture~,
-              bd_capture~,
-              ensure_branch_ready~,
-              ensure_pr~,
-              extra_mcp_servers_json~,
-              shell_command~,
-              listen_uds~,
-              listen_tcp~,
-              tcp_auth_token~,
-              registry~,
-              mutex_registry~,
-              poller_state~,
-              caller_id=tool_args_get(tool_args, "caller_id"),
-              pr_review~,
-              append_file~,
-              read_file~,
-              write_file_atomic~,
-              delete_file~,
-              path_exists~,
-              create_dir_all~,
-              goal_deliver~,
-              goal_request_tick~,
-              goal_note_superseded~,
-            )
+        match dispatch_call_goal_gate_response(call.role, call.name) {
+          Some(blocked) => blocked
+          None =>
+            match
+              parse_tool_request(call.name, call.role, project_dir, tool_args) {
+              Err(e) => @types.Response::Err(e.message())
+              Ok(tool_req) =>
+                dispatch(
+                  tool_req,
+                  project_dir~,
+                  session~,
+                  runner~,
+                  git_capture~,
+                  capture~,
+                  bd_capture~,
+                  ensure_branch_ready~,
+                  ensure_pr~,
+                  extra_mcp_servers_json~,
+                  shell_command~,
+                  listen_uds~,
+                  listen_tcp~,
+                  tcp_auth_token~,
+                  registry~,
+                  mutex_registry~,
+                  poller_state~,
+                  caller_id=tool_args_get(tool_args, "caller_id"),
+                  pr_review~,
+                  append_file~,
+                  read_file~,
+                  write_file_atomic~,
+                  delete_file~,
+                  path_exists~,
+                  create_dir_all~,
+                  goal_deliver~,
+                  goal_request_tick~,
+                )
+            }
         }
     }
   } catch {
