@@ -4,6 +4,11 @@ pub fn quote(s : String) -> String {
 }
 
 ///|
+pub fn delete_file_sync(path : String) -> Bool {
+  @sys.delete_file_sync(path)
+}
+
+///|
 /// Subcommand used only by `choir dev` hot-reload (`watchexec` / `entr`): build native then run `serve`.
 pub const DEV_RELOAD_SUBCOMMAND : String = "__dev_reload"
 

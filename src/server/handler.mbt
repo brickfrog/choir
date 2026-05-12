@@ -191,6 +191,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
       effective_req, runner, capture,
     ),
   )
+  if goal_judge_post_tool_trigger(effective_req, resp) {
+    self.request_goal_judge_tick()
+  }
 
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp)
