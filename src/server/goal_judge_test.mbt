@@ -237,6 +237,44 @@ async test "goal judge does not re-emit complete after clear failure" {
 }
 
 ///|
+async test "goal judge bounds completed goal memory after repeated clear failures" {
+  let judge = GoalJudgeState::new()
+  let mut current_goal = @types.Goal::new("x0", ["true"], 1L).unwrap()
+  let delivered : Array[String] = []
+  let evaluator = async fn(_goal : @types.Goal, now : Int64) {
+    @async.sleep(0)
+    goal_judge_test_eval(1, 1, "", now)
+  }
+  let deliver = async fn(message : String, _status : @types.Status) {
+    @async.sleep(0)
+    delivered.push(message)
+  }
+  for i = 0; i < 140; i = i + 1 {
+    current_goal = @types.Goal::new(
+      "x" + i.to_string(),
+      ["true"],
+      i.to_int64() + 1L,
+    ).unwrap()
+    let result = judge.tick_with(
+      i.to_int64() + 20L,
+      fn() { Ok(Some(current_goal)) },
+      fn(_updated : @types.Goal) { Ok(()) },
+      fn() { Err(@types.ChoirError::workspace_error("delete failed")) },
+      evaluator,
+      deliver,
+    )
+    match result {
+      Err(e) => assert_true(e.message().contains("delete failed"))
+      Ok(_) => fail("expected clear failure")
+    }
+  }
+  assert_eq(delivered.length(), 140)
+  assert_eq(judge.completed_goal_order.length(), 128)
+  assert_false(judge.completed_goal_keys.contains("x0@1"))
+  assert_true(judge.completed_goal_keys.contains("x139@140"))
+}
+
+///|
 async test "server consumes requested goal judge tick flag" {
   let project_dir = "/tmp/choir-goal-requested-tick-test-" +
     @sys.get_pid().to_string() +

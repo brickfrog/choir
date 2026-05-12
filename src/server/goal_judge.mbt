@@ -6,7 +6,11 @@ pub(all) struct GoalJudgeState {
   mut tick_running : Bool
   mut tick_requested : Bool
   completed_goal_keys : Map[String, Bool]
+  completed_goal_order : Array[String]
 }
+
+///|
+let goal_judge_completed_goal_key_limit : Int = 128
 
 ///|
 pub fn GoalJudgeState::new() -> GoalJudgeState {
@@ -17,6 +21,7 @@ pub fn GoalJudgeState::new() -> GoalJudgeState {
     tick_running: false,
     tick_requested: false,
     completed_goal_keys: {},
+    completed_goal_order: [],
   }
 }
 
@@ -105,7 +110,15 @@ fn GoalJudgeState::note_completed(
   self : GoalJudgeState,
   goal : @types.Goal,
 ) -> Unit {
-  self.completed_goal_keys.set(goal_judge_completion_key(goal), true)
+  let key = goal_judge_completion_key(goal)
+  if !self.completed_goal_keys.contains(key) {
+    self.completed_goal_order.push(key)
+  }
+  self.completed_goal_keys.set(key, true)
+  while self.completed_goal_order.length() > goal_judge_completed_goal_key_limit {
+    let old = self.completed_goal_order.remove(0)
+    self.completed_goal_keys.remove(old)
+  }
 }
 
 ///|
@@ -113,7 +126,16 @@ fn GoalJudgeState::forget_completed(
   self : GoalJudgeState,
   goal : @types.Goal,
 ) -> Unit {
-  self.completed_goal_keys.remove(goal_judge_completion_key(goal))
+  let key = goal_judge_completion_key(goal)
+  self.completed_goal_keys.remove(key)
+  let mut i = 0
+  while i < self.completed_goal_order.length() {
+    if self.completed_goal_order[i] == key {
+      ignore(self.completed_goal_order.remove(i))
+    } else {
+      i = i + 1
+    }
+  }
 }
 
 ///|

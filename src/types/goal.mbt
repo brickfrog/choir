@@ -44,6 +44,13 @@ fn goal_validation_error(message : String) -> ChoirError {
 }
 
 ///|
+fn goal_empty_checks_error() -> ChoirError {
+  goal_validation_error(
+    "a freeform goal needs at least one --verify <cmd>; or pass a bead id to inherit its acceptance.",
+  )
+}
+
+///|
 fn goal_json_null() -> Json {
   @json.parse("null") catch {
     _ => "".to_json()
@@ -376,11 +383,7 @@ pub fn Goal::new(
     }
   }
   if checks.length() == 0 {
-    return Err(
-      goal_validation_error(
-        "a freeform goal needs at least one --verify <cmd>; or pass a bead id to inherit its acceptance.",
-      ),
-    )
+    return Err(goal_empty_checks_error())
   }
   Ok({ slug: source.slug(), source, checks, started_unix_sec, last_eval: None })
 }
@@ -440,6 +443,9 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
       }
     Some(_) => return Err(goal_validation_error("goal checks must be an array"))
     None => return Err(goal_validation_error("goal missing checks"))
+  }
+  if checks.length() == 0 {
+    return Err(goal_empty_checks_error())
   }
   let started_unix_sec = match json_field_int64(obj, "started_unix_sec") {
     Some(value) => value

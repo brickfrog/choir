@@ -124,4 +124,16 @@ test "goal JSON reports wrong checks type separately from missing checks" {
     Err(e) => assert_true(e.message().contains("goal missing checks"))
     Ok(_) => fail("expected missing checks error")
   }
+  let empty = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[],\"started_unix_sec\":1,\"last_eval\":null}"
+  match Goal::from_json_string(empty) {
+    Err(e) =>
+      assert_true(
+        e
+        .message()
+        .contains(
+          "a freeform goal needs at least one --verify <cmd>; or pass a bead id to inherit its acceptance.",
+        ),
+      )
+    Ok(_) => fail("expected empty checks error")
+  }
 }
