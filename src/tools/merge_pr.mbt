@@ -1301,7 +1301,12 @@ fn merge_pr_leaf_cleanup_worktree_path(
         Some(reg) =>
           match (Some(reg.get(t.agent_id)) catch { _ => None }) {
             Some(agent) =>
-              if agent.workspace.contains(".choir/worktrees/") {
+              if @types.is_supervisor_role(agent.role) {
+                return ""
+              } else if @types.is_choir_managed_worktree_path(
+                  project_dir,
+                  agent.workspace,
+                ) {
                 return agent.workspace
               }
             None => ()
@@ -1310,7 +1315,95 @@ fn merge_pr_leaf_cleanup_worktree_path(
       }
     None => ()
   }
-  project_dir + "/.choir/worktrees/" + @phase.extract_slug(branch)
+  let fallback = @workspace.worktree_path(
+    project_dir,
+    @phase.extract_slug(branch),
+  )
+  if @types.is_choir_managed_worktree_path(project_dir, fallback) {
+    fallback
+  } else {
+    ""
+  }
+}
+
+///|
+fn merge_pr_leaf_cleanup_refuses_tracked_supervisor(
+  tracked : @poller.TrackedPR?,
+  registry : @registry.AgentRegistry?,
+) -> Bool {
+  match (tracked, registry) {
+    (Some(t), Some(reg)) =>
+      match (Some(reg.get(t.agent_id)) catch { _ => None }) {
+        Some(agent) => @types.is_supervisor_role(agent.role)
+        None => false
+      }
+    _ => false
+  }
+}
+
+///|
+test "merge_pr_leaf_cleanup_worktree_path refuses supervisor target" {
+  let project_dir = "/repo"
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("root"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "feature/root-pr",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let ps = @poller.PollerState::new()
+  ps.track(1, "root", "feature/root-pr.leaf", "feature/root-pr", "url", 0L)
+  let tracked = ps.get(1)
+  assert_eq(
+    merge_pr_leaf_cleanup_worktree_path(
+      project_dir,
+      tracked,
+      Some(reg),
+      "feature/root-pr.leaf",
+    ),
+    "",
+  )
+  assert_true(
+    merge_pr_leaf_cleanup_refuses_tracked_supervisor(tracked, Some(reg)),
+  )
+}
+
+///|
+test "merge_pr_leaf_cleanup_worktree_path never returns project root" {
+  let project_dir = "/repo"
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.leaf"),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main"),
+      workspace: project_dir,
+      branch: "feature/demo.leaf",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let ps = @poller.PollerState::new()
+  ps.track(2, "main.leaf", "feature/demo.leaf", "feature/demo", "url", 0L)
+  let path = merge_pr_leaf_cleanup_worktree_path(
+    project_dir,
+    ps.get(2),
+    Some(reg),
+    "feature/demo.leaf",
+  )
+  assert_eq(path, "/repo/.choir/worktrees/leaf")
+  assert_false(path == project_dir)
 }
 
 ///|
@@ -1332,10 +1425,25 @@ async fn merge_pr_cleanup_leaf_success(
     )
     return
   }
+  if merge_pr_leaf_cleanup_refuses_tracked_supervisor(tracked, registry) {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup leaf skipped outcome=supervisor_agent branch=" + branch,
+    )
+    return
+  }
   let worktree_path = merge_pr_leaf_cleanup_worktree_path(
     project_dir, tracked, registry, branch,
   )
-  if path_exists(worktree_path) {
+  if worktree_path == "" {
+    merge_pr_delivery_log_line(
+      append_file,
+      project_dir,
+      "merge_pr cleanup leaf_worktree skipped outcome=unsafe_path branch=" +
+      branch,
+    )
+  } else if path_exists(worktree_path) {
     ignore(
       merge_pr_run_cleanup_command(
         project_dir,
@@ -1373,7 +1481,7 @@ async fn merge_pr_cleanup_feature_success(
   append_file : (String, String) -> Bool,
 ) -> Unit {
   let branch = feature_branch.unwrap_or("")
-  if branch == "" || branch == "main" {
+  if branch == "" || branch == "main" || branch == "HEAD" {
     merge_pr_delivery_log_line(
       append_file, project_dir, "merge_pr cleanup feature_branch skipped outcome=no_feature_branch",
     )

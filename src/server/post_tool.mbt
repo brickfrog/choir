@@ -86,6 +86,9 @@ pub fn plan_finalize(
 ) -> Array[TeardownEffect] {
   let agent_id = agent.agent_id.to_string()
   let effects : Array[TeardownEffect] = []
+  if @types.is_supervisor_role(agent.role) {
+    return effects
+  }
   let finalize_reason = finalize_reason_for_exit(exit_reason)
   let allow_merge_refinalize = exit_reason == @types.ExitReason::Merged
 
@@ -143,7 +146,8 @@ pub fn plan_finalize(
   effects.push(FireHook(agent_id~, role=agent.role, exit_reason~))
 
   // Cleanup
-  if remove_worktree && agent.workspace.contains(".choir/worktrees/") {
+  if remove_worktree &&
+    @types.is_choir_managed_worktree_path(".", agent.workspace) {
     effects.push(RemoveWorktree(agent.workspace))
   }
   if close_target {
@@ -259,6 +263,9 @@ pub fn plan_external_merge_finalization(
   notify_parent? : Bool = true,
 ) -> Array[TeardownEffect] {
   let agent_id = agent.agent_id.to_string()
+  if @types.is_supervisor_role(agent.role) {
+    return []
+  }
   match lifecycle.process {
     @phase.ProcessState::Failed(..)
     | @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged) =>
@@ -315,6 +322,9 @@ pub fn plan_fail(
 ) -> Array[TeardownEffect] {
   let agent_id = agent.agent_id.to_string()
   let effects : Array[TeardownEffect] = []
+  if @types.is_supervisor_role(agent.role) {
+    return effects
+  }
 
   match lifecycle.process {
     @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => {
@@ -466,15 +476,18 @@ pub fn plan_post_tool_actions(
   // merge_pr
   if req.name == "merge_pr" {
     match (request_int_arg(req, "pr_number"), merged_agent_id) {
-      (Some(pr_number), Some(agent_id)) => {
-        effects.push(
-          UpdateDevLifecycle(
-            agent_id~,
-            event=@phase.DevEvent::MergeObserved(pr_number~),
-          ),
-        )
+      (Some(pr_number), Some(agent_id)) =>
         try {
           let leaf = registry.get(agent_id)
+          if @types.is_supervisor_role(leaf.role) {
+            return effects
+          }
+          effects.push(
+            UpdateDevLifecycle(
+              agent_id~,
+              event=@phase.DevEvent::MergeObserved(pr_number~),
+            ),
+          )
           let (branch, parent_branch, url) = match poller.get(pr_number) {
             Some(t) => (t.branch, t.parent_branch, t.pr_url)
             None => (leaf.branch, "", "")
@@ -516,7 +529,6 @@ pub fn plan_post_tool_actions(
         } catch {
           _ => effects.push(ClearRuntimeTracking(agent_id))
         }
-      }
       _ => ()
     }
   }

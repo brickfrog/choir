@@ -13,10 +13,18 @@ pub fn shutdown_poller_block_message(pr_number : Int) -> String {
 }
 
 ///|
-/// Pure predicate: workspace path qualifies for choir-managed worktree removal on
-/// shutdown (matches `agent.workspace.contains(".choir/worktrees/")` in dispatch).
+/// Pure predicate: workspace path qualifies for choir-managed worktree removal.
+/// This accepts only paths under `.choir/worktrees/`, never the project root.
 pub fn shutdown_intent_remove_choir_worktree(workspace : String) -> Bool {
-  workspace.contains(".choir/worktrees/")
+  @types.is_choir_managed_worktree_path(".", workspace)
+}
+
+///|
+pub fn shutdown_safe_choir_worktree_path(
+  project_dir : String,
+  workspace : String,
+) -> Bool {
+  @types.is_choir_managed_worktree_path(project_dir, workspace)
 }
 
 ///|
@@ -35,8 +43,9 @@ pub fn kill_agent_pane_close_command(
 /// is a choir-managed worktree (same predicate as `shutdown_intent_remove_choir_worktree`).
 pub fn kill_agent_worktree_remove_command(
   agent : @types.Agent,
+  project_dir? : String = ".",
 ) -> @workspace.Command? {
-  if shutdown_intent_remove_choir_worktree(agent.workspace) {
+  if shutdown_safe_choir_worktree_path(project_dir, agent.workspace) {
     Some(@workspace.git_worktree_remove(agent.workspace))
   } else {
     None
@@ -123,14 +132,27 @@ pub async fn interpret_kill_agent(
     ])
     return kill_pending_wave_ok_response(args.agent_id)
   }
-  for pw in pending_waves_naming_dep(project_dir, args.agent_id) {
-    mark_pending_wave_failed(project_dir, registry, runner, pw, args.agent_id)
-  }
   match registry {
     None => @types.Response::Err("no agent registry available")
     Some(reg) => {
       let agent = reg.get(args.agent_id) catch {
         _ => return @types.Response::Err("agent not found: " + args.agent_id)
+      }
+      if @types.is_supervisor_role(agent.role) {
+        @moontrace.warn("kill_agent refused: target is supervisor", fields=[
+          @moontrace.field("agent_id", args.agent_id),
+          @moontrace.field("role", agent.role.to_wire_string()),
+        ])
+        return @types.Response::Err("kill_agent refused: target is supervisor")
+      }
+      for pw in pending_waves_naming_dep(project_dir, args.agent_id) {
+        mark_pending_wave_failed(
+          project_dir,
+          registry,
+          runner,
+          pw,
+          args.agent_id,
+        )
       }
       let mut pane_close_failed = false
       match kill_agent_pane_close_command(agent) {
@@ -147,7 +169,7 @@ pub async fn interpret_kill_agent(
         }
         None => ()
       }
-      match kill_agent_worktree_remove_command(agent) {
+      match kill_agent_worktree_remove_command(agent, project_dir~) {
         Some(cmd) => {
           let _ = runner([cmd])
           ()
@@ -168,7 +190,10 @@ pub async fn interpret_kill_agent(
       // every process on the host — which then all get SIGKILLed. Skipping
       // the fallback for non-choir paths keeps `kill_agent` scoped to the
       // worktree layout we actually own.
-      let victims = if shutdown_intent_remove_choir_worktree(agent.workspace) {
+      let victims = if shutdown_safe_choir_worktree_path(
+          project_dir,
+          agent.workspace,
+        ) {
         list_pids(agent.workspace)
       } else {
         []
@@ -378,12 +403,14 @@ pub async fn interpret_shutdown(
       ),
     )
   }
-  if plan.attempt_worktree_cleanup {
+  let may_cleanup_workspace = plan.attempt_worktree_cleanup &&
+    !@types.is_supervisor_role(role)
+  if may_cleanup_workspace {
     match registry {
       Some(reg) =>
         try {
           let agent = reg.get(caller_id)
-          if shutdown_intent_remove_choir_worktree(agent.workspace) {
+          if shutdown_safe_choir_worktree_path(project_dir, agent.workspace) {
             let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
             ()
           }
@@ -393,7 +420,7 @@ pub async fn interpret_shutdown(
       None => ()
     }
   }
-  if plan.attempt_worktree_cleanup {
+  if may_cleanup_workspace {
     ignore(
       mirror_beads_state_for_agent(
         project_dir, registry, caller_id, "lifecycle", "shutdown", "Choir agent shutdown",

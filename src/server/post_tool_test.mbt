@@ -251,6 +251,95 @@ test "plan_post_tool_actions - merge_pr effect shape and ordering" {
 }
 
 ///|
+test "plan_post_tool_actions - merge_pr refuses supervisor tracked agent" {
+  let poller = @poller.PollerState::new()
+  let registry = @registry.AgentRegistry::new()
+  let project_dir = isolated_post_tool_project_dir("merge-supervisor")
+  let terminal_session = "s"
+  let pr_number = 43
+  poller.track(pr_number, "root", "feature/root-pr", "main", "url", 0L)
+  let root_agent : @types.Agent = {
+    agent_id: @types.AgentId("root"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: project_dir,
+    branch: "feature/root-pr",
+    terminal_target: Some({
+      kind: @types.TargetKind::ZellijTab,
+      session: terminal_session,
+      name: "TL",
+    }),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(registry.upsert(root_agent))
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::new({ "pr_number": pr_number.to_string() }),
+  }
+  let resp = @types.Response::Ok(
+    @types.ResponseFields::new({ "status": "merged" }),
+  )
+  let effects = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id=Some("root"),
+    poller,
+    registry,
+    project_dir,
+    terminal_session,
+  )
+  assert_eq(effects.length(), 0)
+}
+
+///|
+test "plan_finalize and plan_fail refuse supervisor agents" {
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("root"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace: "/repo",
+    branch: "main",
+    terminal_target: Some({
+      kind: @types.TargetKind::ZellijTab,
+      session: "s",
+      name: "TL",
+    }),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let lifecycle = @phase.lifecycle_for_agent(agent)
+  assert_eq(
+    plan_finalize(
+      agent,
+      lifecycle,
+      @types.ExitReason::Shutdown,
+      close_target=true,
+      remove_worktree=true,
+    ),
+    [],
+  )
+  assert_eq(
+    plan_fail(
+      agent,
+      lifecycle,
+      @phase.FailureReason::UnexpectedDisconnect,
+      "failed",
+      @types.ExitReason::Disconnected,
+      None,
+      close_target=true,
+    ),
+    [],
+  )
+}
+
+///|
 test "plan_post_tool_actions - kill_agent failure chain" {
   let poller = @poller.PollerState::new()
   let registry = @registry.AgentRegistry::new()

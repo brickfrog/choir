@@ -103,6 +103,31 @@ async test "cancel_wave cancels spawning agent" {
 }
 
 ///|
+test "cancel_wave_non_terminal_agents excludes supervisors" {
+  let mk = fn(id : String, role : @types.Role) -> @types.Agent {
+    {
+      agent_id: @types.AgentId(id),
+      role,
+      agent_type: @types.AgentType::Gemini,
+      parent: Some("main"),
+      workspace: "/tmp/.choir/worktrees/" + id,
+      branch: id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      state: @types.AgentState::Active,
+      spawn_depth: 0,
+    }
+  }
+  let got = cancel_wave_non_terminal_agents([
+    mk("root", @types.Role::Root),
+    mk("main.tl", @types.Role::TL),
+    mk("main.dev", @types.Role::Dev),
+  ])
+  assert_eq(got.length(), 1)
+  assert_eq(got[0].agent_id.to_string(), "main.dev")
+}
+
+///|
 async test "cancel_wave force=false blocked by PR" {
   let reg = @registry.AgentRegistry::new()
   let agent1 : @types.Agent = {

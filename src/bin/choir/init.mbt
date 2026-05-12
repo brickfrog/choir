@@ -799,15 +799,6 @@ fn init_run() -> Unit {
       ignore(
         @exec.run({
           program: "zellij",
-          args: ["--session", session, "action", "close-tab-by-id", "0"],
-          workdir: None,
-        }) catch {
-          _ => 0
-        },
-      )
-      ignore(
-        @exec.run({
-          program: "zellij",
           args: ["--session", session, "action", "go-to-tab-name", "TL"],
           workdir: None,
         }) catch {

@@ -2910,6 +2910,65 @@ fn handler_auto_close_agent(
 }
 
 ///|
+fn handler_supervisor_agent(
+  agent_id : String,
+  role : @types.Role,
+  state : @types.AgentState,
+  target : @types.LocalTarget?,
+  workspace : String,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role,
+    agent_type: @types.AgentType::Claude,
+    parent: None,
+    workspace,
+    branch: "main",
+    terminal_target: target,
+    host: @types.Host::Local,
+    spawn_depth: 0,
+    state,
+  }
+}
+
+///|
+async test "test_disconnect_supervisor_agent_no_fail_or_close" {
+  let state = handler_auto_close_test_state("disconnect-supervisor")
+  for role in [@types.Role::Root, @types.Role::TL] {
+    let agent_id = match role {
+      @types.Role::Root => "root"
+      @types.Role::TL => "main.tl"
+      _ => "main.supervisor"
+    }
+    let target = handler_auto_close_target(agent_id)
+    ignore(
+      state.register_agent(
+        handler_supervisor_agent(
+          agent_id,
+          role,
+          @types.AgentState::Active,
+          Some(target),
+          state.config.project_dir,
+        ),
+      ),
+    )
+    let calls : Array[@workspace.Command] = []
+    state.handle_disconnect_with_runner(agent_id, runner=async fn(cmds) {
+      @async.sleep(0)
+      for cmd in cmds {
+        calls.push(cmd)
+      }
+      [0]
+    })
+    assert_eq(calls, [])
+    let agent = state.registry.get(agent_id) catch {
+      _ => fail("expected supervisor agent")
+    }
+    assert_eq(agent.state, @types.AgentState::Active)
+  }
+}
+
+///|
 async test "test_disconnect_done_agent_closes_pane" {
   let state = handler_auto_close_test_state("disconnect-done")
   let agent_id = "main.done-leaf"

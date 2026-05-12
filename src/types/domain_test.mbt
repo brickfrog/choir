@@ -64,6 +64,46 @@ test "Role parse_wire raises on unknown strings matching try_parse_wire error" {
 }
 
 ///|
+test "is_supervisor_role identifies only root and TL" {
+  assert_true(@types.is_supervisor_role(@types.Role::Root))
+  assert_true(@types.is_supervisor_role(@types.Role::TL))
+  assert_false(@types.is_supervisor_role(@types.Role::Dev))
+  assert_false(@types.is_supervisor_role(@types.Role::Worker))
+}
+
+///|
+test "path guards reject project root and accept managed worktrees" {
+  assert_true(@types.path_is_project_root_or_parent("/repo", "/repo"))
+  assert_true(@types.path_is_project_root_or_parent("/repo/sub", "/repo"))
+  assert_true(@types.path_is_project_root_or_parent("/repo", ""))
+  assert_true(@types.path_is_project_root_or_parent("/repo", "."))
+  assert_false(
+    @types.path_is_project_root_or_parent(
+      "/repo", "/repo/.choir/worktrees/leaf",
+    ),
+  )
+  assert_true(
+    @types.is_choir_managed_worktree_path(
+      "/repo", "/repo/.choir/worktrees/leaf",
+    ),
+  )
+  assert_true(
+    @types.is_choir_managed_worktree_path(".", "./.choir/worktrees/leaf"),
+  )
+  assert_false(@types.is_choir_managed_worktree_path("/repo", "/repo"))
+  assert_false(
+    @types.is_choir_managed_worktree_path(
+      "/repo", "/other/.choir/worktrees/leaf",
+    ),
+  )
+  assert_false(
+    @types.is_choir_managed_worktree_path(
+      "/repo", "/repo/.choir/worktrees/../config",
+    ),
+  )
+}
+
+///|
 test "TaskStatus accepts Beads status aliases" {
   match @types.TaskStatus::try_parse_wire("open") {
     Ok(status) => @debug.assert_eq(status, @types.TaskStatus::Todo)

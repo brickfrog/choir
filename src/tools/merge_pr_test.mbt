@@ -2010,6 +2010,112 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
 }
 
 ///|
+async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
+  let project_dir = "/tmp/choir-mpr-supervisor-cleanup-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  merge_pr_test_enable_force_override(project_dir)
+  let feature_branch = "feature/supervisor-cleanup"
+  let leaf_branch = feature_branch + ".root"
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("root"),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: feature_branch,
+      terminal_target: Some({
+        kind: @types.TargetKind::ZellijTab,
+        session: "s",
+        name: "TL",
+      }),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    82,
+    "root",
+    leaf_branch,
+    feature_branch,
+    "https://github.com/o/r/pull/82",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let ran : Array[@workspace.Command] = []
+  let logs : Array[String] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    (0, "")
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    merge_pr_test_runner_record_ok(cmds, ran)
+  }
+  let got = interpret_merge_pr(
+    {
+      pr_number: 82,
+      parent_branch: feature_branch,
+      caller_id: "main.tl",
+      force: true,
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    Some(reg),
+    runner,
+    capture,
+    fn(_path, content) {
+      logs.push(content)
+      true
+    },
+    fn(path) { path == project_dir },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail(msg)
+  }
+  assert_false(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "worktree" &&
+      cmd.args[1] == "remove"
+    }),
+  )
+  assert_false(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "branch" &&
+      cmd.args[1] == "-D"
+    }),
+  )
+  assert_true(
+    logs.iter().any(fn(line) { line.contains("outcome=supervisor_agent") }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "merge_pr_tracked_branch_for_post_success is None without poller" {
   @debug.assert_eq(merge_pr_tracked_branch_for_post_success(None, 1), None)
 }

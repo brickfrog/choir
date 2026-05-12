@@ -14,8 +14,11 @@ pub fn cancel_wave_non_terminal_agents(
   children : Array[@types.Agent],
 ) -> Array[@types.Agent] {
   children.filter(fn(agent) {
-    agent.state == @types.AgentState::Spawning ||
-    agent.state == @types.AgentState::Active
+    !@types.is_supervisor_role(agent.role) &&
+    (
+      agent.state == @types.AgentState::Spawning ||
+      agent.state == @types.AgentState::Active
+    )
   })
 }
 
@@ -133,7 +136,7 @@ pub async fn interpret_cancel_wave(
           }
           None => ()
         }
-        if agent.workspace.contains(".choir/worktrees/") {
+        if @types.is_choir_managed_worktree_path(project_dir, agent.workspace) {
           let _ = runner([@workspace.git_worktree_remove(agent.workspace)])
           ()
         }
