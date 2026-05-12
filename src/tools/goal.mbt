@@ -156,6 +156,7 @@ pub async fn interpret_goal_set(
   write_file_atomic : (String, String) -> Bool,
   create_dir_all : (String) -> Bool,
   now_unix_sec : Int64,
+  nonce : String,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
 ) -> @types.Response {
@@ -164,14 +165,14 @@ pub async fn interpret_goal_set(
     Ok(value) => value
     Err(e) => return @types.Response::Err(e.message())
   }
-  let goal = match @types.Goal::new(args.input, args.verify, now_unix_sec) {
+  let goal = match
+    @types.Goal::new(args.input, args.verify, now_unix_sec, nonce~) {
     Ok(value) => value
     Err(e) => return @types.Response::Err(e.message())
   }
   let eval = goal_evaluate_with_workspace_caps(
     goal, project_dir, runner, bd_capture, now_unix_sec,
   )
-  let goal = goal.with_last_eval(eval)
   if !create_dir_all(project_dir + "/.choir/kv") {
     return @types.Response::Err("failed to create goal kv directory")
   }
@@ -258,7 +259,6 @@ pub async fn interpret_goal_status(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   bd_capture : async (@workspace.Command) -> (Int, String),
   read_file : (String) -> String,
-  write_file_atomic : (String, String) -> Bool,
   now_unix_sec : Int64,
 ) -> @types.Response {
   let current = match goal_read_current(project_dir, session, read_file) {
@@ -276,15 +276,7 @@ pub async fn interpret_goal_status(
         let eval = goal_evaluate_with_workspace_caps(
           goal, project_dir, runner, bd_capture, now_unix_sec,
         )
-        let updated = goal.with_last_eval(eval)
-        let path = match @types.goal_kv_path(project_dir, session) {
-          Ok(path) => path
-          Err(e) => return @types.Response::Err(e.message())
-        }
-        if !write_file_atomic(path, updated.to_json_string()) {
-          return @types.Response::Err("failed to write goal kv file: " + path)
-        }
-        goal_status_response(updated)
+        goal_status_response(goal.with_last_eval(eval))
       } else {
         goal_status_response(goal)
       }

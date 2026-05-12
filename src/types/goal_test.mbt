@@ -18,6 +18,7 @@ test "goal parser detects generated bead ids without swallowing freeform slugs" 
 test "goal new builds bead and shell checks" {
   let goal = Goal::new("choir-7uc.1", [" moon test --target native ", ""], 10L).unwrap()
   assert_eq(goal.slug, "choir-7uc.1")
+  assert_true(goal.nonce != "")
   assert_eq(goal.checks.length(), 2)
   assert_true(goal.checks[0] == GoalCheck::BeadStateClosed("choir-7uc.1"))
   assert_true(
@@ -50,10 +51,14 @@ test "goal prod decision emits transitions and rate-limits unchanged open state"
     goal_prod_decision(Some(prior), changed, Some(20L), 21L) ==
     GoalProdDecision::EmitComplete,
   )
+  assert_true(
+    goal_prod_decision(Some(changed), changed, Some(21L), 22L) ==
+    GoalProdDecision::EmitComplete,
+  )
 }
 
 ///|
-test "goal JSON roundtrip preserves exact KV key shape and last evaluation" {
+test "goal JSON roundtrip preserves exact KV key shape, nonce, and last evaluation" {
   assert_eq(goal_kv_key("choir-choir").unwrap(), "tl-goal--choir-choir.json")
   assert_eq(
     goal_kv_path("/repo", "choir-choir").unwrap(),
@@ -70,6 +75,7 @@ test "goal JSON roundtrip preserves exact KV key shape and last evaluation" {
     .with_last_eval(eval)
   let decoded = Goal::from_json_string(goal.to_json_string()).unwrap()
   assert_true(decoded == goal)
+  assert_eq(decoded.nonce, goal.nonce)
 }
 
 ///|
@@ -114,17 +120,17 @@ test "freeform goal requires at least one verify command" {
 
 ///|
 test "goal JSON reports wrong checks type separately from missing checks" {
-  let wrong_type = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":true,\"started_unix_sec\":1,\"last_eval\":null}"
+  let wrong_type = "{\"slug\":\"x\",\"nonce\":\"n1\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":true,\"started_unix_sec\":1,\"last_eval\":null}"
   match Goal::from_json_string(wrong_type) {
     Err(e) => assert_true(e.message().contains("goal checks must be an array"))
     Ok(_) => fail("expected wrong checks type error")
   }
-  let missing = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"started_unix_sec\":1,\"last_eval\":null}"
+  let missing = "{\"slug\":\"x\",\"nonce\":\"n1\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"started_unix_sec\":1,\"last_eval\":null}"
   match Goal::from_json_string(missing) {
     Err(e) => assert_true(e.message().contains("goal missing checks"))
     Ok(_) => fail("expected missing checks error")
   }
-  let empty = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[],\"started_unix_sec\":1,\"last_eval\":null}"
+  let empty = "{\"slug\":\"x\",\"nonce\":\"n1\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[],\"started_unix_sec\":1,\"last_eval\":null}"
   match Goal::from_json_string(empty) {
     Err(e) =>
       assert_true(
@@ -140,12 +146,26 @@ test "goal JSON reports wrong checks type separately from missing checks" {
 
 ///|
 test "goal JSON rejects empty shell command checks" {
-  let empty_shell = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"  \\t \"}],\"started_unix_sec\":1,\"last_eval\":null}"
+  let empty_shell = "{\"slug\":\"x\",\"nonce\":\"n1\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"  \\t \"}],\"started_unix_sec\":1,\"last_eval\":null}"
   match Goal::from_json_string(empty_shell) {
     Err(e) =>
       assert_true(
         e.message().contains("shell goal check command cannot be empty"),
       )
     Ok(_) => fail("expected empty shell check command to be rejected")
+  }
+}
+
+///|
+test "goal JSON requires nonce" {
+  let missing_nonce = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"true\"}],\"started_unix_sec\":1,\"last_eval\":null}"
+  match Goal::from_json_string(missing_nonce) {
+    Err(e) => assert_true(e.message().contains("goal missing nonce"))
+    Ok(_) => fail("expected missing nonce to be rejected")
+  }
+  let empty_nonce = "{\"slug\":\"x\",\"nonce\":\"  \",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"true\"}],\"started_unix_sec\":1,\"last_eval\":null}"
+  match Goal::from_json_string(empty_nonce) {
+    Err(e) => assert_true(e.message().contains("goal nonce cannot be empty"))
+    Ok(_) => fail("expected empty nonce to be rejected")
   }
 }

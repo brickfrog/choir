@@ -148,12 +148,12 @@ async test "goal judge emits complete exactly once and clears goal" {
 }
 
 ///|
-async test "goal judge treats a same-slug replacement as fresh state" {
+async test "goal judge treats same-slug same-second replacement nonce as fresh state" {
   let judge = GoalJudgeState::new()
   let delivered : Array[String] = []
   let writes : Array[@types.Goal] = []
   let mut clears = 0
-  let first_goal = @types.Goal::new("x", ["false"], 1L).unwrap()
+  let first_goal = @types.Goal::new("x", ["false"], 1L, nonce="first").unwrap()
   let first = judge.tick_with(
     20L,
     fn() { Ok(Some(first_goal)) },
@@ -178,7 +178,7 @@ async test "goal judge treats a same-slug replacement as fresh state" {
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
-  let second_goal = @types.Goal::new("x", ["false"], 2L).unwrap()
+  let second_goal = @types.Goal::new("x", ["false"], 1L, nonce="second").unwrap()
   let second = judge.tick_with(
     21L,
     fn() { Ok(Some(second_goal)) },
@@ -259,6 +259,49 @@ async test "goal judge skips stale writes when kv changes during evaluation" {
 }
 
 ///|
+async test "goal judge aborts write when kv changes immediately before write" {
+  let judge = GoalJudgeState::new()
+  let old_goal = @types.Goal::new("old", ["false"], 1L).unwrap()
+  let new_goal = @types.Goal::new("new", ["false"], 2L).unwrap()
+  let mut current_goal : @types.Goal? = Some(old_goal)
+  let delivered : Array[String] = []
+  let writes : Array[@types.Goal] = []
+  let mut reads = 0
+  let result = judge.tick_with(
+    20L,
+    fn() {
+      reads = reads + 1
+      Ok(current_goal)
+    },
+    fn(updated) {
+      writes.push(updated)
+      Ok(())
+    },
+    fn() { Ok(()) },
+    async fn(_goal, now) {
+      @async.sleep(0)
+      goal_judge_test_eval(0, 1, "shell failed: false", now)
+    },
+    async fn(message, _status) {
+      @async.sleep(0)
+      delivered.push(message)
+      current_goal = Some(new_goal)
+    },
+  )
+  match result {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  assert_eq(reads, 3)
+  assert_eq(delivered, ["[GOAL: old] 0/1 passing — shell failed: false"])
+  assert_eq(writes.length(), 0)
+  match current_goal {
+    Some(goal) => assert_eq(goal.slug, "new")
+    None => fail("expected replacement goal to remain active")
+  }
+}
+
+///|
 async test "goal judge skips stale clears when kv changes during completion" {
   let judge = GoalJudgeState::new()
   let old_goal = @types.Goal::new("old", ["true"], 1L).unwrap()
@@ -296,6 +339,45 @@ async test "goal judge skips stale clears when kv changes during completion" {
   assert_eq(delivered, [])
   assert_eq(clears, 0)
   assert_eq(writes, 0)
+  match current_goal {
+    Some(goal) => assert_eq(goal.slug, "new")
+    None => fail("expected replacement goal to remain active")
+  }
+}
+
+///|
+async test "goal judge aborts delete when kv changes immediately before delete" {
+  let judge = GoalJudgeState::new()
+  let old_goal = @types.Goal::new("old", ["true"], 1L).unwrap()
+  let new_goal = @types.Goal::new("new", ["false"], 2L).unwrap()
+  let mut current_goal : @types.Goal? = Some(old_goal)
+  let delivered : Array[String] = []
+  let mut clears = 0
+  let result = judge.tick_with(
+    20L,
+    fn() { Ok(current_goal) },
+    fn(_updated) { Ok(()) },
+    fn() {
+      clears = clears + 1
+      current_goal = None
+      Ok(())
+    },
+    async fn(_goal, now) {
+      @async.sleep(0)
+      goal_judge_test_eval(1, 1, "", now)
+    },
+    async fn(message, _status) {
+      @async.sleep(0)
+      delivered.push(message)
+      current_goal = Some(new_goal)
+    },
+  )
+  match result {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  assert_eq(delivered, ["[GOAL COMPLETE: old]"])
+  assert_eq(clears, 0)
   match current_goal {
     Some(goal) => assert_eq(goal.slug, "new")
     None => fail("expected replacement goal to remain active")
@@ -363,6 +445,7 @@ async test "goal judge bounds completed goal memory after repeated clear failure
       "x" + i.to_string(),
       ["true"],
       i.to_int64() + 1L,
+      nonce="n" + i.to_string(),
     ).unwrap()
     let result = judge.tick_with(
       i.to_int64() + 20L,
@@ -379,8 +462,8 @@ async test "goal judge bounds completed goal memory after repeated clear failure
   }
   assert_eq(delivered.length(), 140)
   assert_eq(judge.completed_goal_order.length(), 128)
-  assert_false(judge.completed_goal_keys.contains("x0@1"))
-  assert_true(judge.completed_goal_keys.contains("x139@140"))
+  assert_false(judge.completed_goal_keys.contains("x0@n0"))
+  assert_true(judge.completed_goal_keys.contains("x139@n139"))
 }
 
 ///|
@@ -424,7 +507,7 @@ async test "server consumes requested goal judge tick flag" {
     Err(e) => fail(e.message())
   }
   assert_false(state.goal_judge.tick_requested)
-  assert_eq(reads, 2)
+  assert_eq(reads, 3)
   assert_eq(delivered, ["[GOAL: x] 0/1 passing — shell failed: false"])
 }
 

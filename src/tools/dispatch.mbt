@@ -703,6 +703,9 @@ pub async fn dispatch(
   pr_review? : Bool = true,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
+  goal_nonce? : () -> String = fn() {
+    @types.next_goal_nonce(@env.now().reinterpret_as_int64())
+  },
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1229,6 +1232,7 @@ pub async fn dispatch(
         write_file_atomic,
         create_dir_all,
         @poller.now_sec(),
+        goal_nonce(),
         goal_deliver~,
         goal_request_tick~,
       )
@@ -1242,7 +1246,6 @@ pub async fn dispatch(
         runner,
         bd_capture,
         read_file,
-        write_file_atomic,
         @poller.now_sec(),
       )
     ToolRequest::MutexAcquire(mutex_args) =>
@@ -1421,6 +1424,9 @@ pub async fn handle_request(
   pr_review? : Bool = true,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
+  goal_nonce? : () -> String = fn() {
+    @types.next_goal_nonce(@env.now().reinterpret_as_int64())
+  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
@@ -1517,6 +1523,7 @@ pub async fn handle_request(
                   create_dir_all~,
                   goal_deliver~,
                   goal_request_tick~,
+                  goal_nonce~,
                 )
                 ran_builtin_dispatch = true
                 out

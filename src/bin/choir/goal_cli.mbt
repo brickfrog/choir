@@ -4,75 +4,16 @@ fn goal_cli_usage() -> String {
 }
 
 ///|
-fn goal_cli_string_args(values : Map[String, Json]) -> Map[String, String] {
-  let out : Map[String, String] = {}
-  values.each(fn(k, v) {
-    out.set(
-      k,
-      match v {
-        String(s) => s
-        Array(items) => {
-          let lines : Array[String] = []
-          for item in items {
-            match item {
-              String(s) => lines.push(s)
-              _ => ()
-            }
-          }
-          lines.join("\n")
-        }
-        _ => v.stringify()
-      },
-    )
-  })
-  out
-}
-
-///|
-async fn goal_cli_local_dispatch(
-  role : @types.Role,
-  config : @types.Config,
-  tool : String,
-  values : Map[String, Json],
-) -> @types.Response {
-  let resp = @tools.dispatch_call(
-    { role, name: tool, args: goal_cli_string_args(values) },
-    project_dir=config.project_dir,
-    session=config.terminal_session,
+fn goal_cli_no_serve_response() -> @types.Response {
+  @types.Response::Err(
+    @types.ChoirError::transport_error(
+      "no `choir serve` is running — start it, then run `choir goal`.",
+    ).message(),
   )
-  goal_cli_response_with_local_dispatch_warning(tool, resp)
 }
 
 ///|
-fn goal_cli_response_append_warning(
-  resp : @types.Response,
-  warning : String,
-) -> @types.Response {
-  match resp.ok_field("warning") {
-    Some(existing) => resp.with_warning(existing + "\n" + warning)
-    None => resp.with_warning(warning)
-  }
-}
-
-///|
-fn goal_cli_response_with_local_dispatch_warning(
-  tool : String,
-  resp : @types.Response,
-) -> @types.Response {
-  if tool == "goal_set" && resp.is_ok() {
-    goal_cli_response_append_warning(
-      resp, "goal set, but no running `choir serve` was detected — the judge will not run until a choir server is up.",
-    )
-  } else {
-    resp
-  }
-}
-
-///|
-async fn goal_cli_call(
-  tool : String,
-  values : Map[String, Json],
-) -> @types.Response {
+fn goal_cli_call(tool : String, values : Map[String, Json]) -> @types.Response {
   let empty_cli = parse_leaf_cli_args([])
   let (role, config, local_cfg) = match tool_load_config(empty_cli) {
     Ok(loaded) => loaded
@@ -86,13 +27,8 @@ async fn goal_cli_call(
   }
   match
     client_call_uds(role, config, local_cfg, req, register_if_needed=false) {
-    Ok(resp) =>
-      match resp.error_message() {
-        Some(msg) if msg.has_prefix("unknown tool: goal_") =>
-          goal_cli_local_dispatch(role, config, tool, values)
-        _ => resp
-      }
-    Err(_) => goal_cli_local_dispatch(role, config, tool, values)
+    Ok(resp) => resp
+    Err(_) => goal_cli_no_serve_response()
   }
 }
 
@@ -149,22 +85,13 @@ fn goal_cli_status_values(
 }
 
 ///|
-test "goal CLI local dispatch warning is attached to goal_set success" {
-  let resp = goal_cli_response_with_local_dispatch_warning(
-    "goal_set",
-    @types.Response::ok_values({ "status": "set".to_json() }),
-  )
-  assert_eq(
-    resp.ok_field("warning").unwrap_or(""),
-    "goal set, but no running `choir serve` was detected — the judge will not run until a choir server is up.",
-  )
-  let clear = goal_cli_response_with_local_dispatch_warning(
-    "goal_clear",
-    @types.Response::ok_values({ "status": "cleared".to_json() }),
-  )
-  match clear.ok_field("warning") {
-    None => ()
-    Some(_) => fail("goal_clear local fallback should not use goal_set warning")
+test "goal CLI reports missing serve instead of local fallback" {
+  match goal_cli_no_serve_response().error_message() {
+    Some(msg) => {
+      assert_true(msg.contains("no `choir serve` is running"))
+      assert_true(msg.contains("start it, then run `choir goal`"))
+    }
+    None => fail("expected missing-serve error")
   }
 }
 
@@ -179,9 +106,7 @@ fn goal_run() -> Unit {
         return
       }
     }
-    @async.run_async_main(async fn() {
-      client_emit(goal_cli_call("goal_status", values))
-    })
+    client_emit(goal_cli_call("goal_status", values))
     return
   }
   let values = match goal_cli_parse_goal_values(args, 2) {
@@ -191,14 +116,10 @@ fn goal_run() -> Unit {
       return
     }
   }
-  @async.run_async_main(async fn() {
-    client_emit(goal_cli_call("goal_set", values))
-  })
+  client_emit(goal_cli_call("goal_set", values))
 }
 
 ///|
 fn goal_clear_run() -> Unit {
-  @async.run_async_main(async fn() {
-    client_emit(goal_cli_call("goal_clear", {}))
-  })
+  client_emit(goal_cli_call("goal_clear", {}))
 }
