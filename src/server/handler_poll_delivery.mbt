@@ -1435,7 +1435,11 @@ fn log_poller_pr_tick(
   } else {
     ""
   }
-  @moontrace.info("poller pr", fields=[
+  // Per-PR per-tick: log at INFO only when something actually changed (an
+  // event, a review-state change, a failure-count change, or a non-`polled`
+  // action). The steady-state "polled, nothing changed" line — once per
+  // tracked PR every tick — goes to TRACE so the INFO log isn't flooded.
+  let pr_fields = [
     @moontrace.field("pr", log.pr_number),
     @moontrace.field("agent", log.agent_id),
     @moontrace.field("action", action),
@@ -1448,7 +1452,17 @@ fn log_poller_pr_tick(
     @moontrace.field("events", events_summary),
     @moontrace.field("failures", log.consecutive_failures),
     @moontrace.field("prev_failures", log.previous_consecutive_failures),
-  ])
+  ]
+  let pr_tick_interesting = action != "polled" ||
+    log.events.length() > 0 ||
+    log.detected_review_state.to_wire_string() !=
+    log.prior_review_state.to_wire_string() ||
+    log.consecutive_failures != log.previous_consecutive_failures
+  if pr_tick_interesting {
+    @moontrace.info("poller pr", fields=pr_fields)
+  } else {
+    @moontrace.trace("poller pr", fields=pr_fields)
+  }
   let line = "pr=" +
     log.pr_number.to_string() +
     " agent=" +
