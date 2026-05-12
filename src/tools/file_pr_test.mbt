@@ -108,6 +108,7 @@ test "file_pr_post_success_effects gates poller track and parent notify on capab
 
 ///|
 test "file_pr_auto_notify_plan delivers and formats delivery log append" {
+  let now_ms = 1776000000123L
   let parent : @types.Agent = {
     agent_id: @types.AgentId("main.tl"),
     role: @types.Role::TL,
@@ -121,7 +122,7 @@ test "file_pr_auto_notify_plan delivers and formats delivery log append" {
     state: @types.AgentState::Active,
   }
   let msg = "[PR READY] PR #1 filed: https://ex/pr/1"
-  let plan = file_pr_auto_notify_plan(Ok(parent), "main.leaf", msg)
+  let plan = file_pr_auto_notify_plan(Ok(parent), "main.leaf", msg, now_ms~)
   match plan {
     FilePrAutoNotifyPlan::Deliver(delivery~, delivery_log_append~) => {
       let expected = @message.plan_delivery(
@@ -133,9 +134,11 @@ test "file_pr_auto_notify_plan delivers and formats delivery log append" {
       assert_eq(delivery, expected)
       assert_eq(
         delivery_log_append,
-        "[auto-notify] caller=main.leaf parent=main.tl delivery=" +
-        delivery.to_display_string() +
-        "\n",
+        @poller.delivery_log_line(
+          "[auto-notify] caller=main.leaf parent=main.tl delivery=" +
+          delivery.to_display_string(),
+          now_ms~,
+        ),
       )
     }
     _ => fail("expected Deliver")
@@ -144,11 +147,13 @@ test "file_pr_auto_notify_plan delivers and formats delivery log append" {
 
 ///|
 test "file_pr_auto_notify_plan logs only when parent resolution fails" {
+  let now_ms = 1776000000123L
   let err = @types.ChoirError::agent_not_found("main.tl")
   let plan = file_pr_auto_notify_plan(
     Err(err),
     "main.leaf",
     "[PR READY] PR #1 filed: https://ex/pr/1",
+    now_ms~,
   )
   match plan {
     FilePrAutoNotifyPlan::ParentResolutionFailed(
@@ -158,9 +163,11 @@ test "file_pr_auto_notify_plan logs only when parent resolution fails" {
       assert_eq(parent_resolve_error, err.message())
       assert_eq(
         delivery_log_append,
-        "[auto-notify] resolve_parent_for_notify failed error=" +
-        err.message() +
-        "\n",
+        @poller.delivery_log_line(
+          "[auto-notify] resolve_parent_for_notify failed error=" +
+          err.message(),
+          now_ms~,
+        ),
       )
     }
     _ => fail("expected ParentResolutionFailed")
@@ -169,9 +176,13 @@ test "file_pr_auto_notify_plan logs only when parent resolution fails" {
 
 ///|
 test "file_pr_auto_notify_delivery_failed_log_append normalizes one line" {
+  let now_ms = 1776000000123L
   assert_eq(
-    file_pr_auto_notify_delivery_failed_log_append("oops"),
-    "[auto-notify] delivery failed error=oops\n",
+    file_pr_auto_notify_delivery_failed_log_append("oops", now_ms~),
+    @poller.delivery_log_line(
+      "[auto-notify] delivery failed error=oops",
+      now_ms~,
+    ),
   )
 }
 
@@ -271,6 +282,7 @@ async test "interpret_file_pr_post_success registers poller when tracked" {
 
 ///|
 async test "interpret_file_pr_post_success auto-notify tcp appends delivery log" {
+  let now_ms = 1776000000123L
   let project_dir = file_pr_post_success_test_dir()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let log_path = project_dir + "/.choir/delivery.log"
@@ -329,6 +341,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
     None,
     Some(reg),
     mock_runner_all_ok,
+    delivery_log_now_ms=now_ms,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -344,9 +357,11 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
     msg,
     @types.Status::Success,
   )
-  let expected_log = "[auto-notify] caller=main.leaf parent=main.tl delivery=" +
-    expected_delivery.to_display_string() +
-    "\n"
+  let expected_log = @poller.delivery_log_line(
+    "[auto-notify] caller=main.leaf parent=main.tl delivery=" +
+    expected_delivery.to_display_string(),
+    now_ms~,
+  )
   assert_eq(@sys.read_file(log_path), expected_log)
 }
 

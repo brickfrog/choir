@@ -313,17 +313,18 @@ pub async fn execute_delivery(
     ignore(
       @sys.append_file_sync(
         log_path,
-        "[delivery-retry] ts_ms=" +
-        delivery_timestamp() +
-        " target=" +
-        target +
-        " attempt=" +
-        attempt.to_string() +
-        " delay_ms=" +
-        delay_ms.to_string() +
-        " error=" +
-        normalize_log_error(error) +
-        "\n",
+        @poller.delivery_log_line(
+          "[delivery-retry] ts_ms=" +
+          delivery_timestamp() +
+          " target=" +
+          target +
+          " attempt=" +
+          attempt.to_string() +
+          " delay_ms=" +
+          delay_ms.to_string() +
+          " error=" +
+          normalize_log_error(error),
+        ),
       ),
     )
   }
@@ -331,13 +332,14 @@ pub async fn execute_delivery(
     ignore(
       @sys.append_file_sync(
         log_path,
-        "[delivery-failed] ts_ms=" +
-        delivery_timestamp() +
-        " target=" +
-        target +
-        " error=" +
-        normalize_log_error(error) +
-        "\n",
+        @poller.delivery_log_line(
+          "[delivery-failed] ts_ms=" +
+          delivery_timestamp() +
+          " target=" +
+          target +
+          " error=" +
+          normalize_log_error(error),
+        ),
       ),
     )
   }
@@ -391,17 +393,20 @@ pub async fn execute_delivery(
       ignore(
         @sys.append_file_sync(
           log_path,
-          "[delivery] target=" +
-          target.to_string() +
-          " cmd=" +
-          cmd.to_string() +
-          "\n",
+          @poller.delivery_log_line(
+            "[delivery] target=" +
+            target.to_string() +
+            " cmd=" +
+            cmd.to_string(),
+          ),
         ),
       )
       ignore(
         @sys.append_file_sync(
           log_path,
-          "[delivery] dispatch-with-retry target=" + target.to_string() + "\n",
+          @poller.delivery_log_line(
+            "[delivery] dispatch-with-retry target=" + target.to_string(),
+          ),
         ),
       )
       run_with_retries(cmd, target.to_string())
