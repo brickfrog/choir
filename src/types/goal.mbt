@@ -409,7 +409,7 @@ pub fn Goal::new(
   input : String,
   verify_commands : Array[String],
   started_unix_sec : Int64,
-  nonce? : String = next_goal_nonce(0L),
+  nonce? : String = next_goal_nonce(started_unix_sec),
 ) -> Result[Goal, ChoirError] {
   let source = match GoalSource::from_input(input) {
     Ok(value) => value
@@ -480,16 +480,6 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
     Some(value) => value
     None => return Err(goal_validation_error("goal missing slug"))
   }
-  let nonce = match json_field_string(obj, "nonce") {
-    Some(value) => {
-      let trimmed = value.trim().to_owned()
-      if trimmed == "" {
-        return Err(goal_validation_error("goal nonce cannot be empty"))
-      }
-      trimmed
-    }
-    None => return Err(goal_validation_error("goal missing nonce"))
-  }
   let source = match obj.get("source") {
     Some(value) =>
       match GoalSource::from_goal_json(value) {
@@ -516,6 +506,16 @@ pub fn Goal::from_json_string(raw : String) -> Result[Goal, ChoirError] {
   let started_unix_sec = match json_field_int64(obj, "started_unix_sec") {
     Some(value) => value
     None => return Err(goal_validation_error("goal missing started_unix_sec"))
+  }
+  let nonce = match json_field_string(obj, "nonce") {
+    Some(value) => {
+      let trimmed = value.trim().to_owned()
+      if trimmed == "" {
+        return Err(goal_validation_error("goal nonce cannot be empty"))
+      }
+      trimmed
+    }
+    None => next_goal_nonce(started_unix_sec)
   }
   let last_eval = match obj.get("last_eval") {
     None | Some(Null) => None

@@ -18,7 +18,7 @@ test "goal parser detects generated bead ids without swallowing freeform slugs" 
 test "goal new builds bead and shell checks" {
   let goal = Goal::new("choir-7uc.1", [" moon test --target native ", ""], 10L).unwrap()
   assert_eq(goal.slug, "choir-7uc.1")
-  assert_true(goal.nonce != "")
+  assert_true(goal.nonce.has_prefix("0000000a-"))
   assert_eq(goal.checks.length(), 2)
   assert_true(goal.checks[0] == GoalCheck::BeadStateClosed("choir-7uc.1"))
   assert_true(
@@ -157,11 +157,14 @@ test "goal JSON rejects empty shell command checks" {
 }
 
 ///|
-test "goal JSON requires nonce" {
+test "goal JSON synthesizes missing nonce and rejects empty nonce" {
   let missing_nonce = "{\"slug\":\"x\",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"true\"}],\"started_unix_sec\":1,\"last_eval\":null}"
   match Goal::from_json_string(missing_nonce) {
-    Err(e) => assert_true(e.message().contains("goal missing nonce"))
-    Ok(_) => fail("expected missing nonce to be rejected")
+    Ok(goal) => {
+      assert_eq(goal.slug, "x")
+      assert_true(goal.nonce.has_prefix("00000001-"))
+    }
+    Err(e) => fail(e.message())
   }
   let empty_nonce = "{\"slug\":\"x\",\"nonce\":\"  \",\"source\":{\"tag\":\"text\",\"value\":\"x\"},\"checks\":[{\"tag\":\"shell\",\"command\":\"true\"}],\"started_unix_sec\":1,\"last_eval\":null}"
   match Goal::from_json_string(empty_nonce) {
