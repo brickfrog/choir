@@ -119,6 +119,8 @@ fn ServerState::clear_agent_runtime_tracking(
   self.pending_disconnect_soft_notified.remove(agent_id)
   self.worker_no_handoff_prodded_at.remove(agent_id)
   self.worker_no_handoff_stalled_emitted.remove(agent_id)
+  self.handoff_delivered.remove(agent_id)
+  self.worker_no_handoff_exit_emitted.remove(agent_id)
 }
 
 ///|
@@ -889,14 +891,12 @@ fn nonnegative_elapsed(now : Int64, then : Int64) -> Int64 {
 }
 
 ///|
-fn ServerState::worker_no_handoff_total_idle_sec(
-  self : ServerState,
-  agent_id : String,
-  now : Int64,
-) -> Int64 {
-  match self.pane_watcher.idle_elapsed_sec(agent_id, now) {
-    Some(elapsed) if elapsed > 0L => elapsed
-    _ => 0L
+fn worker_no_handoff_terminal_process(
+  lifecycle : @phase.AgentLifecycle,
+) -> Bool {
+  match lifecycle.process {
+    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => true
+    _ => false
   }
 }
 
@@ -1003,6 +1003,7 @@ async fn ServerState::check_worker_no_handoff(
   self : ServerState,
   agent : @types.Agent,
   now : Int64,
+  observation : @runtime.PaneIdleObservation,
   prod_sec : Int64,
   escalate_sec : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
@@ -1019,35 +1020,33 @@ async fn ServerState::check_worker_no_handoff(
   if idle_timeout <= 0L {
     return
   }
-  match self.pane_watcher.check_idle(agent_id, now, idle_timeout) {
-    Some(screen) => {
-      let decision_idle_sec = match prodded_at {
-        Some(t) => nonnegative_elapsed(now, t)
-        None => self.worker_no_handoff_total_idle_sec(agent_id, now)
-      }
-      match
-        worker_no_handoff_decision(
-          agent.role,
-          decision_idle_sec,
-          self.handoff_was_delivered(agent_id),
-          prodded,
-          self.worker_no_handoff_stalled_emitted.contains(agent_id),
-          prod_sec,
-          escalate_sec,
-        ) {
-        WorkerNoHandoffDecision::Prod =>
-          self.prod_worker_no_handoff(agent, now, runner)
-        WorkerNoHandoffDecision::EmitStalled =>
-          self.emit_worker_stalled_no_handoff(
-            agent,
-            self.worker_no_handoff_total_idle_sec(agent_id, now),
-            screen,
-            runner,
-          )
-        WorkerNoHandoffDecision::DoNothing => ()
-      }
-    }
-    None => ()
+  if observation.idle_sec < idle_timeout {
+    return
+  }
+  let decision_idle_sec = match prodded_at {
+    Some(t) => nonnegative_elapsed(now, t)
+    None => observation.idle_sec
+  }
+  match
+    worker_no_handoff_decision(
+      agent.role,
+      decision_idle_sec,
+      self.handoff_was_delivered(agent_id),
+      prodded,
+      self.worker_no_handoff_stalled_emitted.contains(agent_id),
+      prod_sec,
+      escalate_sec,
+    ) {
+    WorkerNoHandoffDecision::Prod =>
+      self.prod_worker_no_handoff(agent, now, runner)
+    WorkerNoHandoffDecision::EmitStalled =>
+      self.emit_worker_stalled_no_handoff(
+        agent,
+        observation.idle_sec,
+        observation.screen,
+        runner,
+      )
+    WorkerNoHandoffDecision::DoNothing => ()
   }
 }
 
@@ -1090,16 +1089,19 @@ pub async fn ServerState::check_idle_agents(
       None => continue
     }
 
-    self.check_worker_no_handoff(
-      agent, now, worker_no_handoff_prod_sec, worker_no_handoff_escalate_sec, runner,
-    )
-
-    // Check if idle too long
-    match self.pane_watcher.check_idle(agent_id, now, timeout) {
-      Some(screen) => {
+    // Read and parse the pane snapshot once for all idle decisions this tick.
+    match self.pane_watcher.observe_idle(agent_id, now) {
+      Some(observation) => {
+        self.check_worker_no_handoff(
+          agent, now, observation, worker_no_handoff_prod_sec, worker_no_handoff_escalate_sec,
+          runner,
+        )
+        if observation.idle_sec < timeout {
+          continue
+        }
         self.emit_worker_exited_without_notify_if_needed(
           agent,
-          Some(screen),
+          Some(observation.screen),
           runner,
         )
         // Kill the agent
@@ -1199,6 +1201,36 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
 }
 
 ///|
+test "clear_agent_runtime_tracking clears worker no-handoff maps" {
+  let project_dir = "/tmp/choir-clear-worker-handoff-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_recovery_provider(),
+  )
+  let agent_id = "main.worker"
+  state.pending_disconnects.set(agent_id, 1L)
+  state.pending_disconnect_soft_notified.set(agent_id, true)
+  state.handoff_delivered.set(agent_id, true)
+  state.worker_no_handoff_prodded_at.set(agent_id, 2L)
+  state.worker_no_handoff_stalled_emitted.set(agent_id, true)
+  state.worker_no_handoff_exit_emitted.set(agent_id, true)
+
+  state.clear_agent_runtime_tracking(agent_id)
+
+  assert_eq(state.pending_disconnects.contains(agent_id), false)
+  assert_eq(state.pending_disconnect_soft_notified.contains(agent_id), false)
+  assert_eq(state.handoff_delivered.contains(agent_id), false)
+  assert_eq(state.worker_no_handoff_prodded_at.contains(agent_id), false)
+  assert_eq(state.worker_no_handoff_stalled_emitted.contains(agent_id), false)
+  assert_eq(state.worker_no_handoff_exit_emitted.contains(agent_id), false)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 pub fn ServerState::list_agents(self : ServerState) -> Array[@types.Agent] {
   self.registry.list()
 }
@@ -1240,15 +1272,20 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
   let lifecycle = self.current_lifecycle(agent_id)
   match agent.state {
     Done | Failed => {
-      self.emit_worker_exited_without_notify_if_needed(agent, None, runner)
+      if !worker_no_handoff_terminal_process(lifecycle) {
+        self.emit_worker_exited_without_notify_if_needed(agent, None, runner)
+      }
       match agent.terminal_target {
         Some(target) =>
           self.interpret_teardown_effects([CloseTerminal(target)], runner)
         None => ()
       }
+      self.clear_agent_runtime_tracking(agent_id)
     }
     Completing => {
-      self.emit_worker_exited_without_notify_if_needed(agent, None, runner)
+      if !worker_no_handoff_terminal_process(lifecycle) {
+        self.emit_worker_exited_without_notify_if_needed(agent, None, runner)
+      }
       let exit_reason = match lifecycle.process {
         @phase.ProcessState::Finalizing(reason=@phase.FinalizeReason::Merged) =>
           @types.ExitReason::Merged

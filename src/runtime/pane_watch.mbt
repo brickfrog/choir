@@ -39,6 +39,12 @@ pub(all) struct WatchState {
 }
 
 ///|
+pub(all) struct PaneIdleObservation {
+  screen : String
+  idle_sec : Int64
+}
+
+///|
 pub struct PaneWatcher {
   watches : Map[String, WatchState]
   host : PaneWatchHost
@@ -176,12 +182,11 @@ fn PaneWatcher::record_observation(
 /// Checks if the agent's pane has been idle. Returns `Some(screen_text)` if idle, `None` if not idle or not being watched.
 /// This is the pane-watch idle/no-heartbeat proxy signal; it emits no hard
 /// disconnect notification by itself.
-pub fn PaneWatcher::check_idle(
+pub fn PaneWatcher::observe_idle(
   self : PaneWatcher,
   agent_id : String,
   now : Int64,
-  timeout : Int64,
-) -> String? {
+) -> PaneIdleObservation? {
   let watch = match self.watches.get(agent_id) {
     Some(watch) => watch
     None => return None
@@ -201,22 +206,23 @@ pub fn PaneWatcher::check_idle(
   }
 
   let elapsed = now - observation.last_change_at
-  if elapsed >= timeout {
-    Some(screen)
-  } else {
-    None
-  }
+  Some({ screen, idle_sec: elapsed })
 }
 
 ///|
-pub fn PaneWatcher::idle_elapsed_sec(
+/// Checks if the agent's pane has been idle. Returns `Some(screen_text)` if idle, `None` if not idle or not being watched.
+/// This is the pane-watch idle/no-heartbeat proxy signal; it emits no hard
+/// disconnect notification by itself.
+pub fn PaneWatcher::check_idle(
   self : PaneWatcher,
   agent_id : String,
   now : Int64,
-) -> Int64? {
-  match self.watches.get(agent_id) {
-    Some(watch) => Some(now - watch.observation.last_change_at)
-    None => None
+  timeout : Int64,
+) -> String? {
+  match self.observe_idle(agent_id, now) {
+    Some(observation) if observation.idle_sec >= timeout =>
+      Some(observation.screen)
+    _ => None
   }
 }
 

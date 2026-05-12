@@ -2911,12 +2911,24 @@ fn handler_auto_close_agent(
 
 ///|
 fn worker_handoff_test_state(label : String, snapshot : String) -> ServerState {
+  worker_handoff_test_state_with_read_log(label, snapshot, [])
+}
+
+///|
+fn worker_handoff_test_state_with_read_log(
+  label : String,
+  snapshot : String,
+  reads : Array[String],
+) -> ServerState {
   let base = handler_auto_close_test_state(label)
   let host : @runtime.PaneWatchHost = {
     spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 101 },
     kill_pid_best_effort: fn(_pid) {  },
     delete_file_sync: fn(_path) {  },
-    read_file: fn(_path) { snapshot },
+    read_file: fn(path) {
+      reads.push(path)
+      snapshot
+    },
   }
   base.with_pane_watcher(@runtime.PaneWatcher::with_host(host))
 }
@@ -3043,6 +3055,46 @@ async test "check_idle_agents prods worker then emits one stalled no-handoff eve
     ),
     1,
   )
+}
+
+///|
+async test "check_idle_agents reuses one pane snapshot for handoff and watchdog checks" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"done\",\"tail\"]}"
+  let reads : Array[String] = []
+  let state = worker_handoff_test_state_with_read_log(
+    "worker-handoff-single-read", snapshot, reads,
+  )
+  let parent_id = "main.parent"
+  let worker_id = "main.single-read"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.watch_pane(worker_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 301L,
+    300L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+
+  assert_eq(reads, [
+    @runtime.pane_snapshot_path(worker_id),
+    @runtime.pane_snapshot_path(worker_id),
+  ])
 }
 
 ///|
