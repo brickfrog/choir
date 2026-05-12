@@ -102,6 +102,47 @@ async test "goal judge suppresses unchanged state inside reminder window" {
 }
 
 ///|
+async test "goal judge treats a same-second first eval as a real previous eval (no re-prod)" {
+  // started_unix_sec and last_eval.evaluated_unix_sec are both second-
+  // granularity; the first tick can stamp evaluated == started. That must
+  // count as a previous eval so an unchanged-state second tick is rate-
+  // limited rather than re-emitting the same [GOAL: ...] prod.
+  let judge = GoalJudgeState::new()
+  let goal = @types.Goal::new("x", ["false"], 5L)
+    .unwrap()
+    .with_last_eval(goal_judge_test_eval(0, 1, "shell failed: false", 5L))
+  let delivered : Array[String] = []
+  let writes : Array[@types.Goal] = []
+  let mut clears = 0
+  let result = judge.tick_with(
+    10L,
+    fn() { Ok(Some(goal)) },
+    fn(updated) {
+      writes.push(updated)
+      Ok(())
+    },
+    fn() {
+      clears = clears + 1
+      Ok(())
+    },
+    async fn(_goal, now) {
+      @async.sleep(0)
+      goal_judge_test_eval(0, 1, "shell failed: false", now)
+    },
+    async fn(message, _status) {
+      @async.sleep(0)
+      delivered.push(message)
+    },
+  )
+  match result {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  assert_eq(delivered, [])
+  assert_eq(clears, 0)
+}
+
+///|
 async test "goal judge emits complete exactly once and clears goal" {
   let judge = GoalJudgeState::new()
   let mut current_goal : @types.Goal? = Some(

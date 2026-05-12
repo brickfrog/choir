@@ -135,8 +135,14 @@ fn goal_judge_clear_if_current(
 
 ///|
 fn goal_judge_previous_eval(goal : @types.Goal) -> @types.GoalEvalResult? {
+  // `>=`, not `>`: started_unix_sec and evaluated_unix_sec are both
+  // second-granularity (@poller.now_sec()), so the first judge tick can
+  // legitimately stamp evaluated_unix_sec == started_unix_sec when it runs
+  // in the same wall-clock second the goal was created. With `>` that valid
+  // first eval was discarded, previous_eval became None, and the same
+  // `[GOAL: …]` progress prod was re-emitted instead of being rate-limited.
   match goal.last_eval {
-    Some(eval) if eval.evaluated_unix_sec > goal.started_unix_sec => Some(eval)
+    Some(eval) if eval.evaluated_unix_sec >= goal.started_unix_sec => Some(eval)
     _ => None
   }
 }
