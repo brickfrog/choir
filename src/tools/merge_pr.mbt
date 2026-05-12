@@ -357,6 +357,17 @@ pub async fn interpret_merge_pr_preflight(
     )
   }
   if force {
+    // Audit trail: a force-merge bypasses the poller/threads/policy preflight
+    // (the GitHub changes-requested gate above is still enforced). Log it so
+    // override usage is visible in the server log, not just in the KV
+    // paper-trail. See choir-u7v.
+    @moontrace.warn(
+      "force-merge: override active, bypassing poller/threads/policy preflight",
+      fields=[
+        @moontrace.field("pr", pr_number),
+        @moontrace.field("caller", caller_id),
+      ],
+    )
     return Ok(())
   }
   let poller_tracked = match poller_state {
