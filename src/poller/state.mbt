@@ -97,7 +97,11 @@ fn review_thread_refs_to_json(refs : Array[ReviewThreadRef]) -> Json {
   let items : Array[Json] = []
   for thread in refs {
     items.push(
-      { "id": thread.id.to_json(), "is_outdated": thread.is_outdated.to_json() }.to_json(),
+      {
+        "id": thread.id.to_json(),
+        "is_outdated": thread.is_outdated.to_json(),
+        "author_login": thread.author_login.to_json(),
+      }.to_json(),
     )
   }
   items.to_json()
@@ -119,7 +123,11 @@ fn parse_review_thread_refs(json : Json?) -> Array[ReviewThreadRef]? {
           Some(value) => value
           None => false
         }
-        refs.push({ id, is_outdated })
+        let author_login = match @types.json_field_string(obj, "author_login") {
+          Some(value) => value
+          None => ""
+        }
+        refs.push({ id, is_outdated, author_login })
       }
       Some(refs)
     }
@@ -154,6 +162,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "unresolved_thread_ids": review_thread_refs_to_json(
       self.unresolved_thread_ids,
     ),
+    "auto_resolve_outdated_pending": self.auto_resolve_outdated_pending.to_json(),
   }
   .to_json()
   .stringify()
@@ -278,6 +287,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => return None
   }
+  let auto_resolve_outdated_pending = match
+    @types.json_field_bool(fields, "auto_resolve_outdated_pending") {
+    Some(value) => value
+    None => false
+  }
   Some({
     pr_number,
     agent_id,
@@ -301,6 +315,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     fixes_pushed_at,
     review_mode,
     unresolved_thread_ids,
+    auto_resolve_outdated_pending,
   })
 }
 
@@ -343,6 +358,7 @@ pub fn PollerState::track(
     fixes_pushed_at: 0L,
     review_mode,
     unresolved_thread_ids: [],
+    auto_resolve_outdated_pending: false,
   }
   self.set_tracked(pr_number, pr)
 }
@@ -464,6 +480,7 @@ pub fn PollerState::track_recovered(
     fixes_pushed_at: 0L,
     review_mode: @types.ReviewMode::Iterative,
     unresolved_thread_ids: [],
+    auto_resolve_outdated_pending: false,
   }
   self.set_tracked(pr_number, pr)
 }
@@ -848,6 +865,7 @@ pub async fn PollerState::tick_pr_with(
   let mut crs = tracked_ok.changes_requested_since
   let mut sn = tracked_ok.stall_notified
   let mut fpa = tracked_ok.fixes_pushed_at
+  let mut auto_resolve_outdated_pending = tracked_ok.auto_resolve_outdated_pending
   let sha_moved = tracked_ok.last_sha != "" &&
     sha != "" &&
     sha != tracked_ok.last_sha
@@ -867,6 +885,15 @@ pub async fn PollerState::tick_pr_with(
     crs = now
     sn = false
   }
+  for event in all_events {
+    match event {
+      FixesPushed(_) =>
+        if tracked_ok.review_mode == @types.ReviewMode::Iterative {
+          auto_resolve_outdated_pending = true
+        }
+      _ => ()
+    }
+  }
   let updated = if sha == "" {
     {
       ..tracked_ok,
@@ -879,6 +906,7 @@ pub async fn PollerState::tick_pr_with(
       changes_requested_since: crs,
       stall_notified: sn,
       fixes_pushed_at: fpa,
+      auto_resolve_outdated_pending,
     }
   } else {
     {
@@ -893,6 +921,7 @@ pub async fn PollerState::tick_pr_with(
       changes_requested_since: crs,
       stall_notified: sn,
       fixes_pushed_at: fpa,
+      auto_resolve_outdated_pending,
     }
   }
   self.set_tracked(pr_number, updated)

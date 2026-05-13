@@ -202,25 +202,41 @@ test "parse_unresolved_threads_response empty on parse error" {
 ///|
 test "parse_review_thread_refs_response preserves isOutdated true and false" {
   let json =
-    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_old","isResolved":false,"isOutdated":true},{"id":"PRRT_new","isResolved":false,"isOutdated":false},{"id":"PRRT_done","isResolved":true,"isOutdated":true}]}}}}}
-  let refs = parse_review_thread_refs_response(json)
-  assert_eq(refs.length(), 2)
-  assert_eq(refs[0], @poller.ReviewThreadRef::{
-    id: "PRRT_old",
-    is_outdated: true,
-  })
-  assert_eq(refs[1], @poller.ReviewThreadRef::{
-    id: "PRRT_new",
-    is_outdated: false,
-  })
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_old","isResolved":false,"isOutdated":true,"author":{"login":"copilot-pull-request-reviewer[bot]"}},{"id":"PRRT_new","isResolved":false,"isOutdated":false,"author":{"login":"octocat"}},{"id":"PRRT_done","isResolved":true,"isOutdated":true}]}}}}}
+  match parse_review_thread_refs_response(json) {
+    Some(refs) => {
+      assert_eq(refs.length(), 2)
+      assert_eq(refs[0], @poller.ReviewThreadRef::{
+        id: "PRRT_old",
+        is_outdated: true,
+        author_login: "copilot-pull-request-reviewer[bot]",
+      })
+      assert_eq(refs[1], @poller.ReviewThreadRef::{
+        id: "PRRT_new",
+        is_outdated: false,
+        author_login: "octocat",
+      })
+    }
+    None => fail("expected review thread refs")
+  }
 }
 
 ///|
-test "parse_review_thread_refs_response empty nodes and malformed json are empty" {
+test "parse_review_thread_refs_response distinguishes empty nodes from malformed json" {
   let empty =
     #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
-  assert_eq(parse_review_thread_refs_response(empty), [])
-  assert_eq(parse_review_thread_refs_response("not json"), [])
+  match parse_review_thread_refs_response(empty) {
+    Some(refs) => assert_eq(refs, [])
+    None => fail("expected empty nodes to parse as an empty snapshot")
+  }
+  match parse_review_thread_refs_response("not json") {
+    None => ()
+    Some(_) => fail("expected malformed JSON to fail parsing")
+  }
+  match parse_review_thread_refs_response("{\"data\":{}}") {
+    None => ()
+    Some(_) => fail("expected missing reviewThreads nodes to fail parsing")
+  }
 }
 
 ///|
@@ -289,4 +305,54 @@ async test "fetch_unresolved_review_threads fails_closed_when_graphql_nonzero_af
   )
   assert_eq(count, 1)
   assert_eq(text, review_thread_fetch_failed_marker)
+}
+
+///|
+async test "fetch_unresolved_review_thread_refs uses bounded gh and parses author logins" {
+  let seen : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    seen.push(cmd)
+    assert_eq(cmd.program, "timeout")
+    assert_true(cmd.args.length() >= 3)
+    assert_eq(cmd.args[0], "30s")
+    assert_eq(cmd.args[1], "gh")
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      assert_true(cmd.args.join(" ").contains("author { login }"))
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_old\",\"isResolved\":false,\"isOutdated\":true,\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}}}}}",
+      )
+    }
+    (1, "unexpected command")
+  }
+  match fetch_unresolved_review_thread_refs(5, "/tmp/repo", capture) {
+    Some(refs) => {
+      assert_eq(refs.length(), 1)
+      assert_eq(refs[0], @poller.ReviewThreadRef::{
+        id: "PRRT_old",
+        is_outdated: true,
+        author_login: "copilot-pull-request-reviewer[bot]",
+      })
+    }
+    None => fail("expected thread refs")
+  }
+  assert_eq(seen.length(), 2)
+}
+
+///|
+async test "fetch_unresolved_review_thread_refs returns None on malformed graphql body" {
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    (0, "not json")
+  }
+  match fetch_unresolved_review_thread_refs(5, "/tmp/repo", capture) {
+    None => ()
+    Some(_) => fail("expected malformed GraphQL body to fail fetching")
+  }
 }

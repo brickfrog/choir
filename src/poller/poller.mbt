@@ -46,6 +46,7 @@ pub(all) enum CiRollupStatus {
 pub(all) struct ReviewThreadRef {
   id : String
   is_outdated : Bool
+  author_login : String
 } derive(Debug, Eq)
 
 ///|
@@ -86,6 +87,7 @@ pub(all) struct TrackedPR {
   mut fixes_pushed_at : Int64
   mut review_mode : @types.ReviewMode
   mut unresolved_thread_ids : Array[ReviewThreadRef]
+  mut auto_resolve_outdated_pending : Bool
 } derive(Debug, Eq)
 
 ///|
@@ -106,9 +108,22 @@ pub fn review_thread_ids_to_auto_resolve(
       }
     _ => return []
   }
+  review_thread_ids_to_auto_resolve_for_pending(review_mode, thread_refs)
+}
+
+///|
+pub fn review_thread_ids_to_auto_resolve_for_pending(
+  review_mode : @types.ReviewMode,
+  thread_refs : Array[ReviewThreadRef],
+) -> Array[String] {
+  if review_mode != @types.ReviewMode::Iterative {
+    return []
+  }
   let ids : Array[String] = []
   for thread in thread_refs {
-    if thread.is_outdated && thread.id != "" {
+    if thread.is_outdated &&
+      thread.id != "" &&
+      gh_login_is_copilot_issue_comment_author(thread.author_login) {
       ids.push(thread.id)
     }
   }

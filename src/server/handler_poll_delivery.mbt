@@ -1054,24 +1054,83 @@ async fn mirror_poll_event_to_beads(
 }
 
 ///|
-pub async fn ServerState::auto_resolve_outdated_review_threads_for_event(
-  self : ServerState,
+fn poll_event_starts_auto_resolve_outdated_threads(
   event : @poller.PollEvent,
+  review_mode : @types.ReviewMode,
+) -> Bool {
+  match event {
+    @poller.PollEvent::FixesPushed(_) =>
+      review_mode == @types.ReviewMode::Iterative
+    _ => false
+  }
+}
+
+///|
+fn ServerState::log_review_thread_ref_fetch_failed(
+  self : ServerState,
+  pr_number : Int,
+) -> Unit {
+  @moontrace.warn("poller review thread ref fetch failed", fields=[
+    @moontrace.field("pr", pr_number),
+  ])
+  append_poller_delivery_line(
+    self.append_file,
+    self.config.project_dir,
+    "review thread ref fetch failed pr=" +
+    pr_number.to_string() +
+    " keeping prior snapshot",
+  )
+}
+
+///|
+pub async fn ServerState::refresh_unresolved_review_thread_refs_snapshot(
+  self : ServerState,
+  tracked : @poller.TrackedPR,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @poller.TrackedPR? {
+  match
+    @tools.fetch_unresolved_review_thread_refs(
+      tracked.pr_number,
+      self.config.project_dir,
+      capture,
+    ) {
+    Some(thread_refs) => {
+      let refreshed = { ..tracked, unresolved_thread_ids: thread_refs }
+      self.poller.restore(refreshed)
+      Some(refreshed)
+    }
+    None => {
+      self.log_review_thread_ref_fetch_failed(tracked.pr_number)
+      None
+    }
+  }
+}
+
+///|
+pub async fn ServerState::auto_resolve_outdated_review_threads_for_pending(
+  self : ServerState,
   tracked : @poller.TrackedPR,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> @poller.TrackedPR {
-  match event {
-    @poller.PollEvent::FixesPushed(_) =>
-      if tracked.review_mode != @types.ReviewMode::Iterative {
-        return tracked
-      }
-    _ => return tracked
+  if tracked.review_mode != @types.ReviewMode::Iterative ||
+    !tracked.auto_resolve_outdated_pending {
+    return tracked
   }
-  let ids = @poller.review_thread_ids_to_auto_resolve(
-    event,
+  let ids = @poller.review_thread_ids_to_auto_resolve_for_pending(
     tracked.review_mode,
     tracked.unresolved_thread_ids,
   )
+  if ids.length() == 0 {
+    append_poller_delivery_line(
+      self.append_file,
+      self.config.project_dir,
+      "poller auto-resolved 0 outdated review thread(s) pr=" +
+      tracked.pr_number.to_string(),
+    )
+    let updated = { ..tracked, auto_resolve_outdated_pending: false }
+    self.poller.restore(updated)
+    return updated
+  }
   let resolved : Array[String] = []
   for thread_id in ids {
     let cmd = @tools.resolve_review_thread_gh_command(
@@ -1120,9 +1179,63 @@ pub async fn ServerState::auto_resolve_outdated_review_threads_for_event(
       remaining.push(thread)
     }
   }
-  let updated = { ..tracked, unresolved_thread_ids: remaining }
+  let still_pending = @poller.review_thread_ids_to_auto_resolve_for_pending(
+      tracked.review_mode,
+      remaining,
+    ).length() >
+    0
+  let updated = {
+    ..tracked,
+    unresolved_thread_ids: remaining,
+    auto_resolve_outdated_pending: still_pending,
+  }
   self.poller.restore(updated)
   updated
+}
+
+///|
+pub async fn ServerState::auto_resolve_outdated_review_threads_for_event(
+  self : ServerState,
+  event : @poller.PollEvent,
+  tracked : @poller.TrackedPR,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @poller.TrackedPR {
+  if !poll_event_starts_auto_resolve_outdated_threads(
+      event,
+      tracked.review_mode,
+    ) {
+    return tracked
+  }
+  let pending = { ..tracked, auto_resolve_outdated_pending: true }
+  self.poller.restore(pending)
+  self.auto_resolve_outdated_review_threads_for_pending(pending, capture)
+}
+
+///|
+async fn ServerState::retry_auto_resolve_outdated_review_threads(
+  self : ServerState,
+  capture : async (@workspace.Command) -> (Int, String),
+  skipped_prs : Map[Int, Bool],
+) -> Unit {
+  for tracked in self.poller.tracked.values() {
+    if skipped_prs.contains(tracked.pr_number) {
+      continue
+    }
+    if tracked.review_mode != @types.ReviewMode::Iterative ||
+      !tracked.auto_resolve_outdated_pending {
+      continue
+    }
+    match
+      self.refresh_unresolved_review_thread_refs_snapshot(tracked, capture) {
+      Some(refreshed) =>
+        ignore(
+          self.auto_resolve_outdated_review_threads_for_pending(
+            refreshed, capture,
+          ),
+        )
+      None => ()
+    }
+  }
 }
 
 ///|
@@ -1136,6 +1249,7 @@ async fn deliver_pending_poll_events(
 ) -> Unit {
   let pending_parent_rows : Array[PendingPollParentRow] = []
   let automerge_attempted_prs : Map[Int, Bool] = {}
+  let auto_resolve_attempted_prs : Map[Int, Bool] = {}
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
@@ -1171,19 +1285,16 @@ async fn deliver_pending_poll_events(
       automerge_enabled,
       review_mode~,
     )
+    if poll_event_starts_auto_resolve_outdated_threads(event, review_mode) {
+      auto_resolve_attempted_prs.set(poll_event_pr_number(event), true)
+    }
     let (tracked_for_delivery, unresolved_threads) = match
       tracked_before_delivery {
       Some(pr) =>
         if should_fetch_threads {
           match
-            @tools.fetch_unresolved_review_thread_refs(
-              poll_event_pr_number(event),
-              state.config.project_dir,
-              capture,
-            ) {
-            Some(thread_refs) => {
-              let refreshed = { ..pr, unresolved_thread_ids: thread_refs }
-              state.poller.restore(refreshed)
+            state.refresh_unresolved_review_thread_refs_snapshot(pr, capture) {
+            Some(refreshed) => {
               let after_resolve = state.auto_resolve_outdated_review_threads_for_event(
                 event, refreshed, capture,
               )
@@ -1192,7 +1303,7 @@ async fn deliver_pending_poll_events(
                 Some(after_resolve.unresolved_thread_ids.length()),
               )
             }
-            None => (Some(pr), None)
+            None => (Some(pr), Some(pr.unresolved_thread_ids.length()))
           }
         } else {
           (Some(pr), None)
@@ -1290,6 +1401,9 @@ async fn deliver_pending_poll_events(
       None => ()
     }
   }
+  state.retry_auto_resolve_outdated_review_threads(
+    capture, auto_resolve_attempted_prs,
+  )
   if pending_parent_rows.length() > 0 {
     let rollup_entries : Array[@poller.WaveRollupEntry] = []
     for row in pending_parent_rows {

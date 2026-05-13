@@ -76,6 +76,7 @@ pub fn file_pr_plan(
       fixes_pushed_at: 0L,
       review_mode,
       unresolved_thread_ids: [],
+      auto_resolve_outdated_pending: false,
     })
   } else {
     None

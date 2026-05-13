@@ -83,6 +83,7 @@ fn merge_pr_test_tracked(
     fixes_pushed_at: 0L,
     review_mode: @types.ReviewMode::Iterative,
     unresolved_thread_ids: [],
+    auto_resolve_outdated_pending: false,
   }
 }
 
@@ -2327,9 +2328,11 @@ test "merge_pr_tracked_branch_for_post_success returns branch when tracked" {
 ///|
 test "resolve_review_thread_gh_command matches graphql argv and workdir" {
   let cmd = resolve_review_thread_gh_command("/repo/root", "PRRT_kwDOabc")
-  assert_eq(cmd.program, "gh")
+  assert_eq(cmd.program, "timeout")
   @debug.assert_eq(cmd.workdir, Some("/repo/root"))
   assert_eq(cmd.args, [
+    "30s",
+    "gh",
     "api",
     "graphql",
     "-f",

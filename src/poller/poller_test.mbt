@@ -367,6 +367,7 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   assert_eq(t.orphan_reconciling, false)
   assert_eq(t.review_mode, @types.ReviewMode::Iterative)
   assert_eq(t.unresolved_thread_ids, [])
+  assert_eq(t.auto_resolve_outdated_pending, false)
 }
 
 ///|
@@ -388,17 +389,35 @@ test "poller_state json round-trips review mode and unresolved thread refs" {
   ps.restore({
     ..tracked,
     unresolved_thread_ids: [
-      @poller.ReviewThreadRef::{ id: "T_old", is_outdated: true },
-      @poller.ReviewThreadRef::{ id: "T_current", is_outdated: false },
+      @poller.ReviewThreadRef::{
+        id: "T_old",
+        is_outdated: true,
+        author_login: "copilot-pull-request-reviewer[bot]",
+      },
+      @poller.ReviewThreadRef::{
+        id: "T_current",
+        is_outdated: false,
+        author_login: "octocat",
+      },
     ],
+    auto_resolve_outdated_pending: true,
   })
   let parsed = @poller.parse_tracked_prs_json(ps.to_json())
   assert_eq(parsed.length(), 1)
   assert_eq(parsed[0].review_mode, @types.ReviewMode::SinglePass)
   assert_eq(parsed[0].unresolved_thread_ids, [
-    @poller.ReviewThreadRef::{ id: "T_old", is_outdated: true },
-    @poller.ReviewThreadRef::{ id: "T_current", is_outdated: false },
+    @poller.ReviewThreadRef::{
+      id: "T_old",
+      is_outdated: true,
+      author_login: "copilot-pull-request-reviewer[bot]",
+    },
+    @poller.ReviewThreadRef::{
+      id: "T_current",
+      is_outdated: false,
+      author_login: "octocat",
+    },
   ])
+  assert_eq(parsed[0].auto_resolve_outdated_pending, true)
 }
 
 ///|

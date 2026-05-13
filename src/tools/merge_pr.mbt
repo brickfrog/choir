@@ -1694,18 +1694,14 @@ pub fn resolve_review_thread_gh_command(
   project_dir : String,
   thread_id : String,
 ) -> @workspace.Command {
-  {
-    program: "gh",
-    args: [
-      "api",
-      "graphql",
-      "-f",
-      "query=" + resolve_review_thread_graphql_mutation(),
-      "-F",
-      "threadId=" + thread_id,
-    ],
-    workdir: Some(project_dir),
-  }
+  bounded_gh_command(project_dir, [
+    "api",
+    "graphql",
+    "-f",
+    "query=" + resolve_review_thread_graphql_mutation(),
+    "-F",
+    "threadId=" + thread_id,
+  ])
 }
 
 ///|
