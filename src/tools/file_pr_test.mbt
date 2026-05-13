@@ -21,6 +21,8 @@ test "file_pr_plan builds tracked result when tracking enabled" {
       assert_eq(tracked.branch, "main.task-leaf")
       assert_eq(tracked.parent_branch, "main")
       assert_eq(tracked.pr_url, "https://example.test/pr/7")
+      assert_eq(tracked.review_mode, @types.ReviewMode::Iterative)
+      assert_eq(tracked.unresolved_thread_ids, [])
     }
     None => fail("expected tracked PR")
   }
@@ -43,6 +45,35 @@ test "file_pr_plan builds tracked result when tracking enabled" {
       @debug.assert_eq(map.get("tracked"), Some(Bool::to_json(true)))
     }
     _ => fail("expected OK response")
+  }
+}
+
+///|
+test "file_pr_plan stores explicit review mode on tracked PR" {
+  let args : FilePrArgs = {
+    branch: "main.task-leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.task-leaf",
+    title: None,
+    body: None,
+    review_context: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 8,
+    url: "https://example.test/pr/8",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(
+    args,
+    "main",
+    pr,
+    true,
+    review_mode=@types.ReviewMode::SinglePass,
+  )
+  match plan.tracked_pr {
+    Some(tracked) =>
+      assert_eq(tracked.review_mode, @types.ReviewMode::SinglePass)
+    None => fail("expected tracked PR")
   }
 }
 

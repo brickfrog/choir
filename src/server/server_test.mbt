@@ -1457,6 +1457,8 @@ async test "recover_state finalizes merged agent without startup parent notifica
           changes_requested_since: 0L,
           stall_notified: false,
           fixes_pushed_at: 0L,
+          review_mode: @types.ReviewMode::Iterative,
+          unresolved_thread_ids: [],
         },
       ],
     },

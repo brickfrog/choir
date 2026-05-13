@@ -365,6 +365,40 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   assert_eq(t.consecutive_failures, 0)
   assert_eq(t.backoff_until, 0L)
   assert_eq(t.orphan_reconciling, false)
+  assert_eq(t.review_mode, @types.ReviewMode::Iterative)
+  assert_eq(t.unresolved_thread_ids, [])
+}
+
+///|
+test "poller_state json round-trips review mode and unresolved thread refs" {
+  let ps = @poller.PollerState::new()
+  ps.track(
+    8,
+    "agent-8",
+    "branch-8",
+    "main",
+    "https://example.test/pr/8",
+    80L,
+    review_mode=@types.ReviewMode::SinglePass,
+  )
+  let tracked = match ps.get(8) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  ps.restore({
+    ..tracked,
+    unresolved_thread_ids: [
+      @poller.ReviewThreadRef::{ id: "T_old", is_outdated: true },
+      @poller.ReviewThreadRef::{ id: "T_current", is_outdated: false },
+    ],
+  })
+  let parsed = @poller.parse_tracked_prs_json(ps.to_json())
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].review_mode, @types.ReviewMode::SinglePass)
+  assert_eq(parsed[0].unresolved_thread_ids, [
+    @poller.ReviewThreadRef::{ id: "T_old", is_outdated: true },
+    @poller.ReviewThreadRef::{ id: "T_current", is_outdated: false },
+  ])
 }
 
 ///|

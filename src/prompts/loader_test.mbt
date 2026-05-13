@@ -235,14 +235,17 @@ test "audit default prompt writes receipt after successful worker" {
 }
 
 ///|
-test "leaf profile default prompt instructs leaves to resolve threads after fixes" {
-  // Per CLAUDE.md Leaf Agent Rules: Copilot reviews once; the leaf MUST
-  // resolve threads itself after addressing comments. Guard against
-  // future edits that revert to the wrong contradicting variant.
+test "leaf profile default prompt uses poller snapshots for review state" {
   let body = default_prompt(PromptName::LeafProfile)
-  assert_true(body.contains("you (the leaf) must resolve each thread yourself"))
-  assert_true(body.contains("resolveReviewThread(input: {threadId:"))
-  assert_false(body.contains("Do not resolve GitHub review threads yourself"))
+  assert_true(body.contains("source of truth for review state"))
+  assert_true(
+    body.contains("do NOT issue your own `gh api graphql ... reviewThreads`"),
+  )
+  assert_true(body.contains("A `gh` timeout is not a blocker"))
+  assert_false(
+    body.contains("you (the leaf) must resolve each thread yourself"),
+  )
+  assert_false(body.contains("resolveReviewThread(input: {threadId:"))
 }
 
 ///|

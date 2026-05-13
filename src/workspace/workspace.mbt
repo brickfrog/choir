@@ -314,6 +314,32 @@ pub fn task_contract_for_agent_workspace(
 }
 
 ///|
+pub fn review_mode_for_agent_workspace(
+  project_dir : String,
+  agent_workspace : String?,
+  agent_slug : String,
+) -> @types.ReviewMode? {
+  for
+    path in local_config_candidate_paths_for_agent_workspace(
+      project_dir, agent_workspace, agent_slug,
+    ) {
+    let content = @sys.read_file(path)
+    if content == "" {
+      continue
+    }
+    match @config.parse_local_config(content) {
+      Ok(local_cfg) =>
+        match local_cfg.review_mode {
+          Some(mode) => return Some(mode)
+          None => ()
+        }
+      Err(_) => ()
+    }
+  }
+  None
+}
+
+///|
 pub fn task_contract_for_agent(
   project_dir : String,
   agent : @types.Agent,

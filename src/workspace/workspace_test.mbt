@@ -539,6 +539,32 @@ test "config_local_content emits review_mode override" {
 }
 
 ///|
+test "review_mode_for_agent_workspace reads local config override" {
+  let root = "/tmp/choir-workspace-review-mode-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let workdir = root + "/.choir/worktrees/leaf-0"
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(workdir + "/.choir"))
+  @debug.assert_eq(
+    @workspace.review_mode_for_agent_workspace(root, Some(workdir), "leaf-0"),
+    None,
+  )
+  assert_true(
+    @sys.write_file_sync(
+      workdir + "/.choir/config.local.toml",
+      "review_mode = \"single_pass\"\n",
+    ),
+  )
+  @debug.assert_eq(
+    @workspace.review_mode_for_agent_workspace(root, Some(workdir), "leaf-0"),
+    Some(@types.ReviewMode::SinglePass),
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
 test "config_local_content emits wave_id when present" {
   let spec = @types.SpawnSpec::{
     slug: "leaf-0",

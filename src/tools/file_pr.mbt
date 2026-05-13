@@ -50,6 +50,7 @@ pub fn file_pr_plan(
   parent_branch : String,
   pr : PullRequestInfo,
   tracked : Bool,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> FilePrPlanResult {
   let tracked_pr = if tracked {
     Some(@poller.TrackedPR::{
@@ -73,6 +74,8 @@ pub fn file_pr_plan(
       changes_requested_since: 0L,
       stall_notified: false,
       fixes_pushed_at: 0L,
+      review_mode,
+      unresolved_thread_ids: [],
     })
   } else {
     None
@@ -242,6 +245,7 @@ pub async fn interpret_file_pr_post_success(
             tracked_pr.parent_branch,
             tracked_pr.pr_url,
             @poller.now_sec(),
+            review_mode=Some(tracked_pr.review_mode),
           )
           ignore(ps.write_state_file(project_dir))
         }
@@ -978,6 +982,19 @@ pub(all) struct ForkWaveSpawnPlan {
 /// When `fork_wave` passes `review_context`, append a stable section so leaves can reuse it for `file_pr`.
 
 ///|
+fn file_pr_review_mode_for_agent(
+  project_dir : String,
+  tracked_agent_id : String,
+  file_pr_dir : String,
+) -> @types.ReviewMode {
+  @workspace.review_mode_for_agent_workspace(
+    project_dir,
+    Some(file_pr_dir),
+    @phase.extract_slug(tracked_agent_id),
+  ).unwrap_or(@types.ReviewMode::Iterative)
+}
+
+///|
 /// End-to-end `file_pr`: parent-branch defaulting, tracked workdir, preflight
 /// create, then post-success poller/lifecycle/notify. Dispatcher delegates
 /// here; behavior matches the prior `ToolRequest::FilePr` inline arm.
@@ -1066,7 +1083,16 @@ pub async fn interpret_file_pr(
     Err(e) => @types.Response::Err(e.message())
     Ok(pr) => {
       let tracked = poller_state is Some(_)
-      let plan = file_pr_plan(file_pr_args, parent_branch, pr, tracked)
+      let review_mode = file_pr_review_mode_for_agent(
+        project_dir, tracked_agent_id, file_pr_dir,
+      )
+      let plan = file_pr_plan(
+        file_pr_args,
+        parent_branch,
+        pr,
+        tracked,
+        review_mode~,
+      )
       let effects = file_pr_post_success_effects(
         plan,
         poller_state is Some(_),

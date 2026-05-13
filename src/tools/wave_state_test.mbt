@@ -142,6 +142,8 @@ fn tracked_pr_with(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
 }
 

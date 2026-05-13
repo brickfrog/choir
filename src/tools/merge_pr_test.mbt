@@ -81,6 +81,8 @@ fn merge_pr_test_tracked(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
 }
 

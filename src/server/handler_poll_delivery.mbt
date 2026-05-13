@@ -759,7 +759,10 @@ pub fn ServerState::plan_poll_event_deliveries(
       )
     None => None
   }
-  let review_mode = review_mode_for_agent(self.config, local_cfg)
+  let review_mode = match tracked {
+    Some(pr) => pr.review_mode
+    None => review_mode_for_agent(self.config, local_cfg)
+  }
   match (tracked, event) {
     (Some(_), ReviewReceived(n, body)) =>
       @tools.apply_dev_event(
@@ -1051,6 +1054,78 @@ async fn mirror_poll_event_to_beads(
 }
 
 ///|
+pub async fn ServerState::auto_resolve_outdated_review_threads_for_event(
+  self : ServerState,
+  event : @poller.PollEvent,
+  tracked : @poller.TrackedPR,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @poller.TrackedPR {
+  match event {
+    @poller.PollEvent::FixesPushed(_) =>
+      if tracked.review_mode != @types.ReviewMode::Iterative {
+        return tracked
+      }
+    _ => return tracked
+  }
+  let ids = @poller.review_thread_ids_to_auto_resolve(
+    event,
+    tracked.review_mode,
+    tracked.unresolved_thread_ids,
+  )
+  let resolved : Array[String] = []
+  for thread_id in ids {
+    let cmd = @tools.resolve_review_thread_gh_command(
+      self.config.project_dir,
+      thread_id,
+    )
+    let (exit_code, output) = capture(cmd)
+    let response = @tools.interpret_resolve_review_thread_result(
+      exit_code, output, thread_id,
+    )
+    if response.is_ok() {
+      resolved.push(thread_id)
+    } else {
+      let message = response.error_message().unwrap_or("unknown error")
+      @moontrace.warn("poller auto-resolve review thread failed", fields=[
+        @moontrace.field("pr", tracked.pr_number),
+        @moontrace.field("thread_id", thread_id),
+        @moontrace.field("error", message),
+      ])
+      append_poller_delivery_line(
+        self.append_file,
+        self.config.project_dir,
+        "auto-resolve failed pr=" +
+        tracked.pr_number.to_string() +
+        " thread=" +
+        thread_id +
+        " error=" +
+        message,
+      )
+    }
+  }
+  append_poller_delivery_line(
+    self.append_file,
+    self.config.project_dir,
+    "poller auto-resolved " +
+    resolved.length().to_string() +
+    " outdated review thread(s) pr=" +
+    tracked.pr_number.to_string(),
+  )
+  if resolved.length() == 0 {
+    return tracked
+  }
+  let remaining : Array[@poller.ReviewThreadRef] = []
+  for thread in tracked.unresolved_thread_ids {
+    if !resolved.contains(thread.id) {
+      remaining.push(thread)
+    }
+  }
+  let updated = { ..tracked, unresolved_thread_ids: remaining }
+  self.poller.restore(updated)
+  updated
+}
+
+///|
 async fn deliver_pending_poll_events(
   state : ServerState,
   pending_events : Array[@poller.PollEvent],
@@ -1088,36 +1163,43 @@ async fn deliver_pending_poll_events(
       None => false
     }
     let review_mode = match tracked_before_delivery {
-      Some(pr) =>
-        review_mode_for_agent(
-          state.config,
-          local_config_for_agent(
-            state.config.project_dir,
-            state.registry,
-            pr.agent_id,
-          ),
-        )
+      Some(pr) => pr.review_mode
       None => state.config.review_mode
     }
-    let unresolved_threads : Int? = if should_fetch_unresolved_threads_for_pending_event(
-        event,
-        automerge_enabled,
-        review_mode~,
-      ) {
-      let (count, thread_text) = @tools.fetch_unresolved_review_threads(
-        poll_event_pr_number(event),
-        state.config.project_dir,
-        capture,
-      )
-      if thread_text == @tools.review_thread_fetch_failed_marker {
-        None
-      } else {
-        Some(count)
-      }
-    } else {
-      None
+    let should_fetch_threads = should_fetch_unresolved_threads_for_pending_event(
+      event,
+      automerge_enabled,
+      review_mode~,
+    )
+    let (tracked_for_delivery, unresolved_threads) = match
+      tracked_before_delivery {
+      Some(pr) =>
+        if should_fetch_threads {
+          match
+            @tools.fetch_unresolved_review_thread_refs(
+              poll_event_pr_number(event),
+              state.config.project_dir,
+              capture,
+            ) {
+            Some(thread_refs) => {
+              let refreshed = { ..pr, unresolved_thread_ids: thread_refs }
+              state.poller.restore(refreshed)
+              let after_resolve = state.auto_resolve_outdated_review_threads_for_event(
+                event, refreshed, capture,
+              )
+              (
+                Some(after_resolve),
+                Some(after_resolve.unresolved_thread_ids.length()),
+              )
+            }
+            None => (Some(pr), None)
+          }
+        } else {
+          (Some(pr), None)
+        }
+      None => (None, None)
     }
-    match (event, tracked_before_delivery) {
+    match (event, tracked_for_delivery) {
       (PRMerged(pr), Some(_)) =>
         state.reconcile_external_merge_with_runner(
           pr.agent_id,
@@ -1138,7 +1220,7 @@ async fn deliver_pending_poll_events(
           ignore(state.durable_dispatch_planned(planned, runner))
         }
     }
-    match tracked_before_delivery {
+    match tracked_for_delivery {
       Some(pr) => {
         append_poll_snapshot_evidence(state, pr, event, unresolved_threads)
         mirror_poll_event_to_beads(state, pr, event, runner)

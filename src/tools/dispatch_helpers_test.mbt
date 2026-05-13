@@ -181,15 +181,15 @@ test "parse_unresolved_threads_response empty on all resolved" {
 }
 
 ///|
-test "parse_unresolved_threads_response skips outdated threads" {
+test "parse_unresolved_threads_response includes outdated unresolved threads" {
   let json =
     #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_old","isResolved":false,"isOutdated":true,"path":"src/foo.mbt","comments":{"nodes":[{"body":"stale comment"}]}},{"id":"PRRT_new","isResolved":false,"isOutdated":false,"path":"src/bar.mbt","comments":{"nodes":[{"body":"active comment"}]}}]}}}}}
   let (count, text) = parse_unresolved_threads_response(json)
-  assert_eq(count, 1)
+  assert_eq(count, 2)
   assert_true(text.contains("PRRT_new"))
   assert_true(text.contains("active comment"))
-  assert_false(text.contains("PRRT_old"))
-  assert_false(text.contains("stale comment"))
+  assert_true(text.contains("PRRT_old"))
+  assert_true(text.contains("stale comment"))
 }
 
 ///|
@@ -197,6 +197,30 @@ test "parse_unresolved_threads_response empty on parse error" {
   let (count, text) = parse_unresolved_threads_response("not json")
   assert_eq(count, 0)
   assert_eq(text, "")
+}
+
+///|
+test "parse_review_thread_refs_response preserves isOutdated true and false" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_old","isResolved":false,"isOutdated":true},{"id":"PRRT_new","isResolved":false,"isOutdated":false},{"id":"PRRT_done","isResolved":true,"isOutdated":true}]}}}}}
+  let refs = parse_review_thread_refs_response(json)
+  assert_eq(refs.length(), 2)
+  assert_eq(refs[0], @poller.ReviewThreadRef::{
+    id: "PRRT_old",
+    is_outdated: true,
+  })
+  assert_eq(refs[1], @poller.ReviewThreadRef::{
+    id: "PRRT_new",
+    is_outdated: false,
+  })
+}
+
+///|
+test "parse_review_thread_refs_response empty nodes and malformed json are empty" {
+  let empty =
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+  assert_eq(parse_review_thread_refs_response(empty), [])
+  assert_eq(parse_review_thread_refs_response("not json"), [])
 }
 
 ///|

@@ -120,6 +120,8 @@ test "poll_event_beads_note_and_state maps review and ci events" {
         changes_requested_since: 0L,
         stall_notified: false,
         fixes_pushed_at: 0L,
+        review_mode: @types.ReviewMode::Iterative,
+        unresolved_thread_ids: [],
       }),
     ) {
     Some((note, dimension, value)) => {
@@ -700,6 +702,7 @@ fn blocked_gh_automerge_fixture(
     "main",
     "https://github.com/brickfrog/choir/pull/" + pr_number.to_string(),
     100L,
+    review_mode~,
   )
   match state.poller.get(pr_number) {
     Some(tracked) =>
@@ -857,6 +860,8 @@ async test "blocked gh notify honors single-pass review mode for fixes pushed" {
         last_sha: "fix-sha-singlepass",
         changes_requested_since: 0L,
         fixes_pushed_at: 999L,
+        review_mode: @types.ReviewMode::SinglePass,
+        unresolved_thread_ids: [],
       })
     None => fail("expected tracked PR")
   }
@@ -1226,7 +1231,101 @@ fn parent_poll_test_ready_tracked(pr_number : Int) -> @poller.TrackedPR {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
+}
+
+///|
+async test "auto_resolve_outdated_review_threads_for_event resolves only iterative FixesPushed outdated threads" {
+  let project_dir = "/tmp/choir-auto-resolve-threads-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_recovery_provider(),
+  )
+  let tracked = {
+    ..parent_poll_test_ready_tracked(701),
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [
+      @poller.ReviewThreadRef::{ id: "T_old", is_outdated: true },
+      @poller.ReviewThreadRef::{ id: "T_current", is_outdated: false },
+    ],
+  }
+  let seen : Array[String] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    for arg in cmd.args {
+      if arg.has_prefix("threadId=") {
+        seen.push(arg)
+      }
+    }
+    (
+      0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+    )
+  }
+  let updated = state.auto_resolve_outdated_review_threads_for_event(
+    @poller.PollEvent::FixesPushed(701),
+    tracked,
+    capture,
+  )
+  assert_eq(seen, ["threadId=T_old"])
+  assert_eq(updated.unresolved_thread_ids, [
+    @poller.ReviewThreadRef::{ id: "T_current", is_outdated: false },
+  ])
+  let log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(
+    log.contains("poller auto-resolved 1 outdated review thread(s) pr=701"),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "auto_resolve_outdated_review_threads_for_event skips single pass and non FixesPushed" {
+  let project_dir = "/tmp/choir-auto-resolve-skip-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_recovery_provider(),
+  )
+  let tracked = {
+    ..parent_poll_test_ready_tracked(702),
+    review_mode: @types.ReviewMode::SinglePass,
+    unresolved_thread_ids: [
+      @poller.ReviewThreadRef::{ id: "T_old", is_outdated: true },
+    ],
+  }
+  let mut calls = 0
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    calls = calls + 1
+    (
+      0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+    )
+  }
+  ignore(
+    state.auto_resolve_outdated_review_threads_for_event(
+      @poller.PollEvent::FixesPushed(702),
+      tracked,
+      capture,
+    ),
+  )
+  let iterative = { ..tracked, review_mode: @types.ReviewMode::Iterative }
+  ignore(
+    state.auto_resolve_outdated_review_threads_for_event(
+      @poller.PollEvent::PRReady(702),
+      iterative,
+      capture,
+    ),
+  )
+  assert_eq(calls, 0)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -1260,6 +1359,8 @@ test "parent_poll_event_message PR READY stresses not merged" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -1305,6 +1406,8 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -1345,6 +1448,8 @@ test "parent_poll_event_message MergeReady is actionable in manual mode" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -1389,6 +1494,8 @@ test "parent_poll_event_message MergeReady is informational in automerge mode" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -1569,6 +1676,8 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -1614,6 +1723,8 @@ test "parent_poll_event_message FixesPushed single_pass avoids re-review wording
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 1L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -1671,6 +1782,8 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -1752,6 +1865,8 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -1817,6 +1932,8 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     leaf_poll_review_injection_message(
@@ -1873,6 +1990,8 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   @debug.assert_eq(
     parent_poll_event_message(
@@ -1975,6 +2094,8 @@ test "disconnect auto-rescue decision fires for review-owned unresolved threads"
     changes_requested_since: 1001L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     disconnect_auto_rescue_decision(agent, lifecycle, Some(tracked), 2, 2000L) {
@@ -2041,6 +2162,8 @@ test "disconnect auto-rescue decision fires while Copilot review is pending" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     disconnect_auto_rescue_decision(agent, lifecycle, Some(tracked), 0, 1100L) {
@@ -2105,6 +2228,8 @@ test "disconnect auto-rescue decision is one-shot for auto-rescue leaves" {
     changes_requested_since: 1001L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     disconnect_auto_rescue_decision(agent, lifecycle, Some(tracked), 2, 2000L) {
@@ -2447,6 +2572,8 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -2490,6 +2617,8 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -2531,6 +2660,8 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   match
     parent_poll_event_message(
@@ -2571,6 +2702,8 @@ test "parent_poll_event_message PRMerged is handled by canonical teardown delive
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   @debug.assert_eq(
     parent_poll_event_message(
@@ -2606,6 +2739,8 @@ test "evidence_events_for_poll_snapshot emits normalized snapshot events" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   let events = evidence_events_for_poll_snapshot(
     tracked,
@@ -2660,6 +2795,8 @@ test "evidence_events_for_poll_snapshot includes merge observed on PRMerged" {
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   let events = evidence_events_for_poll_snapshot(
     tracked,
@@ -2722,6 +2859,8 @@ async test "deliver_orphaned_pr_notification_for skips finalized merged lifecycl
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   let mut runner_calls = 0
   deliver_orphaned_pr_notification_for(state, pr, async fn(cmds) {
@@ -2778,6 +2917,8 @@ async test "deliver_poller_stall_notification_for skips finalized merged lifecyc
     changes_requested_since: 1L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
   let mut runner_calls = 0
   deliver_poller_stall_notification_for(state, pr, 1000L, async fn(cmds) {

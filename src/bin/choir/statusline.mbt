@@ -430,6 +430,8 @@ fn statusline_test_tracked_pr(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
 }
 

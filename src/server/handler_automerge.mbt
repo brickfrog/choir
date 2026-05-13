@@ -9,15 +9,7 @@ fn ServerState::request_with_review_mode_default(
   let review_mode = match request_int_arg(req, "pr_number") {
     Some(pr_number) =>
       match self.poller.get(pr_number) {
-        Some(tracked) =>
-          review_mode_for_agent(
-            self.config,
-            local_config_for_agent(
-              self.config.project_dir,
-              self.registry,
-              tracked.agent_id,
-            ),
-          )
+        Some(tracked) => tracked.review_mode
         None => self.config.review_mode
       }
     None => self.config.review_mode

@@ -433,6 +433,58 @@ pub async fn execute_delivery(
 /// Parse the JSON response from `gh api graphql` for unresolved review threads.
 /// Returns (count, formatted_text). Each entry includes the thread ID so agents
 /// can call resolve_review_thread to resolve specific threads.
+pub fn parse_review_thread_refs_response(
+  json_str : String,
+) -> Array[@poller.ReviewThreadRef] {
+  let json = @json.parse(json_str) catch { _ => return [] }
+  guard json is Object(root) else { return [] }
+  let nodes = match root.get("data") {
+    Some(Object(data)) =>
+      match data.get("repository") {
+        Some(Object(repo)) =>
+          match repo.get("pullRequest") {
+            Some(Object(pr)) =>
+              match pr.get("reviewThreads") {
+                Some(Object(rt)) =>
+                  match rt.get("nodes") {
+                    Some(Array(ns)) => ns
+                    _ => return []
+                  }
+                _ => return []
+              }
+            _ => return []
+          }
+        _ => return []
+      }
+    _ => return []
+  }
+  let refs : Array[@poller.ReviewThreadRef] = []
+  for node in nodes {
+    guard node is Object(thread) else { continue }
+    let is_resolved = match thread.get("isResolved") {
+      Some(True) => true
+      _ => false
+    }
+    if is_resolved {
+      continue
+    }
+    let id = match thread.get("id") {
+      Some(String(v)) => v
+      _ => ""
+    }
+    if id == "" {
+      continue
+    }
+    let is_outdated = match thread.get("isOutdated") {
+      Some(True) => true
+      _ => false
+    }
+    refs.push({ id, is_outdated })
+  }
+  refs
+}
+
+///|
 pub fn parse_unresolved_threads_response(json_str : String) -> (Int, String) {
   let json = @json.parse(json_str) catch { _ => return (0, "") }
   guard json is Object(root) else { return (0, "") }
@@ -464,11 +516,7 @@ pub fn parse_unresolved_threads_response(json_str : String) -> (Int, String) {
       Some(True) => true
       _ => false
     }
-    let is_outdated = match thread.get("isOutdated") {
-      Some(True) => true
-      _ => false
-    }
-    if is_resolved || is_outdated {
+    if is_resolved {
       continue
     }
     let thread_id = match thread.get("id") {
@@ -667,6 +715,53 @@ pub async fn fetch_unresolved_review_threads_with_repo(
     return (1, review_thread_fetch_failed_marker)
   }
   parse_unresolved_threads_response(output)
+}
+
+///|
+pub async fn fetch_unresolved_review_thread_refs_with_repo(
+  pr_number : Int,
+  owner : String,
+  repo : String,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Array[@poller.ReviewThreadRef]? {
+  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved isOutdated } } } } }"
+  let cmd : @workspace.Command = {
+    program: "gh",
+    args: [
+      "api",
+      "graphql",
+      "-f",
+      "query=" + query,
+      "-F",
+      "owner=" + owner,
+      "-F",
+      "repo=" + repo,
+      "-F",
+      "pr=" + pr_number.to_string(),
+    ],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 || output.trim().to_owned() == "" {
+    return None
+  }
+  Some(parse_review_thread_refs_response(output))
+}
+
+///|
+pub async fn fetch_unresolved_review_thread_refs(
+  pr_number : Int,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Array[@poller.ReviewThreadRef]? {
+  let (owner, repo) = match fetch_gh_repo_owner_name(project_dir, capture) {
+    Some(pair) => pair
+    None => return None
+  }
+  fetch_unresolved_review_thread_refs_with_repo(
+    pr_number, owner, repo, project_dir, capture,
+  )
 }
 
 ///|

@@ -29,6 +29,8 @@ fn detect_test_tracked(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
   }
 }
 
@@ -92,6 +94,62 @@ test "detect_events FixesPushed when SHA changes after ChangesRequested" {
     FixesPushed(n) => assert_eq(n, 3)
     _ => fail("expected FixesPushed")
   }
+}
+
+///|
+test "review_thread_ids_to_auto_resolve selects outdated threads on iterative FixesPushed" {
+  let refs : Array[ReviewThreadRef] = [
+    { id: "T_old_1", is_outdated: true },
+    { id: "T_current", is_outdated: false },
+    { id: "T_old_2", is_outdated: true },
+  ]
+  let ids = review_thread_ids_to_auto_resolve(
+    FixesPushed(3),
+    @types.ReviewMode::Iterative,
+    refs,
+  )
+  assert_eq(ids, ["T_old_1", "T_old_2"])
+}
+
+///|
+test "review_thread_ids_to_auto_resolve skips single pass and non FixesPushed events" {
+  let refs : Array[ReviewThreadRef] = [{ id: "T_old", is_outdated: true }]
+  assert_eq(
+    review_thread_ids_to_auto_resolve(
+      FixesPushed(3),
+      @types.ReviewMode::SinglePass,
+      refs,
+    ),
+    [],
+  )
+  assert_eq(
+    review_thread_ids_to_auto_resolve(
+      PRReady(3),
+      @types.ReviewMode::Iterative,
+      refs,
+    ),
+    [],
+  )
+}
+
+///|
+test "review_thread_ids_to_auto_resolve skips current and empty thread lists" {
+  assert_eq(
+    review_thread_ids_to_auto_resolve(
+      FixesPushed(3),
+      @types.ReviewMode::Iterative,
+      [{ id: "T_current", is_outdated: false }],
+    ),
+    [],
+  )
+  assert_eq(
+    review_thread_ids_to_auto_resolve(
+      FixesPushed(3),
+      @types.ReviewMode::Iterative,
+      [],
+    ),
+    [],
+  )
 }
 
 ///|
