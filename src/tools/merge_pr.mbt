@@ -534,12 +534,14 @@ pub fn format_tl_pr_recheck_summary(
     tracked,
     unresolved_thread_count,
     task_contract~,
+    review_mode=tracked.review_mode,
     verify_results~,
   )
   let policy = @poller.merge_policy_summary_line(
     tracked,
     unresolved_thread_count,
     task_contract~,
+    review_mode=tracked.review_mode,
     verify_results~,
   )
 

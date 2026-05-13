@@ -1,7 +1,10 @@
 ///|
 async fn mock_refresh_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" {
+  if cmd.program == "timeout" &&
+    cmd.args.length() >= 2 &&
+    cmd.args[0] == "30s" &&
+    cmd.args[1] == "gh" {
     if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
     }
@@ -225,6 +228,7 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
   }
 
   let mut runner_called = false
+  let mut graphql_calls = 0
   state.refresh_pr_with(
     pr_number,
     200L,
@@ -239,8 +243,19 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
       }
       res
     },
-    capture=mock_refresh_capture,
+    capture=async fn(cmd) {
+      @async.sleep(0)
+      if cmd.program == "timeout" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "30s" &&
+        cmd.args[1] == "gh" &&
+        cmd.args.contains("graphql") {
+        graphql_calls = graphql_calls + 1
+      }
+      mock_refresh_capture(cmd)
+    },
   )
 
+  assert_eq(graphql_calls, 1)
   assert_false(runner_called)
 }

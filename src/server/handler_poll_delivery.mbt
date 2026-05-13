@@ -1257,8 +1257,7 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
         if after_count < before_count ||
           (
             prior_thread_snapshot_fetched &&
-            prior_unresolved_count > 0 &&
-            after_count == 0
+            before_count < prior_unresolved_count
           ) {
           events.push(
             (

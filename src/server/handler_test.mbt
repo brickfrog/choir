@@ -1599,6 +1599,131 @@ async test "quiet poller tick successful auto resolve retry re-enters automerge 
 }
 
 ///|
+async test "quiet poller tick refetch count drop re-enters review-thread pipeline" {
+  let pr_number = 706
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "quiet-refetch-drop",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::Approved,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_sha: "stable-sha",
+        notified_parent: true,
+        copilot_issue_comment_seen: true,
+        auto_resolve_outdated_pending: true,
+        unresolved_thread_ids: [
+          @poller.ReviewThreadRef::{
+            id: "PRRT_prior_1",
+            is_outdated: true,
+            author_login: "copilot-pull-request-reviewer[bot]",
+          },
+          @poller.ReviewThreadRef::{
+            id: "PRRT_prior_2",
+            is_outdated: true,
+            author_login: "copilot-pull-request-reviewer[bot]",
+          },
+          @poller.ReviewThreadRef::{
+            id: "PRRT_prior_3",
+            is_outdated: true,
+            author_login: "copilot-pull-request-reviewer[bot]",
+          },
+        ],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let mut thread_fetches = 0
+  let mut resolve_calls = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let two_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_remaining_1","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer[bot]"}}]}},{"id":"PRRT_remaining_2","isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"octocat"}}]}}]}}}}}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.args.join(" ").contains("threadId=") {
+      resolve_calls = resolve_calls + 1
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      thread_fetches = thread_fetches + 1
+      return (0, two_threads_json)
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "stable-sha",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+      )
+    },
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_eq(resolve_calls, 0)
+  assert_eq(thread_fetches, 2)
+  let parent_text = parent_messages.join("\n")
+  assert_true(parent_text.contains("[THREADS RESOLVED]"))
+  assert_true(
+    parent_text.contains("Unresolved inline review threads (GraphQL): 2"),
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) => {
+      assert_eq(tracked.unresolved_thread_ids.length(), 2)
+      assert_false(tracked.auto_resolve_outdated_pending)
+    }
+    None => fail("expected PR to remain tracked")
+  }
+}
+
+///|
 async test "fresh PR first thread refs fetch failure leaves merge gate unknown" {
   let pr_number = 705
   let (state, child_id, project_dir) = blocked_gh_automerge_fixture(

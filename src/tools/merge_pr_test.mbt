@@ -1059,6 +1059,23 @@ test "format_tl_pr_recheck_summary lists blockers for changes requested" {
 }
 
 ///|
+test "format_tl_pr_recheck_summary uses tracked SinglePass mode consistently after fixes" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::ChangesRequested, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    fixes_pushed_at: 1_700_000_000L,
+    last_sha: "fixed-sha",
+    review_mode: @types.ReviewMode::SinglePass,
+  }
+  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  assert_true(s.contains("no tracked blockers"))
+  assert_true(s.contains("Advisory evaluation verdict: ready"))
+  assert_true(s.contains("Merge policy decision: merge_now"))
+  assert_false(s.contains("Advisory evaluation verdict: blocked"))
+  assert_false(s.contains("Merge policy decision: blocked"))
+}
+
+///|
 test "format_tl_pr_recheck_summary does not claim ready when thread count not fetched" {
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
