@@ -372,6 +372,31 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
 }
 
 ///|
+test "parse_tracked_prs_json defaults unknown review_mode instead of failing" {
+  let json =
+    #|[
+    #|  {
+    #|    "pr_number": 2,
+    #|    "agent_id": "a",
+    #|    "branch": "b",
+    #|    "parent_branch": "main",
+    #|    "pr_url": "u",
+    #|    "first_seen": 1,
+    #|    "last_review_state": "approved",
+    #|    "last_review_bodies": "",
+    #|    "last_sha": "sha",
+    #|    "notified_parent": false,
+    #|    "last_ci_rollup": "success",
+    #|    "last_timeout_at": 0,
+    #|    "review_mode": "future_mode"
+    #|  }
+    #|]
+  let parsed = @poller.parse_tracked_prs_json(json)
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].review_mode, @types.Config::default().review_mode)
+}
+
+///|
 test "poller_state json round-trips review mode and unresolved thread refs" {
   let ps = @poller.PollerState::new()
   ps.track(

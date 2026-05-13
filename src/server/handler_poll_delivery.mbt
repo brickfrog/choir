@@ -1078,7 +1078,7 @@ fn ServerState::log_review_thread_ref_fetch_failed(
     self.config.project_dir,
     "review thread ref fetch failed pr=" +
     pr_number.to_string() +
-    " keeping prior snapshot",
+    " keeping prior snapshot if available",
   )
 }
 

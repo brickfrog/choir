@@ -279,7 +279,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) =>
       match parse_review_mode_name(value) {
         Some(parsed) => parsed
-        None => return None
+        None => @types.Config::default().review_mode
       }
     None => @types.Config::default().review_mode
   }
