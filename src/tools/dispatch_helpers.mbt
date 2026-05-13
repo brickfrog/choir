@@ -478,19 +478,42 @@ pub fn parse_review_thread_refs_response(
       Some(False) => false
       _ => return None
     }
-    let author_login = match thread.get("author") {
-      Some(Object(author)) =>
-        match author.get("login") {
-          Some(String(v)) => v
-          _ => return None
-        }
-      _ => return None
-    }
+    let author_login = review_thread_first_comment_author_login(thread)
     if id != "" {
       refs.push({ id, is_outdated, author_login })
     }
   }
   Some(refs)
+}
+
+///|
+fn review_thread_first_comment_author_login(
+  thread : Map[String, Json],
+) -> String {
+  match thread.get("comments") {
+    Some(Object(comments)) =>
+      match comments.get("nodes") {
+        Some(Array(nodes)) =>
+          if nodes.length() == 0 {
+            ""
+          } else {
+            match nodes[0] {
+              Object(comment) =>
+                match comment.get("author") {
+                  Some(Object(author)) =>
+                    match author.get("login") {
+                      Some(String(v)) => v
+                      _ => ""
+                    }
+                  _ => ""
+                }
+              _ => ""
+            }
+          }
+        _ => ""
+      }
+    _ => ""
+  }
 }
 
 ///|
@@ -761,7 +784,7 @@ pub async fn fetch_unresolved_review_thread_refs_with_repo(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Array[@poller.ReviewThreadRef]? {
-  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved isOutdated author { login } } } } } }"
+  let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved isOutdated comments(first: 1) { nodes { author { login } } } } } } } }"
   let cmd = bounded_gh_command(project_dir, [
     "api",
     "graphql",

@@ -202,7 +202,7 @@ test "parse_unresolved_threads_response empty on parse error" {
 ///|
 test "parse_review_thread_refs_response preserves isOutdated true and false" {
   let json =
-    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_old","isResolved":false,"isOutdated":true,"author":{"login":"copilot-pull-request-reviewer[bot]"}},{"id":"PRRT_new","isResolved":false,"isOutdated":false,"author":{"login":"octocat"}},{"id":"PRRT_done","isResolved":true,"isOutdated":true}]}}}}}
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_old","isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer[bot]"}}]}},{"id":"PRRT_new","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"octocat"}}]}},{"id":"PRRT_done","isResolved":true,"isOutdated":true}]}}}}}
   match parse_review_thread_refs_response(json) {
     Some(refs) => {
       assert_eq(refs.length(), 2)
@@ -218,6 +218,23 @@ test "parse_review_thread_refs_response preserves isOutdated true and false" {
       })
     }
     None => fail("expected review thread refs")
+  }
+}
+
+///|
+test "parse_review_thread_refs_response defaults missing comment author to empty login" {
+  let json =
+    #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_unknown","isResolved":false,"isOutdated":true,"comments":{"nodes":[]}}]}}}}}
+  match parse_review_thread_refs_response(json) {
+    Some(refs) => {
+      assert_eq(refs.length(), 1)
+      assert_eq(refs[0], @poller.ReviewThreadRef::{
+        id: "PRRT_unknown",
+        is_outdated: true,
+        author_login: "",
+      })
+    }
+    None => fail("expected missing author to be a non-Copilot thread ref")
   }
 }
 
@@ -321,9 +338,10 @@ async test "fetch_unresolved_review_thread_refs uses bounded gh and parses autho
       return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
     }
     if cmd.args.contains("graphql") {
-      assert_true(cmd.args.join(" ").contains("author { login }"))
+      assert_true(cmd.args.join(" ").contains("comments(first: 1)"))
+      assert_true(cmd.args.join(" ").contains("nodes { author { login } }"))
       return (
-        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_old\",\"isResolved\":false,\"isOutdated\":true,\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}}}}}",
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_old\",\"isResolved\":false,\"isOutdated\":true,\"comments\":{\"nodes\":[{\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}}]}}}}}",
       )
     }
     (1, "unexpected command")
