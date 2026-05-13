@@ -1216,7 +1216,8 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
   self : ServerState,
   capture : async (@workspace.Command) -> (Int, String),
   skipped_prs : Map[Int, Bool],
-) -> Unit {
+) -> Array[(@poller.PollEvent, String)] {
+  let events : Array[(@poller.PollEvent, String)] = []
   for tracked in self.poller.tracked.values() {
     if skipped_prs.contains(tracked.pr_number) {
       continue
@@ -1225,17 +1226,29 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
       !tracked.auto_resolve_outdated_pending {
       continue
     }
+    let prior_unresolved_count = tracked.unresolved_thread_ids.length()
     match
       self.refresh_unresolved_review_thread_refs_snapshot(tracked, capture) {
-      Some(refreshed) =>
-        ignore(
-          self.auto_resolve_outdated_review_threads_for_pending(
-            refreshed, capture,
-          ),
+      Some(refreshed) => {
+        let before_count = refreshed.unresolved_thread_ids.length()
+        let updated = self.auto_resolve_outdated_review_threads_for_pending(
+          refreshed, capture,
         )
+        let after_count = updated.unresolved_thread_ids.length()
+        if after_count < before_count ||
+          (prior_unresolved_count > 0 && after_count == 0) {
+          events.push(
+            (
+              @poller.PollEvent::ReviewThreadsResolved(updated.pr_number),
+              updated.agent_id,
+            ),
+          )
+        }
+      }
       None => ()
     }
   }
+  events
 }
 
 ///|
@@ -1250,6 +1263,26 @@ async fn deliver_pending_poll_events(
   let pending_parent_rows : Array[PendingPollParentRow] = []
   let automerge_attempted_prs : Map[Int, Bool] = {}
   let auto_resolve_attempted_prs : Map[Int, Bool] = {}
+  for event in pending_events {
+    let review_mode = match state.poller.get(poll_event_pr_number(event)) {
+      Some(pr) => pr.review_mode
+      None => state.config.review_mode
+    }
+    if poll_event_starts_auto_resolve_outdated_threads(event, review_mode) {
+      auto_resolve_attempted_prs.set(poll_event_pr_number(event), true)
+    }
+  }
+  let retried_events = state.retry_auto_resolve_outdated_review_threads(
+    capture, auto_resolve_attempted_prs,
+  )
+  for item in retried_events {
+    let (event, agent_id) = item
+    pending_events.push(event)
+    pending_agent_ids.push(agent_id)
+  }
+  if retried_events.length() > 0 {
+    state.request_goal_judge_tick()
+  }
   for i = 0; i < pending_events.length(); i = i + 1 {
     let event = pending_events[i]
     let agent_id = pending_agent_ids[i]
@@ -1285,9 +1318,6 @@ async fn deliver_pending_poll_events(
       automerge_enabled,
       review_mode~,
     )
-    if poll_event_starts_auto_resolve_outdated_threads(event, review_mode) {
-      auto_resolve_attempted_prs.set(poll_event_pr_number(event), true)
-    }
     let (tracked_for_delivery, unresolved_threads) = match
       tracked_before_delivery {
       Some(pr) =>
@@ -1401,9 +1431,6 @@ async fn deliver_pending_poll_events(
       None => ()
     }
   }
-  state.retry_auto_resolve_outdated_review_threads(
-    capture, auto_resolve_attempted_prs,
-  )
   if pending_parent_rows.length() > 0 {
     let rollup_entries : Array[@poller.WaveRollupEntry] = []
     for row in pending_parent_rows {
@@ -1715,6 +1742,8 @@ pub async fn ServerState::process_poller_tick_with(
     Bool,
   ),
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> Unit {
   self.mutex_registry.expire(now)
   let pending_events = []
@@ -1733,7 +1762,14 @@ pub async fn ServerState::process_poller_tick_with(
     self.request_goal_judge_tick()
   }
   deliver_orphaned_pr_notifications(self, runner)
-  deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+  deliver_pending_poll_events(
+    self,
+    pending_events,
+    pending_agent_ids,
+    runner,
+    capture~,
+    automerge_capture~,
+  )
   deliver_poller_stall_notifications(self, now, runner)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))

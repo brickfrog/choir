@@ -1398,6 +1398,129 @@ async test "auto_resolve_outdated_review_threads_for_pending keeps retry pending
 }
 
 ///|
+async test "quiet poller tick successful auto resolve retry re-enters automerge pipeline" {
+  let pr_number = 704
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "quiet-retry",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::Approved,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_sha: "stable-sha",
+        notified_parent: true,
+        copilot_issue_comment_seen: true,
+        auto_resolve_outdated_pending: true,
+        unresolved_thread_ids: [
+          @poller.ReviewThreadRef::{
+            id: "PRRT_retry",
+            is_outdated: true,
+            author_login: "copilot-pull-request-reviewer[bot]",
+          },
+        ],
+      })
+    None => fail("expected tracked PR")
+  }
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let mut thread_fetches = 0
+  let mut resolve_calls = 0
+  let mut review_gate_calls = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let unresolved_thread_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_retry","isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer[bot]"}}]}}]}}}}}
+    let clear_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.args.contains("threadId=PRRT_retry") {
+      resolve_calls = resolve_calls + 1
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      thread_fetches = thread_fetches + 1
+      if thread_fetches == 1 {
+        return (0, unresolved_thread_json)
+      }
+      return (0, clear_threads_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      review_gate_calls = review_gate_calls + 1
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "stable-sha",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+      )
+    },
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_eq(resolve_calls, 1)
+  assert_true(thread_fetches >= 2)
+  assert_true(review_gate_calls > 0)
+  let parent_text = parent_messages.join("\n")
+  assert_true(
+    state.poller.get(pr_number) == None ||
+    parent_text.contains("[THREADS RESOLVED]"),
+  )
+}
+
+///|
 fn assert_next_action_line(
   message : String,
   action : @poller.NextAction,
