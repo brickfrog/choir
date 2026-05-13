@@ -432,6 +432,7 @@ fn statusline_test_tracked_pr(
     fixes_pushed_at: 0L,
     review_mode: @types.ReviewMode::Iterative,
     unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
     auto_resolve_outdated_pending: false,
   }
 }

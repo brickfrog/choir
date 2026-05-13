@@ -1095,7 +1095,11 @@ pub async fn ServerState::refresh_unresolved_review_thread_refs_snapshot(
       capture,
     ) {
     Some(thread_refs) => {
-      let refreshed = { ..tracked, unresolved_thread_ids: thread_refs }
+      let refreshed = {
+        ..tracked,
+        unresolved_thread_ids: thread_refs,
+        unresolved_thread_ids_fetched: true,
+      }
       self.poller.restore(refreshed)
       Some(refreshed)
     }
@@ -1114,6 +1118,9 @@ pub async fn ServerState::auto_resolve_outdated_review_threads_for_pending(
 ) -> @poller.TrackedPR {
   if tracked.review_mode != @types.ReviewMode::Iterative ||
     !tracked.auto_resolve_outdated_pending {
+    return tracked
+  }
+  if !tracked.unresolved_thread_ids_fetched {
     return tracked
   }
   let ids = @poller.review_thread_ids_to_auto_resolve_for_pending(
@@ -1194,6 +1201,17 @@ pub async fn ServerState::auto_resolve_outdated_review_threads_for_pending(
 }
 
 ///|
+fn tracked_unresolved_thread_count_for_gate(
+  tracked : @poller.TrackedPR,
+) -> Int? {
+  if tracked.unresolved_thread_ids_fetched {
+    Some(tracked.unresolved_thread_ids.length())
+  } else {
+    None
+  }
+}
+
+///|
 pub async fn ServerState::auto_resolve_outdated_review_threads_for_event(
   self : ServerState,
   event : @poller.PollEvent,
@@ -1226,6 +1244,7 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
       !tracked.auto_resolve_outdated_pending {
       continue
     }
+    let prior_thread_snapshot_fetched = tracked.unresolved_thread_ids_fetched
     let prior_unresolved_count = tracked.unresolved_thread_ids.length()
     match
       self.refresh_unresolved_review_thread_refs_snapshot(tracked, capture) {
@@ -1236,7 +1255,12 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
         )
         let after_count = updated.unresolved_thread_ids.length()
         if after_count < before_count ||
-          (prior_unresolved_count > 0 && after_count == 0) {
+          (
+            prior_thread_snapshot_fetched &&
+            prior_unresolved_count > 0 &&
+            after_count == 0
+          ) ||
+          (!prior_thread_snapshot_fetched && after_count == 0) {
           events.push(
             (
               @poller.PollEvent::ReviewThreadsResolved(updated.pr_number),
@@ -1333,7 +1357,7 @@ async fn deliver_pending_poll_events(
                 Some(after_resolve.unresolved_thread_ids.length()),
               )
             }
-            None => (Some(pr), Some(pr.unresolved_thread_ids.length()))
+            None => (Some(pr), tracked_unresolved_thread_count_for_gate(pr))
           }
         } else {
           (Some(pr), None)

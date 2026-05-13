@@ -565,6 +565,38 @@ test "review_mode_for_agent_workspace reads local config override" {
 }
 
 ///|
+test "review_mode_for_agent_workspace reads inline agent metadata when agent id supplied" {
+  let root = "/tmp/choir-workspace-inline-review-mode-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let agent_id = "main.inline-leaf"
+  let metadata_dir = @workspace.inline_agent_metadata_dir(root, agent_id)
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(metadata_dir + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      metadata_dir + "/.choir/config.local.toml",
+      "review_mode = \"single_pass\"\n",
+    ),
+  )
+  @debug.assert_eq(
+    @workspace.review_mode_for_agent_workspace(root, Some(root), "inline-leaf"),
+    None,
+  )
+  @debug.assert_eq(
+    @workspace.review_mode_for_agent_workspace(
+      root,
+      Some(root),
+      "inline-leaf",
+      agent_id=Some(agent_id),
+    ),
+    Some(@types.ReviewMode::SinglePass),
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
 test "config_local_content emits wave_id when present" {
   let spec = @types.SpawnSpec::{
     slug: "leaf-0",

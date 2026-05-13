@@ -144,6 +144,7 @@ fn tracked_pr_with(
     fixes_pushed_at,
     review_mode: @types.ReviewMode::Iterative,
     unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
     auto_resolve_outdated_pending: false,
   }
 }

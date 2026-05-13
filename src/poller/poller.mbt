@@ -87,6 +87,7 @@ pub(all) struct TrackedPR {
   mut fixes_pushed_at : Int64
   mut review_mode : @types.ReviewMode
   mut unresolved_thread_ids : Array[ReviewThreadRef]
+  mut unresolved_thread_ids_fetched : Bool
   mut auto_resolve_outdated_pending : Bool
 } derive(Debug, Eq)
 

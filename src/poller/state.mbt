@@ -162,6 +162,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "unresolved_thread_ids": review_thread_refs_to_json(
       self.unresolved_thread_ids,
     ),
+    "unresolved_thread_ids_fetched": self.unresolved_thread_ids_fetched.to_json(),
     "auto_resolve_outdated_pending": self.auto_resolve_outdated_pending.to_json(),
   }
   .to_json()
@@ -287,6 +288,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => return None
   }
+  let unresolved_thread_ids_fetched = match
+    @types.json_field_bool(fields, "unresolved_thread_ids_fetched") {
+    Some(value) => value
+    None => false
+  }
   let auto_resolve_outdated_pending = match
     @types.json_field_bool(fields, "auto_resolve_outdated_pending") {
     Some(value) => value
@@ -315,6 +321,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     fixes_pushed_at,
     review_mode,
     unresolved_thread_ids,
+    unresolved_thread_ids_fetched,
     auto_resolve_outdated_pending,
   })
 }
@@ -358,6 +365,7 @@ pub fn PollerState::track(
     fixes_pushed_at: 0L,
     review_mode,
     unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
     auto_resolve_outdated_pending: false,
   }
   self.set_tracked(pr_number, pr)
@@ -480,6 +488,7 @@ pub fn PollerState::track_recovered(
     fixes_pushed_at: 0L,
     review_mode: @types.ReviewMode::Iterative,
     unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
     auto_resolve_outdated_pending: false,
   }
   self.set_tracked(pr_number, pr)

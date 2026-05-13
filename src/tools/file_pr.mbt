@@ -76,6 +76,7 @@ pub fn file_pr_plan(
       fixes_pushed_at: 0L,
       review_mode,
       unresolved_thread_ids: [],
+      unresolved_thread_ids_fetched: false,
       auto_resolve_outdated_pending: false,
     })
   } else {
@@ -992,6 +993,7 @@ fn file_pr_review_mode_for_agent(
     project_dir,
     Some(file_pr_dir),
     @phase.extract_slug(tracked_agent_id),
+    agent_id=Some(tracked_agent_id),
   ).unwrap_or(@types.ReviewMode::Iterative)
 }
 

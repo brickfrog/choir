@@ -318,10 +318,14 @@ pub fn review_mode_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,
   agent_slug : String,
+  agent_id? : String? = None,
 ) -> @types.ReviewMode? {
   for
     path in local_config_candidate_paths_for_agent_workspace(
-      project_dir, agent_workspace, agent_slug,
+      project_dir,
+      agent_workspace,
+      agent_slug,
+      agent_id~,
     ) {
     let content = @sys.read_file(path)
     if content == "" {
