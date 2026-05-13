@@ -1401,7 +1401,7 @@ async fn deliver_pending_poll_events(
               unresolved_threads,
               runner,
               capture=automerge_capture,
-              review_mode~,
+              review_mode=Some(review_mode),
             ) {
             continue
           }

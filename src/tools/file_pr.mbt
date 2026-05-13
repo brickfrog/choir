@@ -50,7 +50,7 @@ pub fn file_pr_plan(
   parent_branch : String,
   pr : PullRequestInfo,
   tracked : Bool,
-  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> FilePrPlanResult {
   let tracked_pr = if tracked {
     Some(@poller.TrackedPR::{
@@ -944,9 +944,25 @@ pub fn interpret_track_pr(
   project_dir : String,
   poller_state : @poller.PollerState?,
   now_sec : Int64,
+  registry? : @registry.AgentRegistry? = None,
+  global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> @types.Response {
   match poller_state {
     Some(ps) => {
+      let agent_workspace = match registry {
+        Some(reg) =>
+          Some(reg.get(track_pr_args.agent_id).workspace) catch {
+            _ => None
+          }
+        None => None
+      }
+      let review_mode = @workspace.review_mode_for_agent_workspace(
+        project_dir,
+        agent_workspace,
+        @phase.extract_slug(track_pr_args.agent_id),
+        agent_id=Some(track_pr_args.agent_id),
+        global_review_mode~,
+      )
       ps.ensure_tracked(
         track_pr_args.pr_number,
         track_pr_args.agent_id,
@@ -954,6 +970,7 @@ pub fn interpret_track_pr(
         track_pr_args.parent_branch,
         track_pr_args.pr_url,
         now_sec,
+        review_mode=Some(review_mode),
       )
       ignore(ps.write_state_file(project_dir))
       @types.Response::ok_values({
@@ -988,13 +1005,15 @@ fn file_pr_review_mode_for_agent(
   project_dir : String,
   tracked_agent_id : String,
   file_pr_dir : String,
+  global_review_mode : @types.ReviewMode,
 ) -> @types.ReviewMode {
   @workspace.review_mode_for_agent_workspace(
     project_dir,
     Some(file_pr_dir),
     @phase.extract_slug(tracked_agent_id),
     agent_id=Some(tracked_agent_id),
-  ).unwrap_or(@types.ReviewMode::Iterative)
+    global_review_mode~,
+  )
 }
 
 ///|
@@ -1024,6 +1043,7 @@ pub async fn interpret_file_pr(
   ) {
     ()
   },
+  global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> @types.Response {
   let branch = file_pr_args.branch
   let parent_branch = match file_pr_args.parent_branch {
@@ -1087,7 +1107,7 @@ pub async fn interpret_file_pr(
     Ok(pr) => {
       let tracked = poller_state is Some(_)
       let review_mode = file_pr_review_mode_for_agent(
-        project_dir, tracked_agent_id, file_pr_dir,
+        project_dir, tracked_agent_id, file_pr_dir, global_review_mode,
       )
       let plan = file_pr_plan(
         file_pr_args,

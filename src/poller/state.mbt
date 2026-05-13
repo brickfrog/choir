@@ -281,7 +281,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
         Some(parsed) => parsed
         None => return None
       }
-    None => @types.ReviewMode::Iterative
+    None => @types.Config::default().review_mode
   }
   let unresolved_thread_ids = match
     parse_review_thread_refs(fields.get("unresolved_thread_ids")) {
@@ -340,7 +340,7 @@ pub fn PollerState::track(
   parent_branch : String,
   pr_url : String,
   now : Int64,
-  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> Unit {
   let pr = {
     pr_number,
@@ -400,7 +400,7 @@ pub fn PollerState::ensure_tracked(
         parent_branch,
         pr_url,
         now,
-        review_mode=review_mode.unwrap_or(@types.ReviewMode::Iterative),
+        review_mode=review_mode.unwrap_or(@types.Config::default().review_mode),
       )
   }
 }
@@ -464,6 +464,7 @@ pub fn PollerState::track_recovered(
   sha : String,
   ci_rollup : CiRollupStatus,
   copilot_issue_comment_seen : Bool,
+  review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> Unit {
   let pr = {
     pr_number,
@@ -486,7 +487,7 @@ pub fn PollerState::track_recovered(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
-    review_mode: @types.ReviewMode::Iterative,
+    review_mode,
     unresolved_thread_ids: [],
     unresolved_thread_ids_fetched: false,
     auto_resolve_outdated_pending: false,

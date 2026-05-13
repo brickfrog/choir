@@ -261,6 +261,16 @@ fn local_config_candidate_paths_for_agent_workspace(
   agent_id? : String? = None,
 ) -> Array[String] {
   let candidate_paths : Array[String] = []
+  match agent_id {
+    Some(id) => {
+      let inline_path = inline_agent_metadata_dir(project_dir, id) +
+        "/.choir/config.local.toml"
+      if !candidate_paths.contains(inline_path) {
+        candidate_paths.push(inline_path)
+      }
+    }
+    None => ()
+  }
   match agent_workspace {
     Some(w) =>
       if w != "" {
@@ -272,16 +282,6 @@ fn local_config_candidate_paths_for_agent_workspace(
     "/.choir/config.local.toml"
   if !candidate_paths.contains(fallback_path) {
     candidate_paths.push(fallback_path)
-  }
-  match agent_id {
-    Some(id) => {
-      let inline_path = inline_agent_metadata_dir(project_dir, id) +
-        "/.choir/config.local.toml"
-      if !candidate_paths.contains(inline_path) {
-        candidate_paths.push(inline_path)
-      }
-    }
-    None => ()
   }
   candidate_paths
 }
@@ -319,7 +319,8 @@ pub fn review_mode_for_agent_workspace(
   agent_workspace : String?,
   agent_slug : String,
   agent_id? : String? = None,
-) -> @types.ReviewMode? {
+  global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+) -> @types.ReviewMode {
   for
     path in local_config_candidate_paths_for_agent_workspace(
       project_dir,
@@ -334,13 +335,13 @@ pub fn review_mode_for_agent_workspace(
     match @config.parse_local_config(content) {
       Ok(local_cfg) =>
         match local_cfg.review_mode {
-          Some(mode) => return Some(mode)
+          Some(mode) => return mode
           None => ()
         }
       Err(_) => ()
     }
   }
-  None
+  global_review_mode
 }
 
 ///|

@@ -926,6 +926,77 @@ async test "blocked gh notify honors single-pass review mode for fixes pushed" {
 }
 
 ///|
+async test "blocked gh notify uses tracked review mode over global config" {
+  let pr_number = 95
+  let (state, child_id, _) = blocked_gh_automerge_fixture(
+    "tracked-singlepass",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::ChangesRequested,
+        last_sha: "fix-sha-tracked-singlepass",
+        changes_requested_since: 0L,
+        fixes_pushed_at: 999L,
+        review_mode: @types.ReviewMode::SinglePass,
+      })
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args == ["repo", "view", "--json", "owner,name"] {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1] == "graphql" {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    (0, "")
+  }
+  let resp = state.handle_with_runner_and_capture(
+    blocked_gh_notify_request(
+      child_id, "[BLOCKED] bounded GraphQL review-thread check timed out (exit 124). I cannot confirm zero unresolved review threads, so I am not reporting review-complete.",
+    ),
+    runner~,
+    capture~,
+  )
+  assert_true(resp.is_ok())
+  assert_true(merge_seen)
+  assert_true(state.poller.get(pr_number) == None)
+}
+
+///|
 async test "blocked gh notify does not auto-merge unrelated blocked reasons" {
   let pr_number = 93
   let (state, child_id, _) = blocked_gh_automerge_fixture(
@@ -2358,6 +2429,92 @@ test "disconnect PR recovery only applies to branch-owning dev agents" {
     disconnect_pr_recovery_candidate(mk(@types.Role::Worker, "main.worker")),
   )
   assert_false(disconnect_pr_recovery_candidate(mk(@types.Role::TL, "main")))
+}
+
+///|
+async test "disconnect PR recovery uses inline review mode when tracking recovered PR" {
+  let project_dir = "/tmp/choir-disconnect-review-mode-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.inline-leaf"
+  let pr_number = 812
+  let provider = {
+    ..disconnect_confirmation_provider([], []),
+    find_prs_by_head: async fn(_dir, branch) {
+      @async.sleep(0)
+      if branch == agent_id {
+        [
+          @runtime.OpenPR::{
+            pr_number,
+            branch: agent_id,
+            base: "main",
+            url: "https://gh.test/812",
+            created_sec: Some(1000L),
+          },
+        ]
+      } else {
+        []
+      }
+    },
+  }
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+      review_mode: @types.ReviewMode::Iterative,
+    },
+    provider,
+  )
+  let inline_dir = @workspace.inline_agent_metadata_dir(project_dir, agent_id)
+  assert_true(@sys.create_dir_all(inline_dir + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      inline_dir + "/.choir/config.local.toml",
+      "review_mode = \"single_pass\"\n",
+    ),
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir,
+      branch: agent_id,
+      terminal_target: Some(handler_auto_close_target("inline-leaf")),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.schedule_disconnect(agent_id, 0L)
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    (1, "")
+  }
+  state.process_pending_disconnects_with_runner(91L, 60L, runner~, capture~)
+  match state.poller.get(pr_number) {
+    Some(tracked) => {
+      assert_eq(tracked.agent_id, agent_id)
+      assert_eq(tracked.review_mode, @types.ReviewMode::SinglePass)
+    }
+    None => fail("expected recovered PR to be tracked")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

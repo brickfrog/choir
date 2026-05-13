@@ -210,8 +210,9 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   unresolved_threads : Int?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
-  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  review_mode? : @types.ReviewMode? = None,
 ) -> Bool {
+  let review_mode = review_mode.unwrap_or(tracked.review_mode)
   if !automerge_candidate_event_for_review_mode(event, review_mode) {
     return false
   }

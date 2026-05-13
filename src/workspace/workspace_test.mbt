@@ -549,7 +549,7 @@ test "review_mode_for_agent_workspace reads local config override" {
   assert_true(@sys.create_dir_all(workdir + "/.choir"))
   @debug.assert_eq(
     @workspace.review_mode_for_agent_workspace(root, Some(workdir), "leaf-0"),
-    None,
+    @types.Config::default().review_mode,
   )
   assert_true(
     @sys.write_file_sync(
@@ -559,7 +559,7 @@ test "review_mode_for_agent_workspace reads local config override" {
   )
   @debug.assert_eq(
     @workspace.review_mode_for_agent_workspace(root, Some(workdir), "leaf-0"),
-    Some(@types.ReviewMode::SinglePass),
+    @types.ReviewMode::SinglePass,
   )
   ignore(@sys.rm_rf(root))
 }
@@ -582,7 +582,7 @@ test "review_mode_for_agent_workspace reads inline agent metadata when agent id 
   )
   @debug.assert_eq(
     @workspace.review_mode_for_agent_workspace(root, Some(root), "inline-leaf"),
-    None,
+    @types.Config::default().review_mode,
   )
   @debug.assert_eq(
     @workspace.review_mode_for_agent_workspace(
@@ -591,7 +591,44 @@ test "review_mode_for_agent_workspace reads inline agent metadata when agent id 
       "inline-leaf",
       agent_id=Some(agent_id),
     ),
-    Some(@types.ReviewMode::SinglePass),
+    @types.ReviewMode::SinglePass,
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+test "review_mode_for_agent_workspace prefers inline metadata over workspace config" {
+  let root = "/tmp/choir-workspace-inline-review-mode-order-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let agent_id = "main.inline-shadow"
+  let workdir = root + "/workspace"
+  let metadata_dir = @workspace.inline_agent_metadata_dir(root, agent_id)
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(workdir + "/.choir"))
+  assert_true(@sys.create_dir_all(metadata_dir + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      workdir + "/.choir/config.local.toml",
+      "review_mode = \"iterative\"\n",
+    ),
+  )
+  assert_true(
+    @sys.write_file_sync(
+      metadata_dir + "/.choir/config.local.toml",
+      "review_mode = \"single_pass\"\n",
+    ),
+  )
+  @debug.assert_eq(
+    @workspace.review_mode_for_agent_workspace(
+      root,
+      Some(workdir),
+      "inline-shadow",
+      agent_id=Some(agent_id),
+      global_review_mode=@types.ReviewMode::Iterative,
+    ),
+    @types.ReviewMode::SinglePass,
   )
   ignore(@sys.rm_rf(root))
 }

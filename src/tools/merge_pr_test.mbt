@@ -50,9 +50,46 @@ test "interpret_track_pr ensure_tracked writes state and returns tracked envelop
       assert_eq(t.parent_branch, "develop")
       assert_eq(t.pr_url, "https://gh/pr/99")
       assert_eq(t.first_seen, 12345L)
+      assert_eq(t.review_mode, @types.Config::default().review_mode)
     }
     None => fail("expected tracked PR in poller state")
   }
+}
+
+///|
+test "interpret_track_pr resolves inline review mode before global fallback" {
+  let project_dir = "/tmp/choir-track-pr-review-mode-" +
+    @sys.get_pid().to_string()
+  let agent_id = "main.inline-track"
+  let inline_dir = @workspace.inline_agent_metadata_dir(project_dir, agent_id)
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(inline_dir + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      inline_dir + "/.choir/config.local.toml",
+      "review_mode = \"single_pass\"\n",
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  let got = interpret_track_pr(
+    {
+      pr_number: 100,
+      agent_id,
+      branch: "main.inline-track",
+      parent_branch: "main",
+      pr_url: "https://gh/pr/100",
+    },
+    project_dir,
+    Some(ps),
+    12345L,
+    global_review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_true(got.is_ok())
+  match ps.get(100) {
+    Some(t) => assert_eq(t.review_mode, @types.ReviewMode::SinglePass)
+    None => fail("expected tracked PR")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

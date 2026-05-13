@@ -145,6 +145,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       poller_state=Some(self.poller),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
+      global_review_mode=self.config.review_mode,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
       },

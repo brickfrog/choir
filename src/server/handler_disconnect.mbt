@@ -1366,6 +1366,17 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
                   ),
                   registry=Some(self.registry),
                 )
+                let review_mode = match self.poller.get(pr_number) {
+                  Some(existing) => existing.review_mode
+                  None =>
+                    @workspace.review_mode_for_agent_workspace(
+                      self.config.project_dir,
+                      Some(agent.workspace),
+                      @phase.extract_slug(agent_id),
+                      agent_id=Some(agent_id),
+                      global_review_mode=self.config.review_mode,
+                    )
+                }
                 self.poller.ensure_tracked(
                   pr_number,
                   agent_id,
@@ -1373,6 +1384,7 @@ async fn ServerState::handle_disconnect_confirming_with_runner(
                   parent_branch,
                   pr_url,
                   @poller.now_sec(),
+                  review_mode=Some(review_mode),
                 )
                 ignore(self.poller.write_state_file(self.config.project_dir))
               }

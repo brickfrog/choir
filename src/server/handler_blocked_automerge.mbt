@@ -177,7 +177,7 @@ async fn ServerState::maybe_trigger_automerge_for_blocked_gh_notify(
   if !automerge_enabled_for_agent(self.config, local_cfg) {
     return false
   }
-  let review_mode = review_mode_for_agent(self.config, local_cfg)
+  let review_mode = tracked.review_mode
   if !blocked_gh_poll_snapshot_ready(
       self.config.project_dir,
       tracked,

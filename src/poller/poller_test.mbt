@@ -365,7 +365,7 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   assert_eq(t.consecutive_failures, 0)
   assert_eq(t.backoff_until, 0L)
   assert_eq(t.orphan_reconciling, false)
-  assert_eq(t.review_mode, @types.ReviewMode::Iterative)
+  assert_eq(t.review_mode, @types.Config::default().review_mode)
   assert_eq(t.unresolved_thread_ids, [])
   assert_eq(t.unresolved_thread_ids_fetched, false)
   assert_eq(t.auto_resolve_outdated_pending, false)

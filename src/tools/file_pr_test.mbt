@@ -21,7 +21,7 @@ test "file_pr_plan builds tracked result when tracking enabled" {
       assert_eq(tracked.branch, "main.task-leaf")
       assert_eq(tracked.parent_branch, "main")
       assert_eq(tracked.pr_url, "https://example.test/pr/7")
-      assert_eq(tracked.review_mode, @types.ReviewMode::Iterative)
+      assert_eq(tracked.review_mode, @types.Config::default().review_mode)
       assert_eq(tracked.unresolved_thread_ids, [])
       assert_false(tracked.unresolved_thread_ids_fetched)
     }
@@ -1597,6 +1597,44 @@ async test "interpret_file_pr ok response matches full pipeline" {
     }
     _ => fail("expected ok")
   }
+}
+
+///|
+async test "interpret_file_pr tracks global review mode when no local override exists" {
+  let project_dir = "/tmp/choir-fpr-global-review-mode-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let ps = @poller.PollerState::new()
+  let got = interpret_file_pr(
+    {
+      branch: "feature/base.leaf",
+      parent_branch: Some("feature/base"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    Some(ps),
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    mock_capture_empty,
+    mock_ensure_pr_ok,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  match ps.get(42) {
+    Some(tracked) =>
+      assert_eq(tracked.review_mode, @types.ReviewMode::SinglePass)
+    None => fail("expected tracked PR")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
