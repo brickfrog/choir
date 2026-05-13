@@ -387,7 +387,7 @@ pub async fn interpret_wave_state(
   // spawn `gh repo view` N times. If resolution fails, every PR reports
   // fail-loud without further gh calls.
   let owner_repo = if pr_numbers.length() > 0 {
-    fetch_gh_repo_owner_name(project_dir, capture)
+    fetch_gh_repo_owner_name_bounded(project_dir, capture)
   } else {
     None
   }

@@ -306,14 +306,10 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
     }
-    if cmd.program == "gh" &&
-      cmd.args == ["repo", "view", "--json", "owner,name"] {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, repo_view_json)
     }
-    if cmd.program == "gh" &&
-      cmd.args.length() >= 2 &&
-      cmd.args[0] == "api" &&
-      cmd.args[1] == "graphql" {
+    if cmd.args.contains("graphql") {
       return (0, review_threads_json)
     }
     (0, "")
@@ -817,14 +813,10 @@ async test "blocked gh notify auto-merges when latest poller snapshot is clear" 
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let review_threads_json =
       #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
-    if cmd.program == "gh" &&
-      cmd.args == ["repo", "view", "--json", "owner,name"] {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, repo_view_json)
     }
-    if cmd.program == "gh" &&
-      cmd.args.length() >= 2 &&
-      cmd.args[0] == "api" &&
-      cmd.args[1] == "graphql" {
+    if cmd.args.contains("graphql") {
       return (0, review_threads_json)
     }
     if cmd.program == "gh" &&
@@ -893,14 +885,10 @@ async test "blocked gh notify honors single-pass review mode for fixes pushed" {
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let review_threads_json =
       #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
-    if cmd.program == "gh" &&
-      cmd.args == ["repo", "view", "--json", "owner,name"] {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, repo_view_json)
     }
-    if cmd.program == "gh" &&
-      cmd.args.length() >= 2 &&
-      cmd.args[0] == "api" &&
-      cmd.args[1] == "graphql" {
+    if cmd.args.contains("graphql") {
       return (0, review_threads_json)
     }
     if cmd.program == "gh" &&
@@ -962,14 +950,10 @@ async test "blocked gh notify uses tracked review mode over global config" {
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
-    if cmd.program == "gh" &&
-      cmd.args == ["repo", "view", "--json", "owner,name"] {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
     }
-    if cmd.program == "gh" &&
-      cmd.args.length() >= 2 &&
-      cmd.args[0] == "api" &&
-      cmd.args[1] == "graphql" {
+    if cmd.args.contains("graphql") {
       return (
         0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
       )
@@ -1025,14 +1009,10 @@ async test "blocked gh notify does not auto-merge unrelated blocked reasons" {
       #|{"owner":{"login":"brickfrog"},"name":"choir"}
     let review_threads_json =
       #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
-    if cmd.program == "gh" &&
-      cmd.args == ["repo", "view", "--json", "owner,name"] {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, repo_view_json)
     }
-    if cmd.program == "gh" &&
-      cmd.args.length() >= 2 &&
-      cmd.args[0] == "api" &&
-      cmd.args[1] == "graphql" {
+    if cmd.args.contains("graphql") {
       return (0, review_threads_json)
     }
     (0, "")
@@ -1601,7 +1581,7 @@ async test "quiet poller tick successful auto resolve retry re-enters automerge 
 ///|
 async test "quiet poller tick refetch count drop re-enters review-thread pipeline" {
   let pr_number = 706
-  let (state, _, _) = blocked_gh_automerge_fixture(
+  let (state, _, project_dir) = blocked_gh_automerge_fixture(
     "quiet-refetch-drop",
     pr_number,
     review_mode=@types.ReviewMode::Iterative,
@@ -1709,6 +1689,12 @@ async test "quiet poller tick refetch count drop re-enters review-thread pipelin
   )
   assert_eq(resolve_calls, 0)
   assert_eq(thread_fetches, 2)
+  let delivery_log = @sys.read_file(project_dir + "/.choir/delivery.log")
+  assert_true(
+    delivery_log.contains(
+      "automerge gate recheck pr=706 event=review_threads_resolved",
+    ),
+  )
   let parent_text = parent_messages.join("\n")
   assert_true(parent_text.contains("[THREADS RESOLVED]"))
   assert_true(
@@ -1720,6 +1706,121 @@ async test "quiet poller tick refetch count drop re-enters review-thread pipelin
       assert_false(tracked.auto_resolve_outdated_pending)
     }
     None => fail("expected PR to remain tracked")
+  }
+}
+
+///|
+async test "quiet poller tick never-fetched retry clear re-enters automerge pipeline" {
+  let pr_number = 707
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "quiet-never-fetched-clear",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::Approved,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_sha: "stable-sha",
+        notified_parent: true,
+        copilot_issue_comment_seen: true,
+        auto_resolve_outdated_pending: true,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: false,
+      })
+    None => fail("expected tracked PR")
+  }
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args == ["pr", "merge", pr_number.to_string(), "--merge"] {
+        merge_seen = true
+      }
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let mut thread_fetches = 0
+  let mut review_gate_calls = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let clear_threads_json =
+      #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      review_gate_calls = review_gate_calls + 1
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      thread_fetches = thread_fetches + 1
+      return (0, clear_threads_json)
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "stable-sha",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+      )
+    },
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_true(thread_fetches >= 3)
+  assert_true(review_gate_calls > 0)
+  assert_true(merge_seen)
+  let parent_text = parent_messages.join("\n")
+  assert_false(parent_text.contains("[THREADS RESOLVED]"))
+  match state.poller.get(pr_number) {
+    Some(tracked) => {
+      assert_true(tracked.unresolved_thread_ids_fetched)
+      assert_false(tracked.auto_resolve_outdated_pending)
+    }
+    None => ()
   }
 }
 
@@ -3016,14 +3117,10 @@ async test "disconnect auto-rescue spawns replacement for unresolved threads" {
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
-    if cmd.program == "gh" &&
-      cmd.args == ["repo", "view", "--json", "owner,name"] {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
     }
-    if cmd.program == "gh" &&
-      cmd.args.length() >= 2 &&
-      cmd.args[0] == "api" &&
-      cmd.args[1] == "graphql" {
+    if cmd.args.contains("graphql") {
       return (
         0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"T1\",\"isResolved\":false,\"isOutdated\":false,\"path\":\"src/server/handler_disconnect.mbt\",\"comments\":{\"nodes\":[{\"body\":\"fix\"}]}}]}}}}}",
       )

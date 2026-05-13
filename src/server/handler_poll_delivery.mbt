@@ -1258,6 +1258,10 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
           (
             prior_thread_snapshot_fetched &&
             before_count < prior_unresolved_count
+          ) ||
+          (
+            !prior_thread_snapshot_fetched &&
+            !updated.auto_resolve_outdated_pending
           ) {
           events.push(
             (

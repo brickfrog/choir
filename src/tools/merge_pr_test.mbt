@@ -430,7 +430,7 @@ async fn mock_preflight_capture_approved_no_graphql(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[{\"state\":\"APPROVED\"}]")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     fail("force=true should skip review thread GraphQL fetch")
   }
   (0, "")
@@ -467,10 +467,10 @@ async fn mock_preflight_capture_empty_reviews(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[]")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
     )
@@ -604,10 +604,10 @@ async fn mock_preflight_capture_no_unresolved_threads(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[{\"state\":\"APPROVED\"}]")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
     )
@@ -865,10 +865,10 @@ async fn mock_preflight_capture_one_unresolved_thread(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[{\"state\":\"APPROVED\"}]")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     let body =
       #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_abc","isResolved":false,"path":"src/x.mbt","comments":{"nodes":[{"body":"fix it"}]}}]}}}}}
     return (0, body)

@@ -866,12 +866,12 @@ async fn mock_wave_state_capture_threads_none(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
     )
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")
@@ -882,12 +882,12 @@ async fn mock_wave_state_capture_threads_two(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"T1\",\"isResolved\":false,\"path\":\"f.mbt\",\"comments\":{\"nodes\":[{\"body\":\"fix\"}]}},{\"id\":\"T2\",\"isResolved\":false,\"path\":\"g.mbt\",\"comments\":{\"nodes\":[{\"body\":\"nit\"}]}}]}}}}}",
     )
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")
@@ -898,10 +898,10 @@ async fn mock_wave_state_capture_gh_fails(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (1, "gh error")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")

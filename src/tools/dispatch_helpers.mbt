@@ -753,22 +753,18 @@ pub async fn fetch_unresolved_review_threads_with_repo(
   capture : async (@workspace.Command) -> (Int, String),
 ) -> (Int, String) {
   let query = "query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved isOutdated path comments(first: 1) { nodes { body } } } } } } }"
-  let cmd : @workspace.Command = {
-    program: "gh",
-    args: [
-      "api",
-      "graphql",
-      "-f",
-      "query=" + query,
-      "-F",
-      "owner=" + owner,
-      "-F",
-      "repo=" + repo,
-      "-F",
-      "pr=" + pr_number.to_string(),
-    ],
-    workdir: Some(project_dir),
-  }
+  let cmd = bounded_gh_command(project_dir, [
+    "api",
+    "graphql",
+    "-f",
+    "query=" + query,
+    "-F",
+    "owner=" + owner,
+    "-F",
+    "repo=" + repo,
+    "-F",
+    "pr=" + pr_number.to_string(),
+  ])
   let (exit_code, output) = capture(cmd)
   if exit_code != 0 || output.trim().to_owned() == "" {
     return (1, review_thread_fetch_failed_marker)
@@ -830,7 +826,8 @@ pub async fn fetch_unresolved_review_threads(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> (Int, String) {
-  let (owner, repo) = match fetch_gh_repo_owner_name(project_dir, capture) {
+  let (owner, repo) = match
+    fetch_gh_repo_owner_name_bounded(project_dir, capture) {
     Some(pair) => pair
     None => return (1, review_thread_fetch_failed_marker)
   }

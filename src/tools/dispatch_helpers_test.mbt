@@ -280,10 +280,12 @@ async fn mock_capture_repo_view_unavailable(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" &&
-    cmd.args.length() >= 3 &&
-    cmd.args[0] == "repo" &&
-    cmd.args[1] == "view" {
+  if cmd.program == "timeout" &&
+    cmd.args.length() >= 4 &&
+    cmd.args[0] == "30s" &&
+    cmd.args[1] == "gh" &&
+    cmd.args[2] == "repo" &&
+    cmd.args[3] == "view" {
     return (1, "")
   }
   (0, "")
@@ -303,13 +305,15 @@ async fn mock_capture_repo_ok_graphql_fails(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" &&
-    cmd.args.length() >= 3 &&
-    cmd.args[0] == "repo" &&
-    cmd.args[1] == "view" {
+  if cmd.program == "timeout" &&
+    cmd.args.length() >= 4 &&
+    cmd.args[0] == "30s" &&
+    cmd.args[1] == "gh" &&
+    cmd.args[2] == "repo" &&
+    cmd.args[3] == "view" {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (1, "graphql request failed")
   }
   (0, "")
@@ -322,6 +326,33 @@ async test "fetch_unresolved_review_threads fails_closed_when_graphql_nonzero_af
   )
   assert_eq(count, 1)
   assert_eq(text, review_thread_fetch_failed_marker)
+}
+
+///|
+async test "fetch_unresolved_review_threads uses bounded gh for count fetch" {
+  let seen : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    seen.push(cmd)
+    assert_eq(cmd.program, "timeout")
+    assert_true(cmd.args.length() >= 3)
+    assert_eq(cmd.args[0], "30s")
+    assert_eq(cmd.args[1], "gh")
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      assert_true(cmd.args.join(" ").contains("reviewThreads(first: 100)"))
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (1, "unexpected command")
+  }
+  let (count, text) = fetch_unresolved_review_threads(5, "/tmp/repo", capture)
+  assert_eq(count, 0)
+  assert_eq(text, "")
+  assert_eq(seen.length(), 2)
 }
 
 ///|

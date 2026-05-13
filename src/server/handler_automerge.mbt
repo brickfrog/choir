@@ -224,6 +224,17 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   if !automerge_enabled_for_agent(state.config, local_cfg) {
     return false
   }
+  match event {
+    @poller.PollEvent::ReviewThreadsResolved(_) =>
+      append_poller_delivery_line(
+        state.append_file,
+        state.config.project_dir,
+        "automerge gate recheck pr=" +
+        tracked.pr_number.to_string() +
+        " event=review_threads_resolved",
+      )
+    _ => ()
+  }
   let task_contract = task_contract_for_agent(
     state.config.project_dir,
     state.registry,

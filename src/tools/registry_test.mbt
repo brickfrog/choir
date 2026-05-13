@@ -63,6 +63,17 @@ async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
   if cmd.program == "zellij" {
     return (1, "")
   }
+  if cmd.program == "timeout" && cmd.args.length() >= 2 && cmd.args[1] == "gh" {
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    return (0, "")
+  }
   if cmd.program == "gh" {
     if cmd.args.length() >= 2 &&
       cmd.args[0] == "api" &&

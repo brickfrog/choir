@@ -1,10 +1,10 @@
 ///|
 async fn mock_capture_threads_failed(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (1, "gh error")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")
@@ -13,12 +13,12 @@ async fn mock_capture_threads_failed(cmd : @workspace.Command) -> (Int, String) 
 ///|
 async fn mock_capture_threads_one(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"T1\",\"isResolved\":false,\"path\":\"f.mbt\",\"comments\":{\"nodes\":[{\"body\":\"fix\"}]}}]}}}}}",
     )
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")
@@ -27,12 +27,12 @@ async fn mock_capture_threads_one(cmd : @workspace.Command) -> (Int, String) {
 ///|
 async fn mock_capture_threads_none(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
     )
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")
@@ -43,13 +43,10 @@ async fn mock_capture_repo_view_fails(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" &&
-    cmd.args.length() >= 3 &&
-    cmd.args[0] == "repo" &&
-    cmd.args[1] == "view" {
+  if cmd.args.contains("repo") && cmd.args.contains("view") {
     return (1, "")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
     )
