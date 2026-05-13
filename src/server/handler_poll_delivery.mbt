@@ -1259,8 +1259,7 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
             prior_thread_snapshot_fetched &&
             prior_unresolved_count > 0 &&
             after_count == 0
-          ) ||
-          (!prior_thread_snapshot_fetched && after_count == 0) {
+          ) {
           events.push(
             (
               @poller.PollEvent::ReviewThreadsResolved(updated.pr_number),
@@ -1893,24 +1892,21 @@ pub async fn ServerState::refresh_pr_with(
   )
   match self.poller.get(pr_number) {
     Some(pr) => {
-      if pending_events.length() == 0 {
-        pending_events.push(@poller.PollEvent::ReviewThreadsResolved(pr_number))
-        pending_agent_ids.push(pr.agent_id)
-      }
       deliver_orphaned_pr_notification_for(self, pr, runner)
       deliver_poller_stall_notification_for(self, pr, now, runner)
     }
     None => ()
   }
-  if pending_events.length() > 0 {
-    deliver_pending_poll_events(
-      self,
-      pending_events,
-      pending_agent_ids,
-      runner,
-      capture~,
-      automerge_capture~,
-    )
+  let had_pending_events = pending_events.length() > 0
+  deliver_pending_poll_events(
+    self,
+    pending_events,
+    pending_agent_ids,
+    runner,
+    capture~,
+    automerge_capture~,
+  )
+  if had_pending_events {
     self.request_goal_judge_tick()
   }
   ignore(self.poller.write_state_file(self.config.project_dir))

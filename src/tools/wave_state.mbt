@@ -56,12 +56,11 @@ fn wave_state_pr_from_tracked(
   tracked : @poller.TrackedPR,
   unresolved_threads : Int?,
   threads_fetch_error : String?,
-  review_mode : @types.ReviewMode,
 ) -> WaveStatePR {
   let merge_gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
     unresolved_threads,
-    review_mode~,
+    review_mode=tracked.review_mode,
   )
   {
     pr_number: tracked.pr_number,
@@ -242,7 +241,6 @@ pub fn plan_wave_state(
   poller_state : @poller.PollerState?,
   threads_lookup : (Int) -> (Int?, String?),
   heartbeat_reader : (String) -> Int64?,
-  review_mode : @types.ReviewMode,
   now_ms : Int64,
   beads_issue_reader? : (@types.Agent) -> String? = wave_state_default_beads_issue_reader,
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
@@ -269,9 +267,7 @@ pub fn plan_wave_state(
           match ps.get(pr_number) {
             Some(tracked) => {
               let (threads, err) = threads_lookup(pr_number)
-              Some(
-                wave_state_pr_from_tracked(tracked, threads, err, review_mode),
-              )
+              Some(wave_state_pr_from_tracked(tracked, threads, err))
             }
             None => None
           }
@@ -295,7 +291,7 @@ pub fn plan_wave_state(
     let pr = match tracked_by_agent.get(child_id) {
       Some(tracked) => {
         let (threads, err) = threads_lookup(tracked.pr_number)
-        Some(wave_state_pr_from_tracked(tracked, threads, err, review_mode))
+        Some(wave_state_pr_from_tracked(tracked, threads, err))
       }
       None => None
     }
@@ -345,7 +341,6 @@ pub async fn interpret_wave_state(
   poller_state : @poller.PollerState?,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   heartbeat_reader? : (String) -> Int64? = wave_state_default_heartbeat,
-  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> @types.Response {
   let reg = match registry {
     Some(r) => r
@@ -452,7 +447,6 @@ pub async fn interpret_wave_state(
       poller_state,
       threads_lookup,
       heartbeat_reader,
-      review_mode,
       @env.now().reinterpret_as_int64(),
       beads_issue_reader~,
     ) {

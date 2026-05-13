@@ -125,7 +125,7 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
 }
 
 ///|
-async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapshot unchanged" {
+async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolved on no-op refresh" {
   let project_dir = "/tmp/choir-refresh-unchanged-test-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -191,6 +191,10 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
         last_sha: "sha1",
         last_ci_rollup: @poller.CiRollupStatus::Success,
         last_review_bodies: "comment!",
+        review_mode: @types.ReviewMode::Iterative,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+        auto_resolve_outdated_pending: true,
       })
     None => fail("expected PR")
   }
@@ -238,5 +242,5 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
     capture=mock_refresh_capture,
   )
 
-  assert_true(runner_called)
+  assert_false(runner_called)
 }

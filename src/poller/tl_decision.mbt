@@ -490,7 +490,7 @@ pub fn detect_stalled_on_review(
 pub fn tl_tracked_pr_merge_gate_snapshot_ready(
   tracked : TrackedPR,
   unresolved_threads : Int?,
-  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  review_mode? : @types.ReviewMode = tracked.review_mode,
 ) -> Bool {
   let threads_clear = match unresolved_threads {
     Some(n) => n == 0

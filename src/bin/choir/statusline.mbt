@@ -531,7 +531,11 @@ fn statusline_pr_token(
   ignore(project_dir)
   ignore(task_contract)
   let n = tracked.pr_number.to_string()
-  if @poller.tl_tracked_pr_merge_gate_snapshot_ready(tracked, Some(0)) {
+  if @poller.tl_tracked_pr_merge_gate_snapshot_ready(
+      tracked,
+      Some(0),
+      review_mode=tracked.review_mode,
+    ) {
     return match merge_mode {
       @poller.MergeOperatorMode::Manual => "\u001b[32m#\{n}M\u001b[0m"
       @poller.MergeOperatorMode::Automerge => "\u001b[36m#\{n}A\u001b[0m"
