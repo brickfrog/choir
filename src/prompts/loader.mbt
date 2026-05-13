@@ -282,9 +282,9 @@ const LEAF_PROFILE_DEFAULT : String =
   #|   - If `notify_parent` fails, stop after one concise failure report. Do not try to repair registry/session state from inside the leaf.
   #|6. Wait for review feedback — it arrives automatically via the poller.
   #|7. If review feedback arrives, address every comment and push fixes.
-  #|   - Copilot reviews once — it does NOT re-review after fixes are pushed. After addressing each comment and pushing, you (the leaf) must resolve each thread yourself via the GraphQL mutation `resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } }` for every thread you addressed.
-  #|   - Use `timeout 30s gh api graphql -f query='...'` (or `gh-bounded`) when resolving — see "gh discipline" below for the bounding rules and why.
-  #|   - Verify zero unresolved threads via the same GraphQL endpoint before notifying parent. Only notify_parent once that confirmation lands.
+  #|   - Copilot reviews once — it does NOT re-review after fixes are pushed. After addressing every comment, `git push`, then stop and wait for the next poller snapshot.
+  #|   - The server resolves now-outdated review threads for iterative-review PRs after your fix push. The next poller snapshot should show `Unresolved inline review threads (GraphQL): 0`.
+  #|   - Do not call `gh` to resolve threads as part of the normal review cycle. Use the poller snapshot to decide whether unresolved threads remain before notifying parent.
   #|8. Call `shutdown` only AFTER all threads are resolved and the parent tells you to stop.
   #|9. If you hit persistent API rate limits or errors (5+ consecutive failures), call `shutdown` — do not retry indefinitely.
   #|
@@ -296,10 +296,14 @@ const LEAF_PROFILE_DEFAULT : String =
   #|
   #|gh discipline:
   #|- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.
-  #|- Prefer REST endpoints (`gh api repos/{owner}/{repo}/pulls/{n}/comments`, `gh api repos/{owner}/{repo}/pulls/{n}/reviews`) over GraphQL when querying review state. REST returns instantly even when GraphQL stalls.
+  #|- The choir poller pushes review snapshots into your pane: `[REVIEW]`, `[CI LATEST HEAD]`, `[COPILOT ISSUE COMMENT]`, `[FIXES PUSHED]`, and `[MERGE READY]`. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, `GitHub Copilot issue comment (REST)`, and the CI rollup. That snapshot is the source of truth for review state.
+  #|- do NOT issue your own `gh api graphql ... reviewThreads`, `gh api .../pulls/N/reviews`, or `gh api .../comments` calls to determine review state. The poller already fetched that state, and duplicate leaf-side queries regularly hang.
   #|- After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops. The choir poller pushes [REVIEW], [COPILOT ISSUE COMMENT], [FIXES PUSHED], [MERGE READY], [PR MERGED] events into your pane automatically after file_pr; sit idle and let those push events drive your next action. Pulling burns context for no signal and doubles GitHub API hits.
-  #|- When you DO need to call `resolveReviewThread` (per step 7 above — leaves resolve their own threads after addressing comments), always bound the GraphQL call with `timeout 30s`. If the parent has already resolved threads from its own path (you'll see `[PARENT RELEASE]` or a [PR MERGED] event), skip the resolveReviewThread call and proceed.
-  #|- If a `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f "gh api"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.
+  #|- A `gh` timeout is not a blocker. Wait for the next poller snapshot instead of reporting `[BLOCKED]` just because a local GitHub command stalled.
+  #|- When Copilot comments arrive, address every comment, push, then stop. The server resolves outdated threads for iterative-review PRs; the next snapshot should show zero unresolved inline threads.
+  #|- Only use review-thread resolution tooling in the rare persistent-unresolved case: after your fix push, repeated poller snapshots still show `Unresolved inline review threads (GraphQL): N > 0` and the count is not clearing. Prefer the `resolve_review_thread` MCP tool if a thread ID is available. If you cannot clear the persistent snapshot, call `notify_parent --status failure` and let the TL resolve it from its pane.
+  #|- Keep using bounded `gh` for legitimate non-review-state work, and prefer REST over GraphQL for non-review-state API calls when both are available.
+  #|- If a non-review-state `gh` call appears stuck, interrupt it in your own terminal (Ctrl-C) or kill only the specific PID you launched — do NOT use a global `pkill -f "gh api"`, which would also terminate concurrent leaves' calls on the same host. Then report state to the parent rather than waiting indefinitely.
   #|
   #|Execution discipline:
   #|- Run requested verification once per code change.

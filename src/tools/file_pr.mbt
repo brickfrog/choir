@@ -50,6 +50,7 @@ pub fn file_pr_plan(
   parent_branch : String,
   pr : PullRequestInfo,
   tracked : Bool,
+  review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> FilePrPlanResult {
   let tracked_pr = if tracked {
     Some(@poller.TrackedPR::{
@@ -73,6 +74,10 @@ pub fn file_pr_plan(
       changes_requested_since: 0L,
       stall_notified: false,
       fixes_pushed_at: 0L,
+      review_mode,
+      unresolved_thread_ids: [],
+      unresolved_thread_ids_fetched: false,
+      auto_resolve_outdated_pending: false,
     })
   } else {
     None
@@ -242,6 +247,7 @@ pub async fn interpret_file_pr_post_success(
             tracked_pr.parent_branch,
             tracked_pr.pr_url,
             @poller.now_sec(),
+            review_mode=Some(tracked_pr.review_mode),
           )
           ignore(ps.write_state_file(project_dir))
         }
@@ -938,9 +944,25 @@ pub fn interpret_track_pr(
   project_dir : String,
   poller_state : @poller.PollerState?,
   now_sec : Int64,
+  registry? : @registry.AgentRegistry? = None,
+  global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> @types.Response {
   match poller_state {
     Some(ps) => {
+      let agent_workspace = match registry {
+        Some(reg) =>
+          Some(reg.get(track_pr_args.agent_id).workspace) catch {
+            _ => None
+          }
+        None => None
+      }
+      let review_mode = @workspace.review_mode_for_agent_workspace(
+        project_dir,
+        agent_workspace,
+        @phase.extract_slug(track_pr_args.agent_id),
+        agent_id=Some(track_pr_args.agent_id),
+        global_review_mode~,
+      )
       ps.ensure_tracked(
         track_pr_args.pr_number,
         track_pr_args.agent_id,
@@ -948,6 +970,7 @@ pub fn interpret_track_pr(
         track_pr_args.parent_branch,
         track_pr_args.pr_url,
         now_sec,
+        review_mode=Some(review_mode),
       )
       ignore(ps.write_state_file(project_dir))
       @types.Response::ok_values({
@@ -978,6 +1001,22 @@ pub(all) struct ForkWaveSpawnPlan {
 /// When `fork_wave` passes `review_context`, append a stable section so leaves can reuse it for `file_pr`.
 
 ///|
+fn file_pr_review_mode_for_agent(
+  project_dir : String,
+  tracked_agent_id : String,
+  file_pr_dir : String,
+  global_review_mode : @types.ReviewMode,
+) -> @types.ReviewMode {
+  @workspace.review_mode_for_agent_workspace(
+    project_dir,
+    Some(file_pr_dir),
+    @phase.extract_slug(tracked_agent_id),
+    agent_id=Some(tracked_agent_id),
+    global_review_mode~,
+  )
+}
+
+///|
 /// End-to-end `file_pr`: parent-branch defaulting, tracked workdir, preflight
 /// create, then post-success poller/lifecycle/notify. Dispatcher delegates
 /// here; behavior matches the prior `ToolRequest::FilePr` inline arm.
@@ -1004,6 +1043,7 @@ pub async fn interpret_file_pr(
   ) {
     ()
   },
+  global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> @types.Response {
   let branch = file_pr_args.branch
   let parent_branch = match file_pr_args.parent_branch {
@@ -1066,7 +1106,16 @@ pub async fn interpret_file_pr(
     Err(e) => @types.Response::Err(e.message())
     Ok(pr) => {
       let tracked = poller_state is Some(_)
-      let plan = file_pr_plan(file_pr_args, parent_branch, pr, tracked)
+      let review_mode = file_pr_review_mode_for_agent(
+        project_dir, tracked_agent_id, file_pr_dir, global_review_mode,
+      )
+      let plan = file_pr_plan(
+        file_pr_args,
+        parent_branch,
+        pr,
+        tracked,
+        review_mode~,
+      )
       let effects = file_pr_post_success_effects(
         plan,
         poller_state is Some(_),

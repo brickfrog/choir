@@ -22,11 +22,13 @@ You are a leaf agent working in your own worktree and branch.
 5. Commit with a semantic message.
 6. Use `file_pr` — it auto-notifies the parent with the PR URL. Do not send a separate notify_parent.
 7. Wait for Copilot review feedback — it arrives automatically via the poller.
-9. If Copilot leaves review comments:
-   - Address every thread. Push the fix commit.
-   - Resolve each thread on GitHub: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<id>"}) { thread { isResolved } } }'`
-   - Confirm zero unresolved threads: `gh api graphql -f query='{ repository(owner: "<owner>", name: "<repo>") { pullRequest(number: <n>) { reviewThreads(first: 20) { nodes { id isResolved } } } } }'`
-   - Only then `notify_parent` that all threads are resolved.
+8. If Copilot leaves review comments:
+   - The poller pushes review snapshots into your pane: `[REVIEW]`, `[CI LATEST HEAD]`, `[COPILOT ISSUE COMMENT]`, `[FIXES PUSHED]`, and `[MERGE READY]`. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, `GitHub Copilot issue comment (REST)`, and the CI rollup. That snapshot is the source of truth for review state.
+   - do NOT issue your own `gh api graphql ... reviewThreads`, `gh api .../pulls/N/reviews`, or `gh api .../comments` calls to determine review state. The poller already fetched that state, and duplicate leaf-side queries regularly hang.
+   - Copilot reviews once — it does NOT re-review after fixes are pushed. Address every comment, `git push`, then stop and wait for the next poller snapshot.
+   - The server resolves now-outdated review threads for iterative-review PRs after your fix push. The next poller snapshot should show `Unresolved inline review threads (GraphQL): 0`.
+   - A `gh` timeout is not a blocker. Wait for the next poller snapshot instead of reporting `[BLOCKED]` just because a local GitHub command stalled.
+   - Report `[BLOCKED]` with `notify_parent` only when the poller snapshot itself shows persistent unresolved threads that are not clearing after your fix push.
 9. Do not self-declare merge-ready. That is the parent's decision.
 
 ## Execution Discipline

@@ -43,6 +43,18 @@ pub(all) enum CiRollupStatus {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct ReviewThreadRef {
+  id : String
+  is_outdated : Bool
+  author_login : String
+} derive(Debug, Eq)
+
+///|
+pub impl Show for ReviewThreadRef with output(self, logger) -> Unit {
+  self.to_repr().output(logger)
+}
+
+///|
 /// Tracked state for a single PR in the poller.
 pub(all) struct TrackedPR {
   pr_number : Int
@@ -73,11 +85,50 @@ pub(all) struct TrackedPR {
   /// merge-gate to distinguish "fixes pushed after changes requested" from
   /// "fresh PR that never had a review" (both would have `changes_requested_since == 0L`).
   mut fixes_pushed_at : Int64
+  mut review_mode : @types.ReviewMode
+  mut unresolved_thread_ids : Array[ReviewThreadRef]
+  mut unresolved_thread_ids_fetched : Bool
+  mut auto_resolve_outdated_pending : Bool
 } derive(Debug, Eq)
 
 ///|
 pub impl Show for TrackedPR with output(self, logger) -> Unit {
   self.to_repr().output(logger)
+}
+
+///|
+pub fn review_thread_ids_to_auto_resolve(
+  event : PollEvent,
+  review_mode : @types.ReviewMode,
+  thread_refs : Array[ReviewThreadRef],
+) -> Array[String] {
+  match event {
+    FixesPushed(_) =>
+      if review_mode != @types.ReviewMode::Iterative {
+        return []
+      }
+    _ => return []
+  }
+  review_thread_ids_to_auto_resolve_for_pending(review_mode, thread_refs)
+}
+
+///|
+pub fn review_thread_ids_to_auto_resolve_for_pending(
+  review_mode : @types.ReviewMode,
+  thread_refs : Array[ReviewThreadRef],
+) -> Array[String] {
+  if review_mode != @types.ReviewMode::Iterative {
+    return []
+  }
+  let ids : Array[String] = []
+  for thread in thread_refs {
+    if thread.is_outdated &&
+      thread.id != "" &&
+      gh_login_is_copilot_issue_comment_author(thread.author_login) {
+      ids.push(thread.id)
+    }
+  }
+  ids
 }
 
 ///|

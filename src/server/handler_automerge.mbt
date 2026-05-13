@@ -9,15 +9,7 @@ fn ServerState::request_with_review_mode_default(
   let review_mode = match request_int_arg(req, "pr_number") {
     Some(pr_number) =>
       match self.poller.get(pr_number) {
-        Some(tracked) =>
-          review_mode_for_agent(
-            self.config,
-            local_config_for_agent(
-              self.config.project_dir,
-              self.registry,
-              tracked.agent_id,
-            ),
-          )
+        Some(tracked) => tracked.review_mode
         None => self.config.review_mode
       }
     None => self.config.review_mode
@@ -218,8 +210,9 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   unresolved_threads : Int?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
-  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  review_mode? : @types.ReviewMode? = None,
 ) -> Bool {
+  let review_mode = review_mode.unwrap_or(tracked.review_mode)
   if !automerge_candidate_event_for_review_mode(event, review_mode) {
     return false
   }
@@ -230,6 +223,17 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   )
   if !automerge_enabled_for_agent(state.config, local_cfg) {
     return false
+  }
+  match event {
+    @poller.PollEvent::ReviewThreadsResolved(_) =>
+      append_poller_delivery_line(
+        state.append_file,
+        state.config.project_dir,
+        "automerge gate recheck pr=" +
+        tracked.pr_number.to_string() +
+        " event=review_threads_resolved",
+      )
+    _ => ()
   }
   let task_contract = task_contract_for_agent(
     state.config.project_dir,

@@ -1,7 +1,10 @@
 ///|
 async fn mock_refresh_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" {
+  if cmd.program == "timeout" &&
+    cmd.args.length() >= 2 &&
+    cmd.args[0] == "30s" &&
+    cmd.args[1] == "gh" {
     if cmd.args.contains("repo") && cmd.args.contains("view") {
       return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
     }
@@ -125,7 +128,7 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
 }
 
 ///|
-async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapshot unchanged" {
+async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolved on no-op refresh" {
   let project_dir = "/tmp/choir-refresh-unchanged-test-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -191,6 +194,10 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
         last_sha: "sha1",
         last_ci_rollup: @poller.CiRollupStatus::Success,
         last_review_bodies: "comment!",
+        review_mode: @types.ReviewMode::Iterative,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+        auto_resolve_outdated_pending: true,
       })
     None => fail("expected PR")
   }
@@ -221,6 +228,7 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
   }
 
   let mut runner_called = false
+  let mut graphql_calls = 0
   state.refresh_pr_with(
     pr_number,
     200L,
@@ -235,8 +243,19 @@ async test "ServerState::refresh_pr_with emits ReviewThreadsResolved when snapsh
       }
       res
     },
-    capture=mock_refresh_capture,
+    capture=async fn(cmd) {
+      @async.sleep(0)
+      if cmd.program == "timeout" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "30s" &&
+        cmd.args[1] == "gh" &&
+        cmd.args.contains("graphql") {
+        graphql_calls = graphql_calls + 1
+      }
+      mock_refresh_capture(cmd)
+    },
   )
 
-  assert_true(runner_called)
+  assert_eq(graphql_calls, 1)
+  assert_false(runner_called)
 }

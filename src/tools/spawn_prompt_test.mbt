@@ -51,7 +51,11 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
     ),
   )
   assert_true(prompt.contains("`gh-bounded` wrapper"))
-  assert_true(prompt.contains("Prefer REST endpoints"))
+  assert_true(prompt.contains("source of truth for review state"))
+  assert_true(
+    prompt.contains("do NOT issue your own `gh api graphql ... reviewThreads`"),
+  )
+  assert_true(prompt.contains("A `gh` timeout is not a blocker"))
   assert_true(
     prompt.contains(
       "After `file_pr`, do NOT proactively poll review state with `gh api` / `gh pr view` / `sleep` loops",
@@ -66,14 +70,9 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
     prompt.contains("sit idle and let those push events drive your next action"),
   )
   assert_true(prompt.contains("doubles GitHub API hits"))
-  // Per CLAUDE.md Leaf Agent Rules, leaves MUST resolve threads themselves
-  // after addressing comments — earlier prompt drafts said the opposite,
-  // which contradicted the source-of-truth rule. Guard against regression.
-  assert_true(
-    prompt.contains(
-      "When you DO need to call `resolveReviewThread` (per step 7 above",
-    ),
-  )
+  assert_true(prompt.contains("resolve_review_thread` MCP tool"))
+  assert_false(prompt.contains("per step 7 above"))
+  assert_false(prompt.contains("resolveReviewThread"))
   assert_true(prompt.contains("do NOT use a global `pkill -f \"gh api\"`"))
   assert_true(prompt.contains("kill only the specific PID you launched"))
 

@@ -365,6 +365,87 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   assert_eq(t.consecutive_failures, 0)
   assert_eq(t.backoff_until, 0L)
   assert_eq(t.orphan_reconciling, false)
+  assert_eq(t.review_mode, @types.Config::default().review_mode)
+  assert_eq(t.unresolved_thread_ids, [])
+  assert_eq(t.unresolved_thread_ids_fetched, false)
+  assert_eq(t.auto_resolve_outdated_pending, false)
+}
+
+///|
+test "parse_tracked_prs_json defaults unknown review_mode instead of failing" {
+  let json =
+    #|[
+    #|  {
+    #|    "pr_number": 2,
+    #|    "agent_id": "a",
+    #|    "branch": "b",
+    #|    "parent_branch": "main",
+    #|    "pr_url": "u",
+    #|    "first_seen": 1,
+    #|    "last_review_state": "approved",
+    #|    "last_review_bodies": "",
+    #|    "last_sha": "sha",
+    #|    "notified_parent": false,
+    #|    "last_ci_rollup": "success",
+    #|    "last_timeout_at": 0,
+    #|    "review_mode": "future_mode"
+    #|  }
+    #|]
+  let parsed = @poller.parse_tracked_prs_json(json)
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].review_mode, @types.Config::default().review_mode)
+}
+
+///|
+test "poller_state json round-trips review mode and unresolved thread refs" {
+  let ps = @poller.PollerState::new()
+  ps.track(
+    8,
+    "agent-8",
+    "branch-8",
+    "main",
+    "https://example.test/pr/8",
+    80L,
+    review_mode=@types.ReviewMode::SinglePass,
+  )
+  let tracked = match ps.get(8) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  ps.restore({
+    ..tracked,
+    unresolved_thread_ids: [
+      @poller.ReviewThreadRef::{
+        id: "T_old",
+        is_outdated: true,
+        author_login: "copilot-pull-request-reviewer[bot]",
+      },
+      @poller.ReviewThreadRef::{
+        id: "T_current",
+        is_outdated: false,
+        author_login: "octocat",
+      },
+    ],
+    unresolved_thread_ids_fetched: true,
+    auto_resolve_outdated_pending: true,
+  })
+  let parsed = @poller.parse_tracked_prs_json(ps.to_json())
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].review_mode, @types.ReviewMode::SinglePass)
+  assert_eq(parsed[0].unresolved_thread_ids, [
+    @poller.ReviewThreadRef::{
+      id: "T_old",
+      is_outdated: true,
+      author_login: "copilot-pull-request-reviewer[bot]",
+    },
+    @poller.ReviewThreadRef::{
+      id: "T_current",
+      is_outdated: false,
+      author_login: "octocat",
+    },
+  ])
+  assert_eq(parsed[0].unresolved_thread_ids_fetched, true)
+  assert_eq(parsed[0].auto_resolve_outdated_pending, true)
 }
 
 ///|

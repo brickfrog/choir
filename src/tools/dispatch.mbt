@@ -716,6 +716,7 @@ pub async fn dispatch(
   poller_state? : @poller.PollerState? = None,
   caller_id? : String? = None,
   pr_review? : Bool = true,
+  global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   goal_nonce? : () -> String = fn() {
@@ -951,6 +952,7 @@ pub async fn dispatch(
         capture,
         ensure_pr,
         record_verify_event~,
+        global_review_mode~,
       )
     ToolRequest::MergePr(merge_args) => {
       let resp = interpret_merge_pr(
@@ -980,6 +982,8 @@ pub async fn dispatch(
         project_dir,
         poller_state,
         @poller.now_sec(),
+        registry~,
+        global_review_mode~,
       )
     ToolRequest::NotifyParent(notify_args) => {
       if registry is Some(reg) {
@@ -1440,6 +1444,7 @@ pub async fn handle_request(
   poller_state? : @poller.PollerState? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
+  global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   goal_nonce? : () -> String = fn() {
@@ -1534,6 +1539,7 @@ pub async fn handle_request(
                   poller_state~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   pr_review~,
+                  global_review_mode~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,
@@ -1653,6 +1659,7 @@ pub async fn dispatch_call(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   pr_review? : Bool = true,
+  global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
@@ -1712,6 +1719,7 @@ pub async fn dispatch_call(
                   poller_state~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   pr_review~,
+                  global_review_mode~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,

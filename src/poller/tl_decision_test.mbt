@@ -25,6 +25,10 @@ fn sample_tracked(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
   }
 }
 
@@ -610,6 +614,16 @@ test "single_pass treats fixed changes-requested review as gate-ready when fixes
     review_mode=@types.ReviewMode::SinglePass,
   )
   assert_eq(decision.label(), "merge_now")
+}
+
+///|
+test "tl_tracked_pr_merge_gate_snapshot_ready uses tracked SinglePass mode by default" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 105),
+    fixes_pushed_at: 999L,
+    review_mode: @types.ReviewMode::SinglePass,
+  }
+  assert_true(tl_tracked_pr_merge_gate_snapshot_ready(t, Some(0)))
 }
 
 ///|

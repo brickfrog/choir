@@ -50,9 +50,46 @@ test "interpret_track_pr ensure_tracked writes state and returns tracked envelop
       assert_eq(t.parent_branch, "develop")
       assert_eq(t.pr_url, "https://gh/pr/99")
       assert_eq(t.first_seen, 12345L)
+      assert_eq(t.review_mode, @types.Config::default().review_mode)
     }
     None => fail("expected tracked PR in poller state")
   }
+}
+
+///|
+test "interpret_track_pr resolves inline review mode before global fallback" {
+  let project_dir = "/tmp/choir-track-pr-review-mode-" +
+    @sys.get_pid().to_string()
+  let agent_id = "main.inline-track"
+  let inline_dir = @workspace.inline_agent_metadata_dir(project_dir, agent_id)
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(inline_dir + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      inline_dir + "/.choir/config.local.toml",
+      "review_mode = \"single_pass\"\n",
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  let got = interpret_track_pr(
+    {
+      pr_number: 100,
+      agent_id,
+      branch: "main.inline-track",
+      parent_branch: "main",
+      pr_url: "https://gh/pr/100",
+    },
+    project_dir,
+    Some(ps),
+    12345L,
+    global_review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_true(got.is_ok())
+  match ps.get(100) {
+    Some(t) => assert_eq(t.review_mode, @types.ReviewMode::SinglePass)
+    None => fail("expected tracked PR")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -81,6 +118,10 @@ fn merge_pr_test_tracked(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
   }
 }
 
@@ -389,7 +430,7 @@ async fn mock_preflight_capture_approved_no_graphql(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[{\"state\":\"APPROVED\"}]")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     fail("force=true should skip review thread GraphQL fetch")
   }
   (0, "")
@@ -426,10 +467,10 @@ async fn mock_preflight_capture_empty_reviews(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[]")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
     )
@@ -563,10 +604,10 @@ async fn mock_preflight_capture_no_unresolved_threads(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[{\"state\":\"APPROVED\"}]")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
     )
@@ -824,10 +865,10 @@ async fn mock_preflight_capture_one_unresolved_thread(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[{\"state\":\"APPROVED\"}]")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     let body =
       #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_abc","isResolved":false,"path":"src/x.mbt","comments":{"nodes":[{"body":"fix it"}]}}]}}}}}
     return (0, body)
@@ -1015,6 +1056,23 @@ test "format_tl_pr_recheck_summary lists blockers for changes requested" {
   assert_false(s.contains("no tracked blockers"))
   assert_true(s.contains("Advisory evaluation verdict: blocked"))
   assert_true(s.contains("Merge policy decision: blocked"))
+}
+
+///|
+test "format_tl_pr_recheck_summary uses tracked SinglePass mode consistently after fixes" {
+  let t : @poller.TrackedPR = {
+    ..merge_pr_test_tracked(@poller.ReviewState::ChangesRequested, "main.leaf"),
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    fixes_pushed_at: 1_700_000_000L,
+    last_sha: "fixed-sha",
+    review_mode: @types.ReviewMode::SinglePass,
+  }
+  let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
+  assert_true(s.contains("no tracked blockers"))
+  assert_true(s.contains("Advisory evaluation verdict: ready"))
+  assert_true(s.contains("Merge policy decision: merge_now"))
+  assert_false(s.contains("Advisory evaluation verdict: blocked"))
+  assert_false(s.contains("Merge policy decision: blocked"))
 }
 
 ///|
@@ -2325,9 +2383,11 @@ test "merge_pr_tracked_branch_for_post_success returns branch when tracked" {
 ///|
 test "resolve_review_thread_gh_command matches graphql argv and workdir" {
   let cmd = resolve_review_thread_gh_command("/repo/root", "PRRT_kwDOabc")
-  assert_eq(cmd.program, "gh")
+  assert_eq(cmd.program, "timeout")
   @debug.assert_eq(cmd.workdir, Some("/repo/root"))
   assert_eq(cmd.args, [
+    "30s",
+    "gh",
     "api",
     "graphql",
     "-f",

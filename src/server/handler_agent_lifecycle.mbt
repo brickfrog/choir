@@ -67,9 +67,34 @@ pub fn ServerState::track_recovered_pr(
   ci_rollup : @poller.CiRollupStatus,
   copilot_issue_comment_seen : Bool,
 ) -> Unit {
+  let review_mode = match self.poller.get(pr_number) {
+    Some(existing) => existing.review_mode
+    None => {
+      let agent_workspace = Some(self.registry.get(agent_id).workspace) catch {
+        _ => None
+      }
+      @workspace.review_mode_for_agent_workspace(
+        self.config.project_dir,
+        agent_workspace,
+        @phase.extract_slug(agent_id),
+        agent_id=Some(agent_id),
+        global_review_mode=self.config.review_mode,
+      )
+    }
+  }
   self.poller.track_recovered(
-    pr_number, agent_id, branch, parent_branch, pr_url, created_at, review, review_bodies,
-    sha, ci_rollup, copilot_issue_comment_seen,
+    pr_number,
+    agent_id,
+    branch,
+    parent_branch,
+    pr_url,
+    created_at,
+    review,
+    review_bodies,
+    sha,
+    ci_rollup,
+    copilot_issue_comment_seen,
+    review_mode~,
   )
 }
 

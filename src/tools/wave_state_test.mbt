@@ -120,6 +120,7 @@ fn tracked_pr_with(
   copilot_comment : Bool,
   fixes_pushed_at : Int64,
   last_sha : String,
+  review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
 ) -> @poller.TrackedPR {
   {
     pr_number,
@@ -142,6 +143,10 @@ fn tracked_pr_with(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at,
+    review_mode,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
   }
 }
 
@@ -209,7 +214,6 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
     Some(ps),
     threads_zero_lookup,
     heartbeat_map_reader(hb),
-    @types.ReviewMode::Iterative,
     9_999_999L,
     beads_issue_reader=fn(agent) { bead_ids.get(agent.agent_id.to_string()) },
   ).unwrap()
@@ -280,7 +284,6 @@ test "plan_wave_state masks UnexpectedDisconnect on active root with unknown hea
     None,
     threads_zero_lookup,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     1_700_000_000_000L,
   ).unwrap()
   assert_eq(snap.supervisor.agent_id, "root")
@@ -321,7 +324,6 @@ test "plan_wave_state preserves UnexpectedDisconnect on active root with stale h
     None,
     threads_zero_lookup,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     1_700_000_000_000L,
   ).unwrap()
   match snap.supervisor.workflow {
@@ -385,7 +387,6 @@ test "plan_wave_state merge_gate_ready: approved + threads=0 + CI success" {
     Some(ps),
     threads_zero_lookup,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     0L,
   ).unwrap()
   let pr = snap.children[0].pr.unwrap()
@@ -435,10 +436,22 @@ test "plan_wave_state merge_gate_ready SinglePass: ChangesRequested + fixes_push
     Some(ps),
     threads_zero_lookup,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     0L,
   ).unwrap()
   assert_eq(iter_snap.children[0].pr.unwrap().merge_gate_ready, false)
+  ps.tracked.set(
+    20,
+    tracked_pr_with(
+      20,
+      "tl.leaf",
+      @poller.ReviewState::ChangesRequested,
+      @poller.CiRollupStatus::Success,
+      false,
+      1_700_000_000L,
+      "def",
+      review_mode=@types.ReviewMode::SinglePass,
+    ),
+  )
   let single_snap = plan_wave_state(
     "tl",
     reg,
@@ -446,10 +459,90 @@ test "plan_wave_state merge_gate_ready SinglePass: ChangesRequested + fixes_push
     Some(ps),
     threads_zero_lookup,
     no_heartbeat,
-    @types.ReviewMode::SinglePass,
     0L,
   ).unwrap()
   assert_eq(single_snap.children[0].pr.unwrap().merge_gate_ready, true)
+}
+
+///|
+test "plan_wave_state merge_gate_ready uses each tracked PR review_mode" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent(
+        "tl.iter",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Gemini,
+      ),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent(
+        "tl.single",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Gemini,
+      ),
+    ),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(
+    30,
+    tracked_pr_with(
+      30,
+      "tl.iter",
+      @poller.ReviewState::ChangesRequested,
+      @poller.CiRollupStatus::Success,
+      false,
+      1_700_000_001L,
+      "iter-sha",
+      review_mode=@types.ReviewMode::Iterative,
+    ),
+  )
+  ps.tracked.set(
+    31,
+    tracked_pr_with(
+      31,
+      "tl.single",
+      @poller.ReviewState::ChangesRequested,
+      @poller.CiRollupStatus::Success,
+      false,
+      1_700_000_002L,
+      "single-sha",
+      review_mode=@types.ReviewMode::SinglePass,
+    ),
+  )
+  let snap = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    Some(ps),
+    threads_zero_lookup,
+    no_heartbeat,
+    0L,
+  ).unwrap()
+  let iter_row = snap.children
+    .iter()
+    .find_first(fn(c) { c.agent_id == "tl.iter" })
+    .unwrap()
+  let single_row = snap.children
+    .iter()
+    .find_first(fn(c) { c.agent_id == "tl.single" })
+    .unwrap()
+  assert_eq(iter_row.pr.unwrap().merge_gate_ready, false)
+  assert_eq(single_row.pr.unwrap().merge_gate_ready, true)
 }
 
 ///|
@@ -495,7 +588,6 @@ test "plan_wave_state merge_gate_ready false when CI is not success" {
     Some(ps),
     threads_zero_lookup,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     0L,
   ).unwrap()
   assert_eq(snap.children[0].pr.unwrap().merge_gate_ready, false)
@@ -545,7 +637,6 @@ test "plan_wave_state merge_gate_ready false when unresolved threads > 0" {
     Some(ps),
     threads_two,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     0L,
   ).unwrap()
   let pr = snap.children[0].pr.unwrap()
@@ -599,7 +690,6 @@ test "plan_wave_state reports threads_fetch_error on fail-loud path" {
     Some(ps),
     fail_lookup,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     0L,
   ).unwrap()
   let pr = snap.children[0].pr.unwrap()
@@ -662,7 +752,6 @@ test "plan_wave_state worker with stale heartbeat appears in snapshot" {
     None,
     threads_zero_lookup,
     heartbeat_map_reader(hb),
-    @types.ReviewMode::Iterative,
     1_600_000_600_000L,
   ).unwrap()
   assert_eq(snap.children.length(), 1)
@@ -739,7 +828,6 @@ test "plan_wave_state filters terminal children outside the current wave" {
     None,
     threads_zero_lookup,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     0L,
   ).unwrap()
   assert_eq(snap.children.length(), 2)
@@ -768,7 +856,6 @@ test "plan_wave_state rejects non-supervisor caller with permission_denied" {
     None,
     threads_zero_lookup,
     no_heartbeat,
-    @types.ReviewMode::Iterative,
     0L,
   )
   assert_true(result is Err(_))
@@ -779,12 +866,12 @@ async fn mock_wave_state_capture_threads_none(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
     )
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")
@@ -795,12 +882,12 @@ async fn mock_wave_state_capture_threads_two(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (
       0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"T1\",\"isResolved\":false,\"path\":\"f.mbt\",\"comments\":{\"nodes\":[{\"body\":\"fix\"}]}},{\"id\":\"T2\",\"isResolved\":false,\"path\":\"g.mbt\",\"comments\":{\"nodes\":[{\"body\":\"nit\"}]}}]}}}}}",
     )
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")
@@ -811,10 +898,10 @@ async fn mock_wave_state_capture_gh_fails(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" && cmd.args.contains("graphql") {
+  if cmd.args.contains("graphql") {
     return (1, "gh error")
   }
-  if cmd.program == "gh" && cmd.args.contains("repo") {
+  if cmd.args.contains("repo") {
     return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
   }
   (0, "")

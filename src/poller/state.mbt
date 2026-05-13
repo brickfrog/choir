@@ -80,6 +80,62 @@ fn parse_review_state_name(s : String) -> ReviewState? {
 }
 
 ///|
+fn review_mode_name(review_mode : @types.ReviewMode) -> String {
+  review_mode.to_wire_string()
+}
+
+///|
+fn parse_review_mode_name(s : String) -> @types.ReviewMode? {
+  match @types.ReviewMode::try_parse_wire(s) {
+    Ok(value) => Some(value)
+    Err(_) => None
+  }
+}
+
+///|
+fn review_thread_refs_to_json(refs : Array[ReviewThreadRef]) -> Json {
+  let items : Array[Json] = []
+  for thread in refs {
+    items.push(
+      {
+        "id": thread.id.to_json(),
+        "is_outdated": thread.is_outdated.to_json(),
+        "author_login": thread.author_login.to_json(),
+      }.to_json(),
+    )
+  }
+  items.to_json()
+}
+
+///|
+fn parse_review_thread_refs(json : Json?) -> Array[ReviewThreadRef]? {
+  match json {
+    None => Some([])
+    Some(Array(items)) => {
+      let refs : Array[ReviewThreadRef] = []
+      for item in items {
+        guard item is Object(obj) else { return None }
+        let id = match @types.json_field_string(obj, "id") {
+          Some(value) => value
+          None => return None
+        }
+        let is_outdated = match @types.json_field_bool(obj, "is_outdated") {
+          Some(value) => value
+          None => false
+        }
+        let author_login = match @types.json_field_string(obj, "author_login") {
+          Some(value) => value
+          None => ""
+        }
+        refs.push({ id, is_outdated, author_login })
+      }
+      Some(refs)
+    }
+    Some(_) => None
+  }
+}
+
+///|
 pub fn TrackedPR::to_json(self : TrackedPR) -> String {
   {
     "pr_number": self.pr_number.to_json(),
@@ -102,6 +158,12 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "changes_requested_since": self.changes_requested_since.to_json(),
     "stall_notified": self.stall_notified.to_json(),
     "fixes_pushed_at": self.fixes_pushed_at.to_json(),
+    "review_mode": review_mode_name(self.review_mode).to_json(),
+    "unresolved_thread_ids": review_thread_refs_to_json(
+      self.unresolved_thread_ids,
+    ),
+    "unresolved_thread_ids_fetched": self.unresolved_thread_ids_fetched.to_json(),
+    "auto_resolve_outdated_pending": self.auto_resolve_outdated_pending.to_json(),
   }
   .to_json()
   .stringify()
@@ -213,6 +275,29 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     Some(value) => value
     None => 0L
   }
+  let review_mode = match @types.json_field_string(fields, "review_mode") {
+    Some(value) =>
+      match parse_review_mode_name(value) {
+        Some(parsed) => parsed
+        None => @types.Config::default().review_mode
+      }
+    None => @types.Config::default().review_mode
+  }
+  let unresolved_thread_ids = match
+    parse_review_thread_refs(fields.get("unresolved_thread_ids")) {
+    Some(value) => value
+    None => return None
+  }
+  let unresolved_thread_ids_fetched = match
+    @types.json_field_bool(fields, "unresolved_thread_ids_fetched") {
+    Some(value) => value
+    None => false
+  }
+  let auto_resolve_outdated_pending = match
+    @types.json_field_bool(fields, "auto_resolve_outdated_pending") {
+    Some(value) => value
+    None => false
+  }
   Some({
     pr_number,
     agent_id,
@@ -234,6 +319,10 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     changes_requested_since,
     stall_notified,
     fixes_pushed_at,
+    review_mode,
+    unresolved_thread_ids,
+    unresolved_thread_ids_fetched,
+    auto_resolve_outdated_pending,
   })
 }
 
@@ -251,6 +340,7 @@ pub fn PollerState::track(
   parent_branch : String,
   pr_url : String,
   now : Int64,
+  review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> Unit {
   let pr = {
     pr_number,
@@ -273,6 +363,10 @@ pub fn PollerState::track(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
   }
   self.set_tracked(pr_number, pr)
 }
@@ -286,6 +380,7 @@ pub fn PollerState::ensure_tracked(
   parent_branch : String,
   pr_url : String,
   now : Int64,
+  review_mode? : @types.ReviewMode? = None,
 ) -> Unit {
   match self.tracked.get(pr_number) {
     Some(existing) =>
@@ -295,8 +390,18 @@ pub fn PollerState::ensure_tracked(
         branch,
         parent_branch,
         pr_url,
+        review_mode: review_mode.unwrap_or(existing.review_mode),
       })
-    None => self.track(pr_number, agent_id, branch, parent_branch, pr_url, now)
+    None =>
+      self.track(
+        pr_number,
+        agent_id,
+        branch,
+        parent_branch,
+        pr_url,
+        now,
+        review_mode=review_mode.unwrap_or(@types.Config::default().review_mode),
+      )
   }
 }
 
@@ -359,6 +464,7 @@ pub fn PollerState::track_recovered(
   sha : String,
   ci_rollup : CiRollupStatus,
   copilot_issue_comment_seen : Bool,
+  review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> Unit {
   let pr = {
     pr_number,
@@ -381,6 +487,10 @@ pub fn PollerState::track_recovered(
     changes_requested_since: 0L,
     stall_notified: false,
     fixes_pushed_at: 0L,
+    review_mode,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
   }
   self.set_tracked(pr_number, pr)
 }
@@ -765,6 +875,7 @@ pub async fn PollerState::tick_pr_with(
   let mut crs = tracked_ok.changes_requested_since
   let mut sn = tracked_ok.stall_notified
   let mut fpa = tracked_ok.fixes_pushed_at
+  let mut auto_resolve_outdated_pending = tracked_ok.auto_resolve_outdated_pending
   let sha_moved = tracked_ok.last_sha != "" &&
     sha != "" &&
     sha != tracked_ok.last_sha
@@ -784,6 +895,15 @@ pub async fn PollerState::tick_pr_with(
     crs = now
     sn = false
   }
+  for event in all_events {
+    match event {
+      FixesPushed(_) =>
+        if tracked_ok.review_mode == @types.ReviewMode::Iterative {
+          auto_resolve_outdated_pending = true
+        }
+      _ => ()
+    }
+  }
   let updated = if sha == "" {
     {
       ..tracked_ok,
@@ -796,6 +916,7 @@ pub async fn PollerState::tick_pr_with(
       changes_requested_since: crs,
       stall_notified: sn,
       fixes_pushed_at: fpa,
+      auto_resolve_outdated_pending,
     }
   } else {
     {
@@ -810,6 +931,7 @@ pub async fn PollerState::tick_pr_with(
       changes_requested_since: crs,
       stall_notified: sn,
       fixes_pushed_at: fpa,
+      auto_resolve_outdated_pending,
     }
   }
   self.set_tracked(pr_number, updated)
