@@ -10,7 +10,9 @@ target/
 !.choir/prompts/profiles/
 !.choir/prompts/profiles/*.md
 !.choir/plugin/
+.choir/plugin/*
 !.choir/plugin/skills/
+.choir/plugin/skills/*
 !.choir/plugin/skills/audit/
 !.choir/plugin/skills/audit/SKILL.md
 .mcp.json
