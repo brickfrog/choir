@@ -214,7 +214,6 @@ fn merged_provenance_label(
       match merge_execution_mode {
         Some(@evidence.MergeExecutionMode::ServerAutomerge) =>
           "server_automerge"
-        Some(@evidence.MergeExecutionMode::ForceOverride) => "force_override"
         _ => "merge_pr"
       }
   }
@@ -232,23 +231,9 @@ fn merged_summary_line(
       match merge_execution_mode {
         Some(@evidence.MergeExecutionMode::ServerAutomerge) =>
           "Authoritative: server automerge succeeded; no TL merge action was required."
-        Some(@evidence.MergeExecutionMode::ForceOverride) =>
-          "Authoritative: merge_pr force=true succeeded; merge policy was overridden explicitly."
         _ =>
           "Authoritative: merge_pr succeeded; the leaf is finalized and cleaned up."
       }
-  }
-}
-
-///|
-fn merged_override_reason_line(
-  source : MergedDeliverySource,
-  merge_execution_mode : @evidence.MergeExecutionMode?,
-) -> String? {
-  match (source, merge_execution_mode) {
-    (MergePrTool, Some(@evidence.MergeExecutionMode::ForceOverride)) =>
-      Some("policy_override: merge_pr invoked with force=true")
-    _ => None
   }
 }
 
@@ -501,9 +486,7 @@ pub fn plan_post_tool_actions(
               url~,
               source=MergedDeliverySource::MergePrTool,
               merge_execution_mode=Some(
-                if request_bool_arg(req, "force").unwrap_or(false) {
-                  @evidence.MergeExecutionMode::ForceOverride
-                } else if request_bool_arg(req, "automerge").unwrap_or(false) {
+                if request_bool_arg(req, "automerge").unwrap_or(false) {
                   @evidence.MergeExecutionMode::ServerAutomerge
                 } else {
                   @evidence.MergeExecutionMode::Manual
@@ -641,10 +624,6 @@ pub fn merged_pr_parent_message(
     "merge_provenance: " + merged_provenance_label(source, merge_execution_mode),
     merged_summary_line(source, merge_execution_mode),
   ]
-  match merged_override_reason_line(source, merge_execution_mode) {
-    Some(line) => lines.push(line)
-    None => ()
-  }
   if pr_url != "" {
     lines.push("pr_url: " + pr_url)
   }

@@ -530,7 +530,7 @@ test "merged_pr_parent_message uses unknown when branch or parent_branch missing
 }
 
 ///|
-test "merged_pr_parent_message marks automerge and force override distinctly" {
+test "merged_pr_parent_message marks server automerge distinctly" {
   let automerge_msg = merged_pr_parent_message(
     7,
     "main.leaf-a",
@@ -540,21 +540,8 @@ test "merged_pr_parent_message marks automerge and force override distinctly" {
     MergedDeliverySource::MergePrTool,
     merge_execution_mode=Some(@evidence.MergeExecutionMode::ServerAutomerge),
   )
-  let force_msg = merged_pr_parent_message(
-    8,
-    "main.leaf-b",
-    "feat/b",
-    "main",
-    "",
-    MergedDeliverySource::MergePrTool,
-    merge_execution_mode=Some(@evidence.MergeExecutionMode::ForceOverride),
-  )
   assert_true(automerge_msg.contains("merge_provenance: server_automerge"))
   assert_true(automerge_msg.contains("server automerge succeeded"))
-  assert_true(force_msg.contains("merge_provenance: force_override"))
-  assert_true(
-    force_msg.contains("policy_override: merge_pr invoked with force=true"),
-  )
 }
 
 ///|

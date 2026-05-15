@@ -1,11 +1,6 @@
 ///|
 fn tl_policy_usage() -> String {
-  "usage: choir <tl-policy-watch --pid <pid> [--interval-ms <ms>]|tl-parent-override <on|off>>"
-}
-
-///|
-fn tl_policy_override_key(agent_id : String) -> String {
-  "tl-parent-override--" + @types.sanitize_agent_id(agent_id)
+  "usage: choir tl-policy-watch --pid <pid> [--interval-ms <ms>]"
 }
 
 ///|
@@ -72,13 +67,6 @@ async fn tl_policy_status_paths(repo_dir : String) -> Array[String] {
   // lines before slicing column 3 (the local copy here used to corrupt
   // ` M src/foo.mbt` -> `rc/foo.mbt`) and returns both sides of a rename.
   @policy.git_status_changed_paths(output)
-}
-
-///|
-fn tl_policy_override_enabled(project_dir : String, agent_id : String) -> Bool {
-  let path = project_dir + "/.choir/kv/" + tl_policy_override_key(agent_id)
-  let content = @sys.read_file(path).trim().to_lower()
-  content == "1" || content == "true" || content == "on" || content == "yes"
 }
 
 ///|
@@ -196,7 +184,6 @@ async fn tl_policy_watch_loop(
   pid_is_alive? : (Int) -> Bool = @sys.pid_is_alive,
   status_paths? : async (String) -> Array[String] = tl_policy_status_paths,
   lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
-  override_check? : (String, String) -> Bool = tl_policy_override_enabled,
   write_stderr? : (String) -> Unit = @sys.write_stderr,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
@@ -208,9 +195,8 @@ async fn tl_policy_watch_loop(
     let changed_paths = status_paths(repo_dir)
     let lifecycle = lifecycle_reader(project_dir, agent_id)
     let (live_wave, wave) = tl_policy_live_wave_info(lifecycle)
-    let override_enabled = override_check(project_dir, agent_id)
     let decision = @policy.decide_tl_parent_branch_write(
-      live_wave, wave, changed_paths, override_enabled,
+      live_wave, wave, changed_paths,
     )
     if decision.is_blocked() {
       let current_paths_key = tl_policy_changed_paths_key(changed_paths)
@@ -256,46 +242,6 @@ fn tl_policy_watch_run() -> Unit {
     let repo_dir = tl_policy_current_dir()
     tl_policy_watch_loop(pid, interval_ms, agent_id, project_dir, repo_dir)
   })
-}
-
-///|
-fn tl_parent_override_run() -> Unit {
-  let args = @env.args()
-  let mode = if args.length() >= 3 { args[2].trim().to_lower() } else { "" }
-  if mode != "on" && mode != "off" {
-    @sys.write_stderr(tl_policy_usage() + "\n")
-    @sys.exit(1)
-    return
-  }
-  let config = tl_policy_load_config()
-  let local_cfg = tl_policy_load_local_cfg()
-  let agent_id = tl_policy_agent_id(config, local_cfg)
-  let project_dir = tl_policy_resolve_project_dir(config.project_dir)
-  let path = project_dir + "/.choir/kv/" + tl_policy_override_key(agent_id)
-  if mode == "on" {
-    ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
-    if !@sys.write_file_atomic(path, "1\n") {
-      @sys.write_stderr("failed to write override file\n")
-      @sys.exit(1)
-      return
-    }
-    @sys.write_stdout(
-      "TL parent-branch override enabled for " + agent_id + "\n",
-    )
-  } else {
-    ignore(@sys.delete_file_sync(path))
-    @sys.write_stdout(
-      "TL parent-branch override cleared for " + agent_id + "\n",
-    )
-  }
-}
-
-///|
-test "tl_policy_override_key sanitizes agent id" {
-  assert_eq(
-    tl_policy_override_key("main/tl.1"),
-    "tl-parent-override--main_tl.1",
-  )
 }
 
 ///|
@@ -361,7 +307,6 @@ async test "tl_policy_watch_loop logs violation without terminating watcher" {
   let pid_checks : Array[Int] = []
   let status_repos : Array[String] = []
   let lifecycle_inputs : Array[String] = []
-  let override_inputs : Array[String] = []
   let alive_checks = [true, true, true, false]
   let alive_index = [0]
   let status_calls = [0]
@@ -415,10 +360,6 @@ async test "tl_policy_watch_loop logs violation without terminating watcher" {
         last_updated_unix_sec: 0L,
       })
     },
-    override_check=fn(project, agent) {
-      override_inputs.push(project + ":" + agent)
-      false
-    },
     write_stderr=fn(message) { logs.push(message) },
     sleep_fn=async fn(ms) {
       @async.sleep(0)
@@ -432,7 +373,6 @@ async test "tl_policy_watch_loop logs violation without terminating watcher" {
   assert_eq(lifecycle_inputs, [
     "/project:root", "/project:root", "/project:root",
   ])
-  assert_eq(override_inputs, ["/project:root", "/project:root", "/project:root"])
   assert_eq(sleeps, [250, 250, 250])
   assert_eq(logs.length(), 2)
   assert_true(logs[0].contains("policy blocked:"))

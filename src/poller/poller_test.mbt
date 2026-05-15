@@ -369,6 +369,7 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   assert_eq(t.unresolved_thread_ids, [])
   assert_eq(t.unresolved_thread_ids_fetched, false)
   assert_eq(t.auto_resolve_outdated_pending, false)
+  assert_eq(t.last_automerge_attempt_sha, "")
 }
 
 ///|
@@ -428,10 +429,12 @@ test "poller_state json round-trips review mode and unresolved thread refs" {
     ],
     unresolved_thread_ids_fetched: true,
     auto_resolve_outdated_pending: true,
+    last_automerge_attempt_sha: "attempt-sha",
   })
   let parsed = @poller.parse_tracked_prs_json(ps.to_json())
   assert_eq(parsed.length(), 1)
   assert_eq(parsed[0].review_mode, @types.ReviewMode::SinglePass)
+  assert_eq(parsed[0].last_automerge_attempt_sha, "attempt-sha")
   assert_eq(parsed[0].unresolved_thread_ids, [
     @poller.ReviewThreadRef::{
       id: "T_old",

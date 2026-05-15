@@ -79,11 +79,7 @@ pub fn decide_tl_parent_branch_write(
   live_wave : Bool,
   wave : Int?,
   changed_paths : Array[String],
-  override_enabled : Bool,
 ) -> TLParentBranchPolicyDecision {
-  if override_enabled {
-    return Allowed(reason="explicit parent-branch override enabled")
-  }
   let change_class = classify_tl_parent_branch_paths(changed_paths)
   match change_class {
     NoChanges => return Allowed(reason="no parent-branch changes detected")
@@ -104,7 +100,7 @@ pub fn decide_tl_parent_branch_write(
       Blocked(
         reason="TL is supervising " +
           wave_text +
-          " and parent-branch feature work is not allowed while a wave is live; delegate to leaves or explicitly override",
+          " and parent-branch feature work is not allowed while a wave is live; delegate to leaves or wait for the wave to finish",
       )
     }
     NoChanges => Allowed(reason="no parent-branch changes detected")

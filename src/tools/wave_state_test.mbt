@@ -134,6 +134,7 @@ fn tracked_pr_with(
     last_review_state: review,
     last_review_bodies: "",
     last_sha,
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: ci,
     last_timeout_at: 0L,

@@ -1538,6 +1538,67 @@ async fn deliver_pending_poll_events(
       }
     }
   }
+  state.sweep_tracked_prs_for_automerge(runner, capture=automerge_capture)
+}
+
+///|
+async fn ServerState::sweep_tracked_prs_for_automerge(
+  self : ServerState,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+) -> Unit {
+  let tracked_prs : Array[@poller.TrackedPR] = []
+  for tracked in self.poller.tracked.values() {
+    tracked_prs.push(tracked)
+  }
+  for tracked in tracked_prs {
+    let current = match self.poller.get(tracked.pr_number) {
+      Some(pr) => pr
+      None => continue
+    }
+    let local_cfg = local_config_for_agent(
+      self.config.project_dir,
+      self.registry,
+      current.agent_id,
+    )
+    let automerge_enabled = automerge_enabled_for_agent(self.config, local_cfg)
+    let unresolved_threads = tracked_unresolved_thread_count_for_gate(current)
+    let gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
+      current,
+      unresolved_threads,
+      review_mode=current.review_mode,
+    )
+    if !pr_needs_automerge_sweep_attempt(current, gate_ready, automerge_enabled) {
+      continue
+    }
+    append_poller_delivery_line(
+      self.append_file,
+      self.config.project_dir,
+      "automerge sweep attempt pr=" +
+      current.pr_number.to_string() +
+      " sha=" +
+      current.last_sha,
+    )
+    ignore(
+      maybe_trigger_automerge_for_pending_event(
+        self,
+        @poller.PollEvent::MergeReady(current.pr_number),
+        current,
+        unresolved_threads,
+        runner,
+        capture~,
+        review_mode=Some(current.review_mode),
+      ),
+    )
+    match self.poller.get(current.pr_number) {
+      Some(after_attempt) =>
+        self.poller.restore({
+          ..after_attempt,
+          last_automerge_attempt_sha: current.last_sha,
+        })
+      None => ()
+    }
+  }
 }
 
 ///|

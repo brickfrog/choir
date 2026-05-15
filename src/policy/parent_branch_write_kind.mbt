@@ -465,8 +465,8 @@ fn detect_git_command_write(command : String) -> ParentBranchWriteKind? {
       // patches; pull = fetch + integrate (can fast-forward the current
       // branch); update-ref moves a ref directly. All are parent-branch
       // writes when run on the TL's checkout during a live wave. Classified
-      // as Other (the gate's marker-path logic handles them like GitCommit —
-      // block unless override or doc-only).
+      // as Other (the gate's marker-path logic handles them like GitCommit,
+      // except doc-only status still passes).
       "switch" => return Some(ParentBranchWriteKind::Other(detail="git switch"))
       "restore" =>
         return Some(ParentBranchWriteKind::Other(detail="git restore"))

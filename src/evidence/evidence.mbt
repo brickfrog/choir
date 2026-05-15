@@ -75,7 +75,6 @@ fn parse_evidence_review_state(s : String) -> EvidenceReviewState? {
 pub(all) enum MergeExecutionMode {
   Manual
   ServerAutomerge
-  ForceOverride
 } derive(Debug, Eq)
 
 ///|
@@ -83,7 +82,6 @@ pub fn MergeExecutionMode::to_wire_string(self : MergeExecutionMode) -> String {
   match self {
     Manual => "manual"
     ServerAutomerge => "server_automerge"
-    ForceOverride => "force_override"
   }
 }
 
@@ -97,7 +95,6 @@ fn parse_merge_execution_mode(s : String) -> MergeExecutionMode? {
   match s {
     "manual" => Some(Manual)
     "server_automerge" => Some(ServerAutomerge)
-    "force_override" => Some(ForceOverride)
     _ => None
   }
 }
@@ -113,7 +110,6 @@ pub(all) enum EvidenceEvent {
   CopilotIssueCommentUnobserved
   MergeExecutionRequested(mode~ : MergeExecutionMode)
   MergeObserved(pr_number~ : Int, pr_url~ : String?)
-  UserOverrideObserved(scope~ : String, reason~ : String?)
   ReviewThreadsResolved
 } derive(Debug, Eq)
 
@@ -144,7 +140,6 @@ pub fn EvidenceEvent::type_name(self : EvidenceEvent) -> String {
     CopilotIssueCommentUnobserved => "evidence.copilot_issue_comment_unobserved"
     MergeExecutionRequested(..) => "evidence.merge_execution_requested"
     MergeObserved(..) => "evidence.merge_observed"
-    UserOverrideObserved(..) => "evidence.user_override_observed"
     ReviewThreadsResolved => "evidence.review_threads_resolved"
   }
 }
@@ -190,13 +185,6 @@ fn evidence_event_data_json(event : EvidenceEvent) -> Json {
       fields.set("pr_number", pr_number.to_json())
       match pr_url {
         Some(value) => fields.set("pr_url", value.to_json())
-        None => ()
-      }
-    }
-    UserOverrideObserved(scope~, reason~) => {
-      fields.set("scope", scope.to_json())
-      match reason {
-        Some(value) => fields.set("reason", value.to_json())
         None => ()
       }
     }
@@ -292,18 +280,6 @@ fn evidence_event_from_fields(
         EvidenceEvent::MergeObserved(
           pr_number~,
           pr_url=@types.json_field_string(fields, "pr_url"),
-        ),
-      )
-    }
-    "evidence.user_override_observed" => {
-      let scope = match @types.json_field_string(fields, "scope") {
-        Some(value) => value
-        None => return None
-      }
-      Some(
-        EvidenceEvent::UserOverrideObserved(
-          scope~,
-          reason=@types.json_field_string(fields, "reason"),
         ),
       )
     }

@@ -157,13 +157,22 @@ pub fn should_fetch_unresolved_threads_for_pending_event(
 pub fn merge_execution_mode_for_request(
   req : @types.Request,
 ) -> @evidence.MergeExecutionMode {
-  if request_bool_arg(req, "force").unwrap_or(false) {
-    return @evidence.MergeExecutionMode::ForceOverride
-  }
   if request_bool_arg(req, "automerge").unwrap_or(false) {
     return @evidence.MergeExecutionMode::ServerAutomerge
   }
   @evidence.MergeExecutionMode::Manual
+}
+
+///|
+pub fn pr_needs_automerge_sweep_attempt(
+  pr : @poller.TrackedPR,
+  gate_ready : Bool,
+  automerge_enabled : Bool,
+) -> Bool {
+  pr.review_mode == @types.ReviewMode::Iterative &&
+  gate_ready &&
+  automerge_enabled &&
+  pr.last_automerge_attempt_sha != pr.last_sha
 }
 
 ///|
@@ -263,6 +272,14 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     automerge_parent_caller_id_for_tracked_pr(state, tracked) {
     Some(value) => value
     None => return false
+  }
+  match state.poller.get(tracked.pr_number) {
+    Some(current) =>
+      state.poller.restore({
+        ..current,
+        last_automerge_attempt_sha: tracked.last_sha,
+      })
+    None => ()
   }
   append_poller_delivery_line(
     state.append_file,

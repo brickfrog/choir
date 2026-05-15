@@ -65,6 +65,7 @@ pub fn file_pr_plan(
       last_review_state: @poller.ReviewState::None_,
       last_review_bodies: "",
       last_sha: "",
+      last_automerge_attempt_sha: "",
       notified_parent: false,
       last_ci_rollup: @poller.CiRollupStatus::Unknown,
       last_timeout_at: 0L,
@@ -695,6 +696,7 @@ pub fn file_pr_validate_audit_receipt(
 ///|
 async fn file_pr_require_audit_receipt(
   parent_branch : String,
+  project_dir : String,
   file_pr_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[Unit, @types.ChoirError] {
@@ -714,7 +716,7 @@ async fn file_pr_require_audit_receipt(
   let (exit_code, receipt_body) = capture({
     program: "cat",
     args: [receipt_path],
-    workdir: Some(file_pr_dir),
+    workdir: Some(project_dir),
   })
   file_pr_validate_audit_receipt(
     parent_branch,
@@ -725,6 +727,100 @@ async fn file_pr_require_audit_receipt(
       None
     },
   )
+}
+
+///|
+fn file_pr_receipt_root_test_body(sha : String) -> String {
+  let receipt : @types.AuditReceipt = {
+    sha,
+    branch: "feature/receipt-root",
+    audited_at: 1L,
+    agent_id: "main.tl",
+    findings_count: 0,
+  }
+  receipt.to_json().stringify() + "\n"
+}
+
+///|
+fn file_pr_receipt_root_test_capture(
+  project_dir : String,
+  head : String,
+) -> async (@workspace.Command) -> (Int, String) {
+  async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" {
+      return (0, head + "\n")
+    }
+    if cmd.program == "cat" && cmd.args.length() == 1 {
+      let workdir = cmd.workdir.unwrap_or("")
+      assert_eq(workdir, project_dir)
+      let body = @sys.read_file(workdir + "/" + cmd.args[0])
+      if body == "" {
+        return (1, "")
+      }
+      return (0, body)
+    }
+    (0, "")
+  }
+}
+
+///|
+async test "file_pr_require_audit_receipt reads receipt from project_dir" {
+  let project_dir = "/tmp/test-receipt-root-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/some-leaf"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/audit-receipts"))
+  assert_true(@sys.create_dir_all(file_pr_dir))
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/" + file_pr_audit_receipt_path_for_head(head),
+      file_pr_receipt_root_test_body(head),
+    ),
+  )
+  let got = file_pr_require_audit_receipt(
+    "main",
+    project_dir,
+    file_pr_dir,
+    file_pr_receipt_root_test_capture(project_dir, head),
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected audit receipt under project_dir: " + e.message())
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "file_pr_require_audit_receipt ignores receipt under file_pr_dir" {
+  let project_dir = "/tmp/test-receipt-root-inverse-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/some-leaf"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(file_pr_dir + "/.choir/audit-receipts"))
+  assert_true(
+    @sys.write_file_sync(
+      file_pr_dir + "/" + file_pr_audit_receipt_path_for_head(head),
+      file_pr_receipt_root_test_body(head),
+    ),
+  )
+  let got = file_pr_require_audit_receipt(
+    "main",
+    project_dir,
+    file_pr_dir,
+    file_pr_receipt_root_test_capture(project_dir, head),
+  )
+  match got {
+    Err(e) => assert_true(e.message().contains("require a recent audit"))
+    Ok(_) => fail("expected missing project_dir audit receipt")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -1071,6 +1167,7 @@ pub async fn interpret_file_pr(
   match
     file_pr_require_audit_receipt(
       preflight_inputs.parent_branch,
+      project_dir,
       preflight_inputs.file_pr_dir,
       capture,
     ) {

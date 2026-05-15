@@ -20,6 +20,7 @@ fn detect_test_tracked(
     last_review_state,
     last_review_bodies,
     last_sha,
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup,
     last_timeout_at,

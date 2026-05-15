@@ -109,6 +109,7 @@ fn merge_pr_test_tracked(
     last_review_state: review,
     last_review_bodies: "",
     last_sha: "",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
@@ -201,17 +202,6 @@ fn merge_pr_test_registry(worktree : String) -> @registry.AgentRegistry {
     }),
   )
   reg
-}
-
-///|
-fn merge_pr_test_enable_force_override(project_dir : String) -> Unit {
-  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
-  ignore(
-    @sys.write_file_atomic(
-      project_dir + "/.choir/kv/tl-parent-override--main.tl",
-      "1\n",
-    ),
-  )
 }
 
 ///|
@@ -417,26 +407,6 @@ test "merge_pr_review_gate_block_message falls back to array order on unparseabl
 }
 
 ///|
-async fn mock_preflight_capture_approved_no_graphql(
-  cmd : @workspace.Command,
-) -> (Int, String) {
-  @async.sleep(0)
-  if cmd.program == "git" && cmd.args == ["remote", "get-url", "origin"] {
-    return (0, "https://github.com/o/r.git\n")
-  }
-  if cmd.program == "gh" &&
-    cmd.args.length() >= 2 &&
-    cmd.args[0] == "api" &&
-    cmd.args[1].has_suffix("/reviews") {
-    return (0, "[{\"state\":\"APPROVED\"}]")
-  }
-  if cmd.args.contains("graphql") {
-    fail("force=true should skip review thread GraphQL fetch")
-  }
-  (0, "")
-}
-
-///|
 async fn mock_preflight_capture_changes_requested_reviews(
   cmd : @workspace.Command,
 ) -> (Int, String) {
@@ -479,27 +449,24 @@ async fn mock_preflight_capture_empty_reviews(
 }
 
 ///|
-async test "interpret_merge_pr_preflight review gate force true still blocks changes requested" {
+async test "interpret_merge_pr_preflight review gate blocks changes requested" {
   let got = interpret_merge_pr_preflight(
-    true,
     42,
     None,
     "/tmp",
     "main.tl",
     mock_preflight_capture_changes_requested_reviews,
     None,
-    override_check=fn(_project_dir, _caller_id) { true },
   )
   match got {
     Err(e) => assert_true(e.message().contains("requesting changes"))
-    Ok(_) => fail("expected Err: force=true must not bypass GitHub review gate")
+    Ok(_) => fail("expected Err: changes requested must block merge")
   }
 }
 
 ///|
 async test "interpret_merge_pr_preflight review gate passes without approval" {
   let got = interpret_merge_pr_preflight(
-    false,
     42,
     None,
     "/tmp",
@@ -510,83 +477,6 @@ async test "interpret_merge_pr_preflight review gate passes without approval" {
   match got {
     Ok(_) => ()
     Err(e) => fail(e.message())
-  }
-}
-
-///|
-async test "interpret_merge_pr_preflight force bypass skips poller and thread checks when override ON" {
-  let got = interpret_merge_pr_preflight(
-    true,
-    1,
-    None,
-    "/tmp",
-    "main.tl",
-    mock_preflight_capture_approved_no_graphql,
-    None,
-    override_check=fn(_project_dir, _caller_id) { true },
-  )
-  match got {
-    Ok(_) => ()
-    Err(e) => fail(e.message())
-  }
-}
-
-///|
-async test "interpret_merge_pr_preflight force rejected when tl-parent-override off" {
-  let got = interpret_merge_pr_preflight(
-    true,
-    1,
-    None,
-    "/tmp",
-    "main.tl",
-    mock_preflight_capture_approved_no_graphql,
-    None,
-    override_check=fn(_project_dir, _caller_id) { false },
-  )
-  match got {
-    Err(e) => {
-      let msg = e.message()
-      assert_true(msg.contains("force=true"))
-      assert_true(msg.contains("choir tl-parent-override on"))
-      assert_true(msg.contains("main.tl"))
-    }
-    Ok(_) => fail("expected Err: force=true without override must be rejected")
-  }
-}
-
-///|
-async test "interpret_merge_pr_preflight force honored when tl-parent-override on (parity)" {
-  let ps = @poller.PollerState::new()
-  ps.track_recovered(
-    9,
-    "main.leaf",
-    "main.topic",
-    "main",
-    "https://github.com/o/r/pull/9",
-    0L,
-    @poller.ReviewState::ChangesRequested,
-    "",
-    "",
-    @poller.CiRollupStatus::Unknown,
-    false,
-  )
-  let got = interpret_merge_pr_preflight(
-    true,
-    9,
-    Some(ps),
-    "/tmp",
-    "main.tl",
-    mock_preflight_capture_approved_no_graphql,
-    None,
-    override_check=fn(_project_dir, _caller_id) { true },
-  )
-  match got {
-    Ok(_) => ()
-    Err(e) =>
-      fail(
-        "expected Ok: force=true with override ON must bypass poller and thread checks, got " +
-        e.message(),
-      )
   }
 }
 
@@ -619,7 +509,6 @@ async fn mock_preflight_capture_no_unresolved_threads(
 async test "interpret_merge_pr_preflight ok when no poller block and no threads" {
   let project_dir = "/tmp/choir-mpf-ok-" + @sys.get_pid().to_string()
   let got = interpret_merge_pr_preflight(
-    false,
     7,
     None,
     project_dir,
@@ -663,7 +552,6 @@ async test "interpret_merge_pr_preflight accepts required verify evidence" {
     last_ci_rollup: @poller.CiRollupStatus::Success,
   })
   let got = interpret_merge_pr_preflight(
-    false,
     7,
     Some(ps),
     project_dir,
@@ -707,7 +595,6 @@ async test "interpret_merge_pr_preflight rejects stale verify evidence" {
     last_ci_rollup: @poller.CiRollupStatus::Success,
   })
   let got = interpret_merge_pr_preflight(
-    false,
     7,
     Some(ps),
     project_dir,
@@ -750,7 +637,6 @@ async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
     last_ci_rollup: @poller.CiRollupStatus::Success,
   })
   let got = interpret_merge_pr_preflight(
-    false,
     7,
     Some(ps),
     project_dir,
@@ -797,7 +683,6 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
     last_ci_rollup: @poller.CiRollupStatus::Success,
   })
   let strict = interpret_merge_pr_preflight(
-    false,
     7,
     Some(strict_ps),
     strict_dir,
@@ -835,7 +720,6 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
     last_ci_rollup: @poller.CiRollupStatus::Success,
   })
   let stale = interpret_merge_pr_preflight(
-    false,
     7,
     Some(stale_ps),
     stale_dir,
@@ -880,7 +764,6 @@ async fn mock_preflight_capture_one_unresolved_thread(
 async test "interpret_merge_pr_preflight err when review threads unresolved" {
   let project_dir = "/tmp/choir-mpf-threads-" + @sys.get_pid().to_string()
   let got = interpret_merge_pr_preflight(
-    false,
     3,
     None,
     project_dir,
@@ -918,7 +801,6 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
   )
   let project_dir = "/tmp/choir-mpf-cr-" + @sys.get_pid().to_string()
   let got = interpret_merge_pr_preflight(
-    false,
     9,
     Some(ps),
     project_dir,
@@ -998,7 +880,7 @@ test "merge_pr_preflight_block_message policy Blocked" {
   match merge_pr_preflight_block_message(9, None, 0, "", policy_decision) {
     Some(msg) => {
       assert_true(msg.contains("policy blocked: insufficient evidence"))
-      assert_true(msg.contains("pass force=true to override"))
+      assert_false(msg.contains("force=true"))
     }
     None => fail("expected block")
   }
@@ -1010,7 +892,7 @@ test "merge_pr_preflight_block_message policy Wait" {
   match merge_pr_preflight_block_message(9, None, 0, "", policy_decision) {
     Some(msg) => {
       assert_true(msg.contains("policy wait: pending CI"))
-      assert_true(msg.contains("pass force=true to override"))
+      assert_false(msg.contains("force=true"))
     }
     None => fail("expected wait")
   }
@@ -1024,7 +906,7 @@ test "merge_pr_preflight_block_message policy NeedsHuman" {
   match merge_pr_preflight_block_message(9, None, 0, "", policy_decision) {
     Some(msg) => {
       assert_true(msg.contains("policy requires human check: manual check"))
-      assert_true(msg.contains("pass force=true to override"))
+      assert_false(msg.contains("force=true"))
     }
     None => fail("expected needs human")
   }
@@ -1358,6 +1240,14 @@ async fn mock_merge_host_capture_for_merge(
     cmd.args[1].has_suffix("/reviews") {
     return (0, "[{\"state\":\"APPROVED\"}]")
   }
+  if cmd.args.contains("repo") {
+    return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+  }
+  if cmd.args.contains("graphql") {
+    return (
+      0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+    )
+  }
   if cmd.program == "gh" && cmd.args.length() >= 2 && cmd.args[0] == "pr" {
     return (1, "permission denied\n")
   }
@@ -1615,7 +1505,6 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     pr_number: 9,
     parent_branch: "main",
     caller_id: "main.tl",
-    force: false,
     review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let project_dir = "/tmp/choir-mpr-preflight-" + @sys.get_pid().to_string()
@@ -1638,22 +1527,14 @@ async test "interpret_merge_pr returns preflight err without merge host" {
 }
 
 ///|
-async test "interpret_merge_pr returns merge host err after force preflight" {
+async test "interpret_merge_pr returns merge host err after passing preflight" {
   let args : MergePrArgs = {
     pr_number: 4,
     parent_branch: "main",
     caller_id: "main.tl",
-    force: true,
     review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let project_dir = "/tmp/choir-mpr-host-err-" + @sys.get_pid().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
-  assert_true(
-    @sys.write_file_atomic(
-      project_dir + "/.choir/kv/tl-parent-override--main.tl",
-      "1\n",
-    ),
-  )
   let got = interpret_merge_pr(
     args,
     project_dir,
@@ -1681,18 +1562,10 @@ async test "interpret_merge_pr returns merge host err after force preflight" {
 ///|
 async test "interpret_merge_pr ok response matches merged envelope" {
   let project_dir = "/tmp/choir-mpr-interpret-" + @sys.get_pid().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
-  assert_true(
-    @sys.write_file_atomic(
-      project_dir + "/.choir/kv/tl-parent-override--main.tl",
-      "1\n",
-    ),
-  )
   let args : MergePrArgs = {
     pr_number: 77,
     parent_branch: "main",
     caller_id: "main.tl",
-    force: true,
     review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let got = interpret_merge_pr(
@@ -1702,7 +1575,7 @@ async test "interpret_merge_pr ok response matches merged envelope" {
     None,
     None,
     mock_merge_host_runner_ok,
-    mock_preflight_capture_approved_no_graphql,
+    mock_preflight_capture_no_unresolved_threads,
     @sys.append_file_sync,
     @sys.path_entry_exists,
   )
@@ -1758,7 +1631,6 @@ test "merge_pr_beads_show_status_and_open_children detects epic children" {
 async test "interpret_merge_pr feature main closes wave and body beads then deletes feature branch" {
   let project_dir = "/tmp/choir-mpr-feature-beads-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  merge_pr_test_enable_force_override(project_dir)
   let feature_branch = "feature/demo"
   let leaf_a = merge_pr_test_write_beads_contract(
     project_dir,
@@ -1811,6 +1683,14 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
       cmd.args[0] == "api" &&
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
     }
     if cmd.program == "timeout" &&
       cmd.args == ["30s", "gh", "pr", "view", "77", "--json", "body"] {
@@ -1865,7 +1745,6 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     pr_number: 77,
     parent_branch: "main",
     caller_id: "main.tl",
-    force: true,
     review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let got = interpret_merge_pr(
@@ -1918,7 +1797,6 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
   let project_dir = "/tmp/choir-mpr-feature-no-beads-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  merge_pr_test_enable_force_override(project_dir)
   let feature_branch = "feature/no-beads"
   let leaf = merge_pr_test_write_beads_contract(
     project_dir,
@@ -1963,6 +1841,14 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
     }
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
     if cmd.program == "gh" && cmd.args == ["pr", "view", "78", "--json", "body"] {
       return (0, "{\"body\":\"No closing lines here.\"}")
     }
@@ -1978,7 +1864,6 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
     pr_number: 78,
     parent_branch: "main",
     caller_id: "main.tl",
-    force: true,
     review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let got = interpret_merge_pr(
@@ -2013,7 +1898,6 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
 async test "interpret_merge_pr leaf merge removes worktree and deletes local branch" {
   let project_dir = "/tmp/choir-mpr-leaf-cleanup-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  merge_pr_test_enable_force_override(project_dir)
   let feature_branch = "feature/demo"
   let leaf_branch = feature_branch + ".leaf-a"
   let leaf = merge_pr_test_write_beads_contract(
@@ -2048,6 +1932,14 @@ async test "interpret_merge_pr leaf merge removes worktree and deletes local bra
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
     }
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
     if cmd.program == "bd" && cmd.args.length() > 0 && cmd.args[0] == "close" {
       fail("leaf PR merge must not close beads")
     }
@@ -2060,7 +1952,6 @@ async test "interpret_merge_pr leaf merge removes worktree and deletes local bra
     pr_number: 79,
     parent_branch: feature_branch,
     caller_id: "main.tl",
-    force: true,
     review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let got = interpret_merge_pr(
@@ -2103,7 +1994,6 @@ async test "dispatch merge_pr routes injected append_file and path_exists" {
   let project_dir = "/tmp/choir-mpr-dispatch-inject-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  merge_pr_test_enable_force_override(project_dir)
   let feature_branch = "feature/dispatch-cleanup"
   let leaf_branch = feature_branch + ".leaf-a"
   let leaf = merge_pr_test_write_beads_contract(
@@ -2139,6 +2029,14 @@ async test "dispatch merge_pr routes injected append_file and path_exists" {
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
     }
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
     (0, "")
   }
   let resp = dispatch(
@@ -2146,7 +2044,6 @@ async test "dispatch merge_pr routes injected append_file and path_exists" {
       pr_number: 81,
       parent_branch: feature_branch,
       caller_id: "main.tl",
-      force: true,
       review_mode: Some(@types.ReviewMode::SinglePass),
     }),
     project_dir~,
@@ -2178,7 +2075,6 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
   let project_dir = "/tmp/choir-mpr-leaf-no-worktree-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  merge_pr_test_enable_force_override(project_dir)
   let feature_branch = "feature/no-worktree"
   let leaf_branch = feature_branch + ".leaf-a"
   let ps = @poller.PollerState::new()
@@ -2204,6 +2100,14 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
     }
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
     (0, "")
   }
   let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
@@ -2213,7 +2117,6 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
     pr_number: 80,
     parent_branch: feature_branch,
     caller_id: "main.tl",
-    force: true,
     review_mode: Some(@types.ReviewMode::SinglePass),
   }
   let got = interpret_merge_pr(
@@ -2258,7 +2161,6 @@ async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
   let project_dir = "/tmp/choir-mpr-supervisor-cleanup-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  merge_pr_test_enable_force_override(project_dir)
   let feature_branch = "feature/supervisor-cleanup"
   let leaf_branch = feature_branch + ".root"
   let reg = @registry.AgentRegistry::new()
@@ -2304,6 +2206,14 @@ async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
     }
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
     (0, "")
   }
   let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
@@ -2314,7 +2224,6 @@ async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
       pr_number: 82,
       parent_branch: feature_branch,
       caller_id: "main.tl",
-      force: true,
       review_mode: Some(@types.ReviewMode::SinglePass),
     },
     project_dir,

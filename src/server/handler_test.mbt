@@ -9,7 +9,7 @@ test "poll_events_delivery_summary escapes newlines and truncates long events" {
 }
 
 ///|
-test "merge_execution_mode_for_request distinguishes manual automerge and force" {
+test "merge_execution_mode_for_request distinguishes manual and automerge" {
   let manual_req : @types.Request = {
     req_method: "tools/call",
     role: @types.Role::TL,
@@ -33,21 +33,6 @@ test "merge_execution_mode_for_request distinguishes manual automerge and force"
   assert_eq(
     merge_execution_mode_for_request(automerge_req),
     @evidence.MergeExecutionMode::ServerAutomerge,
-  )
-  let force_args : Map[String, Json] = {
-    "pr_number": Int::to_json(5),
-    "automerge": Bool::to_json(true),
-    "force": Bool::to_json(true),
-  }
-  let force_req : @types.Request = {
-    req_method: "tools/call",
-    role: @types.Role::TL,
-    name: "merge_pr",
-    args: @types.RequestArgs::from_values(force_args),
-  }
-  assert_eq(
-    merge_execution_mode_for_request(force_req),
-    @evidence.MergeExecutionMode::ForceOverride,
   )
 }
 
@@ -111,6 +96,7 @@ test "poll_event_beads_note_and_state maps review and ci events" {
         last_review_state: @poller.ReviewState::Approved,
         last_review_bodies: "",
         last_sha: "sha",
+        last_automerge_attempt_sha: "",
         notified_parent: false,
         last_ci_rollup: @poller.CiRollupStatus::Success,
         last_timeout_at: 0L,
@@ -151,6 +137,44 @@ test "automerge_enabled_for_agent respects local override" {
       Some({ ..@types.LocalConfig::default(), automerge: Some(true) }),
     ),
   )
+}
+
+///|
+test "pr_needs_automerge_sweep_attempt truth table" {
+  let ps = @poller.PollerState::new()
+  ps.track(
+    41, "main.leaf", "main.leaf", "main", "https://example.test/pr/41", 0L,
+  )
+  let base = match ps.get(41) {
+    Some(pr) => pr
+    None => fail("expected tracked PR")
+  }
+  for iterative in [true, false] {
+    for gate_ready in [true, false] {
+      for automerge_enabled in [true, false] {
+        for new_head in [true, false] {
+          let pr = {
+            ..base,
+            review_mode: if iterative {
+              @types.ReviewMode::Iterative
+            } else {
+              @types.ReviewMode::SinglePass
+            },
+            last_sha: "head-sha",
+            last_automerge_attempt_sha: if new_head {
+              "old-sha"
+            } else {
+              "head-sha"
+            },
+          }
+          assert_eq(
+            pr_needs_automerge_sweep_attempt(pr, gate_ready, automerge_enabled),
+            iterative && gate_ready && automerge_enabled && new_head,
+          )
+        }
+      }
+    }
+  }
 }
 
 ///|
@@ -785,6 +809,304 @@ fn blocked_gh_notify_request(
 }
 
 ///|
+async test "quiet poller tick automerge sweep records attempted head on success" {
+  let pr_number = 96
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "sweep-success",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+        match state.poller.get(pr_number) {
+          Some(current) =>
+            assert_eq(current.last_automerge_attempt_sha, "sha-sweep-success")
+          None => fail("expected tracked PR during merge attempt")
+        }
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-sweep-success",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+      )
+    },
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_true(merge_seen)
+  assert_true(state.poller.get(pr_number) == None)
+}
+
+///|
+async test "quiet poller tick automerge sweep records attempted head on failure" {
+  let pr_number = 97
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "sweep-failure",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen_count = 0
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen_count = merge_seen_count + 1
+        statuses.push(1)
+      } else {
+        statuses.push(0)
+      }
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[0] == "pr" &&
+      cmd.args[1] == "merge" {
+      return (1, "transient gh failure")
+    }
+    (0, "")
+  }
+  let poll_same_head = async fn(_pr_number, _skip_issue_comment_fetch) {
+    @async.sleep(0)
+    (
+      true,
+      @poller.ReviewState::Approved,
+      "sha-sweep-failure",
+      @poller.CiRollupStatus::Success,
+      "",
+      true,
+      false,
+    )
+  }
+  state.process_poller_tick_with(
+    500L,
+    900L,
+    poll_same_head,
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_eq(merge_seen_count, 1)
+  match state.poller.get(pr_number) {
+    Some(current) =>
+      assert_eq(current.last_automerge_attempt_sha, "sha-sweep-failure")
+    None => fail("failed merge must remain tracked")
+  }
+  state.process_poller_tick_with(
+    600L,
+    900L,
+    poll_same_head,
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_eq(merge_seen_count, 1)
+}
+
+///|
+async test "automerge sweep runs after queued parent rows are delivered" {
+  let pr_number = 98
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "sweep-after-parent",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_ci_rollup: @poller.CiRollupStatus::InProgress,
+        copilot_issue_comment_seen: false,
+      })
+    None => fail("expected tracked PR")
+  }
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let mut graphql_calls = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      graphql_calls = graphql_calls + 1
+      if graphql_calls == 1 {
+        return (
+          0,
+          (
+            #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PRRT_blocked","isResolved":false,"isOutdated":false,"author":{"login":"copilot-pull-request-reviewer[bot]"},"path":"src/x.mbt","comments":{"nodes":[{"body":"fix it"}]}}]}}}}}
+          ),
+        )
+      }
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-sweep-after-parent",
+        @poller.CiRollupStatus::Success,
+        "looks good",
+        true,
+        true,
+      )
+    },
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_eq(parent_messages.length(), 3)
+  assert_true(parent_messages[0].contains("[CI LATEST HEAD]"))
+  assert_true(parent_messages[1].contains("[COPILOT ISSUE COMMENT]"))
+  assert_true(parent_messages[2].contains("[PR MERGED]"))
+  assert_true(state.poller.get(pr_number) == None)
+}
+
+///|
 async test "blocked gh notify auto-merges when latest poller snapshot is clear" {
   let pr_number = 92
   let (state, child_id, _) = blocked_gh_automerge_fixture(
@@ -1280,6 +1602,7 @@ fn parent_poll_test_ready_tracked(pr_number : Int) -> @poller.TrackedPR {
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -1943,6 +2266,7 @@ test "parent_poll_event_message PR READY stresses not merged" {
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
@@ -1992,6 +2316,7 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -2036,6 +2361,7 @@ test "parent_poll_event_message MergeReady is actionable in manual mode" {
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -2084,6 +2410,7 @@ test "parent_poll_event_message MergeReady is informational in automerge mode" {
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -2268,6 +2595,7 @@ test "parent_poll_event_message FixesPushed stresses not merged" {
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "abc",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
@@ -2317,6 +2645,7 @@ test "parent_poll_event_message FixesPushed single_pass avoids re-review wording
     last_review_state: @poller.ReviewState::ChangesRequested,
     last_review_bodies: "",
     last_sha: "abc",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -2378,6 +2707,7 @@ test "parent_poll_event_message CIFailureCleared stresses re-check not merge" {
     last_review_state: @poller.ReviewState::ChangesRequested,
     last_review_bodies: "",
     last_sha: "abc",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
@@ -2463,6 +2793,7 @@ test "parent_poll_event_message CILatestHeadRollupSucceeded stresses not merge o
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "abc",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -2532,6 +2863,7 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     last_review_state: @poller.ReviewState::None_,
     last_review_bodies: "",
     last_sha: "abc",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 100L,
@@ -2592,6 +2924,7 @@ test "parent_poll_event_message suppresses non-blocking review comments" {
     last_review_state: @poller.ReviewState::Commented,
     last_review_bodies: "note",
     last_sha: "abc",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
     last_timeout_at: 0L,
@@ -2784,6 +3117,7 @@ test "disconnect auto-rescue decision fires for review-owned unresolved threads"
     last_review_state: @poller.ReviewState::ChangesRequested,
     last_review_bodies: "fix this",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -2854,6 +3188,7 @@ test "disconnect auto-rescue decision fires while Copilot review is pending" {
     last_review_state: @poller.ReviewState::Commented,
     last_review_bodies: "human comment before copilot",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -2922,6 +3257,7 @@ test "disconnect auto-rescue decision is one-shot for auto-rescue leaves" {
     last_review_state: @poller.ReviewState::ChangesRequested,
     last_review_bodies: "fix this",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -3264,6 +3600,7 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -3311,6 +3648,7 @@ test "parent_poll_event_message CI LATEST HEAD adds escalation when review timeo
     last_review_state: @poller.ReviewState::None_,
     last_review_bodies: "",
     last_sha: "abc",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 999L,
@@ -3356,6 +3694,7 @@ test "parent_poll_event_message CI FAILED uses attention-required decision" {
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Failure,
     last_timeout_at: 0L,
@@ -3400,6 +3739,7 @@ test "parent_poll_event_message PRMerged is handled by canonical teardown delive
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -3439,6 +3779,7 @@ test "evidence_events_for_poll_snapshot emits normalized snapshot events" {
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "looks good",
     last_sha: "sha64",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -3497,6 +3838,7 @@ test "evidence_events_for_poll_snapshot includes merge observed on PRMerged" {
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "sha65",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -3563,6 +3905,7 @@ async test "deliver_orphaned_pr_notification_for skips finalized merged lifecycl
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -3623,6 +3966,7 @@ async test "deliver_poller_stall_notification_for skips finalized merged lifecyc
     last_review_state: @poller.ReviewState::ChangesRequested,
     last_review_bodies: "",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
