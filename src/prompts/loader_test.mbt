@@ -242,6 +242,10 @@ test "leaf profile default prompt uses poller snapshots for review state" {
     body.contains("do NOT issue your own `gh api graphql ... reviewThreads`"),
   )
   assert_true(body.contains("A `gh` timeout is not a blocker"))
+  assert_true(body.contains("Post-fix-push terminal handoff"))
+  assert_true(body.contains("the moment the next poller snapshot shows"))
+  assert_true(body.contains("notify_parent --status success"))
+  assert_true(body.contains("do not enter sleep loops"))
   assert_false(
     body.contains("you (the leaf) must resolve each thread yourself"),
   )

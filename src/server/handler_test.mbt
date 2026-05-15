@@ -4172,6 +4172,26 @@ fn worker_handoff_worker(
 }
 
 ///|
+fn worker_handoff_dev(
+  agent_id : String,
+  parent_id : String,
+  state : @types.AgentState,
+) -> @types.Agent {
+  {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some(parent_id),
+    workspace: "/tmp/choir-leaf-handoff-dev",
+    branch: agent_id,
+    terminal_target: Some(handler_auto_close_target("leaf-pane")),
+    host: @types.Host::Local,
+    spawn_depth: 1,
+    state,
+  }
+}
+
+///|
 async fn worker_handoff_capture_runner(
   sent : Array[String],
   cmds : Array[@workspace.Command],
@@ -4199,6 +4219,118 @@ fn worker_handoff_count_sent(sent : Array[String], needle : String) -> Int {
     }
   }
   count
+}
+
+///|
+async test "check_idle_agents emits stalled parent event for merge-ready ReviewOwned dev leaf" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"fixes pushed\",\"waiting\"]}"
+  let state = worker_handoff_test_state("leaf-no-handoff-stall", snapshot)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-ready"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_dev(leaf_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number=77,
+            state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+          ),
+        ),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.poller.restore({
+    ..parent_poll_test_ready_tracked(77),
+    agent_id: leaf_id,
+    branch: leaf_id,
+    unresolved_thread_ids_fetched: true,
+  })
+  state.watch_pane(leaf_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 120L,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 240L,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-ready"),
+    1,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-ready"),
+    1,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent"), 0)
+}
+
+///|
+async test "check_idle_agents does not prod non-ReviewOwned dev leaf" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"still implementing\"]}"
+  let state = worker_handoff_test_state("leaf-no-handoff-working", snapshot)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-working"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_dev(leaf_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.poller.restore({
+    ..parent_poll_test_ready_tracked(88),
+    agent_id: leaf_id,
+    branch: leaf_id,
+    unresolved_thread_ids_fetched: true,
+  })
+  state.watch_pane(leaf_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 240L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF]"), 0)
+  assert_eq(worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH]"), 0)
 }
 
 ///|

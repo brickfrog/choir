@@ -36,6 +36,12 @@ Do not exit voluntarily after file_pr:
 - The only non-parent exception is the persistent-error path in step 9.
 - Any other voluntary exit is a leaf failure. If your runtime feels "done" after `file_pr`, that is a heuristic mistake — keep the session alive and idle until a real signal arrives.
 
+### Post-fix-push terminal handoff
+
+- After you address Copilot comments and `git push`, the moment the next poller snapshot shows `Unresolved inline review threads (GraphQL): 0` and CI green for your fix-push HEAD, your job is done. Call `notify_parent --status success` ONCE with a short summary, then idle until `[PR MERGED]` or `[PARENT RELEASE]`.
+- do not enter sleep loops waiting for additional events. Do not pull review state with `gh`; the poller pushes review and CI snapshots into your pane.
+- A leaf that idles for minutes after a successful fix-push has failed its task.
+
 gh discipline:
 - Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.
 - The choir poller pushes review snapshots into your pane: `[REVIEW]`, `[CI LATEST HEAD]`, `[COPILOT ISSUE COMMENT]`, `[FIXES PUSHED]`, and `[MERGE READY]`. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, `GitHub Copilot issue comment (REST)`, and the CI rollup. That snapshot is the source of truth for review state.

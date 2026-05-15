@@ -891,12 +891,89 @@ fn nonnegative_elapsed(now : Int64, then : Int64) -> Int64 {
 }
 
 ///|
+fn ServerState::leaf_merge_gate_ready_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> Bool {
+  for tracked in self.poller.tracked.values() {
+    if tracked.agent_id == agent_id {
+      let unresolved_threads = tracked_unresolved_thread_count_for_gate(tracked)
+      if @poller.tl_tracked_pr_merge_gate_snapshot_ready(
+          tracked,
+          unresolved_threads,
+          review_mode=tracked.review_mode,
+        ) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+///|
 fn worker_no_handoff_terminal_process(
   lifecycle : @phase.AgentLifecycle,
 ) -> Bool {
   match lifecycle.process {
     @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => true
     _ => false
+  }
+}
+
+///|
+async fn ServerState::prod_leaf_no_handoff(
+  self : ServerState,
+  agent : @types.Agent,
+  now : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  if self.worker_no_handoff_prodded_at.contains(agent_id) ||
+    self.handoff_was_delivered(agent_id) {
+    return
+  }
+  self.worker_no_handoff_prodded_at.set(agent_id, now)
+  ignore(
+    self.durable_deliver_to_agent(
+      agent,
+      "watchdog",
+      leaf_stalled_no_handoff_prod_message(@phase.extract_slug(agent_id)),
+      @types.Status::Info,
+      runner,
+    ),
+  ) catch {
+    _ => ()
+  }
+}
+
+///|
+async fn ServerState::emit_leaf_stalled_no_handoff(
+  self : ServerState,
+  agent : @types.Agent,
+  idle_sec : Int64,
+  screen : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  if self.worker_no_handoff_stalled_emitted.contains(agent_id) ||
+    self.handoff_was_delivered(agent_id) {
+    return
+  }
+  self.worker_no_handoff_stalled_emitted.set(agent_id, true)
+  let message = leaf_stalled_no_handoff_parent_message(
+    @phase.extract_slug(agent_id),
+    idle_sec,
+    screen,
+  )
+  ignore(
+    self.durable_deliver_to_parent(
+      agent_id,
+      message,
+      @types.Status::Failure,
+      runner,
+    ),
+  ) catch {
+    _ => ()
   }
 }
 
@@ -999,6 +1076,55 @@ async fn ServerState::emit_worker_exited_without_notify_if_needed(
 }
 
 ///|
+async fn ServerState::check_leaf_no_handoff(
+  self : ServerState,
+  agent : @types.Agent,
+  lifecycle : @phase.WorkflowState,
+  now : Int64,
+  observation : @runtime.PaneIdleObservation,
+  prod_sec : Int64,
+  escalate_sec : Int64,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Unit {
+  let agent_id = agent.agent_id.to_string()
+  if agent.role != @types.Role::Dev ||
+    self.handoff_was_delivered(agent_id) ||
+    prod_sec <= 0L {
+    return
+  }
+  let prodded_at = self.worker_no_handoff_prodded_at.get(agent_id)
+  let prodded = prodded_at != None
+  let gate_ready = self.leaf_merge_gate_ready_for_agent(agent_id)
+  let decision_idle_sec = match prodded_at {
+    Some(t) => prod_sec + nonnegative_elapsed(now, t)
+    None => observation.idle_sec
+  }
+  match
+    leaf_no_handoff_decision(
+      agent.role,
+      lifecycle,
+      gate_ready,
+      decision_idle_sec,
+      self.handoff_was_delivered(agent_id),
+      prodded,
+      self.worker_no_handoff_stalled_emitted.contains(agent_id),
+      prod_sec,
+      escalate_sec,
+    ) {
+    WorkerNoHandoffDecision::Prod =>
+      self.prod_leaf_no_handoff(agent, now, runner)
+    WorkerNoHandoffDecision::EmitStalled =>
+      self.emit_leaf_stalled_no_handoff(
+        agent,
+        decision_idle_sec,
+        observation.screen,
+        runner,
+      )
+    WorkerNoHandoffDecision::DoNothing => ()
+  }
+}
+
+///|
 async fn ServerState::check_worker_no_handoff(
   self : ServerState,
   agent : @types.Agent,
@@ -1078,12 +1204,10 @@ pub async fn ServerState::check_idle_agents(
     if @types.is_supervisor_role(agent.role) {
       continue
     }
-    // `ReviewOwned` devs are watchdog-exempt (idle while waiting for TL merge /
-    // review). Dispatch still warns the parent when `notify_parent` is blocked on
-    // unresolved threads.
-    if @phase.lifecycle_idle_watchdog_exempt(self.current_lifecycle(agent_id)) {
-      continue
-    }
+    let lifecycle = self.current_lifecycle(agent_id)
+    // Some lifecycle states are kill-watchdog-exempt, but no-handoff checks
+    // may still need to prod or notify without terminating the agent.
+    let watchdog_exempt = @phase.lifecycle_idle_watchdog_exempt(lifecycle)
     match agent.terminal_target {
       Some(_) => ()
       None => continue
@@ -1096,6 +1220,18 @@ pub async fn ServerState::check_idle_agents(
           agent, now, observation, worker_no_handoff_prod_sec, worker_no_handoff_escalate_sec,
           runner,
         )
+        self.check_leaf_no_handoff(
+          agent,
+          lifecycle.workflow,
+          now,
+          observation,
+          worker_no_handoff_prod_sec,
+          worker_no_handoff_escalate_sec,
+          runner,
+        )
+        if watchdog_exempt {
+          continue
+        }
         if observation.idle_sec < timeout {
           continue
         }
