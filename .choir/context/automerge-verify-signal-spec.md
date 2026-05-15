@@ -10,11 +10,12 @@ whose `details` stamp the *current merge HEAD sha* (`verify_result_for_head` /
 and record the contract's verify commands — but it records them stamped against
 the file_pr-time HEAD, and the moment Copilot review prompts a fix-push the HEAD
 moves, so the recorded result goes stale → `NotObserved` → cascade returns
-`NeedsHuman("local verify not observed: moon test --target native")`. Result: the
-TL must do `choir tl-parent-override on` → `merge_pr force=true` →
-`choir tl-parent-override off` on **every** leaf PR. Observable target: a healthy
-`fork_wave(automerge, iterative)` leaf PR with green CI on its merge HEAD and zero
-unresolved threads auto-merges with no TL override action.
+`NeedsHuman("local verify not observed: moon test --target native")`. Observable
+target: a healthy `fork_wave(automerge, iterative)` leaf PR with green CI on its
+merge HEAD and zero unresolved threads auto-merges with no TL override action. If
+`merge_pr` returns a policy block, address the block (resolve threads, wait for
+CI, etc.) or use `gh pr merge --admin <N>` for human-judgment overrides — there
+is no choir-side force flag.
 
 ## Clarifications
 > Q&A from the crystallize step. Durable; leaves read this.
@@ -69,7 +70,7 @@ Keep this leaf small and focused.
   `["moon test --target native"]`, `verify_satisfied_by_ci = true` — that has a
   green merge-HEAD CI rollup, Copilot issue comment seen, and zero unresolved
   threads, reaches cascade verdict `Ready` and the server automerges it with **no
-  TL `merge_pr force=true` / `tl-parent-override` action**. A fix-push after
+  TL-side merge override action**. A fix-push after
   review (new HEAD) does not break this: CI re-runs, the poller re-records
   `CiObserved` at the new HEAD, the helper matches it, `Ready` again.
 - Strict path preserved: with `verify_satisfied_by_ci = false`, behavior is
@@ -84,9 +85,8 @@ Keep this leaf small and focused.
 - Re-running `moon test --target native` server-side on `FixesPushed`.
 - Per-CI-job introspection (parsing which workflow/check ran which command). We
   trust the wave-level `verify_satisfied_by_ci` declaration, not a per-job map.
-- Subsuming `tl-parent-override` into typed gates / removing the force-merge
-  override entirely — that is `choir-kqv.8`. (This bead removes the *need* to use
-  it on the happy path; it does not remove the mechanism.)
+- Retiring Choir-side merge override flags entirely — that is `choir-kqv.8`.
+  (This bead removes the happy-path need; the later bead removes the mechanism.)
 - Changing the `Blocked` vs `NeedsHuman` semantics for *failed* or genuinely
   *unobserved* verify (no CI green and no record ⇒ still `NeedsHuman`).
 - Accepting a leaf's `notify_parent` verify *prose* as a signal (option (c) in
@@ -161,8 +161,8 @@ uses the existing record-replay seam; everything else is pure data threading.
   `NeedsHuman`. (A pure-function test against the eval entrypoint is fine — no
   live server / live gh.)
 - Manual smoke (post-merge, optional, document in PR): next `fork_wave(automerge,
-  iterative)` wave — leaf PR with green CI + 0 threads auto-merges with no TL
-  `merge_pr force=true`; `choir logs --grep "needs_human"` shows no
+  iterative)` wave — leaf PR with green CI + 0 threads auto-merges with no TL-side
+  merge override; `choir logs --grep "needs_human"` shows no
   "local verify not observed" line for that PR.
 
 ## Boundary (do not)
@@ -180,8 +180,9 @@ uses the existing record-replay seam; everything else is pure data threading.
 - No `@sys.*` / `@process.*` direct calls in `src/server` / `src/tools` / the
   evidence helper beyond the existing record-replay/file-read seam.
 - Do not touch the leaf spawn prompt or `notify_parent` flow (that's `choir-q4y`).
-- Do not remove or alter `tl-parent-override` / `merge_pr force=true` (that's
-  `choir-kqv.8`).
+- Do not reintroduce a Choir-side force flag. If `merge_pr` returns a policy
+  block, address the block or use `gh pr merge --admin <N>` for human-judgment
+  overrides.
 
 ## Follow-Ups
 
@@ -189,8 +190,8 @@ uses the existing record-replay seam; everything else is pure data threading.
   (and re-emit after every fix-push) as mandatorily as `notify_parent`, so a wave
   with `verify_satisfied_by_ci=false` (or a repo whose CI doesn't run the verify
   commands) still auto-merges.
-- `choir-kqv.8` — subsume `tl-parent-override` + `merge_pr force=true` into typed
-  gates now that the happy path no longer needs them.
+- `choir-kqv.8` — retire Choir-side merge override flags now that the happy path
+  no longer needs them.
 - Consider per-check CI introspection (map workflow/job → command) so
   `verify_satisfied_by_ci` could be derived rather than declared — only if the
   declaration proves error-prone in practice.

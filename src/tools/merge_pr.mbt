@@ -1,7 +1,6 @@
 ///|
-/// Ordered host-side steps for `merge_pr` preflight when `force` is false
-/// (poller read is synchronous; thread fetch uses `capture`). Matches
-/// `interpret_merge_pr_preflight`.
+/// Ordered host-side steps for `merge_pr` preflight (poller read is synchronous;
+/// thread fetch uses `capture`). Matches `interpret_merge_pr_preflight`.
 pub(all) enum MergePrPreflightHostStep {
   PollerSnapshot
   FetchUnresolvedReviewThreads
@@ -287,23 +286,6 @@ async fn enforce_merge_pr_github_review_gate(
 }
 
 ///|
-/// Default capability for `interpret_merge_pr_preflight`'s `override_check`:
-/// reads `.choir/kv/tl-parent-override--<sanitized caller_id>` and returns true
-/// iff the trimmed, lowercased content is one of `1`/`true`/`on`/`yes`. Matches
-/// `tl_policy_override_enabled` in `src/bin/choir/tl_policy.mbt` so the
-/// `choir tl-parent-override <on|off>` CLI is the single source of truth.
-pub fn merge_pr_override_enabled_default(
-  project_dir : String,
-  caller_id : String,
-) -> Bool {
-  let path = project_dir +
-    "/.choir/kv/tl-parent-override--" +
-    @types.sanitize_agent_id(caller_id)
-  let content = @sys.read_file(path).trim().to_lower()
-  content == "1" || content == "true" || content == "on" || content == "yes"
-}
-
-///|
 fn merge_pr_verify_results_for_tracked(
   project_dir : String,
   tracked : @poller.TrackedPR,
@@ -323,16 +305,10 @@ fn merge_pr_verify_results_for_tracked(
 }
 
 ///|
-/// `merge_pr` preflight: GitHub changes-requested reviews are checked first and
-/// are never bypassed by `force`. When `force` is true it additionally requires
-/// the caller's `tl-parent-override` flag (set via `choir tl-parent-override on`)
-/// to be ON; otherwise the merge is rejected with a validation error so every
-/// force merge leaves a KV paper trail. When `force` is false, poller snapshot,
-/// unresolved review-thread fetch, then `merge_pr_preflight_block_message`.
-/// When `force` is true and the override is ON, the poller/threads/policy checks
-/// are skipped after the GitHub review gate (historical inline `force` behavior).
+/// `merge_pr` preflight: GitHub changes-requested reviews are checked first,
+/// then the poller snapshot, unresolved review-thread fetch, and
+/// `merge_pr_preflight_block_message` must all pass.
 pub async fn interpret_merge_pr_preflight(
-  force : Bool,
   pr_number : Int,
   poller_state : @poller.PollerState?,
   project_dir : String,
@@ -340,36 +316,14 @@ pub async fn interpret_merge_pr_preflight(
   capture : async (@workspace.Command) -> (Int, String),
   registry : @registry.AgentRegistry?,
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
-  override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
 ) -> Result[Unit, @types.ChoirError] {
+  ignore(caller_id)
   match
     enforce_merge_pr_github_review_gate(
       pr_number, poller_state, project_dir, capture,
     ) {
     Err(e) => return Err(e)
     Ok(_) => ()
-  }
-  if force && !override_check(project_dir, caller_id) {
-    return Err(
-      @types.ChoirError::validation_error(
-        "merge_pr force=true requires `choir tl-parent-override on` for caller " +
-        caller_id,
-      ),
-    )
-  }
-  if force {
-    // Audit trail: a force-merge bypasses the poller/threads/policy preflight
-    // (the GitHub changes-requested gate above is still enforced). Log it so
-    // override usage is visible in the server log, not just in the KV
-    // paper-trail. See choir-u7v.
-    @moontrace.warn(
-      "force-merge: override active, bypassing poller/threads/policy preflight",
-      fields=[
-        @moontrace.field("pr", pr_number),
-        @moontrace.field("caller", caller_id),
-      ],
-    )
-    return Ok(())
   }
   let poller_tracked = match poller_state {
     Some(ps) => ps.get(pr_number)
@@ -421,9 +375,9 @@ pub async fn interpret_merge_pr_preflight(
 }
 
 ///|
-/// Pre-merge gating for `merge_pr` when `force` is false: poller review state
-/// is checked first, then unresolved GraphQL review threads. Returns `Some(err)`
-/// when the merge must not proceed; `None` when checks pass.
+/// Pre-merge gating for `merge_pr`: poller review state is checked first, then
+/// unresolved GraphQL review threads. Returns `Some(err)` when the merge must
+/// not proceed; `None` when checks pass.
 pub fn merge_pr_preflight_block_message(
   pr_number : Int,
   poller_tracked : @poller.TrackedPR?,
@@ -442,7 +396,7 @@ pub fn merge_pr_preflight_block_message(
           "PR #" +
           pr_number.to_string() +
           " has unresolved review comments (ChangesRequested). " +
-          "Wait for the owning agent to push fixes, or pass force=true to override.",
+          "Wait for the owning agent to push fixes.",
         )
       }
     None => ()
@@ -452,19 +406,17 @@ pub fn merge_pr_preflight_block_message(
       return Some(
         "policy blocked: " +
         reason +
-        ". Address the blocking policy condition before merging, or pass force=true to override.",
+        ". Address the blocking policy condition before merging.",
       )
     Some(@policy.MergeDecision::Wait(reason~)) =>
       return Some(
-        "policy wait: " +
-        reason +
-        ". Wait for the policy condition to clear, or pass force=true to override.",
+        "policy wait: " + reason + ". Wait for the policy condition to clear.",
       )
     Some(@policy.MergeDecision::NeedsHuman(reason~)) =>
       return Some(
         "policy requires human check: " +
         reason +
-        ". Request the required human check before merging, or pass force=true to override.",
+        ". Request the required human check before merging.",
       )
     _ => ()
   }
@@ -481,7 +433,7 @@ pub fn merge_pr_preflight_block_message(
       unresolved_thread_count.to_string() +
       " unresolved review thread(s). Address or resolve them before merging:\n" +
       unresolved_thread_text +
-      "\nUse resolve_review_thread to mark threads resolved, or pass force=true to override.",
+      "\nUse resolve_review_thread to mark threads resolved.",
     )
   }
   None
@@ -1627,7 +1579,6 @@ pub async fn interpret_merge_pr(
 ) -> @types.Response {
   match
     interpret_merge_pr_preflight(
-      merge_args.force,
       merge_args.pr_number,
       poller_state,
       project_dir,

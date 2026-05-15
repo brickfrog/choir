@@ -68,6 +68,7 @@ pub(all) struct TrackedPR {
   mut last_review_state : ReviewState
   mut last_review_bodies : String
   mut last_sha : String
+  mut last_automerge_attempt_sha : String
   mut notified_parent : Bool
   mut last_ci_rollup : CiRollupStatus
   mut last_timeout_at : Int64

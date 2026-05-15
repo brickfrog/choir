@@ -38,8 +38,8 @@ pub(all) enum MergeOperatorMode {
 pub(all) enum NextAction {
   /// Parent does nothing; server delivers the next event.
   Wait
-  /// Parent calls merge_pr with force=true for a needs_human gate.
-  ForceMerge
+  /// A needs_human gate requires human judgment outside Choir's merge tool.
+  HumanOverride
   /// Parent calls merge_pr; gates are clear and the server cannot auto-fire.
   MergeNow
   /// Leaf addresses Copilot review threads; parent waits.
@@ -66,7 +66,7 @@ pub impl Show for NextAction with output(self, logger) -> Unit {
 pub fn NextAction::to_wire_string(self : NextAction) -> String {
   match self {
     Wait => "wait"
-    ForceMerge => "force_merge"
+    HumanOverride => "human_override"
     MergeNow => "merge_now"
     AddressThreads => "address_threads"
     CrossCheckThreads => "cross_check_threads"
@@ -153,18 +153,18 @@ pub fn next_action_detail_line(
           pr_number.to_string() +
           " once the parent branch is confirmed."
       }
-    ForceMerge =>
+    HumanOverride =>
       match parent_branch {
         Some(branch) =>
-          "Next action: `merge_pr(pr_number: \"" +
+          "Next action: address the policy block, or use `gh pr merge --admin " +
           pr_number.to_string() +
-          "\", parent_branch: \"" +
+          "` against parent branch `" +
           branch +
-          "\", force: true)`"
+          "` for a human-judgment override."
         None =>
-          "Next action: force-merge PR #" +
+          "Next action: address the policy block, or use `gh pr merge --admin " +
           pr_number.to_string() +
-          " once the parent branch is confirmed."
+          "` for a human-judgment override once the parent branch is confirmed."
       }
     Wait =>
       match mode {
@@ -710,7 +710,7 @@ fn merge_gate_next_action(
         Manual => MergeNow
         Mixed => CrossCheckMergeMode
       }
-    NeedsHuman(_) => ForceMerge
+    NeedsHuman(_) => HumanOverride
     Blocked(reason~) =>
       if policy_block_is_review_work(tracked, unresolved_threads, reason) {
         AddressThreads
@@ -831,10 +831,10 @@ pub fn tl_pr_state_notification_sentence(
       }
     NeedsHuman(reason~) =>
       match decision.next_action {
-        ForceMerge =>
-          "FORCE MERGE: merge policy requires human confirmation (" +
+        HumanOverride =>
+          "HUMAN OVERRIDE: merge policy requires human confirmation (" +
           reason +
-          "). Run merge_pr with force=true."
+          "). Address the block, or use gh pr merge --admin for a human-judgment override."
         _ => tl_tracked_pr_workflow_category_sentence(decision.category)
       }
     Blocked(reason~) =>

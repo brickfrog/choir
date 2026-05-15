@@ -387,7 +387,8 @@ fn normalize_path_segments(path : String) -> String {
 ///   which let `/repo/src/foo.mbt` slip past whenever `project_dir` was the
 ///   production `"."`, and would also let a symlinked repo root slip past. The
 ///   cost is over-blocking a genuine write to an absolute path outside the
-///   repo during a live wave; `choir tl-parent-override on` is the escape.
+///   repo during a live wave; use `scaffold_commit` or wait for the wave to
+///   finish when that happens.
 fn parent_branch_policy_relative_path(
   project_dir : String,
   repo_toplevel : String?,
@@ -569,8 +570,8 @@ async fn parent_branch_policy_changed_paths(
       // other-branch` brings in arbitrary content from another branch, `git
       // clean -fd` deletes untracked files, etc. Reusing the current `git
       // status` paths would let a TL with only doc changes run any of these
-      // during a live wave. Use a marker path so the gate always blocks them
-      // (unless override is on), the same way GitCheckout is handled.
+      // during a live wave. Use a marker path so the gate always blocks them,
+      // the same way GitCheckout is handled.
       Some([parent_branch_policy_marker_path(kind)])
     @policy.ParentBranchWriteKind::GitResetHard =>
       // `git reset --hard <ref>` moves HEAD and overwrites the working tree
@@ -604,7 +605,7 @@ fn parent_branch_policy_refusal_message(
   kind.to_wire_string() +
   "): " +
   decision.reason() +
-  ". Use scaffold_commit or `choir tl-parent-override on` to override."
+  ". Use scaffold_commit or wait for the live wave to finish."
 }
 
 ///|
@@ -614,7 +615,6 @@ pub async fn parent_branch_policy_gate_response(
   capture : async (@workspace.Command) -> (Int, String),
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
-  override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
 ) -> @types.Response? {
   if policy_enforcement_mode == @policy.PolicyEnforcementMode::LogOnly {
     return None
@@ -634,9 +634,8 @@ pub async fn parent_branch_policy_gate_response(
   let caller_id = parent_branch_policy_caller_id(req)
   let lifecycle = lifecycle_reader(project_dir, caller_id)
   let (live_wave, wave) = parent_branch_policy_live_wave_info(lifecycle)
-  let override_enabled = override_check(project_dir, caller_id)
   let decision = @policy.decide_tl_parent_branch_write(
-    live_wave, wave, changed_paths, override_enabled,
+    live_wave, wave, changed_paths,
   )
   if decision.is_blocked() {
     Some(
@@ -1453,7 +1452,6 @@ pub async fn handle_request(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
-  parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
   read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
@@ -1471,7 +1469,6 @@ pub async fn handle_request(
         capture,
         policy_enforcement_mode~,
         lifecycle_reader=parent_branch_lifecycle_reader,
-        override_check=parent_branch_override_check,
       ) {
       Some(blocked) => blocked
       None => {
@@ -1665,7 +1662,6 @@ pub async fn dispatch_call(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
-  parent_branch_override_check? : (String, String) -> Bool = merge_pr_override_enabled_default,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
   read_file? : (String) -> String = @sys.read_file,
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
@@ -1688,7 +1684,6 @@ pub async fn dispatch_call(
         capture,
         policy_enforcement_mode~,
         lifecycle_reader=parent_branch_lifecycle_reader,
-        override_check=parent_branch_override_check,
       ) {
       Some(blocked) => blocked
       None =>

@@ -98,13 +98,14 @@ async test "dispatch_call refuses parent branch write during live wave" {
     project_dir="/repo",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
       assert_true(msg.contains("policy refused: parent-branch write"))
       assert_true(msg.contains("kind=git_commit"))
-      assert_true(msg.contains("choir tl-parent-override on"))
+      assert_true(
+        msg.contains("Use scaffold_commit or wait for the live wave to finish."),
+      )
     }
     @types.Response::Ok(_) => fail("expected policy refusal")
   }
@@ -121,7 +122,6 @@ async test "dispatch_call refuses branch checkout during live wave" {
     project_dir="/repo",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -129,30 +129,6 @@ async test "dispatch_call refuses branch checkout during live wave" {
       assert_true(msg.contains("kind=git_checkout:feature/docs"))
     }
     @types.Response::Ok(_) => fail("expected policy refusal")
-  }
-}
-
-///|
-async test "dispatch_call lets override reach normal tool handling" {
-  let resp = dispatch_call(
-    ToolCall::{
-      role: @types.Role::TL,
-      name: "bash",
-      args: { "command": "git commit -m dispatch", "caller_id": "main.tl" },
-    },
-    project_dir="/repo",
-    capture=dispatch_policy_git_capture,
-    parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { true },
-  )
-  match resp {
-    @types.Response::Err(msg) => {
-      assert_true(
-        msg.contains("unknown tool") || msg.contains("tool not found"),
-      )
-      assert_false(msg.contains("policy refused"))
-    }
-    @types.Response::Ok(_) => fail("test harness should not have a bash tool")
   }
 }
 
@@ -167,7 +143,6 @@ async test "dispatch_call lets no live wave reach normal tool handling" {
     project_dir="/repo",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_idle_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -192,7 +167,6 @@ async test "dispatch_call log only mode does not refuse parent branch write" {
     capture=dispatch_policy_git_capture,
     policy_enforcement_mode=@policy.PolicyEnforcementMode::LogOnly,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -217,7 +191,6 @@ async test "dispatch_call passes through non parent branch writes" {
     capture=dispatch_policy_git_capture,
     bd_capture=dispatch_policy_task_get_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Ok(fields) =>
@@ -253,7 +226,6 @@ async test "dispatch_call refuses Write of a new untracked source file during li
     project_dir="/repo",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -278,7 +250,6 @@ async test "dispatch_call refuses git switch during live wave" {
     project_dir="/repo",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -323,7 +294,6 @@ async test "dispatch_call refuses git switch even when only docs are dirty durin
     project_dir="/repo",
     capture=dispatch_policy_git_capture_doc_only_dirty,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -351,7 +321,6 @@ async test "dispatch_call still allows a doc-only git commit during live wave" {
     project_dir="/repo",
     capture=dispatch_policy_git_capture_doc_only_dirty,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   // The gate returns None (no refusal) → dispatch_call proceeds to run the
   // bash tool. We don't care about the bash result here, only that it
@@ -409,7 +378,6 @@ async test "dispatch_call refuses an absolute in-repo source Write with project_
     project_dir=".",
     capture=dispatch_policy_git_capture_with_toplevel,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -442,7 +410,6 @@ async test "dispatch_call allows an out-of-repo absolute doc Write during live w
     project_dir=".",
     capture=dispatch_policy_git_capture_with_toplevel,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) =>
@@ -471,7 +438,6 @@ async test "dispatch_call refuses a `docs/..`-traversal source Write during live
     project_dir=".",
     capture=dispatch_policy_git_capture_with_toplevel,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -498,7 +464,6 @@ async test "dispatch_call refuses git reset --hard even when only docs are dirty
     project_dir="/repo",
     capture=dispatch_policy_git_capture_doc_only_dirty,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -528,7 +493,6 @@ async test "dispatch_call refuses git checkout <ref> -- <paths> during live wave
     project_dir="/repo",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -562,7 +526,6 @@ async test "dispatch_call allows /repo/docs/x.svg Write with project_dir=. only 
     project_dir=".",
     capture=dispatch_policy_git_capture_with_toplevel,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) =>
@@ -595,7 +558,6 @@ async test "dispatch_call refuses /repo/docs/x.svg Write with project_dir=. when
     project_dir=".",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -623,7 +585,6 @@ async test "dispatch_call refuses git checkout -B <branch> <start> during live w
     project_dir="/repo",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -650,7 +611,6 @@ async test "dispatch_call refuses git pull during live wave" {
     project_dir="/repo",
     capture=dispatch_policy_git_capture,
     parent_branch_lifecycle_reader=dispatch_policy_live_reader,
-    parent_branch_override_check=fn(_project_dir, _caller_id) { false },
   )
   match resp {
     @types.Response::Err(msg) => {

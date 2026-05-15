@@ -149,6 +149,7 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "last_review_state": review_state_name(self.last_review_state).to_json(),
     "last_review_bodies": self.last_review_bodies.to_json(),
     "last_sha": self.last_sha.to_json(),
+    "last_automerge_attempt_sha": self.last_automerge_attempt_sha.to_json(),
     "notified_parent": self.notified_parent.to_json(),
     "last_ci_rollup": ci_rollup_name(self.last_ci_rollup).to_json(),
     "last_timeout_at": self.last_timeout_at.to_json(),
@@ -221,6 +222,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
   let last_sha = match @types.json_field_string(fields, "last_sha") {
     Some(value) => value
     None => return None
+  }
+  let last_automerge_attempt_sha = match
+    @types.json_field_string(fields, "last_automerge_attempt_sha") {
+    Some(value) => value
+    None => ""
   }
   let notified_parent = match
     @types.json_field_bool(fields, "notified_parent") {
@@ -310,6 +316,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     last_review_state,
     last_review_bodies,
     last_sha,
+    last_automerge_attempt_sha,
     notified_parent,
     last_ci_rollup,
     last_timeout_at,
@@ -354,6 +361,7 @@ pub fn PollerState::track(
     last_review_state: None_,
     last_review_bodies: "",
     last_sha: "",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: Unknown,
     last_timeout_at: 0L,
@@ -478,6 +486,7 @@ pub fn PollerState::track_recovered(
     last_review_state: review,
     last_review_bodies: review_bodies,
     last_sha: sha,
+    last_automerge_attempt_sha: "",
     notified_parent: recovered_notified_parent(review),
     last_ci_rollup: ci_rollup,
     last_timeout_at: 0L,

@@ -233,5 +233,6 @@ beyond the existing `gh` capture adapter seam; use the `ReviewMode` enum,
   can resolve them via the MCP tool without ever shelling `gh`.
 - Have the leaf consume the poller's CI-rollup line as the verify signal too
   (overlaps choir-8z1's CI-satisfies-verify — already shipped on the gate side).
-- `choir-kqv.8` — subsume `tl-parent-override` / `merge_pr force=true` into typed
-  gates (now that the happy path needs neither).
+- `choir-kqv.8` — retire Choir-side merge override flags. If `merge_pr` returns a
+  policy block, address it or use `gh pr merge --admin <N>` for human-judgment
+  overrides.

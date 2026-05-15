@@ -108,7 +108,6 @@ fn append_merge_pr_evidence_if_needed(
     Some(value) => value
     None => return
   }
-  let force = request_bool_arg(req, "force").unwrap_or(false)
   let merge_mode = merge_execution_mode_for_request(req)
   match merged_agent_id {
     Some(agent_id) => {
@@ -120,19 +119,6 @@ fn append_merge_pr_evidence_if_needed(
           @evidence.EvidenceEvent::MergeExecutionRequested(mode=merge_mode),
         ),
       )
-      if force {
-        ignore(
-          append_evidence_event(
-            state.append_file,
-            state.config.project_dir,
-            agent_id,
-            @evidence.EvidenceEvent::UserOverrideObserved(
-              scope="merge_pr.force",
-              reason=Some("merge_pr invoked with force=true"),
-            ),
-          ),
-        )
-      }
       if resp.is_ok() {
         ignore(
           append_evidence_event(

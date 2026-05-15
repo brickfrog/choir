@@ -16,6 +16,7 @@ fn sample_tracked(
     last_review_state: review,
     last_review_bodies: "",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: ci,
     last_timeout_at: 0L,
@@ -124,7 +125,7 @@ test "merge operator helpers distinguish manual and automerge" {
 ///|
 test "NextAction wire strings are stable" {
   assert_eq(NextAction::Wait.to_wire_string(), "wait")
-  assert_eq(NextAction::ForceMerge.to_wire_string(), "force_merge")
+  assert_eq(NextAction::HumanOverride.to_wire_string(), "human_override")
   assert_eq(NextAction::MergeNow.to_wire_string(), "merge_now")
   assert_eq(NextAction::AddressThreads.to_wire_string(), "address_threads")
   assert_eq(

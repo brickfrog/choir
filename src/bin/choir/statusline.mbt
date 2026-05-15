@@ -181,13 +181,6 @@ fn statusline_git_branch(project_dir : String) -> String {
 }
 
 ///|
-/// True when any `tl-parent-override--*` sentinel exists in `.choir/kv`.
-fn statusline_override_active(project_dir : String) -> Bool {
-  statusline_kv_files_with_prefix(project_dir, "tl-parent-override--").length() >
-  0
-}
-
-///|
 fn statusline_goal_segment(project_dir : String) -> String {
   let config = statusline_global_config(project_dir)
   let path = match @types.goal_kv_path(project_dir, config.terminal_session) {
@@ -421,6 +414,7 @@ fn statusline_test_tracked_pr(
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
     last_sha: "sha",
+    last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Success,
     last_timeout_at: 0L,
@@ -695,11 +689,6 @@ fn statusline_run() -> Unit {
     }
   }
 
-  // Override warning — bright so the TL can't miss it.
-  if statusline_override_active(project_dir) {
-    out.write_string(sep)
-    out.write_string("\u001b[1;31m⚠ override\u001b[0m")
-  }
   let goal_segment = statusline_goal_segment(project_dir)
   if goal_segment != "" {
     out.write_string(sep)

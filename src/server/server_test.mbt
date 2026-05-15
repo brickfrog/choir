@@ -5,7 +5,7 @@ test "notify_parent uses live registry parent when present" {
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
-  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
@@ -599,13 +599,6 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
   let parent_id = "main.tl"
   let child_id = "main.claude-leaf"
   let pr_number = 88
-  // force=true requires the tl-parent-override sentinel to be ON for the caller.
-  assert_true(
-    @sys.write_file_atomic(
-      project_dir + "/.choir/kv/tl-parent-override--" + parent_id,
-      "1\n",
-    ),
-  )
   let parent_target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":TL") {
     Some(t) => t
@@ -686,7 +679,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
     @poller.ReviewState::Approved,
     "",
     "deadbeef",
-    @poller.CiRollupStatus::Unknown,
+    @poller.CiRollupStatus::Success,
     false,
   )
   let req = @types.Request::{
@@ -697,7 +690,6 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
       "pr_number": pr_number.to_string(),
       "caller_id": parent_id,
       "parent_branch": "main",
-      "force": "true",
     }),
   }
   let runner = async fn(cmds : Array[@workspace.Command]) {
@@ -720,6 +712,14 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
       cmd.args[0] == "api" &&
       cmd.args[1].has_suffix("/reviews") {
       return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
     }
     (0, "")
   }
@@ -1448,6 +1448,7 @@ async test "recover_state finalizes merged agent without startup parent notifica
           last_review_state: @poller.ReviewState::Approved,
           last_review_bodies: "",
           last_sha: "sha-merged",
+          last_automerge_attempt_sha: "",
           notified_parent: true,
           last_ci_rollup: @poller.CiRollupStatus::Success,
           last_timeout_at: 0L,

@@ -4,6 +4,7 @@ pub(all) enum ParseError {
   InvalidValue(field~ : String, value~ : String)
   InvalidFormat(field~ : String, message~ : String)
   UnknownTool(name~ : String)
+  UnknownArgument(field~ : String)
   UnknownRole(value~ : String)
   UnknownAgentType(value~ : String)
   UnknownTaskStatus(value~ : String)
@@ -17,6 +18,7 @@ pub fn ParseError::message(self : ParseError) -> String {
     InvalidValue(field~, value~) => "invalid " + field + ": " + value
     InvalidFormat(field~, message~) => "invalid " + field + ": " + message
     UnknownTool(name~) => "unknown tool: " + name
+    UnknownArgument(field~) => "unknown argument: " + field
     UnknownRole(value~) => "invalid role: " + value
     UnknownAgentType(value~) => "invalid agent_type: " + value
     UnknownTaskStatus(value~) => "invalid task status: " + value
@@ -1465,6 +1467,9 @@ fn parse_resolve_review_thread_args(
 
 ///|
 fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
+  if tool_args_get(args, "force") is Some(_) {
+    return Err(ParseError::UnknownArgument(field="force"))
+  }
   let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
   if pr_str == "" {
     return Err(ParseError::MissingField(field="pr_number"))
@@ -1496,13 +1501,6 @@ fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
     caller_id: match tool_args_get(args, "caller_id") {
       Some(v) => if v == "" { "server" } else { v }
       None => "server"
-    },
-    force: match tool_args_get(args, "force") {
-      Some(v) => {
-        let lowered = v.trim().to_lower()
-        lowered == "true" || lowered == "1" || lowered == "yes"
-      }
-      None => false
     },
     review_mode: match tool_args_get(args, "review_mode") {
       Some(v) => {
@@ -2136,6 +2134,18 @@ test "parse_merge_pr_args treats empty review_mode as unset" {
     ) {
     Ok(args) => @debug.assert_eq(args.review_mode, None)
     Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_merge_pr_args rejects removed force argument" {
+  match
+    parse_merge_pr_args(
+      tool_args_from_map({ "pr_number": "229", "force": "true" }),
+    ) {
+    Err(ParseError::UnknownArgument(field~)) => assert_eq(field, "force")
+    Err(e) => fail("unexpected error: " + e.message())
+    Ok(_) => fail("expected force to be rejected as an unknown argument")
   }
 }
 

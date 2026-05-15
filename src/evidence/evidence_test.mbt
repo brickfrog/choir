@@ -43,11 +43,7 @@ test "evidence append load replay file" {
   )
   let event2 = EvidenceEvent::ThreadsUnobserved
   let event3 = EvidenceEvent::MergeExecutionRequested(
-    mode=MergeExecutionMode::ForceOverride,
-  )
-  let event4 = EvidenceEvent::UserOverrideObserved(
-    scope="merge_pr.force",
-    reason=Some("manual approval"),
+    mode=MergeExecutionMode::Manual,
   )
   assert_true(
     append_agent_evidence_event(
@@ -64,15 +60,10 @@ test "evidence append load replay file" {
       @sys.append_file_sync, project_dir, "leaf/1", 102L, event3,
     ),
   )
-  assert_true(
-    append_agent_evidence_event(
-      @sys.append_file_sync, project_dir, "leaf/1", 103L, event4,
-    ),
-  )
   let records = load_agent_evidence_records(project_dir, "leaf/1")
-  assert_eq(records.length(), 4)
+  assert_eq(records.length(), 3)
   let replayed = replay_evidence_records(records)
-  assert_eq(replayed.length(), 4)
+  assert_eq(replayed.length(), 3)
   match replayed[0] {
     CiObserved(status~, head_sha~) => {
       assert_eq(status, EvidenceCiStatus::Success)
@@ -86,15 +77,8 @@ test "evidence append load replay file" {
   }
   match replayed[2] {
     MergeExecutionRequested(mode~) =>
-      assert_eq(mode, MergeExecutionMode::ForceOverride)
+      assert_eq(mode, MergeExecutionMode::Manual)
     _ => fail("expected MergeExecutionRequested")
-  }
-  match replayed[3] {
-    UserOverrideObserved(scope~, reason~) => {
-      assert_eq(scope, "merge_pr.force")
-      @debug.assert_eq(reason, Some("manual approval"))
-    }
-    _ => fail("expected UserOverrideObserved")
   }
   ignore(@sys.rm_rf(project_dir))
 }
