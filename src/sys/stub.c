@@ -11,6 +11,9 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <unistd.h>
 
 static int choir_cleanup_runtime_native = 0;
@@ -210,6 +213,19 @@ int choir_pid_is_alive(int pid) {
         return 0;
     }
     return kill((pid_t)pid, 0) == 0 ? 1 : 0;
+}
+
+int choir_set_parent_death_signal_term(void) {
+#ifdef __linux__
+    int rc = prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0);
+    if (rc == 0 && getppid() == 1) {
+        raise(SIGTERM);
+        _exit(0);
+    }
+    return rc;
+#else
+    return 0;
+#endif
 }
 
 /**

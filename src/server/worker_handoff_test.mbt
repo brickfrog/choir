@@ -101,6 +101,186 @@ test "worker_no_handoff_decision escalate zero disables stalled event" {
 }
 
 ///|
+test "leaf_no_handoff_decision truth table" {
+  let review_owned = @phase.WorkflowState::Dev(
+    @phase.DevLifecycle::ReviewOwned(
+      pr_number=12,
+      state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+    ),
+  )
+  let working = @phase.WorkflowState::Dev(@phase.DevLifecycle::Working)
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Worker,
+      review_owned,
+      true,
+      999L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      working,
+      true,
+      999L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      false,
+      999L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      119L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      120L,
+      false,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::Prod,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      239L,
+      false,
+      true,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      240L,
+      false,
+      true,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::EmitStalled,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      240L,
+      false,
+      true,
+      false,
+      120L,
+      0L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      240L,
+      true,
+      false,
+      false,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      999L,
+      false,
+      false,
+      false,
+      0L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      240L,
+      false,
+      true,
+      true,
+      120L,
+      120L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+}
+
+///|
+test "leaf no-handoff messages include fix-push headers and pane tail" {
+  let prod = leaf_stalled_no_handoff_prod_message("leaf-a")
+  assert_true(prod.contains("[LEAF POST-FIX-PUSH HANDOFF] leaf-a"))
+  assert_true(prod.contains("notify_parent --status success"))
+  assert_true(prod.contains("Do not idle waiting for more events"))
+
+  let stalled = leaf_stalled_no_handoff_parent_message(
+    "leaf-a", 240L, "line 1\nline 2",
+  )
+  assert_true(stalled.contains("[LEAF STALLED AFTER FIX-PUSH] leaf-a"))
+  assert_true(stalled.contains("idle 240s"))
+  assert_true(stalled.contains("Pane tail:\nline 1\nline 2"))
+}
+
+///|
 test "worker no-handoff messages include event headers slug and tail" {
   let stalled = worker_stalled_no_handoff_message(
     "sarcasmotron", 240L, "line 1\nline 2",

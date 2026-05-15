@@ -51,6 +51,45 @@ pub fn worker_no_handoff_decision(
 }
 
 ///|
+fn lifecycle_is_review_owned(lifecycle : @phase.WorkflowState) -> Bool {
+  match lifecycle {
+    @phase.WorkflowState::Dev(@phase.DevLifecycle::ReviewOwned(..)) => true
+    _ => false
+  }
+}
+
+///|
+pub fn leaf_no_handoff_decision(
+  role : @types.Role,
+  lifecycle : @phase.WorkflowState,
+  gate_ready : Bool,
+  idle_sec : Int64,
+  handoff_delivered : Bool,
+  prodded : Bool,
+  stalled_emitted : Bool,
+  prod_sec : Int64,
+  escalate_sec : Int64,
+) -> WorkerNoHandoffDecision {
+  if role != @types.Role::Dev ||
+    !lifecycle_is_review_owned(lifecycle) ||
+    !gate_ready ||
+    handoff_delivered ||
+    prod_sec <= 0L ||
+    idle_sec < prod_sec {
+    return DoNothing
+  }
+  if !prodded {
+    Prod
+  } else if escalate_sec > 0L &&
+    !stalled_emitted &&
+    idle_sec >= prod_sec + escalate_sec {
+    EmitStalled
+  } else {
+    DoNothing
+  }
+}
+
+///|
 pub fn worker_no_handoff_pane_tail(screen : String) -> String {
   let lines : Array[String] = []
   for line in screen.split("\n") {
@@ -81,6 +120,27 @@ fn worker_no_handoff_tail_or_placeholder(screen : String) -> String {
   } else {
     tail
   }
+}
+
+///|
+pub fn leaf_stalled_no_handoff_prod_message(slug : String) -> String {
+  "[LEAF POST-FIX-PUSH HANDOFF] " +
+  slug +
+  ": You pushed fixes and the merge gate is ready. Call `notify_parent --status success` once with a short summary, then stand down. Do not idle waiting for more events."
+}
+
+///|
+pub fn leaf_stalled_no_handoff_parent_message(
+  slug : String,
+  idle_sec : Int64,
+  pane_tail : String,
+) -> String {
+  "[LEAF STALLED AFTER FIX-PUSH] " +
+  slug +
+  " idle " +
+  idle_sec.to_string() +
+  "s after fix-push merge gate readiness and did not call notify_parent. Pane tail:\n" +
+  worker_no_handoff_tail_or_placeholder(pane_tail)
 }
 
 ///|

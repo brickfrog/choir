@@ -578,6 +578,9 @@ fn mcp_run_uds_loop(
 
 ///|
 fn mcp_run() -> Unit {
+  if !@sys.set_parent_death_signal_term() {
+    @moontrace.trace("failed to set parent death signal", fields=[])
+  }
   let args = @env.args()
   match mcp_cli_stderr_append_log(args) {
     Some(path) => ignore(@sys.redirect_stderr_append(path))

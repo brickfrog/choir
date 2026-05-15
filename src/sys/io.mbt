@@ -50,6 +50,9 @@ extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_serv
 extern "C" fn c_pid_is_alive(pid : Int) -> Int = "choir_pid_is_alive"
 
 ///|
+extern "C" fn c_set_parent_death_signal_term() -> Int = "choir_set_parent_death_signal_term"
+
+///|
 #borrow(prefix, buf)
 extern "C" fn c_list_pids_with_cwd_prefix(
   prefix : Bytes,
@@ -278,6 +281,61 @@ pub fn kill_server_pid_sequence_best_effort(pid : Int) -> Unit {
 /// True when `kill(pid, 0)` succeeds (process exists for signaling).
 pub fn pid_is_alive(pid : Int) -> Bool {
   c_pid_is_alive(pid) != 0
+}
+
+///|
+pub fn set_parent_death_signal_term() -> Bool {
+  c_set_parent_death_signal_term() == 0
+}
+
+///|
+fn proc_name_pid(name : String) -> Int? {
+  if name == "" {
+    return None
+  }
+  for c in name {
+    if c < '0' || c > '9' {
+      return None
+    }
+  }
+  Some(@string.parse_int(name)) catch {
+    _ => None
+  }
+}
+
+///|
+fn read_proc_process_table_entries(
+  list_dir_fn? : (String) -> Array[String] = fn(path) { list_dir(path) },
+  read_file_fn? : (String) -> String = fn(path) { read_file(path) },
+) -> Array[ProcessTableEntry] {
+  let entries : Array[ProcessTableEntry] = []
+  for name in list_dir_fn("/proc") {
+    let pid = match proc_name_pid(name) {
+      Some(n) => n
+      None => continue
+    }
+    let base = "/proc/" + name
+    let ppid = match
+      process_table_ppid_from_proc_stat(read_file_fn(base + "/stat")) {
+      Some(n) => n
+      None => continue
+    }
+    let cmdline = read_file_fn(base + "/cmdline")
+    if cmdline == "" {
+      continue
+    }
+    entries.push({ pid, ppid, cmdline })
+  }
+  entries
+}
+
+///|
+pub fn list_orphan_choir_mcp_stdio_pids(
+  list_processes? : () -> Array[ProcessTableEntry] = fn() {
+    read_proc_process_table_entries()
+  },
+) -> Array[Int] {
+  orphan_choir_mcp_stdio_pids_from_processes(list_processes())
 }
 
 ///|
