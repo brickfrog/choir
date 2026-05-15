@@ -213,6 +213,20 @@ test "leaf_no_handoff_decision truth table" {
       review_owned,
       true,
       240L,
+      false,
+      true,
+      false,
+      120L,
+      0L,
+    ),
+    WorkerNoHandoffDecision::DoNothing,
+  )
+  assert_eq(
+    leaf_no_handoff_decision(
+      @types.Role::Dev,
+      review_owned,
+      true,
+      240L,
       true,
       false,
       false,

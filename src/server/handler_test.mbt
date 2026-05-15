@@ -4136,6 +4136,34 @@ fn worker_handoff_test_state_with_read_log(
 }
 
 ///|
+fn worker_handoff_test_state_with_snapshots(
+  label : String,
+  snapshots : Array[String],
+) -> ServerState {
+  let base = handler_auto_close_test_state(label)
+  let mut read_count = 0
+  let host : @runtime.PaneWatchHost = {
+    spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 101 },
+    kill_pid_best_effort: fn(_pid) {  },
+    delete_file_sync: fn(_path) {  },
+    read_file: fn(_path) {
+      if snapshots.length() == 0 {
+        ""
+      } else {
+        let idx = if read_count < snapshots.length() {
+          read_count
+        } else {
+          snapshots.length() - 1
+        }
+        read_count = read_count + 1
+        snapshots[idx]
+      }
+    },
+  }
+  base.with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+}
+
+///|
 fn worker_handoff_parent(parent_id : String) -> @types.Agent {
   {
     agent_id: @types.AgentId(parent_id),
@@ -4276,6 +4304,17 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
     worker_no_handoff_escalate_sec=120L,
   )
   state.check_idle_agents(
+    start + 121L,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-ready"),
+    0,
+  )
+  state.check_idle_agents(
     start + 240L,
     180L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
@@ -4291,6 +4330,88 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
     1,
   )
   assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent"), 0)
+}
+
+///|
+async test "check_idle_agents does not stall prodded leaf after fresh pane output" {
+  let idle_snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"fixes pushed\",\"waiting\"]}"
+  let active_snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"fixes pushed\",\"working after prod\"]}"
+  let state = worker_handoff_test_state_with_snapshots(
+    "leaf-no-handoff-active-after-prod",
+    [idle_snapshot, idle_snapshot, active_snapshot, active_snapshot],
+  )
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-active"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_dev(leaf_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number=78,
+            state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+          ),
+        ),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.poller.restore({
+    ..parent_poll_test_ready_tracked(78),
+    agent_id: leaf_id,
+    branch: leaf_id,
+    unresolved_thread_ids_fetched: true,
+  })
+  state.watch_pane(leaf_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 120L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 230L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 241L,
+    999L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[LEAF POST-FIX-PUSH HANDOFF] dev-active"),
+    1,
+  )
+  assert_eq(
+    worker_handoff_count_sent(sent, "[LEAF STALLED AFTER FIX-PUSH] dev-active"),
+    0,
+  )
 }
 
 ///|

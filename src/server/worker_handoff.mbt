@@ -80,7 +80,9 @@ pub fn leaf_no_handoff_decision(
   }
   if !prodded {
     Prod
-  } else if !stalled_emitted && idle_sec >= prod_sec + escalate_sec {
+  } else if escalate_sec > 0L &&
+    !stalled_emitted &&
+    idle_sec >= prod_sec + escalate_sec {
     EmitStalled
   } else {
     DoNothing

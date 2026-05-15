@@ -297,8 +297,8 @@ const LEAF_PROFILE_DEFAULT : String =
   #|### Post-fix-push terminal handoff
   #|
   #|- After you address Copilot comments and `git push`, the moment the next poller snapshot shows `Unresolved inline review threads (GraphQL): 0` and CI green for your fix-push HEAD, your job is done. Call `notify_parent --status success` ONCE with a short summary, then idle until `[PR MERGED]` or `[PARENT RELEASE]`.
-  #|- do not enter sleep loops waiting for additional events. Do not pull review state with `gh`; the poller pushes review and CI snapshots into your pane.
-  #|- A leaf that idles for minutes after a successful fix-push has failed its task.
+  #|- Do not enter sleep loops waiting for additional events. Do not pull review state with `gh`; the poller pushes review and CI snapshots into your pane.
+  #|- A leaf that idles for minutes after a successful fix-push without sending that required `notify_parent` handoff has failed its task.
   #|
   #|gh discipline:
   #|- Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.

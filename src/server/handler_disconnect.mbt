@@ -1094,9 +1094,24 @@ async fn ServerState::check_leaf_no_handoff(
   }
   let prodded_at = self.worker_no_handoff_prodded_at.get(agent_id)
   let prodded = prodded_at != None
+  let idle_timeout = if prodded { escalate_sec } else { prod_sec }
+  if idle_timeout <= 0L {
+    return
+  }
+  if observation.idle_sec < idle_timeout {
+    return
+  }
   let gate_ready = self.leaf_merge_gate_ready_for_agent(agent_id)
   let decision_idle_sec = match prodded_at {
-    Some(t) => prod_sec + nonnegative_elapsed(now, t)
+    Some(t) => {
+      let elapsed_since_prod = nonnegative_elapsed(now, t)
+      let post_prod_idle_sec = if observation.idle_sec < elapsed_since_prod {
+        observation.idle_sec
+      } else {
+        elapsed_since_prod
+      }
+      prod_sec + post_prod_idle_sec
+    }
     None => observation.idle_sec
   }
   match
@@ -1116,7 +1131,7 @@ async fn ServerState::check_leaf_no_handoff(
     WorkerNoHandoffDecision::EmitStalled =>
       self.emit_leaf_stalled_no_handoff(
         agent,
-        decision_idle_sec,
+        observation.idle_sec,
         observation.screen,
         runner,
       )

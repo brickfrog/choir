@@ -217,7 +217,12 @@ int choir_pid_is_alive(int pid) {
 
 int choir_set_parent_death_signal_term(void) {
 #ifdef __linux__
-    return prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0);
+    int rc = prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0);
+    if (rc == 0 && getppid() == 1) {
+        raise(SIGTERM);
+        _exit(0);
+    }
+    return rc;
 #else
     return 0;
 #endif
