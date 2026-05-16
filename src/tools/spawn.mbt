@@ -94,9 +94,19 @@ fn fallback_spawn_worker_parent_id(agents : Array[@types.Agent]) -> String? {
 fn resolve_spawn_worker_parent_id(
   caller_id : String,
   registry : @registry.AgentRegistry?,
+  allow_audit_on_file_pr_caller? : Bool = false,
 ) -> Result[String, @types.ChoirError] {
   if caller_id == audit_on_file_pr_internal_caller_id {
-    return Ok(caller_id)
+    if allow_audit_on_file_pr_caller {
+      return Ok(caller_id)
+    }
+    return Err(
+      @types.ChoirError::validation_error(
+        "spawn_worker caller_id '" +
+        audit_on_file_pr_internal_caller_id +
+        "' is reserved for internal file_pr audit workers",
+      ),
+    )
   }
   match registry {
     None => Ok(caller_id)
@@ -268,9 +278,14 @@ pub async fn interpret_spawn_worker(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  allow_audit_on_file_pr_caller? : Bool = false,
 ) -> @types.Response {
   let normalized_args = match
-    resolve_spawn_worker_parent_id(worker_args.caller_id, registry) {
+    resolve_spawn_worker_parent_id(
+      worker_args.caller_id,
+      registry,
+      allow_audit_on_file_pr_caller~,
+    ) {
     Ok(parent_id) => { ..worker_args, caller_id: parent_id }
     Err(e) => return @types.Response::Err(e.message())
   }

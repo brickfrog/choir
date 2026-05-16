@@ -932,6 +932,7 @@ async fn file_pr_auto_audit_for_missing_receipt(
     @types.ChoirError,
   ],
   wait_for_audit_report : async (String) -> AuditOnFilePrReport?,
+  cleanup_audit_report : (String) -> Unit,
   write_audit_receipt : (WriteAuditReceiptArgs) -> @types.Response,
   audit_budget_ms : Int,
 ) -> Result[Unit, @types.ChoirError] {
@@ -947,19 +948,24 @@ async fn file_pr_auto_audit_for_missing_receipt(
   let worker_args = audit_on_file_pr_worker_args(project_dir, branch, head_sha)
   let worker_id = match spawn_audit_worker(worker_args) {
     Ok(id) => id
-    Err(_) => return Err(@types.ChoirError::timeout("audit budget exceeded"))
+    Err(e) => return Err(e)
   }
   let waited = @async.with_timeout_opt(audit_budget_ms, async fn() {
     wait_for_audit_report(worker_id)
   })
   let report = match waited {
-    None => return Err(@types.ChoirError::timeout("audit budget exceeded"))
-    Some(None) =>
+    None => {
+      cleanup_audit_report(worker_id)
+      return Err(@types.ChoirError::timeout("audit budget exceeded"))
+    }
+    Some(None) => {
+      cleanup_audit_report(worker_id)
       return Err(
         @types.ChoirError::validation_error(
           "file_pr: audit worker did not report",
         ),
       )
+    }
     Some(Some(value)) => value
   }
   if report.status == @types.Status::Failure {
@@ -1020,6 +1026,7 @@ async fn file_pr_require_audit_receipt(
     @async.sleep(0)
     None
   },
+  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   write_audit_receipt? : (WriteAuditReceiptArgs) -> @types.Response = fn(_) {
     @types.Response::Err("audit receipt writer unavailable")
   },
@@ -1058,7 +1065,7 @@ async fn file_pr_require_audit_receipt(
       if caller_role == @types.Role::Dev && validation.auto_audit_allowed() {
         file_pr_auto_audit_for_missing_receipt(
           project_dir, file_pr_dir, head_sha, capture, spawn_audit_worker, wait_for_audit_report,
-          write_audit_receipt, audit_budget_ms,
+          cleanup_audit_report, write_audit_receipt, audit_budget_ms,
         )
       } else {
         validation.to_result()
@@ -1160,6 +1167,34 @@ async test "file_pr_require_audit_receipt ignores receipt under file_pr_dir" {
     Ok(_) => fail("expected missing project_dir audit receipt")
   }
   ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "file_pr_require_audit_receipt preserves audit spawn errors" {
+  let project_dir = "/tmp/test-receipt-spawn-error-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let got = file_pr_require_audit_receipt(
+    "main",
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    file_pr_receipt_root_test_capture(project_dir, head),
+    spawn_audit_worker=async fn(_) {
+      @async.sleep(0)
+      Err(@types.ChoirError::validation_error("spawn config bad"))
+    },
+  )
+  match got {
+    Err(e) => {
+      let msg = e.validation_detail_or_message()
+      assert_true(msg.contains("spawn config bad"))
+      assert_false(msg.contains("audit budget exceeded"))
+    }
+    Ok(_) => fail("expected spawn error")
+  }
 }
 
 ///|
@@ -1487,6 +1522,7 @@ pub async fn interpret_file_pr(
     @async.sleep(0)
     None
   },
+  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
@@ -1538,6 +1574,7 @@ pub async fn interpret_file_pr(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          allow_audit_on_file_pr_caller=true,
         )
         match resp.ok_field("agent_id") {
           Some(agent_id) => Ok(agent_id)
@@ -1550,6 +1587,7 @@ pub async fn interpret_file_pr(
         }
       },
       wait_for_audit_report~,
+      cleanup_audit_report~,
       write_audit_receipt=fn(write_args) {
         interpret_write_audit_receipt(
           write_args, project_dir, create_dir_all, write_file_atomic,

@@ -1,4 +1,30 @@
 ///|
+test "audit-on-file-pr report capture ignores missing waiter" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_recovery_provider())
+  state.capture_audit_on_file_pr_report("worker-a", {
+    message: "No findings.",
+    status: @types.Status::Success,
+  })
+  assert_false(state.audit_on_file_pr_reports.contains("worker-a"))
+}
+
+///|
+test "audit-on-file-pr report cleanup removes waiter queue" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_recovery_provider())
+  let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+  state.audit_on_file_pr_reports.set("worker-a", queue)
+  state.cleanup_audit_on_file_pr_report("worker-a")
+  assert_false(state.audit_on_file_pr_reports.contains("worker-a"))
+  state.capture_audit_on_file_pr_report("worker-a", {
+    message: "No findings.",
+    status: @types.Status::Success,
+  })
+  assert_false(state.audit_on_file_pr_reports.contains("worker-a"))
+}
+
+///|
 test "notify_parent uses live registry parent when present" {
   let project_dir = "/tmp/choir-notify-parent-test-" +
     "live-present-" +

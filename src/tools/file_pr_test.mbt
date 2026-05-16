@@ -965,6 +965,7 @@ async test "interpret_file_pr Dev audit outer budget returns timeout" {
   let project_dir = "/tmp/choir-fpr-auto-audit-timeout-" +
     @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut cleaned_worker = ""
   let got = interpret_file_pr(
     {
       branch: "feature/auto-audit",
@@ -985,6 +986,7 @@ async test "interpret_file_pr Dev audit outer budget returns timeout" {
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
     audit_budget_ms=1,
+    cleanup_audit_report=fn(worker_id) { cleaned_worker = worker_id },
     wait_for_audit_report=async fn(_) {
       @async.sleep(50)
       None
@@ -995,6 +997,7 @@ async test "interpret_file_pr Dev audit outer budget returns timeout" {
       assert_true(msg.contains("audit budget exceeded"))
     @types.Response::Ok(_) => fail("expected timeout")
   }
+  assert_true(cleaned_worker.contains(audit_on_file_pr_internal_caller_id))
 }
 
 ///|

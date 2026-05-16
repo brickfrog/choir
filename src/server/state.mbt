@@ -138,8 +138,28 @@ pub fn ServerState::capture_audit_on_file_pr_report(
   agent_id : String,
   report : @tools.AuditOnFilePrReport,
 ) -> Unit {
-  let queue = self.audit_on_file_pr_report_queue(agent_id)
-  ignore(queue.try_put(report) catch { _ => false })
+  match self.audit_on_file_pr_reports.get(agent_id) {
+    Some(queue) => ignore(queue.try_put(report) catch { _ => false })
+    None => ()
+  }
+}
+
+///|
+pub fn ServerState::cleanup_audit_on_file_pr_report(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  match self.audit_on_file_pr_reports.get(agent_id) {
+    Some(queue) => {
+      self.audit_on_file_pr_reports.remove(agent_id)
+      ignore(
+        queue.try_put({ message: "", status: @types.Status::Failure }) catch {
+          _ => false
+        },
+      )
+    }
+    None => ()
+  }
 }
 
 ///|

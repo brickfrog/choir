@@ -755,6 +755,7 @@ pub async fn dispatch(
   ) {
     ()
   },
+  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -996,6 +997,7 @@ pub async fn dispatch(
         create_dir_all~,
         write_file_atomic~,
         wait_for_audit_report~,
+        cleanup_audit_report~,
         extra_mcp_servers_json~,
         shell_command~,
         listen_uds~,
@@ -1525,6 +1527,7 @@ pub async fn handle_request(
   ) {
     ()
   },
+  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
@@ -1625,6 +1628,7 @@ pub async fn handle_request(
                   record_handoff_delivered~,
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
+                  cleanup_audit_report~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -1750,6 +1754,7 @@ pub async fn dispatch_call(
   ) {
     ()
   },
+  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
@@ -1817,6 +1822,7 @@ pub async fn dispatch_call(
                   record_handoff_delivered~,
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
+                  cleanup_audit_report~,
                 )
             }
         }
