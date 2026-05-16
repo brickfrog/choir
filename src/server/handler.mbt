@@ -151,12 +151,19 @@ pub async fn ServerState::handle_with_runner_and_capture(
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
       global_review_mode=self.config.review_mode,
+      audit_heartbeat_sec=self.config.audit_heartbeat_sec,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
       },
       goal_request_tick=fn() { self.request_goal_judge_tick() },
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
+      },
+      prepare_audit_report=fn(agent_id) {
+        self.prepare_audit_on_file_pr_report(agent_id)
+      },
+      audit_worker_alive=fn(agent_id) {
+        self.registry.is_alive(agent_id).unwrap_or(false)
       },
       wait_for_audit_report=async fn(agent_id) {
         self.wait_for_audit_on_file_pr_report(agent_id)

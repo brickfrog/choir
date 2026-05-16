@@ -701,6 +701,14 @@ fn notify_parent_from_audit_on_file_pr_worker(
 }
 
 ///|
+fn audit_on_file_pr_shutdown_report() -> AuditOnFilePrReport {
+  {
+    message: "audit worker shutdown without notify_parent report",
+    status: @types.Status::Failure,
+  }
+}
+
+///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -737,12 +745,15 @@ pub async fn dispatch(
   caller_role? : @types.Role = @types.Role::TL,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   goal_nonce? : () -> String = fn() {
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
+  audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
   ) {
@@ -1053,8 +1064,12 @@ pub async fn dispatch(
         record_verify_event~,
         create_dir_all~,
         write_file_atomic~,
+        prepare_audit_report~,
         wait_for_audit_report~,
         cleanup_audit_report~,
+        audit_heartbeat_sec~,
+        append_file~,
+        audit_worker_alive~,
         extra_mcp_servers_json~,
         shell_command~,
         listen_uds~,
@@ -1280,7 +1295,17 @@ pub async fn dispatch(
         runner,
       )
     }
-    ToolRequest::Shutdown(shutdown_args) =>
+    ToolRequest::Shutdown(shutdown_args) => {
+      match shutdown_args.caller_id {
+        Some(caller_id) =>
+          if notify_parent_from_audit_on_file_pr_worker(registry, caller_id) {
+            capture_audit_on_file_pr_report(
+              caller_id,
+              audit_on_file_pr_shutdown_report(),
+            )
+          }
+        _ => ()
+      }
       interpret_shutdown(
         shutdown_args,
         project_dir,
@@ -1289,6 +1314,7 @@ pub async fn dispatch(
         runner,
         capture=bd_capture,
       )
+    }
     ToolRequest::KillAgent(kill_args) =>
       interpret_kill_agent(kill_args, registry, runner, project_dir~, capture~)
     ToolRequest::Suspend(suspend_args) =>
@@ -1566,12 +1592,15 @@ pub async fn handle_request(
   plugins_json? : String? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   goal_nonce? : () -> String = fn() {
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
+  audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
   ) {
@@ -1673,6 +1702,7 @@ pub async fn handle_request(
                   caller_role=req.role,
                   pr_review~,
                   global_review_mode~,
+                  audit_heartbeat_sec~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,
@@ -1683,6 +1713,8 @@ pub async fn handle_request(
                   goal_request_tick~,
                   goal_nonce~,
                   record_handoff_delivered~,
+                  prepare_audit_report~,
+                  audit_worker_alive~,
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
                   cleanup_audit_report~,
@@ -1796,9 +1828,12 @@ pub async fn dispatch_call(
   poller_state? : @poller.PollerState? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
+  audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
   ) {
@@ -1868,6 +1903,7 @@ pub async fn dispatch_call(
                   caller_role=call.role,
                   pr_review~,
                   global_review_mode~,
+                  audit_heartbeat_sec~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,
@@ -1877,6 +1913,8 @@ pub async fn dispatch_call(
                   goal_deliver~,
                   goal_request_tick~,
                   record_handoff_delivered~,
+                  prepare_audit_report~,
+                  audit_worker_alive~,
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
                   cleanup_audit_report~,

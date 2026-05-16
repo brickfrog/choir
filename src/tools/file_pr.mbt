@@ -595,6 +595,189 @@ pub let audit_on_file_pr_internal_caller_id : String = "audit-on-file-pr"
 pub let audit_on_file_pr_default_budget_ms : Int = 900_000
 
 ///|
+pub(all) enum AuditHeartbeatStatus {
+  HeartbeatRunning
+  HeartbeatOk
+  HeartbeatError
+} derive(Debug, Eq)
+
+///|
+fn AuditHeartbeatStatus::to_wire_string(self : AuditHeartbeatStatus) -> String {
+  match self {
+    HeartbeatRunning => "running"
+    HeartbeatOk => "ok"
+    HeartbeatError => "error"
+  }
+}
+
+///|
+pub fn audit_heartbeat_log_line(
+  pr_number : Int,
+  agent_id : String,
+  elapsed_s : Int64,
+  status? : AuditHeartbeatStatus = HeartbeatRunning,
+  findings_count? : Int? = None,
+  reason? : String? = None,
+  branch? : String? = None,
+) -> String {
+  let parts = [
+    "audit-on-file-pr",
+    if pr_number > 0 {
+      "pr=" + pr_number.to_string()
+    } else {
+      "pr=pending"
+    },
+    "agent=" + agent_id,
+  ]
+  match branch {
+    Some(value) if value != "" => parts.push("branch=" + value)
+    _ => ()
+  }
+  parts.push("elapsed_s=" + elapsed_s.to_string())
+  parts.push("status=" + status.to_wire_string())
+  match findings_count {
+    Some(count) => parts.push("findings_count=" + count.to_string())
+    None => ()
+  }
+  match reason {
+    Some(value) if value != "" => parts.push("reason=" + value)
+    _ => ()
+  }
+  parts.join(" ")
+}
+
+///|
+fn emit_audit_heartbeat_log_line(
+  project_dir : String,
+  append_file : (String, String) -> Bool,
+  pr_number : Int,
+  agent_id : String,
+  elapsed_s : Int64,
+  status? : AuditHeartbeatStatus = HeartbeatRunning,
+  findings_count? : Int? = None,
+  reason? : String? = None,
+  branch? : String? = None,
+  now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
+) -> Unit {
+  let fields = [
+    if pr_number > 0 {
+      @moontrace.field("pr", pr_number)
+    } else {
+      @moontrace.field("pr", "pending")
+    },
+    @moontrace.field("agent", agent_id),
+    @moontrace.field("elapsed_s", elapsed_s),
+    @moontrace.field("status", status.to_wire_string()),
+  ]
+  match findings_count {
+    Some(count) => fields.push(@moontrace.field("findings_count", count))
+    None => ()
+  }
+  match reason {
+    Some(value) if value != "" => fields.push(@moontrace.field("reason", value))
+    _ => ()
+  }
+  match branch {
+    Some(value) if value != "" => fields.push(@moontrace.field("branch", value))
+    _ => ()
+  }
+  @moontrace.info("audit-on-file-pr", fields~)
+  ignore(
+    @poller.append_delivery_log_line(
+      append_file,
+      project_dir,
+      audit_heartbeat_log_line(
+        pr_number,
+        agent_id,
+        elapsed_s,
+        status~,
+        findings_count~,
+        reason~,
+        branch~,
+      ),
+      now_ms=now_ms_fn(),
+    ),
+  )
+}
+
+///|
+priv enum AuditReportWaitOutcome {
+  AuditWaitTimedOut
+  AuditWaitNoReport
+  AuditWaitReported(AuditOnFilePrReport)
+}
+
+///|
+priv struct AuditReportWaitResult {
+  outcome : AuditReportWaitOutcome
+  elapsed_s : Int64
+}
+
+///|
+async fn wait_for_audit_report_with_heartbeats(
+  project_dir : String,
+  tracked_agent_id : String,
+  worker_id : String,
+  wait_for_audit_report : async (String) -> AuditOnFilePrReport?,
+  audit_budget_ms : Int,
+  audit_heartbeat_sec : Int,
+  append_file : (String, String) -> Bool,
+  sleep_fn : async (Int) -> Unit,
+  now_ms_fn : () -> Int64,
+  audit_worker_alive : (String) -> Bool,
+  pr_number? : Int = 0,
+  branch? : String? = None,
+) -> AuditReportWaitResult {
+  let started_ms = now_ms_fn()
+  let mut audit_done = false
+  let waited = @async.with_task_group(group => {
+    // `audit_heartbeat_sec` gates only periodic running lines. The terminal
+    // completion line is emitted by the caller even when the cadence is 0.
+    if audit_heartbeat_sec > 0 {
+      group.spawn_bg(no_wait=true, allow_failure=true, () => {
+        let interval_ms = audit_heartbeat_sec * 1000
+        while !audit_done && audit_worker_alive(worker_id) {
+          sleep_fn(interval_ms)
+          if !audit_done && audit_worker_alive(worker_id) {
+            let elapsed_s = (now_ms_fn() - started_ms) / 1000L
+            emit_audit_heartbeat_log_line(
+              project_dir,
+              append_file,
+              pr_number,
+              tracked_agent_id,
+              elapsed_s,
+              branch~,
+              now_ms_fn~,
+            )
+          }
+        }
+      })
+    }
+    let waited = @async.with_timeout_opt(audit_budget_ms, () => {
+      wait_for_audit_report(worker_id)
+    })
+    audit_done = true
+    waited
+  })
+  let elapsed_s = (now_ms_fn() - started_ms) / 1000L
+  let outcome = match waited {
+    None => AuditWaitTimedOut
+    Some(None) => AuditWaitNoReport
+    Some(Some(report)) => AuditWaitReported(report)
+  }
+  { outcome, elapsed_s }
+}
+
+///|
+fn audit_report_failure_reason(report : AuditOnFilePrReport) -> String {
+  if report.message.contains("shutdown") {
+    "worker_shutdown"
+  } else {
+    "worker_failure"
+  }
+}
+
+///|
 pub(all) struct AuditOnFilePrReport {
   message : String
   status : @types.Status
@@ -844,7 +1027,7 @@ pub fn build_audit_on_file_pr_task(
   branch : String,
   head_sha : String,
 ) -> String {
-  let review_surface = "git diff main...HEAD"
+  let review_surface = "git diff main..." + head_sha
   [
     "Your printed report is NOT the handoff — the parent cannot read your stdout. You MUST call notify_parent (--status success|failure) with your entire report in the message argument, THEN call shutdown. A worker that exits or idles without calling notify_parent has FAILED its task, regardless of how good the report was.",
     "",
@@ -925,6 +1108,7 @@ fn audit_on_file_pr_worker_args(
 async fn file_pr_auto_audit_for_missing_receipt(
   project_dir : String,
   file_pr_dir : String,
+  tracked_agent_id : String,
   head_sha : String,
   capture : async (@workspace.Command) -> (Int, String),
   spawn_audit_worker : async (WorkerSpawnArgs) -> Result[
@@ -935,6 +1119,11 @@ async fn file_pr_auto_audit_for_missing_receipt(
   cleanup_audit_report : (String) -> Unit,
   write_audit_receipt : (WriteAuditReceiptArgs) -> @types.Response,
   audit_budget_ms : Int,
+  audit_heartbeat_sec : Int,
+  append_file : (String, String) -> Bool,
+  sleep_fn : async (Int) -> Unit,
+  now_ms_fn : () -> Int64,
+  audit_worker_alive : (String) -> Bool,
 ) -> Result[Unit, @types.ChoirError] {
   let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
     Some(value) => value
@@ -950,25 +1139,69 @@ async fn file_pr_auto_audit_for_missing_receipt(
     Ok(id) => id
     Err(e) => return Err(e)
   }
-  let waited = @async.with_timeout_opt(audit_budget_ms, async fn() {
-    wait_for_audit_report(worker_id)
-  })
-  let report = match waited {
-    None => {
+  let wait_result = wait_for_audit_report_with_heartbeats(
+    project_dir,
+    tracked_agent_id,
+    worker_id,
+    wait_for_audit_report,
+    audit_budget_ms,
+    audit_heartbeat_sec,
+    append_file,
+    sleep_fn,
+    now_ms_fn,
+    audit_worker_alive,
+    branch=Some(branch),
+  )
+  let report = match wait_result.outcome {
+    AuditWaitTimedOut => {
       cleanup_audit_report(worker_id)
+      emit_audit_heartbeat_log_line(
+        project_dir,
+        append_file,
+        0,
+        tracked_agent_id,
+        wait_result.elapsed_s,
+        status=HeartbeatError,
+        reason=Some("timeout"),
+        branch=Some(branch),
+        now_ms_fn~,
+      )
       return Err(@types.ChoirError::timeout("audit budget exceeded"))
     }
-    Some(None) => {
+    AuditWaitNoReport => {
       cleanup_audit_report(worker_id)
+      emit_audit_heartbeat_log_line(
+        project_dir,
+        append_file,
+        0,
+        tracked_agent_id,
+        wait_result.elapsed_s,
+        status=HeartbeatError,
+        reason=Some("missing_report"),
+        branch=Some(branch),
+        now_ms_fn~,
+      )
       return Err(
         @types.ChoirError::validation_error(
           "file_pr: audit worker did not report",
         ),
       )
     }
-    Some(Some(value)) => value
+    AuditWaitReported(value) => value
   }
   if report.status == @types.Status::Failure {
+    let reason = audit_report_failure_reason(report)
+    emit_audit_heartbeat_log_line(
+      project_dir,
+      append_file,
+      0,
+      tracked_agent_id,
+      wait_result.elapsed_s,
+      status=HeartbeatError,
+      reason=Some(reason),
+      branch=Some(branch),
+      now_ms_fn~,
+    )
     return Err(
       @types.ChoirError::validation_error(
         "file_pr: audit worker reported failure: " +
@@ -977,6 +1210,17 @@ async fn file_pr_auto_audit_for_missing_receipt(
     )
   }
   let findings_count = parse_findings_count(report.message)
+  emit_audit_heartbeat_log_line(
+    project_dir,
+    append_file,
+    0,
+    tracked_agent_id,
+    wait_result.elapsed_s,
+    status=HeartbeatOk,
+    findings_count=Some(findings_count),
+    branch=Some(branch),
+    now_ms_fn~,
+  )
   if findings_count > 0 {
     return Err(
       @types.ChoirError::validation_error(
@@ -1011,6 +1255,7 @@ async fn file_pr_require_audit_receipt(
   parent_branch : String,
   project_dir : String,
   file_pr_dir : String,
+  tracked_agent_id : String,
   caller_role : @types.Role,
   capture : async (@workspace.Command) -> (Int, String),
   spawn_audit_worker? : async (WorkerSpawnArgs) -> Result[
@@ -1031,6 +1276,11 @@ async fn file_pr_require_audit_receipt(
     @types.Response::Err("audit receipt writer unavailable")
   },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
+  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  append_file? : (String, String) -> Bool = fn(_, _) { false },
+  audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
+  audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
+  audit_worker_alive? : (String) -> Bool = fn(_) { true },
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_audit_receipt_required(parent_branch) {
     return Ok(())
@@ -1064,8 +1314,9 @@ async fn file_pr_require_audit_receipt(
     _ =>
       if caller_role == @types.Role::Dev && validation.auto_audit_allowed() {
         file_pr_auto_audit_for_missing_receipt(
-          project_dir, file_pr_dir, head_sha, capture, spawn_audit_worker, wait_for_audit_report,
-          cleanup_audit_report, write_audit_receipt, audit_budget_ms,
+          project_dir, file_pr_dir, tracked_agent_id, head_sha, capture, spawn_audit_worker,
+          wait_for_audit_report, cleanup_audit_report, write_audit_receipt, audit_budget_ms,
+          audit_heartbeat_sec, append_file, audit_sleep_fn, audit_now_ms_fn, audit_worker_alive,
         )
       } else {
         validation.to_result()
@@ -1129,6 +1380,7 @@ async test "file_pr_require_audit_receipt reads receipt from project_dir" {
     "main",
     project_dir,
     file_pr_dir,
+    "main.some-leaf",
     @types.Role::TL,
     file_pr_receipt_root_test_capture(project_dir, head),
   )
@@ -1159,6 +1411,7 @@ async test "file_pr_require_audit_receipt ignores receipt under file_pr_dir" {
     "main",
     project_dir,
     file_pr_dir,
+    "main.some-leaf",
     @types.Role::TL,
     file_pr_receipt_root_test_capture(project_dir, head),
   )
@@ -1180,6 +1433,7 @@ async test "file_pr_require_audit_receipt preserves audit spawn errors" {
     "main",
     project_dir,
     project_dir,
+    "main.some-leaf",
     @types.Role::Dev,
     file_pr_receipt_root_test_capture(project_dir, head),
     spawn_audit_worker=async fn(_) {
@@ -1516,6 +1770,7 @@ pub async fn interpret_file_pr(
   },
   create_dir_all? : (String) -> Bool = fn(_) { false },
   write_file_atomic? : (String, String) -> Bool = fn(_, _) { false },
+  prepare_audit_report? : (String) -> Unit = fn(_) {  },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
   ) {
@@ -1524,6 +1779,11 @@ pub async fn interpret_file_pr(
   },
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
+  audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  append_file? : (String, String) -> Bool = fn(_, _) { false },
+  audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
+  audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
+  audit_worker_alive? : (String) -> Bool = fn(_) { true },
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -1559,9 +1819,17 @@ pub async fn interpret_file_pr(
       preflight_inputs.parent_branch,
       project_dir,
       preflight_inputs.file_pr_dir,
+      tracked_agent_id,
       caller_role,
       capture,
       spawn_audit_worker=async fn(worker_args) {
+        let resolved_parent_branch = detect_default_branch_with_capture(
+          project_dir, capture,
+        )
+        let plan = spawn_worker_plan(
+          worker_args, resolved_parent_branch, session, project_dir,
+        )
+        prepare_audit_report(plan.agent_id)
         let resp = interpret_spawn_worker(
           worker_args,
           project_dir,
@@ -1594,6 +1862,11 @@ pub async fn interpret_file_pr(
         )
       },
       audit_budget_ms~,
+      audit_heartbeat_sec~,
+      append_file~,
+      audit_sleep_fn~,
+      audit_now_ms_fn~,
+      audit_worker_alive~,
     ) {
     Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()

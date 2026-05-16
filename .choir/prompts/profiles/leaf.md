@@ -42,6 +42,13 @@ Do not exit voluntarily after file_pr:
 - Do not enter sleep loops waiting for additional events. Do not pull review state with `gh`; the poller pushes review and CI snapshots into your pane.
 - A leaf that idles for minutes after a successful fix-push without sending that required `notify_parent` handoff has failed its task.
 
+### file_pr main audit wait
+
+- `file_pr` against `main` blocks for about 5-10 minutes while the server runs the Sarcasmotron audit worker against your diff. The MCP tool call stays pending during that server-side audit.
+- A 120s pause is normal, expected, and does not mean the call failed. Do NOT report [FAILED] at 120s; wait for the actual `file_pr` response.
+- A successful audit returns the PR URL. A blocking audit returns `audit found N findings: ...`; address those findings, push, and retry `file_pr`.
+- Only treat the call as genuinely stuck when about 15 minutes have passed since the call started and `tail .choir/serve.log | grep 'audit-on-file-pr.*<your branch>'` shows the audit worker has shut down without your `file_pr` returning. In that case, report `[BLOCKED]` to your parent with the elapsed time and the last matching log line.
+
 gh discipline:
 - Always bound `gh api` and `gh pr view` calls with `timeout 30s` (or use the `gh-bounded` wrapper provided in your worktree). `gh api graphql` and `gh pr view --json` are known to hang indefinitely without a timeout — they have stalled wave progress for minutes per failure.
 - The choir poller pushes review snapshots into your pane: `[REVIEW]`, `[CI LATEST HEAD]`, `[COPILOT ISSUE COMMENT]`, `[FIXES PUSHED]`, and `[MERGE READY]`. Those snapshots carry `GitHub review rollup`, `Unresolved inline review threads (GraphQL): N`, `GitHub Copilot issue comment (REST)`, and the CI rollup. That snapshot is the source of truth for review state.

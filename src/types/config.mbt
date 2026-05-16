@@ -23,6 +23,8 @@ pub(all) struct Config {
   worker_no_handoff_prod_sec : Int64
   /// Worker-only no-handoff stalled-event grace after prod in seconds; 0 disables stalled event.
   worker_no_handoff_escalate_sec : Int64
+  /// file_pr->main audit heartbeat cadence in seconds; 0 disables running heartbeats.
+  audit_heartbeat_sec : Int
   /// Per-agent-type token pricing, keyed by canonical AgentType wire string.
   pricing : Map[String, PricingRate]
 } derive(Debug)
@@ -74,6 +76,7 @@ pub fn Config::default() -> Config {
     review_mode: SinglePass,
     worker_no_handoff_prod_sec: 120L,
     worker_no_handoff_escalate_sec: 120L,
+    audit_heartbeat_sec: 60,
     pricing: {},
   }
 }

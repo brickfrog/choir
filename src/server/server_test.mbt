@@ -10,6 +10,25 @@ test "audit-on-file-pr report capture ignores missing waiter" {
 }
 
 ///|
+async test "audit-on-file-pr report prepare buffers fast report before waiter" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_recovery_provider())
+  state.prepare_audit_on_file_pr_report("worker-a")
+  state.capture_audit_on_file_pr_report("worker-a", {
+    message: "No findings.",
+    status: @types.Status::Success,
+  })
+  match state.wait_for_audit_on_file_pr_report("worker-a") {
+    Some(report) => {
+      assert_eq(report.message, "No findings.")
+      assert_eq(report.status, @types.Status::Success)
+    }
+    None => fail("expected buffered audit report")
+  }
+  assert_false(state.audit_on_file_pr_reports.contains("worker-a"))
+}
+
+///|
 test "audit-on-file-pr report cleanup removes waiter queue" {
   let config = @types.Config::default()
   let state = ServerState::new(config, make_recovery_provider())
