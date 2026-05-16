@@ -160,13 +160,13 @@ pub async fn ServerState::handle_with_runner_and_capture(
         self.mark_handoff_delivered(agent_id)
       },
       on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
-        for pr_number in pr_numbers {
-          self.refresh_pr_with_runner(pr_number, runner) catch {
+        if pr_numbers.length() > 0 {
+          self.sweep_tracked_prs_for_automerge(runner) catch {
             e =>
               @moontrace.warn(
-                "failed to refresh PR after resolve_review_thread",
+                "failed to sweep PRs after resolve_review_thread",
                 fields=[
-                  @moontrace.field("pr_number", pr_number.to_string()),
+                  @moontrace.field("pr_numbers", pr_numbers.to_string()),
                   @moontrace.field("error", e.to_string()),
                 ],
               )

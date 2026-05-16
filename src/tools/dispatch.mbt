@@ -1599,6 +1599,13 @@ pub async fn dispatch(
                   capture,
                 )
                 after_counts.set(tracked.pr_number, count)
+                if count == 0 {
+                  state.restore({
+                    ..tracked,
+                    unresolved_thread_ids: [],
+                    unresolved_thread_ids_fetched: true,
+                  })
+                }
               }
             }
           None => ()
