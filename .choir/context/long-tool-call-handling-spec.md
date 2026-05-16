@@ -3,7 +3,9 @@
 ## Context
 
 The cbm auto-audit shipped in PR #346 runs server-side for ~5-10 minutes per
-file_pr→main call (Sarcasmotron review worker against `git diff main...HEAD`).
+file_pr→main call (Sarcasmotron review worker against the audited leaf diff,
+now pinned as `git diff main...<audited_head_sha>` so worker cwd cannot change
+the review surface).
 Codex's MCP client treats a 120s tool-call pause as a timeout and the leaf
 reports `[FAILED]` to the TL — even though the server is still progressing
 correctly and will eventually return the actual response (PR URL on success,
@@ -20,8 +22,9 @@ told.
 Observable target: a Dev leaf's file_pr→main call that triggers an auto-audit
 sees a normal 5-10 min wait, never misreports `[FAILED]` at 120s, eventually
 receives the actual response (PR URL or audit findings), and acts on it. A
-TL or user watching `.choir/serve.log` sees periodic `audit-on-file-pr pr=N
-elapsed=Ns` heartbeats so "is it still working?" has a verifiable answer.
+TL or user watching `.choir/serve.log` sees periodic `audit-on-file-pr
+pr=pending branch=<branch> elapsed=Ns` heartbeats so "is it still working?"
+has a verifiable answer.
 
 ## Clarifications
 > Q&A from the crystallize step. Durable; leaves read this.
@@ -39,13 +42,16 @@ matches what proved to work in the PR #347 live retry.
 **Q: How should the server signal progress while file_pr blocks?**
 A: Periodic delivery-log heartbeats only. The auto-audit's spawn-and-wait
 path writes a heartbeat line to `.choir/serve.log` + `.choir/delivery.log`
-every ~60s (`audit-on-file-pr pr=N agent=<leaf_id> elapsed=Ns status=running`)
-while the worker is alive; a final line on worker complete (`elapsed=Ns
-status=ok|error findings_count=N`). The leaf doesn't get a pane event (the
-MCP tool call is still synchronous from its perspective), but a TL / user
-watching the log sees clear "still working" signal. Smallest server change;
-no MCP protocol shifts. Pairs with the prompt rule above (leaf checks log
-if in doubt).
+every ~60s while the worker is alive. The audit currently runs before PR
+creation, so the live file_pr path uses `pr=pending branch=<branch>` rather
+than inventing a PR number it does not have yet:
+`audit-on-file-pr pr=pending agent=<leaf_id> branch=<branch> elapsed=Ns
+status=running`. A final line on worker complete includes the same identity
+fields plus `elapsed=Ns status=ok|error findings_count=N`. The leaf doesn't
+get a pane event (the MCP tool call is still synchronous from its
+perspective), but a TL / user watching the log sees clear "still working"
+signal. Smallest server change; no MCP protocol shifts. Pairs with the
+prompt rule above (leaf checks log if in doubt).
 
 ## Goals
 
@@ -86,15 +92,18 @@ if in doubt).
   seam):
   1. Compute elapsed seconds since spawn.
   2. Emit `@moontrace.info("audit-on-file-pr", fields=[field("pr",
-     pr_number), field("agent", tracked_agent_id), field("elapsed_s",
-     elapsed), field("status", "running")])`.
+     "pending"), field("agent", tracked_agent_id), field("branch",
+     branch), field("elapsed_s", elapsed), field("status", "running")])`
+     on the pre-PR audit path. If a future caller has an actual PR number,
+     use that number instead of `"pending"`.
   3. Append a one-line entry to `.choir/delivery.log` with the same data
      (matches the existing poller-delivery-line shape so `choir logs`
      interleaves it).
 
 - On worker complete (notify_parent received OR shutdown), emit one final
-  line: `audit-on-file-pr pr=N agent=... elapsed=Ns status=ok findings_count=N`
-  or `status=error reason=...`.
+  line: `audit-on-file-pr pr=pending agent=... branch=... elapsed=Ns
+  status=ok findings_count=N` or `status=error reason=...` on the current
+  pre-PR path.
 
 - Heartbeat cadence: 60s default (configurable via a config knob like
   `audit_heartbeat_sec`; 0 disables). The heartbeat task must NOT block the
@@ -106,7 +115,9 @@ if in doubt).
 
 - Factor the heartbeat-line construction as a pure function for testing
   (e.g. `pub fn audit_heartbeat_log_line(pr_number, agent_id, elapsed_s,
-  status~, findings_count?) -> String`).
+  status~, findings_count?) -> String`). The formatter should render
+  nonpositive `pr_number` values as `pr=pending` so the pre-PR path is
+  explicit instead of pretending PR #0 exists.
 
 ### End-to-end
 
@@ -164,14 +175,15 @@ let heartbeat_task = async fn() {
     @moontrace.info(
       "audit-on-file-pr",
       fields=[
-        @moontrace.field("pr", pr_number),
+        @moontrace.field("pr", "pending"),
+        @moontrace.field("branch", branch),
         @moontrace.field("agent", tracked_agent_id),
         @moontrace.field("elapsed_s", elapsed),
         @moontrace.field("status", "running"),
       ],
     )
     append_delivery_log_line(
-      audit_heartbeat_log_line(pr_number, tracked_agent_id, elapsed)
+      audit_heartbeat_log_line(0, tracked_agent_id, elapsed, branch=Some(branch))
     )
   }
 }
@@ -193,15 +205,17 @@ Add `audit_heartbeat_sec : Int` to the config struct (alongside
 
 ### Tests
 
-- `audit_heartbeat_log_line` truth-table: known pr/agent/elapsed/status →
-  expected formatted string (running, ok, error).
+- `audit_heartbeat_log_line` truth-table: known pr/agent/elapsed/status and
+  pre-PR pending/branch → expected formatted string (running, ok, error).
 - Loader test: leaf.md contains the new key phrases.
 - Heartbeat-loop wiring test: mock the audit-spawn-await with a synthetic
   worker that takes 180s; assert ≥2 heartbeat log lines appear (at ~60s
   and ~120s). Hermetic — mock `@async.sleep` + the timer seam + the worker
   await; no real sleeping.
-- No-heartbeat case: `audit_heartbeat_sec=0` disables heartbeats; assert
-  zero heartbeat lines in the same 180s scenario.
+- No-heartbeat case: `audit_heartbeat_sec=0` disables periodic running
+  heartbeats; assert zero running heartbeat lines in the same 180s scenario.
+  The terminal completion line still appears so the log records the audit
+  outcome.
 - Final-line: on worker complete, the final line has `status=ok` (or
   `status=error reason=...`) and the actual elapsed time, regardless of
   heartbeat cadence.
@@ -224,7 +238,8 @@ Add `audit_heartbeat_sec : Int` to the config struct (alongside
   send_message, merge_pr, etc.).
 - The heartbeat task must NOT block the worker-await — concurrent task,
   flips a `done` flag when the await completes.
-- `audit_heartbeat_sec == 0` must fully disable heartbeats (no log lines).
+- `audit_heartbeat_sec == 0` must fully disable periodic running heartbeats.
+  It does not suppress the one terminal completion line.
 - No new MCP tool surface, no new poller event types, no pane-side
   `[AUDIT IN PROGRESS]` events.
 - No `@sys.*`/`@process.*` direct calls in `src/server`/`src/tools` beyond

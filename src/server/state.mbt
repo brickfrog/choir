@@ -145,6 +145,14 @@ pub fn ServerState::capture_audit_on_file_pr_report(
 }
 
 ///|
+pub fn ServerState::prepare_audit_on_file_pr_report(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  ignore(self.audit_on_file_pr_report_queue(agent_id))
+}
+
+///|
 pub fn ServerState::cleanup_audit_on_file_pr_report(
   self : ServerState,
   agent_id : String,

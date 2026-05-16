@@ -171,6 +171,27 @@ fn parse_nonnegative_int64_config_value(
 }
 
 ///|
+fn parse_nonnegative_int_config_value(
+  key : String,
+  raw : String,
+  max? : Int64 = 2_147_483_647L,
+) -> Result[Int, @types.ChoirError] {
+  match parse_nonnegative_int64_config_value(key, raw) {
+    Ok(v) =>
+      if v > max {
+        Err(
+          @types.ChoirError::config_error(
+            key + ": expected <= " + max.to_string(),
+          ),
+        )
+      } else {
+        Ok(v.to_int())
+      }
+    Err(e) => Err(e)
+  }
+}
+
+///|
 fn parse_pricing_config(
   doc : TomlDoc,
 ) -> Result[Map[String, @types.PricingRate], @types.ChoirError] {
@@ -332,6 +353,19 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let audit_heartbeat_sec = match doc.get("audit_heartbeat_sec") {
+    None => default_cfg.audit_heartbeat_sec
+    Some(raw) =>
+      match
+        parse_nonnegative_int_config_value(
+          "audit_heartbeat_sec",
+          raw,
+          max=@types.audit_heartbeat_sec_max.to_int64(),
+        ) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+  }
   let pricing = match parse_pricing_config(doc) {
     Ok(p) => p
     Err(e) => return Err(e)
@@ -355,6 +389,7 @@ pub fn parse_config(
     review_mode,
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,
+    audit_heartbeat_sec,
     pricing,
   })
 }

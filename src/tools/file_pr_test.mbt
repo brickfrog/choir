@@ -772,6 +772,82 @@ test "parse_findings_count counts finding markers" {
 }
 
 ///|
+test "audit worker task pins review surface to audited head" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let task = build_audit_on_file_pr_task("/repo", "main.leaf", head)
+  assert_true(task.contains("Review surface: `git diff main..." + head + "`"))
+  assert_false(task.contains("git diff main...HEAD"))
+}
+
+///|
+test "audit_heartbeat_log_line formats status variants" {
+  assert_eq(
+    audit_heartbeat_log_line(42, "main.leaf", 60L),
+    "audit-on-file-pr pr=42 agent=main.leaf elapsed_s=60 status=running",
+  )
+  assert_eq(
+    audit_heartbeat_log_line(0, "main.leaf", 60L, branch=Some("main.leaf")),
+    "audit-on-file-pr pr=pending agent=main.leaf branch=main.leaf elapsed_s=60 status=running",
+  )
+  assert_eq(
+    audit_heartbeat_log_line(
+      42,
+      "main.leaf",
+      180L,
+      status=HeartbeatOk,
+      findings_count=Some(2),
+    ),
+    "audit-on-file-pr pr=42 agent=main.leaf elapsed_s=180 status=ok findings_count=2",
+  )
+  assert_eq(
+    audit_heartbeat_log_line(
+      42,
+      "main.leaf",
+      180L,
+      status=HeartbeatError,
+      reason=Some("timeout"),
+    ),
+    "audit-on-file-pr pr=42 agent=main.leaf elapsed_s=180 status=error reason=timeout",
+  )
+}
+
+///|
+async test "dispatch shutdown from audit worker completes audit wait queue" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId("main.audit-on-file-pr-shutdown"),
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(audit_on_file_pr_internal_caller_id),
+      workspace: "/tmp/choir-audit-worker",
+      branch: "main.audit-worker",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let reports : Array[(String, AuditOnFilePrReport)] = []
+  let resp = dispatch(
+    ToolRequest::Shutdown({ caller_id: Some("main.audit-on-file-pr-shutdown") }),
+    project_dir="/tmp/choir-audit-shutdown",
+    registry=Some(reg),
+    runner=mock_runner_all_ok,
+    bd_capture=mock_capture_empty,
+    capture_audit_on_file_pr_report=fn(agent_id, report) {
+      reports.push((agent_id, report))
+    },
+  )
+  assert_true(resp.is_ok())
+  assert_eq(reports.length(), 1)
+  let (agent_id, report) = reports[0]
+  assert_eq(agent_id, "main.audit-on-file-pr-shutdown")
+  assert_eq(report.status, @types.Status::Failure)
+  assert_true(report.message.contains("shutdown"))
+}
+
+///|
 fn file_pr_auto_audit_capture(
   head : String,
   receipt_body : String?,
@@ -799,10 +875,294 @@ fn file_pr_auto_audit_capture(
 }
 
 ///|
+fn file_pr_audit_heartbeat_log_count(log : String, needle : String) -> Int {
+  let mut count = 0
+  for line in log.split("\n") {
+    if line.contains(needle) {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
+async test "interpret_file_pr audit wait emits heartbeats and final findings line" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-heartbeat-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let appended : Array[String] = []
+  let mut now_ms = 0L
+  let fake_sleep = async fn(ms : Int) -> Unit {
+    if ms == 60000 && now_ms < 180000L {
+      now_ms = now_ms + ms.to_int64()
+    }
+    @async.pause()
+  }
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    audit_heartbeat_sec=60,
+    append_file=fn(_path, content) {
+      appended.push(content)
+      true
+    },
+    audit_sleep_fn=fake_sleep,
+    audit_now_ms_fn=fn() { now_ms },
+    wait_for_audit_report=async fn(_) {
+      while now_ms < 180000L {
+        @async.pause()
+      }
+      Some({
+        message: "Finding 1: one\nFinding 2: two\n",
+        status: @types.Status::Success,
+      })
+    },
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("audit found 2 findings"))
+    @types.Response::Ok(_) => fail("expected findings error")
+  }
+  let log = appended.join("")
+  assert_true(file_pr_audit_heartbeat_log_count(log, "status=running") >= 2)
+  assert_true(log.contains("elapsed_s=60 status=running"))
+  assert_true(log.contains("elapsed_s=120 status=running"))
+  if !log.contains("elapsed_s=180 status=ok findings_count=2") {
+    fail("missing final heartbeat line: " + log)
+  }
+}
+
+///|
+async test "interpret_file_pr stops running heartbeats when audit worker is not alive" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-heartbeat-dead-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let appended : Array[String] = []
+  let mut now_ms = 0L
+  let fake_sleep = async fn(ms : Int) -> Unit {
+    if ms == 60000 && now_ms < 120000L {
+      now_ms = now_ms + ms.to_int64()
+    }
+    @async.pause()
+  }
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    audit_heartbeat_sec=60,
+    append_file=fn(_path, content) {
+      appended.push(content)
+      true
+    },
+    audit_sleep_fn=fake_sleep,
+    audit_now_ms_fn=fn() { now_ms },
+    audit_worker_alive=fn(_) { now_ms < 120000L },
+    wait_for_audit_report=async fn(_) {
+      while now_ms < 120000L {
+        @async.pause()
+      }
+      now_ms = 180000L
+      @async.pause()
+      None
+    },
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("audit worker did not report"))
+    @types.Response::Ok(_) => fail("expected missing report")
+  }
+  let log = appended.join("")
+  assert_true(log.contains("elapsed_s=60 status=running"))
+  assert_false(log.contains("elapsed_s=120 status=running"))
+  assert_true(log.contains("elapsed_s=180 status=error reason=missing_report"))
+}
+
+///|
+async test "interpret_file_pr audit heartbeat zero disables running lines only" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-heartbeat-off-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let appended : Array[String] = []
+  let mut now_ms = 0L
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    audit_heartbeat_sec=0,
+    append_file=fn(_path, content) {
+      appended.push(content)
+      true
+    },
+    audit_now_ms_fn=fn() { now_ms },
+    wait_for_audit_report=async fn(_) {
+      now_ms = 180000L
+      @async.pause()
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    create_dir_all=fn(_) { true },
+    write_file_atomic=fn(_, _) { true },
+  )
+  assert_true(got.is_ok())
+  let log = appended.join("")
+  assert_eq(file_pr_audit_heartbeat_log_count(log, "audit-on-file-pr"), 1)
+  assert_eq(file_pr_audit_heartbeat_log_count(log, "status=running"), 0)
+  assert_true(log.contains("elapsed_s=180 status=ok findings_count=0"))
+}
+
+///|
+async test "interpret_file_pr audit final line records worker failure elapsed" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-heartbeat-error-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let appended : Array[String] = []
+  let mut now_ms = 0L
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    audit_heartbeat_sec=0,
+    append_file=fn(_path, content) {
+      appended.push(content)
+      true
+    },
+    audit_now_ms_fn=fn() { now_ms },
+    wait_for_audit_report=async fn(_) {
+      now_ms = 180000L
+      @async.pause()
+      Some({
+        message: "worker failed before report body",
+        status: @types.Status::Failure,
+      })
+    },
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("audit worker reported failure"))
+    @types.Response::Ok(_) => fail("expected worker failure")
+  }
+  let log = appended.join("")
+  assert_eq(file_pr_audit_heartbeat_log_count(log, "audit-on-file-pr"), 1)
+  assert_true(log.contains("elapsed_s=180 status=error reason=worker_failure"))
+}
+
+///|
+async test "interpret_file_pr audit final line records worker shutdown elapsed" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-heartbeat-shutdown-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let appended : Array[String] = []
+  let mut now_ms = 0L
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    audit_heartbeat_sec=0,
+    append_file=fn(_path, content) {
+      appended.push(content)
+      true
+    },
+    audit_now_ms_fn=fn() { now_ms },
+    wait_for_audit_report=async fn(_) {
+      now_ms = 180000L
+      @async.pause()
+      Some({
+        message: "audit worker shutdown without notify_parent report",
+        status: @types.Status::Failure,
+      })
+    },
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("audit worker reported failure"))
+    @types.Response::Ok(_) => fail("expected worker shutdown failure")
+  }
+  let log = appended.join("")
+  assert_eq(file_pr_audit_heartbeat_log_count(log, "audit-on-file-pr"), 1)
+  assert_true(log.contains("elapsed_s=180 status=error reason=worker_shutdown"))
+}
+
+///|
 async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and returns PR" {
   let project_dir = "/tmp/choir-fpr-auto-audit-ok-" + @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let mut runner_calls = 0
+  let mut prepared_worker = ""
   let mut waited_worker = ""
   let mut receipt_dir = ""
   let mut receipt_path = ""
@@ -834,6 +1194,7 @@ async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and r
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    prepare_audit_report=fn(worker_id) { prepared_worker = worker_id },
     create_dir_all=fn(path) {
       receipt_dir = path
       true
@@ -846,6 +1207,7 @@ async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and r
     wait_for_audit_report=async fn(worker_id) {
       @async.sleep(0)
       waited_worker = worker_id
+      assert_eq(prepared_worker, worker_id)
       Some({
         message: "No findings. The code is acceptable.",
         status: @types.Status::Success,
@@ -863,6 +1225,7 @@ async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and r
   // The auto-audit path runs the spawned worker, then the normal file_pr push.
   assert_eq(runner_calls, 2)
   assert_true(waited_worker.contains(audit_on_file_pr_internal_caller_id))
+  assert_true(prepared_worker.contains(file_pr_short_sha(head)))
   assert_true(receipt_dir.contains(".choir/audit-receipts"))
   assert_true(receipt_path.contains(".choir/audit-receipts/abcdef123456.json"))
   let parsed_receipt = @json.parse(receipt_content) catch {

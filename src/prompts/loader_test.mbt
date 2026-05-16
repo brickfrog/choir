@@ -246,6 +246,9 @@ test "leaf profile default prompt uses poller snapshots for review state" {
   assert_true(body.contains("the moment the next poller snapshot shows"))
   assert_true(body.contains("notify_parent --status success"))
   assert_true(body.contains("Do not enter sleep loops"))
+  assert_true(body.contains("A 120s pause is normal"))
+  assert_true(body.contains("Do NOT report [FAILED] at 120s"))
+  assert_true(body.contains("audit-on-file-pr"))
   assert_true(
     body.contains(
       "without sending that required `notify_parent` handoff has failed",
