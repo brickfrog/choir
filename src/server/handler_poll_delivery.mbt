@@ -1835,6 +1835,7 @@ pub async fn ServerState::process_poller_tick_with(
   self.mutex_registry.expire(now)
   let pending_events = []
   let pending_agent_ids = []
+  let sha_before = poller_last_sha_snapshot(self.poller)
   self.poller.tick_with(
     now,
     timeout,
@@ -1845,6 +1846,7 @@ pub async fn ServerState::process_poller_tick_with(
     },
     fn(_) { () },
   )
+  self.record_poller_sha_transitions(sha_before, now)
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
   }
@@ -1876,6 +1878,7 @@ pub async fn ServerState::process_poller_tick(
   let mut tick_event_total = 0
   let project_dir = self.config.project_dir
   let append_file = self.append_file
+  let sha_before = poller_last_sha_snapshot(self.poller)
   self.poller.tick_with(
     now,
     timeout,
@@ -1889,6 +1892,7 @@ pub async fn ServerState::process_poller_tick(
       log_poller_pr_tick(append_file, project_dir, log)
     },
   )
+  self.record_poller_sha_transitions(sha_before, now)
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
   }
@@ -1942,6 +1946,7 @@ pub async fn ServerState::refresh_pr_with(
 ) -> Unit {
   let pending_events : Array[@poller.PollEvent] = []
   let pending_agent_ids : Array[String] = []
+  let sha_before = poller_last_sha_snapshot(self.poller)
   self.poller.tick_pr_with(
     pr_number,
     now,
@@ -1954,6 +1959,7 @@ pub async fn ServerState::refresh_pr_with(
     fn(_) { () },
     force_refresh=true,
   )
+  self.record_poller_sha_transitions(sha_before, now)
   match self.poller.get(pr_number) {
     Some(pr) => {
       deliver_orphaned_pr_notification_for(self, pr, runner)

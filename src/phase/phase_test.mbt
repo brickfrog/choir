@@ -63,6 +63,53 @@ test "lifecycle_idle_watchdog_exempt logic" {
 }
 
 ///|
+test "progress_watchdog_applies includes Dev Working regardless of fixes" {
+  assert_true(progress_watchdog_applies(Dev(Working), 0L))
+  assert_true(progress_watchdog_applies(Dev(Working), 10L))
+}
+
+///|
+test "progress_watchdog_applies includes ChangesRequested only after fixes" {
+  let workflow : WorkflowState = Dev(
+    ChangesRequested(pr_number=1, next_round=2),
+  )
+  assert_false(progress_watchdog_applies(workflow, 0L))
+  assert_true(progress_watchdog_applies(workflow, 1L))
+}
+
+///|
+test "progress_watchdog_applies excludes parked Dev states" {
+  assert_false(
+    progress_watchdog_applies(
+      Dev(ReviewOwned(pr_number=1, state=ApprovedAwaitingMerge)),
+      1L,
+    ),
+  )
+  assert_false(progress_watchdog_applies(Dev(Done(reason=Merged)), 1L))
+  assert_false(
+    progress_watchdog_applies(Dev(Failed(reason=UnexpectedDisconnect)), 1L),
+  )
+  assert_false(
+    progress_watchdog_applies(
+      Dev(ExitRequestedDeferred(pr_number=1, state=ApprovedAwaitingMerge)),
+      1L,
+    ),
+  )
+  assert_false(progress_watchdog_applies(Dev(Exitable), 1L))
+  assert_false(progress_watchdog_applies(Dev(WaitingForRedGate), 1L))
+}
+
+///|
+test "progress_watchdog_applies includes only working Worker state" {
+  assert_true(progress_watchdog_applies(Worker(Working), 0L))
+  assert_false(progress_watchdog_applies(Worker(Done(reason=Shutdown)), 1L))
+  assert_false(
+    progress_watchdog_applies(Worker(Failed(reason=UnexpectedDisconnect)), 1L),
+  )
+  assert_false(progress_watchdog_applies(Worker(Exitable), 1L))
+}
+
+///|
 test "WaitingForRedGate transitions identically to Working" {
   // PRCreated from WaitingForRedGate should work like from Working.
   match

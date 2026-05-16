@@ -34,6 +34,8 @@ pub struct ServerState {
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
+  last_commit_observed_at : Map[String, Int64]
+  last_commit_observed_sha : Map[String, String]
   goal_judge : GoalJudgeState
   pane_watcher : @runtime.PaneWatcher
   recovery_provider : @runtime.RecoveryProvider
@@ -99,6 +101,8 @@ pub fn ServerState::new(
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
+    last_commit_observed_at: {},
+    last_commit_observed_sha: {},
     goal_judge: GoalJudgeState::new(),
     pane_watcher: @runtime.PaneWatcher::new(),
     recovery_provider,

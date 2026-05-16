@@ -121,6 +121,8 @@ fn ServerState::clear_agent_runtime_tracking(
   self.worker_no_handoff_stalled_emitted.remove(agent_id)
   self.handoff_delivered.remove(agent_id)
   self.worker_no_handoff_exit_emitted.remove(agent_id)
+  self.last_commit_observed_at.remove(agent_id)
+  self.last_commit_observed_sha.remove(agent_id)
 }
 
 ///|
@@ -132,6 +134,345 @@ pub fn ServerState::mark_handoff_delivered(
   self.worker_no_handoff_prodded_at.remove(agent_id)
   self.worker_no_handoff_stalled_emitted.remove(agent_id)
   self.worker_no_handoff_exit_emitted.remove(agent_id)
+}
+
+///|
+fn first_whitespace_token(raw : String) -> String {
+  let s = raw.trim().to_owned()
+  for i = 0; i < s.length(); i = i + 1 {
+    let c = s[i]
+    if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+      return s[:i].to_owned()
+    }
+  }
+  s
+}
+
+///|
+fn parse_ls_remote_head_sha(output : String) -> String {
+  for raw in output.split("\n") {
+    let sha = first_whitespace_token(raw.to_owned())
+    if sha != "" {
+      return sha
+    }
+  }
+  ""
+}
+
+///|
+fn progress_watchdog_ls_remote_command(
+  project_dir : String,
+  branch : String,
+) -> @workspace.Command {
+  {
+    program: "git",
+    args: ["ls-remote", "--heads", "origin", branch],
+    workdir: Some(project_dir),
+  }
+}
+
+///|
+fn ServerState::record_leaf_commit_observed(
+  self : ServerState,
+  agent_id : String,
+  sha : String,
+  now : Int64,
+) -> Unit {
+  if sha == "" {
+    return
+  }
+  match self.last_commit_observed_sha.get(agent_id) {
+    Some(previous) if previous == sha => ()
+    _ => {
+      self.last_commit_observed_sha.set(agent_id, sha)
+      self.last_commit_observed_at.set(agent_id, now)
+    }
+  }
+}
+
+///|
+pub fn poller_last_sha_snapshot(
+  poller : @poller.PollerState,
+) -> Map[Int, String] {
+  let snapshot : Map[Int, String] = {}
+  for tracked in poller.tracked.values() {
+    snapshot.set(tracked.pr_number, tracked.last_sha)
+  }
+  snapshot
+}
+
+///|
+pub fn ServerState::record_poller_sha_transitions(
+  self : ServerState,
+  before : Map[Int, String],
+  now : Int64,
+) -> Unit {
+  for tracked in self.poller.tracked.values() {
+    let sha = tracked.last_sha
+    if sha == "" {
+      continue
+    }
+    match before.get(tracked.pr_number) {
+      Some(previous) if previous == sha => ()
+      _ => self.record_leaf_commit_observed(tracked.agent_id, sha, now)
+    }
+  }
+}
+
+///|
+fn ServerState::tracked_sha_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> String? {
+  for tracked in self.poller.tracked.values() {
+    if tracked.agent_id == agent_id && tracked.last_sha != "" {
+      return Some(tracked.last_sha)
+    }
+  }
+  None
+}
+
+///|
+fn ServerState::fixes_pushed_at_for_agent(
+  self : ServerState,
+  agent_id : String,
+  workflow : @phase.WorkflowState,
+) -> Int64 {
+  let pr_number = match workflow {
+    @phase.WorkflowState::Dev(@phase.DevLifecycle::ReviewOwned(pr_number=n, ..))
+    | @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ChangesRequested(pr_number=n, ..)
+    )
+    | @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(pr_number=n, ..)
+    ) => Some(n)
+    _ => None
+  }
+  match pr_number {
+    Some(n) =>
+      match self.poller.get(n) {
+        Some(tracked) if tracked.agent_id == agent_id => tracked.fixes_pushed_at
+        _ => 0L
+      }
+    None => {
+      let mut latest = 0L
+      for tracked in self.poller.tracked.values() {
+        if tracked.agent_id == agent_id && tracked.fixes_pushed_at > latest {
+          latest = tracked.fixes_pushed_at
+        }
+      }
+      latest
+    }
+  }
+}
+
+///|
+async fn ServerState::ensure_progress_commit_observed(
+  self : ServerState,
+  agent : @types.Agent,
+  now : Int64,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Int64 {
+  let agent_id = agent.agent_id.to_string()
+  match self.tracked_sha_for_agent(agent_id) {
+    Some(sha) => {
+      self.record_leaf_commit_observed(agent_id, sha, now)
+      return self.last_commit_observed_at.get(agent_id).unwrap_or(0L)
+    }
+    None => ()
+  }
+  let branch = if agent.branch != "" { agent.branch } else { agent_id }
+  let (status, output) = capture(
+    progress_watchdog_ls_remote_command(self.config.project_dir, branch),
+  ) catch {
+    _ => return self.last_commit_observed_at.get(agent_id).unwrap_or(0L)
+  }
+  if status == 0 {
+    let sha = parse_ls_remote_head_sha(output)
+    self.record_leaf_commit_observed(agent_id, sha, now)
+  }
+  self.last_commit_observed_at.get(agent_id).unwrap_or(0L)
+}
+
+///|
+fn progress_watchdog_suffix_number(slug : String, base_slug : String) -> Int? {
+  let prefix = base_slug + "-r"
+  if !slug.has_prefix(prefix) || slug.length() <= prefix.length() {
+    return None
+  }
+  let raw = slug[prefix.length():].to_owned()
+  for c in raw {
+    if c < '0' || c > '9' {
+      return None
+    }
+  }
+  Some(@string.parse_int(raw)) catch {
+    _ => None
+  }
+}
+
+///|
+fn progress_watchdog_base_slug(slug : String) -> String {
+  match slug.rev_find("-r") {
+    Some(i) if i + 2 < slug.length() => {
+      let suffix = slug[i + 2:].to_owned()
+      for c in suffix {
+        if c < '0' || c > '9' {
+          return slug
+        }
+      }
+      slug[:i].to_owned()
+    }
+    _ => slug
+  }
+}
+
+///|
+fn ServerState::next_progress_rescue_slug(
+  self : ServerState,
+  from_agent_id : String,
+) -> String {
+  let current_slug = @phase.extract_slug(from_agent_id)
+  let base_slug = progress_watchdog_base_slug(current_slug)
+  let mut max_seen = 0
+  for agent in self.registry.list() {
+    let slug = @phase.extract_slug(agent.agent_id.to_string())
+    match progress_watchdog_suffix_number(slug, base_slug) {
+      Some(n) if n > max_seen => max_seen = n
+      _ => ()
+    }
+  }
+  base_slug + "-r" + (max_seen + 1).to_string()
+}
+
+///|
+fn ServerState::task_contract_for_progress_rescue(
+  self : ServerState,
+  agent : @types.Agent,
+) -> @types.TaskContract {
+  let agent_id = agent.agent_id.to_string()
+  let slug = @phase.extract_slug(agent_id)
+  let paths : Array[String] = [
+    @workspace.inline_agent_metadata_dir(self.config.project_dir, agent_id) +
+    "/.choir/config.local.toml",
+    agent.workspace + "/.choir/config.local.toml",
+    @workspace.worktree_path(self.config.project_dir, slug) +
+    "/.choir/config.local.toml",
+  ]
+  for path in paths {
+    let content = (self.read_file)(path)
+    if content == "" {
+      continue
+    }
+    match @config.parse_local_config(content) {
+      Ok(local_cfg) =>
+        match local_cfg.task_contract {
+          Some(contract) if contract.goal != "" => return contract
+          Some(contract) => {
+            let goal = "Continue progress-watchdog rescue for " + agent_id
+            return { ..contract, goal, }
+          }
+          None => ()
+        }
+      Err(_) => ()
+    }
+  }
+  {
+    ..@types.TaskContract::empty(),
+    goal: "Continue progress-watchdog rescue for " + agent_id,
+  }
+}
+
+///|
+fn progress_watchdog_rescue_args(
+  task_contract : @types.TaskContract,
+  caller_id : String,
+  from_agent_id : String,
+  new_slug : String,
+  agent_type : @types.AgentType,
+) -> @tools.RescueLeafArgs {
+  {
+    task: task_contract.goal,
+    task_contract,
+    caller_id,
+    from_agent_id,
+    new_slug,
+    agent_type,
+    parent_session_id: None,
+  }
+}
+
+///|
+pub async fn ServerState::check_leaf_progress(
+  self : ServerState,
+  agent : @types.Agent,
+  lifecycle : @phase.AgentLifecycle,
+  fixes_pushed_at : Int64,
+  now : Int64,
+  capture : async (@workspace.Command) -> (Int, String),
+  rescue_invoker : async (@tools.RescueLeafArgs) -> @types.Response,
+) -> Unit {
+  if agent.role != @types.Role::Dev && agent.role != @types.Role::Worker {
+    return
+  }
+  let applies = @phase.progress_watchdog_applies(
+    lifecycle.workflow,
+    fixes_pushed_at,
+  )
+  if !applies {
+    return
+  }
+  let from_agent_id = agent.agent_id.to_string()
+  let last_commit_at = self.ensure_progress_commit_observed(agent, now, capture)
+  match
+    progress_watchdog_decision(applies, last_commit_at, now, PROGRESS_STALL_SEC) {
+    ProgressWatchdogDecision::DoNothing => ()
+    ProgressWatchdogDecision::Rescue => {
+      let caller_id = match agent.parent {
+        Some(parent_id) => parent_id
+        None => return
+      }
+      let new_type = pick_rescue_agent_type(agent.agent_type)
+      let new_slug = self.next_progress_rescue_slug(from_agent_id)
+      let task_contract = self.task_contract_for_progress_rescue(agent)
+      self.last_commit_observed_at.remove(from_agent_id)
+      self.last_commit_observed_sha.remove(from_agent_id)
+      let resp = rescue_invoker(
+        progress_watchdog_rescue_args(
+          task_contract, caller_id, from_agent_id, new_slug, new_type,
+        ),
+      )
+      if resp.is_ok() {
+        let to_agent_id = resp.ok_field("agent_id").unwrap_or("")
+        ignore(
+          @poller.append_delivery_log_line(
+            self.append_file,
+            self.config.project_dir,
+            "progress_watchdog outcome=rescued from=" +
+            from_agent_id +
+            " to=" +
+            to_agent_id +
+            " agent_type=" +
+            new_type.to_wire_string(),
+            now_ms=now * 1000L,
+          ),
+        )
+        self.clear_agent_runtime_tracking(from_agent_id)
+        if to_agent_id != "" {
+          self.watch_pane(to_agent_id)
+        }
+      } else {
+        @moontrace.warn("progress watchdog rescue failed", fields=[
+          @moontrace.field("agent_id", from_agent_id),
+          @moontrace.field("agent_type", new_type.to_wire_string()),
+          @moontrace.field(
+            "error",
+            resp.error_message().unwrap_or("unknown error"),
+          ),
+        ])
+      }
+    }
+  }
 }
 
 ///|
@@ -1202,7 +1543,26 @@ pub async fn ServerState::check_idle_agents(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   worker_no_handoff_prod_sec? : Int64 = 120L,
   worker_no_handoff_escalate_sec? : Int64 = 120L,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  rescue_invoker? : (async (@tools.RescueLeafArgs) -> @types.Response)? = None,
 ) -> Unit {
+  let progress_rescue_invoker = match rescue_invoker {
+    Some(invoker) => invoker
+    None =>
+      @tools.build_rescue_leaf_invoker(
+        self.config.project_dir,
+        self.config.terminal_session,
+        runner,
+        capture,
+        Some(self.registry),
+        Some(self.poller),
+        extra_mcp_servers_json=self.config.extra_mcp_servers_json,
+        shell_command=self.config.shell_command,
+        listen_uds=self.config.listen_uds,
+        listen_tcp=self.config.listen_tcp,
+        tcp_auth_token=self.config.tcp_auth_token,
+      )
+  }
   let agent_ids = self.pane_watcher.watched_agents()
   for agent_id in agent_ids {
     let agent = try self.registry.get(agent_id) catch {
@@ -1224,6 +1584,16 @@ pub async fn ServerState::check_idle_agents(
     // Some lifecycle states are kill-watchdog-exempt, but no-handoff checks
     // may still need to prod or notify without terminating the agent.
     let watchdog_exempt = @phase.lifecycle_idle_watchdog_exempt(lifecycle)
+    let fixes_pushed_at = self.fixes_pushed_at_for_agent(
+      agent_id,
+      lifecycle.workflow,
+    )
+    self.check_leaf_progress(
+      agent, lifecycle, fixes_pushed_at, now, capture, progress_rescue_invoker,
+    )
+    if self.registry.get_opt(agent_id) is None {
+      continue
+    }
     match agent.terminal_target {
       Some(_) => ()
       None => continue

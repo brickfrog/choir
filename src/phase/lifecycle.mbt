@@ -536,6 +536,19 @@ pub fn lifecycle_idle_watchdog_exempt(lifecycle : AgentLifecycle) -> Bool {
 }
 
 ///|
+pub fn progress_watchdog_applies(
+  workflow : WorkflowState,
+  fixes_pushed_at : Int64,
+) -> Bool {
+  match workflow {
+    Dev(Working) => true
+    Dev(ChangesRequested(..)) => fixes_pushed_at > 0L
+    Worker(Working) => true
+    _ => false
+  }
+}
+
+///|
 pub fn dev_lifecycle_transition(
   lifecycle : DevLifecycle,
   event : DevLifecycleEvent,
