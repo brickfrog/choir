@@ -166,7 +166,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
               @moontrace.warn(
                 "failed to sweep PRs after resolve_review_thread",
                 fields=[
-                  @moontrace.field("pr_numbers", pr_numbers.to_string()),
+                  @moontrace.field("pr_count", pr_numbers.length()),
                   @moontrace.field("error", e.to_string()),
                 ],
               )

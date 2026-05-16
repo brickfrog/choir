@@ -1593,18 +1593,21 @@ pub async fn dispatch(
             for tracked in state.tracked.values() {
               if tracked.agent_id == resolve_args.caller_id &&
                 tracked.unresolved_thread_ids_fetched {
-                let (count, _) = fetch_unresolved_review_threads(
-                  tracked.pr_number,
-                  project_dir,
-                  capture,
-                )
-                after_counts.set(tracked.pr_number, count)
-                if count == 0 {
-                  state.restore({
-                    ..tracked,
-                    unresolved_thread_ids: [],
-                    unresolved_thread_ids_fetched: true,
-                  })
+                match
+                  fetch_unresolved_review_thread_refs(
+                    tracked.pr_number,
+                    project_dir,
+                    capture,
+                  ) {
+                  Some(refs) => {
+                    after_counts.set(tracked.pr_number, refs.length())
+                    state.restore({
+                      ..tracked,
+                      unresolved_thread_ids: refs,
+                      unresolved_thread_ids_fetched: true,
+                    })
+                  }
+                  None => ()
                 }
               }
             }

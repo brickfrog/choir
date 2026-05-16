@@ -2715,7 +2715,7 @@ async test "dispatch resolve_review_thread triggers pulse for unresolved drop 5-
     None => fail("expected tracked PR")
   }
   let seen : Array[Int] = []
-  let four_threads = "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"a\",\"isResolved\":false,\"path\":\"src/a\",\"comments\":{\"nodes\":[{\"body\":\"a\"}]}},{\"id\":\"b\",\"isResolved\":false,\"path\":\"src/b\",\"comments\":{\"nodes\":[{\"body\":\"b\"}]}},{\"id\":\"c\",\"isResolved\":false,\"path\":\"src/c\",\"comments\":{\"nodes\":[{\"body\":\"c\"}]}},{\"id\":\"d\",\"isResolved\":false,\"path\":\"src/d\",\"comments\":{\"nodes\":[{\"body\":\"d\"}]}}]}}}}"
+  let four_threads = "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"a\",\"isResolved\":false,\"isOutdated\":false,\"path\":\"src/a\",\"comments\":{\"nodes\":[{\"body\":\"a\",\"author\":{\"login\":\"user-1\"}}]}},{\"id\":\"b\",\"isResolved\":false,\"isOutdated\":false,\"path\":\"src/b\",\"comments\":{\"nodes\":[{\"body\":\"b\",\"author\":{\"login\":\"user-1\"}}]}},{\"id\":\"c\",\"isResolved\":false,\"isOutdated\":false,\"path\":\"src/c\",\"comments\":{\"nodes\":[{\"body\":\"c\",\"author\":{\"login\":\"user-1\"}}]}},{\"id\":\"d\",\"isResolved\":false,\"isOutdated\":false,\"path\":\"src/d\",\"comments\":{\"nodes\":[{\"body\":\"d\",\"author\":{\"login\":\"user-1\"}}]}}]}}}}}"
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
     let repo_view_json =
@@ -2795,6 +2795,98 @@ async test "dispatch resolve_review_thread triggers pulse for unresolved drop 5-
     _ => fail("expected Ok")
   }
   @debug.assert_eq(seen, [222])
+  match ps.get(222) {
+    Some(current) => assert_eq(current.unresolved_thread_ids.length(), 4)
+    None => fail("expected tracked PR")
+  }
+}
+
+///|
+async test "dispatch resolve_review_thread skips pulse when after-count fetch fails" {
+  let project_dir = "/tmp/choir-dispatch-resolve-fetch-fail-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    333,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/333",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match ps.get(333) {
+    Some(current) =>
+      ps.restore({
+        ..current,
+        unresolved_thread_ids: [
+          @poller.ReviewThreadRef::{
+            id: "thread-1",
+            is_outdated: false,
+            author_login: "user-1",
+          },
+          @poller.ReviewThreadRef::{
+            id: "thread-2",
+            is_outdated: false,
+            author_login: "user-1",
+          },
+        ],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let seen : Array[Int] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let is_graphql = cmd.args.contains("api") && cmd.args.contains("graphql")
+    let is_repo_view = cmd.args.contains("repo") &&
+      cmd.args.contains("view") &&
+      cmd.args.contains("owner,name")
+    let is_resolve = cmd.args
+      .iter()
+      .any(fn(arg) {
+        arg.contains("resolveReviewThread") || arg.contains("query=mutation")
+      })
+    if is_repo_view {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if is_graphql && is_resolve {
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if is_graphql {
+      return (0, "{\"data\":{\"repository\":{\"pullRequest\":null}}}")
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveReviewThread({
+      thread_id: "PRRT_fetch_fail",
+      caller_id: "main.leaf",
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    capture~,
+    on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
+      for n in pr_numbers {
+        seen.push(n)
+      }
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected Ok")
+  }
+  @debug.assert_eq(seen, [])
+  match ps.get(333) {
+    Some(current) => assert_eq(current.unresolved_thread_ids.length(), 2)
+    None => fail("expected tracked PR")
+  }
 }
 
 ///|

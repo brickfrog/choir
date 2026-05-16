@@ -448,15 +448,6 @@ pub async fn interpret_shutdown(
     Some(v) => v
     None => return shutdown_missing_caller_response()
   }
-  match shutdown_poller_block_pr_number(poller_state, caller_id) {
-    Some(pr_number) =>
-      return @types.Response::Err(shutdown_poller_block_message(pr_number))
-    None => ()
-  }
-  let role = shutdown_registry_role_for_caller(registry, caller_id)
-  let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
-  let plan = shutdown_exit_plan(lifecycle, poller_state~)
-
   match registry {
     Some(reg) =>
       try {
@@ -480,6 +471,14 @@ pub async fn interpret_shutdown(
       }
     None => ()
   }
+  match shutdown_poller_block_pr_number(poller_state, caller_id) {
+    Some(pr_number) =>
+      return @types.Response::Err(shutdown_poller_block_message(pr_number))
+    None => ()
+  }
+  let role = shutdown_registry_role_for_caller(registry, caller_id)
+  let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
+  let plan = shutdown_exit_plan(lifecycle, poller_state~)
 
   if plan.apply_dev_exit_requested {
     ignore(

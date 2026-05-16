@@ -1200,6 +1200,59 @@ async test "interpret_shutdown blocks poller critical phase before plan" {
 }
 
 ///|
+async test "interpret_shutdown closes pane before poller critical phase block" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    5,
+    "main.leaf",
+    "b",
+    "main",
+    "https://ex/5",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "",
+    "",
+    @poller.CiRollupStatus::Unknown,
+    false,
+  )
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    Some(t),
+    "/tmp/choir-shutdown-critical-pane",
+  )
+  ignore(reg.upsert(agent))
+  let seen : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      seen.push(cmd)
+    }
+    [0]
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.leaf") },
+    "/tmp",
+    Some(ps),
+    Some(reg),
+    runner,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, shutdown_poller_block_message(5))
+    _ => fail("expected poller block")
+  }
+  match kill_agent_pane_close_command(agent) {
+    Some(close_cmd) =>
+      assert_true(seen.iter().any(fn(cmd) { cmd == close_cmd }))
+    None => fail("expected close command")
+  }
+}
+
+///|
 async test "interpret_shutdown ok when caller missing uses best-effort" {
   let args : ShutdownArgs = { caller_id: None }
   let got = interpret_shutdown(
