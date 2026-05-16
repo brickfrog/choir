@@ -169,6 +169,71 @@ pub fn gh_pr_view_command(branch : String) -> @workspace.Command {
 }
 
 ///|
+fn bounded_gh_pr_view_branch_command(branch : String) -> @workspace.Command {
+  {
+    program: "timeout",
+    args: ["30s", "gh", "pr", "view", branch, "--json", "number,url,state"],
+    workdir: None,
+  }
+}
+
+///|
+fn tracked_pr_for_branch(
+  poller_state : @poller.PollerState,
+  branch : String,
+) -> @poller.TrackedPR? {
+  for tracked in poller_state.tracked.values() {
+    if tracked.branch == branch {
+      return Some(tracked)
+    }
+  }
+  None
+}
+
+///|
+async fn gh_pr_view_branch_with_poller_fallback(
+  branch : String,
+  project_dir : String,
+  poller_state : @poller.PollerState?,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @poller.GhWithFallback {
+  let capture_in_project = async fn(cmd : @workspace.Command) -> (Int, String) {
+    capture({ ..cmd, workdir: Some(project_dir) })
+  }
+  match poller_state {
+    Some(ps) =>
+      match tracked_pr_for_branch(ps, branch) {
+        Some(tracked) =>
+          @poller.gh_pr_view_with_fallback(
+            tracked.pr_number,
+            ps,
+            capture=capture_in_project,
+          )
+        None => gh_pr_view_branch_bounded(branch, project_dir, capture)
+      }
+    None => gh_pr_view_branch_bounded(branch, project_dir, capture)
+  }
+}
+
+///|
+async fn gh_pr_view_branch_bounded(
+  branch : String,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @poller.GhWithFallback {
+  let cmd = {
+    ..bounded_gh_pr_view_branch_command(branch),
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture(cmd)
+  match @poller.gh_fallback_classify(exit_code, output) {
+    @poller.Fresh(data) => { data, stale: false, age_sec: 0 }
+    @poller.Stall | @poller.EmptyOutput | @poller.Error(_) =>
+      { data: "", stale: true, age_sec: 0 }
+  }
+}
+
+///|
 fn parse_non_negative_int(s : String) -> Int? {
   Some(@string.parse_int(s.trim().to_owned())) catch {
     _ => None
@@ -510,11 +575,13 @@ pub async fn ensure_pull_request_with_capture(
   title : String?,
   body : String?,
   capture : async (@workspace.Command) -> (Int, String),
+  poller_state? : @poller.PollerState? = None,
 ) -> Result[PullRequestInfo, @types.ChoirError] {
-  let view_cmd = { ..gh_pr_view_command(branch), workdir: Some(project_dir) }
-  let (view_exit, view_output) = capture(view_cmd)
-  if view_exit == 0 {
-    match parse_pull_request_info(view_output) {
+  let view = gh_pr_view_branch_with_poller_fallback(
+    branch, project_dir, poller_state, capture,
+  )
+  if view.data != "" {
+    match parse_pull_request_info(view.data) {
       Some(pr) => if pr.state == "OPEN" { return Ok(pr) }
       None =>
         return Err(
@@ -550,15 +617,17 @@ pub async fn ensure_pull_request_with_capture(
     }
   }
 
-  let (post_view_exit, post_view_output) = capture(view_cmd)
-  if post_view_exit != 0 {
+  let post_view = gh_pr_view_branch_with_poller_fallback(
+    branch, project_dir, poller_state, capture,
+  )
+  if post_view.data == "" {
     return Err(
       @types.ChoirError::git_error(
         "gh pr view failed after create for branch: " + branch,
       ),
     )
   }
-  match parse_pull_request_info(post_view_output) {
+  match parse_pull_request_info(post_view.data) {
     Some(pr) => Ok(pr)
     None =>
       Err(

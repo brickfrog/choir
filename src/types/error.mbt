@@ -6,6 +6,7 @@ suberror ChoirError {
   PermissionDenied(String, String)
   PolicyBlocked(String)
   ValidationError(String)
+  Timeout(String)
   WorkspaceError(String)
   TransportError(String)
   GitError(String)
@@ -20,6 +21,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     PermissionDenied(role, tool) => "role " + role + " cannot call " + tool
     PolicyBlocked(msg) => "policy blocked: " + msg
     ValidationError(msg) => "validation error: " + msg
+    Timeout(msg) => "timeout error: " + msg
     WorkspaceError(msg) => "workspace error: " + msg
     TransportError(msg) => "transport error: " + msg
     GitError(msg) => "git error: " + msg
@@ -57,9 +59,15 @@ pub fn ChoirError::validation_error(msg : String) -> ChoirError {
 }
 
 ///|
+pub fn ChoirError::timeout(msg : String) -> ChoirError {
+  Timeout(msg)
+}
+
+///|
 pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
   match self {
     ValidationError(msg) => msg
+    Timeout(msg) => msg
     _ => self.message()
   }
 }
@@ -102,6 +110,7 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
       ChoirError::permission_denied(role, tool).message()
     PolicyBlocked(msg) => ChoirError::policy_blocked(msg).message()
     ValidationError(msg) => ChoirError::validation_error(msg).message()
+    Timeout(msg) => ChoirError::timeout(msg).message()
     WorkspaceError(msg) => ChoirError::workspace_error(msg).message()
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
@@ -119,6 +128,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | PermissionDenied(_, _)
     | PolicyBlocked(_)
     | ValidationError(_)
+    | Timeout(_)
     | WorkspaceError(_)
     | TransportError(_)
     | GitError(_)

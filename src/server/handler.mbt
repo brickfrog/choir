@@ -153,6 +153,15 @@ pub async fn ServerState::handle_with_runner_and_capture(
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
       },
+      wait_for_audit_report=async fn(agent_id) {
+        self.wait_for_audit_on_file_pr_report(agent_id)
+      },
+      capture_audit_on_file_pr_report=fn(agent_id, report) {
+        self.capture_audit_on_file_pr_report(agent_id, report)
+      },
+      cleanup_audit_report=fn(agent_id) {
+        self.cleanup_audit_on_file_pr_report(agent_id)
+      },
     ) catch {
       e => @tools.tool_response_err_from_caught(e)
     }

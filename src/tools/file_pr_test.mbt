@@ -764,6 +764,243 @@ fn file_pr_test_record_verify_outcome(
 }
 
 ///|
+test "parse_findings_count counts finding markers" {
+  assert_eq(parse_findings_count("Finding 1: bad\n\nFinding 12: also bad\n"), 2)
+  assert_eq(parse_findings_count("No findings."), 0)
+  assert_eq(parse_findings_count("findings_count=0"), 0)
+  assert_eq(parse_findings_count(""), 0)
+}
+
+///|
+fn file_pr_auto_audit_capture(
+  head : String,
+  receipt_body : String?,
+) -> async (@workspace.Command) -> (Int, String) {
+  async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+      return (0, head + "\n")
+    }
+    if cmd.program == "git" && cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+      return (0, "feature/auto-audit\n")
+    }
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "cat" {
+      match receipt_body {
+        Some(body) => return (0, body)
+        None => return (1, "")
+      }
+    }
+    (0, "")
+  }
+}
+
+///|
+async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and returns PR" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-ok-" + @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut runner_calls = 0
+  let mut waited_worker = ""
+  let mut receipt_dir = ""
+  let mut receipt_path = ""
+  let mut receipt_content = ""
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_calls = runner_calls + 1
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    create_dir_all=fn(path) {
+      receipt_dir = path
+      true
+    },
+    write_file_atomic=fn(path, content) {
+      receipt_path = path
+      receipt_content = content
+      true
+    },
+    wait_for_audit_report=async fn(worker_id) {
+      @async.sleep(0)
+      waited_worker = worker_id
+      Some({
+        message: "No findings. The code is acceptable.",
+        status: @types.Status::Success,
+      })
+    },
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      assert_eq(
+        fields.get("pr_url").unwrap_or(""),
+        "https://example.test/pr/42",
+      )
+    @types.Response::Err(msg) => fail("expected PR response: " + msg)
+  }
+  // The auto-audit path runs the spawned worker, then the normal file_pr push.
+  assert_eq(runner_calls, 2)
+  assert_true(waited_worker.contains(audit_on_file_pr_internal_caller_id))
+  assert_true(receipt_dir.contains(".choir/audit-receipts"))
+  assert_true(receipt_path.contains(".choir/audit-receipts/abcdef123456.json"))
+  let parsed_receipt = @json.parse(receipt_content) catch {
+    _ => fail("receipt did not parse")
+  }
+  let decoded : @types.AuditReceipt = @json.from_json(parsed_receipt) catch {
+    _ => fail("receipt did not decode")
+  }
+  assert_eq(decoded.sha, head)
+  assert_eq(decoded.branch, "feature/auto-audit")
+  assert_eq(decoded.agent_id, audit_on_file_pr_internal_caller_id)
+  assert_eq(decoded.findings_count, 0)
+}
+
+///|
+async test "interpret_file_pr Dev missing audit returns findings error" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-findings-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut receipt_written = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    create_dir_all=fn(_) { true },
+    write_file_atomic=fn(_, _) {
+      receipt_written = true
+      true
+    },
+    wait_for_audit_report=async fn(_) {
+      @async.sleep(0)
+      Some({
+        message: "Finding 1: one\nFinding 2: two\nFinding 3: three\n",
+        status: @types.Status::Success,
+      })
+    },
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("audit found 3 findings"))
+      assert_true(msg.contains("Finding 1: one"))
+    }
+    @types.Response::Ok(_) => fail("expected findings error")
+  }
+  assert_false(receipt_written)
+}
+
+///|
+async test "interpret_file_pr Dev existing receipt skips auto audit" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-existing-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut waited = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, Some(file_pr_test_audit_receipt(head))),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    wait_for_audit_report=async fn(_) {
+      @async.sleep(0)
+      waited = true
+      None
+    },
+  )
+  assert_true(got.is_ok())
+  assert_false(waited)
+}
+
+///|
+async test "interpret_file_pr Dev audit outer budget returns timeout" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-timeout-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut cleaned_worker = ""
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    audit_budget_ms=1,
+    cleanup_audit_report=fn(worker_id) { cleaned_worker = worker_id },
+    wait_for_audit_report=async fn(_) {
+      @async.sleep(50)
+      None
+    },
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("audit budget exceeded"))
+    @types.Response::Ok(_) => fail("expected timeout")
+  }
+  assert_true(cleaned_worker.contains(audit_on_file_pr_internal_caller_id))
+}
+
+///|
 async test "interpret_file_pr_preflight_create returns preflight error and skips push" {
   let inputs : FilePrPreflightCreateInputs = {
     branch: "main.leaf",

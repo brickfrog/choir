@@ -1,5 +1,6 @@
 import {
   "choir/src/exec",
+  "choir/src/workspace",
   "choir/src/policy",
   "choir/src/sys",
   "choir/src/types",

@@ -27,6 +27,10 @@ pub struct ServerState {
   pending_disconnect_soft_notified : Map[String, Bool]
   delivery_failures : Map[String, Int]
   handoff_delivered : Map[String, Bool]
+  audit_on_file_pr_reports : Map[
+    String,
+    @aqueue.Queue[@tools.AuditOnFilePrReport],
+  ]
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
@@ -91,6 +95,7 @@ pub fn ServerState::new(
     pending_disconnect_soft_notified: {},
     delivery_failures: {},
     handoff_delivered: {},
+    audit_on_file_pr_reports: {},
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
@@ -110,4 +115,60 @@ pub fn ServerState::with_pane_watcher(
   pane_watcher : @runtime.PaneWatcher,
 ) -> ServerState {
   { ..self, pane_watcher, }
+}
+
+///|
+fn ServerState::audit_on_file_pr_report_queue(
+  self : ServerState,
+  agent_id : String,
+) -> @aqueue.Queue[@tools.AuditOnFilePrReport] {
+  match self.audit_on_file_pr_reports.get(agent_id) {
+    Some(queue) => queue
+    None => {
+      let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+      self.audit_on_file_pr_reports.set(agent_id, queue)
+      queue
+    }
+  }
+}
+
+///|
+pub fn ServerState::capture_audit_on_file_pr_report(
+  self : ServerState,
+  agent_id : String,
+  report : @tools.AuditOnFilePrReport,
+) -> Unit {
+  match self.audit_on_file_pr_reports.get(agent_id) {
+    Some(queue) => ignore(queue.try_put(report) catch { _ => false })
+    None => ()
+  }
+}
+
+///|
+pub fn ServerState::cleanup_audit_on_file_pr_report(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  match self.audit_on_file_pr_reports.get(agent_id) {
+    Some(queue) => {
+      self.audit_on_file_pr_reports.remove(agent_id)
+      ignore(
+        queue.try_put({ message: "", status: @types.Status::Failure }) catch {
+          _ => false
+        },
+      )
+    }
+    None => ()
+  }
+}
+
+///|
+pub async fn ServerState::wait_for_audit_on_file_pr_report(
+  self : ServerState,
+  agent_id : String,
+) -> @tools.AuditOnFilePrReport? {
+  let queue = self.audit_on_file_pr_report_queue(agent_id)
+  let report = queue.get()
+  self.audit_on_file_pr_reports.remove(agent_id)
+  Some(report)
 }

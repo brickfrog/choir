@@ -489,12 +489,27 @@ async test "detect_default_branch_with_capture falls back to main on failure" {
 }
 
 ///|
-async fn mock_ensure_pr_exists(cmd : @workspace.Command) -> (Int, String) {
-  @async.sleep(0)
-  if cmd.program == "gh" &&
+fn mock_is_gh_pr_view(cmd : @workspace.Command) -> Bool {
+  (
+    cmd.program == "gh" &&
     cmd.args.length() >= 2 &&
     cmd.args[0] == "pr" &&
-    cmd.args[1] == "view" {
+    cmd.args[1] == "view"
+  ) ||
+  (
+    cmd.program == "timeout" &&
+    cmd.args.length() >= 4 &&
+    cmd.args[0] == "30s" &&
+    cmd.args[1] == "gh" &&
+    cmd.args[2] == "pr" &&
+    cmd.args[3] == "view"
+  )
+}
+
+///|
+async fn mock_ensure_pr_exists(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if mock_is_gh_pr_view(cmd) {
     (
       0, "{\"number\":42,\"url\":\"https://github.com/x/y/pull/42\",\"state\":\"OPEN\"}",
     )
@@ -534,10 +549,7 @@ async fn mock_ensure_pr_create_uses_capture(
   cmd : @workspace.Command,
 ) -> (Int, String) {
   @async.sleep(0)
-  if cmd.program == "gh" &&
-    cmd.args.length() >= 2 &&
-    cmd.args[0] == "pr" &&
-    cmd.args[1] == "view" {
+  if mock_is_gh_pr_view(cmd) {
     if cmd.workdir == Some("/repo") {
       (
         0, "{\"number\":42,\"url\":\"https://github.com/x/y/pull/42\",\"state\":\"CLOSED\"}",
