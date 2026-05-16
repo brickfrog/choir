@@ -784,7 +784,7 @@ pub(all) struct AuditOnFilePrReport {
 } derive(Debug, Eq)
 
 ///|
-priv enum FilePrAuditReceiptValidation {
+pub(all) enum FilePrAuditReceiptValidation {
   AuditReceiptValid
   AuditReceiptMissing(String)
   AuditReceiptInvalid(String)
@@ -894,7 +894,7 @@ fn file_pr_parse_audit_receipt(receipt_body : String) -> @types.AuditReceipt? {
 }
 
 ///|
-fn file_pr_audit_receipt_validation(
+pub fn file_pr_audit_receipt_validation(
   parent_branch : String,
   current_head : String,
   receipt_body : String?,
@@ -1105,7 +1105,7 @@ fn audit_on_file_pr_worker_args(
 }
 
 ///|
-async fn file_pr_auto_audit_for_missing_receipt(
+pub async fn file_pr_auto_audit_for_missing_receipt(
   project_dir : String,
   file_pr_dir : String,
   tracked_agent_id : String,
@@ -1124,6 +1124,7 @@ async fn file_pr_auto_audit_for_missing_receipt(
   sleep_fn : async (Int) -> Unit,
   now_ms_fn : () -> Int64,
   audit_worker_alive : (String) -> Bool,
+  pr_number? : Int = 0,
 ) -> Result[Unit, @types.ChoirError] {
   let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
     Some(value) => value
@@ -1150,6 +1151,7 @@ async fn file_pr_auto_audit_for_missing_receipt(
     sleep_fn,
     now_ms_fn,
     audit_worker_alive,
+    pr_number~,
     branch=Some(branch),
   )
   let report = match wait_result.outcome {
@@ -1158,7 +1160,7 @@ async fn file_pr_auto_audit_for_missing_receipt(
       emit_audit_heartbeat_log_line(
         project_dir,
         append_file,
-        0,
+        pr_number,
         tracked_agent_id,
         wait_result.elapsed_s,
         status=HeartbeatError,
@@ -1173,7 +1175,7 @@ async fn file_pr_auto_audit_for_missing_receipt(
       emit_audit_heartbeat_log_line(
         project_dir,
         append_file,
-        0,
+        pr_number,
         tracked_agent_id,
         wait_result.elapsed_s,
         status=HeartbeatError,
@@ -1194,7 +1196,7 @@ async fn file_pr_auto_audit_for_missing_receipt(
     emit_audit_heartbeat_log_line(
       project_dir,
       append_file,
-      0,
+      pr_number,
       tracked_agent_id,
       wait_result.elapsed_s,
       status=HeartbeatError,
@@ -1213,7 +1215,7 @@ async fn file_pr_auto_audit_for_missing_receipt(
   emit_audit_heartbeat_log_line(
     project_dir,
     append_file,
-    0,
+    pr_number,
     tracked_agent_id,
     wait_result.elapsed_s,
     status=HeartbeatOk,
