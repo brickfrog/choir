@@ -1208,6 +1208,31 @@ async fn merge_pr_close_feature_beads(
 }
 
 ///|
+fn merge_pr_lifecycle_role_overrides_registry(
+  lifecycle : @phase.AgentLifecycle,
+) -> Bool {
+  lifecycle.role == @types.Role::Dev || lifecycle.role == @types.Role::Worker
+}
+
+///|
+fn merge_pr_cleanup_agent_role(
+  project_dir : String,
+  agent : @types.Agent,
+  read_lifecycle : (String, String) -> @phase.AgentLifecycle?,
+) -> @types.Role {
+  let agent_id = agent.agent_id.to_string()
+  match read_lifecycle(project_dir, agent_id) {
+    Some(lifecycle) =>
+      if merge_pr_lifecycle_role_overrides_registry(lifecycle) {
+        lifecycle.role
+      } else {
+        agent.role
+      }
+    None => agent.role
+  }
+}
+
+///|
 async fn merge_pr_run_cleanup_command(
   project_dir : String,
   label : String,
@@ -1249,6 +1274,7 @@ fn merge_pr_leaf_cleanup_worktree_path(
   tracked : @poller.TrackedPR?,
   registry : @registry.AgentRegistry?,
   branch : String,
+  read_lifecycle : (String, String) -> @phase.AgentLifecycle?,
 ) -> String {
   match tracked {
     Some(t) =>
@@ -1256,7 +1282,11 @@ fn merge_pr_leaf_cleanup_worktree_path(
         Some(reg) =>
           match (Some(reg.get(t.agent_id)) catch { _ => None }) {
             Some(agent) =>
-              if @types.is_supervisor_role(agent.role) {
+              if @types.is_supervisor_role(
+                  merge_pr_cleanup_agent_role(
+                    project_dir, agent, read_lifecycle,
+                  ),
+                ) {
                 return ""
               } else if @types.is_choir_managed_worktree_path(
                   project_dir,
@@ -1283,13 +1313,18 @@ fn merge_pr_leaf_cleanup_worktree_path(
 
 ///|
 fn merge_pr_leaf_cleanup_refuses_tracked_supervisor(
+  project_dir : String,
   tracked : @poller.TrackedPR?,
   registry : @registry.AgentRegistry?,
+  read_lifecycle : (String, String) -> @phase.AgentLifecycle?,
 ) -> Bool {
   match (tracked, registry) {
     (Some(t), Some(reg)) =>
       match (Some(reg.get(t.agent_id)) catch { _ => None }) {
-        Some(agent) => @types.is_supervisor_role(agent.role)
+        Some(agent) =>
+          @types.is_supervisor_role(
+            merge_pr_cleanup_agent_role(project_dir, agent, read_lifecycle),
+          )
         None => false
       }
     _ => false
@@ -1323,11 +1358,17 @@ test "merge_pr_leaf_cleanup_worktree_path refuses supervisor target" {
       tracked,
       Some(reg),
       "feature/root-pr.leaf",
+      fn(_, _) { None },
     ),
     "",
   )
   assert_true(
-    merge_pr_leaf_cleanup_refuses_tracked_supervisor(tracked, Some(reg)),
+    merge_pr_leaf_cleanup_refuses_tracked_supervisor(
+      project_dir,
+      tracked,
+      Some(reg),
+      fn(_, _) { None },
+    ),
   )
 }
 
@@ -1356,6 +1397,7 @@ test "merge_pr_leaf_cleanup_worktree_path never returns project root" {
     ps.get(2),
     Some(reg),
     "feature/demo.leaf",
+    fn(_, _) { None },
   )
   assert_eq(path, "/repo/.choir/worktrees/leaf")
   assert_false(path == project_dir)
@@ -1369,6 +1411,7 @@ async fn merge_pr_cleanup_leaf_success(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   append_file : (String, String) -> Bool,
   path_exists : (String) -> Bool,
+  read_lifecycle : (String, String) -> @phase.AgentLifecycle?,
 ) -> Unit {
   let branch = match tracked {
     Some(t) => t.branch
@@ -1380,7 +1423,9 @@ async fn merge_pr_cleanup_leaf_success(
     )
     return
   }
-  if merge_pr_leaf_cleanup_refuses_tracked_supervisor(tracked, registry) {
+  if merge_pr_leaf_cleanup_refuses_tracked_supervisor(
+      project_dir, tracked, registry, read_lifecycle,
+    ) {
     merge_pr_delivery_log_line(
       append_file,
       project_dir,
@@ -1389,7 +1434,7 @@ async fn merge_pr_cleanup_leaf_success(
     return
   }
   let worktree_path = merge_pr_leaf_cleanup_worktree_path(
-    project_dir, tracked, registry, branch,
+    project_dir, tracked, registry, branch, read_lifecycle,
   )
   if worktree_path == "" {
     merge_pr_delivery_log_line(
@@ -1485,6 +1530,7 @@ async fn interpret_merge_pr_post_success_side_effects(
   capture : async (@workspace.Command) -> (Int, String),
   append_file : (String, String) -> Bool,
   path_exists : (String) -> Bool,
+  read_lifecycle : (String, String) -> @phase.AgentLifecycle?,
 ) -> Unit {
   if parent_branch == "main" {
     let feature_branch = match tracked {
@@ -1519,7 +1565,7 @@ async fn interpret_merge_pr_post_success_side_effects(
     }
   } else if parent_branch.has_prefix("feature/") {
     merge_pr_cleanup_leaf_success(
-      project_dir, tracked, registry, runner, append_file, path_exists,
+      project_dir, tracked, registry, runner, append_file, path_exists, read_lifecycle,
     )
   }
 }
@@ -1553,6 +1599,10 @@ pub fn interpret_merge_pr_post_success(
   if plan.poller_untrack_and_write_state {
     match poller_state {
       Some(ps) => {
+        match ps.get(pr_number) {
+          Some(tracked) => ps.mark_merged_observed(tracked)
+          None => ()
+        }
         ps.untrack(pr_number)
         ignore(ps.write_state_file(project_dir))
       }
@@ -1576,6 +1626,7 @@ pub async fn interpret_merge_pr(
   capture : async (@workspace.Command) -> (Int, String),
   append_file : (String, String) -> Bool,
   path_exists : (String) -> Bool,
+  read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
 ) -> @types.Response {
   match
     interpret_merge_pr_preflight(
@@ -1625,6 +1676,7 @@ pub async fn interpret_merge_pr(
               capture,
               append_file,
               path_exists,
+              read_lifecycle,
             )
           }
           resp

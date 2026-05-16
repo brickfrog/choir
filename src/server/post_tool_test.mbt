@@ -156,6 +156,71 @@ test "plan_post_tool_actions - shutdown with agent yields finalize teardown shap
 }
 
 ///|
+test "plan_post_tool_actions - shutdown trusts leaf lifecycle over stale supervisor role" {
+  let poller = @poller.PollerState::new()
+  let registry = @registry.AgentRegistry::new()
+  let project_dir = isolated_post_tool_project_dir("sd-stale-role")
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "s"
+  let agent_id = "main.leaf-stale-shutdown"
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("root"),
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(registry.upsert(agent))
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Dev,
+    name: "shutdown",
+    args: @types.RequestArgs::new({ "agent_id": agent_id }),
+  }
+  let resp = @types.Response::Ok(
+    @types.ResponseFields::new({ "status": "shutdown" }),
+  )
+  let effects = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id=None,
+    poller,
+    registry,
+    project_dir,
+    terminal_session,
+  )
+  assert_true(last_is_clear_runtime_for(effects, agent_id))
+  assert_eq(
+    count_persist_with_trigger(effects, @types.LifecycleTrigger::ExitShutdown),
+    1,
+  )
+  assert_true(
+    has_fire_hook_exit(effects, agent_id, @types.ExitReason::Shutdown),
+  )
+  for e in effects {
+    match e {
+      RemoveWorktree(path) => assert_false(path == project_dir)
+      _ => ()
+    }
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "plan_post_tool_actions - merge_pr effect shape and ordering" {
   let poller = @poller.PollerState::new()
   let registry = @registry.AgentRegistry::new()
@@ -181,7 +246,10 @@ test "plan_post_tool_actions - merge_pr effect shape and ordering" {
     req_method: "tools/call",
     role: @types.Role::TL,
     name: "merge_pr",
-    args: @types.RequestArgs::new({ "pr_number": pr_number.to_string() }),
+    args: @types.RequestArgs::new({
+      "pr_number": pr_number.to_string(),
+      "caller_id": "main.tl",
+    }),
   }
   let resp = @types.Response::Ok(
     @types.ResponseFields::new({ "status": "merged" }),
@@ -219,7 +287,7 @@ test "plan_post_tool_actions - merge_pr effect shape and ordering" {
         url="url",
         source=MergedDeliverySource::MergePrTool,
         merge_execution_mode=Some(@evidence.MergeExecutionMode::Manual),
-        parent_id=Some("parent")
+        parent_id=Some("main.tl")
       ) => {
         assert_eq(aid, agent_id)
         assert_eq(n, pr_number)
@@ -248,6 +316,162 @@ test "plan_post_tool_actions - merge_pr effect shape and ordering" {
     1,
   )
   assert_true(has_fire_hook_exit(effects, agent_id, @types.ExitReason::Merged))
+}
+
+///|
+test "plan_post_tool_actions - merge_pr keeps captured metadata after untrack" {
+  let poller = @poller.PollerState::new()
+  let registry = @registry.AgentRegistry::new()
+  let project_dir = isolated_post_tool_project_dir("merge-captured")
+  let terminal_session = "s"
+  let pr_number = 43
+  let agent_id = "main.leaf-captured"
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("parent"),
+    workspace: "dir",
+    branch: "fallback-branch",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(registry.upsert(agent))
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::new({
+      "pr_number": pr_number.to_string(),
+      "caller_id": "main.tl",
+    }),
+  }
+  let resp = @types.Response::Ok(
+    @types.ResponseFields::new({ "status": "merged" }),
+  )
+  let effects = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id=Some(agent_id),
+    poller,
+    registry,
+    project_dir,
+    terminal_session,
+    merged_pr_context=Some({
+      agent_id,
+      branch: "captured-branch",
+      parent_branch: "feature/base",
+      url: "https://example.test/pr/43",
+    }),
+  )
+  let mut saw_captured_metadata = false
+  for e in effects {
+    match e {
+      DeliverToParentMerged(
+        leaf_id=aid,
+        pr_number=n,
+        branch="captured-branch",
+        parent_branch="feature/base",
+        url="https://example.test/pr/43",
+        ..
+      ) => {
+        assert_eq(aid, agent_id)
+        assert_eq(n, pr_number)
+        saw_captured_metadata = true
+      }
+      _ => ()
+    }
+  }
+  assert_true(saw_captured_metadata)
+}
+
+///|
+test "plan_post_tool_actions - stale supervisor metadata does not close parent target" {
+  let poller = @poller.PollerState::new()
+  let registry = @registry.AgentRegistry::new()
+  let project_dir = isolated_post_tool_project_dir("merge-stale-metadata")
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "s"
+  let pr_number = 44
+  let agent_id = "main.leaf-stale-metadata"
+  let parent_target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijTab,
+    session: terminal_session,
+    name: "TL",
+  }
+  poller.track(
+    pr_number, agent_id, "main.leaf-stale-metadata", "main", "url", 0L,
+  )
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("root"),
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: Some(parent_target),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(registry.upsert(agent))
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ReviewOwned(
+          pr_number~,
+          state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+        ),
+      ),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::new({
+      "pr_number": pr_number.to_string(),
+      "caller_id": "main.tl",
+    }),
+  }
+  let resp = @types.Response::Ok(
+    @types.ResponseFields::new({ "status": "merged" }),
+  )
+  let effects = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id=Some(agent_id),
+    poller,
+    registry,
+    project_dir,
+    terminal_session,
+  )
+  let mut delivered = false
+  for e in effects {
+    match e {
+      DeliverToParentMerged(leaf_id=aid, parent_id=Some("main.tl"), ..) =>
+        if aid == agent_id {
+          delivered = true
+        }
+      CloseTerminal(target) =>
+        if target == parent_target {
+          fail("must not close stale parent target")
+        }
+      RemoveWorktree(path) =>
+        if path == project_dir {
+          fail("must not remove project root from stale metadata")
+        }
+      _ => ()
+    }
+  }
+  assert_true(delivered)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -423,6 +647,83 @@ test "plan_post_tool_actions - kill_agent failure chain" {
   }
   assert_true(saw_notify)
   assert_true(saw_echo_slot)
+}
+
+///|
+test "plan_post_tool_actions - kill_agent trusts leaf lifecycle over stale supervisor role" {
+  let poller = @poller.PollerState::new()
+  let registry = @registry.AgentRegistry::new()
+  let project_dir = isolated_post_tool_project_dir("kill-stale-role")
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let terminal_session = "s"
+  let parent_target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijPane,
+    session: terminal_session,
+    name: "TL",
+  }
+  let agent_id = "main.leaf-stale-kill"
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("root"),
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: Some(parent_target),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(registry.upsert(agent))
+  assert_true(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Connected,
+      workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "kill_agent",
+    args: @types.RequestArgs::new({ "agent_id": agent_id }),
+  }
+  let resp = @types.Response::Ok(
+    @types.ResponseFields::new({ "status": "killed" }),
+  )
+  let effects = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id=None,
+    poller,
+    registry,
+    project_dir,
+    terminal_session,
+  )
+  assert_true(last_is_clear_runtime_for(effects, agent_id))
+  assert_eq(
+    count_persist_with_trigger(effects, @types.LifecycleTrigger::ExitShutdown),
+    1,
+  )
+  assert_true(
+    has_fire_hook_exit(effects, agent_id, @types.ExitReason::Shutdown),
+  )
+  for e in effects {
+    match e {
+      CloseTerminal(target) =>
+        if target == parent_target {
+          fail("must not close stale parent target")
+        }
+      RemoveWorktree(path) =>
+        if path == project_dir {
+          fail("must not remove project root from stale metadata")
+        }
+      _ => ()
+    }
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -602,6 +903,74 @@ test "plan_external_merge_finalization reuses canonical merged teardown" {
     ),
     1,
   )
+}
+
+///|
+test "plan_external_merge_finalization trusts leaf lifecycle over stale supervisor role" {
+  let project_dir = "/repo"
+  let parent_target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijTab,
+    session: "s",
+    name: "TL",
+  }
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId("main.leaf"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Claude,
+    parent: Some("root"),
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: Some(parent_target),
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    ..@phase.lifecycle_for_role("main.leaf", @types.Role::Dev),
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=42,
+        state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+      ),
+    ),
+  }
+  let effects = plan_external_merge_finalization(
+    agent,
+    lifecycle,
+    42,
+    "main.leaf",
+    "main",
+    "https://gh.test/42",
+    project_dir~,
+  )
+  match effects[0] {
+    UpdateDevLifecycle(
+      agent_id="main.leaf",
+      event=@phase.DevEvent::MergeObserved(pr_number=42)
+    ) => ()
+    _ => fail("expected MergeObserved update first")
+  }
+  let mut delivered = false
+  for e in effects {
+    match e {
+      DeliverToParentMerged(
+        leaf_id="main.leaf",
+        source=MergedDeliverySource::ExternalObservation,
+        ..
+      ) => delivered = true
+      CloseTerminal(target) =>
+        if target == parent_target {
+          fail("must not close stale parent target")
+        }
+      RemoveWorktree(path) =>
+        if path == project_dir {
+          fail("must not remove project root from stale metadata")
+        }
+      _ => ()
+    }
+  }
+  assert_true(delivered)
+  assert_true(last_is_clear_runtime_for(effects, "main.leaf"))
 }
 
 ///|

@@ -797,31 +797,88 @@ pub async fn dispatch(
     ToolRequest::Register(register_args) =>
       match registry {
         Some(reg) => {
-          // Re-register must not lose the parent link: if a worker re-registers
-          // with `parent: None` (e.g. its MCP session reads the parent's cwd
-          // config instead of its own inline metadata), keep the parent we
-          // already had so notify_parent can still resolve.
-          let prior_parent : String? = try
+          // Re-register must not lose stable identity metadata when a child
+          // refresh comes from the parent's cwd config. Missing fields keep the
+          // prior row, including agent_type; an existing leaf row refreshed as
+          // Root/TL is treated as stale parent metadata. Otherwise explicit
+          // register data can repair a stale registry row.
+          let prior_agent : @types.Agent? = try
             reg.get(register_args.agent_id)
           catch {
             _ => None
           } noraise {
-            prior => prior.parent
+            prior => Some(prior)
           }
-          let parent = match register_args.parent {
-            Some(p) => Some(p)
-            None => prior_parent
+          let stale_parent_refresh = match prior_agent {
+            Some(prior) =>
+              !@types.is_supervisor_role(prior.role) &&
+              @types.is_supervisor_role(register_args.role)
+            None => false
+          }
+          let parent = match prior_agent {
+            Some(prior) =>
+              if stale_parent_refresh || register_args.parent is None {
+                prior.parent
+              } else {
+                register_args.parent
+              }
+            None => register_args.parent
+          }
+          let role = match prior_agent {
+            Some(prior) =>
+              if stale_parent_refresh {
+                prior.role
+              } else {
+                register_args.role
+              }
+            None => register_args.role
+          }
+          let terminal_target = match prior_agent {
+            Some(prior) =>
+              if stale_parent_refresh || register_args.terminal_target is None {
+                prior.terminal_target
+              } else {
+                register_args.terminal_target
+              }
+            None => register_args.terminal_target
+          }
+          let workspace = match prior_agent {
+            Some(prior) =>
+              if stale_parent_refresh || register_args.workspace == "" {
+                prior.workspace
+              } else {
+                register_args.workspace
+              }
+            None => register_args.workspace
+          }
+          let branch = match prior_agent {
+            Some(prior) =>
+              if stale_parent_refresh || register_args.branch == "" {
+                prior.branch
+              } else {
+                register_args.branch
+              }
+            None => register_args.branch
+          }
+          let agent_type = match prior_agent {
+            Some(prior) =>
+              if stale_parent_refresh || !register_args.agent_type_explicit {
+                prior.agent_type
+              } else {
+                register_args.agent_type
+              }
+            None => register_args.agent_type
           }
           let agent = @types.Agent::{
             agent_id: register_args.agent_id,
-            role: register_args.role,
-            agent_type: register_args.agent_type,
+            role,
+            agent_type,
             state: @types.AgentState::Active,
             parent,
-            terminal_target: register_args.terminal_target,
+            terminal_target,
             host: @types.Host::Local,
-            workspace: register_args.workspace,
-            branch: register_args.branch,
+            workspace,
+            branch,
             spawn_depth: register_args.spawn_depth,
           }
           let refreshed = reg.upsert(agent)

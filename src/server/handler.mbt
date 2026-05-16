@@ -98,13 +98,17 @@ pub async fn ServerState::handle_with_runner_and_capture(
 ) -> @types.Response {
   let start_ms = @env.now()
   let effective_req = self.request_with_review_mode_default(req)
-  let merged_pr_context : (String, String?)? = if effective_req.name ==
-    "merge_pr" {
+  let merged_pr_context : MergedPrContext? = if effective_req.name == "merge_pr" {
     match request_int_arg(effective_req, "pr_number") {
       Some(pr_number) =>
         match self.poller.get(pr_number) {
           Some(tracked) =>
-            Some((tracked.agent_id, evidence_optional_string(tracked.pr_url)))
+            Some({
+              agent_id: tracked.agent_id,
+              branch: tracked.branch,
+              parent_branch: tracked.parent_branch,
+              url: tracked.pr_url,
+            })
           None =>
             // Poller doesn't have this PR (server restart, file_pr bypassed).
             // Fall back to scanning the registry for an agent in ReviewOwned
@@ -115,7 +119,8 @@ pub async fn ServerState::handle_with_runner_and_capture(
                 self.config.project_dir,
                 pr_number,
               ) {
-              Some(agent_id) => Some((agent_id, None))
+              Some(agent_id) =>
+                Some({ agent_id, branch: "", parent_branch: "", url: "" })
               None => None
             }
         }
@@ -171,13 +176,14 @@ pub async fn ServerState::handle_with_runner_and_capture(
     effective_req,
     resp,
     merged_agent_id=match merged_pr_context {
-      Some((agent_id, _)) => Some(agent_id)
+      Some(ctx) => Some(ctx.agent_id)
       None => None
     },
     self.poller,
     self.registry,
     self.config.project_dir,
     self.config.terminal_session,
+    merged_pr_context~,
   )
   // Yield like the legacy `fail_agent_with_runner` path so other fibers can observe registry
   // updates before teardown side effects run (kill_agent is entirely effect-driven now).
@@ -215,13 +221,13 @@ pub async fn ServerState::handle_with_runner_and_capture(
   let end_ms = @env.now()
   emit_span(self, req, start_ms, end_ms, resp)
   match merged_pr_context {
-    Some((agent_id, pr_url)) =>
+    Some(ctx) =>
       append_merge_pr_evidence_if_needed(
         self,
         req,
         resp,
-        Some(agent_id),
-        pr_url,
+        Some(ctx.agent_id),
+        evidence_optional_string(ctx.url),
       )
     None => append_merge_pr_evidence_if_needed(self, req, resp, None, None)
   }

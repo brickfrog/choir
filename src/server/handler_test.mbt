@@ -898,9 +898,167 @@ async test "quiet poller tick automerge sweep records attempted head on success"
 }
 
 ///|
+async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf on success" {
+  let pr_number = 99
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
+    "sweep-finalize",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let child_target = @workspace.local_target_for(
+    "test-session",
+    "leaf-finalize",
+    @types.IsolationMode::Worktree,
+  )
+  let child_close = @workspace.local_close_target(child_target)
+  match state.registry.get(child_id) {
+    child =>
+      state.register_agent({ ..child, terminal_target: Some(child_target) })
+  }
+  match state.registry.get(child_id) {
+    child => ignore(state.registry.upsert({ ..child, role: @types.Role::TL }))
+  }
+  state.pending_disconnects.set(child_id, 1L)
+  state.worker_no_handoff_prodded_at.set(child_id, 2L)
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let mut merge_seen = false
+  let mut close_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+        match state.poller.get(pr_number) {
+          Some(current) =>
+            assert_eq(current.last_automerge_attempt_sha, "sha-sweep-finalize")
+          None => fail("expected tracked PR during merge attempt")
+        }
+      }
+      if cmd.program == child_close.program && cmd.args == child_close.args {
+        close_seen = true
+      }
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  state.process_poller_tick_with(
+    500L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "sha-sweep-finalize",
+        @poller.CiRollupStatus::Success,
+        "",
+        true,
+        false,
+      )
+    },
+    runner~,
+    capture~,
+    automerge_capture=capture,
+  )
+  assert_true(merge_seen)
+  assert_true(close_seen)
+  let mut delivered_merged = false
+  for message in parent_messages {
+    if message.contains(
+        "[PR MERGED] " +
+        child_id +
+        " PR #" +
+        pr_number.to_string() +
+        " is merged",
+      ) {
+      assert_true(message.contains("parent_branch: main"))
+      assert_true(
+        message.contains(
+          "pr_url: https://github.com/brickfrog/choir/pull/" +
+          pr_number.to_string(),
+        ),
+      )
+      delivered_merged = true
+    }
+  }
+  assert_true(delivered_merged)
+  assert_true(state.poller.get(pr_number) == None)
+  @debug.assert_eq(state.pending_disconnects.get(child_id), None)
+  @debug.assert_eq(state.worker_no_handoff_prodded_at.get(child_id), None)
+  match @phase.read_lifecycle(project_dir, child_id) {
+    Some(lifecycle) => {
+      assert_eq(
+        lifecycle.process,
+        @phase.ProcessState::Finalized(reason=@phase.FinalizeReason::Merged),
+      )
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(@phase.DevLifecycle::Done(reason~)) =>
+          assert_eq(reason, @phase.FinalizeReason::Merged)
+        other => fail("expected Done(Merged), got: " + other.to_string())
+      }
+    }
+    None => fail("expected leaf lifecycle")
+  }
+}
+
+///|
 async test "quiet poller tick automerge sweep records attempted head on failure" {
   let pr_number = 97
-  let (state, _, _) = blocked_gh_automerge_fixture(
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
     "sweep-failure",
     pr_number,
     review_mode=@types.ReviewMode::Iterative,
@@ -914,6 +1072,26 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
       })
     None => fail("expected tracked PR")
   }
+  let child_target = @workspace.local_target_for(
+    "test-session",
+    "leaf-failure",
+    @types.IsolationMode::Worktree,
+  )
+  let child_close = @workspace.local_close_target(child_target)
+  match state.registry.get(child_id) {
+    child =>
+      ignore(
+        state.registry.upsert({ ..child, terminal_target: Some(child_target) }),
+      )
+  }
+  state.pending_disconnects.set(child_id, 1L)
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let mut close_seen = false
   let mut merge_seen_count = 0
   let runner = async fn(cmds : Array[@workspace.Command]) {
     @async.sleep(0)
@@ -926,6 +1104,16 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
         merge_seen_count = merge_seen_count + 1
         statuses.push(1)
       } else {
+        if cmd.program == child_close.program && cmd.args == child_close.args {
+          close_seen = true
+        }
+        if cmd.program == "choir" &&
+          cmd.args.length() >= 4 &&
+          cmd.args[0] == "zellij-action" &&
+          cmd.args[1] == "send" &&
+          cmd.args[2] == parent_target {
+          parent_messages.push(cmd.args[3])
+        }
         statuses.push(0)
       }
     }
@@ -991,6 +1179,30 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
     Some(current) =>
       assert_eq(current.last_automerge_attempt_sha, "sha-sweep-failure")
     None => fail("failed merge must remain tracked")
+  }
+  assert_false(close_seen)
+  for message in parent_messages {
+    assert_false(
+      message.contains(
+        "[PR MERGED] " +
+        child_id +
+        " PR #" +
+        pr_number.to_string() +
+        " is merged",
+      ),
+    )
+  }
+  @debug.assert_eq(state.pending_disconnects.get(child_id), Some(1L))
+  match @phase.read_lifecycle(project_dir, child_id) {
+    Some(lifecycle) =>
+      match lifecycle.workflow {
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(pr_number=n, ..)
+        ) => assert_eq(n, pr_number)
+        other =>
+          fail("expected leaf to stay ReviewOwned, got: " + other.to_string())
+      }
+    None => fail("expected leaf lifecycle")
   }
   state.process_poller_tick_with(
     600L,
