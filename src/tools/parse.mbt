@@ -1968,12 +1968,16 @@ test "parse_fork_wave_args merges nested contract object with top-level task" {
     Ok(parsed) => {
       assert_eq(parsed.task_contracts.length(), 1)
       assert_eq(parsed.task_contracts[0].goal, "Ship feature")
-      assert_eq(parsed.task_contracts[0].scope, ["src/tools", "src/poller"])
+      @debug.assert_eq(parsed.task_contracts[0].scope, [
+        "src/tools", "src/poller",
+      ])
       @debug.assert_eq(
         parsed.task_contracts[0].beads_issue_id,
         Some("choir-poller-state-race"),
       )
-      assert_eq(parsed.task_contracts[0].verify, ["moon test --target native"])
+      @debug.assert_eq(parsed.task_contracts[0].verify, [
+        "moon test --target native",
+      ])
       assert_true(parsed.task_contracts[0].verify_satisfied_by_ci)
       assert_true(parsed.tasks[0].contains("## BEADS ISSUE"))
       assert_true(parsed.tasks[0].contains("choir-poller-state-race"))

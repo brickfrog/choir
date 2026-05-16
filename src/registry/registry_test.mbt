@@ -406,10 +406,10 @@ test "mutex registry acquire is fifo and idempotent" {
   let second = reg.acquire("README", "agent-b", 300L, 11L)
   let third = reg.acquire("README", "agent-c", 300L, 12L)
   let repeat = reg.acquire("README", "agent-b", 300L, 13L)
-  assert_eq(first, (true, 0))
-  assert_eq(second, (false, 1))
-  assert_eq(third, (false, 2))
-  assert_eq(repeat, (false, 1))
+  @debug.assert_eq(first, (true, 0))
+  @debug.assert_eq(second, (false, 1))
+  @debug.assert_eq(third, (false, 2))
+  @debug.assert_eq(repeat, (false, 1))
   let (holder, queue) = reg.status("README")
   @debug.assert_eq(holder, Some("agent-a"))
   assert_eq(queue.length(), 2)
@@ -430,7 +430,7 @@ test "mutex registry release hands off to next waiter" {
   assert_eq(queue.length(), 1)
   assert_eq(queue[0], "agent-c")
   let reacquire = reg.acquire("README", "agent-b", 300L, 20L)
-  assert_eq(reacquire, (true, 0))
+  @debug.assert_eq(reacquire, (true, 0))
 }
 
 ///|
@@ -453,7 +453,7 @@ test "mutex registry expire clears stale waiters on reacquire" {
   ignore(reg.acquire("README", "agent-a", 5L, 10L))
   ignore(reg.acquire("README", "agent-b", 5L, 11L))
   let result = reg.acquire("README", "agent-c", 5L, 17L)
-  assert_eq(result, (true, 0))
+  @debug.assert_eq(result, (true, 0))
   let (holder, queue) = reg.status("README")
   @debug.assert_eq(holder, Some("agent-c"))
   assert_eq(queue.length(), 0)

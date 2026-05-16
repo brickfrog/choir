@@ -730,11 +730,11 @@ test "build_claude_settings_json emits statusline and choir MCP stdio entry" {
     return
   }
   assert_eq(args_json.length(), 5)
-  assert_eq(args_json[0], "mcp-stdio".to_json())
-  assert_eq(args_json[1], "--role".to_json())
-  assert_eq(args_json[2], "tl".to_json())
-  assert_eq(args_json[3], "--name".to_json())
-  assert_eq(args_json[4], "user-123-456".to_json())
+  @debug.assert_eq(args_json[0], "mcp-stdio".to_json())
+  @debug.assert_eq(args_json[1], "--role".to_json())
+  @debug.assert_eq(args_json[2], "tl".to_json())
+  @debug.assert_eq(args_json[3], "--name".to_json())
+  @debug.assert_eq(args_json[4], "user-123-456".to_json())
   // Claude Code's tool-search deferral is opt-out via `alwaysLoad: true`. The
   // TL hits choir's orchestration tools constantly; deferring them costs more
   // than it saves.

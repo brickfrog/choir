@@ -56,7 +56,7 @@ test "merge_log_lines orders timestamped lines and leaves untimestamped last" {
       "delivery untimestamped",
     ],
   )
-  assert_eq(got, [
+  @debug.assert_eq(got, [
     "2026-05-12T09:00:01Z [poller] delivery first", "09:00:02.000 | INFO | choir - serve later",
     "09:00:03.000 | INFO | choir - equal a", "2026-05-12T09:00:03Z [poller] equal b",
     "serve untimestamped", "delivery untimestamped",
@@ -86,7 +86,7 @@ test "merge_log_lines orders dated delivery lines across days" {
   let got = merge_log_lines([], [
     "2026-05-12T00:00:01.000Z [poller] day two", "2026-05-11T23:59:59.000Z [poller] day one",
   ])
-  assert_eq(got, [
+  @debug.assert_eq(got, [
     "2026-05-11T23:59:59.000Z [poller] day one", "2026-05-12T00:00:01.000Z [poller] day two",
   ])
 }
@@ -109,7 +109,7 @@ test "apply_filters keeps dated delivery lines under a level filter" {
     ],
     opts,
   )
-  assert_eq(got, [
+  @debug.assert_eq(got, [
     "09:00:01.000 | ERROR | choir - kept", "2026-05-12T09:00:02.000Z [poller] kept ' | INFO | ' delivery",
   ])
 }
@@ -133,7 +133,7 @@ test "apply_filters applies level grep and tail in order" {
     ],
     opts,
   )
-  assert_eq(got, [
+  @debug.assert_eq(got, [
     "09:00:02.000 | ERROR | choir - keep error", "[poller] keep delivery without level",
   ])
 }

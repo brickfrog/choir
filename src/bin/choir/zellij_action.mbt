@@ -186,7 +186,7 @@ fn zellij_action_run() -> Unit {
                     " panes_found=" +
                     panes.length().to_string() +
                     " tabs=" +
-                    tab_names.to_string() +
+                    @debug.to_string(tab_names) +
                     ")\n",
                   )
                   @sys.exit(1)

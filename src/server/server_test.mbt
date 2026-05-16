@@ -1418,7 +1418,7 @@ async test "recover_state finalizes merged agent without startup parent notifica
     panes: { live: { tabs: [], panes: [] } },
     prs: {
       open_prs: [],
-      polls: Map::new(),
+      polls: Map([], capacity=0),
       resolved_prs: [
         @runtime.KnownPR::{
           pr_number: 21,

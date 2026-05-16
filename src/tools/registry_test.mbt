@@ -495,8 +495,8 @@ async test "dispatch returns correct stub for each tool name" {
     ("reply", "ok", { "id": "req-1" }),
     ("kv_get", "", { "key": "missing" }),
     ("mutex_status", "", { "name": "readme" }),
-    ("shutdown", "shutdown", Map::new()),
-    ("task_list", "ok", Map::new()),
+    ("shutdown", "shutdown", Map([], capacity=0)),
+    ("task_list", "ok", Map([], capacity=0)),
     (
       "write_audit_receipt",
       "ok",

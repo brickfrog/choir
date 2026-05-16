@@ -243,7 +243,7 @@ test "parse_review_thread_refs_response distinguishes empty nodes from malformed
   let empty =
     #|{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}
   match parse_review_thread_refs_response(empty) {
-    Some(refs) => assert_eq(refs, [])
+    Some(refs) => @debug.assert_eq(refs, [])
     None => fail("expected empty nodes to parse as an empty snapshot")
   }
   match parse_review_thread_refs_response("not json") {

@@ -366,14 +366,14 @@ async test "tl_policy_watch_loop logs violation without terminating watcher" {
       sleeps.push(ms)
     },
   )
-  assert_eq(pid_checks, [1234, 1234, 1234, 1234])
+  @debug.assert_eq(pid_checks, [1234, 1234, 1234, 1234])
   assert_eq(alive_index[0], 4)
   assert_eq(status_calls[0], 3)
-  assert_eq(status_repos, ["/repo", "/repo", "/repo"])
-  assert_eq(lifecycle_inputs, [
+  @debug.assert_eq(status_repos, ["/repo", "/repo", "/repo"])
+  @debug.assert_eq(lifecycle_inputs, [
     "/project:root", "/project:root", "/project:root",
   ])
-  assert_eq(sleeps, [250, 250, 250])
+  @debug.assert_eq(sleeps, [250, 250, 250])
   assert_eq(logs.length(), 2)
   assert_true(logs[0].contains("policy blocked:"))
   assert_true(logs[0].contains("Changed paths: src/a.mbt"))

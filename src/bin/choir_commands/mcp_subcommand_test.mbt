@@ -8,7 +8,7 @@ test "parse_mcp_config_json valid" {
     McpTransport::Stdio => ()
   }
   assert_eq(srv.command, "npx")
-  assert_eq(srv.args, ["-y", "@linear/mcp-server"])
+  @debug.assert_eq(srv.args, ["-y", "@linear/mcp-server"])
 }
 
 ///|

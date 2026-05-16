@@ -22,7 +22,7 @@ test "file_pr_plan builds tracked result when tracking enabled" {
       assert_eq(tracked.parent_branch, "main")
       assert_eq(tracked.pr_url, "https://example.test/pr/7")
       assert_eq(tracked.review_mode, @types.Config::default().review_mode)
-      assert_eq(tracked.unresolved_thread_ids, [])
+      @debug.assert_eq(tracked.unresolved_thread_ids, [])
       assert_false(tracked.unresolved_thread_ids_fetched)
     }
     None => fail("expected tracked PR")

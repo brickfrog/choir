@@ -374,7 +374,7 @@ test "parse_local_config task_contract_json" {
         parsed.beads_issue_id,
         Some("choir-beads-contract-propagation"),
       )
-      assert_eq(parsed.verify, ["moon test --target native"])
+      @debug.assert_eq(parsed.verify, ["moon test --target native"])
     }
     None => fail("expected task_contract")
   }

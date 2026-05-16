@@ -125,7 +125,7 @@ async test "dispatch write_audit_receipt routes injected filesystem capabilities
     @types.Response::Ok(_) => ()
     @types.Response::Err(msg) => fail("expected dispatch success: " + msg)
   }
-  assert_eq(dirs, ["/repo/.choir/audit-receipts"])
+  @debug.assert_eq(dirs, ["/repo/.choir/audit-receipts"])
   assert_eq(writes.length(), 1)
   let (path, content) = writes[0]
   assert_eq(path, "/repo/.choir/audit-receipts/abcdef123456.json")

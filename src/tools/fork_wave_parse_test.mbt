@@ -125,7 +125,7 @@ test "parse_fork_wave_args parses scaffold_commit message and paths" {
       match fork.scaffold_commit {
         Some(scaffold) => {
           assert_eq(scaffold.message, "chore: scaffold wave fields")
-          assert_eq(scaffold.paths, [
+          @debug.assert_eq(scaffold.paths, [
             "src/server/state.mbt", "src/tools/new_file.mbt",
           ])
         }
@@ -309,7 +309,7 @@ test "parse_fork_wave_args parses depends_on JSON-array string" {
     "depends_on": "[\"main.dep-a\",\"main.dep-b\"]",
   })
   match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.depends_on, ["main.dep-a", "main.dep-b"])
+    Ok(fork) => @debug.assert_eq(fork.depends_on, ["main.dep-a", "main.dep-b"])
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }
@@ -324,7 +324,7 @@ test "parse_fork_wave_args parses single-entry depends_on" {
     "depends_on": "[\"main.dep\"]",
   })
   match @tools.parse_fork_wave_args(".", args) {
-    Ok(fork) => assert_eq(fork.depends_on, ["main.dep"])
+    Ok(fork) => @debug.assert_eq(fork.depends_on, ["main.dep"])
     Err(e) => fail("parse_fork_wave_args: " + e.message())
   }
 }

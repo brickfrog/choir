@@ -1332,7 +1332,7 @@ test "sort_strings_lex orders paths lexicographically" {
 async fn mock_beads_list_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   assert_eq(cmd.program, "bd")
-  assert_eq(cmd.args, ["list", "--json", "--all"])
+  @debug.assert_eq(cmd.args, ["list", "--json", "--all"])
   @debug.assert_eq(cmd.workdir, Some("/proj"))
   let output =
     #|[
@@ -1393,7 +1393,7 @@ async fn mock_beads_create_capture(cmd : @workspace.Command) -> (Int, String) {
   if cmd.args == ["show", "local-task", "--json"] {
     return (1, "{\"error\":\"not found\"}")
   }
-  assert_eq(cmd.args, [
+  @debug.assert_eq(cmd.args, [
     "create", "Local task", "--id", "local-task", "--force", "--type", "task", "--priority",
     "2", "--json", "--assignee", "codex", "--notes", "details",
   ])
@@ -1450,7 +1450,7 @@ async fn mock_beads_create_in_progress_capture(
       #|{"id":"progress-task","title":"Progress task","status":"open","notes":"details"}
     return (0, output)
   }
-  assert_eq(cmd.args, [
+  @debug.assert_eq(cmd.args, [
     "update", "progress-task", "--status", "in_progress", "--json",
   ])
   let output =
@@ -1561,7 +1561,7 @@ async fn clean_beads_show_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   assert_eq(cmd.program, "bd")
   @debug.assert_eq(cmd.workdir, Some("/proj"))
-  assert_eq(cmd.args, ["show", "shown-task", "--json"])
+  @debug.assert_eq(cmd.args, ["show", "shown-task", "--json"])
   let output =
     #|{"id":"shown-task","title":"Shown task","status":"in_progress","assignee":"codex","notes":"visible"}
   (0, output)
@@ -1616,7 +1616,7 @@ async fn mock_beads_update_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   assert_eq(cmd.program, "bd")
   @debug.assert_eq(cmd.workdir, Some("/proj"))
-  assert_eq(cmd.args, [
+  @debug.assert_eq(cmd.args, [
     "update", "choir-a", "--status", "closed", "--assignee", "claude", "--notes",
     "merged", "--json",
   ])
@@ -1655,11 +1655,11 @@ async test "handle_task_update maps done to Beads closed" {
 async fn mock_kv_list_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   if cmd.program == "test" {
-    assert_eq(cmd.args, ["-d", "/p/.choir/kv"])
+    @debug.assert_eq(cmd.args, ["-d", "/p/.choir/kv"])
     return (0, "")
   }
   if cmd.program == "find" {
-    assert_eq(cmd.args, ["/p/.choir/kv", "-type", "f"])
+    @debug.assert_eq(cmd.args, ["/p/.choir/kv", "-type", "f"])
     return (0, "/p/.choir/kv/b\n/p/.choir/kv/a\n")
   }
   (-1, "")

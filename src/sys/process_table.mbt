@@ -49,15 +49,15 @@ fn orphan_choir_mcp_stdio_pids_from_processes(
 
 ///|
 test "process table stat parser reads ppid after command field" {
-  assert_eq(
+  @debug.assert_eq(
     process_table_ppid_from_proc_stat("123 (choir mcp) S 1 2 3"),
     Some(1),
   )
-  assert_eq(
+  @debug.assert_eq(
     process_table_ppid_from_proc_stat("124 (name with ) paren) S 77 2 3"),
     Some(77),
   )
-  assert_eq(process_table_ppid_from_proc_stat("bad stat"), None)
+  @debug.assert_eq(process_table_ppid_from_proc_stat("bad stat"), None)
 }
 
 ///|
@@ -73,7 +73,7 @@ test "orphan_choir_mcp_stdio_pids_from_processes filters narrowly" {
     { pid: 14, ppid: 1, cmdline: "other mcp-stdio" },
     { pid: 15, ppid: 1, cmdline: "/usr/bin/choir --raw-stdio mcp-stdio" },
   ])
-  assert_eq(pids, [11, 15])
+  @debug.assert_eq(pids, [11, 15])
 }
 
 ///|
@@ -85,5 +85,5 @@ test "list_orphan_choir_mcp_stdio_pids accepts injected process table" {
       { pid: 23, ppid: 9, cmdline: "choir mcp-stdio --name child" },
     ]
   })
-  assert_eq(pids, [21])
+  @debug.assert_eq(pids, [21])
 }

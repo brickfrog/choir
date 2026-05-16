@@ -765,5 +765,5 @@ pub fn shell_quote(s : String) -> String {
 /// the MoonBit wrapper rejects the empty string up front. A buggy caller
 /// that leaks a blank workspace must never trigger a system-wide scan.
 test "list_pids_with_cwd_prefix rejects empty prefix" {
-  assert_eq(list_pids_with_cwd_prefix(""), [])
+  @debug.assert_eq(list_pids_with_cwd_prefix(""), [])
 }

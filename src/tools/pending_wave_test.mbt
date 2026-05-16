@@ -78,7 +78,7 @@ test "pending_wave_to_json_string round-trip preserves args" {
       assert_eq(round_tripped.args.parent_branch, "main")
       assert_eq(round_tripped.args.agent_type, @types.AgentType::Claude)
       assert_eq(round_tripped.args.child_role, @types.Role::Dev)
-      assert_eq(round_tripped.args.tasks, ["work"])
+      @debug.assert_eq(round_tripped.args.tasks, ["work"])
       assert_eq(round_tripped.args.has_per_leaf_tasks, false)
       assert_eq(round_tripped.args.count, 1)
       @debug.assert_eq(round_tripped.args.review_context, Some("ctx"))
@@ -87,7 +87,9 @@ test "pending_wave_to_json_string round-trip preserves args" {
         round_tripped.args.review_mode,
         Some(@types.ReviewMode::SinglePass),
       )
-      assert_eq(round_tripped.args.depends_on, ["main.dep-a", "main.dep-b"])
+      @debug.assert_eq(round_tripped.args.depends_on, [
+        "main.dep-a", "main.dep-b",
+      ])
       @debug.assert_eq(
         round_tripped.args.scaffold_commit,
         Some({
@@ -118,7 +120,7 @@ test "write_pending_wave + read_pending_wave round-trip via disk" {
   match @tools.read_pending_wave(project_dir, "wv-1") {
     Some(got) => {
       assert_eq(got.wave_id, "wv-1")
-      assert_eq(got.args.depends_on, ["main.dep"])
+      @debug.assert_eq(got.args.depends_on, ["main.dep"])
     }
     None => fail("read_pending_wave: None")
   }

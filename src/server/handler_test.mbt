@@ -1664,8 +1664,8 @@ async test "auto_resolve_outdated_review_threads_for_event resolves only iterati
     tracked,
     capture,
   )
-  assert_eq(seen, ["threadId=T_old"])
-  assert_eq(updated.unresolved_thread_ids, [
+  @debug.assert_eq(seen, ["threadId=T_old"])
+  @debug.assert_eq(updated.unresolved_thread_ids, [
     @poller.ReviewThreadRef::{
       id: "T_current",
       is_outdated: false,
@@ -1773,7 +1773,7 @@ async test "auto_resolve_outdated_review_threads_for_pending keeps retry pending
     still_pending, success_capture,
   )
   assert_false(cleared.auto_resolve_outdated_pending)
-  assert_eq(cleared.unresolved_thread_ids, [])
+  @debug.assert_eq(cleared.unresolved_thread_ids, [])
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -2237,7 +2237,7 @@ async test "fresh PR first thread refs fetch failure leaves merge gate unknown" 
   assert_true(saw_threads_unobserved)
   match state.poller.get(pr_number) {
     Some(tracked) => {
-      assert_eq(tracked.unresolved_thread_ids, [])
+      @debug.assert_eq(tracked.unresolved_thread_ids, [])
       assert_false(tracked.unresolved_thread_ids_fetched)
     }
     None => fail("expected PR to remain tracked")
@@ -4546,7 +4546,7 @@ async test "check_idle_agents reuses one pane snapshot for handoff and watchdog 
     worker_no_handoff_escalate_sec=120L,
   )
 
-  assert_eq(reads, [
+  @debug.assert_eq(reads, [
     @runtime.pane_snapshot_path(worker_id),
     @runtime.pane_snapshot_path(worker_id),
   ])
@@ -4780,7 +4780,7 @@ async test "test_disconnect_supervisor_agent_no_fail_or_close" {
       }
       [0]
     })
-    assert_eq(calls, [])
+    @debug.assert_eq(calls, [])
     let agent = state.registry.get(agent_id) catch {
       _ => fail("expected supervisor agent")
     }

@@ -119,7 +119,7 @@ test "review_thread_ids_to_auto_resolve selects outdated threads on iterative Fi
     @types.ReviewMode::Iterative,
     refs,
   )
-  assert_eq(ids, ["T_old_1", "T_old_2"])
+  @debug.assert_eq(ids, ["T_old_1", "T_old_2"])
 }
 
 ///|
@@ -131,7 +131,7 @@ test "review_thread_ids_to_auto_resolve skips single pass and non FixesPushed ev
       author_login: "copilot-pull-request-reviewer[bot]",
     },
   ]
-  assert_eq(
+  @debug.assert_eq(
     review_thread_ids_to_auto_resolve(
       FixesPushed(3),
       @types.ReviewMode::SinglePass,
@@ -139,7 +139,7 @@ test "review_thread_ids_to_auto_resolve skips single pass and non FixesPushed ev
     ),
     [],
   )
-  assert_eq(
+  @debug.assert_eq(
     review_thread_ids_to_auto_resolve(
       PRReady(3),
       @types.ReviewMode::Iterative,
@@ -151,7 +151,7 @@ test "review_thread_ids_to_auto_resolve skips single pass and non FixesPushed ev
 
 ///|
 test "review_thread_ids_to_auto_resolve skips current and empty thread lists" {
-  assert_eq(
+  @debug.assert_eq(
     review_thread_ids_to_auto_resolve(
       FixesPushed(3),
       @types.ReviewMode::Iterative,
@@ -165,7 +165,7 @@ test "review_thread_ids_to_auto_resolve skips current and empty thread lists" {
     ),
     [],
   )
-  assert_eq(
+  @debug.assert_eq(
     review_thread_ids_to_auto_resolve(
       FixesPushed(3),
       @types.ReviewMode::Iterative,
@@ -185,7 +185,7 @@ test "review_thread_ids_to_auto_resolve skips outdated human-authored threads" {
       author_login: "copilot-pull-request-reviewer[bot]",
     },
   ]
-  assert_eq(
+  @debug.assert_eq(
     review_thread_ids_to_auto_resolve(
       FixesPushed(3),
       @types.ReviewMode::Iterative,
