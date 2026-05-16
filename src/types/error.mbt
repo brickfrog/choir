@@ -101,6 +101,14 @@ pub fn ChoirError::is_tool_not_found(self : ChoirError) -> Bool {
 }
 
 ///|
+pub fn ChoirError::is_timeout(self : ChoirError) -> Bool {
+  match self {
+    Timeout(_) => true
+    _ => false
+  }
+}
+
+///|
 /// Format a caught [`Error`] when it originated from [`ChoirError`] (`try` / `catch`).
 pub fn choir_error_message_from_caught(e : Error) -> String {
   match e {

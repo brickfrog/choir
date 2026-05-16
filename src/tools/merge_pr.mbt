@@ -682,15 +682,12 @@ fn merge_pr_audit_error_status(
 ) -> MergePrAuditGateStatus {
   match spawn_error {
     Some(msg) => MergeAuditGateAutoAuditSpawnFailed(msg)
-    None => {
-      let detail = err.validation_detail_or_message()
-      if detail == "audit budget exceeded" ||
-        err.message().contains("audit budget exceeded") {
+    None =>
+      if err.is_timeout() {
         MergeAuditGateAutoAuditTimedOut(audit_budget_ms)
       } else {
         MergeAuditGateAutoAuditFailed(err.message())
       }
-    }
   }
 }
 
@@ -703,7 +700,7 @@ pub async fn merge_pr_require_audit_receipt(
   pr_number : Int,
   head_sha : String,
   gate_state : MergeGateState,
-  pr_created_at_unix : Int64,
+  pr_first_seen_unix : Int64,
   capture : async (@workspace.Command) -> (Int, String),
   spawn_audit_worker? : async (WorkerSpawnArgs) -> Result[
     String,
@@ -732,7 +729,7 @@ pub async fn merge_pr_require_audit_receipt(
   if !file_pr_audit_receipt_required(parent_branch) {
     return Ok(())
   }
-  if !merge_pr_audit_gate_required(gate_state, pr_created_at_unix) {
+  if !merge_pr_audit_gate_required(gate_state, pr_first_seen_unix) {
     return Ok(())
   }
   if head_sha.trim().to_owned() == "" {
@@ -2032,9 +2029,6 @@ pub async fn interpret_merge_pr(
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) => {
-      let gate_state = load_or_initialize_gate_state(
-        project_dir, merge_gate_now_sec_fn, read_file, write_file_atomic,
-      )
       match poller_state {
         Some(ps) =>
           match ps.get(merge_args.pr_number) {
@@ -2042,67 +2036,77 @@ pub async fn interpret_merge_pr(
               let file_pr_dir = merge_pr_audit_workdir(
                 project_dir, tracked, registry,
               )
-              match
-                merge_pr_require_audit_receipt(
-                  merge_args.parent_branch,
-                  project_dir,
-                  file_pr_dir,
-                  tracked.agent_id,
-                  merge_args.pr_number,
-                  tracked.last_sha,
-                  gate_state,
-                  tracked.first_seen,
-                  capture,
-                  spawn_audit_worker=async fn(worker_args) {
-                    let resolved_parent_branch = detect_default_branch_with_capture(
-                      project_dir, capture,
-                    )
-                    let plan = spawn_worker_plan(
-                      worker_args, resolved_parent_branch, session, project_dir,
-                    )
-                    prepare_audit_report(plan.agent_id)
-                    let resp = interpret_spawn_worker(
-                      worker_args,
-                      project_dir,
-                      session,
-                      runner,
-                      capture,
-                      registry,
-                      extra_mcp_servers_json~,
-                      shell_command~,
-                      listen_uds~,
-                      listen_tcp~,
-                      tcp_auth_token~,
-                      allow_audit_on_file_pr_caller=true,
-                    )
-                    match resp.ok_field("agent_id") {
-                      Some(agent_id) => Ok(agent_id)
-                      None =>
-                        Err(
-                          @types.ChoirError::validation_error(
-                            resp
-                            .error_message()
-                            .unwrap_or("audit worker spawn failed"),
-                          ),
-                        )
-                    }
-                  },
-                  wait_for_audit_report~,
-                  cleanup_audit_report~,
-                  write_audit_receipt=fn(write_args) {
-                    interpret_write_audit_receipt(
-                      write_args, project_dir, create_dir_all, write_file_atomic,
-                    )
-                  },
-                  audit_budget_ms~,
-                  audit_heartbeat_sec~,
-                  append_file~,
-                  audit_sleep_fn~,
-                  audit_now_ms_fn~,
-                  audit_worker_alive~,
-                ) {
-                Err(e) => return @types.Response::Err(e.message())
-                Ok(_) => ()
+              let pr_first_seen_unix = tracked.first_seen
+              if file_pr_audit_receipt_required(merge_args.parent_branch) {
+                let gate_state = match
+                  load_or_initialize_gate_state(
+                    project_dir, merge_gate_now_sec_fn, read_file, write_file_atomic,
+                  ) {
+                  Ok(state) => state
+                  Err(e) => return @types.Response::Err(e.message())
+                }
+                match
+                  merge_pr_require_audit_receipt(
+                    merge_args.parent_branch,
+                    project_dir,
+                    file_pr_dir,
+                    tracked.agent_id,
+                    merge_args.pr_number,
+                    tracked.last_sha,
+                    gate_state,
+                    pr_first_seen_unix,
+                    capture,
+                    spawn_audit_worker=async fn(worker_args) {
+                      let resolved_parent_branch = detect_default_branch_with_capture(
+                        project_dir, capture,
+                      )
+                      let plan = spawn_worker_plan(
+                        worker_args, resolved_parent_branch, session, project_dir,
+                      )
+                      prepare_audit_report(plan.agent_id)
+                      let resp = interpret_spawn_worker(
+                        worker_args,
+                        project_dir,
+                        session,
+                        runner,
+                        capture,
+                        registry,
+                        extra_mcp_servers_json~,
+                        shell_command~,
+                        listen_uds~,
+                        listen_tcp~,
+                        tcp_auth_token~,
+                        allow_audit_on_file_pr_caller=true,
+                      )
+                      match resp.ok_field("agent_id") {
+                        Some(agent_id) => Ok(agent_id)
+                        None =>
+                          Err(
+                            @types.ChoirError::validation_error(
+                              resp
+                              .error_message()
+                              .unwrap_or("audit worker spawn failed"),
+                            ),
+                          )
+                      }
+                    },
+                    wait_for_audit_report~,
+                    cleanup_audit_report~,
+                    write_audit_receipt=fn(write_args) {
+                      interpret_write_audit_receipt(
+                        write_args, project_dir, create_dir_all, write_file_atomic,
+                      )
+                    },
+                    audit_budget_ms~,
+                    audit_heartbeat_sec~,
+                    append_file~,
+                    audit_sleep_fn~,
+                    audit_now_ms_fn~,
+                    audit_worker_alive~,
+                  ) {
+                  Err(e) => return @types.Response::Err(e.message())
+                  Ok(_) => ()
+                }
               }
             }
             None => ()

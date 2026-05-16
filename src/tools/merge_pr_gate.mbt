@@ -23,7 +23,7 @@ pub fn load_or_initialize_gate_state(
   now_fn : () -> Int64,
   read : (String) -> String,
   write : (String, String) -> Bool,
-) -> MergeGateState {
+) -> Result[MergeGateState, @types.ChoirError] {
   let path = merge_pr_audit_gate_state_path(project_dir)
   let body = read(path).trim().to_owned()
   if body != "" {
@@ -31,21 +31,28 @@ pub fn load_or_initialize_gate_state(
     match parsed {
       Some(json) =>
         match merge_pr_gate_state_from_json(json) {
-          Some(state) => return state
+          Some(state) => return Ok(state)
           None => ()
         }
       None => ()
     }
   }
   let state : MergeGateState = { enabled_at_unix: now_fn() }
-  ignore(write(path, state.to_json().stringify() + "\n"))
-  state
+  if write(path, state.to_json().stringify() + "\n") {
+    Ok(state)
+  } else {
+    Err(
+      @types.ChoirError::validation_error(
+        "merge blocked: audit receipt gate could not persist .choir/audit-gate.json; refusing to merge because the grandfather timestamp is not durable",
+      ),
+    )
+  }
 }
 
 ///|
 pub fn merge_pr_audit_gate_required(
   state : MergeGateState,
-  pr_created_at_unix : Int64,
+  pr_first_seen_unix : Int64,
 ) -> Bool {
-  pr_created_at_unix >= state.enabled_at_unix
+  pr_first_seen_unix >= state.enabled_at_unix
 }

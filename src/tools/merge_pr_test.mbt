@@ -147,11 +147,41 @@ fn merge_pr_test_audit_receipt(sha : String) -> String {
 }
 
 ///|
-test "merge_pr_audit_gate_required grandfathers PRs before gate timestamp" {
+fn merge_pr_test_gate_state_reader(
+  enabled_at_unix : Int64,
+) -> (String) -> String {
+  fn(path : String) -> String {
+    if path.has_suffix("/.choir/audit-gate.json") {
+      "{\"enabled_at_unix\":" + enabled_at_unix.to_string() + "}\n"
+    } else {
+      ""
+    }
+  }
+}
+
+///|
+test "merge_pr_audit_gate_required grandfathers PRs first seen before gate timestamp" {
   let state : MergeGateState = { enabled_at_unix: 100L }
   assert_false(merge_pr_audit_gate_required(state, 99L))
   assert_true(merge_pr_audit_gate_required(state, 100L))
   assert_true(merge_pr_audit_gate_required(state, 101L))
+}
+
+///|
+test "load_or_initialize_gate_state fails closed when timestamp cannot persist" {
+  match
+    load_or_initialize_gate_state("/repo", fn() { 123L }, fn(_) { "" }, fn(
+      _,
+      _,
+    ) {
+      false
+    }) {
+    Err(e) => {
+      assert_true(e.message().contains("audit receipt gate"))
+      assert_true(e.message().contains("not durable"))
+    }
+    Ok(_) => fail("expected gate state persistence failure")
+  }
 }
 
 ///|
@@ -2038,6 +2068,7 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     capture,
     append_file,
     fn(_path) { false },
+    read_file=merge_pr_test_gate_state_reader(1L),
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2157,6 +2188,7 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
     capture,
     fn(_path, _content) { true },
     fn(_path) { false },
+    read_file=merge_pr_test_gate_state_reader(1L),
   )
   match got {
     @types.Response::Ok(_) => ()
