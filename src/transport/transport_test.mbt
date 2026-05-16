@@ -88,7 +88,7 @@ test "parse_request invalid role" {
 
 ///|
 test "format_response ok" {
-  let result = Map::new()
+  let result = Map([], capacity=0)
   result.set("agent_id", "main.feat-a")
   let resp = @types.Response::ok(result)
   assert_true(resp.is_ok())
@@ -213,7 +213,7 @@ test "format_augmented_request adds caller and sender defaults" {
 
 ///|
 test "format_response escaping" {
-  let result = Map::new()
+  let result = Map([], capacity=0)
   result.set("message", "hello \"quoted\" world")
   let resp = @types.Response::ok(result)
   let output = format_response(resp)

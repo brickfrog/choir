@@ -335,7 +335,7 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
 
 ///|
 pub fn PollerState::new() -> PollerState {
-  { tracked: Map::new(), write_generation: 0 }
+  { tracked: Map([], capacity=0), write_generation: 0 }
 }
 
 ///|

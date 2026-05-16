@@ -45,16 +45,16 @@ test "PaneWatcher::with_host routes subscribe and cleanup through injected host 
   let snap = pane_snapshot_path("agent-x")
   pw.watch_pane("agent-x", target, 0L)
   @debug.assert_eq(pw.watches.get("agent-x").map(fn(w) { w.pid }), Some(99))
-  assert_eq(spawn_args, ["sess", "tab1", snap])
+  @debug.assert_eq(spawn_args, ["sess", "tab1", snap])
   assert_eq(
     pw.read_viewport("agent-x"),
     "{\"event\":\"pane_update\",\"viewport\":[\"hi\"]}",
   )
-  assert_eq(read_paths, [snap])
+  @debug.assert_eq(read_paths, [snap])
   pw.stop_subscribe("agent-x")
   @debug.assert_eq(pw.watches.get("agent-x").map(fn(w) { w.pid }), None)
-  assert_eq(killed_pids, [99])
-  assert_eq(deleted_paths, [snap])
+  @debug.assert_eq(killed_pids, [99])
+  @debug.assert_eq(deleted_paths, [snap])
 }
 
 ///|
@@ -82,9 +82,9 @@ test "PaneWatcher::stop_subscribe followed by check_idle does not double-kill or
 
   @debug.assert_eq(pw.check_idle("agent-stop", 999L, 0L), None)
   @debug.assert_eq(pw.watches.get("agent-stop").map(fn(w) { w.pid }), None)
-  assert_eq(killed_pids, [123])
-  assert_eq(deleted_paths, [pane_snapshot_path("agent-stop")])
-  assert_eq(read_paths, [])
+  @debug.assert_eq(killed_pids, [123])
+  @debug.assert_eq(deleted_paths, [pane_snapshot_path("agent-stop")])
+  @debug.assert_eq(read_paths, [])
 }
 
 ///|
@@ -118,7 +118,7 @@ test "PaneWatcher::record_observation updates all fields atomically" {
   assert_eq(observation.last_change_at, 42L)
   assert_eq(observation.last_hash, simple_hash(screen))
   assert_eq(observation.last_len, screen.length())
-  assert_eq(read_paths, [pane_snapshot_path("agent-observe")])
+  @debug.assert_eq(read_paths, [pane_snapshot_path("agent-observe")])
 }
 
 ///|

@@ -394,7 +394,7 @@ test "statusline_count_agents matches child ids using lifecycle content agent_id
     project_dir,
   )
   ignore(@sys.rm_rf(project_dir))
-  assert_eq((working, review, changes, failed, done), (1, 0, 0, 0, 0))
+  @debug.assert_eq((working, review, changes, failed, done), (1, 0, 0, 0, 0))
 }
 
 ///|

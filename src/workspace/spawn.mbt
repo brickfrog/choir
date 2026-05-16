@@ -237,7 +237,7 @@ test "launch env serializers agree on the non-PATH key set" {
       None => ()
     }
   }
-  assert_eq(prefix_keys, expected_keys)
+  @debug.assert_eq(prefix_keys, expected_keys)
   // Exports serializer: `export PATH=...; export K1='v1'; ...` — split on `;`.
   let exports = launch_env_exports(spec, "sess", "/ws", target)
   let export_keys : Array[String] = []
@@ -255,7 +255,7 @@ test "launch env serializers agree on the non-PATH key set" {
       None => ()
     }
   }
-  assert_eq(export_keys, expected_keys)
+  @debug.assert_eq(export_keys, expected_keys)
   // Argv serializer: `Array[String]` — first entry is PATH, rest are K=V.
   let argv = launch_env_assignments(spec, "sess", "/ws", target)
   let argv_keys : Array[String] = []
@@ -268,7 +268,7 @@ test "launch env serializers agree on the non-PATH key set" {
       None => ()
     }
   }
-  assert_eq(argv_keys, expected_keys)
+  @debug.assert_eq(argv_keys, expected_keys)
 }
 
 ///|

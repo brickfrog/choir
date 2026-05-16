@@ -120,7 +120,7 @@ async test "run_beads_wave_from execute reads ready children and invokes fork_wa
       assert_eq(seen.length(), 2)
       let bd_cmd = seen[0]
       assert_eq(bd_cmd.program, "bd")
-      assert_eq(bd_cmd.args, [
+      @debug.assert_eq(bd_cmd.args, [
         "ready", "--json", "--parent", "choir-epic", "--limit", "0",
       ])
       @debug.assert_eq(bd_cmd.workdir, Some("/repo"))
@@ -189,7 +189,7 @@ test "build_beads_doctor_report flags export and unrelated dirty paths" {
   assert_eq(report.ready_count, 1)
   assert_eq(report.in_progress_count, 1)
   assert_true(report.beads_export_dirty)
-  assert_eq(report.unrelated_dirty_paths, ["src/tools/foo.mbt"])
+  @debug.assert_eq(report.unrelated_dirty_paths, ["src/tools/foo.mbt"])
   let rendered = render_beads_doctor_report(report)
   assert_true(rendered.contains("ready_count: 1"))
   assert_true(rendered.contains("- src/tools/foo.mbt"))
@@ -244,7 +244,7 @@ async test "run_beads_spec_link refuses missing spec file" {
     Ok(_) => fail("expected missing spec error")
   }
   assert_eq(seen.length(), 0)
-  assert_eq(file_checks, ["entry:/repo/.choir/context/missing-spec.md"])
+  @debug.assert_eq(file_checks, ["entry:/repo/.choir/context/missing-spec.md"])
 }
 
 ///|
@@ -281,7 +281,7 @@ async test "run_beads_spec_link refuses empty spec file" {
     Ok(_) => fail("expected empty spec error")
   }
   assert_eq(seen.length(), 0)
-  assert_eq(file_checks, [
+  @debug.assert_eq(file_checks, [
     "entry:/repo/.choir/context/empty-spec.md", "readable:/repo/.choir/context/empty-spec.md",
     "read:/repo/.choir/context/empty-spec.md",
   ])
@@ -321,7 +321,7 @@ async test "run_beads_spec_link refuses unreadable spec file" {
     Ok(_) => fail("expected unreadable spec error")
   }
   assert_eq(seen.length(), 0)
-  assert_eq(file_checks, [
+  @debug.assert_eq(file_checks, [
     "entry:/repo/.choir/context/locked-spec.md", "readable:/repo/.choir/context/locked-spec.md",
   ])
 }
@@ -392,7 +392,7 @@ async test "run_beads_spec_link succeeds for existing spec file" {
     Err(e) => fail(e.message())
   }
   assert_eq(seen.length(), 1)
-  assert_eq(file_checks, [
+  @debug.assert_eq(file_checks, [
     "entry:/repo/.choir/context/beads-glue-spec.md", "readable:/repo/.choir/context/beads-glue-spec.md",
     "read:/repo/.choir/context/beads-glue-spec.md",
   ])

@@ -30,8 +30,8 @@ async test "Goal::evaluate passes shell and closed bead checks through injected 
   assert_eq(eval.total, 2)
   assert_eq(eval.failing_summary, "")
   assert_eq(eval.evaluated_unix_sec, 20L)
-  assert_eq(shell_seen, ["true"])
-  assert_eq(bead_seen, ["choir-kqv"])
+  @debug.assert_eq(shell_seen, ["true"])
+  @debug.assert_eq(bead_seen, ["choir-kqv"])
 }
 
 ///|
@@ -89,12 +89,12 @@ async test "goal_set writes one session KV file and evaluates shell check throug
   )
   assert_true(resp.is_ok())
   assert_eq(requested_ticks, 1)
-  assert_eq(dirs, ["/repo/.choir/kv"])
+  @debug.assert_eq(dirs, ["/repo/.choir/kv"])
   let path = @types.goal_kv_path("/repo", "sess").unwrap()
   assert_true(files.contains(path))
   assert_eq(commands.length(), 1)
   assert_eq(commands[0].program, "sh")
-  assert_eq(commands[0].args, ["-c", "true"])
+  @debug.assert_eq(commands[0].args, ["-c", "true"])
   @debug.assert_eq(commands[0].workdir, Some("/repo"))
   let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
   match stored.last_eval {
@@ -138,7 +138,7 @@ async test "goal_set bead source evaluates bd show json through injected capture
   assert_true(resp.is_ok())
   assert_eq(bd_commands.length(), 1)
   assert_eq(bd_commands[0].program, "bd")
-  assert_eq(bd_commands[0].args, ["show", "choir-kqv", "--json"])
+  @debug.assert_eq(bd_commands[0].args, ["show", "choir-kqv", "--json"])
   @debug.assert_eq(bd_commands[0].workdir, Some("/repo"))
   let stored = @types.Goal::from_json_string(
     files.get(@types.goal_kv_path("/repo", "sess").unwrap()).unwrap(),
@@ -236,7 +236,9 @@ async test "goal_set supersedes previous goal without stacking keys" {
   assert_true(second.is_ok())
   assert_eq(write_paths.length(), 2)
   assert_eq(write_paths[0], write_paths[1])
-  assert_eq(events, ["write", "write", "deliver:[GOAL SUPERSEDED: first-goal]"])
+  @debug.assert_eq(events, [
+    "write", "write", "deliver:[GOAL SUPERSEDED: first-goal]",
+  ])
   match second.ok_payload() {
     Some(fields) =>
       match fields.get_json("superseded") {
@@ -308,7 +310,7 @@ async test "goal_set does not emit superseded when replacement write fails" {
     Some(msg) => assert_true(msg.contains("failed to write goal kv file"))
     None => fail("expected replacement write failure")
   }
-  assert_eq(events, ["write", "write"])
+  @debug.assert_eq(events, ["write", "write"])
   let stored = @types.Goal::from_json_string(files.get(path).unwrap()).unwrap()
   assert_eq(stored.slug, "first-goal")
 }
@@ -391,7 +393,7 @@ async test "goal_clear removes the exact session KV path" {
     },
   )
   assert_true(resp.is_ok())
-  assert_eq(deleted, [path])
+  @debug.assert_eq(deleted, [path])
   assert_false(files.contains(path))
 }
 
@@ -416,7 +418,7 @@ async test "goal_clear surfaces delete failures for existing goal KV" {
     Some(msg) => assert_eq(msg, "failed to delete goal kv file: " + path)
     None => fail("expected delete failure to surface")
   }
-  assert_eq(deleted, [path])
+  @debug.assert_eq(deleted, [path])
   assert_true(files.contains(path))
 }
 
@@ -566,7 +568,7 @@ async test "goal_clear deletes corrupt goal KV unconditionally" {
     },
   )
   assert_true(resp.is_ok())
-  assert_eq(deleted, [path])
+  @debug.assert_eq(deleted, [path])
   assert_false(files.contains(path))
   match resp.ok_payload() {
     Some(fields) => {

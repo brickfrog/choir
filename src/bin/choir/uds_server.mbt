@@ -422,7 +422,7 @@ test "serve rotates oversized logs with one shared helper" {
     },
   )
   assert_true(did_rotate)
-  assert_eq(renames, [(".choir/serve.log", ".choir/serve.log.1")])
+  @debug.assert_eq(renames, [(".choir/serve.log", ".choir/serve.log.1")])
   let small_renames : Array[(String, String)] = []
   let no_rotate = serve_rotate_log_if_large(
     ".",
@@ -435,7 +435,7 @@ test "serve rotates oversized logs with one shared helper" {
     },
   )
   assert_false(no_rotate)
-  assert_eq(small_renames, [])
+  @debug.assert_eq(small_renames, [])
 }
 
 ///|
@@ -457,9 +457,9 @@ test "serve cleanup removes stale tl goal kv files only" {
       true
     },
   )
-  assert_eq(listed, [".choir/kv"])
+  @debug.assert_eq(listed, [".choir/kv"])
   assert_eq(removed, 2)
-  assert_eq(deleted, [
+  @debug.assert_eq(deleted, [
     ".choir/kv/tl-goal--old.json", ".choir/kv/tl-goal--other.json",
   ])
 }

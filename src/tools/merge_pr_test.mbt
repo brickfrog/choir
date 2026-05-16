@@ -2294,7 +2294,7 @@ test "resolve_review_thread_gh_command matches graphql argv and workdir" {
   let cmd = resolve_review_thread_gh_command("/repo/root", "PRRT_kwDOabc")
   assert_eq(cmd.program, "timeout")
   @debug.assert_eq(cmd.workdir, Some("/repo/root"))
-  assert_eq(cmd.args, [
+  @debug.assert_eq(cmd.args, [
     "30s",
     "gh",
     "api",

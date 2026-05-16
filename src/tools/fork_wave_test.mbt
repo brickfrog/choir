@@ -511,7 +511,7 @@ test "fork_wave_spawn_plan skips active agents and records skipped_ids" {
   assert_eq(plan.skipped_count, 1)
   assert_eq(plan.skipped_ids, "main.wave-0")
   assert_eq(plan.agent_ids, "main.wave-1")
-  assert_eq(plan.spawned_slugs, ["wave-1"])
+  @debug.assert_eq(plan.spawned_slugs, ["wave-1"])
 }
 
 ///|
@@ -815,12 +815,14 @@ async test "interpret_fork_wave_spawn_effect_phase commits scaffold before workt
     if seq == 0 {
       assert_eq(cmds.length(), 3)
       assert_eq(cmds[0].program, "git")
-      assert_eq(cmds[0].args, ["-C", "/proj", "add", "--", "src/shared.mbt"])
-      assert_eq(cmds[1].args, [
+      @debug.assert_eq(cmds[0].args, [
+        "-C", "/proj", "add", "--", "src/shared.mbt",
+      ])
+      @debug.assert_eq(cmds[1].args, [
         "-C", "/proj", "commit", "-m", "chore: scaffold shared wave surface", "--",
         "src/shared.mbt",
       ])
-      assert_eq(cmds[2].args, ["-C", "/proj", "push"])
+      @debug.assert_eq(cmds[2].args, ["-C", "/proj", "push"])
       for cmd in cmds {
         assert_false(cmd.args.contains("worktree"))
       }
@@ -1144,7 +1146,7 @@ test "fork_wave_spawn_plan skips Failed agents after kill_agent" {
   assert_eq(plan.spawned_count, 1)
   assert_eq(plan.skipped_ids, "main.wave-0")
   assert_eq(plan.agent_ids, "main.wave-1")
-  assert_eq(plan.spawned_slugs, ["wave-1"])
+  @debug.assert_eq(plan.spawned_slugs, ["wave-1"])
 }
 
 ///|
@@ -1170,7 +1172,7 @@ test "fork_wave_spawn_plan skips Done agents" {
   assert_eq(plan.spawned_count, 1)
   assert_eq(plan.skipped_ids, "main.wave-0")
   assert_eq(plan.agent_ids, "main.wave-1")
-  assert_eq(plan.spawned_slugs, ["wave-1"])
+  @debug.assert_eq(plan.spawned_slugs, ["wave-1"])
 }
 
 ///|

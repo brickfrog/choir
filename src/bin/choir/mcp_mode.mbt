@@ -805,11 +805,11 @@ test "mcp startup retries UDS connect until success" {
     Exhausted(_) => fail("expected startup connect to succeed")
   }
   assert_eq(connect_calls, 3)
-  assert_eq(connect_paths, [
+  @debug.assert_eq(connect_paths, [
     ".choir/server.sock", ".choir/server.sock", ".choir/server.sock",
   ])
-  assert_eq(waits, [".choir/server.sock:150", ".choir/server.sock:150"])
-  assert_eq(sleeps, [1000, 2000])
+  @debug.assert_eq(waits, [".choir/server.sock:150", ".choir/server.sock:150"])
+  @debug.assert_eq(sleeps, [1000, 2000])
   match mcp_startup_transport(result, None) {
     Uds(fd) => assert_eq(fd, 42)
     Tcp(_) => fail("expected UDS transport")
@@ -849,9 +849,9 @@ test "wait_for_socket_returns_success_mid_attempt_breaks_outer_retry" {
       fail("expected startup connect to succeed after socket wait")
   }
   assert_eq(connect_calls, 2)
-  assert_eq(connect_paths, [".choir/server.sock", ".choir/server.sock"])
-  assert_eq(waits, [".choir/server.sock:150"])
-  assert_eq(sleeps, [])
+  @debug.assert_eq(connect_paths, [".choir/server.sock", ".choir/server.sock"])
+  @debug.assert_eq(waits, [".choir/server.sock:150"])
+  @debug.assert_eq(sleeps, [])
   match mcp_startup_transport(result, None) {
     Uds(fd) => assert_eq(fd, 42)
     Tcp(_) => fail("expected UDS transport")
@@ -893,7 +893,7 @@ test "mcp startup exits after exhausting UDS attempts with no TCP fallback" {
   }
   assert_eq(connect_calls, 3)
   assert_eq(wait_calls, 3)
-  assert_eq(sleeps, [250, 500])
+  @debug.assert_eq(sleeps, [250, 500])
   match mcp_startup_transport(result, None) {
     Uds(_) => fail("expected startup failure")
     Tcp(_) => fail("expected startup failure without listen_tcp")

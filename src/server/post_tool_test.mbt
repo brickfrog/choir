@@ -315,7 +315,7 @@ test "plan_finalize and plan_fail refuse supervisor agents" {
     spawn_depth: 0,
   }
   let lifecycle = @phase.lifecycle_for_agent(agent)
-  assert_eq(
+  @debug.assert_eq(
     plan_finalize(
       agent,
       lifecycle,
@@ -325,7 +325,7 @@ test "plan_finalize and plan_fail refuse supervisor agents" {
     ),
     [],
   )
-  assert_eq(
+  @debug.assert_eq(
     plan_fail(
       agent,
       lifecycle,
@@ -630,7 +630,7 @@ test "plan_external_merge_finalization is idempotent for merged leaf" {
   let effects = plan_external_merge_finalization(
     agent, lifecycle, 42, "branch", "main", "https://gh.test/42",
   )
-  assert_eq(effects, [ClearRuntimeTracking("main.leaf")])
+  @debug.assert_eq(effects, [ClearRuntimeTracking("main.leaf")])
 }
 
 ///|

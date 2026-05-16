@@ -172,16 +172,16 @@ fn init_purge_cleanup_marker_substrings() -> Array[String] {
 test "init session lifecycle commands use zellij" {
   let list_cmd = @workspace.zellij_list_sessions_command()
   assert_eq(list_cmd.program, "env")
-  assert_eq(list_cmd.args, ["NO_COLOR=1", "zellij", "list-sessions"])
+  @debug.assert_eq(list_cmd.args, ["NO_COLOR=1", "zellij", "list-sessions"])
 
   let tab_q = @workspace.zellij_query_tab_names_command("choir")
   assert_eq(tab_q.program, "env")
-  assert_eq(tab_q.args, [
+  @debug.assert_eq(tab_q.args, [
     "NO_COLOR=1", "zellij", "--session", "choir", "action", "query-tab-names",
   ])
 
   let kill = init_kill_session_command("choir")
-  assert_eq(kill.args, ["delete-session", "--force", "choir"])
+  @debug.assert_eq(kill.args, ["delete-session", "--force", "choir"])
 }
 
 ///|
@@ -249,7 +249,7 @@ test "init orphan mcp-stdio reaper kills listed pids and cleanup invokes once" {
   ) {
     killed.push(pid)
   })
-  assert_eq(killed, [301, 302, 303])
+  @debug.assert_eq(killed, [301, 302, 303])
 
   let events : Array[String] = []
   init_cleanup_recreate_artifacts(
@@ -290,7 +290,9 @@ test "init waits for server socket before TL launch" {
     write_stdout=fn(_) {  },
   )
   events.push("tl-tab")
-  assert_eq(events, ["server-tab", "wait:.choir/server.sock:100", "tl-tab"])
+  @debug.assert_eq(events, [
+    "server-tab", "wait:.choir/server.sock:100", "tl-tab",
+  ])
 }
 
 ///|
@@ -307,8 +309,10 @@ test "init_wait_timeout_warns_and_proceeds" {
     write_stdout=fn(msg) { output.push(msg) },
   )
   events.push("tl-tab")
-  assert_eq(events, ["server-tab", "wait:.choir/server.sock:100", "tl-tab"])
-  assert_eq(output, [
+  @debug.assert_eq(events, [
+    "server-tab", "wait:.choir/server.sock:100", "tl-tab",
+  ])
+  @debug.assert_eq(output, [
     "Waiting for server socket...\n", "Warning: server socket not ready after 20s; launching TL anyway.\n",
   ])
 }

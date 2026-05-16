@@ -60,7 +60,7 @@ pub fn TomlDoc::to_map(self : TomlDoc) -> Map[String, String] {
 
 ///|
 pub fn parse_toml_doc(content : String) -> TomlDoc {
-  let map : Map[String, String] = Map::new()
+  let map : Map[String, String] = Map([], capacity=0)
   let lines = content.split("\n")
   let mut section = ""
   for line in lines {

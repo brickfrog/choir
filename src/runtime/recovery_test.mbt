@@ -27,8 +27,8 @@ test "parse_zellij_live_targets collects live tab and pane names" {
       #|]
     ),
   )
-  assert_eq(live.tabs, ["leaf-a"])
-  assert_eq(live.panes, ["gemini --prompt-interactive"])
+  @debug.assert_eq(live.tabs, ["leaf-a"])
+  @debug.assert_eq(live.panes, ["gemini --prompt-interactive"])
 }
 
 ///|
@@ -188,9 +188,12 @@ async test "shell recovery provider skips missing optional choir paths" {
     fail("capture should not run for missing optional paths")
     ""
   })
-  assert_eq((provider.list_agents_in_container)(project_dir, "worktrees"), [])
+  @debug.assert_eq(
+    (provider.list_agents_in_container)(project_dir, "worktrees"),
+    [],
+  )
   assert_eq((provider.read_agent_config)(project_dir, "agents", "root"), "")
-  assert_eq((provider.list_lifecycle_ids)(project_dir), [])
+  @debug.assert_eq((provider.list_lifecycle_ids)(project_dir), [])
   assert_eq((provider.read_lifecycle_content)(project_dir, "root"), "")
-  assert_eq((provider.read_poller_state)(project_dir), [])
+  @debug.assert_eq((provider.read_poller_state)(project_dir), [])
 }

@@ -96,7 +96,7 @@ async test "goal judge suppresses unchanged state inside reminder window" {
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
-  assert_eq(delivered, [])
+  @debug.assert_eq(delivered, [])
   assert_eq(clears, 0)
   assert_eq(writes.length(), 0)
 }
@@ -138,7 +138,7 @@ async test "goal judge treats a same-second first eval as a real previous eval (
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
-  assert_eq(delivered, [])
+  @debug.assert_eq(delivered, [])
   assert_eq(clears, 0)
 }
 
@@ -183,7 +183,7 @@ async test "goal judge emits complete exactly once and clears goal" {
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
-  assert_eq(delivered, ["[GOAL COMPLETE: x]"])
+  @debug.assert_eq(delivered, ["[GOAL COMPLETE: x]"])
   assert_eq(clears, 1)
   assert_eq(writes, 0)
 }
@@ -290,7 +290,7 @@ async test "goal judge skips stale writes when kv changes during evaluation" {
     Err(e) => fail(e.message())
   }
   assert_eq(reads, 2)
-  assert_eq(delivered, [])
+  @debug.assert_eq(delivered, [])
   assert_eq(writes.length(), 0)
   assert_eq(clears, 0)
   match current_goal {
@@ -334,7 +334,9 @@ async test "goal judge aborts write when kv changes immediately before write" {
     Err(e) => fail(e.message())
   }
   assert_eq(reads, 3)
-  assert_eq(delivered, ["[GOAL: old] 0/1 passing — shell failed: false"])
+  @debug.assert_eq(delivered, [
+    "[GOAL: old] 0/1 passing — shell failed: false",
+  ])
   assert_eq(writes.length(), 0)
   match current_goal {
     Some(goal) => assert_eq(goal.slug, "new")
@@ -377,7 +379,7 @@ async test "goal judge skips stale clears when kv changes during completion" {
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
-  assert_eq(delivered, [])
+  @debug.assert_eq(delivered, [])
   assert_eq(clears, 0)
   assert_eq(writes, 0)
   match current_goal {
@@ -417,7 +419,7 @@ async test "goal judge aborts delete when kv changes immediately before delete" 
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
-  assert_eq(delivered, ["[GOAL COMPLETE: old]"])
+  @debug.assert_eq(delivered, ["[GOAL COMPLETE: old]"])
   assert_eq(clears, 0)
   match current_goal {
     Some(goal) => assert_eq(goal.slug, "new")
@@ -463,7 +465,7 @@ async test "goal judge does not re-emit complete after clear failure" {
     Err(e) => assert_true(e.message().contains("delete failed"))
     Ok(_) => fail("expected second clear failure")
   }
-  assert_eq(delivered, ["[GOAL COMPLETE: x]"])
+  @debug.assert_eq(delivered, ["[GOAL COMPLETE: x]"])
   assert_eq(clears, 2)
   assert_eq(writes, 0)
 }
@@ -549,7 +551,7 @@ async test "server consumes requested goal judge tick flag" {
   }
   assert_false(state.goal_judge.tick_requested)
   assert_eq(reads, 3)
-  assert_eq(delivered, ["[GOAL: x] 0/1 passing — shell failed: false"])
+  @debug.assert_eq(delivered, ["[GOAL: x] 0/1 passing — shell failed: false"])
 }
 
 ///|

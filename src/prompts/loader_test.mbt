@@ -11,7 +11,7 @@ struct PromptFs {
 
 ///|
 fn PromptFs::new() -> PromptFs {
-  { files: Map::new(), dirs: Map::new() }
+  { files: Map([], capacity=0), dirs: Map([], capacity=0) }
 }
 
 ///|

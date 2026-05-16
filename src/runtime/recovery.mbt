@@ -1128,7 +1128,7 @@ pub async fn discover_recovery_input(
     recovered_agents: prebuilt.0,
     agent_stage_actions: prebuilt.1,
   }
-  let polls : Map[Int, RecoveryPrPollRow] = Map::new()
+  let polls : Map[Int, RecoveryPrPollRow] = Map([], capacity=0)
   let resolved_prs : Array[KnownPR] = []
   for pr in open_prs {
     match

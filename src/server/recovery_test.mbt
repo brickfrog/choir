@@ -63,8 +63,8 @@ async test "discover_recovery_input with mock provider" {
     },
   }
   let input = @runtime.discover_recovery_input(mock_provider, "/tmp", "session")
-  assert_eq(input.panes.live.tabs, ["tab1"])
-  assert_eq(input.panes.live.panes, ["pane1"])
+  @debug.assert_eq(input.panes.live.tabs, ["tab1"])
+  @debug.assert_eq(input.panes.live.panes, ["pane1"])
   assert_eq(input.prs.open_prs.length(), 1)
   assert_eq(input.prs.open_prs[0].pr_number, 123)
   assert_eq(input.files.local_agents.length(), 1)
@@ -84,7 +84,7 @@ async test "discover_recovery_input with mock provider" {
 
 ///|
 test "plan_recovery reconciles local agents and open PRs" {
-  let polls : Map[Int, @runtime.RecoveryPrPollRow] = Map::new()
+  let polls : Map[Int, @runtime.RecoveryPrPollRow] = Map([], capacity=0)
   polls.set(123, {
     review: @poller.ReviewState::Approved,
     sha: "sha1",
@@ -184,7 +184,7 @@ test "plan_recovery uses fallback poll row when TrackNewPR snapshot map has no e
           created_sec: Some(1000L),
         },
       ],
-      polls: Map::new(),
+      polls: Map([], capacity=0),
       resolved_prs: [],
     },
     files: {
@@ -248,7 +248,7 @@ test "plan_recovery handles offline agent and persisted PR" {
           created_sec: Some(3000L),
         },
       ],
-      polls: Map::new(),
+      polls: Map([], capacity=0),
       resolved_prs: [],
     },
     files: {
@@ -357,7 +357,7 @@ test "plan_recovery finalizes merged tracked PR after restart" {
     panes: { live: { tabs: [], panes: [] } },
     prs: {
       open_prs: [],
-      polls: Map::new(),
+      polls: Map([], capacity=0),
       resolved_prs: [
         @runtime.KnownPR::{
           pr_number: 777,

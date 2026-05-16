@@ -1343,9 +1343,9 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
     [0]
   })
   assert_eq(spawned.length(), 2)
-  assert_eq(reads, [])
-  assert_eq(killed, [])
-  assert_eq(calls, [])
+  @debug.assert_eq(reads, [])
+  @debug.assert_eq(killed, [])
+  @debug.assert_eq(calls, [])
   assert_eq(state.registry.get("root").state, @types.AgentState::Active)
   assert_eq(state.registry.get("main.tl").state, @types.AgentState::Active)
   ignore(@sys.rm_rf(project_dir))

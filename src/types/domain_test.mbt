@@ -235,7 +235,7 @@ test "TaskContract missing verify_satisfied_by_ci decodes as true" {
     _ => fail("expected legacy contract JSON to decode")
   }
   assert_eq(contract.goal, "ship feature")
-  assert_eq(contract.verify, ["moon test --target native"])
+  @debug.assert_eq(contract.verify, ["moon test --target native"])
   assert_true(@types.task_contract_verify_satisfied_by_ci(contract))
 }
 

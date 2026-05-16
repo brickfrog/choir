@@ -408,26 +408,26 @@ test "git_status_changed_paths keeps leading-whitespace porcelain lines intact" 
   let out = git_status_changed_paths(
     " M src/foo.mbt\nMM src/bar.mbt\n?? new/file.mbt\n",
   )
-  assert_eq(out, ["src/foo.mbt", "src/bar.mbt", "new/file.mbt"])
+  @debug.assert_eq(out, ["src/foo.mbt", "src/bar.mbt", "new/file.mbt"])
 }
 
 ///|
 test "git_status_changed_paths returns both sides of a rename" {
   // A rename touches both the old and the new path; the gate needs both.
   let out = git_status_changed_paths("R  old/name.mbt -> docs/new.md\n")
-  assert_eq(out, ["old/name.mbt", "docs/new.md"])
+  @debug.assert_eq(out, ["old/name.mbt", "docs/new.md"])
 }
 
 ///|
 test "git_status_changed_paths strips trailing CR and skips blanks" {
   let out = git_status_changed_paths(" M src/foo.mbt\r\n\r\n M src/bar.mbt\r\n")
-  assert_eq(out, ["src/foo.mbt", "src/bar.mbt"])
+  @debug.assert_eq(out, ["src/foo.mbt", "src/bar.mbt"])
 }
 
 ///|
 test "git_status_changed_paths unquotes a path with spaces" {
   let out = git_status_changed_paths("?? \"notes with space.md\"\n")
-  assert_eq(out, ["notes with space.md"])
+  @debug.assert_eq(out, ["notes with space.md"])
 }
 
 ///|
@@ -573,7 +573,7 @@ test "git_status_changed_paths does not split a non-rename line on a literal arr
   // ` M "weird -> name.md"` is a plain modify of a file whose name contains
   // ` -> `; only rename/copy lines may be split on the arrow.
   let out = git_status_changed_paths(" M \"weird -> name.md\"\n")
-  assert_eq(out, ["weird -> name.md"])
+  @debug.assert_eq(out, ["weird -> name.md"])
 }
 
 ///|

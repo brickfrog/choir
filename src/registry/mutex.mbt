@@ -13,7 +13,7 @@ pub(all) struct MutexRegistry {
 
 ///|
 pub fn MutexRegistry::new() -> MutexRegistry {
-  { locks: Map::new() }
+  { locks: Map([], capacity=0) }
 }
 
 ///|

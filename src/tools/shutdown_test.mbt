@@ -64,7 +64,7 @@ test "kill_agent_pane_close_command matches local_close_target" {
   match kill_agent_pane_close_command(a) {
     Some(cmd) => {
       assert_eq(cmd.program, expected.program)
-      assert_eq(cmd.args, expected.args)
+      @debug.assert_eq(cmd.args, expected.args)
     }
     None => fail("expected close command")
   }
@@ -76,7 +76,7 @@ test "kill_agent_worktree_remove_command follows choir worktree path rule" {
   match kill_agent_worktree_remove_command(a) {
     Some(cmd) => {
       assert_eq(cmd.program, "git")
-      assert_eq(cmd.args, [
+      @debug.assert_eq(cmd.args, [
         "worktree", "remove", "--force", "/proj/.choir/worktrees/slug-0",
       ])
     }
@@ -207,9 +207,9 @@ async test "interpret_kill_agent refuses supervisor roles without side effects" 
         assert_eq(msg, "kill_agent refused: target is supervisor")
       _ => fail("expected supervisor refusal")
     }
-    assert_eq(ran, [])
-    assert_eq(scanned, [])
-    assert_eq(killed, [])
+    @debug.assert_eq(ran, [])
+    @debug.assert_eq(scanned, [])
+    @debug.assert_eq(killed, [])
     match reg.get(agent_id) {
       a => assert_eq(a.state, @types.AgentState::Active)
     }
@@ -300,8 +300,8 @@ async test "interpret_kill_agent skips /proc scan for non-choir workspaces" {
       @types.Response::Ok(_) => ()
       _ => fail("expected ok for workspace=" + workspace)
     }
-    assert_eq(scanned, [])
-    assert_eq(killed, [])
+    @debug.assert_eq(scanned, [])
+    @debug.assert_eq(killed, [])
   }
 }
 
@@ -331,8 +331,8 @@ async test "interpret_kill_agent skips /proc scan for project-root workspaces" {
       @types.Response::Ok(_) => ()
       _ => fail("expected ok for workspace=" + workspace)
     }
-    assert_eq(scanned, [])
-    assert_eq(killed, [])
+    @debug.assert_eq(scanned, [])
+    @debug.assert_eq(killed, [])
   }
 }
 
@@ -361,8 +361,8 @@ async test "interpret_kill_agent runs /proc scan when workspace is a choir workt
     @types.Response::Ok(_) => ()
     _ => fail("expected ok")
   }
-  assert_eq(scanned, [workspace])
-  assert_eq(killed, [7])
+  @debug.assert_eq(scanned, [workspace])
+  @debug.assert_eq(killed, [7])
 }
 
 ///|
@@ -400,7 +400,7 @@ async test "interpret_kill_agent pane-close warning reflects kill outcome" {
       let map = fields.to_json_map()
       match map.get("warning") {
         Some(w) =>
-          assert_eq(
+          @debug.assert_eq(
             w,
             String::to_json(
               "pane close failed — zellij tab/pane may still be open",
@@ -428,7 +428,7 @@ async test "interpret_kill_agent pane-close warning reflects kill outcome" {
       let map = fields.to_json_map()
       match map.get("warning") {
         Some(w) =>
-          assert_eq(
+          @debug.assert_eq(
             w,
             String::to_json(
               "pane close failed — zellij tab/pane may still linger, but the agent process was killed",
@@ -827,7 +827,7 @@ async test "interpret_shutdown skips Beads shutdown mirror when exit is deferred
     }
     _ => fail("expected deferred ok")
   }
-  assert_eq(seen, [])
+  @debug.assert_eq(seen, [])
   ignore(@sys.rm_rf(tmp))
 }
 

@@ -63,7 +63,7 @@ test "git_worktree_add args" {
     "/path/to/worktree", "main.test-slug", "main",
   )
   assert_eq(cmd.program, "git")
-  assert_eq(cmd.args, [
+  @debug.assert_eq(cmd.args, [
     "worktree", "add", "/path/to/worktree", "-b", "main.test-slug", "main",
   ])
 }
@@ -85,7 +85,7 @@ test "git_fetch_origin_branch_best_effort runs fetch in project dir" {
     cmd.program,
     @workspace.native_git_fetch_origin_branch_best_effort_program,
   )
-  assert_eq(cmd.args, ["/repo", "main"])
+  @debug.assert_eq(cmd.args, ["/repo", "main"])
 }
 
 ///|
@@ -118,7 +118,7 @@ test "zellij_new_tab uses env argv without sh -lc" {
     { program: "echo", args: ["READY"], workdir: None },
   )
   assert_eq(cmd.program, "zellij")
-  assert_eq(cmd.args, [
+  @debug.assert_eq(cmd.args, [
     "--session", "howdy", "action", "new-tab", "--name", "leaf-a", "--cwd", "/path/to/worktree",
     "--", "env", "echo", "READY",
   ])
@@ -183,7 +183,7 @@ test "init_tl_agent_command supports agent alias for cursor" {
 test "zellij_list_sessions_command uses env argv without shell" {
   let cmd = @workspace.zellij_list_sessions_command()
   assert_eq(cmd.program, "env")
-  assert_eq(cmd.args, ["NO_COLOR=1", "zellij", "list-sessions"])
+  @debug.assert_eq(cmd.args, ["NO_COLOR=1", "zellij", "list-sessions"])
 }
 
 ///|
@@ -220,7 +220,7 @@ test "zellij_session_exists_in_list_output strips ansi" {
 test "zellij_query_tab_names_command uses env argv without shell" {
   let cmd = @workspace.zellij_query_tab_names_command("my-session")
   assert_eq(cmd.program, "env")
-  assert_eq(cmd.args, [
+  @debug.assert_eq(cmd.args, [
     "NO_COLOR=1", "zellij", "--session", "my-session", "action", "query-tab-names",
   ])
 }
@@ -284,11 +284,13 @@ test "agent_launch_command for each AgentType" {
   @debug.assert_eq(cmd_claude.workdir, Some("/path"))
 
   assert_eq(cmd_gemini.program, "gemini")
-  assert_eq(cmd_gemini.args, ["--yolo", "--prompt-interactive", "fix bugs"])
+  @debug.assert_eq(cmd_gemini.args, [
+    "--yolo", "--prompt-interactive", "fix bugs",
+  ])
   @debug.assert_eq(cmd_gemini.workdir, Some("/path"))
 
   assert_eq(cmd_moon.program, "moon")
-  assert_eq(cmd_moon.args, ["pilot", "fix bugs"])
+  @debug.assert_eq(cmd_moon.args, ["pilot", "fix bugs"])
   @debug.assert_eq(cmd_moon.workdir, Some("/path"))
 
   assert_eq(cmd_codex.program, "codex")
@@ -718,16 +720,16 @@ test "spawn_commands for worktree mode returns zellij tab" {
     cmds[0].program,
     @workspace.native_worktree_bootstrap_cleanup_program,
   )
-  assert_eq(cmds[0].args, [
+  @debug.assert_eq(cmds[0].args, [
     "/project", "/project/.choir/worktrees/test-slug", "main.test-slug",
   ])
   assert_eq(
     cmds[1].program,
     @workspace.native_git_fetch_origin_branch_best_effort_program,
   )
-  assert_eq(cmds[1].args, ["/project", "main"])
+  @debug.assert_eq(cmds[1].args, ["/project", "main"])
   assert_eq(cmds[2].program, "git")
-  assert_eq(cmds[2].args, [
+  @debug.assert_eq(cmds[2].args, [
     "worktree", "add", "/project/.choir/worktrees/test-slug", "-b", "main.test-slug",
     "origin/main",
   ])
@@ -738,7 +740,7 @@ test "spawn_commands for worktree mode returns zellij tab" {
   assert_eq(cmds[3].args[0], "/project/.choir/worktrees/test-slug")
   assert_true(cmds[3].args[1].contains(".cursor/"))
   assert_eq(cmds[6].program, @workspace.native_leaf_helpers_program)
-  assert_eq(cmds[6].args, ["/project/.choir/worktrees/test-slug"])
+  @debug.assert_eq(cmds[6].args, ["/project/.choir/worktrees/test-slug"])
   assert_eq(cmds[7].program, "zellij")
   assert_eq(cmds[7].args[3], "new-tab")
 }
@@ -882,7 +884,7 @@ test "spawn_commands standalone includes config writes" {
     ),
   )
   assert_eq(cmds[3].program, @workspace.native_leaf_helpers_program)
-  assert_eq(cmds[3].args, ["/proj/.choir/agents/standalone-task"])
+  @debug.assert_eq(cmds[3].args, ["/proj/.choir/agents/standalone-task"])
 }
 
 ///|
@@ -907,7 +909,7 @@ test "spawn_commands adds Gemini trust bootstrap" {
   let cmds = @workspace.spawn_commands(spec, "/project", "session")
   assert_eq(cmds.length(), 10)
   assert_eq(cmds[7].program, "choir")
-  assert_eq(cmds[7].args, [
+  @debug.assert_eq(cmds[7].args, [
     "trust-gemini-folder", "/project/.choir/worktrees/gemini-slug",
   ])
   assert_eq(cmds[8].program, @workspace.native_write_choir_file_program)
@@ -1033,16 +1035,16 @@ test "write_spawn_config and write_local_config use native choir file commands" 
   let spawn_cmd = @workspace.write_spawn_config("/wt", "a=toml")
   let local_cmd = @workspace.write_local_config("/wt", "b=toml")
   assert_eq(spawn_cmd.program, @workspace.native_write_choir_file_program)
-  assert_eq(spawn_cmd.args, ["/wt", "config.toml", "a=toml"])
+  @debug.assert_eq(spawn_cmd.args, ["/wt", "config.toml", "a=toml"])
   assert_eq(local_cmd.program, @workspace.native_write_choir_file_program)
-  assert_eq(local_cmd.args, ["/wt", "config.local.toml", "b=toml"])
+  @debug.assert_eq(local_cmd.args, ["/wt", "config.local.toml", "b=toml"])
 }
 
 ///|
 test "write_leaf_helper_scripts uses native leaf helper install command" {
   let cmd = @workspace.write_leaf_helper_scripts("/tmp/wt")
   assert_eq(cmd.program, @workspace.native_leaf_helpers_program)
-  assert_eq(cmd.args, ["/tmp/wt"])
+  @debug.assert_eq(cmd.args, ["/tmp/wt"])
 }
 
 ///|
