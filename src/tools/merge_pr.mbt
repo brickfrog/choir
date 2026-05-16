@@ -1208,27 +1208,18 @@ async fn merge_pr_close_feature_beads(
 }
 
 ///|
-fn merge_pr_lifecycle_role_overrides_registry(
-  lifecycle : @phase.AgentLifecycle,
-) -> Bool {
-  lifecycle.role == @types.Role::Dev || lifecycle.role == @types.Role::Worker
-}
-
-///|
-fn merge_pr_cleanup_agent_role(
+fn merge_pr_cleanup_agent(
   project_dir : String,
   agent : @types.Agent,
   read_lifecycle : (String, String) -> @phase.AgentLifecycle?,
-) -> @types.Role {
+) -> @types.Agent {
   let agent_id = agent.agent_id.to_string()
   match read_lifecycle(project_dir, agent_id) {
     Some(lifecycle) =>
-      if merge_pr_lifecycle_role_overrides_registry(lifecycle) {
-        lifecycle.role
-      } else {
-        agent.role
-      }
-    None => agent.role
+      @phase.agent_with_lifecycle_leaf_teardown_metadata(
+        agent, lifecycle, project_dir,
+      )
+    None => agent
   }
 }
 
@@ -1281,19 +1272,19 @@ fn merge_pr_leaf_cleanup_worktree_path(
       match registry {
         Some(reg) =>
           match (Some(reg.get(t.agent_id)) catch { _ => None }) {
-            Some(agent) =>
-              if @types.is_supervisor_role(
-                  merge_pr_cleanup_agent_role(
-                    project_dir, agent, read_lifecycle,
-                  ),
-                ) {
+            Some(agent) => {
+              let cleanup_agent = merge_pr_cleanup_agent(
+                project_dir, agent, read_lifecycle,
+              )
+              if @types.is_supervisor_role(cleanup_agent.role) {
                 return ""
               } else if @types.is_choir_managed_worktree_path(
                   project_dir,
-                  agent.workspace,
+                  cleanup_agent.workspace,
                 ) {
-                return agent.workspace
+                return cleanup_agent.workspace
               }
+            }
             None => ()
           }
         None => ()
@@ -1323,7 +1314,7 @@ fn merge_pr_leaf_cleanup_refuses_tracked_supervisor(
       match (Some(reg.get(t.agent_id)) catch { _ => None }) {
         Some(agent) =>
           @types.is_supervisor_role(
-            merge_pr_cleanup_agent_role(project_dir, agent, read_lifecycle),
+            merge_pr_cleanup_agent(project_dir, agent, read_lifecycle).role,
           )
         None => false
       }
@@ -1600,7 +1591,7 @@ pub fn interpret_merge_pr_post_success(
     match poller_state {
       Some(ps) => {
         match ps.get(pr_number) {
-          Some(tracked) => ps.mark_merged_observed(tracked)
+          Some(_) => ps.mark_merged_observed(pr_number)
           None => ()
         }
         ps.untrack(pr_number)

@@ -212,37 +212,6 @@ fn lifecycle_accepts_merge_observed(
 }
 
 ///|
-fn lifecycle_role_is_killable(role : @types.Role) -> Bool {
-  role == @types.Role::Dev || role == @types.Role::Worker
-}
-
-///|
-fn agent_with_lifecycle_role_if_killable(
-  agent : @types.Agent,
-  lifecycle : @phase.AgentLifecycle,
-  project_dir : String,
-) -> @types.Agent {
-  if lifecycle_role_is_killable(lifecycle.role) {
-    let with_lifecycle_role = { ..agent, role: lifecycle.role }
-    if @types.is_supervisor_role(agent.role) &&
-      !@types.is_choir_managed_worktree_path(project_dir, agent.workspace) {
-      {
-        ..with_lifecycle_role,
-        workspace: @workspace.worktree_path(
-          project_dir,
-          @phase.extract_slug(agent.agent_id.to_string()),
-        ),
-        terminal_target: None,
-      }
-    } else {
-      with_lifecycle_role
-    }
-  } else {
-    agent
-  }
-}
-
-///|
 fn merge_pr_delivery_parent_id(
   req : @types.Request,
   leaf : @types.Agent,
@@ -276,16 +245,31 @@ fn merge_pr_delivery_metadata(
   poller : @poller.PollerState,
   leaf : @types.Agent,
 ) -> (String, String, String) {
-  match merged_pr_context {
-    Some(ctx) =>
-      if ctx.branch != "" || ctx.parent_branch != "" || ctx.url != "" {
-        return (ctx.branch, ctx.parent_branch, ctx.url)
-      }
-    None => ()
-  }
-  match poller.get(pr_number) {
+  let (poller_branch, poller_parent_branch, poller_url) = match
+    poller.get(pr_number) {
     Some(t) => (t.branch, t.parent_branch, t.pr_url)
     None => (leaf.branch, "", "")
+  }
+  match merged_pr_context {
+    Some(ctx) =>
+      (
+        if ctx.branch == "" {
+          poller_branch
+        } else {
+          ctx.branch
+        },
+        if ctx.parent_branch == "" {
+          poller_parent_branch
+        } else {
+          ctx.parent_branch
+        },
+        if ctx.url == "" {
+          poller_url
+        } else {
+          ctx.url
+        },
+      )
+    None => (poller_branch, poller_parent_branch, poller_url)
   }
 }
 
@@ -331,10 +315,10 @@ pub fn plan_external_merge_finalization(
   branch : String,
   parent_branch : String,
   url : String,
+  project_dir : String,
   notify_parent? : Bool = true,
-  project_dir? : String = ".",
 ) -> Array[TeardownEffect] {
-  let finalized_agent = agent_with_lifecycle_role_if_killable(
+  let finalized_agent = @phase.agent_with_lifecycle_leaf_teardown_metadata(
     agent, lifecycle, project_dir,
   )
   let agent_id = finalized_agent.agent_id.to_string()
@@ -531,7 +515,7 @@ pub fn plan_post_tool_actions(
                 agent_id,
                 agent.role,
               )
-              let finalized_agent = agent_with_lifecycle_role_if_killable(
+              let finalized_agent = @phase.agent_with_lifecycle_leaf_teardown_metadata(
                 agent, lifecycle, project_dir,
               )
               for
@@ -567,7 +551,7 @@ pub fn plan_post_tool_actions(
             agent_id,
             leaf.role,
           )
-          let finalized_leaf = agent_with_lifecycle_role_if_killable(
+          let finalized_leaf = @phase.agent_with_lifecycle_leaf_teardown_metadata(
             leaf, lifecycle, project_dir,
           )
           if @types.is_supervisor_role(finalized_leaf.role) {
@@ -627,7 +611,7 @@ pub fn plan_post_tool_actions(
             agent_id,
             agent.role,
           )
-          let finalized_agent = agent_with_lifecycle_role_if_killable(
+          let finalized_agent = @phase.agent_with_lifecycle_leaf_teardown_metadata(
             agent, lifecycle, project_dir,
           )
           let parent = resolve_parent_for_plan_fail(

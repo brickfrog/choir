@@ -97,13 +97,6 @@ pub fn kill_pending_wave_ok_response(wave_id : String) -> @types.Response {
 }
 
 ///|
-fn kill_agent_lifecycle_role_overrides_registry(
-  lifecycle : @phase.AgentLifecycle,
-) -> Bool {
-  lifecycle.role == @types.Role::Dev || lifecycle.role == @types.Role::Worker
-}
-
-///|
 fn kill_agent_target_agent(
   agent : @types.Agent,
   project_dir : String,
@@ -112,24 +105,9 @@ fn kill_agent_target_agent(
   let agent_id = agent.agent_id.to_string()
   match read_lifecycle(project_dir, agent_id) {
     Some(lifecycle) =>
-      if kill_agent_lifecycle_role_overrides_registry(lifecycle) {
-        let corrected = { ..agent, role: lifecycle.role }
-        if (agent.role == @types.Role::Root || agent.role == @types.Role::TL) &&
-          !shutdown_safe_choir_worktree_path(project_dir, agent.workspace) {
-          {
-            ..corrected,
-            workspace: @workspace.worktree_path(
-              project_dir,
-              @phase.extract_slug(agent_id),
-            ),
-            terminal_target: None,
-          }
-        } else {
-          corrected
-        }
-      } else {
-        agent
-      }
+      @phase.agent_with_lifecycle_leaf_teardown_metadata(
+        agent, lifecycle, project_dir,
+      )
     None => agent
   }
 }
@@ -301,17 +279,22 @@ fn shutdown_exit_requested_deferred_releasable(
   lifecycle : @phase.AgentLifecycle,
   poller_state : @poller.PollerState?,
 ) -> Bool {
+  let has_merge_receipt = fn(pr_number : Int) -> Bool {
+    match poller_state {
+      Some(ps) => ps.merged_observed(pr_number)
+      None => false
+    }
+  }
   match lifecycle.workflow {
     @phase.WorkflowState::Dev(
       @phase.DevLifecycle::ExitRequestedDeferred(pr_number~, state~)
     ) =>
       match state {
         @phase.ReviewOwnership::OpenUnreviewed(..) =>
-          match poller_state {
-            Some(ps) => ps.merged_observed(pr_number) is Some(_)
-            None => false
-          }
-        _ => true
+          has_merge_receipt(pr_number)
+        @phase.ReviewOwnership::FixesAwaitingReview(..) =>
+          has_merge_receipt(pr_number)
+        @phase.ReviewOwnership::ApprovedAwaitingMerge => true
       }
     _ => false
   }

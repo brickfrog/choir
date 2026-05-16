@@ -11,6 +11,18 @@ test "poller_backoff_delay_after_failure exponential ladder capped at 900s" {
 }
 
 ///|
+test "PollerState merge receipts are bounded markers" {
+  let ps = @poller.PollerState::new()
+  ps.mark_merged_observed(10)
+  assert_true(ps.merged_observed(10))
+  for i = 0; i < 140; i = i + 1 {
+    ps.mark_merged_observed(1000 + i)
+  }
+  assert_true(ps.merged_observed.length() <= 128)
+  assert_true(ps.merged_observed(1139))
+}
+
+///|
 fn assert_generation_increased(
   ps : @poller.PollerState,
   before : Int,

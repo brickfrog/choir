@@ -652,10 +652,7 @@ test "shutdown_exit_plan releases deferred open PR after explicit merge receipt"
   }
   let ps = @poller.PollerState::new()
   ps.track(7, "main.l", "feature/l", "main", "https://ex/7", 0L)
-  match ps.get(7) {
-    Some(tracked) => ps.mark_merged_observed(tracked)
-    None => fail("expected tracked PR")
-  }
+  ps.mark_merged_observed(7)
   ps.untrack(7)
   let plan = shutdown_exit_plan(lifecycle, poller_state=Some(ps))
   assert_false(plan.apply_dev_exit_requested)
@@ -671,7 +668,37 @@ test "shutdown_exit_plan releases deferred open PR after explicit merge receipt"
 }
 
 ///|
-test "shutdown_exit_plan releases deferred non-open review state" {
+test "shutdown_exit_plan keeps deferred fixes-awaiting-review without merge receipt" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.l",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(
+        pr_number=9,
+        state=@phase.ReviewOwnership::FixesAwaitingReview(round=2),
+      ),
+    ),
+    last_updated_unix_sec: 0L,
+  }
+  let plan = shutdown_exit_plan(
+    lifecycle,
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  assert_true(plan.apply_dev_exit_requested)
+  assert_false(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("deferred")),
+      )
+    _ => fail("expected deferred ok")
+  }
+}
+
+///|
+test "shutdown_exit_plan releases deferred approved-awaiting-merge state" {
   let lifecycle : @phase.AgentLifecycle = {
     agent_id: "main.l",
     role: @types.Role::Dev,

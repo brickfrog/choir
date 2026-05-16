@@ -388,6 +388,79 @@ test "plan_post_tool_actions - merge_pr keeps captured metadata after untrack" {
 }
 
 ///|
+test "plan_post_tool_actions - merge_pr fills partial captured metadata from poller" {
+  let poller = @poller.PollerState::new()
+  let registry = @registry.AgentRegistry::new()
+  let project_dir = isolated_post_tool_project_dir("merge-partial-context")
+  let terminal_session = "s"
+  let pr_number = 45
+  let agent_id = "main.leaf-partial-context"
+  poller.track(
+    pr_number, agent_id, "poller-branch", "feature/base", "https://example.test/pr/45",
+    0L,
+  )
+  let agent : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    parent: Some("parent"),
+    workspace: "dir",
+    branch: "fallback-branch",
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(registry.upsert(agent))
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "merge_pr",
+    args: @types.RequestArgs::new({
+      "pr_number": pr_number.to_string(),
+      "caller_id": "main.tl",
+    }),
+  }
+  let resp = @types.Response::Ok(
+    @types.ResponseFields::new({ "status": "merged" }),
+  )
+  let effects = plan_post_tool_actions(
+    req,
+    resp,
+    merged_agent_id=Some(agent_id),
+    poller,
+    registry,
+    project_dir,
+    terminal_session,
+    merged_pr_context=Some({
+      agent_id,
+      branch: "captured-branch",
+      parent_branch: "",
+      url: "",
+    }),
+  )
+  let mut saw_partial_fallback = false
+  for e in effects {
+    match e {
+      DeliverToParentMerged(
+        leaf_id=aid,
+        pr_number=n,
+        branch="captured-branch",
+        parent_branch="feature/base",
+        url="https://example.test/pr/45",
+        ..
+      ) => {
+        assert_eq(aid, agent_id)
+        assert_eq(n, pr_number)
+        saw_partial_fallback = true
+      }
+      _ => ()
+    }
+  }
+  assert_true(saw_partial_fallback)
+}
+
+///|
 test "plan_post_tool_actions - stale supervisor metadata does not close parent target" {
   let poller = @poller.PollerState::new()
   let registry = @registry.AgentRegistry::new()
@@ -847,6 +920,7 @@ test "merged_pr_parent_message marks server automerge distinctly" {
 
 ///|
 test "plan_external_merge_finalization reuses canonical merged teardown" {
+  let project_dir = "/repo"
   let agent : @types.Agent = {
     agent_id: @types.AgentId("main.leaf"),
     role: @types.Role::Dev,
@@ -869,7 +943,7 @@ test "plan_external_merge_finalization reuses canonical merged teardown" {
     ),
   }
   let effects = plan_external_merge_finalization(
-    agent, lifecycle, 42, "branch", "main", "https://gh.test/42",
+    agent, lifecycle, 42, "branch", "main", "https://gh.test/42", project_dir,
   )
   match effects[0] {
     UpdateDevLifecycle(
@@ -935,13 +1009,7 @@ test "plan_external_merge_finalization trusts leaf lifecycle over stale supervis
     ),
   }
   let effects = plan_external_merge_finalization(
-    agent,
-    lifecycle,
-    42,
-    "main.leaf",
-    "main",
-    "https://gh.test/42",
-    project_dir~,
+    agent, lifecycle, 42, "main.leaf", "main", "https://gh.test/42", project_dir,
   )
   match effects[0] {
     UpdateDevLifecycle(
@@ -975,6 +1043,7 @@ test "plan_external_merge_finalization trusts leaf lifecycle over stale supervis
 
 ///|
 test "plan_external_merge_finalization is idempotent for merged leaf" {
+  let project_dir = "/repo"
   let agent : @types.Agent = {
     agent_id: @types.AgentId("main.leaf"),
     role: @types.Role::Dev,
@@ -997,13 +1066,14 @@ test "plan_external_merge_finalization is idempotent for merged leaf" {
     ),
   }
   let effects = plan_external_merge_finalization(
-    agent, lifecycle, 42, "branch", "main", "https://gh.test/42",
+    agent, lifecycle, 42, "branch", "main", "https://gh.test/42", project_dir,
   )
   @debug.assert_eq(effects, [ClearRuntimeTracking("main.leaf")])
 }
 
 ///|
 test "plan_external_merge_finalization can suppress parent notification for recovery" {
+  let project_dir = "/repo"
   let agent : @types.Agent = {
     agent_id: @types.AgentId("main.leaf"),
     role: @types.Role::Dev,
@@ -1032,6 +1102,7 @@ test "plan_external_merge_finalization can suppress parent notification for reco
     "branch",
     "main",
     "https://gh.test/42",
+    project_dir,
     notify_parent=false,
   )
   for effect in effects {
