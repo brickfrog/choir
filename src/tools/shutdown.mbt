@@ -346,9 +346,9 @@ pub fn shutdown_exit_plan(
 }
 
 ///|
-/// Adapter-side ordering for `shutdown`: poller gate, registry role, lifecycle
-/// read, optional dev exit event, optional worktree removal, and Beads mirror
-/// (matches dispatch).
+/// Adapter-side ordering for `shutdown`: pane close first, then poller gate,
+/// registry role, lifecycle read, optional dev exit event, optional worktree
+/// removal, and Beads mirror (matches dispatch).
 pub(all) enum ShutdownAdapterHostStep {
   PaneClose
   PollerCriticalPhaseRead
@@ -434,8 +434,9 @@ pub fn workflow_state_pr_number(workflow : @phase.WorkflowState) -> Int? {
 }
 
 ///|
-/// Effectful shutdown adapter: poller gate, lifecycle + `shutdown_exit_plan`,
-/// dev exit event, worktree cleanup, Beads lifecycle mirror.
+/// Effectful shutdown adapter: pane close first, then poller gate, lifecycle +
+/// `shutdown_exit_plan`, dev exit event, worktree cleanup, Beads lifecycle
+/// mirror.
 pub async fn interpret_shutdown(
   args : ShutdownArgs,
   project_dir : String,
