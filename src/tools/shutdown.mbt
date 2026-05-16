@@ -97,6 +97,22 @@ pub fn kill_pending_wave_ok_response(wave_id : String) -> @types.Response {
 }
 
 ///|
+fn kill_agent_target_agent(
+  agent : @types.Agent,
+  project_dir : String,
+  read_lifecycle : (String, String) -> @phase.AgentLifecycle?,
+) -> @types.Agent {
+  let agent_id = agent.agent_id.to_string()
+  match read_lifecycle(project_dir, agent_id) {
+    Some(lifecycle) =>
+      @phase.agent_with_lifecycle_leaf_teardown_metadata(
+        agent, lifecycle, project_dir,
+      )
+    None => agent
+  }
+}
+
+///|
 /// Effectful `kill_agent` adapter: optional pane close, optional worktree remove,
 /// registry failed state, warning log, success response. Preserves historical
 /// `ToolRequest::KillAgent` control flow while keeping `dispatch` as a thin caller.
@@ -116,6 +132,7 @@ pub async fn interpret_kill_agent(
     @sys.list_pids_with_cwd_prefix(p)
   },
   kill_pid? : (Int) -> Unit = @sys.kill_server_pid_sequence_best_effort,
+  read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
 ) -> @types.Response {
   // File existence is the source of truth for "is this id a pending wave"
   // — delete the entry whether or not its JSON parses. A partial/corrupt
@@ -138,10 +155,18 @@ pub async fn interpret_kill_agent(
       let agent = reg.get(args.agent_id) catch {
         _ => return @types.Response::Err("agent not found: " + args.agent_id)
       }
-      if @types.is_supervisor_role(agent.role) {
+      let target_agent = kill_agent_target_agent(
+        agent, project_dir, read_lifecycle,
+      )
+      let guard_role = target_agent.role
+      // Role::Dev and Role::Worker are always killable; only Root/TL refused.
+      // The persisted lifecycle role can correct a stale registry refresh that
+      // accidentally wrote supervisor metadata onto an existing leaf row.
+      if @types.is_supervisor_role(guard_role) {
         @moontrace.warn("kill_agent refused: target is supervisor", fields=[
           @moontrace.field("agent_id", args.agent_id),
-          @moontrace.field("role", agent.role.to_wire_string()),
+          @moontrace.field("role", guard_role.to_wire_string()),
+          @moontrace.field("registry_role", agent.role.to_wire_string()),
         ])
         return @types.Response::Err("kill_agent refused: target is supervisor")
       }
@@ -155,7 +180,7 @@ pub async fn interpret_kill_agent(
         )
       }
       let mut pane_close_failed = false
-      match kill_agent_pane_close_command(agent) {
+      match kill_agent_pane_close_command(target_agent) {
         Some(cmd) => {
           let codes = runner([cmd]) catch { _ => [-1] }
           if codes.length() > 0 && codes[0] != 0 {
@@ -169,7 +194,7 @@ pub async fn interpret_kill_agent(
         }
         None => ()
       }
-      match kill_agent_worktree_remove_command(agent, project_dir~) {
+      match kill_agent_worktree_remove_command(target_agent, project_dir~) {
         Some(cmd) => {
           let _ = runner([cmd])
           ()
@@ -192,9 +217,9 @@ pub async fn interpret_kill_agent(
       // worktree layout we actually own.
       let victims = if shutdown_safe_choir_worktree_path(
           project_dir,
-          agent.workspace,
+          target_agent.workspace,
         ) {
-        list_pids(agent.workspace)
+        list_pids(target_agent.workspace)
       } else {
         []
       }
@@ -250,12 +275,48 @@ pub(all) struct ShutdownExitPlan {
 }
 
 ///|
+fn shutdown_exit_requested_deferred_releasable(
+  lifecycle : @phase.AgentLifecycle,
+  poller_state : @poller.PollerState?,
+) -> Bool {
+  let has_merge_receipt = fn(pr_number : Int) -> Bool {
+    match poller_state {
+      Some(ps) => ps.merged_observed(pr_number)
+      None => false
+    }
+  }
+  match lifecycle.workflow {
+    @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(pr_number~, state~)
+    ) =>
+      match state {
+        @phase.ReviewOwnership::OpenUnreviewed(..) =>
+          has_merge_receipt(pr_number)
+        @phase.ReviewOwnership::FixesAwaitingReview(..) =>
+          has_merge_receipt(pr_number)
+        @phase.ReviewOwnership::ApprovedAwaitingMerge => true
+      }
+    _ => false
+  }
+}
+
+///|
 pub fn shutdown_exit_plan(
   lifecycle : @phase.AgentLifecycle,
+  poller_state? : @poller.PollerState? = None,
 ) -> ShutdownExitPlan {
   let dev_may_request_exit = match lifecycle.workflow {
     @phase.WorkflowState::Dev(_) => true
     _ => false
+  }
+  if shutdown_exit_requested_deferred_releasable(lifecycle, poller_state) {
+    return ShutdownExitPlan::{
+      response: @types.Response::ok_values({
+        "status": String::to_json("shutdown"),
+      }),
+      apply_dev_exit_requested: false,
+      attempt_worktree_cleanup: true,
+    }
   }
   match @phase.lifecycle_exit_policy(lifecycle) {
     @phase.LifecycleExitPolicy::Blocked(reason~) =>
@@ -392,7 +453,7 @@ pub async fn interpret_shutdown(
   }
   let role = shutdown_registry_role_for_caller(registry, caller_id)
   let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
-  let plan = shutdown_exit_plan(lifecycle)
+  let plan = shutdown_exit_plan(lifecycle, poller_state~)
   if plan.apply_dev_exit_requested {
     ignore(
       apply_dev_event_checked(

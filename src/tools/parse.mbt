@@ -1254,7 +1254,8 @@ fn parse_register_args(
   if agent_id == "" {
     return Err(ParseError::MissingField(field="agent_id"))
   }
-  let agent_type = match tool_args_get(args, "agent_type") {
+  let agent_type_value = tool_args_get(args, "agent_type")
+  let agent_type = match agent_type_value {
     Some(v) =>
       match parse_agent_type(v) {
         Ok(agent_type) => agent_type
@@ -1297,6 +1298,7 @@ fn parse_register_args(
     agent_id,
     role,
     agent_type,
+    agent_type_explicit: agent_type_value is Some(_),
     parent: match tool_args_get(args, "parent_id") {
       Some(v) => if v == "" { None } else { Some(v) }
       None => None

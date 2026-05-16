@@ -884,6 +884,37 @@ pub fn extract_slug(agent_id : String) -> String {
 }
 
 ///|
+pub fn lifecycle_role_is_leaf_teardown(role : @types.Role) -> Bool {
+  role == @types.Role::Dev || role == @types.Role::Worker
+}
+
+///|
+pub fn agent_with_lifecycle_leaf_teardown_metadata(
+  agent : @types.Agent,
+  lifecycle : AgentLifecycle,
+  project_dir : String,
+) -> @types.Agent {
+  if lifecycle_role_is_leaf_teardown(lifecycle.role) {
+    let with_lifecycle_role = { ..agent, role: lifecycle.role }
+    if @types.is_supervisor_role(agent.role) &&
+      !@types.is_choir_managed_worktree_path(project_dir, agent.workspace) {
+      {
+        ..with_lifecycle_role,
+        workspace: @workspace.worktree_path(
+          project_dir,
+          extract_slug(agent.agent_id.to_string()),
+        ),
+        terminal_target: None,
+      }
+    } else {
+      with_lifecycle_role
+    }
+  } else {
+    agent
+  }
+}
+
+///|
 /// Copy dev workflow state from a failing leaf to a pending replacement agent id (KV lifecycle file).
 pub fn handoff_dev_workflow_to_new_agent(
   project_dir : String,

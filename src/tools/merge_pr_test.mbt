@@ -2269,6 +2269,133 @@ async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
 }
 
 ///|
+async test "interpret_merge_pr leaf cleanup trusts dev lifecycle over stale supervisor role" {
+  let project_dir = "/tmp/choir-mpr-stale-role-cleanup-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let feature_branch = "feature/stale-role-cleanup"
+  let leaf_branch = feature_branch + ".leaf"
+  let leaf_id = "main.stale-role-leaf"
+  let leaf_worktree = project_dir + "/.choir/worktrees/stale-role-leaf"
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId(leaf_id),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main.tl"),
+      workspace: leaf_worktree,
+      branch: leaf_branch,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: leaf_id,
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ReviewOwned(
+        pr_number=83,
+        state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+      ),
+    ),
+    last_updated_unix_sec: 0L,
+  }
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    83,
+    leaf_id,
+    leaf_branch,
+    feature_branch,
+    "https://github.com/o/r/pull/83",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let ran : Array[@workspace.Command] = []
+  let logs : Array[String] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    merge_pr_test_runner_record_ok(cmds, ran)
+  }
+  let got = interpret_merge_pr(
+    {
+      pr_number: 83,
+      parent_branch: feature_branch,
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    Some(reg),
+    runner,
+    capture,
+    fn(_path, content) {
+      logs.push(content)
+      true
+    },
+    fn(path) { path == leaf_worktree },
+    read_lifecycle=fn(_project_dir, agent_id) {
+      if agent_id == leaf_id {
+        Some(lifecycle)
+      } else {
+        None
+      }
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail(msg)
+  }
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["worktree", "remove", "--force", leaf_worktree]
+    }),
+  )
+  assert_true(
+    ran
+    .iter()
+    .any(fn(cmd) {
+      cmd.program == "git" &&
+      cmd.args == ["branch", "-D", leaf_branch] &&
+      cmd.workdir == Some(project_dir)
+    }),
+  )
+  assert_false(
+    logs.iter().any(fn(line) { line.contains("outcome=supervisor_agent") }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "merge_pr_tracked_branch_for_post_success is None without poller" {
   @debug.assert_eq(merge_pr_tracked_branch_for_post_success(None, 1), None)
 }

@@ -10,6 +10,14 @@ pub impl Show for MergedDeliverySource with output(self, logger) -> Unit {
 }
 
 ///|
+pub(all) struct MergedPrContext {
+  agent_id : String
+  branch : String
+  parent_branch : String
+  url : String
+} derive(Debug, Eq)
+
+///|
 pub(all) enum TeardownEffect {
   PersistLifecycle(
     agent_id~ : String,
@@ -204,6 +212,68 @@ fn lifecycle_accepts_merge_observed(
 }
 
 ///|
+fn merge_pr_delivery_parent_id(
+  req : @types.Request,
+  leaf : @types.Agent,
+) -> String? {
+  match req.args.get("caller_id") {
+    Some(caller_id) =>
+      if caller_id != "" {
+        Some(caller_id)
+      } else {
+        leaf.parent
+      }
+    None => leaf.parent
+  }
+}
+
+///|
+fn merged_pr_context_agent_id(
+  merged_agent_id : String?,
+  merged_pr_context : MergedPrContext?,
+) -> String? {
+  match merged_pr_context {
+    Some(ctx) => Some(ctx.agent_id)
+    None => merged_agent_id
+  }
+}
+
+///|
+fn merge_pr_delivery_metadata(
+  pr_number : Int,
+  merged_pr_context : MergedPrContext?,
+  poller : @poller.PollerState,
+  leaf : @types.Agent,
+) -> (String, String, String) {
+  let (poller_branch, poller_parent_branch, poller_url) = match
+    poller.get(pr_number) {
+    Some(t) => (t.branch, t.parent_branch, t.pr_url)
+    None => (leaf.branch, "", "")
+  }
+  match merged_pr_context {
+    Some(ctx) =>
+      (
+        if ctx.branch == "" {
+          poller_branch
+        } else {
+          ctx.branch
+        },
+        if ctx.parent_branch == "" {
+          poller_parent_branch
+        } else {
+          ctx.parent_branch
+        },
+        if ctx.url == "" {
+          poller_url
+        } else {
+          ctx.url
+        },
+      )
+    None => (poller_branch, poller_parent_branch, poller_url)
+  }
+}
+
+///|
 fn merged_provenance_label(
   source : MergedDeliverySource,
   merge_execution_mode : @evidence.MergeExecutionMode?,
@@ -245,10 +315,14 @@ pub fn plan_external_merge_finalization(
   branch : String,
   parent_branch : String,
   url : String,
+  project_dir : String,
   notify_parent? : Bool = true,
 ) -> Array[TeardownEffect] {
-  let agent_id = agent.agent_id.to_string()
-  if @types.is_supervisor_role(agent.role) {
+  let finalized_agent = @phase.agent_with_lifecycle_leaf_teardown_metadata(
+    agent, lifecycle, project_dir,
+  )
+  let agent_id = finalized_agent.agent_id.to_string()
+  if @types.is_supervisor_role(finalized_agent.role) {
     return []
   }
   match lifecycle.process {
@@ -275,13 +349,13 @@ pub fn plan_external_merge_finalization(
             url~,
             source=MergedDeliverySource::ExternalObservation,
             merge_execution_mode=None,
-            parent_id=agent.parent,
+            parent_id=finalized_agent.parent,
           ),
         )
       }
       for
         effect in plan_finalize(
-          agent,
+          finalized_agent,
           lifecycle,
           @types.ExitReason::Merged,
           notify_parent=false,
@@ -421,6 +495,7 @@ pub fn plan_post_tool_actions(
   registry : @registry.AgentRegistry,
   project_dir : String,
   terminal_session : String,
+  merged_pr_context? : MergedPrContext? = None,
 ) -> Array[TeardownEffect] {
   let effects : Array[TeardownEffect] = []
   if !resp.is_ok() {
@@ -440,9 +515,12 @@ pub fn plan_post_tool_actions(
                 agent_id,
                 agent.role,
               )
+              let finalized_agent = @phase.agent_with_lifecycle_leaf_teardown_metadata(
+                agent, lifecycle, project_dir,
+              )
               for
                 e in plan_finalize(
-                  agent,
+                  finalized_agent,
                   lifecycle,
                   @types.ExitReason::Shutdown,
                   notify_parent=true,
@@ -460,11 +538,23 @@ pub fn plan_post_tool_actions(
 
   // merge_pr
   if req.name == "merge_pr" {
-    match (request_int_arg(req, "pr_number"), merged_agent_id) {
+    match
+      (
+        request_int_arg(req, "pr_number"),
+        merged_pr_context_agent_id(merged_agent_id, merged_pr_context),
+      ) {
       (Some(pr_number), Some(agent_id)) =>
         try {
           let leaf = registry.get(agent_id)
-          if @types.is_supervisor_role(leaf.role) {
+          let lifecycle = @phase.read_or_default_lifecycle(
+            project_dir,
+            agent_id,
+            leaf.role,
+          )
+          let finalized_leaf = @phase.agent_with_lifecycle_leaf_teardown_metadata(
+            leaf, lifecycle, project_dir,
+          )
+          if @types.is_supervisor_role(finalized_leaf.role) {
             return effects
           }
           effects.push(
@@ -473,10 +563,9 @@ pub fn plan_post_tool_actions(
               event=@phase.DevEvent::MergeObserved(pr_number~),
             ),
           )
-          let (branch, parent_branch, url) = match poller.get(pr_number) {
-            Some(t) => (t.branch, t.parent_branch, t.pr_url)
-            None => (leaf.branch, "", "")
-          }
+          let (branch, parent_branch, url) = merge_pr_delivery_metadata(
+            pr_number, merged_pr_context, poller, leaf,
+          )
           effects.push(
             DeliverToParentMerged(
               leaf_id=agent_id,
@@ -492,17 +581,12 @@ pub fn plan_post_tool_actions(
                   @evidence.MergeExecutionMode::Manual
                 },
               ),
-              parent_id=leaf.parent,
+              parent_id=merge_pr_delivery_parent_id(req, finalized_leaf),
             ),
-          )
-          let lifecycle = @phase.read_or_default_lifecycle(
-            project_dir,
-            agent_id,
-            leaf.role,
           )
           for
             e in plan_finalize(
-              leaf,
+              finalized_leaf,
               lifecycle,
               @types.ExitReason::Merged,
               notify_parent=false,
@@ -527,12 +611,15 @@ pub fn plan_post_tool_actions(
             agent_id,
             agent.role,
           )
+          let finalized_agent = @phase.agent_with_lifecycle_leaf_teardown_metadata(
+            agent, lifecycle, project_dir,
+          )
           let parent = resolve_parent_for_plan_fail(
-            project_dir, terminal_session, registry, agent,
+            project_dir, terminal_session, registry, finalized_agent,
           )
           for
             e in plan_fail(
-              agent,
+              finalized_agent,
               lifecycle,
               @phase.FailureReason::ParentKilled,
               "agent killed by parent",

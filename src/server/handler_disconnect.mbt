@@ -581,6 +581,7 @@ async fn ServerState::reconcile_external_merge_with_runner(
     branch,
     parent_branch,
     pr_url,
+    self.config.project_dir,
     notify_parent~,
   )
   self.interpret_teardown_effects(effects, runner)

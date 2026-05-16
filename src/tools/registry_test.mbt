@@ -1132,6 +1132,118 @@ async test "re-register without parent preserves prior parent metadata" {
 }
 
 ///|
+async test "re-register preserves prior stable metadata when caller metadata is stale" {
+  let reg = @registry.AgentRegistry::new()
+  let target = match @types.LocalTarget::parse("zellij-tab:choir:leaf-role") {
+    Some(t) => t
+    None => fail("expected parseable target")
+  }
+  ignore(
+    reg.upsert({
+      agent_id: "main.leaf-role",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      state: @types.AgentState::Active,
+      parent: Some("main.tl"),
+      terminal_target: Some(target),
+      host: @types.Host::Local,
+      workspace: "/repo/.choir/worktrees/leaf-role",
+      branch: "main.leaf-role",
+      spawn_depth: 0,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::TL,
+    name: "register",
+    args: {
+      "agent_id": "main.leaf-role",
+      "parent_id": "root",
+      "workspace": "/repo",
+      "branch": "main",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/tmp/choir-test-noop",
+    registry=Some(reg),
+    capture=mock_registry_capture,
+  )
+  match res {
+    Ok(_) => ()
+    Err(e) => fail("register failed: " + e)
+  }
+  try reg.get("main.leaf-role") catch {
+    _ => fail("expected registered agent")
+  } noraise {
+    agent => {
+      assert_eq(agent.role, @types.Role::Dev)
+      assert_eq(agent.agent_type, @types.AgentType::Codex)
+      @debug.assert_eq(agent.parent, Some("main.tl"))
+      @debug.assert_eq(agent.terminal_target, Some(target))
+      assert_eq(agent.workspace, "/repo/.choir/worktrees/leaf-role")
+      assert_eq(agent.branch, "main.leaf-role")
+    }
+  }
+}
+
+///|
+async test "re-register explicit leaf metadata repairs stale prior row" {
+  let reg = @registry.AgentRegistry::new()
+  let target = match @types.LocalTarget::parse("zellij-tab:choir:leaf-repair") {
+    Some(t) => t
+    None => fail("expected parseable target")
+  }
+  ignore(
+    reg.upsert({
+      agent_id: "main.leaf-repair",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      state: @types.AgentState::Active,
+      parent: Some("root"),
+      terminal_target: None,
+      host: @types.Host::Local,
+      workspace: "/repo",
+      branch: "main",
+      spawn_depth: 0,
+    }),
+  )
+  let call = ToolCall::{
+    role: @types.Role::Dev,
+    name: "register",
+    args: {
+      "agent_id": "main.leaf-repair",
+      "parent_id": "main.tl",
+      "workspace": "/repo/.choir/worktrees/leaf-repair",
+      "branch": "main.leaf-repair",
+      "terminal_target": target.to_string(),
+      "agent_type": "codex",
+    },
+  }
+  let res = @tools.dispatch_call(
+    call,
+    project_dir="/tmp/choir-test-noop",
+    registry=Some(reg),
+    capture=mock_registry_capture,
+  )
+  match res {
+    Ok(_) => ()
+    Err(e) => fail("register failed: " + e)
+  }
+  try reg.get("main.leaf-repair") catch {
+    _ => fail("expected registered agent")
+  } noraise {
+    agent => {
+      assert_eq(agent.role, @types.Role::Dev)
+      assert_eq(agent.agent_type, @types.AgentType::Codex)
+      @debug.assert_eq(agent.parent, Some("main.tl"))
+      @debug.assert_eq(agent.terminal_target, Some(target))
+      assert_eq(agent.workspace, "/repo/.choir/worktrees/leaf-repair")
+      assert_eq(agent.branch, "main.leaf-repair")
+    }
+  }
+}
+
+///|
 async test "register accepts whitespace-trimmed spawn_depth" {
   let reg = @registry.AgentRegistry::new()
   let call = ToolCall::{

@@ -211,6 +211,22 @@ test "dev_lifecycle_transition single_pass skips fixes awaiting review" {
 }
 
 ///|
+test "dev_lifecycle_transition exits deferred open PR when merge observed" {
+  let lifecycle : DevLifecycle = ExitRequestedDeferred(
+    pr_number=346,
+    state=OpenUnreviewed(url="https://example.test/pr/346"),
+  )
+  match
+    dev_lifecycle_transition(
+      lifecycle,
+      DevLifecycleEvent::MergeObserved(pr_number=346),
+    ) {
+    Transitioned(Done(reason=Merged)) => ()
+    _ => fail("expected deferred exit to complete after merge observed")
+  }
+}
+
+///|
 test "dev_lifecycle_transition iterative keeps fixes awaiting review" {
   let lifecycle : DevLifecycle = ChangesRequested(pr_number=123, next_round=2)
   match

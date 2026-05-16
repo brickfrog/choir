@@ -9,6 +9,10 @@
 // Tracked as a follow-up; not in scope for choir-poller-state-race.
 pub(all) struct PollerState {
   tracked : Map[Int, TrackedPR]
+  /// In-memory receipt that this process observed a PR close through the
+  /// merge path. This is intentionally not serialized: after a restart, absence
+  /// of a tracked row must not be treated as proof of merge.
+  merged_observed : Map[Int, Bool]
   mut write_generation : Int
 }
 
@@ -24,6 +28,7 @@ fn PollerState::set_tracked(
   tracked : TrackedPR,
 ) -> Unit {
   self.tracked.set(pr_number, tracked)
+  self.merged_observed.remove(pr_number)
   self.bump_write_generation()
 }
 
@@ -335,7 +340,11 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
 
 ///|
 pub fn PollerState::new() -> PollerState {
-  { tracked: Map([], capacity=0), write_generation: 0 }
+  {
+    tracked: Map([], capacity=0),
+    merged_observed: Map([], capacity=0),
+    write_generation: 0,
+  }
 }
 
 ///|
@@ -507,6 +516,44 @@ pub fn PollerState::track_recovered(
 ///|
 pub fn PollerState::restore(self : PollerState, tracked : TrackedPR) -> Unit {
   self.set_tracked(tracked.pr_number, tracked)
+}
+
+///|
+fn PollerState::prune_merged_observed(
+  self : PollerState,
+  protected_pr_number : Int,
+) -> Unit {
+  let max_receipts = 128
+  if self.merged_observed.length() < max_receipts {
+    return
+  }
+  let pr_numbers : Array[Int] = []
+  self.merged_observed.each(fn(pr_number, _) { pr_numbers.push(pr_number) })
+  let mut i = 0
+  while self.merged_observed.length() >= max_receipts && i < pr_numbers.length() {
+    if pr_numbers[i] != protected_pr_number {
+      self.merged_observed.remove(pr_numbers[i])
+    }
+    i = i + 1
+  }
+}
+
+///|
+pub fn PollerState::mark_merged_observed(
+  self : PollerState,
+  pr_number : Int,
+) -> Unit {
+  self.prune_merged_observed(pr_number)
+  self.merged_observed.set(pr_number, true)
+  self.bump_write_generation()
+}
+
+///|
+pub fn PollerState::merged_observed(
+  self : PollerState,
+  pr_number : Int,
+) -> Bool {
+  self.merged_observed.get(pr_number).unwrap_or(false)
 }
 
 ///|
@@ -818,6 +865,7 @@ pub async fn PollerState::tick_pr_with(
   }
   let tracked_ok = { ..tracked, consecutive_failures: 0, backoff_until: 0L }
   if !is_open {
+    self.mark_merged_observed(tracked_ok.pr_number)
     on_event(PRMerged(tracked_ok), tracked_ok.agent_id)
     log_pr({
       pr_number,

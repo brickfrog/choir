@@ -217,6 +217,123 @@ async test "interpret_kill_agent refuses supervisor roles without side effects" 
 }
 
 ///|
+async test "interpret_kill_agent permits dev and worker targets in lifecycle states" {
+  let project_dir = "/tmp/choir-kill-agent-lifecycle-roles-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let cases : Array[(@types.Role, @types.Role, String)] = [
+    (@types.Role::TL, @types.Role::Dev, "main.review-owned-dev"),
+    (@types.Role::Worker, @types.Role::Worker, "main.killable-worker"),
+  ]
+  let stale_parent_target : @types.LocalTarget = {
+    kind: @types.TargetKind::ZellijTab,
+    session: "choir",
+    name: "TL",
+  }
+  for case in cases {
+    let (registry_role, lifecycle_role, agent_id) = case
+    let reg = @registry.AgentRegistry::new()
+    let stale_supervisor_leaf = registry_role == @types.Role::TL &&
+      lifecycle_role == @types.Role::Dev
+    let agent = kill_agent_test_agent(
+      if stale_supervisor_leaf {
+        Some(stale_parent_target)
+      } else {
+        None
+      },
+      if stale_supervisor_leaf {
+        project_dir
+      } else {
+        project_dir + "/.choir/worktrees/" + agent_id
+      },
+      role=registry_role,
+      agent_id~,
+    )
+    ignore(reg.upsert(agent))
+    let fallback_workspace = @workspace.worktree_path(
+      project_dir,
+      @phase.extract_slug(agent_id),
+    )
+    let workflow = match lifecycle_role {
+      @types.Role::Dev =>
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number=44,
+            state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/pr/44"),
+          ),
+        )
+      @types.Role::Worker =>
+        @phase.WorkflowState::Worker(@phase.WorkerLifecycle::Working)
+      _ => @phase.default_workflow_state(lifecycle_role)
+    }
+    assert_true(
+      @phase.write_lifecycle(project_dir, {
+        agent_id,
+        role: lifecycle_role,
+        process: @phase.ProcessState::Connected,
+        workflow,
+        last_updated_unix_sec: 0L,
+      }),
+    )
+    let ran : Array[@workspace.Command] = []
+    let scanned : Array[String] = []
+    let spy_runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        ran.push(cmd)
+      }
+      [0]
+    }
+    let got = interpret_kill_agent(
+      { agent_id, reason: "cleanup" },
+      Some(reg),
+      spy_runner,
+      project_dir~,
+      list_pids=fn(path) {
+        scanned.push(path)
+        []
+      },
+      kill_pid=fn(_) {  },
+    )
+    match got {
+      @types.Response::Ok(fields) => {
+        let map = fields.to_json_map()
+        @debug.assert_eq(map.get("status"), Some(String::to_json("killed")))
+        @debug.assert_eq(map.get("agent_id"), Some(String::to_json(agent_id)))
+      }
+      @types.Response::Err(msg) =>
+        fail("expected killable target, got error: " + msg)
+    }
+    match reg.get(agent_id) {
+      a => assert_eq(a.state, @types.AgentState::Failed)
+    }
+    for cmd in ran {
+      if stale_supervisor_leaf {
+        match kill_agent_pane_close_command(agent) {
+          Some(close_cmd) => assert_false(cmd == close_cmd)
+          None => ()
+        }
+      }
+    }
+    if stale_supervisor_leaf {
+      assert_true(
+        ran
+        .iter()
+        .any(fn(cmd) {
+          cmd.program == "git" &&
+          cmd.args == ["worktree", "remove", "--force", fallback_workspace]
+        }),
+      )
+      @debug.assert_eq(scanned, [fallback_workspace])
+    }
+    assert_true(ran.length() <= 1)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_kill_agent runs process-kill fallback after pane close and worktree remove" {
   let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
     Some(v) => v
@@ -488,6 +605,122 @@ test "shutdown_exit_plan deferred dev applies exit and skips cleanup" {
       )
     }
     _ => fail("expected deferred ok")
+  }
+}
+
+///|
+test "shutdown_exit_plan keeps deferred open PR when poller lacks merge receipt" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.l",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(
+        pr_number=7,
+        state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/7"),
+      ),
+    ),
+    last_updated_unix_sec: 0L,
+  }
+  let ps = @poller.PollerState::new()
+  let plan = shutdown_exit_plan(lifecycle, poller_state=Some(ps))
+  assert_true(plan.apply_dev_exit_requested)
+  assert_false(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("deferred")),
+      )
+    _ => fail("expected deferred ok")
+  }
+}
+
+///|
+test "shutdown_exit_plan releases deferred open PR after explicit merge receipt" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.l",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(
+        pr_number=7,
+        state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/7"),
+      ),
+    ),
+    last_updated_unix_sec: 0L,
+  }
+  let ps = @poller.PollerState::new()
+  ps.track(7, "main.l", "feature/l", "main", "https://ex/7", 0L)
+  ps.mark_merged_observed(7)
+  ps.untrack(7)
+  let plan = shutdown_exit_plan(lifecycle, poller_state=Some(ps))
+  assert_false(plan.apply_dev_exit_requested)
+  assert_true(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("shutdown")),
+      )
+    _ => fail("expected shutdown ok")
+  }
+}
+
+///|
+test "shutdown_exit_plan keeps deferred fixes-awaiting-review without merge receipt" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.l",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(
+        pr_number=9,
+        state=@phase.ReviewOwnership::FixesAwaitingReview(round=2),
+      ),
+    ),
+    last_updated_unix_sec: 0L,
+  }
+  let plan = shutdown_exit_plan(
+    lifecycle,
+    poller_state=Some(@poller.PollerState::new()),
+  )
+  assert_true(plan.apply_dev_exit_requested)
+  assert_false(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("deferred")),
+      )
+    _ => fail("expected deferred ok")
+  }
+}
+
+///|
+test "shutdown_exit_plan releases deferred approved-awaiting-merge state" {
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id: "main.l",
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ExitRequestedDeferred(
+        pr_number=8,
+        state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+      ),
+    ),
+    last_updated_unix_sec: 0L,
+  }
+  let plan = shutdown_exit_plan(lifecycle)
+  assert_false(plan.apply_dev_exit_requested)
+  assert_true(plan.attempt_worktree_cleanup)
+  match plan.response {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(
+        fields.to_json_map().get("status"),
+        Some(String::to_json("shutdown")),
+      )
+    _ => fail("expected shutdown ok")
   }
 }
 

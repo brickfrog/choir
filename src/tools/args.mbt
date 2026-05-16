@@ -134,6 +134,7 @@ struct RegisterArgs {
   agent_id : String
   role : @types.Role
   agent_type : @types.AgentType
+  agent_type_explicit : Bool
   parent : String?
   terminal_target : @types.LocalTarget?
   workspace : String
