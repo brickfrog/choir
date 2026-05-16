@@ -709,6 +709,33 @@ fn audit_on_file_pr_shutdown_report() -> AuditOnFilePrReport {
 }
 
 ///|
+pub fn should_synthesize_tick_on_resolve(
+  prior_unresolved : Int,
+  after_unresolved : Int,
+) -> Bool {
+  prior_unresolved > after_unresolved
+}
+
+///|
+fn resolve_review_thread_unresolved_counts(
+  poller_state : @poller.PollerState?,
+  caller_id : String,
+) -> Map[Int, Int] {
+  let counts : Map[Int, Int] = {}
+  match poller_state {
+    Some(state) =>
+      state.tracked.each(fn(_pr_number, tracked) {
+        if tracked.agent_id == caller_id &&
+          tracked.unresolved_thread_ids_fetched {
+          counts.set(tracked.pr_number, tracked.unresolved_thread_ids.length())
+        }
+      })
+    None => ()
+  }
+  counts
+}
+
+///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -743,6 +770,11 @@ pub async fn dispatch(
   poller_state? : @poller.PollerState? = None,
   caller_id? : String? = None,
   caller_role? : @types.Role = @types.Role::TL,
+  on_resolve_review_thread? : async (Array[Int]) -> Unit = async fn(
+    _pr_numbers,
+  ) {
+    ()
+  },
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
@@ -1546,8 +1578,47 @@ pub async fn dispatch(
         @types.Response::Err("failed to write reply: " + id)
       }
     }
-    ToolRequest::ResolveReviewThread(resolve_args) =>
-      interpret_resolve_review_thread(resolve_args, project_dir, capture)
+    ToolRequest::ResolveReviewThread(resolve_args) => {
+      let prior_counts = resolve_review_thread_unresolved_counts(
+        poller_state,
+        resolve_args.caller_id,
+      )
+      let result = interpret_resolve_review_thread(
+        resolve_args, project_dir, capture,
+      )
+      if result.is_ok() {
+        let after_counts : Map[Int, Int] = {}
+        match poller_state {
+          Some(state) =>
+            for tracked in state.tracked.values() {
+              if tracked.agent_id == resolve_args.caller_id &&
+                tracked.unresolved_thread_ids_fetched {
+                let (count, _) = fetch_unresolved_review_threads(
+                  tracked.pr_number,
+                  project_dir,
+                  capture,
+                )
+                after_counts.set(tracked.pr_number, count)
+              }
+            }
+          None => ()
+        }
+        let trigger_prs : Array[Int] = []
+        prior_counts.each(fn(pr_number, prior_count) {
+          match after_counts.get(pr_number) {
+            Some(after_count) =>
+              if should_synthesize_tick_on_resolve(prior_count, after_count) {
+                trigger_prs.push(pr_number)
+              }
+            None => ()
+          }
+        })
+        if trigger_prs.length() > 0 {
+          on_resolve_review_thread(trigger_prs)
+        }
+      }
+      result
+    }
   }
 }
 
@@ -1593,6 +1664,11 @@ pub async fn handle_request(
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  on_resolve_review_thread? : async (Array[Int]) -> Unit = async fn(
+    _pr_numbers,
+  ) {
+    ()
+  },
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   goal_nonce? : () -> String = fn() {
@@ -1700,6 +1776,7 @@ pub async fn handle_request(
                   poller_state~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   caller_role=req.role,
+                  on_resolve_review_thread~,
                   pr_review~,
                   global_review_mode~,
                   audit_heartbeat_sec~,

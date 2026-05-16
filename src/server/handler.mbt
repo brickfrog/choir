@@ -159,6 +159,20 @@ pub async fn ServerState::handle_with_runner_and_capture(
       record_handoff_delivered=fn(agent_id) {
         self.mark_handoff_delivered(agent_id)
       },
+      on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
+        for pr_number in pr_numbers {
+          self.refresh_pr_with_runner(pr_number, runner) catch {
+            e =>
+              @moontrace.warn(
+                "failed to refresh PR after resolve_review_thread",
+                fields=[
+                  @moontrace.field("pr_number", pr_number.to_string()),
+                  @moontrace.field("error", e.to_string()),
+                ],
+              )
+          }
+        }
+      },
       prepare_audit_report=fn(agent_id) {
         self.prepare_audit_on_file_pr_report(agent_id)
       },

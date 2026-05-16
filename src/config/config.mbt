@@ -366,6 +366,19 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let poller_heartbeat_tick_sec = match doc.get("poller_heartbeat_tick_sec") {
+    None => default_cfg.poller_heartbeat_tick_sec
+    Some(raw) =>
+      match
+        parse_nonnegative_int_config_value(
+          "poller_heartbeat_tick_sec",
+          raw,
+          max=@types.audit_heartbeat_sec_max.to_int64(),
+        ) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+  }
   let pricing = match parse_pricing_config(doc) {
     Ok(p) => p
     Err(e) => return Err(e)
@@ -390,6 +403,7 @@ pub fn parse_config(
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,
     audit_heartbeat_sec,
+    poller_heartbeat_tick_sec,
     pricing,
   })
 }

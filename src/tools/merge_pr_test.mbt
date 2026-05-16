@@ -2534,3 +2534,267 @@ test "interpret_resolve_review_thread_result success envelope" {
 }
 
 ///|
+test "should_synthesize_tick_on_resolve truth table" {
+  assert_true(should_synthesize_tick_on_resolve(1, 0))
+  assert_false(should_synthesize_tick_on_resolve(1, 1))
+  assert_false(should_synthesize_tick_on_resolve(5, 5))
+  assert_true(should_synthesize_tick_on_resolve(5, 4))
+}
+
+///|
+async test "dispatch resolve_review_thread triggers pulse for unresolved count drop 1->0" {
+  let project_dir = "/tmp/choir-dispatch-resolve-drop-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    111,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/111",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match ps.get(111) {
+    Some(current) =>
+      ps.restore({
+        ..current,
+        unresolved_thread_ids: [
+          @poller.ReviewThreadRef::{
+            id: "thread-1",
+            is_outdated: false,
+            author_login: "user-1",
+          },
+        ],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let seen : Array[Int] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let is_graphql = cmd.args.contains("api") && cmd.args.contains("graphql")
+    let is_repo_view = cmd.args.contains("repo") &&
+      cmd.args.contains("view") &&
+      cmd.args.contains("owner,name")
+    let is_resolve = cmd.args
+      .iter()
+      .any(fn(arg) {
+        arg.contains("resolveReviewThread") || arg.contains("query=mutation")
+      })
+    if (cmd.program == "gh" && is_repo_view) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args.length() >= 2 &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" && is_graphql && is_resolve {
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[0] == "30s" &&
+      cmd.args[1] == "gh" &&
+      is_graphql &&
+      is_resolve {
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "gh" &&
+      is_graphql &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[0] == "30s" &&
+      cmd.args[1] == "gh" &&
+      is_graphql &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if is_graphql {
+      if is_resolve {
+        return (
+          0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+        )
+      }
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveReviewThread({
+      thread_id: "PRRT_drop",
+      caller_id: "main.leaf",
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    capture~,
+    on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
+      for n in pr_numbers {
+        seen.push(n)
+      }
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected Ok")
+  }
+  @debug.assert_eq(seen, [111])
+}
+
+///|
+async test "dispatch resolve_review_thread triggers pulse for unresolved drop 5->4 (implemented behavior)" {
+  let project_dir = "/tmp/choir-dispatch-resolve-drop-5-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    222,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/222",
+    0L,
+    @poller.ReviewState::Approved,
+    "",
+    "",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match ps.get(222) {
+    Some(current) =>
+      ps.restore({
+        ..current,
+        unresolved_thread_ids: [
+          @poller.ReviewThreadRef::{
+            id: "thread-1",
+            is_outdated: false,
+            author_login: "user-1",
+          },
+          @poller.ReviewThreadRef::{
+            id: "thread-2",
+            is_outdated: false,
+            author_login: "user-1",
+          },
+          @poller.ReviewThreadRef::{
+            id: "thread-3",
+            is_outdated: false,
+            author_login: "user-1",
+          },
+          @poller.ReviewThreadRef::{
+            id: "thread-4",
+            is_outdated: false,
+            author_login: "user-1",
+          },
+          @poller.ReviewThreadRef::{
+            id: "thread-5",
+            is_outdated: false,
+            author_login: "user-1",
+          },
+        ],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let seen : Array[Int] = []
+  let four_threads = "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"a\",\"isResolved\":false,\"path\":\"src/a\",\"comments\":{\"nodes\":[{\"body\":\"a\"}]}},{\"id\":\"b\",\"isResolved\":false,\"path\":\"src/b\",\"comments\":{\"nodes\":[{\"body\":\"b\"}]}},{\"id\":\"c\",\"isResolved\":false,\"path\":\"src/c\",\"comments\":{\"nodes\":[{\"body\":\"c\"}]}},{\"id\":\"d\",\"isResolved\":false,\"path\":\"src/d\",\"comments\":{\"nodes\":[{\"body\":\"d\"}]}}]}}}}"
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    let is_graphql = cmd.args.contains("api") && cmd.args.contains("graphql")
+    let is_repo_view = cmd.args.contains("repo") &&
+      cmd.args.contains("view") &&
+      cmd.args.contains("owner,name")
+    let is_resolve = cmd.args
+      .iter()
+      .any(fn(arg) {
+        arg.contains("resolveReviewThread") || arg.contains("query=mutation")
+      })
+    if (cmd.program == "gh" && is_repo_view) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "30s" &&
+        cmd.args[1] == "gh" &&
+        is_repo_view
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" && is_graphql && is_resolve {
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[0] == "30s" &&
+      cmd.args[1] == "gh" &&
+      is_graphql &&
+      is_resolve {
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "gh" &&
+      is_graphql &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      return (0, four_threads)
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[0] == "30s" &&
+      cmd.args[1] == "gh" &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      return (0, four_threads)
+    }
+    if is_graphql {
+      if is_resolve {
+        return (
+          0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+        )
+      }
+      return (0, four_threads)
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveReviewThread({
+      thread_id: "PRRT_drop_many",
+      caller_id: "main.leaf",
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    capture~,
+    on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
+      for n in pr_numbers {
+        seen.push(n)
+      }
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected Ok")
+  }
+  @debug.assert_eq(seen, [222])
+}
+
+///|
