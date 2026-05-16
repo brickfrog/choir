@@ -194,6 +194,9 @@ test "reload snapshot restores registry pending state and mutexes" {
   state.worker_no_handoff_prodded_at.set("root.worker", 2222L)
   state.worker_no_handoff_stalled_emitted.set("root.worker", true)
   state.worker_no_handoff_exit_emitted.set("root.worker", true)
+  state.last_commit_observed_at.set("root.leaf", 3333L)
+  state.last_commit_observed_sha.set("root.leaf", "sha-observed")
+  state.last_commit_probe_at.set("root.leaf", 3344L)
   ignore(state.mutex_registry.acquire("build", "root", 300L, 10L))
   ignore(state.mutex_registry.acquire("build", "root.leaf", 300L, 11L))
 
@@ -234,6 +237,18 @@ test "reload snapshot restores registry pending state and mutexes" {
       @debug.assert_eq(
         restored.worker_no_handoff_exit_emitted.get("root.worker"),
         Some(true),
+      )
+      @debug.assert_eq(
+        restored.last_commit_observed_at.get("root.leaf"),
+        Some(3333L),
+      )
+      @debug.assert_eq(
+        restored.last_commit_observed_sha.get("root.leaf"),
+        Some("sha-observed"),
+      )
+      @debug.assert_eq(
+        restored.last_commit_probe_at.get("root.leaf"),
+        Some(3344L),
       )
       let (holder, queue) = restored.mutex_registry.status("build")
       @debug.assert_eq(holder, Some("root"))
