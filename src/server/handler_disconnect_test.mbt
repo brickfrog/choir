@@ -190,3 +190,108 @@ async test "check_leaf_progress does not rescue fresh ReviewOwned leaf" {
   )
   ignore(@sys.rm_rf(state.config.project_dir))
 }
+
+///|
+async test "check_leaf_progress preserves commit observation when rescue fails" {
+  let state = progress_watchdog_test_state("rescue-fails")
+  let parent_id = "main.parent"
+  let agent_id = "main.leaf"
+  let agent = progress_watchdog_dev(
+    agent_id,
+    parent_id,
+    state.config.project_dir,
+  )
+  ignore(
+    state.register_agent(
+      progress_watchdog_parent(parent_id, state.config.project_dir),
+    ),
+  )
+  ignore(state.register_agent(agent))
+  let now = 4000L
+  let observed_at = now - PROGRESS_STALL_SEC
+  state.last_commit_observed_at.set(agent_id, observed_at)
+  state.last_commit_observed_sha.set(agent_id, "sha-old")
+  state.last_commit_probe_at.set(agent_id, now - 1L)
+  let invoked : Array[@tools.RescueLeafArgs] = []
+  let invoker = async fn(args : @tools.RescueLeafArgs) -> @types.Response {
+    @async.sleep(0)
+    invoked.push(args)
+    @types.Response::Err("spawn failed")
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id,
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::ChangesRequested(pr_number=7, next_round=2),
+    ),
+    last_updated_unix_sec: 0L,
+  }
+  state.check_leaf_progress(
+    agent, lifecycle, 1L, now, progress_watchdog_empty_capture, invoker,
+  )
+  assert_eq(invoked.length(), 1)
+  @debug.assert_eq(
+    state.last_commit_observed_at.get(agent_id),
+    Some(observed_at),
+  )
+  @debug.assert_eq(
+    state.last_commit_observed_sha.get(agent_id),
+    Some("sha-old"),
+  )
+  @debug.assert_eq(state.last_commit_probe_at.get(agent_id), Some(now - 1L))
+  ignore(@sys.rm_rf(state.config.project_dir))
+}
+
+///|
+async test "check_leaf_progress bounds and throttles pre-PR ls-remote probes" {
+  let state = progress_watchdog_test_state("ls-remote")
+  let parent_id = "main.parent"
+  let agent_id = "main.leaf"
+  let agent = progress_watchdog_dev(
+    agent_id,
+    parent_id,
+    state.config.project_dir,
+  )
+  ignore(
+    state.register_agent(
+      progress_watchdog_parent(parent_id, state.config.project_dir),
+    ),
+  )
+  ignore(state.register_agent(agent))
+  let captured : Array[@workspace.Command] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    captured.push(cmd)
+    (0, "sha-new\trefs/heads/main.leaf\n")
+  }
+  let invoked : Array[@tools.RescueLeafArgs] = []
+  let invoker = async fn(args : @tools.RescueLeafArgs) -> @types.Response {
+    @async.sleep(0)
+    invoked.push(args)
+    @types.Response::ok_values({ "agent_id": "main.leaf-r1".to_json() })
+  }
+  let lifecycle : @phase.AgentLifecycle = {
+    agent_id,
+    role: @types.Role::Dev,
+    process: @phase.ProcessState::Connected,
+    workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+    last_updated_unix_sec: 0L,
+  }
+  state.check_leaf_progress(agent, lifecycle, 0L, 1000L, capture, invoker)
+  state.check_leaf_progress(agent, lifecycle, 0L, 1030L, capture, invoker)
+  assert_eq(captured.length(), 1)
+  assert_eq(captured[0].program, "timeout")
+  assert_eq(captured[0].args[0], "30s")
+  assert_eq(captured[0].args[1], "git")
+  assert_eq(captured[0].args[2], "ls-remote")
+  assert_eq(captured[0].args[5], agent_id)
+  assert_eq(invoked.length(), 0)
+  @debug.assert_eq(state.last_commit_observed_at.get(agent_id), Some(1000L))
+  @debug.assert_eq(
+    state.last_commit_observed_sha.get(agent_id),
+    Some("sha-new"),
+  )
+  @debug.assert_eq(state.last_commit_probe_at.get(agent_id), Some(1000L))
+  ignore(@sys.rm_rf(state.config.project_dir))
+}

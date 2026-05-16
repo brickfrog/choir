@@ -123,6 +123,7 @@ fn ServerState::clear_agent_runtime_tracking(
   self.worker_no_handoff_exit_emitted.remove(agent_id)
   self.last_commit_observed_at.remove(agent_id)
   self.last_commit_observed_sha.remove(agent_id)
+  self.last_commit_probe_at.remove(agent_id)
 }
 
 ///|
@@ -165,8 +166,15 @@ fn progress_watchdog_ls_remote_command(
   branch : String,
 ) -> @workspace.Command {
   {
-    program: "git",
-    args: ["ls-remote", "--heads", "origin", branch],
+    program: "timeout",
+    args: [
+      PROGRESS_LS_REMOTE_TIMEOUT_SEC.to_string() + "s",
+      "git",
+      "ls-remote",
+      "--heads",
+      "origin",
+      branch,
+    ],
     workdir: Some(project_dir),
   }
 }
@@ -281,7 +289,13 @@ async fn ServerState::ensure_progress_commit_observed(
     }
     None => ()
   }
+  match self.last_commit_probe_at.get(agent_id) {
+    Some(last_probe) if now - last_probe < PROGRESS_LS_REMOTE_PROBE_SEC =>
+      return self.last_commit_observed_at.get(agent_id).unwrap_or(0L)
+    _ => ()
+  }
   let branch = if agent.branch != "" { agent.branch } else { agent_id }
+  self.last_commit_probe_at.set(agent_id, now)
   let (status, output) = capture(
     progress_watchdog_ls_remote_command(self.config.project_dir, branch),
   ) catch {
@@ -435,8 +449,6 @@ pub async fn ServerState::check_leaf_progress(
       let new_type = pick_rescue_agent_type(agent.agent_type)
       let new_slug = self.next_progress_rescue_slug(from_agent_id)
       let task_contract = self.task_contract_for_progress_rescue(agent)
-      self.last_commit_observed_at.remove(from_agent_id)
-      self.last_commit_observed_sha.remove(from_agent_id)
       let resp = rescue_invoker(
         progress_watchdog_rescue_args(
           task_contract, caller_id, from_agent_id, new_slug, new_type,

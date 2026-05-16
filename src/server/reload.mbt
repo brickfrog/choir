@@ -102,6 +102,9 @@ fn ServerState::reload_runtime_snapshot_json(
     "last_commit_observed_sha": server_reload_string_entries_json(
       self.last_commit_observed_sha,
     ),
+    "last_commit_probe_at": server_reload_int64_entries_json(
+      self.last_commit_probe_at,
+    ),
     "mutex_registry": self.mutex_registry.to_snapshot_json(),
   }.to_json()
 }
@@ -445,6 +448,11 @@ pub fn ServerState::restore_reload_snapshot(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let parsed_last_commit_probe_at = match
+    server_reload_parse_int64_map_or_empty(root.get("last_commit_probe_at")) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let parsed_mutex = match root.get("mutex_registry") {
     Some(j) =>
       match @registry.parse_mutex_registry_snapshot_json(j) {
@@ -487,6 +495,10 @@ pub fn ServerState::restore_reload_snapshot(
   server_reload_replace_map_contents(
     self.last_commit_observed_sha,
     parsed_last_commit_observed_sha,
+  )
+  server_reload_replace_map_contents(
+    self.last_commit_probe_at,
+    parsed_last_commit_probe_at,
   )
   // Release any mutex whose holder isn't in the just-restored registry —
   // otherwise a stale lock would block unrelated callers until TTL.

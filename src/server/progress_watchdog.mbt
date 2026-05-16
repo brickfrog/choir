@@ -2,6 +2,12 @@
 pub const PROGRESS_STALL_SEC : Int64 = 900L
 
 ///|
+pub const PROGRESS_LS_REMOTE_TIMEOUT_SEC : Int64 = 30L
+
+///|
+pub const PROGRESS_LS_REMOTE_PROBE_SEC : Int64 = 60L
+
+///|
 pub(all) enum ProgressWatchdogDecision {
   DoNothing
   Rescue
