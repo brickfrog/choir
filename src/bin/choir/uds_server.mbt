@@ -412,6 +412,36 @@ fn serve_cleanup_stale_goal_kv(
 }
 
 ///|
+async fn run_poller_heartbeat_tick_loop(
+  tick_sec : Int,
+  tick_fn : async (Int64, Int64) -> Unit,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
+  timeout_sec? : Int64 = 900L,
+  now_sec? : () -> Int64 = @poller.now_sec,
+  max_iterations? : Int = -1,
+) -> Unit {
+  if tick_sec == 0 {
+    return
+  }
+  let interval_ms = tick_sec * 1000
+  let mut remaining = max_iterations
+  while remaining != 0 {
+    ignore(sleep_fn(interval_ms))
+    if tick_sec != 0 {
+      ignore(tick_fn(now_sec(), timeout_sec)) catch {
+        e =>
+          @moontrace.error("poller heartbeat tick error", fields=[
+            @moontrace.field("error", e.to_string()),
+          ])
+      }
+    }
+    if remaining > 0 {
+      remaining = remaining - 1
+    }
+  }
+}
+
+///|
 /// On `choir serve` fresh start, rotate an unbounded append log to `<path>.1`
 /// if it's grown past the cap. One backup is kept; a prior `.1` is overwritten
 /// by the rename. Returns true if a rotation happened.
@@ -484,6 +514,207 @@ test "serve cleanup removes stale tl goal kv files only" {
   @debug.assert_eq(deleted, [
     ".choir/kv/tl-goal--old.json", ".choir/kv/tl-goal--other.json",
   ])
+}
+
+///|
+async test "serve heartbeat task honors interval and calls poller tick" {
+  let tick_calls : Array[Int64] = []
+  let sleeps : Array[Int] = []
+  run_poller_heartbeat_tick_loop(
+    1,
+    async fn(_now : Int64, _timeout : Int64) { tick_calls.push(1) },
+    sleep_fn=async fn(delay : Int) {
+      sleeps.push(delay)
+      @async.sleep(0)
+    },
+    max_iterations=2,
+  )
+  assert_eq(sleeps, [1000, 1000])
+  @debug.assert_eq(tick_calls.length(), 2)
+}
+
+///|
+async test "heartbeat task with zero interval disables tick callback" {
+  let tick_calls : Array[Int] = []
+  let sleeps : Array[Int] = []
+  run_poller_heartbeat_tick_loop(
+    0,
+    async fn(_now : Int64, _timeout : Int64) { tick_calls.push(1) },
+    sleep_fn=async fn(delay : Int) {
+      sleeps.push(delay)
+      @async.sleep(0)
+    },
+    max_iterations=2,
+  )
+  assert_eq(sleeps, [])
+  assert_eq(tick_calls, [])
+}
+
+///|
+async test "heartbeat tick loop triggers automerge sweep path via process_poller_tick" {
+  let project_dir = "/tmp/choir-heartbeat-sweep-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir))
+  let child_id = "main.leaf-heartbeat"
+  let parent_id = "main.tl-heartbeat"
+  let child_workspace = project_dir + "/.choir/worktrees/leaf-heartbeat"
+  ignore(@sys.create_dir_all(child_workspace))
+  let state = @server.ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      automerge: true,
+      review_mode: @types.ReviewMode::Iterative,
+      terminal_session: "test-heartbeat",
+    },
+    @server.make_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Claude,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: Some(
+        @workspace.local_target_for(
+          "test-heartbeat",
+          "TL",
+          @types.IsolationMode::Worktree,
+        ),
+      ),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some(parent_id),
+      workspace: child_workspace,
+      branch: child_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 77
+  state.poller.track(
+    pr_number,
+    child_id,
+    child_id,
+    "main",
+    "https://github.com/brickfrog/choir/pull/" + pr_number.to_string(),
+    500L,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({
+        ..tracked,
+        last_review_state: @poller.ReviewState::Approved,
+        last_ci_rollup: @poller.CiRollupStatus::Success,
+        last_sha: "sha-heartbeat-sweep",
+        unresolved_thread_ids: [],
+        unresolved_thread_ids_fetched: true,
+        copilot_issue_comment_seen: true,
+        auto_resolve_outdated_pending: false,
+        last_automerge_attempt_sha: "",
+      })
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      if cmd.program == "git" && cmd.args == ["branch", "-D", child_id] {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json =
+      #|{"owner":{"login":"brickfrog"},"name":"choir"}
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, repo_view_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (
+        0, "[{\"state\":\"APPROVED\",\"user\":{\"login\":\"copilot-pull-request-reviewer[bot]\"},\"submitted_at\":\"2026-05-10T00:00:00Z\"}]",
+      )
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    if cmd.args == ["pr", "view", pr_number.to_string(), "--json", "body"] {
+      return (0, "{\"body\":\"Closes choir-heartbeat\"}")
+    }
+    if cmd.args ==
+      ["pr", "merge", pr_number.to_string(), "--squash", "--delete-branch"] {
+      return (0, "merged")
+    }
+    if cmd.program == "git" && cmd.args == ["branch", "-D", child_id] {
+      return (0, "")
+    }
+    (0, "")
+  }
+  let poll = async fn(_pr_number : Int, _skip_issue_comment_fetch : Bool) {
+    @async.sleep(0)
+    (
+      true,
+      @poller.ReviewState::Approved,
+      "sha-heartbeat-sweep",
+      @poller.CiRollupStatus::Success,
+      "",
+      true,
+      false,
+    )
+  }
+  run_poller_heartbeat_tick_loop(
+    1,
+    async fn(now : Int64, timeout_sec : Int64) {
+      state.process_poller_tick_with(
+        now,
+        timeout_sec,
+        poll,
+        runner~,
+        capture~,
+        automerge_capture=capture,
+      )
+    },
+    max_iterations=1,
+  )
+  assert_true(merge_seen)
+  assert_true(state.poller.get(pr_number) == None)
 }
 
 ///|
@@ -587,6 +818,14 @@ fn serve_run() -> Unit {
               ])
           }
         }
+      })
+      root.spawn_bg(async fn() {
+        run_poller_heartbeat_tick_loop(config.poller_heartbeat_tick_sec, async fn(
+          now : Int64,
+          timeout_sec : Int64,
+        ) {
+          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
+        })
       })
       root.spawn_bg(async fn() {
         for ;; {

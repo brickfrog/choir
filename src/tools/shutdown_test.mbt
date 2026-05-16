@@ -771,13 +771,254 @@ test "shutdown_exit_plan allowed tl skips dev exit but may cleanup worktree" {
 ///|
 test "shutdown_adapter_host_steps lists poller through cleanup" {
   let steps = shutdown_adapter_host_steps()
-  assert_eq(steps.length(), 6)
-  assert_eq(steps[0], ShutdownAdapterHostStep::PollerCriticalPhaseRead)
-  assert_eq(steps[1], ShutdownAdapterHostStep::RegistryRoleLookup)
-  assert_eq(steps[2], ShutdownAdapterHostStep::LifecycleRead)
-  assert_eq(steps[3], ShutdownAdapterHostStep::DevExitEventApply)
-  assert_eq(steps[4], ShutdownAdapterHostStep::WorktreeCleanupAttempt)
-  assert_eq(steps[5], ShutdownAdapterHostStep::BeadsLifecycleMirror)
+  assert_eq(steps.length(), 7)
+  assert_eq(steps[0], ShutdownAdapterHostStep::PaneClose)
+  assert_eq(steps[1], ShutdownAdapterHostStep::PollerCriticalPhaseRead)
+  assert_eq(steps[2], ShutdownAdapterHostStep::RegistryRoleLookup)
+  assert_eq(steps[3], ShutdownAdapterHostStep::LifecycleRead)
+  assert_eq(steps[4], ShutdownAdapterHostStep::DevExitEventApply)
+  assert_eq(steps[5], ShutdownAdapterHostStep::WorktreeCleanupAttempt)
+  assert_eq(steps[6], ShutdownAdapterHostStep::BeadsLifecycleMirror)
+}
+
+///|
+async test "interpret_shutdown closes pane for dev and worker terminals" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  for role in [@types.Role::Dev, @types.Role::Worker] {
+    let workspace = "/tmp/choir-shutdown-paneclose-" +
+      role.to_wire_string() +
+      "-" +
+      @sys.get_pid().to_string()
+    ignore(@sys.rm_rf(workspace))
+    let reg = @registry.AgentRegistry::new()
+    let agent = kill_agent_test_agent(
+      Some(t),
+      workspace,
+      role~,
+      agent_id="main.leaf",
+    )
+    ignore(reg.upsert(agent))
+    ignore(
+      @phase.write_lifecycle(workspace, {
+        agent_id: "main.leaf",
+        role,
+        process: @phase.ProcessState::Connected,
+        workflow: if role == @types.Role::Dev {
+          @phase.WorkflowState::Dev(
+            @phase.DevLifecycle::ReviewOwned(
+              pr_number=88,
+              state=@phase.ReviewOwnership::OpenUnreviewed(url="https://ex/88"),
+            ),
+          )
+        } else {
+          @phase.WorkflowState::Worker(@phase.WorkerLifecycle::Working)
+        },
+        last_updated_unix_sec: 0L,
+      }),
+    )
+    let seen : Array[@workspace.Command] = []
+    let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        seen.push(cmd)
+      }
+      [0]
+    }
+    let got = interpret_shutdown(
+      { caller_id: Some("main.leaf") },
+      workspace,
+      None,
+      Some(reg),
+      runner,
+    )
+    match got {
+      @types.Response::Ok(fields) => {
+        let map = fields.to_json_map()
+        match map.get("status") {
+          Some(status) =>
+            assert_true(
+              status == String::to_json("shutdown") ||
+              status == String::to_json("deferred"),
+            )
+          None => fail("expected status field")
+        }
+      }
+      _ => fail("expected shutdown ok")
+    }
+    let expected = kill_agent_pane_close_command(agent)
+    assert_true(
+      seen
+      .iter()
+      .any(fn(cmd) {
+        match expected {
+          Some(close_cmd) => cmd == close_cmd
+          None => false
+        }
+      }),
+    )
+    assert_true(
+      try {
+        ignore(reg.get("main.leaf"))
+        true
+      } catch {
+        _ => false
+      },
+    )
+  }
+}
+
+///|
+async test "interpret_shutdown does not call pane close for supervisor roles" {
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:tl") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  for role in [@types.Role::Root, @types.Role::TL] {
+    let workspace = "/tmp/choir-shutdown-paneclose-sup-" +
+      role.to_wire_string() +
+      "-" +
+      @sys.get_pid().to_string()
+    ignore(@sys.rm_rf(workspace))
+    let reg = @registry.AgentRegistry::new()
+    let agent = kill_agent_test_agent(Some(t), workspace, role~)
+    ignore(reg.upsert(agent))
+    let seen : Array[@workspace.Command] = []
+    let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      for cmd in cmds {
+        seen.push(cmd)
+      }
+      [0]
+    }
+    let got = interpret_shutdown(
+      { caller_id: Some("main.leaf") },
+      workspace,
+      None,
+      Some(reg),
+      runner,
+    )
+    match got {
+      @types.Response::Ok(fields) => {
+        let map = fields.to_json_map()
+        @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+      }
+      _ => fail("expected shutdown ok")
+    }
+    let expected = kill_agent_pane_close_command(agent)
+    assert_false(
+      seen
+      .iter()
+      .any(fn(cmd) {
+        match expected {
+          Some(close_cmd) => cmd == close_cmd
+          None => false
+        }
+      }),
+    )
+    assert_true(
+      try {
+        ignore(reg.get("main.leaf"))
+        true
+      } catch {
+        _ => false
+      },
+    )
+  }
+}
+
+///|
+async test "interpret_shutdown does not invoke pane close when dev has no terminal_target" {
+  let workspace = "/tmp/choir-shutdown-paneclose-no-terminal-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(workspace))
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    None,
+    workspace,
+    role=@types.Role::Dev,
+    agent_id="main.leaf",
+  )
+  ignore(reg.upsert(agent))
+  let seen : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      seen.push(cmd)
+    }
+    [0]
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.leaf") },
+    workspace,
+    None,
+    Some(reg),
+    runner,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+    }
+    _ => fail("expected shutdown ok")
+  }
+  assert_eq(seen.length(), 0)
+}
+
+///|
+async test "interpret_shutdown continues when pane close command fails" {
+  let workspace = "/tmp/choir-shutdown-paneclose-fail-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(workspace + "/.choir/worktrees"))
+  let reg = @registry.AgentRegistry::new()
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let agent = kill_agent_test_agent(
+    Some(t),
+    workspace + "/.choir/worktrees/leaf",
+  )
+  ignore(reg.upsert(agent))
+  let target_cmd = kill_agent_pane_close_command(agent)
+  match target_cmd {
+    Some(close_cmd) => {
+      let seen : Array[@workspace.Command] = []
+      let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+        @async.sleep(0)
+        for cmd in cmds {
+          seen.push(cmd)
+        }
+        [-1]
+      }
+      let got = interpret_shutdown(
+        { caller_id: Some("main.leaf") },
+        workspace,
+        None,
+        Some(reg),
+        runner,
+      )
+      match got {
+        @types.Response::Ok(fields) => {
+          let map = fields.to_json_map()
+          @debug.assert_eq(map.get("status"), Some(String::to_json("shutdown")))
+        }
+        _ => fail("expected shutdown ok")
+      }
+      assert_true(seen.iter().any(fn(cmd) { cmd == close_cmd }))
+      assert_true(
+        seen
+        .iter()
+        .any(fn(cmd) {
+          cmd.program == "git" &&
+          cmd.args == ["worktree", "remove", "--force", agent.workspace]
+        }),
+      )
+    }
+    None => fail("expected close command")
+  }
 }
 
 ///|
@@ -955,6 +1196,59 @@ async test "interpret_shutdown blocks poller critical phase before plan" {
     @types.Response::Err(msg) =>
       assert_eq(msg, shutdown_poller_block_message(5))
     _ => fail("expected poller block")
+  }
+}
+
+///|
+async test "interpret_shutdown closes pane before poller critical phase block" {
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    5,
+    "main.leaf",
+    "b",
+    "main",
+    "https://ex/5",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "",
+    "",
+    @poller.CiRollupStatus::Unknown,
+    false,
+  )
+  let t = match @types.LocalTarget::parse("zellij-tab:choir:leaf") {
+    Some(v) => v
+    None => fail("expected parse")
+  }
+  let reg = @registry.AgentRegistry::new()
+  let agent = kill_agent_test_agent(
+    Some(t),
+    "/tmp/choir-shutdown-critical-pane",
+  )
+  ignore(reg.upsert(agent))
+  let seen : Array[@workspace.Command] = []
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    for cmd in cmds {
+      seen.push(cmd)
+    }
+    [0]
+  }
+  let got = interpret_shutdown(
+    { caller_id: Some("main.leaf") },
+    "/tmp",
+    Some(ps),
+    Some(reg),
+    runner,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, shutdown_poller_block_message(5))
+    _ => fail("expected poller block")
+  }
+  match kill_agent_pane_close_command(agent) {
+    Some(close_cmd) =>
+      assert_true(seen.iter().any(fn(cmd) { cmd == close_cmd }))
+    None => fail("expected close command")
   }
 }
 

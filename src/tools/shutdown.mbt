@@ -346,10 +346,11 @@ pub fn shutdown_exit_plan(
 }
 
 ///|
-/// Adapter-side ordering for `shutdown`: poller gate, registry role, lifecycle
-/// read, optional dev exit event, optional worktree removal, and Beads mirror
-/// (matches dispatch).
+/// Adapter-side ordering for `shutdown`: pane close first, then poller gate,
+/// registry role, lifecycle read, optional dev exit event, optional worktree
+/// removal, and Beads mirror (matches dispatch).
 pub(all) enum ShutdownAdapterHostStep {
+  PaneClose
   PollerCriticalPhaseRead
   RegistryRoleLookup
   LifecycleRead
@@ -366,6 +367,7 @@ pub impl Show for ShutdownAdapterHostStep with output(self, logger) -> Unit {
 ///|
 pub fn shutdown_adapter_host_steps() -> Array[ShutdownAdapterHostStep] {
   [
+    ShutdownAdapterHostStep::PaneClose,
     ShutdownAdapterHostStep::PollerCriticalPhaseRead,
     ShutdownAdapterHostStep::RegistryRoleLookup,
     ShutdownAdapterHostStep::LifecycleRead,
@@ -432,8 +434,9 @@ pub fn workflow_state_pr_number(workflow : @phase.WorkflowState) -> Int? {
 }
 
 ///|
-/// Effectful shutdown adapter: poller gate, lifecycle + `shutdown_exit_plan`,
-/// dev exit event, worktree cleanup, Beads lifecycle mirror.
+/// Effectful shutdown adapter: pane close first, then poller gate, lifecycle +
+/// `shutdown_exit_plan`, dev exit event, worktree cleanup, Beads lifecycle
+/// mirror.
 pub async fn interpret_shutdown(
   args : ShutdownArgs,
   project_dir : String,
@@ -446,6 +449,29 @@ pub async fn interpret_shutdown(
     Some(v) => v
     None => return shutdown_missing_caller_response()
   }
+  match registry {
+    Some(reg) =>
+      try {
+        let agent = reg.get(caller_id)
+        if !@types.is_supervisor_role(agent.role) {
+          match kill_agent_pane_close_command(agent) {
+            Some(cmd) => {
+              let codes = runner([cmd]) catch { _ => [-1] }
+              if codes.length() > 0 && codes[0] != 0 {
+                @moontrace.trace("shutdown pane close failed", fields=[
+                  @moontrace.field("agent_id", caller_id),
+                  @moontrace.field("exit", codes[0]),
+                ])
+              }
+            }
+            None => ()
+          }
+        }
+      } catch {
+        _ => ()
+      }
+    None => ()
+  }
   match shutdown_poller_block_pr_number(poller_state, caller_id) {
     Some(pr_number) =>
       return @types.Response::Err(shutdown_poller_block_message(pr_number))
@@ -454,6 +480,7 @@ pub async fn interpret_shutdown(
   let role = shutdown_registry_role_for_caller(registry, caller_id)
   let lifecycle = @phase.read_or_default_lifecycle(project_dir, caller_id, role)
   let plan = shutdown_exit_plan(lifecycle, poller_state~)
+
   if plan.apply_dev_exit_requested {
     ignore(
       apply_dev_event_checked(

@@ -191,7 +191,7 @@ pub(all) struct MergePrArgs {
 } derive(Debug, Eq)
 
 ///|
-struct ResolveReviewThreadArgs {
+pub(all) struct ResolveReviewThreadArgs {
   thread_id : String
   caller_id : String
 } derive(Debug, Eq)
