@@ -1,4 +1,7 @@
 ///|
+pub let audit_heartbeat_sec_max : Int = 2_147_483
+
+///|
 /// Parsed server configuration.
 pub(all) struct Config {
   default_role : Role

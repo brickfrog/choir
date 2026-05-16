@@ -174,9 +174,19 @@ fn parse_nonnegative_int64_config_value(
 fn parse_nonnegative_int_config_value(
   key : String,
   raw : String,
+  max? : Int64 = 2_147_483_647L,
 ) -> Result[Int, @types.ChoirError] {
   match parse_nonnegative_int64_config_value(key, raw) {
-    Ok(v) => Ok(v.to_int())
+    Ok(v) =>
+      if v > max {
+        Err(
+          @types.ChoirError::config_error(
+            key + ": expected <= " + max.to_string(),
+          ),
+        )
+      } else {
+        Ok(v.to_int())
+      }
     Err(e) => Err(e)
   }
 }
@@ -346,7 +356,12 @@ pub fn parse_config(
   let audit_heartbeat_sec = match doc.get("audit_heartbeat_sec") {
     None => default_cfg.audit_heartbeat_sec
     Some(raw) =>
-      match parse_nonnegative_int_config_value("audit_heartbeat_sec", raw) {
+      match
+        parse_nonnegative_int_config_value(
+          "audit_heartbeat_sec",
+          raw,
+          max=@types.audit_heartbeat_sec_max.to_int64(),
+        ) {
         Ok(v) => v
         Err(e) => return Err(e)
       }

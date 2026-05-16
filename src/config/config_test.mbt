@@ -170,6 +170,10 @@ test "parse_config worker no-handoff knobs reject fractional values" {
 
 ///|
 test "parse_config audit heartbeat knob rejects invalid values" {
+  let max_cfg = parse_config(
+    "audit_heartbeat_sec = " + @types.audit_heartbeat_sec_max.to_string(),
+  ).unwrap()
+  assert_eq(max_cfg.audit_heartbeat_sec, @types.audit_heartbeat_sec_max)
   match parse_config("audit_heartbeat_sec = -1") {
     Err(e) => assert_true(e.message().contains("expected >= 0"))
     Ok(_) => fail("expected negative audit heartbeat config to fail")
@@ -177,6 +181,14 @@ test "parse_config audit heartbeat knob rejects invalid values" {
   match parse_config("audit_heartbeat_sec = 1.5") {
     Err(e) => assert_true(e.message().contains("expected integer"))
     Ok(_) => fail("expected fractional audit heartbeat config to fail")
+  }
+  match
+    parse_config(
+      "audit_heartbeat_sec = " +
+      (@types.audit_heartbeat_sec_max.to_int64() + 1L).to_string(),
+    ) {
+    Err(e) => assert_true(e.message().contains("expected <= "))
+    Ok(_) => fail("expected oversized audit heartbeat config to fail")
   }
 }
 
