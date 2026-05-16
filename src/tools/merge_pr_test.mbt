@@ -127,6 +127,317 @@ fn merge_pr_test_tracked(
 }
 
 ///|
+fn merge_pr_test_audit_receipt_with_findings(
+  sha : String,
+  findings_count : Int,
+) -> String {
+  let receipt : @types.AuditReceipt = {
+    sha,
+    branch: "feature/audit-gate",
+    audited_at: 1L,
+    agent_id: "audit-on-file-pr",
+    findings_count,
+  }
+  receipt.to_json().stringify() + "\n"
+}
+
+///|
+fn merge_pr_test_audit_receipt(sha : String) -> String {
+  merge_pr_test_audit_receipt_with_findings(sha, 0)
+}
+
+///|
+fn merge_pr_test_gate_state_reader(
+  enabled_at_unix : Int64,
+) -> (String) -> String {
+  fn(path : String) -> String {
+    if path.has_suffix("/.choir/audit-gate.json") {
+      "{\"enabled_at_unix\":" + enabled_at_unix.to_string() + "}\n"
+    } else {
+      ""
+    }
+  }
+}
+
+///|
+test "merge_pr_audit_gate_required grandfathers PRs first seen before gate timestamp" {
+  let state : MergeGateState = { enabled_at_unix: 100L }
+  assert_false(merge_pr_audit_gate_required(state, 99L))
+  assert_true(merge_pr_audit_gate_required(state, 100L))
+  assert_true(merge_pr_audit_gate_required(state, 101L))
+}
+
+///|
+test "load_or_initialize_gate_state fails closed when timestamp cannot persist" {
+  match
+    load_or_initialize_gate_state("/repo", fn() { 123L }, fn(_) { "" }, fn(
+      _,
+      _,
+    ) {
+      false
+    }) {
+    Err(e) => {
+      assert_true(e.message().contains("audit receipt gate"))
+      assert_true(e.message().contains("not durable"))
+    }
+    Ok(_) => fail("expected gate state persistence failure")
+  }
+}
+
+///|
+test "merge_pr_audit_receipt_validation distinguishes valid stale missing invalid" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let other = "1111111111112222222222223333333333334444"
+  match
+    merge_pr_audit_receipt_validation(
+      "main",
+      head,
+      Some(merge_pr_test_audit_receipt(head)),
+    ) {
+    MergeAuditReceiptValid => ()
+    _ => fail("expected valid receipt")
+  }
+  match
+    merge_pr_audit_receipt_validation(
+      "main",
+      head,
+      Some(merge_pr_test_audit_receipt(other)),
+    ) {
+    MergeAuditReceiptStale(audited, current) => {
+      assert_eq(audited, other)
+      assert_eq(current, head)
+    }
+    _ => fail("expected stale receipt")
+  }
+  match merge_pr_audit_receipt_validation("main", head, None) {
+    MergeAuditReceiptMissing(short_sha) =>
+      assert_eq(short_sha, file_pr_short_sha(head))
+    _ => fail("expected missing receipt")
+  }
+  match merge_pr_audit_receipt_validation("main", head, Some("{not json")) {
+    MergeAuditReceiptInvalid(short_sha) =>
+      assert_eq(short_sha, file_pr_short_sha(head))
+    _ => fail("expected invalid receipt")
+  }
+}
+
+///|
+async test "merge_pr_require_audit_receipt auto-audit writes receipt and clears gate" {
+  let project_dir = "/tmp/choir-mpr-audit-ok-" + @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut receipt_body : String? = None
+  let mut spawned = false
+  let mut waited_worker = ""
+  let mut write_sha = ""
+  let got = merge_pr_require_audit_receipt(
+    "main",
+    project_dir,
+    project_dir,
+    "main.leaf",
+    91,
+    head,
+    { enabled_at_unix: 100L },
+    200L,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "cat" {
+        match receipt_body {
+          Some(body) => return (0, body)
+          None => return (1, "")
+        }
+      }
+      (0, "")
+    },
+    spawn_audit_worker=async fn(_) {
+      @async.sleep(0)
+      spawned = true
+      Ok("audit-worker-1")
+    },
+    wait_for_audit_report=async fn(worker_id) {
+      @async.sleep(0)
+      waited_worker = worker_id
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    write_audit_receipt=fn(args) {
+      write_sha = args.sha
+      receipt_body = Some(merge_pr_test_audit_receipt(args.sha))
+      @types.Response::ok_values({ "status": "ok".to_json() })
+    },
+    audit_heartbeat_sec=0,
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected audit gate to clear: " + e.message())
+  }
+  assert_true(spawned)
+  assert_eq(waited_worker, "audit-worker-1")
+  assert_eq(write_sha, head)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "merge_pr_require_audit_receipt timeout returns audit budget block" {
+  let project_dir = "/tmp/choir-mpr-audit-timeout-" + @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut cleaned_worker = ""
+  let got = merge_pr_require_audit_receipt(
+    "main",
+    project_dir,
+    project_dir,
+    "main.leaf",
+    92,
+    head,
+    { enabled_at_unix: 100L },
+    200L,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "cat" {
+        return (1, "")
+      }
+      (0, "")
+    },
+    spawn_audit_worker=async fn(_) {
+      @async.sleep(0)
+      Ok("audit-worker-timeout")
+    },
+    wait_for_audit_report=async fn(_) {
+      @async.sleep(50)
+      None
+    },
+    cleanup_audit_report=fn(worker_id) { cleaned_worker = worker_id },
+    audit_budget_ms=1,
+    audit_heartbeat_sec=0,
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(
+        msg.contains("policy blocked: audit receipt gate blocked PR #92"),
+      )
+      assert_true(msg.contains("audit budget 1ms"))
+    }
+    Ok(_) => fail("expected audit timeout block")
+  }
+  assert_eq(cleaned_worker, "audit-worker-timeout")
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr audit spawn failure blocks before merge and logs audit_block" {
+  let project_dir = "/tmp/choir-mpr-audit-spawn-fail-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    93,
+    "main.leaf",
+    "feature/audit-gate",
+    "main",
+    "https://github.com/o/r/pull/93",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    head,
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let logs : Array[String] = []
+  let mut runner_called = false
+  let resp = interpret_merge_pr(
+    {
+      pr_number: 93,
+      parent_branch: "main",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_called = true
+      let statuses = []
+      for _ in cmds {
+        statuses.push(1)
+      }
+      statuses
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "api" &&
+        cmd.args[1].has_suffix("/reviews") {
+        return (0, "[{\"state\":\"APPROVED\"}]")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("repo") {
+        return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("graphql") {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "cat" {
+        return (1, "")
+      }
+      (1, "spawn failed")
+    },
+    fn(_path, content) {
+      logs.push(content)
+      true
+    },
+    fn(_) { false },
+    read_file=fn(path) {
+      if path.has_suffix("/.choir/audit-gate.json") {
+        "{\"enabled_at_unix\":100}\n"
+      } else {
+        ""
+      }
+    },
+    write_file_atomic=fn(_, _) { false },
+    create_dir_all=fn(_) { true },
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      if !msg.contains("policy blocked: audit receipt gate blocked PR #93") {
+        fail("unexpected merge_pr error: " + msg)
+      }
+      assert_true(msg.contains("could not start auto-audit"))
+      assert_true(msg.contains("Run `/audit` manually"))
+    }
+    @types.Response::Ok(_) => fail("expected audit spawn failure block")
+  }
+  assert_true(runner_called)
+  assert_true(
+    logs.iter().any(fn(line) { line.contains("outcome=audit_block") }),
+  )
+  assert_true(
+    logs
+    .iter()
+    .any(fn(line) { line.contains("audit_gate=auto_audit_spawn_failed") }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 fn merge_pr_test_write_verify_contract(
   project_dir : String,
   verify : Array[String],
@@ -1757,6 +2068,7 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     capture,
     append_file,
     fn(_path) { false },
+    read_file=merge_pr_test_gate_state_reader(1L),
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -1876,6 +2188,7 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
     capture,
     fn(_path, _content) { true },
     fn(_path) { false },
+    read_file=merge_pr_test_gate_state_reader(1L),
   )
   match got {
     @types.Response::Ok(_) => ()

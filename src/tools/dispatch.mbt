@@ -1111,8 +1111,29 @@ pub async fn dispatch(
       )
     ToolRequest::MergePr(merge_args) => {
       let resp = interpret_merge_pr(
-        merge_args, project_dir, poller_state, mutex_registry, registry, runner,
-        capture, append_file, path_exists,
+        merge_args,
+        project_dir,
+        poller_state,
+        mutex_registry,
+        registry,
+        runner,
+        capture,
+        append_file,
+        path_exists,
+        read_file~,
+        write_file_atomic~,
+        create_dir_all~,
+        prepare_audit_report~,
+        wait_for_audit_report~,
+        cleanup_audit_report~,
+        audit_heartbeat_sec~,
+        audit_worker_alive~,
+        session~,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
       )
       if resp.is_ok() {
         try_dispatch_pending_waves(
