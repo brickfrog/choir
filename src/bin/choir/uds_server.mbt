@@ -32,6 +32,7 @@ struct ServeUDSClient {
   // TL claude process died. See choir-u7v.
   connected_at_sec : Int64
   mut last_request_name : String?
+  mut busy : Bool
 }
 
 ///|
@@ -43,6 +44,7 @@ fn ServeUDSClient::new(fd : Int) -> ServeUDSClient {
     connected_agent_id: None,
     connected_at_sec: @poller.now_sec(),
     last_request_name: None,
+    busy: false,
   }
 }
 
@@ -254,11 +256,42 @@ fn serve_write_all_uds(fd : Int, data : Bytes) -> Unit {
 }
 
 ///|
-async fn serve_handle_uds_connection(
+async fn serve_handle_uds_request_line(
   client : ServeUDSClient,
   state : @server.ServerState,
   server_fd : Int,
+  line : String,
+  req : @types.Request,
+) -> Unit {
+  let resp = state.handle(req) catch {
+    e => {
+      @moontrace.error("handler error", fields=[
+        @moontrace.field("request", req.name),
+        @moontrace.field("error", e.to_string()),
+      ])
+      @types.Response::Err("internal error: " + e.to_string())
+    }
+  }
+  let resp_str = @transport.format_response(resp) + "\n"
+  @moontrace.trace("request", fields=[@moontrace.field("line", line)])
+  @moontrace.trace("response", fields=[@moontrace.field("body", resp_str)])
+  serve_write_all_uds(client.fd, @utf8.encode(resp_str))
+  client.busy = false
+  if serve_is_reload_request(req) && resp.is_ok() {
+    serve_replace_self_after_reload_ack(server_fd, state, req)
+  }
+}
+
+///|
+fn serve_handle_uds_connection(
+  client : ServeUDSClient,
+  state : @server.ServerState,
+  server_fd : Int,
+  spawn_request : (async () -> Unit) -> Unit,
 ) -> Bool {
+  if client.busy {
+    return true
+  }
   for ;; {
     if client.read_pos == client.buf.length() {
       client.buf = grow_connection_buffer(client.buf)
@@ -287,24 +320,10 @@ async fn serve_handle_uds_connection(
               client.connected_agent_id = lifecycle_agent_id_for_register(req)
             }
             client.last_request_name = Some(req.name)
-            let resp = state.handle(req) catch {
-              e => {
-                @moontrace.error("handler error", fields=[
-                  @moontrace.field("request", req.name),
-                  @moontrace.field("error", e.to_string()),
-                ])
-                @types.Response::Err("internal error: " + e.to_string())
-              }
-            }
-            let resp_str = @transport.format_response(resp) + "\n"
-            @moontrace.trace("request", fields=[@moontrace.field("line", line)])
-            @moontrace.trace("response", fields=[
-              @moontrace.field("body", resp_str),
-            ])
-            serve_write_all_uds(client.fd, @utf8.encode(resp_str))
-            if serve_is_reload_request(req) && resp.is_ok() {
-              serve_replace_self_after_reload_ack(server_fd, state, req)
-            }
+            client.busy = true
+            spawn_request(async fn() {
+              serve_handle_uds_request_line(client, state, server_fd, line, req)
+            })
           }
           Err(err) => {
             @moontrace.warn("parse error", fields=[
@@ -325,6 +344,9 @@ async fn serve_handle_uds_connection(
         }
         client.read_pos = remaining
         i = 0
+        if client.busy {
+          return true
+        }
       } else {
         i = i + 1
       }
@@ -626,9 +648,8 @@ fn serve_run() -> Unit {
               clients[i],
               state,
               server_fd,
-            ) catch {
-              _ => false
-            }
+              fn(task) { root.spawn_bg(task) },
+            )
             if alive {
               i = i + 1
             } else {

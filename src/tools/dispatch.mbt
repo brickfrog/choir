@@ -681,6 +681,26 @@ fn notify_parent_blocked_parent_warn_send_plan(
 }
 
 ///|
+fn notify_parent_from_audit_on_file_pr_worker(
+  registry : @registry.AgentRegistry?,
+  caller_id : String,
+) -> Bool {
+  match registry {
+    Some(reg) =>
+      try {
+        let agent = reg.get(caller_id)
+        agent.role == @types.Role::Worker &&
+        agent.parent == Some(audit_on_file_pr_internal_caller_id)
+      } catch {
+        _ => false
+      } noraise {
+        result => result
+      }
+    None => false
+  }
+}
+
+///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -714,6 +734,7 @@ pub async fn dispatch(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   caller_id? : String? = None,
+  caller_role? : @types.Role = @types.Role::TL,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
@@ -722,6 +743,18 @@ pub async fn dispatch(
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
+    _,
+  ) {
+    @async.sleep(0)
+    None
+  },
+  capture_audit_on_file_pr_report? : (String, AuditOnFilePrReport) -> Unit = fn(
+    _agent_id,
+    _report,
+  ) {
+    ()
+  },
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -734,7 +767,15 @@ pub async fn dispatch(
     Some(f) => f
     None =>
       (b, pb, pd, t, bo) => {
-        ensure_pull_request_with_capture(b, pb, pd, t, bo, capture)
+        ensure_pull_request_with_capture(
+          b,
+          pb,
+          pd,
+          t,
+          bo,
+          capture,
+          poller_state~,
+        )
       }
   }
   let record_verify_event = fn(
@@ -950,7 +991,16 @@ pub async fn dispatch(
         runner,
         capture,
         ensure_pr,
+        caller_role~,
         record_verify_event~,
+        create_dir_all~,
+        write_file_atomic~,
+        wait_for_audit_report~,
+        extra_mcp_servers_json~,
+        shell_command~,
+        listen_uds~,
+        listen_tcp~,
+        tcp_auth_token~,
         global_review_mode~,
       )
     ToolRequest::MergePr(merge_args) => {
@@ -1049,6 +1099,19 @@ pub async fn dispatch(
               raise e
             }
         }
+      }
+      if notify_parent_from_audit_on_file_pr_worker(
+          registry,
+          notify_args.caller_id,
+        ) {
+        capture_audit_on_file_pr_report(notify_args.caller_id, {
+          message: notify_args.message,
+          status: notify_args.status,
+        })
+        record_handoff_delivered(notify_args.caller_id)
+        return @types.Response::ok_values({
+          "status": String::to_json("notified"),
+        })
       }
       let parent_resolution = match registry {
         Some(reg) =>
@@ -1450,6 +1513,18 @@ pub async fn handle_request(
     @types.next_goal_nonce(@env.now().reinterpret_as_int64())
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
+    _,
+  ) {
+    @async.sleep(0)
+    None
+  },
+  capture_audit_on_file_pr_report? : (String, AuditOnFilePrReport) -> Unit = fn(
+    _agent_id,
+    _report,
+  ) {
+    ()
+  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
@@ -1535,6 +1610,7 @@ pub async fn handle_request(
                   mutex_registry~,
                   poller_state~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
+                  caller_role=req.role,
                   pr_review~,
                   global_review_mode~,
                   append_file~,
@@ -1547,6 +1623,8 @@ pub async fn handle_request(
                   goal_request_tick~,
                   goal_nonce~,
                   record_handoff_delivered~,
+                  wait_for_audit_report~,
+                  capture_audit_on_file_pr_report~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -1660,6 +1738,18 @@ pub async fn dispatch_call(
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
+  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
+    _,
+  ) {
+    @async.sleep(0)
+    None
+  },
+  capture_audit_on_file_pr_report? : (String, AuditOnFilePrReport) -> Unit = fn(
+    _agent_id,
+    _report,
+  ) {
+    ()
+  },
   policy_enforcement_mode? : @policy.PolicyEnforcementMode = @policy.policy_enforcement_mode,
   parent_branch_lifecycle_reader? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
   append_file? : (String, String) -> Bool = @sys.append_file_sync,
@@ -1713,6 +1803,7 @@ pub async fn dispatch_call(
                   mutex_registry~,
                   poller_state~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
+                  caller_role=call.role,
                   pr_review~,
                   global_review_mode~,
                   append_file~,
@@ -1724,6 +1815,8 @@ pub async fn dispatch_call(
                   goal_deliver~,
                   goal_request_tick~,
                   record_handoff_delivered~,
+                  wait_for_audit_report~,
+                  capture_audit_on_file_pr_report~,
                 )
             }
         }

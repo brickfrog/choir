@@ -95,6 +95,9 @@ fn resolve_spawn_worker_parent_id(
   caller_id : String,
   registry : @registry.AgentRegistry?,
 ) -> Result[String, @types.ChoirError] {
+  if caller_id == audit_on_file_pr_internal_caller_id {
+    return Ok(caller_id)
+  }
   match registry {
     None => Ok(caller_id)
     Some(reg) =>

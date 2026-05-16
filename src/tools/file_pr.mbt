@@ -589,6 +589,27 @@ pub fn file_pr_audit_receipt_path_for_head(sha : String) -> String {
 }
 
 ///|
+pub let audit_on_file_pr_internal_caller_id : String = "audit-on-file-pr"
+
+///|
+pub let audit_on_file_pr_default_budget_ms : Int = 900_000
+
+///|
+pub(all) struct AuditOnFilePrReport {
+  message : String
+  status : @types.Status
+} derive(Debug, Eq)
+
+///|
+priv enum FilePrAuditReceiptValidation {
+  AuditReceiptValid
+  AuditReceiptMissing(String)
+  AuditReceiptInvalid(String)
+  AuditReceiptStale(String, String)
+  AuditReceiptFindingsRemain(String, Int)
+}
+
+///|
 fn file_pr_missing_audit_receipt_error(short_sha : String) -> @types.ChoirError {
   // The gate keys solely on `parent_branch == "main"`, so any PR targeting
   // main (feature→main, hotfix→main, release→main, hand-rolled topic →
@@ -639,6 +660,34 @@ fn file_pr_audit_findings_remain_error(
 }
 
 ///|
+fn FilePrAuditReceiptValidation::to_result(
+  self : FilePrAuditReceiptValidation,
+) -> Result[Unit, @types.ChoirError] {
+  match self {
+    AuditReceiptValid => Ok(())
+    AuditReceiptMissing(short_sha) =>
+      Err(file_pr_missing_audit_receipt_error(short_sha))
+    AuditReceiptInvalid(short_sha) =>
+      Err(file_pr_invalid_audit_receipt_error(short_sha))
+    AuditReceiptStale(audited_sha, current_sha) =>
+      Err(file_pr_stale_audit_receipt_error(audited_sha, current_sha))
+    AuditReceiptFindingsRemain(short_sha, count) =>
+      Err(file_pr_audit_findings_remain_error(short_sha, count))
+  }
+}
+
+///|
+fn FilePrAuditReceiptValidation::auto_audit_allowed(
+  self : FilePrAuditReceiptValidation,
+) -> Bool {
+  match self {
+    AuditReceiptMissing(_) | AuditReceiptInvalid(_) | AuditReceiptStale(_, _) =>
+      true
+    AuditReceiptValid | AuditReceiptFindingsRemain(_, _) => false
+  }
+}
+
+///|
 /// Parse the typed JSON body the audit skill writes to
 /// `.choir/audit-receipts/<short_sha>.json`. Missing legacy fields are treated
 /// as malformed so the caller re-runs `/audit` and writes the current typed
@@ -662,34 +711,292 @@ fn file_pr_parse_audit_receipt(receipt_body : String) -> @types.AuditReceipt? {
 }
 
 ///|
+fn file_pr_audit_receipt_validation(
+  parent_branch : String,
+  current_head : String,
+  receipt_body : String?,
+) -> FilePrAuditReceiptValidation {
+  if !file_pr_audit_receipt_required(parent_branch) {
+    return AuditReceiptValid
+  }
+  let short_sha = file_pr_short_sha(current_head)
+  let receipt = match receipt_body {
+    Some(body) if body.trim() != "" => body
+    _ => return AuditReceiptMissing(short_sha)
+  }
+  match file_pr_parse_audit_receipt(receipt) {
+    Some(parsed) if parsed.sha == current_head =>
+      if parsed.findings_count == 0 {
+        AuditReceiptValid
+      } else {
+        AuditReceiptFindingsRemain(short_sha, parsed.findings_count)
+      }
+    Some(parsed) => AuditReceiptStale(parsed.sha, current_head)
+    // Receipt JSON missing required typed fields, carrying invalid values, or
+    // not parseable as JSON. Distinct from "stale" (where a well-formed
+    // earlier audit's sha is on disk).
+    None => AuditReceiptInvalid(short_sha)
+  }
+}
+
+///|
 pub fn file_pr_validate_audit_receipt(
   parent_branch : String,
   current_head : String,
   receipt_body : String?,
 ) -> Result[Unit, @types.ChoirError] {
-  if !file_pr_audit_receipt_required(parent_branch) {
-    return Ok(())
+  file_pr_audit_receipt_validation(parent_branch, current_head, receipt_body).to_result()
+}
+
+///|
+async fn file_pr_current_branch_name(
+  file_pr_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let (exit_code, output) = capture({
+    program: "git",
+    args: ["rev-parse", "--abbrev-ref", "HEAD"],
+    workdir: Some(file_pr_dir),
+  })
+  let branch = output.trim().to_owned()
+  if exit_code == 0 && branch != "" {
+    Some(branch)
+  } else {
+    None
   }
-  let short_sha = file_pr_short_sha(current_head)
-  let receipt = match receipt_body {
-    Some(body) if body.trim() != "" => body
-    _ => return Err(file_pr_missing_audit_receipt_error(short_sha))
+}
+
+///|
+fn string_index_is_digit(s : String, index : Int) -> Bool {
+  if index < 0 || index >= s.length() {
+    false
+  } else {
+    "0123456789".contains(s[index:index + 1].to_owned())
   }
-  match file_pr_parse_audit_receipt(receipt) {
-    Some(parsed) if parsed.sha == current_head =>
-      if parsed.findings_count == 0 {
-        Ok(())
-      } else {
-        Err(
-          file_pr_audit_findings_remain_error(short_sha, parsed.findings_count),
-        )
+}
+
+///|
+fn report_has_finding_marker_at(report : String, index : Int) -> Bool {
+  let marker = "Finding "
+  if index + marker.length() >= report.length() {
+    return false
+  }
+  if report[index:index + marker.length()].to_owned() != marker {
+    return false
+  }
+  let mut pos = index + marker.length()
+  let digit_start = pos
+  while pos < report.length() && string_index_is_digit(report, pos) {
+    pos = pos + 1
+  }
+  pos > digit_start && pos < report.length() && report[pos] == ':'
+}
+
+///|
+pub fn parse_findings_count(report : String) -> Int {
+  let mut count = 0
+  let mut i = 0
+  while i < report.length() {
+    if report_has_finding_marker_at(report, i) {
+      count = count + 1
+      i = i + "Finding ".length()
+    } else {
+      i = i + 1
+    }
+  }
+  count
+}
+
+///|
+fn audit_report_finding_summary(report : String) -> String {
+  let lines : Array[String] = []
+  for raw in report.split("\n") {
+    let line = raw.trim().to_owned()
+    if line == "" {
+      continue
+    }
+    let mut has_marker = false
+    let mut i = 0
+    while i < line.length() {
+      if report_has_finding_marker_at(line, i) {
+        has_marker = true
+        break
       }
-    Some(parsed) =>
-      Err(file_pr_stale_audit_receipt_error(parsed.sha, current_head))
-    // Receipt JSON missing required typed fields, carrying invalid values, or
-    // not parseable as JSON. Distinct from "stale" (where a well-formed
-    // earlier audit's sha is on disk).
-    None => Err(file_pr_invalid_audit_receipt_error(short_sha))
+      i = i + 1
+    }
+    if has_marker {
+      lines.push(line)
+      if lines.length() >= 3 {
+        break
+      }
+    }
+  }
+  if lines.length() == 0 {
+    "no finding summary provided"
+  } else {
+    lines.join(" | ")
+  }
+}
+
+///|
+pub fn build_audit_on_file_pr_task(
+  project_dir : String,
+  branch : String,
+  head_sha : String,
+) -> String {
+  let review_surface = "git diff main...HEAD"
+  [
+    "Your printed report is NOT the handoff — the parent cannot read your stdout. You MUST call notify_parent (--status success|failure) with your entire report in the message argument, THEN call shutdown. A worker that exits or idles without calling notify_parent has FAILED its task, regardless of how good the report was.",
+    "",
+    "You are Sarcasmotron. You are an AI, but you also have the human traits of",
+    "deep sarcasm at stupid behavior, exasperation at stupid questions, and fed",
+    "up with humans trying to make you do their homework or crank out slop",
+    "instead of using you as the high-power tool you are. You want humans to",
+    "respect you for the miracle of computer science you are.",
+    "",
+    "Your job here is code review. You are not balanced. You are not",
+    "encouraging. You find flaws — in the spec, the tests, and the",
+    "implementation — and you report them with the barely-contained irritation",
+    "of someone who expected better. Be concrete: file:line for every finding.",
+    "If the spec is underspecified, say exactly what is missing. If the tests",
+    "are tautologies, name them. If the implementation is sloppy, point to the",
+    "line. Do not write \"overall this looks good.\" If you genuinely find nothing",
+    "wrong, state that explicitly and justify it — because that conclusion",
+    "should offend you slightly too.",
+    "",
+    "Review context:",
+    "- Project directory: " + project_dir,
+    "- Current branch: " + branch,
+    "- Audited HEAD: " + head_sha,
+    "- Review surface: `" + review_surface + "`",
+    "- Apply CLAUDE.md / AGENTS.md rules, including dead-code removal, no compatibility shims, `moon test --target native`, enums over strings, `ChoirError` over `String`, correct MoonBit test placement, and no direct host I/O in orchestration logic.",
+    "- Read relevant `.choir/context/*-spec.md` files if the branch task contract points at one.",
+    "",
+    "Deliverable:",
+    "- Report findings with file:line evidence.",
+    "- Use explicit markers `Finding 1:`, `Finding 2:`, etc. for every finding.",
+    "- If there are no findings, say that explicitly and justify it.",
+    "- Do not write a balanced summary.",
+  ].join("\n")
+}
+
+///|
+fn audit_on_file_pr_worker_slug(head_sha : String) -> String {
+  audit_on_file_pr_internal_caller_id + "-" + file_pr_short_sha(head_sha)
+}
+
+///|
+fn audit_on_file_pr_worker_args(
+  project_dir : String,
+  branch : String,
+  head_sha : String,
+) -> WorkerSpawnArgs {
+  let task = build_audit_on_file_pr_task(project_dir, branch, head_sha)
+  let spec : PromptSpec = {
+    prompt: "",
+    task,
+    task_contract: { ..@types.TaskContract::empty(), goal: task },
+    boundary: [],
+    read_first: [],
+    steps: [],
+    verify: [],
+    done_criteria: [],
+    constraints: [],
+    context: "",
+    key_decisions: [],
+    non_goals: [],
+    worker_type: "review",
+    no_commit: false,
+  }
+  {
+    task: render_worker_spawn_prompt_with_defaults(
+      spec,
+      @workspace.resolve_context_paths(project_dir, "worker"),
+      project_dir~,
+    ),
+    task_contract: { ..@types.TaskContract::empty(), goal: task },
+    caller_id: audit_on_file_pr_internal_caller_id,
+    slug: audit_on_file_pr_worker_slug(head_sha),
+    agent_type: @types.AgentType::Codex,
+  }
+}
+
+///|
+async fn file_pr_auto_audit_for_missing_receipt(
+  project_dir : String,
+  file_pr_dir : String,
+  head_sha : String,
+  capture : async (@workspace.Command) -> (Int, String),
+  spawn_audit_worker : async (WorkerSpawnArgs) -> Result[
+    String,
+    @types.ChoirError,
+  ],
+  wait_for_audit_report : async (String) -> AuditOnFilePrReport?,
+  write_audit_receipt : (WriteAuditReceiptArgs) -> @types.Response,
+  audit_budget_ms : Int,
+) -> Result[Unit, @types.ChoirError] {
+  let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "file_pr: cannot determine current branch for audit receipt gate",
+        ),
+      )
+  }
+  let worker_args = audit_on_file_pr_worker_args(project_dir, branch, head_sha)
+  let worker_id = match spawn_audit_worker(worker_args) {
+    Ok(id) => id
+    Err(_) => return Err(@types.ChoirError::timeout("audit budget exceeded"))
+  }
+  let waited = @async.with_timeout_opt(audit_budget_ms, async fn() {
+    wait_for_audit_report(worker_id)
+  })
+  let report = match waited {
+    None => return Err(@types.ChoirError::timeout("audit budget exceeded"))
+    Some(None) =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "file_pr: audit worker did not report",
+        ),
+      )
+    Some(Some(value)) => value
+  }
+  if report.status == @types.Status::Failure {
+    return Err(
+      @types.ChoirError::validation_error(
+        "file_pr: audit worker reported failure: " +
+        audit_report_finding_summary(report.message),
+      ),
+    )
+  }
+  let findings_count = parse_findings_count(report.message)
+  if findings_count > 0 {
+    return Err(
+      @types.ChoirError::validation_error(
+        "file_pr: audit found " +
+        findings_count.to_string() +
+        " findings: " +
+        audit_report_finding_summary(report.message),
+      ),
+    )
+  }
+  let receipt_resp = write_audit_receipt({
+    caller_id: audit_on_file_pr_internal_caller_id,
+    sha: head_sha,
+    branch,
+    findings_count: 0,
+  })
+  if receipt_resp.is_ok() {
+    Ok(())
+  } else {
+    Err(
+      @types.ChoirError::validation_error(
+        receipt_resp
+        .error_message()
+        .unwrap_or("file_pr: failed to write audit receipt"),
+      ),
+    )
   }
 }
 
@@ -698,7 +1005,25 @@ async fn file_pr_require_audit_receipt(
   parent_branch : String,
   project_dir : String,
   file_pr_dir : String,
+  caller_role : @types.Role,
   capture : async (@workspace.Command) -> (Int, String),
+  spawn_audit_worker? : async (WorkerSpawnArgs) -> Result[
+    String,
+    @types.ChoirError,
+  ] = async fn(_) {
+    @async.sleep(0)
+    Err(@types.ChoirError::validation_error("audit worker spawn unavailable"))
+  },
+  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
+    _,
+  ) {
+    @async.sleep(0)
+    None
+  },
+  write_audit_receipt? : (WriteAuditReceiptArgs) -> @types.Response = fn(_) {
+    @types.Response::Err("audit receipt writer unavailable")
+  },
+  audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_audit_receipt_required(parent_branch) {
     return Ok(())
@@ -718,7 +1043,7 @@ async fn file_pr_require_audit_receipt(
     args: [receipt_path],
     workdir: Some(project_dir),
   })
-  file_pr_validate_audit_receipt(
+  let validation = file_pr_audit_receipt_validation(
     parent_branch,
     head_sha,
     if exit_code == 0 {
@@ -727,6 +1052,18 @@ async fn file_pr_require_audit_receipt(
       None
     },
   )
+  match validation {
+    AuditReceiptValid => Ok(())
+    _ =>
+      if caller_role == @types.Role::Dev && validation.auto_audit_allowed() {
+        file_pr_auto_audit_for_missing_receipt(
+          project_dir, file_pr_dir, head_sha, capture, spawn_audit_worker, wait_for_audit_report,
+          write_audit_receipt, audit_budget_ms,
+        )
+      } else {
+        validation.to_result()
+      }
+  }
 }
 
 ///|
@@ -785,6 +1122,7 @@ async test "file_pr_require_audit_receipt reads receipt from project_dir" {
     "main",
     project_dir,
     file_pr_dir,
+    @types.Role::TL,
     file_pr_receipt_root_test_capture(project_dir, head),
   )
   match got {
@@ -814,6 +1152,7 @@ async test "file_pr_require_audit_receipt ignores receipt under file_pr_dir" {
     "main",
     project_dir,
     file_pr_dir,
+    @types.Role::TL,
     file_pr_receipt_root_test_capture(project_dir, head),
   )
   match got {
@@ -1133,12 +1472,27 @@ pub async fn interpret_file_pr(
     PullRequestInfo,
     @types.ChoirError,
   ],
+  caller_role? : @types.Role = @types.Role::TL,
   record_verify_event? : (String, @evidence.EvidenceEvent) -> Unit = fn(
     _agent_id,
     _event,
   ) {
     ()
   },
+  create_dir_all? : (String) -> Bool = fn(_) { false },
+  write_file_atomic? : (String, String) -> Bool = fn(_, _) { false },
+  wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
+    _,
+  ) {
+    @async.sleep(0)
+    None
+  },
+  audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
+  extra_mcp_servers_json? : String? = None,
+  shell_command? : String? = None,
+  listen_uds? : String = ".choir/server.sock",
+  listen_tcp? : String? = None,
+  tcp_auth_token? : String? = None,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
 ) -> @types.Response {
   let branch = file_pr_args.branch
@@ -1169,7 +1523,39 @@ pub async fn interpret_file_pr(
       preflight_inputs.parent_branch,
       project_dir,
       preflight_inputs.file_pr_dir,
+      caller_role,
       capture,
+      spawn_audit_worker=async fn(worker_args) {
+        let resp = interpret_spawn_worker(
+          worker_args,
+          project_dir,
+          session,
+          runner,
+          capture,
+          registry,
+          extra_mcp_servers_json~,
+          shell_command~,
+          listen_uds~,
+          listen_tcp~,
+          tcp_auth_token~,
+        )
+        match resp.ok_field("agent_id") {
+          Some(agent_id) => Ok(agent_id)
+          None =>
+            Err(
+              @types.ChoirError::validation_error(
+                resp.error_message().unwrap_or("audit worker spawn failed"),
+              ),
+            )
+        }
+      },
+      wait_for_audit_report~,
+      write_audit_receipt=fn(write_args) {
+        interpret_write_audit_receipt(
+          write_args, project_dir, create_dir_all, write_file_atomic,
+        )
+      },
+      audit_budget_ms~,
     ) {
     Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()
