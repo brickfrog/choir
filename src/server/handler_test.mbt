@@ -30,6 +30,166 @@ test "build_tick_summary_line formats each non-zero component" {
 }
 
 ///|
+test "poller_event_should_dedup covers hash and window branches" {
+  let prior : RecentEmission = { content_hash: "same", emitted_at_unix: 100L }
+  assert_true(
+    poller_event_should_dedup(
+      Some(prior),
+      "same",
+      159L,
+      DEDUP_WINDOW_SEC,
+      HEARTBEAT_WINDOW_SEC,
+    ),
+  )
+  assert_true(
+    poller_event_should_dedup(
+      Some(prior),
+      "same",
+      161L,
+      DEDUP_WINDOW_SEC,
+      HEARTBEAT_WINDOW_SEC,
+    ),
+  )
+  assert_false(
+    poller_event_should_dedup(
+      Some(prior),
+      "same",
+      451L,
+      600L,
+      HEARTBEAT_WINDOW_SEC,
+    ),
+  )
+  assert_false(
+    poller_event_should_dedup(
+      Some(prior),
+      "different",
+      159L,
+      DEDUP_WINDOW_SEC,
+      HEARTBEAT_WINDOW_SEC,
+    ),
+  )
+  assert_false(
+    poller_event_should_dedup(
+      None,
+      "same",
+      159L,
+      DEDUP_WINDOW_SEC,
+      HEARTBEAT_WINDOW_SEC,
+    ),
+  )
+  assert_true(
+    poller_event_should_dedup(
+      Some(prior),
+      "same",
+      90L,
+      DEDUP_WINDOW_SEC,
+      HEARTBEAT_WINDOW_SEC,
+    ),
+  )
+}
+
+///|
+fn parent_delivery_count(
+  deliveries : Array[PlannedDelivery],
+  parent_id : String,
+  marker : String,
+) -> Int {
+  let mut count = 0
+  for delivery in deliveries {
+    if delivery.recipient_id == parent_id && delivery.body.contains(marker) {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
+test "poller parent delivery dedups steady echoes but emits transitions and heartbeat" {
+  let pr_number = 1701
+  let label = "dedup-parent"
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  let parent_id = "main.tl-" + label
+  let event = @poller.PollEvent::MergeReady(pr_number)
+  let first = state.plan_poll_event_deliveries(
+    event,
+    child_id,
+    Some(0),
+    now=100L,
+  )
+  let duplicate = state.plan_poll_event_deliveries(
+    event,
+    child_id,
+    Some(0),
+    now=120L,
+  )
+  let transition = state.plan_poll_event_deliveries(
+    event,
+    child_id,
+    Some(1),
+    now=130L,
+  )
+  let heartbeat = state.plan_poll_event_deliveries(
+    event,
+    child_id,
+    Some(1),
+    now=491L,
+  )
+  assert_eq(parent_delivery_count(first, parent_id, "[MERGE READY]"), 1)
+  assert_eq(parent_delivery_count(duplicate, parent_id, "[MERGE READY]"), 0)
+  assert_eq(parent_delivery_count(transition, parent_id, "[MERGE READY]"), 1)
+  assert_eq(parent_delivery_count(heartbeat, parent_id, "[MERGE READY]"), 1)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "poller parent dedup records only after parent planning succeeds" {
+  let pr_number = 1702
+  let label = "dedup-parent-missing"
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  let parent_id = "main.tl-" + label
+  let child = state.registry.get(child_id)
+  ignore(state.registry.upsert({ ..child, parent: Some("missing-parent") }))
+  let event = @poller.PollEvent::MergeReady(pr_number)
+  let missing_parent = state.plan_poll_event_deliveries(
+    event,
+    child_id,
+    Some(0),
+    now=100L,
+  )
+  assert_eq(
+    parent_delivery_count(missing_parent, parent_id, "[MERGE READY]"),
+    0,
+  )
+  ignore(state.registry.upsert(child))
+  let first_after_recovery = state.plan_poll_event_deliveries(
+    event,
+    child_id,
+    Some(0),
+    now=120L,
+  )
+  let duplicate = state.plan_poll_event_deliveries(
+    event,
+    child_id,
+    Some(0),
+    now=121L,
+  )
+  assert_eq(
+    parent_delivery_count(first_after_recovery, parent_id, "[MERGE READY]"),
+    1,
+  )
+  assert_eq(parent_delivery_count(duplicate, parent_id, "[MERGE READY]"), 0)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "process_poller_tick_with emits tick summary when an event is produced" {
   let project_dir = "/tmp/choir-poller-tick-summary-" +
     @sys.get_pid().to_string() +
