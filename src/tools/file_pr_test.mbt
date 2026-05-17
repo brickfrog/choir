@@ -780,6 +780,97 @@ test "audit worker task pins review surface to audited head" {
 }
 
 ///|
+test "audit_on_file_pr_worker_slug appends supplied now_ms" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let first = audit_on_file_pr_worker_slug(head, 1L)
+  let second = audit_on_file_pr_worker_slug(head, 2L)
+  assert_eq(first, "audit-on-file-pr-abcdef123456-1")
+  assert_eq(second, "audit-on-file-pr-abcdef123456-2")
+  assert_true(first != second)
+  assert_true(first.has_prefix(audit_on_file_pr_slug_prefix(head)))
+  assert_true(second.has_prefix(audit_on_file_pr_slug_prefix(head)))
+}
+
+///|
+test "audit_on_file_pr_slug_prefix omits timestamp suffix" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  assert_eq(
+    audit_on_file_pr_slug_prefix(head),
+    "audit-on-file-pr-abcdef123456-",
+  )
+}
+
+///|
+fn file_pr_test_audit_child(
+  slug : String,
+  summary : @phase.ChildLifecycleSummary,
+) -> @phase.ChildLifecycle {
+  {
+    child_id: "main." + slug,
+    slug,
+    branch: "main." + slug,
+    agent_type: @types.AgentType::Codex,
+    summary,
+  }
+}
+
+///|
+test "find_in_flight_audit_worker returns first non-terminal prefix match" {
+  let prefix = audit_on_file_pr_slug_prefix("abcdef1234567890")
+  let matching = file_pr_test_audit_child(
+    prefix + "111",
+    @phase.ChildLifecycleSummary::Working,
+  )
+  let later = file_pr_test_audit_child(
+    prefix + "222",
+    @phase.ChildLifecycleSummary::ReviewOwned(
+      pr_number=7,
+      state=@phase.ReviewOwnership::OpenUnreviewed(url="https://example/pr/7"),
+    ),
+  )
+  match find_in_flight_audit_worker([matching, later], prefix) {
+    Some(entry) => assert_eq(entry.child_id, matching.child_id)
+    None => fail("expected in-flight audit worker")
+  }
+}
+
+///|
+test "find_in_flight_audit_worker ignores terminal prefix matches" {
+  let prefix = audit_on_file_pr_slug_prefix("abcdef1234567890")
+  let done = file_pr_test_audit_child(
+    prefix + "111",
+    @phase.ChildLifecycleSummary::Done,
+  )
+  let failed = file_pr_test_audit_child(
+    prefix + "222",
+    @phase.ChildLifecycleSummary::Failed(
+      reason=@phase.FailureReason::RecoveredFailed,
+    ),
+  )
+  let exitable = file_pr_test_audit_child(
+    prefix + "333",
+    @phase.ChildLifecycleSummary::Exitable,
+  )
+  match find_in_flight_audit_worker([done, failed, exitable], prefix) {
+    None => ()
+    Some(entry) => fail("expected terminal entries ignored: " + entry.child_id)
+  }
+}
+
+///|
+test "find_in_flight_audit_worker returns none without prefix match" {
+  let prefix = audit_on_file_pr_slug_prefix("abcdef1234567890")
+  let other = file_pr_test_audit_child(
+    "audit-on-file-pr-fedcba654321-111",
+    @phase.ChildLifecycleSummary::Working,
+  )
+  match find_in_flight_audit_worker([other], prefix) {
+    None => ()
+    Some(entry) => fail("expected no prefix match: " + entry.child_id)
+  }
+}
+
+///|
 test "audit_heartbeat_log_line formats status variants" {
   assert_eq(
     audit_heartbeat_log_line(42, "main.leaf", 60L),
@@ -883,6 +974,175 @@ fn file_pr_audit_heartbeat_log_count(log : String, needle : String) -> Int {
     }
   }
   count
+}
+
+///|
+fn file_pr_test_write_audit_receipt_ok(
+  _args : WriteAuditReceiptArgs,
+) -> @types.Response {
+  @types.Response::ok_values({ "status": String::to_json("ok") })
+}
+
+///|
+async test "file_pr_auto_audit short-circuits valid receipt without spawn or wait" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-short-circuit-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let appended : Array[String] = []
+  let mut spawn_calls = 0
+  let mut wait_calls = 0
+  let mut cleanup_calls = 0
+  let mut receipt_write_calls = 0
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, Some(file_pr_test_audit_receipt(head))),
+    async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    async fn(_) {
+      @async.sleep(0)
+      wait_calls = wait_calls + 1
+      None
+    },
+    fn(_) { cleanup_calls = cleanup_calls + 1 },
+    fn(_) {
+      receipt_write_calls = receipt_write_calls + 1
+      @types.Response::Err("unexpected write")
+    },
+    1000,
+    0,
+    fn(_path, content) {
+      appended.push(content)
+      true
+    },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1234L },
+    fn(_) { true },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected valid receipt short-circuit: " + e.message())
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(wait_calls, 0)
+  assert_eq(cleanup_calls, 0)
+  assert_eq(receipt_write_calls, 0)
+  let log = appended.join("")
+  assert_true(log.contains("file_pr_auto_audit outcome=receipt_present"))
+}
+
+///|
+async test "file_pr_auto_audit awaits existing in-flight worker without spawning" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-in-flight-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let prefix = audit_on_file_pr_slug_prefix(head)
+  let existing = file_pr_test_audit_child(
+    prefix + "111",
+    @phase.ChildLifecycleSummary::Working,
+  )
+  let appended : Array[String] = []
+  let mut spawn_calls = 0
+  let mut waited_worker = ""
+  let mut cleanup_calls = 0
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, None),
+    async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    async fn(worker_id) {
+      @async.sleep(0)
+      waited_worker = worker_id
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    fn(_) { cleanup_calls = cleanup_calls + 1 },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_path, content) {
+      appended.push(content)
+      true
+    },
+    async fn(_) { @async.sleep(0) },
+    fn() { 5678L },
+    fn(_) { true },
+    list_audit_workers=fn() { [existing] },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected in-flight audit success: " + e.message())
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(cleanup_calls, 0)
+  assert_eq(waited_worker, existing.child_id)
+  let log = appended.join("")
+  assert_true(
+    log.contains(
+      "file_pr_auto_audit outcome=awaiting_in_flight worker=" +
+      existing.child_id,
+    ),
+  )
+}
+
+///|
+async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-fresh-spawn-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let now_ms = 123456789L
+  let mut spawn_calls = 0
+  let mut spawned_slug = ""
+  let mut waited_worker = ""
+  let mut cleanup_calls = 0
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, None),
+    async fn(worker_args) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      spawned_slug = worker_args.slug
+      Ok("main." + worker_args.slug)
+    },
+    async fn(worker_id) {
+      @async.sleep(0)
+      waited_worker = worker_id
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    fn(_) { cleanup_calls = cleanup_calls + 1 },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { now_ms },
+    fn(_) { true },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected fresh audit success: " + e.message())
+  }
+  assert_eq(spawn_calls, 1)
+  assert_eq(cleanup_calls, 0)
+  assert_eq(spawned_slug, audit_on_file_pr_worker_slug(head, now_ms))
+  assert_true(spawned_slug.has_suffix("-" + now_ms.to_string()))
+  assert_eq(waited_worker, "main." + spawned_slug)
 }
 
 ///|

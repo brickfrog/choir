@@ -765,6 +765,7 @@ pub async fn merge_pr_require_audit_receipt(
       project_dir,
       file_pr_dir,
       tracked_agent_id,
+      parent_branch,
       head_sha,
       capture,
       async fn(worker_args) {
