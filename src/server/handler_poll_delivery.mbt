@@ -1730,6 +1730,46 @@ pub fn poll_events_delivery_summary(
 }
 
 ///|
+pub fn build_tick_summary_line(
+  events : Array[@poller.PollEvent],
+  agents_observed : Int,
+  agents_failed : Int,
+) -> String? {
+  if events.length() == 0 && agents_observed == 0 && agents_failed == 0 {
+    return None
+  }
+  Some(
+    "tick events=" +
+    events.length().to_string() +
+    " observed=" +
+    agents_observed.to_string() +
+    " failed=" +
+    agents_failed.to_string(),
+  )
+}
+
+///|
+fn emit_tick_summary_line(
+  append_file : (String, String) -> Bool,
+  project_dir : String,
+  events : Array[@poller.PollEvent],
+  agents_observed : Int,
+  agents_failed : Int,
+) -> Unit {
+  match build_tick_summary_line(events, agents_observed, agents_failed) {
+    Some(line) => {
+      @moontrace.info("poller tick summary", fields=[
+        @moontrace.field("events", events.length()),
+        @moontrace.field("observed", agents_observed),
+        @moontrace.field("failed", agents_failed),
+      ])
+      append_poller_delivery_line(append_file, project_dir, line)
+    }
+    None => ()
+  }
+}
+
+///|
 fn log_poller_pr_tick(
   append_file : (String, String) -> Bool,
   project_dir : String,
@@ -1835,6 +1875,9 @@ pub async fn ServerState::process_poller_tick_with(
   self.mutex_registry.expire(now)
   let pending_events = []
   let pending_agent_ids = []
+  let mut tick_agents_failed = 0
+  let project_dir = self.config.project_dir
+  let append_file = self.append_file
   let sha_before = poller_last_sha_snapshot(self.poller)
   self.poller.tick_with(
     now,
@@ -1844,9 +1887,16 @@ pub async fn ServerState::process_poller_tick_with(
       pending_events.push(event)
       pending_agent_ids.push(agent_id)
     },
-    fn(_) { () },
+    fn(log) {
+      if log.polled_network && !log.poll_succeeded {
+        tick_agents_failed = tick_agents_failed + 1
+      }
+    },
   )
-  self.record_poller_sha_transitions(sha_before, now)
+  let agents_observed = self.record_poller_sha_transitions(sha_before, now)
+  emit_tick_summary_line(
+    append_file, project_dir, pending_events, agents_observed, tick_agents_failed,
+  )
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
   }
@@ -1872,10 +1922,9 @@ pub async fn ServerState::process_poller_tick(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
 ) -> Unit {
   self.mutex_registry.expire(now)
-  let tracked_before = self.poller.tracked.length()
   let pending_events = []
   let pending_agent_ids = []
-  let mut tick_event_total = 0
+  let mut tick_agents_failed = 0
   let project_dir = self.config.project_dir
   let append_file = self.append_file
   let sha_before = poller_last_sha_snapshot(self.poller)
@@ -1888,36 +1937,19 @@ pub async fn ServerState::process_poller_tick(
       pending_agent_ids.push(agent_id)
     },
     fn(log) {
-      tick_event_total = tick_event_total + log.events.length()
+      if log.polled_network && !log.poll_succeeded {
+        tick_agents_failed = tick_agents_failed + 1
+      }
       log_poller_pr_tick(append_file, project_dir, log)
     },
   )
-  self.record_poller_sha_transitions(sha_before, now)
+  let agents_observed = self.record_poller_sha_transitions(sha_before, now)
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
   }
-  let tracked_after = self.poller.tracked.length()
-  // Only log a tick that actually did something — no two-line start/end
-  // heartbeat per tick (the steady state with nothing tracked produced two
-  // INFO lines every interval that said nothing). Empty ticks are silent;
-  // a tick that generated events or changed the tracked-PR set logs one line.
-  if tick_event_total > 0 || tracked_after != tracked_before {
-    @moontrace.info("poller tick", fields=[
-      @moontrace.field("events_generated", tick_event_total),
-      @moontrace.field("tracked_before", tracked_before),
-      @moontrace.field("tracked_after", tracked_after),
-    ])
-    append_poller_delivery_line(
-      append_file,
-      project_dir,
-      "tick events_generated=" +
-      tick_event_total.to_string() +
-      " tracked_before=" +
-      tracked_before.to_string() +
-      " tracked_after=" +
-      tracked_after.to_string(),
-    )
-  }
+  emit_tick_summary_line(
+    append_file, project_dir, pending_events, agents_observed, tick_agents_failed,
+  )
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
   deliver_poller_stall_notifications(self, now, runner)
@@ -1959,7 +1991,7 @@ pub async fn ServerState::refresh_pr_with(
     fn(_) { () },
     force_refresh=true,
   )
-  self.record_poller_sha_transitions(sha_before, now)
+  ignore(self.record_poller_sha_transitions(sha_before, now))
   match self.poller.get(pr_number) {
     Some(pr) => {
       deliver_orphaned_pr_notification_for(self, pr, runner)

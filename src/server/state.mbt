@@ -34,6 +34,7 @@ pub struct ServerState {
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
+  idle_agent_warned_at_70 : Map[String, Bool]
   last_commit_observed_at : Map[String, Int64]
   last_commit_observed_sha : Map[String, String]
   last_commit_probe_at : Map[String, Int64]
@@ -102,6 +103,7 @@ pub fn ServerState::new(
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
+    idle_agent_warned_at_70: {},
     last_commit_observed_at: {},
     last_commit_observed_sha: {},
     last_commit_probe_at: {},
