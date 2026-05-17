@@ -27,6 +27,23 @@ pub(all) struct StatusBarRegistryEntry {
 } derive(Debug)
 
 ///|
+pub(all) struct ZellijListPanesEntry {
+  pane_id : Int
+  tab_name : String
+  pane_name : String
+} derive(Debug, Eq)
+
+///|
+pub(all) struct ZellijListPanesSnapshot {
+  entries : Array[ZellijListPanesEntry]
+} derive(Debug, Eq)
+
+///|
+pub fn empty_zellij_list_panes_snapshot() -> ZellijListPanesSnapshot {
+  { entries: [] }
+}
+
+///|
 fn status_bar_null_json() -> Json {
   @json.parse("null") catch {
     _ => "".to_json()
@@ -355,24 +372,214 @@ fn status_bar_parse_digits(raw : String) -> Int? {
 }
 
 ///|
-pub fn parse_zellij_pane_id(target : String) -> Int? {
-  if !target.has_prefix("zellij-pane:") {
+fn status_bar_json_bool(value : Json?) -> Bool {
+  match value {
+    Some(True) => true
+    _ => false
+  }
+}
+
+///|
+fn status_bar_json_int(value : Json?) -> Int? {
+  match value {
+    Some(Number(n, ..)) => Some(n.to_int())
+    Some(String(s)) => status_bar_parse_digits(s)
+    _ => None
+  }
+}
+
+///|
+fn status_bar_json_string(value : Json?) -> String? {
+  match value {
+    Some(String(s)) => Some(s)
+    Some(Number(n, ..)) => Some(n.to_int().to_string())
+    _ => None
+  }
+}
+
+///|
+fn status_bar_first_nonempty_string(a : String?, b : String?) -> String? {
+  match a {
+    Some(value) if value != "" => Some(value)
+    _ =>
+      match b {
+        Some(value) if value != "" => Some(value)
+        _ => None
+      }
+  }
+}
+
+///|
+fn status_bar_list_panes_entry_from_object(
+  obj : Map[String, Json],
+  fallback_tab_name : String?,
+  fallback_pane_name : String?,
+) -> ZellijListPanesEntry? {
+  if status_bar_json_bool(obj.get("is_plugin")) ||
+    status_bar_json_bool(obj.get("exited")) {
     return None
   }
-  let mut parts_count = 0
-  let mut last_part = ""
-  for part in target.split(":") {
-    parts_count = parts_count + 1
-    last_part = part.to_owned()
+  let pane_id = match status_bar_json_int(obj.get("pane_id")) {
+    Some(value) => value
+    None =>
+      match status_bar_json_int(obj.get("id")) {
+        Some(value) => value
+        None => return None
+      }
   }
-  if parts_count < 3 {
-    return None
+  let tab_name = match
+    status_bar_first_nonempty_string(
+      status_bar_json_string(obj.get("tab_name")),
+      fallback_tab_name,
+    ) {
+    Some(value) => value
+    None => return None
   }
+  let pane_name = status_bar_first_nonempty_string(
+    status_bar_first_nonempty_string(
+      status_bar_json_string(obj.get("pane_name")),
+      status_bar_json_string(obj.get("title")),
+    ),
+    fallback_pane_name,
+  ).unwrap_or("")
+  Some({ pane_id, tab_name, pane_name })
+}
+
+///|
+fn status_bar_push_list_panes_entry(
+  entries : Array[ZellijListPanesEntry],
+  entry : ZellijListPanesEntry?,
+) -> Unit {
+  match entry {
+    Some(value) => entries.push(value)
+    None => ()
+  }
+}
+
+///|
+fn status_bar_parse_list_panes_array(
+  panes : Array[Json],
+  fallback_tab_name? : String? = None,
+) -> Array[ZellijListPanesEntry] {
+  let entries : Array[ZellijListPanesEntry] = []
+  for pane in panes {
+    match pane {
+      Object(obj) =>
+        status_bar_push_list_panes_entry(
+          entries,
+          status_bar_list_panes_entry_from_object(obj, fallback_tab_name, None),
+        )
+      _ => ()
+    }
+  }
+  entries
+}
+
+///|
+fn status_bar_parse_list_panes_object(
+  fields : Map[String, Json],
+) -> Array[ZellijListPanesEntry] {
+  let entries : Array[ZellijListPanesEntry] = []
+  match status_bar_list_panes_entry_from_object(fields, None, None) {
+    Some(entry) => {
+      entries.push(entry)
+      return entries
+    }
+    None => ()
+  }
+  match fields.get("panes") {
+    Some(Array(panes)) => return status_bar_parse_list_panes_array(panes)
+    _ => ()
+  }
+  fields.each(fn(tab_name, value) {
+    match value {
+      Object(tab_obj) =>
+        match
+          status_bar_list_panes_entry_from_object(tab_obj, Some(tab_name), None) {
+          Some(entry) => entries.push(entry)
+          None =>
+            tab_obj.each(fn(pane_name, pane_value) {
+              match pane_value {
+                Object(pane_obj) =>
+                  status_bar_push_list_panes_entry(
+                    entries,
+                    status_bar_list_panes_entry_from_object(
+                      pane_obj,
+                      Some(tab_name),
+                      Some(pane_name),
+                    ),
+                  )
+                _ => ()
+              }
+            })
+        }
+      Array(panes) => {
+        let parsed = status_bar_parse_list_panes_array(
+          panes,
+          fallback_tab_name=Some(tab_name),
+        )
+        for entry in parsed {
+          entries.push(entry)
+        }
+      }
+      _ => ()
+    }
+  })
+  entries
+}
+
+///|
+pub fn parse_zellij_list_panes_json(raw : String) -> ZellijListPanesSnapshot {
+  if raw.trim().to_owned() == "" {
+    return empty_zellij_list_panes_snapshot()
+  }
+  let json = @json.parse(raw) catch {
+    _ => return empty_zellij_list_panes_snapshot()
+  }
+  let entries = match json {
+    Array(panes) => status_bar_parse_list_panes_array(panes)
+    Object(fields) => status_bar_parse_list_panes_object(fields)
+    _ => []
+  }
+  { entries, }
+}
+
+///|
+fn status_bar_terminal_pane_id(name : String) -> Int? {
   let prefix = "terminal_"
-  if !last_part.has_prefix(prefix) {
+  if !name.has_prefix(prefix) {
     return None
   }
-  status_bar_parse_digits(last_part[prefix.length():].to_owned())
+  status_bar_parse_digits(name[prefix.length():].to_owned())
+}
+
+///|
+pub fn resolve_zellij_pane_id(
+  target : @types.LocalTarget,
+  list_panes : ZellijListPanesSnapshot,
+) -> Int? {
+  match target.kind {
+    @types.TargetKind::ZellijPane =>
+      match status_bar_terminal_pane_id(target.name) {
+        Some(value) => Some(value)
+        None => {
+          for entry in list_panes.entries {
+            if entry.pane_name == target.name {
+              return Some(entry.pane_id)
+            }
+          }
+          None
+        }
+      }
+    @types.TargetKind::ZellijTab => {
+      for entry in list_panes.entries {
+        if entry.tab_name == target.name {
+          return Some(entry.pane_id)
+        }
+      }
+      None
+    }
+  }
 }
 
 ///|
@@ -491,12 +698,13 @@ fn status_bar_tracked_by_agent(
 fn status_bar_pane_from_entry(
   entry : StatusBarRegistryEntry,
   tracked_by_agent : Map[String, @poller.TrackedPR],
+  list_panes : ZellijListPanesSnapshot,
 ) -> StatusBarPane? {
   let target = match entry.agent.terminal_target {
-    Some(value) => value.to_string()
+    Some(value) => value
     None => return None
   }
-  let zellij_pane_id = match parse_zellij_pane_id(target) {
+  let zellij_pane_id = match resolve_zellij_pane_id(target, list_panes) {
     Some(value) => value
     None => return None
   }
@@ -568,12 +776,13 @@ fn sort_status_bar_panes(panes : Array[StatusBarPane]) -> Array[StatusBarPane] {
 pub fn build_status_bar_snapshot(
   registry_entries : Array[StatusBarRegistryEntry],
   poller_tracked : Map[Int, @poller.TrackedPR],
+  list_panes : ZellijListPanesSnapshot,
   now_ms : Int64,
 ) -> StatusBarSnapshot {
   let tracked_by_agent = status_bar_tracked_by_agent(poller_tracked)
   let panes : Array[StatusBarPane] = []
   for entry in registry_entries {
-    match status_bar_pane_from_entry(entry, tracked_by_agent) {
+    match status_bar_pane_from_entry(entry, tracked_by_agent, list_panes) {
       Some(pane) => panes.push(pane)
       None => ()
     }
@@ -604,12 +813,34 @@ pub fn status_bar_registry_entries(
 }
 
 ///|
-pub fn interpret_status_bar_state(
+async fn status_bar_default_list_panes_capture() -> ZellijListPanesSnapshot {
+  @async.sleep(0)
+  empty_zellij_list_panes_snapshot()
+}
+
+///|
+pub async fn capture_zellij_list_panes_snapshot(
+  session : String,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+) -> ZellijListPanesSnapshot {
+  let (exit_code, output) = capture(
+    @workspace.zellij_list_panes_json_command(session),
+  )
+  if exit_code != 0 {
+    empty_zellij_list_panes_snapshot()
+  } else {
+    parse_zellij_list_panes_json(output)
+  }
+}
+
+///|
+pub async fn interpret_status_bar_state(
   args : StatusBarStateArgs,
   project_dir : String,
   registry : @registry.AgentRegistry?,
   poller_state : @poller.PollerState?,
   lifecycle_reader? : ((String) -> @phase.AgentLifecycle?)? = None,
+  list_panes_capture? : async () -> ZellijListPanesSnapshot = status_bar_default_list_panes_capture,
   now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> @types.Response {
   ignore(args)
@@ -626,9 +857,11 @@ pub fn interpret_status_bar_state(
     Some(value) => value.tracked
     None => {}
   }
+  let list_panes = list_panes_capture()
   let snapshot = build_status_bar_snapshot(
     status_bar_registry_entries(reg, reader),
     tracked,
+    list_panes,
     now_ms,
   )
   @types.Response::ok_values(snapshot.to_json_map())

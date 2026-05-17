@@ -1374,7 +1374,13 @@ pub async fn dispatch(
       )
     ToolRequest::StatusBarState(status_bar_state_args) =>
       interpret_status_bar_state(
-        status_bar_state_args, project_dir, registry, poller_state,
+        status_bar_state_args,
+        project_dir,
+        registry,
+        poller_state,
+        list_panes_capture=async fn() {
+          capture_zellij_list_panes_snapshot(session, capture~)
+        },
       )
     ToolRequest::CrystallizeSpec(crystallize_args) =>
       interpret_crystallize_spec(crystallize_args, project_dir)

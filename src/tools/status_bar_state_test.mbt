@@ -9,6 +9,17 @@ fn status_bar_test_tab_target(name : String) -> @types.LocalTarget {
 }
 
 ///|
+fn status_bar_test_list_panes_snapshot() -> ZellijListPanesSnapshot {
+  {
+    entries: [
+      { pane_id: 2, tab_name: "TL", pane_name: "root-tl" },
+      { pane_id: 7, tab_name: "feature-leaf", pane_name: "leaf-inline" },
+      { pane_id: 9, tab_name: "feature-leaf", pane_name: "secondary-pane" },
+    ],
+  }
+}
+
+///|
 fn status_bar_test_agent(
   id : String,
   role : @types.Role,
@@ -180,7 +191,12 @@ fn status_bar_test_snapshot() -> StatusBarSnapshot {
       1,
     ),
   )
-  build_status_bar_snapshot(entries, tracked, 12_345L)
+  build_status_bar_snapshot(
+    entries,
+    tracked,
+    empty_zellij_list_panes_snapshot(),
+    12_345L,
+  )
 }
 
 ///|
@@ -475,15 +491,132 @@ test "status_bar_state ci rollup mapping covers schema rollups" {
 }
 
 ///|
-test "status_bar_state parse_zellij_pane_id extracts terminal suffix" {
+test "status_bar_state parses zellij list-panes json snapshot" {
+  let json =
+    #|[
+    #|  {"id":1,"tab_name":"Server","title":"env choir serve","is_plugin":false,"exited":false},
+    #|  {"id":2,"tab_name":"TL","title":"root tl","is_plugin":false},
+    #|  {"id":3,"tab_name":"TL","title":"zellij:status-bar","is_plugin":true},
+    #|  {"id":"12","tab_name":"feature:one","title":"pane \"quoted\" name","extra":"ignored"}
+    #|]
+  let snapshot = parse_zellij_list_panes_json(json)
+  assert_eq(snapshot.entries.length(), 3)
+  assert_eq(snapshot.entries[0].pane_id, 1)
+  assert_eq(snapshot.entries[0].tab_name, "Server")
+  assert_eq(snapshot.entries[0].pane_name, "env choir serve")
+  assert_eq(snapshot.entries[1].pane_id, 2)
+  assert_eq(snapshot.entries[1].tab_name, "TL")
+  assert_eq(snapshot.entries[1].pane_name, "root tl")
+  assert_eq(snapshot.entries[2].pane_id, 12)
+  assert_eq(snapshot.entries[2].tab_name, "feature:one")
+  assert_eq(snapshot.entries[2].pane_name, "pane \"quoted\" name")
+}
+
+///|
+test "status_bar_state parses nested zellij list-panes json snapshot" {
+  let json =
+    #|{
+    #|  "Server": {
+    #|    "serve-pane": {"pane_id": 4, "pane_x": 0},
+    #|    "plugin": {"pane_id": 5, "is_plugin": true}
+    #|  },
+    #|  "TL": {
+    #|    "tl-pane": {"id": 6, "extra": "ok"}
+    #|  }
+    #|}
+  let snapshot = parse_zellij_list_panes_json(json)
+  assert_eq(snapshot.entries.length(), 2)
+  assert_eq(snapshot.entries[0].pane_id, 4)
+  assert_eq(snapshot.entries[0].tab_name, "Server")
+  assert_eq(snapshot.entries[0].pane_name, "serve-pane")
+  assert_eq(snapshot.entries[1].pane_id, 6)
+  assert_eq(snapshot.entries[1].tab_name, "TL")
+  assert_eq(snapshot.entries[1].pane_name, "tl-pane")
+}
+
+///|
+async fn status_bar_mock_list_panes_capture_ok(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  assert_eq(cmd.program, "env")
+  @debug.assert_eq(cmd.args, [
+    "NO_COLOR=1", "zellij", "--session", "status-test", "action", "list-panes", "--json",
+    "--tab",
+  ])
+  let output =
+    #|[{"id":8,"tab_name":"TL","title":"root tl","is_plugin":false}]
+  (0, output)
+}
+
+///|
+async test "status_bar_state list-panes capture uses zellij argv and parses output" {
+  let snapshot = capture_zellij_list_panes_snapshot(
+    "status-test",
+    capture=status_bar_mock_list_panes_capture_ok,
+  )
+  assert_eq(snapshot.entries.length(), 1)
+  assert_eq(snapshot.entries[0].pane_id, 8)
+  assert_eq(snapshot.entries[0].tab_name, "TL")
+  assert_eq(snapshot.entries[0].pane_name, "root tl")
+}
+
+///|
+async fn status_bar_mock_list_panes_capture_fail(
+  _cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  let output =
+    #|[{"id":8,"tab_name":"TL","title":"root tl","is_plugin":false}]
+  (1, output)
+}
+
+///|
+async test "status_bar_state list-panes capture degrades to empty snapshot on failure" {
+  let snapshot = capture_zellij_list_panes_snapshot(
+    "status-test",
+    capture=status_bar_mock_list_panes_capture_fail,
+  )
+  assert_eq(snapshot.entries.length(), 0)
+}
+
+///|
+test "status_bar_state resolves zellij pane ids from target shapes" {
+  let snapshot = status_bar_test_list_panes_snapshot()
   @debug.assert_eq(
-    parse_zellij_pane_id("zellij-pane:choir-choir:terminal_42"),
+    resolve_zellij_pane_id(status_bar_test_pane_target("terminal_42"), snapshot),
     Some(42),
   )
-  @debug.assert_eq(parse_zellij_pane_id("terminal_42"), None)
-  @debug.assert_eq(parse_zellij_pane_id("zellij-pane:s:terminal_x"), None)
-  @debug.assert_eq(parse_zellij_pane_id("zellij-pane:s:not_terminal_42"), None)
-  @debug.assert_eq(parse_zellij_pane_id(""), None)
+  @debug.assert_eq(
+    resolve_zellij_pane_id(status_bar_test_tab_target("TL"), snapshot),
+    Some(2),
+  )
+  @debug.assert_eq(
+    resolve_zellij_pane_id(status_bar_test_tab_target("missing"), snapshot),
+    None,
+  )
+  @debug.assert_eq(
+    resolve_zellij_pane_id(status_bar_test_pane_target("leaf-inline"), snapshot),
+    Some(7),
+  )
+  @debug.assert_eq(
+    resolve_zellij_pane_id(
+      status_bar_test_pane_target("missing-pane"),
+      snapshot,
+    ),
+    None,
+  )
+  @debug.assert_eq(
+    resolve_zellij_pane_id(
+      status_bar_test_pane_target("leaf-inline"),
+      empty_zellij_list_panes_snapshot(),
+    ),
+    None,
+  )
+  @debug.assert_eq(
+    resolve_zellij_pane_id(status_bar_test_pane_target("terminal_x"), snapshot),
+    None,
+  )
 }
 
 ///|
@@ -599,6 +732,70 @@ test "status_bar_state builds snapshot from registry and poller snapshots" {
 }
 
 ///|
+test "status_bar_state builds snapshot with all zellij target shapes" {
+  let entries : Array[StatusBarRegistryEntry] = [
+    {
+      agent: status_bar_test_agent(
+        "root",
+        @types.Role::Root,
+        None,
+        @types.AgentType::Codex,
+        Some(status_bar_test_pane_target("terminal_1")),
+      ),
+      lifecycle: status_bar_test_lifecycle(
+        "root",
+        @types.Role::Root,
+        @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Planning),
+        100L,
+      ),
+    },
+    {
+      agent: status_bar_test_agent(
+        "root.tl",
+        @types.Role::TL,
+        Some("root"),
+        @types.AgentType::Claude,
+        Some(status_bar_test_tab_target("TL")),
+      ),
+      lifecycle: status_bar_test_lifecycle(
+        "root.tl",
+        @types.Role::TL,
+        @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Planning),
+        200L,
+      ),
+    },
+    {
+      agent: status_bar_test_agent(
+        "root.leaf",
+        @types.Role::Dev,
+        Some("root.tl"),
+        @types.AgentType::Codex,
+        Some(status_bar_test_pane_target("leaf-inline")),
+      ),
+      lifecycle: status_bar_test_lifecycle(
+        "root.leaf",
+        @types.Role::Dev,
+        @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+        300L,
+      ),
+    },
+  ]
+  let snapshot = build_status_bar_snapshot(
+    entries,
+    {},
+    status_bar_test_list_panes_snapshot(),
+    12_345L,
+  )
+  assert_eq(snapshot.panes.length(), 3)
+  assert_eq(snapshot.panes[0].agent_id, "root")
+  assert_eq(snapshot.panes[0].zellij_pane_id, 1)
+  assert_eq(snapshot.panes[1].agent_id, "root.tl")
+  assert_eq(snapshot.panes[1].zellij_pane_id, 2)
+  assert_eq(snapshot.panes[2].agent_id, "root.leaf")
+  assert_eq(snapshot.panes[2].zellij_pane_id, 7)
+}
+
+///|
 test "status_bar_state json round trips without extra fields" {
   let snap = status_bar_test_snapshot()
   let json = @json.parse(snap.to_json().stringify()) catch {
@@ -646,7 +843,7 @@ test "status_bar_state from_json accepts previous string timestamp form" {
 }
 
 ///|
-test "interpret_status_bar_state returns direct structured payload" {
+async test "interpret_status_bar_state returns direct structured payload" {
   let reg = @registry.AgentRegistry::new()
   ignore(
     try? reg.insert(
@@ -691,7 +888,53 @@ test "interpret_status_bar_state returns direct structured payload" {
 }
 
 ///|
-test "interpret_status_bar_state fails without registry" {
+async test "interpret_status_bar_state uses injected list-panes snapshot" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      status_bar_test_agent(
+        "root.tl",
+        @types.Role::TL,
+        Some("root"),
+        @types.AgentType::Codex,
+        Some(status_bar_test_tab_target("TL")),
+      ),
+    ),
+  )
+  let lifecycle = status_bar_test_lifecycle(
+    "root.tl",
+    @types.Role::TL,
+    @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Planning),
+    10L,
+  )
+  let resp = interpret_status_bar_state(
+    { unit: () },
+    ".",
+    Some(reg),
+    None,
+    lifecycle_reader=Some(fn(_agent_id) { Some(lifecycle) }),
+    list_panes_capture=async fn() {
+      @async.sleep(0)
+      status_bar_test_list_panes_snapshot()
+    },
+    now_ms=99L,
+  )
+  assert_true(resp.is_ok())
+  match resp.ok_payload() {
+    Some(fields) => {
+      let parsed : StatusBarSnapshot = @json.from_json(
+        fields.to_json_map().to_json(),
+      )
+      assert_eq(parsed.panes.length(), 1)
+      assert_eq(parsed.panes[0].agent_id, "root.tl")
+      assert_eq(parsed.panes[0].zellij_pane_id, 2)
+    }
+    None => fail("expected ok payload")
+  }
+}
+
+///|
+async test "interpret_status_bar_state fails without registry" {
   let resp = interpret_status_bar_state(
     { unit: () },
     ".",
