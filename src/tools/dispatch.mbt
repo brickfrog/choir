@@ -1134,6 +1134,21 @@ pub async fn dispatch(
         audit_heartbeat_sec~,
         append_file~,
         audit_worker_alive~,
+        list_audit_workers=fn() {
+          match registry {
+            Some(reg) => {
+              let entries : Array[@phase.ChildLifecycle] = []
+              for agent in reg.list() {
+                let agent_id = agent.agent_id.to_string()
+                if reg.is_alive(agent_id).unwrap_or(false) {
+                  entries.push(audit_on_file_pr_worker_entry_from_agent(agent))
+                }
+              }
+              entries
+            }
+            None => []
+          }
+        },
         extra_mcp_servers_json~,
         shell_command~,
         listen_uds~,

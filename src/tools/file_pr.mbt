@@ -1064,8 +1064,63 @@ pub fn build_audit_on_file_pr_task(
 }
 
 ///|
-fn audit_on_file_pr_worker_slug(head_sha : String) -> String {
-  audit_on_file_pr_internal_caller_id + "-" + file_pr_short_sha(head_sha)
+pub fn audit_on_file_pr_slug_prefix(head_sha : String) -> String {
+  audit_on_file_pr_internal_caller_id + "-" + file_pr_short_sha(head_sha) + "-"
+}
+
+///|
+pub fn audit_on_file_pr_worker_slug(
+  head_sha : String,
+  now_ms : Int64,
+) -> String {
+  audit_on_file_pr_slug_prefix(head_sha) + now_ms.to_string()
+}
+
+///|
+fn audit_worker_child_summary_in_flight(
+  summary : @phase.ChildLifecycleSummary,
+) -> Bool {
+  match summary {
+    @phase.ChildLifecycleSummary::Working => true
+    @phase.ChildLifecycleSummary::ReviewOwned(..) => true
+    @phase.ChildLifecycleSummary::ChangesRequested(..) => true
+    _ => false
+  }
+}
+
+///|
+pub fn find_in_flight_audit_worker(
+  entries : Array[@phase.ChildLifecycle],
+  slug_prefix : String,
+) -> @phase.ChildLifecycle? {
+  for entry in entries {
+    if entry.slug.has_prefix(slug_prefix) &&
+      audit_worker_child_summary_in_flight(entry.summary) {
+      return Some(entry)
+    }
+  }
+  None
+}
+
+///|
+pub fn audit_on_file_pr_worker_entry_from_agent(
+  agent : @types.Agent,
+) -> @phase.ChildLifecycle {
+  let summary = match agent.state {
+    @types.AgentState::Done => @phase.ChildLifecycleSummary::Done
+    @types.AgentState::Failed =>
+      @phase.ChildLifecycleSummary::Failed(
+        reason=@phase.FailureReason::RecoveredFailed,
+      )
+    _ => @phase.ChildLifecycleSummary::Working
+  }
+  {
+    child_id: agent.agent_id.to_string(),
+    slug: @phase.extract_slug(agent.agent_id.to_string()),
+    branch: agent.branch,
+    agent_type: agent.agent_type,
+    summary,
+  }
 }
 
 ///|
@@ -1073,6 +1128,7 @@ fn audit_on_file_pr_worker_args(
   project_dir : String,
   branch : String,
   head_sha : String,
+  now_ms : Int64,
 ) -> WorkerSpawnArgs {
   let task = build_audit_on_file_pr_task(project_dir, branch, head_sha)
   let spec : PromptSpec = {
@@ -1099,9 +1155,53 @@ fn audit_on_file_pr_worker_args(
     ),
     task_contract: { ..@types.TaskContract::empty(), goal: task },
     caller_id: audit_on_file_pr_internal_caller_id,
-    slug: audit_on_file_pr_worker_slug(head_sha),
+    slug: audit_on_file_pr_worker_slug(head_sha, now_ms),
     agent_type: @types.AgentType::Codex,
   }
+}
+
+///|
+priv enum FilePrAutoAuditLogOutcome {
+  ReceiptPresent
+  AwaitingInFlight(worker_id~ : String)
+}
+
+///|
+fn FilePrAutoAuditLogOutcome::to_message(
+  self : FilePrAutoAuditLogOutcome,
+) -> String {
+  match self {
+    ReceiptPresent => "file_pr_auto_audit outcome=receipt_present"
+    AwaitingInFlight(worker_id~) =>
+      "file_pr_auto_audit outcome=awaiting_in_flight worker=" + worker_id
+  }
+}
+
+///|
+fn emit_file_pr_auto_audit_log_line(
+  project_dir : String,
+  append_file : (String, String) -> Bool,
+  outcome : FilePrAutoAuditLogOutcome,
+  now_ms_fn : () -> Int64,
+) -> Unit {
+  let message = outcome.to_message()
+  let fields = match outcome {
+    ReceiptPresent => [@moontrace.field("outcome", "receipt_present")]
+    AwaitingInFlight(worker_id~) =>
+      [
+        @moontrace.field("outcome", "awaiting_in_flight"),
+        @moontrace.field("worker", worker_id),
+      ]
+  }
+  @moontrace.info("file_pr_auto_audit", fields~)
+  ignore(
+    @poller.append_delivery_log_line(
+      append_file,
+      project_dir,
+      message,
+      now_ms=now_ms_fn(),
+    ),
+  )
 }
 
 ///|
@@ -1109,6 +1209,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
   project_dir : String,
   file_pr_dir : String,
   tracked_agent_id : String,
+  parent_branch : String,
   head_sha : String,
   capture : async (@workspace.Command) -> (Int, String),
   spawn_audit_worker : async (WorkerSpawnArgs) -> Result[
@@ -1124,6 +1225,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
   sleep_fn : async (Int) -> Unit,
   now_ms_fn : () -> Int64,
   audit_worker_alive : (String) -> Bool,
+  list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
   pr_number? : Int = 0,
 ) -> Result[Unit, @types.ChoirError] {
   let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
@@ -1135,10 +1237,60 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
         ),
       )
   }
-  let worker_args = audit_on_file_pr_worker_args(project_dir, branch, head_sha)
-  let worker_id = match spawn_audit_worker(worker_args) {
-    Ok(id) => id
-    Err(e) => return Err(e)
+  let receipt_path = file_pr_audit_receipt_path_for_head(head_sha)
+  let (receipt_exit_code, receipt_body) = capture({
+    program: "cat",
+    args: [receipt_path],
+    workdir: Some(project_dir),
+  })
+  let receipt_validation = file_pr_audit_receipt_validation(
+    parent_branch,
+    head_sha,
+    if receipt_exit_code == 0 {
+      Some(receipt_body)
+    } else {
+      None
+    },
+  )
+  match receipt_validation {
+    AuditReceiptValid => {
+      emit_file_pr_auto_audit_log_line(
+        project_dir,
+        append_file,
+        ReceiptPresent,
+        now_ms_fn,
+      )
+      return Ok(())
+    }
+    AuditReceiptFindingsRemain(_, _) => return receipt_validation.to_result()
+    _ => ()
+  }
+  let worker_id = match
+    find_in_flight_audit_worker(
+      list_audit_workers(),
+      audit_on_file_pr_slug_prefix(head_sha),
+    ) {
+    Some(existing) => {
+      emit_file_pr_auto_audit_log_line(
+        project_dir,
+        append_file,
+        AwaitingInFlight(worker_id=existing.child_id),
+        now_ms_fn,
+      )
+      existing.child_id
+    }
+    None => {
+      let worker_args = audit_on_file_pr_worker_args(
+        project_dir,
+        branch,
+        head_sha,
+        now_ms_fn(),
+      )
+      match spawn_audit_worker(worker_args) {
+        Ok(id) => id
+        Err(e) => return Err(e)
+      }
+    }
   }
   let wait_result = wait_for_audit_report_with_heartbeats(
     project_dir,
@@ -1283,6 +1435,7 @@ async fn file_pr_require_audit_receipt(
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
+  list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_audit_receipt_required(parent_branch) {
     return Ok(())
@@ -1316,9 +1469,23 @@ async fn file_pr_require_audit_receipt(
     _ =>
       if caller_role == @types.Role::Dev && validation.auto_audit_allowed() {
         file_pr_auto_audit_for_missing_receipt(
-          project_dir, file_pr_dir, tracked_agent_id, head_sha, capture, spawn_audit_worker,
-          wait_for_audit_report, cleanup_audit_report, write_audit_receipt, audit_budget_ms,
-          audit_heartbeat_sec, append_file, audit_sleep_fn, audit_now_ms_fn, audit_worker_alive,
+          project_dir,
+          file_pr_dir,
+          tracked_agent_id,
+          parent_branch,
+          head_sha,
+          capture,
+          spawn_audit_worker,
+          wait_for_audit_report,
+          cleanup_audit_report,
+          write_audit_receipt,
+          audit_budget_ms,
+          audit_heartbeat_sec,
+          append_file,
+          audit_sleep_fn,
+          audit_now_ms_fn,
+          audit_worker_alive,
+          list_audit_workers~,
         )
       } else {
         validation.to_result()
@@ -1786,6 +1953,7 @@ pub async fn interpret_file_pr(
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
+  list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -1869,6 +2037,7 @@ pub async fn interpret_file_pr(
       audit_sleep_fn~,
       audit_now_ms_fn~,
       audit_worker_alive~,
+      list_audit_workers~,
     ) {
     Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()
