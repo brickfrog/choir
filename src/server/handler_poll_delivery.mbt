@@ -1732,21 +1732,15 @@ pub fn poll_events_delivery_summary(
 ///|
 pub fn build_tick_summary_line(
   events : Array[@poller.PollEvent],
-  rescues_invoked : Int,
   agents_observed : Int,
   agents_failed : Int,
 ) -> String? {
-  if events.length() == 0 &&
-    rescues_invoked == 0 &&
-    agents_observed == 0 &&
-    agents_failed == 0 {
+  if events.length() == 0 && agents_observed == 0 && agents_failed == 0 {
     return None
   }
   Some(
     "tick events=" +
     events.length().to_string() +
-    " rescues=" +
-    rescues_invoked.to_string() +
     " observed=" +
     agents_observed.to_string() +
     " failed=" +
@@ -1759,18 +1753,13 @@ fn emit_tick_summary_line(
   append_file : (String, String) -> Bool,
   project_dir : String,
   events : Array[@poller.PollEvent],
-  rescues_invoked : Int,
   agents_observed : Int,
   agents_failed : Int,
 ) -> Unit {
-  match
-    build_tick_summary_line(
-      events, rescues_invoked, agents_observed, agents_failed,
-    ) {
+  match build_tick_summary_line(events, agents_observed, agents_failed) {
     Some(line) => {
       @moontrace.info("poller tick summary", fields=[
         @moontrace.field("events", events.length()),
-        @moontrace.field("rescues", rescues_invoked),
         @moontrace.field("observed", agents_observed),
         @moontrace.field("failed", agents_failed),
       ])
@@ -1906,7 +1895,7 @@ pub async fn ServerState::process_poller_tick_with(
   )
   let agents_observed = self.record_poller_sha_transitions(sha_before, now)
   emit_tick_summary_line(
-    append_file, project_dir, pending_events, 0, agents_observed, tick_agents_failed,
+    append_file, project_dir, pending_events, agents_observed, tick_agents_failed,
   )
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
@@ -1959,7 +1948,7 @@ pub async fn ServerState::process_poller_tick(
     self.request_goal_judge_tick()
   }
   emit_tick_summary_line(
-    append_file, project_dir, pending_events, 0, agents_observed, tick_agents_failed,
+    append_file, project_dir, pending_events, agents_observed, tick_agents_failed,
   )
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)

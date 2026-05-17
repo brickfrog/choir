@@ -10,26 +10,22 @@ test "poll_events_delivery_summary escapes newlines and truncates long events" {
 
 ///|
 test "build_tick_summary_line suppresses all-zero ticks" {
-  @debug.assert_eq(build_tick_summary_line([], 0, 0, 0), None)
+  @debug.assert_eq(build_tick_summary_line([], 0, 0), None)
 }
 
 ///|
 test "build_tick_summary_line formats each non-zero component" {
   @debug.assert_eq(
-    build_tick_summary_line([@poller.PollEvent::PRReady(3)], 0, 0, 0),
-    Some("tick events=1 rescues=0 observed=0 failed=0"),
+    build_tick_summary_line([@poller.PollEvent::PRReady(3)], 0, 0),
+    Some("tick events=1 observed=0 failed=0"),
   )
   @debug.assert_eq(
-    build_tick_summary_line([], 1, 0, 0),
-    Some("tick events=0 rescues=1 observed=0 failed=0"),
+    build_tick_summary_line([], 1, 0),
+    Some("tick events=0 observed=1 failed=0"),
   )
   @debug.assert_eq(
-    build_tick_summary_line([], 0, 1, 0),
-    Some("tick events=0 rescues=0 observed=1 failed=0"),
-  )
-  @debug.assert_eq(
-    build_tick_summary_line([], 0, 0, 1),
-    Some("tick events=0 rescues=0 observed=0 failed=1"),
+    build_tick_summary_line([], 0, 1),
+    Some("tick events=0 observed=0 failed=1"),
   )
 }
 
