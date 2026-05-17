@@ -50,6 +50,33 @@ fn status_bar_optional_string_json(value : String?) -> Json {
 }
 
 ///|
+fn status_bar_int64_json(v : Int64) -> Json {
+  Json::number(v.to_double(), repr=v.to_string())
+}
+
+///|
+fn status_bar_int64_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> Int64 raise @json.JsonDecodeError {
+  match value {
+    Number(n, ..) => {
+      let v = n.to_int64()
+      if v.to_double() == n {
+        v
+      } else {
+        raise @json.JsonDecodeError(
+          (path, "status_bar_state: expected integer"),
+        )
+      }
+    }
+    String(_) => @json.from_json(value, path~)
+    _ =>
+      raise @json.JsonDecodeError((path, "status_bar_state: expected integer"))
+  }
+}
+
+///|
 pub impl ToJson for StatusBarPane with to_json(self) -> Json {
   {
     "zellij_pane_id": self.zellij_pane_id.to_json(),
@@ -62,7 +89,7 @@ pub impl ToJson for StatusBarPane with to_json(self) -> Json {
     "ci_rollup": self.ci_rollup.to_json(),
     "attention_needed": self.attention_needed.to_json(),
     "parent_agent_id": status_bar_optional_string_json(self.parent_agent_id),
-    "last_activity_unix": self.last_activity_unix.to_json(),
+    "last_activity_unix": status_bar_int64_json(self.last_activity_unix),
   }.to_json()
 }
 
@@ -179,7 +206,7 @@ pub impl FromJson for StatusBarPane with from_json(json, path) {
       }
       let last_activity_unix : Int64 = match fields.get("last_activity_unix") {
         Some(value) =>
-          @json.from_json(value, path=path.add_key("last_activity_unix"))
+          status_bar_int64_from_json(value, path.add_key("last_activity_unix"))
         None =>
           raise @json.JsonDecodeError(
             (
@@ -219,7 +246,7 @@ pub fn StatusBarSnapshot::to_json_map(
   }
   {
     "schema_version": self.schema_version.to_json(),
-    "taken_at_ms": self.taken_at_ms.to_json(),
+    "taken_at_ms": status_bar_int64_json(self.taken_at_ms),
     "panes": panes.to_json(),
   }
 }
@@ -245,7 +272,8 @@ pub impl FromJson for StatusBarSnapshot with from_json(json, path) {
           )
       }
       let taken_at_ms : Int64 = match fields.get("taken_at_ms") {
-        Some(value) => @json.from_json(value, path=path.add_key("taken_at_ms"))
+        Some(value) =>
+          status_bar_int64_from_json(value, path.add_key("taken_at_ms"))
         None =>
           raise @json.JsonDecodeError(
             (

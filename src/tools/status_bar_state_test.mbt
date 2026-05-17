@@ -220,6 +220,49 @@ fn assert_status_bar_json_has_contract_keys(json : Json) -> Unit raise {
 }
 
 ///|
+fn assert_status_bar_json_number_field(
+  obj : Map[String, Json],
+  key : String,
+  expected : Int64,
+) -> Unit raise {
+  match obj.get(key) {
+    Some(Number(n, ..)) => assert_eq(n.to_int64(), expected)
+    Some(String(_)) => fail(key + " encoded as JSON string")
+    Some(_) => fail(key + " encoded as non-number JSON value")
+    None => fail("missing " + key)
+  }
+}
+
+///|
+fn assert_status_bar_timestamp_fields_are_numbers(
+  json : Json,
+  expected_taken_at_ms : Int64,
+  expected_last_activity_unix : Int64,
+) -> Unit raise {
+  match json {
+    Object(root) => {
+      assert_status_bar_json_number_field(
+        root, "taken_at_ms", expected_taken_at_ms,
+      )
+      match root.get("panes") {
+        Some(Array(items)) => {
+          assert_true(items.length() > 0)
+          match items[0] {
+            Object(pane) =>
+              assert_status_bar_json_number_field(
+                pane, "last_activity_unix", expected_last_activity_unix,
+              )
+            _ => fail("expected pane object")
+          }
+        }
+        _ => fail("expected panes array")
+      }
+    }
+    _ => fail("expected status bar snapshot object")
+  }
+}
+
+///|
 test "status_bar_state lifecycle_to_wire_string covers workflow variants" {
   assert_eq(
     lifecycle_to_wire_string(
@@ -558,10 +601,48 @@ test "status_bar_state builds snapshot from registry and poller snapshots" {
 ///|
 test "status_bar_state json round trips without extra fields" {
   let snap = status_bar_test_snapshot()
-  let json = snap.to_json()
+  let json = @json.parse(snap.to_json().stringify()) catch {
+    _ => fail("expected emitted status bar json to parse")
+  }
   assert_status_bar_json_has_contract_keys(json)
+  assert_status_bar_timestamp_fields_are_numbers(json, 12_345L, 100L)
   let parsed : StatusBarSnapshot = @json.from_json(json)
   @debug.assert_eq(parsed, snap)
+  let encoded_again = @json.parse(parsed.to_json().stringify()) catch {
+    _ => fail("expected re-encoded status bar json to parse")
+  }
+  @debug.assert_eq(encoded_again, json)
+  assert_status_bar_timestamp_fields_are_numbers(encoded_again, 12_345L, 100L)
+}
+
+///|
+test "status_bar_state from_json accepts previous string timestamp form" {
+  let pane : Map[String, Json] = {
+    "zellij_pane_id": (7).to_json(),
+    "agent_id": "root.leaf".to_json(),
+    "role": "dev".to_json(),
+    "agent_type": "codex".to_json(),
+    "lifecycle": "working".to_json(),
+    "pr_number": Json::null(),
+    "unresolved_threads": (0).to_json(),
+    "ci_rollup": "unknown".to_json(),
+    "attention_needed": false.to_json(),
+    "parent_agent_id": "root".to_json(),
+    "last_activity_unix": "456".to_json(),
+  }
+  let json : Json = {
+    "schema_version": (1).to_json(),
+    "taken_at_ms": "12345".to_json(),
+    "panes": [pane.to_json()].to_json(),
+  }.to_json()
+  let parsed : StatusBarSnapshot = @json.from_json(json)
+  assert_eq(parsed.taken_at_ms, 12_345L)
+  assert_eq(parsed.panes.length(), 1)
+  assert_eq(parsed.panes[0].last_activity_unix, 456L)
+  let encoded = @json.parse(parsed.to_json().stringify()) catch {
+    _ => fail("expected re-encoded status bar json to parse")
+  }
+  assert_status_bar_timestamp_fields_are_numbers(encoded, 12_345L, 456L)
 }
 
 ///|
