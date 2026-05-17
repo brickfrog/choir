@@ -293,7 +293,8 @@ pub async fn interpret_rescue_leaf_post_spawn(
   )
   @phase.interpret_lifecycle_effects(project_dir, rescue_tl_effects, registry~)
   let resolved_pane_ids : Array[(String, String)] = []
-  match resolve_zellij_pane_id(session, rescue_args.new_slug, capture~) {
+  match
+    resolve_zellij_tab_terminal_target(session, rescue_args.new_slug, capture~) {
     Some(pane_id) => resolved_pane_ids.push((plan.to_id, pane_id))
     None => ()
   }

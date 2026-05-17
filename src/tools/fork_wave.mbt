@@ -506,7 +506,7 @@ pub fn fork_wave_post_spawn_host_steps() -> Array[ForkWavePostSpawnHostStep] {
 ///|
 /// Post-spawn registry/team/TL/pane/terminal sequence for `fork_wave` when the
 /// spawn effect phase returned ok and at least one leaf was spawned. Preserves
-/// ordering and defaults (including `resolve_zellij_pane_id` capture) from the
+/// ordering and defaults (including `resolve_zellij_tab_terminal_target` capture) from the
 /// prior inline `ToolRequest::ForkWave` arm.
 pub async fn interpret_fork_wave_post_spawn(
   fork_wave_args : ForkWaveArgs,
@@ -542,7 +542,7 @@ pub async fn interpret_fork_wave_post_spawn(
     )
     @phase.interpret_lifecycle_effects(project_dir, tl_effects, registry~)
     let agent_id = @workspace.branch_name(fork_wave_args.parent_branch, slug)
-    match resolve_zellij_pane_id(session, slug, capture~) {
+    match resolve_zellij_tab_terminal_target(session, slug, capture~) {
       Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
       None => ()
     }

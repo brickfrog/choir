@@ -127,6 +127,20 @@ pub fn zellij_tab_name_exists_in_query_output(
 }
 
 ///|
+/// `NO_COLOR=1 zellij --session <session> action list-panes --json --tab` via `env` argv.
+/// The installed zellij exposes JSON output as `--json`; `--tab` includes `tab_name`.
+pub fn zellij_list_panes_json_command(session : String) -> Command {
+  {
+    program: "env",
+    args: [
+      "NO_COLOR=1", "zellij", "--session", session, "action", "list-panes", "--json",
+      "--tab",
+    ],
+    workdir: None,
+  }
+}
+
+///|
 /// Layout loaded into choir-managed zellij sessions. Opt-in: only loads when
 /// the layout file is present under the user's zellij config dir
 /// (`~/.config/zellij/layouts/<name>.kdl`). Zellij sessions started outside

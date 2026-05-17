@@ -113,7 +113,10 @@ async fn dispatch_to_plugin(
 ///|
 /// Parse JSON from `zellij action list-panes --json -a -t -s` and return the first non-plugin
 /// pane ID for `tab_name` as `terminal_N`, or None.
-fn parse_zellij_list_panes_json(content : String, tab_name : String) -> String? {
+fn parse_zellij_tab_terminal_target_json(
+  content : String,
+  tab_name : String,
+) -> String? {
   if content == "" {
     return None
   }
@@ -147,7 +150,7 @@ fn parse_zellij_list_panes_json(content : String, tab_name : String) -> String? 
 ///|
 /// Resolve the zellij pane ID for a named tab by running list-panes.
 /// Returns Some("terminal_N") if found, None otherwise.
-pub async fn resolve_zellij_pane_id(
+pub async fn resolve_zellij_tab_terminal_target(
   session : String,
   tab_name : String,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
@@ -163,7 +166,7 @@ pub async fn resolve_zellij_pane_id(
   if exit_code != 0 {
     return None
   }
-  parse_zellij_list_panes_json(content, tab_name)
+  parse_zellij_tab_terminal_target_json(content, tab_name)
 }
 
 ///|
@@ -1229,29 +1232,29 @@ async fn handle_kv_list(
 }
 
 ///|
-test "parse_zellij_list_panes_json matches tab and returns terminal id" {
+test "parse_zellij_tab_terminal_target_json matches tab and returns terminal id" {
   let json =
     #|[{"id":3,"tab_name":"leaf-1","is_plugin":false},{"id":9,"tab_name":"other","is_plugin":false}]
-  match parse_zellij_list_panes_json(json, "leaf-1") {
+  match parse_zellij_tab_terminal_target_json(json, "leaf-1") {
     Some(s) => assert_eq(s, "terminal_3")
     None => fail("expected pane")
   }
 }
 
 ///|
-test "parse_zellij_list_panes_json skips plugin panes" {
+test "parse_zellij_tab_terminal_target_json skips plugin panes" {
   let json =
     #|[{"id":1,"tab_name":"leaf-1","is_plugin":true},{"id":2,"tab_name":"leaf-1","is_plugin":false}]
-  match parse_zellij_list_panes_json(json, "leaf-1") {
+  match parse_zellij_tab_terminal_target_json(json, "leaf-1") {
     Some(s) => assert_eq(s, "terminal_2")
     None => fail("expected non-plugin pane")
   }
 }
 
 ///|
-test "parse_zellij_list_panes_json returns None when tab missing" {
+test "parse_zellij_tab_terminal_target_json returns None when tab missing" {
   @debug.assert_eq(
-    parse_zellij_list_panes_json(
+    parse_zellij_tab_terminal_target_json(
       "[{\"id\":1,\"tab_name\":\"x\",\"is_plugin\":false}]", "missing",
     ),
     None,
@@ -1269,8 +1272,13 @@ async fn mock_zellij_pane_ok(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
-async test "resolve_zellij_pane_id uses zellij argv and capture" {
-  match resolve_zellij_pane_id("choir", "slug-a", capture=mock_zellij_pane_ok) {
+async test "resolve_zellij_tab_terminal_target uses zellij argv and capture" {
+  match
+    resolve_zellij_tab_terminal_target(
+      "choir",
+      "slug-a",
+      capture=mock_zellij_pane_ok,
+    ) {
     Some(s) => assert_eq(s, "terminal_7")
     None => fail("expected pane id")
   }
@@ -1283,9 +1291,13 @@ async fn mock_zellij_nonzero(_cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
-async test "resolve_zellij_pane_id returns None when zellij exits non-zero" {
+async test "resolve_zellij_tab_terminal_target returns None when zellij exits non-zero" {
   @debug.assert_eq(
-    resolve_zellij_pane_id("choir", "x", capture=mock_zellij_nonzero),
+    resolve_zellij_tab_terminal_target(
+      "choir",
+      "x",
+      capture=mock_zellij_nonzero,
+    ),
     None,
   )
 }
