@@ -127,10 +127,19 @@ pub fn zellij_tab_name_exists_in_query_output(
 }
 
 ///|
+/// Layout loaded into choir-managed zellij sessions. Opt-in: only loads when
+/// the layout file is present under the user's zellij config dir
+/// (`~/.config/zellij/layouts/<name>.kdl`). Zellij sessions started outside
+/// choir are unaffected.
+pub let choir_session_layout : String = "zjbar"
+
+///|
 pub fn zellij_create_background_session(session : String) -> Command {
   {
     program: "zellij",
-    args: ["attach", "--create-background", session],
+    args: [
+      "--layout", choir_session_layout, "attach", "--create-background", session,
+    ],
     workdir: None,
   }
 }

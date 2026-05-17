@@ -1546,3 +1546,12 @@ test "task_contract_for_agent finds inline worker metadata" {
   )
   ignore(@sys.rm_rf(project_dir))
 }
+
+///|
+test "zellij_create_background_session passes --layout for choir session" {
+  let cmd = @workspace.zellij_create_background_session("choir")
+  @debug.assert_eq(cmd.program, "zellij")
+  @debug.assert_eq(cmd.args, [
+    "--layout", "zjbar", "attach", "--create-background", "choir",
+  ])
+}
