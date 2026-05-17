@@ -9,6 +9,87 @@ test "poll_events_delivery_summary escapes newlines and truncates long events" {
 }
 
 ///|
+test "build_tick_summary_line suppresses all-zero ticks" {
+  @debug.assert_eq(build_tick_summary_line([], 0, 0, 0), None)
+}
+
+///|
+test "build_tick_summary_line formats each non-zero component" {
+  @debug.assert_eq(
+    build_tick_summary_line([@poller.PollEvent::PRReady(3)], 0, 0, 0),
+    Some("tick events=1 rescues=0 observed=0 failed=0"),
+  )
+  @debug.assert_eq(
+    build_tick_summary_line([], 1, 0, 0),
+    Some("tick events=0 rescues=1 observed=0 failed=0"),
+  )
+  @debug.assert_eq(
+    build_tick_summary_line([], 0, 1, 0),
+    Some("tick events=0 rescues=0 observed=1 failed=0"),
+  )
+  @debug.assert_eq(
+    build_tick_summary_line([], 0, 0, 1),
+    Some("tick events=0 rescues=0 observed=0 failed=1"),
+  )
+}
+
+///|
+async test "process_poller_tick_with emits tick summary when an event is produced" {
+  let project_dir = "/tmp/choir-poller-tick-summary-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "s" },
+    make_recovery_provider(),
+  )
+  state.poller.track(
+    3, "main.leaf", "main.leaf", "main", "https://example.test/pr/3", 1L,
+  )
+  let captured : Array[@moontrace.Event] = []
+  handler_with_moontrace_capture(captured, async fn() {
+    state.process_poller_tick_with(
+      1000L,
+      900L,
+      async fn(_pr_number, _skip_issue_comment_fetch) {
+        @async.sleep(0)
+        (
+          true,
+          @poller.ReviewState::ChangesRequested,
+          "sha-1",
+          @poller.CiRollupStatus::Failure,
+          "please fix",
+          true,
+          false,
+        )
+      },
+      runner=async fn(_cmds) {
+        @async.sleep(0)
+        []
+      },
+      capture=async fn(_cmd) {
+        @async.sleep(0)
+        (0, "")
+      },
+      automerge_capture=async fn(_cmd) {
+        @async.sleep(0)
+        (0, "")
+      },
+    )
+  })
+  let summary = match handler_tick_summary_event(captured) {
+    Some(event) => event
+    None => fail("expected poller tick summary")
+  }
+  match handler_moontrace_field_value(summary.fields, "events") {
+    Some(Number(value, ..)) => assert_eq(value.to_int(), 1)
+    _ => fail("events field")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "merge_execution_mode_for_request distinguishes manual and automerge" {
   let manual_req : @types.Request = {
     req_method: "tools/call",
@@ -4218,6 +4299,32 @@ async fn handler_with_moontrace_capture(
 }
 
 ///|
+fn handler_moontrace_field_value(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> Json? {
+  for field in fields {
+    if field.key == key {
+      return Some(field.value)
+    }
+  }
+  None
+}
+
+///|
+fn handler_tick_summary_event(
+  events : Array[@moontrace.Event],
+) -> @moontrace.Event? {
+  for event in events {
+    if event.level == @moontrace.Level::Info &&
+      event.message == "poller tick summary" {
+      return Some(event)
+    }
+  }
+  None
+}
+
+///|
 fn handler_auto_close_test_state(label : String) -> ServerState {
   let project_dir = "/tmp/choir-handler-auto-close-" +
     label +
@@ -4459,6 +4566,63 @@ fn worker_handoff_count_sent(sent : Array[String], needle : String) -> Int {
     }
   }
   count
+}
+
+///|
+fn handler_idle_warning_count(events : Array[@moontrace.Event]) -> Int {
+  let mut count = 0
+  for event in events {
+    if event.level == @moontrace.Level::Warn &&
+      event.message == "idle agent approaching kill threshold" {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
+async test "check_idle_agents warns once at seventy percent before idle kill" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"still working\"]}"
+  let state = worker_handoff_test_state("idle-warning", snapshot)
+  let parent_id = "main.parent"
+  let worker_id = "main.idle-worker"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_worker(worker_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  state.watch_pane(worker_id)
+
+  let sent : Array[String] = []
+  let captured : Array[@moontrace.Event] = []
+  let start = @poller.now_sec()
+  handler_with_moontrace_capture(captured, async fn() {
+    state.check_idle_agents(
+      start,
+      100L,
+      async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+      worker_no_handoff_prod_sec=0L,
+      worker_no_handoff_escalate_sec=0L,
+    )
+    state.check_idle_agents(
+      start + 70L,
+      100L,
+      async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+      worker_no_handoff_prod_sec=0L,
+      worker_no_handoff_escalate_sec=0L,
+    )
+    state.check_idle_agents(
+      start + 80L,
+      100L,
+      async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+      worker_no_handoff_prod_sec=0L,
+      worker_no_handoff_escalate_sec=0L,
+    )
+  })
+  assert_eq(handler_idle_warning_count(captured), 1)
+  assert_true(state.idle_agent_warned_at_70.contains(worker_id))
+  ignore(@sys.rm_rf(state.config.project_dir))
 }
 
 ///|

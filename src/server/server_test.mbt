@@ -194,6 +194,7 @@ test "reload snapshot restores registry pending state and mutexes" {
   state.worker_no_handoff_prodded_at.set("root.worker", 2222L)
   state.worker_no_handoff_stalled_emitted.set("root.worker", true)
   state.worker_no_handoff_exit_emitted.set("root.worker", true)
+  state.idle_agent_warned_at_70.set("root.worker", true)
   state.last_commit_observed_at.set("root.leaf", 3333L)
   state.last_commit_observed_sha.set("root.leaf", "sha-observed")
   state.last_commit_probe_at.set("root.leaf", 3344L)
@@ -236,6 +237,10 @@ test "reload snapshot restores registry pending state and mutexes" {
       )
       @debug.assert_eq(
         restored.worker_no_handoff_exit_emitted.get("root.worker"),
+        Some(true),
+      )
+      @debug.assert_eq(
+        restored.idle_agent_warned_at_70.get("root.worker"),
         Some(true),
       )
       @debug.assert_eq(

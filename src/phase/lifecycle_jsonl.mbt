@@ -22,6 +22,45 @@ fn build_lifecycle_transition_jsonl_line(
 }
 
 ///|
+fn lifecycle_failed_reason(lifecycle : AgentLifecycle) -> FailureReason? {
+  match lifecycle.workflow {
+    Supervisor(Failed(reason~)) => Some(reason)
+    Dev(Failed(reason~)) => Some(reason)
+    Worker(Failed(reason~)) => Some(reason)
+    _ => None
+  }
+}
+
+///|
+pub fn is_active_to_failed_transition(
+  from_lc : AgentLifecycle,
+  to_lc : AgentLifecycle,
+) -> Bool {
+  lifecycle_failed_reason(from_lc) is None &&
+  lifecycle_failed_reason(to_lc) is Some(_)
+}
+
+///|
+fn warn_active_to_failed_transition(
+  agent_id : String,
+  from_lc : AgentLifecycle,
+  to_lc : AgentLifecycle,
+  trigger : @types.LifecycleTrigger,
+) -> Unit {
+  match lifecycle_failed_reason(to_lc) {
+    Some(reason) =>
+      @moontrace.warn("agent lifecycle transitioned to failed", fields=[
+        @moontrace.field("agent_id", agent_id),
+        @moontrace.field("from_state", lifecycle_to_json(from_lc)),
+        @moontrace.field("to_state", lifecycle_to_json(to_lc)),
+        @moontrace.field("trigger", trigger.to_wire_string()),
+        @moontrace.field("reason", reason.to_wire_string()),
+      ])
+    None => ()
+  }
+}
+
+///|
 pub fn append_lifecycle_event(
   project_dir : String,
   agent_id : String,
@@ -42,7 +81,11 @@ pub fn append_lifecycle_event(
     lifecycle_to_json(to_lc),
     trigger.to_wire_string(),
   )
-  @sys.append_file_sync(path, line)
+  let ok = @sys.append_file_sync(path, line)
+  if ok && is_active_to_failed_transition(from_lc, to_lc) {
+    warn_active_to_failed_transition(agent_id, from_lc, to_lc, trigger)
+  }
+  ok
 }
 
 ///|
