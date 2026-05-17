@@ -2133,6 +2133,110 @@ fn parent_poll_test_ready_tracked(pr_number : Int) -> @poller.TrackedPR {
 }
 
 ///|
+async test "PRMerged completion hook fires only PrMerged for feature parent" {
+  let pr = {
+    ..parent_poll_test_ready_tracked(501),
+    agent_id: "feature/base.leaf",
+    branch: "feature/base.leaf",
+    parent_branch: "feature/base",
+    pr_url: "https://example.test/pull/501",
+  }
+  let fired_paths : Array[String] = []
+  let fired_inputs : Array[@hooks.HookInput] = []
+  let mut default_branch_checks = 0
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    default_branch_checks = default_branch_checks + 1
+    (0, "origin/main\n")
+  }
+  let hook_capture = async fn(
+    path : String,
+    input_json : String,
+    cwd : String?,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    fired_paths.push(path)
+    @debug.assert_eq(cwd, Some("/repo"))
+    match @hooks.HookInput::from_json_string(input_json) {
+      Some(input) => fired_inputs.push(input)
+      None => fail("expected completion hook input JSON")
+    }
+    (0, "hook stdout")
+  }
+  let path_exists = fn(path : String) -> Bool {
+    path.has_suffix("/pr_merged.sh") || path.has_suffix("/wave_complete.sh")
+  }
+  fire_pr_merged_completion_hooks(
+    "/repo",
+    pr,
+    capture~,
+    hook_capture~,
+    path_exists~,
+  )
+
+  assert_eq(default_branch_checks, 1)
+  assert_eq(fired_inputs.length(), 1)
+  assert_eq(fired_paths[0], "/repo/.choir/hooks/pr_merged.sh")
+  let input = fired_inputs[0]
+  assert_eq(input.event, @hooks.HookEvent::PrMerged)
+  @debug.assert_eq(input.pr_number, Some(501))
+  @debug.assert_eq(input.pr_url, Some("https://example.test/pull/501"))
+  @debug.assert_eq(input.branch, Some("feature/base.leaf"))
+  @debug.assert_eq(input.parent_branch, Some("feature/base"))
+  @debug.assert_eq(input.merge_provenance, Some("external_observation"))
+  @debug.assert_eq(input.agent_id, Some("feature/base.leaf"))
+}
+
+///|
+async test "PRMerged completion hook fires PrMerged and WaveComplete for main parent" {
+  let pr = {
+    ..parent_poll_test_ready_tracked(502),
+    agent_id: "feature/base.integration",
+    branch: "feature/base",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/502",
+  }
+  let fired_inputs : Array[@hooks.HookInput] = []
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    (0, "origin/main\n")
+  }
+  let hook_capture = async fn(
+    _path : String,
+    input_json : String,
+    _cwd : String?,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    match @hooks.HookInput::from_json_string(input_json) {
+      Some(input) => fired_inputs.push(input)
+      None => fail("expected completion hook input JSON")
+    }
+    (0, "hook stdout")
+  }
+  let path_exists = fn(path : String) -> Bool {
+    path.has_suffix("/pr_merged.sh") || path.has_suffix("/wave_complete.sh")
+  }
+  fire_pr_merged_completion_hooks(
+    "/repo",
+    pr,
+    capture~,
+    hook_capture~,
+    path_exists~,
+  )
+
+  assert_eq(fired_inputs.length(), 2)
+  assert_eq(fired_inputs[0].event, @hooks.HookEvent::PrMerged)
+  assert_eq(fired_inputs[1].event, @hooks.HookEvent::WaveComplete)
+  @debug.assert_eq(fired_inputs[1].pr_number, Some(502))
+  @debug.assert_eq(fired_inputs[1].parent_branch, Some("main"))
+  @debug.assert_eq(
+    fired_inputs[1].merge_provenance,
+    Some("external_observation"),
+  )
+  @debug.assert_eq(fired_inputs[1].agent_id, Some("feature/base.integration"))
+}
+
+///|
 async test "auto_resolve_outdated_review_threads_for_event resolves only iterative FixesPushed outdated threads" {
   let project_dir = "/tmp/choir-auto-resolve-threads-" +
     @sys.get_pid().to_string() +

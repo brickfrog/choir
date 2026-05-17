@@ -1798,6 +1798,11 @@ pub async fn handle_request(
             event: @hooks.HookEvent::PreToolUse,
             session_id: Some(session),
             agent_id: tool_args_get(tool_args, "caller_id"),
+            pr_number: None,
+            pr_url: None,
+            branch: None,
+            parent_branch: None,
+            merge_provenance: None,
             role: Some(req.role),
             tool_name: Some(req.name),
             tool_args: Some(tool_args_to_map(tool_args)),
@@ -1897,6 +1902,11 @@ pub async fn handle_request(
         event: @hooks.HookEvent::PostToolUse,
         session_id: Some(session),
         agent_id: tool_args_get(tool_args, "caller_id"),
+        pr_number: None,
+        pr_url: None,
+        branch: None,
+        parent_branch: None,
+        merge_provenance: None,
         role: Some(req.role),
         tool_name: Some(req.name),
         tool_args: None,
@@ -1920,7 +1930,7 @@ pub async fn fire_hook_async(
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
 ) -> Unit {
-  let hook_path = project_dir + "/.choir/hooks/" + event.script_name() + ".sh"
+  let hook_path = project_dir + "/.choir/hooks/" + event.script_name()
   if !path_exists(hook_path) {
     return
   }
