@@ -121,6 +121,7 @@ fn ServerState::clear_agent_runtime_tracking(
   self.worker_no_handoff_stalled_emitted.remove(agent_id)
   self.handoff_delivered.remove(agent_id)
   self.worker_no_handoff_exit_emitted.remove(agent_id)
+  self.idle_agent_warned_at_70.remove(agent_id)
   self.last_commit_observed_at.remove(agent_id)
   self.last_commit_observed_sha.remove(agent_id)
   self.last_commit_probe_at.remove(agent_id)
@@ -214,7 +215,8 @@ pub fn ServerState::record_poller_sha_transitions(
   self : ServerState,
   before : Map[Int, String],
   now : Int64,
-) -> Unit {
+) -> Int {
+  let mut observed = 0
   for tracked in self.poller.tracked.values() {
     let sha = tracked.last_sha
     if sha == "" {
@@ -222,9 +224,13 @@ pub fn ServerState::record_poller_sha_transitions(
     }
     match before.get(tracked.pr_number) {
       Some(previous) if previous == sha => ()
-      _ => self.record_leaf_commit_observed(tracked.agent_id, sha, now)
+      _ => {
+        self.record_leaf_commit_observed(tracked.agent_id, sha, now)
+        observed = observed + 1
+      }
     }
   }
+  observed
 }
 
 ///|
@@ -1630,6 +1636,19 @@ pub async fn ServerState::check_idle_agents(
         if watchdog_exempt {
           continue
         }
+        if should_emit_70_pct_warning(
+            observation.idle_sec,
+            timeout,
+            self.idle_agent_warned_at_70.contains(agent_id),
+          ) {
+          self.idle_agent_warned_at_70.set(agent_id, true)
+          @moontrace.warn("idle agent approaching kill threshold", fields=[
+            @moontrace.field("agent_id", agent_id),
+            @moontrace.field("idle_sec", observation.idle_sec),
+            @moontrace.field("threshold", timeout),
+            @moontrace.field("percent", idle_watchdog_warning_percent),
+          ])
+        }
         if observation.idle_sec < timeout {
           continue
         }
@@ -1752,6 +1771,7 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   state.worker_no_handoff_prodded_at.set(agent_id, 2L)
   state.worker_no_handoff_stalled_emitted.set(agent_id, true)
   state.worker_no_handoff_exit_emitted.set(agent_id, true)
+  state.idle_agent_warned_at_70.set(agent_id, true)
 
   state.clear_agent_runtime_tracking(agent_id)
 
@@ -1761,6 +1781,7 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   assert_eq(state.worker_no_handoff_prodded_at.contains(agent_id), false)
   assert_eq(state.worker_no_handoff_stalled_emitted.contains(agent_id), false)
   assert_eq(state.worker_no_handoff_exit_emitted.contains(agent_id), false)
+  assert_eq(state.idle_agent_warned_at_70.contains(agent_id), false)
   ignore(@sys.rm_rf(project_dir))
 }
 

@@ -1,4 +1,158 @@
 ///|
+fn phase_test_lifecycle_for_workflow(
+  workflow : WorkflowState,
+) -> AgentLifecycle {
+  let role = match workflow {
+    Supervisor(_) => @types.Role::TL
+    Dev(_) => @types.Role::Dev
+    Worker(_) => @types.Role::Worker
+  }
+  {
+    agent_id: "phase.test",
+    role,
+    process: Connected,
+    workflow,
+    last_updated_unix_sec: 0L,
+  }
+}
+
+///|
+fn phase_test_field_value(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> Json? {
+  for field in fields {
+    if field.key == key {
+      return Some(field.value)
+    }
+  }
+  None
+}
+
+///|
+fn phase_test_failed_warn_event(
+  events : Array[@moontrace.Event],
+) -> @moontrace.Event? {
+  for event in events {
+    if event.level == @moontrace.Level::Warn &&
+      event.message == "agent lifecycle transitioned to failed" {
+      return Some(event)
+    }
+  }
+  None
+}
+
+///|
+test "is_active_to_failed_transition matches non-failed workflow to failed workflow" {
+  assert_true(
+    is_active_to_failed_transition(
+      phase_test_lifecycle_for_workflow(Supervisor(Planning)),
+      phase_test_lifecycle_for_workflow(
+        Supervisor(Failed(reason=UnexpectedDisconnect)),
+      ),
+    ),
+  )
+  assert_true(
+    is_active_to_failed_transition(
+      phase_test_lifecycle_for_workflow(Supervisor(Dispatching)),
+      phase_test_lifecycle_for_workflow(
+        Supervisor(Failed(reason=ParentFailureNotification)),
+      ),
+    ),
+  )
+  assert_true(
+    is_active_to_failed_transition(
+      phase_test_lifecycle_for_workflow(Dev(Working)),
+      phase_test_lifecycle_for_workflow(
+        Dev(Failed(reason=UnexpectedDisconnect)),
+      ),
+    ),
+  )
+  assert_true(
+    is_active_to_failed_transition(
+      phase_test_lifecycle_for_workflow(
+        Dev(ReviewOwned(pr_number=1, state=ApprovedAwaitingMerge)),
+      ),
+      phase_test_lifecycle_for_workflow(Dev(Failed(reason=BlockedByReview))),
+    ),
+  )
+  assert_true(
+    is_active_to_failed_transition(
+      phase_test_lifecycle_for_workflow(Worker(Working)),
+      phase_test_lifecycle_for_workflow(Worker(Failed(reason=WatchdogTimeout))),
+    ),
+  )
+  assert_true(
+    is_active_to_failed_transition(
+      phase_test_lifecycle_for_workflow(Worker(Exitable)),
+      phase_test_lifecycle_for_workflow(Worker(Failed(reason=ParentKilled))),
+    ),
+  )
+}
+
+///|
+test "is_active_to_failed_transition suppresses non-failed and repeated failed transitions" {
+  let working = phase_test_lifecycle_for_workflow(Dev(Working))
+  let review_owned = phase_test_lifecycle_for_workflow(
+    Dev(ReviewOwned(pr_number=1, state=ApprovedAwaitingMerge)),
+  )
+  assert_false(is_active_to_failed_transition(working, review_owned))
+  let failed = phase_test_lifecycle_for_workflow(
+    Dev(Failed(reason=UnexpectedDisconnect)),
+  )
+  assert_false(is_active_to_failed_transition(failed, failed))
+}
+
+///|
+test "append_lifecycle_event warns when lifecycle enters Failed" {
+  let project_dir = "/tmp/choir-lifecycle-failed-warn-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let from_lc = phase_test_lifecycle_for_workflow(Dev(Working))
+  let to_lc = {
+    ..phase_test_lifecycle_for_workflow(Dev(Failed(reason=WatchdogTimeout))),
+    agent_id: from_lc.agent_id,
+  }
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  let ok = append_lifecycle_event(
+    project_dir,
+    from_lc.agent_id,
+    from_lc,
+    to_lc,
+    @types.LifecycleTrigger::ExitShutdown,
+  )
+  @moontrace.clear_subscriber()
+  assert_true(ok)
+  let warn_event = match phase_test_failed_warn_event(captured) {
+    Some(event) => event
+    None => fail("expected failed lifecycle warning")
+  }
+  match phase_test_field_value(warn_event.fields, "agent_id") {
+    Some(String(value)) => assert_eq(value, from_lc.agent_id)
+    _ => fail("agent_id field")
+  }
+  match phase_test_field_value(warn_event.fields, "trigger") {
+    Some(String(value)) => assert_eq(value, "ExitShutdown")
+    _ => fail("trigger field")
+  }
+  match phase_test_field_value(warn_event.fields, "reason") {
+    Some(String(value)) => assert_eq(value, "watchdog_timeout")
+    _ => fail("reason field")
+  }
+  match phase_test_field_value(warn_event.fields, "from_state") {
+    Some(String(value)) => assert_true(value.contains("\"workflow\""))
+    _ => fail("from_state field")
+  }
+  match phase_test_field_value(warn_event.fields, "to_state") {
+    Some(String(value)) => assert_true(value.contains("WatchdogTimeout"))
+    _ => fail("to_state field")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "lifecycle_idle_watchdog_exempt logic" {
   let dev_working = lifecycle_for_role("d1", @types.Role::Dev)
   assert_false(lifecycle_idle_watchdog_exempt(dev_working))
