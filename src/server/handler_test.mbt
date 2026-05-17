@@ -2237,6 +2237,48 @@ async test "PRMerged completion hook fires PrMerged and WaveComplete for main pa
 }
 
 ///|
+async test "PRMerged completion hook does not fire WaveComplete for non-default main parent" {
+  let pr = {
+    ..parent_poll_test_ready_tracked(503),
+    agent_id: "trunk.leaf",
+    branch: "feature/main-is-not-default",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/503",
+  }
+  let fired_inputs : Array[@hooks.HookInput] = []
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    (0, "origin/trunk\n")
+  }
+  let hook_capture = async fn(
+    _path : String,
+    input_json : String,
+    _cwd : String?,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    match @hooks.HookInput::from_json_string(input_json) {
+      Some(input) => fired_inputs.push(input)
+      None => fail("expected completion hook input JSON")
+    }
+    (0, "hook stdout")
+  }
+  let path_exists = fn(path : String) -> Bool {
+    path.has_suffix("/pr_merged.sh") || path.has_suffix("/wave_complete.sh")
+  }
+  fire_pr_merged_completion_hooks(
+    "/repo",
+    pr,
+    capture~,
+    hook_capture~,
+    path_exists~,
+  )
+
+  assert_eq(fired_inputs.length(), 1)
+  assert_eq(fired_inputs[0].event, @hooks.HookEvent::PrMerged)
+  @debug.assert_eq(fired_inputs[0].parent_branch, Some("main"))
+}
+
+///|
 async test "auto_resolve_outdated_review_threads_for_event resolves only iterative FixesPushed outdated threads" {
   let project_dir = "/tmp/choir-auto-resolve-threads-" +
     @sys.get_pid().to_string() +

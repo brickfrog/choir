@@ -506,6 +506,42 @@ pub fn pr_merged_completion_hook_input(
 }
 
 ///|
+fn parse_detected_default_branch(output : String) -> String? {
+  let trimmed = output.trim().to_owned()
+  let prefix = "origin/"
+  if trimmed.has_prefix(prefix) {
+    let branch = trimmed[prefix.length():].to_owned()
+    if branch == "" {
+      None
+    } else {
+      Some(branch)
+    }
+  } else if trimmed == "" {
+    None
+  } else {
+    Some(trimmed)
+  }
+}
+
+///|
+async fn detect_default_branch_for_wave_complete(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let cmd : @workspace.Command = {
+    program: "git",
+    args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture(cmd)
+  if exit_code == 0 {
+    parse_detected_default_branch(output)
+  } else {
+    None
+  }
+}
+
+///|
 async fn pr_merged_parent_branch_is_wave_complete(
   project_dir : String,
   parent_branch : String,
@@ -514,12 +550,10 @@ async fn pr_merged_parent_branch_is_wave_complete(
   if parent_branch == "" {
     return false
   }
-  let default_branch = @tools.detect_default_branch_with_capture(
-    project_dir, capture,
-  )
-  parent_branch == default_branch ||
-  parent_branch == "main" ||
-  parent_branch == "master"
+  match detect_default_branch_for_wave_complete(project_dir, capture) {
+    Some(default_branch) => parent_branch == default_branch
+    None => parent_branch == "main" || parent_branch == "master"
+  }
 }
 
 ///|
