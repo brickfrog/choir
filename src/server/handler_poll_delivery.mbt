@@ -1053,12 +1053,6 @@ pub fn ServerState::plan_poll_event_deliveries(
                     parent, leaf_agent_id, message, status,
                   ),
                 })
-                self.record_poller_parent_event_emission(
-                  pr.agent_id,
-                  event_name,
-                  content_hash,
-                  now,
-                )
               } catch {
                 _ => ()
               }

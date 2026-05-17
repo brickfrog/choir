@@ -104,9 +104,9 @@ fn parent_delivery_count(
 }
 
 ///|
-test "poller parent delivery dedups steady echoes but emits transitions and heartbeat" {
-  let pr_number = 1701
-  let label = "dedup-parent"
+test "poller parent planner does not commit dedup state before delivery" {
+  let pr_number = 1700
+  let label = "dedup-parent-planner"
   let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
     label,
     pr_number,
@@ -139,53 +139,116 @@ test "poller parent delivery dedups steady echoes but emits transitions and hear
     now=491L,
   )
   assert_eq(parent_delivery_count(first, parent_id, "[MERGE READY]"), 1)
-  assert_eq(parent_delivery_count(duplicate, parent_id, "[MERGE READY]"), 0)
+  assert_eq(parent_delivery_count(duplicate, parent_id, "[MERGE READY]"), 1)
   assert_eq(parent_delivery_count(transition, parent_id, "[MERGE READY]"), 1)
   assert_eq(parent_delivery_count(heartbeat, parent_id, "[MERGE READY]"), 1)
   ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
-test "poller parent dedup records only after parent planning succeeds" {
+async test "deliver_pending_poll_events commits dedup only after durable parent delivery succeeds" {
   let pr_number = 1702
-  let label = "dedup-parent-missing"
-  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
+  let label = "dedup-parent-durable"
+  let (state, _, project_dir) = blocked_gh_automerge_fixture(
     label,
     pr_number,
     review_mode=@types.ReviewMode::Iterative,
+    automerge=false,
   )
-  let parent_id = "main.tl-" + label
-  let child = state.registry.get(child_id)
-  ignore(state.registry.upsert({ ..child, parent: Some("missing-parent") }))
-  let event = @poller.PollEvent::MergeReady(pr_number)
-  let missing_parent = state.plan_poll_event_deliveries(
-    event,
-    child_id,
-    Some(0),
-    now=100L,
-  )
-  assert_eq(
-    parent_delivery_count(missing_parent, parent_id, "[MERGE READY]"),
-    0,
-  )
-  ignore(state.registry.upsert(child))
-  let first_after_recovery = state.plan_poll_event_deliveries(
-    event,
-    child_id,
-    Some(0),
-    now=120L,
-  )
-  let duplicate = state.plan_poll_event_deliveries(
-    event,
-    child_id,
-    Some(0),
-    now=121L,
-  )
-  assert_eq(
-    parent_delivery_count(first_after_recovery, parent_id, "[MERGE READY]"),
-    1,
-  )
-  assert_eq(parent_delivery_count(duplicate, parent_id, "[MERGE READY]"), 0)
+  let parent_target = @workspace.local_target_for(
+    "test-session",
+    "TL",
+    @types.IsolationMode::Worktree,
+  ).to_string()
+  let parent_messages : Array[String] = []
+  let mut fail_parent_delivery = true
+  let mut unresolved_threads = 0
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "choir" &&
+        cmd.args.length() >= 4 &&
+        cmd.args[0] == "zellij-action" &&
+        cmd.args[1] == "send" &&
+        cmd.args[2] == parent_target {
+        parent_messages.push(cmd.args[3])
+        statuses.push(if fail_parent_delivery { 1 } else { 0 })
+      } else {
+        statuses.push(0)
+      }
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if (
+        cmd.program == "gh" &&
+        cmd.args == ["repo", "view", "--json", "owner,name"]
+      ) ||
+      (
+        cmd.program == "timeout" &&
+        cmd.args == ["30s", "gh", "repo", "view", "--json", "owner,name"]
+      ) {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      if unresolved_threads == 0 {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+        )
+      }
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_one\",\"isResolved\":false,\"isOutdated\":false,\"comments\":{\"nodes\":[{\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}}]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let refresh_ci_success = async fn(now : Int64) {
+    match state.poller.get(pr_number) {
+      Some(tracked) =>
+        state.poller.restore({
+          ..tracked,
+          last_review_state: @poller.ReviewState::Approved,
+          last_ci_rollup: @poller.CiRollupStatus::InProgress,
+          last_sha: "sha-" + label,
+          copilot_issue_comment_seen: true,
+        })
+      None => fail("expected tracked PR")
+    }
+    state.refresh_pr_with(
+      pr_number,
+      now,
+      900L,
+      async fn(_pr_number, _skip_issue_comment_fetch) {
+        @async.sleep(0)
+        (
+          true,
+          @poller.ReviewState::Approved,
+          "sha-" + label,
+          @poller.CiRollupStatus::Success,
+          "looks good",
+          true,
+          true,
+        )
+      },
+      runner~,
+      capture~,
+      automerge_capture=capture,
+    )
+  }
+  refresh_ci_success(100L)
+  assert_eq(parent_messages.length(), 4)
+  fail_parent_delivery = false
+  refresh_ci_success(120L)
+  assert_eq(parent_messages.length(), 5)
+  refresh_ci_success(121L)
+  assert_eq(parent_messages.length(), 5)
+  unresolved_threads = 1
+  refresh_ci_success(130L)
+  assert_eq(parent_messages.length(), 6)
+  refresh_ci_success(491L)
+  assert_eq(parent_messages.length(), 7)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -869,6 +932,7 @@ fn blocked_gh_automerge_fixture(
   label : String,
   pr_number : Int,
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
+  automerge? : Bool = true,
 ) -> (ServerState, String, String) raise {
   let project_dir = "/tmp/choir-blocked-gh-automerge-" +
     label +
@@ -882,7 +946,7 @@ fn blocked_gh_automerge_fixture(
     ..@types.Config::default(),
     project_dir,
     terminal_session,
-    automerge: true,
+    automerge,
     review_mode,
   }
   let state = ServerState::new(config, make_recovery_provider())
