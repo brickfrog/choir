@@ -1372,6 +1372,10 @@ pub async fn dispatch(
         poller_state,
         capture~,
       )
+    ToolRequest::StatusBarState(status_bar_state_args) =>
+      interpret_status_bar_state(
+        status_bar_state_args, project_dir, registry, poller_state,
+      )
     ToolRequest::CrystallizeSpec(crystallize_args) =>
       interpret_crystallize_spec(crystallize_args, project_dir)
     ToolRequest::WriteAuditReceipt(write_audit_args) =>

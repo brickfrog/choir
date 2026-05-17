@@ -358,6 +358,12 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["caller_id"],
     },
     {
+      name: "status_bar_state",
+      description: "Return a schema-versioned per-pane status snapshot for status bar polling",
+      props: [],
+      required: [],
+    },
+    {
       name: "crystallize_spec",
       description: "Scaffold a canonical eight-section spec template (Context, Clarifications, Goals, Non-Goals, Design, Verify, Boundary, Follow-Ups) at .choir/context/<feature_slug>-spec.md. Refuses if the spec file already exists.",
       props: [

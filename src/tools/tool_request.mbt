@@ -9,6 +9,7 @@ pub(all) enum ToolRequest {
   NotifyParent(CallerMessageArgs)
   ReportUsage(ReportUsageArgs)
   WaveState(WaveStateArgs)
+  StatusBarState(StatusBarStateArgs)
   CrystallizeSpec(CrystallizeSpecArgs)
   WriteAuditReceipt(WriteAuditReceiptArgs)
   SendMessage(SendMessageArgs)
@@ -52,6 +53,7 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     NotifyParent(_) => "notify_parent"
     ReportUsage(_) => "report_usage"
     WaveState(_) => "wave_state"
+    StatusBarState(_) => "status_bar_state"
     CrystallizeSpec(_) => "crystallize_spec"
     WriteAuditReceipt(_) => "write_audit_receipt"
     SendMessage(_) => "send_message"

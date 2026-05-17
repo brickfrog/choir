@@ -86,6 +86,11 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       allowed_roles: [@types.Role::Root, @types.Role::TL],
     },
     {
+      name: "status_bar_state",
+      description: "Read schema-versioned per-pane status-bar snapshot for zjbar polling",
+      allowed_roles: all_roles,
+    },
+    {
       name: "crystallize_spec",
       description: "Scaffold a canonical eight-section spec template at .choir/context/<feature_slug>-spec.md. Refuses if the spec file already exists.",
       allowed_roles: [@types.Role::Root, @types.Role::TL],
