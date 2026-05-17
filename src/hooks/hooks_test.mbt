@@ -72,6 +72,11 @@ test "HookInput construction with all fields" {
     event: HookEvent::PreToolUse,
     session_id: Some("session-1"),
     agent_id: Some("agent-1"),
+    pr_number: None,
+    pr_url: None,
+    branch: None,
+    parent_branch: None,
+    merge_provenance: None,
     role: Some(@types.Role::Dev),
     tool_name: Some("test_tool"),
     tool_args: Some(Map::of([("key", "value")])),
@@ -88,6 +93,11 @@ test "HookInput construction with minimal fields" {
     event: HookEvent::SessionStart,
     session_id: None,
     agent_id: None,
+    pr_number: None,
+    pr_url: None,
+    branch: None,
+    parent_branch: None,
+    merge_provenance: None,
     role: None,
     tool_name: None,
     tool_args: None,
@@ -96,4 +106,60 @@ test "HookInput construction with minimal fields" {
     suspend_reason: None,
   }
   assert_eq(input.event, HookEvent::SessionStart)
+}
+
+///|
+fn assert_hook_event_round_trip(
+  event : HookEvent,
+  wire_name : String,
+  script_name : String,
+) -> Unit raise {
+  assert_eq(event.hook_event_wire_name(), wire_name)
+  assert_eq(event.script_name(), script_name)
+  @debug.assert_eq(HookEvent::from_wire_name(wire_name), Some(event))
+}
+
+///|
+test "completion hook events round-trip through wire and script names" {
+  assert_hook_event_round_trip(HookEvent::PrMerged, "PrMerged", "pr_merged.sh")
+  assert_hook_event_round_trip(
+    HookEvent::WaveComplete,
+    "WaveComplete",
+    "wave_complete.sh",
+  )
+}
+
+///|
+test "HookInput::from_json_string parses completion payload fields" {
+  let input = HookInput::{
+    event: HookEvent::PrMerged,
+    session_id: None,
+    agent_id: Some("feature/base.leaf"),
+    pr_number: Some(42),
+    pr_url: Some("https://github.test/org/repo/pull/42"),
+    branch: Some("feature/base.leaf"),
+    parent_branch: Some("feature/base"),
+    merge_provenance: Some("external_observation"),
+    role: None,
+    tool_name: None,
+    tool_args: None,
+    tool_result_status: None,
+    exit_reason: None,
+    suspend_reason: None,
+  }
+  match HookInput::from_json_string(input.to_json_string()) {
+    Some(parsed) => {
+      assert_eq(parsed.event, HookEvent::PrMerged)
+      @debug.assert_eq(parsed.agent_id, Some("feature/base.leaf"))
+      @debug.assert_eq(parsed.pr_number, Some(42))
+      @debug.assert_eq(
+        parsed.pr_url,
+        Some("https://github.test/org/repo/pull/42"),
+      )
+      @debug.assert_eq(parsed.branch, Some("feature/base.leaf"))
+      @debug.assert_eq(parsed.parent_branch, Some("feature/base"))
+      @debug.assert_eq(parsed.merge_provenance, Some("external_observation"))
+    }
+    None => fail("expected completion hook input to parse")
+  }
 }

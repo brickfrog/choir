@@ -59,6 +59,8 @@ fn hook_run() -> Unit {
       @hooks.HookEvent::SessionStop => "hook.session_stop"
       @hooks.HookEvent::BeforeModel => "hook.before_model"
       @hooks.HookEvent::AfterModel => "hook.after_model"
+      @hooks.HookEvent::PrMerged => "hook.pr_merged"
+      @hooks.HookEvent::WaveComplete => "hook.wave_complete"
     }
 
     match @config.hook_command_path(config_content, hook_key) {

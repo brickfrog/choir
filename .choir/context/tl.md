@@ -201,6 +201,14 @@ After all PRs in a wave merge (WaveComplete):
 - **Integration test**: spawn a worker to run the full test suite on your branch. Leaves test in isolation — you need to verify the combined result.
 - **Cross-leaf review**: for large waves (3+ leaves), spawn a worker to review the combined diff for inconsistencies — duplicate imports, naming conflicts, dead code, style drift. Copilot only reviewed each PR individually.
 
+### Completion Hooks
+
+`[PR MERGED]` poller delivery fires optional `.choir/hooks/pr_merged.sh`; default-branch merges (`main`/`master` fallback) also fire `.choir/hooks/wave_complete.sh`.
+Both scripts receive stdin JSON: `event`, `pr_number`, `pr_url`, `branch`, `parent_branch`, `merge_provenance`, and `agent_id`.
+Example `pr_merged.sh`: `payload=$(cat); n=$(printf '%s' "$payload" | jq -r .pr_number); url=$(printf '%s' "$payload" | jq -r .pr_url); notify-send "choir: PR #$n merged" "$url"`.
+Example `wave_complete.sh`: `payload=$(cat); paplay /usr/share/sounds/freedesktop/stereo/complete.oga; notify-send "choir: wave complete" "$(printf '%s' "$payload" | jq -r .parent_branch)"`.
+Hooks are opt-in by `.sh` existence and fail open; OS-specific notification choices stay in the shell script.
+
 ---
 
 ## Feature-Branch Workflow

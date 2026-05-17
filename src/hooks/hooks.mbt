@@ -9,6 +9,8 @@ pub(all) enum HookEvent {
   SessionStop
   BeforeModel
   AfterModel
+  PrMerged
+  WaveComplete
 } derive(Debug, Eq)
 
 ///|
@@ -21,6 +23,11 @@ pub(all) struct HookInput {
   event : HookEvent
   session_id : String?
   agent_id : String?
+  pr_number : Int?
+  pr_url : String?
+  branch : String?
+  parent_branch : String?
+  merge_provenance : String?
   role : @types.Role?
   tool_name : String?
   tool_args : Map[String, String]?
@@ -30,7 +37,7 @@ pub(all) struct HookInput {
 } derive(Debug)
 
 ///|
-fn HookEvent::hook_event_wire_name(self : HookEvent) -> String {
+pub fn HookEvent::hook_event_wire_name(self : HookEvent) -> String {
   match self {
     SessionStart => "SessionStart"
     PreToolUse => "PreToolUse"
@@ -41,6 +48,26 @@ fn HookEvent::hook_event_wire_name(self : HookEvent) -> String {
     SessionStop => "SessionStop"
     BeforeModel => "BeforeModel"
     AfterModel => "AfterModel"
+    PrMerged => "PrMerged"
+    WaveComplete => "WaveComplete"
+  }
+}
+
+///|
+pub fn HookEvent::from_wire_name(name : String) -> HookEvent? {
+  match name {
+    "SessionStart" => Some(SessionStart)
+    "PreToolUse" => Some(PreToolUse)
+    "PostToolUse" => Some(PostToolUse)
+    "AgentExit" => Some(AgentExit)
+    "AgentSuspended" => Some(AgentSuspended)
+    "AgentResumed" => Some(AgentResumed)
+    "SessionStop" => Some(SessionStop)
+    "BeforeModel" => Some(BeforeModel)
+    "AfterModel" => Some(AfterModel)
+    "PrMerged" => Some(PrMerged)
+    "WaveComplete" => Some(WaveComplete)
+    _ => None
   }
 }
 
@@ -64,6 +91,26 @@ pub fn HookInput::to_json_string(self : HookInput) -> String {
   }
   match self.agent_id {
     Some(v) => obj.set("agent_id", v.to_json())
+    None => ()
+  }
+  match self.pr_number {
+    Some(v) => obj.set("pr_number", v.to_json())
+    None => ()
+  }
+  match self.pr_url {
+    Some(v) => obj.set("pr_url", v.to_json())
+    None => ()
+  }
+  match self.branch {
+    Some(v) => obj.set("branch", v.to_json())
+    None => ()
+  }
+  match self.parent_branch {
+    Some(v) => obj.set("parent_branch", v.to_json())
+    None => ()
+  }
+  match self.merge_provenance {
+    Some(v) => obj.set("merge_provenance", v.to_json())
     None => ()
   }
   match self.role {
@@ -157,6 +204,14 @@ fn json_opt_string(obj : Map[String, Json], key : String) -> String? {
 }
 
 ///|
+fn json_opt_int(obj : Map[String, Json], key : String) -> Int? {
+  match obj.get(key) {
+    Some(Number(n, ..)) => Some(n.to_int())
+    _ => None
+  }
+}
+
+///|
 pub fn HookInput::from_json_string(line : String) -> HookInput? {
   let obj = match parse_json_object(line) {
     Some(o) => o
@@ -166,20 +221,17 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     Some(v) => v
     None => return None
   }
-  let event = match event_str {
-    "SessionStart" => HookEvent::SessionStart
-    "PreToolUse" => HookEvent::PreToolUse
-    "PostToolUse" => HookEvent::PostToolUse
-    "AgentExit" => HookEvent::AgentExit
-    "AgentSuspended" => HookEvent::AgentSuspended
-    "AgentResumed" => HookEvent::AgentResumed
-    "SessionStop" => HookEvent::SessionStop
-    "BeforeModel" => HookEvent::BeforeModel
-    "AfterModel" => HookEvent::AfterModel
-    _ => return None
+  let event = match HookEvent::from_wire_name(event_str) {
+    Some(v) => v
+    None => return None
   }
   let session_id = json_opt_string(obj, "session_id")
   let agent_id = json_opt_string(obj, "agent_id")
+  let pr_number = json_opt_int(obj, "pr_number")
+  let pr_url = json_opt_string(obj, "pr_url")
+  let branch = json_opt_string(obj, "branch")
+  let parent_branch = json_opt_string(obj, "parent_branch")
+  let merge_provenance = json_opt_string(obj, "merge_provenance")
   let role_str = json_opt_string(obj, "role")
   let role = match role_str {
     Some("root") => Some(@types.Role::Root)
@@ -206,6 +258,11 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
     event,
     session_id,
     agent_id,
+    pr_number,
+    pr_url,
+    branch,
+    parent_branch,
+    merge_provenance,
     role,
     tool_name,
     tool_args,
@@ -218,15 +275,17 @@ pub fn HookInput::from_json_string(line : String) -> HookInput? {
 ///|
 pub fn HookEvent::script_name(self : HookEvent) -> String {
   match self {
-    SessionStart => "session_start"
-    PreToolUse => "pre_tool_use"
-    PostToolUse => "post_tool_use"
-    AgentExit => "agent_exit"
-    AgentSuspended => "agent_suspended"
-    AgentResumed => "agent_resumed"
-    SessionStop => "session_stop"
-    BeforeModel => "before_model"
-    AfterModel => "after_model"
+    SessionStart => "session_start.sh"
+    PreToolUse => "pre_tool_use.sh"
+    PostToolUse => "post_tool_use.sh"
+    AgentExit => "agent_exit.sh"
+    AgentSuspended => "agent_suspended.sh"
+    AgentResumed => "agent_resumed.sh"
+    SessionStop => "session_stop.sh"
+    BeforeModel => "before_model.sh"
+    AfterModel => "after_model.sh"
+    PrMerged => "pr_merged.sh"
+    WaveComplete => "wave_complete.sh"
   }
 }
 
