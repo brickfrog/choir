@@ -69,6 +69,28 @@ test "parse_request preserves primitive arg literals" {
 }
 
 ///|
+test "is_jsonrpc_request detects JSON-RPC envelope only" {
+  assert_true(
+    is_jsonrpc_request(
+      "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}",
+    ),
+  )
+  assert_true(
+    is_jsonrpc_request(
+      "{ \"jsonrpc\" : \"2.0\", \"id\": 1, \"method\": \"initialize\" }",
+    ),
+  )
+  assert_false(
+    is_jsonrpc_request(
+      "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"status_bar_state\",\"args\":{}}",
+    ),
+  )
+  assert_false(is_jsonrpc_request("not jsonrpc"))
+  assert_false(is_jsonrpc_request("{\"jsonrpc\":\"2.0\","))
+  assert_false(is_jsonrpc_request("{\"jsonrpc\"}"))
+}
+
+///|
 test "parse_request missing field" {
   let input = "{\"role\": \"tl\", \"name\": \"fork_wave\", \"args\": {}}"
   match parse_request(input) {

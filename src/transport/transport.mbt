@@ -28,6 +28,38 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
 }
 
 ///|
+fn is_jsonrpc_key_space(c : UInt16) -> Bool {
+  c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+///|
+fn contains_jsonrpc_key(line : String) -> Bool {
+  let needle = "\"jsonrpc\""
+  let mut i = 0
+  while i + needle.length() <= line.length() {
+    if line[i:i + needle.length()] == needle {
+      let mut j = i + needle.length()
+      while j < line.length() && is_jsonrpc_key_space(line[j]) {
+        j = j + 1
+      }
+      if j < line.length() && line[j] == ':' {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+pub fn is_jsonrpc_request(line : String) -> Bool {
+  let trimmed = line.trim().to_owned()
+  trimmed.has_prefix("{") &&
+  trimmed.has_suffix("}") &&
+  contains_jsonrpc_key(trimmed)
+}
+
+///|
 pub fn format_request(req : @types.Request) -> String {
   let args_map : Map[String, Json] = {}
   req.args.each_json(fn(k, v) { args_map.set(k, v) })
