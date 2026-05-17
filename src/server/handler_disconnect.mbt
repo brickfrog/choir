@@ -125,6 +125,7 @@ fn ServerState::clear_agent_runtime_tracking(
   self.last_commit_observed_at.remove(agent_id)
   self.last_commit_observed_sha.remove(agent_id)
   self.last_commit_probe_at.remove(agent_id)
+  self.recent_poller_event_emissions.remove(agent_id)
 }
 
 ///|
@@ -1772,6 +1773,9 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   state.worker_no_handoff_stalled_emitted.set(agent_id, true)
   state.worker_no_handoff_exit_emitted.set(agent_id, true)
   state.idle_agent_warned_at_70.set(agent_id, true)
+  state.recent_poller_event_emissions.set(agent_id, {
+    "merge_ready": { content_hash: "hash", emitted_at_unix: 3L },
+  })
 
   state.clear_agent_runtime_tracking(agent_id)
 
@@ -1782,6 +1786,7 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   assert_eq(state.worker_no_handoff_stalled_emitted.contains(agent_id), false)
   assert_eq(state.worker_no_handoff_exit_emitted.contains(agent_id), false)
   assert_eq(state.idle_agent_warned_at_70.contains(agent_id), false)
+  assert_eq(state.recent_poller_event_emissions.contains(agent_id), false)
   ignore(@sys.rm_rf(project_dir))
 }
 
