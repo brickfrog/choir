@@ -28,6 +28,16 @@ pub fn parse_request(data : String) -> Result[@types.Request, String] {
 }
 
 ///|
+pub fn is_jsonrpc_request(line : String) -> Bool {
+  let json = @json.parse(line) catch { _ => return false }
+  guard json is Object(obj) else { return false }
+  match obj.get("jsonrpc") {
+    Some(String(_)) => true
+    _ => false
+  }
+}
+
+///|
 pub fn format_request(req : @types.Request) -> String {
   let args_map : Map[String, Json] = {}
   req.args.each_json(fn(k, v) { args_map.set(k, v) })

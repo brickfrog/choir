@@ -121,6 +121,218 @@ fn lifecycle_agent_id_for_register(req : @types.Request) -> String? {
 }
 
 ///|
+struct ServeRequestLineResult {
+  response_line : String?
+  request_name : String?
+  saw_register : Bool
+  connected_agent_id : String?
+  reload_request : @types.Request?
+}
+
+///|
+async fn serve_handle_internal_request(
+  state : @server.ServerState,
+  req : @types.Request,
+) -> @types.Response {
+  state.handle(req) catch {
+    e => {
+      @moontrace.error("handler error", fields=[
+        @moontrace.field("request", req.name),
+        @moontrace.field("error", e.to_string()),
+      ])
+      @types.Response::Err("internal error: " + e.to_string())
+    }
+  }
+}
+
+///|
+fn serve_jsonrpc_response_line(resp : @mcp.JsonRpcResponse) -> String {
+  resp.to_json_string() + "\n"
+}
+
+///|
+async fn serve_handle_jsonrpc_request_line(
+  state : @server.ServerState,
+  line : String,
+  allow_reload : Bool,
+) -> ServeRequestLineResult {
+  match @mcp.parse_jsonrpc_request(line) {
+    Ok(rpc) => {
+      let id = match rpc.id {
+        Some(id) => id
+        None =>
+          return {
+            response_line: None,
+            request_name: Some(rpc.req_method),
+            saw_register: false,
+            connected_agent_id: None,
+            reload_request: None,
+          }
+      }
+      if rpc.req_method == @mcp.method_initialize {
+        return {
+          response_line: Some(
+            serve_jsonrpc_response_line(@mcp.initialize_response(id)),
+          ),
+          request_name: Some(rpc.req_method),
+          saw_register: false,
+          connected_agent_id: None,
+          reload_request: None,
+        }
+      }
+      if rpc.req_method == @mcp.method_tools_list {
+        return {
+          response_line: Some(
+            serve_jsonrpc_response_line(
+              @mcp.tools_list_response(id, @types.Role::Root),
+            ),
+          ),
+          request_name: Some(rpc.req_method),
+          saw_register: false,
+          connected_agent_id: None,
+          reload_request: None,
+        }
+      }
+      match @mcp.to_internal_request(rpc, @types.Role::Root) {
+        Ok(req) => {
+          if !allow_reload && serve_is_reload_request(req) {
+            return {
+              response_line: Some(
+                serve_jsonrpc_response_line(
+                  @mcp.from_internal_response(
+                    id,
+                    @types.Response::Err(
+                      "server_reload requires the UDS transport",
+                    ),
+                  ),
+                ),
+              ),
+              request_name: Some(req.name),
+              saw_register: false,
+              connected_agent_id: None,
+              reload_request: None,
+            }
+          }
+          let resp = serve_handle_internal_request(state, req)
+          {
+            response_line: Some(
+              serve_jsonrpc_response_line(@mcp.from_internal_response(id, resp)),
+            ),
+            request_name: Some(req.name),
+            saw_register: false,
+            connected_agent_id: None,
+            reload_request: if allow_reload &&
+              serve_is_reload_request(req) &&
+              resp.is_ok() {
+              Some(req)
+            } else {
+              None
+            },
+          }
+        }
+        Err(e) =>
+          {
+            response_line: Some(
+              serve_jsonrpc_response_line(
+                @mcp.error_response(id, e.code, e.message),
+              ),
+            ),
+            request_name: Some(rpc.req_method),
+            saw_register: false,
+            connected_agent_id: None,
+            reload_request: None,
+          }
+      }
+    }
+    Err(e) => {
+      @moontrace.warn("jsonrpc parse error", fields=[
+        @moontrace.field("line", line),
+        @moontrace.field("error", e.message),
+      ])
+      {
+        response_line: Some(
+          serve_jsonrpc_response_line(
+            @mcp.error_response(Number(0), e.code, e.message),
+          ),
+        ),
+        request_name: None,
+        saw_register: false,
+        connected_agent_id: None,
+        reload_request: None,
+      }
+    }
+  }
+}
+
+///|
+async fn serve_handle_custom_request_line(
+  state : @server.ServerState,
+  line : String,
+  allow_reload : Bool,
+) -> ServeRequestLineResult {
+  match @transport.parse_request(line) {
+    Ok(req) => {
+      let saw_register = req.req_method == "register"
+      let connected_agent_id = if saw_register {
+        lifecycle_agent_id_for_register(req)
+      } else {
+        None
+      }
+      if !allow_reload && serve_is_reload_request(req) {
+        let resp = @types.Response::Err(
+          "server_reload requires the UDS transport",
+        )
+        return {
+          response_line: Some(@transport.format_response(resp) + "\n"),
+          request_name: Some(req.name),
+          saw_register,
+          connected_agent_id,
+          reload_request: None,
+        }
+      }
+      let resp = serve_handle_internal_request(state, req)
+      {
+        response_line: Some(@transport.format_response(resp) + "\n"),
+        request_name: Some(req.name),
+        saw_register,
+        connected_agent_id,
+        reload_request: if allow_reload &&
+          serve_is_reload_request(req) &&
+          resp.is_ok() {
+          Some(req)
+        } else {
+          None
+        },
+      }
+    }
+    Err(err) => {
+      @moontrace.warn("parse error", fields=[@moontrace.field("line", line)])
+      let resp = @types.Response::Err("parse error: " + err)
+      {
+        response_line: Some(@transport.format_response(resp) + "\n"),
+        request_name: None,
+        saw_register: false,
+        connected_agent_id: None,
+        reload_request: None,
+      }
+    }
+  }
+}
+
+///|
+async fn serve_handle_request_line(
+  state : @server.ServerState,
+  line : String,
+  allow_reload : Bool,
+) -> ServeRequestLineResult {
+  if @transport.is_jsonrpc_request(line) {
+    serve_handle_jsonrpc_request_line(state, line, allow_reload)
+  } else {
+    serve_handle_custom_request_line(state, line, allow_reload)
+  }
+}
+
+///|
 test "lifecycle_agent_id_for_register ignores one-shot clients" {
   let req : @types.Request = {
     req_method: "register",
@@ -146,6 +358,164 @@ test "lifecycle_agent_id_for_register keeps session clients" {
     }),
   }
   @debug.assert_eq(lifecycle_agent_id_for_register(req), Some("main.leaf"))
+}
+
+///|
+fn serve_test_project_dir(label : String) -> String {
+  "/tmp/choir-uds-jsonrpc-" +
+  label +
+  "-" +
+  @sys.get_pid().to_string() +
+  "-" +
+  @env.now().reinterpret_as_int64().to_string()
+}
+
+///|
+fn serve_test_state_with_root(label : String) -> (@server.ServerState, String) {
+  let project_dir = serve_test_project_dir(label)
+  ignore(@sys.rm_rf(project_dir))
+  ignore(@sys.create_dir_all(project_dir))
+  let state = @server.ServerState::new(
+    { ..@types.Config::default(), project_dir, terminal_session: "uds-jsonrpc" },
+    @server.make_recovery_provider(),
+  )
+  ignore(
+    state.registry.upsert({
+      agent_id: "root",
+      role: @types.Role::Root,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: @types.LocalTarget::parse(
+        "zellij-pane:uds-jsonrpc:terminal_1",
+      ),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  (state, project_dir)
+}
+
+///|
+fn serve_test_json_object(line : String) -> Result[Map[String, Json], String] {
+  let parsed = @json.parse(line.trim().to_owned()) catch {
+    _ => return Err("expected JSON response")
+  }
+  guard parsed is Object(obj) else {
+    return Err("expected JSON object response")
+  }
+  Ok(obj)
+}
+
+///|
+async test "serve JSON-RPC initialize returns MCP handshake shape" {
+  let (state, project_dir) = serve_test_state_with_root("initialize")
+  let result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}", true,
+  )
+  match result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      @debug.assert_eq(obj.get("jsonrpc"), Some("2.0".to_json()))
+      @debug.assert_eq(obj.get("id"), Some((1).to_json()))
+      guard obj.get("result") is Some(Object(body)) else {
+        fail("expected initialize result")
+      }
+      @debug.assert_eq(
+        body.get("protocolVersion"),
+        Some("2024-11-05".to_json()),
+      )
+      guard body.get("serverInfo") is Some(Object(server_info)) else {
+        fail("expected serverInfo")
+      }
+      @debug.assert_eq(server_info.get("name"), Some("choir".to_json()))
+    }
+    None => fail("expected initialize response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve UDS JSON-RPC tools call returns status bar structured content" {
+  let (state, project_dir) = serve_test_state_with_root("status-bar-jsonrpc")
+  let result = serve_handle_request_line(
+    state, "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"status_bar_state\",\"arguments\":{}}}",
+    true,
+  )
+  @debug.assert_eq(result.request_name, Some("status_bar_state"))
+  assert_false(result.saw_register)
+  @debug.assert_eq(result.connected_agent_id, None)
+  match result.response_line {
+    Some(line) => {
+      let obj = match serve_test_json_object(line) {
+        Ok(obj) => obj
+        Err(e) => {
+          fail(e)
+          return
+        }
+      }
+      @debug.assert_eq(obj.get("jsonrpc"), Some("2.0".to_json()))
+      @debug.assert_eq(obj.get("id"), Some((7).to_json()))
+      guard obj.get("result") is Some(Object(result_obj)) else {
+        fail("expected tools/call result")
+      }
+      @debug.assert_eq(result_obj.get("isError"), Some(false.to_json()))
+      guard result_obj.get("structuredContent") is Some(Object(snapshot)) else {
+        fail("expected structuredContent object")
+      }
+      @debug.assert_eq(snapshot.get("schema_version"), Some((1).to_json()))
+      guard snapshot.get("panes") is Some(Array(panes)) else {
+        fail("expected panes array")
+      }
+      assert_eq(panes.length(), 1)
+      guard panes[0] is Object(pane) else { fail("expected pane object") }
+      @debug.assert_eq(pane.get("zellij_pane_id"), Some((1).to_json()))
+      @debug.assert_eq(pane.get("agent_id"), Some("root".to_json()))
+      @debug.assert_eq(pane.get("role"), Some("root".to_json()))
+    }
+    None => fail("expected status_bar_state response")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "serve UDS custom envelope still parses and dispatches" {
+  let (state, project_dir) = serve_test_state_with_root("custom-envelope")
+  let result = serve_handle_request_line(
+    state, "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"status_bar_state\",\"args\":{}}",
+    true,
+  )
+  @debug.assert_eq(result.request_name, Some("status_bar_state"))
+  match result.response_line {
+    Some(line) =>
+      match @transport.parse_response(line.trim().to_owned()) {
+        Ok(resp) => {
+          assert_true(resp.is_ok())
+          match resp.ok_payload() {
+            Some(fields) => {
+              let body = fields.to_json_map()
+              @debug.assert_eq(body.get("schema_version"), Some((1).to_json()))
+              guard body.get("panes") is Some(Array(panes)) else {
+                fail("expected panes array")
+              }
+              assert_eq(panes.length(), 1)
+            }
+            None => fail("expected ok payload")
+          }
+        }
+        Err(e) => fail("expected custom response to parse: " + e)
+      }
+    None => fail("expected custom response")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -193,38 +563,13 @@ async fn serve_handle_connection(
           }
           continue
         }
-        let req_res = @transport.parse_request(line)
-        match req_res {
-          Ok(req) => {
-            if serve_is_reload_request(req) {
-              let resp = @types.Response::Err(
-                "server_reload requires the UDS transport",
-              )
-              conn.write(@utf8.encode(@transport.format_response(resp) + "\n"))
-              continue
-            }
-            if req.req_method == "register" {
-              connected_agent_id = lifecycle_agent_id_for_register(req)
-            }
-            let resp = state.handle(req) catch {
-              e => {
-                @moontrace.error("handler error", fields=[
-                  @moontrace.field("request", req.name),
-                  @moontrace.field("error", e.to_string()),
-                ])
-                @types.Response::Err("internal error: " + e.to_string())
-              }
-            }
-            let resp_str = @transport.format_response(resp) + "\n"
-            conn.write(@utf8.encode(resp_str))
-          }
-          Err(err) => {
-            @moontrace.warn("parse error", fields=[
-              @moontrace.field("line", line),
-            ])
-            let resp = @types.Response::Err("parse error: " + err)
-            conn.write(@utf8.encode(@transport.format_response(resp) + "\n"))
-          }
+        let result = serve_handle_request_line(state, line, false)
+        if result.saw_register {
+          connected_agent_id = result.connected_agent_id
+        }
+        match result.response_line {
+          Some(resp_str) => conn.write(@utf8.encode(resp_str))
+          None => ()
         }
       } else {
         i = i + 1
@@ -263,15 +608,7 @@ async fn serve_handle_uds_request_line(
   line : String,
   req : @types.Request,
 ) -> Unit {
-  let resp = state.handle(req) catch {
-    e => {
-      @moontrace.error("handler error", fields=[
-        @moontrace.field("request", req.name),
-        @moontrace.field("error", e.to_string()),
-      ])
-      @types.Response::Err("internal error: " + e.to_string())
-    }
-  }
+  let resp = serve_handle_internal_request(state, req)
   let resp_str = @transport.format_response(resp) + "\n"
   @moontrace.trace("request", fields=[@moontrace.field("line", line)])
   @moontrace.trace("response", fields=[@moontrace.field("body", resp_str)])
@@ -279,6 +616,33 @@ async fn serve_handle_uds_request_line(
   client.busy = false
   if serve_is_reload_request(req) && resp.is_ok() {
     serve_replace_self_after_reload_ack(server_fd, state, req)
+  }
+}
+
+///|
+async fn serve_handle_uds_jsonrpc_request_line(
+  client : ServeUDSClient,
+  state : @server.ServerState,
+  server_fd : Int,
+  line : String,
+) -> Unit {
+  let result = serve_handle_jsonrpc_request_line(state, line, true)
+  match result.request_name {
+    Some(name) => client.last_request_name = Some(name)
+    None => ()
+  }
+  match result.response_line {
+    Some(resp_str) => {
+      @moontrace.trace("request", fields=[@moontrace.field("line", line)])
+      @moontrace.trace("response", fields=[@moontrace.field("body", resp_str)])
+      serve_write_all_uds(client.fd, @utf8.encode(resp_str))
+    }
+    None => ()
+  }
+  client.busy = false
+  match result.reload_request {
+    Some(req) => serve_replace_self_after_reload_ack(server_fd, state, req)
+    None => ()
   }
 }
 
@@ -313,27 +677,39 @@ fn serve_handle_uds_connection(
     while i < client.read_pos {
       if client.buf[i] == (10 : Byte) {
         let line = serve_fixed_array_slice_to_string(client.buf, 0, i)
-        let req_res = @transport.parse_request(line)
-        match req_res {
-          Ok(req) => {
-            if req.req_method == "register" {
-              client.connected_agent_id = lifecycle_agent_id_for_register(req)
-            }
-            client.last_request_name = Some(req.name)
-            client.busy = true
-            spawn_request(async fn() {
-              serve_handle_uds_request_line(client, state, server_fd, line, req)
-            })
-          }
-          Err(err) => {
-            @moontrace.warn("parse error", fields=[
-              @moontrace.field("line", line),
-            ])
-            let resp = @types.Response::Err("parse error: " + err)
-            serve_write_all_uds(
-              client.fd,
-              @utf8.encode(@transport.format_response(resp) + "\n"),
+        if @transport.is_jsonrpc_request(line) {
+          client.last_request_name = Some("jsonrpc")
+          client.busy = true
+          spawn_request(async fn() {
+            serve_handle_uds_jsonrpc_request_line(
+              client, state, server_fd, line,
             )
+          })
+        } else {
+          let req_res = @transport.parse_request(line)
+          match req_res {
+            Ok(req) => {
+              if req.req_method == "register" {
+                client.connected_agent_id = lifecycle_agent_id_for_register(req)
+              }
+              client.last_request_name = Some(req.name)
+              client.busy = true
+              spawn_request(async fn() {
+                serve_handle_uds_request_line(
+                  client, state, server_fd, line, req,
+                )
+              })
+            }
+            Err(err) => {
+              @moontrace.warn("parse error", fields=[
+                @moontrace.field("line", line),
+              ])
+              let resp = @types.Response::Err("parse error: " + err)
+              serve_write_all_uds(
+                client.fd,
+                @utf8.encode(@transport.format_response(resp) + "\n"),
+              )
+            }
           }
         }
         let remaining = client.read_pos - (i + 1)
