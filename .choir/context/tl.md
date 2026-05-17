@@ -142,6 +142,19 @@ bd init --skip-agents --skip-hooks --non-interactive --role maintainer
   EOF
   ```
 
+### Beads Auto-Export Warning
+
+`bd` write commands may print
+`Warning: auto-export: git add failed: exit status 1` when
+`.beads/issues.jsonl` is ignored by git. Treat this as benign when the `bd`
+command itself succeeded: auto-export wrote the file, but the follow-up
+`git add` refused an ignored path. For repos that keep Beads exports local,
+run `bd init --setup-exclude` from the project root to register the ignored
+export with Beads and silence the warning. For repos that commit shared Beads
+state, stop ignoring `.beads/issues.jsonl` instead. If an older `bd` lacks
+retroactive `--setup-exclude`, use `bd config set export.git-add false` or
+`BD_EXPORT_GIT_ADD=false` until the project wrapper owns the policy.
+
 ## Decomposition Principles
 
 - **Vertical slices, not horizontal layers.** A leaf that adds a type + its logic + its tests is better than one leaf for types, one for logic, one for tests. Vertical slices can't conflict.

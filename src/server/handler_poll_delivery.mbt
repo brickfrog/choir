@@ -1,4 +1,39 @@
 ///|
+pub const DEDUP_WINDOW_SEC : Int64 = 60L
+
+///|
+pub const HEARTBEAT_WINDOW_SEC : Int64 = 300L
+
+///|
+pub(all) struct RecentEmission {
+  content_hash : String
+  emitted_at_unix : Int64
+} derive(Debug, Eq)
+
+///|
+pub fn poller_event_should_dedup(
+  prior : RecentEmission?,
+  current_hash : String,
+  now : Int64,
+  dedup_window : Int64,
+  heartbeat_window : Int64,
+) -> Bool {
+  match prior {
+    Some(emission) => {
+      let raw_elapsed = now - emission.emitted_at_unix
+      let elapsed = if raw_elapsed < 0L { 0L } else { raw_elapsed }
+      let suppress_window = if heartbeat_window > 0L {
+        heartbeat_window
+      } else {
+        dedup_window
+      }
+      emission.content_hash == current_hash && elapsed < suppress_window
+    }
+    None => false
+  }
+}
+
+///|
 fn render_parent_next_action(
   decision : @poller.PrStateNotificationDecision,
   pr_number : Int,
@@ -82,6 +117,7 @@ pub fn parent_poll_event_message(
   task_contract? : @types.TaskContract? = None,
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  precomputed_decision? : @poller.PrStateNotificationDecision? = None,
 ) -> (String, @types.Status)? {
   let agent_id = tracked.agent_id
   let branch = tracked.branch
@@ -99,15 +135,19 @@ pub fn parent_poll_event_message(
     ReviewCommented(_, _) | PRMerged(_) => return None
     _ => ()
   }
-  let notification_decision = parent_pr_state_notification_decision(
-    project_dir,
-    tracked,
-    event,
-    unresolved_threads_for_recheck,
-    task_contract~,
-    merge_mode~,
-    review_mode~,
-  )
+  let notification_decision = match precomputed_decision {
+    Some(decision) => decision
+    None =>
+      parent_pr_state_notification_decision(
+        project_dir,
+        tracked,
+        event,
+        unresolved_threads_for_recheck,
+        task_contract~,
+        merge_mode~,
+        review_mode~,
+      )
+  }
   match event {
     PRReady(n) => {
       let message = "[PR READY] " +
@@ -435,6 +475,130 @@ fn poll_event_is_external_merge(event : @poller.PollEvent) -> Bool {
 }
 
 ///|
+fn poller_event_name(event : @poller.PollEvent) -> String {
+  match event {
+    ReviewReceived(_, _) => "review_received"
+    ReviewCommented(_, _) => "review_commented"
+    PRReady(_) => "pr_ready"
+    FixesPushed(_) => "fixes_pushed"
+    ReviewTimeout(_) => "review_timeout"
+    CIFailed(_) => "ci_failed"
+    CIFailureCleared(_) => "ci_failure_cleared"
+    CILatestHeadRollupSucceeded(_) => "ci_latest_head_rollup_succeeded"
+    CopilotIssueCommentSeen(_) => "copilot_issue_comment_seen"
+    PRMerged(_) => "pr_merged"
+    MergeReady(_) => "merge_ready"
+    ReviewThreadsResolved(_) => "review_threads_resolved"
+  }
+}
+
+///|
+fn poller_event_content_hash(
+  event_name : String,
+  agent_id : String,
+  head_sha : String,
+  review_state : @poller.ReviewState,
+  ci_rollup : @poller.CiRollupStatus,
+  unresolved_thread_count : Int?,
+  merge_decision_kind : String,
+) -> String {
+  let unresolved = match unresolved_thread_count {
+    Some(count) => count.to_string()
+    None => "unknown"
+  }
+  let input = "event_name=" +
+    event_name +
+    "\nagent_id=" +
+    agent_id +
+    "\nhead_sha=" +
+    head_sha +
+    "\nreview_state=" +
+    review_state.to_wire_string() +
+    "\nci_rollup=" +
+    ci_rollup.to_wire_string() +
+    "\nunresolved_thread_count=" +
+    unresolved +
+    "\nmerge_decision_kind=" +
+    merge_decision_kind
+  @runtime.simple_hash(input).to_string()
+}
+
+///|
+fn poller_parent_event_content_hash(
+  tracked : @poller.TrackedPR,
+  event : @poller.PollEvent,
+  unresolved_threads_for_recheck : Int?,
+  merge_decision_kind : String,
+) -> (String, String) {
+  let event_name = poller_event_name(event)
+  (
+    event_name,
+    poller_event_content_hash(
+      event_name,
+      tracked.agent_id,
+      tracked.last_sha,
+      tracked.last_review_state,
+      tracked.last_ci_rollup,
+      unresolved_threads_for_recheck,
+      merge_decision_kind,
+    ),
+  )
+}
+
+///|
+fn ServerState::recent_poller_event_emissions_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> Map[String, RecentEmission] {
+  match self.recent_poller_event_emissions.get(agent_id) {
+    Some(existing) => existing
+    None => {
+      let created : Map[String, RecentEmission] = {}
+      self.recent_poller_event_emissions.set(agent_id, created)
+      created
+    }
+  }
+}
+
+///|
+fn ServerState::poller_parent_event_should_dedup_hash(
+  self : ServerState,
+  agent_id : String,
+  event_name : String,
+  content_hash : String,
+  now : Int64,
+) -> Bool {
+  let emissions = self.recent_poller_event_emissions_for_agent(agent_id)
+  if poller_event_should_dedup(
+      emissions.get(event_name),
+      content_hash,
+      now,
+      DEDUP_WINDOW_SEC,
+      HEARTBEAT_WINDOW_SEC,
+    ) {
+    @moontrace.debug("dedup skip", fields=[
+      @moontrace.field("agent", agent_id),
+      @moontrace.field("event", event_name),
+    ])
+    true
+  } else {
+    false
+  }
+}
+
+///|
+fn ServerState::record_poller_parent_event_emission(
+  self : ServerState,
+  agent_id : String,
+  event_name : String,
+  content_hash : String,
+  now : Int64,
+) -> Unit {
+  let emissions = self.recent_poller_event_emissions_for_agent(agent_id)
+  emissions.set(event_name, { content_hash, emitted_at_unix: now })
+}
+
+///|
 fn lifecycle_suppresses_poller_followups(
   lifecycle : @phase.AgentLifecycle,
 ) -> Bool {
@@ -577,6 +741,8 @@ pub fn leaf_poll_review_injection_message(
 priv struct PendingPollParentRow {
   tracked : @poller.TrackedPR
   leaf_agent_id : String
+  event_name : String
+  content_hash : String
   message : String
   status : @types.Status
   category : @poller.TlTrackedPrWorkflowCategory
@@ -736,12 +902,38 @@ fn rollup_merge_mode(
 }
 
 ///|
+fn ServerState::record_poller_parent_row_emission(
+  self : ServerState,
+  row : PendingPollParentRow,
+  now : Int64,
+) -> Unit {
+  self.record_poller_parent_event_emission(
+    row.leaf_agent_id,
+    row.event_name,
+    row.content_hash,
+    now,
+  )
+}
+
+///|
+fn ServerState::record_poller_parent_row_emissions(
+  self : ServerState,
+  rows : Array[PendingPollParentRow],
+  now : Int64,
+) -> Unit {
+  for row in rows {
+    self.record_poller_parent_row_emission(row, now)
+  }
+}
+
+///|
 pub fn ServerState::plan_poll_event_deliveries(
   self : ServerState,
   event : @poller.PollEvent,
   agent_id : String,
   unresolved_threads_for_recheck : Int?,
   skip_parent? : Bool = false,
+  now? : Int64 = @poller.now_sec(),
 ) -> Array[PlannedDelivery] {
   let deliveries : Array[PlannedDelivery] = []
   let tracked = self.poller.get(poll_event_pr_number(event))
@@ -799,49 +991,76 @@ pub fn ServerState::plan_poll_event_deliveries(
   // Parent notification — TL triage / merge signals (comment-only reviews: leaf only)
   if !skip_parent {
     match tracked {
-      Some(pr) =>
+      Some(pr) => {
+        let merge_mode = @poller.merge_operator_mode_from_automerge(
+          automerge_enabled_for_agent(self.config, local_cfg),
+        )
+        let notification_decision = parent_pr_state_notification_decision(
+          self.config.project_dir,
+          pr,
+          event,
+          unresolved_threads_for_recheck,
+          merge_mode~,
+          review_mode~,
+        )
         match
           parent_poll_event_message(
             pr,
             self.config.project_dir,
             event,
             unresolved_threads_for_recheck,
-            merge_mode=@poller.merge_operator_mode_from_automerge(
-              automerge_enabled_for_agent(self.config, local_cfg),
-            ),
+            merge_mode~,
             review_mode~,
+            precomputed_decision=Some(notification_decision),
           ) {
-          Some((message, status)) =>
-            try {
-              let parent = self.resolve_parent_for_delivery(leaf_agent_id)
-              ignore(
-                @poller.append_delivery_log_line(
-                  self.append_file,
-                  self.config.project_dir,
-                  "[poller-parent] agent=" +
-                  leaf_agent_id +
-                  " parent=" +
-                  parent.agent_id.to_string() +
-                  " terminal_target=" +
-                  parent.terminal_target
-                  .map(@types.LocalTarget::to_string)
-                  .unwrap_or("NONE"),
-                ),
-              )
-              deliveries.push({
-                recipient_id: parent.agent_id.to_string(),
-                sender_id: leaf_agent_id,
-                body: message,
-                status,
-                delivery: @message.plan_delivery(
-                  parent, leaf_agent_id, message, status,
-                ),
-              })
-            } catch {
-              _ => ()
+          Some((message, status)) => {
+            let (event_name, content_hash) = poller_parent_event_content_hash(
+              pr,
+              event,
+              unresolved_threads_for_recheck,
+              notification_decision.policy_decision.label(),
+            )
+            if self.poller_parent_event_should_dedup_hash(
+                pr.agent_id,
+                event_name,
+                content_hash,
+                now,
+              ) {
+              ()
+            } else {
+              try {
+                let parent = self.resolve_parent_for_delivery(leaf_agent_id)
+                ignore(
+                  @poller.append_delivery_log_line(
+                    self.append_file,
+                    self.config.project_dir,
+                    "[poller-parent] agent=" +
+                    leaf_agent_id +
+                    " parent=" +
+                    parent.agent_id.to_string() +
+                    " terminal_target=" +
+                    parent.terminal_target
+                    .map(@types.LocalTarget::to_string)
+                    .unwrap_or("NONE"),
+                  ),
+                )
+                deliveries.push({
+                  recipient_id: parent.agent_id.to_string(),
+                  sender_id: leaf_agent_id,
+                  body: message,
+                  status,
+                  delivery: @message.plan_delivery(
+                    parent, leaf_agent_id, message, status,
+                  ),
+                })
+              } catch {
+                _ => ()
+              }
             }
+          }
           None => ()
         }
+      }
       None => ()
     }
   }
@@ -1280,6 +1499,7 @@ async fn ServerState::retry_auto_resolve_outdated_review_threads(
 ///|
 async fn deliver_pending_poll_events(
   state : ServerState,
+  now : Int64,
   pending_events : Array[@poller.PollEvent],
   pending_agent_ids : Array[String],
   runner : async (Array[@workspace.Command]) -> Array[Int],
@@ -1383,6 +1603,7 @@ async fn deliver_pending_poll_events(
             agent_id,
             unresolved_threads,
             skip_parent=true,
+            now~,
           ) {
           ignore(state.durable_dispatch_planned(planned, runner))
         }
@@ -1408,21 +1629,33 @@ async fn deliver_pending_poll_events(
             continue
           }
         }
+        let task_contract = task_contract_for_agent(
+          state.config.project_dir,
+          state.registry,
+          pr.agent_id,
+        )
+        let merge_mode = @poller.merge_operator_mode_from_automerge(
+          automerge_enabled,
+        )
+        let notification_decision = parent_pr_state_notification_decision(
+          state.config.project_dir,
+          pr,
+          event,
+          unresolved_threads,
+          task_contract~,
+          merge_mode~,
+          review_mode~,
+        )
         match
           parent_poll_event_message(
             pr,
             state.config.project_dir,
             event,
             unresolved_threads,
-            task_contract=task_contract_for_agent(
-              state.config.project_dir,
-              state.registry,
-              pr.agent_id,
-            ),
-            merge_mode=@poller.merge_operator_mode_from_automerge(
-              automerge_enabled,
-            ),
+            task_contract~,
+            merge_mode~,
             review_mode~,
+            precomputed_decision=Some(notification_decision),
           ) {
           Some((message, status)) => {
             let category = @poller.plan_tl_poll_event_parent(
@@ -1431,16 +1664,31 @@ async fn deliver_pending_poll_events(
               unresolved_threads,
               review_mode~,
             )
-            pending_parent_rows.push({
-              tracked: pr,
-              leaf_agent_id: pr.agent_id,
-              message,
-              status,
-              category,
-              merge_mode: @poller.merge_operator_mode_from_automerge(
-                automerge_enabled,
-              ),
-            })
+            let (event_name, content_hash) = poller_parent_event_content_hash(
+              pr,
+              event,
+              unresolved_threads,
+              notification_decision.policy_decision.label(),
+            )
+            if state.poller_parent_event_should_dedup_hash(
+                pr.agent_id,
+                event_name,
+                content_hash,
+                now,
+              ) {
+              ()
+            } else {
+              pending_parent_rows.push({
+                tracked: pr,
+                leaf_agent_id: pr.agent_id,
+                event_name,
+                content_hash,
+                message,
+                status,
+                category,
+                merge_mode,
+              })
+            }
           }
           None => ()
         }
@@ -1497,9 +1745,11 @@ async fn deliver_pending_poll_events(
             rollup.wave.to_string(),
           ),
         )
-        ignore(
-          state.durable_deliver_to_agent(parent, sender, body, status, runner),
-        )
+        match
+          state.durable_deliver_to_agent(parent, sender, body, status, runner) {
+          Ok(_) => state.record_poller_parent_row_emissions(matched, now)
+          Err(_) => ()
+        }
       } catch {
         _ => ()
       }
@@ -1524,15 +1774,17 @@ async fn deliver_pending_poll_events(
             .unwrap_or("NONE"),
           ),
         )
-        ignore(
+        match
           state.durable_deliver_to_agent(
             parent,
             row.leaf_agent_id,
             row.message,
             row.status,
             runner,
-          ),
-        )
+          ) {
+          Ok(_) => state.record_poller_parent_row_emission(row, now)
+          Err(_) => ()
+        }
       } catch {
         _ => ()
       }
@@ -1903,6 +2155,7 @@ pub async fn ServerState::process_poller_tick_with(
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(
     self,
+    now,
     pending_events,
     pending_agent_ids,
     runner,
@@ -1951,7 +2204,9 @@ pub async fn ServerState::process_poller_tick(
     append_file, project_dir, pending_events, agents_observed, tick_agents_failed,
   )
   deliver_orphaned_pr_notifications(self, runner)
-  deliver_pending_poll_events(self, pending_events, pending_agent_ids, runner)
+  deliver_pending_poll_events(
+    self, now, pending_events, pending_agent_ids, runner,
+  )
   deliver_poller_stall_notifications(self, now, runner)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
@@ -2002,6 +2257,7 @@ pub async fn ServerState::refresh_pr_with(
   let had_pending_events = pending_events.length() > 0
   deliver_pending_poll_events(
     self,
+    now,
     pending_events,
     pending_agent_ids,
     runner,
