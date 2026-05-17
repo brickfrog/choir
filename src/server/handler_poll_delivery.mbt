@@ -475,6 +475,132 @@ fn poll_event_is_external_merge(event : @poller.PollEvent) -> Bool {
 }
 
 ///|
+fn completion_hook_path(
+  project_dir : String,
+  event : @hooks.HookEvent,
+) -> String {
+  project_dir + "/.choir/hooks/" + event.script_name()
+}
+
+///|
+pub fn pr_merged_completion_hook_input(
+  event : @hooks.HookEvent,
+  pr : @poller.TrackedPR,
+) -> @hooks.HookInput {
+  {
+    event,
+    session_id: None,
+    agent_id: Some(pr.agent_id),
+    pr_number: Some(pr.pr_number),
+    pr_url: Some(pr.pr_url),
+    branch: Some(pr.branch),
+    parent_branch: Some(pr.parent_branch),
+    merge_provenance: Some("external_observation"),
+    role: None,
+    tool_name: None,
+    tool_args: None,
+    tool_result_status: None,
+    exit_reason: None,
+    suspend_reason: None,
+  }
+}
+
+///|
+fn parse_detected_default_branch(output : String) -> String? {
+  let trimmed = output.trim().to_owned()
+  let prefix = "origin/"
+  if trimmed.has_prefix(prefix) {
+    let branch = trimmed[prefix.length():].to_owned()
+    if branch == "" {
+      None
+    } else {
+      Some(branch)
+    }
+  } else if trimmed == "" {
+    None
+  } else {
+    Some(trimmed)
+  }
+}
+
+///|
+async fn detect_default_branch_for_wave_complete(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let cmd : @workspace.Command = {
+    program: "git",
+    args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    workdir: Some(project_dir),
+  }
+  let (exit_code, output) = capture(cmd)
+  if exit_code == 0 {
+    parse_detected_default_branch(output)
+  } else {
+    None
+  }
+}
+
+///|
+async fn pr_merged_parent_branch_is_wave_complete(
+  project_dir : String,
+  parent_branch : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Bool {
+  if parent_branch == "" {
+    return false
+  }
+  match detect_default_branch_for_wave_complete(project_dir, capture) {
+    Some(default_branch) => parent_branch == default_branch
+    None => parent_branch == "main" || parent_branch == "master"
+  }
+}
+
+///|
+pub async fn fire_pr_merged_completion_hooks(
+  project_dir : String,
+  pr : @poller.TrackedPR,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  path_exists? : (String) -> Bool = @sys.path_entry_exists,
+) -> Unit {
+  if path_exists(completion_hook_path(project_dir, @hooks.HookEvent::PrMerged)) {
+    @tools.fire_hook_async(
+      @hooks.HookEvent::PrMerged,
+      pr_merged_completion_hook_input(@hooks.HookEvent::PrMerged, pr),
+      project_dir,
+      hook_capture~,
+      path_exists~,
+    ) catch {
+      _ => ()
+    }
+  }
+  if path_exists(
+      completion_hook_path(project_dir, @hooks.HookEvent::WaveComplete),
+    ) {
+    let is_wave_complete = pr_merged_parent_branch_is_wave_complete(
+      project_dir,
+      pr.parent_branch,
+      capture,
+    ) catch {
+      _ => false
+    }
+    if !is_wave_complete {
+      return
+    }
+    @tools.fire_hook_async(
+      @hooks.HookEvent::WaveComplete,
+      pr_merged_completion_hook_input(@hooks.HookEvent::WaveComplete, pr),
+      project_dir,
+      hook_capture~,
+      path_exists~,
+    ) catch {
+      _ => ()
+    }
+  }
+}
+
+///|
 fn poller_event_name(event : @poller.PollEvent) -> String {
   match event {
     ReviewReceived(_, _) => "review_received"
@@ -1587,7 +1713,7 @@ async fn deliver_pending_poll_events(
       None => (None, None)
     }
     match (event, tracked_for_delivery) {
-      (PRMerged(pr), Some(_)) =>
+      (PRMerged(pr), Some(_)) => {
         state.reconcile_external_merge_with_runner(
           pr.agent_id,
           pr.pr_number,
@@ -1596,6 +1722,8 @@ async fn deliver_pending_poll_events(
           pr.pr_url,
           runner,
         )
+        fire_pr_merged_completion_hooks(state.config.project_dir, pr, capture~)
+      }
       _ =>
         for
           planned in state.plan_poll_event_deliveries(
