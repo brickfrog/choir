@@ -218,6 +218,11 @@ pub(all) struct WaveStateArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct StatusBarStateArgs {
+  unit : Unit
+} derive(Debug, Eq)
+
+///|
 pub(all) struct CrystallizeSpecArgs {
   caller_id : String
   feature_slug : String

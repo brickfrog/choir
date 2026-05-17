@@ -1613,6 +1613,13 @@ fn parse_wave_state_args(args : ToolArgs) -> Result[WaveStateArgs, ParseError] {
 }
 
 ///|
+fn parse_status_bar_state_args(
+  _args : ToolArgs,
+) -> Result[StatusBarStateArgs, ParseError] {
+  Ok({ unit: () })
+}
+
+///|
 fn parse_crystallize_spec_args(
   args : ToolArgs,
 ) -> Result[CrystallizeSpecArgs, ParseError] {
@@ -1789,6 +1796,10 @@ fn parse_tool_request(
       parse_report_usage_args(args).map(fn(a) { ToolRequest::ReportUsage(a) })
     "wave_state" =>
       parse_wave_state_args(args).map(fn(a) { ToolRequest::WaveState(a) })
+    "status_bar_state" =>
+      parse_status_bar_state_args(args).map(fn(a) {
+        ToolRequest::StatusBarState(a)
+      })
     "crystallize_spec" =>
       parse_crystallize_spec_args(args).map(fn(a) {
         ToolRequest::CrystallizeSpec(a)
