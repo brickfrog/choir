@@ -85,6 +85,14 @@ test "is_jsonrpc_request detects JSON-RPC envelope only" {
       "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"status_bar_state\",\"args\":{}}",
     ),
   )
+  assert_false(
+    is_jsonrpc_request(
+      "{\"method\":\"tools/call\",\"role\":\"root\",\"name\":\"send_message\",\"args\":{\"payload\":{\"jsonrpc\":\"2.0\",\"method\":\"initialize\"}}}",
+    ),
+  )
+  assert_false(
+    is_jsonrpc_request("{\"jsonrpc\":2,\"id\":1,\"method\":\"initialize\"}"),
+  )
   assert_false(is_jsonrpc_request("not jsonrpc"))
   assert_false(is_jsonrpc_request("{\"jsonrpc\":\"2.0\","))
   assert_false(is_jsonrpc_request("{\"jsonrpc\"}"))
