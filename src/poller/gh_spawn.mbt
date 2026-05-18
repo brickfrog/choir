@@ -76,7 +76,18 @@ fn merge_inline_comments(pr_json : String, inline_json : String) -> String {
 pub async fn gh_poll_pr(
   pr_number : Int,
   skip_issue_comment_fetch : Bool,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+) -> (
+  Bool,
+  ReviewState,
+  String,
+  CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+  Mergeable,
+  MergeStateStatus,
+  Int64?,
+) {
   let (reader, writer) = @process.read_from_process() catch {
     e => {
       @sys.write_stderr(
@@ -86,21 +97,38 @@ pub async fn gh_poll_pr(
         e.to_string() +
         "\n",
       )
-      return (false, None_, "", Unknown, "", true, false)
+      return (
+        false,
+        None_,
+        "",
+        CiRollupStatus::Unknown,
+        "",
+        true,
+        false,
+        Mergeable::Unknown,
+        MergeStateStatus::Unknown,
+        None,
+      )
     }
   }
   let (err_reader, err_writer) = @process.read_from_process() catch {
-    _ => return (false, None_, "", Unknown, "", true, false)
+    _ =>
+      return (
+        false,
+        None_,
+        "",
+        CiRollupStatus::Unknown,
+        "",
+        true,
+        false,
+        Mergeable::Unknown,
+        MergeStateStatus::Unknown,
+        None,
+      )
   }
   let pid = @process.spawn_orphan(
     "gh",
-    [
-      "pr",
-      "view",
-      pr_number.to_string(),
-      "--json",
-      "reviews,headRefOid,statusCheckRollup,state",
-    ],
+    ["pr", "view", pr_number.to_string(), "--json", gh_pr_view_json_fields],
     stdout=writer,
     stderr=err_writer,
   ) catch {
@@ -113,7 +141,18 @@ pub async fn gh_poll_pr(
         "\n",
       )
       reader.close()
-      return (false, None_, "", Unknown, "", true, false)
+      return (
+        false,
+        None_,
+        "",
+        CiRollupStatus::Unknown,
+        "",
+        true,
+        false,
+        Mergeable::Unknown,
+        MergeStateStatus::Unknown,
+        None,
+      )
     }
   }
   let (output, total) = drain_reader_from_process(reader, 65536)
@@ -133,16 +172,35 @@ pub async fn gh_poll_pr(
       "\n",
     )
     if total == 0 {
-      return (false, None_, "", Unknown, "", true, false)
+      return (
+        false,
+        None_,
+        "",
+        CiRollupStatus::Unknown,
+        "",
+        true,
+        false,
+        Mergeable::Unknown,
+        MergeStateStatus::Unknown,
+        None,
+      )
     }
   }
   // Fetch inline code review comments (separate API)
   let inline_output = fetch_inline_comments(pr_number)
   let merged = merge_inline_comments(output, inline_output)
   let exit_ok = exit_code == 0 && total > 0
-  let (json_ok, review, sha, ci_rollup, review_bodies, is_open) = parse_gh_pr_view_output(
-    merged,
-  )
+  let (
+    json_ok,
+    review,
+    sha,
+    ci_rollup,
+    review_bodies,
+    is_open,
+    mergeable,
+    merge_state_status,
+    merged_at_unix,
+  ) = parse_gh_pr_view_output(merged)
   let copilot_in_reviews = parse_copilot_in_reviews(output)
   let copilot_from_issue_comment = if skip_issue_comment_fetch {
     false
@@ -169,5 +227,8 @@ pub async fn gh_poll_pr(
     review_bodies,
     is_open,
     copilot_issue_comment_seen,
+    mergeable,
+    merge_state_status,
+    merged_at_unix,
   )
 }

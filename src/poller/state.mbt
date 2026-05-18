@@ -62,6 +62,14 @@ fn ci_rollup_name(rollup : CiRollupStatus) -> String {
 }
 
 ///|
+fn tracked_pr_optional_int64_to_json(value : Int64?) -> Json {
+  match value {
+    Some(v) => v.to_json()
+    None => null
+  }
+}
+
+///|
 fn parse_ci_rollup_name(s : String) -> CiRollupStatus? {
   match s {
     "unknown" => Some(Unknown)
@@ -157,6 +165,9 @@ pub fn TrackedPR::to_json(self : TrackedPR) -> String {
     "last_automerge_attempt_sha": self.last_automerge_attempt_sha.to_json(),
     "notified_parent": self.notified_parent.to_json(),
     "last_ci_rollup": ci_rollup_name(self.last_ci_rollup).to_json(),
+    "mergeable": self.mergeable.to_wire_string().to_json(),
+    "merge_state_status": self.merge_state_status.to_wire_string().to_json(),
+    "merged_at_unix": tracked_pr_optional_int64_to_json(self.merged_at_unix),
     "last_timeout_at": self.last_timeout_at.to_json(),
     "copilot_issue_comment_seen": self.copilot_issue_comment_seen.to_json(),
     "orphan_notified": self.orphan_notified.to_json(),
@@ -252,6 +263,16 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
         None => return None
       }
   }
+  let mergeable = match @types.json_field_string(fields, "mergeable") {
+    Some(value) => parse_mergeable(value)
+    None => Mergeable::Unknown
+  }
+  let merge_state_status = match
+    @types.json_field_string(fields, "merge_state_status") {
+    Some(value) => parse_merge_state_status(value)
+    None => MergeStateStatus::Unknown
+  }
+  let merged_at_unix = @types.json_field_int64(fields, "merged_at_unix")
   let last_timeout_at = match
     @types.json_field_int64(fields, "last_timeout_at") {
     Some(value) => value
@@ -324,6 +345,9 @@ fn parse_tracked_pr(fields : Map[String, Json]) -> TrackedPR? {
     last_automerge_attempt_sha,
     notified_parent,
     last_ci_rollup,
+    mergeable,
+    merge_state_status,
+    merged_at_unix,
     last_timeout_at,
     copilot_issue_comment_seen,
     orphan_notified,
@@ -373,6 +397,9 @@ pub fn PollerState::track(
     last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: Unknown,
+    mergeable: Mergeable::Unknown,
+    merge_state_status: MergeStateStatus::Unknown,
+    merged_at_unix: None,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -498,6 +525,9 @@ pub fn PollerState::track_recovered(
     last_automerge_attempt_sha: "",
     notified_parent: recovered_notified_parent(review),
     last_ci_rollup: ci_rollup,
+    mergeable: Mergeable::Unknown,
+    merge_state_status: MergeStateStatus::Unknown,
+    merged_at_unix: None,
     last_timeout_at: 0L,
     copilot_issue_comment_seen,
     orphan_notified: false,
@@ -801,6 +831,9 @@ pub async fn PollerState::tick_pr_with(
     String,
     Bool,
     Bool,
+    Mergeable,
+    MergeStateStatus,
+    Int64?,
   ),
   on_event : (PollEvent, String) -> Unit,
   log_pr : (PollerPrTickLog) -> Unit,
@@ -830,10 +863,18 @@ pub async fn PollerState::tick_pr_with(
     })
     return
   }
-  let (poll_ok, review, sha, ci_rollup, review_bodies, is_open, copilot_now) = poll(
-    pr_number,
-    tracked.copilot_issue_comment_seen,
-  )
+  let (
+    poll_ok,
+    review,
+    sha,
+    ci_rollup,
+    review_bodies,
+    is_open,
+    copilot_now,
+    mergeable,
+    merge_state_status,
+    merged_at_unix,
+  ) = poll(pr_number, tracked.copilot_issue_comment_seen)
   let tracked = match self.tracked.get(pr_number) {
     Some(value) => value
     None => return
@@ -863,7 +904,14 @@ pub async fn PollerState::tick_pr_with(
     })
     return
   }
-  let tracked_ok = { ..tracked, consecutive_failures: 0, backoff_until: 0L }
+  let tracked_ok = {
+    ..tracked,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    mergeable,
+    merge_state_status,
+    merged_at_unix,
+  }
   if !is_open {
     self.mark_merged_observed(tracked_ok.pr_number)
     on_event(PRMerged(tracked_ok), tracked_ok.agent_id)
@@ -968,6 +1016,9 @@ pub async fn PollerState::tick_pr_with(
       last_review_bodies: review_bodies,
       notified_parent,
       last_ci_rollup: ci_rollup,
+      mergeable,
+      merge_state_status,
+      merged_at_unix,
       last_timeout_at: timeout_at,
       copilot_issue_comment_seen: copilot_sticky,
       changes_requested_since: crs,
@@ -983,6 +1034,9 @@ pub async fn PollerState::tick_pr_with(
       last_sha: sha,
       notified_parent,
       last_ci_rollup: ci_rollup,
+      mergeable,
+      merge_state_status,
+      merged_at_unix,
       last_timeout_at: timeout_at,
       copilot_issue_comment_seen: copilot_sticky,
       changes_requested_since: crs,
@@ -1021,6 +1075,9 @@ pub async fn PollerState::tick_with(
     String,
     Bool,
     Bool,
+    Mergeable,
+    MergeStateStatus,
+    Int64?,
   ),
   on_event : (PollEvent, String) -> Unit,
   log_pr : (PollerPrTickLog) -> Unit,
@@ -1048,45 +1105,155 @@ pub async fn PollerState::tick(
 async fn state_tick_backoff_mock_failure(
   _pr_number : Int,
   _skip_issue : Bool,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+) -> (
+  Bool,
+  ReviewState,
+  String,
+  CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+  Mergeable,
+  MergeStateStatus,
+  Int64?,
+) {
   @async.sleep(0)
-  (false, None_, "", Unknown, "", true, false)
+  (
+    false,
+    None_,
+    "",
+    CiRollupStatus::Unknown,
+    "",
+    true,
+    false,
+    Mergeable::Unknown,
+    MergeStateStatus::Unknown,
+    None,
+  )
 }
 
 ///|
 async fn state_tick_backoff_mock_success(
   _pr_number : Int,
   _skip_issue : Bool,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+) -> (
+  Bool,
+  ReviewState,
+  String,
+  CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+  Mergeable,
+  MergeStateStatus,
+  Int64?,
+) {
   @async.sleep(0)
-  (true, Commented, "sha-1", Success, "body", true, false)
+  (
+    true,
+    Commented,
+    "sha-1",
+    Success,
+    "body",
+    true,
+    false,
+    Mergeable::Unknown,
+    MergeStateStatus::Unknown,
+    None,
+  )
 }
 
 ///|
 async fn state_tick_sha_change_under_changes_requested(
   _pr_number : Int,
   _skip_issue : Bool,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+) -> (
+  Bool,
+  ReviewState,
+  String,
+  CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+  Mergeable,
+  MergeStateStatus,
+  Int64?,
+) {
   @async.sleep(0)
-  (true, ChangesRequested, "sha-new", Success, "", true, false)
+  (
+    true,
+    ChangesRequested,
+    "sha-new",
+    Success,
+    "",
+    true,
+    false,
+    Mergeable::Unknown,
+    MergeStateStatus::Unknown,
+    None,
+  )
 }
 
 ///|
 async fn state_tick_none_to_changes_requested(
   _pr_number : Int,
   _skip_issue : Bool,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+) -> (
+  Bool,
+  ReviewState,
+  String,
+  CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+  Mergeable,
+  MergeStateStatus,
+  Int64?,
+) {
   @async.sleep(0)
-  (true, ChangesRequested, "head1", Success, "fix it", true, false)
+  (
+    true,
+    ChangesRequested,
+    "head1",
+    Success,
+    "fix it",
+    true,
+    false,
+    Mergeable::Unknown,
+    MergeStateStatus::Unknown,
+    None,
+  )
 }
 
 ///|
 async fn state_tick_changes_requested_to_approved(
   _pr_number : Int,
   _skip_issue : Bool,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool, Bool) {
+) -> (
+  Bool,
+  ReviewState,
+  String,
+  CiRollupStatus,
+  String,
+  Bool,
+  Bool,
+  Mergeable,
+  MergeStateStatus,
+  Int64?,
+) {
   @async.sleep(0)
-  (true, Approved, "head1", Success, "", true, false)
+  (
+    true,
+    Approved,
+    "head1",
+    Success,
+    "",
+    true,
+    false,
+    Mergeable::Unknown,
+    MergeStateStatus::Unknown,
+    None,
+  )
 }
 
 ///|

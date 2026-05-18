@@ -87,6 +87,9 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
     String,
     Bool,
     Bool,
+    @poller.Mergeable,
+    @poller.MergeStateStatus,
+    Int64?,
   ) {
     @async.sleep(0)
     poll_called = true
@@ -98,6 +101,9 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
       "approved!",
       true,
       false,
+      @poller.Mergeable::Unknown,
+      @poller.MergeStateStatus::Unknown,
+      None,
     )
   }
 
@@ -193,6 +199,9 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
         last_review_state: @poller.ReviewState::Commented,
         last_sha: "sha1",
         last_ci_rollup: @poller.CiRollupStatus::Success,
+        mergeable: @poller.Mergeable::Unknown,
+        merge_state_status: @poller.MergeStateStatus::Unknown,
+        merged_at_unix: None,
         last_review_bodies: "comment!",
         review_mode: @types.ReviewMode::Iterative,
         unresolved_thread_ids: [],
@@ -214,6 +223,9 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
     String,
     Bool,
     Bool,
+    @poller.Mergeable,
+    @poller.MergeStateStatus,
+    Int64?,
   ) {
     @async.sleep(0)
     (
@@ -224,6 +236,9 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
       "comment!",
       true,
       false,
+      @poller.Mergeable::Unknown,
+      @poller.MergeStateStatus::Unknown,
+      None,
     )
   }
 

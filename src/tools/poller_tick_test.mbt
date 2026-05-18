@@ -10,6 +10,9 @@ async fn mock_poll_failure_sentinel(
   String,
   Bool,
   Bool,
+  @poller.Mergeable,
+  @poller.MergeStateStatus,
+  Int64?,
 ) {
   @async.sleep(0)
   (
@@ -20,6 +23,9 @@ async fn mock_poll_failure_sentinel(
     "",
     true,
     false,
+    @poller.Mergeable::Unknown,
+    @poller.MergeStateStatus::Unknown,
+    None,
   )
 }
 
@@ -35,6 +41,9 @@ async fn mock_poll_success_open(
   String,
   Bool,
   Bool,
+  @poller.Mergeable,
+  @poller.MergeStateStatus,
+  Int64?,
 ) {
   @async.sleep(0)
   (
@@ -45,6 +54,9 @@ async fn mock_poll_success_open(
     "body",
     true,
     false,
+    @poller.Mergeable::Unknown,
+    @poller.MergeStateStatus::Unknown,
+    None,
   )
 }
 

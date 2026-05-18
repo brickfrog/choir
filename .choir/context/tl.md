@@ -24,6 +24,23 @@ pipeline discipline). Do not duplicate its content here.
 - Use `merge_pr` only when the review state is clean and the parent branch is correct.
 - Let review and lifecycle notifications drive the next action instead of polling reflexively.
 
+## TL reads: wave_state first, gh/git for recovery only
+
+Use `wave_state` for all steady-state orchestration reads:
+
+- merge readiness (`mergeable`, `merge_state_status`, `merge_gate_ready`)
+- review state (`review_state`, `copilot_issue_comment_seen`, `unresolved_threads`)
+- CI rollup (`ci_rollup`)
+- merge confirmation (`merged_at_unix`)
+- branch state (`last_sha`, `fixes_pushed_at`)
+
+Drop to direct `gh`/`git` ONLY for:
+
+- Resolving review threads from the parent path (`gh api graphql resolveReviewThread` mutation)
+- Inspecting diffs to validate leaf fixes (`git show <sha>`, `git log`)
+- Diagnosing custom GitHub state outside the typed surface
+- Recovery cases when the MCP server is disconnected
+
 ## Subagent vs Leaf vs Inline
 
 Use the smallest delegation surface that preserves ownership and context
