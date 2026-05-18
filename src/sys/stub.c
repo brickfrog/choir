@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 static int choir_cleanup_runtime_native = 0;
+static volatile sig_atomic_t choir_sigusr1_flag = 0;
 static char choir_server_exit_log_buf[128];
 #define CHOIR_MAX_SLEEP_MS_FOR_USLEEP (INT_MAX / 1000)
 
@@ -205,6 +206,31 @@ void choir_install_crash_handlers(void) {
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGABRT, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
+}
+
+static void choir_sigusr1_handler(int sig) {
+    (void)sig;
+    choir_sigusr1_flag = 1;
+}
+
+int choir_install_sigusr1_handler(void) {
+    return signal(SIGUSR1, choir_sigusr1_handler) == SIG_ERR ? -1 : 0;
+}
+
+int choir_consume_sigusr1_flag(void) {
+    sigset_t set;
+    sigset_t oldset;
+    sigemptyset(&set);
+    sigaddset(&set, SIGUSR1);
+    sigprocmask(SIG_BLOCK, &set, &oldset);
+    int was_set = choir_sigusr1_flag ? 1 : 0;
+    choir_sigusr1_flag = 0;
+    sigprocmask(SIG_SETMASK, &oldset, NULL);
+    return was_set;
+}
+
+int choir_raise_sigusr1_for_test(void) {
+    return raise(SIGUSR1);
 }
 
 static int choir_signal_handler_installed(int sig, int require_crash_flags) {

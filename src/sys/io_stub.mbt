@@ -168,6 +168,21 @@ pub fn register_cleanup_runtime_artifacts() -> Unit {
 }
 
 ///|
+pub fn install_sigusr1_handler() -> Bool {
+  false
+}
+
+///|
+pub fn consume_sigusr1_flag() -> Bool {
+  false
+}
+
+///|
+pub fn raise_sigusr1_for_test() -> Bool {
+  false
+}
+
+///|
 pub fn install_crash_handlers() -> Unit {
 
 }

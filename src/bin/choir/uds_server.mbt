@@ -831,6 +831,104 @@ async fn run_poller_heartbeat_tick_loop(
 }
 
 ///|
+/// On `choir serve` fresh start, rotate an unbounded append log to `<path>.1`
+/// if it's grown past the cap. One backup is kept; a prior `.1` is overwritten
+/// by the rename. Returns true if a rotation happened.
+fn serve_rotate_log_if_large(
+  project_dir : String,
+  rel_path : String,
+  cap_bytes? : Int = 8000000,
+  file_size? : (String) -> Int = @sys.file_size,
+  rename? : (String, String) -> Bool = @sys.rename_file_sync,
+) -> Bool {
+  let log_path = serve_project_path(project_dir, rel_path)
+  if file_size(log_path) > cap_bytes {
+    rename(log_path, log_path + ".1")
+  } else {
+    false
+  }
+}
+
+///|
+fn serve_write_status_dump_if_sigusr1_requested(
+  state : @server.ServerState,
+  now_sec : Int64,
+) -> Unit {
+  if @sys.consume_sigusr1_flag() {
+    let status_path = @server.server_status_path(state.config.project_dir)
+    if !state.write_server_status_snapshot(now_sec, fn(agent_id) {
+        @phase.read_lifecycle(state.config.project_dir, agent_id)
+      }) {
+      @moontrace.error("server status dump failed", fields=[
+        @moontrace.field("path", status_path),
+      ])
+    } else {
+      @moontrace.info("server status dump written", fields=[
+        @moontrace.field("path", status_path),
+        @moontrace.field("agents", state.registry.list().length()),
+      ])
+    }
+  }
+}
+
+///|
+test "serve SIGUSR1 flag writes server status snapshot" {
+  let (state, project_dir) = serve_test_state_with_root("sigusr1-status")
+  ignore(@sys.consume_sigusr1_flag())
+  assert_true(@sys.install_sigusr1_handler())
+  assert_true(@sys.raise_sigusr1_for_test())
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  serve_write_status_dump_if_sigusr1_requested(state, 100L)
+  @moontrace.clear_subscriber()
+  let content = @sys.read_file(@server.server_status_path(project_dir))
+  assert_true(content.contains("choir server status\n"))
+  assert_true(content.contains("agent_id=root "))
+  assert_true(
+    content.contains("terminal_target=zellij-pane:uds-jsonrpc:terminal_1"),
+  )
+  assert_true(
+    captured
+    .iter()
+    .any(fn(event) {
+      event.level == @moontrace.Level::Info &&
+      event.message == "server status dump written"
+    }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "serve rotates oversized logs with one shared helper" {
+  let renames : Array[(String, String)] = []
+  let did_rotate = serve_rotate_log_if_large(
+    ".",
+    ".choir/serve.log",
+    cap_bytes=1000,
+    file_size=fn(_p) { 2000 },
+    rename=fn(from, to) {
+      renames.push((from, to))
+      true
+    },
+  )
+  assert_true(did_rotate)
+  @debug.assert_eq(renames, [(".choir/serve.log", ".choir/serve.log.1")])
+  let small_renames : Array[(String, String)] = []
+  let no_rotate = serve_rotate_log_if_large(
+    ".",
+    ".choir/delivery.log",
+    cap_bytes=1000,
+    file_size=fn(_p) { 500 },
+    rename=fn(from, to) {
+      small_renames.push((from, to))
+      true
+    },
+  )
+  assert_false(no_rotate)
+  @debug.assert_eq(small_renames, [])
+}
+
+///|
 test "serve cleanup removes stale tl goal kv files only" {
   let entries = [
     "tl-goal--old.json", "tl-goal--other.json", "tl-goal--missing.tmp", "lifecycle--root.json",
@@ -1123,6 +1221,9 @@ fn serve_run() -> Unit {
   @sys.write_pid_file(".choir/server.pid")
   @sys.register_cleanup_runtime_artifacts()
   @sys.install_crash_handlers()
+  if !@sys.install_sigusr1_handler() {
+    @moontrace.warn("failed to install SIGUSR1 handler", fields=[])
+  }
   match inherited_uds_fd {
     Some(_) => ()
     // Clean stale runtime markers from previous sessions, but preserve recoverable
@@ -1166,6 +1267,12 @@ fn serve_run() -> Unit {
       }
       state.replay_pending_outbox(runner=@exec.run_sequence)
       root.spawn_bg(async fn() {
+        for ;; {
+          @async.sleep(1000)
+          serve_write_status_dump_if_sigusr1_requested(state, @poller.now_sec())
+        }
+      })
+      root.spawn_bg(async fn() {
         let timeout_sec = 900L
         let disconnect_grace_sec = 60L
         let interval_ms = 30000
@@ -1205,7 +1312,12 @@ fn serve_run() -> Unit {
           now : Int64,
           timeout_sec : Int64,
         ) {
-          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
+          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence) catch {
+            e =>
+              @moontrace.error("poller heartbeat tick error", fields=[
+                @moontrace.field("error", e.to_string()),
+              ])
+          }
         })
       })
       root.spawn_bg(async fn() {

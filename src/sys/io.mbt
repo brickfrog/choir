@@ -679,6 +679,15 @@ extern "C" fn c_init_cleanup_purge_artifacts() = "choir_init_cleanup_purge_artif
 extern "C" fn c_register_cleanup_runtime_artifacts() = "choir_register_cleanup_runtime_artifacts"
 
 ///|
+extern "C" fn c_install_sigusr1_handler() -> Int = "choir_install_sigusr1_handler"
+
+///|
+extern "C" fn c_consume_sigusr1_flag() -> Int = "choir_consume_sigusr1_flag"
+
+///|
+extern "C" fn c_raise_sigusr1_for_test() -> Int = "choir_raise_sigusr1_for_test"
+
+///|
 extern "C" fn c_install_crash_handlers() = "choir_install_crash_handlers"
 
 ///|
@@ -775,6 +784,21 @@ pub fn register_cleanup_runtime_artifacts() -> Unit {
 }
 
 ///|
+pub fn install_sigusr1_handler() -> Bool {
+  c_install_sigusr1_handler() == 0
+}
+
+///|
+pub fn consume_sigusr1_flag() -> Bool {
+  c_consume_sigusr1_flag() != 0
+}
+
+///|
+pub fn raise_sigusr1_for_test() -> Bool {
+  c_raise_sigusr1_for_test() == 0
+}
+
+///|
 /// Register crash-signal handlers that emit `.choir/server-exits.log` before default crash handling.
 pub fn install_crash_handlers() -> Unit {
   c_install_crash_handlers()
@@ -822,8 +846,6 @@ test "server exit handlers install signal dispositions without delivery" {
   c_reset_server_exit_signal_handlers()
   assert_eq(installed, 1)
 }
-
-///|
 
 ///|
 /// POSIX single-quote style for embedding in `sh -c` (same as exec.quote).
