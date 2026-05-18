@@ -183,6 +183,11 @@ pub fn raise_sigusr1_for_test() -> Bool {
 }
 
 ///|
+pub fn install_crash_handlers() -> Unit {
+
+}
+
+///|
 pub fn create_dir_all(_path : String) -> Bool {
   false
 }

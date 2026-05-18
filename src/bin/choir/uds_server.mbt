@@ -1183,9 +1183,29 @@ fn serve_run() -> Unit {
     Some(_) => ()
     None => {
       ignore(
-        serve_rotate_log_if_large(config.project_dir, ".choir/delivery.log"),
+        @server.serve_rotate_log_if_large(
+          config.project_dir,
+          ".choir/delivery.log",
+          @sys.file_size,
+          @sys.rename_file_sync,
+        ),
       )
-      ignore(serve_rotate_log_if_large(config.project_dir, ".choir/serve.log"))
+      ignore(
+        @server.serve_rotate_log_if_large(
+          config.project_dir,
+          ".choir/serve.log",
+          @sys.file_size,
+          @sys.rename_file_sync,
+        ),
+      )
+      ignore(
+        @server.serve_rotate_log_if_large(
+          config.project_dir,
+          ".choir/server-exits.log",
+          @sys.file_size,
+          @sys.rename_file_sync,
+        ),
+      )
     }
   }
   @moontrace.set_subscriber(fn(event) {
@@ -1200,6 +1220,7 @@ fn serve_run() -> Unit {
   @moontrace.set_min_level(@moontrace.Level::Debug)
   @sys.write_pid_file(".choir/server.pid")
   @sys.register_cleanup_runtime_artifacts()
+  @sys.install_crash_handlers()
   if !@sys.install_sigusr1_handler() {
     @moontrace.warn("failed to install SIGUSR1 handler", fields=[])
   }
