@@ -44,6 +44,56 @@ test "audit-on-file-pr report cleanup removes waiter queue" {
 }
 
 ///|
+async test "status_bar_state server handler caches list-panes per session" {
+  let project_dir = "/tmp/choir-status-bar-cache-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let terminal_session = "status-cache-session"
+  let config = { ..@types.Config::default(), project_dir, terminal_session }
+  let state = ServerState::new(config, make_recovery_provider())
+  ignore(
+    state.register_agent({
+      agent_id: "root.tl",
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("root"),
+      workspace: project_dir,
+      branch: "root.tl",
+      terminal_target: @types.LocalTarget::parse(
+        "zellij-tab:" + terminal_session + ":TL",
+      ),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Root,
+    name: "status_bar_state",
+    args: @types.RequestArgs::from_values({}),
+  }
+  let mut captures = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "env" && cmd.args.contains("list-panes") {
+      captures = captures + 1
+      return (
+        0, "[{\"id\":8,\"tab_name\":\"TL\",\"title\":\"root tl\",\"is_plugin\":false}]",
+      )
+    }
+    (0, "")
+  }
+  let first = state.handle_with_runner_and_capture(req, capture~)
+  assert_true(first.is_ok())
+  let second = state.handle_with_runner_and_capture(req, capture~)
+  assert_true(second.is_ok())
+  assert_eq(captures, 1)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "notify_parent uses live registry parent when present" {
   let project_dir = "/tmp/choir-notify-parent-test-" +
     "live-present-" +
