@@ -475,14 +475,6 @@ fn poll_event_is_external_merge(event : @poller.PollEvent) -> Bool {
 }
 
 ///|
-fn completion_hook_path(
-  project_dir : String,
-  event : @hooks.HookEvent,
-) -> String {
-  project_dir + "/.choir/hooks/" + event.script_name()
-}
-
-///|
 pub fn pr_merged_completion_hook_input(
   event : @hooks.HookEvent,
   pr : @poller.TrackedPR,
@@ -1117,21 +1109,37 @@ pub async fn fire_pr_merged_completion_hooks(
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  xdg_config_home? : String? = @exec.hook_xdg_config_home(),
+  home? : String = @exec.hook_home(),
 ) -> Unit {
-  if path_exists(completion_hook_path(project_dir, @hooks.HookEvent::PrMerged)) {
+  if @hooks.resolve_hook_script_path(
+      project_dir,
+      @hooks.HookEvent::PrMerged.script_name(),
+      xdg_config_home,
+      home,
+      path_exists,
+    )
+    is Some(_) {
     @tools.fire_hook_async(
       @hooks.HookEvent::PrMerged,
       pr_merged_completion_hook_input(@hooks.HookEvent::PrMerged, pr),
       project_dir,
       hook_capture~,
       path_exists~,
+      xdg_config_home~,
+      home~,
     ) catch {
       _ => ()
     }
   }
-  if path_exists(
-      completion_hook_path(project_dir, @hooks.HookEvent::WaveComplete),
-    ) {
+  if @hooks.resolve_hook_script_path(
+      project_dir,
+      @hooks.HookEvent::WaveComplete.script_name(),
+      xdg_config_home,
+      home,
+      path_exists,
+    )
+    is Some(_) {
     let is_wave_complete = pr_merged_parent_branch_is_wave_complete(
       project_dir,
       pr.parent_branch,
@@ -1148,6 +1156,8 @@ pub async fn fire_pr_merged_completion_hooks(
       project_dir,
       hook_capture~,
       path_exists~,
+      xdg_config_home~,
+      home~,
     ) catch {
       _ => ()
     }

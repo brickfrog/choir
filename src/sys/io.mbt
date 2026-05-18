@@ -453,7 +453,9 @@ pub fn sleep_milliseconds(ms : Int) -> Unit {
 extern "C" fn c_redirect_stderr_append(path : Bytes) -> Int = "choir_redirect_stderr_append"
 
 ///|
-/// Redirect the process stderr to `path` (append, create if needed). Used by `mcp-stdio` Codex path.
+/// Redirect process stderr to `path` (append, create if needed), filtering
+/// terminal response escape sequences while preserving SGR color/style escapes.
+/// Used by the `mcp-stdio` Codex path.
 pub fn redirect_stderr_append(path : String) -> Bool {
   c_redirect_stderr_append(string_to_null_terminated_bytes(path)) == 0
 }
