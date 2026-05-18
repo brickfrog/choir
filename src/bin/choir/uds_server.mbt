@@ -911,14 +911,17 @@ async test "serve heartbeat task honors interval and calls poller tick" {
   let sleeps : Array[Int] = []
   run_poller_heartbeat_tick_loop(
     1,
-    async fn(_now : Int64, _timeout : Int64) { tick_calls.push(1) },
+    async fn(_now : Int64, _timeout : Int64) {
+      @async.sleep(0)
+      tick_calls.push(1)
+    },
     sleep_fn=async fn(delay : Int) {
       sleeps.push(delay)
       @async.sleep(0)
     },
     max_iterations=2,
   )
-  assert_eq(sleeps, [1000, 1000])
+  @debug.assert_eq(sleeps, [1000, 1000])
   @debug.assert_eq(tick_calls.length(), 2)
 }
 
@@ -928,15 +931,18 @@ async test "heartbeat task with zero interval disables tick callback" {
   let sleeps : Array[Int] = []
   run_poller_heartbeat_tick_loop(
     0,
-    async fn(_now : Int64, _timeout : Int64) { tick_calls.push(1) },
+    async fn(_now : Int64, _timeout : Int64) {
+      @async.sleep(0)
+      tick_calls.push(1)
+    },
     sleep_fn=async fn(delay : Int) {
       sleeps.push(delay)
       @async.sleep(0)
     },
     max_iterations=2,
   )
-  assert_eq(sleeps, [])
-  assert_eq(tick_calls, [])
+  @debug.assert_eq(sleeps, [])
+  @debug.assert_eq(tick_calls, [])
 }
 
 ///|
@@ -1152,6 +1158,11 @@ fn serve_run() -> Unit {
   let state = @server.ServerState::new(config, provider)
   @moontrace.set_global_field("service", "choir".to_json())
   @moontrace.set_global_field("run_id", state.run_id.to_json())
+  @prompts.emit_prompt_drift_warnings(
+    config.project_dir,
+    @exec.path_entry_exists,
+    @exec.read_file,
+  )
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(root) {
       let recovery_input = @runtime.discover_recovery_input(

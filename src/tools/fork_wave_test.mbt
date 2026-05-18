@@ -754,6 +754,9 @@ async fn mock_git_capture_fork_wave_scaffold_changed(
   if args == ["-C", "/proj", "status", "--porcelain"] {
     return ""
   }
+  if args == ["-C", "/proj", "rev-parse", "HEAD"] {
+    return "1111111111111111111111111111111111111111\n"
+  }
   if args == ["-C", "/proj", "log", "--oneline", "@{u}..HEAD"] {
     return ""
   }
@@ -778,6 +781,9 @@ async fn mock_git_capture_fork_wave_no_scaffold_change(
   }
   if args == ["-C", "/proj", "log", "--oneline", "@{u}..HEAD"] {
     return ""
+  }
+  if args == ["-C", "/proj", "rev-parse", "HEAD"] {
+    return "1111111111111111111111111111111111111111\n"
   }
   if args == ["-C", "/proj", "status", "--porcelain", "--", "missing.mbt"] {
     return ""
@@ -860,6 +866,93 @@ async test "interpret_fork_wave_spawn_effect_phase commits scaffold before workt
     @types.Response::Ok(fields) =>
       @debug.assert_eq(fields.get("status"), Some("spawned"))
     @types.Response::Err(msg) => fail("unexpected err: " + msg)
+  }
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase compensates post-scaffold clean failure" {
+  let runner_seq : Array[Int] = [0]
+  let status_calls : Array[Int] = [0]
+  let pre_sha = "1111111111111111111111111111111111111111"
+  let args = {
+    ..fork_wave_args_base(),
+    parent_branch: "feature/parent",
+    scaffold_commit: Some({
+      message: "chore: scaffold shared wave surface",
+      paths: ["src/shared.mbt"],
+    }),
+  }
+  let git_capture = async fn(
+    program : String,
+    git_args : Array[String],
+  ) -> String {
+    @async.sleep(0)
+    if program != "git" {
+      fail("unexpected program: " + program)
+    }
+    if git_args == ["-C", "/proj", "rev-parse", "--abbrev-ref", "HEAD"] {
+      return "feature/parent\n"
+    }
+    if git_args == ["-C", "/proj", "log", "--oneline", "@{u}..HEAD"] {
+      return ""
+    }
+    if git_args == ["-C", "/proj", "status", "--porcelain"] {
+      let n = status_calls[0]
+      status_calls[0] = n + 1
+      return if n == 0 { " M src/shared.mbt\n" } else { "?? stray.mbt\n" }
+    }
+    if git_args == ["-C", "/proj", "rev-parse", "HEAD"] {
+      return pre_sha + "\n"
+    }
+    if git_args ==
+      ["-C", "/proj", "status", "--porcelain", "--", "src/shared.mbt"] {
+      return " M src/shared.mbt\n"
+    }
+    fail("unexpected git args: " + git_args.join(" "))
+    ""
+  }
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let seq = runner_seq[0]
+    runner_seq[0] = seq + 1
+    if seq == 0 {
+      assert_eq(cmds.length(), 3)
+      @debug.assert_eq(cmds[0].args, [
+        "-C", "/proj", "add", "--", "src/shared.mbt",
+      ])
+      @debug.assert_eq(cmds[2].args, ["-C", "/proj", "push"])
+    } else if seq == 1 {
+      assert_eq(cmds.length(), 2)
+      @debug.assert_eq(cmds[0].args, ["-C", "/proj", "reset", "--hard", pre_sha])
+      @debug.assert_eq(cmds[1].args, [
+        "-C", "/proj", "push", "--force-with-lease",
+      ])
+    } else {
+      fail("unexpected extra runner invocation")
+    }
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+  let (resp, _, _) = interpret_fork_wave_spawn_effect_phase(
+    args,
+    "/proj",
+    "choir",
+    None,
+    mock_capture_fork_wave_must_not_run,
+    git_capture,
+    runner,
+  )
+  assert_eq(runner_seq[0], 2)
+  assert_eq(status_calls[0], 2)
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("Working tree has uncommitted changes"))
+      assert_true(msg.contains("stray.mbt"))
+    }
+    @types.Response::Ok(_) => fail("expected post-scaffold failure")
   }
 }
 
