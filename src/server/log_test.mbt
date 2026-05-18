@@ -51,3 +51,64 @@ test "span_to_otlp preserves choir fields as attributes" {
   assert_eq(otlp_span.attributes.length(), 3)
   assert_eq(otlp_span.attributes[0].key, "agent_id")
 }
+
+///|
+test "request_log_level maps read-only tools to trace" {
+  let read_only : @types.ToolDef = {
+    name: "status_bar_state",
+    description: "read",
+    allowed_roles: [@types.Role::Root],
+    read_only: true,
+  }
+  let mutating : @types.ToolDef = {
+    name: "file_pr",
+    description: "write",
+    allowed_roles: [@types.Role::TL],
+    read_only: false,
+  }
+  assert_true(request_log_level(read_only) == RequestLogLevel::Trace)
+  assert_true(request_log_level(mutating) == RequestLogLevel::Info)
+}
+
+///|
+test "request_log_level_for_request uses registry read-only annotation" {
+  let project_dir = "/tmp/choir-request-log-readonly-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_recovery_provider(),
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Root,
+    name: "status_bar_state",
+    args: @types.RequestArgs::from_values({}),
+  }
+  assert_true(
+    request_log_level_for_request(state, req) == RequestLogLevel::Trace,
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "request_log_level_for_request keeps mutating tools at info" {
+  let project_dir = "/tmp/choir-request-log-mutating-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_recovery_provider(),
+  )
+  let req : @types.Request = {
+    req_method: "tools/call",
+    role: @types.Role::Root,
+    name: "kv_set",
+    args: @types.RequestArgs::from_values({
+      "key": "request-log".to_json(),
+      "value": "info".to_json(),
+    }),
+  }
+  assert_true(
+    request_log_level_for_request(state, req) == RequestLogLevel::Info,
+  )
+  ignore(@sys.rm_rf(project_dir))
+}

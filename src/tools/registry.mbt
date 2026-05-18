@@ -5,6 +5,16 @@ pub struct ToolRegistry {
 }
 
 ///|
+fn tool_def(
+  name : String,
+  description : String,
+  allowed_roles : Array[@types.Role],
+  read_only? : Bool = false,
+) -> @types.ToolDef {
+  { name, description, allowed_roles, read_only }
+}
+
+///|
 /// Create a new tool registry with the default tool set from SPEC section 6.
 pub fn ToolRegistry::new() -> ToolRegistry {
   let tools : Map[String, @types.ToolDef] = {}
@@ -15,214 +25,206 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     @types.Role::Worker,
   ]
   let defs : Array[@types.ToolDef] = [
-    {
-      name: "register",
-      description: "Register an agent in the registry",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "server_reload",
-      description: "Persist server runtime state and re-exec choir-serve in place using the freshly built binary",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "fork_wave",
-      description: "Spawn one or more agents in worktrees. For nontrivial decomposition, create child Beads issues first and pass per-leaf task_contracts with beads_issue_id for each child; single-child waves may pass beads_issue_id directly. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge and review_mode override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "fork_session",
-      description: "Create a named session subdirectory for a nested team",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "spawn_gemini",
-      description: "Spawn a single Gemini leaf agent in a worktree. The leaf will automatically notify you of PR/completion via MCP events.",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "rescue_leaf",
-      description: "Manual rescue: spawn a replacement dev leaf (default cursor_agent) into an existing salvaged worktree/branch; hand off lifecycle and re-point tracked PRs",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "spawn_remote",
-      description: "Spawn an agent on a remote machine via SSH, connecting back over TCP. The agent will automatically notify you via MCP events.",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "spawn_worker",
-      description: "Spawn an inline worker for research/review; create a worker Beads issue first for durable nontrivial work and pass beads_issue_id. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex). Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "file_pr",
-      description: "Create or update PR for current branch; optional review_context posts an @copilot review comment when PR review is requested",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev],
-    },
-    {
-      name: "merge_pr",
-      description: "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "track_pr",
-      description: "Track a PR in the background poller with owning branch/base metadata",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev],
-    },
-    {
-      name: "notify_parent",
-      description: "Send message to parent agent",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
-    },
-    {
-      name: "report_usage",
-      description: "Self-report usage for wave telemetry; no-op when caller has no wave_id",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
-    },
-    {
-      name: "wave_state",
-      description: "Read typed per-child PR/review/CI snapshot for the caller (Root/TL only). Replaces prose-notification tracking for merge/review readiness.",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "status_bar_state",
-      description: "Read schema-versioned per-pane status-bar snapshot for zjbar polling",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "crystallize_spec",
-      description: "Scaffold a canonical eight-section spec template at .choir/context/<feature_slug>-spec.md. Refuses if the spec file already exists.",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "write_audit_receipt",
-      description: "Write the typed audit receipt for the current audited HEAD, including findings_count.",
-      // Dev leaves MUST NOT mint their own audit receipts; that would let a
-      // dev forge findings_count=0 for its own HEAD and bypass the
-      // file_pr feature→main gate. Restrict to Root/TL (which invokes the
-      // audit skill) and Worker (Sarcasmotron's audit worker context).
-      // The forgery hole is narrowed but not closed — a Root/TL could in
-      // principle still write a stale receipt without running an audit;
-      // proper attestation requires binding the write to a spawn_worker
-      // completion token, filed as follow-up.
-      allowed_roles: [@types.Role::Root, @types.Role::TL, @types.Role::Worker],
-    },
-    {
-      name: "send_message",
-      description: "Send message to any agent by ID",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "reply",
-      description: "Store a reply to a pending interaction request",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "shutdown",
-      description: "Notify parent, close own pane",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
-    },
-    {
-      name: "kill_agent",
-      description: "Kill a child agent by agent_id; closes its pane and cleans up registry",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "kv_get",
-      description: "Read one value from shared KV storage (flat key: no '/' in key)",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "kv_set",
-      description: "Write one value to shared KV storage (flat key: no '/' in key)",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "kv_delete",
-      description: "Delete one value from shared KV storage (flat key: no '/' in key)",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "kv_list",
-      description: "List all keys in shared KV storage",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "goal_set",
-      description: "Set or supersede the active TL goal for this session",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "goal_clear",
-      description: "Clear the active TL goal for this session",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "goal_status",
-      description: "Inspect the active TL goal for this session",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "mutex_acquire",
-      description: "Acquire an in-memory coordination mutex",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "mutex_release",
-      description: "Release an in-memory coordination mutex",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "mutex_status",
-      description: "Inspect an in-memory coordination mutex",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "task_list",
-      description: "List Beads-backed shared tasks",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
-    },
-    {
-      name: "task_get",
-      description: "Get a Beads-backed shared task by ID",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
-    },
-    {
-      name: "task_create",
-      description: "Create a Beads-backed shared task",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
-    },
-    {
-      name: "task_update",
-      description: "Update a Beads-backed shared task status/owner",
-      allowed_roles: [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
-    },
-    {
-      name: "agent_list",
-      description: "List active agents in the registry by default; optional parent_id filters to direct children and include_inactive=true shows the full registry view",
-      allowed_roles: all_roles,
-    },
-    {
-      name: "cancel_wave",
-      description: "Kill all active children of the calling agent and clean up their lifecycle/PR tracking; optional force=true to cancel even mid-review children",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "resolve_review_thread",
-      description: "Resolve a GitHub pull request review thread by its thread ID; thread IDs are included in merge_pr unresolved-thread error messages",
-      allowed_roles: [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
-    },
-    {
-      name: "suspend",
-      description: "Suspend a child agent: transitions Active → Suspended, pausing poll delivery and the idle watchdog for that agent until `resume` is called. Use when handing the worktree back to a human for manual intervention.",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
-    {
-      name: "resume",
-      description: "Resume a suspended child agent: transitions Suspended → Active, unblocking poll delivery for that agent.",
-      allowed_roles: [@types.Role::Root, @types.Role::TL],
-    },
+    tool_def("register", "Register an agent in the registry", all_roles),
+    tool_def(
+      "server_reload",
+      "Persist server runtime state and re-exec choir-serve in place using the freshly built binary",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "fork_wave",
+      "Spawn one or more agents in worktrees. For nontrivial decomposition, create child Beads issues first and pass per-leaf task_contracts with beads_issue_id for each child; single-child waves may pass beads_issue_id directly. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex); optional role (dev|tl, default dev) for sub-TL children; optional review_context appended to each leaf task for file_pr / Copilot review; optional automerge and review_mode override server defaults for that wave. Agents will automatically notify you of PR/completion via MCP events; do not poll or use side-channels.",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "fork_session",
+      "Create a named session subdirectory for a nested team",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "spawn_gemini",
+      "Spawn a single Gemini leaf agent in a worktree. The leaf will automatically notify you of PR/completion via MCP events.",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "rescue_leaf",
+      "Manual rescue: spawn a replacement dev leaf (default cursor_agent) into an existing salvaged worktree/branch; hand off lifecycle and re-point tracked PRs",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "spawn_remote",
+      "Spawn an agent on a remote machine via SSH, connecting back over TCP. The agent will automatically notify you via MCP events.",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "spawn_worker",
+      "Spawn an inline worker for research/review; create a worker Beads issue first for durable nontrivial work and pass beads_issue_id. Optional agent_type (codex|claude|moon_pilot|gemini|cursor_agent, default codex). Workers do not own a branch or PR. The worker will automatically send you its final report via the `notify_parent` tool once it finishes; wait for this notification in your MCP event stream instead of polling or waiting on KV keys.",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "file_pr",
+      "Create or update PR for current branch; optional review_context posts an @copilot review comment when PR review is requested",
+      [@types.Role::TL, @types.Role::Dev],
+    ),
+    tool_def(
+      "merge_pr",
+      "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "track_pr",
+      "Track a PR in the background poller with owning branch/base metadata",
+      [@types.Role::TL, @types.Role::Dev],
+    ),
+    tool_def("notify_parent", "Send message to parent agent", [
+      @types.Role::TL,
+      @types.Role::Dev,
+      @types.Role::Worker,
+    ]),
+    tool_def(
+      "report_usage",
+      "Self-report usage for wave telemetry; no-op when caller has no wave_id",
+      [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
+    ),
+    tool_def(
+      "wave_state",
+      "Read typed per-child PR/review/CI snapshot for the caller (Root/TL only). Replaces prose-notification tracking for merge/review readiness.",
+      [@types.Role::Root, @types.Role::TL],
+      read_only=true,
+    ),
+    tool_def(
+      "status_bar_state",
+      "Read schema-versioned per-pane status-bar snapshot for zjbar polling",
+      all_roles,
+      read_only=true,
+    ),
+    tool_def(
+      "crystallize_spec",
+      "Scaffold a canonical eight-section spec template at .choir/context/<feature_slug>-spec.md. Refuses if the spec file already exists.",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    // Dev leaves MUST NOT mint their own audit receipts; that would let a
+    // dev forge findings_count=0 for its own HEAD and bypass the
+    // file_pr feature→main gate. Restrict to Root/TL (which invokes the
+    // audit skill) and Worker (Sarcasmotron's audit worker context).
+    // The forgery hole is narrowed but not closed — a Root/TL could in
+    // principle still write a stale receipt without running an audit;
+    // proper attestation requires binding the write to a spawn_worker
+    // completion token, filed as follow-up.
+    tool_def(
+      "write_audit_receipt",
+      "Write the typed audit receipt for the current audited HEAD, including findings_count.",
+      [@types.Role::Root, @types.Role::TL, @types.Role::Worker],
+    ),
+    tool_def("send_message", "Send message to any agent by ID", all_roles),
+    tool_def(
+      "reply", "Store a reply to a pending interaction request", all_roles,
+    ),
+    tool_def("shutdown", "Notify parent, close own pane", [
+      @types.Role::TL,
+      @types.Role::Dev,
+      @types.Role::Worker,
+    ]),
+    tool_def(
+      "kill_agent",
+      "Kill a child agent by agent_id; closes its pane and cleans up registry",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "kv_get",
+      "Read one value from shared KV storage (flat key: no '/' in key)",
+      all_roles,
+      read_only=true,
+    ),
+    tool_def(
+      "kv_set", "Write one value to shared KV storage (flat key: no '/' in key)",
+      all_roles,
+    ),
+    tool_def(
+      "kv_delete", "Delete one value from shared KV storage (flat key: no '/' in key)",
+      all_roles,
+    ),
+    tool_def(
+      "kv_list",
+      "List all keys in shared KV storage",
+      all_roles,
+      read_only=true,
+    ),
+    tool_def(
+      "goal_set",
+      "Set or supersede the active TL goal for this session",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def("goal_clear", "Clear the active TL goal for this session", [
+      @types.Role::Root,
+      @types.Role::TL,
+    ]),
+    tool_def(
+      "goal_status",
+      "Inspect the active TL goal for this session",
+      [@types.Role::Root, @types.Role::TL],
+      read_only=true,
+    ),
+    tool_def(
+      "mutex_acquire", "Acquire an in-memory coordination mutex", all_roles,
+    ),
+    tool_def(
+      "mutex_release", "Release an in-memory coordination mutex", all_roles,
+    ),
+    tool_def(
+      "mutex_status",
+      "Inspect an in-memory coordination mutex",
+      all_roles,
+      read_only=true,
+    ),
+    tool_def(
+      "task_list",
+      "List Beads-backed shared tasks",
+      [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
+      read_only=true,
+    ),
+    tool_def(
+      "task_get",
+      "Get a Beads-backed shared task by ID",
+      [@types.Role::TL, @types.Role::Dev, @types.Role::Worker],
+      read_only=true,
+    ),
+    tool_def("task_create", "Create a Beads-backed shared task", [
+      @types.Role::TL,
+      @types.Role::Dev,
+      @types.Role::Worker,
+    ]),
+    tool_def("task_update", "Update a Beads-backed shared task status/owner", [
+      @types.Role::TL,
+      @types.Role::Dev,
+      @types.Role::Worker,
+    ]),
+    tool_def(
+      "agent_list",
+      "List active agents in the registry by default; optional parent_id filters to direct children and include_inactive=true shows the full registry view",
+      all_roles,
+      read_only=true,
+    ),
+    tool_def(
+      "cancel_wave",
+      "Kill all active children of the calling agent and clean up their lifecycle/PR tracking; optional force=true to cancel even mid-review children",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "resolve_review_thread",
+      "Resolve a GitHub pull request review thread by its thread ID; thread IDs are included in merge_pr unresolved-thread error messages",
+      [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
+    ),
+    tool_def(
+      "suspend",
+      "Suspend a child agent: transitions Active → Suspended, pausing poll delivery and the idle watchdog for that agent until `resume` is called. Use when handing the worktree back to a human for manual intervention.",
+      [@types.Role::Root, @types.Role::TL],
+    ),
+    tool_def(
+      "resume",
+      "Resume a suspended child agent: transitions Suspended → Active, unblocking poll delivery for that agent.",
+      [@types.Role::Root, @types.Role::TL],
+    ),
   ]
   for def in defs {
     tools.set(def.name, def)

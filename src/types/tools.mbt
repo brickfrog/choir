@@ -31,6 +31,7 @@ pub(all) struct ToolDef {
   name : String
   description : String
   allowed_roles : Array[Role]
+  read_only : Bool
 } derive(Debug)
 
 ///|

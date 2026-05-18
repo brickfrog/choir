@@ -277,7 +277,7 @@ async test "process_poller_tick_with emits tick summary when an event is produce
           true,
           @poller.ReviewState::ChangesRequested,
           "sha-1",
-          @poller.CiRollupStatus::Failure,
+          @poller.CiRollupStatus::Unknown,
           "please fix",
           true,
           false,
@@ -299,7 +299,11 @@ async test "process_poller_tick_with emits tick summary when an event is produce
   })
   let summary = match handler_tick_summary_event(captured) {
     Some(event) => event
-    None => fail("expected poller tick summary")
+    None =>
+      fail(
+        "expected poller tick summary, captured: " +
+        handler_moontrace_event_summary(captured),
+      )
   }
   match handler_moontrace_field_value(summary.fields, "events") {
     Some(Number(value, ..)) => assert_eq(value.to_int(), 1)
@@ -2276,6 +2280,344 @@ async test "PRMerged completion hook does not fire WaveComplete for non-default 
   assert_eq(fired_inputs.length(), 1)
   assert_eq(fired_inputs[0].event, @hooks.HookEvent::PrMerged)
   @debug.assert_eq(fired_inputs[0].parent_branch, Some("main"))
+}
+
+///|
+async test "deliver_pending_poll_events fires PRMerged hook whether tracked or swept" {
+  let run_case = async fn(
+    label : String,
+    tracked : Bool,
+    pr_number : Int,
+  ) -> Int {
+    let project_dir = "/tmp/choir-deliver-pr-merged-hook-" +
+      label +
+      "-" +
+      @sys.get_pid().to_string() +
+      "-" +
+      @env.now().reinterpret_as_int64().to_string()
+    ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+    ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
+    ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
+    let state = ServerState::new(
+      {
+        ..@types.Config::default(),
+        project_dir,
+        auto_pull_after_integration: false,
+      },
+      make_recovery_provider(),
+    )
+    let parent_id = "main.parent"
+    let child_id = "main.child"
+    ignore(
+      state.register_agent({
+        agent_id: parent_id,
+        role: @types.Role::TL,
+        agent_type: @types.AgentType::Claude,
+        parent: None,
+        workspace: project_dir,
+        branch: "main",
+        terminal_target: None,
+        host: @types.Host::Local,
+        spawn_depth: 0,
+        state: @types.AgentState::Active,
+      }),
+    )
+    ignore(
+      state.register_agent({
+        agent_id: child_id,
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Codex,
+        parent: Some(parent_id),
+        workspace: project_dir + "/.choir/worktrees/child",
+        branch: child_id,
+        terminal_target: None,
+        host: @types.Host::Local,
+        spawn_depth: 1,
+        state: @types.AgentState::Active,
+      }),
+    )
+    let pr = {
+      ..parent_poll_test_ready_tracked(pr_number),
+      agent_id: child_id,
+      branch: child_id,
+      parent_branch: if tracked {
+        "feature/base"
+      } else {
+        "main"
+      },
+      pr_url: "https://example.test/pull/" + pr_number.to_string(),
+    }
+    if tracked {
+      state.poller.restore(pr)
+    }
+    let fired_inputs : Array[@hooks.HookInput] = []
+    state.process_poller_tick_with(
+      1000L,
+      900L,
+      async fn(_pr_number, _skip_issue_comment_fetch) {
+        @async.sleep(0)
+        (
+          true,
+          @poller.ReviewState::Approved,
+          "sha-merged",
+          @poller.CiRollupStatus::Success,
+          "",
+          false,
+          true,
+        )
+      },
+      runner=async fn(cmds : Array[@workspace.Command]) {
+        @async.sleep(0)
+        cmds.map(fn(_) { 0 })
+      },
+      capture=async fn(cmd : @workspace.Command) {
+        @async.sleep(0)
+        if cmd.program == "git" &&
+          cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+          return (0, "origin/main\n")
+        }
+        if cmd.program == "gh" && cmd.args.contains("list") {
+          if tracked {
+            return (0, "[]")
+          }
+          return (
+            0,
+            "[{\"number\":" +
+            pr_number.to_string() +
+            ",\"url\":\"https://example.test/pull/" +
+            pr_number.to_string() +
+            "\",\"headRefName\":\"" +
+            child_id +
+            "\",\"baseRefName\":\"main\"}]",
+          )
+        }
+        (0, "")
+      },
+      automerge_capture=async fn(_cmd : @workspace.Command) {
+        @async.sleep(0)
+        (0, "")
+      },
+      hook_capture=async fn(
+        _path : String,
+        input_json : String,
+        _cwd : String?,
+      ) {
+        @async.sleep(0)
+        match @hooks.HookInput::from_json_string(input_json) {
+          Some(input) => fired_inputs.push(input)
+          None => fail("expected hook JSON")
+        }
+        (0, "hook")
+      },
+    )
+    let fired_count = fired_inputs.length()
+    if fired_count > 0 {
+      assert_eq(fired_inputs[0].event, @hooks.HookEvent::PrMerged)
+      @debug.assert_eq(fired_inputs[0].pr_number, Some(pr_number))
+    }
+    ignore(@sys.rm_rf(project_dir))
+    fired_count
+  }
+  assert_eq(run_case("tracked", true, 620), 1)
+  assert_eq(run_case("swept", false, 621), 1)
+}
+
+///|
+test "seen merge cache predicate and capacity" {
+  assert_true(should_emit_untracked_pr_merged(false, false))
+  assert_false(should_emit_untracked_pr_merged(true, false))
+  assert_false(should_emit_untracked_pr_merged(false, true))
+  let cache = update_seen_merge_cache([1, 2, 3], 2, capacity=3)
+  @debug.assert_eq(cache, [1, 3, 2])
+  let bounded = update_seen_merge_cache(cache, 4, capacity=3)
+  @debug.assert_eq(bounded, [3, 2, 4])
+}
+
+///|
+test "should_auto_pull_parent truth table" {
+  assert_true(should_auto_pull_parent("main", "main", "main", true, true))
+  assert_false(
+    should_auto_pull_parent("feature/base", "main", "main", true, true),
+  )
+  assert_false(
+    should_auto_pull_parent("main", "main", "feature/work", true, true),
+  )
+  assert_false(should_auto_pull_parent("main", "main", "main", false, true))
+  assert_false(should_auto_pull_parent("main", "main", "main", true, false))
+}
+
+///|
+async test "untracked merge detection emits synthetic PRMerged and fires hooks" {
+  let project_dir = "/tmp/choir-synthetic-untracked-merge-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+    },
+    make_recovery_provider(),
+  )
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "gh" && cmd.args.contains("list") {
+      return (
+        0, "[{\"number\":612,\"url\":\"https://example.test/pull/612\",\"headRefName\":\"feature/integration\",\"baseRefName\":\"main\"}]",
+      )
+    }
+    (0, "")
+  }
+  let events = detect_untracked_pr_merged_events(state, 1000L, capture)
+  assert_eq(events.length(), 1)
+  let pr = match events[0] {
+    @poller.PollEvent::PRMerged(pr) => pr
+    _ => fail("expected synthetic PRMerged")
+  }
+  let fired_inputs : Array[@hooks.HookInput] = []
+  fire_pr_merged_completion_hooks(
+    project_dir,
+    pr,
+    capture~,
+    hook_capture=async fn(
+      _path : String,
+      input_json : String,
+      _cwd : String?,
+    ) -> (Int, String) {
+      @async.sleep(0)
+      match @hooks.HookInput::from_json_string(input_json) {
+        Some(input) => fired_inputs.push(input)
+        None => fail("expected hook JSON")
+      }
+      (0, "hook")
+    },
+    path_exists=fn(path) {
+      path.has_suffix("/pr_merged.sh") || path.has_suffix("/wave_complete.sh")
+    },
+  )
+  assert_eq(fired_inputs.length(), 2)
+  assert_eq(fired_inputs[0].event, @hooks.HookEvent::PrMerged)
+  assert_eq(fired_inputs[1].event, @hooks.HookEvent::WaveComplete)
+  @debug.assert_eq(fired_inputs[0].pr_number, Some(612))
+  @debug.assert_eq(fired_inputs[0].branch, Some("feature/integration"))
+  @debug.assert_eq(fired_inputs[0].parent_branch, Some("main"))
+  assert_true(state.poller.merged_observed(612))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "PRMerged into default branch triggers injected parent auto-pull" {
+  let project_dir = "/tmp/choir-auto-pull-parent-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_recovery_provider(),
+  )
+  let pr = {
+    ..parent_poll_test_ready_tracked(613),
+    agent_id: "user-0-0",
+    branch: "feature/integration",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/613",
+  }
+  let pulled_workdirs : Array[String] = []
+  maybe_auto_pull_parent_after_pr_merged(
+    state,
+    pr,
+    async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      (0, "")
+    },
+    async fn(
+      workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      @debug.assert_eq(workdir, project_dir)
+      Some(parent_worktree_git_state("main", true))
+    },
+    async fn(
+      workdir : String,
+      _runner : async (Array[@workspace.Command]) -> Array[Int],
+    ) -> Bool {
+      @async.sleep(0)
+      pulled_workdirs.push(workdir)
+      true
+    },
+  )
+  @debug.assert_eq(pulled_workdirs, [project_dir])
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "PRMerged auto-pull skips dirty parent tree" {
+  let project_dir = "/tmp/choir-auto-pull-dirty-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_recovery_provider(),
+  )
+  let pr = {
+    ..parent_poll_test_ready_tracked(614),
+    agent_id: "user-0-0",
+    branch: "feature/integration",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/614",
+  }
+  let mut pull_calls = 0
+  maybe_auto_pull_parent_after_pr_merged(
+    state,
+    pr,
+    async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      (0, "")
+    },
+    async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      Some(parent_worktree_git_state("main", false))
+    },
+    async fn(
+      _workdir : String,
+      _runner : async (Array[@workspace.Command]) -> Array[Int],
+    ) -> Bool {
+      @async.sleep(0)
+      pull_calls = pull_calls + 1
+      true
+    },
+  )
+  assert_eq(pull_calls, 0)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -4688,6 +5030,15 @@ fn handler_tick_summary_event(
     }
   }
   None
+}
+
+///|
+fn handler_moontrace_event_summary(events : Array[@moontrace.Event]) -> String {
+  let parts : Array[String] = []
+  for event in events {
+    parts.push(event.message)
+  }
+  parts.join("; ")
 }
 
 ///|
