@@ -591,9 +591,22 @@ fn serve_write_all_uds(fd : Int, data : Bytes) -> Unit {
   while written < data.length() {
     let n = @uds.write_bytes(fd, data, written, data.length() - written)
     if n <= 0 {
-      @moontrace.warn("UDS client disconnected", fields=[
-        @moontrace.field("written", written),
-      ])
+      // written == 0 here means the peer closed the connection before we
+      // wrote a single byte — characteristic of one-shot JSON-RPC clients
+      // (zjbar) that close immediately after sending a request. Not a
+      // server-side problem; demote to TRACE so the log isn't spammed at
+      // 2 Hz per polling client. Anomalous mid-stream disconnects
+      // (partial write then disconnect) stay at WARN.
+      if written == 0 {
+        @moontrace.trace("UDS client disconnected pre-write", fields=[
+          @moontrace.field("response_bytes", data.length()),
+        ])
+      } else {
+        @moontrace.warn("UDS client disconnected mid-write", fields=[
+          @moontrace.field("written", written),
+          @moontrace.field("response_bytes", data.length()),
+        ])
+      }
       break
     }
     written = written + n
