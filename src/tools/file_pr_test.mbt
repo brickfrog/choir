@@ -840,6 +840,31 @@ test "find_prior_branch_audit_receipt picks newest mtime" {
 }
 
 ///|
+test "find_prior_branch_audit_receipt uses subsecond mtime" {
+  @debug.assert_eq(
+    find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) {
+      [
+        "300.1000000000\tsha-old\tfeature/a", "300.9000000000\tsha-new\tfeature/a",
+        "299.9999999999\tsha-prev\tfeature/a",
+      ]
+    }),
+    Some("sha-new"),
+  )
+}
+
+///|
+test "find_prior_branch_audit_receipt breaks equal mtime ties by sha" {
+  @debug.assert_eq(
+    find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) {
+      [
+        "300.9000000000\tbbbb\tfeature/a", "300.9000000000\taaaa\tfeature/a", "300.9000000000\tcccc\tfeature/a",
+      ]
+    }),
+    Some("cccc"),
+  )
+}
+
+///|
 test "find_prior_branch_audit_receipt ignores different branch" {
   @debug.assert_eq(
     find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) {

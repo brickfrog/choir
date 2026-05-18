@@ -954,33 +954,84 @@ pub fn file_pr_validate_audit_receipt(
 
 ///|
 fn prior_audit_receipt_entry(
-  mtime_sec : String,
+  mtime_key : String,
   receipt : @types.AuditReceipt,
 ) -> String {
-  mtime_sec.trim().to_owned() + "\t" + receipt.sha + "\t" + receipt.branch
+  mtime_key.trim().to_owned() + "\t" + receipt.sha + "\t" + receipt.branch
 }
 
 ///|
-fn parse_prior_audit_receipt_entry(entry : String) -> (Int64, String, String)? {
+fn prior_audit_mtime_fraction_key(raw : String) -> String {
+  let parts = raw.trim().to_owned().split(".").to_array()
+  if parts.length() < 2 {
+    return ""
+  }
+  let mut key = parts[1].trim().to_owned()
+  while key.length() < 18 {
+    key = key + "0"
+  }
+  if key.length() > 18 {
+    key[:18].to_owned()
+  } else {
+    key
+  }
+}
+
+///|
+fn parse_prior_audit_receipt_entry(
+  entry : String,
+) -> (Int64, String, String, String)? {
   let parts = entry.split("\t").to_array()
   if parts.length() < 3 {
     return None
   }
-  let mtime = @string.parse_int(parts[0].trim().to_owned()) catch {
-    _ => return None
+  let mtime_raw = parts[0].trim().to_owned()
+  let mtime_whole_raw = match mtime_raw.find(".") {
+    Some(idx) => mtime_raw[:idx].to_owned()
+    None => mtime_raw
   }
+  let mtime = @string.parse_int(mtime_whole_raw) catch { _ => return None }
+  let mtime_fraction = prior_audit_mtime_fraction_key(parts[0].to_owned())
   let sha = parts[1].trim().to_owned()
   let branch = parts[2].trim().to_owned()
   if sha == "" || branch == "" {
     return None
   }
-  Some((mtime.to_int64(), sha, branch))
+  Some((mtime.to_int64(), mtime_fraction, sha, branch))
+}
+
+///|
+fn prior_audit_entry_is_better(
+  mtime : Int64,
+  mtime_fraction : String,
+  sha : String,
+  best_mtime : Int64,
+  best_mtime_fraction : String,
+  best_sha : String?,
+) -> Bool {
+  if mtime > best_mtime {
+    return true
+  }
+  if mtime < best_mtime {
+    return false
+  }
+  let fraction_cmp = mtime_fraction.compare(best_mtime_fraction)
+  if fraction_cmp > 0 {
+    return true
+  }
+  if fraction_cmp < 0 {
+    return false
+  }
+  match best_sha {
+    Some(current) => sha.compare(current) > 0
+    None => true
+  }
 }
 
 ///|
 /// Select the newest audit receipt summary for `branch`. The injected
 /// `list_files` returns pure receipt summaries in the form
-/// `<mtime_sec>\t<sha>\t<branch>`; production builds those summaries through
+/// `<mtime_key>\t<sha>\t<branch>`; production builds those summaries through
 /// injected command capture, while tests provide them directly.
 pub fn find_prior_branch_audit_receipt(
   receipts_dir : String,
@@ -992,12 +1043,17 @@ pub fn find_prior_branch_audit_receipt(
     return None
   }
   let mut best_mtime = -1L
+  let mut best_mtime_fraction = ""
   let mut best_sha : String? = None
   for entry in list_files(receipts_dir) {
     match parse_prior_audit_receipt_entry(entry) {
-      Some((mtime, sha, entry_branch)) =>
-        if entry_branch == target_branch && mtime >= best_mtime {
+      Some((mtime, mtime_fraction, sha, entry_branch)) =>
+        if entry_branch == target_branch &&
+          prior_audit_entry_is_better(
+            mtime, mtime_fraction, sha, best_mtime, best_mtime_fraction, best_sha,
+          ) {
           best_mtime = mtime
+          best_mtime_fraction = mtime_fraction
           best_sha = Some(sha)
         }
       None => ()
@@ -1018,6 +1074,8 @@ pub fn audit_delta_numstat_lines(numstat : String) -> Int? {
     if parts.length() < 2 {
       return None
     }
+    // Binary numstat rows are `-\t-\t<path>`. Treat that as unknown so the
+    // caller conservatively falls back to a full audit instead of under-counting.
     let added = @string.parse_int(parts[0].to_owned()) catch {
       _ => return None
     }
@@ -1062,10 +1120,7 @@ async fn file_pr_prior_audit_receipt_entries(
     if filename == "" || filename.contains("/") || !filename.has_suffix(".json") {
       continue
     }
-    let mtime_sec = match mtime_raw.find(".") {
-      Some(idx) => mtime_raw[:idx].to_owned()
-      None => mtime_raw.trim().to_owned()
-    }
+    let mtime_key = mtime_raw.trim().to_owned()
     let (cat_exit, body) = capture({
       program: "cat",
       args: [receipts_dir + "/" + filename],
@@ -1077,7 +1132,7 @@ async fn file_pr_prior_audit_receipt_entries(
     match file_pr_parse_audit_receipt(body) {
       Some(receipt) if receipt.sha != current_head &&
         receipt.findings_count == 0 =>
-        entries.push(prior_audit_receipt_entry(mtime_sec, receipt))
+        entries.push(prior_audit_receipt_entry(mtime_key, receipt))
       _ => ()
     }
   }
@@ -1092,12 +1147,18 @@ async fn file_pr_audit_delta_prior_sha(
   head_sha : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> String? {
-  let receipts_dir = project_dir + "/.choir/audit-receipts"
+  let receipts_dir = ".choir/audit-receipts"
   let entries = file_pr_prior_audit_receipt_entries(
     project_dir, head_sha, capture,
   )
   let prior_sha = match
-    find_prior_branch_audit_receipt(receipts_dir, branch, fn(_) { entries }) {
+    find_prior_branch_audit_receipt(receipts_dir, branch, fn(path) {
+      if path == receipts_dir {
+        entries
+      } else {
+        []
+      }
+    }) {
     Some(sha) => sha
     None => return None
   }

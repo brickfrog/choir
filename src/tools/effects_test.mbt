@@ -186,6 +186,19 @@ test "scaffold compensation command builder emits reset and force-with-lease" {
 }
 
 ///|
+test "scaffold compensation failure message warns before force push recovery" {
+  let msg = @tools.ForkWaveError::ScaffoldCompensationFailed(
+    pre_scaffold_sha="1111111111111111111111111111111111111111",
+    original_error="Working tree has uncommitted changes",
+    status=1,
+    failing_cmd=None,
+  ).message()
+  assert_true(msg.contains("confirm no concurrent commits would be discarded"))
+  assert_true(msg.contains("Do not force-push blindly"))
+  assert_true(msg.contains("git push --force-with-lease"))
+}
+
+///|
 test "all skipped with scaffold_commit still short-circuits without running scaffold" {
   // The pre-scaffold check must also fire for the scaffold path: if every
   // leaf is deduped, we must not push a scaffold commit for a no-op call.

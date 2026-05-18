@@ -49,9 +49,9 @@ pub fn ForkWaveError::message(self : ForkWaveError) -> String {
     ScaffoldCompensationFailed(pre_scaffold_sha~, original_error~, status~, ..) =>
       "scaffold_commit compensation failed after post-scaffold error (" +
       original_error +
-      "). Manual recovery required: run `git reset --hard " +
+      "). Manual recovery required: first inspect the remote parent branch and confirm no concurrent commits would be discarded; if the scaffold commit is still the only remote change to rewind, run `git reset --hard " +
       pre_scaffold_sha +
-      "` and `git push --force-with-lease`; compensation command failed with status " +
+      "` and `git push --force-with-lease`. Do not force-push blindly: even force-with-lease can discard commits pushed after the scaffold. Compensation command failed with status " +
       status.to_string()
     ScaffoldBranchMismatch(expected~, actual~) =>
       "scaffold_commit refused: HEAD is on '" +
