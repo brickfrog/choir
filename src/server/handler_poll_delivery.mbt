@@ -565,6 +565,7 @@ pub(all) struct RecentMergedPullRequest {
   branch : String
   parent_branch : String
   pr_url : String
+  merged_at_unix : Int64
 } derive(Debug, Eq)
 
 ///|
@@ -601,6 +602,50 @@ pub fn should_emit_untracked_pr_merged(
   already_seen : Bool,
 ) -> Bool {
   !tracked && !already_seen
+}
+
+///|
+/// Grandfather predicate for untracked-PR-merge detection. Returns true iff
+/// the merge happened strictly before the cache was enabled. Used to suppress
+/// historical merges on first-startup-with-empty-cache (which otherwise
+/// fire the pr_merged hook for every PR ever merged into main; observed
+/// live as a notify-send storm on 2026-05-17).
+///
+/// `merged_at_unix == 0` means "merge time unknown" — fail closed by
+/// grandfathering (do not emit). The gh query supplies mergedAt for all
+/// real merges, so 0 only happens on parse failure.
+pub fn pr_merged_predates_seen_cache(
+  merged_at_unix : Int64,
+  enabled_at_unix : Int64,
+) -> Bool {
+  merged_at_unix == 0L || merged_at_unix < enabled_at_unix
+}
+
+///|
+fn seen_merge_enabled_at_path(project_dir : String) -> String {
+  project_dir + "/.choir/seen_merged_prs.enabled_at"
+}
+
+///|
+/// Read the seen-merge cache's `enabled_at` epoch-seconds. On first call
+/// (file absent), seed it with `now` so all currently-existing merges into
+/// main are grandfathered. Subsequent calls return the persisted value.
+fn ServerState::read_or_initialize_seen_merge_enabled_at(
+  self : ServerState,
+  now : Int64,
+) -> Int64 {
+  let path = seen_merge_enabled_at_path(self.config.project_dir)
+  let content = (self.read_file)(path)
+  let parsed = content.trim().to_owned()
+  if parsed != "" {
+    let json = @json.parse(parsed) catch { _ => "".to_json() }
+    match json {
+      Number(n, ..) => return n.to_int64()
+      _ => ()
+    }
+  }
+  ignore((self.write_file_atomic)(path, now.to_string() + "\n"))
+  now
 }
 
 ///|
@@ -699,10 +744,80 @@ fn recent_merged_pull_requests_command(
       "--limit",
       seen_merge_cache_capacity.to_string(),
       "--json",
-      "number,url,headRefName,baseRefName",
+      "number,url,headRefName,baseRefName,mergedAt",
     ],
     workdir: Some(project_dir),
   }
+}
+
+///|
+/// Parse an ISO-8601 mergedAt string (e.g. "2026-05-18T00:27:59Z") into
+/// unix epoch seconds. Returns 0 on parse failure — callers should treat
+/// 0 as "unknown" and grandfather closed.
+pub fn parse_iso8601_to_unix_seconds(raw : String) -> Int64 {
+  if raw.length() < 19 {
+    return 0L
+  }
+  let s = raw
+  let n4 = fn(off : Int) -> Int64? {
+    let mut v = 0L
+    for k = 0; k < 4; k = k + 1 {
+      let c = s[off + k].to_int()
+      if c < 0x30 || c > 0x39 {
+        return None
+      }
+      v = v * 10L + (c - 0x30).to_int64()
+    }
+    Some(v)
+  }
+  let n2 = fn(off : Int) -> Int64? {
+    let mut v = 0L
+    for k = 0; k < 2; k = k + 1 {
+      let c = s[off + k].to_int()
+      if c < 0x30 || c > 0x39 {
+        return None
+      }
+      v = v * 10L + (c - 0x30).to_int64()
+    }
+    Some(v)
+  }
+  let year = match n4(0) {
+    Some(v) => v
+    None => return 0L
+  }
+  let month = match n2(5) {
+    Some(v) => v
+    None => return 0L
+  }
+  let day = match n2(8) {
+    Some(v) => v
+    None => return 0L
+  }
+  let hour = match n2(11) {
+    Some(v) => v
+    None => return 0L
+  }
+  let minute = match n2(14) {
+    Some(v) => v
+    None => return 0L
+  }
+  let second = match n2(17) {
+    Some(v) => v
+    None => return 0L
+  }
+  if month < 1L || month > 12L || day < 1L || day > 31L {
+    return 0L
+  }
+  // Days from civil — Howard Hinnant's algorithm. Inputs in proleptic
+  // Gregorian; output is days since 1970-01-01.
+  let y = if month <= 2L { year - 1L } else { year }
+  let era = if y >= 0L { y / 400L } else { (y - 399L) / 400L }
+  let yoe = y - era * 400L
+  let m_adj = if month > 2L { month - 3L } else { month + 9L }
+  let doy = (153L * m_adj + 2L) / 5L + day - 1L
+  let doe = yoe * 365L + yoe / 4L - yoe / 100L + doy
+  let days = era * 146097L + doe - 719468L
+  days * 86400L + hour * 3600L + minute * 60L + second
 }
 
 ///|
@@ -726,11 +841,16 @@ fn parse_recent_merged_pull_requests(
       Some(value) => if value == "" { default_branch } else { value }
       None => default_branch
     }
+    let merged_at_unix = match @types.json_field_string(obj, "mergedAt") {
+      Some(raw) => parse_iso8601_to_unix_seconds(raw)
+      None => 0L
+    }
     result.push({
       pr_number,
       branch: @types.json_field_string(obj, "headRefName").unwrap_or(""),
       parent_branch,
       pr_url: @types.json_field_string(obj, "url").unwrap_or(""),
+      merged_at_unix,
     })
   }
   result
@@ -805,11 +925,21 @@ pub async fn detect_untracked_pr_merged_events(
     return []
   }
   let seen_cache = state.read_seen_merge_cache()
+  let enabled_at = state.read_or_initialize_seen_merge_enabled_at(now)
   let events : Array[@poller.PollEvent] = []
   for info in parse_recent_merged_pull_requests(output, default_branch) {
     let tracked = state.poller.get(info.pr_number) is Some(_)
     let already_seen = state.poller.merged_observed(info.pr_number) ||
       seen_cache.contains(info.pr_number)
+    let grandfathered = pr_merged_predates_seen_cache(
+      info.merged_at_unix,
+      enabled_at,
+    )
+    if grandfathered {
+      // Pre-existing merge; record it as seen so we don't reconsider it.
+      state.poller.mark_merged_observed(info.pr_number)
+      continue
+    }
     if should_emit_untracked_pr_merged(tracked, already_seen) {
       let pr = synthetic_untracked_merged_pr(
         info,
