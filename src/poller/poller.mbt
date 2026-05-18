@@ -215,6 +215,62 @@ pub(all) struct PollerPrTickLog {
 }
 
 ///|
+/// Per-runtime-tick summary for operator-visible INFO logging.
+pub(all) struct TickSummary {
+  mut polled : Int
+  mut changes : Int
+  mut errors : Int
+  started_at_ms : Int64
+} derive(Debug, Eq)
+
+///|
+pub fn TickSummary::new(started_at_ms : Int64) -> TickSummary {
+  { polled: 0, changes: 0, errors: 0, started_at_ms }
+}
+
+///|
+pub fn TickSummary::is_non_empty(self : TickSummary) -> Bool {
+  // M5 defines a non-empty tick as any tick where at least one PR was polled,
+  // a state transition fired, or an error occurred.
+  self.polled > 0 || self.changes > 0 || self.errors > 0
+}
+
+///|
+pub fn TickSummary::elapsed_ms(
+  self : TickSummary,
+  ended_at_ms : Int64,
+) -> Int64 {
+  let elapsed = ended_at_ms - self.started_at_ms
+  if elapsed < 0L {
+    0L
+  } else {
+    elapsed
+  }
+}
+
+///|
+pub fn build_tick_summary_line(
+  summary : TickSummary,
+  elapsed_ms : Int64,
+) -> String? {
+  if !summary.is_non_empty() {
+    return None
+  }
+  let elapsed = if elapsed_ms < 0L { 0L } else { elapsed_ms }
+  Some(
+    "tick poll=" +
+    summary.polled.to_string() +
+    " changes=" +
+    summary.changes.to_string() +
+    " errors=" +
+    summary.errors.to_string() +
+    " elapsed=" +
+    elapsed.to_string() +
+    "ms",
+  )
+}
+
+///|
 /// Events emitted by the poller on each tick.
 pub(all) enum PollEvent {
   ReviewReceived(Int, String)

@@ -9,27 +9,6 @@ test "poll_events_delivery_summary escapes newlines and truncates long events" {
 }
 
 ///|
-test "build_tick_summary_line suppresses all-zero ticks" {
-  @debug.assert_eq(build_tick_summary_line([], 0, 0), None)
-}
-
-///|
-test "build_tick_summary_line formats each non-zero component" {
-  @debug.assert_eq(
-    build_tick_summary_line([@poller.PollEvent::PRReady(3)], 0, 0),
-    Some("tick events=1 observed=0 failed=0"),
-  )
-  @debug.assert_eq(
-    build_tick_summary_line([], 1, 0),
-    Some("tick events=0 observed=1 failed=0"),
-  )
-  @debug.assert_eq(
-    build_tick_summary_line([], 0, 1),
-    Some("tick events=0 observed=0 failed=1"),
-  )
-}
-
-///|
 test "poller_event_should_dedup covers hash and window branches" {
   let prior : RecentEmission = { content_hash: "same", emitted_at_unix: 100L }
   assert_true(
@@ -310,13 +289,41 @@ async test "process_poller_tick_with emits tick summary when an event is produce
     Some(event) => event
     None =>
       fail(
-        "expected poller tick summary, captured: " +
+        "expected poller tick, captured: " +
         handler_moontrace_event_summary(captured),
       )
   }
-  match handler_moontrace_field_value(summary.fields, "events") {
+  match handler_moontrace_field_value(summary.fields, "polled") {
     Some(Number(value, ..)) => assert_eq(value.to_int(), 1)
-    _ => fail("events field")
+    _ => fail("polled field")
+  }
+  match handler_moontrace_field_value(summary.fields, "changes") {
+    Some(Number(value, ..)) => assert_eq(value.to_int(), 1)
+    _ => fail("changes field")
+  }
+  match handler_moontrace_field_value(summary.fields, "errors") {
+    Some(Number(value, ..)) => assert_eq(value.to_int(), 0)
+    _ => fail("errors field")
+  }
+  match handler_moontrace_field_value(summary.fields, "elapsed_ms") {
+    Some(_) => ()
+    _ => fail("elapsed_ms field")
+  }
+  match handler_moontrace_field_value(summary.fields, "agent_counts") {
+    Some(String(value)) => assert_true(value.contains("active=0"))
+    _ => fail("agent_counts field")
+  }
+  match handler_moontrace_field_value(summary.fields, "tracked_prs") {
+    Some(Number(value, ..)) => assert_eq(value.to_int(), 1)
+    _ => fail("tracked_prs field")
+  }
+  match
+    handler_moontrace_field_value(
+      summary.fields,
+      "previous_delivered_event_age_sec",
+    ) {
+    Some(String(value)) => assert_eq(value, "unknown")
+    _ => fail("previous_delivered_event_age_sec field")
   }
   ignore(@sys.rm_rf(project_dir))
 }
@@ -5206,8 +5213,7 @@ fn handler_tick_summary_event(
   events : Array[@moontrace.Event],
 ) -> @moontrace.Event? {
   for event in events {
-    if event.level == @moontrace.Level::Info &&
-      event.message == "poller tick summary" {
+    if event.level == @moontrace.Level::Info && event.message == "poller tick" {
       return Some(event)
     }
   }

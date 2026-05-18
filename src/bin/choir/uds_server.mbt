@@ -850,6 +850,55 @@ fn serve_rotate_log_if_large(
 }
 
 ///|
+fn serve_write_status_dump_if_sigusr1_requested(
+  state : @server.ServerState,
+  now_sec : Int64,
+) -> Unit {
+  if @sys.consume_sigusr1_flag() {
+    let status_path = @server.server_status_path(state.config.project_dir)
+    if !state.write_server_status_snapshot(now_sec, fn(agent_id) {
+        @phase.read_lifecycle(state.config.project_dir, agent_id)
+      }) {
+      @moontrace.error("server status dump failed", fields=[
+        @moontrace.field("path", status_path),
+      ])
+    } else {
+      @moontrace.info("server status dump written", fields=[
+        @moontrace.field("path", status_path),
+        @moontrace.field("agents", state.registry.list().length()),
+      ])
+    }
+  }
+}
+
+///|
+test "serve SIGUSR1 flag writes server status snapshot" {
+  let (state, project_dir) = serve_test_state_with_root("sigusr1-status")
+  ignore(@sys.consume_sigusr1_flag())
+  assert_true(@sys.install_sigusr1_handler())
+  assert_true(@sys.raise_sigusr1_for_test())
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  serve_write_status_dump_if_sigusr1_requested(state, 100L)
+  @moontrace.clear_subscriber()
+  let content = @sys.read_file(@server.server_status_path(project_dir))
+  assert_true(content.contains("choir server status\n"))
+  assert_true(content.contains("agent_id=root "))
+  assert_true(
+    content.contains("terminal_target=zellij-pane:uds-jsonrpc:terminal_1"),
+  )
+  assert_true(
+    captured
+    .iter()
+    .any(fn(event) {
+      event.level == @moontrace.Level::Info &&
+      event.message == "server status dump written"
+    }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "serve rotates oversized logs with one shared helper" {
   let renames : Array[(String, String)] = []
   let did_rotate = serve_rotate_log_if_large(
@@ -1151,6 +1200,9 @@ fn serve_run() -> Unit {
   @moontrace.set_min_level(@moontrace.Level::Debug)
   @sys.write_pid_file(".choir/server.pid")
   @sys.register_cleanup_runtime_artifacts()
+  if !@sys.install_sigusr1_handler() {
+    @moontrace.warn("failed to install SIGUSR1 handler", fields=[])
+  }
   match inherited_uds_fd {
     Some(_) => ()
     // Clean stale runtime markers from previous sessions, but preserve recoverable
@@ -1194,6 +1246,12 @@ fn serve_run() -> Unit {
       }
       state.replay_pending_outbox(runner=@exec.run_sequence)
       root.spawn_bg(async fn() {
+        for ;; {
+          @async.sleep(1000)
+          serve_write_status_dump_if_sigusr1_requested(state, @poller.now_sec())
+        }
+      })
+      root.spawn_bg(async fn() {
         let timeout_sec = 900L
         let disconnect_grace_sec = 60L
         let interval_ms = 30000
@@ -1233,7 +1291,12 @@ fn serve_run() -> Unit {
           now : Int64,
           timeout_sec : Int64,
         ) {
-          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence)
+          state.process_poller_tick(now, timeout_sec, runner=@exec.run_sequence) catch {
+            e =>
+              @moontrace.error("poller heartbeat tick error", fields=[
+                @moontrace.field("error", e.to_string()),
+              ])
+          }
         })
       })
       root.spawn_bg(async fn() {

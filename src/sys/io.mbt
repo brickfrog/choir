@@ -679,6 +679,15 @@ extern "C" fn c_init_cleanup_purge_artifacts() = "choir_init_cleanup_purge_artif
 extern "C" fn c_register_cleanup_runtime_artifacts() = "choir_register_cleanup_runtime_artifacts"
 
 ///|
+extern "C" fn c_install_sigusr1_handler() -> Int = "choir_install_sigusr1_handler"
+
+///|
+extern "C" fn c_consume_sigusr1_flag() -> Int = "choir_consume_sigusr1_flag"
+
+///|
+extern "C" fn c_raise_sigusr1_for_test() -> Int = "choir_raise_sigusr1_for_test"
+
+///|
 #borrow(pd, br)
 extern "C" fn c_git_fetch_origin_branch_best_effort(pd : Bytes, br : Bytes) = "choir_git_fetch_origin_branch_best_effort"
 
@@ -744,6 +753,21 @@ pub fn init_cleanup_purge_artifacts_native() -> Unit {
 /// Register SIGTERM/SIGINT cleanup that unlinks runtime markers only (no shell command).
 pub fn register_cleanup_runtime_artifacts() -> Unit {
   c_register_cleanup_runtime_artifacts()
+}
+
+///|
+pub fn install_sigusr1_handler() -> Bool {
+  c_install_sigusr1_handler() == 0
+}
+
+///|
+pub fn consume_sigusr1_flag() -> Bool {
+  c_consume_sigusr1_flag() != 0
+}
+
+///|
+pub fn raise_sigusr1_for_test() -> Bool {
+  c_raise_sigusr1_for_test() == 0
 }
 
 ///|
