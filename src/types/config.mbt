@@ -30,6 +30,12 @@ pub(all) struct Config {
   audit_heartbeat_sec : Int
   /// Poller heartbeat cadence in seconds; 0 disables heartbeat ticks.
   poller_heartbeat_tick_sec : Int
+  /// Best-effort `git pull --ff-only` on the parent worktree after an integration PR merges.
+  auto_pull_after_integration : Bool
+  /// Placeholder only in v1; parsed and persisted but not acted on.
+  auto_rebuild_after_pull : Bool
+  /// Placeholder only in v1; parsed and persisted but not acted on.
+  auto_reload_after_rebuild : Bool
   /// Per-agent-type token pricing, keyed by canonical AgentType wire string.
   pricing : Map[String, PricingRate]
 } derive(Debug)
@@ -56,6 +62,12 @@ pub(all) struct LocalConfig {
   automerge : Bool?
   /// Per-wave review-mode override. `None` inherits global config.
   review_mode : ReviewMode?
+  /// Optional root-local override for post-integration-merge parent pull.
+  auto_pull_after_integration : Bool?
+  /// Placeholder only in v1; parsed but not acted on.
+  auto_rebuild_after_pull : Bool?
+  /// Placeholder only in v1; parsed but not acted on.
+  auto_reload_after_rebuild : Bool?
   /// Wave telemetry id assigned by `fork_wave`. `None` for root/pre-scaffold agents.
   wave_id : String?
 } derive(Debug)
@@ -83,6 +95,9 @@ pub fn Config::default() -> Config {
     worker_no_handoff_escalate_sec: 120L,
     audit_heartbeat_sec: 60,
     poller_heartbeat_tick_sec: 60,
+    auto_pull_after_integration: true,
+    auto_rebuild_after_pull: false,
+    auto_reload_after_rebuild: false,
     pricing: {},
   }
 }
@@ -102,6 +117,9 @@ pub fn LocalConfig::default() -> LocalConfig {
     task_contract: None,
     automerge: None,
     review_mode: None,
+    auto_pull_after_integration: None,
+    auto_rebuild_after_pull: None,
+    auto_reload_after_rebuild: None,
     wave_id: None,
   }
 }

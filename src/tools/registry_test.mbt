@@ -337,6 +337,48 @@ test "tool registry lookup success" {
 }
 
 ///|
+test "tool registry marks read-only tools" {
+  let reg = @tools.ToolRegistry::new()
+  for
+    name in [
+      "status_bar_state", "wave_state", "kv_get", "kv_list", "mutex_status", "goal_status",
+      "agent_list",
+    ] {
+    try reg.lookup(@types.Role::Root, name) catch {
+      _ => fail("expected read-only tool lookup: " + name)
+    } noraise {
+      def => assert_true(def.read_only)
+    }
+  }
+  for name in ["task_get", "task_list"] {
+    try reg.lookup(@types.Role::TL, name) catch {
+      _ => fail("expected read-only tool lookup: " + name)
+    } noraise {
+      def => assert_true(def.read_only)
+    }
+  }
+}
+
+///|
+test "tool registry defaults mutating tools to read_only false" {
+  let reg = @tools.ToolRegistry::new()
+  for name in ["merge_pr", "kv_set", "mutex_acquire", "server_reload"] {
+    try reg.lookup(@types.Role::Root, name) catch {
+      _ => fail("expected mutating tool lookup: " + name)
+    } noraise {
+      def => assert_false(def.read_only)
+    }
+  }
+  for name in ["file_pr", "track_pr", "task_update"] {
+    try reg.lookup(@types.Role::TL, name) catch {
+      _ => fail("expected mutating tool lookup: " + name)
+    } noraise {
+      def => assert_false(def.read_only)
+    }
+  }
+}
+
+///|
 test "tool registry lookup wrong role" {
   let reg = @tools.ToolRegistry::new()
   let result = try? reg.lookup(@types.Role::Worker, "fork_wave")

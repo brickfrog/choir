@@ -557,6 +557,430 @@ async fn pr_merged_parent_branch_is_wave_complete(
 }
 
 ///|
+pub let seen_merge_cache_capacity : Int = 50
+
+///|
+pub(all) struct RecentMergedPullRequest {
+  pr_number : Int
+  branch : String
+  parent_branch : String
+  pr_url : String
+} derive(Debug, Eq)
+
+///|
+pub struct ParentWorktreeGitState {
+  current_branch : String
+  working_tree_clean : Bool
+} derive(Debug, Eq)
+
+///|
+pub fn parent_worktree_git_state(
+  current_branch : String,
+  working_tree_clean : Bool,
+) -> ParentWorktreeGitState {
+  { current_branch, working_tree_clean }
+}
+
+///|
+pub fn should_auto_pull_parent(
+  parent_branch : String,
+  default_branch : String,
+  current_branch : String,
+  working_tree_clean : Bool,
+  config_auto_pull_enabled : Bool,
+) -> Bool {
+  parent_branch == default_branch &&
+  current_branch == default_branch &&
+  working_tree_clean &&
+  config_auto_pull_enabled
+}
+
+///|
+pub fn should_emit_untracked_pr_merged(
+  tracked : Bool,
+  already_seen : Bool,
+) -> Bool {
+  !tracked && !already_seen
+}
+
+///|
+pub fn update_seen_merge_cache(
+  cache : Array[Int],
+  pr_number : Int,
+  capacity? : Int = seen_merge_cache_capacity,
+) -> Array[Int] {
+  let next : Array[Int] = []
+  for value in cache {
+    if value != pr_number {
+      next.push(value)
+    }
+  }
+  next.push(pr_number)
+  let limit = if capacity < 1 { 1 } else { capacity }
+  while next.length() > limit {
+    ignore(next.remove(0))
+  }
+  next
+}
+
+///|
+fn parse_seen_merge_cache(content : String) -> Array[Int] {
+  let json = @json.parse(content) catch { _ => return [] }
+  let result : Array[Int] = []
+  match json {
+    Array(items) =>
+      for item in items {
+        match item {
+          Number(n, ..) => result.push(n.to_int())
+          _ => ()
+        }
+      }
+    _ => ()
+  }
+  result
+}
+
+///|
+fn seen_merge_cache_to_json(cache : Array[Int]) -> String {
+  let items : Array[Json] = cache.map(fn(n) { n.to_json() })
+  items.to_json().stringify()
+}
+
+///|
+fn seen_merge_cache_path(project_dir : String) -> String {
+  project_dir + "/.choir/seen_merged_prs.json"
+}
+
+///|
+fn ServerState::read_seen_merge_cache(self : ServerState) -> Array[Int] {
+  parse_seen_merge_cache(
+    (self.read_file)(seen_merge_cache_path(self.config.project_dir)),
+  )
+}
+
+///|
+fn ServerState::write_seen_merge_cache(
+  self : ServerState,
+  cache : Array[Int],
+) -> Unit {
+  ignore(
+    (self.write_file_atomic)(
+      seen_merge_cache_path(self.config.project_dir),
+      seen_merge_cache_to_json(cache) + "\n",
+    ),
+  )
+}
+
+///|
+fn ServerState::record_seen_merged_pr_number(
+  self : ServerState,
+  pr_number : Int,
+) -> Unit {
+  let cache = self.read_seen_merge_cache()
+  let next = update_seen_merge_cache(cache, pr_number)
+  self.poller.mark_merged_observed(pr_number)
+  self.write_seen_merge_cache(next)
+}
+
+///|
+fn recent_merged_pull_requests_command(
+  project_dir : String,
+  default_branch : String,
+) -> @workspace.Command {
+  {
+    program: "gh",
+    args: [
+      "pr",
+      "list",
+      "--state",
+      "merged",
+      "--base",
+      default_branch,
+      "--limit",
+      seen_merge_cache_capacity.to_string(),
+      "--json",
+      "number,url,headRefName,baseRefName",
+    ],
+    workdir: Some(project_dir),
+  }
+}
+
+///|
+fn parse_recent_merged_pull_requests(
+  output : String,
+  default_branch : String,
+) -> Array[RecentMergedPullRequest] {
+  let parsed = @json.parse(output) catch { _ => return [] }
+  let result : Array[RecentMergedPullRequest] = []
+  guard parsed is Array(items) else { return result }
+  for item in items {
+    guard item is Object(obj) else { continue }
+    let pr_number = match @types.json_field_int(obj, "number") {
+      Some(value) => value
+      None => continue
+    }
+    if pr_number <= 0 {
+      continue
+    }
+    let parent_branch = match @types.json_field_string(obj, "baseRefName") {
+      Some(value) => if value == "" { default_branch } else { value }
+      None => default_branch
+    }
+    result.push({
+      pr_number,
+      branch: @types.json_field_string(obj, "headRefName").unwrap_or(""),
+      parent_branch,
+      pr_url: @types.json_field_string(obj, "url").unwrap_or(""),
+    })
+  }
+  result
+}
+
+///|
+fn synthetic_untracked_merged_pr(
+  info : RecentMergedPullRequest,
+  now : Int64,
+  review_mode : @types.ReviewMode,
+  agent_id : String,
+) -> @poller.TrackedPR {
+  {
+    pr_number: info.pr_number,
+    agent_id,
+    branch: info.branch,
+    parent_branch: info.parent_branch,
+    pr_url: info.pr_url,
+    first_seen: now,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "",
+    last_automerge_attempt_sha: "",
+    notified_parent: true,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: false,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+    review_mode,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
+  }
+}
+
+///|
+fn synthetic_untracked_merge_agent_id(state : ServerState) -> String {
+  match state.config.agent_id {
+    Some(agent_id) =>
+      if @phase.is_root_tl_shaped_agent_id(agent_id) {
+        agent_id
+      } else {
+        "user-0-0"
+      }
+    None => "user-0-0"
+  }
+}
+
+///|
+pub async fn detect_untracked_pr_merged_events(
+  state : ServerState,
+  now : Int64,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Array[@poller.PollEvent] {
+  let default_branch = match
+    detect_default_branch_for_wave_complete(state.config.project_dir, capture) {
+    Some(branch) => branch
+    None => return []
+  }
+  let cmd = recent_merged_pull_requests_command(
+    state.config.project_dir,
+    default_branch,
+  )
+  let (exit_code, output) = capture(cmd)
+  if exit_code != 0 {
+    return []
+  }
+  let seen_cache = state.read_seen_merge_cache()
+  let events : Array[@poller.PollEvent] = []
+  for info in parse_recent_merged_pull_requests(output, default_branch) {
+    let tracked = state.poller.get(info.pr_number) is Some(_)
+    let already_seen = state.poller.merged_observed(info.pr_number) ||
+      seen_cache.contains(info.pr_number)
+    if should_emit_untracked_pr_merged(tracked, already_seen) {
+      let pr = synthetic_untracked_merged_pr(
+        info,
+        now,
+        state.config.review_mode,
+        synthetic_untracked_merge_agent_id(state),
+      )
+      events.push(@poller.PollEvent::PRMerged(pr))
+    }
+  }
+  events
+}
+
+///|
+async fn capture_parent_worktree_git_state(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> ParentWorktreeGitState? {
+  let branch_cmd : @workspace.Command = {
+    program: "git",
+    args: ["rev-parse", "--abbrev-ref", "HEAD"],
+    workdir: Some(project_dir),
+  }
+  let (branch_exit, branch_output) = capture(branch_cmd)
+  if branch_exit != 0 {
+    return None
+  }
+  let status_cmd : @workspace.Command = {
+    program: "git",
+    args: ["status", "--porcelain"],
+    workdir: Some(project_dir),
+  }
+  let (status_exit, status_output) = capture(status_cmd)
+  if status_exit != 0 {
+    return None
+  }
+  Some({
+    current_branch: branch_output.trim().to_owned(),
+    working_tree_clean: status_output.trim().to_owned() == "",
+  })
+}
+
+///|
+async fn run_parent_git_pull_ff_only(
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Bool {
+  let (exit_code, _) = capture({
+    program: "git",
+    args: ["pull", "--ff-only"],
+    workdir: Some(project_dir),
+  })
+  exit_code == 0
+}
+
+///|
+async test "run_parent_git_pull_ff_only uses capture-based git pull" {
+  let captured : Array[@workspace.Command] = []
+  let ok = run_parent_git_pull_ff_only("/repo", async fn(
+    cmd : @workspace.Command,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    captured.push(cmd)
+    (1, "fatal: origin does not appear to be a git repository")
+  })
+  assert_false(ok)
+  assert_eq(captured.length(), 1)
+  assert_eq(captured[0].program, "git")
+  @debug.assert_eq(captured[0].args, ["pull", "--ff-only"])
+  @debug.assert_eq(captured[0].workdir, Some("/repo"))
+}
+
+///|
+fn ServerState::auto_pull_after_integration_enabled(self : ServerState) -> Bool {
+  let local_content = (self.read_file)(
+    self.config.project_dir + "/.choir/config.local.toml",
+  )
+  match @config.parse_local_config(local_content) {
+    Ok(local_cfg) =>
+      local_cfg.auto_pull_after_integration.unwrap_or(
+        self.config.auto_pull_after_integration,
+      )
+    Err(_) => self.config.auto_pull_after_integration
+  }
+}
+
+///|
+pub async fn maybe_auto_pull_parent_after_pr_merged(
+  state : ServerState,
+  pr : @poller.TrackedPR,
+  capture : async (@workspace.Command) -> (Int, String),
+  git_pull_capture : async (@workspace.Command) -> (Int, String),
+  git_state_capture : async (
+    String,
+    async (@workspace.Command) -> (Int, String),
+  ) -> ParentWorktreeGitState?,
+  git_pull_runner : async (String, async (@workspace.Command) -> (Int, String)) -> Bool,
+) -> Unit {
+  let default_branch = match
+    detect_default_branch_for_wave_complete(state.config.project_dir, capture) {
+    Some(branch) => branch
+    None => {
+      if pr.parent_branch != "" {
+        @moontrace.warn("auto-pull skipped: default branch unknown", fields=[
+          @moontrace.field("pr", pr.pr_number),
+          @moontrace.field("parent_branch", pr.parent_branch),
+        ])
+      }
+      return
+    }
+  }
+  if pr.parent_branch != default_branch {
+    return
+  }
+  let enabled = state.auto_pull_after_integration_enabled()
+  if !enabled {
+    @moontrace.info("auto-pull skipped", fields=[
+      @moontrace.field("pr", pr.pr_number),
+      @moontrace.field("reason", "disabled"),
+      @moontrace.field("default_branch", default_branch),
+    ])
+    return
+  }
+  let git_state = match git_state_capture(state.config.project_dir, capture) {
+    Some(value) => value
+    None => {
+      @moontrace.warn("auto-pull skipped: parent git state unavailable", fields=[
+        @moontrace.field("pr", pr.pr_number),
+        @moontrace.field("default_branch", default_branch),
+      ])
+      return
+    }
+  }
+  if !should_auto_pull_parent(
+      pr.parent_branch,
+      default_branch,
+      git_state.current_branch,
+      git_state.working_tree_clean,
+      enabled,
+    ) {
+    let reason = if git_state.current_branch != default_branch {
+      "wrong_branch"
+    } else if !git_state.working_tree_clean {
+      "dirty_tree"
+    } else {
+      "predicate_false"
+    }
+    @moontrace.warn("auto-pull skipped", fields=[
+      @moontrace.field("pr", pr.pr_number),
+      @moontrace.field("reason", reason),
+      @moontrace.field("default_branch", default_branch),
+      @moontrace.field("current_branch", git_state.current_branch),
+    ])
+    return
+  }
+  if git_pull_runner(state.config.project_dir, git_pull_capture) {
+    @moontrace.info("auto-pull completed", fields=[
+      @moontrace.field("pr", pr.pr_number),
+      @moontrace.field("default_branch", default_branch),
+      @moontrace.field("workdir", state.config.project_dir),
+    ])
+  } else {
+    @moontrace.warn("auto-pull failed", fields=[
+      @moontrace.field("pr", pr.pr_number),
+      @moontrace.field("default_branch", default_branch),
+      @moontrace.field("workdir", state.config.project_dir),
+    ])
+  }
+}
+
+///|
 pub async fn fire_pr_merged_completion_hooks(
   project_dir : String,
   pr : @poller.TrackedPR,
@@ -1631,6 +2055,13 @@ async fn deliver_pending_poll_events(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  git_state_capture? : async (
+    String,
+    async (@workspace.Command) -> (Int, String),
+  ) -> ParentWorktreeGitState? = capture_parent_worktree_git_state,
+  git_pull_runner? : async (String, async (@workspace.Command) -> (Int, String)) -> Bool = run_parent_git_pull_ff_only,
 ) -> Unit {
   let pending_parent_rows : Array[PendingPollParentRow] = []
   let automerge_attempted_prs : Map[Int, Bool] = {}
@@ -1712,17 +2143,30 @@ async fn deliver_pending_poll_events(
         }
       None => (None, None)
     }
-    match (event, tracked_for_delivery) {
-      (PRMerged(pr), Some(_)) => {
-        state.reconcile_external_merge_with_runner(
-          pr.agent_id,
-          pr.pr_number,
-          pr.branch,
-          pr.parent_branch,
-          pr.pr_url,
-          runner,
+    match event {
+      PRMerged(pr) => {
+        match tracked_for_delivery {
+          Some(_) =>
+            state.reconcile_external_merge_with_runner(
+              pr.agent_id,
+              pr.pr_number,
+              pr.branch,
+              pr.parent_branch,
+              pr.pr_url,
+              runner,
+            )
+          None => ()
+        }
+        fire_pr_merged_completion_hooks(
+          state.config.project_dir,
+          pr,
+          capture~,
+          hook_capture~,
         )
-        fire_pr_merged_completion_hooks(state.config.project_dir, pr, capture~)
+        state.record_seen_merged_pr_number(pr.pr_number)
+        maybe_auto_pull_parent_after_pr_merged(
+          state, pr, capture, git_pull_capture, git_state_capture, git_pull_runner,
+        )
       }
       _ =>
         for
@@ -2251,6 +2695,13 @@ pub async fn ServerState::process_poller_tick_with(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  git_state_capture? : async (
+    String,
+    async (@workspace.Command) -> (Int, String),
+  ) -> ParentWorktreeGitState? = capture_parent_worktree_git_state,
+  git_pull_runner? : async (String, async (@workspace.Command) -> (Int, String)) -> Bool = run_parent_git_pull_ff_only,
 ) -> Unit {
   self.mutex_registry.expire(now)
   let pending_events = []
@@ -2273,6 +2724,10 @@ pub async fn ServerState::process_poller_tick_with(
       }
     },
   )
+  for event in detect_untracked_pr_merged_events(self, now, capture) {
+    pending_events.push(event)
+    pending_agent_ids.push(synthetic_untracked_merge_agent_id(self))
+  }
   let agents_observed = self.record_poller_sha_transitions(sha_before, now)
   emit_tick_summary_line(
     append_file, project_dir, pending_events, agents_observed, tick_agents_failed,
@@ -2289,6 +2744,10 @@ pub async fn ServerState::process_poller_tick_with(
     runner,
     capture~,
     automerge_capture~,
+    git_pull_capture~,
+    hook_capture~,
+    git_state_capture~,
+    git_pull_runner~,
   )
   deliver_poller_stall_notifications(self, now, runner)
   self.sweep_outbox(now)
@@ -2301,6 +2760,8 @@ pub async fn ServerState::process_poller_tick(
   now : Int64,
   timeout : Int64,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> Unit {
   self.mutex_registry.expire(now)
   let pending_events = []
@@ -2324,6 +2785,10 @@ pub async fn ServerState::process_poller_tick(
       log_poller_pr_tick(append_file, project_dir, log)
     },
   )
+  for event in detect_untracked_pr_merged_events(self, now, capture) {
+    pending_events.push(event)
+    pending_agent_ids.push(synthetic_untracked_merge_agent_id(self))
+  }
   let agents_observed = self.record_poller_sha_transitions(sha_before, now)
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
@@ -2333,7 +2798,13 @@ pub async fn ServerState::process_poller_tick(
   )
   deliver_orphaned_pr_notifications(self, runner)
   deliver_pending_poll_events(
-    self, now, pending_events, pending_agent_ids, runner,
+    self,
+    now,
+    pending_events,
+    pending_agent_ids,
+    runner,
+    capture~,
+    automerge_capture~,
   )
   deliver_poller_stall_notifications(self, now, runner)
   self.sweep_outbox(now)

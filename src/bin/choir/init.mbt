@@ -375,6 +375,9 @@ fn init_config_toml_content(default_session : String) -> String {
   "\"\n" +
   "worker_no_handoff_prod_sec = 120\n" +
   "worker_no_handoff_escalate_sec = 120\n" +
+  "auto_pull_after_integration = true\n" +
+  "auto_rebuild_after_pull = false\n" +
+  "auto_reload_after_rebuild = false\n" +
   "\n" +
   "# [pricing.codex]\n" +
   "# rate_in = 0.0\n" +

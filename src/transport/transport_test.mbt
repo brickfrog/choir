@@ -180,6 +180,9 @@ test "format_registration_request includes local config metadata" {
     task_contract: None,
     automerge: None,
     review_mode: None,
+    auto_pull_after_integration: None,
+    auto_rebuild_after_pull: None,
+    auto_reload_after_rebuild: None,
     wave_id: None,
   }
   let output = format_registration_request(
