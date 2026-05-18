@@ -256,8 +256,8 @@ pub fn parse_merge_state_status(raw : String) -> MergeStateStatus {
 }
 
 ///|
-pub fn merged_at_from_iso(raw : String) -> Int64 {
-  @types.parse_iso8601_to_unix_seconds(raw)
+pub fn merged_at_from_iso(raw : String) -> Int64? {
+  @types.parse_iso8601_to_unix_seconds_opt(raw)
 }
 
 ///|
@@ -282,7 +282,7 @@ fn parse_merge_state_status_field(json : Json) -> MergeStateStatus {
 fn parse_merged_at_unix_field(json : Json) -> Int64? {
   guard json is Object(obj) else { return None }
   match @types.json_field_string(obj, "mergedAt") {
-    Some(raw) => Some(merged_at_from_iso(raw))
+    Some(raw) => merged_at_from_iso(raw)
     None => @types.json_field_int64(obj, "merged_at_unix")
   }
 }

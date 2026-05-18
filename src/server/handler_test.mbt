@@ -2576,6 +2576,7 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
     @poller.PollEvent::PRMerged(pr) => pr
     _ => fail("expected synthetic PRMerged")
   }
+  @debug.assert_eq(pr.merged_at_unix, Some(4102358400L))
   let fired_inputs : Array[@hooks.HookInput] = []
   fire_pr_merged_completion_hooks(
     project_dir,

@@ -30,7 +30,12 @@ test "parse_merge_state_status covers GitHub variants and unknown fallback" {
 
 ///|
 test "merged_at_from_iso reuses shared ISO timestamp parser" {
-  assert_eq(merged_at_from_iso("2026-05-18T00:27:59Z"), 1779064079L)
+  @debug.assert_eq(
+    merged_at_from_iso("2026-05-18T00:27:59Z"),
+    Some(1779064079L),
+  )
+  @debug.assert_eq(merged_at_from_iso("not-a-timestamp"), None)
+  @debug.assert_eq(merged_at_from_iso("2026-05-18T00:27:59+02:00"), None)
 }
 
 ///|
@@ -63,6 +68,31 @@ test "parse_gh_pr_view_output maps valid gh json to review SHA and CI" {
   assert_eq(mergeable, Mergeable::Mergeable)
   assert_eq(merge_state_status, MergeStateStatus::Clean)
   @debug.assert_eq(merged_at_unix, Some(1779064079L))
+}
+
+///|
+test "parse_gh_pr_view_output maps invalid mergedAt to unknown timestamp" {
+  let json =
+    #|{"reviews":[],
+    #|"headRefOid":"abc123def",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN",
+    #|"mergeable":"UNKNOWN",
+    #|"mergeStateStatus":"UNKNOWN",
+    #|"mergedAt":"not-a-timestamp"}
+  let (
+    ok,
+    _review,
+    _sha,
+    _ci_rollup,
+    _bodies,
+    _open,
+    _mergeable,
+    _merge_state_status,
+    merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  @debug.assert_eq(merged_at_unix, None)
 }
 
 ///|

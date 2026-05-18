@@ -802,7 +802,11 @@ fn synthetic_untracked_merged_pr(
     last_ci_rollup: @poller.CiRollupStatus::Success,
     mergeable: @poller.Mergeable::Unknown,
     merge_state_status: @poller.MergeStateStatus::Unknown,
-    merged_at_unix: Some(info.merged_at_unix),
+    merged_at_unix: if info.merged_at_unix == 0L {
+      None
+    } else {
+      Some(info.merged_at_unix)
+    },
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
