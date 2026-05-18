@@ -4,6 +4,48 @@ fn request_span_name(req : @types.Request) -> String {
 }
 
 ///|
+pub(all) enum RequestLogLevel {
+  Trace
+  Info
+} derive(Debug, Eq)
+
+///|
+pub fn request_log_level(tool_def : @types.ToolDef) -> RequestLogLevel {
+  if tool_def.read_only {
+    Trace
+  } else {
+    Info
+  }
+}
+
+///|
+pub fn request_log_level_for_request(
+  state : ServerState,
+  req : @types.Request,
+) -> RequestLogLevel {
+  if req.req_method != "tools/call" {
+    return Info
+  }
+  try state.tool_registry.lookup(req.role, req.name) catch {
+    _ => Info
+  } noraise {
+    def => request_log_level(def)
+  }
+}
+
+///|
+fn emit_request_log(
+  level : RequestLogLevel,
+  name : String,
+  fields : Array[@moontrace.Field],
+) -> Unit {
+  match level {
+    Trace => @moontrace.trace(name, fields~)
+    Info => @moontrace.info(name, fields~)
+  }
+}
+
+///|
 fn emit_span(
   state : ServerState,
   req : @types.Request,
@@ -26,7 +68,7 @@ fn emit_span(
     Some(msg) => fields.push(@moontrace.field("error", msg))
     None => ()
   }
-  @moontrace.info(name, fields~)
+  emit_request_log(request_log_level_for_request(state, req), name, fields)
   match state.config.otlp_endpoint {
     Some(ep) => {
       let mt_span = @moontrace.span_with_trace(

@@ -16,6 +16,9 @@ test "parse_config - full" {
     #|worker_no_handoff_escalate_sec = 45
     #|audit_heartbeat_sec = 30
     #|poller_heartbeat_tick_sec = 10
+    #|auto_pull_after_integration = false
+    #|auto_rebuild_after_pull = true
+    #|auto_reload_after_rebuild = true
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
@@ -45,6 +48,9 @@ test "parse_config - full" {
   assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
   assert_eq(cfg.audit_heartbeat_sec, 30)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
+  assert_eq(cfg.auto_pull_after_integration, false)
+  assert_eq(cfg.auto_rebuild_after_pull, true)
+  assert_eq(cfg.auto_reload_after_rebuild, true)
 }
 
 ///|
@@ -62,6 +68,9 @@ test "parse_config - minimal" {
   assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
   assert_eq(cfg.audit_heartbeat_sec, 60)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
+  assert_eq(cfg.auto_pull_after_integration, true)
+  assert_eq(cfg.auto_rebuild_after_pull, false)
+  assert_eq(cfg.auto_reload_after_rebuild, false)
 }
 
 ///|
@@ -397,6 +406,19 @@ test "parse_local_config review_mode override" {
     #|review_mode = "iterative"
   let local_cfg = parse_local_config(content).unwrap()
   @debug.assert_eq(local_cfg.review_mode, Some(@types.ReviewMode::Iterative))
+}
+
+///|
+test "parse_local_config post merge loop flags" {
+  let content =
+    #|role = "tl"
+    #|auto_pull_after_integration = false
+    #|auto_rebuild_after_pull = true
+    #|auto_reload_after_rebuild = true
+  let local_cfg = parse_local_config(content).unwrap()
+  @debug.assert_eq(local_cfg.auto_pull_after_integration, Some(false))
+  @debug.assert_eq(local_cfg.auto_rebuild_after_pull, Some(true))
+  @debug.assert_eq(local_cfg.auto_reload_after_rebuild, Some(true))
 }
 
 ///|

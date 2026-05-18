@@ -122,6 +122,37 @@ fn parse_bool_config_value(raw : String) -> Result[Bool, String] {
 }
 
 ///|
+fn parse_required_bool_config_value(
+  doc : TomlDoc,
+  key : String,
+  default_value : Bool,
+) -> Result[Bool, @types.ChoirError] {
+  match doc.get(key) {
+    None => Ok(default_value)
+    Some(raw) =>
+      match parse_bool_config_value(raw) {
+        Ok(b) => Ok(b)
+        Err(msg) => Err(@types.ChoirError::config_error(key + ": " + msg))
+      }
+  }
+}
+
+///|
+fn parse_optional_bool_config_value(
+  doc : TomlDoc,
+  key : String,
+) -> Result[Bool?, @types.ChoirError] {
+  match doc.get(key) {
+    None => Ok(None)
+    Some(raw) =>
+      match parse_bool_config_value(raw) {
+        Ok(b) => Ok(Some(b))
+        Err(msg) => Err(@types.ChoirError::config_error(key + ": " + msg))
+      }
+  }
+}
+
+///|
 fn parse_double_config_value(
   key : String,
   raw : String,
@@ -379,6 +410,33 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let auto_pull_after_integration = match
+    parse_required_bool_config_value(
+      doc,
+      "auto_pull_after_integration",
+      default_cfg.auto_pull_after_integration,
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let auto_rebuild_after_pull = match
+    parse_required_bool_config_value(
+      doc,
+      "auto_rebuild_after_pull",
+      default_cfg.auto_rebuild_after_pull,
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let auto_reload_after_rebuild = match
+    parse_required_bool_config_value(
+      doc,
+      "auto_reload_after_rebuild",
+      default_cfg.auto_reload_after_rebuild,
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let pricing = match parse_pricing_config(doc) {
     Ok(p) => p
     Err(e) => return Err(e)
@@ -404,6 +462,9 @@ pub fn parse_config(
     worker_no_handoff_escalate_sec,
     audit_heartbeat_sec,
     poller_heartbeat_tick_sec,
+    auto_pull_after_integration,
+    auto_rebuild_after_pull,
+    auto_reload_after_rebuild,
     pricing,
   })
 }
@@ -518,6 +579,21 @@ pub fn parse_local_config(
       }
     None => None
   }
+  let auto_pull_after_integration = match
+    parse_optional_bool_config_value(doc, "auto_pull_after_integration") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let auto_rebuild_after_pull = match
+    parse_optional_bool_config_value(doc, "auto_rebuild_after_pull") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let auto_reload_after_rebuild = match
+    parse_optional_bool_config_value(doc, "auto_reload_after_rebuild") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let wave_id = doc.get_optional_nonempty("wave_id")
   Ok({
     role,
@@ -532,6 +608,9 @@ pub fn parse_local_config(
     task_contract,
     automerge,
     review_mode,
+    auto_pull_after_integration,
+    auto_rebuild_after_pull,
+    auto_reload_after_rebuild,
     wave_id,
   })
 }
