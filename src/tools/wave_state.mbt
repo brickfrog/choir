@@ -9,13 +9,50 @@ pub(all) struct WaveStatePR {
   pr_url : String
   review_state : @poller.ReviewState
   ci_rollup : @poller.CiRollupStatus
+  mergeable : @poller.Mergeable
+  merge_state_status : @poller.MergeStateStatus
+  merged_at_unix : Int64?
   unresolved_threads : Int?
   threads_fetch_error : String?
   copilot_issue_comment_seen : Bool
   fixes_pushed_at : Int64
   last_sha : String
   merge_gate_ready : Bool
-} derive(Debug, Eq, ToJson)
+} derive(Debug, Eq)
+
+///|
+fn wave_state_optional_int64_to_json(value : Int64?) -> Json {
+  match value {
+    Some(v) => v.to_json()
+    None => null
+  }
+}
+
+///|
+pub impl ToJson for WaveStatePR with to_json(self) -> Json {
+  let obj : Map[String, Json] = {
+    "pr_number": self.pr_number.to_json(),
+    "pr_url": self.pr_url.to_json(),
+    "review_state": self.review_state.to_json(),
+    "ci_rollup": self.ci_rollup.to_json(),
+    "mergeable": self.mergeable.to_json(),
+    "merge_state_status": self.merge_state_status.to_json(),
+    "merged_at_unix": wave_state_optional_int64_to_json(self.merged_at_unix),
+    "copilot_issue_comment_seen": self.copilot_issue_comment_seen.to_json(),
+    "fixes_pushed_at": self.fixes_pushed_at.to_json(),
+    "last_sha": self.last_sha.to_json(),
+    "merge_gate_ready": self.merge_gate_ready.to_json(),
+  }
+  match self.unresolved_threads {
+    Some(v) => obj.set("unresolved_threads", v.to_json())
+    None => ()
+  }
+  match self.threads_fetch_error {
+    Some(v) => obj.set("threads_fetch_error", v.to_json())
+    None => ()
+  }
+  obj.to_json()
+}
 
 ///|
 /// Typed per-child snapshot used by `wave_state`. Covers both Dev leaves
@@ -67,6 +104,9 @@ fn wave_state_pr_from_tracked(
     pr_url: tracked.pr_url,
     review_state: tracked.last_review_state,
     ci_rollup: tracked.last_ci_rollup,
+    mergeable: tracked.mergeable,
+    merge_state_status: tracked.merge_state_status,
+    merged_at_unix: tracked.merged_at_unix,
     unresolved_threads,
     threads_fetch_error,
     copilot_issue_comment_seen: tracked.copilot_issue_comment_seen,

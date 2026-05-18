@@ -147,6 +147,9 @@ pub(all) struct RecoveryProvider {
     String,
     Bool,
     Bool,
+    @poller.Mergeable,
+    @poller.MergeStateStatus,
+    Int64?,
   )
 }
 
@@ -926,9 +929,23 @@ fn recovery_pr_poll_row_from_gh_tuple(
     String,
     Bool,
     Bool,
+    @poller.Mergeable,
+    @poller.MergeStateStatus,
+    Int64?,
   ),
 ) -> RecoveryPrPollRow {
-  let (poll_ok, review, sha, ci_rollup, review_bodies, pr_is_open, copilot_seen) = tuple
+  let (
+    poll_ok,
+    review,
+    sha,
+    ci_rollup,
+    review_bodies,
+    pr_is_open,
+    copilot_seen,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = tuple
   ignore(poll_ok)
   ignore(pr_is_open)
   {

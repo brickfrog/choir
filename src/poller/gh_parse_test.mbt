@@ -1,17 +1,98 @@
 ///|
+test "gh pr view json field lists include mergeability fields" {
+  assert_true(gh_pr_view_json_fields.contains("mergeable"))
+  assert_true(gh_pr_view_json_fields.contains("mergeStateStatus"))
+  assert_true(gh_pr_view_json_fields.contains("mergedAt"))
+  assert_true(gh_pr_view_fallback_json_fields.contains("mergeable"))
+  assert_true(gh_pr_view_fallback_json_fields.contains("mergeStateStatus"))
+  assert_true(gh_pr_view_fallback_json_fields.contains("mergedAt"))
+}
+
+///|
+test "parse_mergeable covers GitHub variants and unknown fallback" {
+  assert_eq(parse_mergeable("MERGEABLE"), Mergeable::Mergeable)
+  assert_eq(parse_mergeable("CONFLICTING"), Mergeable::Conflicting)
+  assert_eq(parse_mergeable("UNKNOWN"), Mergeable::Unknown)
+  assert_eq(parse_mergeable("future-value"), Mergeable::Unknown)
+}
+
+///|
+test "parse_merge_state_status covers GitHub variants and unknown fallback" {
+  assert_eq(parse_merge_state_status("CLEAN"), MergeStateStatus::Clean)
+  assert_eq(parse_merge_state_status("UNSTABLE"), MergeStateStatus::Unstable)
+  assert_eq(parse_merge_state_status("BLOCKED"), MergeStateStatus::Blocked)
+  assert_eq(parse_merge_state_status("HAS_HOOKS"), MergeStateStatus::HasHooks)
+  assert_eq(parse_merge_state_status("BEHIND"), MergeStateStatus::Behind)
+  assert_eq(parse_merge_state_status("UNKNOWN"), MergeStateStatus::Unknown)
+  assert_eq(parse_merge_state_status("DIRTY"), MergeStateStatus::Dirty)
+  assert_eq(parse_merge_state_status("future-value"), MergeStateStatus::Unknown)
+}
+
+///|
+test "merged_at_from_iso reuses shared ISO timestamp parser" {
+  @debug.assert_eq(
+    merged_at_from_iso("2026-05-18T00:27:59Z"),
+    Some(1779064079L),
+  )
+  @debug.assert_eq(merged_at_from_iso("not-a-timestamp"), None)
+  @debug.assert_eq(merged_at_from_iso("2026-05-18T00:27:59+02:00"), None)
+}
+
+///|
 test "parse_gh_pr_view_output maps valid gh json to review SHA and CI" {
   let json =
     #|{"reviews":[{"state":"APPROVED","body":"ship it"}],
     #|"headRefOid":"abc123def",
     #|"statusCheckRollup":[{"conclusion":"SUCCESS"}],
-    #|"state":"OPEN"}
-  let (ok, review, sha, ci_rollup, bodies, open) = parse_gh_pr_view_output(json)
+    #|"state":"OPEN",
+    #|"mergeable":"MERGEABLE",
+    #|"mergeStateStatus":"CLEAN",
+    #|"mergedAt":"2026-05-18T00:27:59Z"}
+  let (
+    ok,
+    review,
+    sha,
+    ci_rollup,
+    bodies,
+    open,
+    mergeable,
+    merge_state_status,
+    merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, Approved)
   assert_eq(sha, "abc123def")
   assert_eq(ci_rollup, Success)
   assert_eq(bodies, "ship it")
   assert_true(open)
+  assert_eq(mergeable, Mergeable::Mergeable)
+  assert_eq(merge_state_status, MergeStateStatus::Clean)
+  @debug.assert_eq(merged_at_unix, Some(1779064079L))
+}
+
+///|
+test "parse_gh_pr_view_output maps invalid mergedAt to unknown timestamp" {
+  let json =
+    #|{"reviews":[],
+    #|"headRefOid":"abc123def",
+    #|"statusCheckRollup":[],
+    #|"state":"OPEN",
+    #|"mergeable":"UNKNOWN",
+    #|"mergeStateStatus":"UNKNOWN",
+    #|"mergedAt":"not-a-timestamp"}
+  let (
+    ok,
+    _review,
+    _sha,
+    _ci_rollup,
+    _bodies,
+    _open,
+    _mergeable,
+    _merge_state_status,
+    merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
+  assert_true(ok)
+  @debug.assert_eq(merged_at_unix, None)
 }
 
 ///|
@@ -21,7 +102,17 @@ test "parse_gh_pr_view_output empty reviews yields None_" {
     #|"headRefOid":"",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, review, sha, ci_rollup, bodies, open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    review,
+    sha,
+    ci_rollup,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, None_)
   assert_eq(sha, "")
@@ -40,7 +131,17 @@ test "parse_gh_pr_view_output last decisive review state wins" {
     #|"headRefOid":"x",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, review, _sha, _ci, _bodies, _open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    review,
+    _sha,
+    _ci,
+    _bodies,
+    _open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, Approved)
 }
@@ -52,18 +153,34 @@ test "parse_gh_pr_view_output detects CI failure from rollup" {
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[{"conclusion":"FAILURE"}],
     #|"state":"OPEN"}
-  let (ok, _rev, _sha, ci_rollup, _bodies, _open) = parse_gh_pr_view_output(
-    json,
-  )
+  let (
+    ok,
+    _rev,
+    _sha,
+    ci_rollup,
+    _bodies,
+    _open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(ci_rollup, Failure)
 }
 
 ///|
 test "parse_gh_pr_view_output invalid json returns parse failure sentinel" {
-  let (ok, review, sha, ci_rollup, bodies, open) = parse_gh_pr_view_output(
-    "not-json",
-  )
+  let (
+    ok,
+    review,
+    sha,
+    ci_rollup,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output("not-json")
   assert_false(ok)
   assert_eq(review, None_)
   assert_eq(sha, "")
@@ -82,7 +199,17 @@ test "parse_gh_pr_view_output filters pull request overview review noise" {
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    review,
+    _sha,
+    _ci,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, Commented)
   assert_eq(bodies, "Please change the heading.")
@@ -96,7 +223,17 @@ test "parse_gh_pr_view_output filters Copilot markdown pull request overview" {
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    review,
+    _sha,
+    _ci,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, Commented)
   assert_eq(bodies, "")
@@ -113,7 +250,17 @@ test "parse_gh_pr_view_output dedupes repeated review bodies" {
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    review,
+    _sha,
+    _ci,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, Commented)
   assert_eq(bodies, "Please change the heading.")
@@ -131,7 +278,17 @@ test "parse_gh_pr_view_output filters pull request overview inline noise with pa
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    review,
+    _sha,
+    _ci,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, Commented)
   assert_eq(
@@ -148,7 +305,17 @@ test "parse_gh_pr_view_output does not filter bracketed review mentioning overvi
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, review, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    review,
+    _sha,
+    _ci,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(review, Commented)
   assert_eq(
@@ -165,7 +332,17 @@ test "parse_gh_pr_view_output inline comment with line number gets path:line pre
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, _r, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    _r,
+    _sha,
+    _ci,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(bodies, "[src/a.mbt:10] Add error handling here.")
   assert_true(open)
@@ -182,7 +359,17 @@ test "parse_gh_pr_view_output same body on different lines both appear in output
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[],
     #|"state":"OPEN"}
-  let (ok, _r, _sha, _ci, bodies, open) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    _r,
+    _sha,
+    _ci,
+    bodies,
+    open,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(
     bodies, "[src/a.mbt:10] Add error handling here.\n---\n[src/a.mbt:42] Add error handling here.",
@@ -197,7 +384,17 @@ test "parse_gh_pr_view_output rollup InProgress when check is still running" {
     #|"headRefOid":"sha",
     #|"statusCheckRollup":[{"state":"IN_PROGRESS","conclusion":""}],
     #|"state":"OPEN"}
-  let (ok, _r, _sha, ci_rollup, _b, _o) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    _r,
+    _sha,
+    ci_rollup,
+    _b,
+    _o,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(ci_rollup, InProgress)
 }
@@ -212,7 +409,17 @@ test "parse_gh_pr_view_output rollup InProgress when one check still pending" {
     #|  {"state":"PENDING","conclusion":""}
     #|],
     #|"state":"OPEN"}
-  let (ok, _r, _sha, ci_rollup, _b, _o) = parse_gh_pr_view_output(json)
+  let (
+    ok,
+    _r,
+    _sha,
+    ci_rollup,
+    _b,
+    _o,
+    _mergeable,
+    _merge_state_status,
+    _merged_at_unix,
+  ) = parse_gh_pr_view_output(json)
   assert_true(ok)
   assert_eq(ci_rollup, InProgress)
 }

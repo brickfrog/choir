@@ -103,6 +103,9 @@ async test "find_agent_for_pr_in_lifecycle finds agent ID by PR number" {
         "",
         true,
         false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
       )
     },
   }
@@ -151,6 +154,9 @@ async test "find_pr_for_branch_in_provider finds PR by head branch" {
         "",
         true,
         false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
       )
     },
   }

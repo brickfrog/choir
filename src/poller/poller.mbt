@@ -43,6 +43,68 @@ pub(all) enum CiRollupStatus {
 } derive(Debug, Eq)
 
 ///|
+/// GitHub mergeability snapshot for a tracked PR.
+pub(all) enum Mergeable {
+  Mergeable
+  Conflicting
+  Unknown
+} derive(Debug, Eq)
+
+///|
+pub fn Mergeable::to_wire_string(self : Mergeable) -> String {
+  match self {
+    Mergeable => "mergeable"
+    Conflicting => "conflicting"
+    Unknown => "unknown"
+  }
+}
+
+///|
+pub impl ToJson for Mergeable with to_json(self) -> Json {
+  self.to_wire_string().to_json()
+}
+
+///|
+pub impl Show for Mergeable with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+/// GitHub `mergeStateStatus` snapshot for a tracked PR.
+pub(all) enum MergeStateStatus {
+  Clean
+  Unstable
+  Blocked
+  HasHooks
+  Behind
+  Unknown
+  Dirty
+} derive(Debug, Eq)
+
+///|
+pub fn MergeStateStatus::to_wire_string(self : MergeStateStatus) -> String {
+  match self {
+    Clean => "clean"
+    Unstable => "unstable"
+    Blocked => "blocked"
+    HasHooks => "has_hooks"
+    Behind => "behind"
+    Unknown => "unknown"
+    Dirty => "dirty"
+  }
+}
+
+///|
+pub impl ToJson for MergeStateStatus with to_json(self) -> Json {
+  self.to_wire_string().to_json()
+}
+
+///|
+pub impl Show for MergeStateStatus with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
 pub(all) struct ReviewThreadRef {
   id : String
   is_outdated : Bool
@@ -71,6 +133,9 @@ pub(all) struct TrackedPR {
   mut last_automerge_attempt_sha : String
   mut notified_parent : Bool
   mut last_ci_rollup : CiRollupStatus
+  mut mergeable : Mergeable
+  mut merge_state_status : MergeStateStatus
+  mut merged_at_unix : Int64?
   mut last_timeout_at : Int64
   /// True once the poller has observed an issue-thread comment authored by a
   /// GitHub Copilot bot login (REST `/issues/{n}/comments`), distinct from review objects.

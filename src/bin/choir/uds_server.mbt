@@ -1016,6 +1016,9 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
         ..tracked,
         last_review_state: @poller.ReviewState::Approved,
         last_ci_rollup: @poller.CiRollupStatus::Success,
+        mergeable: @poller.Mergeable::Unknown,
+        merge_state_status: @poller.MergeStateStatus::Unknown,
+        merged_at_unix: None,
         last_sha: "sha-heartbeat-sweep",
         unresolved_thread_ids: [],
         unresolved_thread_ids_fetched: true,
@@ -1092,6 +1095,9 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
       "",
       true,
       false,
+      @poller.Mergeable::Unknown,
+      @poller.MergeStateStatus::Unknown,
+      None,
     )
   }
   run_poller_heartbeat_tick_loop(

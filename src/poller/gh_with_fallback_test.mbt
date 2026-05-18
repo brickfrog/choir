@@ -15,6 +15,9 @@ async fn gh_fallback_fresh_capture(cmd : @workspace.Command) -> (Int, String) {
   if cmd.program != "timeout" {
     return (2, "expected bounded gh")
   }
+  if !cmd.args.contains(gh_pr_view_fallback_json_fields) {
+    return (2, "missing mergeability gh fields")
+  }
   (
     0, "{\"number\":7,\"url\":\"https://github.com/o/r/pull/7\",\"state\":\"OPEN\",\"reviews\":[],\"headRefOid\":\"sha\",\"statusCheckRollup\":[]}",
   )
@@ -75,6 +78,9 @@ async test "gh_pr_view_with_fallback returns stale snapshot when tracked" {
   assert_eq(got.age_sec, 30)
   assert_true(got.data.contains("\"number\":7"))
   assert_true(got.data.contains("\"headRefOid\":\"abc123\""))
+  assert_true(got.data.contains("\"mergeable\":\"unknown\""))
+  assert_true(got.data.contains("\"mergeStateStatus\":\"unknown\""))
+  assert_true(got.data.contains("\"merged_at_unix\":null"))
   assert_true(got.data.contains("\"unresolved_threads\":1"))
   assert_true(got.data.contains("\"copilot_issue_comment_seen\":true"))
 }
