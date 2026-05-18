@@ -1791,6 +1791,8 @@ pub async fn handle_request(
   write_file_atomic? : (String, String) -> Bool = @sys.write_file_atomic,
   delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  hook_xdg_config_home? : String? = @exec.hook_xdg_config_home(),
+  hook_home? : String = @exec.hook_home(),
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
@@ -1807,46 +1809,55 @@ pub async fn handle_request(
       Some(blocked) => blocked
       None => {
         ignore(registry.lookup(req.role, req.name))
-        let hook_path = project_dir + "/.choir/hooks/pre_tool_use.sh"
         let mut hook_early : @types.Response? = None
-        if path_exists(hook_path) {
-          let input = @hooks.HookInput::{
-            event: @hooks.HookEvent::PreToolUse,
-            session_id: Some(session),
-            agent_id: tool_args_get(tool_args, "caller_id"),
-            pr_number: None,
-            pr_url: None,
-            branch: None,
-            parent_branch: None,
-            merge_provenance: None,
-            role: Some(req.role),
-            tool_name: Some(req.name),
-            tool_args: Some(tool_args_to_map(tool_args)),
-            tool_result_status: None,
-            exit_reason: None,
-            suspend_reason: None,
-          }
-          let input_json = input.to_json_string()
-          let (hook_status, output_json) = hook_capture(
-            hook_path,
-            input_json,
-            Some(project_dir),
-          )
-          if hook_status < 0 {
-            hook_early = Some(@types.Response::Err("hook execution failed"))
-          } else if hook_status == 0 {
-            match @hooks.HookResponse::from_json_string(output_json) {
-              Some(res) =>
-                if !res.continue_ {
-                  let msg = match res.message {
-                    Some(v) => v
-                    None => "hook blocked request"
+        match
+          @hooks.resolve_hook_script_path(
+            project_dir,
+            @hooks.HookEvent::PreToolUse.script_name(),
+            hook_xdg_config_home,
+            hook_home,
+            path_exists,
+          ) {
+          Some(hook_path) => {
+            let input = @hooks.HookInput::{
+              event: @hooks.HookEvent::PreToolUse,
+              session_id: Some(session),
+              agent_id: tool_args_get(tool_args, "caller_id"),
+              pr_number: None,
+              pr_url: None,
+              branch: None,
+              parent_branch: None,
+              merge_provenance: None,
+              role: Some(req.role),
+              tool_name: Some(req.name),
+              tool_args: Some(tool_args_to_map(tool_args)),
+              tool_result_status: None,
+              exit_reason: None,
+              suspend_reason: None,
+            }
+            let input_json = input.to_json_string()
+            let (hook_status, output_json) = hook_capture(
+              hook_path,
+              input_json,
+              Some(project_dir),
+            )
+            if hook_status < 0 {
+              hook_early = Some(@types.Response::Err("hook execution failed"))
+            } else if hook_status == 0 {
+              match @hooks.HookResponse::from_json_string(output_json) {
+                Some(res) =>
+                  if !res.continue_ {
+                    let msg = match res.message {
+                      Some(v) => v
+                      None => "hook blocked request"
+                    }
+                    hook_early = Some(@types.Response::Err(msg))
                   }
-                  hook_early = Some(@types.Response::Err(msg))
-                }
-              None => ()
+                None => ()
+              }
             }
           }
+          None => ()
         }
         match hook_early {
           Some(r) => r
@@ -1934,6 +1945,8 @@ pub async fn handle_request(
       project_dir,
       hook_capture~,
       path_exists~,
+      xdg_config_home=hook_xdg_config_home,
+      home=hook_home,
     )
   }
   resp
@@ -1946,10 +1959,19 @@ pub async fn fire_hook_async(
   project_dir : String,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  xdg_config_home? : String? = @exec.hook_xdg_config_home(),
+  home? : String = @exec.hook_home(),
 ) -> Unit {
-  let hook_path = project_dir + "/.choir/hooks/" + event.script_name()
-  if !path_exists(hook_path) {
-    return
+  let hook_path = match
+    @hooks.resolve_hook_script_path(
+      project_dir,
+      event.script_name(),
+      xdg_config_home,
+      home,
+      path_exists,
+    ) {
+    Some(path) => path
+    None => return
   }
   let input_json = input.to_json_string()
   ignore(hook_capture(hook_path, input_json, Some(project_dir)))

@@ -2192,6 +2192,46 @@ async test "PRMerged completion hook fires only PrMerged for feature parent" {
 }
 
 ///|
+async test "PRMerged completion hook uses global hook when project hook is absent" {
+  let pr = {
+    ..parent_poll_test_ready_tracked(511),
+    agent_id: "feature/base.leaf",
+    branch: "feature/base.leaf",
+    parent_branch: "feature/base",
+    pr_url: "https://example.test/pull/511",
+  }
+  let fired_paths : Array[String] = []
+  let mut default_branch_checks = 0
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    default_branch_checks = default_branch_checks + 1
+    (0, "origin/main\n")
+  }
+  let hook_capture = async fn(
+    path : String,
+    _input_json : String,
+    cwd : String?,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    fired_paths.push(path)
+    @debug.assert_eq(cwd, Some("/repo"))
+    (0, "hook stdout")
+  }
+  fire_pr_merged_completion_hooks(
+    "/repo",
+    pr,
+    capture~,
+    hook_capture~,
+    path_exists=fn(path) { path == "/home/me/.config/choir/hooks/pr_merged.sh" },
+    xdg_config_home=None,
+    home="/home/me",
+  )
+
+  assert_eq(default_branch_checks, 0)
+  @debug.assert_eq(fired_paths, ["/home/me/.config/choir/hooks/pr_merged.sh"])
+}
+
+///|
 async test "PRMerged completion hook fires PrMerged and WaveComplete for main parent" {
   let pr = {
     ..parent_poll_test_ready_tracked(502),

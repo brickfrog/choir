@@ -9,6 +9,124 @@ pub fn delete_file_sync(path : String) -> Bool {
 }
 
 ///|
+fn terminal_response_is_digit(c : UInt16) -> Bool {
+  c >= '0' && c <= '9'
+}
+
+///|
+fn terminal_response_osc_end(s : String, start : Int) -> Int? {
+  let n = s.length()
+  if start + 3 >= n || s[start] != '\u{1b}' || s[start + 1] != ']' {
+    return None
+  }
+  let payload_start = if s[start + 2] == '4' && s[start + 3] == ';' {
+    start + 4
+  } else if start + 4 < n &&
+    s[start + 2] == '1' &&
+    (s[start + 3] == '0' || s[start + 3] == '1') &&
+    s[start + 4] == ';' {
+    start + 5
+  } else {
+    return None
+  }
+  let mut j = payload_start
+  while j < n {
+    if s[j] == '\u{07}' {
+      return Some(j + 1)
+    }
+    if j + 1 < n && s[j] == '\u{1b}' && s[j + 1] == '\\' {
+      return Some(j + 2)
+    }
+    j = j + 1
+  }
+  None
+}
+
+///|
+fn terminal_response_primary_da_end(s : String, start : Int) -> Int? {
+  let n = s.length()
+  if start + 3 >= n ||
+    s[start] != '\u{1b}' ||
+    s[start + 1] != '[' ||
+    s[start + 2] != '?' {
+    return None
+  }
+  let mut j = start + 3
+  let mut saw_digit = false
+  while j < n && (terminal_response_is_digit(s[j]) || s[j] == ';') {
+    if terminal_response_is_digit(s[j]) {
+      saw_digit = true
+    }
+    j = j + 1
+  }
+  if saw_digit && j < n && s[j] == 'c' {
+    Some(j + 1)
+  } else {
+    None
+  }
+}
+
+///|
+fn terminal_response_cpr_end(s : String, start : Int) -> Int? {
+  let n = s.length()
+  if start + 4 >= n || s[start] != '\u{1b}' || s[start + 1] != '[' {
+    return None
+  }
+  let mut j = start + 2
+  let row_start = j
+  while j < n && terminal_response_is_digit(s[j]) {
+    j = j + 1
+  }
+  if j == row_start || j >= n || s[j] != ';' {
+    return None
+  }
+  j = j + 1
+  let col_start = j
+  while j < n && terminal_response_is_digit(s[j]) {
+    j = j + 1
+  }
+  if j == col_start || j >= n || s[j] != 'R' {
+    return None
+  }
+  Some(j + 1)
+}
+
+///|
+fn terminal_response_end(s : String, start : Int) -> Int? {
+  match terminal_response_osc_end(s, start) {
+    Some(end) => Some(end)
+    None =>
+      match terminal_response_primary_da_end(s, start) {
+        Some(end) => Some(end)
+        None => terminal_response_cpr_end(s, start)
+      }
+  }
+}
+
+///|
+/// Remove terminal response escape sequences that can leak from PTY-backed
+/// subprocesses into logs. SGR color/style escapes are intentionally kept.
+pub fn strip_terminal_responses(s : String) -> String {
+  let buf = StringBuilder::new()
+  let mut i = 0
+  let n = s.length()
+  while i < n {
+    if s[i] == '\u{1b}' {
+      match terminal_response_end(s, i) {
+        Some(end) => {
+          i = end
+          continue
+        }
+        None => ()
+      }
+    }
+    buf.write_char(Int::unsafe_to_char(s[i].to_int()))
+    i = i + 1
+  }
+  buf.to_string()
+}
+
+///|
 /// Subcommand used only by `choir dev` hot-reload (`watchexec` / `entr`): build native then run `serve`.
 pub const DEV_RELOAD_SUBCOMMAND : String = "__dev_reload"
 

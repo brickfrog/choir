@@ -10,6 +10,16 @@ pub fn reload_binary_path(project_dir : String) -> String {
 }
 
 ///|
+pub fn hook_xdg_config_home() -> String? {
+  None
+}
+
+///|
+pub fn hook_home() -> String {
+  ""
+}
+
+///|
 pub fn validate_replace_self_binary(
   binary_path : String,
 ) -> Result[Unit, @types.ChoirError] {

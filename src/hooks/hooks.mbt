@@ -290,6 +290,39 @@ pub fn HookEvent::script_name(self : HookEvent) -> String {
 }
 
 ///|
+fn global_hook_config_home(xdg_config_home : String?, home : String) -> String? {
+  match xdg_config_home {
+    Some(value) if value != "" => Some(value)
+    _ => if home != "" { Some(home + "/.config") } else { None }
+  }
+}
+
+///|
+pub fn resolve_hook_script_path(
+  project_dir : String,
+  event_script_name : String,
+  xdg_config_home : String?,
+  home : String,
+  path_exists : (String) -> Bool,
+) -> String? {
+  let project_path = project_dir + "/.choir/hooks/" + event_script_name
+  if path_exists(project_path) {
+    return Some(project_path)
+  }
+  match global_hook_config_home(xdg_config_home, home) {
+    Some(config_home) => {
+      let global_path = config_home + "/choir/hooks/" + event_script_name
+      if path_exists(global_path) {
+        Some(global_path)
+      } else {
+        None
+      }
+    }
+    None => None
+  }
+}
+
+///|
 pub fn HookResponse::from_json_string(line : String) -> HookResponse? {
   let obj = match parse_json_object(line) {
     Some(o) => o

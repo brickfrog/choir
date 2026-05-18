@@ -620,6 +620,15 @@ pub fn audit_heartbeat_log_line(
   reason? : String? = None,
   branch? : String? = None,
 ) -> String {
+  let agent_id = @exec.strip_terminal_responses(agent_id)
+  let reason = match reason {
+    Some(value) => Some(@exec.strip_terminal_responses(value))
+    None => None
+  }
+  let branch = match branch {
+    Some(value) => Some(@exec.strip_terminal_responses(value))
+    None => None
+  }
   let parts = [
     "audit-on-file-pr",
     if pr_number > 0 {
@@ -659,6 +668,15 @@ fn emit_audit_heartbeat_log_line(
   branch? : String? = None,
   now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
 ) -> Unit {
+  let agent_id = @exec.strip_terminal_responses(agent_id)
+  let reason = match reason {
+    Some(value) => Some(@exec.strip_terminal_responses(value))
+    None => None
+  }
+  let branch = match branch {
+    Some(value) => Some(@exec.strip_terminal_responses(value))
+    None => None
+  }
   let fields = [
     if pr_number > 0 {
       @moontrace.field("pr", pr_number)

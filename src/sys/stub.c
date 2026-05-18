@@ -393,16 +393,177 @@ void choir_sleep_milliseconds(int ms) {
     usleep((useconds_t)ms * 1000);
 }
 
+static int choir_term_resp_is_digit(char c) {
+    return c >= '0' && c <= '9';
+}
+
+static int choir_term_resp_osc_end(const char* s, int len, int start) {
+    if (start + 3 >= len || s[start] != '\033' || s[start + 1] != ']') {
+        return -1;
+    }
+    int payload_start = -1;
+    if (s[start + 2] == '4' && s[start + 3] == ';') {
+        payload_start = start + 4;
+    } else if (
+        start + 4 < len &&
+        s[start + 2] == '1' &&
+        (s[start + 3] == '0' || s[start + 3] == '1') &&
+        s[start + 4] == ';'
+    ) {
+        payload_start = start + 5;
+    } else {
+        return -1;
+    }
+    for (int j = payload_start; j < len; j++) {
+        if (s[j] == '\007') return j + 1;
+        if (j + 1 < len && s[j] == '\033' && s[j + 1] == '\\') return j + 2;
+    }
+    return -1;
+}
+
+static int choir_term_resp_primary_da_end(const char* s, int len, int start) {
+    if (
+        start + 3 >= len ||
+        s[start] != '\033' ||
+        s[start + 1] != '[' ||
+        s[start + 2] != '?'
+    ) {
+        return -1;
+    }
+    int j = start + 3;
+    int saw_digit = 0;
+    while (j < len && (choir_term_resp_is_digit(s[j]) || s[j] == ';')) {
+        if (choir_term_resp_is_digit(s[j])) saw_digit = 1;
+        j++;
+    }
+    if (saw_digit && j < len && s[j] == 'c') return j + 1;
+    return -1;
+}
+
+static int choir_term_resp_cpr_end(const char* s, int len, int start) {
+    if (start + 4 >= len || s[start] != '\033' || s[start + 1] != '[') {
+        return -1;
+    }
+    int j = start + 2;
+    int row_start = j;
+    while (j < len && choir_term_resp_is_digit(s[j])) j++;
+    if (j == row_start || j >= len || s[j] != ';') return -1;
+    j++;
+    int col_start = j;
+    while (j < len && choir_term_resp_is_digit(s[j])) j++;
+    if (j == col_start || j >= len || s[j] != 'R') return -1;
+    return j + 1;
+}
+
+static int choir_term_resp_end(const char* s, int len, int start) {
+    int end = choir_term_resp_osc_end(s, len, start);
+    if (end >= 0) return end;
+    end = choir_term_resp_primary_da_end(s, len, start);
+    if (end >= 0) return end;
+    return choir_term_resp_cpr_end(s, len, start);
+}
+
+static int choir_write_all_fd(int fd, const char* buf, int len) {
+    int written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, buf + written, (size_t)(len - written));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1;
+        written += (int)n;
+    }
+    return 0;
+}
+
+static int choir_write_stripped_terminal_responses_fd(int fd, const char* buf, int len) {
+    int chunk_start = 0;
+    int i = 0;
+    while (i < len) {
+        if (buf[i] == '\033') {
+            int end = choir_term_resp_end(buf, len, i);
+            if (end >= 0) {
+                if (i > chunk_start && choir_write_all_fd(fd, buf + chunk_start, i - chunk_start) < 0) {
+                    return -1;
+                }
+                i = end;
+                chunk_start = i;
+                continue;
+            }
+        }
+        i++;
+    }
+    if (chunk_start < len) {
+        return choir_write_all_fd(fd, buf + chunk_start, len - chunk_start);
+    }
+    return 0;
+}
+
+static void choir_stderr_append_filter_loop(int read_fd, int out_fd) {
+    char buf[4096];
+    for (;;) {
+        ssize_t n = read(read_fd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (n == 0) break;
+        if (out_fd >= 0 &&
+            choir_write_stripped_terminal_responses_fd(out_fd, buf, (int)n) < 0) {
+            close(out_fd);
+            out_fd = -1;
+        }
+    }
+    if (out_fd >= 0) close(out_fd);
+    close(read_fd);
+    _exit(0);
+}
+
 int choir_redirect_stderr_append(const char* path) {
-    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (fd < 0) {
+    int out_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (out_fd < 0) {
         return -1;
     }
-    if (dup2(fd, STDERR_FILENO) < 0) {
-        close(fd);
+    int pipefd[2];
+    if (pipe(pipefd) < 0) {
+        close(out_fd);
         return -1;
     }
-    close(fd);
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(out_fd);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        close(pipefd[1]);
+        pid_t pid2 = fork();
+        if (pid2 < 0) {
+            close(out_fd);
+            close(pipefd[0]);
+            _exit(127);
+        }
+        if (pid2 > 0) {
+            close(out_fd);
+            close(pipefd[0]);
+            _exit(0);
+        }
+        choir_stderr_append_filter_loop(pipefd[0], out_fd);
+    }
+    close(pipefd[0]);
+    close(out_fd);
+    int st = 0;
+    if (waitpid(pid, &st, 0) < 0 || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+        close(pipefd[1]);
+        return -1;
+    }
+    if (dup2(pipefd[1], STDERR_FILENO) < 0) {
+        close(pipefd[1]);
+        return -1;
+    }
+    close(pipefd[1]);
     return 0;
 }
 
