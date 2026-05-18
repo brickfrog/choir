@@ -270,6 +270,28 @@ pub async fn fork_wave_response_from_interpret_result(
         argv_detail,
       )
     }
+    Err(
+      ScaffoldCompensationFailed(
+        pre_scaffold_sha~,
+        original_error~,
+        status~,
+        failing_cmd~
+      )
+    ) => {
+      let argv_detail = match failing_cmd {
+        Some(cmd) => " (argv: " + cmd.program + " " + cmd.args.join(" ") + ")"
+        None => ""
+      }
+      @types.Response::Err(
+        ScaffoldCompensationFailed(
+          pre_scaffold_sha~,
+          original_error~,
+          status~,
+          failing_cmd~,
+        ).message() +
+        argv_detail,
+      )
+    }
     Err(e) => @types.Response::Err(e.message())
   }
 }

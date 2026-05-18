@@ -19,6 +19,7 @@ Do not place public-API-only tests inline in source files. Do not place tests th
 ## Effect Architecture
 
 - **No direct I/O in orchestration logic.** Code in `src/server/`, `src/tools/`, `src/poller/`, `src/phase/`, `src/runtime/` must not call `@sys.*` or `@process.*` directly. Emit typed effects or use injected adapter functions. All host I/O (Git, GitHub, Zellij, filesystem) goes through `src/exec/` or injected function parameters.
+- **Read-only dispatch seam exception.** Direct `@sys.path_exists`, `@sys.path_entry_exists`, and `@sys.read_file` calls from `src/tools/*.mbt` are permitted for read-only existence checks and config/state reads at the tool dispatch seam. Mutations, process execution, Git/GitHub/Zellij calls, and side-effecting reads still go through typed effects or injected adapters.
 - **Use enums, not strings, for fixed domains.** Agent types use `AgentType`, roles use `Role`, states use `AgentState`. Do not introduce new `String` fields for values drawn from a fixed set — define an enum.
 - **Use `ChoirError` suberror, not `String`, for errors.** New error paths should return `Result[T, ChoirError]` or `raise ChoirError`, not `Result[T, String]`. The `ChoirError` type in `src/types/error.mbt` has variants for common cases.
 - **Inject I/O dependencies.** Functions that need to run commands, capture output, or read files should take the capability as an optional parameter with a default (see `dispatch()` pattern with `runner?`, `capture?`, `git_capture?`). This enables testing with mocks.

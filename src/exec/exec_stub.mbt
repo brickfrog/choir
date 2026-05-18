@@ -20,6 +20,16 @@ pub fn hook_home() -> String {
 }
 
 ///|
+pub fn path_entry_exists(_path : String) -> Bool {
+  false
+}
+
+///|
+pub fn read_file(_path : String) -> String {
+  ""
+}
+
+///|
 pub fn validate_replace_self_binary(
   binary_path : String,
 ) -> Result[Unit, @types.ChoirError] {

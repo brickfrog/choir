@@ -609,9 +609,20 @@ fn file_pr_test_audit_receipt_with_findings(
   sha : String,
   findings_count : Int,
 ) -> String {
+  file_pr_test_audit_receipt_for_branch(
+    sha, "feature/discipline-gates", findings_count,
+  )
+}
+
+///|
+fn file_pr_test_audit_receipt_for_branch(
+  sha : String,
+  branch : String,
+  findings_count : Int,
+) -> String {
   let receipt : @types.AuditReceipt = {
     sha,
-    branch: "feature/discipline-gates",
+    branch,
     audited_at: 1770000000L,
     agent_id: "main.tl",
     findings_count,
@@ -777,6 +788,74 @@ test "audit worker task pins review surface to audited head" {
   let task = build_audit_on_file_pr_task("/repo", "main.leaf", head)
   assert_true(task.contains("Review surface: `git diff main..." + head + "`"))
   assert_false(task.contains("git diff main...HEAD"))
+}
+
+///|
+test "audit worker task can scope retry to prior audited delta" {
+  let prior = "1111111111111111111111111111111111111111"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let task = build_audit_on_file_pr_task(
+    "/repo",
+    "main.leaf",
+    head,
+    prior_sha=Some(prior),
+  )
+  assert_true(
+    task.contains("Review surface: `git diff " + prior + "..." + head + "`"),
+  )
+  assert_true(
+    task.contains("audit only the changes between prior_sha and current_head"),
+  )
+  assert_false(task.contains("Review surface: `git diff main..." + head + "`"))
+}
+
+///|
+test "find_prior_branch_audit_receipt returns none for empty dir" {
+  @debug.assert_eq(
+    find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) { [] }),
+    None,
+  )
+}
+
+///|
+test "find_prior_branch_audit_receipt returns one receipt for branch" {
+  @debug.assert_eq(
+    find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) {
+      ["100\tsha-one\tfeature/a"]
+    }),
+    Some("sha-one"),
+  )
+}
+
+///|
+test "find_prior_branch_audit_receipt picks newest mtime" {
+  @debug.assert_eq(
+    find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) {
+      [
+        "100\tsha-old\tfeature/a", "300\tsha-new\tfeature/a", "200\tsha-mid\tfeature/a",
+      ]
+    }),
+    Some("sha-new"),
+  )
+}
+
+///|
+test "find_prior_branch_audit_receipt ignores different branch" {
+  @debug.assert_eq(
+    find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) {
+      ["400\tsha-other\tfeature/b"]
+    }),
+    None,
+  )
+}
+
+///|
+test "audit_delta_numstat_lines sums additions and deletions" {
+  @debug.assert_eq(
+    audit_delta_numstat_lines("3\t2\tsrc/a.mbt\n0\t4\tsrc/b.mbt\n"),
+    Some(9),
+  )
+  @debug.assert_eq(audit_delta_numstat_lines("-\t-\tasset.bin\n"), None)
 }
 
 ///|
@@ -1122,6 +1201,7 @@ async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
   let now_ms = 123456789L
   let mut spawn_calls = 0
   let mut spawned_slug = ""
+  let mut spawned_task = ""
   let mut waited_worker = ""
   let mut cleanup_calls = 0
   let got = file_pr_auto_audit_for_missing_receipt(
@@ -1135,6 +1215,7 @@ async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
       @async.sleep(0)
       spawn_calls = spawn_calls + 1
       spawned_slug = worker_args.slug
+      spawned_task = worker_args.task
       Ok("main." + worker_args.slug)
     },
     async fn(worker_id) {
@@ -1158,8 +1239,216 @@ async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
   assert_eq(spawn_calls, 1)
   assert_eq(cleanup_calls, 0)
   assert_eq(spawned_slug, audit_on_file_pr_worker_slug(head, now_ms))
+  assert_true(
+    spawned_task.contains("Review surface: `git diff main..." + head + "`"),
+  )
+  assert_false(spawned_task.contains("Prior audited HEAD"))
   assert_true(spawned_slug.has_suffix("-" + now_ms.to_string()))
   assert_eq(waited_worker, "main." + spawned_slug)
+}
+
+///|
+async test "file_pr_auto_audit scopes worker to prior receipt delta under max lines" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-delta-" +
+    @sys.get_pid().to_string()
+  let prior = "1111111111111111111111111111111111111111"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let now_ms = 123456789L
+  let mut spawned_task = ""
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/auto-audit\n")
+      }
+      if cmd.program == "cat" &&
+        cmd.args == [file_pr_audit_receipt_path_for_head(head)] {
+        return (1, "")
+      }
+      if cmd.program == "find" {
+        return (0, "1000.000000\t111111111111.json\n")
+      }
+      if cmd.program == "cat" &&
+        cmd.args == [".choir/audit-receipts/111111111111.json"] {
+        return (
+          0,
+          file_pr_test_audit_receipt_for_branch(prior, "feature/auto-audit", 0),
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["diff", "--numstat", prior + "..." + head] {
+        return (0, "3\t2\tsrc/a.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(worker_args) {
+      @async.sleep(0)
+      spawned_task = worker_args.task
+      Ok("main." + worker_args.slug)
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    fn(_) {  },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { now_ms },
+    fn(_) { true },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected delta audit success: " + e.message())
+  }
+  assert_true(
+    spawned_task.contains(
+      "Review surface: `git diff " + prior + "..." + head + "`",
+    ),
+  )
+  assert_true(spawned_task.contains("Prior audited HEAD: " + prior))
+}
+
+///|
+async test "file_pr_auto_audit ignores prior receipt with findings" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-delta-findings-" +
+    @sys.get_pid().to_string()
+  let prior = "1111111111111111111111111111111111111111"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawned_task = ""
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/auto-audit\n")
+      }
+      if cmd.program == "cat" &&
+        cmd.args == [file_pr_audit_receipt_path_for_head(head)] {
+        return (1, "")
+      }
+      if cmd.program == "find" {
+        return (0, "1000.000000\t111111111111.json\n")
+      }
+      if cmd.program == "cat" &&
+        cmd.args == [".choir/audit-receipts/111111111111.json"] {
+        return (
+          0,
+          file_pr_test_audit_receipt_for_branch(prior, "feature/auto-audit", 2),
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["diff", "--numstat", prior + "..." + head] {
+        fail("dirty prior receipt should not be used for delta audit")
+      }
+      (0, "")
+    },
+    async fn(worker_args) {
+      @async.sleep(0)
+      spawned_task = worker_args.task
+      Ok("main." + worker_args.slug)
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    fn(_) {  },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1234L },
+    fn(_) { true },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected full audit fallback success: " + e.message())
+  }
+  assert_true(
+    spawned_task.contains("Review surface: `git diff main..." + head + "`"),
+  )
+  assert_false(spawned_task.contains("Prior audited HEAD"))
+}
+
+///|
+async test "file_pr_auto_audit falls back to full audit when delta is over max lines" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-delta-large-" +
+    @sys.get_pid().to_string()
+  let prior = "1111111111111111111111111111111111111111"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawned_task = ""
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/auto-audit\n")
+      }
+      if cmd.program == "cat" &&
+        cmd.args == [file_pr_audit_receipt_path_for_head(head)] {
+        return (1, "")
+      }
+      if cmd.program == "find" {
+        return (0, "1000.000000\t111111111111.json\n")
+      }
+      if cmd.program == "cat" &&
+        cmd.args == [".choir/audit-receipts/111111111111.json"] {
+        return (
+          0,
+          file_pr_test_audit_receipt_for_branch(prior, "feature/auto-audit", 0),
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["diff", "--numstat", prior + "..." + head] {
+        return (0, "501\t0\tsrc/a.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(worker_args) {
+      @async.sleep(0)
+      spawned_task = worker_args.task
+      Ok("main." + worker_args.slug)
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    fn(_) {  },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1234L },
+    fn(_) { true },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected full audit fallback success: " + e.message())
+  }
+  assert_true(
+    spawned_task.contains("Review surface: `git diff main..." + head + "`"),
+  )
+  assert_false(spawned_task.contains("Prior audited HEAD"))
 }
 
 ///|

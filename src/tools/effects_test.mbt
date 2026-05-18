@@ -160,12 +160,29 @@ test "scaffold_commit preflight accepts rename lines whose target is in scaffold
       cont("R  src/old.mbt -> src/new.mbt\n")
     _ => fail("expected status --porcelain capture")
   }
+  let after_pre_sha = match after_status {
+    GitCapture(args=[_, _, "rev-parse", "HEAD"], cont~, ..) =>
+      cont("1111111111111111111111111111111111111111\n")
+    _ => fail("expected pre-scaffold HEAD capture")
+  }
   // After the preflight passes, the next step is the per-path
   // status check inside scaffold_commit_phase (path_index=0).
-  match after_status {
+  match after_pre_sha {
     GitCapture(args~, ..) => assert_true(args.contains("--porcelain"))
     _ => fail("expected scaffold per-path status check to follow")
   }
+}
+
+///|
+test "scaffold compensation command builder emits reset and force-with-lease" {
+  let cmds = @tools.fork_wave_scaffold_compensation_commands(
+    "/proj", "1111111111111111111111111111111111111111",
+  )
+  assert_eq(cmds.length(), 2)
+  @debug.assert_eq(cmds[0].args, [
+    "-C", "/proj", "reset", "--hard", "1111111111111111111111111111111111111111",
+  ])
+  @debug.assert_eq(cmds[1].args, ["-C", "/proj", "push", "--force-with-lease"])
 }
 
 ///|

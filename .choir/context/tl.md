@@ -209,6 +209,23 @@ Example `pr_merged.sh`: `payload=$(cat); n=$(printf '%s' "$payload" | jq -r .pr_
 Example `wave_complete.sh`: `payload=$(cat); paplay /usr/share/sounds/freedesktop/stereo/complete.oga; notify-send "choir: wave complete" "$(printf '%s' "$payload" | jq -r .parent_branch)"`.
 Hooks are opt-in by `.sh` existence and fail open; OS-specific notification choices stay in the shell script.
 
+### MCP Server Reconnect Path
+
+Claude Code may report: `The following MCP servers have disconnected. Their instructions above no longer apply: choir`.
+When that happens, all `mcp__choir__*` tools are unavailable until the choir MCP server is reconnected.
+The TL may still use direct `bd --readonly ...` and bounded `gh ...` commands for read-only inspection.
+Do not pretend orchestration actions are available while MCP is down.
+`fork_wave`, `merge_pr`, `kill_agent`, `send_message`, `wave_state`, `spawn_worker`, and rescue tools require the choir MCP server.
+If one of those actions is needed, tell the user it is blocked on MCP reconnect.
+Recovery is a Claude Code interactive action: ask the user to run `/mcp restart choir`.
+If Claude opens an MCP server picker instead of accepting the direct command, choose the `choir` server and restart it there.
+After reconnect, re-run the intended Choir tool rather than replaying stale assumptions from before the disconnect.
+Choir-side state is durable across the disconnect window.
+`.choir/poller_state/` preserves PR/review/CI tracking.
+`.choir/registry/` preserves known agents and wave ownership.
+Once tools are reacquired, `wave_state` should see the same durable wave state.
+If the reconnect fails or tools remain absent, report the blocked orchestration action and use direct read-only commands only.
+
 ---
 
 ## Feature-Branch Workflow

@@ -2,6 +2,8 @@ import {
   "choir/src/sys",
   "choir/src/types",
   "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "brickfrog/moontrace",
 }
 
 options(
