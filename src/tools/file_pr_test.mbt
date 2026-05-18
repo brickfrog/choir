@@ -903,6 +903,23 @@ test "audit_heartbeat_log_line formats status variants" {
 }
 
 ///|
+test "audit_heartbeat_log_line strips terminal responses but preserves SGR" {
+  let line = audit_heartbeat_log_line(
+    42,
+    "main.leaf\u{1b}[?62;4;52c",
+    180L,
+    status=HeartbeatError,
+    reason=Some(
+      "bad \u{1b}]11;rgb:0a0a/0f0f/1414\u{1b}\\\u{1b}[31mred\u{1b}[0m",
+    ),
+    branch=Some("feature\u{1b}[61;1R"),
+  )
+  assert_eq(
+    line, "audit-on-file-pr pr=42 agent=main.leaf branch=feature elapsed_s=180 status=error reason=bad \u{1b}[31mred\u{1b}[0m",
+  )
+}
+
+///|
 async test "dispatch shutdown from audit worker completes audit wait queue" {
   let reg = @registry.AgentRegistry::new()
   ignore(

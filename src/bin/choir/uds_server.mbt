@@ -1128,9 +1128,12 @@ fn serve_run() -> Unit {
     }
   }
   @moontrace.set_subscriber(fn(event) {
-    println(event.format(color=true))
+    println(@exec.strip_terminal_responses(event.format(color=true)))
     ignore(
-      @sys.append_file_sync(serve_log_path, event.format(color=false) + "\n"),
+      @sys.append_file_sync(
+        serve_log_path,
+        @exec.strip_terminal_responses(event.format(color=false)) + "\n",
+      ),
     )
   })
   @moontrace.set_min_level(@moontrace.Level::Debug)

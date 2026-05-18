@@ -41,6 +41,19 @@ pub fn reload_binary_path(project_dir : String) -> String {
 }
 
 ///|
+pub fn hook_xdg_config_home() -> String? {
+  @sys.getenv("XDG_CONFIG_HOME")
+}
+
+///|
+pub fn hook_home() -> String {
+  match @sys.getenv("HOME") {
+    Some(value) => value
+    None => ""
+  }
+}
+
+///|
 fn replace_self_error(binary_path : String, code : Int) -> @types.ChoirError {
   let errno = if code < 0 { 0 - code } else { code }
   @types.ChoirError::workspace_error(
@@ -174,7 +187,12 @@ async fn drain_process_stdout(
       "capture read error after " + total.to_string() + " bytes\n",
     )
   }
-  (@utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total]), total)
+  (
+    strip_terminal_responses(
+      @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total]),
+    ),
+    total,
+  )
 }
 
 ///|
@@ -409,7 +427,7 @@ async fn capture_hook_script_merged_with_retry(
   for ;; {
     attempts = attempts + 1
     match attempt(hook_path, stdin_body, cwd) {
-      Done(code, output) => return (code, output)
+      Done(code, output) => return (code, strip_terminal_responses(output))
       Failed(kind) =>
         if !kind.is_retryable() {
           return (-1, "")
@@ -653,6 +671,32 @@ async test "capture_hook_script_merged_once exhausts after N attempts and logs w
     "final_error",
     "spawn_transient_emfile",
   )
+}
+
+///|
+async test "capture_hook_script_merged strips terminal responses from captured output" {
+  let attempt = async fn(
+    _hook_path : String,
+    _stdin_body : String,
+    _cwd : String?,
+  ) -> HookCaptureAttemptResult {
+    @async.sleep(0)
+    Done(
+      0, "before \u{1b}[32mok\u{1b}[0m \u{1b}]11;rgb:0a0a/0f0f/1414\u{1b}\\\u{1b}[?62;4;52c\u{1b}[61;1R after",
+    )
+  }
+  let sleep_fn = async fn(_ms : Int) -> Unit { @async.sleep(0) }
+
+  let (code, output) = capture_hook_script_merged_with_retry(
+    "/tmp/hook.sh",
+    "{}",
+    None,
+    attempt,
+    sleep_fn,
+  )
+
+  assert_eq(code, 0)
+  assert_eq(output, "before \u{1b}[32mok\u{1b}[0m  after")
 }
 
 ///|

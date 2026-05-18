@@ -130,6 +130,128 @@ test "completion hook events round-trip through wire and script names" {
 }
 
 ///|
+fn hook_test_path_exists(paths : Array[String]) -> (String) -> Bool {
+  fn(path : String) -> Bool {
+    for existing in paths {
+      if path == existing {
+        return true
+      }
+    }
+    false
+  }
+}
+
+///|
+test "resolve_hook_script_path returns project hook when only project exists" {
+  @debug.assert_eq(
+    resolve_hook_script_path(
+      "/repo",
+      "pr_merged.sh",
+      Some("/xdg"),
+      "/home/me",
+      hook_test_path_exists(["/repo/.choir/hooks/pr_merged.sh"]),
+    ),
+    Some("/repo/.choir/hooks/pr_merged.sh"),
+  )
+}
+
+///|
+test "resolve_hook_script_path returns global hook when project is absent" {
+  @debug.assert_eq(
+    resolve_hook_script_path(
+      "/repo",
+      "pr_merged.sh",
+      Some("/xdg"),
+      "/home/me",
+      hook_test_path_exists(["/xdg/choir/hooks/pr_merged.sh"]),
+    ),
+    Some("/xdg/choir/hooks/pr_merged.sh"),
+  )
+}
+
+///|
+test "resolve_hook_script_path lets project hook override global hook" {
+  @debug.assert_eq(
+    resolve_hook_script_path(
+      "/repo",
+      "pr_merged.sh",
+      Some("/xdg"),
+      "/home/me",
+      hook_test_path_exists([
+        "/repo/.choir/hooks/pr_merged.sh", "/xdg/choir/hooks/pr_merged.sh",
+      ]),
+    ),
+    Some("/repo/.choir/hooks/pr_merged.sh"),
+  )
+}
+
+///|
+test "resolve_hook_script_path returns None when neither hook exists" {
+  @debug.assert_eq(
+    resolve_hook_script_path(
+      "/repo",
+      "pr_merged.sh",
+      Some("/xdg"),
+      "/home/me",
+      hook_test_path_exists([]),
+    ),
+    None,
+  )
+}
+
+///|
+test "resolve_hook_script_path defaults empty XDG_CONFIG_HOME to HOME config" {
+  @debug.assert_eq(
+    resolve_hook_script_path(
+      "/repo",
+      "pr_merged.sh",
+      Some(""),
+      "/home/me",
+      hook_test_path_exists(["/home/me/.config/choir/hooks/pr_merged.sh"]),
+    ),
+    Some("/home/me/.config/choir/hooks/pr_merged.sh"),
+  )
+}
+
+///|
+test "resolve_hook_script_path defaults absent XDG_CONFIG_HOME to HOME config" {
+  @debug.assert_eq(
+    resolve_hook_script_path(
+      "/repo",
+      "pr_merged.sh",
+      None,
+      "/home/me",
+      hook_test_path_exists(["/home/me/.config/choir/hooks/pr_merged.sh"]),
+    ),
+    Some("/home/me/.config/choir/hooks/pr_merged.sh"),
+  )
+}
+
+///|
+test "resolve_hook_script_path with empty HOME only returns project hook" {
+  @debug.assert_eq(
+    resolve_hook_script_path(
+      "/repo",
+      "pr_merged.sh",
+      None,
+      "",
+      hook_test_path_exists(["/home/me/.config/choir/hooks/pr_merged.sh"]),
+    ),
+    None,
+  )
+  @debug.assert_eq(
+    resolve_hook_script_path(
+      "/repo",
+      "pr_merged.sh",
+      None,
+      "",
+      hook_test_path_exists(["/repo/.choir/hooks/pr_merged.sh"]),
+    ),
+    Some("/repo/.choir/hooks/pr_merged.sh"),
+  )
+}
+
+///|
 test "HookInput::from_json_string parses completion payload fields" {
   let input = HookInput::{
     event: HookEvent::PrMerged,
