@@ -2415,6 +2415,11 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
       assert_eq(fired_inputs[0].event, @hooks.HookEvent::PrMerged)
       @debug.assert_eq(fired_inputs[0].pr_number, Some(pr_number))
     }
+    assert_true(
+      @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+        pr_number.to_string(),
+      ),
+    )
     ignore(@sys.rm_rf(project_dir))
     fired_count
   }
@@ -2507,7 +2512,8 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
   @debug.assert_eq(fired_inputs[0].pr_number, Some(612))
   @debug.assert_eq(fired_inputs[0].branch, Some("feature/integration"))
   @debug.assert_eq(fired_inputs[0].parent_branch, Some("main"))
-  assert_true(state.poller.merged_observed(612))
+  assert_false(state.poller.merged_observed(612))
+  assert_false(@sys.path_exists(project_dir + "/.choir/seen_merged_prs.json"))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -2533,10 +2539,6 @@ async test "PRMerged into default branch triggers injected parent auto-pull" {
   maybe_auto_pull_parent_after_pr_merged(
     state,
     pr,
-    async fn(_cmds) {
-      @async.sleep(0)
-      []
-    },
     async fn(cmd : @workspace.Command) {
       @async.sleep(0)
       if cmd.program == "git" &&
@@ -2544,6 +2546,10 @@ async test "PRMerged into default branch triggers injected parent auto-pull" {
         return (0, "origin/main\n")
       }
       (0, "")
+    },
+    async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (1, "unused")
     },
     async fn(
       workdir : String,
@@ -2555,7 +2561,7 @@ async test "PRMerged into default branch triggers injected parent auto-pull" {
     },
     async fn(
       workdir : String,
-      _runner : async (Array[@workspace.Command]) -> Array[Int],
+      _capture : async (@workspace.Command) -> (Int, String),
     ) -> Bool {
       @async.sleep(0)
       pulled_workdirs.push(workdir)
@@ -2588,10 +2594,6 @@ async test "PRMerged auto-pull skips dirty parent tree" {
   maybe_auto_pull_parent_after_pr_merged(
     state,
     pr,
-    async fn(_cmds) {
-      @async.sleep(0)
-      []
-    },
     async fn(cmd : @workspace.Command) {
       @async.sleep(0)
       if cmd.program == "git" &&
@@ -2599,6 +2601,10 @@ async test "PRMerged auto-pull skips dirty parent tree" {
         return (0, "origin/main\n")
       }
       (0, "")
+    },
+    async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (1, "unused")
     },
     async fn(
       _workdir : String,
@@ -2609,7 +2615,7 @@ async test "PRMerged auto-pull skips dirty parent tree" {
     },
     async fn(
       _workdir : String,
-      _runner : async (Array[@workspace.Command]) -> Array[Int],
+      _capture : async (@workspace.Command) -> (Int, String),
     ) -> Bool {
       @async.sleep(0)
       pull_calls = pull_calls + 1

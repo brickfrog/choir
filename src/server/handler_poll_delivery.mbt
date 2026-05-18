@@ -678,6 +678,7 @@ fn ServerState::record_seen_merged_pr_number(
 ) -> Unit {
   let cache = self.read_seen_merge_cache()
   let next = update_seen_merge_cache(cache, pr_number)
+  self.poller.mark_merged_observed(pr_number)
   self.write_seen_merge_cache(next)
 }
 
@@ -803,7 +804,7 @@ pub async fn detect_untracked_pr_merged_events(
   if exit_code != 0 {
     return []
   }
-  let mut seen_cache = state.read_seen_merge_cache()
+  let seen_cache = state.read_seen_merge_cache()
   let events : Array[@poller.PollEvent] = []
   for info in parse_recent_merged_pull_requests(output, default_branch) {
     let tracked = state.poller.get(info.pr_number) is Some(_)
@@ -817,12 +818,7 @@ pub async fn detect_untracked_pr_merged_events(
         synthetic_untracked_merge_agent_id(state),
       )
       events.push(@poller.PollEvent::PRMerged(pr))
-      state.poller.mark_merged_observed(pr.pr_number)
-      seen_cache = update_seen_merge_cache(seen_cache, pr.pr_number)
     }
-  }
-  if events.length() > 0 {
-    state.write_seen_merge_cache(seen_cache)
   }
   events
 }
@@ -859,12 +855,31 @@ async fn capture_parent_worktree_git_state(
 ///|
 async fn run_parent_git_pull_ff_only(
   project_dir : String,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
 ) -> Bool {
-  let statuses = runner([
-    { program: "git", args: ["pull", "--ff-only"], workdir: Some(project_dir) },
-  ])
-  statuses.length() == 1 && statuses[0] == 0
+  let (exit_code, _) = capture({
+    program: "git",
+    args: ["pull", "--ff-only"],
+    workdir: Some(project_dir),
+  })
+  exit_code == 0
+}
+
+///|
+async test "run_parent_git_pull_ff_only uses capture-based git pull" {
+  let captured : Array[@workspace.Command] = []
+  let ok = run_parent_git_pull_ff_only("/repo", async fn(
+    cmd : @workspace.Command,
+  ) -> (Int, String) {
+    @async.sleep(0)
+    captured.push(cmd)
+    (1, "fatal: origin does not appear to be a git repository")
+  })
+  assert_false(ok)
+  assert_eq(captured.length(), 1)
+  assert_eq(captured[0].program, "git")
+  @debug.assert_eq(captured[0].args, ["pull", "--ff-only"])
+  @debug.assert_eq(captured[0].workdir, Some("/repo"))
 }
 
 ///|
@@ -885,16 +900,13 @@ fn ServerState::auto_pull_after_integration_enabled(self : ServerState) -> Bool 
 pub async fn maybe_auto_pull_parent_after_pr_merged(
   state : ServerState,
   pr : @poller.TrackedPR,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
+  git_pull_capture : async (@workspace.Command) -> (Int, String),
   git_state_capture : async (
     String,
     async (@workspace.Command) -> (Int, String),
   ) -> ParentWorktreeGitState?,
-  git_pull_runner : async (
-    String,
-    async (Array[@workspace.Command]) -> Array[Int],
-  ) -> Bool,
+  git_pull_runner : async (String, async (@workspace.Command) -> (Int, String)) -> Bool,
 ) -> Unit {
   let default_branch = match
     detect_default_branch_for_wave_complete(state.config.project_dir, capture) {
@@ -936,7 +948,7 @@ pub async fn maybe_auto_pull_parent_after_pr_merged(
       default_branch,
       git_state.current_branch,
       git_state.working_tree_clean,
-      true,
+      enabled,
     ) {
     let reason = if git_state.current_branch != default_branch {
       "wrong_branch"
@@ -953,7 +965,7 @@ pub async fn maybe_auto_pull_parent_after_pr_merged(
     ])
     return
   }
-  if git_pull_runner(state.config.project_dir, runner) {
+  if git_pull_runner(state.config.project_dir, git_pull_capture) {
     @moontrace.info("auto-pull completed", fields=[
       @moontrace.field("pr", pr.pr_number),
       @moontrace.field("default_branch", default_branch),
@@ -2043,15 +2055,13 @@ async fn deliver_pending_poll_events(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   git_state_capture? : async (
     String,
     async (@workspace.Command) -> (Int, String),
   ) -> ParentWorktreeGitState? = capture_parent_worktree_git_state,
-  git_pull_runner? : async (
-    String,
-    async (Array[@workspace.Command]) -> Array[Int],
-  ) -> Bool = run_parent_git_pull_ff_only,
+  git_pull_runner? : async (String, async (@workspace.Command) -> (Int, String)) -> Bool = run_parent_git_pull_ff_only,
 ) -> Unit {
   let pending_parent_rows : Array[PendingPollParentRow] = []
   let automerge_attempted_prs : Map[Int, Bool] = {}
@@ -2155,7 +2165,7 @@ async fn deliver_pending_poll_events(
         )
         state.record_seen_merged_pr_number(pr.pr_number)
         maybe_auto_pull_parent_after_pr_merged(
-          state, pr, runner, capture, git_state_capture, git_pull_runner,
+          state, pr, capture, git_pull_capture, git_state_capture, git_pull_runner,
         )
       }
       _ =>
@@ -2685,15 +2695,13 @@ pub async fn ServerState::process_poller_tick_with(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
   git_state_capture? : async (
     String,
     async (@workspace.Command) -> (Int, String),
   ) -> ParentWorktreeGitState? = capture_parent_worktree_git_state,
-  git_pull_runner? : async (
-    String,
-    async (Array[@workspace.Command]) -> Array[Int],
-  ) -> Bool = run_parent_git_pull_ff_only,
+  git_pull_runner? : async (String, async (@workspace.Command) -> (Int, String)) -> Bool = run_parent_git_pull_ff_only,
 ) -> Unit {
   self.mutex_registry.expire(now)
   let pending_events = []
@@ -2736,6 +2744,7 @@ pub async fn ServerState::process_poller_tick_with(
     runner,
     capture~,
     automerge_capture~,
+    git_pull_capture~,
     hook_capture~,
     git_state_capture~,
     git_pull_runner~,
