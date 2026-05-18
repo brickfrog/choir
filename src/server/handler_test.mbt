@@ -2388,7 +2388,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
             pr_number.to_string() +
             "\",\"headRefName\":\"" +
             child_id +
-            "\",\"baseRefName\":\"main\"}]",
+            "\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
           )
         }
         (0, "")
@@ -2474,7 +2474,7 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
     }
     if cmd.program == "gh" && cmd.args.contains("list") {
       return (
-        0, "[{\"number\":612,\"url\":\"https://example.test/pull/612\",\"headRefName\":\"feature/integration\",\"baseRefName\":\"main\"}]",
+        0, "[{\"number\":612,\"url\":\"https://example.test/pull/612\",\"headRefName\":\"feature/integration\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
       )
     }
     (0, "")
@@ -6208,4 +6208,28 @@ async test "direct disconnect wrapper buffers awaiting-confirmation result" {
     _ => fail("expected active agent to remain in registry")
   }
   assert_eq(agent.state, @types.AgentState::Active)
+}
+
+///|
+test "pr_merged_predates_seen_cache grandfathers older merges" {
+  // 2026-05-17 18:00:00 UTC == 1779056400
+  assert_true(pr_merged_predates_seen_cache(1779056400L, 1779058800L))
+  assert_false(pr_merged_predates_seen_cache(1779058800L, 1779056400L))
+  // Equal timestamps: NOT grandfathered (the merge is at the moment of enable).
+  assert_false(pr_merged_predates_seen_cache(1779058800L, 1779058800L))
+  // Parse-failed merge time (0) fails closed -> grandfathered.
+  assert_true(pr_merged_predates_seen_cache(0L, 1L))
+  assert_true(pr_merged_predates_seen_cache(0L, 0L))
+}
+
+///|
+test "parse_iso8601_to_unix_seconds parses canonical Z-suffixed timestamps" {
+  // 2026-05-18T00:27:59Z = 1779064079 (matches gh's mergedAt format)
+  assert_eq(parse_iso8601_to_unix_seconds("2026-05-18T00:27:59Z"), 1779064079L)
+  // 1970 epoch
+  assert_eq(parse_iso8601_to_unix_seconds("1970-01-01T00:00:00Z"), 0L)
+  // Malformed -> 0 (caller treats as 'unknown' and grandfathers closed)
+  assert_eq(parse_iso8601_to_unix_seconds(""), 0L)
+  assert_eq(parse_iso8601_to_unix_seconds("not-a-timestamp"), 0L)
+  assert_eq(parse_iso8601_to_unix_seconds("2026-13-01T00:00:00Z"), 0L)
 }
