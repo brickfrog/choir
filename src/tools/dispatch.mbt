@@ -800,6 +800,7 @@ pub async fn dispatch(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   caller_id? : String? = None,
   caller_role? : @types.Role = @types.Role::TL,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = async fn(
@@ -1378,8 +1379,12 @@ pub async fn dispatch(
         project_dir,
         registry,
         poller_state,
-        list_panes_capture=async fn() {
-          capture_zellij_list_panes_snapshot(session, capture~)
+        list_panes_cache~,
+        list_panes_capture=async fn(list_panes_session) {
+          capture_zellij_list_panes_snapshot_result(
+            list_panes_session,
+            capture~,
+          )
         },
       )
     ToolRequest::CrystallizeSpec(crystallize_args) =>
@@ -1748,6 +1753,7 @@ pub async fn handle_request(
   agent_registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
@@ -1867,6 +1873,7 @@ pub async fn handle_request(
                   registry=agent_registry,
                   mutex_registry~,
                   poller_state~,
+                  list_panes_cache~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   caller_role=req.role,
                   on_resolve_review_thread~,
@@ -2001,6 +2008,7 @@ pub async fn dispatch_call(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
@@ -2074,6 +2082,7 @@ pub async fn dispatch_call(
                   registry~,
                   mutex_registry~,
                   poller_state~,
+                  list_panes_cache~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   caller_role=call.role,
                   pr_review~,

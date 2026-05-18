@@ -20,6 +20,22 @@ fn status_bar_test_list_panes_snapshot() -> ZellijListPanesSnapshot {
 }
 
 ///|
+test "status_bar_state list-panes cache lookup handles fresh stale and missing" {
+  let cache : Map[String, CachedListPanesSnapshot] = {}
+  let snapshot = status_bar_test_list_panes_snapshot()
+  cache.set("status-test", { snapshot, expires_at_unix_ms: 1000L })
+  @debug.assert_eq(
+    list_panes_cache_lookup(cache, "status-test", 999L),
+    Some(snapshot),
+  )
+  @debug.assert_eq(list_panes_cache_lookup(cache, "status-test", 1000L), None)
+  @debug.assert_eq(
+    list_panes_cache_lookup(cache, "missing-session", 999L),
+    None,
+  )
+}
+
+///|
 fn status_bar_test_agent(
   id : String,
   role : @types.Role,
@@ -913,9 +929,12 @@ async test "interpret_status_bar_state uses injected list-panes snapshot" {
     Some(reg),
     None,
     lifecycle_reader=Some(fn(_agent_id) { Some(lifecycle) }),
-    list_panes_capture=async fn() {
+    list_panes_capture=async fn(
+      session,
+    ) -> Result[ZellijListPanesSnapshot, @types.ChoirError] {
       @async.sleep(0)
-      status_bar_test_list_panes_snapshot()
+      assert_eq(session, "status-test")
+      Ok(status_bar_test_list_panes_snapshot())
     },
     now_ms=99L,
   )
@@ -931,6 +950,144 @@ async test "interpret_status_bar_state uses injected list-panes snapshot" {
     }
     None => fail("expected ok payload")
   }
+}
+
+///|
+async test "interpret_status_bar_state reuses list-panes within ttl and refreshes after ttl" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      status_bar_test_agent(
+        "root.tl",
+        @types.Role::TL,
+        Some("root"),
+        @types.AgentType::Codex,
+        Some(status_bar_test_tab_target("TL")),
+      ),
+    ),
+  )
+  let lifecycle = status_bar_test_lifecycle(
+    "root.tl",
+    @types.Role::TL,
+    @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Planning),
+    10L,
+  )
+  let cache : Map[String, CachedListPanesSnapshot] = {}
+  let calls : Ref[Int] = @ref.new(0)
+  let capture = async fn(
+    session : String,
+  ) -> Result[ZellijListPanesSnapshot, @types.ChoirError] {
+    @async.sleep(0)
+    assert_eq(session, "status-test")
+    calls.val += 1
+    Ok(status_bar_test_list_panes_snapshot())
+  }
+  let first = interpret_status_bar_state(
+    { unit: () },
+    ".",
+    Some(reg),
+    None,
+    lifecycle_reader=Some(fn(_agent_id) { Some(lifecycle) }),
+    list_panes_cache=Some(cache),
+    list_panes_capture=capture,
+    now_ms=1000L,
+  )
+  assert_true(first.is_ok())
+  let second = interpret_status_bar_state(
+    { unit: () },
+    ".",
+    Some(reg),
+    None,
+    lifecycle_reader=Some(fn(_agent_id) { Some(lifecycle) }),
+    list_panes_cache=Some(cache),
+    list_panes_capture=capture,
+    now_ms=1000L + LIST_PANES_TTL_MS - 1L,
+  )
+  assert_true(second.is_ok())
+  assert_eq(calls.val, 1)
+  @debug.assert_eq(
+    list_panes_cache_lookup(
+      cache,
+      "status-test",
+      1000L + LIST_PANES_TTL_MS - 1L,
+    ),
+    Some(status_bar_test_list_panes_snapshot()),
+  )
+  let third = interpret_status_bar_state(
+    { unit: () },
+    ".",
+    Some(reg),
+    None,
+    lifecycle_reader=Some(fn(_agent_id) { Some(lifecycle) }),
+    list_panes_cache=Some(cache),
+    list_panes_capture=capture,
+    now_ms=1000L + LIST_PANES_TTL_MS + 1000L,
+  )
+  assert_true(third.is_ok())
+  assert_eq(calls.val, 2)
+}
+
+///|
+async test "interpret_status_bar_state does not store failed list-panes capture" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      status_bar_test_agent(
+        "root.tl",
+        @types.Role::TL,
+        Some("root"),
+        @types.AgentType::Codex,
+        Some(status_bar_test_tab_target("TL")),
+      ),
+    ),
+  )
+  let lifecycle = status_bar_test_lifecycle(
+    "root.tl",
+    @types.Role::TL,
+    @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Planning),
+    10L,
+  )
+  let cache : Map[String, CachedListPanesSnapshot] = {}
+  let calls : Ref[Int] = @ref.new(0)
+  let capture = async fn(
+    _session : String,
+  ) -> Result[ZellijListPanesSnapshot, @types.ChoirError] {
+    @async.sleep(0)
+    calls.val += 1
+    if calls.val == 1 {
+      Err(@types.ChoirError::workspace_error("capture failed"))
+    } else {
+      Ok(status_bar_test_list_panes_snapshot())
+    }
+  }
+  let failed_capture = interpret_status_bar_state(
+    { unit: () },
+    ".",
+    Some(reg),
+    None,
+    lifecycle_reader=Some(fn(_agent_id) { Some(lifecycle) }),
+    list_panes_cache=Some(cache),
+    list_panes_capture=capture,
+    now_ms=1000L,
+  )
+  assert_true(failed_capture.is_ok())
+  @debug.assert_eq(list_panes_cache_lookup(cache, "status-test", 1001L), None)
+  let retry = interpret_status_bar_state(
+    { unit: () },
+    ".",
+    Some(reg),
+    None,
+    lifecycle_reader=Some(fn(_agent_id) { Some(lifecycle) }),
+    list_panes_cache=Some(cache),
+    list_panes_capture=capture,
+    now_ms=1001L,
+  )
+  assert_true(retry.is_ok())
+  assert_eq(calls.val, 2)
+  @debug.assert_eq(
+    list_panes_cache_lookup(cache, "status-test", 1001L),
+    Some(status_bar_test_list_panes_snapshot()),
+  )
 }
 
 ///|

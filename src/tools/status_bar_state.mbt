@@ -39,8 +39,29 @@ pub(all) struct ZellijListPanesSnapshot {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct CachedListPanesSnapshot {
+  snapshot : ZellijListPanesSnapshot
+  expires_at_unix_ms : Int64
+} derive(Debug, Eq)
+
+///|
+pub const LIST_PANES_TTL_MS : Int64 = 3000L
+
+///|
 pub fn empty_zellij_list_panes_snapshot() -> ZellijListPanesSnapshot {
   { entries: [] }
+}
+
+///|
+pub fn list_panes_cache_lookup(
+  map : Map[String, CachedListPanesSnapshot],
+  session : String,
+  now_ms : Int64,
+) -> ZellijListPanesSnapshot? {
+  match map.get(session) {
+    Some(entry) if entry.expires_at_unix_ms > now_ms => Some(entry.snapshot)
+    _ => None
+  }
 }
 
 ///|
@@ -813,9 +834,91 @@ pub fn status_bar_registry_entries(
 }
 
 ///|
-async fn status_bar_default_list_panes_capture() -> ZellijListPanesSnapshot {
+fn status_bar_registry_entry_sessions(
+  registry_entries : Array[StatusBarRegistryEntry],
+) -> Array[String] {
+  let seen : Map[String, Bool] = {}
+  let sessions : Array[String] = []
+  for entry in registry_entries {
+    match entry.agent.terminal_target {
+      Some(target) =>
+        if !seen.contains(target.session) {
+          seen.set(target.session, true)
+          sessions.push(target.session)
+        }
+      None => ()
+    }
+  }
+  sessions
+}
+
+///|
+fn status_bar_pane_from_entry_by_session(
+  entry : StatusBarRegistryEntry,
+  tracked_by_agent : Map[String, @poller.TrackedPR],
+  list_panes_by_session : Map[String, ZellijListPanesSnapshot],
+) -> StatusBarPane? {
+  let target = match entry.agent.terminal_target {
+    Some(value) => value
+    None => return None
+  }
+  let list_panes = match list_panes_by_session.get(target.session) {
+    Some(value) => value
+    None => return None
+  }
+  status_bar_pane_from_entry(entry, tracked_by_agent, list_panes)
+}
+
+///|
+fn build_status_bar_snapshot_by_session(
+  registry_entries : Array[StatusBarRegistryEntry],
+  poller_tracked : Map[Int, @poller.TrackedPR],
+  list_panes_by_session : Map[String, ZellijListPanesSnapshot],
+  now_ms : Int64,
+) -> StatusBarSnapshot {
+  let tracked_by_agent = status_bar_tracked_by_agent(poller_tracked)
+  let panes : Array[StatusBarPane] = []
+  for entry in registry_entries {
+    match
+      status_bar_pane_from_entry_by_session(
+        entry, tracked_by_agent, list_panes_by_session,
+      ) {
+      Some(pane) => panes.push(pane)
+      None => ()
+    }
+  }
+  {
+    schema_version: 1,
+    taken_at_ms: status_bar_nonnegative_i64(now_ms),
+    panes: sort_status_bar_panes(panes),
+  }
+}
+
+///|
+async fn status_bar_default_list_panes_capture(
+  _session : String,
+) -> Result[ZellijListPanesSnapshot, @types.ChoirError] {
   @async.sleep(0)
-  empty_zellij_list_panes_snapshot()
+  Ok(empty_zellij_list_panes_snapshot())
+}
+
+///|
+async fn capture_zellij_list_panes_snapshot_result(
+  session : String,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+) -> Result[ZellijListPanesSnapshot, @types.ChoirError] {
+  let (exit_code, output) = capture(
+    @workspace.zellij_list_panes_json_command(session),
+  )
+  if exit_code != 0 {
+    Err(
+      @types.ChoirError::workspace_error(
+        "zellij list-panes failed for session " + session,
+      ),
+    )
+  } else {
+    Ok(parse_zellij_list_panes_json(output))
+  }
 }
 
 ///|
@@ -823,14 +926,66 @@ pub async fn capture_zellij_list_panes_snapshot(
   session : String,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
 ) -> ZellijListPanesSnapshot {
-  let (exit_code, output) = capture(
-    @workspace.zellij_list_panes_json_command(session),
-  )
-  if exit_code != 0 {
-    empty_zellij_list_panes_snapshot()
-  } else {
-    parse_zellij_list_panes_json(output)
+  match capture_zellij_list_panes_snapshot_result(session, capture~) {
+    Ok(snapshot) => snapshot
+    Err(_) => empty_zellij_list_panes_snapshot()
   }
+}
+
+///|
+async fn status_bar_list_panes_for_session(
+  session : String,
+  now_ms : Int64,
+  list_panes_cache : Map[String, CachedListPanesSnapshot]?,
+  list_panes_capture : async (String) -> Result[
+    ZellijListPanesSnapshot,
+    @types.ChoirError,
+  ],
+) -> ZellijListPanesSnapshot {
+  match list_panes_cache {
+    Some(cache) =>
+      match list_panes_cache_lookup(cache, session, now_ms) {
+        Some(snapshot) => return snapshot
+        None => ()
+      }
+    None => ()
+  }
+  match list_panes_capture(session) {
+    Ok(snapshot) => {
+      match list_panes_cache {
+        Some(cache) =>
+          cache.set(session, {
+            snapshot,
+            expires_at_unix_ms: now_ms + LIST_PANES_TTL_MS,
+          })
+        None => ()
+      }
+      snapshot
+    }
+    Err(_) => empty_zellij_list_panes_snapshot()
+  }
+}
+
+///|
+async fn status_bar_list_panes_by_session(
+  registry_entries : Array[StatusBarRegistryEntry],
+  now_ms : Int64,
+  list_panes_cache : Map[String, CachedListPanesSnapshot]?,
+  list_panes_capture : async (String) -> Result[
+    ZellijListPanesSnapshot,
+    @types.ChoirError,
+  ],
+) -> Map[String, ZellijListPanesSnapshot] {
+  let snapshots : Map[String, ZellijListPanesSnapshot] = {}
+  for session in status_bar_registry_entry_sessions(registry_entries) {
+    snapshots.set(
+      session,
+      status_bar_list_panes_for_session(
+        session, now_ms, list_panes_cache, list_panes_capture,
+      ),
+    )
+  }
+  snapshots
 }
 
 ///|
@@ -840,7 +995,11 @@ pub async fn interpret_status_bar_state(
   registry : @registry.AgentRegistry?,
   poller_state : @poller.PollerState?,
   lifecycle_reader? : ((String) -> @phase.AgentLifecycle?)? = None,
-  list_panes_capture? : async () -> ZellijListPanesSnapshot = status_bar_default_list_panes_capture,
+  list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
+  list_panes_capture? : async (String) -> Result[
+    ZellijListPanesSnapshot,
+    @types.ChoirError,
+  ] = status_bar_default_list_panes_capture,
   now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> @types.Response {
   ignore(args)
@@ -857,12 +1016,12 @@ pub async fn interpret_status_bar_state(
     Some(value) => value.tracked
     None => {}
   }
-  let list_panes = list_panes_capture()
-  let snapshot = build_status_bar_snapshot(
-    status_bar_registry_entries(reg, reader),
-    tracked,
-    list_panes,
-    now_ms,
+  let registry_entries = status_bar_registry_entries(reg, reader)
+  let list_panes_by_session = status_bar_list_panes_by_session(
+    registry_entries, now_ms, list_panes_cache, list_panes_capture,
+  )
+  let snapshot = build_status_bar_snapshot_by_session(
+    registry_entries, tracked, list_panes_by_session, now_ms,
   )
   @types.Response::ok_values(snapshot.to_json_map())
 }

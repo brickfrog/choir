@@ -38,6 +38,7 @@ pub struct ServerState {
   last_commit_observed_at : Map[String, Int64]
   last_commit_observed_sha : Map[String, String]
   last_commit_probe_at : Map[String, Int64]
+  list_panes_cache : Map[String, @tools.CachedListPanesSnapshot]
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
   goal_judge : GoalJudgeState
   pane_watcher : @runtime.PaneWatcher
@@ -108,6 +109,7 @@ pub fn ServerState::new(
     last_commit_observed_at: {},
     last_commit_observed_sha: {},
     last_commit_probe_at: {},
+    list_panes_cache: {},
     recent_poller_event_emissions: {},
     goal_judge: GoalJudgeState::new(),
     pane_watcher: @runtime.PaneWatcher::new(),
