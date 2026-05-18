@@ -406,6 +406,51 @@ pub fn load_prompt(
 }
 
 ///|
+pub fn detect_prompt_drift(on_disk : String?, baked_in : String) -> Bool {
+  match on_disk {
+    Some(content) => content != baked_in
+    None => false
+  }
+}
+
+///|
+pub(all) struct PromptDriftWarning {
+  path : String
+  mismatch : Bool
+} derive(Debug, Eq)
+
+///|
+pub fn prompt_drift_warnings(
+  project_dir : String,
+  path_exists : (String) -> Bool,
+  read_file : (String) -> String,
+) -> Array[PromptDriftWarning] {
+  let warnings : Array[PromptDriftWarning] = []
+  for name in all_prompt_names() {
+    let path = prompt_path(name, project_dir)
+    let on_disk = if path_exists(path) { Some(read_file(path)) } else { None }
+    if detect_prompt_drift(on_disk, default_prompt(name)) {
+      warnings.push({ path, mismatch: true })
+    }
+  }
+  warnings
+}
+
+///|
+pub fn emit_prompt_drift_warnings(
+  project_dir : String,
+  path_exists : (String) -> Bool,
+  read_file : (String) -> String,
+) -> Unit {
+  for warning in prompt_drift_warnings(project_dir, path_exists, read_file) {
+    @moontrace.warn("prompt drift detected", fields=[
+      @moontrace.field("path", warning.path),
+      @moontrace.field("mismatch", warning.mismatch),
+    ])
+  }
+}
+
+///|
 /// Materialize the default prompts into `<project_dir>/.choir/prompts/...`
 /// when each one is absent. I/O capabilities are injected for the same
 /// reason as `load_prompt`; production callers omit them and pick up the

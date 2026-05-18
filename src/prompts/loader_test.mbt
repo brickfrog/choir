@@ -69,6 +69,32 @@ fn PromptFs::mkdir(self : PromptFs, path : String) -> Bool {
 }
 
 ///|
+fn prompt_test_field_value(
+  fields : Array[@moontrace.Field],
+  key : String,
+) -> Json? {
+  for field in fields {
+    if field.key == key {
+      return Some(field.value)
+    }
+  }
+  None
+}
+
+///|
+fn prompt_drift_warn_event(
+  events : Array[@moontrace.Event],
+) -> @moontrace.Event? {
+  for event in events {
+    if event.level == @moontrace.Level::Warn &&
+      event.message == "prompt drift detected" {
+      return Some(event)
+    }
+  }
+  None
+}
+
+///|
 test "load_prompt returns file contents when present" {
   // load_prompt only reads (path_exists + read_file); seed the files map
   // directly. The PromptFs.write parent-dir check is load-bearing only for
@@ -95,6 +121,70 @@ test "load_prompt returns fallback when file is missing" {
     read_file=fn(p) { fs.read(p) },
   )
   assert_eq(got, default_prompt(PromptName::AuditSkill))
+}
+
+///|
+test "detect_prompt_drift truth table" {
+  assert_false(detect_prompt_drift(None, "default"))
+  assert_false(detect_prompt_drift(Some("default"), "default"))
+  assert_true(detect_prompt_drift(Some("changed"), "default"))
+  assert_true(detect_prompt_drift(Some(""), "default"))
+}
+
+///|
+test "prompt_drift_warnings ignores missing files and matches" {
+  let fs = PromptFs::new()
+  fs.files.set(
+    "/repo/.choir/prompts/skills/audit.md",
+    default_prompt(PromptName::AuditSkill),
+  )
+  let warnings = prompt_drift_warnings("/repo", fn(p) { fs.exists(p) }, fn(p) {
+    fs.read(p)
+  })
+  assert_eq(warnings.length(), 0)
+}
+
+///|
+test "prompt_drift_warnings reports changed on-disk prompt" {
+  let fs = PromptFs::new()
+  let path = "/repo/.choir/prompts/profiles/leaf.md"
+  fs.files.set(path, "changed leaf profile\n")
+  let warnings = prompt_drift_warnings("/repo", fn(p) { fs.exists(p) }, fn(p) {
+    fs.read(p)
+  })
+  assert_eq(warnings.length(), 1)
+  assert_eq(warnings[0].path, path)
+  assert_true(warnings[0].mismatch)
+}
+
+///|
+test "emit_prompt_drift_warnings logs warn only for mismatch" {
+  let fs = PromptFs::new()
+  let changed = "/repo/.choir/prompts/profiles/worker-review.md"
+  fs.files.set(changed, "changed worker review\n")
+  fs.files.set(
+    "/repo/.choir/prompts/skills/audit.md",
+    default_prompt(PromptName::AuditSkill),
+  )
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  emit_prompt_drift_warnings("/repo", fn(p) { fs.exists(p) }, fn(p) {
+    fs.read(p)
+  })
+  @moontrace.clear_subscriber()
+  let warn = match prompt_drift_warn_event(captured) {
+    Some(event) => event
+    None => fail("expected prompt drift warning")
+  }
+  match prompt_test_field_value(warn.fields, "path") {
+    Some(String(value)) => assert_eq(value, changed)
+    _ => fail("expected path field")
+  }
+  match prompt_test_field_value(warn.fields, "mismatch") {
+    Some(True) => ()
+    _ => fail("expected mismatch field")
+  }
+  assert_eq(captured.length(), 1)
 }
 
 ///|

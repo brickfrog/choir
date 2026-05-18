@@ -15,6 +15,14 @@ pub(all) enum ForkWaveError {
   ScaffoldCommitPathUnchanged(path~ : String)
   /// A scaffold_commit git command exited with a non-zero status.
   ScaffoldCommandFailed(status~ : Int, failing_cmd~ : @workspace.Command?)
+  /// Compensation after a successful scaffold commit failed; manual recovery
+  /// is required because the parent branch may still contain the scaffold commit.
+  ScaffoldCompensationFailed(
+    pre_scaffold_sha~ : String,
+    original_error~ : String,
+    status~ : Int,
+    failing_cmd~ : @workspace.Command?
+  )
   /// HEAD is on a different branch than the requested parent_branch.
   /// scaffold_commit refuses to push: it would mutate the wrong branch.
   ScaffoldBranchMismatch(expected~ : String, actual~ : String)
@@ -38,6 +46,13 @@ pub fn ForkWaveError::message(self : ForkWaveError) -> String {
       "scaffold_commit path has no changes or does not exist: " + path
     ScaffoldCommandFailed(status~, ..) =>
       "scaffold_commit command failed with status " + status.to_string()
+    ScaffoldCompensationFailed(pre_scaffold_sha~, original_error~, status~, ..) =>
+      "scaffold_commit compensation failed after post-scaffold error (" +
+      original_error +
+      "). Manual recovery required: first inspect the remote parent branch and confirm no concurrent commits would be discarded; if the scaffold commit is still the only remote change to rewind, run `git reset --hard " +
+      pre_scaffold_sha +
+      "` and `git push --force-with-lease`. Do not force-push blindly: even force-with-lease can discard commits pushed after the scaffold. Compensation command failed with status " +
+      status.to_string()
     ScaffoldBranchMismatch(expected~, actual~) =>
       "scaffold_commit refused: HEAD is on '" +
       actual +
@@ -223,6 +238,84 @@ fn fork_wave_scaffold_commit_commands(
 }
 
 ///|
+pub fn fork_wave_scaffold_compensation_commands(
+  project_dir : String,
+  pre_scaffold_sha : String,
+) -> Array[@workspace.Command] {
+  [
+    @workspace.Command::{
+      program: "git",
+      args: ["-C", project_dir, "reset", "--hard", pre_scaffold_sha],
+      workdir: None,
+    },
+    @workspace.Command::{
+      program: "git",
+      args: ["-C", project_dir, "push", "--force-with-lease"],
+      workdir: None,
+    },
+  ]
+}
+
+///|
+fn fork_wave_compensate_scaffold_failure(
+  project_dir : String,
+  pre_scaffold_sha : String,
+  original : ForkWaveError,
+) -> Eff[Result[@types.Response, ForkWaveError]] {
+  let compensation_cmds = fork_wave_scaffold_compensation_commands(
+    project_dir, pre_scaffold_sha,
+  )
+  RunCommands(cmds=compensation_cmds, cont=fn(exit_codes) {
+    let (failed_idx, failed_status, failing) = first_failed_command(
+      compensation_cmds, exit_codes,
+    )
+    if failed_idx >= 0 {
+      Pure(
+        Err(
+          ScaffoldCompensationFailed(
+            pre_scaffold_sha~,
+            original_error=original.message(),
+            status=failed_status,
+            failing_cmd=failing,
+          ),
+        ),
+      )
+    } else {
+      Pure(Err(original))
+    }
+  })
+}
+
+///|
+fn fork_wave_compensate_on_post_scaffold_error(
+  post_scaffold : Eff[Result[@types.Response, ForkWaveError]],
+  project_dir : String,
+  pre_scaffold_sha : String,
+) -> Eff[Result[@types.Response, ForkWaveError]] {
+  match post_scaffold {
+    Pure(Ok(resp)) => Pure(Ok(resp))
+    Pure(Err(e)) =>
+      fork_wave_compensate_scaffold_failure(project_dir, pre_scaffold_sha, e)
+    GitCapture(program~, args~, cont~) =>
+      GitCapture(program~, args~, cont=fn(output) {
+        fork_wave_compensate_on_post_scaffold_error(
+          cont(output),
+          project_dir,
+          pre_scaffold_sha,
+        )
+      })
+    RunCommands(cmds~, cont~) =>
+      RunCommands(cmds~, cont=fn(exit_codes) {
+        fork_wave_compensate_on_post_scaffold_error(
+          cont(exit_codes),
+          project_dir,
+          pre_scaffold_sha,
+        )
+      })
+  }
+}
+
+///|
 fn fork_wave_scaffold_commit_phase(
   project_dir : String,
   scaffold : ForkWaveScaffoldCommit,
@@ -232,6 +325,7 @@ fn fork_wave_scaffold_commit_phase(
   agent_ids : String,
   skipped_ids : String,
   path_index : Int,
+  pre_scaffold_sha : String,
 ) -> Eff[Result[@types.Response, ForkWaveError]] {
   if path_index >= scaffold.paths.length() {
     let scaffold_cmds = fork_wave_scaffold_commit_commands(
@@ -246,8 +340,12 @@ fn fork_wave_scaffold_commit_phase(
           Err(ScaffoldCommandFailed(status=failed_status, failing_cmd=failing)),
         )
       } else {
-        fork_wave_clean_gate_phase(
-          project_dir, cmds, spawned_count, skipped_count, agent_ids, skipped_ids,
+        fork_wave_compensate_on_post_scaffold_error(
+          fork_wave_clean_gate_phase(
+            project_dir, cmds, spawned_count, skipped_count, agent_ids, skipped_ids,
+          ),
+          project_dir,
+          pre_scaffold_sha,
         )
       }
     })
@@ -269,6 +367,7 @@ fn fork_wave_scaffold_commit_phase(
           agent_ids,
           skipped_ids,
           path_index + 1,
+          pre_scaffold_sha,
         )
       }
     },
@@ -373,9 +472,26 @@ fn fork_wave_scaffold_preflight_phase(
                       ),
                     )
                   } else {
-                    fork_wave_scaffold_commit_phase(
-                      project_dir, scaffold, cmds, spawned_count, skipped_count,
-                      agent_ids, skipped_ids, 0,
+                    GitCapture(
+                      program="git",
+                      args=["-C", project_dir, "rev-parse", "HEAD"],
+                      cont=fn(pre_scaffold_out) {
+                        let pre_scaffold_sha = pre_scaffold_out
+                          .trim()
+                          .to_owned()
+                        if pre_scaffold_sha == "" {
+                          Pure(
+                            Err(
+                              ScaffoldCommandFailed(status=1, failing_cmd=None),
+                            ),
+                          )
+                        } else {
+                          fork_wave_scaffold_commit_phase(
+                            project_dir, scaffold, cmds, spawned_count, skipped_count,
+                            agent_ids, skipped_ids, 0, pre_scaffold_sha,
+                          )
+                        }
+                      },
                     )
                   }
                 },

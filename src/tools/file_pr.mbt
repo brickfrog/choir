@@ -595,6 +595,9 @@ pub let audit_on_file_pr_internal_caller_id : String = "audit-on-file-pr"
 pub let audit_on_file_pr_default_budget_ms : Int = 900_000
 
 ///|
+pub const AUDIT_DELTA_MAX_LINES : Int = 500
+
+///|
 pub(all) enum AuditHeartbeatStatus {
   HeartbeatRunning
   HeartbeatOk
@@ -950,6 +953,230 @@ pub fn file_pr_validate_audit_receipt(
 }
 
 ///|
+fn prior_audit_receipt_entry(
+  mtime_key : String,
+  receipt : @types.AuditReceipt,
+) -> String {
+  mtime_key.trim().to_owned() + "\t" + receipt.sha + "\t" + receipt.branch
+}
+
+///|
+fn prior_audit_mtime_fraction_key(raw : String) -> String {
+  let parts = raw.trim().to_owned().split(".").to_array()
+  if parts.length() < 2 {
+    return ""
+  }
+  let mut key = parts[1].trim().to_owned()
+  while key.length() < 18 {
+    key = key + "0"
+  }
+  if key.length() > 18 {
+    key[:18].to_owned()
+  } else {
+    key
+  }
+}
+
+///|
+fn parse_prior_audit_receipt_entry(
+  entry : String,
+) -> (Int64, String, String, String)? {
+  let parts = entry.split("\t").to_array()
+  if parts.length() < 3 {
+    return None
+  }
+  let mtime_raw = parts[0].trim().to_owned()
+  let mtime_whole_raw = match mtime_raw.find(".") {
+    Some(idx) => mtime_raw[:idx].to_owned()
+    None => mtime_raw
+  }
+  let mtime = @string.parse_int(mtime_whole_raw) catch { _ => return None }
+  let mtime_fraction = prior_audit_mtime_fraction_key(parts[0].to_owned())
+  let sha = parts[1].trim().to_owned()
+  let branch = parts[2].trim().to_owned()
+  if sha == "" || branch == "" {
+    return None
+  }
+  Some((mtime.to_int64(), mtime_fraction, sha, branch))
+}
+
+///|
+fn prior_audit_entry_is_better(
+  mtime : Int64,
+  mtime_fraction : String,
+  sha : String,
+  best_mtime : Int64,
+  best_mtime_fraction : String,
+  best_sha : String?,
+) -> Bool {
+  if mtime > best_mtime {
+    return true
+  }
+  if mtime < best_mtime {
+    return false
+  }
+  let fraction_cmp = mtime_fraction.compare(best_mtime_fraction)
+  if fraction_cmp > 0 {
+    return true
+  }
+  if fraction_cmp < 0 {
+    return false
+  }
+  match best_sha {
+    Some(current) => sha.compare(current) > 0
+    None => true
+  }
+}
+
+///|
+/// Select the newest audit receipt summary for `branch`. The injected
+/// `list_files` returns pure receipt summaries in the form
+/// `<mtime_key>\t<sha>\t<branch>`; production builds those summaries through
+/// injected command capture, while tests provide them directly.
+pub fn find_prior_branch_audit_receipt(
+  receipts_dir : String,
+  branch : String,
+  list_files : (String) -> Array[String],
+) -> String? {
+  let target_branch = branch.trim().to_owned()
+  if target_branch == "" {
+    return None
+  }
+  let mut best_mtime = -1L
+  let mut best_mtime_fraction = ""
+  let mut best_sha : String? = None
+  for entry in list_files(receipts_dir) {
+    match parse_prior_audit_receipt_entry(entry) {
+      Some((mtime, mtime_fraction, sha, entry_branch)) =>
+        if entry_branch == target_branch &&
+          prior_audit_entry_is_better(
+            mtime, mtime_fraction, sha, best_mtime, best_mtime_fraction, best_sha,
+          ) {
+          best_mtime = mtime
+          best_mtime_fraction = mtime_fraction
+          best_sha = Some(sha)
+        }
+      None => ()
+    }
+  }
+  best_sha
+}
+
+///|
+pub fn audit_delta_numstat_lines(numstat : String) -> Int? {
+  let mut total = 0
+  for raw in numstat.split("\n") {
+    let line = raw.trim().to_owned()
+    if line == "" {
+      continue
+    }
+    let parts = line.split("\t").to_array()
+    if parts.length() < 2 {
+      return None
+    }
+    // Binary numstat rows are `-\t-\t<path>`. Treat that as unknown so the
+    // caller conservatively falls back to a full audit instead of under-counting.
+    let added = @string.parse_int(parts[0].to_owned()) catch {
+      _ => return None
+    }
+    let deleted = @string.parse_int(parts[1].to_owned()) catch {
+      _ => return None
+    }
+    total = total + added + deleted
+  }
+  Some(total)
+}
+
+///|
+async fn file_pr_prior_audit_receipt_entries(
+  project_dir : String,
+  current_head : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Array[String] {
+  let receipts_dir = ".choir/audit-receipts"
+  let (list_exit, list_output) = capture({
+    program: "find",
+    args: [
+      receipts_dir, "-maxdepth", "1", "-type", "f", "-name", "*.json", "-printf",
+      "%T@\t%f\n",
+    ],
+    workdir: Some(project_dir),
+  })
+  if list_exit != 0 {
+    return []
+  }
+  let entries : Array[String] = []
+  for raw in list_output.split("\n") {
+    let line = raw.trim().to_owned()
+    if line == "" {
+      continue
+    }
+    let parts = line.split("\t").to_array()
+    if parts.length() < 2 {
+      continue
+    }
+    let mtime_raw = parts[0]
+    let filename = parts[1].trim().to_owned()
+    if filename == "" || filename.contains("/") || !filename.has_suffix(".json") {
+      continue
+    }
+    let mtime_key = mtime_raw.trim().to_owned()
+    let (cat_exit, body) = capture({
+      program: "cat",
+      args: [receipts_dir + "/" + filename],
+      workdir: Some(project_dir),
+    })
+    if cat_exit != 0 {
+      continue
+    }
+    match file_pr_parse_audit_receipt(body) {
+      Some(receipt) if receipt.sha != current_head &&
+        receipt.findings_count == 0 =>
+        entries.push(prior_audit_receipt_entry(mtime_key, receipt))
+      _ => ()
+    }
+  }
+  entries
+}
+
+///|
+async fn file_pr_audit_delta_prior_sha(
+  project_dir : String,
+  file_pr_dir : String,
+  branch : String,
+  head_sha : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  let receipts_dir = ".choir/audit-receipts"
+  let entries = file_pr_prior_audit_receipt_entries(
+    project_dir, head_sha, capture,
+  )
+  let prior_sha = match
+    find_prior_branch_audit_receipt(receipts_dir, branch, fn(path) {
+      if path == receipts_dir {
+        entries
+      } else {
+        []
+      }
+    }) {
+    Some(sha) => sha
+    None => return None
+  }
+  let (diff_exit, numstat) = capture({
+    program: "git",
+    args: ["diff", "--numstat", prior_sha + "..." + head_sha],
+    workdir: Some(file_pr_dir),
+  })
+  if diff_exit != 0 {
+    return None
+  }
+  match audit_delta_numstat_lines(numstat) {
+    Some(lines) if lines <= AUDIT_DELTA_MAX_LINES => Some(prior_sha)
+    _ => None
+  }
+}
+
+///|
 async fn file_pr_current_branch_name(
   file_pr_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
@@ -1044,8 +1271,23 @@ pub fn build_audit_on_file_pr_task(
   project_dir : String,
   branch : String,
   head_sha : String,
+  prior_sha? : String? = None,
 ) -> String {
-  let review_surface = "git diff main..." + head_sha
+  let review_surface = match prior_sha {
+    Some(prior) => "git diff " + prior + "..." + head_sha
+    None => "git diff main..." + head_sha
+  }
+  let delta_context = match prior_sha {
+    Some(prior) =>
+      [
+        "- Prior audited HEAD: " + prior,
+        "- Delta audit: audit only the changes between prior_sha and current_head; treat the prior audited HEAD as already reviewed.",
+        "- Delta limit: this retry path is used only when the changed-line count is <= " +
+        AUDIT_DELTA_MAX_LINES.to_string() +
+        "; larger retries fall back to the full review surface.",
+      ]
+    None => []
+  }
   [
     "Your printed report is NOT the handoff — the parent cannot read your stdout. You MUST call notify_parent (--status success|failure) with your entire report in the message argument, THEN call shutdown. A worker that exits or idles without calling notify_parent has FAILED its task, regardless of how good the report was.",
     "",
@@ -1070,6 +1312,7 @@ pub fn build_audit_on_file_pr_task(
     "- Current branch: " + branch,
     "- Audited HEAD: " + head_sha,
     "- Review surface: `" + review_surface + "`",
+    ..delta_context,
     "- Apply CLAUDE.md / AGENTS.md rules, including dead-code removal, no compatibility shims, `moon test --target native`, enums over strings, `ChoirError` over `String`, correct MoonBit test placement, and no direct host I/O in orchestration logic.",
     "- Read relevant `.choir/context/*-spec.md` files if the branch task contract points at one.",
     "",
@@ -1147,8 +1390,14 @@ fn audit_on_file_pr_worker_args(
   branch : String,
   head_sha : String,
   now_ms : Int64,
+  prior_sha? : String? = None,
 ) -> WorkerSpawnArgs {
-  let task = build_audit_on_file_pr_task(project_dir, branch, head_sha)
+  let task = build_audit_on_file_pr_task(
+    project_dir,
+    branch,
+    head_sha,
+    prior_sha~,
+  )
   let spec : PromptSpec = {
     prompt: "",
     task,
@@ -1298,11 +1547,15 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
       existing.child_id
     }
     None => {
+      let prior_sha = file_pr_audit_delta_prior_sha(
+        project_dir, file_pr_dir, branch, head_sha, capture,
+      )
       let worker_args = audit_on_file_pr_worker_args(
         project_dir,
         branch,
         head_sha,
         now_ms_fn(),
+        prior_sha~,
       )
       match spawn_audit_worker(worker_args) {
         Ok(id) => id

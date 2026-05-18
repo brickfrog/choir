@@ -54,6 +54,16 @@ pub fn hook_home() -> String {
 }
 
 ///|
+pub fn path_entry_exists(path : String) -> Bool {
+  @sys.path_entry_exists(path)
+}
+
+///|
+pub fn read_file(path : String) -> String {
+  @sys.read_file(path)
+}
+
+///|
 fn replace_self_error(binary_path : String, code : Int) -> @types.ChoirError {
   let errno = if code < 0 { 0 - code } else { code }
   @types.ChoirError::workspace_error(
