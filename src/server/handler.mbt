@@ -190,6 +190,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       agent_registry=Some(self.registry),
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
+      list_panes_cache=Some(self.list_panes_cache),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
       global_review_mode=self.config.review_mode,
