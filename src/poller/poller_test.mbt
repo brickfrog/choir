@@ -47,9 +47,23 @@ async fn poller_test_poll_failure(
   String,
   Bool,
   Bool,
+  @poller.Mergeable,
+  @poller.MergeStateStatus,
+  Int64?,
 ) {
   @async.sleep(0)
-  (false, None_, "", Unknown, "", true, false)
+  (
+    false,
+    None_,
+    "",
+    Unknown,
+    "",
+    true,
+    false,
+    @poller.Mergeable::Unknown,
+    @poller.MergeStateStatus::Unknown,
+    None,
+  )
 }
 
 ///|
@@ -64,9 +78,23 @@ async fn poller_test_poll_success_open(
   String,
   Bool,
   Bool,
+  @poller.Mergeable,
+  @poller.MergeStateStatus,
+  Int64?,
 ) {
   @async.sleep(0)
-  (true, Commented, "sha-open", Success, "body", true, false)
+  (
+    true,
+    Commented,
+    "sha-open",
+    Success,
+    "body",
+    true,
+    false,
+    @poller.Mergeable::Unknown,
+    @poller.MergeStateStatus::Unknown,
+    None,
+  )
 }
 
 ///|
@@ -81,9 +109,23 @@ async fn poller_test_poll_success_closed(
   String,
   Bool,
   Bool,
+  @poller.Mergeable,
+  @poller.MergeStateStatus,
+  Int64?,
 ) {
   @async.sleep(0)
-  (true, Approved, "sha-closed", Success, "", false, false)
+  (
+    true,
+    Approved,
+    "sha-closed",
+    Success,
+    "",
+    false,
+    false,
+    @poller.Mergeable::Mergeable,
+    @poller.MergeStateStatus::Clean,
+    Some(1779064079L),
+  )
 }
 
 ///|
@@ -215,6 +257,31 @@ async test "PollerState mutations bump write_generation" {
     4, 300L, 900L, poller_test_poll_success_closed, noop_ev, noop_log,
   )
   ignore(assert_generation_increased(ps, generation, "tick closed untrack"))
+}
+
+///|
+async test "tick_with closed PR event carries mergeability snapshot" {
+  let ps = @poller.PollerState::new()
+  ps.track(44, "agent-44", "branch-44", "main", "url-44", 1L)
+  let events : Array[@poller.PollEvent] = []
+  let noop_log = fn(_l : @poller.PollerPrTickLog) -> Unit { () }
+  ps.tick_pr_with(
+    44,
+    100L,
+    900L,
+    poller_test_poll_success_closed,
+    fn(event, _agent_id) { events.push(event) },
+    noop_log,
+  )
+  assert_eq(events.length(), 1)
+  match events[0] {
+    @poller.PollEvent::PRMerged(pr) => {
+      assert_eq(pr.mergeable, @poller.Mergeable::Mergeable)
+      assert_eq(pr.merge_state_status, @poller.MergeStateStatus::Clean)
+      @debug.assert_eq(pr.merged_at_unix, Some(1779064079L))
+    }
+    _ => fail("expected PRMerged event")
+  }
 }
 
 ///|
@@ -382,6 +449,9 @@ test "parse_tracked_prs_json defaults missing backoff fields to zero" {
   assert_eq(t.unresolved_thread_ids_fetched, false)
   assert_eq(t.auto_resolve_outdated_pending, false)
   assert_eq(t.last_automerge_attempt_sha, "")
+  assert_eq(t.mergeable, @poller.Mergeable::Unknown)
+  assert_eq(t.merge_state_status, @poller.MergeStateStatus::Unknown)
+  @debug.assert_eq(t.merged_at_unix, None)
 }
 
 ///|
@@ -442,11 +512,17 @@ test "poller_state json round-trips review mode and unresolved thread refs" {
     unresolved_thread_ids_fetched: true,
     auto_resolve_outdated_pending: true,
     last_automerge_attempt_sha: "attempt-sha",
+    mergeable: @poller.Mergeable::Conflicting,
+    merge_state_status: @poller.MergeStateStatus::Behind,
+    merged_at_unix: Some(1779064079L),
   })
   let parsed = @poller.parse_tracked_prs_json(ps.to_json())
   assert_eq(parsed.length(), 1)
   assert_eq(parsed[0].review_mode, @types.ReviewMode::SinglePass)
   assert_eq(parsed[0].last_automerge_attempt_sha, "attempt-sha")
+  assert_eq(parsed[0].mergeable, @poller.Mergeable::Conflicting)
+  assert_eq(parsed[0].merge_state_status, @poller.MergeStateStatus::Behind)
+  @debug.assert_eq(parsed[0].merged_at_unix, Some(1779064079L))
   @debug.assert_eq(parsed[0].unresolved_thread_ids, [
     @poller.ReviewThreadRef::{
       id: "T_old",

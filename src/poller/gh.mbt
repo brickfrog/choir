@@ -1,4 +1,10 @@
 ///|
+pub let gh_pr_view_json_fields : String = "reviews,headRefOid,statusCheckRollup,state,mergeable,mergeStateStatus,mergedAt"
+
+///|
+pub let gh_pr_view_fallback_json_fields : String = "number,url,state,reviews,comments,headRefOid,statusCheckRollup,mergeable,mergeStateStatus,mergedAt"
+
+///|
 fn parse_review_state(json : Json) -> ReviewState {
   let mut review = ReviewState::None_
   guard json is Object(obj) else { return review }
@@ -226,6 +232,62 @@ fn parse_pr_is_open(json : Json) -> Bool {
 }
 
 ///|
+pub fn parse_mergeable(raw : String) -> Mergeable {
+  match raw.trim().to_owned().to_upper() {
+    "MERGEABLE" => Mergeable::Mergeable
+    "CONFLICTING" => Mergeable::Conflicting
+    "UNKNOWN" => Mergeable::Unknown
+    _ => Mergeable::Unknown
+  }
+}
+
+///|
+pub fn parse_merge_state_status(raw : String) -> MergeStateStatus {
+  match raw.trim().to_owned().to_upper() {
+    "CLEAN" => MergeStateStatus::Clean
+    "UNSTABLE" => MergeStateStatus::Unstable
+    "BLOCKED" => MergeStateStatus::Blocked
+    "HAS_HOOKS" => MergeStateStatus::HasHooks
+    "BEHIND" => MergeStateStatus::Behind
+    "UNKNOWN" => MergeStateStatus::Unknown
+    "DIRTY" => MergeStateStatus::Dirty
+    _ => MergeStateStatus::Unknown
+  }
+}
+
+///|
+pub fn merged_at_from_iso(raw : String) -> Int64 {
+  @types.parse_iso8601_to_unix_seconds(raw)
+}
+
+///|
+fn parse_mergeable_field(json : Json) -> Mergeable {
+  guard json is Object(obj) else { return Mergeable::Unknown }
+  match @types.json_field_string(obj, "mergeable") {
+    Some(raw) => parse_mergeable(raw)
+    None => Mergeable::Unknown
+  }
+}
+
+///|
+fn parse_merge_state_status_field(json : Json) -> MergeStateStatus {
+  guard json is Object(obj) else { return MergeStateStatus::Unknown }
+  match @types.json_field_string(obj, "mergeStateStatus") {
+    Some(raw) => parse_merge_state_status(raw)
+    None => MergeStateStatus::Unknown
+  }
+}
+
+///|
+fn parse_merged_at_unix_field(json : Json) -> Int64? {
+  guard json is Object(obj) else { return None }
+  match @types.json_field_string(obj, "mergedAt") {
+    Some(raw) => Some(merged_at_from_iso(raw))
+    None => @types.json_field_int64(obj, "merged_at_unix")
+  }
+}
+
+///|
 /// Recognize GitHub Copilot bots that post on the PR issue thread (issue comments).
 fn gh_login_is_copilot_issue_comment_author(login : String) -> Bool {
   let l = login.to_lower()
@@ -286,9 +348,30 @@ pub fn parse_issue_comment_logins_for_copilot_present(
 ///|
 pub fn parse_gh_pr_view_output(
   data : String,
-) -> (Bool, ReviewState, String, CiRollupStatus, String, Bool) {
+) -> (
+  Bool,
+  ReviewState,
+  String,
+  CiRollupStatus,
+  String,
+  Bool,
+  Mergeable,
+  MergeStateStatus,
+  Int64?,
+) {
   let json = @json.parse(data) catch {
-    _ => return (false, None_, "", Unknown, "", true)
+    _ =>
+      return (
+        false,
+        None_,
+        "",
+        CiRollupStatus::Unknown,
+        "",
+        true,
+        Mergeable::Unknown,
+        MergeStateStatus::Unknown,
+        None,
+      )
   }
   (
     true,
@@ -297,5 +380,8 @@ pub fn parse_gh_pr_view_output(
     parse_ci_rollup(json),
     parse_review_bodies(json),
     parse_pr_is_open(json),
+    parse_mergeable_field(json),
+    parse_merge_state_status_field(json),
+    parse_merged_at_unix_field(json),
   )
 }

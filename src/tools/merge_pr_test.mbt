@@ -112,6 +112,9 @@ fn merge_pr_test_tracked(
     last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: @poller.CiRollupStatus::Unknown,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: false,
     orphan_notified: false,
@@ -861,6 +864,9 @@ async test "interpret_merge_pr_preflight accepts required verify evidence" {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     pr_number: 7,
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   })
   let got = interpret_merge_pr_preflight(
     7,
@@ -904,6 +910,9 @@ async test "interpret_merge_pr_preflight rejects stale verify evidence" {
     pr_number: 7,
     last_sha: "new-sha",
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   })
   let got = interpret_merge_pr_preflight(
     7,
@@ -946,6 +955,9 @@ async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
     pr_number: 7,
     last_sha: "head-x",
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   })
   let got = interpret_merge_pr_preflight(
     7,
@@ -992,6 +1004,9 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
     pr_number: 7,
     last_sha: "head-x",
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   })
   let strict = interpret_merge_pr_preflight(
     7,
@@ -1029,6 +1044,9 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
     pr_number: 7,
     last_sha: "head-y",
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   })
   let stale = interpret_merge_pr_preflight(
     7,
@@ -1228,6 +1246,9 @@ test "format_tl_pr_recheck_summary ready snapshot when approved success zero thr
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   }
   let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
   assert_true(s.contains("no tracked blockers"))
@@ -1243,6 +1264,9 @@ test "format_tl_pr_recheck_summary lists blockers for changes requested" {
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::ChangesRequested, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   }
   let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
   assert_true(s.contains("GitHub review requests changes"))
@@ -1256,6 +1280,9 @@ test "format_tl_pr_recheck_summary uses tracked SinglePass mode consistently aft
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::ChangesRequested, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
     fixes_pushed_at: 1_700_000_000L,
     last_sha: "fixed-sha",
     review_mode: @types.ReviewMode::SinglePass,
@@ -1273,6 +1300,9 @@ test "format_tl_pr_recheck_summary does not claim ready when thread count not fe
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   }
   let s = format_tl_pr_recheck_summary(t, "/repo", None)
   assert_true(s.contains("not fetched"))
@@ -1286,6 +1316,9 @@ test "format_tl_pr_recheck_summary notes Copilot issue comment when seen on merg
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
     copilot_issue_comment_seen: true,
   }
   let s = format_tl_pr_recheck_summary(t, "/repo", Some(0))
@@ -1300,6 +1333,9 @@ test "format_tl_pr_recheck_summary policy needs human when required verify is mi
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   }
   let contract = {
     ..@types.TaskContract::empty(),
@@ -1325,6 +1361,9 @@ test "format_tl_pr_recheck_summary treats matching CI evidence as verify when en
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     last_sha: "head-x",
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
     copilot_issue_comment_seen: true,
   }
   let contract = {
@@ -1380,6 +1419,9 @@ test "format_tl_pr_recheck_summary reads verify evidence from ledger" {
   let t : @poller.TrackedPR = {
     ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
     last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
   }
   let contract = {
     ..@types.TaskContract::empty(),

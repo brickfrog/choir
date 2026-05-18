@@ -121,6 +121,9 @@ fn tracked_pr_with(
   fixes_pushed_at : Int64,
   last_sha : String,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  mergeable? : @poller.Mergeable = @poller.Mergeable::Unknown,
+  merge_state_status? : @poller.MergeStateStatus = @poller.MergeStateStatus::Unknown,
+  merged_at_unix? : Int64? = None,
 ) -> @poller.TrackedPR {
   {
     pr_number,
@@ -137,6 +140,9 @@ fn tracked_pr_with(
     last_automerge_attempt_sha: "",
     notified_parent: false,
     last_ci_rollup: ci,
+    mergeable,
+    merge_state_status,
+    merged_at_unix,
     last_timeout_at: 0L,
     copilot_issue_comment_seen: copilot_comment,
     orphan_notified: false,
@@ -235,6 +241,9 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
       assert_eq(pr.pr_number, 42)
       assert_eq(pr.review_state, @poller.ReviewState::None_)
       assert_eq(pr.ci_rollup, @poller.CiRollupStatus::Unknown)
+      assert_eq(pr.mergeable, @poller.Mergeable::Unknown)
+      assert_eq(pr.merge_state_status, @poller.MergeStateStatus::Unknown)
+      @debug.assert_eq(pr.merged_at_unix, None)
       @debug.assert_eq(pr.unresolved_threads, Some(0))
       @debug.assert_eq(pr.threads_fetch_error, None)
       assert_eq(pr.merge_gate_ready, false)
@@ -252,6 +261,72 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
   match worker_row.workflow {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
     _ => fail("expected worker Working")
+  }
+}
+
+///|
+test "plan_wave_state carries mergeability snapshot fields" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      make_agent("tl", @types.Role::TL, None, @types.AgentType::Gemini),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent(
+        "tl.leaf",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Gemini,
+      ),
+    ),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(
+    55,
+    tracked_pr_with(
+      55,
+      "tl.leaf",
+      @poller.ReviewState::Approved,
+      @poller.CiRollupStatus::Success,
+      true,
+      0L,
+      "abc",
+      mergeable=@poller.Mergeable::Mergeable,
+      merge_state_status=@poller.MergeStateStatus::Clean,
+      merged_at_unix=Some(1779064079L),
+    ),
+  )
+  let snap = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    Some(ps),
+    threads_zero_lookup,
+    no_heartbeat,
+    0L,
+  ).unwrap()
+  let pr = snap.children[0].pr.unwrap()
+  assert_eq(pr.mergeable, @poller.Mergeable::Mergeable)
+  assert_eq(pr.merge_state_status, @poller.MergeStateStatus::Clean)
+  @debug.assert_eq(pr.merged_at_unix, Some(1779064079L))
+  let json = pr.to_json().stringify()
+  assert_true(json.contains("\"mergeable\":\"mergeable\""))
+  assert_true(json.contains("\"merge_state_status\":\"clean\""))
+  match pr.to_json() {
+    Object(obj) =>
+      match obj.get("merged_at_unix") {
+        Some(Number(value, ..)) => assert_eq(value.to_int64(), 1779064079L)
+        Some(String(value)) => assert_eq(value, "1779064079")
+        _ => fail("expected merged_at_unix value")
+      }
+    _ => fail("expected wave_state PR JSON object")
   }
 }
 
@@ -986,6 +1061,9 @@ async test "interpret_wave_state unresolved_threads=Some(0) on clean graphql" {
   let body = resp.ok_field("snapshot").unwrap()
   assert_true(body.contains("\"unresolved_threads\":0"))
   assert_true(body.contains("\"merge_gate_ready\":true"))
+  assert_true(body.contains("\"mergeable\":\"unknown\""))
+  assert_true(body.contains("\"merge_state_status\":\"unknown\""))
+  assert_true(body.contains("\"merged_at_unix\":null"))
   assert_true(body.contains("\"beads_issue_id\":\"choir-poller-state-race\""))
   ignore(@sys.rm_rf(project_dir))
 }

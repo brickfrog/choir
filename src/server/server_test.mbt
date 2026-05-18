@@ -1408,6 +1408,9 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
         ..tracked,
         last_review_state: @poller.ReviewState::Approved,
         last_ci_rollup: @poller.CiRollupStatus::Success,
+        mergeable: @poller.Mergeable::Unknown,
+        merge_state_status: @poller.MergeStateStatus::Unknown,
+        merged_at_unix: None,
         last_sha: "sha-merged",
       })
     None => fail("expected tracked PR before poll tick")
@@ -1449,6 +1452,9 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
         "",
         false,
         false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        None,
       )
     },
     runner~,
@@ -1566,6 +1572,9 @@ async test "recover_state finalizes merged agent without startup parent notifica
           last_automerge_attempt_sha: "",
           notified_parent: true,
           last_ci_rollup: @poller.CiRollupStatus::Success,
+          mergeable: @poller.Mergeable::Unknown,
+          merge_state_status: @poller.MergeStateStatus::Unknown,
+          merged_at_unix: None,
           last_timeout_at: 0L,
           copilot_issue_comment_seen: true,
           orphan_notified: false,

@@ -79,6 +79,14 @@ fn tracked_unresolved_threads_count(tracked : TrackedPR) -> Int {
 }
 
 ///|
+fn tracked_optional_int64_json(value : Int64?) -> Json {
+  match value {
+    Some(v) => v.to_json()
+    None => null
+  }
+}
+
+///|
 pub fn tracked_pr_snapshot_json(tracked : TrackedPR) -> String {
   {
     "number": tracked.pr_number.to_json(),
@@ -91,6 +99,9 @@ pub fn tracked_pr_snapshot_json(tracked : TrackedPR) -> String {
     "comments": ([] : Array[Json]).to_json(),
     "headRefOid": tracked.last_sha.to_json(),
     "statusCheckRollup": ci_rollup_snapshot_json(tracked.last_ci_rollup).to_json(),
+    "mergeable": tracked.mergeable.to_wire_string().to_json(),
+    "mergeStateStatus": tracked.merge_state_status.to_wire_string().to_json(),
+    "merged_at_unix": tracked_optional_int64_json(tracked.merged_at_unix),
     "unresolved_threads": tracked_unresolved_threads_count(tracked).to_json(),
     "copilot_issue_comment_seen": tracked.copilot_issue_comment_seen.to_json(),
     "last_sha": tracked.last_sha.to_json(),
@@ -110,7 +121,7 @@ fn bounded_gh_pr_view_command(pr_number : Int) -> @workspace.Command {
       "view",
       pr_number.to_string(),
       "--json",
-      "number,url,state,reviews,comments,headRefOid,statusCheckRollup",
+      gh_pr_view_fallback_json_fields,
     ],
     workdir: None,
   }
