@@ -11,28 +11,235 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
 #include <unistd.h>
 
 static int choir_cleanup_runtime_native = 0;
+static char choir_server_exit_log_buf[128];
 #define CHOIR_MAX_SLEEP_MS_FOR_USLEEP (INT_MAX / 1000)
 
+static int choir_append_literal(char *buf, int pos, int cap, const char *literal) {
+    for (int i = 0; literal[i] != '\0'; i++) {
+        if (pos >= cap) return -1;
+        buf[pos++] = literal[i];
+    }
+    return pos;
+}
+
+static int choir_append_unsigned_decimal(char *buf, int pos, int cap, unsigned long long value) {
+    char digits[32];
+    int len = 0;
+    if (value == 0) {
+        digits[len++] = '0';
+    } else {
+        while (value > 0 && len < (int)sizeof(digits)) {
+            digits[len++] = (char)('0' + (value % 10));
+            value /= 10;
+        }
+    }
+    while (len > 0) {
+        if (pos >= cap) return -1;
+        buf[pos++] = digits[--len];
+    }
+    return pos;
+}
+
+static int choir_append_signed_decimal(char *buf, int pos, int cap, long long value) {
+    if (value < 0) {
+        if (pos >= cap) return -1;
+        buf[pos++] = '-';
+        unsigned long long magnitude = (unsigned long long)(-(value + 1)) + 1u;
+        return choir_append_unsigned_decimal(buf, pos, cap, magnitude);
+    }
+    return choir_append_unsigned_decimal(buf, pos, cap, (unsigned long long)value);
+}
+
+static int choir_format_server_exit_log_line(
+    int sig,
+    long long ts,
+    long long pid,
+    char *buf,
+    int cap) {
+    int pos = 0;
+    pos = choir_append_literal(buf, pos, cap, "killed_by=SIG");
+    if (pos < 0) return -1;
+    pos = choir_append_signed_decimal(buf, pos, cap, (long long)sig);
+    if (pos < 0) return -1;
+    pos = choir_append_literal(buf, pos, cap, " sig=");
+    if (pos < 0) return -1;
+    pos = choir_append_signed_decimal(buf, pos, cap, (long long)sig);
+    if (pos < 0) return -1;
+    pos = choir_append_literal(buf, pos, cap, " ts=");
+    if (pos < 0) return -1;
+    pos = choir_append_signed_decimal(buf, pos, cap, ts);
+    if (pos < 0) return -1;
+    pos = choir_append_literal(buf, pos, cap, " pid=");
+    if (pos < 0) return -1;
+    pos = choir_append_signed_decimal(buf, pos, cap, pid);
+    if (pos < 0) return -1;
+    if (pos >= cap) return -1;
+    buf[pos++] = '\n';
+    return pos;
+}
+
+int choir_build_server_exit_log_line(int sig, int ts, int pid, char *buf, int max_size) {
+    int len = choir_format_server_exit_log_line(
+        sig,
+        (long long)ts,
+        (long long)pid,
+        buf,
+        max_size);
+    if (len >= 0 && len < max_size) {
+        buf[len] = '\0';
+    }
+    return len;
+}
+
+static long long choir_signal_timestamp_sec(void);
+
+static int choir_write_server_exit_log_line_to_fd(
+    int fd,
+    int sig,
+    long long ts,
+    long long pid) {
+    int len = choir_format_server_exit_log_line(
+        sig,
+        ts,
+        pid,
+        choir_server_exit_log_buf,
+        (int)sizeof(choir_server_exit_log_buf));
+    if (len <= 0) {
+        return -1;
+    }
+    int written = 0;
+    while (written < len) {
+        ssize_t n = write(
+            fd,
+            choir_server_exit_log_buf + written,
+            (size_t)(len - written));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1;
+        written += (int)n;
+    }
+    return 0;
+}
+
+static int choir_append_server_exit_log_line_values(
+    const char *path,
+    int sig,
+    long long ts,
+    long long pid) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    int rc = choir_write_server_exit_log_line_to_fd(
+        fd,
+        sig,
+        ts,
+        pid);
+    close(fd);
+    return rc;
+}
+
+int choir_append_server_exit_log_line(const char *path, int sig, int ts, int pid) {
+    return choir_append_server_exit_log_line_values(
+        path,
+        sig,
+        (long long)ts,
+        (long long)pid);
+}
+
+static void choir_write_server_exit_log_line(int sig) {
+    /* .choir/server-exits.log records fatal serve signals that can bypass MoonBit logging. */
+    (void)choir_append_server_exit_log_line_values(
+        ".choir/server-exits.log",
+        sig,
+        choir_signal_timestamp_sec(),
+        (long long)getpid());
+}
+
+static int choir_is_crash_signal(int sig) {
+    return sig == SIGSEGV || sig == SIGABRT || sig == SIGBUS;
+}
+
+static long long choir_signal_timestamp_sec(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        return (long long)ts.tv_sec;
+    }
+    return 0;
+}
+
 static void choir_sigterm_handler(int sig) {
-    (void)sig;
+    choir_write_server_exit_log_line(sig);
     if (choir_cleanup_runtime_native) {
         unlink(".choir/server.pid");
         unlink(".choir/server.sock");
         unlink(".choir/run_id");
     }
-    _exit(0);
+    if (choir_is_crash_signal(sig)) {
+        kill(getpid(), sig);
+    }
+    _exit(128 + sig);
 }
 
 void choir_register_cleanup_runtime_artifacts(void) {
     choir_cleanup_runtime_native = 1;
     signal(SIGTERM, choir_sigterm_handler);
     signal(SIGINT, choir_sigterm_handler);
+}
+
+void choir_install_crash_handlers(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = choir_sigterm_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND | SA_NODEFER;
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGABRT, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+}
+
+static int choir_signal_handler_installed(int sig, int require_crash_flags) {
+    struct sigaction current;
+    memset(&current, 0, sizeof(current));
+    if (sigaction(sig, NULL, &current) != 0) {
+        return 0;
+    }
+    if (current.sa_handler != choir_sigterm_handler) {
+        return 0;
+    }
+    if (require_crash_flags &&
+        ((current.sa_flags & SA_RESETHAND) == 0 ||
+         (current.sa_flags & SA_NODEFER) == 0)) {
+        return 0;
+    }
+    return 1;
+}
+
+int choir_server_exit_signal_handlers_installed(void) {
+    return
+        choir_signal_handler_installed(SIGTERM, 0) &&
+        choir_signal_handler_installed(SIGINT, 0) &&
+        choir_signal_handler_installed(SIGSEGV, 1) &&
+        choir_signal_handler_installed(SIGABRT, 1) &&
+        choir_signal_handler_installed(SIGBUS, 1);
+}
+
+void choir_reset_server_exit_signal_handlers(void) {
+    signal(SIGTERM, SIG_DFL);
+    signal(SIGINT, SIG_DFL);
+    signal(SIGSEGV, SIG_DFL);
+    signal(SIGABRT, SIG_DFL);
+    signal(SIGBUS, SIG_DFL);
+    choir_cleanup_runtime_native = 0;
 }
 
 void choir_init_cleanup_runtime_artifacts(void) {

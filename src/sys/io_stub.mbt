@@ -168,6 +168,11 @@ pub fn register_cleanup_runtime_artifacts() -> Unit {
 }
 
 ///|
+pub fn install_crash_handlers() -> Unit {
+
+}
+
+///|
 pub fn create_dir_all(_path : String) -> Bool {
   false
 }

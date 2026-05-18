@@ -1,4 +1,41 @@
 ///|
+pub let server_log_rotate_cap_bytes : Int = 8000000
+
+///|
+fn server_log_project_path(project_dir : String, rel : String) -> String {
+  if project_dir == "" || project_dir == "." {
+    rel
+  } else {
+    project_dir + "/" + rel
+  }
+}
+
+///|
+pub fn server_log_should_rotate(
+  size : Int,
+  cap_bytes? : Int = server_log_rotate_cap_bytes,
+) -> Bool {
+  size > cap_bytes
+}
+
+///|
+/// On fresh server start, rotate an unbounded append log to `<path>.1` when it exceeds the cap.
+pub fn serve_rotate_log_if_large(
+  project_dir : String,
+  rel_path : String,
+  file_size : (String) -> Int,
+  rename : (String, String) -> Bool,
+  cap_bytes? : Int = server_log_rotate_cap_bytes,
+) -> Bool {
+  let log_path = server_log_project_path(project_dir, rel_path)
+  if server_log_should_rotate(file_size(log_path), cap_bytes~) {
+    rename(log_path, log_path + ".1")
+  } else {
+    false
+  }
+}
+
+///|
 pub fn normalize_trace_id(run_id : String) -> String {
   if run_id.length() >= 32 {
     run_id[run_id.length() - 32:].to_owned()

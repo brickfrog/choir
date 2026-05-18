@@ -679,6 +679,34 @@ extern "C" fn c_init_cleanup_purge_artifacts() = "choir_init_cleanup_purge_artif
 extern "C" fn c_register_cleanup_runtime_artifacts() = "choir_register_cleanup_runtime_artifacts"
 
 ///|
+extern "C" fn c_install_crash_handlers() = "choir_install_crash_handlers"
+
+///|
+#borrow(buf)
+extern "C" fn c_build_server_exit_log_line(
+  sig : Int,
+  ts : Int,
+  pid : Int,
+  buf : Bytes,
+  max_size : Int,
+) -> Int = "choir_build_server_exit_log_line"
+
+///|
+#borrow(path)
+extern "C" fn c_append_server_exit_log_line(
+  path : Bytes,
+  sig : Int,
+  ts : Int,
+  pid : Int,
+) -> Int = "choir_append_server_exit_log_line"
+
+///|
+extern "C" fn c_server_exit_signal_handlers_installed() -> Int = "choir_server_exit_signal_handlers_installed"
+
+///|
+extern "C" fn c_reset_server_exit_signal_handlers() = "choir_reset_server_exit_signal_handlers"
+
+///|
 #borrow(pd, br)
 extern "C" fn c_git_fetch_origin_branch_best_effort(pd : Bytes, br : Bytes) = "choir_git_fetch_origin_branch_best_effort"
 
@@ -741,10 +769,61 @@ pub fn init_cleanup_purge_artifacts_native() -> Unit {
 }
 
 ///|
-/// Register SIGTERM/SIGINT cleanup that unlinks runtime markers only (no shell command).
+/// Register SIGTERM/SIGINT cleanup that logs exit and unlinks runtime markers only (no shell command).
 pub fn register_cleanup_runtime_artifacts() -> Unit {
   c_register_cleanup_runtime_artifacts()
 }
+
+///|
+/// Register crash-signal handlers that emit `.choir/server-exits.log` before default crash handling.
+pub fn install_crash_handlers() -> Unit {
+  c_install_crash_handlers()
+}
+
+///|
+test "server exit log line uses fixed signal timestamp pid format" {
+  let max_size = 128
+  let buf = Bytes::new(max_size)
+  let len = c_build_server_exit_log_line(15, 1747000000, 12345, buf, max_size)
+  assert_true(len > 0)
+  assert_eq(
+    @utf8.decode_lossy(buf[:len]),
+    "killed_by=SIG15 sig=15 ts=1747000000 pid=12345\n",
+  )
+  let crash_buf = Bytes::new(max_size)
+  let crash_len = c_build_server_exit_log_line(6, 0, 1, crash_buf, max_size)
+  assert_true(crash_len > 0)
+  assert_eq(
+    @utf8.decode_lossy(crash_buf[:crash_len]),
+    "killed_by=SIG6 sig=6 ts=0 pid=1\n",
+  )
+}
+
+///|
+test "server exit append helper writes diagnostic line" {
+  let path = "/tmp/choir-server-exit-append-" + get_pid().to_string() + ".log"
+  ignore(delete_file_sync(path))
+  let rc = c_append_server_exit_log_line(
+    string_to_null_terminated_bytes(path),
+    15,
+    1747000000,
+    12345,
+  )
+  assert_eq(rc, 0)
+  assert_eq(read_file(path), "killed_by=SIG15 sig=15 ts=1747000000 pid=12345\n")
+  ignore(delete_file_sync(path))
+}
+
+///|
+test "server exit handlers install signal dispositions without delivery" {
+  c_register_cleanup_runtime_artifacts()
+  c_install_crash_handlers()
+  let installed = c_server_exit_signal_handlers_installed()
+  c_reset_server_exit_signal_handlers()
+  assert_eq(installed, 1)
+}
+
+///|
 
 ///|
 /// POSIX single-quote style for embedding in `sh -c` (same as exec.quote).
