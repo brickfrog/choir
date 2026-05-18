@@ -500,12 +500,7 @@ static int choir_write_stripped_terminal_responses_fd(int fd, const char* buf, i
     return 0;
 }
 
-static void choir_stderr_append_filter_loop(int read_fd, const char* path) {
-    int out_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (out_fd < 0) {
-        close(read_fd);
-        _exit(1);
-    }
+static void choir_stderr_append_filter_loop(int read_fd, int out_fd) {
     char buf[4096];
     for (;;) {
         ssize_t n = read(read_fd, buf, sizeof(buf));
@@ -514,31 +509,56 @@ static void choir_stderr_append_filter_loop(int read_fd, const char* path) {
             break;
         }
         if (n == 0) break;
-        if (choir_write_stripped_terminal_responses_fd(out_fd, buf, (int)n) < 0) {
-            break;
+        if (out_fd >= 0 &&
+            choir_write_stripped_terminal_responses_fd(out_fd, buf, (int)n) < 0) {
+            close(out_fd);
+            out_fd = -1;
         }
     }
-    close(out_fd);
+    if (out_fd >= 0) close(out_fd);
     close(read_fd);
     _exit(0);
 }
 
 int choir_redirect_stderr_append(const char* path) {
+    int out_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (out_fd < 0) {
+        return -1;
+    }
     int pipefd[2];
     if (pipe(pipefd) < 0) {
+        close(out_fd);
         return -1;
     }
     pid_t pid = fork();
     if (pid < 0) {
+        close(out_fd);
         close(pipefd[0]);
         close(pipefd[1]);
         return -1;
     }
     if (pid == 0) {
         close(pipefd[1]);
-        choir_stderr_append_filter_loop(pipefd[0], path);
+        pid_t pid2 = fork();
+        if (pid2 < 0) {
+            close(out_fd);
+            close(pipefd[0]);
+            _exit(127);
+        }
+        if (pid2 > 0) {
+            close(out_fd);
+            close(pipefd[0]);
+            _exit(0);
+        }
+        choir_stderr_append_filter_loop(pipefd[0], out_fd);
     }
     close(pipefd[0]);
+    close(out_fd);
+    int st = 0;
+    if (waitpid(pid, &st, 0) < 0 || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+        close(pipefd[1]);
+        return -1;
+    }
     if (dup2(pipefd[1], STDERR_FILENO) < 0) {
         close(pipefd[1]);
         return -1;
