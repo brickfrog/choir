@@ -224,7 +224,8 @@ test "parse_config audit max rounds knob parses default and rejects invalid valu
     Ok(_) => fail("expected zero audit max rounds config to fail")
   }
   match parse_config("audit_max_rounds = -1") {
-    Err(e) => assert_true(e.message().contains("expected >= 0"))
+    Err(e) =>
+      assert_true(e.message().contains("audit_max_rounds must be >= 1; got -1"))
     Ok(_) => fail("expected negative audit max rounds config to fail")
   }
   match parse_config("audit_max_rounds = 1.5") {

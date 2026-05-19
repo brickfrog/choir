@@ -173,7 +173,7 @@ fn parse_double_config_value(
 }
 
 ///|
-fn parse_nonnegative_int64_config_value(
+fn parse_int64_config_value(
   key : String,
   raw : String,
 ) -> Result[Int64, @types.ChoirError] {
@@ -191,13 +191,27 @@ fn parse_nonnegative_int64_config_value(
       let v = n.to_int64()
       if v.to_double() != n {
         Err(@types.ChoirError::config_error(key + ": expected integer"))
-      } else if v < 0L {
-        Err(@types.ChoirError::config_error(key + ": expected >= 0"))
       } else {
         Ok(v)
       }
     }
     _ => Err(@types.ChoirError::config_error(key + ": expected integer"))
+  }
+}
+
+///|
+fn parse_nonnegative_int64_config_value(
+  key : String,
+  raw : String,
+) -> Result[Int64, @types.ChoirError] {
+  match parse_int64_config_value(key, raw) {
+    Ok(v) =>
+      if v < 0L {
+        Err(@types.ChoirError::config_error(key + ": expected >= 0"))
+      } else {
+        Ok(v)
+      }
+    Err(e) => Err(e)
   }
 }
 
@@ -210,6 +224,33 @@ fn parse_nonnegative_int_config_value(
   match parse_nonnegative_int64_config_value(key, raw) {
     Ok(v) =>
       if v > max {
+        Err(
+          @types.ChoirError::config_error(
+            key + ": expected <= " + max.to_string(),
+          ),
+        )
+      } else {
+        Ok(v.to_int())
+      }
+    Err(e) => Err(e)
+  }
+}
+
+///|
+fn parse_positive_int_config_value(
+  key : String,
+  raw : String,
+  max? : Int64 = 2_147_483_647L,
+) -> Result[Int, @types.ChoirError] {
+  match parse_int64_config_value(key, raw) {
+    Ok(v) =>
+      if v < 1L {
+        Err(
+          @types.ChoirError::config_error(
+            key + " must be >= 1; got " + v.to_string(),
+          ),
+        )
+      } else if v > max {
         Err(
           @types.ChoirError::config_error(
             key + ": expected <= " + max.to_string(),
@@ -401,21 +442,12 @@ pub fn parse_config(
     None => default_cfg.audit_max_rounds
     Some(raw) =>
       match
-        parse_nonnegative_int_config_value(
+        parse_positive_int_config_value(
           "audit_max_rounds",
           raw,
           max=@types.audit_max_rounds_max.to_int64(),
         ) {
-        Ok(v) =>
-          if v == 0 {
-            return Err(
-              @types.ChoirError::config_error(
-                "audit_max_rounds must be >= 1; got 0",
-              ),
-            )
-          } else {
-            v
-          }
+        Ok(v) => v
         Err(e) => return Err(e)
       }
   }
