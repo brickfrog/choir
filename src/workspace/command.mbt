@@ -170,11 +170,21 @@ fn leaf_helper_script_body() -> String {
 pub fn gh_shim_script_body() -> String {
   (
     #|#!/bin/sh
-    #|# choir gh shim: route PR creation through `file_pr`; pass everything else through.
+    #|# choir gh shim: route PR write ops through choir MCP tools; pass everything else through.
     #|if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
-    #|  echo "choir: 'gh pr create' is blocked for leaves." >&2
-    #|  echo "choir: use the 'file_pr' MCP tool instead -- it auto-requests @copilot review and tracks the PR for the parent TL." >&2
+    #|  echo "choir: 'gh pr create' is blocked." >&2
+    #|  echo "choir: use the 'file_pr' MCP tool instead -- it auto-requests @copilot review and tracks the PR." >&2
     #|  echo "choir: raw 'gh pr create' here would skip both, leaving the PR uncovered." >&2
+    #|  exit 1
+    #|fi
+    #|if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+    #|  echo "choir: 'gh pr merge' is blocked (including --admin)." >&2
+    #|  echo "choir: use the 'merge_pr' MCP tool instead -- it honors the audit gate and verify policy." >&2
+    #|  echo "choir: if merge_pr blocks on something you believe is wrong, fix the gate (choir-file-pr-preflight, choir-t92), don't bypass it." >&2
+    #|  exit 1
+    #|fi
+    #|if [ "$1" = "pr" ] && { [ "$2" = "close" ] || [ "$2" = "reopen" ] || [ "$2" = "ready" ] || [ "$2" = "edit" ]; }; then
+    #|  echo "choir: 'gh pr $2' is blocked. PR lifecycle writes must go through choir MCP tools or the human." >&2
     #|  exit 1
     #|fi
     #|this_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || this_dir=

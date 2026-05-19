@@ -156,15 +156,15 @@ pub fn next_action_detail_line(
     HumanOverride =>
       match parent_branch {
         Some(branch) =>
-          "Next action: address the policy block, or use `gh pr merge --admin " +
+          "Next action: address the policy block on PR #" +
           pr_number.to_string() +
-          "` against parent branch `" +
+          " against parent branch `" +
           branch +
-          "` for a human-judgment override."
+          "`, or surface the block to the user. Raw `gh pr merge` is banned by the shim; fix the gate, do not route around it."
         None =>
-          "Next action: address the policy block, or use `gh pr merge --admin " +
+          "Next action: address the policy block on PR #" +
           pr_number.to_string() +
-          "` for a human-judgment override once the parent branch is confirmed."
+          ", or surface the block to the user. Raw `gh pr merge` is banned by the shim; fix the gate, do not route around it."
       }
     Wait =>
       match mode {
@@ -834,7 +834,7 @@ pub fn tl_pr_state_notification_sentence(
         HumanOverride =>
           "HUMAN OVERRIDE: merge policy requires human confirmation (" +
           reason +
-          "). Address the block, or use gh pr merge --admin for a human-judgment override."
+          "). Address the block or surface it to the user. Raw `gh pr merge` is banned by the shim; fix the gate, do not route around it."
         _ => tl_tracked_pr_workflow_category_sentence(decision.category)
       }
     Blocked(reason~) =>
