@@ -1049,7 +1049,17 @@ async test "replay_pending_outbox_with replays pending root delivery before root
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let state = ServerState::new(config, {
+    ..make_hermetic_recovery_provider(),
+    list_agents_in_container: async fn(_dir, container) {
+      @async.sleep(0)
+      if container == "outbox" {
+        ["root.jsonl"]
+      } else {
+        []
+      }
+    },
+  })
   let target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":TL") {
     Some(t) => t

@@ -140,7 +140,7 @@ test "initialize_response instructions forbid parent branch implementation durin
             ),
           )
           assert_true(
-            instructions.contains("there is no choir-side force flag"),
+            instructions.contains("DO NOT bypass it with raw `gh pr merge`"),
           )
           assert_true(
             instructions.contains(

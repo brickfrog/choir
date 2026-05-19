@@ -1712,7 +1712,7 @@ async test "check_idle_agents skips supervisor roles before reading panes" {
   let state = {
     ..ServerState::new(
       { ..@types.Config::default(), project_dir, terminal_session: "s" },
-      make_recovery_provider(),
+      make_hermetic_recovery_provider(),
     ),
     pane_watcher: @runtime.PaneWatcher::with_host(host),
   }
@@ -1768,7 +1768,7 @@ test "clear_agent_runtime_tracking clears worker no-handoff maps" {
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, terminal_session: "s" },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let agent_id = "main.worker"
   state.pending_disconnects.set(agent_id, 1L)

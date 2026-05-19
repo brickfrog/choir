@@ -42,6 +42,11 @@ jobs:
       - name: Update registry
         run: moon update
 
+      - name: Hermeticity lint
+        run: |
+          moon build src/bin/choir_lint --target native
+          _build/native/debug/build/src/bin/choir_lint/choir_lint.exe
+
       - name: Test
         run: moon test --target native
 
