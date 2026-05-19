@@ -406,7 +406,16 @@ pub fn parse_config(
           raw,
           max=@types.audit_max_rounds_max.to_int64(),
         ) {
-        Ok(v) => v
+        Ok(v) =>
+          if v == 0 {
+            return Err(
+              @types.ChoirError::config_error(
+                "audit_max_rounds must be >= 1; got 0",
+              ),
+            )
+          } else {
+            v
+          }
         Err(e) => return Err(e)
       }
   }
