@@ -13,7 +13,7 @@ fn progress_watchdog_test_state(slug : String) -> ServerState {
   let project_dir = progress_watchdog_test_project_dir(slug)
   ServerState::new(
     { ..@types.Config::default(), project_dir, terminal_session: "s" },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
 }
 

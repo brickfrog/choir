@@ -803,9 +803,7 @@ pub async fn dispatch(
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   caller_id? : String? = None,
   caller_role? : @types.Role = @types.Role::TL,
-  on_resolve_review_thread? : async (Array[Int]) -> Unit = async fn(
-    _pr_numbers,
-  ) {
+  on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
     ()
   },
   pr_review? : Bool = true,
@@ -1758,9 +1756,7 @@ pub async fn handle_request(
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
-  on_resolve_review_thread? : async (Array[Int]) -> Unit = async fn(
-    _pr_numbers,
-  ) {
+  on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
     ()
   },
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,

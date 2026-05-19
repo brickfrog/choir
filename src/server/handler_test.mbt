@@ -246,7 +246,7 @@ async test "process_poller_tick_with emits tick summary when an event is produce
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, terminal_session: "s" },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   state.poller.track(
     3, "main.leaf", "main.leaf", "main", "https://example.test/pr/3", 1L,
@@ -536,7 +536,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     terminal_session,
     automerge: true,
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
   let child_id = "main.auto-leaf"
   let pr_number = 90
@@ -700,7 +700,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
     automerge: true,
     review_mode: @types.ReviewMode::Iterative,
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
   let child_id = "main.auto-leaf"
   let pr_number = 91
@@ -987,7 +987,7 @@ fn blocked_gh_automerge_fixture(
     automerge,
     review_mode,
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl-" + label
   let child_id = "main.blocked-gh-" + label
   ignore(
@@ -1956,7 +1956,7 @@ fn kill_agent_reconciliation_fixture(
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.parent"
   let child_id = "main.child"
   let live_target = match
@@ -2399,7 +2399,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
         project_dir,
         auto_pull_after_integration: false,
       },
-      make_recovery_provider(),
+      make_hermetic_recovery_provider(),
     )
     let parent_id = "main.parent"
     let child_id = "main.child"
@@ -2562,7 +2562,7 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
       project_dir,
       auto_pull_after_integration: false,
     },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
     @async.sleep(0)
@@ -2625,7 +2625,7 @@ async test "PRMerged into default branch triggers injected parent auto-pull" {
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let pr = {
     ..parent_poll_test_ready_tracked(613),
@@ -2680,7 +2680,7 @@ async test "PRMerged auto-pull skips dirty parent tree" {
   ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let pr = {
     ..parent_poll_test_ready_tracked(614),
@@ -2734,7 +2734,7 @@ async test "auto_resolve_outdated_review_threads_for_event resolves only iterati
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let tracked = {
     ..parent_poll_test_ready_tracked(701),
@@ -2795,7 +2795,7 @@ async test "auto_resolve_outdated_review_threads_for_event skips single pass and
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let tracked = {
     ..parent_poll_test_ready_tracked(702),
@@ -2845,7 +2845,7 @@ async test "auto_resolve_outdated_review_threads_for_pending keeps retry pending
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let tracked = {
     ..parent_poll_test_ready_tracked(703),
@@ -4454,7 +4454,7 @@ async test "disconnect auto-rescue skips thread fetch during Copilot grace windo
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
   let old_id = "main.leaf"
   let pr_number = 79
@@ -4552,7 +4552,7 @@ async test "disconnect auto-rescue spawns replacement for unresolved threads" {
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
   let old_id = "main.leaf"
   let pr_number = 78
@@ -4675,7 +4675,7 @@ async test "fail_agent_with_runner injects failure to parent terminal" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
 
   let parent_id = "main.parent"
   let live_target = match
@@ -5064,7 +5064,7 @@ async test "deliver_orphaned_pr_notification_for skips finalized merged lifecycl
     project_dir,
     terminal_session: "test-session",
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let agent_id = "main.dev-finalized"
   assert_true(
     @phase.write_lifecycle(project_dir, {
@@ -5128,7 +5128,7 @@ async test "deliver_poller_stall_notification_for skips finalized merged lifecyc
     project_dir,
     terminal_session: "test-session",
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let agent_id = "main.dev-finalized"
   assert_true(
     @phase.write_lifecycle(project_dir, {
@@ -5243,7 +5243,7 @@ fn handler_auto_close_test_state(label : String) -> ServerState {
     project_dir,
     terminal_session: "test-session",
   }
-  ServerState::new(config, make_recovery_provider())
+  ServerState::new(config, make_hermetic_recovery_provider())
 }
 
 ///|
@@ -6166,7 +6166,7 @@ fn disconnect_confirmation_provider(
   live_panes : Array[String],
 ) -> @runtime.RecoveryProvider {
   {
-    ..make_recovery_provider(),
+    ..make_hermetic_recovery_provider(),
     zellij_live: async fn(_, _) {
       @async.sleep(0)
       { tabs: live_tabs, panes: live_panes }

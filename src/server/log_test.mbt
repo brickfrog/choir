@@ -76,7 +76,7 @@ test "request_log_level_for_request uses registry read-only annotation" {
     @env.now().reinterpret_as_int64().to_string()
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let req : @types.Request = {
     req_method: "tools/call",
@@ -96,7 +96,7 @@ test "request_log_level_for_request keeps mutating tools at info" {
     @env.now().reinterpret_as_int64().to_string()
   let state = ServerState::new(
     { ..@types.Config::default(), project_dir, },
-    make_recovery_provider(),
+    make_hermetic_recovery_provider(),
   )
   let req : @types.Request = {
     req_method: "tools/call",

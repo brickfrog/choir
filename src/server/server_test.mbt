@@ -1,7 +1,7 @@
 ///|
 test "audit-on-file-pr report capture ignores missing waiter" {
   let config = @types.Config::default()
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   state.capture_audit_on_file_pr_report("worker-a", {
     message: "No findings.",
     status: @types.Status::Success,
@@ -12,7 +12,7 @@ test "audit-on-file-pr report capture ignores missing waiter" {
 ///|
 async test "audit-on-file-pr report prepare buffers fast report before waiter" {
   let config = @types.Config::default()
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   state.prepare_audit_on_file_pr_report("worker-a")
   state.capture_audit_on_file_pr_report("worker-a", {
     message: "No findings.",
@@ -31,7 +31,7 @@ async test "audit-on-file-pr report prepare buffers fast report before waiter" {
 ///|
 test "audit-on-file-pr report cleanup removes waiter queue" {
   let config = @types.Config::default()
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
   state.audit_on_file_pr_reports.set("worker-a", queue)
   state.cleanup_audit_on_file_pr_report("worker-a")
@@ -51,7 +51,7 @@ async test "status_bar_state server handler caches list-panes per session" {
     @env.now().reinterpret_as_int64().to_string()
   let terminal_session = "status-cache-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   ignore(
     state.register_agent({
       agent_id: "root.tl",
@@ -104,7 +104,7 @@ test "notify_parent uses live registry parent when present" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
 
   let parent_id = "main.parent"
   let live_target = match
@@ -170,7 +170,7 @@ test "init_run_id reuses existing run_id file" {
     project_dir,
     terminal_session: "s",
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   assert_eq(state.run_id, "stable-run-id")
 }
 
@@ -186,7 +186,7 @@ test "init_run_id persists generated run_id via native write" {
     project_dir,
     terminal_session: "s",
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let on_disk = @sys.read_file(project_dir + "/.choir/run_id")
   assert_eq(state.run_id, on_disk)
   assert_true(state.run_id.length() > 0)
@@ -205,7 +205,7 @@ test "reload snapshot restores registry pending state and mutexes" {
     project_dir,
     terminal_session: "choir-reload-test",
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let agent : @types.Agent = {
     agent_id: "root.leaf",
     role: @types.Role::Dev,
@@ -256,7 +256,7 @@ test "reload snapshot restores registry pending state and mutexes" {
     Err(e) => fail(e.message())
   }
 
-  let restored = ServerState::new(config, make_recovery_provider())
+  let restored = ServerState::new(config, make_hermetic_recovery_provider())
   match restored.restore_reload_snapshot() {
     Ok(_) => ()
     Err(e) => fail(e.message())
@@ -330,7 +330,7 @@ test "reload snapshot releases mutex whose holder is not in restored registry" {
     project_dir,
     terminal_session: "choir-reload-stale-holder",
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   // Acquire the lock with a holder that we then DON'T register, so on
   // restore the holder won't be found in the registry.
   ignore(state.mutex_registry.acquire("build", "ghost-holder", 300L, 10L))
@@ -338,7 +338,7 @@ test "reload snapshot releases mutex whose holder is not in restored registry" {
     Ok(_) => ()
     Err(e) => fail(e.message())
   }
-  let restored = ServerState::new(config, make_recovery_provider())
+  let restored = ServerState::new(config, make_hermetic_recovery_provider())
   match restored.restore_reload_snapshot() {
     Ok(_) => ()
     Err(e) => fail(e.message())
@@ -359,7 +359,7 @@ test "notify_parent falls back to persisted lifecycle when parent missing from r
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
 
   let parent_id = "main.parent"
   // Persisted lifecycle exists on disk, but the parent agent is intentionally not inserted into the live registry.
@@ -414,7 +414,7 @@ test "notify_parent synthesizes user root TL parent when lifecycle is absent" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
 
   let root_tl_id = "user-12345-67890"
   let caller_id = root_tl_id + ".worker"
@@ -467,7 +467,7 @@ fn assert_notify_parent_does_not_synthesize_parent_id(
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
 
   let caller_id = parent_id + ".worker"
   ignore(
@@ -516,7 +516,7 @@ test "notify_parent returns clear error when parent cannot be resolved" {
 
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
 
   let parent_id = "main.parent"
   let caller_id = "main.child"
@@ -556,7 +556,7 @@ test "manual rescue transfers PR ownership and supervisor summary to replacement
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":tl") {
     Some(t) => t
@@ -710,7 +710,7 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
   let child_id = "main.claude-leaf"
   let pr_number = 88
@@ -901,7 +901,7 @@ test "manual rescue refuses unsalvageable cross-parent ownership transfer" {
     project_dir,
     terminal_session: "s",
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let tl_a = "main.tl-a"
   let tl_b = "main.tl-b"
   ignore(
@@ -981,7 +981,7 @@ async test "replay_pending_outbox_with replays pending message and marks it deli
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let recipient = @types.Agent::{
     agent_id: "main.parent",
     role: @types.Role::TL,
@@ -1049,7 +1049,7 @@ async test "replay_pending_outbox_with replays pending root delivery before root
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":TL") {
     Some(t) => t
@@ -1102,7 +1102,7 @@ async test "replay_pending_outbox_with GC's stale pane lifecycle after repeated 
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let agent_id = "main.dead-pane"
   let target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":dead-pane") {
@@ -1197,7 +1197,7 @@ async test "replay_pending_outbox_with clears stale failure counter on exhausted
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let agent_id = "main.exhausted-pane"
   let target = match
     @types.LocalTarget::parse("zellij-tab:" + terminal_session + ":exhausted") {
@@ -1273,7 +1273,7 @@ async test "sweep_outbox marks expired pending messages and compacts recipient f
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   let recipient = @types.Agent::{
     agent_id: "main.parent",
     role: @types.Role::TL,
@@ -1340,7 +1340,7 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
 
   let parent_id = "main.tl"
   let parent_target = match
@@ -1495,7 +1495,7 @@ async test "recover_state finalizes merged agent without startup parent notifica
   assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
   let terminal_session = "test-session"
   let config = { ..@types.Config::default(), project_dir, terminal_session }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
 
   let parent_id = "root"
   let leaf_id = "main.leaf"

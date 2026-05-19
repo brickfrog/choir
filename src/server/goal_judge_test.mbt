@@ -521,7 +521,7 @@ async test "server consumes requested goal judge tick flag" {
     project_dir,
     terminal_session: "test-session",
   }
-  let state = ServerState::new(config, make_recovery_provider())
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
   state.request_goal_judge_tick()
   assert_true(state.goal_judge.tick_requested)
   let goal = @types.Goal::new("x", ["false"], 1L).unwrap()

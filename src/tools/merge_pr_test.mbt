@@ -3003,7 +3003,7 @@ async test "dispatch resolve_review_thread triggers pulse for unresolved count d
     project_dir~,
     poller_state=Some(ps),
     capture~,
-    on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
+    on_resolve_review_thread=fn(pr_numbers : Array[Int]) {
       for n in pr_numbers {
         seen.push(n)
       }
@@ -3139,7 +3139,7 @@ async test "dispatch resolve_review_thread triggers pulse for unresolved drop 5-
     project_dir~,
     poller_state=Some(ps),
     capture~,
-    on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
+    on_resolve_review_thread=fn(pr_numbers : Array[Int]) {
       for n in pr_numbers {
         seen.push(n)
       }
@@ -3227,7 +3227,7 @@ async test "dispatch resolve_review_thread skips pulse when after-count fetch fa
     project_dir~,
     poller_state=Some(ps),
     capture~,
-    on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
+    on_resolve_review_thread=fn(pr_numbers : Array[Int]) {
       for n in pr_numbers {
         seen.push(n)
       }
