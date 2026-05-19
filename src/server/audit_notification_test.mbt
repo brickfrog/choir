@@ -714,3 +714,364 @@ async test "file_pr exhaustion drives real ServerState audit visibility pipeline
     None => fail("expected exhausted audit progress")
   }
 }
+
+///|
+async test "clean audit resets cycle counter before next consecutive findings run" {
+  let state = audit_notification_state(audit_max_rounds=2)
+  let parent_id = "feature/audit-tl-visibility.tl"
+  let leaf_id = "feature/audit-tl-visibility.leaf-reset"
+  let head_a = "abcdef1234567890abcdef1234567890abcdef12"
+  let head_b = "bbbbbb1234567890abcdef1234567890abcdef12"
+  let branch = "feature/audit-tl-visibility"
+  audit_notification_seed_leaf(
+    state,
+    parent_id~,
+    leaf_id~,
+    pr_number=42,
+    branch~,
+    sha=head_a,
+  )
+  let target = @types.LocalTarget::parse("zellij-tab:audit-test:tl").unwrap()
+  ignore(
+    state.registry.upsert(
+      audit_notification_agent(
+        parent_id,
+        @types.Role::TL,
+        None,
+        state.config.project_dir,
+        terminal_target=Some(target),
+      ),
+    ),
+  )
+  let delivery_cmds : Array[@workspace.Command] = []
+  let comment_cmds : Array[@workspace.Command] = []
+  let recorded_agents : Array[String] = []
+  let cleared_agents : Array[String] = []
+  let findings_report : @tools.AuditOnFilePrReport = {
+    message: "Finding 1: still broken\n",
+    status: @types.Status::Success,
+  }
+  let clean_report : @tools.AuditOnFilePrReport = {
+    message: "No findings.\n",
+    status: @types.Status::Success,
+  }
+  let set_tracked_head = fn(head : String) -> Unit {
+    match state.poller.get(42) {
+      Some(tracked) => state.poller.restore({ ..tracked, last_sha: head })
+      None => ()
+    }
+  }
+  let run_cycle = async fn(
+    head : String,
+    report : @tools.AuditOnFilePrReport,
+    now_ms : Int64,
+  ) -> Result[Unit, @types.ChoirError] {
+    set_tracked_head(head)
+    @tools.file_pr_auto_audit_for_missing_receipt(
+      state.config.project_dir,
+      state.config.project_dir,
+      leaf_id,
+      "main",
+      head,
+      async fn(cmd : @workspace.Command) -> (Int, String) {
+        @async.sleep(0)
+        if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+          return (0, head + "\n")
+        }
+        if cmd.program == "git" &&
+          cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+          return (0, branch + "\n")
+        }
+        if cmd.program == "git" &&
+          cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+          return (0, "origin/main\n")
+        }
+        if cmd.program == "cat" || cmd.program == "find" {
+          return (1, "")
+        }
+        (0, "")
+      },
+      async fn(worker_args) {
+        @async.sleep(0)
+        let worker_id = "feature/audit-tl-visibility." + worker_args.slug
+        state.prepare_audit_on_file_pr_report(worker_id)
+        Ok(worker_id)
+      },
+      async fn(worker_id) {
+        @async.sleep(0)
+        state.capture_audit_on_file_pr_report(
+          worker_id,
+          report,
+          runner=async fn(cmds) {
+            @async.sleep(0)
+            for cmd in cmds {
+              delivery_cmds.push(cmd)
+            }
+            [0]
+          },
+          capture=async fn(cmd) {
+            @async.sleep(0)
+            comment_cmds.push(cmd)
+            (0, "")
+          },
+        )
+        state.wait_for_audit_on_file_pr_report(worker_id)
+      },
+      fn(_) {  },
+      fn(_) { @types.Response::ok_values({ "status": String::to_json("ok") }) },
+      1000,
+      0,
+      fn(_, _) { true },
+      async fn(_) { @async.sleep(0) },
+      fn() { now_ms },
+      fn(_) { true },
+      audit_max_rounds=2,
+      record_audit_cycle_for_agent=fn(agent_id) {
+        recorded_agents.push(agent_id)
+        state.record_audit_cycle_for_agent(agent_id)
+      },
+      audit_cycle_count_for_agent=fn(agent_id) {
+        state.audit_cycle_count_for_agent(agent_id)
+      },
+      clear_audit_cycle_for_agent=fn(agent_id) {
+        cleared_agents.push(agent_id)
+        state.clear_audit_cycle_count_for_agent(agent_id)
+      },
+    )
+  }
+
+  match run_cycle(head_a, findings_report, 1779000100L) {
+    Err(e) => assert_true(e.message().contains("audit found 1 findings"))
+    Ok(_) => fail("expected first noisy cycle to fail")
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  match run_cycle(head_a, findings_report, 1779000101L) {
+    Err(e) => assert_true(e.message().contains("audit found 1 findings"))
+    Ok(_) => fail("expected second noisy cycle to fail")
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  assert_eq(state.audit_cycle_count_for_agent(leaf_id), 2)
+
+  match run_cycle(head_a, clean_report, 1779000102L) {
+    Ok(_) => ()
+    Err(e) => fail("expected clean audit to pass: " + e.message())
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  assert_eq(state.audit_cycle_count_for_agent(leaf_id), 0)
+  @debug.assert_eq(cleared_agents, [leaf_id])
+
+  match run_cycle(head_b, findings_report, 1779000103L) {
+    Err(e) => {
+      assert_true(e.message().contains("audit found 1 findings"))
+      assert_false(e.to_wire_string() == "audit_loop_exhausted")
+    }
+    Ok(_) => fail("expected fresh noisy cycle to fail without exhaustion")
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  assert_eq(state.audit_cycle_count_for_agent(leaf_id), 1)
+  let fresh_notification = delivery_cmds[3].args[3]
+  assert_true(
+    fresh_notification.contains(
+      "[AUDIT cycle 1] PR #42 on feature/audit-tl-visibility\n",
+    ),
+  )
+  assert_false(fresh_notification.contains("[AUDIT cycle 4"))
+
+  match run_cycle(head_b, findings_report, 1779000104L) {
+    Err(e) => {
+      assert_true(e.message().contains("audit found 1 findings"))
+      assert_false(e.to_wire_string() == "audit_loop_exhausted")
+    }
+    Ok(_) =>
+      fail("expected second fresh noisy cycle to fail without exhaustion")
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  match run_cycle(head_b, findings_report, 1779000105L) {
+    Err(e) => {
+      assert_eq(e.to_wire_string(), "audit_loop_exhausted")
+      assert_true(e.message().contains("audit loop exhausted after 3 cycle(s)"))
+    }
+    Ok(_) => fail("expected third fresh noisy cycle to exhaust")
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  @debug.assert_eq(recorded_agents, [
+    leaf_id, leaf_id, leaf_id, leaf_id, leaf_id, leaf_id,
+  ])
+  assert_eq(state.audit_cycle_count_for_agent(leaf_id), 3)
+  assert_eq(delivery_cmds.length(), 6)
+  assert_true(
+    delivery_cmds[5].args[3].contains("[AUDIT cycle 3 — LOOP EXHAUSTED]"),
+  )
+  assert_eq(comment_cmds.length(), 6)
+}
+
+///|
+async test "existing valid audit receipt resets stale cycle counter" {
+  let state = audit_notification_state(audit_max_rounds=2)
+  let leaf_id = "feature/audit-tl-visibility.leaf-existing-receipt"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let branch = "feature/audit-tl-visibility"
+  ignore(state.record_audit_cycle_for_agent(leaf_id))
+  ignore(state.record_audit_cycle_for_agent(leaf_id))
+  assert_eq(state.audit_cycle_count_for_agent(leaf_id), 2)
+  let receipt : @types.AuditReceipt = {
+    sha: head,
+    branch,
+    audited_at: 1779000200L,
+    agent_id: "main.audit",
+    findings_count: 0,
+  }
+  let mut spawn_called = false
+  let cleared_agents : Array[String] = []
+  let got = @tools.file_pr_auto_audit_for_missing_receipt(
+    state.config.project_dir,
+    state.config.project_dir,
+    leaf_id,
+    "main",
+    head,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, branch + "\n")
+      }
+      if cmd.program == "cat" {
+        return (0, receipt.to_json().stringify() + "\n")
+      }
+      (0, "")
+    },
+    async fn(_) {
+      @async.sleep(0)
+      spawn_called = true
+      Err(@types.ChoirError::validation_error("unexpected audit spawn"))
+    },
+    async fn(_) {
+      @async.sleep(0)
+      Some({ message: "unexpected wait", status: @types.Status::Failure })
+    },
+    fn(_) {  },
+    fn(_) { @types.Response::Err("unexpected receipt write") },
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1779000200L },
+    fn(_) { true },
+    audit_max_rounds=2,
+    record_audit_cycle_for_agent=fn(agent_id) {
+      state.record_audit_cycle_for_agent(agent_id)
+    },
+    audit_cycle_count_for_agent=fn(agent_id) {
+      state.audit_cycle_count_for_agent(agent_id)
+    },
+    clear_audit_cycle_for_agent=fn(agent_id) {
+      cleared_agents.push(agent_id)
+      state.clear_audit_cycle_count_for_agent(agent_id)
+    },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected valid receipt to pass: " + e.message())
+  }
+  assert_false(spawn_called)
+  assert_eq(state.audit_cycle_count_for_agent(leaf_id), 0)
+  @debug.assert_eq(cleared_agents, [leaf_id])
+}
+
+///|
+async test "dispatch_call routes audit max rounds and cycle callbacks into file_pr" {
+  let project_dir = "/tmp/choir-audit-dispatch-call-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir"))
+  let head = "cccccc1234567890abcdef1234567890abcdef12"
+  let leaf_id = "feature/audit-tl-visibility.dispatch-leaf"
+  let branch = "feature/audit-dispatch-call"
+  let mut cycles = 0
+  let recorded_agents : Array[String] = []
+  let cleared_agents : Array[String] = []
+  let call = @tools.ToolCall::{
+    role: @types.Role::Dev,
+    name: "file_pr",
+    args: { "caller_id": leaf_id, "branch": branch, "parent_branch": "main" },
+  }
+  let run = async fn() -> @types.Response {
+    @tools.dispatch_call(
+      call,
+      project_dir~,
+      runner=async fn(cmds) {
+        @async.sleep(0)
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      },
+      capture=async fn(cmd : @workspace.Command) -> (Int, String) {
+        @async.sleep(0)
+        if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+          return (0, head + "\n")
+        }
+        if cmd.program == "git" &&
+          cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+          return (0, branch + "\n")
+        }
+        if cmd.program == "git" &&
+          cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+          return (0, "origin/main\n")
+        }
+        if cmd.program == "cat" || cmd.program == "find" {
+          return (1, "")
+        }
+        (0, "")
+      },
+      ensure_branch_ready=Some(async fn(_branch, _parent_branch, _dir) {
+        @async.sleep(0)
+        Ok(())
+      }),
+      audit_max_rounds=2,
+      record_audit_cycle_for_agent=fn(agent_id) {
+        recorded_agents.push(agent_id)
+        cycles = cycles + 1
+        cycles
+      },
+      audit_cycle_count_for_agent=fn(_) { cycles },
+      clear_audit_cycle_for_agent=fn(agent_id) {
+        cleared_agents.push(agent_id)
+        cycles = 0
+      },
+      wait_for_audit_report=async fn(_) {
+        @async.sleep(0)
+        Some({
+          message: "Finding 1: still broken\n",
+          status: @types.Status::Success,
+        })
+      },
+      pr_review=false,
+    )
+  }
+  match run() {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("audit found 1 findings"))
+    @types.Response::Ok(_) =>
+      fail("expected first dispatch_call audit findings")
+  }
+  match run() {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("audit found 1 findings"))
+    @types.Response::Ok(_) =>
+      fail("expected second dispatch_call audit findings")
+  }
+  match run() {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("audit loop exhausted after 3 cycle(s)"))
+      assert_true(msg.contains("1 finding(s) remaining"))
+      assert_false(msg.contains("audit found 1 findings"))
+    }
+    @types.Response::Ok(_) => fail("expected dispatch_call audit exhaustion")
+  }
+  assert_eq(cycles, 3)
+  @debug.assert_eq(recorded_agents, [leaf_id, leaf_id, leaf_id])
+  @debug.assert_eq(cleared_agents, [])
+}

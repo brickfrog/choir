@@ -1511,6 +1511,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
   audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
   notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
     _tracked_agent_id,
     _pr_number,
@@ -1552,6 +1553,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
         ReceiptPresent,
         now_ms_fn,
       )
+      clear_audit_cycle_for_agent(tracked_agent_id)
       return Ok(())
     }
     AuditReceiptFindingsRemain(_, _) => return receipt_validation.to_result()
@@ -1704,6 +1706,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     findings_count: 0,
   })
   if receipt_resp.is_ok() {
+    clear_audit_cycle_for_agent(tracked_agent_id)
     Ok(())
   } else {
     Err(
@@ -1746,6 +1749,7 @@ async fn file_pr_require_audit_receipt(
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
   audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
   notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
     _tracked_agent_id,
     _pr_number,
@@ -1787,7 +1791,10 @@ async fn file_pr_require_audit_receipt(
     },
   )
   match validation {
-    AuditReceiptValid => Ok(())
+    AuditReceiptValid => {
+      clear_audit_cycle_for_agent(tracked_agent_id)
+      Ok(())
+    }
     _ =>
       if caller_role == @types.Role::Dev && validation.auto_audit_allowed() {
         file_pr_auto_audit_for_missing_receipt(
@@ -1811,6 +1818,7 @@ async fn file_pr_require_audit_receipt(
           audit_max_rounds~,
           record_audit_cycle_for_agent~,
           audit_cycle_count_for_agent~,
+          clear_audit_cycle_for_agent~,
           notify_audit_started~,
         )
       } else {
@@ -2278,6 +2286,7 @@ pub async fn interpret_file_pr(
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
   audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
@@ -2372,6 +2381,7 @@ pub async fn interpret_file_pr(
       audit_max_rounds~,
       record_audit_cycle_for_agent~,
       audit_cycle_count_for_agent~,
+      clear_audit_cycle_for_agent~,
       notify_audit_started~,
       append_file~,
       audit_sleep_fn~,
