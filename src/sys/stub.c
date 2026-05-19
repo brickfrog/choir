@@ -17,10 +17,14 @@
 #endif
 #include <unistd.h>
 
-static int choir_cleanup_runtime_native = 0;
+static volatile sig_atomic_t choir_cleanup_runtime_native = 0;
 static volatile sig_atomic_t choir_sigusr1_flag = 0;
-static char choir_server_exit_log_buf[128];
 #define CHOIR_MAX_SLEEP_MS_FOR_USLEEP (INT_MAX / 1000)
+#ifdef CLOCK_REALTIME_COARSE
+#define CHOIR_SIGNAL_EXIT_CLOCK CLOCK_REALTIME_COARSE
+#else
+#define CHOIR_SIGNAL_EXIT_CLOCK CLOCK_REALTIME
+#endif
 
 static int choir_append_literal(char *buf, int pos, int cap, const char *literal) {
     for (int i = 0; literal[i] != '\0'; i++) {
@@ -106,12 +110,13 @@ static int choir_write_server_exit_log_line_to_fd(
     int sig,
     long long ts,
     long long pid) {
+    char buf[128];
     int len = choir_format_server_exit_log_line(
         sig,
         ts,
         pid,
-        choir_server_exit_log_buf,
-        (int)sizeof(choir_server_exit_log_buf));
+        buf,
+        (int)sizeof(buf));
     if (len <= 0) {
         return -1;
     }
@@ -119,7 +124,7 @@ static int choir_write_server_exit_log_line_to_fd(
     while (written < len) {
         ssize_t n = write(
             fd,
-            choir_server_exit_log_buf + written,
+            buf + written,
             (size_t)(len - written));
         if (n < 0) {
             if (errno == EINTR) continue;
@@ -172,7 +177,8 @@ static int choir_is_crash_signal(int sig) {
 
 static long long choir_signal_timestamp_sec(void) {
     struct timespec ts;
-    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+    /* signal-safety(7): clock_gettime is async-signal-safe; use coarse realtime when present. */
+    if (clock_gettime(CHOIR_SIGNAL_EXIT_CLOCK, &ts) == 0) {
         return (long long)ts.tv_sec;
     }
     return 0;
