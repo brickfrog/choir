@@ -147,6 +147,26 @@ test "initialize_response instructions forbid parent branch implementation durin
               "kill that leaf immediately and close or abandon its PR",
             ),
           )
+          // Integration-branch pattern is non-optional, including for small waves.
+          assert_true(
+            instructions.contains(
+              "every wave forks off an integration branch named `feature/<wave-slug>`",
+            ),
+          )
+          assert_true(
+            instructions.contains(
+              "a wave that lands as N separate merges on main is a regression",
+            ),
+          )
+          // Audit context must reach the PR body, not just the commit message.
+          assert_true(
+            instructions.contains(
+              "task contract MUST include the receipt path and the specific finding text",
+            ),
+          )
+          assert_true(
+            instructions.contains("`.choir/audit-receipts/<sha>.json`"),
+          )
         }
         _ => fail("expected instructions string")
       }
