@@ -171,6 +171,8 @@ pub async fn ServerState::handle_with_runner_and_capture(
   } else {
     None
   }
+  let mut last_audit_report_for_progress : @tools.AuditOnFilePrReport? = None
+  let mut last_audit_receipt_path_for_progress : String? = None
   let resp = if effective_req.req_method == "tools/call" &&
     effective_req.name == "server_reload" {
     self.handle_server_reload_request(effective_req)
@@ -221,13 +223,44 @@ pub async fn ServerState::handle_with_runner_and_capture(
         self.prepare_audit_on_file_pr_report(agent_id)
       },
       record_audit_cycle_for_agent=fn(agent_id) {
-        self.record_audit_cycle_for_agent(agent_id)
+        let cycles = self.record_audit_cycle_for_agent(agent_id)
+        match last_audit_report_for_progress {
+          Some(report) => {
+            self.update_audit_progress(
+              agent_id,
+              report,
+              receipt_path=last_audit_receipt_path_for_progress,
+            )
+            last_audit_report_for_progress = None
+            last_audit_receipt_path_for_progress = None
+          }
+          None => ()
+        }
+        cycles
+      },
+      audit_progress_reader=fn(agent_id) {
+        match self.audit_progress_for_agent(agent_id) {
+          Some(progress) =>
+            Some(@tools.WaveStateAuditProgress::{
+              cycles_so_far: progress.cycles_so_far,
+              last_findings_count: progress.last_findings_count,
+              last_receipt_path: progress.last_receipt_path,
+              last_cycle_at_ms: progress.last_cycle_at_ms,
+              exhausted: progress.exhausted,
+            })
+          None => None
+        }
       },
       audit_worker_alive=fn(agent_id) {
         self.registry.is_alive(agent_id).unwrap_or(false)
       },
       wait_for_audit_report=async fn(agent_id) {
-        self.wait_for_audit_on_file_pr_report(agent_id)
+        let report = self.wait_for_audit_on_file_pr_report(agent_id)
+        last_audit_report_for_progress = report
+        last_audit_receipt_path_for_progress = audit_progress_receipt_path_from_worker_id(
+          agent_id,
+        )
+        report
       },
       capture_audit_on_file_pr_report=async fn(agent_id, report) {
         self.capture_audit_on_file_pr_report(

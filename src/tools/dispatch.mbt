@@ -818,6 +818,7 @@ pub async fn dispatch(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
   record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
+  audit_progress_reader? : (String) -> WaveStateAuditProgress? = fn(_) { None },
   audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
@@ -1375,6 +1376,7 @@ pub async fn dispatch(
         registry,
         poller_state,
         capture~,
+        audit_progress_reader~,
       )
     ToolRequest::StatusBarState(status_bar_state_args) =>
       interpret_status_bar_state(
@@ -1773,6 +1775,7 @@ pub async fn handle_request(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
   record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
+  audit_progress_reader? : (String) -> WaveStateAuditProgress? = fn(_) { None },
   audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
@@ -1908,6 +1911,7 @@ pub async fn handle_request(
                   record_handoff_delivered~,
                   prepare_audit_report~,
                   record_audit_cycle_for_agent~,
+                  audit_progress_reader~,
                   audit_worker_alive~,
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
@@ -2044,6 +2048,7 @@ pub async fn dispatch_call(
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
+  audit_progress_reader? : (String) -> WaveStateAuditProgress? = fn(_) { None },
   audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
@@ -2127,6 +2132,7 @@ pub async fn dispatch_call(
                   goal_request_tick~,
                   record_handoff_delivered~,
                   prepare_audit_report~,
+                  audit_progress_reader~,
                   audit_worker_alive~,
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
