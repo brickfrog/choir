@@ -11,6 +11,28 @@ suberror ChoirError {
   TransportError(String)
   GitError(String)
   ConfigError(String)
+  AuditLoopExhausted(
+    cycles~ : Int,
+    findings_count~ : Int,
+    receipt_path~ : String
+  )
+}
+
+///|
+pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
+  match self {
+    AgentNotFound(_) => "agent_not_found"
+    ToolNotFound(_) => "tool_not_found"
+    PermissionDenied(_, _) => "permission_denied"
+    PolicyBlocked(_) => "policy_blocked"
+    ValidationError(_) => "validation_error"
+    Timeout(_) => "timeout"
+    WorkspaceError(_) => "workspace_error"
+    TransportError(_) => "transport_error"
+    GitError(_) => "git_error"
+    ConfigError(_) => "config_error"
+    AuditLoopExhausted(..) => "audit_loop_exhausted"
+  }
 }
 
 ///|
@@ -26,7 +48,19 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     TransportError(msg) => "transport error: " + msg
     GitError(msg) => "git error: " + msg
     ConfigError(msg) => "config error: " + msg
+    AuditLoopExhausted(cycles~, findings_count~, receipt_path~) =>
+      "audit loop exhausted after " +
+      cycles.to_string() +
+      " cycle(s) with " +
+      findings_count.to_string() +
+      " finding(s) remaining; receipt: " +
+      receipt_path
   }
+}
+
+///|
+pub impl Show for ChoirError with output(self, logger) -> Unit {
+  self.message().output(logger)
 }
 
 ///|
@@ -93,6 +127,15 @@ pub fn ChoirError::config_error(msg : String) -> ChoirError {
 }
 
 ///|
+pub fn ChoirError::audit_loop_exhausted(
+  cycles : Int,
+  findings_count : Int,
+  receipt_path : String,
+) -> ChoirError {
+  AuditLoopExhausted(cycles~, findings_count~, receipt_path~)
+}
+
+///|
 pub fn ChoirError::is_tool_not_found(self : ChoirError) -> Bool {
   match self {
     ToolNotFound(_) => true
@@ -123,6 +166,8 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
     ConfigError(msg) => ChoirError::config_error(msg).message()
+    AuditLoopExhausted(cycles~, findings_count~, receipt_path~) =>
+      ChoirError::audit_loop_exhausted(cycles, findings_count, receipt_path).message()
     _ => "internal error"
   }
 }
@@ -140,7 +185,8 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | WorkspaceError(_)
     | TransportError(_)
     | GitError(_)
-    | ConfigError(_) => true
+    | ConfigError(_)
+    | AuditLoopExhausted(..) => true
     _ => false
   }
 }

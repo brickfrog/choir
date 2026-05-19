@@ -15,6 +15,7 @@ test "parse_config - full" {
     #|worker_no_handoff_prod_sec = 90
     #|worker_no_handoff_escalate_sec = 45
     #|audit_heartbeat_sec = 30
+    #|audit_max_rounds = 2
     #|poller_heartbeat_tick_sec = 10
     #|auto_pull_after_integration = false
     #|auto_rebuild_after_pull = true
@@ -47,6 +48,7 @@ test "parse_config - full" {
   assert_eq(cfg.worker_no_handoff_prod_sec, 90L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
   assert_eq(cfg.audit_heartbeat_sec, 30)
+  assert_eq(cfg.audit_max_rounds, 2)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
   assert_eq(cfg.auto_pull_after_integration, false)
   assert_eq(cfg.auto_rebuild_after_pull, true)
@@ -67,6 +69,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.worker_no_handoff_prod_sec, 120L)
   assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
   assert_eq(cfg.audit_heartbeat_sec, 60)
+  assert_eq(cfg.audit_max_rounds, 3)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
   assert_eq(cfg.auto_pull_after_integration, true)
   assert_eq(cfg.auto_rebuild_after_pull, false)
@@ -203,6 +206,29 @@ test "parse_config audit heartbeat knob rejects invalid values" {
     ) {
     Err(e) => assert_true(e.message().contains("expected <= "))
     Ok(_) => fail("expected oversized audit heartbeat config to fail")
+  }
+}
+
+///|
+test "parse_config audit max rounds knob parses default and rejects invalid values" {
+  assert_eq(parse_config("").unwrap().audit_max_rounds, 3)
+  let one_cfg = parse_config("audit_max_rounds = 1").unwrap()
+  assert_eq(one_cfg.audit_max_rounds, 1)
+  let max_cfg = parse_config(
+    "audit_max_rounds = " + @types.audit_max_rounds_max.to_string(),
+  ).unwrap()
+  assert_eq(max_cfg.audit_max_rounds, @types.audit_max_rounds_max)
+  match parse_config("audit_max_rounds = -1") {
+    Err(e) => assert_true(e.message().contains("expected >= 0"))
+    Ok(_) => fail("expected negative audit max rounds config to fail")
+  }
+  match parse_config("audit_max_rounds = 1.5") {
+    Err(e) => assert_true(e.message().contains("expected integer"))
+    Ok(_) => fail("expected fractional audit max rounds config to fail")
+  }
+  match parse_config("audit_max_rounds = 9999999") {
+    Err(e) => assert_true(e.message().contains("expected <= "))
+    Ok(_) => fail("expected oversized audit max rounds config to fail")
   }
 }
 

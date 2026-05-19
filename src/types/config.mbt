@@ -2,6 +2,9 @@
 pub let audit_heartbeat_sec_max : Int = 2_147_483
 
 ///|
+pub let audit_max_rounds_max : Int = 2_147_483
+
+///|
 /// Parsed server configuration.
 pub(all) struct Config {
   default_role : Role
@@ -28,6 +31,8 @@ pub(all) struct Config {
   worker_no_handoff_escalate_sec : Int64
   /// file_pr->main audit heartbeat cadence in seconds; 0 disables running heartbeats.
   audit_heartbeat_sec : Int
+  /// file_pr->main audit hard limit; exhausted findings return AuditLoopExhausted.
+  audit_max_rounds : Int
   /// Poller heartbeat cadence in seconds; 0 disables heartbeat ticks.
   poller_heartbeat_tick_sec : Int
   /// Best-effort `git pull --ff-only` on the parent worktree after an integration PR merges.
@@ -94,6 +99,7 @@ pub fn Config::default() -> Config {
     worker_no_handoff_prod_sec: 120L,
     worker_no_handoff_escalate_sec: 120L,
     audit_heartbeat_sec: 60,
+    audit_max_rounds: 3,
     poller_heartbeat_tick_sec: 60,
     auto_pull_after_integration: true,
     auto_rebuild_after_pull: false,

@@ -809,6 +809,7 @@ pub async fn dispatch(
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   goal_nonce? : () -> String = fn() {
@@ -816,6 +817,7 @@ pub async fn dispatch(
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
   audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
@@ -1131,6 +1133,8 @@ pub async fn dispatch(
         wait_for_audit_report~,
         cleanup_audit_report~,
         audit_heartbeat_sec~,
+        audit_max_rounds~,
+        record_audit_cycle_for_agent~,
         append_file~,
         audit_worker_alive~,
         list_audit_workers=fn() {
@@ -1756,6 +1760,7 @@ pub async fn handle_request(
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
     ()
   },
@@ -1766,6 +1771,7 @@ pub async fn handle_request(
   },
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
   audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
     _,
@@ -1887,6 +1893,7 @@ pub async fn handle_request(
                   pr_review~,
                   global_review_mode~,
                   audit_heartbeat_sec~,
+                  audit_max_rounds~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,
@@ -1898,6 +1905,7 @@ pub async fn handle_request(
                   goal_nonce~,
                   record_handoff_delivered~,
                   prepare_audit_report~,
+                  record_audit_cycle_for_agent~,
                   audit_worker_alive~,
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
