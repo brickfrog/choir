@@ -818,6 +818,13 @@ pub async fn dispatch(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
   record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   audit_progress_reader? : (String) -> WaveStateAuditProgress? = fn(_) { None },
   audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
@@ -1154,6 +1161,7 @@ pub async fn dispatch(
             None => []
           }
         },
+        notify_audit_started~,
         extra_mcp_servers_json~,
         shell_command~,
         listen_uds~,
@@ -1775,6 +1783,13 @@ pub async fn handle_request(
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
   prepare_audit_report? : (String) -> Unit = fn(_agent_id) {  },
   record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   audit_progress_reader? : (String) -> WaveStateAuditProgress? = fn(_) { None },
   audit_worker_alive? : (String) -> Bool = fn(_agent_id) { true },
   wait_for_audit_report? : async (String) -> AuditOnFilePrReport? = async fn(
@@ -1911,6 +1926,7 @@ pub async fn handle_request(
                   record_handoff_delivered~,
                   prepare_audit_report~,
                   record_audit_cycle_for_agent~,
+                  notify_audit_started~,
                   audit_progress_reader~,
                   audit_worker_alive~,
                   wait_for_audit_report~,

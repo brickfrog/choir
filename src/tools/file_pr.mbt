@@ -111,6 +111,18 @@ pub fn file_pr_plan(
 }
 
 ///|
+pub fn audit_started_notification_body(
+  cycle_number : Int,
+  pr_number? : Int? = None,
+) -> String {
+  let pr_label = match pr_number {
+    Some(value) => value.to_string()
+    None => "pending"
+  }
+  "[AUDIT cycle " + cycle_number.to_string() + " started] PR #" + pr_label
+}
+
+///|
 /// Pure plan for `file_pr` post-success auto-notify: parent resolution outcome
 /// maps to delivery intent plus exact delivery-log append text. The dispatcher
 /// interprets this (append logs, `execute_delivery`, moontrace on failures).
@@ -1498,6 +1510,13 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
   list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _tracked_agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   pr_number? : Int = 0,
 ) -> Result[Unit, @types.ChoirError] {
   let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
@@ -1537,6 +1556,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     AuditReceiptFindingsRemain(_, _) => return receipt_validation.to_result()
     _ => ()
   }
+  let cycles = record_audit_cycle_for_agent(tracked_agent_id)
   let worker_id = match
     find_in_flight_audit_worker(
       list_audit_workers(),
@@ -1552,6 +1572,12 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
       existing.child_id
     }
     None => {
+      let pr_number_for_notification : Int? = if pr_number > 0 {
+        Some(pr_number)
+      } else {
+        None
+      }
+      notify_audit_started(tracked_agent_id, pr_number_for_notification, cycles)
       let prior_sha = file_pr_audit_delta_prior_sha(
         project_dir, file_pr_dir, branch, head_sha, capture,
       )
@@ -1619,7 +1645,6 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     }
     AuditWaitReported(value) => value
   }
-  let cycles = record_audit_cycle_for_agent(tracked_agent_id)
   if report.status == @types.Status::Failure {
     let reason = audit_report_failure_reason(report)
     emit_audit_heartbeat_log_line(
@@ -1717,6 +1742,13 @@ async fn file_pr_require_audit_receipt(
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _tracked_agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
@@ -1774,6 +1806,7 @@ async fn file_pr_require_audit_receipt(
           list_audit_workers~,
           audit_max_rounds~,
           record_audit_cycle_for_agent~,
+          notify_audit_started~,
         )
       } else {
         validation.to_result()
@@ -2244,6 +2277,13 @@ pub async fn interpret_file_pr(
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
   list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _tracked_agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -2325,6 +2365,7 @@ pub async fn interpret_file_pr(
       audit_heartbeat_sec~,
       audit_max_rounds~,
       record_audit_cycle_for_agent~,
+      notify_audit_started~,
       append_file~,
       audit_sleep_fn~,
       audit_now_ms_fn~,

@@ -235,3 +235,120 @@ async test "capture_audit_on_file_pr_report fires notification and PR comment si
     None => fail("expected queued report")
   }
 }
+
+///|
+test "audit_worker_short_sha extracts production branch-prefixed audit worker id" {
+  @debug.assert_eq(
+    audit_worker_short_sha("main.audit-on-file-pr-abcdef123-1779000000"),
+    Some("abcdef123"),
+  )
+}
+
+///|
+test "audit digest context resolves production worker id through tracked head sha" {
+  let state = audit_notification_state()
+  let leaf_id = "main.audit-leaf"
+  let worker_id = "main.audit-on-file-pr-abcdef123-1779000000"
+  audit_notification_seed_leaf(
+    state,
+    leaf_id~,
+    sha="abcdef1234567890abcdef1234567890abcdef12",
+  )
+  ignore(state.record_audit_cycle_for_agent(leaf_id))
+  match
+    state.audit_digest_context(worker_id, {
+      message: "Finding 1: production resolver failed\n",
+      status: @types.Status::Success,
+    }) {
+    Some(ctx) => {
+      assert_eq(ctx.leaf_agent_id, leaf_id)
+      assert_eq(ctx.parent_id, "main.tl")
+      assert_eq(ctx.pr_number, 24)
+      assert_eq(ctx.branch, "feature/audit")
+      assert_eq(ctx.receipt_path, ".choir/audit-receipts/abcdef123456.json")
+      assert_eq(ctx.cycle, 1)
+      assert_eq(ctx.findings_count, 1)
+      assert_false(ctx.exhausted)
+    }
+    None => fail("expected digest context for production audit worker")
+  }
+}
+
+///|
+async test "notify_parent_about_audit uses second recorded cycle for production worker id" {
+  let state = audit_notification_state()
+  let leaf_id = "main.audit-leaf"
+  let worker_id = "main.audit-on-file-pr-abcdef123-1779000000"
+  audit_notification_seed_leaf(
+    state,
+    leaf_id~,
+    sha="abcdef1234567890abcdef1234567890abcdef12",
+  )
+  ignore(state.record_audit_cycle_for_agent(leaf_id))
+  ignore(state.record_audit_cycle_for_agent(leaf_id))
+  let sent : Array[(String, String, String, @types.Status)] = []
+  state.notify_parent_about_audit(
+    worker_id,
+    { message: "Finding 1: alpha\n", status: @types.Status::Success },
+    send_message=async fn(parent, sender_id, body, status) {
+      @async.sleep(0)
+      sent.push((parent.agent_id.to_string(), sender_id, body, status))
+    },
+  )
+  assert_eq(sent.length(), 1)
+  let (parent_id, sender_id, body, status) = sent[0]
+  assert_eq(parent_id, "main.tl")
+  assert_eq(sender_id, leaf_id)
+  assert_eq(status, @types.Status::Info)
+  assert_true(body.has_prefix("[AUDIT cycle 2] PR #24 on feature/audit\n"))
+  assert_false(body.has_prefix("[AUDIT cycle 1]"))
+}
+
+///|
+async test "notify_parent_audit_started sends one-line start body to leaf parent" {
+  let state = audit_notification_state()
+  let leaf_id = "main.audit-leaf"
+  audit_notification_seed_leaf(state, leaf_id~)
+  let sent : Array[(String, String, String, @types.Status)] = []
+  state.notify_parent_audit_started(leaf_id, 3, pr_number=Some(24), send_message=async fn(
+    parent,
+    sender_id,
+    body,
+    status,
+  ) {
+    @async.sleep(0)
+    sent.push((parent.agent_id.to_string(), sender_id, body, status))
+  })
+  assert_eq(sent.length(), 1)
+  let (parent_id, sender_id, body, status) = sent[0]
+  assert_eq(parent_id, "main.tl")
+  assert_eq(sender_id, leaf_id)
+  assert_eq(body, "[AUDIT cycle 3 started] PR #24")
+  assert_eq(status, @types.Status::Info)
+}
+
+///|
+test "update_audit_progress exposes exhausted flag when caller sets it" {
+  let state = audit_notification_state()
+  let leaf_id = "main.audit-leaf"
+  state.update_audit_progress(
+    leaf_id,
+    { message: "Finding 1: still broken\n", status: @types.Status::Success },
+    receipt_path=Some(".choir/audit-receipts/abcdef123456.json"),
+    exhausted=true,
+    now_ms=444L,
+  )
+  match state.audit_progress_for_agent(leaf_id) {
+    Some(progress) => {
+      assert_eq(progress.cycles_so_far, 1)
+      @debug.assert_eq(progress.last_findings_count, Some(1))
+      @debug.assert_eq(
+        progress.last_receipt_path,
+        Some(".choir/audit-receipts/abcdef123456.json"),
+      )
+      @debug.assert_eq(progress.last_cycle_at_ms, Some(444L))
+      assert_true(progress.exhausted)
+    }
+    None => fail("expected exhausted audit progress")
+  }
+}

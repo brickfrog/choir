@@ -1274,6 +1274,74 @@ async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
 }
 
 ///|
+async test "file_pr_auto_audit sends one start notification before each fresh audit spawn" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-start-notify-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut cycles = 0
+  let events : Array[String] = []
+  let recorded_agents : Array[String] = []
+  let started_agents : Array[String] = []
+  let run_cycle = async fn() -> Unit {
+    let got = file_pr_auto_audit_for_missing_receipt(
+      project_dir,
+      project_dir,
+      "feature/auto-audit",
+      "main",
+      head,
+      file_pr_auto_audit_capture(head, None),
+      async fn(worker_args) {
+        @async.sleep(0)
+        events.push("spawn:" + worker_args.slug)
+        Ok("main." + worker_args.slug)
+      },
+      async fn(_) {
+        @async.sleep(0)
+        Some({
+          message: "Finding 1: still broken\n",
+          status: @types.Status::Success,
+        })
+      },
+      fn(_) {  },
+      file_pr_test_write_audit_receipt_ok,
+      1000,
+      0,
+      fn(_, _) { true },
+      async fn(_) { @async.sleep(0) },
+      fn() { 1779000000L + cycles.to_int64() },
+      fn(_) { true },
+      audit_max_rounds=3,
+      record_audit_cycle_for_agent=fn(agent_id) {
+        recorded_agents.push(agent_id)
+        cycles = cycles + 1
+        cycles
+      },
+      notify_audit_started=async fn(agent_id, pr_number, cycle_number) {
+        @async.sleep(0)
+        started_agents.push(agent_id)
+        events.push(
+          "start:" + audit_started_notification_body(cycle_number, pr_number~),
+        )
+      },
+    )
+    match got {
+      Err(e) => assert_true(e.message().contains("audit found 1 findings"))
+      Ok(_) => fail("expected findings error")
+    }
+  }
+  run_cycle()
+  run_cycle()
+  assert_eq(cycles, 2)
+  @debug.assert_eq(recorded_agents, ["feature/auto-audit", "feature/auto-audit"])
+  @debug.assert_eq(started_agents, ["feature/auto-audit", "feature/auto-audit"])
+  assert_eq(events.length(), 4)
+  assert_eq(events[0], "start:[AUDIT cycle 1 started] PR #pending")
+  assert_true(events[1].has_prefix("spawn:audit-on-file-pr-abcdef123456-"))
+  assert_eq(events[2], "start:[AUDIT cycle 2 started] PR #pending")
+  assert_true(events[3].has_prefix("spawn:audit-on-file-pr-abcdef123456-"))
+}
+
+///|
 async test "file_pr_auto_audit scopes worker to prior receipt delta under max lines" {
   let project_dir = "/tmp/choir-fpr-auto-audit-delta-" +
     @sys.get_pid().to_string()
