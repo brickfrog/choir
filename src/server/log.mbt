@@ -24,15 +24,51 @@ pub fn serve_rotate_log_if_large(
   project_dir : String,
   rel_path : String,
   file_size : (String) -> Int,
-  rename : (String, String) -> Bool,
+  rename_file : (String, String) -> Bool,
   cap_bytes? : Int = server_log_rotate_cap_bytes,
 ) -> Bool {
   let log_path = server_log_project_path(project_dir, rel_path)
+  serve_rotate_resolved_log_if_large(
+    log_path,
+    file_size,
+    rename_file,
+    cap_bytes~,
+  )
+}
+
+///|
+fn serve_rotate_resolved_log_if_large(
+  log_path : String,
+  file_size : (String) -> Int,
+  rename_file : (String, String) -> Bool,
+  cap_bytes? : Int = server_log_rotate_cap_bytes,
+) -> Bool {
   if server_log_should_rotate(file_size(log_path), cap_bytes~) {
-    rename(log_path, log_path + ".1")
+    rename_file(log_path, log_path + ".1")
   } else {
     false
   }
+}
+
+///|
+test "serve_rotate_resolved_log_if_large rotates oversized logs through injected adapters" {
+  let log_path = "/tmp/choir-project/.choir/serve.log"
+  let sized_paths : Array[String] = []
+  let renamed_paths : Array[(String, String)] = []
+  let rotated = serve_rotate_resolved_log_if_large(
+    log_path,
+    fn(path) {
+      sized_paths.push(path)
+      8000001
+    },
+    fn(from_path, to_path) {
+      renamed_paths.push((from_path, to_path))
+      true
+    },
+  )
+  assert_true(rotated)
+  @debug.assert_eq(sized_paths, [log_path])
+  @debug.assert_eq(renamed_paths, [(log_path, log_path + ".1")])
 }
 
 ///|

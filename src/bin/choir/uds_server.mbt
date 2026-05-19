@@ -831,25 +831,6 @@ async fn run_poller_heartbeat_tick_loop(
 }
 
 ///|
-/// On `choir serve` fresh start, rotate an unbounded append log to `<path>.1`
-/// if it's grown past the cap. One backup is kept; a prior `.1` is overwritten
-/// by the rename. Returns true if a rotation happened.
-fn serve_rotate_log_if_large(
-  project_dir : String,
-  rel_path : String,
-  cap_bytes? : Int = 8000000,
-  file_size? : (String) -> Int = @sys.file_size,
-  rename? : (String, String) -> Bool = @sys.rename_file_sync,
-) -> Bool {
-  let log_path = serve_project_path(project_dir, rel_path)
-  if file_size(log_path) > cap_bytes {
-    rename(log_path, log_path + ".1")
-  } else {
-    false
-  }
-}
-
-///|
 fn serve_write_status_dump_if_sigusr1_requested(
   state : @server.ServerState,
   now_sec : Int64,
@@ -896,36 +877,6 @@ test "serve SIGUSR1 flag writes server status snapshot" {
     }),
   )
   ignore(@sys.rm_rf(project_dir))
-}
-
-///|
-test "serve rotates oversized logs with one shared helper" {
-  let renames : Array[(String, String)] = []
-  let did_rotate = serve_rotate_log_if_large(
-    ".",
-    ".choir/serve.log",
-    cap_bytes=1000,
-    file_size=fn(_p) { 2000 },
-    rename=fn(from, to) {
-      renames.push((from, to))
-      true
-    },
-  )
-  assert_true(did_rotate)
-  @debug.assert_eq(renames, [(".choir/serve.log", ".choir/serve.log.1")])
-  let small_renames : Array[(String, String)] = []
-  let no_rotate = serve_rotate_log_if_large(
-    ".",
-    ".choir/delivery.log",
-    cap_bytes=1000,
-    file_size=fn(_p) { 500 },
-    rename=fn(from, to) {
-      small_renames.push((from, to))
-      true
-    },
-  )
-  assert_false(no_rotate)
-  @debug.assert_eq(small_renames, [])
 }
 
 ///|
