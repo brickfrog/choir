@@ -1146,6 +1146,7 @@ pub async fn dispatch(
         record_audit_cycle_for_agent~,
         append_file~,
         audit_worker_alive~,
+        capture_audit_on_file_pr_report~,
         list_audit_workers=fn() {
           match registry {
             Some(reg) => {

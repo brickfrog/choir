@@ -23,6 +23,11 @@ pub(all) struct AuditProgress {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct AuditPrCommentTask {
+  run : async () -> Unit
+}
+
+///|
 fn audit_progress_report_receipt_path(message : String) -> String? {
   let marker = ".choir/audit-receipts/"
   match message.find(marker) {
@@ -115,6 +120,7 @@ pub struct ServerState {
     String,
     @aqueue.Queue[@tools.AuditOnFilePrReport],
   ]
+  audit_pr_comment_tasks : @aqueue.Queue[AuditPrCommentTask]
   audit_cycle_counts : Map[String, Int]
   audit_progress : Map[String, AuditProgress]
   worker_no_handoff_prodded_at : Map[String, Int64]
@@ -188,6 +194,7 @@ pub fn ServerState::new(
     delivery_failures: {},
     handoff_delivered: {},
     audit_on_file_pr_reports: {},
+    audit_pr_comment_tasks: @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded),
     audit_cycle_counts: {},
     audit_progress: {},
     worker_no_handoff_prodded_at: {},
@@ -508,7 +515,63 @@ pub async fn ServerState::notify_parent_about_audit(
 }
 
 ///|
-pub async fn ServerState::post_audit_pr_comment(
+fn ServerState::enqueue_audit_pr_comment_task(
+  self : ServerState,
+  task : AuditPrCommentTask,
+) -> Bool {
+  self.audit_pr_comment_tasks.try_put(task) catch {
+    e => {
+      @moontrace.warn("audit PR comment enqueue failed", fields=[
+        @moontrace.field("error", e.to_string()),
+      ])
+      false
+    }
+  }
+}
+
+///|
+pub async fn ServerState::run_next_audit_pr_comment_task(
+  self : ServerState,
+) -> Bool {
+  let maybe_task = self.audit_pr_comment_tasks.try_get() catch {
+    e => {
+      @moontrace.warn("audit PR comment dequeue failed", fields=[
+        @moontrace.field("error", e.to_string()),
+      ])
+      None
+    }
+  }
+  match maybe_task {
+    Some(task) => {
+      (task.run)() catch {
+        e =>
+          @moontrace.warn("audit PR comment task failed", fields=[
+            @moontrace.field("error", e.to_string()),
+          ])
+      }
+      true
+    }
+    None => false
+  }
+}
+
+///|
+pub async fn ServerState::run_audit_pr_comment_task_loop(
+  self : ServerState,
+) -> Unit {
+  for ;; {
+    let task = self.audit_pr_comment_tasks.get()
+    (task.run)() catch {
+      e =>
+        @moontrace.warn("audit PR comment task failed", fields=[
+          @moontrace.field("error", e.to_string()),
+        ])
+    }
+  }
+}
+
+///|
+pub fn ServerState::post_audit_pr_comment(
   self : ServerState,
   agent_id : String,
   report : @tools.AuditOnFilePrReport,
@@ -523,15 +586,30 @@ pub async fn ServerState::post_audit_pr_comment(
   match self.audit_digest_context(agent_id, report) {
     Some(ctx) => {
       let body = audit_digest_body(ctx, report.message)
-      match post_comment(ctx.pr_number, body) {
-        Ok(_) => ()
-        Err(e) =>
-          @moontrace.warn("audit PR comment failed", fields=[
-            @moontrace.field("agent_id", ctx.leaf_agent_id),
-            @moontrace.field("pr_number", ctx.pr_number),
-            @moontrace.field("error", e.message()),
-          ])
-      }
+      ignore(
+        self.enqueue_audit_pr_comment_task({
+          run: async fn() {
+            try {
+              match post_comment(ctx.pr_number, body) {
+                Ok(_) => ()
+                Err(e) =>
+                  @moontrace.warn("audit PR comment failed", fields=[
+                    @moontrace.field("agent_id", ctx.leaf_agent_id),
+                    @moontrace.field("pr_number", ctx.pr_number),
+                    @moontrace.field("error", e.message()),
+                  ])
+              }
+            } catch {
+              e =>
+                @moontrace.warn("audit PR comment failed", fields=[
+                  @moontrace.field("agent_id", ctx.leaf_agent_id),
+                  @moontrace.field("pr_number", ctx.pr_number),
+                  @moontrace.field("error", e.to_string()),
+                ])
+            }
+          },
+        }),
+      )
     }
     None => ()
   }
