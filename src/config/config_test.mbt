@@ -218,8 +218,14 @@ test "parse_config audit max rounds knob parses default and rejects invalid valu
     "audit_max_rounds = " + @types.audit_max_rounds_max.to_string(),
   ).unwrap()
   assert_eq(max_cfg.audit_max_rounds, @types.audit_max_rounds_max)
+  match parse_config("audit_max_rounds = 0") {
+    Err(e) =>
+      assert_true(e.message().contains("audit_max_rounds must be >= 1; got 0"))
+    Ok(_) => fail("expected zero audit max rounds config to fail")
+  }
   match parse_config("audit_max_rounds = -1") {
-    Err(e) => assert_true(e.message().contains("expected >= 0"))
+    Err(e) =>
+      assert_true(e.message().contains("audit_max_rounds must be >= 1; got -1"))
     Ok(_) => fail("expected negative audit max rounds config to fail")
   }
   match parse_config("audit_max_rounds = 1.5") {

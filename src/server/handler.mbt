@@ -238,6 +238,9 @@ pub async fn ServerState::handle_with_runner_and_capture(
         }
         cycles
       },
+      audit_cycle_count_for_agent=fn(agent_id) {
+        self.audit_cycle_count_for_agent(agent_id)
+      },
       notify_audit_started=async fn(agent_id, pr_number, cycle_number) {
         self.notify_parent_audit_started(
           agent_id,

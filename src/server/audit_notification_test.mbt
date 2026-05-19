@@ -363,6 +363,47 @@ async test "notify_parent_audit_started sends one-line start body to leaf parent
 }
 
 ///|
+test "audit_digest_context treats max cycle as last normal cycle" {
+  let state = audit_notification_state(audit_max_rounds=2)
+  audit_notification_seed_leaf(state)
+  ignore(state.record_audit_cycle_for_agent("main.leaf"))
+  ignore(state.record_audit_cycle_for_agent("main.leaf"))
+  match
+    state.audit_digest_context("main.leaf", {
+      message: "Finding 1: alpha\n",
+      status: @types.Status::Success,
+    }) {
+    Some(ctx) => {
+      assert_eq(ctx.cycle, 2)
+      assert_false(ctx.exhausted)
+      assert_true(
+        audit_digest_body(ctx, "Finding 1: alpha\n").has_prefix(
+          "[AUDIT cycle 2] PR #24 on feature/audit\n",
+        ),
+      )
+    }
+    None => fail("expected digest context at max cycle")
+  }
+  ignore(state.record_audit_cycle_for_agent("main.leaf"))
+  match
+    state.audit_digest_context("main.leaf", {
+      message: "Finding 1: alpha\n",
+      status: @types.Status::Success,
+    }) {
+    Some(ctx) => {
+      assert_eq(ctx.cycle, 3)
+      assert_true(ctx.exhausted)
+      assert_true(
+        audit_digest_body(ctx, "Finding 1: alpha\n").has_prefix(
+          "[AUDIT cycle 3 — LOOP EXHAUSTED] PR #24 on feature/audit — TL decision required\n",
+        ),
+      )
+    }
+    None => fail("expected digest context after max cycle")
+  }
+}
+
+///|
 test "update_audit_progress exposes exhausted flag when caller sets it" {
   let state = audit_notification_state()
   let leaf_id = "main.audit-leaf"
@@ -498,4 +539,178 @@ async test "capture_audit_on_file_pr_report tags exhausted notification and PR c
   assert_true(
     comment_cmds[0].args[4].contains("[AUDIT cycle 2 — LOOP EXHAUSTED]"),
   )
+}
+
+///|
+async test "file_pr exhaustion drives real ServerState audit visibility pipeline" {
+  let state = audit_notification_state(audit_max_rounds=2)
+  let parent_id = "feature/audit-tl-visibility.tl"
+  let leaf_id = "feature/audit-tl-visibility.leaf-y"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  audit_notification_seed_leaf(
+    state,
+    parent_id~,
+    leaf_id~,
+    pr_number=42,
+    branch="feature/audit-tl-visibility",
+    sha=head,
+  )
+  let target = @types.LocalTarget::parse("zellij-tab:audit-test:tl").unwrap()
+  ignore(
+    state.registry.upsert(
+      audit_notification_agent(
+        parent_id,
+        @types.Role::TL,
+        None,
+        state.config.project_dir,
+        terminal_target=Some(target),
+      ),
+    ),
+  )
+  let delivery_cmds : Array[@workspace.Command] = []
+  let comment_cmds : Array[@workspace.Command] = []
+  let recorded_agents : Array[String] = []
+  let worker_ids : Array[String] = []
+  let findings_report : @tools.AuditOnFilePrReport = {
+    message: "Finding 1: still broken\nreceipt: .choir/audit-receipts/abcdef123456.json\n",
+    status: @types.Status::Success,
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+      return (0, head + "\n")
+    }
+    if cmd.program == "git" && cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+      return (0, "feature/audit-tl-visibility\n")
+    }
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "cat" {
+      return (1, "")
+    }
+    if cmd.program == "find" {
+      return (1, "")
+    }
+    (0, "")
+  }
+  let run_cycle = async fn(now_ms : Int64) -> Result[Unit, @types.ChoirError] {
+    @tools.file_pr_auto_audit_for_missing_receipt(
+      state.config.project_dir,
+      state.config.project_dir,
+      leaf_id,
+      "main",
+      head,
+      capture,
+      async fn(worker_args) {
+        @async.sleep(0)
+        let worker_id = "feature/audit-tl-visibility." + worker_args.slug
+        worker_ids.push(worker_id)
+        state.prepare_audit_on_file_pr_report(worker_id)
+        Ok(worker_id)
+      },
+      async fn(worker_id) {
+        @async.sleep(0)
+        state.capture_audit_on_file_pr_report(
+          worker_id,
+          findings_report,
+          runner=async fn(cmds) {
+            @async.sleep(0)
+            for cmd in cmds {
+              delivery_cmds.push(cmd)
+            }
+            [0]
+          },
+          capture=async fn(cmd) {
+            @async.sleep(0)
+            comment_cmds.push(cmd)
+            (0, "")
+          },
+        )
+        state.wait_for_audit_on_file_pr_report(worker_id)
+      },
+      fn(_) {  },
+      fn(_) { @types.Response::ok_values({ "status": String::to_json("ok") }) },
+      1000,
+      0,
+      fn(_, _) { true },
+      async fn(_) { @async.sleep(0) },
+      fn() { now_ms },
+      fn(_) { true },
+      audit_max_rounds=2,
+      record_audit_cycle_for_agent=fn(agent_id) {
+        recorded_agents.push(agent_id)
+        state.record_audit_cycle_for_agent(agent_id)
+      },
+      audit_cycle_count_for_agent=fn(agent_id) {
+        state.audit_cycle_count_for_agent(agent_id)
+      },
+    )
+  }
+  match run_cycle(1779000000L) {
+    Err(e) => assert_true(e.message().contains("audit found 1 findings"))
+    Ok(_) => fail("expected first cycle findings")
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  match run_cycle(1779000001L) {
+    Err(e) => assert_true(e.message().contains("audit found 1 findings"))
+    Ok(_) => fail("expected second cycle findings")
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  match run_cycle(1779000002L) {
+    Err(e) => {
+      assert_eq(e.to_wire_string(), "audit_loop_exhausted")
+      assert_true(e.message().contains("audit loop exhausted after 3 cycle(s)"))
+    }
+    Ok(_) => fail("expected third cycle exhaustion")
+  }
+  assert_true(state.run_next_audit_pr_comment_task())
+  assert_false(state.run_next_audit_pr_comment_task())
+  assert_eq(worker_ids.length(), 3)
+  @debug.assert_eq(recorded_agents, [leaf_id, leaf_id, leaf_id])
+  assert_eq(delivery_cmds.length(), 3)
+  assert_eq(comment_cmds.length(), 3)
+  let notification_1 = delivery_cmds[0].args[3]
+  let notification_2 = delivery_cmds[1].args[3]
+  let notification_3 = delivery_cmds[2].args[3]
+  assert_true(
+    notification_1.contains(
+      "[AUDIT cycle 1] PR #42 on feature/audit-tl-visibility\n",
+    ),
+  )
+  assert_true(
+    notification_2.contains(
+      "[AUDIT cycle 2] PR #42 on feature/audit-tl-visibility\n",
+    ),
+  )
+  assert_true(
+    notification_3.contains(
+      "[AUDIT cycle 3 — LOOP EXHAUSTED] PR #42 on feature/audit-tl-visibility — TL decision required\n",
+    ),
+  )
+  assert_false(notification_2.contains("LOOP EXHAUSTED"))
+  assert_true(
+    comment_cmds[0].args[4].has_prefix(
+      "[AUDIT cycle 1] PR #42 on feature/audit-tl-visibility\n",
+    ),
+  )
+  assert_true(
+    comment_cmds[1].args[4].has_prefix(
+      "[AUDIT cycle 2] PR #42 on feature/audit-tl-visibility\n",
+    ),
+  )
+  assert_true(
+    comment_cmds[2].args[4].has_prefix(
+      "[AUDIT cycle 3 — LOOP EXHAUSTED] PR #42 on feature/audit-tl-visibility — TL decision required\n",
+    ),
+  )
+  match state.audit_progress_for_agent(leaf_id) {
+    Some(progress) => {
+      assert_eq(progress.cycles_so_far, 3)
+      @debug.assert_eq(progress.last_findings_count, Some(1))
+      assert_true(progress.exhausted)
+    }
+    None => fail("expected exhausted audit progress")
+  }
 }

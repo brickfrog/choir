@@ -365,7 +365,7 @@ pub fn ServerState::audit_digest_context(
   let findings_count = @tools.parse_findings_count(report.message)
   let exhausted = findings_count > 0 &&
     self.config.audit_max_rounds > 0 &&
-    cycle >= self.config.audit_max_rounds
+    cycle > self.config.audit_max_rounds
   Some({
     leaf_agent_id: tracked.agent_id,
     parent_id,
@@ -664,12 +664,18 @@ fn ServerState::capture_audit_progress(
   report : @tools.AuditOnFilePrReport,
 ) -> Unit {
   match self.audit_progress_agent_id_for_capture(agent_id) {
-    Some(tracked_agent_id) =>
+    Some(tracked_agent_id) => {
+      let exhausted = match self.audit_digest_context(agent_id, report) {
+        Some(ctx) => ctx.exhausted
+        None => false
+      }
       self.update_audit_progress(
         tracked_agent_id,
         report,
         receipt_path=audit_progress_receipt_path_from_worker_id(agent_id),
+        exhausted~,
       )
+    }
     None => ()
   }
 }
