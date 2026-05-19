@@ -1518,6 +1518,12 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     @async.sleep(0)
   },
   pr_number? : Int = 0,
+  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
+    _,
+    _,
+  ) {
+    @async.sleep(0)
+  },
 ) -> Result[Unit, @types.ChoirError] {
   let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
     Some(value) => value
@@ -1678,7 +1684,14 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     now_ms_fn~,
   )
   if findings_count > 0 {
-    if cycles >= audit_max_rounds {
+    if audit_max_rounds > 0 && cycles > audit_max_rounds {
+      capture_audit_on_file_pr_report(tracked_agent_id, report) catch {
+        e =>
+          @moontrace.warn("audit exhaustion notification failed", fields=[
+            @moontrace.field("agent_id", tracked_agent_id),
+            @moontrace.field("error", e.to_string()),
+          ])
+      }
       return Err(
         @types.ChoirError::audit_loop_exhausted(
           cycles, findings_count, receipt_path,
@@ -1754,6 +1767,12 @@ async fn file_pr_require_audit_receipt(
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
   list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
+  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
+    _,
+    _,
+  ) {
+    @async.sleep(0)
+  },
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_audit_receipt_required(parent_branch) {
     return Ok(())
@@ -1807,6 +1826,7 @@ async fn file_pr_require_audit_receipt(
           audit_max_rounds~,
           record_audit_cycle_for_agent~,
           notify_audit_started~,
+          capture_audit_on_file_pr_report~,
         )
       } else {
         validation.to_result()
@@ -2284,6 +2304,12 @@ pub async fn interpret_file_pr(
   ) {
     @async.sleep(0)
   },
+  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
+    _,
+    _,
+  ) {
+    @async.sleep(0)
+  },
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -2371,6 +2397,7 @@ pub async fn interpret_file_pr(
       audit_now_ms_fn~,
       audit_worker_alive~,
       list_audit_workers~,
+      capture_audit_on_file_pr_report~,
     ) {
     Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()

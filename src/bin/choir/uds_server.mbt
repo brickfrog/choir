@@ -1217,6 +1217,7 @@ fn serve_run() -> Unit {
         None => ()
       }
       state.replay_pending_outbox(runner=@exec.run_sequence)
+      root.spawn_bg(async fn() { state.run_audit_pr_comment_task_loop() })
       root.spawn_bg(async fn() {
         for ;; {
           @async.sleep(1000)

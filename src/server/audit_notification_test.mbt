@@ -79,6 +79,38 @@ fn audit_notification_seed_leaf(
 }
 
 ///|
+fn audit_notification_seed_worker(
+  state : ServerState,
+  worker_id : String,
+  leaf_id : String,
+) -> Unit {
+  ignore(
+    state.registry.upsert(
+      audit_notification_agent(
+        worker_id,
+        @types.Role::Worker,
+        Some(leaf_id),
+        state.config.project_dir,
+      ),
+    ),
+  )
+}
+
+///|
+async fn audit_notification_wait_until(
+  ready : () -> Bool,
+  label : String,
+) -> Unit {
+  for _i = 0; _i < 50; _i = _i + 1 {
+    if ready() {
+      return
+    }
+    @async.pause()
+  }
+  fail("timed out waiting for " + label)
+}
+
+///|
 test "audit_digest_body formats normal cycle body with verbatim findings" {
   let body = audit_digest_body(
     {
@@ -163,6 +195,7 @@ async test "post_audit_pr_comment posts same audit body to tracked PR" {
       Ok(())
     },
   )
+  assert_true(state.run_next_audit_pr_comment_task())
   assert_eq(comments.length(), 1)
   let (pr_number, body) = comments[0]
   assert_eq(pr_number, 24)
@@ -186,6 +219,7 @@ async test "post_audit_pr_comment absorbs comment failures" {
       Err(@types.ChoirError::transport_error("gh down"))
     },
   )
+  assert_true(state.run_next_audit_pr_comment_task())
   assert_eq(attempts, 1)
 }
 
@@ -226,6 +260,7 @@ async test "capture_audit_on_file_pr_report fires notification and PR comment si
     },
   )
   assert_eq(delivery_cmds.length(), 1)
+  assert_true(state.run_next_audit_pr_comment_task())
   assert_eq(comment_cmds.length(), 1)
   @debug.assert_eq(comment_cmds[0].args, [
     "pr", "comment", "24", "--body", "[AUDIT cycle 1] PR #24 on feature/audit\nfindings_count=1\nreceipt: .choir/audit-receipts/abcdef123456.json\n\nFinding 1: alpha\n",
@@ -351,4 +386,116 @@ test "update_audit_progress exposes exhausted flag when caller sets it" {
     }
     None => fail("expected exhausted audit progress")
   }
+}
+
+///|
+async test "capture_audit_on_file_pr_report returns before slow PR comment capture resolves" {
+  let state = audit_notification_state()
+  let parent_id = "feature/audit-tl-visibility.tl"
+  let leaf_id = "feature/audit-tl-visibility.leaf-y"
+  let worker_id = "feature/audit-tl-visibility.audit-on-file-pr-abcdef123456-1779000000"
+  audit_notification_seed_leaf(
+    state,
+    parent_id~,
+    leaf_id~,
+    pr_number=42,
+    branch="feature/audit-tl-visibility",
+    sha="abcdef1234567890abcdef1234567890abcdef12",
+  )
+  audit_notification_seed_worker(state, worker_id, leaf_id)
+  let comment_started = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+  let release_comment = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+  let mut capture_completed = false
+  state.capture_audit_on_file_pr_report(
+    worker_id,
+    { message: "Finding 1: alpha\n", status: @types.Status::Success },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      [0]
+    },
+    capture=async fn(cmd) {
+      ignore(comment_started.try_put(cmd) catch { _ => false })
+      ignore(release_comment.get())
+      capture_completed = true
+      (0, "")
+    },
+  )
+  assert_false(capture_completed)
+  let mut drain_done = false
+  @async.with_task_group(group => {
+    group.spawn_bg(async fn() {
+      ignore(state.run_next_audit_pr_comment_task())
+      drain_done = true
+    })
+    let started = @async.with_timeout_opt(1000, () => comment_started.get())
+    let cmd = match started {
+      Some(value) => value
+      None => fail("timed out waiting for slow gh capture to start")
+    }
+    assert_eq(cmd.program, "gh")
+    assert_false(capture_completed)
+    assert_false(drain_done)
+    ignore(release_comment.try_put(()) catch { _ => false })
+    audit_notification_wait_until(
+      fn() { capture_completed && drain_done },
+      "slow audit PR comment capture completion",
+    )
+  })
+}
+
+///|
+async test "capture_audit_on_file_pr_report tags exhausted notification and PR comment" {
+  let state = audit_notification_state(audit_max_rounds=1)
+  let parent_id = "feature/audit-tl-visibility.tl"
+  let leaf_id = "feature/audit-tl-visibility.leaf-y"
+  let worker_id = "feature/audit-tl-visibility.audit-on-file-pr-abcdef123456-1779000000"
+  audit_notification_seed_leaf(
+    state,
+    parent_id~,
+    leaf_id~,
+    branch="feature/audit-tl-visibility",
+    sha="abcdef1234567890abcdef1234567890abcdef12",
+  )
+  audit_notification_seed_worker(state, worker_id, leaf_id)
+  let target = @types.LocalTarget::parse("zellij-tab:audit-test:tl").unwrap()
+  ignore(
+    state.registry.upsert(
+      audit_notification_agent(
+        parent_id,
+        @types.Role::TL,
+        None,
+        state.config.project_dir,
+        terminal_target=Some(target),
+      ),
+    ),
+  )
+  ignore(state.record_audit_cycle_for_agent(leaf_id))
+  ignore(state.record_audit_cycle_for_agent(leaf_id))
+  let delivery_cmds : Array[@workspace.Command] = []
+  let comment_cmds : Array[@workspace.Command] = []
+  state.capture_audit_on_file_pr_report(
+    worker_id,
+    { message: "Finding 1: alpha\n", status: @types.Status::Success },
+    runner=async fn(cmds) {
+      @async.sleep(0)
+      for cmd in cmds {
+        delivery_cmds.push(cmd)
+      }
+      [0]
+    },
+    capture=async fn(cmd) {
+      @async.sleep(0)
+      comment_cmds.push(cmd)
+      (0, "")
+    },
+  )
+  assert_eq(delivery_cmds.length(), 1)
+  assert_true(
+    delivery_cmds[0].args[3].contains("[AUDIT cycle 2 — LOOP EXHAUSTED]"),
+  )
+  assert_true(state.run_next_audit_pr_comment_task())
+  assert_eq(comment_cmds.length(), 1)
+  assert_true(
+    comment_cmds[0].args[4].contains("[AUDIT cycle 2 — LOOP EXHAUSTED]"),
+  )
 }
