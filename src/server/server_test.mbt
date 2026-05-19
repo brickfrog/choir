@@ -44,6 +44,33 @@ test "audit-on-file-pr report cleanup removes waiter queue" {
 }
 
 ///|
+async test "audit cycle counter records tracked leaf cycles and clears on unregister cleanup" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let agent_id = "main.audit-loop-leaf"
+  assert_eq(state.audit_cycle_count_for_agent(agent_id), 0)
+  state.capture_audit_on_file_pr_report(agent_id, {
+    message: "Finding 1: defect",
+    status: @types.Status::Success,
+  })
+  assert_eq(state.audit_cycle_count_for_agent(agent_id), 0)
+  ignore(state.record_audit_cycle_for_agent(agent_id))
+  assert_eq(state.audit_cycle_count_for_agent(agent_id), 1)
+  state.handle_disconnect_with_runner(
+    agent_id,
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    capture=async fn(_cmd) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  assert_eq(state.audit_cycle_count_for_agent(agent_id), 0)
+}
+
+///|
 async test "status_bar_state server handler caches list-panes per session" {
   let project_dir = "/tmp/choir-status-bar-cache-" +
     @sys.get_pid().to_string() +

@@ -1496,6 +1496,8 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
   now_ms_fn : () -> Int64,
   audit_worker_alive : (String) -> Bool,
   list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
   pr_number? : Int = 0,
 ) -> Result[Unit, @types.ChoirError] {
   let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
@@ -1617,6 +1619,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     }
     AuditWaitReported(value) => value
   }
+  let cycles = record_audit_cycle_for_agent(tracked_agent_id)
   if report.status == @types.Status::Failure {
     let reason = audit_report_failure_reason(report)
     emit_audit_heartbeat_log_line(
@@ -1650,6 +1653,13 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     now_ms_fn~,
   )
   if findings_count > 0 {
+    if cycles >= audit_max_rounds {
+      return Err(
+        @types.ChoirError::audit_loop_exhausted(
+          cycles, findings_count, receipt_path,
+        ),
+      )
+    }
     return Err(
       @types.ChoirError::validation_error(
         "file_pr: audit found " +
@@ -1705,6 +1715,8 @@ async fn file_pr_require_audit_receipt(
   },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
@@ -1760,6 +1772,8 @@ async fn file_pr_require_audit_receipt(
           audit_now_ms_fn,
           audit_worker_alive,
           list_audit_workers~,
+          audit_max_rounds~,
+          record_audit_cycle_for_agent~,
         )
       } else {
         validation.to_result()
@@ -2223,6 +2237,8 @@ pub async fn interpret_file_pr(
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
@@ -2307,6 +2323,8 @@ pub async fn interpret_file_pr(
       },
       audit_budget_ms~,
       audit_heartbeat_sec~,
+      audit_max_rounds~,
+      record_audit_cycle_for_agent~,
       append_file~,
       audit_sleep_fn~,
       audit_now_ms_fn~,

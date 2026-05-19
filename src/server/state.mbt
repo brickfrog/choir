@@ -31,6 +31,7 @@ pub struct ServerState {
     String,
     @aqueue.Queue[@tools.AuditOnFilePrReport],
   ]
+  audit_cycle_counts : Map[String, Int]
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
@@ -102,6 +103,7 @@ pub fn ServerState::new(
     delivery_failures: {},
     handoff_delivered: {},
     audit_on_file_pr_reports: {},
+    audit_cycle_counts: {},
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
@@ -154,6 +156,32 @@ pub fn ServerState::capture_audit_on_file_pr_report(
     Some(queue) => ignore(queue.try_put(report) catch { _ => false })
     None => ()
   }
+}
+
+///|
+pub fn ServerState::record_audit_cycle_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> Int {
+  let next = self.audit_cycle_count_for_agent(agent_id) + 1
+  self.audit_cycle_counts.set(agent_id, next)
+  next
+}
+
+///|
+pub fn ServerState::audit_cycle_count_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> Int {
+  self.audit_cycle_counts.get(agent_id).unwrap_or(0)
+}
+
+///|
+pub fn ServerState::clear_audit_cycle_count_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.audit_cycle_counts.remove(agent_id)
 }
 
 ///|

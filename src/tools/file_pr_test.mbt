@@ -1880,6 +1880,62 @@ async test "interpret_file_pr Dev missing audit returns findings error" {
 }
 
 ///|
+async test "interpret_file_pr Dev audit max rounds returns typed exhaustion after first finding cycle" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-exhausted-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut cycles = 0
+  let mut wait_count = 0
+  let recorded_agents : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    audit_max_rounds=1,
+    record_audit_cycle_for_agent=fn(agent_id) {
+      recorded_agents.push(agent_id)
+      cycles = cycles + 1
+      cycles
+    },
+    wait_for_audit_report=async fn(_) {
+      @async.sleep(0)
+      wait_count = wait_count + 1
+      Some({
+        message: "Finding 1: still broken\n",
+        status: @types.Status::Success,
+      })
+    },
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("audit loop exhausted after 1 cycle(s)"))
+      assert_true(msg.contains("1 finding(s) remaining"))
+      assert_true(msg.contains(".choir/audit-receipts/abcdef123456.json"))
+      assert_false(msg.contains("audit found 1 findings"))
+    }
+    @types.Response::Ok(_) => fail("expected audit loop exhaustion")
+  }
+  assert_eq(cycles, 1)
+  assert_eq(wait_count, 1)
+  @debug.assert_eq(recorded_agents, ["feature/auto-audit"])
+}
+
+///|
 async test "interpret_file_pr Dev existing receipt skips auto audit" {
   let project_dir = "/tmp/choir-fpr-auto-audit-existing-" +
     @sys.get_pid().to_string()
