@@ -245,12 +245,13 @@ pub(all) struct AuditDigestContext {
 } derive(Debug, Eq)
 
 ///|
-fn audit_worker_short_sha(agent_id : String) -> String? {
+pub fn audit_worker_short_sha(agent_id : String) -> String? {
+  let agent_slug = @phase.extract_slug(agent_id)
   let prefix = @tools.audit_on_file_pr_internal_caller_id + "-"
-  if !agent_id.has_prefix(prefix) {
+  if !agent_slug.has_prefix(prefix) {
     return None
   }
-  let rest = agent_id[prefix.length():].to_owned()
+  let rest = agent_slug[prefix.length():].to_owned()
   match rest.find("-") {
     Some(idx) => {
       let short = rest[0:idx].to_owned()
@@ -328,7 +329,7 @@ fn audit_receipt_path_for_tracked(
 }
 
 ///|
-fn ServerState::audit_digest_context(
+pub fn ServerState::audit_digest_context(
   self : ServerState,
   agent_id : String,
   report : @tools.AuditOnFilePrReport,
@@ -393,6 +394,67 @@ pub fn audit_digest_body(
   ctx.receipt_path +
   "\n\n" +
   findings_text
+}
+
+///|
+pub async fn ServerState::notify_parent_audit_started(
+  self : ServerState,
+  tracked_agent_id : String,
+  cycle_number : Int,
+  pr_number? : Int? = None,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
+  send_message? : async (@types.Agent, String, String, @types.Status) -> Unit = async fn(
+    parent,
+    sender_id,
+    body,
+    status,
+  ) {
+    let plan = @tools.send_message_plan(
+      parent.agent_id.to_string(),
+      sender_id,
+      body,
+      status,
+      Some(Ok(parent)),
+    )
+    ignore(
+      @tools.interpret_send_message(
+        plan,
+        self.config.project_dir,
+        runner,
+        sleep_fn~,
+      ),
+    )
+  },
+) -> Unit {
+  match self.registry.get_opt(tracked_agent_id) {
+    Some(agent) =>
+      match agent.parent {
+        Some(parent_id) =>
+          match self.registry.get_opt(parent_id) {
+            Some(parent) =>
+              send_message(
+                parent,
+                tracked_agent_id,
+                @tools.audit_started_notification_body(cycle_number, pr_number~),
+                @types.Status::Info,
+              )
+            None =>
+              @moontrace.warn("audit start notification parent missing", fields=[
+                @moontrace.field("agent_id", tracked_agent_id),
+                @moontrace.field("parent_id", parent_id),
+              ])
+          }
+        None =>
+          @moontrace.warn("audit start notification leaf parent missing", fields=[
+            @moontrace.field("agent_id", tracked_agent_id),
+          ])
+      }
+    None =>
+      @moontrace.warn("audit start notification agent missing", fields=[
+        @moontrace.field("agent_id", tracked_agent_id),
+      ])
+  }
 }
 
 ///|
@@ -497,7 +559,7 @@ fn ServerState::audit_progress_agent_id_for_capture(
   self : ServerState,
   agent_id : String,
 ) -> String? {
-  match audit_progress_short_sha_from_worker_id(agent_id) {
+  match audit_worker_short_sha(agent_id) {
     Some(short_sha) => {
       for tracked in self.poller.tracked.values() {
         if tracked.last_sha.has_prefix(short_sha) {
@@ -540,6 +602,7 @@ pub fn ServerState::update_audit_progress(
   agent_id : String,
   report : @tools.AuditOnFilePrReport,
   receipt_path? : String? = None,
+  exhausted? : Bool = false,
   now_ms? : Int64 = @env.now().reinterpret_as_int64(),
 ) -> Unit {
   let previous = self.audit_progress_for_agent(agent_id)
@@ -574,7 +637,7 @@ pub fn ServerState::update_audit_progress(
     last_findings_count,
     last_receipt_path,
     last_cycle_at_ms: Some(now_ms),
-    exhausted: false,
+    exhausted,
   })
 }
 

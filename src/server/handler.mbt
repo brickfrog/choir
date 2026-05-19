@@ -238,6 +238,14 @@ pub async fn ServerState::handle_with_runner_and_capture(
         }
         cycles
       },
+      notify_audit_started=async fn(agent_id, pr_number, cycle_number) {
+        self.notify_parent_audit_started(
+          agent_id,
+          cycle_number,
+          pr_number~,
+          runner~,
+        )
+      },
       audit_progress_reader=fn(agent_id) {
         match self.audit_progress_for_agent(agent_id) {
           Some(progress) =>
