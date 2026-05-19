@@ -825,10 +825,11 @@ pub async fn dispatch(
     @async.sleep(0)
     None
   },
-  capture_audit_on_file_pr_report? : (String, AuditOnFilePrReport) -> Unit = fn(
+  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
     _agent_id,
     _report,
   ) {
+    @async.sleep(0)
     ()
   },
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
@@ -1779,10 +1780,11 @@ pub async fn handle_request(
     @async.sleep(0)
     None
   },
-  capture_audit_on_file_pr_report? : (String, AuditOnFilePrReport) -> Unit = fn(
+  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
     _agent_id,
     _report,
   ) {
+    @async.sleep(0)
     ()
   },
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
@@ -2049,10 +2051,11 @@ pub async fn dispatch_call(
     @async.sleep(0)
     None
   },
-  capture_audit_on_file_pr_report? : (String, AuditOnFilePrReport) -> Unit = fn(
+  capture_audit_on_file_pr_report? : async (String, AuditOnFilePrReport) -> Unit = async fn(
     _agent_id,
     _report,
   ) {
+    @async.sleep(0)
     ()
   },
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },

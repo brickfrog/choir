@@ -1,5 +1,5 @@
 ///|
-test "audit-on-file-pr report capture ignores missing waiter" {
+async test "audit-on-file-pr report capture ignores missing waiter" {
   let config = @types.Config::default()
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   state.capture_audit_on_file_pr_report("worker-a", {
@@ -29,7 +29,7 @@ async test "audit-on-file-pr report prepare buffers fast report before waiter" {
 }
 
 ///|
-test "audit-on-file-pr report cleanup removes waiter queue" {
+async test "audit-on-file-pr report cleanup removes waiter queue" {
   let config = @types.Config::default()
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)

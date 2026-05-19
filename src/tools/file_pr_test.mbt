@@ -1047,7 +1047,8 @@ async test "dispatch shutdown from audit worker completes audit wait queue" {
     registry=Some(reg),
     runner=mock_runner_all_ok,
     bd_capture=mock_capture_empty,
-    capture_audit_on_file_pr_report=fn(agent_id, report) {
+    capture_audit_on_file_pr_report=async fn(agent_id, report) {
+      @async.sleep(0)
       reports.push((agent_id, report))
     },
   )

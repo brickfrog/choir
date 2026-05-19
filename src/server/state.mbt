@@ -147,15 +147,262 @@ fn ServerState::audit_on_file_pr_report_queue(
 }
 
 ///|
-pub fn ServerState::capture_audit_on_file_pr_report(
+pub(all) struct AuditDigestContext {
+  leaf_agent_id : String
+  parent_id : String
+  pr_number : Int
+  branch : String
+  receipt_path : String
+  cycle : Int
+  findings_count : Int
+  exhausted : Bool
+} derive(Debug, Eq)
+
+///|
+fn audit_worker_short_sha(agent_id : String) -> String? {
+  let prefix = @tools.audit_on_file_pr_internal_caller_id + "-"
+  if !agent_id.has_prefix(prefix) {
+    return None
+  }
+  let rest = agent_id[prefix.length():].to_owned()
+  match rest.find("-") {
+    Some(idx) => {
+      let short = rest[0:idx].to_owned()
+      if short == "" {
+        None
+      } else {
+        Some(short)
+      }
+    }
+    None => None
+  }
+}
+
+///|
+fn ServerState::tracked_pr_for_agent_id(
+  self : ServerState,
+  agent_id : String,
+) -> @poller.TrackedPR? {
+  for tracked in self.poller.tracked.values() {
+    if tracked.agent_id == agent_id {
+      return Some(tracked)
+    }
+  }
+  None
+}
+
+///|
+fn ServerState::tracked_pr_for_audit_capture(
+  self : ServerState,
+  agent_id : String,
+) -> @poller.TrackedPR? {
+  match self.tracked_pr_for_agent_id(agent_id) {
+    Some(tracked) => return Some(tracked)
+    None => ()
+  }
+  match self.registry.get_opt(agent_id) {
+    Some(agent) =>
+      match agent.parent {
+        Some(parent_id) if parent_id !=
+          @tools.audit_on_file_pr_internal_caller_id =>
+          match self.tracked_pr_for_agent_id(parent_id) {
+            Some(tracked) => return Some(tracked)
+            None => ()
+          }
+        _ => ()
+      }
+    None => ()
+  }
+  match audit_worker_short_sha(agent_id) {
+    Some(short_sha) =>
+      for tracked in self.poller.tracked.values() {
+        if tracked.last_sha != "" && tracked.last_sha.has_prefix(short_sha) {
+          return Some(tracked)
+        }
+      }
+    None => ()
+  }
+  None
+}
+
+///|
+fn audit_receipt_path_for_tracked(
+  tracked : @poller.TrackedPR,
+  agent_id : String,
+) -> String? {
+  if tracked.last_sha != "" {
+    Some(@tools.file_pr_audit_receipt_path_for_head(tracked.last_sha))
+  } else {
+    match audit_worker_short_sha(agent_id) {
+      Some(short_sha) =>
+        Some(@tools.file_pr_audit_receipt_path_for_head(short_sha))
+      None => None
+    }
+  }
+}
+
+///|
+fn ServerState::audit_digest_context(
   self : ServerState,
   agent_id : String,
   report : @tools.AuditOnFilePrReport,
+) -> AuditDigestContext? {
+  if report.status != @types.Status::Success {
+    return None
+  }
+  let tracked = match self.tracked_pr_for_audit_capture(agent_id) {
+    Some(value) => value
+    None => return None
+  }
+  let parent_id = match self.registry.get_opt(tracked.agent_id) {
+    Some(agent) =>
+      match agent.parent {
+        Some(value) => value
+        None => return None
+      }
+    None => return None
+  }
+  let receipt_path = match audit_receipt_path_for_tracked(tracked, agent_id) {
+    Some(value) => value
+    None => return None
+  }
+  let raw_cycle = self.audit_cycle_count_for_agent(tracked.agent_id)
+  let cycle = if raw_cycle <= 0 { 1 } else { raw_cycle }
+  let findings_count = @tools.parse_findings_count(report.message)
+  let exhausted = findings_count > 0 &&
+    self.config.audit_max_rounds > 0 &&
+    cycle >= self.config.audit_max_rounds
+  Some({
+    leaf_agent_id: tracked.agent_id,
+    parent_id,
+    pr_number: tracked.pr_number,
+    branch: tracked.branch,
+    receipt_path,
+    cycle,
+    findings_count,
+    exhausted,
+  })
+}
+
+///|
+pub fn audit_digest_body(
+  ctx : AuditDigestContext,
+  findings_text : String,
+) -> String {
+  let tag = if ctx.exhausted {
+    "[AUDIT cycle " + ctx.cycle.to_string() + " — LOOP EXHAUSTED]"
+  } else {
+    "[AUDIT cycle " + ctx.cycle.to_string() + "]"
+  }
+  let tl_suffix = if ctx.exhausted { " — TL decision required" } else { "" }
+  tag +
+  " PR #" +
+  ctx.pr_number.to_string() +
+  " on " +
+  ctx.branch +
+  tl_suffix +
+  "\nfindings_count=" +
+  ctx.findings_count.to_string() +
+  "\nreceipt: " +
+  ctx.receipt_path +
+  "\n\n" +
+  findings_text
+}
+
+///|
+pub async fn ServerState::notify_parent_about_audit(
+  self : ServerState,
+  agent_id : String,
+  report : @tools.AuditOnFilePrReport,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
+  send_message? : async (@types.Agent, String, String, @types.Status) -> Unit = async fn(
+    parent,
+    sender_id,
+    body,
+    status,
+  ) {
+    let plan = @tools.send_message_plan(
+      parent.agent_id.to_string(),
+      sender_id,
+      body,
+      status,
+      Some(Ok(parent)),
+    )
+    ignore(
+      @tools.interpret_send_message(
+        plan,
+        self.config.project_dir,
+        runner,
+        sleep_fn~,
+      ),
+    )
+  },
+) -> Unit {
+  match self.audit_digest_context(agent_id, report) {
+    Some(ctx) =>
+      match self.registry.get_opt(ctx.parent_id) {
+        Some(parent) =>
+          send_message(
+            parent,
+            ctx.leaf_agent_id,
+            audit_digest_body(ctx, report.message),
+            @types.Status::Info,
+          )
+        None =>
+          @moontrace.warn("audit notification parent missing", fields=[
+            @moontrace.field("agent_id", ctx.leaf_agent_id),
+            @moontrace.field("parent_id", ctx.parent_id),
+          ])
+      }
+    None => ()
+  }
+}
+
+///|
+pub async fn ServerState::post_audit_pr_comment(
+  self : ServerState,
+  agent_id : String,
+  report : @tools.AuditOnFilePrReport,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  post_comment? : async (Int, String) -> Result[Unit, @types.ChoirError] = async fn(
+    pr_number,
+    body,
+  ) {
+    @poller.gh_pr_comment(pr_number, body, self.config.project_dir, capture~)
+  },
+) -> Unit {
+  match self.audit_digest_context(agent_id, report) {
+    Some(ctx) => {
+      let body = audit_digest_body(ctx, report.message)
+      match post_comment(ctx.pr_number, body) {
+        Ok(_) => ()
+        Err(e) =>
+          @moontrace.warn("audit PR comment failed", fields=[
+            @moontrace.field("agent_id", ctx.leaf_agent_id),
+            @moontrace.field("pr_number", ctx.pr_number),
+            @moontrace.field("error", e.message()),
+          ])
+      }
+    }
+    None => ()
+  }
+}
+
+///|
+pub async fn ServerState::capture_audit_on_file_pr_report(
+  self : ServerState,
+  agent_id : String,
+  report : @tools.AuditOnFilePrReport,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> Unit {
   match self.audit_on_file_pr_reports.get(agent_id) {
     Some(queue) => ignore(queue.try_put(report) catch { _ => false })
     None => ()
   }
+  self.notify_parent_about_audit(agent_id, report, runner~)
+  self.post_audit_pr_comment(agent_id, report, capture~)
 }
 
 ///|
