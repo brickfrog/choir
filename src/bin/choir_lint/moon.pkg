@@ -1,0 +1,9 @@
+import {
+  "choir/src/lint",
+  "choir/src/sys",
+  "moonbitlang/core/env",
+}
+
+options(
+  "is-main": true,
+)

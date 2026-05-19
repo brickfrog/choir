@@ -377,7 +377,7 @@ fn serve_test_state_with_root(label : String) -> (@server.ServerState, String) {
   ignore(@sys.create_dir_all(project_dir))
   let state = @server.ServerState::new(
     { ..@types.Config::default(), project_dir, terminal_session: "uds-jsonrpc" },
-    @server.make_recovery_provider(),
+    @server.make_hermetic_recovery_provider(),
   )
   ignore(
     state.registry.upsert({
@@ -1014,7 +1014,7 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
       review_mode: @types.ReviewMode::Iterative,
       terminal_session: "test-heartbeat",
     },
-    @server.make_recovery_provider(),
+    @server.make_hermetic_recovery_provider(),
   )
   ignore(
     state.register_agent({

@@ -1,0 +1,12 @@
+import {
+  "choir/src/types",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/list",
+  "moonbitlang/parser",
+  "moonbitlang/parser/basic",
+  "moonbitlang/parser/syntax",
+}
+
+options(
+  "is-main": false,
+)
