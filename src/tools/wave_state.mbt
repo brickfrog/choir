@@ -1,4 +1,13 @@
 ///|
+pub(all) struct WaveStateAuditProgress {
+  cycles_so_far : Int
+  last_findings_count : Int?
+  last_receipt_path : String?
+  last_cycle_at_ms : Int64?
+  exhausted : Bool
+} derive(Debug, Eq, ToJson)
+
+///|
 /// Typed per-PR snapshot used by `wave_state`.
 ///
 /// `unresolved_threads` and `threads_fetch_error` are fail-loud: when the
@@ -18,6 +27,7 @@ pub(all) struct WaveStatePR {
   fixes_pushed_at : Int64
   last_sha : String
   merge_gate_ready : Bool
+  audits : WaveStateAuditProgress?
 } derive(Debug, Eq)
 
 ///|
@@ -49,6 +59,10 @@ pub impl ToJson for WaveStatePR with to_json(self) -> Json {
   }
   match self.threads_fetch_error {
     Some(v) => obj.set("threads_fetch_error", v.to_json())
+    None => ()
+  }
+  match self.audits {
+    Some(v) => obj.set("audits", v.to_json())
     None => ()
   }
   obj.to_json()
@@ -93,6 +107,7 @@ fn wave_state_pr_from_tracked(
   tracked : @poller.TrackedPR,
   unresolved_threads : Int?,
   threads_fetch_error : String?,
+  audits? : WaveStateAuditProgress? = None,
 ) -> WaveStatePR {
   let merge_gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
@@ -113,6 +128,7 @@ fn wave_state_pr_from_tracked(
     fixes_pushed_at: tracked.fixes_pushed_at,
     last_sha: tracked.last_sha,
     merge_gate_ready,
+    audits,
   }
 }
 
@@ -283,6 +299,7 @@ pub fn plan_wave_state(
   heartbeat_reader : (String) -> Int64?,
   now_ms : Int64,
   beads_issue_reader? : (@types.Agent) -> String? = wave_state_default_beads_issue_reader,
+  audit_progress_reader? : (String) -> WaveStateAuditProgress? = wave_state_default_audit_progress,
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
   guard registry.get_opt(caller_id) is Some(agent) else {
     return Err(@types.ChoirError::agent_not_found(caller_id))
@@ -307,7 +324,8 @@ pub fn plan_wave_state(
           match ps.get(pr_number) {
             Some(tracked) => {
               let (threads, err) = threads_lookup(pr_number)
-              Some(wave_state_pr_from_tracked(tracked, threads, err))
+              let audits = audit_progress_reader(tracked.agent_id)
+              Some(wave_state_pr_from_tracked(tracked, threads, err, audits~))
             }
             None => None
           }
@@ -331,7 +349,8 @@ pub fn plan_wave_state(
     let pr = match tracked_by_agent.get(child_id) {
       Some(tracked) => {
         let (threads, err) = threads_lookup(tracked.pr_number)
-        Some(wave_state_pr_from_tracked(tracked, threads, err))
+        let audits = audit_progress_reader(child_id)
+        Some(wave_state_pr_from_tracked(tracked, threads, err, audits~))
       }
       None => None
     }
@@ -370,6 +389,13 @@ fn wave_state_default_heartbeat(_agent_id : String) -> Int64? {
 }
 
 ///|
+fn wave_state_default_audit_progress(
+  _agent_id : String,
+) -> WaveStateAuditProgress? {
+  None
+}
+
+///|
 /// Effect layer for `wave_state`. Fetches unresolved review threads per
 /// tracked PR via `fetch_unresolved_review_threads`, assembles a typed
 /// snapshot, and returns a JSON response. Thread-fetch errors are reported
@@ -381,6 +407,7 @@ pub async fn interpret_wave_state(
   poller_state : @poller.PollerState?,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   heartbeat_reader? : (String) -> Int64? = wave_state_default_heartbeat,
+  audit_progress_reader? : (String) -> WaveStateAuditProgress? = wave_state_default_audit_progress,
 ) -> @types.Response {
   let reg = match registry {
     Some(r) => r
@@ -489,6 +516,7 @@ pub async fn interpret_wave_state(
       heartbeat_reader,
       @env.now().reinterpret_as_int64(),
       beads_issue_reader~,
+      audit_progress_reader~,
     ) {
     Ok(s) => s
     Err(e) => return @types.Response::Err(e.message())

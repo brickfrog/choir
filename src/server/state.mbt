@@ -14,6 +14,90 @@ fn default_write_file_atomic(path : String, content : String) -> Bool {
 }
 
 ///|
+pub(all) struct AuditProgress {
+  cycles_so_far : Int
+  last_findings_count : Int?
+  last_receipt_path : String?
+  last_cycle_at_ms : Int64?
+  exhausted : Bool
+} derive(Debug, Eq)
+
+///|
+fn audit_progress_report_receipt_path(message : String) -> String? {
+  let marker = ".choir/audit-receipts/"
+  match message.find(marker) {
+    None => None
+    Some(start) => {
+      let mut end = start
+      while end < message.length() {
+        let ch = message[end]
+        if ch == ' ' ||
+          ch == '\n' ||
+          ch == '\r' ||
+          ch == '\t' ||
+          ch == ')' ||
+          ch == ']' ||
+          ch == '"' ||
+          ch == '\'' {
+          break
+        }
+        end = end + 1
+      }
+      if end > start {
+        Some(message[start:end].to_owned())
+      } else {
+        None
+      }
+    }
+  }
+}
+
+///|
+fn audit_progress_short_sha_is_valid(value : String) -> Bool {
+  if value.length() < 7 || value.length() > 12 {
+    return false
+  }
+  for i = 0; i < value.length(); i = i + 1 {
+    let c = value[i]
+    let is_digit = c >= '0' && c <= '9'
+    let is_lower_hex = c >= 'a' && c <= 'f'
+    if !is_digit && !is_lower_hex {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn audit_progress_short_sha_from_worker_id(agent_id : String) -> String? {
+  let marker = "audit-on-file-pr-"
+  match agent_id.find(marker) {
+    None => None
+    Some(marker_start) => {
+      let sha_start = marker_start + marker.length()
+      let mut sha_end = sha_start
+      while sha_end < agent_id.length() && agent_id[sha_end] != '-' {
+        sha_end = sha_end + 1
+      }
+      let token = agent_id[sha_start:sha_end].to_owned()
+      if audit_progress_short_sha_is_valid(token) {
+        Some(token)
+      } else {
+        None
+      }
+    }
+  }
+}
+
+///|
+fn audit_progress_receipt_path_from_worker_id(agent_id : String) -> String? {
+  match audit_progress_short_sha_from_worker_id(agent_id) {
+    Some(short_sha) => Some(".choir/audit-receipts/" + short_sha + ".json")
+    None => None
+  }
+}
+
+///|
 /// Shared server state, passed to all tool handlers.
 pub struct ServerState {
   config : @types.Config
@@ -32,6 +116,7 @@ pub struct ServerState {
     @aqueue.Queue[@tools.AuditOnFilePrReport],
   ]
   audit_cycle_counts : Map[String, Int]
+  audit_progress : Map[String, AuditProgress]
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
@@ -104,6 +189,7 @@ pub fn ServerState::new(
     handoff_delivered: {},
     audit_on_file_pr_reports: {},
     audit_cycle_counts: {},
+    audit_progress: {},
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
@@ -397,12 +483,115 @@ pub async fn ServerState::capture_audit_on_file_pr_report(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
 ) -> Unit {
+  self.capture_audit_progress(agent_id, report)
   match self.audit_on_file_pr_reports.get(agent_id) {
     Some(queue) => ignore(queue.try_put(report) catch { _ => false })
     None => ()
   }
   self.notify_parent_about_audit(agent_id, report, runner~)
   self.post_audit_pr_comment(agent_id, report, capture~)
+}
+
+///|
+fn ServerState::audit_progress_agent_id_for_capture(
+  self : ServerState,
+  agent_id : String,
+) -> String? {
+  match audit_progress_short_sha_from_worker_id(agent_id) {
+    Some(short_sha) => {
+      for tracked in self.poller.tracked.values() {
+        if tracked.last_sha.has_prefix(short_sha) {
+          return Some(tracked.agent_id)
+        }
+      }
+      None
+    }
+    None => {
+      for tracked in self.poller.tracked.values() {
+        if tracked.agent_id == agent_id {
+          return Some(agent_id)
+        }
+      }
+      None
+    }
+  }
+}
+
+///|
+fn ServerState::capture_audit_progress(
+  self : ServerState,
+  agent_id : String,
+  report : @tools.AuditOnFilePrReport,
+) -> Unit {
+  match self.audit_progress_agent_id_for_capture(agent_id) {
+    Some(tracked_agent_id) =>
+      self.update_audit_progress(
+        tracked_agent_id,
+        report,
+        receipt_path=audit_progress_receipt_path_from_worker_id(agent_id),
+      )
+    None => ()
+  }
+}
+
+///|
+pub fn ServerState::update_audit_progress(
+  self : ServerState,
+  agent_id : String,
+  report : @tools.AuditOnFilePrReport,
+  receipt_path? : String? = None,
+  now_ms? : Int64 = @env.now().reinterpret_as_int64(),
+) -> Unit {
+  let previous = self.audit_progress_for_agent(agent_id)
+  let previous_cycles = match previous {
+    Some(progress) => progress.cycles_so_far
+    None => 0
+  }
+  let recorded_cycles = self.audit_cycle_count_for_agent(agent_id)
+  let cycles_so_far = if recorded_cycles > previous_cycles {
+    recorded_cycles
+  } else {
+    previous_cycles + 1
+  }
+  let (last_findings_count, last_receipt_path) = if report.status ==
+    @types.Status::Success {
+    (
+      Some(@tools.parse_findings_count(report.message)),
+      match receipt_path {
+        Some(path) => Some(path)
+        None =>
+          match audit_progress_report_receipt_path(report.message) {
+            Some(path) => Some(path)
+            None => audit_progress_receipt_path_from_worker_id(agent_id)
+          }
+      },
+    )
+  } else {
+    (None, None)
+  }
+  self.audit_progress.set(agent_id, {
+    cycles_so_far,
+    last_findings_count,
+    last_receipt_path,
+    last_cycle_at_ms: Some(now_ms),
+    exhausted: false,
+  })
+}
+
+///|
+pub fn ServerState::audit_progress_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> AuditProgress? {
+  self.audit_progress.get(agent_id)
+}
+
+///|
+pub fn ServerState::clear_audit_progress_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  self.audit_progress.remove(agent_id)
 }
 
 ///|
@@ -429,6 +618,7 @@ pub fn ServerState::clear_audit_cycle_count_for_agent(
   agent_id : String,
 ) -> Unit {
   self.audit_cycle_counts.remove(agent_id)
+  self.clear_audit_progress_for_agent(agent_id)
 }
 
 ///|
