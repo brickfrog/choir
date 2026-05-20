@@ -365,6 +365,9 @@ fn agy_shared_cache_lock_dir(shared_root : String) -> String {
 }
 
 ///|
+let agy_shared_cache_lock_stale_ms : Int64 = 300000L
+
+///|
 fn agy_cache_temp_suffix(worktree_path : String) -> String {
   @sys.get_pid().to_string() +
   "-" +
@@ -398,11 +401,18 @@ fn agy_shared_cache_expected_dirs_exist(
 }
 
 ///|
-fn adopt_existing_agy_shared_cache_if_usable(
+fn mark_existing_agy_shared_cache_seeded(
   shared_root : String,
+  create_dir_all : (String) -> Bool,
   path_entry_exists : (String) -> Bool,
   write_file_sync : (String, String) -> Bool,
 ) -> Bool {
+  if !create_dir_all(shared_root + "/ms-playwright-go") {
+    return false
+  }
+  if !create_dir_all(shared_root + "/antigravity-cli-bin") {
+    return false
+  }
   if !agy_shared_cache_expected_dirs_exist(shared_root, path_entry_exists) {
     return false
   }
@@ -427,6 +437,88 @@ fn wait_for_agy_shared_cache_complete(
 }
 
 ///|
+fn agy_shared_cache_lock_holder_content(
+  worktree_path : String,
+  pid : Int,
+  now_ms : Int64,
+) -> String {
+  "pid=" +
+  pid.to_string() +
+  "\nstarted_ms=" +
+  now_ms.to_string() +
+  "\nholder=" +
+  worktree_path +
+  "\n"
+}
+
+///|
+fn agy_parse_unsigned_i64(raw : String) -> Int64? {
+  let s = raw.trim().to_owned()
+  if s == "" {
+    return None
+  }
+  let mut value = 0L
+  for c in s {
+    if c < '0' || c > '9' {
+      return None
+    }
+    value = value * 10L + (c.to_int() - '0'.to_int()).to_int64()
+  }
+  Some(value)
+}
+
+///|
+fn agy_lock_holder_field(content : String, key : String) -> String? {
+  let prefix = key + "="
+  for raw in content.split("\n") {
+    let line = raw.trim().to_owned()
+    if line.has_prefix(prefix) {
+      return Some(line[prefix.length():].trim().to_owned())
+    }
+  }
+  None
+}
+
+///|
+fn agy_lock_holder_started_ms(content : String) -> Int64? {
+  match agy_lock_holder_field(content, "started_ms") {
+    Some(raw) => agy_parse_unsigned_i64(raw)
+    None => None
+  }
+}
+
+///|
+fn agy_lock_holder_pid(content : String) -> Int? {
+  match agy_lock_holder_field(content, "pid") {
+    Some(raw) =>
+      match agy_parse_unsigned_i64(raw) {
+        Some(pid) => Some(pid.to_int())
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
+fn agy_shared_cache_lock_is_stale(
+  lock_dir : String,
+  read_file : (String) -> String,
+  pid_is_alive : (Int) -> Bool,
+  now_ms : Int64,
+) -> Bool {
+  let content = read_file(lock_dir + "/holder")
+  let pid_dead = match agy_lock_holder_pid(content) {
+    Some(pid) => !pid_is_alive(pid)
+    None => false
+  }
+  let too_old = match agy_lock_holder_started_ms(content) {
+    Some(started_ms) => now_ms - started_ms >= agy_shared_cache_lock_stale_ms
+    None => false
+  }
+  pid_dead || too_old
+}
+
+///|
 fn ensure_agy_shared_cache_seeded(
   shared_root : String,
   worktree_path : String,
@@ -436,13 +528,18 @@ fn ensure_agy_shared_cache_seeded(
   rename_file_sync? : (String, String) -> Bool = @sys.rename_file_sync,
   rm_rf? : (String) -> Bool = @sys.rm_rf,
   sleep_milliseconds? : (Int) -> Unit = @sys.sleep_milliseconds,
+  read_file? : (String) -> String = @sys.read_file,
+  pid_is_alive? : (Int) -> Bool = @sys.pid_is_alive,
+  now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   seed_temp? : (String, (String) -> Bool, (String, String) -> Bool) -> Bool = seed_agy_shared_cache_temp,
+  retry_stale_lock? : Bool = true,
 ) -> Bool {
   if path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
     return true
   }
-  if adopt_existing_agy_shared_cache_if_usable(
-      shared_root, path_entry_exists, write_file_sync,
+  if path_entry_exists(shared_root) &&
+    mark_existing_agy_shared_cache_seeded(
+      shared_root, create_dir_all, path_entry_exists, write_file_sync,
     ) {
     return true
   }
@@ -453,20 +550,61 @@ fn ensure_agy_shared_cache_seeded(
   if !create_dir_all(tmp_lock) {
     return false
   }
-  if !write_file_sync(tmp_lock + "/holder", worktree_path + "\n") {
+  if !write_file_sync(
+      tmp_lock + "/holder",
+      agy_shared_cache_lock_holder_content(
+        worktree_path,
+        @sys.get_pid(),
+        now_ms_fn(),
+      ),
+    ) {
     ignore(rm_rf(tmp_lock))
     return false
   }
   if !rename_file_sync(tmp_lock, lock_dir) {
     ignore(rm_rf(tmp_lock))
-    return wait_for_agy_shared_cache_complete(
-      shared_root, path_entry_exists, sleep_milliseconds,
-    )
+    if agy_shared_cache_lock_is_stale(
+        lock_dir,
+        read_file,
+        pid_is_alive,
+        now_ms_fn(),
+      ) ||
+      !wait_for_agy_shared_cache_complete(
+        shared_root, path_entry_exists, sleep_milliseconds,
+      ) {
+      if retry_stale_lock {
+        ignore(rm_rf(lock_dir))
+        return ensure_agy_shared_cache_seeded(
+          shared_root,
+          worktree_path,
+          path_entry_exists~,
+          create_dir_all~,
+          write_file_sync~,
+          rename_file_sync~,
+          rm_rf~,
+          sleep_milliseconds~,
+          read_file~,
+          pid_is_alive~,
+          now_ms_fn~,
+          seed_temp~,
+          retry_stale_lock=false,
+        )
+      }
+      return false
+    }
+    return true
   }
 
   if path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
     ignore(rm_rf(lock_dir))
     return true
+  }
+  if path_entry_exists(shared_root) {
+    let ok = mark_existing_agy_shared_cache_seeded(
+      shared_root, create_dir_all, path_entry_exists, write_file_sync,
+    )
+    ignore(rm_rf(lock_dir))
+    return ok
   }
   let tmp_root = shared_root + ".tmp." + suffix
   ignore(rm_rf(tmp_root))
@@ -475,20 +613,21 @@ fn ensure_agy_shared_cache_seeded(
     ignore(rm_rf(lock_dir))
     return false
   }
-  if path_entry_exists(shared_root) &&
-    !path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
-    if !rm_rf(shared_root) {
-      ignore(rm_rf(tmp_root))
-      ignore(rm_rf(lock_dir))
-      return false
-    }
-  }
   if !rename_file_sync(tmp_root, shared_root) {
     ignore(rm_rf(tmp_root))
-    if !path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+    if path_entry_exists(shared_root) {
+      let ok = if path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+        true
+      } else {
+        mark_existing_agy_shared_cache_seeded(
+          shared_root, create_dir_all, path_entry_exists, write_file_sync,
+        )
+      }
       ignore(rm_rf(lock_dir))
-      return false
+      return ok
     }
+    ignore(rm_rf(lock_dir))
+    return false
   }
   ignore(rm_rf(lock_dir))
   path_entry_exists(agy_shared_cache_complete_path(shared_root))
@@ -529,6 +668,9 @@ fn run_native_agy_cache_links_paths_with_io(
   rm_rf? : (String) -> Bool = @sys.rm_rf,
   symlink_force? : (String, String) -> Bool = @sys.symlink_force,
   sleep_milliseconds? : (Int) -> Unit = @sys.sleep_milliseconds,
+  read_file? : (String) -> String = @sys.read_file,
+  pid_is_alive? : (Int) -> Bool = @sys.pid_is_alive,
+  now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   seed_temp? : (String, (String) -> Bool, (String, String) -> Bool) -> Bool = seed_agy_shared_cache_temp,
 ) -> Int {
   if project_dir == "" || worktree_path == "" {
@@ -544,6 +686,9 @@ fn run_native_agy_cache_links_paths_with_io(
       rename_file_sync~,
       rm_rf~,
       sleep_milliseconds~,
+      read_file~,
+      pid_is_alive~,
+      now_ms_fn~,
       seed_temp~,
     ) {
     return 1

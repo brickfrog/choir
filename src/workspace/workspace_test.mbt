@@ -1206,12 +1206,14 @@ test "run_native_agy_cache_links_command adopts existing unmarked shared cache" 
   let shared_root = project + "/.choir/agy-shared-cache"
   let shared_playwright = shared_root + "/ms-playwright-go"
   let shared_bin = shared_root + "/antigravity-cli-bin"
+  let shared_extra = shared_root + "/preexisting"
   ignore(@sys.rm_rf(dir))
   assert_true(@sys.create_dir_all(worktree))
   assert_true(@sys.create_dir_all(shared_playwright))
-  assert_true(@sys.create_dir_all(shared_bin))
+  assert_true(@sys.create_dir_all(shared_extra))
   assert_true(@sys.write_file_sync(shared_playwright + "/sentinel.txt", "keep"))
-  assert_true(@sys.write_file_sync(shared_bin + "/agy-sentinel", "keep-bin"))
+  assert_true(@sys.write_file_sync(shared_extra + "/sentinel.txt", "keep-root"))
+  assert_false(@sys.path_entry_exists(shared_bin))
   assert_false(@sys.path_entry_exists(shared_root + "/.complete"))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
@@ -1219,14 +1221,45 @@ test "run_native_agy_cache_links_command adopts existing unmarked shared cache" 
 
   let home = worktree + "/.choir/agy-home"
   assert_true(@sys.path_entry_exists(shared_root + "/.complete"))
+  assert_true(@sys.path_entry_exists(shared_bin))
   assert_eq(
     @sys.read_file(home + "/.cache/ms-playwright-go/sentinel.txt"),
     "keep",
   )
-  assert_eq(
-    @sys.read_file(home + "/.gemini/antigravity-cli/bin/agy-sentinel"),
-    "keep-bin",
+  assert_eq(@sys.read_file(shared_extra + "/sentinel.txt"), "keep-root")
+  assert_true(@sys.path_entry_exists(home + "/.gemini/antigravity-cli/bin"))
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_cache_links_command reclaims stale seed lock" {
+  let dir = "/tmp/choir-agy-cache-stale-lock-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let worktree = project + "/.choir/worktrees/leaf"
+  let shared_root = project + "/.choir/agy-shared-cache"
+  let lock_dir = shared_root + ".lock"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(worktree))
+  assert_true(@sys.create_dir_all(lock_dir))
+  assert_true(
+    @sys.write_file_sync(
+      lock_dir + "/holder",
+      "pid=0\nstarted_ms=0\nholder=crashed-seeder\n",
+    ),
   )
+  assert_false(@sys.path_entry_exists(shared_root + "/.complete"))
+
+  let cmd = @workspace.agy_cache_links(project, worktree)
+  assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 0)
+
+  let home = worktree + "/.choir/agy-home"
+  assert_true(@sys.path_entry_exists(shared_root + "/.complete"))
+  assert_false(@sys.path_entry_exists(lock_dir))
+  assert_true(@sys.path_entry_exists(home + "/.cache/ms-playwright-go"))
+  assert_true(@sys.path_entry_exists(home + "/.gemini/antigravity-cli/bin"))
   ignore(@sys.rm_rf(dir))
 }
 
