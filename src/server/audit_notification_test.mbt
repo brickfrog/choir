@@ -131,8 +131,31 @@ test "audit_digest_body formats normal cycle body with verbatim findings" {
 }
 
 ///|
-test "audit_digest_body tags exhausted cycle and TL decision suffix" {
+test "TL exhaustion notification uses [AUDIT LOOP EXHAUSTED] per spec L18" {
   let body = audit_digest_body(
+    {
+      leaf_agent_id: "main.leaf",
+      parent_id: "main.tl",
+      pr_number: 24,
+      branch: "feature/audit",
+      receipt_path: ".choir/audit-receipts/abcdef123456.json",
+      cycle: 3,
+      findings_count: 1,
+      exhausted: true,
+    },
+    "Finding 1: alpha\n",
+  )
+  assert_true(
+    body.has_prefix(
+      "[AUDIT LOOP EXHAUSTED] 3 cycles, 1 findings remain on PR #24 — TL decision required\nbranch: feature/audit\nreceipt: .choir/audit-receipts/abcdef123456.json\n\n",
+    ),
+  )
+  assert_true(body.contains("Finding 1: alpha\n"))
+}
+
+///|
+test "PR comment exhaustion uses [AUDIT cycle N — LOOP EXHAUSTED] per spec L21" {
+  let body = audit_pr_comment_body(
     {
       leaf_agent_id: "main.leaf",
       parent_id: "main.tl",
@@ -150,6 +173,8 @@ test "audit_digest_body tags exhausted cycle and TL decision suffix" {
       "[AUDIT cycle 3 — LOOP EXHAUSTED] PR #24 on feature/audit — TL decision required\n",
     ),
   )
+  assert_true(body.contains("receipt: .choir/audit-receipts/abcdef123456.json"))
+  assert_true(body.contains("Finding 1: alpha\n"))
 }
 
 ///|
@@ -394,7 +419,7 @@ test "audit_digest_context tags configured max cycle exhausted" {
       assert_true(ctx.exhausted)
       assert_true(
         audit_digest_body(ctx, "Finding 1: alpha\n").has_prefix(
-          "[AUDIT cycle 2 — LOOP EXHAUSTED] PR #24 on feature/audit — TL decision required\n",
+          "[AUDIT LOOP EXHAUSTED] 2 cycles, 1 findings remain on PR #24 — TL decision required\nbranch: feature/audit\nreceipt: .choir/audit-receipts/abcdef123456.json\n\n",
         ),
       )
     }
@@ -529,8 +554,11 @@ async test "capture_audit_on_file_pr_report tags exhausted notification and PR c
     },
   )
   assert_eq(delivery_cmds.length(), 1)
+  assert_true(delivery_cmds[0].args[3].contains("[AUDIT LOOP EXHAUSTED]"))
   assert_true(
-    delivery_cmds[0].args[3].contains("[AUDIT cycle 1 — LOOP EXHAUSTED]"),
+    delivery_cmds[0].args[3].contains(
+      "1 cycles, 1 findings remain on PR #24 — TL decision required",
+    ),
   )
   assert_true(state.run_next_audit_pr_comment_task())
   assert_eq(comment_cmds.length(), 1)
@@ -652,7 +680,7 @@ async test "audit_max_rounds=1 returns AuditLoopExhausted after one cycle per sp
   assert_eq(delivery_cmds.length(), 1)
   assert_true(
     delivery_cmds[0].args[3].contains(
-      "[AUDIT cycle 1 — LOOP EXHAUSTED] PR #42 on feature/audit-tl-visibility — TL decision required\n",
+      "[AUDIT LOOP EXHAUSTED] 1 cycles, 1 findings remain on PR #42 — TL decision required\nbranch: feature/audit-tl-visibility\nreceipt: .choir/audit-receipts/abcdef123456.json\n\n",
     ),
   )
   assert_eq(comment_cmds.length(), 1)
@@ -797,7 +825,7 @@ async test "file_pr exhaustion drives real ServerState audit visibility pipeline
   )
   assert_true(
     notification_2.contains(
-      "[AUDIT cycle 2 — LOOP EXHAUSTED] PR #42 on feature/audit-tl-visibility — TL decision required\n",
+      "[AUDIT LOOP EXHAUSTED] 2 cycles, 1 findings remain on PR #42 — TL decision required\nbranch: feature/audit-tl-visibility\n",
     ),
   )
   assert_false(notification_1.contains("LOOP EXHAUSTED"))
@@ -990,7 +1018,9 @@ async test "clean audit resets cycle counter before next consecutive findings ru
   assert_eq(state.audit_cycle_count_for_agent(leaf_id), 2)
   assert_eq(delivery_cmds.length(), 4)
   assert_true(
-    delivery_cmds[3].args[3].contains("[AUDIT cycle 2 — LOOP EXHAUSTED]"),
+    delivery_cmds[3].args[3].contains(
+      "[AUDIT LOOP EXHAUSTED] 2 cycles, 1 findings remain on PR #42",
+    ),
   )
   assert_eq(comment_cmds.length(), 4)
 }

@@ -383,6 +383,37 @@ pub fn audit_digest_body(
   ctx : AuditDigestContext,
   findings_text : String,
 ) -> String {
+  if ctx.exhausted {
+    tl_exhaustion_notification_body(ctx, findings_text)
+  } else {
+    audit_pr_comment_body(ctx, findings_text)
+  }
+}
+
+///|
+pub fn tl_exhaustion_notification_body(
+  ctx : AuditDigestContext,
+  findings_text : String,
+) -> String {
+  "[AUDIT LOOP EXHAUSTED] " +
+  ctx.cycle.to_string() +
+  " cycles, " +
+  ctx.findings_count.to_string() +
+  " findings remain on PR #" +
+  ctx.pr_number.to_string() +
+  " — TL decision required\nbranch: " +
+  ctx.branch +
+  "\nreceipt: " +
+  ctx.receipt_path +
+  "\n\n" +
+  findings_text
+}
+
+///|
+pub fn audit_pr_comment_body(
+  ctx : AuditDigestContext,
+  findings_text : String,
+) -> String {
   let tag = if ctx.exhausted {
     "[AUDIT cycle " + ctx.cycle.to_string() + " — LOOP EXHAUSTED]"
   } else {
@@ -585,7 +616,7 @@ pub fn ServerState::post_audit_pr_comment(
 ) -> Unit {
   match self.audit_digest_context(agent_id, report) {
     Some(ctx) => {
-      let body = audit_digest_body(ctx, report.message)
+      let body = audit_pr_comment_body(ctx, report.message)
       ignore(
         self.enqueue_audit_pr_comment_task({
           run: async fn() {

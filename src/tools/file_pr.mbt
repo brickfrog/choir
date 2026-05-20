@@ -1567,7 +1567,11 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     ) {
     Some(existing) => {
       let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
-      cycles = if recorded_cycles <= 0 { 1 } else { recorded_cycles }
+      cycles = if recorded_cycles <= 0 {
+        record_audit_cycle_for_agent(tracked_agent_id)
+      } else {
+        recorded_cycles
+      }
       emit_file_pr_auto_audit_log_line(
         project_dir,
         append_file,
