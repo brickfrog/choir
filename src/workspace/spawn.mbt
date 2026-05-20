@@ -668,14 +668,21 @@ pub fn init_tl_zellij_tab_command(
   branch : String,
   lean? : Bool = false,
 ) -> Command {
+  let tl_agent_type = tl_type_agent_type(tl_type)
   let inner = zellij_launch_inner_command(
     init_tl_agent_command(tl_type, project_dir, lean~),
   )
+  let tl_home_export = if tl_agent_type == @types.AgentType::Gemini {
+    export_assignment("HOME", agy_home_path(project_dir))
+  } else {
+    ""
+  }
   let env_exports = export_assignment("CHOIR_AGENT_ID", "root") +
     export_assignment("CHOIR_BRANCH", branch) +
     export_assignment("CHOIR_PARENT_BRANCH", branch) +
     export_assignment("CHOIR_ROLE", "tl") +
     export_assignment("CHOIR_WORKSPACE", project_dir) +
+    tl_home_export +
     export_assignment(
       "CHOIR_TERMINAL_TARGET",
       local_target_for(session, "TL", @types.IsolationMode::Worktree).to_string(),
