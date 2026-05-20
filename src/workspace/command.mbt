@@ -519,7 +519,13 @@ fn agy_shared_cache_lock_content_is_stale(
     None => true
   }
   let too_old = match agy_lock_holder_started_ms(content) {
-    Some(started_ms) => now_ms - started_ms >= agy_shared_cache_lock_stale_ms
+    Some(started_ms) => {
+      let delta = now_ms - started_ms
+      // A negative delta means the holder's start time is in the future (clock
+      // skew or a backward jump) — an untrustworthy lock; treat it as stale so
+      // reclamation cannot deadlock waiters spinning on a never-stale lock.
+      delta < 0L || delta >= agy_shared_cache_lock_stale_ms
+    }
     None => true
   }
   pid_dead || too_old
@@ -751,6 +757,17 @@ fn ensure_agy_shared_cache_seeded(
       ignore(rm_rf(lock_dir))
       return false
     }
+  }
+  // If shared_root already holds the expected cold-cache layout, another leaf
+  // is populating it (agy first-run download in progress via the symlink).
+  // Replacing it with our own un-populated temp seed would wipe that download —
+  // accept the existing cold cache and discard our temp seed instead.
+  if path_entry_exists(shared_root) &&
+    !tmp_populated &&
+    agy_shared_cache_expected_dirs_exist(shared_root, path_entry_exists) {
+    ignore(rm_rf(tmp_root))
+    ignore(rm_rf(lock_dir))
+    return true
   }
   if path_entry_exists(shared_root) && !rm_rf(shared_root) {
     ignore(rm_rf(tmp_root))
