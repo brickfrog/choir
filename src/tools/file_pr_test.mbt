@@ -1282,7 +1282,7 @@ async test "file_pr_auto_audit does not record a new cycle when awaiting in-flig
 }
 
 ///|
-async test "file_pr_auto_audit clamps missing in-flight cycle count before exhaustion" {
+async test "in-flight reuse with stale cycle counter persists clamp to ServerState" {
   let project_dir = "/tmp/choir-fpr-auto-audit-in-flight-zero-cycle-" +
     @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
@@ -1293,6 +1293,9 @@ async test "file_pr_auto_audit clamps missing in-flight cycle count before exhau
   )
   let mut spawn_calls = 0
   let mut record_calls = 0
+  let mut server_state_cycles = 0
+  let cycle_reads : Array[Int] = []
+  let recorded_agents : Array[String] = []
   let got = file_pr_auto_audit_for_missing_receipt(
     project_dir,
     project_dir,
@@ -1323,11 +1326,16 @@ async test "file_pr_auto_audit clamps missing in-flight cycle count before exhau
     fn(_) { true },
     list_audit_workers=fn() { [existing] },
     audit_max_rounds=1,
-    record_audit_cycle_for_agent=fn(_) {
+    record_audit_cycle_for_agent=fn(agent_id) {
+      recorded_agents.push(agent_id)
       record_calls = record_calls + 1
-      record_calls
+      server_state_cycles = server_state_cycles + 1
+      server_state_cycles
     },
-    audit_cycle_count_for_agent=fn(_) { 0 },
+    audit_cycle_count_for_agent=fn(_) {
+      cycle_reads.push(server_state_cycles)
+      server_state_cycles
+    },
   )
   match got {
     Err(e) => {
@@ -1338,7 +1346,10 @@ async test "file_pr_auto_audit clamps missing in-flight cycle count before exhau
     Ok(_) => fail("expected in-flight audit exhaustion")
   }
   assert_eq(spawn_calls, 0)
-  assert_eq(record_calls, 0)
+  assert_eq(record_calls, 1)
+  assert_eq(server_state_cycles, 1)
+  @debug.assert_eq(cycle_reads, [0])
+  @debug.assert_eq(recorded_agents, ["feature/auto-audit"])
 }
 
 ///|
