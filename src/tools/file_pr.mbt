@@ -1566,7 +1566,8 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
       audit_on_file_pr_slug_prefix(head_sha),
     ) {
     Some(existing) => {
-      cycles = audit_cycle_count_for_agent(tracked_agent_id)
+      let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
+      cycles = if recorded_cycles <= 0 { 1 } else { recorded_cycles }
       emit_file_pr_auto_audit_log_line(
         project_dir,
         append_file,
@@ -1683,7 +1684,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     now_ms_fn~,
   )
   if findings_count > 0 {
-    if audit_max_rounds > 0 && cycles > audit_max_rounds {
+    if audit_max_rounds > 0 && cycles >= audit_max_rounds {
       return Err(
         @types.ChoirError::audit_loop_exhausted(
           cycles, findings_count, receipt_path,

@@ -365,7 +365,7 @@ pub fn ServerState::audit_digest_context(
   let findings_count = @tools.parse_findings_count(report.message)
   let exhausted = findings_count > 0 &&
     self.config.audit_max_rounds > 0 &&
-    cycle > self.config.audit_max_rounds
+    cycle >= self.config.audit_max_rounds
   Some({
     leaf_agent_id: tracked.agent_id,
     parent_id,
@@ -765,7 +765,6 @@ pub fn ServerState::clear_audit_cycle_count_for_agent(
   agent_id : String,
 ) -> Unit {
   self.audit_cycle_counts.remove(agent_id)
-  self.clear_audit_progress_for_agent(agent_id)
 }
 
 ///|
