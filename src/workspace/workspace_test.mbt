@@ -148,6 +148,7 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
   assert_true(script.contains("claude"))
   assert_true(script.contains("CHOIR_AGENT_ID='root'"))
   assert_true(script.contains("CHOIR_BRANCH='main'"))
+  assert_false(script.contains("HOME="))
   assert_true(script.contains("choir tl-policy-watch --pid"))
   assert_true(script.contains("exec claude"))
   assert_false(script.contains("child_pid=$!"))
@@ -165,10 +166,42 @@ test "init_tl_zellij_tab_command wraps TL with policy watcher shell" {
 }
 
 ///|
+test "init_tl_zellij_tab_command exports HOME only for gemini TL" {
+  let gemini = @workspace.init_tl_zellij_tab_command(
+    "howdy", "/proj", "gemini", "main",
+  )
+  let gemini_script = gemini.args[11]
+  assert_true(gemini_script.contains("HOME='/proj/.choir/agy-home'"))
+  assert_true(gemini_script.contains("CHOIR_AGENT_ID='root'"))
+
+  let claude = @workspace.init_tl_zellij_tab_command(
+    "howdy", "/proj", "claude", "main",
+  )
+  let claude_script = claude.args[11]
+  assert_false(claude_script.contains("HOME='/proj/.choir/agy-home'"))
+  assert_false(claude_script.contains("HOME="))
+}
+
+///|
 test "normalize_tl_type maps agent alias" {
   assert_eq(@workspace.normalize_tl_type("agent"), "cursor_agent")
   assert_eq(@workspace.normalize_tl_type("cursor_agent"), "cursor_agent")
   assert_eq(@workspace.normalize_tl_type("codex"), "codex")
+}
+
+///|
+test "resolve_agy_binary_with_probe prefers agy and falls back to antigravity" {
+  assert_eq(
+    @workspace.resolve_agy_binary_with_probe(fn(name) {
+      name == "agy" || name == "antigravity"
+    }),
+    "agy",
+  )
+  assert_eq(
+    @workspace.resolve_agy_binary_with_probe(fn(name) { name == "antigravity" }),
+    "antigravity",
+  )
+  assert_eq(@workspace.resolve_agy_binary_with_probe(fn(_) { false }), "agy")
 }
 
 ///|
@@ -271,7 +304,11 @@ test "agent_launch_command for each AgentType" {
   let spec_codex = { ..spec_claude, agent_type: @types.AgentType::Codex }
 
   let cmd_claude = @workspace.agent_launch_command(spec_claude, "/path")
-  let cmd_gemini = @workspace.agent_launch_command(spec_gemini, "/path")
+  let cmd_gemini = @workspace.agent_launch_command(spec_gemini, "/path", agy_path_probe=fn(
+    name,
+  ) {
+    name == "agy"
+  })
   let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
   let cmd_codex = @workspace.agent_launch_command(spec_codex, "/path")
 
@@ -433,6 +470,40 @@ test "agent_launch_command supports command_override" {
   assert_eq(cmd.program, "my-gemini")
   assert_eq(cmd.args[0], "--flag")
   @debug.assert_eq(cmd.workdir, Some("/path"))
+}
+
+///|
+test "agent_launch_command falls back to antigravity for agy-backed types" {
+  let spec = @types.SpawnSpec::{
+    slug: "test-slug",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    task: "do work",
+    task_contract: None,
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main",
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  let probe = fn(name : String) -> Bool { name == "antigravity" }
+  let gemini = @workspace.agent_launch_command(
+    spec,
+    "/path",
+    agy_path_probe=probe,
+  )
+  assert_eq(gemini.program, "antigravity")
+  let unknown = @workspace.agent_launch_command(
+    { ..spec, agent_type: @types.AgentType::Unknown },
+    "/path",
+    agy_path_probe=probe,
+  )
+  assert_eq(unknown.program, "antigravity")
 }
 
 ///|
@@ -1088,18 +1159,26 @@ test "run_native_agy_cache_links_command is idempotent and preserves shared cach
     @env.now().reinterpret_as_int64().to_string()
   let project = dir + "/project"
   let worktree = project + "/.choir/worktrees/leaf"
+  let second_worktree = project + "/.choir/worktrees/second-leaf"
   ignore(@sys.rm_rf(dir))
   assert_true(@sys.create_dir_all(worktree))
+  assert_true(@sys.create_dir_all(second_worktree))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
   assert_eq(cmd.program, @workspace.native_agy_cache_links_program)
   assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 0)
 
   let home = worktree + "/.choir/agy-home"
+  let second_home = second_worktree + "/.choir/agy-home"
   let playwright_link = home + "/.cache/ms-playwright-go"
+  let second_playwright_link = second_home + "/.cache/ms-playwright-go"
   let bin_link = home + "/.gemini/antigravity-cli/bin"
+  let second_bin_link = second_home + "/.gemini/antigravity-cli/bin"
   let shared_playwright = project + "/.choir/agy-shared-cache/ms-playwright-go"
   let shared_bin = project + "/.choir/agy-shared-cache/antigravity-cli-bin"
+  assert_true(
+    @sys.path_entry_exists(project + "/.choir/agy-shared-cache/.complete"),
+  )
   assert_true(
     @sys.write_file_sync(shared_playwright + "/sentinel.txt", "shared"),
   )
@@ -1109,6 +1188,45 @@ test "run_native_agy_cache_links_command is idempotent and preserves shared cach
   assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 0)
   assert_eq(@sys.read_file(playwright_link + "/sentinel.txt"), "shared")
   assert_eq(@sys.read_file(bin_link + "/agy-sentinel"), "bin")
+  let second_cmd = @workspace.agy_cache_links(project, second_worktree)
+  assert_eq(@workspace.run_native_agy_cache_links_command(second_cmd), 0)
+  assert_eq(@sys.read_file(second_playwright_link + "/sentinel.txt"), "shared")
+  assert_eq(@sys.read_file(second_bin_link + "/agy-sentinel"), "bin")
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_cache_links_command adopts existing unmarked shared cache" {
+  let dir = "/tmp/choir-agy-cache-adopt-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let worktree = project + "/.choir/worktrees/leaf"
+  let shared_root = project + "/.choir/agy-shared-cache"
+  let shared_playwright = shared_root + "/ms-playwright-go"
+  let shared_bin = shared_root + "/antigravity-cli-bin"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(worktree))
+  assert_true(@sys.create_dir_all(shared_playwright))
+  assert_true(@sys.create_dir_all(shared_bin))
+  assert_true(@sys.write_file_sync(shared_playwright + "/sentinel.txt", "keep"))
+  assert_true(@sys.write_file_sync(shared_bin + "/agy-sentinel", "keep-bin"))
+  assert_false(@sys.path_entry_exists(shared_root + "/.complete"))
+
+  let cmd = @workspace.agy_cache_links(project, worktree)
+  assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 0)
+
+  let home = worktree + "/.choir/agy-home"
+  assert_true(@sys.path_entry_exists(shared_root + "/.complete"))
+  assert_eq(
+    @sys.read_file(home + "/.cache/ms-playwright-go/sentinel.txt"),
+    "keep",
+  )
+  assert_eq(
+    @sys.read_file(home + "/.gemini/antigravity-cli/bin/agy-sentinel"),
+    "keep-bin",
+  )
   ignore(@sys.rm_rf(dir))
 }
 
@@ -1230,6 +1348,36 @@ test "agy mcp config and cursor mcp json use native file commands" {
   assert_eq(pre_invocation.length(), 1)
   assert_eq(post_invocation.length(), 1)
   assert_eq(stop_hooks.length(), 1)
+  guard pre_invocation[0] is Object(pre_hook) else {
+    fail("PreInvocation hook object missing")
+  }
+  guard post_invocation[0] is Object(post_hook) else {
+    fail("PostInvocation hook object missing")
+  }
+  guard stop_hooks[0] is Object(stop_hook) else {
+    fail("Stop hook object missing")
+  }
+  @debug.assert_eq(pre_hook.get("type"), Some("command".to_json()))
+  @debug.assert_eq(
+    pre_hook.get("command"),
+    Some("extism call '/hooks/hook.wasm' before_model --wasi".to_json()),
+  )
+  @debug.assert_eq(pre_hook.get("timeout"), Some(Int::to_json(60)))
+  @debug.assert_eq(post_hook.get("type"), Some("command".to_json()))
+  @debug.assert_eq(
+    post_hook.get("command"),
+    Some("extism call '/hooks/hook.wasm' after_model --wasi".to_json()),
+  )
+  @debug.assert_eq(post_hook.get("timeout"), Some(Int::to_json(60)))
+  @debug.assert_eq(stop_hook.get("type"), Some("command".to_json()))
+  @debug.assert_eq(
+    stop_hook.get("command"),
+    Some("choir hook worker-exit --runtime gemini".to_json()),
+  )
+  @debug.assert_eq(stop_hook.get("timeout"), Some(Int::to_json(60)))
+  @debug.assert_eq(pre_hook.get("stdin"), None)
+  @debug.assert_eq(post_hook.get("stdin"), None)
+  @debug.assert_eq(stop_hook.get("stdin"), None)
 
   let cur = @workspace.write_cursor_mcp_json("/wt", "main.leaf", "dev")
   assert_eq(cur.program, @workspace.native_write_workspace_rel_file_program)

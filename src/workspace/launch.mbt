@@ -120,6 +120,41 @@ pub fn tl_type_agent_type(tl_type : String) -> @types.AgentType {
 }
 
 ///|
+fn path_var_has_program(
+  name : String,
+  path_var : String,
+  path_exists : (String) -> Bool,
+) -> Bool {
+  for raw in path_var.split(":") {
+    let dir = raw.trim().to_owned()
+    if dir == "" {
+      continue
+    }
+    if path_exists(dir + "/" + name) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn agy_binary_on_path(name : String) -> Bool {
+  let path_var = @sys.getenv("PATH").unwrap_or("/usr/local/bin:/usr/bin:/bin")
+  path_var_has_program(name, path_var, @sys.path_exists)
+}
+
+///|
+pub fn resolve_agy_binary_with_probe(path_probe : (String) -> Bool) -> String {
+  if path_probe("agy") {
+    "agy"
+  } else if path_probe("antigravity") {
+    "antigravity"
+  } else {
+    "agy"
+  }
+}
+
+///|
 fn provider_launch_command(
   agent_type : @types.AgentType,
   role : @types.Role,
@@ -132,6 +167,7 @@ fn provider_launch_command(
   extra_mcp_servers_json? : String? = None,
   tl_init_mode? : Bool = false,
   lean? : Bool = false,
+  agy_path_probe? : (String) -> Bool = agy_binary_on_path,
 ) -> Command {
   let claude_mcp = if tl_init_mode {
     ["--mcp-config", init_tl_claude_mcp_config_json(), "--strict-mcp-config"]
@@ -186,7 +222,9 @@ fn provider_launch_command(
     }
     Gemini =>
       {
-        program: cmd_program.unwrap_or("agy"),
+        program: cmd_program.unwrap_or(
+          resolve_agy_binary_with_probe(agy_path_probe),
+        ),
         args: [
           ..cmd_extra_args, "--dangerously-skip-permissions", "--prompt-interactive",
           ..task_args,
@@ -224,7 +262,9 @@ fn provider_launch_command(
       }
     Unknown =>
       {
-        program: cmd_program.unwrap_or("agy"),
+        program: cmd_program.unwrap_or(
+          resolve_agy_binary_with_probe(agy_path_probe),
+        ),
         args: [
           ..cmd_extra_args, "--dangerously-skip-permissions", "--prompt-interactive",
           ..task_args,
@@ -242,6 +282,7 @@ pub fn agent_launch_command(
   shell_command? : String? = None,
   command_override? : String? = None,
   extra_mcp_servers_json? : String? = None,
+  agy_path_probe? : (String) -> Bool = agy_binary_on_path,
 ) -> Command {
   let parts = match command_override {
     Some(cmd) => split_words(cmd)
@@ -267,6 +308,7 @@ pub fn agent_launch_command(
     cmd_program~,
     cmd_extra_args~,
     extra_mcp_servers_json~,
+    agy_path_probe~,
   )
   match shell_command {
     Some(shell) => wrap_with_shell(cmd, shell)

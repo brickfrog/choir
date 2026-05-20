@@ -355,20 +355,221 @@ fn agy_shared_cache_root(project_dir : String) -> String {
 }
 
 ///|
-fn symlink_shared_cache_dir(shared_dir : String, link_path : String) -> Bool {
-  if !@sys.create_dir_all(shared_dir) {
+fn agy_shared_cache_complete_path(shared_root : String) -> String {
+  shared_root + "/.complete"
+}
+
+///|
+fn agy_shared_cache_lock_dir(shared_root : String) -> String {
+  shared_root + ".lock"
+}
+
+///|
+fn agy_cache_temp_suffix(worktree_path : String) -> String {
+  @sys.get_pid().to_string() +
+  "-" +
+  @env.now().reinterpret_as_int64().to_string() +
+  "-" +
+  @types.sanitize_agent_id(worktree_path)
+}
+
+///|
+fn seed_agy_shared_cache_temp(
+  temp_root : String,
+  create_dir_all : (String) -> Bool,
+  write_file_sync : (String, String) -> Bool,
+) -> Bool {
+  if !create_dir_all(temp_root + "/ms-playwright-go") {
     return false
   }
-  let parent = parent_dir_for_file(link_path)
-  if !@sys.create_dir_all(parent) {
+  if !create_dir_all(temp_root + "/antigravity-cli-bin") {
     return false
   }
-  if @sys.path_entry_exists(link_path) {
-    if !@sys.rm_rf(link_path) {
+  write_file_sync(agy_shared_cache_complete_path(temp_root), "complete\n")
+}
+
+///|
+fn agy_shared_cache_expected_dirs_exist(
+  shared_root : String,
+  path_entry_exists : (String) -> Bool,
+) -> Bool {
+  path_entry_exists(shared_root + "/ms-playwright-go") &&
+  path_entry_exists(shared_root + "/antigravity-cli-bin")
+}
+
+///|
+fn adopt_existing_agy_shared_cache_if_usable(
+  shared_root : String,
+  path_entry_exists : (String) -> Bool,
+  write_file_sync : (String, String) -> Bool,
+) -> Bool {
+  if !agy_shared_cache_expected_dirs_exist(shared_root, path_entry_exists) {
+    return false
+  }
+  let complete = agy_shared_cache_complete_path(shared_root)
+  write_file_sync(complete, "complete\n") && path_entry_exists(complete)
+}
+
+///|
+fn wait_for_agy_shared_cache_complete(
+  shared_root : String,
+  path_entry_exists : (String) -> Bool,
+  sleep_milliseconds : (Int) -> Unit,
+) -> Bool {
+  let complete = agy_shared_cache_complete_path(shared_root)
+  for _i = 0; _i < 200; _i = _i + 1 {
+    if path_entry_exists(complete) {
+      return true
+    }
+    sleep_milliseconds(25)
+  }
+  path_entry_exists(complete)
+}
+
+///|
+fn ensure_agy_shared_cache_seeded(
+  shared_root : String,
+  worktree_path : String,
+  path_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
+  create_dir_all? : (String) -> Bool = @sys.create_dir_all,
+  write_file_sync? : (String, String) -> Bool = @sys.write_file_sync,
+  rename_file_sync? : (String, String) -> Bool = @sys.rename_file_sync,
+  rm_rf? : (String) -> Bool = @sys.rm_rf,
+  sleep_milliseconds? : (Int) -> Unit = @sys.sleep_milliseconds,
+  seed_temp? : (String, (String) -> Bool, (String, String) -> Bool) -> Bool = seed_agy_shared_cache_temp,
+) -> Bool {
+  if path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+    return true
+  }
+  if adopt_existing_agy_shared_cache_if_usable(
+      shared_root, path_entry_exists, write_file_sync,
+    ) {
+    return true
+  }
+  let suffix = agy_cache_temp_suffix(worktree_path)
+  let lock_dir = agy_shared_cache_lock_dir(shared_root)
+  let tmp_lock = lock_dir + ".tmp." + suffix
+  ignore(rm_rf(tmp_lock))
+  if !create_dir_all(tmp_lock) {
+    return false
+  }
+  if !write_file_sync(tmp_lock + "/holder", worktree_path + "\n") {
+    ignore(rm_rf(tmp_lock))
+    return false
+  }
+  if !rename_file_sync(tmp_lock, lock_dir) {
+    ignore(rm_rf(tmp_lock))
+    return wait_for_agy_shared_cache_complete(
+      shared_root, path_entry_exists, sleep_milliseconds,
+    )
+  }
+
+  if path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+    ignore(rm_rf(lock_dir))
+    return true
+  }
+  let tmp_root = shared_root + ".tmp." + suffix
+  ignore(rm_rf(tmp_root))
+  if !seed_temp(tmp_root, create_dir_all, write_file_sync) {
+    ignore(rm_rf(tmp_root))
+    ignore(rm_rf(lock_dir))
+    return false
+  }
+  if path_entry_exists(shared_root) &&
+    !path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+    if !rm_rf(shared_root) {
+      ignore(rm_rf(tmp_root))
+      ignore(rm_rf(lock_dir))
       return false
     }
   }
-  @sys.symlink_force(shared_dir, link_path)
+  if !rename_file_sync(tmp_root, shared_root) {
+    ignore(rm_rf(tmp_root))
+    if !path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+      ignore(rm_rf(lock_dir))
+      return false
+    }
+  }
+  ignore(rm_rf(lock_dir))
+  path_entry_exists(agy_shared_cache_complete_path(shared_root))
+}
+
+///|
+fn symlink_shared_cache_dir_with_io(
+  shared_dir : String,
+  link_path : String,
+  path_entry_exists : (String) -> Bool,
+  create_dir_all : (String) -> Bool,
+  rm_rf : (String) -> Bool,
+  symlink_force : (String, String) -> Bool,
+) -> Bool {
+  if !path_entry_exists(shared_dir) {
+    return false
+  }
+  let parent = parent_dir_for_file(link_path)
+  if !create_dir_all(parent) {
+    return false
+  }
+  if path_entry_exists(link_path) {
+    if !rm_rf(link_path) {
+      return false
+    }
+  }
+  symlink_force(shared_dir, link_path)
+}
+
+///|
+fn run_native_agy_cache_links_paths_with_io(
+  project_dir : String,
+  worktree_path : String,
+  path_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
+  create_dir_all? : (String) -> Bool = @sys.create_dir_all,
+  write_file_sync? : (String, String) -> Bool = @sys.write_file_sync,
+  rename_file_sync? : (String, String) -> Bool = @sys.rename_file_sync,
+  rm_rf? : (String) -> Bool = @sys.rm_rf,
+  symlink_force? : (String, String) -> Bool = @sys.symlink_force,
+  sleep_milliseconds? : (Int) -> Unit = @sys.sleep_milliseconds,
+  seed_temp? : (String, (String) -> Bool, (String, String) -> Bool) -> Bool = seed_agy_shared_cache_temp,
+) -> Int {
+  if project_dir == "" || worktree_path == "" {
+    return 1
+  }
+  let shared_root = agy_shared_cache_root(project_dir)
+  if !ensure_agy_shared_cache_seeded(
+      shared_root,
+      worktree_path,
+      path_entry_exists~,
+      create_dir_all~,
+      write_file_sync~,
+      rename_file_sync~,
+      rm_rf~,
+      sleep_milliseconds~,
+      seed_temp~,
+    ) {
+    return 1
+  }
+  let home = agy_home_path(worktree_path)
+  if !symlink_shared_cache_dir_with_io(
+      shared_root + "/ms-playwright-go",
+      home + "/.cache/ms-playwright-go",
+      path_entry_exists,
+      create_dir_all,
+      rm_rf,
+      symlink_force,
+    ) {
+    return 1
+  }
+  if !symlink_shared_cache_dir_with_io(
+      shared_root + "/antigravity-cli-bin",
+      home + "/.gemini/antigravity-cli/bin",
+      path_entry_exists,
+      create_dir_all,
+      rm_rf,
+      symlink_force,
+    ) {
+    return 1
+  }
+  0
 }
 
 ///|
@@ -379,26 +580,127 @@ pub fn run_native_agy_cache_links_command(cmd : Command) -> Int {
   if cmd.args.length() != 2 {
     return 1
   }
-  let project_dir = cmd.args[0]
-  let worktree_path = cmd.args[1]
-  if project_dir == "" || worktree_path == "" {
-    return 1
+  run_native_agy_cache_links_paths_with_io(cmd.args[0], cmd.args[1])
+}
+
+///|
+test "native agy cache links waits for concurrent cold seed" {
+  let project = "/tmp/choir-fake-project"
+  let leaf_a = project + "/.choir/worktrees/leaf-a"
+  let leaf_b = project + "/.choir/worktrees/leaf-b"
+  let shared_root = agy_shared_cache_root(project)
+  let complete = agy_shared_cache_complete_path(shared_root)
+  let lock_dir = agy_shared_cache_lock_dir(shared_root)
+  let paths : Map[String, Bool] = {}
+  let symlinks : Map[String, String] = {}
+  let path_entry_exists = fn(path : String) -> Bool {
+    paths.get(path).unwrap_or(false)
   }
-  let shared_root = agy_shared_cache_root(project_dir)
-  let home = agy_home_path(worktree_path)
-  if !symlink_shared_cache_dir(
-      shared_root + "/ms-playwright-go",
-      home + "/.cache/ms-playwright-go",
-    ) {
-    return 1
+  let create_dir_all = fn(path : String) -> Bool {
+    paths.set(path, true)
+    true
   }
-  if !symlink_shared_cache_dir(
-      shared_root + "/antigravity-cli-bin",
-      home + "/.gemini/antigravity-cli/bin",
-    ) {
-    return 1
+  let write_file_sync = fn(path : String, _content : String) -> Bool {
+    paths.set(path, true)
+    true
   }
-  0
+  let rename_file_sync = fn(_from : String, to : String) -> Bool {
+    if to == lock_dir {
+      if path_entry_exists(lock_dir + "/holder") {
+        return false
+      }
+      paths.set(lock_dir, true)
+      paths.set(lock_dir + "/holder", true)
+      return true
+    }
+    if to == shared_root {
+      if path_entry_exists(complete) {
+        return false
+      }
+      paths.set(shared_root, true)
+      paths.set(shared_root + "/ms-playwright-go", true)
+      paths.set(shared_root + "/antigravity-cli-bin", true)
+      paths.set(complete, true)
+      return true
+    }
+    true
+  }
+  let rm_rf = fn(path : String) -> Bool {
+    paths.set(path, false)
+    paths.set(path + "/holder", false)
+    true
+  }
+  let symlink_force = fn(target : String, link_path : String) -> Bool {
+    if !path_entry_exists(complete) || !path_entry_exists(target) {
+      return false
+    }
+    symlinks.set(link_path, target)
+    true
+  }
+  let sleep_milliseconds = fn(_ms : Int) -> Unit {
+    paths.set(shared_root, true)
+    paths.set(shared_root + "/ms-playwright-go", true)
+    paths.set(shared_root + "/antigravity-cli-bin", true)
+    paths.set(complete, true)
+  }
+  let mut seed_count = 0
+  let mut nested_rc = -1
+  let seed_temp = fn(
+    temp_root : String,
+    create_dir_all : (String) -> Bool,
+    write_file_sync : (String, String) -> Bool,
+  ) -> Bool {
+    seed_count = seed_count + 1
+    nested_rc = run_native_agy_cache_links_paths_with_io(
+      project,
+      leaf_b,
+      path_entry_exists~,
+      create_dir_all~,
+      write_file_sync~,
+      rename_file_sync~,
+      rm_rf~,
+      symlink_force~,
+      sleep_milliseconds~,
+      seed_temp=fn(_, _, _) {
+        seed_count = seed_count + 100
+        false
+      },
+    )
+    seed_agy_shared_cache_temp(temp_root, create_dir_all, write_file_sync)
+  }
+
+  let rc = run_native_agy_cache_links_paths_with_io(
+    project,
+    leaf_a,
+    path_entry_exists~,
+    create_dir_all~,
+    write_file_sync~,
+    rename_file_sync~,
+    rm_rf~,
+    symlink_force~,
+    sleep_milliseconds~,
+    seed_temp~,
+  )
+  assert_eq(rc, 0)
+  assert_eq(nested_rc, 0)
+  assert_eq(seed_count, 1)
+  assert_true(path_entry_exists(complete))
+  @debug.assert_eq(
+    symlinks.get(leaf_a + "/.choir/agy-home/.cache/ms-playwright-go"),
+    Some(shared_root + "/ms-playwright-go"),
+  )
+  @debug.assert_eq(
+    symlinks.get(leaf_a + "/.choir/agy-home/.gemini/antigravity-cli/bin"),
+    Some(shared_root + "/antigravity-cli-bin"),
+  )
+  @debug.assert_eq(
+    symlinks.get(leaf_b + "/.choir/agy-home/.cache/ms-playwright-go"),
+    Some(shared_root + "/ms-playwright-go"),
+  )
+  @debug.assert_eq(
+    symlinks.get(leaf_b + "/.choir/agy-home/.gemini/antigravity-cli/bin"),
+    Some(shared_root + "/antigravity-cli-bin"),
+  )
 }
 
 ///|
