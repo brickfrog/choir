@@ -85,6 +85,13 @@ fn heartbeat_map_reader(map : Map[String, Int64]) -> (String) -> Int64? {
 }
 
 ///|
+fn audit_progress_map_reader(
+  map : Map[String, WaveStateAuditProgress],
+) -> (String) -> WaveStateAuditProgress? {
+  fn(id) { map.get(id) }
+}
+
+///|
 fn escape_wave_state_test_toml_string(s : String) -> String {
   let buf = StringBuilder::new()
   for c in s {
@@ -262,6 +269,119 @@ test "plan_wave_state assembles supervisor + dev + worker children" {
     @phase.Worker(@phase.WorkerLifecycle::Working) => ()
     _ => fail("expected worker Working")
   }
+}
+
+///|
+test "plan_wave_state serializes audits only for tracked PRs with audit progress" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    try? reg.insert(
+      make_agent("tl", @types.Role::TL, None, @types.AgentType::Codex),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent(
+        "tl.leaf-a",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Codex,
+      ),
+    ),
+  )
+  ignore(
+    try? reg.insert(
+      make_agent(
+        "tl.leaf-b",
+        @types.Role::Dev,
+        Some("tl"),
+        @types.AgentType::Codex,
+      ),
+    ),
+  )
+  let lifecycles : Map[String, @phase.AgentLifecycle] = {}
+  lifecycles.set(
+    "tl",
+    make_supervisor_lifecycle("tl", @phase.SupervisorLifecycle::Planning),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(
+    41,
+    tracked_pr_with(
+      41,
+      "tl.leaf-a",
+      @poller.ReviewState::Approved,
+      @poller.CiRollupStatus::Success,
+      false,
+      0L,
+      "sha-a",
+    ),
+  )
+  ps.tracked.set(
+    42,
+    tracked_pr_with(
+      42,
+      "tl.leaf-b",
+      @poller.ReviewState::Approved,
+      @poller.CiRollupStatus::Success,
+      false,
+      0L,
+      "sha-b",
+    ),
+  )
+  let audits : Map[String, WaveStateAuditProgress] = {}
+  audits.set("tl.leaf-a", {
+    cycles_so_far: 2,
+    last_findings_count: Some(3),
+    last_receipt_path: Some(".choir/audit-receipts/abc123.json"),
+    last_cycle_at_ms: Some(1776000000123L),
+    exhausted: false,
+  })
+  let snap = plan_wave_state(
+    "tl",
+    reg,
+    lifecycle_map_reader(lifecycles),
+    Some(ps),
+    threads_zero_lookup,
+    no_heartbeat,
+    9_999_999L,
+    audit_progress_reader=audit_progress_map_reader(audits),
+  ).unwrap()
+  let leaf_a = snap.children
+    .iter()
+    .find_first(fn(c) { c.agent_id == "tl.leaf-a" })
+    .unwrap()
+  let leaf_b = snap.children
+    .iter()
+    .find_first(fn(c) { c.agent_id == "tl.leaf-b" })
+    .unwrap()
+  let pr_a = leaf_a.pr.unwrap()
+  let pr_b = leaf_b.pr.unwrap()
+  match pr_a.audits {
+    Some(progress) => {
+      assert_eq(progress.cycles_so_far, 2)
+      @debug.assert_eq(progress.last_findings_count, Some(3))
+      @debug.assert_eq(
+        progress.last_receipt_path,
+        Some(".choir/audit-receipts/abc123.json"),
+      )
+      @debug.assert_eq(progress.last_cycle_at_ms, Some(1776000000123L))
+      assert_false(progress.exhausted)
+    }
+    None => fail("expected audits for leaf-a")
+  }
+  @debug.assert_eq(pr_b.audits, None)
+  let pr_a_json = pr_a.to_json().stringify()
+  let pr_b_json = pr_b.to_json().stringify()
+  assert_true(pr_a_json.contains("\"audits\":"))
+  assert_true(pr_a_json.contains("\"cycles_so_far\":2"))
+  assert_true(pr_a_json.contains("\"last_findings_count\":3"))
+  assert_true(
+    pr_a_json.contains(
+      "\"last_receipt_path\":\".choir/audit-receipts/abc123.json\"",
+    ),
+  )
+  assert_false(pr_b_json.contains("\"audits\":"))
 }
 
 ///|

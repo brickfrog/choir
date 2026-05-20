@@ -195,6 +195,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       pr_review=self.config.pr_review,
       global_review_mode=self.config.review_mode,
       audit_heartbeat_sec=self.config.audit_heartbeat_sec,
+      audit_max_rounds=self.config.audit_max_rounds,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
       },
@@ -219,14 +220,49 @@ pub async fn ServerState::handle_with_runner_and_capture(
       prepare_audit_report=fn(agent_id) {
         self.prepare_audit_on_file_pr_report(agent_id)
       },
+      record_audit_cycle_for_agent=fn(agent_id) {
+        self.record_audit_cycle_for_agent(agent_id)
+      },
+      audit_cycle_count_for_agent=fn(agent_id) {
+        self.audit_cycle_count_for_agent(agent_id)
+      },
+      clear_audit_cycle_for_agent=fn(agent_id) {
+        self.clear_audit_cycle_count_for_agent(agent_id)
+      },
+      notify_audit_started=async fn(agent_id, pr_number, cycle_number) {
+        self.notify_parent_audit_started(
+          agent_id,
+          cycle_number,
+          pr_number~,
+          runner~,
+        )
+      },
+      audit_progress_reader=fn(agent_id) {
+        match self.audit_progress_for_agent(agent_id) {
+          Some(progress) =>
+            Some(@tools.WaveStateAuditProgress::{
+              cycles_so_far: progress.cycles_so_far,
+              last_findings_count: progress.last_findings_count,
+              last_receipt_path: progress.last_receipt_path,
+              last_cycle_at_ms: progress.last_cycle_at_ms,
+              exhausted: progress.exhausted,
+            })
+          None => None
+        }
+      },
       audit_worker_alive=fn(agent_id) {
         self.registry.is_alive(agent_id).unwrap_or(false)
       },
       wait_for_audit_report=async fn(agent_id) {
         self.wait_for_audit_on_file_pr_report(agent_id)
       },
-      capture_audit_on_file_pr_report=fn(agent_id, report) {
-        self.capture_audit_on_file_pr_report(agent_id, report)
+      capture_audit_on_file_pr_report=async fn(agent_id, report) {
+        self.capture_audit_on_file_pr_report(
+          agent_id,
+          report,
+          runner~,
+          capture~,
+        )
       },
       cleanup_audit_report=fn(agent_id) {
         self.cleanup_audit_on_file_pr_report(agent_id)

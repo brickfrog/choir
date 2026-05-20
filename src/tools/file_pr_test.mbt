@@ -1047,7 +1047,8 @@ async test "dispatch shutdown from audit worker completes audit wait queue" {
     registry=Some(reg),
     runner=mock_runner_all_ok,
     bd_capture=mock_capture_empty,
-    capture_audit_on_file_pr_report=fn(agent_id, report) {
+    capture_audit_on_file_pr_report=async fn(agent_id, report) {
+      @async.sleep(0)
       reports.push((agent_id, report))
     },
   )
@@ -1219,6 +1220,194 @@ async test "file_pr_auto_audit awaits existing in-flight worker without spawning
 }
 
 ///|
+async test "file_pr_auto_audit does not record a new cycle when awaiting in-flight worker" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-in-flight-cycle-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let prefix = audit_on_file_pr_slug_prefix(head)
+  let existing = file_pr_test_audit_child(
+    prefix + "111",
+    @phase.ChildLifecycleSummary::Working,
+  )
+  let mut cycles = 0
+  let recorded_agents : Array[String] = []
+  let waited_workers : Array[String] = []
+  let mut spawn_calls = 0
+  let run_cycle = async fn(in_flight : Bool) -> Unit {
+    let got = file_pr_auto_audit_for_missing_receipt(
+      project_dir,
+      project_dir,
+      "feature/auto-audit",
+      "main",
+      head,
+      file_pr_auto_audit_capture(head, None),
+      async fn(worker_args) {
+        @async.sleep(0)
+        spawn_calls = spawn_calls + 1
+        Ok("main." + worker_args.slug)
+      },
+      async fn(worker_id) {
+        @async.sleep(0)
+        waited_workers.push(worker_id)
+        Some({ message: "No findings.", status: @types.Status::Success })
+      },
+      fn(_) {  },
+      file_pr_test_write_audit_receipt_ok,
+      1000,
+      0,
+      fn(_, _) { true },
+      async fn(_) { @async.sleep(0) },
+      fn() { 1779000000L },
+      fn(_) { true },
+      list_audit_workers=fn() { if in_flight { [existing] } else { [] } },
+      record_audit_cycle_for_agent=fn(agent_id) {
+        recorded_agents.push(agent_id)
+        cycles = cycles + 1
+        cycles
+      },
+      audit_cycle_count_for_agent=fn(_) { cycles },
+    )
+    match got {
+      Ok(_) => ()
+      Err(e) => fail("expected audit success: " + e.message())
+    }
+  }
+  run_cycle(false)
+  run_cycle(true)
+  assert_eq(spawn_calls, 1)
+  assert_eq(cycles, 1)
+  @debug.assert_eq(recorded_agents, ["feature/auto-audit"])
+  assert_eq(waited_workers.length(), 2)
+  assert_eq(waited_workers[1], existing.child_id)
+}
+
+///|
+async test "in-flight reuse with stale cycle counter persists clamp to ServerState" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-in-flight-zero-cycle-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let prefix = audit_on_file_pr_slug_prefix(head)
+  let existing = file_pr_test_audit_child(
+    prefix + "111",
+    @phase.ChildLifecycleSummary::Working,
+  )
+  let mut spawn_calls = 0
+  let mut record_calls = 0
+  let mut server_state_cycles = 0
+  let cycle_reads : Array[Int] = []
+  let recorded_agents : Array[String] = []
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, None),
+    async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    async fn(worker_id) {
+      @async.sleep(0)
+      assert_eq(worker_id, existing.child_id)
+      Some({
+        message: "Finding 1: still broken\n",
+        status: @types.Status::Success,
+      })
+    },
+    fn(_) {  },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1779000000L },
+    fn(_) { true },
+    list_audit_workers=fn() { [existing] },
+    audit_max_rounds=1,
+    record_audit_cycle_for_agent=fn(agent_id) {
+      recorded_agents.push(agent_id)
+      record_calls = record_calls + 1
+      server_state_cycles = server_state_cycles + 1
+      server_state_cycles
+    },
+    audit_cycle_count_for_agent=fn(_) {
+      cycle_reads.push(server_state_cycles)
+      server_state_cycles
+    },
+  )
+  match got {
+    Err(e) => {
+      assert_eq(e.to_wire_string(), "audit_loop_exhausted")
+      assert_true(e.message().contains("audit loop exhausted after 1 cycle(s)"))
+      assert_false(e.message().contains("after 0 cycle(s)"))
+    }
+    Ok(_) => fail("expected in-flight audit exhaustion")
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(record_calls, 1)
+  assert_eq(server_state_cycles, 1)
+  @debug.assert_eq(cycle_reads, [0])
+  @debug.assert_eq(recorded_agents, ["feature/auto-audit"])
+}
+
+///|
+async test "file_pr_auto_audit records one cycle for each fresh audit spawn" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-fresh-cycle-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut cycles = 0
+  let recorded_agents : Array[String] = []
+  let spawned_workers : Array[String] = []
+  let run_cycle = async fn(now_ms : Int64) -> Unit {
+    let got = file_pr_auto_audit_for_missing_receipt(
+      project_dir,
+      project_dir,
+      "feature/auto-audit",
+      "main",
+      head,
+      file_pr_auto_audit_capture(head, None),
+      async fn(worker_args) {
+        @async.sleep(0)
+        let worker_id = "main." + worker_args.slug
+        spawned_workers.push(worker_id)
+        Ok(worker_id)
+      },
+      async fn(_) {
+        @async.sleep(0)
+        Some({ message: "No findings.", status: @types.Status::Success })
+      },
+      fn(_) {  },
+      file_pr_test_write_audit_receipt_ok,
+      1000,
+      0,
+      fn(_, _) { true },
+      async fn(_) { @async.sleep(0) },
+      fn() { now_ms },
+      fn(_) { true },
+      list_audit_workers=fn() { [] },
+      record_audit_cycle_for_agent=fn(agent_id) {
+        recorded_agents.push(agent_id)
+        cycles = cycles + 1
+        cycles
+      },
+      audit_cycle_count_for_agent=fn(_) { cycles },
+    )
+    match got {
+      Ok(_) => ()
+      Err(e) => fail("expected audit success: " + e.message())
+    }
+  }
+  run_cycle(1779000000L)
+  run_cycle(1779000001L)
+  assert_eq(cycles, 2)
+  assert_eq(spawned_workers.length(), 2)
+  assert_true(spawned_workers[0] != spawned_workers[1])
+  @debug.assert_eq(recorded_agents, ["feature/auto-audit", "feature/auto-audit"])
+}
+
+///|
 async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
   let project_dir = "/tmp/choir-fpr-auto-audit-fresh-spawn-" +
     @sys.get_pid().to_string()
@@ -1270,6 +1459,74 @@ async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
   assert_false(spawned_task.contains("Prior audited HEAD"))
   assert_true(spawned_slug.has_suffix("-" + now_ms.to_string()))
   assert_eq(waited_worker, "main." + spawned_slug)
+}
+
+///|
+async test "file_pr_auto_audit sends one start notification before each fresh audit spawn" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-start-notify-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut cycles = 0
+  let events : Array[String] = []
+  let recorded_agents : Array[String] = []
+  let started_agents : Array[String] = []
+  let run_cycle = async fn() -> Unit {
+    let got = file_pr_auto_audit_for_missing_receipt(
+      project_dir,
+      project_dir,
+      "feature/auto-audit",
+      "main",
+      head,
+      file_pr_auto_audit_capture(head, None),
+      async fn(worker_args) {
+        @async.sleep(0)
+        events.push("spawn:" + worker_args.slug)
+        Ok("main." + worker_args.slug)
+      },
+      async fn(_) {
+        @async.sleep(0)
+        Some({
+          message: "Finding 1: still broken\n",
+          status: @types.Status::Success,
+        })
+      },
+      fn(_) {  },
+      file_pr_test_write_audit_receipt_ok,
+      1000,
+      0,
+      fn(_, _) { true },
+      async fn(_) { @async.sleep(0) },
+      fn() { 1779000000L + cycles.to_int64() },
+      fn(_) { true },
+      audit_max_rounds=3,
+      record_audit_cycle_for_agent=fn(agent_id) {
+        recorded_agents.push(agent_id)
+        cycles = cycles + 1
+        cycles
+      },
+      notify_audit_started=async fn(agent_id, pr_number, cycle_number) {
+        @async.sleep(0)
+        started_agents.push(agent_id)
+        events.push(
+          "start:" + audit_started_notification_body(cycle_number, pr_number~),
+        )
+      },
+    )
+    match got {
+      Err(e) => assert_true(e.message().contains("audit found 1 findings"))
+      Ok(_) => fail("expected findings error")
+    }
+  }
+  run_cycle()
+  run_cycle()
+  assert_eq(cycles, 2)
+  @debug.assert_eq(recorded_agents, ["feature/auto-audit", "feature/auto-audit"])
+  @debug.assert_eq(started_agents, ["feature/auto-audit", "feature/auto-audit"])
+  assert_eq(events.length(), 4)
+  assert_eq(events[0], "start:[AUDIT cycle 1 started] PR #pending")
+  assert_true(events[1].has_prefix("spawn:audit-on-file-pr-abcdef123456-"))
+  assert_eq(events[2], "start:[AUDIT cycle 2 started] PR #pending")
+  assert_true(events[3].has_prefix("spawn:audit-on-file-pr-abcdef123456-"))
 }
 
 ///|
@@ -1877,6 +2134,62 @@ async test "interpret_file_pr Dev missing audit returns findings error" {
     @types.Response::Ok(_) => fail("expected findings error")
   }
   assert_false(receipt_written)
+}
+
+///|
+async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on configured cycle" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-exhausted-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut cycles = 0
+  let mut wait_count = 0
+  let recorded_agents : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "feature/auto-audit",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/auto-audit",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    file_pr_auto_audit_capture(head, None),
+    mock_ensure_pr_ok,
+    caller_role=@types.Role::Dev,
+    audit_max_rounds=1,
+    record_audit_cycle_for_agent=fn(agent_id) {
+      recorded_agents.push(agent_id)
+      cycles = cycles + 1
+      cycles
+    },
+    wait_for_audit_report=async fn(_) {
+      @async.sleep(0)
+      wait_count = wait_count + 1
+      Some({
+        message: "Finding 1: still broken\n",
+        status: @types.Status::Success,
+      })
+    },
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("audit loop exhausted after 1 cycle(s)"))
+      assert_true(msg.contains("1 finding(s) remaining"))
+      assert_true(msg.contains(".choir/audit-receipts/abcdef123456.json"))
+      assert_false(msg.contains("audit found 1 findings"))
+    }
+    @types.Response::Ok(_) => fail("expected audit loop exhaustion")
+  }
+  assert_eq(cycles, 1)
+  assert_eq(wait_count, 1)
+  @debug.assert_eq(recorded_agents, ["feature/auto-audit"])
 }
 
 ///|

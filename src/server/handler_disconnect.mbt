@@ -122,6 +122,8 @@ fn ServerState::clear_agent_runtime_tracking(
   self.handoff_delivered.remove(agent_id)
   self.worker_no_handoff_exit_emitted.remove(agent_id)
   self.idle_agent_warned_at_70.remove(agent_id)
+  self.clear_audit_cycle_count_for_agent(agent_id)
+  self.clear_audit_progress_for_agent(agent_id)
   self.last_commit_observed_at.remove(agent_id)
   self.last_commit_observed_sha.remove(agent_id)
   self.last_commit_probe_at.remove(agent_id)

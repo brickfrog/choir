@@ -1,5 +1,5 @@
 ///|
-test "audit-on-file-pr report capture ignores missing waiter" {
+async test "audit-on-file-pr report capture ignores missing waiter" {
   let config = @types.Config::default()
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   state.capture_audit_on_file_pr_report("worker-a", {
@@ -29,7 +29,7 @@ async test "audit-on-file-pr report prepare buffers fast report before waiter" {
 }
 
 ///|
-test "audit-on-file-pr report cleanup removes waiter queue" {
+async test "audit-on-file-pr report cleanup removes waiter queue" {
   let config = @types.Config::default()
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
@@ -41,6 +41,248 @@ test "audit-on-file-pr report cleanup removes waiter queue" {
     status: @types.Status::Success,
   })
   assert_false(state.audit_on_file_pr_reports.contains("worker-a"))
+}
+
+///|
+async test "audit cycle counter records tracked leaf cycles and clears on unregister cleanup" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let agent_id = "main.audit-loop-leaf"
+  assert_eq(state.audit_cycle_count_for_agent(agent_id), 0)
+  state.capture_audit_on_file_pr_report(agent_id, {
+    message: "Finding 1: defect",
+    status: @types.Status::Success,
+  })
+  assert_eq(state.audit_cycle_count_for_agent(agent_id), 0)
+  ignore(state.record_audit_cycle_for_agent(agent_id))
+  assert_eq(state.audit_cycle_count_for_agent(agent_id), 1)
+  state.handle_disconnect_with_runner(
+    agent_id,
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    capture=async fn(_cmd) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  assert_eq(state.audit_cycle_count_for_agent(agent_id), 0)
+}
+
+///|
+async test "audit progress records latest audit report and clears on unregister cleanup" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let agent_id = "main.audit-progress-leaf"
+  assert_true(state.audit_progress_for_agent(agent_id) is None)
+  state.update_audit_progress(
+    agent_id,
+    {
+      message: "Finding 1: first defect\nreceipt: .choir/audit-receipts/abc123.json",
+      status: @types.Status::Success,
+    },
+    now_ms=111L,
+  )
+  match state.audit_progress_for_agent(agent_id) {
+    Some(progress) => {
+      assert_eq(progress.cycles_so_far, 1)
+      @debug.assert_eq(progress.last_findings_count, Some(1))
+      @debug.assert_eq(
+        progress.last_receipt_path,
+        Some(".choir/audit-receipts/abc123.json"),
+      )
+      @debug.assert_eq(progress.last_cycle_at_ms, Some(111L))
+      assert_false(progress.exhausted)
+    }
+    None => fail("expected audit progress after first report")
+  }
+  state.update_audit_progress(
+    agent_id,
+    {
+      message: "Finding 1: still bad\nFinding 2: also bad\nreceipt: .choir/audit-receipts/def456.json",
+      status: @types.Status::Success,
+    },
+    now_ms=222L,
+  )
+  match state.audit_progress_for_agent(agent_id) {
+    Some(progress) => {
+      assert_eq(progress.cycles_so_far, 2)
+      @debug.assert_eq(progress.last_findings_count, Some(2))
+      @debug.assert_eq(
+        progress.last_receipt_path,
+        Some(".choir/audit-receipts/def456.json"),
+      )
+      @debug.assert_eq(progress.last_cycle_at_ms, Some(222L))
+      assert_false(progress.exhausted)
+    }
+    None => fail("expected audit progress after second report")
+  }
+  state.handle_disconnect_with_runner(
+    agent_id,
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+    capture=async fn(_cmd) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  assert_true(state.audit_progress_for_agent(agent_id) is None)
+}
+
+///|
+test "audit progress treats failure reports as unknown findings without receipt" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let agent_id = "main.audit-progress-leaf"
+  state.update_audit_progress(
+    agent_id,
+    {
+      message: "shutdown before report\nFinding 1: should not be counted",
+      status: @types.Status::Failure,
+    },
+    receipt_path=Some(".choir/audit-receipts/abcdef123456.json"),
+    now_ms=333L,
+  )
+  match state.audit_progress_for_agent(agent_id) {
+    Some(progress) => {
+      assert_eq(progress.cycles_so_far, 1)
+      @debug.assert_eq(progress.last_findings_count, None)
+      @debug.assert_eq(progress.last_receipt_path, None)
+      @debug.assert_eq(progress.last_cycle_at_ms, Some(333L))
+      assert_false(progress.exhausted)
+    }
+    None => fail("expected audit progress for failure report")
+  }
+}
+
+///|
+async test "audit progress capture maps audit worker reports to tracked leaf by head sha" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let leaf_id = "main.tracked-leaf"
+  let worker_id = "main.audit-on-file-pr-abcdef123456-1776000000000"
+  state.poller.track(
+    77, leaf_id, leaf_id, "main", "https://example.test/pr/77", 0L,
+  )
+  match state.poller.get(77) {
+    Some(tracked) =>
+      state.poller.tracked.set(77, {
+        ..tracked,
+        last_sha: "abcdef1234567890abcdef1234567890abcdef12",
+      })
+    None => fail("expected tracked PR")
+  }
+  state.capture_audit_on_file_pr_report(worker_id, {
+    message: "Finding 1: still broken",
+    status: @types.Status::Success,
+  })
+  assert_true(state.audit_progress_for_agent(worker_id) is None)
+  match state.audit_progress_for_agent(leaf_id) {
+    Some(progress) => {
+      assert_eq(progress.cycles_so_far, 1)
+      @debug.assert_eq(progress.last_findings_count, Some(1))
+      @debug.assert_eq(
+        progress.last_receipt_path,
+        Some(".choir/audit-receipts/abcdef123456.json"),
+      )
+    }
+    None => fail("expected worker capture to populate tracked leaf progress")
+  }
+}
+
+///|
+async test "audit progress capture ignores audit worker ids without valid short sha" {
+  let config = @types.Config::default()
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let worker_id = "main.audit-on-file-pr-shutdown"
+  state.capture_audit_on_file_pr_report(worker_id, {
+    message: "shutdown before report",
+    status: @types.Status::Failure,
+  })
+  assert_true(state.audit_progress_for_agent(worker_id) is None)
+}
+
+///|
+async test "wave_state handler reads audit progress from server state" {
+  let project_dir = "/tmp/choir-wave-state-audit-progress-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let config = { ..@types.Config::default(), project_dir, }
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  let tl_id = "main.tl"
+  let leaf_id = "main.tl.leaf"
+  ignore(
+    state.register_agent(@types.Agent::{
+      agent_id: @types.AgentId(tl_id),
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: tl_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent(@types.Agent::{
+      agent_id: @types.AgentId(leaf_id),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(tl_id),
+      workspace: project_dir,
+      branch: leaf_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.poller.track(
+    77, leaf_id, leaf_id, "main", "https://example.test/pr/77", 0L,
+  )
+  state.update_audit_progress(
+    leaf_id,
+    { message: "Finding 1: state is invisible", status: @types.Status::Success },
+    receipt_path=Some(".choir/audit-receipts/facefeed1234.json"),
+    now_ms=333L,
+  )
+  let req = @types.Request::{
+    req_method: "tools/call",
+    role: @types.Role::TL,
+    name: "wave_state",
+    args: @types.RequestArgs::new({ "caller_id": tl_id }),
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.args.contains("repo") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let resp = state.handle_with_runner_and_capture(req, capture~)
+  assert_true(resp.is_ok())
+  let body = resp.ok_field("snapshot").unwrap()
+  assert_true(body.contains("\"audits\":"))
+  assert_true(body.contains("\"cycles_so_far\":1"))
+  assert_true(body.contains("\"last_findings_count\":1"))
+  assert_true(
+    body.contains(
+      "\"last_receipt_path\":\".choir/audit-receipts/facefeed1234.json\"",
+    ),
+  )
+  assert_true(body.contains("\"last_cycle_at_ms\":\"333\""))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

@@ -111,6 +111,18 @@ pub fn file_pr_plan(
 }
 
 ///|
+pub fn audit_started_notification_body(
+  cycle_number : Int,
+  pr_number? : Int? = None,
+) -> String {
+  let pr_label = match pr_number {
+    Some(value) => value.to_string()
+    None => "pending"
+  }
+  "[AUDIT cycle " + cycle_number.to_string() + " started] PR #" + pr_label
+}
+
+///|
 /// Pure plan for `file_pr` post-success auto-notify: parent resolution outcome
 /// maps to delivery intent plus exact delivery-log append text. The dispatcher
 /// interprets this (append logs, `execute_delivery`, moontrace on failures).
@@ -1496,6 +1508,17 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
   now_ms_fn : () -> Int64,
   audit_worker_alive : (String) -> Bool,
   list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
+  audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _tracked_agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   pr_number? : Int = 0,
 ) -> Result[Unit, @types.ChoirError] {
   let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
@@ -1530,17 +1553,25 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
         ReceiptPresent,
         now_ms_fn,
       )
+      clear_audit_cycle_for_agent(tracked_agent_id)
       return Ok(())
     }
     AuditReceiptFindingsRemain(_, _) => return receipt_validation.to_result()
     _ => ()
   }
+  let mut cycles = 0
   let worker_id = match
     find_in_flight_audit_worker(
       list_audit_workers(),
       audit_on_file_pr_slug_prefix(head_sha),
     ) {
     Some(existing) => {
+      let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
+      cycles = if recorded_cycles <= 0 {
+        record_audit_cycle_for_agent(tracked_agent_id)
+      } else {
+        recorded_cycles
+      }
       emit_file_pr_auto_audit_log_line(
         project_dir,
         append_file,
@@ -1550,6 +1581,13 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
       existing.child_id
     }
     None => {
+      cycles = record_audit_cycle_for_agent(tracked_agent_id)
+      let pr_number_for_notification : Int? = if pr_number > 0 {
+        Some(pr_number)
+      } else {
+        None
+      }
+      notify_audit_started(tracked_agent_id, pr_number_for_notification, cycles)
       let prior_sha = file_pr_audit_delta_prior_sha(
         project_dir, file_pr_dir, branch, head_sha, capture,
       )
@@ -1650,6 +1688,13 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     now_ms_fn~,
   )
   if findings_count > 0 {
+    if audit_max_rounds > 0 && cycles >= audit_max_rounds {
+      return Err(
+        @types.ChoirError::audit_loop_exhausted(
+          cycles, findings_count, receipt_path,
+        ),
+      )
+    }
     return Err(
       @types.ChoirError::validation_error(
         "file_pr: audit found " +
@@ -1666,6 +1711,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     findings_count: 0,
   })
   if receipt_resp.is_ok() {
+    clear_audit_cycle_for_agent(tracked_agent_id)
     Ok(())
   } else {
     Err(
@@ -1705,6 +1751,17 @@ async fn file_pr_require_audit_receipt(
   },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
+  audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _tracked_agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
@@ -1739,7 +1796,10 @@ async fn file_pr_require_audit_receipt(
     },
   )
   match validation {
-    AuditReceiptValid => Ok(())
+    AuditReceiptValid => {
+      clear_audit_cycle_for_agent(tracked_agent_id)
+      Ok(())
+    }
     _ =>
       if caller_role == @types.Role::Dev && validation.auto_audit_allowed() {
         file_pr_auto_audit_for_missing_receipt(
@@ -1760,6 +1820,11 @@ async fn file_pr_require_audit_receipt(
           audit_now_ms_fn,
           audit_worker_alive,
           list_audit_workers~,
+          audit_max_rounds~,
+          record_audit_cycle_for_agent~,
+          audit_cycle_count_for_agent~,
+          clear_audit_cycle_for_agent~,
+          notify_audit_started~,
         )
       } else {
         validation.to_result()
@@ -2223,11 +2288,22 @@ pub async fn interpret_file_pr(
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
+  audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
   list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _tracked_agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -2307,6 +2383,11 @@ pub async fn interpret_file_pr(
       },
       audit_budget_ms~,
       audit_heartbeat_sec~,
+      audit_max_rounds~,
+      record_audit_cycle_for_agent~,
+      audit_cycle_count_for_agent~,
+      clear_audit_cycle_for_agent~,
+      notify_audit_started~,
       append_file~,
       audit_sleep_fn~,
       audit_now_ms_fn~,

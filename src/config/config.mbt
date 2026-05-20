@@ -173,7 +173,7 @@ fn parse_double_config_value(
 }
 
 ///|
-fn parse_nonnegative_int64_config_value(
+fn parse_int64_config_value(
   key : String,
   raw : String,
 ) -> Result[Int64, @types.ChoirError] {
@@ -191,13 +191,27 @@ fn parse_nonnegative_int64_config_value(
       let v = n.to_int64()
       if v.to_double() != n {
         Err(@types.ChoirError::config_error(key + ": expected integer"))
-      } else if v < 0L {
-        Err(@types.ChoirError::config_error(key + ": expected >= 0"))
       } else {
         Ok(v)
       }
     }
     _ => Err(@types.ChoirError::config_error(key + ": expected integer"))
+  }
+}
+
+///|
+fn parse_nonnegative_int64_config_value(
+  key : String,
+  raw : String,
+) -> Result[Int64, @types.ChoirError] {
+  match parse_int64_config_value(key, raw) {
+    Ok(v) =>
+      if v < 0L {
+        Err(@types.ChoirError::config_error(key + ": expected >= 0"))
+      } else {
+        Ok(v)
+      }
+    Err(e) => Err(e)
   }
 }
 
@@ -210,6 +224,33 @@ fn parse_nonnegative_int_config_value(
   match parse_nonnegative_int64_config_value(key, raw) {
     Ok(v) =>
       if v > max {
+        Err(
+          @types.ChoirError::config_error(
+            key + ": expected <= " + max.to_string(),
+          ),
+        )
+      } else {
+        Ok(v.to_int())
+      }
+    Err(e) => Err(e)
+  }
+}
+
+///|
+fn parse_positive_int_config_value(
+  key : String,
+  raw : String,
+  max? : Int64 = 2_147_483_647L,
+) -> Result[Int, @types.ChoirError] {
+  match parse_int64_config_value(key, raw) {
+    Ok(v) =>
+      if v < 1L {
+        Err(
+          @types.ChoirError::config_error(
+            key + " must be >= 1; got " + v.to_string(),
+          ),
+        )
+      } else if v > max {
         Err(
           @types.ChoirError::config_error(
             key + ": expected <= " + max.to_string(),
@@ -397,6 +438,19 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let audit_max_rounds = match doc.get("audit_max_rounds") {
+    None => default_cfg.audit_max_rounds
+    Some(raw) =>
+      match
+        parse_positive_int_config_value(
+          "audit_max_rounds",
+          raw,
+          max=@types.audit_max_rounds_max.to_int64(),
+        ) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+  }
   let poller_heartbeat_tick_sec = match doc.get("poller_heartbeat_tick_sec") {
     None => default_cfg.poller_heartbeat_tick_sec
     Some(raw) =>
@@ -461,6 +515,7 @@ pub fn parse_config(
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,
     audit_heartbeat_sec,
+    audit_max_rounds,
     poller_heartbeat_tick_sec,
     auto_pull_after_integration,
     auto_rebuild_after_pull,
