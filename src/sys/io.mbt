@@ -8,6 +8,10 @@ extern "C" fn c_path_entry_exists(path : Bytes) -> Int = "choir_path_entry_exist
 
 ///|
 #borrow(path)
+extern "C" fn c_path_executable(path : Bytes) -> Int = "choir_path_executable"
+
+///|
+#borrow(path)
 extern "C" fn c_rm_rf(path : Bytes) -> Int = "choir_rm_rf"
 
 ///|
@@ -129,6 +133,13 @@ pub fn file_size(path : String) -> Int {
 pub fn path_entry_exists(path : String) -> Bool {
   let path_bytes = string_to_null_terminated_bytes(path)
   c_path_entry_exists(path_bytes) != 0
+}
+
+///|
+/// True when `path` is a regular file with execute permission for this process.
+pub fn path_executable(path : String) -> Bool {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  c_path_executable(path_bytes) != 0
 }
 
 ///|

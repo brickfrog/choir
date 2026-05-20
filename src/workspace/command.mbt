@@ -379,41 +379,111 @@ fn agy_cache_temp_suffix(worktree_path : String) -> String {
 ///|
 fn seed_agy_shared_cache_temp(
   temp_root : String,
-  create_dir_all : (String) -> Bool,
-  write_file_sync : (String, String) -> Bool,
+  _create_dir_all : (String) -> Bool,
+  _write_file_sync : (String, String) -> Bool,
 ) -> Bool {
-  if !create_dir_all(temp_root + "/ms-playwright-go") {
-    return false
-  }
-  if !create_dir_all(temp_root + "/antigravity-cli-bin") {
-    return false
-  }
-  write_file_sync(agy_shared_cache_complete_path(temp_root), "complete\n")
+  // The native helper cannot prove agy's runtime was downloaded; callers that
+  // populate the temp root must inject a real populator through `seed_temp`.
+  ignore(temp_root)
+  false
 }
 
 ///|
-fn agy_shared_cache_expected_dirs_exist(
+fn agy_shared_cache_file_nonempty(
+  path : String,
+  path_entry_exists : (String) -> Bool,
+  read_file : (String) -> String,
+) -> Bool {
+  path_entry_exists(path) && read_file(path) != ""
+}
+
+///|
+fn agy_shared_cache_playwright_populated(
   shared_root : String,
   path_entry_exists : (String) -> Bool,
+  list_dir : (String) -> Array[String],
+  read_file : (String) -> String,
 ) -> Bool {
-  path_entry_exists(shared_root + "/ms-playwright-go") &&
-  path_entry_exists(shared_root + "/antigravity-cli-bin")
+  let playwright_root = shared_root + "/ms-playwright-go"
+  if !path_entry_exists(playwright_root) {
+    return false
+  }
+  for version in list_dir(playwright_root) {
+    let version_root = playwright_root + "/" + version
+    if path_entry_exists(version_root) &&
+      agy_shared_cache_file_nonempty(
+        version_root + "/node",
+        path_entry_exists,
+        read_file,
+      ) &&
+      agy_shared_cache_file_nonempty(
+        version_root + "/package/package.json",
+        path_entry_exists,
+        read_file,
+      ) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn agy_shared_cache_bin_populated(
+  shared_root : String,
+  path_entry_exists : (String) -> Bool,
+  read_file : (String) -> String,
+) -> Bool {
+  let bin_root = shared_root + "/antigravity-cli-bin"
+  path_entry_exists(bin_root) &&
+  agy_shared_cache_file_nonempty(
+    bin_root + "/agentapi",
+    path_entry_exists,
+    read_file,
+  ) &&
+  agy_shared_cache_file_nonempty(
+    bin_root + "/webm_encoder",
+    path_entry_exists,
+    read_file,
+  )
+}
+
+///|
+fn agy_shared_cache_is_populated(
+  shared_root : String,
+  path_entry_exists : (String) -> Bool,
+  list_dir : (String) -> Array[String],
+  read_file : (String) -> String,
+) -> Bool {
+  agy_shared_cache_playwright_populated(
+    shared_root, path_entry_exists, list_dir, read_file,
+  ) &&
+  agy_shared_cache_bin_populated(shared_root, path_entry_exists, read_file)
+}
+
+///|
+fn agy_shared_cache_is_complete(
+  shared_root : String,
+  path_entry_exists : (String) -> Bool,
+  list_dir : (String) -> Array[String],
+  read_file : (String) -> String,
+) -> Bool {
+  path_entry_exists(agy_shared_cache_complete_path(shared_root)) &&
+  agy_shared_cache_is_populated(
+    shared_root, path_entry_exists, list_dir, read_file,
+  )
 }
 
 ///|
 fn mark_existing_agy_shared_cache_seeded(
   shared_root : String,
-  create_dir_all : (String) -> Bool,
   path_entry_exists : (String) -> Bool,
+  list_dir : (String) -> Array[String],
+  read_file : (String) -> String,
   write_file_sync : (String, String) -> Bool,
 ) -> Bool {
-  if !create_dir_all(shared_root + "/ms-playwright-go") {
-    return false
-  }
-  if !create_dir_all(shared_root + "/antigravity-cli-bin") {
-    return false
-  }
-  if !agy_shared_cache_expected_dirs_exist(shared_root, path_entry_exists) {
+  if !agy_shared_cache_is_populated(
+      shared_root, path_entry_exists, list_dir, read_file,
+    ) {
     return false
   }
   let complete = agy_shared_cache_complete_path(shared_root)
@@ -421,19 +491,54 @@ fn mark_existing_agy_shared_cache_seeded(
 }
 
 ///|
-fn wait_for_agy_shared_cache_complete(
-  shared_root : String,
-  path_entry_exists : (String) -> Bool,
-  sleep_milliseconds : (Int) -> Unit,
+priv enum AgySharedCacheWaitResult {
+  AgySharedCacheComplete
+  AgySharedCacheStale(String)
+}
+
+///|
+fn agy_shared_cache_lock_content_is_stale(
+  content : String,
+  pid_is_alive : (Int) -> Bool,
+  now_ms : Int64,
 ) -> Bool {
-  let complete = agy_shared_cache_complete_path(shared_root)
-  for _i = 0; _i < 200; _i = _i + 1 {
-    if path_entry_exists(complete) {
-      return true
+  if content == "" {
+    return true
+  }
+  let pid_dead = match agy_lock_holder_pid(content) {
+    Some(pid) => !pid_is_alive(pid)
+    None => false
+  }
+  let too_old = match agy_lock_holder_started_ms(content) {
+    Some(started_ms) => now_ms - started_ms >= agy_shared_cache_lock_stale_ms
+    None => false
+  }
+  pid_dead || too_old
+}
+
+///|
+fn wait_for_agy_shared_cache_complete_or_stale(
+  shared_root : String,
+  lock_dir : String,
+  path_entry_exists : (String) -> Bool,
+  list_dir : (String) -> Array[String],
+  read_file : (String) -> String,
+  pid_is_alive : (Int) -> Bool,
+  now_ms_fn : () -> Int64,
+  sleep_milliseconds : (Int) -> Unit,
+) -> AgySharedCacheWaitResult {
+  for ;; {
+    if agy_shared_cache_is_complete(
+        shared_root, path_entry_exists, list_dir, read_file,
+      ) {
+      return AgySharedCacheComplete
+    }
+    let holder = read_file(lock_dir + "/holder")
+    if agy_shared_cache_lock_content_is_stale(holder, pid_is_alive, now_ms_fn()) {
+      return AgySharedCacheStale(holder)
     }
     sleep_milliseconds(25)
   }
-  path_entry_exists(complete)
 }
 
 ///|
@@ -500,29 +605,11 @@ fn agy_lock_holder_pid(content : String) -> Int? {
 }
 
 ///|
-fn agy_shared_cache_lock_is_stale(
-  lock_dir : String,
-  read_file : (String) -> String,
-  pid_is_alive : (Int) -> Bool,
-  now_ms : Int64,
-) -> Bool {
-  let content = read_file(lock_dir + "/holder")
-  let pid_dead = match agy_lock_holder_pid(content) {
-    Some(pid) => !pid_is_alive(pid)
-    None => false
-  }
-  let too_old = match agy_lock_holder_started_ms(content) {
-    Some(started_ms) => now_ms - started_ms >= agy_shared_cache_lock_stale_ms
-    None => false
-  }
-  pid_dead || too_old
-}
-
-///|
 fn ensure_agy_shared_cache_seeded(
   shared_root : String,
   worktree_path : String,
   path_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
+  list_dir? : (String) -> Array[String] = @sys.list_dir,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   write_file_sync? : (String, String) -> Bool = @sys.write_file_sync,
   rename_file_sync? : (String, String) -> Bool = @sys.rename_file_sync,
@@ -534,12 +621,14 @@ fn ensure_agy_shared_cache_seeded(
   seed_temp? : (String, (String) -> Bool, (String, String) -> Bool) -> Bool = seed_agy_shared_cache_temp,
   retry_stale_lock? : Bool = true,
 ) -> Bool {
-  if path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+  if agy_shared_cache_is_complete(
+      shared_root, path_entry_exists, list_dir, read_file,
+    ) {
     return true
   }
   if path_entry_exists(shared_root) &&
     mark_existing_agy_shared_cache_seeded(
-      shared_root, create_dir_all, path_entry_exists, write_file_sync,
+      shared_root, path_entry_exists, list_dir, read_file, write_file_sync,
     ) {
     return true
   }
@@ -563,48 +652,60 @@ fn ensure_agy_shared_cache_seeded(
   }
   if !rename_file_sync(tmp_lock, lock_dir) {
     ignore(rm_rf(tmp_lock))
-    if agy_shared_cache_lock_is_stale(
-        lock_dir,
-        read_file,
-        pid_is_alive,
-        now_ms_fn(),
-      ) ||
-      !wait_for_agy_shared_cache_complete(
-        shared_root, path_entry_exists, sleep_milliseconds,
+    match
+      wait_for_agy_shared_cache_complete_or_stale(
+        shared_root, lock_dir, path_entry_exists, list_dir, read_file, pid_is_alive,
+        now_ms_fn, sleep_milliseconds,
       ) {
-      if retry_stale_lock {
-        ignore(rm_rf(lock_dir))
-        return ensure_agy_shared_cache_seeded(
-          shared_root,
-          worktree_path,
-          path_entry_exists~,
-          create_dir_all~,
-          write_file_sync~,
-          rename_file_sync~,
-          rm_rf~,
-          sleep_milliseconds~,
-          read_file~,
-          pid_is_alive~,
-          now_ms_fn~,
-          seed_temp~,
-          retry_stale_lock=false,
-        )
+      AgySharedCacheComplete => return true
+      AgySharedCacheStale(holder_content) => {
+        if retry_stale_lock && read_file(lock_dir + "/holder") == holder_content {
+          ignore(rm_rf(lock_dir))
+          return ensure_agy_shared_cache_seeded(
+            shared_root,
+            worktree_path,
+            path_entry_exists~,
+            list_dir~,
+            create_dir_all~,
+            write_file_sync~,
+            rename_file_sync~,
+            rm_rf~,
+            sleep_milliseconds~,
+            read_file~,
+            pid_is_alive~,
+            now_ms_fn~,
+            seed_temp~,
+            retry_stale_lock=false,
+          )
+        } else if retry_stale_lock {
+          match
+            wait_for_agy_shared_cache_complete_or_stale(
+              shared_root, lock_dir, path_entry_exists, list_dir, read_file, pid_is_alive,
+              now_ms_fn, sleep_milliseconds,
+            ) {
+            AgySharedCacheComplete => return true
+            AgySharedCacheStale(_) => return false
+          }
+        }
+        return false
       }
-      return false
     }
-    return true
   }
 
-  if path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+  if agy_shared_cache_is_complete(
+      shared_root, path_entry_exists, list_dir, read_file,
+    ) {
     ignore(rm_rf(lock_dir))
     return true
   }
   if path_entry_exists(shared_root) {
     let ok = mark_existing_agy_shared_cache_seeded(
-      shared_root, create_dir_all, path_entry_exists, write_file_sync,
+      shared_root, path_entry_exists, list_dir, read_file, write_file_sync,
     )
-    ignore(rm_rf(lock_dir))
-    return ok
+    if ok {
+      ignore(rm_rf(lock_dir))
+      return true
+    }
   }
   let tmp_root = shared_root + ".tmp." + suffix
   ignore(rm_rf(tmp_root))
@@ -613,14 +714,34 @@ fn ensure_agy_shared_cache_seeded(
     ignore(rm_rf(lock_dir))
     return false
   }
+  if !agy_shared_cache_is_populated(
+      tmp_root, path_entry_exists, list_dir, read_file,
+    ) {
+    ignore(rm_rf(tmp_root))
+    ignore(rm_rf(lock_dir))
+    return false
+  }
+  if !write_file_sync(agy_shared_cache_complete_path(tmp_root), "complete\n") ||
+    !path_entry_exists(agy_shared_cache_complete_path(tmp_root)) {
+    ignore(rm_rf(tmp_root))
+    ignore(rm_rf(lock_dir))
+    return false
+  }
+  if path_entry_exists(shared_root) && !rm_rf(shared_root) {
+    ignore(rm_rf(tmp_root))
+    ignore(rm_rf(lock_dir))
+    return false
+  }
   if !rename_file_sync(tmp_root, shared_root) {
     ignore(rm_rf(tmp_root))
     if path_entry_exists(shared_root) {
-      let ok = if path_entry_exists(agy_shared_cache_complete_path(shared_root)) {
+      let ok = if agy_shared_cache_is_complete(
+          shared_root, path_entry_exists, list_dir, read_file,
+        ) {
         true
       } else {
         mark_existing_agy_shared_cache_seeded(
-          shared_root, create_dir_all, path_entry_exists, write_file_sync,
+          shared_root, path_entry_exists, list_dir, read_file, write_file_sync,
         )
       }
       ignore(rm_rf(lock_dir))
@@ -630,7 +751,9 @@ fn ensure_agy_shared_cache_seeded(
     return false
   }
   ignore(rm_rf(lock_dir))
-  path_entry_exists(agy_shared_cache_complete_path(shared_root))
+  agy_shared_cache_is_complete(
+    shared_root, path_entry_exists, list_dir, read_file,
+  )
 }
 
 ///|
@@ -662,6 +785,7 @@ fn run_native_agy_cache_links_paths_with_io(
   project_dir : String,
   worktree_path : String,
   path_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
+  list_dir? : (String) -> Array[String] = @sys.list_dir,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   write_file_sync? : (String, String) -> Bool = @sys.write_file_sync,
   rename_file_sync? : (String, String) -> Bool = @sys.rename_file_sync,
@@ -681,6 +805,7 @@ fn run_native_agy_cache_links_paths_with_io(
       shared_root,
       worktree_path,
       path_entry_exists~,
+      list_dir~,
       create_dir_all~,
       write_file_sync~,
       rename_file_sync~,
@@ -737,16 +862,25 @@ test "native agy cache links waits for concurrent cold seed" {
   let complete = agy_shared_cache_complete_path(shared_root)
   let lock_dir = agy_shared_cache_lock_dir(shared_root)
   let paths : Map[String, Bool] = {}
+  let files : Map[String, String] = {}
   let symlinks : Map[String, String] = {}
   let path_entry_exists = fn(path : String) -> Bool {
     paths.get(path).unwrap_or(false)
+  }
+  let list_dir = fn(path : String) -> Array[String] {
+    if path.has_suffix("/ms-playwright-go") {
+      ["1.57.0"]
+    } else {
+      []
+    }
   }
   let create_dir_all = fn(path : String) -> Bool {
     paths.set(path, true)
     true
   }
-  let write_file_sync = fn(path : String, _content : String) -> Bool {
+  let write_file_sync = fn(path : String, content : String) -> Bool {
     paths.set(path, true)
+    files.set(path, content)
     true
   }
   let rename_file_sync = fn(_from : String, to : String) -> Bool {
@@ -756,6 +890,10 @@ test "native agy cache links waits for concurrent cold seed" {
       }
       paths.set(lock_dir, true)
       paths.set(lock_dir + "/holder", true)
+      files.set(
+        lock_dir + "/holder",
+        files.get(_from + "/holder").unwrap_or(""),
+      )
       return true
     }
     if to == shared_root {
@@ -764,8 +902,25 @@ test "native agy cache links waits for concurrent cold seed" {
       }
       paths.set(shared_root, true)
       paths.set(shared_root + "/ms-playwright-go", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/package", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/node", true)
+      paths.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        true,
+      )
       paths.set(shared_root + "/antigravity-cli-bin", true)
+      paths.set(shared_root + "/antigravity-cli-bin/agentapi", true)
+      paths.set(shared_root + "/antigravity-cli-bin/webm_encoder", true)
       paths.set(complete, true)
+      files.set(shared_root + "/ms-playwright-go/1.57.0/node", "node")
+      files.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        "{}",
+      )
+      files.set(shared_root + "/antigravity-cli-bin/agentapi", "agent")
+      files.set(shared_root + "/antigravity-cli-bin/webm_encoder", "webm")
+      files.set(complete, "complete\n")
       return true
     }
     true
@@ -773,6 +928,20 @@ test "native agy cache links waits for concurrent cold seed" {
   let rm_rf = fn(path : String) -> Bool {
     paths.set(path, false)
     paths.set(path + "/holder", false)
+    if path == shared_root {
+      paths.set(complete, false)
+      paths.set(shared_root + "/ms-playwright-go", false)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0", false)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/package", false)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/node", false)
+      paths.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        false,
+      )
+      paths.set(shared_root + "/antigravity-cli-bin", false)
+      paths.set(shared_root + "/antigravity-cli-bin/agentapi", false)
+      paths.set(shared_root + "/antigravity-cli-bin/webm_encoder", false)
+    }
     true
   }
   let symlink_force = fn(target : String, link_path : String) -> Bool {
@@ -785,8 +954,25 @@ test "native agy cache links waits for concurrent cold seed" {
   let sleep_milliseconds = fn(_ms : Int) -> Unit {
     paths.set(shared_root, true)
     paths.set(shared_root + "/ms-playwright-go", true)
+    paths.set(shared_root + "/ms-playwright-go/1.57.0", true)
+    paths.set(shared_root + "/ms-playwright-go/1.57.0/package", true)
+    paths.set(shared_root + "/ms-playwright-go/1.57.0/node", true)
+    paths.set(
+      shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+      true,
+    )
     paths.set(shared_root + "/antigravity-cli-bin", true)
+    paths.set(shared_root + "/antigravity-cli-bin/agentapi", true)
+    paths.set(shared_root + "/antigravity-cli-bin/webm_encoder", true)
     paths.set(complete, true)
+    files.set(shared_root + "/ms-playwright-go/1.57.0/node", "node")
+    files.set(
+      shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+      "{}",
+    )
+    files.set(shared_root + "/antigravity-cli-bin/agentapi", "agent")
+    files.set(shared_root + "/antigravity-cli-bin/webm_encoder", "webm")
+    files.set(complete, "complete\n")
   }
   let mut seed_count = 0
   let mut nested_rc = -1
@@ -800,6 +986,7 @@ test "native agy cache links waits for concurrent cold seed" {
       project,
       leaf_b,
       path_entry_exists~,
+      list_dir~,
       create_dir_all~,
       write_file_sync~,
       rename_file_sync~,
@@ -810,20 +997,40 @@ test "native agy cache links waits for concurrent cold seed" {
         seed_count = seed_count + 100
         false
       },
+      read_file=fn(path) { files.get(path).unwrap_or("") },
     )
-    seed_agy_shared_cache_temp(temp_root, create_dir_all, write_file_sync)
+    ignore(create_dir_all(temp_root + "/ms-playwright-go"))
+    ignore(create_dir_all(temp_root + "/ms-playwright-go/1.57.0"))
+    ignore(create_dir_all(temp_root + "/ms-playwright-go/1.57.0/package"))
+    ignore(create_dir_all(temp_root + "/antigravity-cli-bin"))
+    ignore(write_file_sync(temp_root + "/ms-playwright-go/1.57.0/node", "node"))
+    ignore(
+      write_file_sync(
+        temp_root + "/ms-playwright-go/1.57.0/package/package.json",
+        "{}",
+      ),
+    )
+    ignore(
+      write_file_sync(temp_root + "/antigravity-cli-bin/agentapi", "agent"),
+    )
+    ignore(
+      write_file_sync(temp_root + "/antigravity-cli-bin/webm_encoder", "webm"),
+    )
+    true
   }
 
   let rc = run_native_agy_cache_links_paths_with_io(
     project,
     leaf_a,
     path_entry_exists~,
+    list_dir~,
     create_dir_all~,
     write_file_sync~,
     rename_file_sync~,
     rm_rf~,
     symlink_force~,
     sleep_milliseconds~,
+    read_file=fn(path) { files.get(path).unwrap_or("") },
     seed_temp~,
   )
   assert_eq(rc, 0)
@@ -846,6 +1053,370 @@ test "native agy cache links waits for concurrent cold seed" {
     symlinks.get(leaf_b + "/.choir/agy-home/.gemini/antigravity-cli/bin"),
     Some(shared_root + "/antigravity-cli-bin"),
   )
+}
+
+///|
+test "agy shared cache temp seed does not bless empty directories" {
+  let temp_root = "/tmp/choir-agy-empty-seed"
+  let writes : Array[String] = []
+  let create_dir_all = fn(_path : String) -> Bool { true }
+  let write_file_sync = fn(path : String, _content : String) -> Bool {
+    writes.push(path)
+    true
+  }
+
+  ignore(seed_agy_shared_cache_temp(temp_root, create_dir_all, write_file_sync))
+
+  assert_false(writes.contains(agy_shared_cache_complete_path(temp_root)))
+}
+
+///|
+test "agy shared cache completes only after populated seed validates" {
+  let shared_root = "/tmp/choir-agy-shared-cache"
+  let lock_dir = agy_shared_cache_lock_dir(shared_root)
+  let complete = agy_shared_cache_complete_path(shared_root)
+  let paths : Map[String, Bool] = {}
+  let files : Map[String, String] = {}
+  let path_entry_exists = fn(path : String) -> Bool {
+    paths.get(path).unwrap_or(false)
+  }
+  let list_dir = fn(path : String) -> Array[String] {
+    if path.has_suffix("/ms-playwright-go") {
+      ["1.57.0"]
+    } else {
+      []
+    }
+  }
+  let create_dir_all = fn(path : String) -> Bool {
+    paths.set(path, true)
+    true
+  }
+  let write_file_sync = fn(path : String, content : String) -> Bool {
+    paths.set(path, true)
+    files.set(path, content)
+    true
+  }
+  let rename_file_sync = fn(from : String, to : String) -> Bool {
+    if to == lock_dir {
+      paths.set(lock_dir, true)
+      paths.set(lock_dir + "/holder", true)
+      files.set(lock_dir + "/holder", files.get(from + "/holder").unwrap_or(""))
+      true
+    } else if to == shared_root {
+      paths.set(shared_root, true)
+      paths.set(shared_root + "/ms-playwright-go", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/package", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/node", true)
+      paths.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        true,
+      )
+      paths.set(shared_root + "/antigravity-cli-bin", true)
+      paths.set(shared_root + "/antigravity-cli-bin/agentapi", true)
+      paths.set(shared_root + "/antigravity-cli-bin/webm_encoder", true)
+      paths.set(complete, true)
+      files.set(
+        shared_root + "/ms-playwright-go/1.57.0/node",
+        files.get(from + "/ms-playwright-go/1.57.0/node").unwrap_or(""),
+      )
+      files.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        files
+        .get(from + "/ms-playwright-go/1.57.0/package/package.json")
+        .unwrap_or(""),
+      )
+      files.set(
+        shared_root + "/antigravity-cli-bin/agentapi",
+        files.get(from + "/antigravity-cli-bin/agentapi").unwrap_or(""),
+      )
+      files.set(
+        shared_root + "/antigravity-cli-bin/webm_encoder",
+        files.get(from + "/antigravity-cli-bin/webm_encoder").unwrap_or(""),
+      )
+      files.set(
+        complete,
+        files.get(agy_shared_cache_complete_path(from)).unwrap_or(""),
+      )
+      true
+    } else {
+      true
+    }
+  }
+  let rm_rf = fn(path : String) -> Bool {
+    paths.set(path, false)
+    paths.set(path + "/holder", false)
+    true
+  }
+  let seed_temp = fn(
+    root : String,
+    create_dir_all : (String) -> Bool,
+    write_file_sync : (String, String) -> Bool,
+  ) -> Bool {
+    ignore(create_dir_all(root + "/ms-playwright-go"))
+    ignore(create_dir_all(root + "/ms-playwright-go/1.57.0"))
+    ignore(create_dir_all(root + "/ms-playwright-go/1.57.0/package"))
+    ignore(create_dir_all(root + "/antigravity-cli-bin"))
+    ignore(write_file_sync(root + "/ms-playwright-go/1.57.0/node", "node"))
+    ignore(
+      write_file_sync(
+        root + "/ms-playwright-go/1.57.0/package/package.json",
+        "{}",
+      ),
+    )
+    ignore(write_file_sync(root + "/antigravity-cli-bin/agentapi", "agent"))
+    ignore(write_file_sync(root + "/antigravity-cli-bin/webm_encoder", "webm"))
+    true
+  }
+
+  let ok = ensure_agy_shared_cache_seeded(
+    shared_root,
+    "/tmp/worktree",
+    path_entry_exists~,
+    list_dir~,
+    create_dir_all~,
+    write_file_sync~,
+    rename_file_sync~,
+    rm_rf~,
+    read_file=fn(path) { files.get(path).unwrap_or("") },
+    seed_temp~,
+  )
+
+  assert_true(ok)
+  assert_true(path_entry_exists(complete))
+  @debug.assert_eq(files.get(complete), Some("complete\n"))
+}
+
+///|
+test "agy shared cache adoption is read-only for partial roots" {
+  let shared_root = "/tmp/choir-agy-partial"
+  let complete = agy_shared_cache_complete_path(shared_root)
+  let paths : Map[String, Bool] = {}
+  paths.set(shared_root, true)
+  paths.set(shared_root + "/ms-playwright-go", true)
+  let mut complete_writes = 0
+  let write_file_sync = fn(path : String, _content : String) -> Bool {
+    if path == complete {
+      complete_writes = complete_writes + 1
+      paths.set(path, true)
+    }
+    true
+  }
+
+  let ok = mark_existing_agy_shared_cache_seeded(
+    shared_root,
+    fn(path) { paths.get(path).unwrap_or(false) },
+    fn(_) { [] },
+    fn(_) { "" },
+    write_file_sync,
+  )
+
+  assert_false(ok)
+  assert_eq(complete_writes, 0)
+  assert_false(paths.get(complete).unwrap_or(false))
+}
+
+///|
+test "agy shared cache wait timeout does not reclaim a live lock" {
+  let shared_root = "/tmp/choir-agy-live-lock"
+  let complete = agy_shared_cache_complete_path(shared_root)
+  let lock_dir = agy_shared_cache_lock_dir(shared_root)
+  let paths : Map[String, Bool] = {}
+  paths.set(lock_dir, true)
+  paths.set(lock_dir + "/holder", true)
+  let files : Map[String, String] = {}
+  files.set(lock_dir + "/holder", "pid=42\nstarted_ms=1000\nholder=other\n")
+  let mut sleep_count = 0
+  let mut seed_count = 0
+  let mut lock_delete_count = 0
+  let path_entry_exists = fn(path : String) -> Bool {
+    paths.get(path).unwrap_or(false)
+  }
+  let list_dir = fn(path : String) -> Array[String] {
+    if path.has_suffix("/ms-playwright-go") {
+      ["1.57.0"]
+    } else {
+      []
+    }
+  }
+  let create_dir_all = fn(path : String) -> Bool {
+    paths.set(path, true)
+    true
+  }
+  let write_file_sync = fn(path : String, content : String) -> Bool {
+    paths.set(path, true)
+    files.set(path, content)
+    true
+  }
+  let rename_file_sync = fn(from : String, to : String) -> Bool {
+    if to == lock_dir {
+      ignore(from)
+      return false
+    }
+    paths.set(to, true)
+    true
+  }
+  let rm_rf = fn(path : String) -> Bool {
+    if path == lock_dir {
+      lock_delete_count = lock_delete_count + 1
+    }
+    paths.set(path, false)
+    paths.set(path + "/holder", false)
+    true
+  }
+  let sleep_milliseconds = fn(_ms : Int) -> Unit {
+    sleep_count = sleep_count + 1
+    if sleep_count == 250 {
+      paths.set(shared_root, true)
+      paths.set(shared_root + "/ms-playwright-go", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/package", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/node", true)
+      paths.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        true,
+      )
+      paths.set(shared_root + "/antigravity-cli-bin", true)
+      paths.set(shared_root + "/antigravity-cli-bin/agentapi", true)
+      paths.set(shared_root + "/antigravity-cli-bin/webm_encoder", true)
+      paths.set(complete, true)
+      files.set(shared_root + "/ms-playwright-go/1.57.0/node", "node")
+      files.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        "{}",
+      )
+      files.set(shared_root + "/antigravity-cli-bin/agentapi", "agent")
+      files.set(shared_root + "/antigravity-cli-bin/webm_encoder", "webm")
+    }
+  }
+  let seed_temp = fn(_, _, _) {
+    seed_count = seed_count + 1
+    false
+  }
+
+  let ok = ensure_agy_shared_cache_seeded(
+    shared_root,
+    "/tmp/worktree",
+    path_entry_exists~,
+    list_dir~,
+    create_dir_all~,
+    write_file_sync~,
+    rename_file_sync~,
+    rm_rf~,
+    sleep_milliseconds~,
+    read_file=fn(path) { files.get(path).unwrap_or("") },
+    pid_is_alive=fn(pid) { pid == 42 },
+    now_ms_fn=fn() { 1000L },
+    seed_temp~,
+  )
+
+  assert_true(ok)
+  assert_true(sleep_count >= 250)
+  assert_eq(seed_count, 0)
+  assert_eq(lock_delete_count, 0)
+}
+
+///|
+test "agy shared cache stale reclaim rechecks unchanged holder" {
+  let shared_root = "/tmp/choir-agy-changing-lock"
+  let complete = agy_shared_cache_complete_path(shared_root)
+  let lock_dir = agy_shared_cache_lock_dir(shared_root)
+  let stale_holder = "pid=111\nstarted_ms=0\nholder=old\n"
+  let fresh_holder = "pid=222\nstarted_ms=1000\nholder=new\n"
+  let paths : Map[String, Bool] = {}
+  paths.set(lock_dir, true)
+  paths.set(lock_dir + "/holder", true)
+  let files : Map[String, String] = {}
+  files.set(lock_dir + "/holder", stale_holder)
+  let mut read_count = 0
+  let mut lock_delete_count = 0
+  let mut sleep_count = 0
+  let path_entry_exists = fn(path : String) -> Bool {
+    paths.get(path).unwrap_or(false)
+  }
+  let list_dir = fn(path : String) -> Array[String] {
+    if path.has_suffix("/ms-playwright-go") {
+      ["1.57.0"]
+    } else {
+      []
+    }
+  }
+  let create_dir_all = fn(path : String) -> Bool {
+    paths.set(path, true)
+    true
+  }
+  let write_file_sync = fn(path : String, content : String) -> Bool {
+    paths.set(path, true)
+    files.set(path, content)
+    true
+  }
+  let rename_file_sync = fn(_from : String, to : String) -> Bool {
+    if to == lock_dir {
+      return false
+    }
+    paths.set(to, true)
+    true
+  }
+  let rm_rf = fn(path : String) -> Bool {
+    if path == lock_dir {
+      lock_delete_count = lock_delete_count + 1
+    }
+    paths.set(path, false)
+    true
+  }
+  let read_file = fn(path : String) -> String {
+    if path == lock_dir + "/holder" {
+      read_count = read_count + 1
+      if read_count > 1 {
+        files.set(path, fresh_holder)
+      }
+    }
+    files.get(path).unwrap_or("")
+  }
+  let sleep_milliseconds = fn(_ms : Int) -> Unit {
+    sleep_count = sleep_count + 1
+    if sleep_count == 3 {
+      paths.set(shared_root, true)
+      paths.set(shared_root + "/ms-playwright-go", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/package", true)
+      paths.set(shared_root + "/ms-playwright-go/1.57.0/node", true)
+      paths.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        true,
+      )
+      paths.set(shared_root + "/antigravity-cli-bin", true)
+      paths.set(shared_root + "/antigravity-cli-bin/agentapi", true)
+      paths.set(shared_root + "/antigravity-cli-bin/webm_encoder", true)
+      paths.set(complete, true)
+      files.set(shared_root + "/ms-playwright-go/1.57.0/node", "node")
+      files.set(
+        shared_root + "/ms-playwright-go/1.57.0/package/package.json",
+        "{}",
+      )
+      files.set(shared_root + "/antigravity-cli-bin/agentapi", "agent")
+      files.set(shared_root + "/antigravity-cli-bin/webm_encoder", "webm")
+    }
+  }
+
+  let ok = ensure_agy_shared_cache_seeded(
+    shared_root,
+    "/tmp/worktree",
+    path_entry_exists~,
+    list_dir~,
+    create_dir_all~,
+    write_file_sync~,
+    rename_file_sync~,
+    rm_rf~,
+    sleep_milliseconds~,
+    read_file~,
+    pid_is_alive=fn(pid) { pid == 222 },
+    now_ms_fn=fn() { 1000L },
+    seed_temp=fn(_, _, _) { false },
+  )
+
+  assert_true(ok)
+  assert_eq(lock_delete_count, 0)
 }
 
 ///|
