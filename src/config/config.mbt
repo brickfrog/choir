@@ -404,6 +404,15 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let agy_migration_incomplete = match
+    parse_required_bool_config_value(
+      doc,
+      "agy_migration_incomplete",
+      default_cfg.agy_migration_incomplete,
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let worker_no_handoff_prod_sec = match doc.get("worker_no_handoff_prod_sec") {
     None => default_cfg.worker_no_handoff_prod_sec
     Some(raw) =>
@@ -512,6 +521,7 @@ pub fn parse_config(
     pr_review,
     automerge,
     review_mode,
+    agy_migration_incomplete,
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,
     audit_heartbeat_sec,

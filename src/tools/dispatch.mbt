@@ -843,6 +843,7 @@ pub async fn dispatch(
     ()
   },
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
+  agy_migration_incomplete? : Bool = false,
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -982,6 +983,12 @@ pub async fn dispatch(
       match ensure_caller_can_spawn(fork_wave_args.caller_id, registry) {
         Err(e) => return @types.Response::Err(e.message())
         Ok(_) => ()
+      }
+      if fork_wave_args.agent_type == @types.AgentType::Gemini {
+        match ensure_agy_migration_ready(agy_migration_incomplete) {
+          Err(e) => return @types.Response::Err(e.message())
+          Ok(_) => ()
+        }
       }
       if fork_wave_args.depends_on.length() > 0 {
         match
@@ -1605,18 +1612,22 @@ pub async fn dispatch(
       match ensure_caller_can_spawn(spawn_args.caller_id, registry) {
         Err(e) => @types.Response::Err(e.message())
         Ok(_) =>
-          interpret_spawn_gemini(
-            spawn_args,
-            project_dir,
-            session,
-            runner,
-            capture,
-            extra_mcp_servers_json~,
-            shell_command~,
-            listen_uds~,
-            listen_tcp~,
-            tcp_auth_token~,
-          )
+          match ensure_agy_migration_ready(agy_migration_incomplete) {
+            Err(e) => @types.Response::Err(e.message())
+            Ok(_) =>
+              interpret_spawn_gemini(
+                spawn_args,
+                project_dir,
+                session,
+                runner,
+                capture,
+                extra_mcp_servers_json~,
+                shell_command~,
+                listen_uds~,
+                listen_tcp~,
+                tcp_auth_token~,
+              )
+          }
       }
     ToolRequest::RescueLeaf(rescue_args) =>
       interpret_rescue_leaf(
@@ -1645,19 +1656,39 @@ pub async fn dispatch(
           )
       }
     ToolRequest::SpawnWorker(worker_args) =>
-      interpret_spawn_worker(
-        worker_args,
-        project_dir,
-        session,
-        runner,
-        capture,
-        registry,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
-      )
+      if worker_args.agent_type == @types.AgentType::Gemini {
+        match ensure_agy_migration_ready(agy_migration_incomplete) {
+          Err(e) => @types.Response::Err(e.message())
+          Ok(_) =>
+            interpret_spawn_worker(
+              worker_args,
+              project_dir,
+              session,
+              runner,
+              capture,
+              registry,
+              extra_mcp_servers_json~,
+              shell_command~,
+              listen_uds~,
+              listen_tcp~,
+              tcp_auth_token~,
+            )
+        }
+      } else {
+        interpret_spawn_worker(
+          worker_args,
+          project_dir,
+          session,
+          runner,
+          capture,
+          registry,
+          extra_mcp_servers_json~,
+          shell_command~,
+          listen_uds~,
+          listen_tcp~,
+          tcp_auth_token~,
+        )
+      }
     ToolRequest::Reply(reply_args) => {
       let id = reply_args.id
       let cancel = reply_args.cancel
@@ -1822,6 +1853,7 @@ pub async fn handle_request(
   hook_xdg_config_home? : String? = @exec.hook_xdg_config_home(),
   hook_home? : String = @exec.hook_home(),
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
+  agy_migration_incomplete? : Bool = false,
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
   let mut ran_builtin_dispatch = false
@@ -1940,6 +1972,7 @@ pub async fn handle_request(
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
                   cleanup_audit_report~,
+                  agy_migration_incomplete~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -2100,6 +2133,7 @@ pub async fn dispatch_call(
   delete_file? : (String) -> Bool = @sys.delete_file_sync,
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
+  agy_migration_incomplete? : Bool = false,
 ) -> @types.Response {
   let tool_args = tool_args_from_map(call.args)
   try {
@@ -2169,6 +2203,7 @@ pub async fn dispatch_call(
                   wait_for_audit_report~,
                   capture_audit_on_file_pr_report~,
                   cleanup_audit_report~,
+                  agy_migration_incomplete~,
                 )
             }
         }

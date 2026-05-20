@@ -34,6 +34,87 @@ test "spawn_worker_ok_response matches spawned envelope" {
 }
 
 ///|
+test "ensure_agy_migration_ready rejects incomplete Gemini migration" {
+  match ensure_agy_migration_ready(true) {
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        "config error: Gemini provider retired — agy migration incomplete",
+      )
+    Ok(_) => fail("expected agy migration gate rejection")
+  }
+  match ensure_agy_migration_ready(false) {
+    Ok(_) => ()
+    Err(e) => fail("unexpected agy migration gate error: " + e.message())
+  }
+}
+
+///|
+async test "dispatch rejects spawn_gemini when agy migration is incomplete" {
+  let spawn_args : SpawnGeminiArgs = {
+    task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
+    caller_id: "main.tl",
+    slug: "gem",
+    parent_branch: "main",
+    parent_session_id: None,
+  }
+  let runner = async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    fail("runner should not run when agy gate rejects")
+  }
+  let got = dispatch(
+    ToolRequest::SpawnGemini(spawn_args),
+    runner~,
+    agy_migration_incomplete=true,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(
+        msg, "config error: Gemini provider retired — agy migration incomplete",
+      )
+    _ => fail("expected spawn_gemini agy gate error")
+  }
+}
+
+///|
+async test "dispatch rejects fork_wave gemini when agy migration is incomplete" {
+  let args : ForkWaveArgs = {
+    count: 1,
+    tasks: ["t"],
+    task_contracts: [{ ..@types.TaskContract::empty(), goal: "t" }],
+    has_per_leaf_tasks: false,
+    parent_branch: "main",
+    caller_id: "main.tl",
+    slug_prefix: "g",
+    agent_type: @types.AgentType::Gemini,
+    child_role: @types.Role::Dev,
+    parent_session_id: None,
+    review_context: None,
+    automerge: None,
+    review_mode: None,
+    depends_on: [],
+    scaffold_commit: None,
+  }
+  let runner = async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    fail("runner should not run when agy gate rejects")
+  }
+  let got = dispatch(
+    ToolRequest::ForkWave(args),
+    runner~,
+    agy_migration_incomplete=true,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(
+        msg, "config error: Gemini provider retired — agy migration incomplete",
+      )
+    _ => fail("expected fork_wave agy gate error")
+  }
+}
+
+///|
 test "spawn_worker_plan builds inline worker spec registry row and response" {
   let worker_args : WorkerSpawnArgs = {
     task: "t",

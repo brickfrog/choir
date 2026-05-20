@@ -1094,6 +1094,12 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   if native_seed >= 0 {
     return native_seed
   }
+  let native_agy_cache_links = @workspace.run_native_agy_cache_links_command(
+    cmd,
+  )
+  if native_agy_cache_links >= 0 {
+    return native_agy_cache_links
+  }
   let prog = cmd.program
   let args = cmd.args[:]
   match cmd.workdir {

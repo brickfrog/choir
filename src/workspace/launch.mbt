@@ -186,8 +186,11 @@ fn provider_launch_command(
     }
     Gemini =>
       {
-        program: cmd_program.unwrap_or("gemini"),
-        args: [..cmd_extra_args, "--yolo", "--prompt-interactive", ..task_args],
+        program: cmd_program.unwrap_or("agy"),
+        args: [
+          ..cmd_extra_args, "--dangerously-skip-permissions", "--prompt-interactive",
+          ..task_args,
+        ],
         workdir: Some(workspace_path),
       }
     MoonPilot =>
@@ -221,8 +224,11 @@ fn provider_launch_command(
       }
     Unknown =>
       {
-        program: cmd_program.unwrap_or("gemini"),
-        args: [..cmd_extra_args, "--yolo", "--prompt-interactive", ..task_args],
+        program: cmd_program.unwrap_or("agy"),
+        args: [
+          ..cmd_extra_args, "--dangerously-skip-permissions", "--prompt-interactive",
+          ..task_args,
+        ],
         workdir: Some(workspace_path),
       }
   }
