@@ -196,6 +196,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       global_review_mode=self.config.review_mode,
       audit_heartbeat_sec=self.config.audit_heartbeat_sec,
       audit_max_rounds=self.config.audit_max_rounds,
+      agy_migration_incomplete=self.config.agy_migration_incomplete,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
       },

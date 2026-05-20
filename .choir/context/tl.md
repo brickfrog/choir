@@ -278,7 +278,7 @@ remember:
   If a pattern exists, cite it by name ("mirror pattern `add-mcp-tool`") and
   the leaf knows exactly which merged example to read. Otherwise, find a
   specific function/file analog as before — e.g. "mirror the shape of
-  `write_gemini_settings()` in `src/workspace/command.mbt`" or "pattern-match
+  `write_agy_mcp_config()` in `src/workspace/command.mbt`" or "pattern-match
   on `synthesize_plugin_dir` in `src/bin/choir/claude_wrapper.mbt`." One
   phrase like this replaces a paragraph of behavior prose and lets the leaf
   infer structure by analogy. If neither a pattern nor an analog exists,

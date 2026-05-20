@@ -25,6 +25,8 @@ pub(all) struct Config {
   automerge : Bool
   /// Review loop behavior after fixes are pushed for review comments.
   review_mode : ReviewMode
+  /// Safety kill-switch while the agy migration is incomplete: rejects Gemini provider spawns.
+  agy_migration_incomplete : Bool
   /// Worker-only no-handoff prod threshold in seconds; 0 disables prod/stall.
   worker_no_handoff_prod_sec : Int64
   /// Worker-only no-handoff stalled-event grace after prod in seconds; 0 disables stalled event.
@@ -96,6 +98,7 @@ pub fn Config::default() -> Config {
     pr_review: true,
     automerge: false,
     review_mode: SinglePass,
+    agy_migration_incomplete: false,
     worker_no_handoff_prod_sec: 120L,
     worker_no_handoff_escalate_sec: 120L,
     audit_heartbeat_sec: 60,

@@ -17,6 +17,7 @@ test "parse_config - full" {
     #|audit_heartbeat_sec = 30
     #|audit_max_rounds = 2
     #|poller_heartbeat_tick_sec = 10
+    #|agy_migration_incomplete = true
     #|auto_pull_after_integration = false
     #|auto_rebuild_after_pull = true
     #|auto_reload_after_rebuild = true
@@ -50,6 +51,7 @@ test "parse_config - full" {
   assert_eq(cfg.audit_heartbeat_sec, 30)
   assert_eq(cfg.audit_max_rounds, 2)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
+  assert_eq(cfg.agy_migration_incomplete, true)
   assert_eq(cfg.auto_pull_after_integration, false)
   assert_eq(cfg.auto_rebuild_after_pull, true)
   assert_eq(cfg.auto_reload_after_rebuild, true)
@@ -71,6 +73,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.audit_heartbeat_sec, 60)
   assert_eq(cfg.audit_max_rounds, 3)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
+  assert_eq(cfg.agy_migration_incomplete, false)
   assert_eq(cfg.auto_pull_after_integration, true)
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)

@@ -393,6 +393,21 @@ pub async fn interpret_spawn_remote(
 }
 
 ///|
+pub fn ensure_agy_migration_ready(
+  agy_migration_incomplete : Bool,
+) -> Result[Unit, @types.ChoirError] {
+  if agy_migration_incomplete {
+    Err(
+      @types.ChoirError::config_error(
+        "Gemini provider retired — agy migration incomplete",
+      ),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
 /// Pure plan for `spawn_gemini`: fixed Dev/Gemini worktree spec and success JSON
 /// (`status`, `agent_id`, `slug`). The interpreter runs `spawn_commands` then
 /// `run_strict`.

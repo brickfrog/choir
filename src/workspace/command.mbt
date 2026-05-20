@@ -41,6 +41,11 @@ pub let native_git_fetch_origin_branch_best_effort_program : String = "__choir_n
 pub let native_worktree_seed_agent_runtime_gitexclude_program : String = "__choir_native_worktree_seed_agent_runtime_gitexclude__"
 
 ///|
+/// Args: `[project_dir, worktree_path]` — ensure agy's heavy runtime cache dirs
+/// are shared under `.choir/agy-shared-cache/` and symlinked into the leaf HOME.
+pub let native_agy_cache_links_program : String = "__choir_native_agy_cache_links__"
+
+///|
 pub fn Command::to_string(self : Command) -> String {
   let mut args_str = ""
   for arg in self.args {
@@ -335,6 +340,77 @@ pub fn run_native_worktree_seed_agent_runtime_gitexclude_command(
 }
 
 ///|
+pub fn agy_home_relative_path() -> String {
+  ".choir/agy-home"
+}
+
+///|
+pub fn agy_home_path(worktree_path : String) -> String {
+  worktree_path + "/" + agy_home_relative_path()
+}
+
+///|
+fn agy_shared_cache_root(project_dir : String) -> String {
+  project_dir + "/.choir/agy-shared-cache"
+}
+
+///|
+fn symlink_shared_cache_dir(shared_dir : String, link_path : String) -> Bool {
+  if !@sys.create_dir_all(shared_dir) {
+    return false
+  }
+  let parent = parent_dir_for_file(link_path)
+  if !@sys.create_dir_all(parent) {
+    return false
+  }
+  if @sys.path_entry_exists(link_path) {
+    if !@sys.rm_rf(link_path) {
+      return false
+    }
+  }
+  @sys.symlink_force(shared_dir, link_path)
+}
+
+///|
+pub fn run_native_agy_cache_links_command(cmd : Command) -> Int {
+  if cmd.program != native_agy_cache_links_program {
+    return -1
+  }
+  if cmd.args.length() != 2 {
+    return 1
+  }
+  let project_dir = cmd.args[0]
+  let worktree_path = cmd.args[1]
+  if project_dir == "" || worktree_path == "" {
+    return 1
+  }
+  let shared_root = agy_shared_cache_root(project_dir)
+  let home = agy_home_path(worktree_path)
+  if !symlink_shared_cache_dir(
+      shared_root + "/ms-playwright-go",
+      home + "/.cache/ms-playwright-go",
+    ) {
+    return 1
+  }
+  if !symlink_shared_cache_dir(
+      shared_root + "/antigravity-cli-bin",
+      home + "/.gemini/antigravity-cli/bin",
+    ) {
+    return 1
+  }
+  0
+}
+
+///|
+pub fn agy_cache_links(project_dir : String, worktree_path : String) -> Command {
+  {
+    program: native_agy_cache_links_program,
+    args: [project_dir, worktree_path],
+    workdir: None,
+  }
+}
+
+///|
 /// After `git worktree add`, keep `git status` clean when agent CLIs write under `.cursor/`, etc.
 pub fn command_seed_worktree_agent_runtime_gitexclude(
   worktree_path : String,
@@ -382,81 +458,6 @@ pub fn write_spawn_config(worktree_path : String, content : String) -> Command {
 }
 
 ///|
-/// Install shell helpers for CLIs that do not load MCP tools directly.
-pub fn write_leaf_helper_scripts(worktree_path : String) -> Command {
-  { program: native_leaf_helpers_program, args: [worktree_path], workdir: None }
-}
-
-///|
-pub fn trust_gemini_folder(worktree_path : String) -> Command {
-  {
-    program: "choir",
-    args: ["trust-gemini-folder", worktree_path],
-    workdir: None,
-  }
-}
-
-///|
-/// Generate Gemini CLI settings.json content with MCP server config, hooks,
-/// and optional context files.
-pub fn gemini_settings_json(
-  agent_name : String,
-  role : String,
-  context_paths? : Array[String] = [],
-  wasm_hooks_path? : String? = None,
-) -> String {
-  let mcp = {
-    "choir": {
-      "type": "stdio".to_json(),
-      "command": "choir".to_json(),
-      "args": ["mcp-stdio", "--role", role, "--name", agent_name].to_json(),
-    }.to_json(),
-  }
-  let hook_entry = {
-    "matcher": "*".to_json(),
-    "hooks": [
-      {
-        "type": "command".to_json(),
-        "command": "choir hook worker-exit --runtime gemini".to_json(),
-      }.to_json(),
-    ].to_json(),
-  }
-  let hooks_obj : Map[String, Json] = {
-    "AfterAgent": [hook_entry.to_json()].to_json(),
-  }
-  match wasm_hooks_path {
-    Some(path) => {
-      let model_hook = fn(func_name : String) -> Json {
-        {
-          "matcher": "*".to_json(),
-          "hooks": [
-            {
-              "type": "command".to_json(),
-              "command": ("extism call " + path + " " + func_name + " --wasi").to_json(),
-            }.to_json(),
-          ].to_json(),
-        }.to_json()
-      }
-      hooks_obj.set("BeforeModel", [model_hook("before_model")].to_json())
-      hooks_obj.set("AfterModel", [model_hook("after_model")].to_json())
-    }
-    None => ()
-  }
-  let settings : Map[String, Json] = {
-    "mcpServers": mcp.to_json(),
-    "hooks": hooks_obj.to_json(),
-  }
-  if context_paths.length() > 0 {
-    let files : Array[Json] = []
-    for path in context_paths {
-      files.push(path.to_json())
-    }
-    settings.set("context", { "fileName": files.to_json() }.to_json())
-  }
-  settings.to_json().stringify(indent=2)
-}
-
-///|
 fn resolve_named_context_path(project_dir : String, name : String) -> String? {
   let local_path = project_dir + "/.choir/context/" + name + ".md"
   if @sys.read_file(local_path) != "" {
@@ -468,12 +469,10 @@ fn resolve_named_context_path(project_dir : String, name : String) -> String? {
       },
     )
   }
-  let home = @sys.getenv("HOME").unwrap_or("")
-  if home != "" {
-    let global = home + "/.choir/context/" + name + ".md"
-    if @sys.read_file(global) != "" {
-      return Some(global)
-    }
+  let global_base = @sys.getenv("HOME").unwrap_or("") + "/.choir/context"
+  let global_path = global_base + "/" + name + ".md"
+  if global_base != "/.choir/context" && @sys.read_file(global_path) != "" {
+    return Some(global_path)
   }
   None
 }
@@ -497,25 +496,116 @@ pub fn resolve_context_paths(
 }
 
 ///|
-/// Write .choir/gemini-settings.json in the workspace for Gemini agents.
-pub fn write_gemini_settings(
+/// Install shell helpers for CLIs that do not load MCP tools directly.
+pub fn write_leaf_helper_scripts(worktree_path : String) -> Command {
+  { program: native_leaf_helpers_program, args: [worktree_path], workdir: None }
+}
+
+///|
+pub fn trust_gemini_folder(worktree_path : String) -> Command {
+  {
+    program: "env",
+    args: [
+      "HOME=" + agy_home_path(worktree_path),
+      "choir",
+      "trust-gemini-folder",
+      worktree_path,
+    ],
+    workdir: None,
+  }
+}
+
+///|
+fn agy_mcp_config_relative_path() -> String {
+  agy_home_relative_path() + "/.gemini/config/mcp_config.json"
+}
+
+///|
+fn agy_hooks_relative_path() -> String {
+  agy_home_relative_path() + "/.gemini/config/hooks.json"
+}
+
+///|
+/// Generate agy's MCP config with the leaf-local Choir stdio server.
+pub fn agy_mcp_config_json(
   worktree_path : String,
   agent_name : String,
   role : String,
-  context_paths? : Array[String] = [],
+) -> String {
+  let mcp = {
+    "choir": {
+      "type": "stdio".to_json(),
+      "command": "choir".to_json(),
+      "args": [
+        "mcp-stdio", "--role", role, "--name", agent_name, "--wait-socket-tries",
+        "300", "--stderr-append-log", ".choir/mcp-stdio.stderr.log",
+      ].to_json(),
+      "cwd": worktree_path.to_json(),
+      "alwaysLoad": true.to_json(),
+    }.to_json(),
+  }
+  let settings : Map[String, Json] = { "mcpServers": mcp.to_json() }
+  settings.to_json().stringify(indent=2)
+}
+
+///|
+fn agy_command_hook(command : String) -> Json {
+  {
+    "type": "command".to_json(),
+    "command": command.to_json(),
+    "timeout": Int::to_json(60),
+  }.to_json()
+}
+
+///|
+/// Generate agy's hooks.json. For model-cycle hooks, agy's direct command
+/// handlers are `PreInvocation`/`PostInvocation`; wrapping them in the older
+/// Gemini `{ matcher, hooks: [...] }` shape loads but does not execute.
+pub fn agy_hooks_json(wasm_hooks_path? : String? = None) -> String {
+  let hook_spec : Map[String, Json] = {
+    "Stop": [agy_command_hook("choir hook worker-exit --runtime gemini")].to_json(),
+  }
+  match wasm_hooks_path {
+    Some(path) => {
+      let model_hook = fn(func_name : String) -> Json {
+        agy_command_hook(
+          "extism call " + @sys.shell_quote(path) + " " + func_name + " --wasi",
+        )
+      }
+      hook_spec.set("PreInvocation", [model_hook("before_model")].to_json())
+      hook_spec.set("PostInvocation", [model_hook("after_model")].to_json())
+    }
+    None => ()
+  }
+  let hooks : Map[String, Json] = { "choir": hook_spec.to_json() }
+  hooks.to_json().stringify(indent=2)
+}
+
+///|
+pub fn write_agy_mcp_config(
+  worktree_path : String,
+  agent_name : String,
+  role : String,
+) -> Command {
+  let content = agy_mcp_config_json(worktree_path, agent_name, role)
+  workspace_relative_file_command(
+    worktree_path,
+    agy_mcp_config_relative_path(),
+    content,
+  )
+}
+
+///|
+pub fn write_agy_hooks(
+  worktree_path : String,
   wasm_hooks_path? : String? = None,
 ) -> Command {
-  let content = gemini_settings_json(
-    agent_name,
-    role,
-    context_paths~,
-    wasm_hooks_path~,
+  let content = agy_hooks_json(wasm_hooks_path~)
+  workspace_relative_file_command(
+    worktree_path,
+    agy_hooks_relative_path(),
+    content,
   )
-  {
-    program: native_write_choir_file_program,
-    args: [worktree_path, "gemini-settings.json", content],
-    workdir: None,
-  }
 }
 
 ///|

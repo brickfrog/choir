@@ -115,12 +115,7 @@ fn shared_env_pairs(
   ]
   if spec.agent_type == @types.AgentType::Gemini ||
     spec.agent_type == @types.AgentType::Unknown {
-    pairs.push(
-      (
-        "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
-        workspace + "/.choir/gemini-settings.json",
-      ),
-    )
+    pairs.push(("HOME", agy_home_path(workspace)))
   }
   match @sys.getenv("TRACEPARENT") {
     Some(value) => if value != "" { pairs.push(("TRACEPARENT", value)) }
@@ -297,23 +292,16 @@ pub fn provider_materialization_commands(
   let cmds : Array[Command] = []
   let role_str = @config.role_to_string(role)
   if agent_type == Gemini || agent_type == Unknown {
+    cmds.push(agy_cache_links(root_project, workspace))
     cmds.push(trust_gemini_folder(workspace))
-    let ctx_paths = resolve_context_paths(root_project, role_str)
     let wasm_path = root_project + "/.choir/hooks/hook.wasm"
     let wasm_hooks = if @sys.read_file(wasm_path) != "" {
       Some(wasm_path)
     } else {
       None
     }
-    cmds.push(
-      write_gemini_settings(
-        workspace,
-        agent_id,
-        role_str,
-        context_paths=ctx_paths,
-        wasm_hooks_path=wasm_hooks,
-      ),
-    )
+    cmds.push(write_agy_mcp_config(workspace, agent_id, role_str))
+    cmds.push(write_agy_hooks(workspace, wasm_hooks_path=wasm_hooks))
   }
   if agent_type == CursorAgent {
     cmds.push(write_cursor_mcp_json(workspace, agent_id, role_str))

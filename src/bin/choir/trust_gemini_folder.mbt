@@ -1,6 +1,6 @@
 ///|
 fn trusted_folders_json(existing : String, workspace : String) -> String {
-  let json = @json.parse(existing) catch { _ => return "{}" }
+  let json = @json.parse(existing) catch { _ => ().to_json() }
   let obj = match json {
     Object(m) => m
     _ => {}
@@ -54,5 +54,13 @@ test "trusted_folders_json preserves existing paths and adds workspace" {
   let json = @json.parse(updated) catch { _ => ().to_json() }
   guard json is Object(parsed) else { panic() }
   @debug.assert_eq(parsed.get("/existing"), Some("TRUST_FOLDER".to_json()))
+  @debug.assert_eq(parsed.get("/new/worktree"), Some("TRUST_FOLDER".to_json()))
+}
+
+///|
+test "trusted_folders_json adds workspace when file is missing or empty" {
+  let updated = trusted_folders_json("", "/new/worktree")
+  let json = @json.parse(updated) catch { _ => ().to_json() }
+  guard json is Object(parsed) else { panic() }
   @debug.assert_eq(parsed.get("/new/worktree"), Some("TRUST_FOLDER".to_json()))
 }
