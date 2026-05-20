@@ -467,6 +467,10 @@ pub async fn interpret_spawn_gemini(
   tcp_auth_token? : String? = None,
 ) -> @types.Response {
   let plan = spawn_gemini_plan(spawn_args)
+  match ensure_agy_binary_available(capture) {
+    Ok(_) => ()
+    Err(msg) => return @types.Response::Err(msg)
+  }
   let cmds = @workspace.spawn_commands(
     plan.spec,
     project_dir,
