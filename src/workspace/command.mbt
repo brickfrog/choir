@@ -379,22 +379,31 @@ fn agy_cache_temp_suffix(worktree_path : String) -> String {
 ///|
 fn seed_agy_shared_cache_temp(
   temp_root : String,
-  _create_dir_all : (String) -> Bool,
+  create_dir_all : (String) -> Bool,
   _write_file_sync : (String, String) -> Bool,
 ) -> Bool {
-  // The native helper cannot prove agy's runtime was downloaded; callers that
-  // populate the temp root must inject a real populator through `seed_temp`.
-  ignore(temp_root)
-  false
+  // Prepare the shared cache layout for agy's first-run downloader. This does
+  // not mark the cache complete; completion is written only after validation.
+  create_dir_all(temp_root + "/ms-playwright-go") &&
+  create_dir_all(temp_root + "/antigravity-cli-bin")
+}
+
+///|
+fn agy_shared_cache_expected_dirs_exist(
+  shared_root : String,
+  path_entry_exists : (String) -> Bool,
+) -> Bool {
+  path_entry_exists(shared_root + "/ms-playwright-go") &&
+  path_entry_exists(shared_root + "/antigravity-cli-bin")
 }
 
 ///|
 fn agy_shared_cache_file_nonempty(
   path : String,
   path_entry_exists : (String) -> Bool,
-  read_file : (String) -> String,
+  file_size : (String) -> Int,
 ) -> Bool {
-  path_entry_exists(path) && read_file(path) != ""
+  path_entry_exists(path) && file_size(path) > 0
 }
 
 ///|
@@ -402,7 +411,7 @@ fn agy_shared_cache_playwright_populated(
   shared_root : String,
   path_entry_exists : (String) -> Bool,
   list_dir : (String) -> Array[String],
-  read_file : (String) -> String,
+  file_size : (String) -> Int,
 ) -> Bool {
   let playwright_root = shared_root + "/ms-playwright-go"
   if !path_entry_exists(playwright_root) {
@@ -414,12 +423,12 @@ fn agy_shared_cache_playwright_populated(
       agy_shared_cache_file_nonempty(
         version_root + "/node",
         path_entry_exists,
-        read_file,
+        file_size,
       ) &&
       agy_shared_cache_file_nonempty(
         version_root + "/package/package.json",
         path_entry_exists,
-        read_file,
+        file_size,
       ) {
       return true
     }
@@ -431,19 +440,19 @@ fn agy_shared_cache_playwright_populated(
 fn agy_shared_cache_bin_populated(
   shared_root : String,
   path_entry_exists : (String) -> Bool,
-  read_file : (String) -> String,
+  file_size : (String) -> Int,
 ) -> Bool {
   let bin_root = shared_root + "/antigravity-cli-bin"
   path_entry_exists(bin_root) &&
   agy_shared_cache_file_nonempty(
     bin_root + "/agentapi",
     path_entry_exists,
-    read_file,
+    file_size,
   ) &&
   agy_shared_cache_file_nonempty(
     bin_root + "/webm_encoder",
     path_entry_exists,
-    read_file,
+    file_size,
   )
 }
 
@@ -452,12 +461,12 @@ fn agy_shared_cache_is_populated(
   shared_root : String,
   path_entry_exists : (String) -> Bool,
   list_dir : (String) -> Array[String],
-  read_file : (String) -> String,
+  file_size : (String) -> Int,
 ) -> Bool {
   agy_shared_cache_playwright_populated(
-    shared_root, path_entry_exists, list_dir, read_file,
+    shared_root, path_entry_exists, list_dir, file_size,
   ) &&
-  agy_shared_cache_bin_populated(shared_root, path_entry_exists, read_file)
+  agy_shared_cache_bin_populated(shared_root, path_entry_exists, file_size)
 }
 
 ///|
@@ -465,11 +474,11 @@ fn agy_shared_cache_is_complete(
   shared_root : String,
   path_entry_exists : (String) -> Bool,
   list_dir : (String) -> Array[String],
-  read_file : (String) -> String,
+  file_size : (String) -> Int,
 ) -> Bool {
   path_entry_exists(agy_shared_cache_complete_path(shared_root)) &&
   agy_shared_cache_is_populated(
-    shared_root, path_entry_exists, list_dir, read_file,
+    shared_root, path_entry_exists, list_dir, file_size,
   )
 }
 
@@ -478,11 +487,11 @@ fn mark_existing_agy_shared_cache_seeded(
   shared_root : String,
   path_entry_exists : (String) -> Bool,
   list_dir : (String) -> Array[String],
-  read_file : (String) -> String,
+  file_size : (String) -> Int,
   write_file_sync : (String, String) -> Bool,
 ) -> Bool {
   if !agy_shared_cache_is_populated(
-      shared_root, path_entry_exists, list_dir, read_file,
+      shared_root, path_entry_exists, list_dir, file_size,
     ) {
     return false
   }
@@ -507,11 +516,11 @@ fn agy_shared_cache_lock_content_is_stale(
   }
   let pid_dead = match agy_lock_holder_pid(content) {
     Some(pid) => !pid_is_alive(pid)
-    None => false
+    None => true
   }
   let too_old = match agy_lock_holder_started_ms(content) {
     Some(started_ms) => now_ms - started_ms >= agy_shared_cache_lock_stale_ms
-    None => false
+    None => true
   }
   pid_dead || too_old
 }
@@ -522,6 +531,7 @@ fn wait_for_agy_shared_cache_complete_or_stale(
   lock_dir : String,
   path_entry_exists : (String) -> Bool,
   list_dir : (String) -> Array[String],
+  file_size : (String) -> Int,
   read_file : (String) -> String,
   pid_is_alive : (Int) -> Bool,
   now_ms_fn : () -> Int64,
@@ -529,7 +539,7 @@ fn wait_for_agy_shared_cache_complete_or_stale(
 ) -> AgySharedCacheWaitResult {
   for ;; {
     if agy_shared_cache_is_complete(
-        shared_root, path_entry_exists, list_dir, read_file,
+        shared_root, path_entry_exists, list_dir, file_size,
       ) {
       return AgySharedCacheComplete
     }
@@ -610,6 +620,7 @@ fn ensure_agy_shared_cache_seeded(
   worktree_path : String,
   path_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
   list_dir? : (String) -> Array[String] = @sys.list_dir,
+  file_size? : (String) -> Int = @sys.file_size,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   write_file_sync? : (String, String) -> Bool = @sys.write_file_sync,
   rename_file_sync? : (String, String) -> Bool = @sys.rename_file_sync,
@@ -621,14 +632,16 @@ fn ensure_agy_shared_cache_seeded(
   seed_temp? : (String, (String) -> Bool, (String, String) -> Bool) -> Bool = seed_agy_shared_cache_temp,
   retry_stale_lock? : Bool = true,
 ) -> Bool {
+  let complete_path = agy_shared_cache_complete_path(shared_root)
+  let had_complete_marker = path_entry_exists(complete_path)
   if agy_shared_cache_is_complete(
-      shared_root, path_entry_exists, list_dir, read_file,
+      shared_root, path_entry_exists, list_dir, file_size,
     ) {
     return true
   }
   if path_entry_exists(shared_root) &&
     mark_existing_agy_shared_cache_seeded(
-      shared_root, path_entry_exists, list_dir, read_file, write_file_sync,
+      shared_root, path_entry_exists, list_dir, file_size, write_file_sync,
     ) {
     return true
   }
@@ -654,8 +667,8 @@ fn ensure_agy_shared_cache_seeded(
     ignore(rm_rf(tmp_lock))
     match
       wait_for_agy_shared_cache_complete_or_stale(
-        shared_root, lock_dir, path_entry_exists, list_dir, read_file, pid_is_alive,
-        now_ms_fn, sleep_milliseconds,
+        shared_root, lock_dir, path_entry_exists, list_dir, file_size, read_file,
+        pid_is_alive, now_ms_fn, sleep_milliseconds,
       ) {
       AgySharedCacheComplete => return true
       AgySharedCacheStale(holder_content) => {
@@ -666,6 +679,7 @@ fn ensure_agy_shared_cache_seeded(
             worktree_path,
             path_entry_exists~,
             list_dir~,
+            file_size~,
             create_dir_all~,
             write_file_sync~,
             rename_file_sync~,
@@ -680,8 +694,8 @@ fn ensure_agy_shared_cache_seeded(
         } else if retry_stale_lock {
           match
             wait_for_agy_shared_cache_complete_or_stale(
-              shared_root, lock_dir, path_entry_exists, list_dir, read_file, pid_is_alive,
-              now_ms_fn, sleep_milliseconds,
+              shared_root, lock_dir, path_entry_exists, list_dir, file_size, read_file,
+              pid_is_alive, now_ms_fn, sleep_milliseconds,
             ) {
             AgySharedCacheComplete => return true
             AgySharedCacheStale(_) => return false
@@ -693,20 +707,22 @@ fn ensure_agy_shared_cache_seeded(
   }
 
   if agy_shared_cache_is_complete(
-      shared_root, path_entry_exists, list_dir, read_file,
+      shared_root, path_entry_exists, list_dir, file_size,
     ) {
     ignore(rm_rf(lock_dir))
     return true
   }
   if path_entry_exists(shared_root) {
     let ok = mark_existing_agy_shared_cache_seeded(
-      shared_root, path_entry_exists, list_dir, read_file, write_file_sync,
+      shared_root, path_entry_exists, list_dir, file_size, write_file_sync,
     )
     if ok {
       ignore(rm_rf(lock_dir))
       return true
     }
   }
+  let complete_marker_present_before_seed = had_complete_marker ||
+    path_entry_exists(complete_path)
   let tmp_root = shared_root + ".tmp." + suffix
   ignore(rm_rf(tmp_root))
   if !seed_temp(tmp_root, create_dir_all, write_file_sync) {
@@ -714,18 +730,27 @@ fn ensure_agy_shared_cache_seeded(
     ignore(rm_rf(lock_dir))
     return false
   }
-  if !agy_shared_cache_is_populated(
-      tmp_root, path_entry_exists, list_dir, read_file,
-    ) {
+  let tmp_populated = agy_shared_cache_is_populated(
+    tmp_root, path_entry_exists, list_dir, file_size,
+  )
+  if !tmp_populated && complete_marker_present_before_seed {
     ignore(rm_rf(tmp_root))
     ignore(rm_rf(lock_dir))
     return false
   }
-  if !write_file_sync(agy_shared_cache_complete_path(tmp_root), "complete\n") ||
-    !path_entry_exists(agy_shared_cache_complete_path(tmp_root)) {
+  if !tmp_populated &&
+    !agy_shared_cache_expected_dirs_exist(tmp_root, path_entry_exists) {
     ignore(rm_rf(tmp_root))
     ignore(rm_rf(lock_dir))
     return false
+  }
+  if tmp_populated {
+    if !write_file_sync(agy_shared_cache_complete_path(tmp_root), "complete\n") ||
+      !path_entry_exists(agy_shared_cache_complete_path(tmp_root)) {
+      ignore(rm_rf(tmp_root))
+      ignore(rm_rf(lock_dir))
+      return false
+    }
   }
   if path_entry_exists(shared_root) && !rm_rf(shared_root) {
     ignore(rm_rf(tmp_root))
@@ -736,12 +761,16 @@ fn ensure_agy_shared_cache_seeded(
     ignore(rm_rf(tmp_root))
     if path_entry_exists(shared_root) {
       let ok = if agy_shared_cache_is_complete(
-          shared_root, path_entry_exists, list_dir, read_file,
+          shared_root, path_entry_exists, list_dir, file_size,
         ) {
         true
       } else {
         mark_existing_agy_shared_cache_seeded(
-          shared_root, path_entry_exists, list_dir, read_file, write_file_sync,
+          shared_root, path_entry_exists, list_dir, file_size, write_file_sync,
+        ) ||
+        (
+          !path_entry_exists(agy_shared_cache_complete_path(shared_root)) &&
+          agy_shared_cache_expected_dirs_exist(shared_root, path_entry_exists)
         )
       }
       ignore(rm_rf(lock_dir))
@@ -752,7 +781,11 @@ fn ensure_agy_shared_cache_seeded(
   }
   ignore(rm_rf(lock_dir))
   agy_shared_cache_is_complete(
-    shared_root, path_entry_exists, list_dir, read_file,
+    shared_root, path_entry_exists, list_dir, file_size,
+  ) ||
+  (
+    !path_entry_exists(agy_shared_cache_complete_path(shared_root)) &&
+    agy_shared_cache_expected_dirs_exist(shared_root, path_entry_exists)
   )
 }
 
@@ -786,6 +819,7 @@ fn run_native_agy_cache_links_paths_with_io(
   worktree_path : String,
   path_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
   list_dir? : (String) -> Array[String] = @sys.list_dir,
+  file_size? : (String) -> Int = @sys.file_size,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   write_file_sync? : (String, String) -> Bool = @sys.write_file_sync,
   rename_file_sync? : (String, String) -> Bool = @sys.rename_file_sync,
@@ -806,6 +840,7 @@ fn run_native_agy_cache_links_paths_with_io(
       worktree_path,
       path_entry_exists~,
       list_dir~,
+      file_size~,
       create_dir_all~,
       write_file_sync~,
       rename_file_sync~,
@@ -872,6 +907,12 @@ test "native agy cache links waits for concurrent cold seed" {
       ["1.57.0"]
     } else {
       []
+    }
+  }
+  let file_size = fn(path : String) -> Int {
+    match files.get(path) {
+      Some(content) => content.length()
+      None => -1
     }
   }
   let create_dir_all = fn(path : String) -> Bool {
@@ -987,6 +1028,7 @@ test "native agy cache links waits for concurrent cold seed" {
       leaf_b,
       path_entry_exists~,
       list_dir~,
+      file_size~,
       create_dir_all~,
       write_file_sync~,
       rename_file_sync~,
@@ -1024,6 +1066,7 @@ test "native agy cache links waits for concurrent cold seed" {
     leaf_a,
     path_entry_exists~,
     list_dir~,
+    file_size~,
     create_dir_all~,
     write_file_sync~,
     rename_file_sync~,
@@ -1058,16 +1101,113 @@ test "native agy cache links waits for concurrent cold seed" {
 ///|
 test "agy shared cache temp seed does not bless empty directories" {
   let temp_root = "/tmp/choir-agy-empty-seed"
+  let creates : Array[String] = []
   let writes : Array[String] = []
-  let create_dir_all = fn(_path : String) -> Bool { true }
+  let create_dir_all = fn(path : String) -> Bool {
+    creates.push(path)
+    true
+  }
   let write_file_sync = fn(path : String, _content : String) -> Bool {
     writes.push(path)
     true
   }
 
-  ignore(seed_agy_shared_cache_temp(temp_root, create_dir_all, write_file_sync))
+  assert_true(
+    seed_agy_shared_cache_temp(temp_root, create_dir_all, write_file_sync),
+  )
 
+  assert_true(creates.contains(temp_root + "/ms-playwright-go"))
+  assert_true(creates.contains(temp_root + "/antigravity-cli-bin"))
   assert_false(writes.contains(agy_shared_cache_complete_path(temp_root)))
+}
+
+///|
+test "native agy cache links prepares cold cache without complete marker" {
+  let project = "/tmp/choir-agy-cold-project"
+  let leaf = project + "/.choir/worktrees/leaf-a"
+  let shared_root = agy_shared_cache_root(project)
+  let complete = agy_shared_cache_complete_path(shared_root)
+  let lock_dir = agy_shared_cache_lock_dir(shared_root)
+  let paths : Map[String, Bool] = {}
+  let files : Map[String, String] = {}
+  let symlinks : Map[String, String] = {}
+  let path_entry_exists = fn(path : String) -> Bool {
+    paths.get(path).unwrap_or(false)
+  }
+  let create_dir_all = fn(path : String) -> Bool {
+    paths.set(path, true)
+    true
+  }
+  let write_file_sync = fn(path : String, content : String) -> Bool {
+    paths.set(path, true)
+    files.set(path, content)
+    true
+  }
+  let rename_file_sync = fn(from : String, to : String) -> Bool {
+    if to == lock_dir {
+      paths.set(lock_dir, true)
+      paths.set(lock_dir + "/holder", true)
+      files.set(lock_dir + "/holder", files.get(from + "/holder").unwrap_or(""))
+      return true
+    }
+    if to == shared_root {
+      paths.set(shared_root, true)
+      paths.set(
+        shared_root + "/ms-playwright-go",
+        path_entry_exists(from + "/ms-playwright-go"),
+      )
+      paths.set(
+        shared_root + "/antigravity-cli-bin",
+        path_entry_exists(from + "/antigravity-cli-bin"),
+      )
+      paths.set(
+        complete,
+        path_entry_exists(agy_shared_cache_complete_path(from)),
+      )
+      return true
+    }
+    true
+  }
+  let rm_rf = fn(path : String) -> Bool {
+    paths.set(path, false)
+    paths.set(path + "/holder", false)
+    true
+  }
+  let symlink_force = fn(target : String, link_path : String) -> Bool {
+    if !path_entry_exists(target) {
+      return false
+    }
+    symlinks.set(link_path, target)
+    true
+  }
+
+  let rc = run_native_agy_cache_links_paths_with_io(
+    project,
+    leaf,
+    path_entry_exists~,
+    list_dir=fn(_) { [] },
+    file_size=fn(_) { -1 },
+    create_dir_all~,
+    write_file_sync~,
+    rename_file_sync~,
+    rm_rf~,
+    symlink_force~,
+    read_file=fn(path) { files.get(path).unwrap_or("") },
+    now_ms_fn=fn() { 1000L },
+  )
+
+  assert_eq(rc, 0)
+  assert_true(path_entry_exists(shared_root + "/ms-playwright-go"))
+  assert_true(path_entry_exists(shared_root + "/antigravity-cli-bin"))
+  assert_false(path_entry_exists(complete))
+  @debug.assert_eq(
+    symlinks.get(leaf + "/.choir/agy-home/.cache/ms-playwright-go"),
+    Some(shared_root + "/ms-playwright-go"),
+  )
+  @debug.assert_eq(
+    symlinks.get(leaf + "/.choir/agy-home/.gemini/antigravity-cli/bin"),
+    Some(shared_root + "/antigravity-cli-bin"),
+  )
 }
 
 ///|
@@ -1085,6 +1225,12 @@ test "agy shared cache completes only after populated seed validates" {
       ["1.57.0"]
     } else {
       []
+    }
+  }
+  let file_size = fn(path : String) -> Int {
+    match files.get(path) {
+      Some(content) => content.length()
+      None => -1
     }
   }
   let create_dir_all = fn(path : String) -> Bool {
@@ -1174,6 +1320,7 @@ test "agy shared cache completes only after populated seed validates" {
     "/tmp/worktree",
     path_entry_exists~,
     list_dir~,
+    file_size~,
     create_dir_all~,
     write_file_sync~,
     rename_file_sync~,
@@ -1185,6 +1332,50 @@ test "agy shared cache completes only after populated seed validates" {
   assert_true(ok)
   assert_true(path_entry_exists(complete))
   @debug.assert_eq(files.get(complete), Some("complete\n"))
+}
+
+///|
+test "agy shared cache validation uses file size instead of file contents" {
+  let shared_root = "/tmp/choir-agy-sized-cache"
+  let complete = agy_shared_cache_complete_path(shared_root)
+  let paths : Map[String, Bool] = {}
+  paths.set(shared_root, true)
+  paths.set(shared_root + "/ms-playwright-go", true)
+  paths.set(shared_root + "/ms-playwright-go/1.57.0", true)
+  paths.set(shared_root + "/ms-playwright-go/1.57.0/package", true)
+  paths.set(shared_root + "/ms-playwright-go/1.57.0/node", true)
+  paths.set(shared_root + "/ms-playwright-go/1.57.0/package/package.json", true)
+  paths.set(shared_root + "/antigravity-cli-bin", true)
+  paths.set(shared_root + "/antigravity-cli-bin/agentapi", true)
+  paths.set(shared_root + "/antigravity-cli-bin/webm_encoder", true)
+  paths.set(complete, true)
+  let sizes : Map[String, Int] = {}
+  sizes.set(shared_root + "/ms-playwright-go/1.57.0/node", 145000000)
+  sizes.set(shared_root + "/ms-playwright-go/1.57.0/package/package.json", 2)
+  sizes.set(shared_root + "/antigravity-cli-bin/agentapi", 12)
+  sizes.set(shared_root + "/antigravity-cli-bin/webm_encoder", 12)
+  let mut read_count = 0
+
+  let ok = ensure_agy_shared_cache_seeded(
+    shared_root,
+    "/tmp/worktree",
+    path_entry_exists=fn(path) { paths.get(path).unwrap_or(false) },
+    list_dir=fn(path) {
+      if path.has_suffix("/ms-playwright-go") {
+        ["1.57.0"]
+      } else {
+        []
+      }
+    },
+    file_size=fn(path) { sizes.get(path).unwrap_or(-1) },
+    read_file=fn(_) {
+      read_count = read_count + 1
+      ""
+    },
+  )
+
+  assert_true(ok)
+  assert_eq(read_count, 0)
 }
 
 ///|
@@ -1207,13 +1398,34 @@ test "agy shared cache adoption is read-only for partial roots" {
     shared_root,
     fn(path) { paths.get(path).unwrap_or(false) },
     fn(_) { [] },
-    fn(_) { "" },
+    fn(_) { -1 },
     write_file_sync,
   )
 
   assert_false(ok)
   assert_eq(complete_writes, 0)
   assert_false(paths.get(complete).unwrap_or(false))
+}
+
+///|
+test "agy shared cache malformed lock holder is stale" {
+  let pid_is_alive = fn(_pid : Int) -> Bool { true }
+
+  assert_true(
+    agy_shared_cache_lock_content_is_stale(
+      "pid=nope\nstarted_ms=1000\nholder=broken\n", pid_is_alive, 1000L,
+    ),
+  )
+  assert_true(
+    agy_shared_cache_lock_content_is_stale(
+      "started_ms=1000\nholder=missing-pid\n", pid_is_alive, 1000L,
+    ),
+  )
+  assert_true(
+    agy_shared_cache_lock_content_is_stale(
+      "pid=42\nholder=missing-started\n", pid_is_alive, 1000L,
+    ),
+  )
 }
 
 ///|
@@ -1237,6 +1449,12 @@ test "agy shared cache wait timeout does not reclaim a live lock" {
       ["1.57.0"]
     } else {
       []
+    }
+  }
+  let file_size = fn(path : String) -> Int {
+    match files.get(path) {
+      Some(content) => content.length()
+      None => -1
     }
   }
   let create_dir_all = fn(path : String) -> Bool {
@@ -1299,6 +1517,7 @@ test "agy shared cache wait timeout does not reclaim a live lock" {
     "/tmp/worktree",
     path_entry_exists~,
     list_dir~,
+    file_size~,
     create_dir_all~,
     write_file_sync~,
     rename_file_sync~,
@@ -1339,6 +1558,12 @@ test "agy shared cache stale reclaim rechecks unchanged holder" {
       ["1.57.0"]
     } else {
       []
+    }
+  }
+  let file_size = fn(path : String) -> Int {
+    match files.get(path) {
+      Some(content) => content.length()
+      None => -1
     }
   }
   let create_dir_all = fn(path : String) -> Bool {
@@ -1404,6 +1629,7 @@ test "agy shared cache stale reclaim rechecks unchanged holder" {
     "/tmp/worktree",
     path_entry_exists~,
     list_dir~,
+    file_size~,
     create_dir_all~,
     write_file_sync~,
     rename_file_sync~,
