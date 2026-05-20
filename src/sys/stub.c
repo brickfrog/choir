@@ -298,6 +298,17 @@ int choir_path_entry_exists(const char* path) {
     return stat(path, &st) == 0;
 }
 
+int choir_path_executable(const char* path) {
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return 0;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        return 0;
+    }
+    return access(path, X_OK) == 0;
+}
+
 /* Recursive delete of `path` (file or directory).  Returns 0 on success
  * (including the idempotent "already gone" case) and -1 if any step failed.
  * Symbolic links are unlinked, not followed; traversal uses lstat.  Intended

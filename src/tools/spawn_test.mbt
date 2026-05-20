@@ -115,6 +115,35 @@ async test "dispatch rejects fork_wave gemini when agy migration is incomplete" 
 }
 
 ///|
+async test "dispatch rejects rescue_leaf gemini when agy migration is incomplete" {
+  let args : RescueLeafArgs = {
+    task: "continue",
+    task_contract: { ..@types.TaskContract::empty(), goal: "continue" },
+    caller_id: "main.tl",
+    from_agent_id: "main.old-leaf",
+    new_slug: "rescue",
+    agent_type: @types.AgentType::Gemini,
+    parent_session_id: None,
+  }
+  let runner = async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    fail("runner should not run when agy gate rejects rescue_leaf")
+  }
+  let got = dispatch(
+    ToolRequest::RescueLeaf(args),
+    runner~,
+    agy_migration_incomplete=true,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(
+        msg, "config error: Gemini provider retired — agy migration incomplete",
+      )
+    _ => fail("expected rescue_leaf agy gate error")
+  }
+}
+
+///|
 test "spawn_worker_plan builds inline worker spec registry row and response" {
   let worker_args : WorkerSpawnArgs = {
     task: "t",

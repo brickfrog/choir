@@ -120,17 +120,17 @@ pub fn tl_type_agent_type(tl_type : String) -> @types.AgentType {
 }
 
 ///|
-fn path_var_has_program(
+fn path_var_has_executable_program(
   name : String,
   path_var : String,
-  path_exists : (String) -> Bool,
+  path_executable : (String) -> Bool,
 ) -> Bool {
   for raw in path_var.split(":") {
     let dir = raw.trim().to_owned()
     if dir == "" {
       continue
     }
-    if path_exists(dir + "/" + name) {
+    if path_executable(dir + "/" + name) {
       return true
     }
   }
@@ -138,9 +138,24 @@ fn path_var_has_program(
 }
 
 ///|
+test "path var agy probe ignores existing but non-executable entries" {
+  let path_executable = fn(path : String) -> Bool {
+    path == "/good/antigravity"
+  }
+  assert_false(
+    path_var_has_executable_program("agy", "/bad:/good", path_executable),
+  )
+  assert_true(
+    path_var_has_executable_program(
+      "antigravity", "/bad:/good", path_executable,
+    ),
+  )
+}
+
+///|
 fn agy_binary_on_path(name : String) -> Bool {
   let path_var = @sys.getenv("PATH").unwrap_or("/usr/local/bin:/usr/bin:/bin")
-  path_var_has_program(name, path_var, @sys.path_exists)
+  path_var_has_executable_program(name, path_var, @sys.path_executable)
 }
 
 ///|

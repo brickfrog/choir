@@ -1630,20 +1630,41 @@ pub async fn dispatch(
           }
       }
     ToolRequest::RescueLeaf(rescue_args) =>
-      interpret_rescue_leaf(
-        rescue_args,
-        project_dir,
-        session,
-        runner,
-        capture,
-        registry,
-        poller_state,
-        extra_mcp_servers_json~,
-        shell_command~,
-        listen_uds~,
-        listen_tcp~,
-        tcp_auth_token~,
-      )
+      if rescue_args.agent_type == @types.AgentType::Gemini {
+        match ensure_agy_migration_ready(agy_migration_incomplete) {
+          Err(e) => @types.Response::Err(e.message())
+          Ok(_) =>
+            interpret_rescue_leaf(
+              rescue_args,
+              project_dir,
+              session,
+              runner,
+              capture,
+              registry,
+              poller_state,
+              extra_mcp_servers_json~,
+              shell_command~,
+              listen_uds~,
+              listen_tcp~,
+              tcp_auth_token~,
+            )
+        }
+      } else {
+        interpret_rescue_leaf(
+          rescue_args,
+          project_dir,
+          session,
+          runner,
+          capture,
+          registry,
+          poller_state,
+          extra_mcp_servers_json~,
+          shell_command~,
+          listen_uds~,
+          listen_tcp~,
+          tcp_auth_token~,
+        )
+      }
     ToolRequest::SpawnRemote(spawn_args) =>
       match ensure_caller_can_spawn(spawn_args.caller_id, registry) {
         Err(e) => @types.Response::Err(e.message())
