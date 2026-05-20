@@ -1282,6 +1282,66 @@ async test "file_pr_auto_audit does not record a new cycle when awaiting in-flig
 }
 
 ///|
+async test "file_pr_auto_audit clamps missing in-flight cycle count before exhaustion" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-in-flight-zero-cycle-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let prefix = audit_on_file_pr_slug_prefix(head)
+  let existing = file_pr_test_audit_child(
+    prefix + "111",
+    @phase.ChildLifecycleSummary::Working,
+  )
+  let mut spawn_calls = 0
+  let mut record_calls = 0
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, None),
+    async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    async fn(worker_id) {
+      @async.sleep(0)
+      assert_eq(worker_id, existing.child_id)
+      Some({
+        message: "Finding 1: still broken\n",
+        status: @types.Status::Success,
+      })
+    },
+    fn(_) {  },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1779000000L },
+    fn(_) { true },
+    list_audit_workers=fn() { [existing] },
+    audit_max_rounds=1,
+    record_audit_cycle_for_agent=fn(_) {
+      record_calls = record_calls + 1
+      record_calls
+    },
+    audit_cycle_count_for_agent=fn(_) { 0 },
+  )
+  match got {
+    Err(e) => {
+      assert_eq(e.to_wire_string(), "audit_loop_exhausted")
+      assert_true(e.message().contains("audit loop exhausted after 1 cycle(s)"))
+      assert_false(e.message().contains("after 0 cycle(s)"))
+    }
+    Ok(_) => fail("expected in-flight audit exhaustion")
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(record_calls, 0)
+}
+
+///|
 async test "file_pr_auto_audit records one cycle for each fresh audit spawn" {
   let project_dir = "/tmp/choir-fpr-auto-audit-fresh-cycle-" +
     @sys.get_pid().to_string()
@@ -2066,11 +2126,11 @@ async test "interpret_file_pr Dev missing audit returns findings error" {
 }
 
 ///|
-async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on max plus one cycle" {
+async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on configured cycle" {
   let project_dir = "/tmp/choir-fpr-auto-audit-exhausted-" +
     @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
-  let mut cycles = 1
+  let mut cycles = 0
   let mut wait_count = 0
   let recorded_agents : Array[String] = []
   let got = interpret_file_pr(
@@ -2109,14 +2169,14 @@ async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on m
   )
   match got {
     @types.Response::Err(msg) => {
-      assert_true(msg.contains("audit loop exhausted after 2 cycle(s)"))
+      assert_true(msg.contains("audit loop exhausted after 1 cycle(s)"))
       assert_true(msg.contains("1 finding(s) remaining"))
       assert_true(msg.contains(".choir/audit-receipts/abcdef123456.json"))
       assert_false(msg.contains("audit found 1 findings"))
     }
     @types.Response::Ok(_) => fail("expected audit loop exhaustion")
   }
-  assert_eq(cycles, 2)
+  assert_eq(cycles, 1)
   assert_eq(wait_count, 1)
   @debug.assert_eq(recorded_agents, ["feature/auto-audit"])
 }
