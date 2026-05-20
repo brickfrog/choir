@@ -559,8 +559,9 @@ fn agy_command_hook(command : String) -> Json {
 
 ///|
 /// Generate agy's hooks.json. For model-cycle hooks, agy's direct command
-/// handlers are `PreInvocation`/`PostInvocation`; wrapping them in the older
-/// Gemini `{ matcher, hooks: [...] }` shape loads but does not execute.
+/// handlers are top-level `PreInvocation`/`PostInvocation` event keys; wrapping
+/// them in the older Gemini `{ matcher, hooks: [...] }` shape loads but does not
+/// execute.
 pub fn agy_hooks_json(wasm_hooks_path? : String? = None) -> String {
   let hook_spec : Map[String, Json] = {
     "Stop": [agy_command_hook("choir hook worker-exit --runtime gemini")].to_json(),
@@ -577,8 +578,7 @@ pub fn agy_hooks_json(wasm_hooks_path? : String? = None) -> String {
     }
     None => ()
   }
-  let hooks : Map[String, Json] = { "choir": hook_spec.to_json() }
-  hooks.to_json().stringify(indent=2)
+  hook_spec.to_json().stringify(indent=2)
 }
 
 ///|

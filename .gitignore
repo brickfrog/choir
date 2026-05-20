@@ -27,6 +27,7 @@ SPEC.md
 bisect.coverage
 .cursor
 .claude/
+.antigravitycli/
 CHANGELOG.md
 
 # Beads / Dolt files (added by bd init)

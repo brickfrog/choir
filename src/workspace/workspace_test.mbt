@@ -1209,6 +1209,27 @@ test "agy mcp config and cursor mcp json use native file commands" {
   assert_true(hooks.args[2].contains("\"PostInvocation\""))
   assert_true(hooks.args[2].contains("\"Stop\""))
   assert_false(hooks.args[2].contains("\"matcher\""))
+  let hooks_json = @json.parse(hooks.args[2]) catch {
+    _ => fail("invalid agy hooks JSON")
+  }
+  guard hooks_json is Object(hooks_root) else {
+    fail("agy hooks json root missing")
+  }
+  guard hooks_root.get("choir") is None else {
+    fail("agy hooks must not be nested under choir")
+  }
+  guard hooks_root.get("PreInvocation") is Some(Array(pre_invocation)) else {
+    fail("agy PreInvocation hook missing")
+  }
+  guard hooks_root.get("PostInvocation") is Some(Array(post_invocation)) else {
+    fail("agy PostInvocation hook missing")
+  }
+  guard hooks_root.get("Stop") is Some(Array(stop_hooks)) else {
+    fail("agy Stop hook missing")
+  }
+  assert_eq(pre_invocation.length(), 1)
+  assert_eq(post_invocation.length(), 1)
+  assert_eq(stop_hooks.length(), 1)
 
   let cur = @workspace.write_cursor_mcp_json("/wt", "main.leaf", "dev")
   assert_eq(cur.program, @workspace.native_write_workspace_rel_file_program)
