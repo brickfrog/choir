@@ -808,6 +808,7 @@ pub async fn dispatch(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
@@ -1351,6 +1352,22 @@ pub async fn dispatch(
           "status": String::to_json("notified"),
         })
       }
+      if prenotify_checks_should_run(
+          caller_role,
+          notify_args.status,
+          prenotify_checks,
+        ) {
+        let prenotify_workdir = match
+          prenotify_check_workdir(project_dir, registry, notify_args.caller_id) {
+          Err(e) => return @types.Response::Err(e.message())
+          Ok(workdir) => workdir
+        }
+        match
+          run_prenotify_checks(prenotify_workdir, prenotify_checks, capture) {
+          Err(e) => return @types.Response::Err(e.message())
+          Ok(_) => ()
+        }
+      }
       let parent_resolution = match registry {
         Some(reg) =>
           Some(
@@ -1840,6 +1857,7 @@ pub async fn handle_request(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
     ()
@@ -2004,6 +2022,7 @@ pub async fn handle_request(
                   global_review_mode~,
                   audit_heartbeat_sec~,
                   audit_max_rounds~,
+                  prenotify_checks~,
                   mutation_kill_rate_min~,
                   append_file~,
                   read_file~,
@@ -2162,6 +2181,7 @@ pub async fn dispatch_call(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
@@ -2264,6 +2284,7 @@ pub async fn dispatch_call(
                   global_review_mode~,
                   audit_heartbeat_sec~,
                   audit_max_rounds~,
+                  prenotify_checks~,
                   mutation_kill_rate_min~,
                   append_file~,
                   read_file~,

@@ -280,6 +280,40 @@ fn parse_positive_int_config_value(
 }
 
 ///|
+fn parse_string_array_config_value(
+  key : String,
+  raw : String,
+) -> Result[Array[String], @types.ChoirError] {
+  let stripped = strip_toml_inline_comment(raw)
+  let parsed = @json.parse(stripped) catch {
+    e =>
+      return Err(
+        @types.ChoirError::config_error(
+          key + ": invalid string array: " + e.to_string(),
+        ),
+      )
+  }
+  match parsed {
+    Array(values) => {
+      let out : Array[String] = []
+      for value in values {
+        match value {
+          String(s) => out.push(s)
+          _ =>
+            return Err(
+              @types.ChoirError::config_error(
+                key + ": expected array of strings",
+              ),
+            )
+        }
+      }
+      Ok(out)
+    }
+    _ => Err(@types.ChoirError::config_error(key + ": expected array"))
+  }
+}
+
+///|
 fn parse_pricing_config(
   doc : TomlDoc,
 ) -> Result[Map[String, @types.PricingRate], @types.ChoirError] {
@@ -497,6 +531,14 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let prenotify_checks = match doc.get("prenotify_checks") {
+    None => default_cfg.prenotify_checks
+    Some(raw) =>
+      match parse_string_array_config_value("prenotify_checks", raw) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+  }
   let auto_pull_after_integration = match
     parse_required_bool_config_value(
       doc,
@@ -552,6 +594,7 @@ pub fn parse_config(
     audit_max_rounds,
     mutation_kill_rate_min,
     poller_heartbeat_tick_sec,
+    prenotify_checks,
     auto_pull_after_integration,
     auto_rebuild_after_pull,
     auto_reload_after_rebuild,

@@ -202,6 +202,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       global_review_mode=self.config.review_mode,
       audit_heartbeat_sec=self.config.audit_heartbeat_sec,
       audit_max_rounds=self.config.audit_max_rounds,
+      prenotify_checks=self.config.prenotify_checks,
       mutation_kill_rate_min=self.config.mutation_kill_rate_min,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
       goal_deliver=async fn(message, status) {

@@ -4822,6 +4822,7 @@ fn handler_auto_close_test_state(label : String) -> ServerState {
     ..@types.Config::default(),
     project_dir,
     terminal_session: "test-session",
+    prenotify_checks: [],
   }
   ServerState::new(config, make_hermetic_recovery_provider())
 }
@@ -5177,7 +5178,7 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
   )
   state.check_idle_agents(
     start + 240L,
-    180L,
+    999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
     worker_no_handoff_prod_sec=120L,
     worker_no_handoff_escalate_sec=120L,
@@ -5191,6 +5192,78 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
     1,
   )
   assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent"), 0)
+}
+
+///|
+async test "watchdog kill records merge-ready dev leaf without notify as failure" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"merge ready\",\"idle\"]}"
+  let state = worker_handoff_test_state("leaf-watchdog-no-notify", snapshot)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-watchdog"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_dev(leaf_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number=79,
+            state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+          ),
+        ),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.poller.restore({
+    ..parent_poll_test_ready_tracked(79),
+    agent_id: leaf_id,
+    branch: leaf_id,
+    unresolved_thread_ids_fetched: true,
+  })
+  state.watch_pane(leaf_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 181L,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  let lifecycle = @phase.read_lifecycle(state.config.project_dir, leaf_id)
+  match lifecycle {
+    Some(
+      {
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(reason~)
+        ),
+        ..,
+      }
+    ) => assert_eq(reason, @phase.FailureReason::WatchdogTimeout)
+    Some(other) =>
+      fail("expected failed lifecycle, got: " + other.to_json().stringify())
+    None => fail("expected lifecycle")
+  }
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent " + leaf_id), 1)
+  assert_eq(state.handoff_delivered.contains(leaf_id), false)
 }
 
 ///|

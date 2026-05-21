@@ -3379,6 +3379,7 @@ async test "interpret_file_pr blocks before PR creation when mutation gate fails
     },
     mutation_gate_now_ms_fn=fn() { 1779000000L },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {

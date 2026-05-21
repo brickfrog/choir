@@ -529,6 +529,23 @@ fn worker_no_handoff_terminal_process(
 }
 
 ///|
+fn ServerState::leaf_watchdog_should_fail_without_handoff(
+  self : ServerState,
+  agent_id : String,
+  workflow : @phase.WorkflowState,
+) -> Bool {
+  if self.handoff_was_delivered(agent_id) {
+    return false
+  }
+  match workflow {
+    @phase.WorkflowState::Dev(@phase.DevLifecycle::ReviewOwned(..))
+    | @phase.WorkflowState::Dev(@phase.DevLifecycle::ExitRequestedDeferred(..)) =>
+      self.leaf_merge_gate_ready_for_agent(agent_id)
+    _ => false
+  }
+}
+
+///|
 async fn ServerState::prod_leaf_no_handoff(
   self : ServerState,
   agent : @types.Agent,
@@ -830,7 +847,11 @@ pub async fn ServerState::check_idle_agents(
     let lifecycle = self.current_lifecycle(agent_id)
     // Some lifecycle states are kill-watchdog-exempt, but no-handoff checks
     // may still need to prod or notify without terminating the agent.
-    let watchdog_exempt = @phase.lifecycle_idle_watchdog_exempt(lifecycle)
+    let watchdog_exempt = @phase.lifecycle_idle_watchdog_exempt(lifecycle) &&
+      !self.leaf_watchdog_should_fail_without_handoff(
+        agent_id,
+        lifecycle.workflow,
+      )
     match agent.terminal_target {
       Some(_) => ()
       None => continue
