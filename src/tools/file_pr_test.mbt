@@ -862,6 +862,28 @@ test "mutation gate targets MoonBit source and sibling tests from changed paths"
 }
 
 ///|
+test "mutation gate worker task carries MoonBit adapter instructions and no cost pilot" {
+  let task = build_mutation_gate_task(
+    "/repo",
+    "main.leaf",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    [
+      {
+        language: MutationLanguage::MoonBit,
+        source_path: "src/math.mbt",
+        test_paths: ["src/math_test.mbt"],
+      },
+    ],
+    ["moon test --target native"],
+    0.75,
+  )
+  assert_true(task.contains("MoonBit adapter:"))
+  assert_true(task.contains("mutation_kill_rate_min=0.75"))
+  assert_false(task.contains("cost pilot"))
+  assert_false(task.contains("dashboard"))
+}
+
+///|
 async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR" {
   let project_dir = "/tmp/choir-fpr-mutation-tl-dev-" +
     @sys.get_pid().to_string()

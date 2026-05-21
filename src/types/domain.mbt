@@ -180,6 +180,15 @@ pub(all) enum LeafTddPhase {
 } derive(Debug, Eq)
 
 ///|
+/// Persisted TDD gate state for a leaf. The test command is declared once at
+/// `tdd_intent` time and reused by the red/green checks so the check tools
+/// cannot substitute a different command.
+pub(all) struct LeafTddState {
+  phase : LeafTddPhase
+  test_command : String?
+} derive(Debug, Eq)
+
+///|
 pub impl Show for LeafTddPhase with output(self, logger) -> Unit {
   logger.write_string(self.to_wire_string())
 }

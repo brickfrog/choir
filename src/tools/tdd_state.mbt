@@ -12,8 +12,57 @@ fn tdd_transition_error(message : String) -> @types.ChoirError {
 }
 
 ///|
-async fn tdd_default_capture(cmd : @workspace.Command) -> (Int, String) {
-  @exec.capture_command_merged(cmd)
+enum TddExitExpectation {
+  RedFailure
+  GreenSuccess
+} derive(Eq)
+
+///|
+fn tdd_state_phase(state : @types.LeafTddState?) -> @types.LeafTddPhase? {
+  match state {
+    Some(value) => Some(value.phase)
+    None => None
+  }
+}
+
+///|
+fn tdd_normalized_test_command(
+  command : String,
+) -> Result[String, @types.ChoirError] {
+  let trimmed = command.trim().to_owned()
+  if trimmed == "" {
+    Err(
+      tdd_transition_error(
+        "tdd_intent requires a non-empty test_command to verify red/green checks",
+      ),
+    )
+  } else {
+    Ok(trimmed)
+  }
+}
+
+///|
+fn tdd_declared_test_command(
+  state : @types.LeafTddState?,
+) -> Result[String, @types.ChoirError] {
+  match state {
+    Some(value) =>
+      match value.test_command {
+        Some(command) => tdd_normalized_test_command(command)
+        None =>
+          Err(
+            tdd_transition_error(
+              "tdd_intent did not persist a test_command; declare intent again with test_command before checking red/green",
+            ),
+          )
+      }
+    None =>
+      Err(
+        tdd_transition_error(
+          "red/green check requires tdd_intent with a persisted test_command first",
+        ),
+      )
+  }
 }
 
 ///|
@@ -22,6 +71,43 @@ fn tdd_check_command(
   command : String,
 ) -> @workspace.Command {
   { program: "sh", args: ["-lc", command], workdir: Some(project_dir) }
+}
+
+///|
+pub fn tdd_check_workdir(
+  project_dir : String,
+  registry : @registry.AgentRegistry?,
+  caller_id : String,
+) -> Result[String, @types.ChoirError] {
+  match registry {
+    None => Ok(project_dir)
+    Some(reg) =>
+      try {
+        let agent = reg.get(caller_id)
+        let workspace = agent.workspace.trim().to_owned()
+        if workspace == "" {
+          Err(
+            tdd_transition_error(
+              "caller '" +
+              caller_id +
+              "' is registered with an empty workspace; cannot run TDD verification",
+            ),
+          )
+        } else {
+          Ok(workspace)
+        }
+      } catch {
+        e =>
+          Err(
+            tdd_transition_error(
+              "cannot resolve caller workspace for TDD verification: " +
+              @types.choir_error_message_from_caught(e),
+            ),
+          )
+      } noraise {
+        result => result
+      }
+  }
 }
 
 ///|
@@ -48,32 +134,55 @@ fn tdd_exit_verification_context(command : String, output : String) -> String {
 }
 
 ///|
-async fn verify_tdd_reported_exit_code(
+async fn verify_tdd_command_outcome(
   project_dir : String,
   command : String,
   reported_exit_code : Int,
+  expectation : TddExitExpectation,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[String, @types.ChoirError] {
+  let expectation_detail = match expectation {
+    RedFailure => "red check expected exit code to be non-zero"
+    GreenSuccess => "green check expected exit code 0"
+  }
+  let reported_ok = match expectation {
+    RedFailure => reported_exit_code != 0
+    GreenSuccess => reported_exit_code == 0
+  }
+  if !reported_ok {
+    return Err(
+      tdd_transition_error(
+        "reported exit_code " +
+        reported_exit_code.to_string() +
+        " did not satisfy " +
+        expectation_detail +
+        tdd_exit_verification_context(command, ""),
+      ),
+    )
+  }
   let (actual_exit_code, actual_output) = capture(
     tdd_check_command(project_dir, command),
   )
   if actual_exit_code < 0 {
-    Err(
+    return Err(
       tdd_transition_error(
         "declared test command could not be executed; actual exit code " +
         actual_exit_code.to_string() +
-        ", reported exit_code " +
-        reported_exit_code.to_string() +
         tdd_exit_verification_context(command, actual_output),
       ),
     )
-  } else if actual_exit_code != reported_exit_code {
+  }
+  let ok = match expectation {
+    RedFailure => actual_exit_code != 0
+    GreenSuccess => actual_exit_code == 0
+  }
+  if !ok {
     Err(
       tdd_transition_error(
         "declared test command actual exit code " +
         actual_exit_code.to_string() +
-        " did not match reported exit_code " +
-        reported_exit_code.to_string() +
+        " did not satisfy " +
+        expectation_detail +
         tdd_exit_verification_context(command, actual_output),
       ),
     )
@@ -233,13 +342,23 @@ fn tdd_phase_response(
 ///|
 pub fn interpret_tdd_intent(
   args : TddIntentArgs,
-  tdd_phase_reader : (String) -> @types.LeafTddPhase?,
-  tdd_phase_writer : (String, @types.LeafTddPhase) -> Unit,
+  tdd_state_reader : (String) -> @types.LeafTddState?,
+  tdd_state_writer : (String, @types.LeafTddState) -> Unit,
 ) -> @types.Response {
-  match plan_tdd_intent_transition(tdd_phase_reader(args.caller_id)) {
+  let command = match tdd_normalized_test_command(args.test_command) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  match
+    plan_tdd_intent_transition(
+      tdd_state_phase(tdd_state_reader(args.caller_id)),
+    ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(next) => {
-      tdd_phase_writer(args.caller_id, next)
+      tdd_state_writer(args.caller_id, {
+        phase: next,
+        test_command: Some(command),
+      })
       let fields : Map[String, Json] = {
         "status": "tdd_phase_updated".to_json(),
         "agent_id": args.caller_id.to_json(),
@@ -247,10 +366,7 @@ pub fn interpret_tdd_intent(
         "tool": "tdd_intent".to_json(),
         "intent": args.intent.to_json(),
       }
-      match args.test_command {
-        Some(command) => fields.set("test_command", command.to_json())
-        None => ()
-      }
+      fields.set("test_command", command.to_json())
       @types.Response::ok_values(fields)
     }
   }
@@ -259,35 +375,47 @@ pub fn interpret_tdd_intent(
 ///|
 pub async fn interpret_tdd_red_check(
   args : TddRedCheckArgs,
-  tdd_phase_reader : (String) -> @types.LeafTddPhase?,
-  tdd_phase_writer : (String, @types.LeafTddPhase) -> Unit,
+  tdd_state_reader : (String) -> @types.LeafTddState?,
+  tdd_state_writer : (String, @types.LeafTddState) -> Unit,
   project_dir? : String = ".",
-  capture? : async (@workspace.Command) -> (Int, String) = tdd_default_capture,
+  registry? : @registry.AgentRegistry? = None,
+  capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
 ) -> @types.Response {
+  let current_state = tdd_state_reader(args.caller_id)
   let next = match
     plan_tdd_red_check_transition(
-      tdd_phase_reader(args.caller_id),
+      tdd_state_phase(current_state),
       args.exit_code,
     ) {
     Ok(phase) => phase
     Err(e) => return @types.Response::Err(e.message())
   }
+  let command = match tdd_declared_test_command(current_state) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  let check_dir = match
+    tdd_check_workdir(project_dir, registry, args.caller_id) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
   let actual_output = match
-    verify_tdd_reported_exit_code(
-      project_dir,
-      args.command,
+    verify_tdd_command_outcome(
+      check_dir,
+      command,
       args.exit_code,
+      TddExitExpectation::RedFailure,
       capture,
     ) {
     Ok(output) => output
     Err(e) => return @types.Response::Err(e.message())
   }
-  tdd_phase_writer(args.caller_id, next)
+  tdd_state_writer(args.caller_id, { phase: next, test_command: Some(command) })
   tdd_phase_response(
     args.caller_id,
     next,
     "tdd_red_check",
-    command=Some(args.command),
+    command=Some(command),
     exit_code=Some(args.exit_code),
     output=Some(actual_output),
   )
@@ -296,36 +424,48 @@ pub async fn interpret_tdd_red_check(
 ///|
 pub async fn interpret_tdd_green_check(
   args : TddGreenCheckArgs,
-  tdd_phase_reader : (String) -> @types.LeafTddPhase?,
-  tdd_phase_writer : (String, @types.LeafTddPhase) -> Unit,
+  tdd_state_reader : (String) -> @types.LeafTddState?,
+  tdd_state_writer : (String, @types.LeafTddState) -> Unit,
   project_dir? : String = ".",
-  capture? : async (@workspace.Command) -> (Int, String) = tdd_default_capture,
+  registry? : @registry.AgentRegistry? = None,
+  capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
 ) -> @types.Response {
+  let current_state = tdd_state_reader(args.caller_id)
   let next = match
     plan_tdd_green_check_transition(
-      tdd_phase_reader(args.caller_id),
+      tdd_state_phase(current_state),
       args.exit_code,
       args.next_phase,
     ) {
     Ok(phase) => phase
     Err(e) => return @types.Response::Err(e.message())
   }
+  let command = match tdd_declared_test_command(current_state) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  let check_dir = match
+    tdd_check_workdir(project_dir, registry, args.caller_id) {
+    Ok(value) => value
+    Err(e) => return @types.Response::Err(e.message())
+  }
   let actual_output = match
-    verify_tdd_reported_exit_code(
-      project_dir,
-      args.command,
+    verify_tdd_command_outcome(
+      check_dir,
+      command,
       args.exit_code,
+      TddExitExpectation::GreenSuccess,
       capture,
     ) {
     Ok(output) => output
     Err(e) => return @types.Response::Err(e.message())
   }
-  tdd_phase_writer(args.caller_id, next)
+  tdd_state_writer(args.caller_id, { phase: next, test_command: Some(command) })
   tdd_phase_response(
     args.caller_id,
     next,
     "tdd_green_check",
-    command=Some(args.command),
+    command=Some(command),
     exit_code=Some(args.exit_code),
     output=Some(actual_output),
   )

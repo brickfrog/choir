@@ -225,6 +225,9 @@ fn leaf_tool_request_args(
         Some(intent) =>
           if intent.trim() == "" {
             Err("tdd_intent requires intent")
+          } else if !flags.contains("test_command") ||
+            flags.get("test_command").unwrap_or("").trim() == "" {
+            Err("tdd_intent requires test_command")
           } else {
             Ok(flags)
           }
@@ -238,20 +241,23 @@ fn leaf_tool_request_args(
           None => ()
         }
       }
-      if !flags.contains("command") && positionals.length() > 0 {
-        flags.set("command", positionals[0])
+      if flags.contains("command") || flags.contains("output") {
+        return Err(
+          tool +
+          " uses the test_command declared by tdd_intent; pass only exit_code",
+        )
       }
-      if !flags.contains("exit_code") && positionals.length() > 1 {
-        flags.set("exit_code", positionals[1])
+      if !flags.contains("exit_code") && positionals.length() > 0 {
+        flags.set("exit_code", positionals[0])
       }
-      match (flags.get("command"), flags.get("exit_code")) {
-        (Some(command), Some(exit_code)) =>
-          if command.trim() == "" || exit_code.trim() == "" {
-            Err(tool + " requires command and exit_code")
+      match flags.get("exit_code") {
+        Some(exit_code) =>
+          if exit_code.trim() == "" {
+            Err(tool + " requires exit_code")
           } else {
             Ok(flags)
           }
-        _ => Err(tool + " requires command and exit_code")
+        _ => Err(tool + " requires exit_code")
       }
     }
     "shutdown" => {
@@ -325,11 +331,10 @@ fn leaf_tool_usage(tool : String) -> String {
     "report_usage" =>
       "usage: report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds> [--cost-usd <usd>]"
     "tdd_intent" =>
-      "usage: tdd_intent --intent <intent> [--test-command <command>]"
-    "tdd_red_check" =>
-      "usage: tdd_red_check --command <command> --exit-code <nonzero> [--output <tail>]"
+      "usage: tdd_intent --intent <intent> --test-command <command>"
+    "tdd_red_check" => "usage: tdd_red_check --exit-code <nonzero>"
     "tdd_green_check" =>
-      "usage: tdd_green_check --command <command> --exit-code 0 [--next-phase <green|refactor|done>] [--output <tail>]"
+      "usage: tdd_green_check --exit-code 0 [--next-phase <green|refactor|done>]"
     "shutdown" => "usage: shutdown [--caller-id <caller_id>]"
     "task_list" => "usage: task_list  # lists Beads-backed shared tasks"
     "task_get" => "usage: task_get <id>  # reads a Beads issue"

@@ -291,42 +291,38 @@ fn tool_defs() -> Array[CatalogTool] {
         { name: "intent", desc: "Short description of the behavior under test" },
         {
           name: "test_command",
-          desc: "Optional test command the leaf expects to use for the red/green checks",
+          desc: "Test command to persist and reuse for red/green verification",
         },
       ],
-      required: ["caller_id", "intent"],
+      required: ["caller_id", "intent", "test_command"],
     },
     {
       name: "tdd_red_check",
-      description: "Advance Intent to Red only when the reported test command failed.",
+      description: "Advance Intent to Red only when the persisted intent test command fails.",
       props: [
         { name: "caller_id", desc: "ID of the calling leaf" },
-        { name: "command", desc: "Test command that was run" },
         {
           name: "exit_code",
-          desc: "Observed test command exit code; Red requires a non-zero value",
+          desc: "Observed test exit code; Red requires a non-zero value",
         },
-        { name: "output", desc: "Optional output tail from the test command" },
       ],
-      required: ["caller_id", "command", "exit_code"],
+      required: ["caller_id", "exit_code"],
     },
     {
       name: "tdd_green_check",
-      description: "Advance Red to Green, Green to Done or Refactor, and Refactor to Done only when the reported test command passed.",
+      description: "Advance Red to Green, Green to Done or Refactor, and Refactor to Done only when the persisted intent test command passes.",
       props: [
         { name: "caller_id", desc: "ID of the calling leaf" },
-        { name: "command", desc: "Test command that was run" },
         {
           name: "exit_code",
-          desc: "Observed test command exit code; Green/Done requires zero",
+          desc: "Observed test exit code; Green/Done requires zero",
         },
         {
           name: "next_phase",
           desc: "Optional target phase: green, refactor, or done. Defaults to green from Red and done from Green/Refactor",
         },
-        { name: "output", desc: "Optional output tail from the test command" },
       ],
-      required: ["caller_id", "command", "exit_code"],
+      required: ["caller_id", "exit_code"],
     },
     {
       name: "merge_pr",

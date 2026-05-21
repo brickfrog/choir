@@ -127,6 +127,7 @@ pub struct ServerState {
   audit_cycle_counts : Map[String, Int]
   audit_progress : Map[String, AuditProgress]
   leaf_tdd_phases : Map[String, @types.LeafTddPhase]
+  leaf_tdd_test_commands : Map[String, String]
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
@@ -199,6 +200,7 @@ pub fn ServerState::new(
     audit_cycle_counts: {},
     audit_progress: {},
     leaf_tdd_phases: {},
+    leaf_tdd_test_commands: {},
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
@@ -224,12 +226,37 @@ pub fn ServerState::leaf_tdd_phase_for_agent(
 }
 
 ///|
+pub fn ServerState::leaf_tdd_state_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> @types.LeafTddState? {
+  match self.leaf_tdd_phases.get(agent_id) {
+    Some(phase) =>
+      Some({ phase, test_command: self.leaf_tdd_test_commands.get(agent_id) })
+    None => None
+  }
+}
+
+///|
 pub fn ServerState::record_leaf_tdd_phase(
   self : ServerState,
   agent_id : String,
   phase : @types.LeafTddPhase,
 ) -> Unit {
   self.leaf_tdd_phases.set(agent_id, phase)
+}
+
+///|
+pub fn ServerState::record_leaf_tdd_state(
+  self : ServerState,
+  agent_id : String,
+  state : @types.LeafTddState,
+) -> Unit {
+  self.leaf_tdd_phases.set(agent_id, state.phase)
+  match state.test_command {
+    Some(command) => self.leaf_tdd_test_commands.set(agent_id, command)
+    None => self.leaf_tdd_test_commands.remove(agent_id)
+  }
 }
 
 ///|

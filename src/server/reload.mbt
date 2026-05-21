@@ -62,6 +62,15 @@ fn server_reload_int_entries_json(values : Map[String, Int]) -> Json {
 }
 
 ///|
+fn server_reload_string_entries_json(values : Map[String, String]) -> Json {
+  let entries : Array[Json] = []
+  for key, value in values {
+    entries.push({ "key": key.to_json(), "value": value.to_json() }.to_json())
+  }
+  entries.to_json()
+}
+
+///|
 fn server_reload_leaf_tdd_phase_entries_json(
   values : Map[String, @types.LeafTddPhase],
 ) -> Json {
@@ -100,6 +109,9 @@ fn ServerState::reload_runtime_snapshot_json(
     ),
     "leaf_tdd_phases": server_reload_leaf_tdd_phase_entries_json(
       self.leaf_tdd_phases,
+    ),
+    "leaf_tdd_test_commands": server_reload_string_entries_json(
+      self.leaf_tdd_test_commands,
     ),
     "mutex_registry": self.mutex_registry.to_snapshot_json(),
   }.to_json()
@@ -302,6 +314,41 @@ fn server_reload_parse_int_map(
 }
 
 ///|
+fn server_reload_parse_string_map(
+  json : Json?,
+) -> Result[Map[String, String], @types.ChoirError] {
+  guard json is Some(Array(items)) else {
+    return Err(server_reload_parse_error("missing string map array"))
+  }
+  let out : Map[String, String] = {}
+  for item in items {
+    guard item is Object(obj) else {
+      return Err(server_reload_parse_error("string map entry is not an object"))
+    }
+    let key = match server_reload_string_field(obj, "key") {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let value = match server_reload_string_field(obj, "value") {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    out.set(key, value)
+  }
+  Ok(out)
+}
+
+///|
+fn server_reload_parse_string_map_or_empty(
+  json : Json?,
+) -> Result[Map[String, String], @types.ChoirError] {
+  match json {
+    None => Ok({})
+    Some(_) => server_reload_parse_string_map(json)
+  }
+}
+
+///|
 fn server_reload_parse_leaf_tdd_phase_map(
   json : Json?,
 ) -> Result[Map[String, @types.LeafTddPhase], @types.ChoirError] {
@@ -443,6 +490,11 @@ pub fn ServerState::restore_reload_snapshot(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let parsed_leaf_tdd_test_commands = match
+    server_reload_parse_string_map_or_empty(root.get("leaf_tdd_test_commands")) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let parsed_mutex = match root.get("mutex_registry") {
     Some(j) =>
       match @registry.parse_mutex_registry_snapshot_json(j) {
@@ -481,6 +533,10 @@ pub fn ServerState::restore_reload_snapshot(
   server_reload_replace_map_contents(
     self.leaf_tdd_phases,
     parsed_leaf_tdd_phases,
+  )
+  server_reload_replace_map_contents(
+    self.leaf_tdd_test_commands,
+    parsed_leaf_tdd_test_commands,
   )
   // Release any mutex whose holder isn't in the just-restored registry —
   // otherwise a stale lock would block unrelated callers until TTL.
