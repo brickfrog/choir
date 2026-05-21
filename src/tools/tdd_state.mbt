@@ -25,6 +25,29 @@ fn tdd_check_command(
 }
 
 ///|
+fn tdd_text_tail(raw : String) -> String {
+  let trimmed = raw.trim().to_owned()
+  if trimmed == "" {
+    ""
+  } else if trimmed.length() <= 600 {
+    trimmed
+  } else {
+    "[truncated]\n" + trimmed[trimmed.length() - 600:].to_owned()
+  }
+}
+
+///|
+fn tdd_exit_verification_context(command : String, output : String) -> String {
+  let output_tail = tdd_text_tail(output)
+  let command_detail = "\ncommand: " + command
+  if output_tail == "" {
+    command_detail
+  } else {
+    command_detail + "\noutput_tail:\n" + output_tail
+  }
+}
+
+///|
 async fn verify_tdd_reported_exit_code(
   project_dir : String,
   command : String,
@@ -40,7 +63,8 @@ async fn verify_tdd_reported_exit_code(
         "declared test command could not be executed; actual exit code " +
         actual_exit_code.to_string() +
         ", reported exit_code " +
-        reported_exit_code.to_string(),
+        reported_exit_code.to_string() +
+        tdd_exit_verification_context(command, actual_output),
       ),
     )
   } else if actual_exit_code != reported_exit_code {
@@ -49,7 +73,8 @@ async fn verify_tdd_reported_exit_code(
         "declared test command actual exit code " +
         actual_exit_code.to_string() +
         " did not match reported exit_code " +
-        reported_exit_code.to_string(),
+        reported_exit_code.to_string() +
+        tdd_exit_verification_context(command, actual_output),
       ),
     )
   } else {

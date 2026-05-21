@@ -50,6 +50,8 @@ async test "leaf TDD red check rejects forged failing report when command passes
     @types.Response::Err(msg) => {
       assert_true(msg.contains("actual exit code"))
       assert_true(msg.contains("reported exit_code 1"))
+      assert_true(msg.contains("command: true"))
+      assert_true(msg.contains("output_tail:\nactual pass"))
     }
     @types.Response::Ok(_) => fail("expected red gate to reject forged failure")
   }
@@ -102,6 +104,8 @@ async test "leaf TDD green check rejects forged passing report when command fail
     @types.Response::Err(msg) => {
       assert_true(msg.contains("actual exit code"))
       assert_true(msg.contains("reported exit_code 0"))
+      assert_true(msg.contains("command: false"))
+      assert_true(msg.contains("output_tail:\nactual fail"))
     }
     @types.Response::Ok(_) => fail("expected green gate to reject forged pass")
   }
