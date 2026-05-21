@@ -241,6 +241,175 @@ test "TaskContract missing verify_satisfied_by_ci decodes as true" {
 }
 
 ///|
+test "moon verify command normalization appends default native target only when missing" {
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon check", "moon test --target native", "echo hi"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon check --target native", "moon test --target native", "echo hi"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon check --target wasm-gc", "moon check --target=wasm-gc"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon check --target wasm-gc", "moon check --target=wasm-gc"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test"],
+      @types.MoonVerifyTarget::WasmGc,
+    ),
+    ["moon test --target wasm-gc"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test && echo ok", "moon check; echo done"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "moon test --target native && echo ok", "moon check --target native; echo done",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      [
+        "moon test && moon check", "echo ok | moon check", "moon test\nmoon check",
+      ],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "moon test --target native && moon check --target native", "echo ok | moon check --target native",
+      "moon test --target native\nmoon check --target native",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test && moon check --target js"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon test --target native && moon check --target js"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      [
+        "CC=cc moon test", "A=1 B=2 moon test", "FOO=a=b moon test", "moon -C subdir test",
+        "moon --dry-run test",
+      ],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "CC=cc moon test --target native", "A=1 B=2 moon test --target native", "FOO=a=b moon test --target native",
+      "moon -C subdir test --target native", "moon --dry-run test --target native",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon --target wasm-gc test", "moon --target native test"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon --target wasm-gc test", "moon --target native test"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      [
+        "echo \"moon test && moon check\"", "moon test \"literal && value\"; moon check",
+        "echo 'moon test | moon check'",
+      ],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "echo \"moon test && moon check\"", "moon test \"literal && value\" --target native; moon check --target native",
+      "echo 'moon test | moon check'",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      [
+        "moon test 2>&1", "moon test 1>&2", "moon test &> out", "moon test &>> out",
+        "moon test <&0",
+      ],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "moon test 2>&1 --target native", "moon test 1>&2 --target native", "moon test &> out --target native",
+      "moon test &>> out --target native", "moon test <&0 --target native",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      [
+        "moon test |& tee out", "moon test & echo done", "moon test & moon check",
+      ],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "moon test --target native |& tee out", "moon test --target native & echo done",
+      "moon test --target native & moon check --target native",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test 2>&1 && moon check 1>&2"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon test 2>&1 --target native && moon check 1>&2 --target native"],
+  )
+  assert_true(
+    @types.moon_verify_commands_allow_native_ci_satisfaction([
+      "moon check --target native",
+    ]),
+  )
+  assert_false(
+    @types.moon_verify_commands_allow_native_ci_satisfaction(
+      @types.moon_verify_normalize_commands(
+        ["moon check"],
+        @types.MoonVerifyTarget::WasmGc,
+      ),
+    ),
+  )
+  assert_false(
+    @types.moon_verify_commands_allow_native_ci_satisfaction([
+      "moon check --target js",
+    ]),
+  )
+  assert_false(
+    @types.moon_verify_commands_allow_native_ci_satisfaction([
+      "RUST_BACKTRACE=1 moon test --target js",
+    ]),
+  )
+  assert_false(
+    @types.moon_verify_commands_allow_native_ci_satisfaction([
+      "moon --target wasm-gc test",
+    ]),
+  )
+  match
+    @types.task_contract_with_normalized_verify(
+      Some({
+        ..@types.TaskContract::empty(),
+        verify: ["moon check"],
+        verify_satisfied_by_ci: true,
+      }),
+      @types.MoonVerifyTarget::WasmGc,
+    ) {
+    Some(contract) => {
+      @debug.assert_eq(contract.verify, ["moon check --target wasm-gc"])
+      assert_false(@types.task_contract_verify_satisfied_by_native_ci(contract))
+    }
+    None => fail("expected normalized task contract")
+  }
+  match @types.MoonVerifyTarget::try_parse_wire("bogus") {
+    Err(e) =>
+      assert_eq(
+        e.message(),
+        "config error: moon_verify_target must be \"native\", \"wasm\", \"wasm-gc\", or \"js\"",
+      )
+    Ok(_) => fail("expected invalid moon_verify_target to be rejected")
+  }
+}
+
+///|
 test "advisory_evaluation_result ready when review CI and threads are clear" {
   let bundle : @types.EvaluationBundle = {
     task_contract: None,

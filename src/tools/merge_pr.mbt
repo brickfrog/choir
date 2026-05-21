@@ -439,43 +439,17 @@ fn merge_pr_verify_results_for_tracked(
   project_dir : String,
   tracked : @poller.TrackedPR,
   task_contract : @types.TaskContract?,
-  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> Array[@types.VerifyCheckResult] {
   match task_contract {
-    Some(contract) => {
-      let verify_commands = @types.moon_verify_normalize_commands(
-        contract.verify,
-        moon_verify_target,
-      )
+    Some(contract) =>
       @evidence.verify_results_for_required_at_head_with_ci(
         project_dir,
         tracked.agent_id,
-        verify_commands,
+        contract.verify,
         tracked.last_sha,
-        @types.task_contract_verify_satisfied_by_native_ci(
-          contract, moon_verify_target,
-        ),
+        @types.task_contract_verify_satisfied_by_native_ci(contract),
       )
-    }
     None => []
-  }
-}
-
-///|
-fn merge_pr_task_contract_with_normalized_verify(
-  task_contract : @types.TaskContract?,
-  moon_verify_target : @types.MoonVerifyTarget,
-) -> @types.TaskContract? {
-  match task_contract {
-    Some(contract) =>
-      Some({
-        ..contract,
-        verify: @types.moon_verify_normalize_commands(
-          contract.verify,
-          moon_verify_target,
-        ),
-      })
-    None => None
   }
 }
 
@@ -521,14 +495,11 @@ pub async fn interpret_merge_pr_preflight(
           )
         None => None
       }
-      let task_contract = merge_pr_task_contract_with_normalized_verify(
+      let task_contract = @types.task_contract_with_normalized_verify(
         task_contract_raw, moon_verify_target,
       )
       let verify_results = merge_pr_verify_results_for_tracked(
-        project_dir,
-        tracked,
-        task_contract,
-        moon_verify_target~,
+        project_dir, tracked, task_contract,
       )
       Some(
         @poller.merge_policy_decision_for_tracked_pr(
@@ -922,18 +893,13 @@ pub fn format_tl_pr_recheck_summary(
     tracked, unresolved_thread_count,
   )
 
-  let task_contract = merge_pr_task_contract_with_normalized_verify(
+  let task_contract = @types.task_contract_with_normalized_verify(
     task_contract, moon_verify_target,
   )
   let verify_results = if verify_results.length() > 0 {
     verify_results
   } else {
-    merge_pr_verify_results_for_tracked(
-      project_dir,
-      tracked,
-      task_contract,
-      moon_verify_target~,
-    )
+    merge_pr_verify_results_for_tracked(project_dir, tracked, task_contract)
   }
   let advisory = @poller.advisory_evaluation_summary_line(
     tracked,

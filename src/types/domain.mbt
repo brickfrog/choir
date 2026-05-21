@@ -272,16 +272,16 @@ pub fn MoonVerifyTarget::try_parse_wire(
 }
 
 ///|
-struct MoonVerifyShellPart {
+priv struct MoonVerifyShellPart {
   segment : String
   separator : String
-} derive(Debug, Eq)
+}
 
 ///|
-struct MoonVerifyInvocation {
+priv struct MoonVerifyInvocation {
   has_explicit_target : Bool
   explicit_target_native : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 fn moon_verify_segment_space(c : UInt16) -> Bool {
@@ -565,12 +565,27 @@ pub fn moon_verify_normalize_commands(
 }
 
 ///|
+pub fn task_contract_with_normalized_verify(
+  task_contract : TaskContract?,
+  target : MoonVerifyTarget,
+) -> TaskContract? {
+  match task_contract {
+    Some(contract) =>
+      Some({
+        ..contract,
+        verify: moon_verify_normalize_commands(contract.verify, target),
+        verify_satisfied_by_ci: contract.verify_satisfied_by_ci &&
+        target == MoonVerifyTarget::Native,
+      })
+    None => None
+  }
+}
+
+///|
 pub fn moon_verify_commands_allow_native_ci_satisfaction(
   commands : Array[String],
-  target : MoonVerifyTarget,
 ) -> Bool {
-  let normalized = moon_verify_normalize_commands(commands, target)
-  for command in normalized {
+  for command in commands {
     for part in moon_verify_shell_parts(command) {
       if moon_verify_segment_requires_non_native_target(part.segment) {
         return false
@@ -873,14 +888,9 @@ pub impl FromJson for TaskContract with from_json(json, path) {
 ///|
 pub fn task_contract_verify_satisfied_by_native_ci(
   contract : TaskContract,
-  moon_verify_target : MoonVerifyTarget,
 ) -> Bool {
   contract.verify_satisfied_by_ci &&
-  moon_verify_target == MoonVerifyTarget::Native &&
-  moon_verify_commands_allow_native_ci_satisfaction(
-    contract.verify,
-    moon_verify_target,
-  )
+  moon_verify_commands_allow_native_ci_satisfaction(contract.verify)
 }
 
 ///|

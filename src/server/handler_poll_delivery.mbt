@@ -61,17 +61,9 @@ fn parent_pr_state_notification_decision(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> @poller.PrStateNotificationDecision {
-  let task_contract = match task_contract {
-    Some(contract) =>
-      Some({
-        ..contract,
-        verify: @types.moon_verify_normalize_commands(
-          contract.verify,
-          moon_verify_target,
-        ),
-      })
-    None => None
-  }
+  let task_contract = @types.task_contract_with_normalized_verify(
+    task_contract, moon_verify_target,
+  )
   let verify_results = match task_contract {
     Some(contract) =>
       @evidence.verify_results_for_required_at_head_with_ci(
@@ -79,9 +71,7 @@ fn parent_pr_state_notification_decision(
         tracked.agent_id,
         contract.verify,
         tracked.last_sha,
-        @types.task_contract_verify_satisfied_by_native_ci(
-          contract, moon_verify_target,
-        ),
+        @types.task_contract_verify_satisfied_by_native_ci(contract),
       )
     None => []
   }
