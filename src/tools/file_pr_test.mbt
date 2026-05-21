@@ -847,6 +847,110 @@ test "audit worker task can scope retry to prior audited delta" {
 }
 
 ///|
+test "mutation gate targets MoonBit source and sibling tests from changed paths" {
+  let targets = mutation_gate_targets_for_changed_paths([
+    "README.md", "src/math.mbt", "src/math_test.mbt", "src/server/handler_test.mbt",
+    "src/server/handler.mbt",
+  ])
+  assert_eq(targets.length(), 2)
+  assert_eq(targets[0].language, MutationLanguage::MoonBit)
+  assert_eq(targets[0].source_path, "src/math.mbt")
+  @debug.assert_eq(targets[0].test_paths, ["src/math_test.mbt"])
+  assert_eq(targets[1].language, MutationLanguage::MoonBit)
+  assert_eq(targets[1].source_path, "src/server/handler.mbt")
+  @debug.assert_eq(targets[1].test_paths, ["src/server/handler_test.mbt"])
+}
+
+///|
+test "mutation gate worker task carries MoonBit adapter instructions and no cost pilot" {
+  let task = build_mutation_gate_task(
+    "/repo",
+    "main.leaf",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    [
+      {
+        language: MutationLanguage::MoonBit,
+        source_path: "src/math.mbt",
+        test_paths: ["src/math_test.mbt"],
+      },
+    ],
+    ["moon test --target native"],
+    0.8,
+  )
+  assert_true(task.contains("MoonBit adapter"))
+  assert_true(task.contains("src/math.mbt"))
+  assert_true(task.contains("src/math_test.mbt"))
+  assert_true(task.contains("moon test --target native"))
+  assert_true(task.contains(mutation_gate_report_json_marker))
+  assert_true(task.contains("mutation_kill_rate_min=0.8"))
+  assert_true(task.contains("re-fix-tests"))
+  assert_false(task.contains("cost pilot"))
+  assert_false(task.contains("dashboard"))
+}
+
+///|
+async test "file_pr_run_mutation_gate rejects low kill rate with surviving mutants" {
+  let project_dir = "/tmp/choir-fpr-mutation-low-" + @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawned_slug = ""
+  let mut waited_worker = ""
+  let mut cleanup_calls = 0
+  let got = file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    "main.leaf",
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(worker_args) {
+      @async.sleep(0)
+      spawned_slug = worker_args.slug
+      Ok("main." + worker_args.slug)
+    },
+    async fn(worker_id) {
+      @async.sleep(0)
+      waited_worker = worker_id
+      Some({
+        message: mutation_gate_report_json_marker +
+        " {\"kill_rate\":0.5,\"total_mutants\":4,\"killed_mutants\":2,\"surviving_mutants\":[\"src/math.mbt:12 == -> !=\"],\"unsupported_languages\":[]}",
+        status: @types.Status::Success,
+      })
+    },
+    fn(_) { cleanup_calls = cleanup_calls + 1 },
+    1000,
+    fn() { 123456789L },
+  )
+  match got {
+    Err(e) => {
+      let msg = e.validation_detail_or_message()
+      assert_true(msg.contains("mutation gate failed"))
+      assert_true(msg.contains("mutant-kill-rate 0.5"))
+      assert_true(msg.contains("threshold 0.8"))
+      assert_true(msg.contains("src/math.mbt:12 == -> !="))
+      assert_true(msg.contains("re-fix-tests"))
+    }
+    Ok(_) => fail("expected low mutation kill rate to block file_pr")
+  }
+  assert_eq(cleanup_calls, 0)
+  assert_eq(spawned_slug, mutation_gate_worker_slug(head, 123456789L))
+  assert_eq(waited_worker, "main." + spawned_slug)
+}
+
+///|
 test "find_prior_branch_audit_receipt returns none for empty dir" {
   @debug.assert_eq(
     find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) { [] }),
@@ -3102,6 +3206,91 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
     }
     _ => fail("expected VerifyResultObserved")
   }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr blocks before PR creation when mutation gate fails" {
+  let project_dir = "/tmp/choir-fpr-mutation-block-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  file_pr_test_write_verify_config(file_pr_dir, ["moon test --target native"])
+  let reg = file_pr_test_registry(file_pr_dir)
+  let mut ensure_pr_called = false
+  let prepared_workers : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/leaf-tdd-discipline"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+        return (0, head + "\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      if cmd.program == "sh" {
+        return (0, "native tests passed\n")
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::Dev,
+    prepare_mutation_gate_report=fn(agent_id) {
+      prepared_workers.push(agent_id)
+    },
+    wait_for_mutation_gate_report=async fn(_agent_id) {
+      @async.sleep(0)
+      Some({
+        message: mutation_gate_report_json_marker +
+        " {\"kill_rate\":0.25,\"total_mutants\":4,\"killed_mutants\":1,\"surviving_mutants\":[\"src/math.mbt:7 + -> -\"],\"unsupported_languages\":[]}",
+        status: @types.Status::Success,
+      })
+    },
+    mutation_gate_now_ms_fn=fn() { 1779000000L },
+    record_verify_event=file_pr_test_record_verify_event(project_dir),
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("mutation gate failed"))
+      assert_true(msg.contains("src/math.mbt:7 + -> -"))
+      assert_true(msg.contains("re-fix-tests"))
+    }
+    _ => fail("expected mutation gate failure")
+  }
+  assert_false(ensure_pr_called)
+  assert_eq(prepared_workers.length(), 1)
+  assert_true(prepared_workers[0].contains("mutation-gate-abcdef123456-"))
   ignore(@sys.rm_rf(project_dir))
 }
 
