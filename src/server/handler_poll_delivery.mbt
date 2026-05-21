@@ -1085,13 +1085,27 @@ pub async fn detect_untracked_pr_merged_events(
       !observed_this_tick &&
       !durably_seen &&
       head_sha == "" {
-      @moontrace.warn("audit enforcement skipped: missing merge head sha", fields=[
+      let outcome = if state.config.pr_policy.require_integration_audit {
+        AuditEnforcementOutcome::UnauditedBlocked
+      } else {
+        AuditEnforcementOutcome::UnauditedWarned
+      }
+      let message = audit_enforcement_log_message(
+        default_branch, head_sha, outcome,
+      )
+      let fields = [
         @moontrace.field("pr", info.pr_number),
         @moontrace.field("branch", info.branch),
         @moontrace.field("parent_branch", info.parent_branch),
         @moontrace.field("default_branch", default_branch),
+        @moontrace.field("head_sha", head_sha),
         @moontrace.field("pr_url", info.pr_url),
-      ])
+      ]
+      match outcome {
+        UnauditedBlocked => @moontrace.error(message, fields~)
+        UnauditedWarned => @moontrace.warn(message, fields~)
+        Audited | NotApplicable => ()
+      }
     }
     let observed_but_recheckable = observed_this_process &&
       !observed_this_tick &&
