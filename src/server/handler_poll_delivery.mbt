@@ -539,12 +539,34 @@ async fn pr_merged_parent_branch_is_wave_complete(
   parent_branch : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Bool {
+  pr_merged_default_branch_for_wave_complete(
+    project_dir, parent_branch, capture,
+  )
+  is Some(_)
+}
+
+///|
+async fn pr_merged_default_branch_for_wave_complete(
+  project_dir : String,
+  parent_branch : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
   if parent_branch == "" {
-    return false
+    return None
   }
   match detect_default_branch_for_wave_complete(project_dir, capture) {
-    Some(default_branch) => parent_branch == default_branch
-    None => parent_branch == "main" || parent_branch == "master"
+    Some(default_branch) =>
+      if parent_branch == default_branch {
+        Some(default_branch)
+      } else {
+        None
+      }
+    None =>
+      if parent_branch == "main" || parent_branch == "master" {
+        Some(parent_branch)
+      } else {
+        None
+      }
   }
 }
 
@@ -556,12 +578,14 @@ async fn detect_pr_merged_audit_enforcement(
   audit_receipt_exists : (String) -> Bool,
   audit_receipt_read : (String) -> String,
 ) -> AuditEnforcementOutcome {
-  if !pr_merged_parent_branch_is_wave_complete(
+  let default_branch = match
+    pr_merged_default_branch_for_wave_complete(
       state.config.project_dir,
       pr.parent_branch,
       capture,
     ) {
-    return AuditEnforcementOutcome::NotApplicable
+    Some(branch) => branch
+    None => return AuditEnforcementOutcome::NotApplicable
   }
   let receipt_rel_path = @tools.file_pr_audit_receipt_path_for_head(
     pr.last_sha.trim().to_owned(),
@@ -572,7 +596,7 @@ async fn detect_pr_merged_audit_enforcement(
   )
   let receipt_is_valid = valid_merge_audit_receipt_exists(
     receipt_path,
-    pr.parent_branch,
+    default_branch,
     pr.last_sha,
     audit_receipt_exists,
     audit_receipt_read,
@@ -586,24 +610,19 @@ async fn detect_pr_merged_audit_enforcement(
 }
 
 ///|
-fn valid_merge_audit_receipt_exists(
+pub fn valid_merge_audit_receipt_exists(
   receipt_path : String,
-  parent_branch : String,
+  default_branch : String,
   head_sha : String,
   audit_receipt_exists : (String) -> Bool,
   audit_receipt_read : (String) -> String,
 ) -> Bool {
-  if !audit_receipt_exists(receipt_path) {
+  if default_branch == "" || !audit_receipt_exists(receipt_path) {
     return false
   }
   let body = audit_receipt_read(receipt_path)
-  match
-    @tools.merge_pr_audit_receipt_validation(
-      parent_branch,
-      head_sha,
-      Some(body),
-    ) {
-    @tools.MergePrAuditReceiptValidation::MergeAuditReceiptValid => true
+  match @tools.file_pr_required_audit_receipt_validation(head_sha, Some(body)) {
+    @tools.FilePrAuditReceiptValidation::AuditReceiptValid => true
     _ => false
   }
 }
@@ -685,7 +704,7 @@ fn project_relative_path(project_dir : String, rel_path : String) -> String {
 }
 
 ///|
-fn audit_enforcement_allows_merge_delivery(
+fn audit_enforcement_allows_auto_pull(
   outcome : AuditEnforcementOutcome,
 ) -> Bool {
   match outcome {
@@ -714,6 +733,52 @@ fn log_unaudited_integration_merge(
     UnauditedWarned => @moontrace.warn("[UNAUDITED MERGE INTO MAIN]", fields~)
     Audited | NotApplicable => ()
   }
+}
+
+///|
+test "log_unaudited_integration_merge emits error for blocked audit outcome" {
+  let pr : @poller.TrackedPR = {
+    pr_number: 408,
+    agent_id: "main.t92-leaf",
+    branch: "feature/t92-integration",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/408",
+    first_seen: 0L,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: "abcdef1234567890abcdef1234567890abcdef12",
+    last_automerge_attempt_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: Some(4102358400L),
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
+  }
+  let captured : Array[@moontrace.Event] = []
+  @moontrace.set_subscriber(fn(event) { captured.push(event) })
+  log_unaudited_integration_merge(
+    pr,
+    "main",
+    "/repo/.choir/audit-receipts/abcdef123456.json",
+    AuditEnforcementOutcome::UnauditedBlocked,
+  )
+  @moontrace.clear_subscriber()
+  assert_eq(captured.length(), 1)
+  @debug.assert_eq(captured[0].level, @moontrace.Level::Error_)
+  assert_eq(captured[0].message, "[UNAUDITED MERGE INTO MAIN]")
 }
 
 ///|
@@ -1000,7 +1065,7 @@ pub async fn detect_untracked_pr_merged_events(
             info.head_sha.trim().to_owned(),
           ),
         ),
-        info.parent_branch,
+        default_branch,
         info.head_sha,
         audit_receipt_exists,
         audit_receipt_read,
@@ -2373,6 +2438,12 @@ async fn deliver_pending_poll_events(
     }
     match event {
       PRMerged(pr) => {
+        fire_pr_merged_completion_hooks(
+          state.config.project_dir,
+          pr,
+          capture~,
+          hook_capture~,
+        )
         let audit_outcome = detect_pr_merged_audit_enforcement(
           state, pr, capture, audit_receipt_exists, audit_receipt_read,
         )
@@ -2382,27 +2453,11 @@ async fn deliver_pending_poll_events(
             pr.last_sha.trim().to_owned(),
           ),
         )
-        if !audit_enforcement_allows_merge_delivery(audit_outcome) {
-          log_unaudited_integration_merge(
-            pr,
-            pr.parent_branch,
-            audit_receipt_path,
-            audit_outcome,
-          )
-          state.poller.mark_merged_observed(pr.pr_number)
-          continue
-        }
         log_unaudited_integration_merge(
           pr,
           pr.parent_branch,
           audit_receipt_path,
           audit_outcome,
-        )
-        fire_pr_merged_completion_hooks(
-          state.config.project_dir,
-          pr,
-          capture~,
-          hook_capture~,
         )
         match tracked_for_delivery {
           Some(_) =>
@@ -2417,10 +2472,14 @@ async fn deliver_pending_poll_events(
             )
           None => ()
         }
-        state.record_seen_merged_pr_number(pr.pr_number)
-        maybe_auto_pull_parent_after_pr_merged(
-          state, pr, capture, git_pull_capture, git_state_capture, git_pull_runner,
-        )
+        if audit_enforcement_allows_auto_pull(audit_outcome) {
+          state.record_seen_merged_pr_number(pr.pr_number)
+          maybe_auto_pull_parent_after_pr_merged(
+            state, pr, capture, git_pull_capture, git_state_capture, git_pull_runner,
+          )
+        } else {
+          state.poller.mark_merged_observed(pr.pr_number)
+        }
       }
       _ =>
         for
