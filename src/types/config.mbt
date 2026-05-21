@@ -37,6 +37,8 @@ pub(all) struct Config {
   audit_max_rounds : Int
   /// Poller heartbeat cadence in seconds; 0 disables heartbeat ticks.
   poller_heartbeat_tick_sec : Int
+  /// Local checks that must pass before a Dev success `notify_parent` handoff.
+  prenotify_checks : Array[String]
   /// Best-effort `git pull --ff-only` on the parent worktree after an integration PR merges.
   auto_pull_after_integration : Bool
   /// Placeholder only in v1; parsed and persisted but not acted on.
@@ -104,6 +106,9 @@ pub fn Config::default() -> Config {
     audit_heartbeat_sec: 60,
     audit_max_rounds: 3,
     poller_heartbeat_tick_sec: 60,
+    prenotify_checks: [
+      "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
+    ],
     auto_pull_after_integration: true,
     auto_rebuild_after_pull: false,
     auto_reload_after_rebuild: false,

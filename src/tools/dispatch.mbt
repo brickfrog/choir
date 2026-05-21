@@ -778,6 +778,7 @@ pub async fn dispatch(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   goal_nonce? : () -> String = fn() {
@@ -1281,6 +1282,16 @@ pub async fn dispatch(
           "status": String::to_json("notified"),
         })
       }
+      if prenotify_checks_should_run(
+          caller_role,
+          notify_args.status,
+          prenotify_checks,
+        ) {
+        match run_prenotify_checks(project_dir, prenotify_checks, capture) {
+          Err(e) => return @types.Response::Err(e.message())
+          Ok(_) => ()
+        }
+      }
       let parent_resolution = match registry {
         Some(reg) =>
           Some(
@@ -1762,6 +1773,7 @@ pub async fn handle_request(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
     ()
   },
@@ -1908,6 +1920,7 @@ pub async fn handle_request(
                   global_review_mode~,
                   audit_heartbeat_sec~,
                   audit_max_rounds~,
+                  prenotify_checks~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,
@@ -2059,6 +2072,7 @@ pub async fn dispatch_call(
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
   goal_request_tick? : () -> Unit = goal_noop_request_tick,
   record_handoff_delivered? : (String) -> Unit = fn(_agent_id) {  },
@@ -2143,6 +2157,7 @@ pub async fn dispatch_call(
                   global_review_mode~,
                   audit_heartbeat_sec~,
                   audit_max_rounds~,
+                  prenotify_checks~,
                   append_file~,
                   read_file~,
                   write_file_atomic~,
