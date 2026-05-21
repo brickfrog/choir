@@ -3433,7 +3433,7 @@ async test "tracked PRMerged with valid receipt is not duplicated by same tick u
 }
 
 ///|
-async test "tracked PRMerged with missing head sha skips audit lookup and permits auto-pull" {
+async test "tracked PRMerged with missing head sha fails closed and stays re-checkable" {
   let project_dir = "/tmp/choir-tracked-missing-head-sha-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -3485,6 +3485,7 @@ async test "tracked PRMerged with missing head sha skips audit lookup and permit
   state.poller.restore(pr)
   let mut pull_calls = 0
   let mut receipt_read_calls = 0
+  let mut receipt_available = false
   let checked_receipts : Array[String] = []
   state.process_poller_tick_with_test(
     1000L,
@@ -3547,7 +3548,214 @@ async test "tracked PRMerged with missing head sha skips audit lookup and permit
     },
     audit_receipt_exists=fn(path) {
       checked_receipts.push(path)
-      false
+      receipt_available
+    },
+    audit_receipt_read=fn(_) {
+      receipt_read_calls = receipt_read_calls + 1
+      handler_test_audit_receipt(
+        "abcdef1234567890abcdef1234567890abcdef12", "main", 0,
+      )
+    },
+  )
+  assert_eq(checked_receipts.length(), 0)
+  assert_eq(receipt_read_calls, 0)
+  assert_eq(pull_calls, 0)
+  assert_false(
+    @sys.path_exists(project_dir + "/.choir/seen_merged_prs.json") &&
+    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+      pr_number.to_string(),
+    ),
+  )
+  receipt_available = true
+  state.process_poller_tick_with_test(
+    1100L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      fail("no tracked PR should remain before the re-check tick")
+    },
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (
+          0,
+          "[{\"number\":" +
+          pr_number.to_string() +
+          ",\"url\":\"https://example.test/pull/" +
+          pr_number.to_string() +
+          "\",\"headRefName\":\"feature/missing-head\",\"headRefOid\":\"abcdef1234567890abcdef1234567890abcdef12\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        )
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    git_state_capture=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      Some(parent_worktree_git_state("main", true))
+    },
+    git_pull_runner=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> Bool {
+      @async.sleep(0)
+      pull_calls = pull_calls + 1
+      true
+    },
+    audit_receipt_exists=fn(path) {
+      checked_receipts.push(path)
+      receipt_available
+    },
+    audit_receipt_read=fn(_) {
+      receipt_read_calls = receipt_read_calls + 1
+      handler_test_audit_receipt(
+        "abcdef1234567890abcdef1234567890abcdef12", "main", 0,
+      )
+    },
+  )
+  assert_eq(pull_calls, 1)
+  assert_eq(receipt_read_calls, 2)
+  assert_true(
+    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+      pr_number.to_string(),
+    ),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "tracked PRMerged with missing head sha warns when integration audit is disabled" {
+  let project_dir = "/tmp/choir-missing-head-audit-disabled-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      pr_policy: { require_integration_audit: false },
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let parent_id = "main.t92-parent-audit-disabled"
+  let child_id = "main.t92-leaf-audit-disabled"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/" + child_id,
+      branch: "feature/missing-head-audit-disabled",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 621
+  let pr = {
+    ..parent_poll_test_ready_tracked(pr_number),
+    agent_id: child_id,
+    branch: "feature/missing-head-audit-disabled",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/" + pr_number.to_string(),
+    last_sha: "",
+  }
+  state.poller.restore(pr)
+  let mut pull_calls = 0
+  let mut receipt_read_calls = 0
+  let checked_receipts : Array[String] = []
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "",
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        Some(4102358400L),
+      )
+    },
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (
+          0,
+          "[{\"number\":" +
+          pr_number.to_string() +
+          ",\"url\":\"https://example.test/pull/" +
+          pr_number.to_string() +
+          "\",\"headRefName\":\"feature/missing-head-audit-disabled\",\"headRefOid\":\"\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        )
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    git_state_capture=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      Some(parent_worktree_git_state("main", true))
+    },
+    git_pull_runner=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> Bool {
+      @async.sleep(0)
+      pull_calls = pull_calls + 1
+      true
+    },
+    audit_receipt_exists=fn(path) {
+      checked_receipts.push(path)
+      true
     },
     audit_receipt_read=fn(_) {
       receipt_read_calls = receipt_read_calls + 1
