@@ -1060,6 +1060,172 @@ async test "file_pr_run_mutation_gate computes kill rate from mutant counts" {
 }
 
 ///|
+async fn file_pr_test_run_mutation_gate_with_report(
+  report_json : String,
+) -> Result[Unit, @types.ChoirError] {
+  let project_dir = "/tmp/choir-fpr-mutation-invalid-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(worker_args) {
+      @async.sleep(0)
+      Ok("main." + worker_args.slug)
+    },
+    async fn(_worker_id) {
+      @async.sleep(0)
+      Some({
+        message: mutation_gate_report_json_marker + " " + report_json,
+        status: @types.Status::Success,
+      })
+    },
+    fn(_) { () },
+    1000,
+    fn() { 123456789L },
+  )
+}
+
+///|
+async test "file_pr_run_mutation_gate rejects invalid mutant counts" {
+  let negative_total = file_pr_test_run_mutation_gate_with_report(
+    "{\"kill_rate\":1.0,\"total_mutants\":-1,\"killed_mutants\":0,\"surviving_mutants\":[],\"unsupported_languages\":[]}",
+  )
+  match negative_total {
+    Err(e) => {
+      let msg = e.validation_detail_or_message()
+      assert_true(msg.contains("invalid mutant counts"))
+      assert_true(msg.contains("total_mutants=-1"))
+      assert_true(msg.contains("refusing to trust kill rate"))
+    }
+    Ok(_) => fail("expected negative mutant count to block file_pr")
+  }
+  let killed_exceeds_total = file_pr_test_run_mutation_gate_with_report(
+    "{\"kill_rate\":1.0,\"total_mutants\":2,\"killed_mutants\":3,\"surviving_mutants\":[],\"unsupported_languages\":[]}",
+  )
+  match killed_exceeds_total {
+    Err(e) => {
+      let msg = e.validation_detail_or_message()
+      assert_true(msg.contains("invalid mutant counts"))
+      assert_true(msg.contains("killed_mutants=3"))
+      assert_true(msg.contains("must not exceed total_mutants"))
+    }
+    Ok(_) => fail("expected impossible killed-mutant count to block file_pr")
+  }
+}
+
+///|
+async test "interpret_file_pr cleans prepared mutation report on spawn failure" {
+  let project_dir = "/tmp/choir-fpr-mutation-spawn-cleanup-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = file_pr_test_task_contract(["moon test --target native"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
+  let reg = file_pr_test_registry(file_pr_dir)
+  let prepared_workers : Array[String] = []
+  let cleaned_workers : Array[String] = []
+  let mut ensure_pr_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/leaf-tdd-discipline"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      let statuses = []
+      for _ in cmds {
+        statuses.push(1)
+      }
+      statuses
+    },
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+        return (0, head + "\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      if cmd.program == "sh" {
+        return (0, "native tests passed\n")
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::TL,
+    prepare_mutation_gate_report=fn(agent_id) {
+      prepared_workers.push(agent_id)
+    },
+    wait_for_mutation_gate_report=async fn(_agent_id) {
+      @async.sleep(0)
+      fail("spawn failure must not wait for mutation report")
+    },
+    cleanup_mutation_gate_report=fn(agent_id) { cleaned_workers.push(agent_id) },
+    mutation_gate_now_ms_fn=fn() { 1779000000L },
+    record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
+    tdd_phase_reader=file_pr_test_tdd_done,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("command failed with status 1"))
+    @types.Response::Ok(_) => fail("expected mutation worker spawn failure")
+  }
+  assert_false(ensure_pr_called)
+  assert_eq(prepared_workers.length(), 1)
+  assert_eq(cleaned_workers.length(), 1)
+  assert_eq(cleaned_workers[0], prepared_workers[0])
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "find_prior_branch_audit_receipt returns none for empty dir" {
   @debug.assert_eq(
     find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) { [] }),

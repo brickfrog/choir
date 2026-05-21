@@ -1857,8 +1857,51 @@ fn mutation_gate_survivor_summary(survivors : Array[String]) -> String {
 }
 
 ///|
+fn mutation_gate_count_summary(result : MutationGateResult) -> String {
+  "total_mutants=" +
+  result.total_mutants.to_string() +
+  ", killed_mutants=" +
+  result.killed_mutants.to_string()
+}
+
+///|
+fn mutation_gate_invalid_count_error(
+  result : MutationGateResult,
+) -> @types.ChoirError? {
+  let counts = mutation_gate_count_summary(result)
+  if result.total_mutants < 0 {
+    return Some(
+      @types.ChoirError::validation_error(
+        "file_pr: mutation gate worker returned invalid mutant counts (" +
+        counts +
+        "): total_mutants must be >= 0; refusing to trust kill rate",
+      ),
+    )
+  }
+  if result.killed_mutants < 0 {
+    return Some(
+      @types.ChoirError::validation_error(
+        "file_pr: mutation gate worker returned invalid mutant counts (" +
+        counts +
+        "): killed_mutants must be >= 0; refusing to trust kill rate",
+      ),
+    )
+  }
+  if result.killed_mutants > result.total_mutants {
+    return Some(
+      @types.ChoirError::validation_error(
+        "file_pr: mutation gate worker returned invalid mutant counts (" +
+        counts +
+        "): killed_mutants must not exceed total_mutants; refusing to trust kill rate",
+      ),
+    )
+  }
+  None
+}
+
+///|
 fn mutation_gate_effective_kill_rate(result : MutationGateResult) -> Double {
-  if result.total_mutants <= 0 {
+  if result.total_mutants == 0 {
     1.0
   } else {
     result.killed_mutants.to_double() / result.total_mutants.to_double()
@@ -1878,6 +1921,10 @@ fn mutation_gate_result_to_error(
         "; notify_parent with the mutation-engine gap instead of filing.",
       ),
     )
+  }
+  match mutation_gate_invalid_count_error(result) {
+    Some(e) => return Some(e)
+    None => ()
   }
   let effective_kill_rate = mutation_gate_effective_kill_rate(result)
   if effective_kill_rate < mutation_kill_rate_min {
@@ -3142,7 +3189,8 @@ pub async fn interpret_file_pr(
             )
             match resp.ok_field("agent_id") {
               Some(agent_id) => Ok(agent_id)
-              None =>
+              None => {
+                cleanup_mutation_gate_report(plan.agent_id)
                 Err(
                   @types.ChoirError::validation_error(
                     resp
@@ -3150,6 +3198,7 @@ pub async fn interpret_file_pr(
                     .unwrap_or("mutation gate worker spawn failed"),
                   ),
                 )
+              }
             }
           },
           wait_for_mutation_gate_report,
