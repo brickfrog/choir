@@ -198,6 +198,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       global_review_mode=self.config.review_mode,
       audit_heartbeat_sec=self.config.audit_heartbeat_sec,
       audit_max_rounds=self.config.audit_max_rounds,
+      mutation_kill_rate_min=self.config.mutation_kill_rate_min,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
@@ -269,6 +270,19 @@ pub async fn ServerState::handle_with_runner_and_capture(
       },
       cleanup_audit_report=fn(agent_id) {
         self.cleanup_audit_on_file_pr_report(agent_id)
+      },
+      prepare_mutation_gate_report=fn(agent_id) {
+        self.prepare_mutation_gate_report(agent_id)
+      },
+      wait_for_mutation_gate_report=async fn(agent_id) {
+        self.wait_for_mutation_gate_report(agent_id)
+      },
+      capture_mutation_gate_report=async fn(agent_id, report) {
+        self.capture_mutation_gate_report(agent_id, report)
+        @async.sleep(0)
+      },
+      cleanup_mutation_gate_report=fn(agent_id) {
+        self.cleanup_mutation_gate_report(agent_id)
       },
     ) catch {
       e => @tools.tool_response_err_from_caught(e)

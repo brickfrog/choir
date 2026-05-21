@@ -35,6 +35,8 @@ pub(all) struct Config {
   audit_heartbeat_sec : Int
   /// file_pr->main audit hard limit; exhausted findings return AuditLoopExhausted.
   audit_max_rounds : Int
+  /// Minimum mutation kill rate required after a leaf's own tests pass.
+  mutation_kill_rate_min : Double
   /// Poller heartbeat cadence in seconds; 0 disables heartbeat ticks.
   poller_heartbeat_tick_sec : Int
   /// Best-effort `git pull --ff-only` on the parent worktree after an integration PR merges.
@@ -103,6 +105,7 @@ pub fn Config::default() -> Config {
     worker_no_handoff_escalate_sec: 120L,
     audit_heartbeat_sec: 60,
     audit_max_rounds: 3,
+    mutation_kill_rate_min: 0.8,
     poller_heartbeat_tick_sec: 60,
     auto_pull_after_integration: true,
     auto_rebuild_after_pull: false,

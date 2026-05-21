@@ -1443,6 +1443,557 @@ fn audit_on_file_pr_worker_args(
 }
 
 ///|
+pub(all) enum MutationLanguage {
+  MoonBit
+} derive(Debug, Eq)
+
+///|
+pub fn MutationLanguage::to_wire_string(self : MutationLanguage) -> String {
+  match self {
+    MoonBit => "moonbit"
+  }
+}
+
+///|
+pub impl Show for MutationLanguage with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+fn MutationLanguage::try_parse_wire(raw : String) -> MutationLanguage? {
+  match raw.trim().to_lower() {
+    "moonbit" => Some(MoonBit)
+    _ => None
+  }
+}
+
+///|
+pub(all) struct MutationGateTarget {
+  language : MutationLanguage
+  source_path : String
+  test_paths : Array[String]
+} derive(Debug, Eq)
+
+///|
+pub(all) struct MutationGateWorkerReport {
+  message : String
+  status : @types.Status
+} derive(Debug, Eq)
+
+///|
+pub(all) struct MutationGateResult {
+  kill_rate : Double
+  total_mutants : Int
+  killed_mutants : Int
+  surviving_mutants : Array[String]
+  unsupported_languages : Array[MutationLanguage]
+} derive(Debug, Eq)
+
+///|
+pub let mutation_gate_internal_caller_id : String = "mutation-gate"
+
+///|
+pub let mutation_gate_report_json_marker : String = "MUTATION_GATE_REPORT_JSON:"
+
+///|
+pub let mutation_gate_default_budget_ms : Int = 900_000
+
+///|
+fn mutation_gate_is_moonbit_path(path : String) -> Bool {
+  path.has_prefix("src/") && path.has_suffix(".mbt")
+}
+
+///|
+fn mutation_gate_is_moonbit_test_path(path : String) -> Bool {
+  mutation_gate_is_moonbit_path(path) && path.has_suffix("_test.mbt")
+}
+
+///|
+fn mutation_gate_source_for_test_path(path : String) -> String {
+  path[:path.length() - "_test.mbt".length()].to_owned() + ".mbt"
+}
+
+///|
+fn mutation_gate_upsert_target(
+  targets : Array[MutationGateTarget],
+  source_path : String,
+  test_path : String?,
+) -> Unit {
+  for i = 0; i < targets.length(); i = i + 1 {
+    let target = targets[i]
+    if target.source_path == source_path {
+      let test_paths = target.test_paths
+      match test_path {
+        Some(path) if path != "" && !test_paths.contains(path) =>
+          test_paths.push(path)
+        _ => ()
+      }
+      targets[i] = { ..target, test_paths, }
+      return
+    }
+  }
+  let test_paths = match test_path {
+    Some(path) if path != "" => [path]
+    _ => []
+  }
+  targets.push({ language: MoonBit, source_path, test_paths })
+}
+
+///|
+pub fn mutation_gate_targets_for_changed_paths(
+  changed_paths : Array[String],
+) -> Array[MutationGateTarget] {
+  let targets : Array[MutationGateTarget] = []
+  for raw in changed_paths {
+    let path = raw.trim().to_owned()
+    if path == "" || !mutation_gate_is_moonbit_path(path) {
+      continue
+    }
+    if mutation_gate_is_moonbit_test_path(path) {
+      mutation_gate_upsert_target(
+        targets,
+        mutation_gate_source_for_test_path(path),
+        Some(path),
+      )
+    } else {
+      mutation_gate_upsert_target(targets, path, None)
+    }
+  }
+  targets
+}
+
+///|
+fn mutation_gate_changed_paths_from_output(output : String) -> Array[String] {
+  let paths : Array[String] = []
+  for raw in output.split("\n") {
+    let path = raw.trim().to_owned()
+    if path != "" {
+      paths.push(path)
+    }
+  }
+  paths
+}
+
+///|
+fn mutation_gate_target_line(target : MutationGateTarget) -> String {
+  let tests = if target.test_paths.length() == 0 {
+    "(no changed sibling test detected; use the verify commands as the suite)"
+  } else {
+    target.test_paths.join(", ")
+  }
+  "- " +
+  target.language.to_wire_string() +
+  ": source=" +
+  target.source_path +
+  " tests=" +
+  tests
+}
+
+///|
+pub fn build_mutation_gate_task(
+  project_dir : String,
+  branch : String,
+  head_sha : String,
+  targets : Array[MutationGateTarget],
+  verify_commands : Array[String],
+  mutation_kill_rate_min : Double,
+) -> String {
+  let target_lines : Array[String] = []
+  for target in targets {
+    target_lines.push(mutation_gate_target_line(target))
+  }
+  let verify_lines : Array[String] = []
+  for command in verify_commands {
+    verify_lines.push("- `" + command + "`")
+  }
+  [
+    "You are the mutation-gate worker for file_pr. The leaf's own tests have already passed; now prove those tests notice source regressions before PR filing is allowed.",
+    "",
+    "Hard boundaries:",
+    "- Do not edit the real checkout. Create an isolated temp copy/worktree and mutate only there.",
+    "- Do not commit, push, file a PR, or add measurement reporting.",
+    "- Do not add cost-measurement scaffold.",
+    "- If a language adapter cannot run, report that adapter gap and stop instead of rabbit-holing on external tools.",
+    "",
+    "Context:",
+    "- Project directory: " + project_dir,
+    "- Current branch: " + branch,
+    "- HEAD: " + head_sha,
+    "- mutation_kill_rate_min=" + mutation_kill_rate_min.to_string(),
+    "",
+    "Coverage targets:",
+    ..target_lines,
+    "",
+    "Verify commands to run for each mutant:",
+    ..verify_lines,
+    "",
+    "MoonBit adapter:",
+    "- Generate single-site source mutants for fixed operators in the listed MoonBit source targets.",
+    "- Mutate comparison operators (`==` <-> `!=`, `<` <-> `<=`, `>` <-> `>=`), boolean operators (`&&` <-> `||`), and simple arithmetic operators (`+` <-> `-`, `*` <-> `/`) when doing so is syntactically safe.",
+    "- For each mutant, run the verify commands in the temp copy. A mutant is killed when any verify command fails. It survives when every verify command still passes.",
+    "- If no usable MoonBit mutation adapter can run in this environment, report `unsupported_languages:[\"moonbit\"]` with a concise gap note.",
+    "",
+    "Result policy:",
+    "- Compute killed_mutants / total_mutants as kill_rate. If total_mutants is 0, report kill_rate 1.0 and an empty survivor list.",
+    "- If kill_rate is below mutation_kill_rate_min, include every surviving mutant you can identify and explicitly tell the leaf to re-fix-tests.",
+    "",
+    "Handoff:",
+    "- Call notify_parent exactly once. Use status success if the mutation run completed, even when mutants survived. Use status failure only if the worker could not run the gate.",
+    "- The notify_parent message MUST contain one line beginning with " +
+    mutation_gate_report_json_marker +
+    " followed by JSON with fields kill_rate, total_mutants, killed_mutants, surviving_mutants, unsupported_languages.",
+    "- Example: " +
+    mutation_gate_report_json_marker +
+    " {\"kill_rate\":0.75,\"total_mutants\":4,\"killed_mutants\":3,\"surviving_mutants\":[\"src/foo.mbt:12 == -> !=\"],\"unsupported_languages\":[]}",
+    "- After notify_parent, call shutdown.",
+  ].join("\n")
+}
+
+///|
+fn json_number_field(fields : Map[String, Json], key : String) -> Double? {
+  match fields.get(key) {
+    Some(Number(value, ..)) => Some(value)
+    _ => None
+  }
+}
+
+///|
+fn json_int_field(fields : Map[String, Json], key : String) -> Int? {
+  match fields.get(key) {
+    Some(Number(value, ..)) => Some(value.to_int())
+    _ => None
+  }
+}
+
+///|
+fn json_string_array_field(
+  fields : Map[String, Json],
+  key : String,
+) -> Array[String]? {
+  match fields.get(key) {
+    Some(Array(items)) => {
+      let out : Array[String] = []
+      for item in items {
+        match item {
+          String(value) => out.push(value)
+          _ => return None
+        }
+      }
+      Some(out)
+    }
+    _ => None
+  }
+}
+
+///|
+fn json_language_array_field(
+  fields : Map[String, Json],
+  key : String,
+) -> Array[MutationLanguage]? {
+  let raw = match json_string_array_field(fields, key) {
+    Some(values) => values
+    None => return None
+  }
+  let out : Array[MutationLanguage] = []
+  for value in raw {
+    match MutationLanguage::try_parse_wire(value) {
+      Some(language) => out.push(language)
+      None => return None
+    }
+  }
+  Some(out)
+}
+
+///|
+pub fn mutation_gate_report_from_message(
+  message : String,
+) -> MutationGateResult? {
+  let start = match message.find(mutation_gate_report_json_marker) {
+    Some(idx) => idx + mutation_gate_report_json_marker.length()
+    None => return None
+  }
+  let raw_body = message[start:].trim().to_owned()
+  let body = match raw_body.find("\n") {
+    Some(idx) => raw_body[:idx].trim().to_owned()
+    None => raw_body
+  }
+  let parsed = @json.parse(body) catch { _ => return None }
+  match parsed {
+    Object(fields) => {
+      let kill_rate = match json_number_field(fields, "kill_rate") {
+        Some(value) => value
+        None => return None
+      }
+      let total_mutants = match json_int_field(fields, "total_mutants") {
+        Some(value) => value
+        None => return None
+      }
+      let killed_mutants = match json_int_field(fields, "killed_mutants") {
+        Some(value) => value
+        None => return None
+      }
+      let surviving_mutants = match
+        json_string_array_field(fields, "surviving_mutants") {
+        Some(value) => value
+        None => return None
+      }
+      let unsupported_languages = match
+        json_language_array_field(fields, "unsupported_languages") {
+        Some(value) => value
+        None => return None
+      }
+      Some({
+        kill_rate,
+        total_mutants,
+        killed_mutants,
+        surviving_mutants,
+        unsupported_languages,
+      })
+    }
+    _ => None
+  }
+}
+
+///|
+fn mutation_gate_worker_slug_prefix(head_sha : String) -> String {
+  mutation_gate_internal_caller_id + "-" + file_pr_short_sha(head_sha) + "-"
+}
+
+///|
+pub fn mutation_gate_worker_slug(head_sha : String, now_ms : Int64) -> String {
+  mutation_gate_worker_slug_prefix(head_sha) + now_ms.to_string()
+}
+
+///|
+fn mutation_gate_worker_args(
+  project_dir : String,
+  branch : String,
+  head_sha : String,
+  targets : Array[MutationGateTarget],
+  verify_commands : Array[String],
+  mutation_kill_rate_min : Double,
+  now_ms : Int64,
+) -> WorkerSpawnArgs {
+  let task = build_mutation_gate_task(
+    project_dir, branch, head_sha, targets, verify_commands, mutation_kill_rate_min,
+  )
+  {
+    task: render_worker_spawn_prompt_with_defaults(
+      {
+        prompt: "",
+        task,
+        task_contract: { ..@types.TaskContract::empty(), goal: task },
+        boundary: [],
+        read_first: [],
+        steps: [],
+        verify: [],
+        done_criteria: [],
+        constraints: [],
+        context: "",
+        key_decisions: [],
+        non_goals: [],
+        worker_type: "mutation",
+        no_commit: false,
+      },
+      @workspace.resolve_context_paths(project_dir, "worker"),
+      project_dir~,
+    ),
+    task_contract: { ..@types.TaskContract::empty(), goal: task },
+    caller_id: mutation_gate_internal_caller_id,
+    slug: mutation_gate_worker_slug(head_sha, now_ms),
+    agent_type: @types.AgentType::Codex,
+  }
+}
+
+///|
+fn mutation_gate_report_summary(message : String) -> String {
+  let lines : Array[String] = []
+  for raw in message.split("\n") {
+    let line = raw.trim().to_owned()
+    if line != "" {
+      lines.push(line)
+      if lines.length() >= 3 {
+        break
+      }
+    }
+  }
+  if lines.length() == 0 {
+    "no report body"
+  } else {
+    lines.join(" | ")
+  }
+}
+
+///|
+fn mutation_gate_languages_summary(
+  languages : Array[MutationLanguage],
+) -> String {
+  let parts : Array[String] = []
+  for language in languages {
+    parts.push(language.to_wire_string())
+  }
+  parts.join(", ")
+}
+
+///|
+fn mutation_gate_survivor_summary(survivors : Array[String]) -> String {
+  if survivors.length() == 0 {
+    "- worker did not list surviving mutants"
+  } else {
+    let lines : Array[String] = []
+    for survivor in survivors {
+      lines.push("- " + survivor)
+    }
+    lines.join("\n")
+  }
+}
+
+///|
+fn mutation_gate_effective_kill_rate(result : MutationGateResult) -> Double {
+  if result.total_mutants <= 0 {
+    1.0
+  } else {
+    result.killed_mutants.to_double() / result.total_mutants.to_double()
+  }
+}
+
+///|
+fn mutation_gate_result_to_error(
+  result : MutationGateResult,
+  mutation_kill_rate_min : Double,
+) -> @types.ChoirError? {
+  if result.unsupported_languages.length() > 0 {
+    return Some(
+      @types.ChoirError::validation_error(
+        "file_pr: mutation gate worker reported unsupported language adapter(s): " +
+        mutation_gate_languages_summary(result.unsupported_languages) +
+        "; notify_parent with the mutation-engine gap instead of filing.",
+      ),
+    )
+  }
+  let effective_kill_rate = mutation_gate_effective_kill_rate(result)
+  if effective_kill_rate < mutation_kill_rate_min {
+    return Some(
+      @types.ChoirError::validation_error(
+        "file_pr: mutation gate failed; mutant-kill-rate " +
+        effective_kill_rate.to_string() +
+        " is below threshold " +
+        mutation_kill_rate_min.to_string() +
+        ". re-fix-tests so they kill the surviving mutants, then rerun file_pr.\nSurviving mutants:\n" +
+        mutation_gate_survivor_summary(result.surviving_mutants),
+      ),
+    )
+  }
+  None
+}
+
+///|
+pub async fn file_pr_run_mutation_gate(
+  project_dir : String,
+  file_pr_dir : String,
+  tracked_agent_id : String,
+  parent_branch : String,
+  head_sha : String,
+  verify_commands : Array[String],
+  mutation_kill_rate_min : Double,
+  capture : async (@workspace.Command) -> (Int, String),
+  spawn_mutation_worker : async (WorkerSpawnArgs) -> Result[
+    String,
+    @types.ChoirError,
+  ],
+  wait_for_mutation_report : async (String) -> MutationGateWorkerReport?,
+  cleanup_mutation_report : (String) -> Unit,
+  mutation_budget_ms : Int,
+  now_ms_fn : () -> Int64,
+) -> Result[Unit, @types.ChoirError] {
+  ignore(tracked_agent_id)
+  if verify_commands.length() == 0 {
+    return Ok(())
+  }
+  let branch = match file_pr_current_branch_name(file_pr_dir, capture) {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "file_pr: cannot determine current branch for mutation gate",
+        ),
+      )
+  }
+  let (diff_exit, diff_output) = capture({
+    program: "git",
+    args: ["diff", "--name-only", parent_branch + "..." + head_sha],
+    workdir: Some(file_pr_dir),
+  })
+  if diff_exit != 0 {
+    return Err(
+      @types.ChoirError::validation_error(
+        "file_pr: cannot determine changed files for mutation gate: " +
+        file_pr_verify_output_tail(diff_output),
+      ),
+    )
+  }
+  let targets = mutation_gate_targets_for_changed_paths(
+    mutation_gate_changed_paths_from_output(diff_output),
+  )
+  if targets.length() == 0 {
+    return Ok(())
+  }
+  let worker_args = mutation_gate_worker_args(
+    project_dir,
+    branch,
+    head_sha,
+    targets,
+    verify_commands,
+    mutation_kill_rate_min,
+    now_ms_fn(),
+  )
+  let worker_id = match spawn_mutation_worker(worker_args) {
+    Ok(id) => id
+    Err(e) => return Err(e)
+  }
+  let waited = @async.with_timeout_opt(mutation_budget_ms, () => {
+    wait_for_mutation_report(worker_id)
+  })
+  let report = match waited {
+    None => {
+      cleanup_mutation_report(worker_id)
+      return Err(@types.ChoirError::timeout("mutation gate budget exceeded"))
+    }
+    Some(None) => {
+      cleanup_mutation_report(worker_id)
+      return Err(
+        @types.ChoirError::validation_error(
+          "file_pr: mutation gate worker did not report",
+        ),
+      )
+    }
+    Some(Some(value)) => value
+  }
+  if report.status == @types.Status::Failure {
+    return Err(
+      @types.ChoirError::validation_error(
+        "file_pr: mutation gate worker reported failure: " +
+        mutation_gate_report_summary(report.message),
+      ),
+    )
+  }
+  let result = match mutation_gate_report_from_message(report.message) {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::validation_error(
+          "file_pr: mutation gate worker did not return " +
+          mutation_gate_report_json_marker,
+        ),
+      )
+  }
+  match mutation_gate_result_to_error(result, mutation_kill_rate_min) {
+    Some(e) => Err(e)
+    None => Ok(())
+  }
+}
+
+///|
 priv enum FilePrAutoAuditLogOutcome {
   ReceiptPresent
   AwaitingInFlight(worker_id~ : String)
@@ -2304,6 +2855,19 @@ pub async fn interpret_file_pr(
   ) {
     @async.sleep(0)
   },
+  prepare_mutation_gate_report? : (String) -> Unit = fn(_) {  },
+  wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
+    _,
+  ) {
+    @async.sleep(0)
+    None
+  },
+  cleanup_mutation_gate_report? : (String) -> Unit = fn(_) {  },
+  mutation_gate_budget_ms? : Int = mutation_gate_default_budget_ms,
+  mutation_kill_rate_min? : Double = @types.Config::default().mutation_kill_rate_min,
+  mutation_gate_now_ms_fn? : () -> Int64 = fn() {
+    @env.now().reinterpret_as_int64()
+  },
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -2398,8 +2962,10 @@ pub async fn interpret_file_pr(
     Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()
   }
-  let verify_outcomes = match
-    file_pr_task_contract_for_agent(project_dir, tracked_agent_id, file_pr_dir) {
+  let task_contract = file_pr_task_contract_for_agent(
+    project_dir, tracked_agent_id, file_pr_dir,
+  )
+  let verify_outcomes = match task_contract {
     Some(contract) =>
       match
         file_pr_run_required_verify(file_pr_dir, contract.verify, capture, record_verify_outcome=fn(
@@ -2414,6 +2980,71 @@ pub async fn interpret_file_pr(
         Err(e) => return @types.Response::Err(e.message())
       }
     None => []
+  }
+  match task_contract {
+    Some(contract) if caller_role == @types.Role::Dev &&
+      contract.verify.length() > 0 => {
+      let head_sha = match file_pr_current_head_sha(file_pr_dir, capture) {
+        Some(sha) => sha
+        None =>
+          return @types.Response::Err(
+            "file_pr: cannot determine current HEAD for mutation gate",
+          )
+      }
+      match
+        file_pr_run_mutation_gate(
+          project_dir,
+          file_pr_dir,
+          tracked_agent_id,
+          parent_branch,
+          head_sha,
+          contract.verify,
+          mutation_kill_rate_min,
+          capture,
+          async fn(worker_args) {
+            let resolved_parent_branch = detect_default_branch_with_capture(
+              project_dir, capture,
+            )
+            let plan = spawn_worker_plan(
+              worker_args, resolved_parent_branch, session, project_dir,
+            )
+            prepare_mutation_gate_report(plan.agent_id)
+            let resp = interpret_spawn_worker(
+              worker_args,
+              project_dir,
+              session,
+              runner,
+              capture,
+              registry,
+              extra_mcp_servers_json~,
+              shell_command~,
+              listen_uds~,
+              listen_tcp~,
+              tcp_auth_token~,
+              allow_mutation_gate_caller=true,
+            )
+            match resp.ok_field("agent_id") {
+              Some(agent_id) => Ok(agent_id)
+              None =>
+                Err(
+                  @types.ChoirError::validation_error(
+                    resp
+                    .error_message()
+                    .unwrap_or("mutation gate worker spawn failed"),
+                  ),
+                )
+            }
+          },
+          wait_for_mutation_gate_report,
+          cleanup_mutation_gate_report,
+          mutation_gate_budget_ms,
+          mutation_gate_now_ms_fn,
+        ) {
+        Ok(_) => ()
+        Err(e) => return @types.Response::Err(e.validation_detail_or_message())
+      }
+    }
+    _ => ()
   }
   let preflight_inputs = {
     ..preflight_inputs,
