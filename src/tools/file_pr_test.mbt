@@ -878,6 +878,11 @@ test "mutation gate worker task carries MoonBit adapter instructions and no cost
     0.75,
   )
   assert_true(task.contains("MoonBit adapter:"))
+  assert_true(task.contains("src/math.mbt"))
+  assert_true(task.contains("src/math_test.mbt"))
+  assert_true(task.contains("moon test --target native"))
+  assert_true(task.contains(mutation_gate_report_json_marker))
+  assert_true(task.contains("re-fix-tests"))
   assert_true(task.contains("mutation_kill_rate_min=0.75"))
   assert_false(task.contains("cost pilot"))
   assert_false(task.contains("dashboard"))

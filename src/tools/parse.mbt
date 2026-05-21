@@ -304,14 +304,33 @@ fn parse_tdd_intent_args(args : ToolArgs) -> Result[TddIntentArgs, ParseError] {
     Some(value) => {
       let trimmed = value.trim().to_owned()
       if trimmed == "" {
-        return Err(ParseError::MissingField(field="test_command"))
+        return Err(ParseError::InvalidValue(field="test_command", value~))
       } else {
-        trimmed
+        Some(trimmed)
       }
     }
-    None => return Err(ParseError::MissingField(field="test_command"))
+    None => None
   }
   Ok({ caller_id, intent, test_command })
+}
+
+///|
+test "parse_tdd_intent_args treats empty optional test_command as invalid" {
+  match
+    parse_tdd_intent_args({
+      values: {
+        "caller_id": "main.leaf".to_json(),
+        "intent": "cover parse behavior".to_json(),
+        "test_command": "   ".to_json(),
+      },
+    }) {
+    Err(ParseError::InvalidValue(field~, value~)) => {
+      assert_eq(field, "test_command")
+      assert_eq(value, "   ")
+    }
+    Err(e) => fail("expected invalid test_command, got: " + e.message())
+    Ok(_) => fail("expected empty test_command to be invalid")
+  }
 }
 
 ///|

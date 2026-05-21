@@ -238,15 +238,6 @@ pub fn ServerState::leaf_tdd_state_for_agent(
 }
 
 ///|
-pub fn ServerState::record_leaf_tdd_phase(
-  self : ServerState,
-  agent_id : String,
-  phase : @types.LeafTddPhase,
-) -> Unit {
-  self.leaf_tdd_phases.set(agent_id, phase)
-}
-
-///|
 pub fn ServerState::record_leaf_tdd_state(
   self : ServerState,
   agent_id : String,

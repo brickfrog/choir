@@ -225,9 +225,6 @@ fn leaf_tool_request_args(
         Some(intent) =>
           if intent.trim() == "" {
             Err("tdd_intent requires intent")
-          } else if !flags.contains("test_command") ||
-            flags.get("test_command").unwrap_or("").trim() == "" {
-            Err("tdd_intent requires test_command")
           } else {
             Ok(flags)
           }
@@ -244,7 +241,7 @@ fn leaf_tool_request_args(
       if flags.contains("command") || flags.contains("output") {
         return Err(
           tool +
-          " uses the test_command declared by tdd_intent; pass only exit_code",
+          " uses the configured task-contract verify command; pass only exit_code",
         )
       }
       if !flags.contains("exit_code") && positionals.length() > 0 {
@@ -330,8 +327,7 @@ fn leaf_tool_usage(tool : String) -> String {
       "usage: notify_parent [--status <success|failure|info>] <message>"
     "report_usage" =>
       "usage: report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds> [--cost-usd <usd>]"
-    "tdd_intent" =>
-      "usage: tdd_intent --intent <intent> --test-command <command>"
+    "tdd_intent" => "usage: tdd_intent --intent <intent>"
     "tdd_red_check" => "usage: tdd_red_check --exit-code <nonzero>"
     "tdd_green_check" =>
       "usage: tdd_green_check --exit-code 0 [--next-phase <green|refactor|done>]"

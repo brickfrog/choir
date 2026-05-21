@@ -285,20 +285,20 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "tdd_intent",
-      description: "Declare the leaf's TDD intent before writing the failing test. file_pr refuses until the leaf reaches Done.",
+      description: "Declare the leaf's TDD intent before writing the failing test. The server pins red/green checks to the task contract verify command; file_pr refuses until the leaf reaches Done.",
       props: [
         { name: "caller_id", desc: "ID of the calling leaf" },
         { name: "intent", desc: "Short description of the behavior under test" },
         {
           name: "test_command",
-          desc: "Test command to persist and reuse for red/green verification",
+          desc: "Optional compatibility field. If supplied, it must match the configured verify command.",
         },
       ],
-      required: ["caller_id", "intent", "test_command"],
+      required: ["caller_id", "intent"],
     },
     {
       name: "tdd_red_check",
-      description: "Advance Intent to Red only when the persisted intent test command fails.",
+      description: "Advance Intent to Red only when the configured task-contract verify command fails.",
       props: [
         { name: "caller_id", desc: "ID of the calling leaf" },
         {
@@ -310,7 +310,7 @@ fn tool_defs() -> Array[CatalogTool] {
     },
     {
       name: "tdd_green_check",
-      description: "Advance Red to Green, Green to Done or Refactor, and Refactor to Done only when the persisted intent test command passes.",
+      description: "Advance Red to Green, Green to Done or Refactor, and Refactor to Done only when the configured task-contract verify command passes.",
       props: [
         { name: "caller_id", desc: "ID of the calling leaf" },
         {
