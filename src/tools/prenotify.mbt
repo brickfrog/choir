@@ -63,12 +63,30 @@ fn prenotify_has_nonempty_check(checks : Array[String]) -> Bool {
 ///|
 pub fn prenotify_checks_should_run(
   caller_role : @types.Role,
+  registry : @registry.AgentRegistry?,
+  caller_id : String,
   status : @types.Status,
   checks : Array[String],
 ) -> Bool {
-  caller_role == @types.Role::Dev &&
+  prenotify_registered_dev_checks_apply(caller_role, registry, caller_id) &&
   status == @types.Status::Success &&
   prenotify_has_nonempty_check(checks)
+}
+
+///|
+fn prenotify_registered_dev_checks_apply(
+  caller_role : @types.Role,
+  registry : @registry.AgentRegistry?,
+  caller_id : String,
+) -> Bool {
+  match registry {
+    Some(reg) =>
+      match reg.get_opt(caller_id) {
+        Some(agent) => agent.role == @types.Role::Dev
+        None => caller_role == @types.Role::Dev
+      }
+    None => caller_role == @types.Role::Dev
+  }
 }
 
 ///|
