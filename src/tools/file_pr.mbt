@@ -1981,11 +1981,15 @@ pub async fn file_pr_run_required_verify(
   verify_commands : Array[String],
   capture : async (@workspace.Command) -> (Int, String),
   record_verify_outcome? : (FilePrVerifyOutcome) -> Unit = fn(_outcome) { () },
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> Result[Array[FilePrVerifyOutcome], @types.ChoirError] {
   let outcomes : Array[FilePrVerifyOutcome] = []
   let head_sha = file_pr_current_head_sha(file_pr_dir, capture)
   for raw in verify_commands {
-    let command = raw.trim().to_owned()
+    let command = @types.moon_verify_normalize_command(
+      raw.trim().to_owned(),
+      moon_verify_target,
+    )
     if command == "" {
       continue
     }
@@ -2326,6 +2330,7 @@ pub async fn interpret_file_pr(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let branch = file_pr_args.branch
@@ -2418,14 +2423,18 @@ pub async fn interpret_file_pr(
     file_pr_task_contract_for_agent(project_dir, tracked_agent_id, file_pr_dir) {
     Some(contract) =>
       match
-        file_pr_run_required_verify(file_pr_dir, contract.verify, capture, record_verify_outcome=fn(
-          outcome : FilePrVerifyOutcome,
+        file_pr_run_required_verify(
+          file_pr_dir,
+          contract.verify,
+          capture,
+          record_verify_outcome=fn(outcome : FilePrVerifyOutcome) {
+            record_verify_event(
+              tracked_agent_id,
+              file_pr_verify_evidence_event(file_pr_dir, outcome),
+            )
+          },
+          moon_verify_target~,
         ) {
-          record_verify_event(
-            tracked_agent_id,
-            file_pr_verify_evidence_event(file_pr_dir, outcome),
-          )
-        }) {
         Ok(outcomes) => outcomes
         Err(e) => return @types.Response::Err(e.message())
       }

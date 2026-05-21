@@ -552,6 +552,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
   let child_id = "main.auto-leaf"
+  let child_workspace = project_dir + "/.choir/worktrees/auto-leaf"
   let pr_number = 90
   ignore(
     state.register_agent({
@@ -579,13 +580,47 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       role: @types.Role::Dev,
       agent_type: @types.AgentType::MoonPilot,
       parent: Some(parent_id),
-      workspace: project_dir + "/.choir/worktrees/auto-leaf",
+      workspace: child_workspace,
       branch: child_id,
       terminal_target: None,
       host: @types.Host::Local,
       spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
+  )
+  assert_true(@sys.create_dir_all(child_workspace + "/.choir"))
+  let target : @types.LocalTarget = {
+    kind: ZellijTab,
+    session: terminal_session,
+    name: "auto-leaf",
+  }
+  let spec : @types.SpawnSpec = {
+    slug: "auto-leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::MoonPilot,
+    task: "automerge verified work",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "automerge verified work",
+      verify: ["moon check"],
+      verify_satisfied_by_ci: false,
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id,
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  assert_true(
+    @sys.write_file_sync(
+      child_workspace + "/.choir/config.local.toml",
+      @workspace.config_local_content(spec, child_workspace, target),
+    ),
   )
   let parent_child : @phase.ChildLifecycle = {
     child_id,
@@ -630,6 +665,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     Some(tracked) =>
       state.poller.restore({
         ..tracked,
+        last_sha: "sha-automerge-normalized",
         last_review_state: @poller.ReviewState::Approved,
         last_ci_rollup: @poller.CiRollupStatus::Success,
         mergeable: @poller.Mergeable::Unknown,
@@ -642,6 +678,19 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     Some(value) => value
     None => fail("expected tracked PR")
   }
+  assert_true(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      child_id,
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon check --target native",
+        ok=true,
+        details=Some("head: sha-automerge-normalized\nexit: 0"),
+      ),
+    ),
+  )
   let mut merge_seen = false
   let runner = async fn(cmds : Array[@workspace.Command]) {
     @async.sleep(0)
@@ -699,8 +748,104 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
 }
 
 ///|
-async test "maybe_trigger_automerge_for_pending_event skips already merged PR" {
+async test "maybe_trigger_automerge_for_pending_event does not satisfy non-native moon verify with native CI" {
   let pr_number = 91
+  let label = "non-native-ci"
+  let (state, _child_id, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
+  )
+  let child_workspace = project_dir + "/.choir/worktrees/" + label
+  assert_true(@sys.create_dir_all(child_workspace + "/.choir"))
+  let target : @types.LocalTarget = {
+    kind: ZellijTab,
+    session: "test-session",
+    name: label,
+  }
+  let spec : @types.SpawnSpec = {
+    slug: label,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "automerge non-native verify",
+    task_contract: Some({
+      ..@types.TaskContract::empty(),
+      goal: "automerge non-native verify",
+      verify: ["moon check"],
+      verify_satisfied_by_ci: true,
+    }),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main.tl-" + label,
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  assert_true(
+    @sys.write_file_sync(
+      child_workspace + "/.choir/config.local.toml",
+      @workspace.config_local_content(spec, child_workspace, target),
+    ),
+  )
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json = "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}"
+    let review_threads_json = "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}"
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, repo_view_json)
+    }
+    if cmd.args.contains("graphql") {
+      return (0, review_threads_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    (0, "")
+  }
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    runner,
+    capture~,
+  )
+  assert_false(merged)
+  assert_false(merge_seen)
+  assert_true(state.poller.get(pr_number) != None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "maybe_trigger_automerge_for_pending_event skips already merged PR" {
+  let pr_number = 92
   let (state, _, _) = blocked_gh_automerge_fixture(
     "already-merged",
     pr_number,
@@ -1063,6 +1208,7 @@ fn blocked_gh_automerge_fixture(
   pr_number : Int,
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   automerge? : Bool = true,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> (ServerState, String, String) raise {
   let project_dir = "/tmp/choir-blocked-gh-automerge-" +
     label +
@@ -1078,6 +1224,7 @@ fn blocked_gh_automerge_fixture(
     terminal_session,
     automerge,
     review_mode,
+    moon_verify_target,
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl-" + label
@@ -4182,6 +4329,45 @@ fn assert_next_action_line(
 }
 
 ///|
+fn parent_poll_event_test_tracked(
+  pr_number : Int,
+  agent_id : String,
+  branch : String,
+  head : String,
+) -> @poller.TrackedPR {
+  {
+    pr_number,
+    agent_id,
+    branch,
+    parent_branch: "main",
+    pr_url: "https://ex/pr/" + pr_number.to_string(),
+    first_seen: 0L,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: head,
+    last_automerge_attempt_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
+  }
+}
+
+///|
 test "parent_poll_event_message PR READY stresses not merged" {
   let tracked : @poller.TrackedPR = {
     pr_number: 7,
@@ -4280,6 +4466,97 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     }
     None => fail("expected merge-gate-open PRReady message")
   }
+}
+
+///|
+test "parent_poll_event_message normalizes moon verify before checking evidence" {
+  let project_dir = "/tmp/choir-parent-normalized-verify-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let head = "sha-parent-normalized"
+  let tracked = parent_poll_event_test_tracked(
+    170, "main.dev-normalized", "work/normalized", head,
+  )
+  assert_true(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      tracked.agent_id,
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon check --target native",
+        ok=true,
+        details=Some("head: " + head + "\nexit: 0"),
+      ),
+    ),
+  )
+  match
+    parent_poll_event_message(
+      tracked,
+      project_dir,
+      @poller.PollEvent::MergeReady(170),
+      Some(0),
+      task_contract=Some({
+        ..@types.TaskContract::empty(),
+        verify: ["moon check"],
+        verify_satisfied_by_ci: false,
+      }),
+      moon_verify_target=@types.MoonVerifyTarget::Native,
+    ) {
+    Some((message, _status)) => {
+      assert_true(message.contains("MERGE NOW"))
+      assert_false(message.contains("local verify not observed"))
+    }
+    None => fail("expected MergeReady message")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "parent_poll_event_message uses configured moon target in recheck summary" {
+  let project_dir = "/tmp/choir-parent-summary-moon-target-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let head = "sha-parent-summary-target"
+  let tracked = parent_poll_event_test_tracked(
+    171, "main.dev-summary-target", "work/summary-target", head,
+  )
+  assert_true(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      tracked.agent_id,
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon check --target wasm-gc",
+        ok=true,
+        details=Some("head: " + head + "\nexit: 0"),
+      ),
+    ),
+  )
+  match
+    parent_poll_event_message(
+      tracked,
+      project_dir,
+      @poller.PollEvent::CILatestHeadRollupSucceeded(171),
+      Some(0),
+      task_contract=Some({
+        ..@types.TaskContract::empty(),
+        verify: ["moon check"],
+        verify_satisfied_by_ci: false,
+      }),
+      moon_verify_target=@types.MoonVerifyTarget::WasmGc,
+    ) {
+    Some((message, _status)) => {
+      assert_true(message.contains("Advisory evaluation verdict: ready"))
+      assert_true(message.contains("Merge policy decision: merge_now"))
+      assert_false(message.contains("local verify not observed"))
+    }
+    None => fail("expected CI latest-head message")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

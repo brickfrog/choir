@@ -230,6 +230,357 @@ pub fn ReviewMode::try_parse_wire(
 }
 
 ///|
+pub(all) enum MoonVerifyTarget {
+  Native
+  Wasm
+  WasmGc
+  Js
+} derive(Debug, Eq)
+
+///|
+pub fn MoonVerifyTarget::to_wire_string(self : MoonVerifyTarget) -> String {
+  match self {
+    Native => "native"
+    Wasm => "wasm"
+    WasmGc => "wasm-gc"
+    Js => "js"
+  }
+}
+
+///|
+pub impl Show for MoonVerifyTarget with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
+pub fn MoonVerifyTarget::try_parse_wire(
+  raw : String,
+) -> Result[MoonVerifyTarget, ChoirError] {
+  let normalized = raw.trim().to_lower().to_owned()
+  match normalized {
+    "native" => Ok(Native)
+    "wasm" => Ok(Wasm)
+    "wasm-gc" => Ok(WasmGc)
+    "js" => Ok(Js)
+    _ =>
+      Err(
+        ChoirError::config_error(
+          "moon_verify_target must be \"native\", \"wasm\", \"wasm-gc\", or \"js\"",
+        ),
+      )
+  }
+}
+
+///|
+struct MoonVerifyShellPart {
+  segment : String
+  separator : String
+} derive(Debug, Eq)
+
+///|
+struct MoonVerifyInvocation {
+  has_explicit_target : Bool
+  explicit_target_native : Bool
+} derive(Debug, Eq)
+
+///|
+fn moon_verify_segment_space(c : UInt16) -> Bool {
+  c == ' ' || c == '\t' || c == '\r'
+}
+
+///|
+fn moon_verify_shell_separator_end(command : String, index : Int) -> Int {
+  let c = command[index]
+  if c == '|' && index + 1 < command.length() && command[index + 1] == '&' {
+    index + 2
+  } else if (c == '&' || c == '|') &&
+    index + 1 < command.length() &&
+    command[index + 1] == c {
+    index + 2
+  } else {
+    index + 1
+  }
+}
+
+///|
+fn moon_verify_ampersand_separator_at(command : String, index : Int) -> Bool {
+  if index + 1 < command.length() && command[index + 1] == '&' {
+    return true
+  }
+  if index > 0 {
+    let prev = command[index - 1]
+    if prev == '>' || prev == '<' || prev == '|' {
+      return false
+    }
+  }
+  if index + 1 < command.length() && command[index + 1] == '>' {
+    return false
+  }
+  let prev_boundary = index == 0 ||
+    moon_verify_segment_space(command[index - 1])
+  let next_boundary = index + 1 == command.length() ||
+    moon_verify_segment_space(command[index + 1]) ||
+    command[index + 1] == '\n' ||
+    command[index + 1] == ';'
+  prev_boundary && next_boundary
+}
+
+///|
+fn moon_verify_shell_separator_at(command : String, index : Int) -> Bool {
+  let c = command[index]
+  if c == '&' {
+    moon_verify_ampersand_separator_at(command, index)
+  } else {
+    c == '\n' || c == ';' || c == '|'
+  }
+}
+
+///|
+fn moon_verify_shell_parts(command : String) -> Array[MoonVerifyShellPart] {
+  let parts : Array[MoonVerifyShellPart] = []
+  let mut in_double = false
+  let mut in_single = false
+  let mut segment_start = 0
+  let mut i = 0
+  while i < command.length() {
+    let c = command[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+    } else if !in_single && !in_double {
+      if moon_verify_shell_separator_at(command, i) {
+        let separator_end = moon_verify_shell_separator_end(command, i)
+        parts.push({
+          segment: command[segment_start:i].to_owned(),
+          separator: command[i:separator_end].to_owned(),
+        })
+        i = separator_end
+        segment_start = i
+        continue
+      }
+    }
+    i = i + 1
+  }
+  parts.push({ segment: command[segment_start:].to_owned(), separator: "" })
+  parts
+}
+
+///|
+fn moon_verify_segment_tokens(segment : String) -> Array[String] {
+  let tokens : Array[String] = []
+  let mut token = ""
+  let mut token_active = false
+  let mut in_double = false
+  let mut in_single = false
+  let mut i = 0
+  while i < segment.length() {
+    let c = segment[i]
+    if c == '"' && !in_single {
+      in_double = !in_double
+      token_active = true
+    } else if c == '\'' && !in_double {
+      in_single = !in_single
+      token_active = true
+    } else if !in_single && !in_double && moon_verify_segment_space(c) {
+      if token_active {
+        tokens.push(token)
+        token = ""
+        token_active = false
+      }
+    } else {
+      token = token + segment[i:i + 1].to_owned()
+      token_active = true
+    }
+    i = i + 1
+  }
+  if token_active {
+    tokens.push(token)
+  }
+  tokens
+}
+
+///|
+fn moon_verify_env_name_char(c : UInt16, first : Bool) -> Bool {
+  let alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'
+  let digit = c >= '0' && c <= '9'
+  alpha || (!first && digit)
+}
+
+///|
+fn moon_verify_env_name_valid(name : String) -> Bool {
+  if name.length() == 0 {
+    return false
+  }
+  let mut i = 0
+  while i < name.length() {
+    if !moon_verify_env_name_char(name[i], i == 0) {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
+fn moon_verify_env_assignment_token(token : String) -> Bool {
+  match token.split_once("=") {
+    Some((name, _)) => moon_verify_env_name_valid(name.to_owned())
+    None => false
+  }
+}
+
+///|
+fn moon_verify_global_flag_takes_value(flag : String) -> Bool {
+  flag == "-C" ||
+  flag == "--directory" ||
+  flag == "--target" ||
+  flag == "--source-dir" ||
+  flag == "--target-dir" ||
+  flag == "--build-dir" ||
+  flag == "--config"
+}
+
+///|
+fn moon_verify_target_word_kind(raw : String) -> (Bool, Bool) {
+  match MoonVerifyTarget::try_parse_wire(raw) {
+    Ok(Native) => (true, true)
+    Ok(_) | Err(_) => (true, false)
+  }
+}
+
+///|
+fn moon_verify_explicit_target_kind(tokens : Array[String]) -> (Bool, Bool) {
+  let mut i = 0
+  while i < tokens.length() {
+    let word = tokens[i]
+    if word.has_prefix("--target=") {
+      return moon_verify_target_word_kind(
+        word["--target=".length():].to_owned(),
+      )
+    }
+    if word == "--target" {
+      if i + 1 < tokens.length() {
+        return moon_verify_target_word_kind(tokens[i + 1])
+      }
+      return (true, false)
+    }
+    i = i + 1
+  }
+  (false, false)
+}
+
+///|
+fn moon_verify_probe_segment(segment : String) -> MoonVerifyInvocation? {
+  let tokens = moon_verify_segment_tokens(segment)
+  let mut i = 0
+  while i < tokens.length() && moon_verify_env_assignment_token(tokens[i]) {
+    i = i + 1
+  }
+  if i >= tokens.length() || tokens[i] != "moon" {
+    return None
+  }
+  i = i + 1
+  while i < tokens.length() && tokens[i].has_prefix("-") {
+    let flag = tokens[i]
+    i = i + 1
+    if moon_verify_global_flag_takes_value(flag) &&
+      !flag.contains("=") &&
+      i < tokens.length() {
+      i = i + 1
+    }
+  }
+  if i >= tokens.length() || (tokens[i] != "check" && tokens[i] != "test") {
+    return None
+  }
+  let (has_explicit_target, explicit_target_native) = moon_verify_explicit_target_kind(
+    tokens,
+  )
+  Some({ has_explicit_target, explicit_target_native })
+}
+
+///|
+fn moon_verify_normalize_segment(
+  segment : String,
+  target : MoonVerifyTarget,
+) -> String {
+  let mut start = 0
+  while start < segment.length() && moon_verify_segment_space(segment[start]) {
+    start = start + 1
+  }
+  let mut end = segment.length()
+  while end > start && moon_verify_segment_space(segment[end - 1]) {
+    end = end - 1
+  }
+  let leading = segment[:start].to_owned()
+  let body = segment[start:end].to_owned()
+  let trailing = segment[end:].to_owned()
+  match moon_verify_probe_segment(body) {
+    Some(invocation) =>
+      if !invocation.has_explicit_target {
+        return leading +
+          body +
+          " --target " +
+          target.to_wire_string() +
+          trailing
+      }
+    None => ()
+  }
+  segment
+}
+
+///|
+pub fn moon_verify_normalize_command(
+  command : String,
+  target : MoonVerifyTarget,
+) -> String {
+  let mut normalized = ""
+  for part in moon_verify_shell_parts(command) {
+    normalized = normalized +
+      moon_verify_normalize_segment(part.segment, target) +
+      part.separator
+  }
+  normalized
+}
+
+///|
+fn moon_verify_segment_requires_non_native_target(segment : String) -> Bool {
+  match moon_verify_probe_segment(segment) {
+    Some(invocation) =>
+      invocation.has_explicit_target && !invocation.explicit_target_native
+    None => false
+  }
+}
+
+///|
+pub fn moon_verify_normalize_commands(
+  commands : Array[String],
+  target : MoonVerifyTarget,
+) -> Array[String] {
+  let normalized : Array[String] = []
+  for command in commands {
+    normalized.push(moon_verify_normalize_command(command, target))
+  }
+  normalized
+}
+
+///|
+pub fn moon_verify_commands_allow_native_ci_satisfaction(
+  commands : Array[String],
+  target : MoonVerifyTarget,
+) -> Bool {
+  let normalized = moon_verify_normalize_commands(commands, target)
+  for command in normalized {
+    for part in moon_verify_shell_parts(command) {
+      if moon_verify_segment_requires_non_native_target(part.segment) {
+        return false
+      }
+    }
+  }
+  true
+}
+
+///|
 pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
   match self {
     ChildSpawned => "ChildSpawned"
@@ -520,8 +871,16 @@ pub impl FromJson for TaskContract with from_json(json, path) {
 }
 
 ///|
-pub fn task_contract_verify_satisfied_by_ci(contract : TaskContract) -> Bool {
-  contract.verify_satisfied_by_ci
+pub fn task_contract_verify_satisfied_by_native_ci(
+  contract : TaskContract,
+  moon_verify_target : MoonVerifyTarget,
+) -> Bool {
+  contract.verify_satisfied_by_ci &&
+  moon_verify_target == MoonVerifyTarget::Native &&
+  moon_verify_commands_allow_native_ci_satisfaction(
+    contract.verify,
+    moon_verify_target,
+  )
 }
 
 ///|

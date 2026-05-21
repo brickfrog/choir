@@ -202,7 +202,7 @@ test "TaskContract empty helper returns empty contract" {
   assert_true(contract.is_empty())
   assert_eq(contract.goal, "")
   assert_eq(contract.verify.length(), 0)
-  assert_true(@types.task_contract_verify_satisfied_by_ci(contract))
+  assert_true(contract.verify_satisfied_by_ci)
 }
 
 ///|
@@ -220,7 +220,7 @@ test "TaskContract round trips verify_satisfied_by_ci" {
     _ => fail("expected contract JSON to decode")
   }
   @debug.assert_eq(parsed, contract)
-  assert_false(@types.task_contract_verify_satisfied_by_ci(parsed))
+  assert_false(parsed.verify_satisfied_by_ci)
 }
 
 ///|
@@ -237,7 +237,7 @@ test "TaskContract missing verify_satisfied_by_ci decodes as true" {
   }
   assert_eq(contract.goal, "ship feature")
   @debug.assert_eq(contract.verify, ["moon test --target native"])
-  assert_true(@types.task_contract_verify_satisfied_by_ci(contract))
+  assert_true(contract.verify_satisfied_by_ci)
 }
 
 ///|

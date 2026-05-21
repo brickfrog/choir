@@ -439,17 +439,43 @@ fn merge_pr_verify_results_for_tracked(
   project_dir : String,
   tracked : @poller.TrackedPR,
   task_contract : @types.TaskContract?,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> Array[@types.VerifyCheckResult] {
   match task_contract {
-    Some(contract) =>
+    Some(contract) => {
+      let verify_commands = @types.moon_verify_normalize_commands(
+        contract.verify,
+        moon_verify_target,
+      )
       @evidence.verify_results_for_required_at_head_with_ci(
         project_dir,
         tracked.agent_id,
-        contract.verify,
+        verify_commands,
         tracked.last_sha,
-        @types.task_contract_verify_satisfied_by_ci(contract),
+        @types.task_contract_verify_satisfied_by_native_ci(
+          contract, moon_verify_target,
+        ),
       )
+    }
     None => []
+  }
+}
+
+///|
+fn merge_pr_task_contract_with_normalized_verify(
+  task_contract : @types.TaskContract?,
+  moon_verify_target : @types.MoonVerifyTarget,
+) -> @types.TaskContract? {
+  match task_contract {
+    Some(contract) =>
+      Some({
+        ..contract,
+        verify: @types.moon_verify_normalize_commands(
+          contract.verify,
+          moon_verify_target,
+        ),
+      })
+    None => None
   }
 }
 
@@ -465,6 +491,7 @@ pub async fn interpret_merge_pr_preflight(
   capture : async (@workspace.Command) -> (Int, String),
   registry : @registry.AgentRegistry?,
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> Result[Unit, @types.ChoirError] {
   ignore(caller_id)
   match
@@ -483,7 +510,7 @@ pub async fn interpret_merge_pr_preflight(
   )
   let policy_decision = match poller_tracked {
     Some(tracked) => {
-      let task_contract = match registry {
+      let task_contract_raw = match registry {
         Some(reg) =>
           @workspace.task_contract_for_agent_workspace(
             project_dir,
@@ -494,8 +521,14 @@ pub async fn interpret_merge_pr_preflight(
           )
         None => None
       }
+      let task_contract = merge_pr_task_contract_with_normalized_verify(
+        task_contract_raw, moon_verify_target,
+      )
       let verify_results = merge_pr_verify_results_for_tracked(
-        project_dir, tracked, task_contract,
+        project_dir,
+        tracked,
+        task_contract,
+        moon_verify_target~,
       )
       Some(
         @poller.merge_policy_decision_for_tracked_pr(
@@ -861,6 +894,7 @@ pub fn format_tl_pr_recheck_summary(
   unresolved_thread_count : Int?,
   task_contract? : @types.TaskContract? = None,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> String {
   let review = match tracked.last_review_state {
     None_ => "none"
@@ -888,10 +922,18 @@ pub fn format_tl_pr_recheck_summary(
     tracked, unresolved_thread_count,
   )
 
+  let task_contract = merge_pr_task_contract_with_normalized_verify(
+    task_contract, moon_verify_target,
+  )
   let verify_results = if verify_results.length() > 0 {
     verify_results
   } else {
-    merge_pr_verify_results_for_tracked(project_dir, tracked, task_contract)
+    merge_pr_verify_results_for_tracked(
+      project_dir,
+      tracked,
+      task_contract,
+      moon_verify_target~,
+    )
   }
   let advisory = @poller.advisory_evaluation_summary_line(
     tracked,
@@ -2063,6 +2105,7 @@ pub async fn interpret_merge_pr(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> @types.Response {
   match
     interpret_merge_pr_preflight(
@@ -2075,6 +2118,7 @@ pub async fn interpret_merge_pr(
       review_mode=merge_args.review_mode.unwrap_or(
         @types.ReviewMode::SinglePass,
       ),
+      moon_verify_target~,
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) => {

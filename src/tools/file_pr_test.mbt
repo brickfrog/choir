@@ -2456,7 +2456,7 @@ async test "file_pr_run_required_verify appends trusted evidence" {
   let mut seen_workdir = ""
   let got = file_pr_run_required_verify(
     "/tmp/leaf-wt",
-    ["moon test --target native"],
+    ["moon test"],
     fn(cmd : @workspace.Command) -> (Int, String) {
       seen_workdir = cmd.workdir.unwrap_or("")
       if cmd.program == "git" {
@@ -2490,6 +2490,124 @@ async test "file_pr_run_required_verify appends trusted evidence" {
     _ => fail("expected VerifyResultObserved")
   }
   ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "moon verify command normalization appends default native target only when missing" {
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon check", "moon test --target native", "echo hi"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon check --target native", "moon test --target native", "echo hi"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon check --target wasm-gc"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon check --target wasm-gc"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test"],
+      @types.MoonVerifyTarget::WasmGc,
+    ),
+    ["moon test --target wasm-gc"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test && echo ok", "moon check; echo done"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "moon test --target native && echo ok", "moon check --target native; echo done",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      [
+        "moon test && moon check", "echo ok | moon check", "moon test\nmoon check",
+      ],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "moon test --target native && moon check --target native", "echo ok | moon check --target native",
+      "moon test --target native\nmoon check --target native",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test && moon check --target js"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon test --target native && moon check --target js"],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["CC=cc moon test", "moon -C subdir test", "moon --dry-run test"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "CC=cc moon test --target native", "moon -C subdir test --target native", "moon --dry-run test --target native",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      [
+        "moon test 2>&1", "moon test 1>&2", "moon test &> out", "moon test &>> out",
+        "moon test <&0",
+      ],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "moon test 2>&1 --target native", "moon test 1>&2 --target native", "moon test &> out --target native",
+      "moon test &>> out --target native", "moon test <&0 --target native",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      [
+        "moon test |& tee out", "moon test & echo done", "moon test & moon check",
+      ],
+      @types.MoonVerifyTarget::Native,
+    ),
+    [
+      "moon test --target native |& tee out", "moon test --target native & echo done",
+      "moon test --target native & moon check --target native",
+    ],
+  )
+  @debug.assert_eq(
+    @types.moon_verify_normalize_commands(
+      ["moon test 2>&1 && moon check 1>&2"],
+      @types.MoonVerifyTarget::Native,
+    ),
+    ["moon test 2>&1 --target native && moon check 1>&2 --target native"],
+  )
+  assert_true(
+    @types.moon_verify_commands_allow_native_ci_satisfaction(
+      ["moon check"],
+      @types.MoonVerifyTarget::Native,
+    ),
+  )
+  assert_false(
+    @types.moon_verify_commands_allow_native_ci_satisfaction(
+      ["moon check"],
+      @types.MoonVerifyTarget::WasmGc,
+    ),
+  )
+  assert_false(
+    @types.moon_verify_commands_allow_native_ci_satisfaction(
+      ["moon check --target js"],
+      @types.MoonVerifyTarget::Native,
+    ),
+  )
+  assert_false(
+    @types.moon_verify_commands_allow_native_ci_satisfaction(
+      ["RUST_BACKTRACE=1 moon test --target js"],
+      @types.MoonVerifyTarget::Native,
+    ),
+  )
 }
 
 ///|
@@ -2959,14 +3077,15 @@ test "file_pr_validate_audit_receipt rejects legacy receipts as malformed" {
 }
 
 ///|
-async test "interpret_file_pr runs required verify and injects generated PR body" {
+async test "interpret_file_pr runs required verify with configured moon target and injects generated PR body" {
   let project_dir = "/tmp/choir-fpr-verify-pr-body-" +
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, ["moon check"])
   let reg = file_pr_test_registry(file_pr_dir)
   let bodies : Array[String] = []
+  let sh_args : Array[Array[String]] = []
   let got = interpret_file_pr(
     {
       branch: "main.leaf",
@@ -2987,7 +3106,8 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       if cmd.program == "git" {
         (0, "sha-pr-body\n")
       } else if cmd.program == "sh" {
-        (0, "typecheck ok\n")
+        sh_args.push(cmd.args)
+        (0, "moon check ok\n")
       } else {
         (0, "")
       }
@@ -3003,6 +3123,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -3010,20 +3131,22 @@ async test "interpret_file_pr runs required verify and injects generated PR body
     @types.Response::Err(msg) => fail("expected file_pr success: " + msg)
   }
   assert_eq(bodies.length(), 1)
+  assert_eq(sh_args.length(), 1)
+  @debug.assert_eq(sh_args[0], ["-lc", "moon check --target wasm-gc"])
   assert_true(bodies[0].contains("Implements claim schema wiring."))
   assert_true(bodies[0].contains("## Verification"))
-  assert_true(bodies[0].contains("`npm run typecheck`"))
-  assert_true(bodies[0].contains("typecheck ok"))
+  assert_true(bodies[0].contains("`moon check --target wasm-gc`"))
+  assert_true(bodies[0].contains("moon check ok"))
   let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
   assert_eq(records.length(), 1)
   match records[0].event {
     @evidence.EvidenceEvent::VerifyResultObserved(name~, ok~, details~) => {
-      assert_eq(name, "npm run typecheck")
+      assert_eq(name, "moon check --target wasm-gc")
       assert_true(ok)
       let detail_text = details.unwrap_or("")
       assert_true(detail_text.contains("cwd: " + file_pr_dir))
       assert_true(detail_text.contains("head: sha-pr-body"))
-      assert_true(detail_text.contains("typecheck ok"))
+      assert_true(detail_text.contains("moon check ok"))
     }
     _ => fail("expected VerifyResultObserved")
   }

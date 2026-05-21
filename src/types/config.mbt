@@ -35,6 +35,8 @@ pub(all) struct Config {
   automerge : Bool
   /// Review loop behavior after fixes are pushed for review comments.
   review_mode : ReviewMode
+  /// Target appended to bare `moon check` / `moon test` verify commands.
+  moon_verify_target : MoonVerifyTarget
   /// Safety kill-switch while the agy migration is incomplete: rejects Gemini provider spawns.
   agy_migration_incomplete : Bool
   /// Worker-only no-handoff prod threshold in seconds; 0 disables prod/stall.
@@ -110,6 +112,7 @@ pub fn Config::default() -> Config {
     pr_review: true,
     automerge: false,
     review_mode: SinglePass,
+    moon_verify_target: Native,
     agy_migration_incomplete: false,
     worker_no_handoff_prod_sec: 120L,
     worker_no_handoff_escalate_sec: 120L,

@@ -59,7 +59,19 @@ fn parent_pr_state_notification_decision(
   task_contract? : @types.TaskContract? = None,
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> @poller.PrStateNotificationDecision {
+  let task_contract = match task_contract {
+    Some(contract) =>
+      Some({
+        ..contract,
+        verify: @types.moon_verify_normalize_commands(
+          contract.verify,
+          moon_verify_target,
+        ),
+      })
+    None => None
+  }
   let verify_results = match task_contract {
     Some(contract) =>
       @evidence.verify_results_for_required_at_head_with_ci(
@@ -67,7 +79,9 @@ fn parent_pr_state_notification_decision(
         tracked.agent_id,
         contract.verify,
         tracked.last_sha,
-        @types.task_contract_verify_satisfied_by_ci(contract),
+        @types.task_contract_verify_satisfied_by_native_ci(
+          contract, moon_verify_target,
+        ),
       )
     None => []
   }
@@ -117,6 +131,7 @@ pub fn parent_poll_event_message(
   task_contract? : @types.TaskContract? = None,
   merge_mode? : @poller.MergeOperatorMode = @poller.MergeOperatorMode::Manual,
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   precomputed_decision? : @poller.PrStateNotificationDecision? = None,
 ) -> (String, @types.Status)? {
   let agent_id = tracked.agent_id
@@ -146,6 +161,7 @@ pub fn parent_poll_event_message(
         task_contract~,
         merge_mode~,
         review_mode~,
+        moon_verify_target~,
       )
   }
   match event {
@@ -288,6 +304,7 @@ pub fn parent_poll_event_message(
         project_dir,
         unresolved_threads_for_recheck,
         task_contract~,
+        moon_verify_target~,
       )
       let prefix = parent_poll_ci_escalation_prefix(tracked)
       Some(
@@ -321,6 +338,7 @@ pub fn parent_poll_event_message(
         project_dir,
         unresolved_threads_for_recheck,
         task_contract~,
+        moon_verify_target~,
       )
       let prefix = parent_poll_ci_escalation_prefix(tracked)
       Some(
@@ -354,6 +372,7 @@ pub fn parent_poll_event_message(
         project_dir,
         unresolved_threads_for_recheck,
         task_contract~,
+        moon_verify_target~,
       )
       Some(
         (
@@ -413,6 +432,7 @@ pub fn parent_poll_event_message(
         project_dir,
         unresolved_threads_for_recheck,
         task_contract~,
+        moon_verify_target~,
       )
       let message = "[THREADS RESOLVED] " +
         agent_id +
@@ -1841,6 +1861,7 @@ pub fn ServerState::plan_poll_event_deliveries(
           unresolved_threads_for_recheck,
           merge_mode~,
           review_mode~,
+          moon_verify_target=self.config.moon_verify_target,
         )
         match
           parent_poll_event_message(
@@ -1850,6 +1871,7 @@ pub fn ServerState::plan_poll_event_deliveries(
             unresolved_threads_for_recheck,
             merge_mode~,
             review_mode~,
+            moon_verify_target=self.config.moon_verify_target,
             precomputed_decision=Some(notification_decision),
           ) {
           Some((message, status)) => {
@@ -2531,6 +2553,7 @@ async fn deliver_pending_poll_events(
           task_contract~,
           merge_mode~,
           review_mode~,
+          moon_verify_target=state.config.moon_verify_target,
         )
         match
           parent_poll_event_message(
@@ -2541,6 +2564,7 @@ async fn deliver_pending_poll_events(
             task_contract~,
             merge_mode~,
             review_mode~,
+            moon_verify_target=state.config.moon_verify_target,
             precomputed_decision=Some(notification_decision),
           ) {
           Some((message, status)) => {
