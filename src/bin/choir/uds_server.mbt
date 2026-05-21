@@ -1001,6 +1001,10 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
       state: @types.AgentState::Active,
     }),
   )
+  state.record_agent_task_contract(
+    child_id,
+    Some({ ..@types.TaskContract::empty(), goal: "heartbeat sweep leaf" }),
+  )
   let pr_number = 77
   state.poller.track(
     pr_number,

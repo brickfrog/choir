@@ -796,6 +796,13 @@ pub async fn dispatch(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
@@ -1116,6 +1123,7 @@ pub async fn dispatch(
             session,
             registry,
             capture~,
+            record_task_contract~,
           )
         }
         match resp.ok_payload() {
@@ -1200,6 +1208,8 @@ pub async fn dispatch(
         listen_tcp~,
         tcp_auth_token~,
         global_review_mode~,
+        task_contract_reader~,
+        record_task_contract~,
         tdd_phase_reader~,
         sleep_fn~,
       )
@@ -1210,6 +1220,7 @@ pub async fn dispatch(
         tdd_state_writer,
         project_dir~,
         registry~,
+        task_contract_reader~,
       )
     ToolRequest::TddRedCheck(args) =>
       interpret_tdd_red_check(
@@ -1218,6 +1229,7 @@ pub async fn dispatch(
         tdd_state_writer,
         project_dir~,
         registry~,
+        task_contract_reader~,
         capture~,
       )
     ToolRequest::TddGreenCheck(args) =>
@@ -1227,6 +1239,7 @@ pub async fn dispatch(
         tdd_state_writer,
         project_dir~,
         registry~,
+        task_contract_reader~,
         capture~,
       )
     ToolRequest::MergePr(merge_args) => {
@@ -1254,6 +1267,8 @@ pub async fn dispatch(
         listen_uds~,
         listen_tcp~,
         tcp_auth_token~,
+        task_contract_reader~,
+        record_task_contract~,
       )
       if resp.is_ok() {
         try_dispatch_pending_waves(
@@ -1268,6 +1283,7 @@ pub async fn dispatch(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          record_task_contract~,
         )
       }
       resp
@@ -1743,6 +1759,7 @@ pub async fn dispatch(
               listen_uds~,
               listen_tcp~,
               tcp_auth_token~,
+              record_task_contract~,
             )
         }
       } else {
@@ -1758,6 +1775,7 @@ pub async fn dispatch(
           listen_uds~,
           listen_tcp~,
           tcp_auth_token~,
+          record_task_contract~,
         )
       }
     ToolRequest::Reply(reply_args) => {
@@ -1872,6 +1890,13 @@ pub async fn handle_request(
   agent_registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
@@ -2036,6 +2061,8 @@ pub async fn handle_request(
                   registry=agent_registry,
                   mutex_registry~,
                   poller_state~,
+                  task_contract_reader~,
+                  record_task_contract~,
                   tdd_phase_reader~,
                   tdd_state_reader~,
                   tdd_state_writer~,
@@ -2199,6 +2226,13 @@ pub async fn dispatch_call(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
   tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
@@ -2301,6 +2335,8 @@ pub async fn dispatch_call(
                   registry~,
                   mutex_registry~,
                   poller_state~,
+                  task_contract_reader~,
+                  record_task_contract~,
                   tdd_phase_reader~,
                   tdd_state_reader~,
                   tdd_state_writer~,

@@ -126,8 +126,8 @@ pub struct ServerState {
   audit_pr_comment_tasks : @aqueue.Queue[AuditPrCommentTask]
   audit_cycle_counts : Map[String, Int]
   audit_progress : Map[String, AuditProgress]
+  agent_task_contracts : Map[String, @types.TaskContract]
   leaf_tdd_phases : Map[String, @types.LeafTddPhase]
-  leaf_tdd_test_commands : Map[String, String]
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
@@ -199,8 +199,8 @@ pub fn ServerState::new(
     audit_pr_comment_tasks: @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded),
     audit_cycle_counts: {},
     audit_progress: {},
+    agent_task_contracts: {},
     leaf_tdd_phases: {},
-    leaf_tdd_test_commands: {},
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
@@ -231,8 +231,7 @@ pub fn ServerState::leaf_tdd_state_for_agent(
   agent_id : String,
 ) -> @types.LeafTddState? {
   match self.leaf_tdd_phases.get(agent_id) {
-    Some(phase) =>
-      Some({ phase, test_command: self.leaf_tdd_test_commands.get(agent_id) })
+    Some(phase) => Some({ phase, })
     None => None
   }
 }
@@ -244,10 +243,26 @@ pub fn ServerState::record_leaf_tdd_state(
   state : @types.LeafTddState,
 ) -> Unit {
   self.leaf_tdd_phases.set(agent_id, state.phase)
-  match state.test_command {
-    Some(command) => self.leaf_tdd_test_commands.set(agent_id, command)
-    None => self.leaf_tdd_test_commands.remove(agent_id)
+}
+
+///|
+pub fn ServerState::record_agent_task_contract(
+  self : ServerState,
+  agent_id : String,
+  contract : @types.TaskContract?,
+) -> Unit {
+  match contract {
+    Some(value) => self.agent_task_contracts.set(agent_id, value)
+    None => self.agent_task_contracts.remove(agent_id)
   }
+}
+
+///|
+pub fn ServerState::task_contract_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> @types.TaskContract? {
+  self.agent_task_contracts.get(agent_id)
 }
 
 ///|

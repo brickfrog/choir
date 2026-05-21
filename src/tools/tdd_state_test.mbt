@@ -29,6 +29,18 @@ fn tdd_test_write_verify_config(
 }
 
 ///|
+fn tdd_test_verify_contract(verify : Array[String]) -> @types.TaskContract {
+  { ..@types.TaskContract::empty(), goal: "tdd verify", verify }
+}
+
+///|
+fn tdd_test_contract_reader(
+  contract : @types.TaskContract,
+) -> (String) -> @types.TaskContract? {
+  fn(_agent_id : String) -> @types.TaskContract? { Some(contract) }
+}
+
+///|
 fn tdd_test_registry(agent_workspace : String) -> @registry.AgentRegistry {
   let reg = @registry.AgentRegistry::new()
   ignore(
@@ -76,7 +88,7 @@ test "leaf TDD state machine requires intent red green done in order" {
 
 ///|
 test "TDD check workdir fails closed without registry" {
-  match tdd_check_workdir("/repo", None, "main.leaf") {
+  match tdd_check_workdir(None, "main.leaf") {
     Err(e) => {
       assert_true(e.message().contains("without an agent registry"))
       assert_true(e.message().contains("leaf TDD gate"))
@@ -90,9 +102,10 @@ async test "leaf TDD intent rejects leaf-authored command outside configured ver
   let project_dir = "/tmp/choir-tdd-forge-intent-" + @sys.get_pid().to_string()
   let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  tdd_test_write_verify_config(leaf_worktree, [
+  let contract = tdd_test_verify_contract([
     "moon test --target native", "moon check --target native",
   ])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
   let reg = tdd_test_registry(leaf_worktree)
   let mut stored : @types.LeafTddState? = None
   let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
@@ -109,6 +122,7 @@ async test "leaf TDD intent rejects leaf-authored command outside configured ver
     writer,
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
   )
   match intent {
     @types.Response::Err(msg) => {
@@ -128,11 +142,11 @@ async test "leaf TDD red check rejects forged failing report when command passes
   let project_dir = "/tmp/choir-tdd-red-forge-" + @sys.get_pid().to_string()
   let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  tdd_test_write_verify_config(leaf_worktree, ["true"])
+  let contract = tdd_test_verify_contract(["true"])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
   let reg = tdd_test_registry(leaf_worktree)
   let mut stored : @types.LeafTddState? = Some({
     phase: @types.LeafTddPhase::Intent,
-    test_command: Some("true"),
   })
   let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
   let writer = fn(_agent_id : String, state : @types.LeafTddState) -> Unit {
@@ -153,6 +167,7 @@ async test "leaf TDD red check rejects forged failing report when command passes
     writer,
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     capture~,
   )
   match red {
@@ -164,10 +179,7 @@ async test "leaf TDD red check rejects forged failing report when command passes
     }
     @types.Response::Ok(_) => fail("expected red gate to reject forged failure")
   }
-  @debug.assert_eq(
-    stored,
-    Some({ phase: @types.LeafTddPhase::Intent, test_command: Some("true") }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Intent }))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -177,7 +189,8 @@ async test "leaf TDD red check rejects check-time non-test command forge" {
     @sys.get_pid().to_string()
   let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  tdd_test_write_verify_config(leaf_worktree, ["moon test --target native"])
+  let contract = tdd_test_verify_contract(["moon test --target native"])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
   let reg = tdd_test_registry(leaf_worktree)
   let mut stored : @types.LeafTddState? = None
   let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
@@ -207,18 +220,13 @@ async test "leaf TDD red check rejects check-time non-test command forge" {
     },
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     tdd_state_reader=reader,
     tdd_state_writer=writer,
     capture~,
   )
   assert_true(intent.is_ok())
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Intent,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Intent }))
 
   let red = dispatch_call(
     ToolCall::{
@@ -228,6 +236,7 @@ async test "leaf TDD red check rejects check-time non-test command forge" {
     },
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     tdd_state_reader=reader,
     tdd_state_writer=writer,
     capture~,
@@ -240,13 +249,47 @@ async test "leaf TDD red check rejects check-time non-test command forge" {
     @types.Response::Ok(_) =>
       fail("expected red gate to reject check-time command forge")
   }
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Intent,
-      test_command: Some("moon test --target native"),
-    }),
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Intent }))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "leaf TDD red check ignores leaf-rewritten verify config" {
+  let project_dir = "/tmp/choir-tdd-config-rewrite-forge-" +
+    @sys.get_pid().to_string()
+  let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = tdd_test_verify_contract(["false"])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
+  let reg = tdd_test_registry(leaf_worktree)
+  let mut stored : @types.LeafTddState? = Some({
+    phase: @types.LeafTddPhase::Intent,
+  })
+  let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
+  let writer = fn(_agent_id : String, state : @types.LeafTddState) -> Unit {
+    stored = Some(state)
+  }
+  tdd_test_write_verify_config(leaf_worktree, ["true"])
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    @debug.assert_eq(cmd, @workspace.Command::{
+      program: "sh",
+      args: ["-lc", "false"],
+      workdir: Some(leaf_worktree),
+    })
+    (1, "authoritative verify still fails")
+  }
+  let red = interpret_tdd_red_check(
+    { caller_id: "main.leaf", exit_code: 1 },
+    reader,
+    writer,
+    project_dir~,
+    registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
+    capture~,
   )
+  assert_true(red.is_ok())
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Red }))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -269,11 +312,11 @@ async test "leaf TDD green check rejects forged passing report when command fail
   let project_dir = "/tmp/choir-tdd-green-forge-" + @sys.get_pid().to_string()
   let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  tdd_test_write_verify_config(leaf_worktree, ["false"])
+  let contract = tdd_test_verify_contract(["false"])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
   let reg = tdd_test_registry(leaf_worktree)
   let mut stored : @types.LeafTddState? = Some({
     phase: @types.LeafTddPhase::Red,
-    test_command: Some("false"),
   })
   let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
   let writer = fn(_agent_id : String, state : @types.LeafTddState) -> Unit {
@@ -294,6 +337,7 @@ async test "leaf TDD green check rejects forged passing report when command fail
     writer,
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     capture~,
   )
   match green {
@@ -305,10 +349,7 @@ async test "leaf TDD green check rejects forged passing report when command fail
     }
     @types.Response::Ok(_) => fail("expected green gate to reject forged pass")
   }
-  @debug.assert_eq(
-    stored,
-    Some({ phase: @types.LeafTddPhase::Red, test_command: Some("false") }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Red }))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -358,7 +399,8 @@ async test "leaf TDD tool handlers persist phase through injected tracker" {
   let project_dir = "/tmp/choir-tdd-handlers-" + @sys.get_pid().to_string()
   let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  tdd_test_write_verify_config(leaf_worktree, ["moon test --target native"])
+  let contract = tdd_test_verify_contract(["moon test --target native"])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
   let reg = tdd_test_registry(leaf_worktree)
   let mut stored : @types.LeafTddState? = None
   let reader = fn(_agent_id : String) -> @types.LeafTddState? { stored }
@@ -385,19 +427,14 @@ async test "leaf TDD tool handlers persist phase through injected tracker" {
     writer,
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
   )
   match intent {
     @types.Response::Ok(fields) =>
       @debug.assert_eq(fields.get_json("phase"), Some("intent".to_json()))
     @types.Response::Err(msg) => fail("expected intent ok: " + msg)
   }
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Intent,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Intent }))
 
   let red = interpret_tdd_red_check(
     { caller_id: "main.leaf", exit_code: 2 },
@@ -405,16 +442,11 @@ async test "leaf TDD tool handlers persist phase through injected tracker" {
     writer,
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     capture~,
   )
   assert_true(red.is_ok())
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Red,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Red }))
 
   let green = interpret_tdd_green_check(
     { caller_id: "main.leaf", exit_code: 0, next_phase: None },
@@ -422,16 +454,11 @@ async test "leaf TDD tool handlers persist phase through injected tracker" {
     writer,
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     capture~,
   )
   assert_true(green.is_ok())
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Green,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Green }))
 
   let done = interpret_tdd_green_check(
     {
@@ -443,16 +470,11 @@ async test "leaf TDD tool handlers persist phase through injected tracker" {
     writer,
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     capture~,
   )
   assert_true(done.is_ok())
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Done,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Done }))
   assert_eq(capture_index, 3)
   ignore(@sys.rm_rf(project_dir))
 }
@@ -467,7 +489,8 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
   let project_dir = "/tmp/choir-tdd-dispatch-" + @sys.get_pid().to_string()
   let leaf_worktree = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  tdd_test_write_verify_config(leaf_worktree, ["moon test --target native"])
+  let contract = tdd_test_verify_contract(["moon test --target native"])
+  tdd_test_write_verify_config(leaf_worktree, contract.verify)
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -513,6 +536,7 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     },
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     tdd_state_reader=reader,
     tdd_state_writer=writer,
     capture~,
@@ -522,13 +546,7 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
       @debug.assert_eq(fields.get("phase"), Some("intent"))
     @types.Response::Err(msg) => fail("expected intent dispatch ok: " + msg)
   }
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Intent,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Intent }))
 
   let red = dispatch_call(
     ToolCall::{
@@ -538,18 +556,13 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     },
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     tdd_state_reader=reader,
     tdd_state_writer=writer,
     capture~,
   )
   assert_true(red.is_ok())
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Red,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Red }))
 
   let green = dispatch_call(
     ToolCall::{
@@ -559,18 +572,13 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     },
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     tdd_state_reader=reader,
     tdd_state_writer=writer,
     capture~,
   )
   assert_true(green.is_ok())
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Green,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Green }))
 
   let done = dispatch_call(
     ToolCall::{
@@ -580,6 +588,7 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     },
     project_dir~,
     registry=Some(reg),
+    task_contract_reader=tdd_test_contract_reader(contract),
     tdd_state_reader=reader,
     tdd_state_writer=writer,
     capture~,
@@ -589,13 +598,7 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
       @debug.assert_eq(fields.get("phase"), Some("done"))
     @types.Response::Err(msg) => fail("expected done dispatch ok: " + msg)
   }
-  @debug.assert_eq(
-    stored,
-    Some({
-      phase: @types.LeafTddPhase::Done,
-      test_command: Some("moon test --target native"),
-    }),
-  )
+  @debug.assert_eq(stored, Some({ phase: @types.LeafTddPhase::Done }))
   assert_eq(capture_index, 3)
   ignore(@sys.rm_rf(project_dir))
 }

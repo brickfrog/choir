@@ -2282,11 +2282,7 @@ async fn deliver_pending_poll_events(
             continue
           }
         }
-        let task_contract = task_contract_for_agent(
-          state.config.project_dir,
-          state.registry,
-          pr.agent_id,
-        )
+        let task_contract = task_contract_for_agent(state, pr.agent_id)
         let merge_mode = @poller.merge_operator_mode_from_automerge(
           automerge_enabled,
         )

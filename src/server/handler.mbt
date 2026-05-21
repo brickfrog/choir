@@ -192,6 +192,12 @@ pub async fn ServerState::handle_with_runner_and_capture(
       agent_registry=Some(self.registry),
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
+      task_contract_reader=fn(agent_id) {
+        self.task_contract_for_agent(agent_id)
+      },
+      record_task_contract=fn(agent_id, contract) {
+        self.record_agent_task_contract(agent_id, contract)
+      },
       tdd_phase_reader=fn(agent_id) { self.leaf_tdd_phase_for_agent(agent_id) },
       tdd_state_reader=fn(agent_id) { self.leaf_tdd_state_for_agent(agent_id) },
       tdd_state_writer=fn(agent_id, state) {

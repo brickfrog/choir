@@ -574,6 +574,10 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       state: @types.AgentState::Active,
     }),
   )
+  state.record_agent_task_contract(
+    child_id,
+    Some({ ..@types.TaskContract::empty(), goal: "automerge leaf" }),
+  )
   let parent_child : @phase.ChildLifecycle = {
     child_id,
     slug: @phase.extract_slug(child_id),
@@ -743,6 +747,10 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
       spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
+  )
+  state.record_agent_task_contract(
+    child_id,
+    Some({ ..@types.TaskContract::empty(), goal: "fixes pushed leaf" }),
   )
   let parent_child : @phase.ChildLifecycle = {
     child_id,
@@ -966,6 +974,62 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
 }
 
 ///|
+async test "maybe_trigger_automerge_for_pending_event blocks missing server contract" {
+  let pr_number = 91
+  let (state, child_id, _) = blocked_gh_automerge_fixture(
+    "missing-contract", pr_number,
+  )
+  state.record_agent_task_contract(child_id, None)
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::ReviewThreadsResolved(pr_number),
+    tracked,
+    Some(0),
+    runner,
+    capture~,
+  )
+  assert_false(merged)
+  assert_false(merge_seen)
+}
+
+///|
 fn blocked_gh_automerge_fixture(
   label : String,
   pr_number : Int,
@@ -1023,6 +1087,10 @@ fn blocked_gh_automerge_fixture(
       spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
+  )
+  state.record_agent_task_contract(
+    child_id,
+    Some({ ..@types.TaskContract::empty(), goal: "automerge fixture" }),
   )
   let parent_child : @phase.ChildLifecycle = {
     child_id,

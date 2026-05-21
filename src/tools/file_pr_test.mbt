@@ -736,6 +736,25 @@ fn file_pr_test_write_verify_config(
 }
 
 ///|
+fn file_pr_test_task_contract(verify : Array[String]) -> @types.TaskContract {
+  { ..@types.TaskContract::empty(), goal: "verify before PR", verify }
+}
+
+///|
+fn file_pr_test_task_contract_reader(
+  contract : @types.TaskContract,
+) -> (String) -> @types.TaskContract? {
+  fn(_agent_id : String) -> @types.TaskContract? { Some(contract) }
+}
+
+///|
+fn file_pr_test_empty_task_contract_reader(
+  _agent_id : String,
+) -> @types.TaskContract? {
+  Some(file_pr_test_task_contract([]))
+}
+
+///|
 fn file_pr_test_registry(file_pr_dir : String) -> @registry.AgentRegistry {
   let reg = @registry.AgentRegistry::new()
   ignore(
@@ -895,7 +914,8 @@ async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR"
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["moon test --target native"])
+  let contract = file_pr_test_task_contract(["moon test --target native"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let mut ensure_pr_called = false
   let prepared_workers : Array[String] = []
@@ -957,6 +977,7 @@ async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR"
     },
     mutation_gate_now_ms_fn=fn() { 1779000000L },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -2032,6 +2053,7 @@ async test "interpret_file_pr audit wait emits heartbeats and final findings lin
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=60,
     append_file=fn(_path, content) {
@@ -2096,6 +2118,7 @@ async test "interpret_file_pr stops running heartbeats when audit worker is not 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=60,
     append_file=fn(_path, content) {
@@ -2151,6 +2174,7 @@ async test "interpret_file_pr audit heartbeat zero disables running lines only" 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
@@ -2199,6 +2223,7 @@ async test "interpret_file_pr audit final line records worker failure elapsed" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
@@ -2251,6 +2276,7 @@ async test "interpret_file_pr audit final line records worker shutdown elapsed" 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
@@ -2314,6 +2340,7 @@ async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and r
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     prepare_audit_report=fn(worker_id) { prepared_worker = worker_id },
     create_dir_all=fn(path) {
@@ -2386,6 +2413,7 @@ async test "interpret_file_pr Dev missing audit returns findings error" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     create_dir_all=fn(_) { true },
     write_file_atomic=fn(_, _) {
@@ -2437,6 +2465,7 @@ async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on c
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     audit_max_rounds=1,
     record_audit_cycle_for_agent=fn(agent_id) {
@@ -2492,6 +2521,7 @@ async test "interpret_file_pr Dev existing receipt skips auto audit" {
     file_pr_auto_audit_capture(head, Some(file_pr_test_audit_receipt(head))),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     wait_for_audit_report=async fn(_) {
       @async.sleep(0)
@@ -2528,6 +2558,7 @@ async test "interpret_file_pr Dev audit outer budget returns timeout" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     audit_budget_ms=1,
     cleanup_audit_report=fn(worker_id) { cleaned_worker = worker_id },
@@ -2806,6 +2837,63 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
 }
 
 ///|
+async test "interpret_file_pr fails closed when server task contract is missing" {
+  let project_dir = "/tmp/choir-fpr-missing-contract-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let reg = file_pr_test_registry(file_pr_dir)
+  let mut ensure_pr_called = false
+  let mut verify_capture_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/missing-contract"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "sh" {
+        verify_capture_called = true
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    tdd_phase_reader=file_pr_test_tdd_done,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("server task contract unavailable"))
+      assert_true(msg.contains("main.leaf"))
+      assert_true(msg.contains("refusing to skip required verify"))
+    }
+    @types.Response::Ok(_) => fail("expected missing contract to block file_pr")
+  }
+  assert_false(verify_capture_called)
+  assert_false(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_file_pr feature main fails without audit receipt" {
   let project_dir = "/tmp/choir-fpr-audit-missing-" + @sys.get_pid().to_string()
   let head = "123456789abcdef0123456789abcdef012345678"
@@ -2847,6 +2935,7 @@ async test "interpret_file_pr feature main fails without audit receipt" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -2908,6 +2997,7 @@ async test "interpret_file_pr feature main succeeds with fresh audit receipt" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2957,6 +3047,7 @@ async test "interpret_file_pr leaf to feature does not require audit receipt" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -3002,6 +3093,7 @@ async test "interpret_file_pr tracked dev leaf refuses before TDD phase is done"
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     caller_role=@types.Role::TL,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=fn(_agent_id : String) { Some(@types.LeafTddPhase::Green) },
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3059,6 +3151,7 @@ async test "interpret_file_pr feature main fails with stale audit receipt" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -3198,7 +3291,8 @@ async test "interpret_file_pr runs required verify and injects generated PR body
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let bodies : Array[String] = []
   let got = interpret_file_pr(
@@ -3237,6 +3331,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3271,7 +3366,8 @@ async test "dispatch file_pr records verify evidence through injected append_fil
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let appends : Array[(String, String)] = []
   let resp = dispatch(
@@ -3313,6 +3409,7 @@ async test "dispatch file_pr records verify evidence through injected append_fil
       appends.push((path, content))
       true
     },
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3333,7 +3430,8 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
   let project_dir = "/tmp/choir-fpr-verify-block-" + @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let mut ensure_pr_called = false
   let got = interpret_file_pr(
@@ -3372,6 +3470,7 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3405,7 +3504,8 @@ async test "interpret_file_pr blocks before PR creation when mutation gate fails
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["moon test --target native"])
+  let contract = file_pr_test_task_contract(["moon test --target native"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let mut ensure_pr_called = false
   let prepared_workers : Array[String] = []
@@ -3467,6 +3567,7 @@ async test "interpret_file_pr blocks before PR creation when mutation gate fails
     },
     mutation_gate_now_ms_fn=fn() { 1779000000L },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3507,6 +3608,7 @@ async test "interpret_file_pr ok response matches full pipeline" {
     mock_runner_all_ok,
     mock_capture_empty,
     mock_ensure_pr_ok,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -3548,6 +3650,7 @@ async test "interpret_file_pr tracks global review mode when no local override e
     mock_runner_all_ok,
     mock_capture_empty,
     mock_ensure_pr_ok,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()

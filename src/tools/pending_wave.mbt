@@ -668,6 +668,12 @@ pub async fn try_dispatch_pending_waves(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
 ) -> Unit {
   // Sweep orphans first so a malformed `pending-wave--*` file does not stay
   // forever counted by the statusline (which scans by filename prefix) while
@@ -718,6 +724,7 @@ pub async fn try_dispatch_pending_waves(
             session,
             registry,
             capture~,
+            record_task_contract~,
           )
           delete_pending_wave(project_dir, pw.wave_id)
         } else if resp.is_ok() {

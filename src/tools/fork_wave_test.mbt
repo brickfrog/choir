@@ -584,6 +584,43 @@ test "fork_wave_post_spawn_host_steps ordering" {
 }
 
 ///|
+async test "fork_wave post-spawn records server task contracts" {
+  let project_dir = "/tmp/choir-fork-wave-contract-capture-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, "choir")
+  let reg = @registry.AgentRegistry::new()
+  let captured : Map[String, @types.TaskContract] = {}
+  interpret_fork_wave_post_spawn(
+    args,
+    plan,
+    project_dir,
+    "choir",
+    Some(reg),
+    capture=async fn(_cmd) {
+      @async.sleep(0)
+      (0, "")
+    },
+    record_task_contract=fn(agent_id, contract) {
+      match contract {
+        Some(value) => captured.set(agent_id, value)
+        None => captured.remove(agent_id)
+      }
+    },
+  )
+  @debug.assert_eq(
+    captured.get("main.wave-0"),
+    Some({ ..@types.TaskContract::empty(), goal: "shared task" }),
+  )
+  @debug.assert_eq(
+    captured.get("main.wave-1"),
+    Some({ ..@types.TaskContract::empty(), goal: "shared task" }),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "fork_wave_child_spawn_depth increments for TL child role" {
   assert_eq(fork_wave_child_spawn_depth(Some(2), @types.Role::TL), 3)
   assert_eq(fork_wave_child_spawn_depth(None, @types.Role::TL), 1)

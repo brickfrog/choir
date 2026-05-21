@@ -32,18 +32,10 @@ fn parent_poll_ci_escalation_prefix(tracked : @poller.TrackedPR) -> String {
 
 ///|
 fn task_contract_for_agent(
-  project_dir : String,
-  registry : @registry.AgentRegistry,
+  state : ServerState,
   agent_id : String,
 ) -> @types.TaskContract? {
-  let agent_workspace = Some(registry.get(agent_id).workspace) catch {
-    _ => None
-  }
-  @workspace.task_contract_for_agent_workspace(
-    project_dir,
-    agent_workspace,
-    @phase.extract_slug(agent_id),
-  )
+  state.task_contract_for_agent(agent_id)
 }
 
 ///|
@@ -245,11 +237,21 @@ pub async fn maybe_trigger_automerge_for_pending_event(
       )
     _ => ()
   }
-  let task_contract = task_contract_for_agent(
-    state.config.project_dir,
-    state.registry,
-    tracked.agent_id,
-  )
+  let task_contract = match task_contract_for_agent(state, tracked.agent_id) {
+    Some(contract) => Some(contract)
+    None => {
+      append_poller_delivery_line(
+        state.append_file,
+        state.config.project_dir,
+        "automerge blocked pr=" +
+        tracked.pr_number.to_string() +
+        " agent=" +
+        tracked.agent_id +
+        " reason=missing_server_task_contract",
+      )
+      return false
+    }
+  }
   let verify_results = match task_contract {
     Some(contract) =>
       @evidence.verify_results_for_required_at_head_with_ci(

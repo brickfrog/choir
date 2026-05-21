@@ -236,6 +236,7 @@ async test "interpret_spawn_worker registers agent on success" {
     agent_type: @types.AgentType::Claude,
   }
   let reg = @registry.AgentRegistry::new()
+  let captured : Map[String, @types.TaskContract] = {}
   let got = interpret_spawn_worker(
     worker_args,
     "/tmp/p",
@@ -243,6 +244,12 @@ async test "interpret_spawn_worker registers agent on success" {
     mock_runner_all_ok,
     mock_capture_origin_main,
     Some(reg),
+    record_task_contract=fn(agent_id, contract) {
+      match contract {
+        Some(value) => captured.set(agent_id, value)
+        None => captured.remove(agent_id)
+      }
+    },
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -259,6 +266,10 @@ async test "interpret_spawn_worker registers agent on success" {
       assert_eq(a.workspace, "/tmp/p")
     }
   }
+  @debug.assert_eq(
+    captured.get("main.w1"),
+    Some({ ..@types.TaskContract::empty(), goal: "unit" }),
+  )
 }
 
 ///|
