@@ -142,6 +142,21 @@ struct ServeRequestLineResult {
 }
 
 ///|
+fn connected_agent_id_after_request(
+  current : String?,
+  result : ServeRequestLineResult,
+) -> String? {
+  if result.saw_register {
+    match result.connected_agent_id {
+      Some(agent_id) => Some(agent_id)
+      None => current
+    }
+  } else {
+    current
+  }
+}
+
+///|
 async fn serve_handle_internal_request(
   state : @server.ServerState,
   req : @types.Request,
@@ -528,20 +543,33 @@ async test "serve UDS custom envelope still parses and dispatches" {
 }
 
 ///|
-async test "serve rejected register does not retain disconnect owner or lifecycle" {
+async test "serve rejected register refresh keeps existing disconnect owner" {
   let (state, project_dir) = serve_test_state_with_root("rejected-register")
-  let agent_id = "main.bad-register"
-  let line = "{\"method\":\"register\",\"role\":\"dev\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
+  let agent_id = "main.good-register"
+  let bad_agent_id = "main.bad-register"
+  let ok_line = "{\"method\":\"register\",\"role\":\"dev\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
     agent_id +
-    "\",\"agent_type\":\"definitely-not-real\",\"branch\":\"" +
+    "\",\"agent_type\":\"codex\",\"branch\":\"" +
     agent_id +
     "\",\"workspace\":\"" +
     project_dir +
     "\"}}"
-  let result = serve_handle_request_line(state, line, true)
-  assert_true(result.saw_register)
-  @debug.assert_eq(result.connected_agent_id, None)
-  match result.response_line {
+  let ok_result = serve_handle_request_line(state, ok_line, true)
+  assert_true(ok_result.saw_register)
+  @debug.assert_eq(ok_result.connected_agent_id, Some(agent_id))
+  let owner = connected_agent_id_after_request(None, ok_result)
+
+  let bad_line = "{\"method\":\"register\",\"role\":\"dev\",\"name\":\"register\",\"args\":{\"agent_id\":\"" +
+    bad_agent_id +
+    "\",\"agent_type\":\"definitely-not-real\",\"branch\":\"" +
+    bad_agent_id +
+    "\",\"workspace\":\"" +
+    project_dir +
+    "\"}}"
+  let bad_result = serve_handle_request_line(state, bad_line, true)
+  assert_true(bad_result.saw_register)
+  @debug.assert_eq(bad_result.connected_agent_id, None)
+  match bad_result.response_line {
     Some(resp_line) =>
       match @transport.parse_response(resp_line.trim().to_owned()) {
         Ok(resp) => assert_false(resp.is_ok())
@@ -549,13 +577,17 @@ async test "serve rejected register does not retain disconnect owner or lifecycl
       }
     None => fail("expected rejected register response")
   }
-  match result.connected_agent_id {
+  let owner = connected_agent_id_after_request(owner, bad_result)
+  @debug.assert_eq(owner, Some(agent_id))
+  match owner {
     Some(id) => state.schedule_disconnect(id, 10L)
     None => ()
   }
-  assert_true(state.registry.get_opt(agent_id) is None)
-  assert_true(@phase.read_lifecycle(project_dir, agent_id) is None)
-  assert_false(state.pending_disconnects.contains(agent_id))
+  assert_true(state.registry.get_opt(agent_id) is Some(_))
+  assert_true(state.registry.get_opt(bad_agent_id) is None)
+  assert_true(@phase.read_lifecycle(project_dir, bad_agent_id) is None)
+  assert_true(state.pending_disconnects.contains(agent_id))
+  assert_false(state.pending_disconnects.contains(bad_agent_id))
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -605,9 +637,9 @@ async fn serve_handle_connection(
           continue
         }
         let result = serve_handle_request_line(state, line, false)
-        if result.saw_register {
-          connected_agent_id = result.connected_agent_id
-        }
+        connected_agent_id = connected_agent_id_after_request(
+          connected_agent_id, result,
+        )
         match result.response_line {
           Some(resp_str) => conn.write(@utf8.encode(resp_str))
           None => ()
@@ -664,9 +696,10 @@ async fn serve_handle_uds_request_line(
 ) -> Unit {
   let resp = serve_handle_internal_request(state, req)
   if req.req_method == "register" {
-    client.connected_agent_id = register_connection_agent_id_after_response(
-      req, resp,
-    )
+    match register_connection_agent_id_after_response(req, resp) {
+      Some(agent_id) => client.connected_agent_id = Some(agent_id)
+      None => ()
+    }
   }
   let resp_str = @transport.format_response(resp) + "\n"
   @moontrace.trace("request", fields=[@moontrace.field("line", line)])

@@ -4272,6 +4272,7 @@ async test "transport disconnect with live pane re-registers as active lifecycle
   ) {
     worker_handoff_capture_runner(sent, cmds)
   })
+  @debug.assert_eq(state.registry.is_alive(agent_id), Some(true))
   match @phase.read_lifecycle(project_dir, agent_id) {
     Some({ process: @phase.ProcessState::Disconnected(..), .. }) => ()
     Some(lifecycle) =>
@@ -4313,6 +4314,96 @@ async test "transport disconnect with live pane re-registers as active lifecycle
     Some(lifecycle) =>
       fail(
         "expected connected working lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "terminal unexpected disconnect failure stays failed on register" {
+  let project_dir = "/tmp/choir-terminal-failed-register-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let agent_id = "main.dead-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir + "/.choir/worktrees/dead-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect,
+      ),
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect,
+        ),
+      ),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+
+  let resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "workspace": project_dir + "/.choir/worktrees/dead-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect
+        ),
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(
+            reason=@phase.FailureReason::UnexpectedDisconnect
+          )
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected terminal failed lifecycle, got " +
         @phase.lifecycle_to_json(lifecycle),
       )
     None => fail("expected lifecycle for " + agent_id)

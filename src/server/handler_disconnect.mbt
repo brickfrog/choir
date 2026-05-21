@@ -1314,9 +1314,6 @@ pub fn ServerState::schedule_disconnect(
   }
   self.mark_transport_soft_disconnected(agent_id, now)
   self.pending_disconnects.set(agent_id, now)
-  ignore(self.registry.set_alive(agent_id, false)) catch {
-    _ => ()
-  }
 }
 
 ///|
@@ -1379,6 +1376,9 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
   for agent_id in stale {
     if self.pending_disconnect_target_still_alive(agent_id) {
       continue
+    }
+    ignore(self.registry.set_alive(agent_id, false)) catch {
+      _ => ()
     }
     self.handle_disconnect_confirming_with_runner(agent_id, runner)
     self.pending_disconnects.remove(agent_id)
