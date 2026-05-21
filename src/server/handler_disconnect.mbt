@@ -257,6 +257,9 @@ pub async fn ServerState::fail_agent_with_runner(
         close_target~,
       )
       self.interpret_teardown_effects(effects, runner)
+      ignore(self.registry.set_alive(agent_id, false)) catch {
+        _ => ()
+      }
     }
   }
 }
@@ -525,6 +528,103 @@ fn worker_no_handoff_terminal_process(
   match lifecycle.process {
     @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => true
     _ => false
+  }
+}
+
+///|
+fn lifecycle_transport_soft_disconnect(
+  lifecycle : @phase.AgentLifecycle,
+  disconnected_at_unix_sec : Int64,
+) -> @phase.AgentLifecycle? {
+  match lifecycle.process {
+    @phase.ProcessState::Finalizing(..)
+    | @phase.ProcessState::Finalized(..)
+    | @phase.ProcessState::Failed(..) => None
+    @phase.ProcessState::Disconnected(..) => None
+    _ =>
+      Some({
+        ..lifecycle,
+        process: @phase.ProcessState::Disconnected(disconnected_at_unix_sec~),
+      })
+  }
+}
+
+///|
+fn lifecycle_transport_reconnect(
+  lifecycle : @phase.AgentLifecycle,
+) -> @phase.AgentLifecycle? {
+  match lifecycle.process {
+    @phase.ProcessState::Disconnected(..) =>
+      Some({ ..lifecycle, process: @phase.ProcessState::Connected })
+    _ => None
+  }
+}
+
+///|
+fn ServerState::persist_transport_process_transition(
+  self : ServerState,
+  agent_id : String,
+  next : @phase.AgentLifecycle,
+  trigger : @types.LifecycleTrigger,
+) -> Unit {
+  let prev = self.current_lifecycle(agent_id)
+  if @phase.persist_lifecycle(self.config.project_dir, self.registry, next) {
+    ignore(
+      append_lifecycle_event(
+        self.config.project_dir,
+        agent_id,
+        prev,
+        next,
+        trigger,
+      ),
+    )
+    @phase.sync_parent_child_lifecycle(
+      self.config.project_dir,
+      self.config.terminal_session,
+      self.registry,
+      agent_id,
+      next,
+    )
+  }
+}
+
+///|
+fn ServerState::mark_transport_soft_disconnected(
+  self : ServerState,
+  agent_id : String,
+  disconnected_at_unix_sec : Int64,
+) -> Unit {
+  if self.registry.get_opt(agent_id) is Some(agent) &&
+    agent.state == @types.AgentState::Suspended {
+    return
+  }
+  let lifecycle = self.current_lifecycle(agent_id)
+  match
+    lifecycle_transport_soft_disconnect(lifecycle, disconnected_at_unix_sec) {
+    Some(next) =>
+      self.persist_transport_process_transition(
+        agent_id,
+        next,
+        @types.LifecycleTrigger::TransportDisconnected,
+      )
+    None => ()
+  }
+}
+
+///|
+fn ServerState::mark_transport_reconnected(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  let lifecycle = self.current_lifecycle(agent_id)
+  match lifecycle_transport_reconnect(lifecycle) {
+    Some(next) =>
+      self.persist_transport_process_transition(
+        agent_id,
+        next,
+        @types.LifecycleTrigger::TransportReconnected,
+      )
+    None => ()
   }
 }
 
@@ -1215,6 +1315,11 @@ pub fn ServerState::schedule_disconnect(
   agent_id : String,
   now : Int64,
 ) -> Unit {
+  match self.registry.get_opt(agent_id) {
+    Some(_) => ()
+    None => return
+  }
+  self.mark_transport_soft_disconnected(agent_id, now)
   self.pending_disconnects.set(agent_id, now)
 }
 
@@ -1225,6 +1330,43 @@ pub fn ServerState::clear_pending_disconnect(
   agent_id : String,
 ) -> Unit {
   self.pending_disconnects.remove(agent_id)
+  self.mark_transport_reconnected(agent_id)
+  ignore(self.registry.set_alive(agent_id, true)) catch {
+    _ => ()
+  }
+}
+
+///|
+async fn ServerState::pending_disconnect_target_still_alive(
+  self : ServerState,
+  agent_id : String,
+) -> Bool {
+  let agent = try self.registry.get(agent_id) catch {
+    _ => return false
+  } noraise {
+    a => a
+  }
+  if (
+      agent.state != @types.AgentState::Active &&
+      agent.state != @types.AgentState::Suspended
+    ) ||
+    @types.is_supervisor_role(agent.role) {
+    return false
+  }
+  match agent.terminal_target {
+    Some(_) => {
+      let live = (self.recovery_provider.zellij_live)(
+        self.config.project_dir,
+        self.config.terminal_session,
+      )
+      @runtime.is_local_target_alive(
+        agent.terminal_target,
+        self.config.terminal_session,
+        live,
+      )
+    }
+    None => false
+  }
 }
 
 ///|
@@ -1242,7 +1384,16 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
     }
   }
   for agent_id in stale {
+    if self.pending_disconnect_target_still_alive(agent_id) {
+      continue
+    }
+    ignore(self.registry.set_alive(agent_id, false)) catch {
+      _ => ()
+    }
     self.handle_disconnect_confirming_with_runner(agent_id, runner)
+    ignore(self.registry.set_alive(agent_id, false)) catch {
+      _ => ()
+    }
     self.pending_disconnects.remove(agent_id)
   }
 }

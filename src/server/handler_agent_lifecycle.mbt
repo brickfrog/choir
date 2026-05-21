@@ -1,4 +1,17 @@
 ///|
+fn lifecycle_for_registered_agent(
+  existing : @phase.AgentLifecycle,
+) -> @phase.AgentLifecycle {
+  match existing.process {
+    @phase.ProcessState::Disconnected(..) =>
+      { ..existing, process: @phase.ProcessState::Connected }
+    @phase.ProcessState::Finalized(..) => existing
+    @phase.ProcessState::Failed(..) => existing
+    _ => { ..existing, process: @phase.ProcessState::Connected }
+  }
+}
+
+///|
 pub fn ServerState::register_agent(
   self : ServerState,
   agent : @types.Agent,
@@ -7,12 +20,7 @@ pub fn ServerState::register_agent(
   let agent_id = agent.agent_id.to_string()
   let lifecycle = match
     @phase.read_lifecycle(self.config.project_dir, agent_id) {
-    Some(existing) =>
-      match existing.process {
-        @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) =>
-          existing
-        _ => { ..existing, process: @phase.ProcessState::Connected }
-      }
+    Some(existing) => lifecycle_for_registered_agent(existing)
     None => @phase.lifecycle_for_agent(agent)
   }
   ignore(self.registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))

@@ -185,6 +185,8 @@ pub(all) enum LifecycleTrigger {
   FixesPushed
   ChildUpdated
   ChildRemoved
+  TransportDisconnected
+  TransportReconnected
   ExitMerged
   ExitDisconnected
   ExitShutdown
@@ -246,6 +248,8 @@ pub fn LifecycleTrigger::to_wire_string(self : LifecycleTrigger) -> String {
     FixesPushed => "FixesPushed"
     ChildUpdated => "ChildUpdated"
     ChildRemoved => "ChildRemoved"
+    TransportDisconnected => "TransportDisconnected"
+    TransportReconnected => "TransportReconnected"
     ExitMerged => "ExitMerged"
     ExitDisconnected => "ExitDisconnected"
     ExitShutdown => "ExitShutdown"
