@@ -979,7 +979,7 @@ async test "maybe_trigger_automerge_for_pending_event blocks missing server cont
   let (state, child_id, _) = blocked_gh_automerge_fixture(
     "missing-contract", pr_number,
   )
-  state.record_agent_task_contract(child_id, None)
+  state.agent_task_contracts.remove(child_id)
   let tracked = match state.poller.get(pr_number) {
     Some(value) => value
     None => fail("expected tracked PR")

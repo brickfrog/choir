@@ -386,11 +386,9 @@ pub fn interpret_tdd_intent(
   args : TddIntentArgs,
   tdd_state_reader : (String) -> @types.LeafTddState?,
   tdd_state_writer : (String, @types.LeafTddState) -> Unit,
-  project_dir? : String = ".",
   registry? : @registry.AgentRegistry? = None,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
 ) -> @types.Response {
-  ignore(project_dir)
   let configured = match
     tdd_configured_verify(registry, args.caller_id, task_contract_reader) {
     Ok(value) => value
@@ -425,12 +423,10 @@ pub async fn interpret_tdd_red_check(
   args : TddRedCheckArgs,
   tdd_state_reader : (String) -> @types.LeafTddState?,
   tdd_state_writer : (String, @types.LeafTddState) -> Unit,
-  project_dir? : String = ".",
   registry? : @registry.AgentRegistry? = None,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
 ) -> @types.Response {
-  ignore(project_dir)
   let current_state = tdd_state_reader(args.caller_id)
   let next = match
     plan_tdd_red_check_transition(
@@ -471,12 +467,10 @@ pub async fn interpret_tdd_green_check(
   args : TddGreenCheckArgs,
   tdd_state_reader : (String) -> @types.LeafTddState?,
   tdd_state_writer : (String, @types.LeafTddState) -> Unit,
-  project_dir? : String = ".",
   registry? : @registry.AgentRegistry? = None,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
 ) -> @types.Response {
-  ignore(project_dir)
   let current_state = tdd_state_reader(args.caller_id)
   let next = match
     plan_tdd_green_check_transition(

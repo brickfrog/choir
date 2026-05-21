@@ -477,12 +477,10 @@ pub async fn interpret_merge_pr_preflight(
   project_dir : String,
   caller_id : String,
   capture : async (@workspace.Command) -> (Int, String),
-  registry : @registry.AgentRegistry?,
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
 ) -> Result[Unit, @types.ChoirError] {
   ignore(caller_id)
-  ignore(registry)
   match
     enforce_merge_pr_github_review_gate(
       pr_number, poller_state, project_dir, capture,
@@ -2022,7 +2020,6 @@ pub async fn interpret_merge_pr(
       project_dir,
       merge_args.caller_id,
       capture,
-      registry,
       task_contract_reader~,
       review_mode=merge_args.review_mode.unwrap_or(
         @types.ReviewMode::SinglePass,
