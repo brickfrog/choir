@@ -257,6 +257,9 @@ pub async fn ServerState::fail_agent_with_runner(
         close_target~,
       )
       self.interpret_teardown_effects(effects, runner)
+      ignore(self.registry.set_alive(agent_id, false)) catch {
+        _ => ()
+      }
     }
   }
 }
@@ -591,6 +594,10 @@ fn ServerState::mark_transport_soft_disconnected(
   agent_id : String,
   disconnected_at_unix_sec : Int64,
 ) -> Unit {
+  if self.registry.get_opt(agent_id) is Some(agent) &&
+    agent.state == @types.AgentState::Suspended {
+    return
+  }
   let lifecycle = self.current_lifecycle(agent_id)
   match
     lifecycle_transport_soft_disconnect(lifecycle, disconnected_at_unix_sec) {
@@ -1339,7 +1346,10 @@ async fn ServerState::pending_disconnect_target_still_alive(
   } noraise {
     a => a
   }
-  if agent.state != @types.AgentState::Active ||
+  if (
+      agent.state != @types.AgentState::Active &&
+      agent.state != @types.AgentState::Suspended
+    ) ||
     @types.is_supervisor_role(agent.role) {
     return false
   }
@@ -1381,6 +1391,9 @@ pub async fn ServerState::process_pending_disconnects_with_runner(
       _ => ()
     }
     self.handle_disconnect_confirming_with_runner(agent_id, runner)
+    ignore(self.registry.set_alive(agent_id, false)) catch {
+      _ => ()
+    }
     self.pending_disconnects.remove(agent_id)
   }
 }
