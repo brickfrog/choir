@@ -862,30 +862,89 @@ test "mutation gate targets MoonBit source and sibling tests from changed paths"
 }
 
 ///|
-test "mutation gate worker task carries MoonBit adapter instructions and no cost pilot" {
-  let task = build_mutation_gate_task(
-    "/repo",
-    "main.leaf",
-    "abcdef1234567890abcdef1234567890abcdef12",
-    [
-      {
-        language: MutationLanguage::MoonBit,
-        source_path: "src/math.mbt",
-        test_paths: ["src/math_test.mbt"],
-      },
-    ],
-    ["moon test --target native"],
-    0.8,
+async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR" {
+  let project_dir = "/tmp/choir-fpr-mutation-tl-dev-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  file_pr_test_write_verify_config(file_pr_dir, ["moon test --target native"])
+  let reg = file_pr_test_registry(file_pr_dir)
+  let mut ensure_pr_called = false
+  let prepared_workers : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/leaf-tdd-discipline"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+        return (0, head + "\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      if cmd.program == "sh" {
+        return (0, "native tests passed\n")
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::TL,
+    prepare_mutation_gate_report=fn(agent_id) {
+      prepared_workers.push(agent_id)
+    },
+    wait_for_mutation_gate_report=async fn(_agent_id) {
+      @async.sleep(0)
+      Some({
+        message: mutation_gate_report_json_marker +
+        " {\"kill_rate\":1.0,\"total_mutants\":4,\"killed_mutants\":1,\"surviving_mutants\":[\"src/math.mbt:7 + -> -\"],\"unsupported_languages\":[]}",
+        status: @types.Status::Success,
+      })
+    },
+    mutation_gate_now_ms_fn=fn() { 1779000000L },
+    record_verify_event=file_pr_test_record_verify_event(project_dir),
+    tdd_phase_reader=file_pr_test_tdd_done,
+    sleep_fn=file_pr_test_no_sleep,
   )
-  assert_true(task.contains("MoonBit adapter"))
-  assert_true(task.contains("src/math.mbt"))
-  assert_true(task.contains("src/math_test.mbt"))
-  assert_true(task.contains("moon test --target native"))
-  assert_true(task.contains(mutation_gate_report_json_marker))
-  assert_true(task.contains("mutation_kill_rate_min=0.8"))
-  assert_true(task.contains("re-fix-tests"))
-  assert_false(task.contains("cost pilot"))
-  assert_false(task.contains("dashboard"))
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("mutation gate failed"))
+      assert_true(msg.contains("src/math.mbt:7 + -> -"))
+      assert_true(msg.contains("re-fix-tests"))
+    }
+    _ => fail("expected registered Dev mutation gate failure")
+  }
+  assert_false(ensure_pr_called)
+  assert_eq(prepared_workers.length(), 1)
+  assert_true(prepared_workers[0].contains("mutation-gate-abcdef123456-"))
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -898,7 +957,9 @@ async test "file_pr_run_mutation_gate computes kill rate from mutant counts" {
   let got = file_pr_run_mutation_gate(
     project_dir,
     project_dir,
+    @types.Role::Dev,
     "main.leaf",
+    None,
     "feature/leaf-tdd-discipline",
     head,
     ["moon test --target native"],

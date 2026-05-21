@@ -1888,10 +1888,28 @@ fn mutation_gate_result_to_error(
 }
 
 ///|
+fn file_pr_registered_dev_gate_applies(
+  caller_role : @types.Role,
+  tracked_agent_id : String,
+  registry : @registry.AgentRegistry?,
+) -> Bool {
+  match registry {
+    Some(reg) =>
+      match reg.get_opt(tracked_agent_id) {
+        Some(agent) => agent.role == @types.Role::Dev
+        None => caller_role == @types.Role::Dev
+      }
+    None => caller_role == @types.Role::Dev
+  }
+}
+
+///|
 pub async fn file_pr_run_mutation_gate(
   project_dir : String,
   file_pr_dir : String,
+  caller_role : @types.Role,
   tracked_agent_id : String,
+  registry : @registry.AgentRegistry?,
   parent_branch : String,
   head_sha : String,
   verify_commands : Array[String],
@@ -1906,7 +1924,11 @@ pub async fn file_pr_run_mutation_gate(
   mutation_budget_ms : Int,
   now_ms_fn : () -> Int64,
 ) -> Result[Unit, @types.ChoirError] {
-  ignore(tracked_agent_id)
+  if !file_pr_registered_dev_gate_applies(
+      caller_role, tracked_agent_id, registry,
+    ) {
+    return Ok(())
+  }
   if verify_commands.length() == 0 {
     return Ok(())
   }
@@ -2389,14 +2411,7 @@ fn file_pr_tdd_gate_applies(
   tracked_agent_id : String,
   registry : @registry.AgentRegistry?,
 ) -> Bool {
-  match registry {
-    Some(reg) =>
-      match reg.get_opt(tracked_agent_id) {
-        Some(agent) => agent.role == @types.Role::Dev
-        None => caller_role == @types.Role::Dev
-      }
-    None => caller_role == @types.Role::Dev
-  }
+  file_pr_registered_dev_gate_applies(caller_role, tracked_agent_id, registry)
 }
 
 ///|
@@ -3035,7 +3050,9 @@ pub async fn interpret_file_pr(
     None => []
   }
   match task_contract {
-    Some(contract) if caller_role == @types.Role::Dev &&
+    Some(contract) if file_pr_registered_dev_gate_applies(
+        caller_role, tracked_agent_id, registry,
+      ) &&
       contract.verify.length() > 0 => {
       let head_sha = match file_pr_current_head_sha(file_pr_dir, capture) {
         Some(sha) => sha
@@ -3048,7 +3065,9 @@ pub async fn interpret_file_pr(
         file_pr_run_mutation_gate(
           project_dir,
           file_pr_dir,
+          caller_role,
           tracked_agent_id,
+          registry,
           parent_branch,
           head_sha,
           contract.verify,

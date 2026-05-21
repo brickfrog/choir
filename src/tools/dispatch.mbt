@@ -1354,6 +1354,8 @@ pub async fn dispatch(
       }
       if prenotify_checks_should_run(
           caller_role,
+          registry,
+          notify_args.caller_id,
           notify_args.status,
           prenotify_checks,
         ) {
