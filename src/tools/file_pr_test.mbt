@@ -949,19 +949,30 @@ fn file_pr_test_tdd_done(_agent_id : String) -> @types.LeafTddPhase? {
 ///|
 test "file_pr TDD guard fails closed for dev leaves" {
   match
-    file_pr_require_tdd_done(@types.Role::Dev, "main.leaf", fn(_) { None }) {
+    file_pr_require_tdd_done(@types.Role::Dev, "main.leaf", None, fn(_) { None }) {
     Err(e) =>
       assert_true(e.message().contains("no TDD phase has been recorded"))
     Ok(_) => fail("expected missing TDD phase to block file_pr")
   }
   match
-    file_pr_require_tdd_done(@types.Role::Dev, "main.leaf", fn(_) {
+    file_pr_require_tdd_done(@types.Role::Dev, "main.leaf", None, fn(_) {
       Some(@types.LeafTddPhase::Done)
     }) {
     Ok(_) => ()
     Err(e) => fail("expected done TDD phase to allow file_pr: " + e.message())
   }
-  match file_pr_require_tdd_done(@types.Role::TL, "main.tl", fn(_) { None }) {
+  let reg = file_pr_test_registry("/tmp/choir-file-pr-tdd-registry")
+  match
+    file_pr_require_tdd_done(@types.Role::TL, "main.leaf", Some(reg), fn(_) {
+      Some(@types.LeafTddPhase::Green)
+    }) {
+    Err(e) => assert_true(e.message().contains("current phase is green"))
+    Ok(_) => fail("expected tracked Dev leaf to block even for TL caller")
+  }
+  match
+    file_pr_require_tdd_done(@types.Role::TL, "main.tl", Some(reg), fn(_) {
+      None
+    }) {
     Ok(_) => ()
     Err(e) =>
       fail("expected TL file_pr to bypass leaf TDD gate: " + e.message())
@@ -2591,6 +2602,7 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
       (0, "")
     },
     mock_ensure_pr_ok,
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -2764,16 +2776,17 @@ async test "interpret_file_pr leaf to feature does not require audit receipt" {
 }
 
 ///|
-async test "interpret_file_pr dev leaf refuses before TDD phase is done" {
+async test "interpret_file_pr tracked dev leaf refuses before TDD phase is done" {
   let project_dir = "/tmp/choir-fpr-tdd-gate-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
   let mut ensure_pr_called = false
+  let reg = file_pr_test_registry(project_dir + "/.choir/worktrees/main.leaf")
   let got = interpret_file_pr(
     {
-      branch: "feature/leaf-tdd-discipline.leaf-0",
+      branch: "main.leaf",
       parent_branch: Some("feature/leaf-tdd-discipline"),
-      tracked_agent_id: "feature/leaf-tdd-discipline.leaf-0",
+      tracked_agent_id: "main.leaf",
       title: None,
       body: None,
       review_context: None,
@@ -2781,7 +2794,7 @@ async test "interpret_file_pr dev leaf refuses before TDD phase is done" {
     project_dir,
     "choir",
     None,
-    None,
+    Some(reg),
     false,
     mock_preflight_ok,
     mock_runner_all_ok,
@@ -2796,8 +2809,9 @@ async test "interpret_file_pr dev leaf refuses before TDD phase is done" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
-    caller_role=@types.Role::Dev,
+    caller_role=@types.Role::TL,
     tdd_phase_reader=fn(_agent_id : String) { Some(@types.LeafTddPhase::Green) },
+    sleep_fn=file_pr_test_no_sleep,
   )
   match got {
     @types.Response::Err(msg) => {
@@ -3031,6 +3045,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -3106,6 +3121,7 @@ async test "dispatch file_pr records verify evidence through injected append_fil
       appends.push((path, content))
       true
     },
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match resp {
@@ -3164,6 +3180,7 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {

@@ -1833,12 +1833,29 @@ async fn file_pr_require_audit_receipt(
 }
 
 ///|
+fn file_pr_tdd_gate_applies(
+  caller_role : @types.Role,
+  tracked_agent_id : String,
+  registry : @registry.AgentRegistry?,
+) -> Bool {
+  match registry {
+    Some(reg) =>
+      match reg.get_opt(tracked_agent_id) {
+        Some(agent) => agent.role == @types.Role::Dev
+        None => caller_role == @types.Role::Dev
+      }
+    None => caller_role == @types.Role::Dev
+  }
+}
+
+///|
 pub fn file_pr_require_tdd_done(
   caller_role : @types.Role,
   tracked_agent_id : String,
+  registry : @registry.AgentRegistry?,
   tdd_phase_reader : (String) -> @types.LeafTddPhase?,
 ) -> Result[Unit, @types.ChoirError] {
-  if caller_role != @types.Role::Dev {
+  if !file_pr_tdd_gate_applies(caller_role, tracked_agent_id, registry) {
     return Ok(())
   }
   match tdd_phase_reader(tracked_agent_id) {
@@ -2344,7 +2361,9 @@ pub async fn interpret_file_pr(
   let branch = file_pr_args.branch
   let tracked_agent_id = file_pr_args.tracked_agent_id
   match
-    file_pr_require_tdd_done(caller_role, tracked_agent_id, tdd_phase_reader) {
+    file_pr_require_tdd_done(
+      caller_role, tracked_agent_id, registry, tdd_phase_reader,
+    ) {
     Err(e) => return @types.Response::Err(e.validation_detail_or_message())
     Ok(_) => ()
   }

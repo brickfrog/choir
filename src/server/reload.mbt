@@ -306,13 +306,13 @@ fn server_reload_parse_leaf_tdd_phase_map(
   json : Json?,
 ) -> Result[Map[String, @types.LeafTddPhase], @types.ChoirError] {
   guard json is Some(Array(items)) else {
-    return Err(server_reload_parse_error("missing leaf_tdd_phase map array"))
+    return Err(server_reload_parse_error("missing leaf_tdd_phases map array"))
   }
   let out : Map[String, @types.LeafTddPhase] = {}
   for item in items {
     guard item is Object(obj) else {
       return Err(
-        server_reload_parse_error("leaf_tdd_phase map entry is not an object"),
+        server_reload_parse_error("leaf_tdd_phases map entry is not an object"),
       )
     }
     let key = match server_reload_string_field(obj, "key") {

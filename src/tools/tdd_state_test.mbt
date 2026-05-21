@@ -62,6 +62,47 @@ test "leaf TDD green check rejects failing reported result" {
 }
 
 ///|
+test "leaf TDD optional refactor requires green and a final passing check" {
+  match
+    plan_tdd_green_check_transition(
+      Some(@types.LeafTddPhase::Green),
+      0,
+      Some(@types.LeafTddPhase::Refactor),
+    ) {
+    Ok(phase) => assert_eq(phase, @types.LeafTddPhase::Refactor)
+    Err(e) => fail("expected green to enter refactor: " + e.message())
+  }
+  match
+    plan_tdd_green_check_transition(
+      Some(@types.LeafTddPhase::Refactor),
+      1,
+      Some(@types.LeafTddPhase::Done),
+    ) {
+    Err(e) => assert_true(e.message().contains("expected passing test"))
+    Ok(_) => fail("expected refactor completion to reject failing result")
+  }
+  match
+    plan_tdd_green_check_transition(
+      Some(@types.LeafTddPhase::Refactor),
+      0,
+      Some(@types.LeafTddPhase::Green),
+    ) {
+    Err(e) => assert_true(e.message().contains("advance only to Done"))
+    Ok(_) => fail("expected refactor to advance only to Done")
+  }
+  match
+    plan_tdd_green_check_transition(
+      Some(@types.LeafTddPhase::Refactor),
+      0,
+      Some(@types.LeafTddPhase::Done),
+    ) {
+    Ok(phase) => assert_eq(phase, @types.LeafTddPhase::Done)
+    Err(e) =>
+      fail("expected passing refactor check to mark done: " + e.message())
+  }
+}
+
+///|
 test "leaf TDD tool handlers persist phase through injected tracker" {
   let mut stored : @types.LeafTddPhase? = None
   let reader = fn(_agent_id : String) -> @types.LeafTddPhase? { stored }
