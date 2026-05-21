@@ -456,6 +456,20 @@ fn poll_event_pr_number(event : @poller.PollEvent) -> Int {
 }
 
 ///|
+fn poll_events_pr_merged_numbers(
+  events : Array[@poller.PollEvent],
+) -> Array[Int] {
+  let pr_numbers : Array[Int] = []
+  for event in events {
+    match event {
+      PRMerged(pr) => pr_numbers.push(pr.pr_number)
+      _ => ()
+    }
+  }
+  pr_numbers
+}
+
+///|
 fn poll_event_tracked_snapshot(
   event : @poller.PollEvent,
   tracked : @poller.TrackedPR?,
@@ -736,52 +750,6 @@ fn log_unaudited_integration_merge(
 }
 
 ///|
-test "log_unaudited_integration_merge emits error for blocked audit outcome" {
-  let pr : @poller.TrackedPR = {
-    pr_number: 408,
-    agent_id: "main.t92-leaf",
-    branch: "feature/t92-integration",
-    parent_branch: "main",
-    pr_url: "https://example.test/pull/408",
-    first_seen: 0L,
-    consecutive_failures: 0,
-    backoff_until: 0L,
-    last_review_state: @poller.ReviewState::Approved,
-    last_review_bodies: "",
-    last_sha: "abcdef1234567890abcdef1234567890abcdef12",
-    last_automerge_attempt_sha: "",
-    notified_parent: false,
-    last_ci_rollup: @poller.CiRollupStatus::Success,
-    mergeable: @poller.Mergeable::Unknown,
-    merge_state_status: @poller.MergeStateStatus::Unknown,
-    merged_at_unix: Some(4102358400L),
-    last_timeout_at: 0L,
-    copilot_issue_comment_seen: true,
-    orphan_notified: false,
-    orphan_reconciling: false,
-    changes_requested_since: 0L,
-    stall_notified: false,
-    fixes_pushed_at: 0L,
-    review_mode: @types.ReviewMode::Iterative,
-    unresolved_thread_ids: [],
-    unresolved_thread_ids_fetched: false,
-    auto_resolve_outdated_pending: false,
-  }
-  let captured : Array[@moontrace.Event] = []
-  @moontrace.set_subscriber(fn(event) { captured.push(event) })
-  log_unaudited_integration_merge(
-    pr,
-    "main",
-    "/repo/.choir/audit-receipts/abcdef123456.json",
-    AuditEnforcementOutcome::UnauditedBlocked,
-  )
-  @moontrace.clear_subscriber()
-  assert_eq(captured.length(), 1)
-  @debug.assert_eq(captured[0].level, @moontrace.Level::Error_)
-  assert_eq(captured[0].message, "[UNAUDITED MERGE INTO MAIN]")
-}
-
-///|
 pub fn should_emit_untracked_pr_merged(
   tracked : Bool,
   already_seen : Bool,
@@ -1035,6 +1003,7 @@ pub async fn detect_untracked_pr_merged_events(
   capture : async (@workspace.Command) -> (Int, String),
   audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
   audit_receipt_read? : (String) -> String = @exec.read_file,
+  same_tick_pr_merged_numbers? : Array[Int] = [],
 ) -> Array[@poller.PollEvent] {
   let default_branch = match
     detect_default_branch_for_wave_complete(state.config.project_dir, capture) {
@@ -1056,7 +1025,11 @@ pub async fn detect_untracked_pr_merged_events(
     let tracked = state.poller.get(info.pr_number) is Some(_)
     let durably_seen = seen_cache.contains(info.pr_number)
     let observed_this_process = state.poller.merged_observed(info.pr_number)
+    let observed_this_tick = same_tick_pr_merged_numbers.contains(
+      info.pr_number,
+    )
     let observed_but_recheckable = observed_this_process &&
+      !observed_this_tick &&
       !durably_seen &&
       valid_merge_audit_receipt_exists(
         project_relative_path(
@@ -1071,6 +1044,7 @@ pub async fn detect_untracked_pr_merged_events(
         audit_receipt_read,
       )
     let already_seen = durably_seen ||
+      observed_this_tick ||
       (observed_this_process && !observed_but_recheckable)
     let grandfathered = pr_merged_predates_seen_cache(
       info.merged_at_unix,
@@ -3125,6 +3099,9 @@ pub async fn ServerState::process_poller_tick_with(
       }
     },
   )
+  let same_tick_pr_merged_numbers = poll_events_pr_merged_numbers(
+    pending_events,
+  )
   for
     event in detect_untracked_pr_merged_events(
       self,
@@ -3132,6 +3109,7 @@ pub async fn ServerState::process_poller_tick_with(
       capture,
       audit_receipt_exists~,
       audit_receipt_read~,
+      same_tick_pr_merged_numbers~,
     ) {
     pending_events.push(event)
     pending_agent_ids.push(synthetic_untracked_merge_agent_id(self))
@@ -3204,7 +3182,18 @@ pub async fn ServerState::process_poller_tick(
       log_poller_pr_tick(append_file, project_dir, log)
     },
   )
-  for event in detect_untracked_pr_merged_events(self, now, capture) {
+  let same_tick_pr_merged_numbers = poll_events_pr_merged_numbers(
+    pending_events,
+  )
+  for
+    event in detect_untracked_pr_merged_events(
+      self,
+      now,
+      capture,
+      audit_receipt_exists~,
+      audit_receipt_read~,
+      same_tick_pr_merged_numbers~,
+    ) {
     pending_events.push(event)
     pending_agent_ids.push(synthetic_untracked_merge_agent_id(self))
   }

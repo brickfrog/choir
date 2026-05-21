@@ -2766,93 +2766,96 @@ async test "PRMerged into default branch without audit receipt fires hooks and s
     let mut hook_calls = 0
     let mut receipt_read_calls = 0
     let mut receipt_available = false
-    let mut gh_list_enabled = false
+    let mut gh_list_enabled = true
     let checked_receipts : Array[String] = []
-    state.process_poller_tick_with_test(
-      1000L,
-      900L,
-      async fn(_pr_number, _skip_issue_comment_fetch) {
-        @async.sleep(0)
-        (
-          true,
-          @poller.ReviewState::Approved,
-          head,
-          @poller.CiRollupStatus::Success,
-          "",
-          false,
-          false,
-          @poller.Mergeable::Unknown,
-          @poller.MergeStateStatus::Unknown,
-          Some(4102358400L),
-        )
-      },
-      runner=async fn(cmds : Array[@workspace.Command]) {
-        @async.sleep(0)
-        cmds.map(fn(_) { 0 })
-      },
-      capture=async fn(cmd : @workspace.Command) {
-        @async.sleep(0)
-        if cmd.program == "git" &&
-          cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
-          if !default_branch_lookup_ok {
-            return (1, "")
+    let captured : Array[@moontrace.Event] = []
+    handler_with_moontrace_capture(captured, async fn() {
+      state.process_poller_tick_with_test(
+        1000L,
+        900L,
+        async fn(_pr_number, _skip_issue_comment_fetch) {
+          @async.sleep(0)
+          (
+            true,
+            @poller.ReviewState::Approved,
+            head,
+            @poller.CiRollupStatus::Success,
+            "",
+            false,
+            false,
+            @poller.Mergeable::Unknown,
+            @poller.MergeStateStatus::Unknown,
+            Some(4102358400L),
+          )
+        },
+        runner=async fn(cmds : Array[@workspace.Command]) {
+          @async.sleep(0)
+          cmds.map(fn(_) { 0 })
+        },
+        capture=async fn(cmd : @workspace.Command) {
+          @async.sleep(0)
+          if cmd.program == "git" &&
+            cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+            if !default_branch_lookup_ok {
+              return (1, "")
+            }
+            return (0, "origin/main\n")
           }
-          return (0, "origin/main\n")
-        }
-        if cmd.program == "gh" && cmd.args.contains("list") {
-          if gh_list_enabled {
-            return (
-              0,
-              "[{\"number\":" +
-              pr_number.to_string() +
-              ",\"url\":\"https://example.test/pull/" +
-              pr_number.to_string() +
-              "\",\"headRefName\":\"feature/t92-integration\",\"headRefOid\":\"" +
-              head +
-              "\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
-            )
+          if cmd.program == "gh" && cmd.args.contains("list") {
+            if gh_list_enabled {
+              return (
+                0,
+                "[{\"number\":" +
+                pr_number.to_string() +
+                ",\"url\":\"https://example.test/pull/" +
+                pr_number.to_string() +
+                "\",\"headRefName\":\"feature/t92-integration\",\"headRefOid\":\"" +
+                head +
+                "\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+              )
+            }
+            return (0, "[]")
           }
-          return (0, "[]")
-        }
-        (0, "")
-      },
-      automerge_capture=async fn(_cmd : @workspace.Command) {
-        @async.sleep(0)
-        (0, "")
-      },
-      hook_capture=async fn(
-        _path : String,
-        _input_json : String,
-        _cwd : String?,
-      ) -> (Int, String) {
-        @async.sleep(0)
-        hook_calls = hook_calls + 1
-        (0, "hook")
-      },
-      git_state_capture=async fn(
-        _workdir : String,
-        _capture : async (@workspace.Command) -> (Int, String),
-      ) -> ParentWorktreeGitState? {
-        @async.sleep(0)
-        Some(parent_worktree_git_state("main", true))
-      },
-      git_pull_runner=async fn(
-        _workdir : String,
-        _capture : async (@workspace.Command) -> (Int, String),
-      ) -> Bool {
-        @async.sleep(0)
-        pull_calls = pull_calls + 1
-        true
-      },
-      audit_receipt_exists=fn(path) {
-        checked_receipts.push(path)
-        receipt_available
-      },
-      audit_receipt_read=fn(_) {
-        receipt_read_calls = receipt_read_calls + 1
-        handler_test_audit_receipt(head, "main", 0)
-      },
-    )
+          (0, "")
+        },
+        automerge_capture=async fn(_cmd : @workspace.Command) {
+          @async.sleep(0)
+          (0, "")
+        },
+        hook_capture=async fn(
+          _path : String,
+          _input_json : String,
+          _cwd : String?,
+        ) -> (Int, String) {
+          @async.sleep(0)
+          hook_calls = hook_calls + 1
+          (0, "hook")
+        },
+        git_state_capture=async fn(
+          _workdir : String,
+          _capture : async (@workspace.Command) -> (Int, String),
+        ) -> ParentWorktreeGitState? {
+          @async.sleep(0)
+          Some(parent_worktree_git_state("main", true))
+        },
+        git_pull_runner=async fn(
+          _workdir : String,
+          _capture : async (@workspace.Command) -> (Int, String),
+        ) -> Bool {
+          @async.sleep(0)
+          pull_calls = pull_calls + 1
+          true
+        },
+        audit_receipt_exists=fn(path) {
+          checked_receipts.push(path)
+          receipt_available
+        },
+        audit_receipt_read=fn(_) {
+          receipt_read_calls = receipt_read_calls + 1
+          handler_test_audit_receipt(head, "main", 0)
+        },
+      )
+    })
     assert_eq(pull_calls, 0)
     assert_eq(hook_calls, 2)
     assert_eq(receipt_read_calls, 0)
@@ -2867,6 +2870,20 @@ async test "PRMerged into default branch without audit receipt fires hooks and s
         pr_number.to_string(),
       ),
     )
+    let mut error_count = 0
+    for event in captured {
+      if event.level == @moontrace.Level::Error_ &&
+        event.message == "[UNAUDITED MERGE INTO MAIN]" {
+        error_count = error_count + 1
+      }
+    }
+    if error_count != 1 {
+      fail(
+        label +
+        " expected delivery path to emit exactly one unaudited merge error; events=" +
+        handler_moontrace_event_summary(captured),
+      )
+    }
     receipt_available = true
     gh_list_enabled = true
     state.process_poller_tick_with_test(
@@ -2949,6 +2966,167 @@ async test "PRMerged into default branch without audit receipt fires hooks and s
   }
   run_case("missing", 615, true)
   run_case("default-lookup-fails", 616, false)
+}
+
+///|
+async test "tracked PRMerged with valid receipt is not duplicated by same tick untracked scan" {
+  let project_dir = "/tmp/choir-same-tick-merge-dedup-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
+  ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
+  ignore(
+    @sys.write_file_sync(project_dir + "/.choir/hooks/wave_complete.sh", ""),
+  )
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  let parent_id = "main.t92-parent-same-tick"
+  let child_id = "main.t92-leaf-same-tick"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/" + child_id,
+      branch: "feature/t92-integration",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: "user-0-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/user-0-0",
+      branch: "feature/t92-integration",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 617
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let pr = {
+    ..parent_poll_test_ready_tracked(pr_number),
+    agent_id: child_id,
+    branch: "feature/t92-integration",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/" + pr_number.to_string(),
+    last_sha: "old-sha",
+  }
+  state.poller.restore(pr)
+  let mut hook_calls = 0
+  let mut pull_calls = 0
+  let mut receipt_read_calls = 0
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        head,
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        Some(4102358400L),
+      )
+    },
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (
+          0,
+          "[{\"number\":" +
+          pr_number.to_string() +
+          ",\"url\":\"https://example.test/pull/" +
+          pr_number.to_string() +
+          "\",\"headRefName\":\"feature/t92-integration\",\"headRefOid\":\"" +
+          head +
+          "\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        )
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    hook_capture=async fn(
+      _path : String,
+      _input_json : String,
+      _cwd : String?,
+    ) -> (Int, String) {
+      @async.sleep(0)
+      hook_calls = hook_calls + 1
+      (0, "hook")
+    },
+    git_state_capture=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      Some(parent_worktree_git_state("main", true))
+    },
+    git_pull_runner=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> Bool {
+      @async.sleep(0)
+      pull_calls = pull_calls + 1
+      true
+    },
+    audit_receipt_exists=fn(_) { true },
+    audit_receipt_read=fn(_) {
+      receipt_read_calls = receipt_read_calls + 1
+      handler_test_audit_receipt(head, "main", 0)
+    },
+  )
+  assert_eq(hook_calls, 2)
+  assert_eq(pull_calls, 1)
+  assert_eq(receipt_read_calls, 1)
+  assert_true(
+    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+      pr_number.to_string(),
+    ),
+  )
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
