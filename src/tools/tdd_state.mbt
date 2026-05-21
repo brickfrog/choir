@@ -12,6 +12,77 @@ fn tdd_transition_error(message : String) -> @types.ChoirError {
 }
 
 ///|
+async fn tdd_default_capture(cmd : @workspace.Command) -> (Int, String) {
+  @exec.capture_command_merged(cmd)
+}
+
+///|
+fn tdd_check_command(
+  project_dir : String,
+  command : String,
+) -> @workspace.Command {
+  { program: "sh", args: ["-lc", command], workdir: Some(project_dir) }
+}
+
+///|
+fn tdd_text_tail(raw : String) -> String {
+  let trimmed = raw.trim().to_owned()
+  if trimmed == "" {
+    ""
+  } else if trimmed.length() <= 600 {
+    trimmed
+  } else {
+    "[truncated]\n" + trimmed[trimmed.length() - 600:].to_owned()
+  }
+}
+
+///|
+fn tdd_exit_verification_context(command : String, output : String) -> String {
+  let output_tail = tdd_text_tail(output)
+  let command_detail = "\ncommand: " + command
+  if output_tail == "" {
+    command_detail
+  } else {
+    command_detail + "\noutput_tail:\n" + output_tail
+  }
+}
+
+///|
+async fn verify_tdd_reported_exit_code(
+  project_dir : String,
+  command : String,
+  reported_exit_code : Int,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[String, @types.ChoirError] {
+  let (actual_exit_code, actual_output) = capture(
+    tdd_check_command(project_dir, command),
+  )
+  if actual_exit_code < 0 {
+    Err(
+      tdd_transition_error(
+        "declared test command could not be executed; actual exit code " +
+        actual_exit_code.to_string() +
+        ", reported exit_code " +
+        reported_exit_code.to_string() +
+        tdd_exit_verification_context(command, actual_output),
+      ),
+    )
+  } else if actual_exit_code != reported_exit_code {
+    Err(
+      tdd_transition_error(
+        "declared test command actual exit code " +
+        actual_exit_code.to_string() +
+        " did not match reported exit_code " +
+        reported_exit_code.to_string() +
+        tdd_exit_verification_context(command, actual_output),
+      ),
+    )
+  } else {
+    Ok(actual_output)
+  }
+}
+
+///|
 pub fn plan_tdd_intent_transition(
   current : @types.LeafTddPhase?,
 ) -> Result[@types.LeafTddPhase, @types.ChoirError] {
@@ -186,54 +257,76 @@ pub fn interpret_tdd_intent(
 }
 
 ///|
-pub fn interpret_tdd_red_check(
+pub async fn interpret_tdd_red_check(
   args : TddRedCheckArgs,
   tdd_phase_reader : (String) -> @types.LeafTddPhase?,
   tdd_phase_writer : (String, @types.LeafTddPhase) -> Unit,
+  project_dir? : String = ".",
+  capture? : async (@workspace.Command) -> (Int, String) = tdd_default_capture,
 ) -> @types.Response {
-  match
+  let next = match
     plan_tdd_red_check_transition(
       tdd_phase_reader(args.caller_id),
       args.exit_code,
     ) {
-    Err(e) => @types.Response::Err(e.message())
-    Ok(next) => {
-      tdd_phase_writer(args.caller_id, next)
-      tdd_phase_response(
-        args.caller_id,
-        next,
-        "tdd_red_check",
-        command=Some(args.command),
-        exit_code=Some(args.exit_code),
-        output=args.output,
-      )
-    }
+    Ok(phase) => phase
+    Err(e) => return @types.Response::Err(e.message())
   }
+  let actual_output = match
+    verify_tdd_reported_exit_code(
+      project_dir,
+      args.command,
+      args.exit_code,
+      capture,
+    ) {
+    Ok(output) => output
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  tdd_phase_writer(args.caller_id, next)
+  tdd_phase_response(
+    args.caller_id,
+    next,
+    "tdd_red_check",
+    command=Some(args.command),
+    exit_code=Some(args.exit_code),
+    output=Some(actual_output),
+  )
 }
 
 ///|
-pub fn interpret_tdd_green_check(
+pub async fn interpret_tdd_green_check(
   args : TddGreenCheckArgs,
   tdd_phase_reader : (String) -> @types.LeafTddPhase?,
   tdd_phase_writer : (String, @types.LeafTddPhase) -> Unit,
+  project_dir? : String = ".",
+  capture? : async (@workspace.Command) -> (Int, String) = tdd_default_capture,
 ) -> @types.Response {
-  match
+  let next = match
     plan_tdd_green_check_transition(
       tdd_phase_reader(args.caller_id),
       args.exit_code,
       args.next_phase,
     ) {
-    Err(e) => @types.Response::Err(e.message())
-    Ok(next) => {
-      tdd_phase_writer(args.caller_id, next)
-      tdd_phase_response(
-        args.caller_id,
-        next,
-        "tdd_green_check",
-        command=Some(args.command),
-        exit_code=Some(args.exit_code),
-        output=args.output,
-      )
-    }
+    Ok(phase) => phase
+    Err(e) => return @types.Response::Err(e.message())
   }
+  let actual_output = match
+    verify_tdd_reported_exit_code(
+      project_dir,
+      args.command,
+      args.exit_code,
+      capture,
+    ) {
+    Ok(output) => output
+    Err(e) => return @types.Response::Err(e.message())
+  }
+  tdd_phase_writer(args.caller_id, next)
+  tdd_phase_response(
+    args.caller_id,
+    next,
+    "tdd_green_check",
+    command=Some(args.command),
+    exit_code=Some(args.exit_code),
+    output=Some(actual_output),
+  )
 }
