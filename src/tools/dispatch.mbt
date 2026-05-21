@@ -1205,9 +1205,21 @@ pub async fn dispatch(
     ToolRequest::TddIntent(args) =>
       interpret_tdd_intent(args, tdd_phase_reader, tdd_phase_writer)
     ToolRequest::TddRedCheck(args) =>
-      interpret_tdd_red_check(args, tdd_phase_reader, tdd_phase_writer)
+      interpret_tdd_red_check(
+        args,
+        tdd_phase_reader,
+        tdd_phase_writer,
+        project_dir~,
+        capture~,
+      )
     ToolRequest::TddGreenCheck(args) =>
-      interpret_tdd_green_check(args, tdd_phase_reader, tdd_phase_writer)
+      interpret_tdd_green_check(
+        args,
+        tdd_phase_reader,
+        tdd_phase_writer,
+        project_dir~,
+        capture~,
+      )
     ToolRequest::MergePr(merge_args) => {
       let resp = interpret_merge_pr(
         merge_args,

@@ -25,14 +25,35 @@ test "leaf TDD state machine requires intent red green done in order" {
 }
 
 ///|
-test "leaf TDD red check rejects a passing reported result" {
-  match plan_tdd_red_check_transition(Some(@types.LeafTddPhase::Intent), 0) {
-    Err(e) => {
-      assert_true(e.message().contains("expected failing test"))
-      assert_true(e.message().contains("exit_code != 0"))
-    }
-    Ok(_) => fail("expected red gate to reject passing result")
+async test "leaf TDD red check rejects forged failing report when command passes" {
+  let mut stored : @types.LeafTddPhase? = Some(@types.LeafTddPhase::Intent)
+  let reader = fn(_agent_id : String) -> @types.LeafTddPhase? { stored }
+  let writer = fn(_agent_id : String, phase : @types.LeafTddPhase) -> Unit {
+    stored = Some(phase)
   }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    @debug.assert_eq(cmd, @workspace.Command::{
+      program: "sh",
+      args: ["-lc", "true"],
+      workdir: Some("."),
+    })
+    (0, "actual pass")
+  }
+  let red = interpret_tdd_red_check(
+    { caller_id: "main.leaf", command: "true", exit_code: 1, output: None },
+    reader,
+    writer,
+    capture~,
+  )
+  match red {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("actual exit code"))
+      assert_true(msg.contains("reported exit_code 1"))
+    }
+    @types.Response::Ok(_) => fail("expected red gate to reject forged failure")
+  }
+  @debug.assert_eq(stored, Some(@types.LeafTddPhase::Intent))
 }
 
 ///|
@@ -50,15 +71,41 @@ test "leaf TDD green check cannot skip red phase" {
 }
 
 ///|
-test "leaf TDD green check rejects failing reported result" {
-  match
-    plan_tdd_green_check_transition(Some(@types.LeafTddPhase::Red), 1, None) {
-    Err(e) => {
-      assert_true(e.message().contains("expected passing test"))
-      assert_true(e.message().contains("exit_code == 0"))
-    }
-    Ok(_) => fail("expected green gate to reject failing result")
+async test "leaf TDD green check rejects forged passing report when command fails" {
+  let mut stored : @types.LeafTddPhase? = Some(@types.LeafTddPhase::Red)
+  let reader = fn(_agent_id : String) -> @types.LeafTddPhase? { stored }
+  let writer = fn(_agent_id : String, phase : @types.LeafTddPhase) -> Unit {
+    stored = Some(phase)
   }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    @debug.assert_eq(cmd, @workspace.Command::{
+      program: "sh",
+      args: ["-lc", "false"],
+      workdir: Some("."),
+    })
+    (1, "actual fail")
+  }
+  let green = interpret_tdd_green_check(
+    {
+      caller_id: "main.leaf",
+      command: "false",
+      exit_code: 0,
+      output: None,
+      next_phase: None,
+    },
+    reader,
+    writer,
+    capture~,
+  )
+  match green {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("actual exit code"))
+      assert_true(msg.contains("reported exit_code 0"))
+    }
+    @types.Response::Ok(_) => fail("expected green gate to reject forged pass")
+  }
+  @debug.assert_eq(stored, Some(@types.LeafTddPhase::Red))
 }
 
 ///|
@@ -103,11 +150,24 @@ test "leaf TDD optional refactor requires green and a final passing check" {
 }
 
 ///|
-test "leaf TDD tool handlers persist phase through injected tracker" {
+async test "leaf TDD tool handlers persist phase through injected tracker" {
   let mut stored : @types.LeafTddPhase? = None
   let reader = fn(_agent_id : String) -> @types.LeafTddPhase? { stored }
   let writer = fn(_agent_id : String, phase : @types.LeafTddPhase) -> Unit {
     stored = Some(phase)
+  }
+  let expected_exit_codes : Array[Int] = [2, 0, 0]
+  let mut capture_index = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    assert_eq(cmd.program, "sh")
+    @debug.assert_eq(cmd.workdir, Some("."))
+    if capture_index >= expected_exit_codes.length() {
+      fail("unexpected extra TDD command capture")
+    }
+    let exit_code = expected_exit_codes[capture_index]
+    capture_index = capture_index + 1
+    (exit_code, "captured command " + capture_index.to_string())
   }
   let intent = interpret_tdd_intent(
     {
@@ -134,6 +194,7 @@ test "leaf TDD tool handlers persist phase through injected tracker" {
     },
     reader,
     writer,
+    capture~,
   )
   assert_true(red.is_ok())
   @debug.assert_eq(stored, Some(@types.LeafTddPhase::Red))
@@ -148,6 +209,7 @@ test "leaf TDD tool handlers persist phase through injected tracker" {
     },
     reader,
     writer,
+    capture~,
   )
   assert_true(green.is_ok())
   @debug.assert_eq(stored, Some(@types.LeafTddPhase::Green))
@@ -162,9 +224,11 @@ test "leaf TDD tool handlers persist phase through injected tracker" {
     },
     reader,
     writer,
+    capture~,
   )
   assert_true(done.is_ok())
   @debug.assert_eq(stored, Some(@types.LeafTddPhase::Done))
+  assert_eq(capture_index, 3)
 }
 
 ///|
@@ -175,6 +239,22 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     stored = Some(phase)
   }
   let project_dir = "/tmp/choir-tdd-dispatch-" + @sys.get_pid().to_string()
+  let expected_exit_codes : Array[Int] = [2, 0, 0]
+  let mut capture_index = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" {
+      return (0, "")
+    }
+    assert_eq(cmd.program, "sh")
+    @debug.assert_eq(cmd.workdir, Some(project_dir))
+    if capture_index >= expected_exit_codes.length() {
+      fail("unexpected extra TDD command capture")
+    }
+    let exit_code = expected_exit_codes[capture_index]
+    capture_index = capture_index + 1
+    (exit_code, "captured dispatch command " + capture_index.to_string())
+  }
 
   let intent = dispatch_call(
     ToolCall::{
@@ -189,6 +269,7 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     project_dir~,
     tdd_phase_reader=reader,
     tdd_phase_writer=writer,
+    capture~,
   )
   match intent {
     @types.Response::Ok(fields) =>
@@ -210,6 +291,7 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     project_dir~,
     tdd_phase_reader=reader,
     tdd_phase_writer=writer,
+    capture~,
   )
   assert_true(red.is_ok())
   @debug.assert_eq(stored, Some(@types.LeafTddPhase::Red))
@@ -227,6 +309,7 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     project_dir~,
     tdd_phase_reader=reader,
     tdd_phase_writer=writer,
+    capture~,
   )
   assert_true(green.is_ok())
   @debug.assert_eq(stored, Some(@types.LeafTddPhase::Green))
@@ -245,6 +328,7 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     project_dir~,
     tdd_phase_reader=reader,
     tdd_phase_writer=writer,
+    capture~,
   )
   match done {
     @types.Response::Ok(fields) =>
@@ -252,4 +336,5 @@ async test "dispatch_call parses TDD tools and persists the full gate sequence" 
     @types.Response::Err(msg) => fail("expected done dispatch ok: " + msg)
   }
   @debug.assert_eq(stored, Some(@types.LeafTddPhase::Done))
+  assert_eq(capture_index, 3)
 }

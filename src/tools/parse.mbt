@@ -289,7 +289,7 @@ fn parse_tdd_command(args : ToolArgs) -> Result[String, ParseError] {
 }
 
 ///|
-fn parse_tdd_exit_code(args : ToolArgs) -> Result[Int, ParseError] {
+fn parse_tdd_reported_exit_code(args : ToolArgs) -> Result[Int, ParseError] {
   let raw = match tool_args_get(args, "exit_code") {
     Some(value) => value
     None => return Err(ParseError::MissingField(field="exit_code"))
@@ -354,7 +354,7 @@ fn parse_tdd_red_check_args(
     Ok(value) => value
     Err(e) => return Err(e)
   }
-  let exit_code = match parse_tdd_exit_code(args) {
+  let exit_code = match parse_tdd_reported_exit_code(args) {
     Ok(value) => value
     Err(e) => return Err(e)
   }
