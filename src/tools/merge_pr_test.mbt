@@ -1128,6 +1128,53 @@ async test "interpret_merge_pr_preflight accepts required verify evidence" {
 }
 
 ///|
+async test "interpret_merge_pr_preflight matches normalized moon verify evidence" {
+  let project_dir = "/tmp/choir-mpf-normalized-verify-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let worktree = merge_pr_test_write_verify_contract(project_dir, ["moon check"])
+  let reg = merge_pr_test_registry(worktree)
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon check --target native",
+        ok=true,
+        details=Some("exit: 0"),
+      ),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    Some(reg),
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) =>
+      fail(
+        "expected normalized verify evidence to satisfy policy: " + e.message(),
+      )
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_merge_pr_preflight rejects stale verify evidence" {
   let project_dir = "/tmp/choir-mpf-stale-verify-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
@@ -1215,6 +1262,51 @@ async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
     Ok(_) => ()
     Err(e) =>
       fail("expected CI evidence to satisfy verify policy: " + e.message())
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr_preflight rejects CI-only verify for non-native moon target" {
+  let project_dir = "/tmp/choir-mpf-ci-verify-nonnative-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let worktree = merge_pr_test_write_verify_contract(project_dir, ["moon check"])
+  let reg = merge_pr_test_registry(worktree)
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::CiObserved(
+        status=@evidence.EvidenceCiStatus::Success,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    Some(reg),
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
+  )
+  match got {
+    Err(e) => assert_true(e.message().contains("local verify not observed"))
+    Ok(_) => fail("expected non-native target to require local verify evidence")
   }
   ignore(@sys.rm_rf(project_dir))
 }
@@ -1652,6 +1744,27 @@ test "format_tl_pr_recheck_summary treats matching CI evidence as verify when en
   )
   assert_true(stale.contains("Advisory evaluation verdict: needs_human"))
   assert_true(stale.contains("local verify not observed"))
+  let non_native_config = format_tl_pr_recheck_summary(
+    t,
+    project_dir,
+    Some(0),
+    task_contract=Some({ ..contract, verify: ["moon test"] }),
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
+  )
+  assert_true(
+    non_native_config.contains("Advisory evaluation verdict: needs_human"),
+  )
+  assert_true(non_native_config.contains("local verify not observed"))
+  let explicit_non_native = format_tl_pr_recheck_summary(
+    t,
+    project_dir,
+    Some(0),
+    task_contract=Some({ ..contract, verify: ["moon test --target wasm-gc"] }),
+  )
+  assert_true(
+    explicit_non_native.contains("Advisory evaluation verdict: needs_human"),
+  )
+  assert_true(explicit_non_native.contains("local verify not observed"))
   ignore(@sys.rm_rf(project_dir))
 }
 

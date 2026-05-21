@@ -776,6 +776,7 @@ pub async fn dispatch(
   },
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
@@ -1148,6 +1149,7 @@ pub async fn dispatch(
         listen_tcp~,
         tcp_auth_token~,
         global_review_mode~,
+        moon_verify_target~,
         sleep_fn~,
       )
     ToolRequest::MergePr(merge_args) => {
@@ -1180,6 +1182,7 @@ pub async fn dispatch(
         listen_uds~,
         listen_tcp~,
         tcp_auth_token~,
+        moon_verify_target~,
       )
       if resp.is_ok() {
         try_dispatch_pending_waves(
@@ -1765,6 +1768,7 @@ pub async fn handle_request(
   plugins_json? : String? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   on_resolve_review_thread? : async (Array[Int]) -> Unit = fn(_pr_numbers) {
@@ -1911,6 +1915,7 @@ pub async fn handle_request(
                   on_resolve_review_thread~,
                   pr_review~,
                   global_review_mode~,
+                  moon_verify_target~,
                   audit_heartbeat_sec~,
                   audit_max_rounds~,
                   append_file~,
@@ -2062,6 +2067,7 @@ pub async fn dispatch_call(
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   goal_deliver? : async (String, @types.Status) -> Unit = goal_noop_deliver,
@@ -2146,6 +2152,7 @@ pub async fn dispatch_call(
                   caller_role=call.role,
                   pr_review~,
                   global_review_mode~,
+                  moon_verify_target~,
                   audit_heartbeat_sec~,
                   audit_max_rounds~,
                   append_file~,

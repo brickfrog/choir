@@ -2456,7 +2456,7 @@ async test "file_pr_run_required_verify appends trusted evidence" {
   let mut seen_workdir = ""
   let got = file_pr_run_required_verify(
     "/tmp/leaf-wt",
-    ["moon test --target native"],
+    ["moon test"],
     fn(cmd : @workspace.Command) -> (Int, String) {
       seen_workdir = cmd.workdir.unwrap_or("")
       if cmd.program == "git" {
@@ -2959,14 +2959,15 @@ test "file_pr_validate_audit_receipt rejects legacy receipts as malformed" {
 }
 
 ///|
-async test "interpret_file_pr runs required verify and injects generated PR body" {
+async test "interpret_file_pr runs required verify with configured moon target and injects generated PR body" {
   let project_dir = "/tmp/choir-fpr-verify-pr-body-" +
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, ["moon check"])
   let reg = file_pr_test_registry(file_pr_dir)
   let bodies : Array[String] = []
+  let sh_args : Array[Array[String]] = []
   let got = interpret_file_pr(
     {
       branch: "main.leaf",
@@ -2987,7 +2988,8 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       if cmd.program == "git" {
         (0, "sha-pr-body\n")
       } else if cmd.program == "sh" {
-        (0, "typecheck ok\n")
+        sh_args.push(cmd.args)
+        (0, "moon check ok\n")
       } else {
         (0, "")
       }
@@ -3003,6 +3005,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -3010,20 +3013,22 @@ async test "interpret_file_pr runs required verify and injects generated PR body
     @types.Response::Err(msg) => fail("expected file_pr success: " + msg)
   }
   assert_eq(bodies.length(), 1)
+  assert_eq(sh_args.length(), 1)
+  @debug.assert_eq(sh_args[0], ["-lc", "moon check --target wasm-gc"])
   assert_true(bodies[0].contains("Implements claim schema wiring."))
   assert_true(bodies[0].contains("## Verification"))
-  assert_true(bodies[0].contains("`npm run typecheck`"))
-  assert_true(bodies[0].contains("typecheck ok"))
+  assert_true(bodies[0].contains("`moon check --target wasm-gc`"))
+  assert_true(bodies[0].contains("moon check ok"))
   let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
   assert_eq(records.length(), 1)
   match records[0].event {
     @evidence.EvidenceEvent::VerifyResultObserved(name~, ok~, details~) => {
-      assert_eq(name, "npm run typecheck")
+      assert_eq(name, "moon check --target wasm-gc")
       assert_true(ok)
       let detail_text = details.unwrap_or("")
       assert_true(detail_text.contains("cwd: " + file_pr_dir))
       assert_true(detail_text.contains("head: sha-pr-body"))
-      assert_true(detail_text.contains("typecheck ok"))
+      assert_true(detail_text.contains("moon check ok"))
     }
     _ => fail("expected VerifyResultObserved")
   }

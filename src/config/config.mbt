@@ -35,6 +35,13 @@ pub fn review_mode_to_string(mode : @types.ReviewMode) -> String {
 }
 
 ///|
+fn parse_moon_verify_target(
+  s : String,
+) -> Result[@types.MoonVerifyTarget, @types.ChoirError] {
+  @types.MoonVerifyTarget::try_parse_wire(s)
+}
+
+///|
 fn prefer_optional_string(value : String?, fallback : String?) -> String? {
   match value {
     Some(v) => Some(v)
@@ -404,6 +411,14 @@ pub fn parse_config(
         Err(e) => return Err(e)
       }
   }
+  let moon_verify_target = match doc.get("moon_verify_target") {
+    None => default_cfg.moon_verify_target
+    Some(raw) =>
+      match parse_moon_verify_target(raw) {
+        Ok(target) => target
+        Err(e) => return Err(e)
+      }
+  }
   let agy_migration_incomplete = match
     parse_required_bool_config_value(
       doc,
@@ -530,6 +545,7 @@ pub fn parse_config(
     pr_review,
     automerge,
     review_mode,
+    moon_verify_target,
     agy_migration_incomplete,
     worker_no_handoff_prod_sec,
     worker_no_handoff_escalate_sec,

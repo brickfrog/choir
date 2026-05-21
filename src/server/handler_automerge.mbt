@@ -255,6 +255,10 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     state.registry,
     tracked.agent_id,
   )
+  let task_contract = @types.task_contract_with_normalized_verify(
+    task_contract,
+    state.config.moon_verify_target,
+  )
   let verify_results = match task_contract {
     Some(contract) =>
       @evidence.verify_results_for_required_at_head_with_ci(
@@ -262,7 +266,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
         tracked.agent_id,
         contract.verify,
         tracked.last_sha,
-        @types.task_contract_verify_satisfied_by_ci(contract),
+        @types.task_contract_verify_satisfied_by_native_ci(contract),
       )
     None => []
   }

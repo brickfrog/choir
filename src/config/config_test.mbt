@@ -17,6 +17,7 @@ test "parse_config - full" {
     #|audit_heartbeat_sec = 30
     #|audit_max_rounds = 2
     #|poller_heartbeat_tick_sec = 10
+    #|moon_verify_target = "js"
     #|agy_migration_incomplete = true
     #|auto_pull_after_integration = false
     #|auto_rebuild_after_pull = true
@@ -53,6 +54,7 @@ test "parse_config - full" {
   assert_eq(cfg.audit_heartbeat_sec, 30)
   assert_eq(cfg.audit_max_rounds, 2)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
+  assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Js)
   assert_eq(cfg.agy_migration_incomplete, true)
   assert_eq(cfg.auto_pull_after_integration, false)
   assert_eq(cfg.pr_policy.require_integration_audit, false)
@@ -81,6 +83,13 @@ test "parse_config - minimal" {
   assert_eq(cfg.pr_policy.require_integration_audit, true)
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)
+  assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Native)
+}
+
+///|
+test "parse_config moon_verify_target override" {
+  let cfg = parse_config("moon_verify_target = \"wasm-gc\"").unwrap()
+  assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::WasmGc)
 }
 
 ///|

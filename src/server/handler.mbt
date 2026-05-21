@@ -196,6 +196,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
       global_review_mode=self.config.review_mode,
+      moon_verify_target=self.config.moon_verify_target,
       audit_heartbeat_sec=self.config.audit_heartbeat_sec,
       audit_max_rounds=self.config.audit_max_rounds,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
