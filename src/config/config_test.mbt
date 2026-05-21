@@ -21,6 +21,8 @@ test "parse_config - full" {
     #|auto_pull_after_integration = false
     #|auto_rebuild_after_pull = true
     #|auto_reload_after_rebuild = true
+    #|[pr_policy]
+    #|require_integration_audit = false
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
@@ -53,6 +55,7 @@ test "parse_config - full" {
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
   assert_eq(cfg.agy_migration_incomplete, true)
   assert_eq(cfg.auto_pull_after_integration, false)
+  assert_eq(cfg.pr_policy.require_integration_audit, false)
   assert_eq(cfg.auto_rebuild_after_pull, true)
   assert_eq(cfg.auto_reload_after_rebuild, true)
 }
@@ -75,6 +78,7 @@ test "parse_config - minimal" {
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
   assert_eq(cfg.agy_migration_incomplete, false)
   assert_eq(cfg.auto_pull_after_integration, true)
+  assert_eq(cfg.pr_policy.require_integration_audit, true)
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)
 }
@@ -317,6 +321,21 @@ test "parse_config review_mode explicit single_pass" {
 test "parse_config review_mode invalid is error" {
   let r = parse_config("review_mode = \"again\"")
   assert_true(r is Err(_))
+}
+
+///|
+test "parse_config pr_policy require_integration_audit invalid is error" {
+  let r = parse_config(
+    (
+      #|[pr_policy]
+      #|require_integration_audit = "maybe"
+    ),
+  )
+  match r {
+    Ok(_) => fail("expected invalid pr_policy.require_integration_audit")
+    Err(e) =>
+      assert_true(e.message().contains("pr_policy.require_integration_audit"))
+  }
 }
 
 ///|

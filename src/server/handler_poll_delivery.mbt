@@ -549,6 +549,51 @@ async fn pr_merged_parent_branch_is_wave_complete(
 }
 
 ///|
+async fn detect_pr_merged_audit_enforcement(
+  state : ServerState,
+  pr : @poller.TrackedPR,
+  capture : async (@workspace.Command) -> (Int, String),
+  audit_receipt_exists : (String) -> Bool,
+  audit_receipt_read : (String) -> String,
+) -> AuditEnforcementOutcome {
+  let default_branch = match
+    detect_default_branch_for_wave_complete(state.config.project_dir, capture) {
+    Some(branch) => branch
+    None => return AuditEnforcementOutcome::NotApplicable
+  }
+  if pr.parent_branch != default_branch {
+    return AuditEnforcementOutcome::NotApplicable
+  }
+  let receipt_rel_path = @tools.file_pr_audit_receipt_path_for_head(
+    pr.last_sha.trim().to_owned(),
+  )
+  let receipt_path = project_relative_path(
+    state.config.project_dir,
+    receipt_rel_path,
+  )
+  let receipt_is_valid = if audit_receipt_exists(receipt_path) {
+    let body = audit_receipt_read(receipt_path)
+    match
+      @tools.merge_pr_audit_receipt_validation(
+        pr.parent_branch,
+        pr.last_sha,
+        Some(body),
+      ) {
+      @tools.MergePrAuditReceiptValidation::MergeAuditReceiptValid => true
+      _ => false
+    }
+  } else {
+    false
+  }
+  let outcome = detect_unaudited_integration_merge(
+    receipt_path,
+    fn(path) { path == receipt_path && receipt_is_valid },
+    state.config.pr_policy.require_integration_audit,
+  )
+  outcome
+}
+
+///|
 pub let seen_merge_cache_capacity : Int = 50
 
 ///|
@@ -557,6 +602,7 @@ pub(all) struct RecentMergedPullRequest {
   branch : String
   parent_branch : String
   pr_url : String
+  head_sha : String
   merged_at_unix : Int64
 } derive(Debug, Eq)
 
@@ -586,6 +632,73 @@ pub fn should_auto_pull_parent(
   current_branch == default_branch &&
   working_tree_clean &&
   config_auto_pull_enabled
+}
+
+///|
+pub(all) enum AuditEnforcementOutcome {
+  Audited
+  UnauditedBlocked
+  UnauditedWarned
+  NotApplicable
+} derive(Debug, Eq)
+
+///|
+pub fn detect_unaudited_integration_merge(
+  receipt_path : String,
+  file_exists : (String) -> Bool,
+  require_audit : Bool,
+) -> AuditEnforcementOutcome {
+  if receipt_path == "" {
+    return AuditEnforcementOutcome::NotApplicable
+  }
+  if file_exists(receipt_path) {
+    AuditEnforcementOutcome::Audited
+  } else if require_audit {
+    AuditEnforcementOutcome::UnauditedBlocked
+  } else {
+    AuditEnforcementOutcome::UnauditedWarned
+  }
+}
+
+///|
+fn project_relative_path(project_dir : String, rel_path : String) -> String {
+  if project_dir == "" || project_dir == "." {
+    rel_path
+  } else {
+    project_dir + "/" + rel_path
+  }
+}
+
+///|
+fn audit_enforcement_allows_merge_delivery(
+  outcome : AuditEnforcementOutcome,
+) -> Bool {
+  match outcome {
+    UnauditedBlocked => false
+    Audited | UnauditedWarned | NotApplicable => true
+  }
+}
+
+///|
+fn log_unaudited_integration_merge(
+  pr : @poller.TrackedPR,
+  default_branch : String,
+  receipt_path : String,
+  outcome : AuditEnforcementOutcome,
+) -> Unit {
+  let fields = [
+    @moontrace.field("pr", pr.pr_number),
+    @moontrace.field("branch", pr.branch),
+    @moontrace.field("parent_branch", pr.parent_branch),
+    @moontrace.field("default_branch", default_branch),
+    @moontrace.field("head_sha", pr.last_sha),
+    @moontrace.field("receipt_path", receipt_path),
+  ]
+  match outcome {
+    UnauditedBlocked => @moontrace.error("[UNAUDITED MERGE INTO MAIN]", fields~)
+    UnauditedWarned => @moontrace.warn("[UNAUDITED MERGE INTO MAIN]", fields~)
+    Audited | NotApplicable => ()
+  }
 }
 
 ///|
@@ -736,7 +849,7 @@ fn recent_merged_pull_requests_command(
       "--limit",
       seen_merge_cache_capacity.to_string(),
       "--json",
-      "number,url,headRefName,baseRefName,mergedAt",
+      "number,url,headRefName,headRefOid,baseRefName,mergedAt",
     ],
     workdir: Some(project_dir),
   }
@@ -772,6 +885,7 @@ fn parse_recent_merged_pull_requests(
       branch: @types.json_field_string(obj, "headRefName").unwrap_or(""),
       parent_branch,
       pr_url: @types.json_field_string(obj, "url").unwrap_or(""),
+      head_sha: @types.json_field_string(obj, "headRefOid").unwrap_or(""),
       merged_at_unix,
     })
   }
@@ -796,7 +910,7 @@ fn synthetic_untracked_merged_pr(
     backoff_until: 0L,
     last_review_state: @poller.ReviewState::Approved,
     last_review_bodies: "",
-    last_sha: "",
+    last_sha: info.head_sha,
     last_automerge_attempt_sha: "",
     notified_parent: true,
     last_ci_rollup: @poller.CiRollupStatus::Success,
@@ -1045,7 +1159,7 @@ pub async fn fire_pr_merged_completion_hooks(
   pr : @poller.TrackedPR,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
-  path_exists? : (String) -> Bool = @sys.path_entry_exists,
+  path_exists? : (String) -> Bool = @exec.path_entry_exists,
   xdg_config_home? : String? = @exec.hook_xdg_config_home(),
   home? : String = @exec.hook_home(),
 ) -> Unit {
@@ -2135,6 +2249,8 @@ async fn deliver_pending_poll_events(
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
+  audit_receipt_read? : (String) -> String = @exec.read_file,
   git_state_capture? : async (
     String,
     async (@workspace.Command) -> (Int, String),
@@ -2224,6 +2340,37 @@ async fn deliver_pending_poll_events(
     }
     match event {
       PRMerged(pr) => {
+        let audit_outcome = detect_pr_merged_audit_enforcement(
+          state, pr, capture, audit_receipt_exists, audit_receipt_read,
+        )
+        let audit_receipt_path = project_relative_path(
+          state.config.project_dir,
+          @tools.file_pr_audit_receipt_path_for_head(
+            pr.last_sha.trim().to_owned(),
+          ),
+        )
+        if !audit_enforcement_allows_merge_delivery(audit_outcome) {
+          log_unaudited_integration_merge(
+            pr,
+            pr.parent_branch,
+            audit_receipt_path,
+            audit_outcome,
+          )
+          state.record_seen_merged_pr_number(pr.pr_number)
+          continue
+        }
+        log_unaudited_integration_merge(
+          pr,
+          pr.parent_branch,
+          audit_receipt_path,
+          audit_outcome,
+        )
+        fire_pr_merged_completion_hooks(
+          state.config.project_dir,
+          pr,
+          capture~,
+          hook_capture~,
+        )
         match tracked_for_delivery {
           Some(_) =>
             state.reconcile_external_merge_with_runner(
@@ -2237,12 +2384,6 @@ async fn deliver_pending_poll_events(
             )
           None => ()
         }
-        fire_pr_merged_completion_hooks(
-          state.config.project_dir,
-          pr,
-          capture~,
-          hook_capture~,
-        )
         state.record_seen_merged_pr_number(pr.pr_number)
         maybe_auto_pull_parent_after_pr_merged(
           state, pr, capture, git_pull_capture, git_state_capture, git_pull_runner,
@@ -2862,6 +3003,8 @@ pub async fn ServerState::process_poller_tick_with(
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
+  audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
+  audit_receipt_read? : (String) -> String = @exec.read_file,
   git_state_capture? : async (
     String,
     async (@workspace.Command) -> (Int, String),
@@ -2915,6 +3058,8 @@ pub async fn ServerState::process_poller_tick_with(
     automerge_capture~,
     git_pull_capture~,
     hook_capture~,
+    audit_receipt_exists~,
+    audit_receipt_read~,
     git_state_capture~,
     git_pull_runner~,
     sleep_fn~,
@@ -2932,6 +3077,8 @@ pub async fn ServerState::process_poller_tick(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
+  audit_receipt_read? : (String) -> String = @exec.read_file,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
@@ -2981,6 +3128,8 @@ pub async fn ServerState::process_poller_tick(
     runner,
     capture~,
     automerge_capture~,
+    audit_receipt_exists~,
+    audit_receipt_read~,
     sleep_fn~,
   )
   deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
@@ -3009,6 +3158,8 @@ pub async fn ServerState::refresh_pr_with(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
+  audit_receipt_read? : (String) -> String = @exec.read_file,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   let pending_events : Array[@poller.PollEvent] = []
@@ -3041,6 +3192,8 @@ pub async fn ServerState::refresh_pr_with(
     runner,
     capture~,
     automerge_capture~,
+    audit_receipt_exists~,
+    audit_receipt_read~,
     sleep_fn~,
   )
   if had_pending_events {
