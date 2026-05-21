@@ -711,6 +711,16 @@ async fn mock_capture_fork_wave_must_not_run(
 }
 
 ///|
+async fn mock_capture_agy_help(cmd : @workspace.Command) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "agy" && cmd.args == ["--help"] {
+    return (0, "agy help\n")
+  }
+  fail("unexpected capture: " + cmd.to_string())
+  (0, "")
+}
+
+///|
 async test "fork_wave_resolve_args_parent_branch skips detection when not main" {
   let args = fork_wave_args_base()
   let got = fork_wave_resolve_args_parent_branch(
@@ -866,6 +876,112 @@ async test "interpret_fork_wave_spawn_effect_phase commits scaffold before workt
     @types.Response::Ok(fields) =>
       @debug.assert_eq(fields.get("status"), Some("spawned"))
     @types.Response::Err(msg) => fail("unexpected err: " + msg)
+  }
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once before leaves spawn" {
+  let args = {
+    ..fork_wave_args_base(),
+    parent_branch: "feature/parent",
+    agent_type: @types.AgentType::Gemini,
+  }
+  let runner_called : Array[Bool] = [false]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    runner_called[0] = true
+    assert_true(cmds.length() > 1)
+    assert_eq(
+      cmds[0].program,
+      "__choir_native_agy_shared_cache_seed_if_needed__",
+    )
+    @debug.assert_eq(cmds[0].args, ["/proj"])
+
+    let mut seed_count = 0
+    let mut eager_bootstrap_count = 0
+    let mut first_worktree_add = -1
+    for i = 0; i < cmds.length(); i = i + 1 {
+      let cmd = cmds[i]
+      if cmd.program == "__choir_native_agy_shared_cache_seed_if_needed__" {
+        seed_count = seed_count + 1
+      }
+      if cmd.program == "env" && cmd.args.contains("agy") {
+        eager_bootstrap_count = eager_bootstrap_count + 1
+      }
+      if first_worktree_add < 0 &&
+        cmd.program == "git" &&
+        cmd.args.contains("worktree") &&
+        cmd.args.contains("add") {
+        first_worktree_add = i
+      }
+    }
+    assert_eq(seed_count, 1)
+    assert_eq(eager_bootstrap_count, 0)
+    assert_true(first_worktree_add > 0)
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+
+  let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    args,
+    "/proj",
+    "choir",
+    None,
+    mock_capture_agy_help,
+    mock_git_capture_fork_wave_clean,
+    runner,
+  )
+
+  assert_true(runner_called[0])
+  assert_eq(spawn_plan.spawned_count, 2)
+  match resp {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(fields.get("status"), Some("spawned"))
+    @types.Response::Err(msg) => fail("unexpected err: " + msg)
+  }
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase fails loudly when agy is unavailable" {
+  let args = {
+    ..fork_wave_args_base(),
+    parent_branch: "feature/parent",
+    agent_type: @types.AgentType::Gemini,
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "agy" && cmd.args == ["--help"] {
+      return (-1, "")
+    }
+    fail("unexpected capture: " + cmd.to_string())
+    (0, "")
+  }
+  let runner = async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    fail("spawn commands must not run when agy is unavailable")
+    []
+  }
+
+  let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    args,
+    "/proj",
+    "choir",
+    None,
+    capture,
+    mock_git_capture_fork_wave_clean,
+    runner,
+  )
+
+  assert_eq(spawn_plan.spawned_count, 0)
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("agy binary"))
+      assert_true(msg.contains("Antigravity IDE"))
+    }
+    @types.Response::Ok(_) => fail("expected agy availability failure")
   }
 }
 

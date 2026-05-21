@@ -115,12 +115,7 @@ fn shared_env_pairs(
   ]
   if spec.agent_type == @types.AgentType::Gemini ||
     spec.agent_type == @types.AgentType::Unknown {
-    pairs.push(
-      (
-        "GEMINI_CLI_SYSTEM_SETTINGS_PATH",
-        workspace + "/.choir/gemini-settings.json",
-      ),
-    )
+    pairs.push(("HOME", agy_home_path(workspace)))
   }
   match @sys.getenv("TRACEPARENT") {
     Some(value) => if value != "" { pairs.push(("TRACEPARENT", value)) }
@@ -297,23 +292,16 @@ pub fn provider_materialization_commands(
   let cmds : Array[Command] = []
   let role_str = @config.role_to_string(role)
   if agent_type == Gemini || agent_type == Unknown {
+    cmds.push(agy_cache_links(root_project, workspace))
     cmds.push(trust_gemini_folder(workspace))
-    let ctx_paths = resolve_context_paths(root_project, role_str)
     let wasm_path = root_project + "/.choir/hooks/hook.wasm"
     let wasm_hooks = if @sys.read_file(wasm_path) != "" {
       Some(wasm_path)
     } else {
       None
     }
-    cmds.push(
-      write_gemini_settings(
-        workspace,
-        agent_id,
-        role_str,
-        context_paths=ctx_paths,
-        wasm_hooks_path=wasm_hooks,
-      ),
-    )
+    cmds.push(write_agy_mcp_config(workspace, agent_id, role_str))
+    cmds.push(write_agy_hooks(workspace, wasm_hooks_path=wasm_hooks))
   }
   if agent_type == CursorAgent {
     cmds.push(write_cursor_mcp_json(workspace, agent_id, role_str))
@@ -680,14 +668,21 @@ pub fn init_tl_zellij_tab_command(
   branch : String,
   lean? : Bool = false,
 ) -> Command {
+  let tl_agent_type = tl_type_agent_type(tl_type)
   let inner = zellij_launch_inner_command(
     init_tl_agent_command(tl_type, project_dir, lean~),
   )
+  let tl_home_export = if tl_agent_type == @types.AgentType::Gemini {
+    export_assignment("HOME", agy_home_path(project_dir))
+  } else {
+    ""
+  }
   let env_exports = export_assignment("CHOIR_AGENT_ID", "root") +
     export_assignment("CHOIR_BRANCH", branch) +
     export_assignment("CHOIR_PARENT_BRANCH", branch) +
     export_assignment("CHOIR_ROLE", "tl") +
     export_assignment("CHOIR_WORKSPACE", project_dir) +
+    tl_home_export +
     export_assignment(
       "CHOIR_TERMINAL_TARGET",
       local_target_for(session, "TL", @types.IsolationMode::Worktree).to_string(),

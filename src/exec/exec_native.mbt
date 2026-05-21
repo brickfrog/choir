@@ -135,6 +135,45 @@ pub async fn run_dev_entr_watcher(
 }
 
 ///|
+async fn run_agy_shared_cache_seed_if_needed_command(
+  cmd : @workspace.Command,
+) -> Int {
+  if cmd.program != @workspace.native_agy_shared_cache_seed_if_needed_program {
+    return -1
+  }
+  if cmd.args.length() != 1 {
+    return 1
+  }
+  let project_dir = cmd.args[0]
+  if project_dir == "" {
+    return 1
+  }
+  if @workspace.run_native_agy_shared_cache_validate_command(
+      @workspace.agy_shared_cache_validate(project_dir),
+    ) ==
+    0 {
+    return 0
+  }
+  let prepare_status = @workspace.run_native_agy_shared_cache_prepare_command(
+    @workspace.agy_shared_cache_prepare(project_dir),
+  )
+  if prepare_status != 0 {
+    return prepare_status
+  }
+  let bootstrap = @workspace.agy_shared_cache_cold_bootstrap(project_dir)
+  let bootstrap_status = match bootstrap.workdir {
+    Some(dir) => @process.run(bootstrap.program, bootstrap.args[:], cwd=dir)
+    None => @process.run(bootstrap.program, bootstrap.args[:])
+  }
+  if bootstrap_status != 0 {
+    return bootstrap_status
+  }
+  @workspace.run_native_agy_shared_cache_validate_command(
+    @workspace.agy_shared_cache_validate(project_dir),
+  )
+}
+
+///|
 /// Default capture cap for `drain_process_stdout`. One megabyte accommodates
 /// JSON responses like `gh pr list` for large repos (previously 64 KiB, which
 /// truncated mid-array and fed malformed JSON into downstream parsers).
@@ -1093,6 +1132,30 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   )
   if native_seed >= 0 {
     return native_seed
+  }
+  let native_agy_cache_links = @workspace.run_native_agy_cache_links_command(
+    cmd,
+  )
+  if native_agy_cache_links >= 0 {
+    return native_agy_cache_links
+  }
+  let native_agy_prepare = @workspace.run_native_agy_shared_cache_prepare_command(
+    cmd,
+  )
+  if native_agy_prepare >= 0 {
+    return native_agy_prepare
+  }
+  let native_agy_validate = @workspace.run_native_agy_shared_cache_validate_command(
+    cmd,
+  )
+  if native_agy_validate >= 0 {
+    return native_agy_validate
+  }
+  let native_agy_seed_if_needed = run_agy_shared_cache_seed_if_needed_command(
+    cmd,
+  )
+  if native_agy_seed_if_needed >= 0 {
+    return native_agy_seed_if_needed
   }
   let prog = cmd.program
   let args = cmd.args[:]

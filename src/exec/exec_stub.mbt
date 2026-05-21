@@ -141,6 +141,31 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   if native_seed >= 0 {
     return native_seed
   }
+  let native_agy_cache_links = @workspace.run_native_agy_cache_links_command(
+    cmd,
+  )
+  if native_agy_cache_links >= 0 {
+    return native_agy_cache_links
+  }
+  let native_agy_prepare = @workspace.run_native_agy_shared_cache_prepare_command(
+    cmd,
+  )
+  if native_agy_prepare >= 0 {
+    return native_agy_prepare
+  }
+  let native_agy_validate = @workspace.run_native_agy_shared_cache_validate_command(
+    cmd,
+  )
+  if native_agy_validate >= 0 {
+    return native_agy_validate
+  }
+  let native_agy_seed_if_needed = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    cmd,
+    fn(_) { -1 },
+  )
+  if native_agy_seed_if_needed >= 0 {
+    return native_agy_seed_if_needed
+  }
   -1
 }
 
