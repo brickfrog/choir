@@ -4230,6 +4230,193 @@ async test "disconnect PR recovery uses inline review mode when tracking recover
 }
 
 ///|
+async test "transport disconnect with live pane re-registers as active lifecycle" {
+  let project_dir = "/tmp/choir-phantom-disconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.phantom-leaf"
+  let pane_name = "phantom-leaf-pane"
+  let provider = disconnect_confirmation_provider([], [pane_name])
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    provider,
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/phantom-leaf",
+      branch: agent_id,
+      terminal_target: Some(handler_auto_close_target(pane_name)),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  state.schedule_disconnect(agent_id, 0L)
+  let sent : Array[String] = []
+  state.process_pending_disconnects_with_runner(91L, 60L, runner=async fn(
+    cmds,
+  ) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some({ process: @phase.ProcessState::Disconnected(..), .. }) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected soft-disconnected lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+
+  let register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": parent_id,
+        "workspace": project_dir + "/.choir/worktrees/phantom-leaf",
+        "branch": agent_id,
+        "terminal_target": handler_auto_close_target(pane_name).to_string(),
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+  )
+  assert_true(register_resp.is_ok())
+
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected connected working lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "soft transport disconnect still escalates when idle watchdog expires" {
+  let project_dir = "/tmp/choir-phantom-watchdog-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.watchdog-leaf"
+  let pane_name = "watchdog-leaf-pane"
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"still thinking\"]}"
+  let host : @runtime.PaneWatchHost = {
+    spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 101 },
+    kill_pid_best_effort: fn(_pid) {  },
+    delete_file_sync: fn(_path) {  },
+    read_file: fn(_path) { snapshot },
+  }
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    disconnect_confirmation_provider([], [pane_name]),
+  ).with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/watchdog-leaf",
+      branch: agent_id,
+      terminal_target: Some(handler_auto_close_target(pane_name)),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.watch_pane(agent_id)
+  let start = @poller.now_sec()
+  let sent : Array[String] = []
+  state.check_idle_agents(
+    start,
+    100L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=0L,
+    worker_no_handoff_escalate_sec=0L,
+  )
+  state.schedule_disconnect(agent_id, start)
+  state.process_pending_disconnects_with_runner(start + 61L, 60L, runner=async fn(
+    cmds,
+  ) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some({ process: @phase.ProcessState::Disconnected(..), .. }) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected soft-disconnected lifecycle before watchdog, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+
+  state.check_idle_agents(
+    start + 101L,
+    100L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=0L,
+    worker_no_handoff_escalate_sec=0L,
+  )
+
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::WatchdogTimeout
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected watchdog failure lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "fail_agent_with_runner injects failure to parent terminal" {
   let project_dir = "/tmp/choir-watchdog-test-" +
     @sys.get_pid().to_string() +

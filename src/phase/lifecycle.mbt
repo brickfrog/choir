@@ -134,6 +134,7 @@ pub impl Show for WorkflowState with output(self, logger) -> Unit {
 ///|
 pub(all) enum ProcessState {
   Connected
+  Disconnected(disconnected_at_unix_sec~ : Int64)
   Finalizing(reason~ : FinalizeReason)
   Finalized(reason~ : FinalizeReason)
   Failed(reason~ : FailureReason)
@@ -363,7 +364,7 @@ pub fn AgentLifecycle::to_agent_state(
   self : AgentLifecycle,
 ) -> @types.AgentState {
   match self.process {
-    Connected => @types.AgentState::Active
+    Connected | Disconnected(_) => @types.AgentState::Active
     Finalizing(_) => @types.AgentState::Completing
     Finalized(_) => @types.AgentState::Done
     Failed(_) => @types.AgentState::Failed

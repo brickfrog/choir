@@ -1,4 +1,52 @@
 ///|
+fn reconnect_unexpected_disconnect_workflow(
+  workflow : @phase.WorkflowState,
+  role : @types.Role,
+) -> @phase.WorkflowState {
+  match workflow {
+    @phase.WorkflowState::Dev(
+      @phase.DevLifecycle::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect
+      )
+    ) => @phase.WorkflowState::Dev(@phase.DevLifecycle::Working)
+    @phase.WorkflowState::Worker(
+      @phase.WorkerLifecycle::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect
+      )
+    ) => @phase.WorkflowState::Worker(@phase.WorkerLifecycle::Working)
+    @phase.WorkflowState::Supervisor(
+      @phase.SupervisorLifecycle::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect
+      )
+    ) => @phase.default_workflow_state(role)
+    other => other
+  }
+}
+
+///|
+fn lifecycle_for_registered_agent(
+  existing : @phase.AgentLifecycle,
+  agent : @types.Agent,
+) -> @phase.AgentLifecycle {
+  let connected = {
+    ..existing,
+    process: @phase.ProcessState::Connected,
+    workflow: reconnect_unexpected_disconnect_workflow(
+      existing.workflow,
+      agent.role,
+    ),
+  }
+  match existing.process {
+    @phase.ProcessState::Finalized(..) => existing
+    @phase.ProcessState::Failed(
+      reason=@phase.FailureReason::UnexpectedDisconnect
+    ) => connected
+    @phase.ProcessState::Failed(..) => existing
+    _ => connected
+  }
+}
+
+///|
 pub fn ServerState::register_agent(
   self : ServerState,
   agent : @types.Agent,
@@ -7,12 +55,7 @@ pub fn ServerState::register_agent(
   let agent_id = agent.agent_id.to_string()
   let lifecycle = match
     @phase.read_lifecycle(self.config.project_dir, agent_id) {
-    Some(existing) =>
-      match existing.process {
-        @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) =>
-          existing
-        _ => { ..existing, process: @phase.ProcessState::Connected }
-      }
+    Some(existing) => lifecycle_for_registered_agent(existing, agent)
     None => @phase.lifecycle_for_agent(agent)
   }
   ignore(self.registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))

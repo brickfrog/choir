@@ -274,6 +274,19 @@ pub async fn ServerState::handle_with_runner_and_capture(
       e => @tools.tool_response_err_from_caught(e)
     }
   }
+  if effective_req.req_method == "register" &&
+    effective_req.name == "register" &&
+    resp.is_ok() {
+    match request_agent_id(effective_req) {
+      Some(agent_id) =>
+        try self.registry.get(agent_id) catch {
+          _ => ()
+        } noraise {
+          agent => self.register_agent(agent)
+        }
+      None => ()
+    }
+  }
 
   let effects = plan_post_tool_actions(
     effective_req,
