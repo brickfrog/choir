@@ -712,6 +712,21 @@ pub fn agy_shared_cache_seed_commands(project_dir : String) -> Array[Command] {
 }
 
 ///|
+pub fn prepend_agy_shared_cache_seed_commands(
+  project_dir : String,
+  cmds : Array[Command],
+) -> Array[Command] {
+  let seeded : Array[Command] = []
+  for cmd in agy_shared_cache_seed_commands(project_dir) {
+    seeded.push(cmd)
+  }
+  for cmd in cmds {
+    seeded.push(cmd)
+  }
+  seeded
+}
+
+///|
 /// After `git worktree add`, keep `git status` clean when agent CLIs write under `.cursor/`, etc.
 pub fn command_seed_worktree_agent_runtime_gitexclude(
   worktree_path : String,

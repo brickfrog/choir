@@ -262,6 +262,142 @@ async test "interpret_spawn_worker registers agent on success" {
 }
 
 ///|
+async test "interpret_spawn_worker gemini seeds agy shared cache before inline launch" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main.tl",
+    slug: "w-agy",
+    agent_type: @types.AgentType::Gemini,
+  }
+  let capture_seen : Array[String] = []
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    capture_seen.push(cmd.program + " " + cmd.args.join(" "))
+    if cmd.program == "agy" && cmd.args == ["--help"] {
+      return (0, "")
+    }
+    if cmd.program == "git" {
+      return (0, "origin/main\n")
+    }
+    (0, "")
+  }
+  let runner_called : Array[Bool] = [false]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    runner_called[0] = true
+    assert_true(cmds.length() > 1)
+    assert_eq(
+      cmds[0].program,
+      @workspace.native_agy_shared_cache_seed_if_needed_program,
+    )
+    @debug.assert_eq(cmds[0].args, ["/tmp/p"])
+    let mut seed_count = 0
+    let mut cache_links_index = -1
+    let mut launch_index = -1
+    let mut eager_bootstrap_count = 0
+    let mut cache_links_args_ok = false
+    let mut launch_has_agy_home = false
+    for i = 0; i < cmds.length(); i = i + 1 {
+      let cmd = cmds[i]
+      if cmd.program ==
+        @workspace.native_agy_shared_cache_seed_if_needed_program {
+        seed_count = seed_count + 1
+      }
+      if cache_links_index < 0 &&
+        cmd.program == @workspace.native_agy_cache_links_program {
+        cache_links_index = i
+      }
+      if cmd.program == @workspace.native_agy_cache_links_program &&
+        cmd.args == ["/tmp/p", "/tmp/p"] {
+        cache_links_args_ok = true
+      }
+      if launch_index < 0 && cmd.program == "zellij" {
+        launch_index = i
+      }
+      if cmd.program == "zellij" &&
+        cmd.args.contains("HOME=/tmp/p/.choir/agy-home") {
+        launch_has_agy_home = true
+      }
+      if cmd.program == "env" && cmd.args.contains("agy") {
+        eager_bootstrap_count = eager_bootstrap_count + 1
+      }
+    }
+    assert_eq(seed_count, 1)
+    assert_eq(eager_bootstrap_count, 0)
+    assert_true(cache_links_index > 0)
+    assert_true(launch_index > cache_links_index)
+    assert_true(cache_links_args_ok)
+    assert_true(launch_has_agy_home)
+    let statuses = []
+    for _ in cmds {
+      statuses.push(0)
+    }
+    statuses
+  }
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    runner,
+    capture,
+    None,
+  )
+  assert_true(runner_called[0])
+  assert_true(capture_seen.contains("agy --help"))
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      @debug.assert_eq(map.get("agent_id"), Some(String::to_json("main.w-agy")))
+      @debug.assert_eq(map.get("agent_type"), Some(String::to_json("gemini")))
+    }
+    @types.Response::Err(msg) => fail("unexpected err: " + msg)
+  }
+}
+
+///|
+async test "interpret_spawn_worker gemini fails before runner when agy is unavailable" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main.tl",
+    slug: "w-agy-missing",
+    agent_type: @types.AgentType::Gemini,
+  }
+  let runner_called : Array[Bool] = [false]
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "agy" && cmd.args == ["--help"] {
+      return (1, "")
+    }
+    if cmd.program == "git" {
+      return (0, "origin/main\n")
+    }
+    fail("unexpected capture: " + cmd.to_string())
+    (0, "")
+  }
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    async fn(_cmds) {
+      @async.sleep(0)
+      runner_called[0] = true
+      []
+    },
+    capture,
+    None,
+  )
+  assert_false(runner_called[0])
+  match got {
+    @types.Response::Err(msg) =>
+      assert_eq(msg, agy_binary_unavailable_message())
+    _ => fail("expected agy unavailable error")
+  }
+}
+
+///|
 async test "interpret_spawn_worker rejects reserved audit caller externally" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
