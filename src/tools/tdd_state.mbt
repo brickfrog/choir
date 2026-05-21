@@ -134,10 +134,9 @@ fn tdd_exit_verification_context(command : String, output : String) -> String {
 }
 
 ///|
-async fn verify_tdd_reported_exit_code(
+async fn verify_tdd_command_outcome(
   project_dir : String,
   command : String,
-  reported_exit_code : Int,
   expectation : TddExitExpectation,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[String, @types.ChoirError] {
@@ -149,8 +148,6 @@ async fn verify_tdd_reported_exit_code(
       tdd_transition_error(
         "declared test command could not be executed; actual exit code " +
         actual_exit_code.to_string() +
-        ", reported exit_code " +
-        reported_exit_code.to_string() +
         tdd_exit_verification_context(command, actual_output),
       ),
     )
@@ -170,8 +167,6 @@ async fn verify_tdd_reported_exit_code(
         actual_exit_code.to_string() +
         " did not satisfy " +
         expectation_detail +
-        "; reported exit_code " +
-        reported_exit_code.to_string() +
         tdd_exit_verification_context(command, actual_output),
       ),
     )
@@ -389,10 +384,9 @@ pub async fn interpret_tdd_red_check(
     Err(e) => return @types.Response::Err(e.message())
   }
   let actual_output = match
-    verify_tdd_reported_exit_code(
+    verify_tdd_command_outcome(
       check_dir,
       command,
-      args.exit_code,
       TddExitExpectation::RedFailure,
       capture,
     ) {
@@ -439,10 +433,9 @@ pub async fn interpret_tdd_green_check(
     Err(e) => return @types.Response::Err(e.message())
   }
   let actual_output = match
-    verify_tdd_reported_exit_code(
+    verify_tdd_command_outcome(
       check_dir,
       command,
-      args.exit_code,
       TddExitExpectation::GreenSuccess,
       capture,
     ) {
