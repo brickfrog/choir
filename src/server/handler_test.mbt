@@ -4417,6 +4417,95 @@ async test "soft transport disconnect still escalates when idle watchdog expires
 }
 
 ///|
+async test "pending transport disconnect preserves completing finalization" {
+  let project_dir = "/tmp/choir-finalizing-disconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let agent_id = "main.finalizing-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir + "/.choir/worktrees/finalizing-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Completing,
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Finalizing(
+        reason=@phase.FinalizeReason::Merged,
+      ),
+      workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+
+  state.schedule_disconnect(agent_id, 0L)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Completing)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Finalizing(
+          reason=@phase.FinalizeReason::Merged
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected finalizing lifecycle after transport drop, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+
+  state.process_pending_disconnects_with_runner(61L, 60L, runner=async fn(
+    _cmds,
+  ) {
+    @async.sleep(0)
+    []
+  })
+
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Done)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Finalized(
+          reason=@phase.FinalizeReason::Merged
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected finalized merged lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "fail_agent_with_runner injects failure to parent terminal" {
   let project_dir = "/tmp/choir-watchdog-test-" +
     @sys.get_pid().to_string() +

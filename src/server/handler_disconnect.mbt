@@ -534,7 +534,9 @@ fn lifecycle_transport_soft_disconnect(
   disconnected_at_unix_sec : Int64,
 ) -> @phase.AgentLifecycle? {
   match lifecycle.process {
-    @phase.ProcessState::Finalized(..) | @phase.ProcessState::Failed(..) => None
+    @phase.ProcessState::Finalizing(..)
+    | @phase.ProcessState::Finalized(..)
+    | @phase.ProcessState::Failed(..) => None
     @phase.ProcessState::Disconnected(..) => None
     _ =>
       Some({
@@ -1306,6 +1308,10 @@ pub fn ServerState::schedule_disconnect(
   agent_id : String,
   now : Int64,
 ) -> Unit {
+  match self.registry.get_opt(agent_id) {
+    Some(_) => ()
+    None => return
+  }
   self.mark_transport_soft_disconnected(agent_id, now)
   self.pending_disconnects.set(agent_id, now)
   ignore(self.registry.set_alive(agent_id, false)) catch {
