@@ -1849,6 +1849,15 @@ fn mutation_gate_survivor_summary(survivors : Array[String]) -> String {
 }
 
 ///|
+fn mutation_gate_effective_kill_rate(result : MutationGateResult) -> Double {
+  if result.total_mutants <= 0 {
+    1.0
+  } else {
+    result.killed_mutants.to_double() / result.total_mutants.to_double()
+  }
+}
+
+///|
 fn mutation_gate_result_to_error(
   result : MutationGateResult,
   mutation_kill_rate_min : Double,
@@ -1862,11 +1871,12 @@ fn mutation_gate_result_to_error(
       ),
     )
   }
-  if result.kill_rate < mutation_kill_rate_min {
+  let effective_kill_rate = mutation_gate_effective_kill_rate(result)
+  if effective_kill_rate < mutation_kill_rate_min {
     return Some(
       @types.ChoirError::validation_error(
         "file_pr: mutation gate failed; mutant-kill-rate " +
-        result.kill_rate.to_string() +
+        effective_kill_rate.to_string() +
         " is below threshold " +
         mutation_kill_rate_min.to_string() +
         ". re-fix-tests so they kill the surviving mutants, then rerun file_pr.\nSurviving mutants:\n" +

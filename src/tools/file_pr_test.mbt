@@ -889,7 +889,7 @@ test "mutation gate worker task carries MoonBit adapter instructions and no cost
 }
 
 ///|
-async test "file_pr_run_mutation_gate rejects low kill rate with surviving mutants" {
+async test "file_pr_run_mutation_gate computes kill rate from mutant counts" {
   let project_dir = "/tmp/choir-fpr-mutation-low-" + @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let mut spawned_slug = ""
@@ -926,7 +926,7 @@ async test "file_pr_run_mutation_gate rejects low kill rate with surviving mutan
       waited_worker = worker_id
       Some({
         message: mutation_gate_report_json_marker +
-        " {\"kill_rate\":0.5,\"total_mutants\":4,\"killed_mutants\":2,\"surviving_mutants\":[\"src/math.mbt:12 == -> !=\"],\"unsupported_languages\":[]}",
+        " {\"kill_rate\":1.0,\"total_mutants\":4,\"killed_mutants\":2,\"surviving_mutants\":[\"src/math.mbt:12 == -> !=\"],\"unsupported_languages\":[]}",
         status: @types.Status::Success,
       })
     },
@@ -3272,7 +3272,7 @@ async test "interpret_file_pr blocks before PR creation when mutation gate fails
       @async.sleep(0)
       Some({
         message: mutation_gate_report_json_marker +
-        " {\"kill_rate\":0.25,\"total_mutants\":4,\"killed_mutants\":1,\"surviving_mutants\":[\"src/math.mbt:7 + -> -\"],\"unsupported_languages\":[]}",
+        " {\"kill_rate\":1.0,\"total_mutants\":4,\"killed_mutants\":1,\"surviving_mutants\":[\"src/math.mbt:7 + -> -\"],\"unsupported_languages\":[]}",
         status: @types.Status::Success,
       })
     },
