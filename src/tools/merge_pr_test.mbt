@@ -417,6 +417,7 @@ async test "interpret_merge_pr audit spawn failure blocks before merge and logs 
     },
     write_file_atomic=fn(_, _) { false },
     create_dir_all=fn(_) { true },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match resp {
     @types.Response::Err(msg) => {
@@ -502,6 +503,13 @@ fn merge_pr_test_contract_reader(
   contract : @types.TaskContract,
 ) -> (String) -> @types.TaskContract? {
   fn(_agent_id : String) -> @types.TaskContract? { Some(contract) }
+}
+
+///|
+fn merge_pr_test_empty_contract_reader(
+  _agent_id : String,
+) -> @types.TaskContract? {
+  Some(merge_pr_test_verify_contract([]))
 }
 
 ///|
@@ -858,6 +866,40 @@ async test "interpret_merge_pr_preflight ok when no poller block and no threads"
 }
 
 ///|
+async test "interpret_merge_pr_preflight fails closed when server contract missing" {
+  let project_dir = "/tmp/choir-mpf-missing-contract-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    None,
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("server task contract unavailable"))
+      assert_true(msg.contains("main.leaf"))
+      assert_true(msg.contains("refusing to evaluate merge verify gate"))
+    }
+    Ok(_) => fail("expected missing server contract to block merge_pr")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_merge_pr_preflight accepts required verify evidence" {
   let project_dir = "/tmp/choir-mpf-verify-evidence-" +
     @sys.get_pid().to_string()
@@ -1175,6 +1217,7 @@ async test "interpret_merge_pr_preflight err when poller ChangesRequested" {
     "main.tl",
     mock_preflight_capture_no_unresolved_threads,
     None,
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
     Err(e) => assert_true(e.message().contains("ChangesRequested"))
@@ -1910,6 +1953,7 @@ async test "interpret_merge_pr returns preflight err without merge host" {
     mock_preflight_capture_no_unresolved_threads,
     @sys.append_file_sync,
     @sys.path_entry_exists,
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
     @types.Response::Err(msg) => assert_true(msg.contains("ChangesRequested"))
@@ -2052,6 +2096,10 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     ("leaf-b", leaf_b),
   ])
   let task_contracts : Map[String, @types.TaskContract] = {}
+  task_contracts.set("main.tl", {
+    ..@types.TaskContract::empty(),
+    goal: "feature integration",
+  })
   task_contracts.set(feature_branch + ".leaf-a", {
     ..@types.TaskContract::empty(),
     goal: "assigned leaf",
@@ -2282,6 +2330,7 @@ async test "interpret_merge_pr feature main with no issue ids does not call bd c
     fn(_path, _content) { true },
     fn(_path) { false },
     read_file=merge_pr_test_gate_state_reader(1L),
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2370,6 +2419,7 @@ async test "interpret_merge_pr leaf merge removes worktree and deletes local bra
     capture,
     fn(_path, _content) { true },
     fn(path) { path == leaf },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2465,6 +2515,7 @@ async test "dispatch merge_pr routes injected append_file and path_exists" {
       path_checks.push(path)
       path == leaf
     },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match resp {
     @types.Response::Ok(_) => ()
@@ -2535,6 +2586,7 @@ async test "interpret_merge_pr leaf merge skips missing worktree and still delet
     capture,
     fn(_path, _content) { true },
     fn(_path) { false },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2643,6 +2695,7 @@ async test "interpret_merge_pr leaf cleanup refuses supervisor tracked agent" {
       true
     },
     fn(path) { path == project_dir },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2773,6 +2826,7 @@ async test "interpret_merge_pr leaf cleanup trusts dev lifecycle over stale supe
         None
       }
     },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()

@@ -541,6 +541,47 @@ test "reload snapshot restores registry pending state and mutexes" {
 }
 
 ///|
+test "reload snapshot fails closed when authoritative contracts are missing" {
+  let project_dir = "/tmp/choir-reload-missing-contracts-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "choir-reload-missing-contracts",
+  }
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  match
+    state.registry.write_snapshot_file(
+      project_dir,
+      write_file=@sys.write_file_atomic,
+    ) {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  let old_runtime_snapshot =
+    #|{"version":1,"run_id":"old","binary_path":null,"pending_disconnects":[],"delivery_failures":[],"handoff_delivered":[],"worker_no_handoff_prodded_at":[],"worker_no_handoff_stalled_emitted":[],"worker_no_handoff_exit_emitted":[],"idle_agent_warned_at_70":[],"leaf_tdd_phases":[],"mutex_registry":{"version":1,"locks":[]}}
+  assert_true(
+    @sys.write_file_sync(
+      server_reload_runtime_snapshot_path(project_dir),
+      old_runtime_snapshot,
+    ),
+  )
+  let restored = ServerState::new(config, make_hermetic_recovery_provider())
+  match restored.restore_reload_snapshot() {
+    Err(e) => {
+      assert_true(e.message().contains("unsupported snapshot version 1"))
+      assert_true(e.message().contains("agent_task_contracts"))
+    }
+    Ok(_) => fail("expected older snapshot without contracts to fail closed")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 /// Stale-holder release on reload: if the mutex snapshot names a holder that
 /// is NOT in the restored registry, the lock must be released — otherwise the
 /// lock blocks unrelated callers until TTL expires.
@@ -1009,6 +1050,10 @@ async test "merge_pr after restart finalizes offline recovered owner and updates
       spawn_depth: 0,
       state: @types.AgentState::Done,
     }),
+  )
+  state.record_agent_task_contract(
+    child_id,
+    Some({ ..@types.TaskContract::empty(), goal: "offline recovered owner" }),
   )
   state.poller.track_recovered(
     pr_number,

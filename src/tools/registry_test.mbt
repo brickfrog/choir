@@ -43,6 +43,13 @@ fn registry_test_audit_receipt(sha : String) -> String {
 }
 
 ///|
+fn registry_test_empty_task_contract_reader(
+  _agent_id : String,
+) -> @types.TaskContract? {
+  Some(@types.TaskContract::empty())
+}
+
+///|
 async fn mock_registry_capture(cmd : @workspace.Command) -> (Int, String) {
   @async.sleep(0)
   if cmd.program == "git" &&
@@ -577,6 +584,7 @@ async test "dispatch returns correct stub for each tool name" {
       ensure_pr=Some(mock_registry_ensure_pr),
       mutex_registry=Some(@registry.MutexRegistry::new()),
       poller_state=Some(@poller.PollerState::new()),
+      task_contract_reader=registry_test_empty_task_contract_reader,
       tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
     )
     match res {
@@ -904,6 +912,7 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
     registry=Some(reg),
     mutex_registry=Some(@registry.MutexRegistry::new()),
     poller_state=Some(@poller.PollerState::new()),
+    task_contract_reader=registry_test_empty_task_contract_reader,
     tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
   )
   match res {
@@ -973,6 +982,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
     registry=Some(reg),
     mutex_registry=Some(@registry.MutexRegistry::new()),
     poller_state=Some(@poller.PollerState::new()),
+    task_contract_reader=registry_test_empty_task_contract_reader,
     tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
   )
   match res {
@@ -1028,6 +1038,7 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
     registry=Some(reg),
     mutex_registry=Some(@registry.MutexRegistry::new()),
     poller_state=Some(@poller.PollerState::new()),
+    task_contract_reader=registry_test_empty_task_contract_reader,
     tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
   )
   match res {

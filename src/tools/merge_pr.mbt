@@ -454,6 +454,20 @@ fn merge_pr_verify_results_for_tracked(
 }
 
 ///|
+fn merge_pr_missing_task_contract_error(
+  pr_number : Int,
+  agent_id : String,
+) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "merge_pr: server task contract unavailable for tracked agent '" +
+    agent_id +
+    "' on PR #" +
+    pr_number.to_string() +
+    "; refusing to evaluate merge verify gate as empty",
+  )
+}
+
+///|
 /// `merge_pr` preflight: GitHub changes-requested reviews are checked first,
 /// then the poller snapshot, unresolved review-thread fetch, and
 /// `merge_pr_preflight_block_message` must all pass.
@@ -485,7 +499,13 @@ pub async fn interpret_merge_pr_preflight(
   )
   let policy_decision = match poller_tracked {
     Some(tracked) => {
-      let task_contract = task_contract_reader(tracked.agent_id)
+      let task_contract = match task_contract_reader(tracked.agent_id) {
+        Some(contract) => Some(contract)
+        None =>
+          return Err(
+            merge_pr_missing_task_contract_error(pr_number, tracked.agent_id),
+          )
+      }
       let verify_results = merge_pr_verify_results_for_tracked(
         project_dir, tracked, task_contract,
       )

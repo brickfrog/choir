@@ -2658,6 +2658,17 @@ fn file_pr_task_contract_for_agent(
 }
 
 ///|
+fn file_pr_missing_task_contract_error(
+  tracked_agent_id : String,
+) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "file_pr: server task contract unavailable for tracked agent '" +
+    tracked_agent_id +
+    "'; refusing to skip required verify",
+  )
+}
+
+///|
 async fn file_pr_mirror_beads_created(
   project_dir : String,
   tracked_agent_id : String,
@@ -3036,6 +3047,11 @@ pub async fn interpret_file_pr(
   let task_contract = file_pr_task_contract_for_agent(
     tracked_agent_id, task_contract_reader,
   )
+  if task_contract is None {
+    return @types.Response::Err(
+      file_pr_missing_task_contract_error(tracked_agent_id).message(),
+    )
+  }
   let verify_outcomes = match task_contract {
     Some(contract) =>
       match

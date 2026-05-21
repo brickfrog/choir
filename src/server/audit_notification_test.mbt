@@ -1129,6 +1129,7 @@ async test "existing valid audit receipt resets stale cycle counter through file
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     caller_role=@types.Role::Dev,
+    task_contract_reader=fn(_) { Some(@types.TaskContract::empty()) },
     tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
     wait_for_audit_report=async fn(_) {
       @async.sleep(0)

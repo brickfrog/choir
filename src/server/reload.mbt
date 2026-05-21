@@ -89,7 +89,7 @@ fn ServerState::reload_runtime_snapshot_json(
   binary_path : String?,
 ) -> Json {
   {
-    "version": (1).to_json(),
+    "version": (2).to_json(),
     "run_id": self.run_id.to_json(),
     "binary_path": server_reload_optional_string_json(binary_path),
     "pending_disconnects": server_reload_int64_entries_json(
@@ -388,16 +388,6 @@ fn server_reload_parse_task_contract_map(
 }
 
 ///|
-fn server_reload_parse_task_contract_map_or_empty(
-  json : Json?,
-) -> Result[Map[String, @types.TaskContract], @types.ChoirError] {
-  match json {
-    None => Ok({})
-    Some(_) => server_reload_parse_task_contract_map(json)
-  }
-}
-
-///|
 /// Replace every entry in `target` with the entries from `source`. Drops any
 /// pre-existing keys not in `source`. Used to atomically commit a parsed
 /// snapshot into the live in-memory map.
@@ -452,6 +442,19 @@ pub fn ServerState::restore_reload_snapshot(
   guard json is Object(root) else {
     return Err(server_reload_parse_error("expected object"))
   }
+  let version = match server_reload_int_field(root, "version") {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if version != 2 {
+    return Err(
+      server_reload_parse_error(
+        "unsupported snapshot version " +
+        version.to_string() +
+        "; authoritative agent_task_contracts are required",
+      ),
+    )
+  }
   let parsed_pending = match
     server_reload_parse_int64_map(root.get("pending_disconnects")) {
     Ok(v) => v
@@ -499,9 +502,7 @@ pub fn ServerState::restore_reload_snapshot(
     Err(e) => return Err(e)
   }
   let parsed_agent_task_contracts = match
-    server_reload_parse_task_contract_map_or_empty(
-      root.get("agent_task_contracts"),
-    ) {
+    server_reload_parse_task_contract_map(root.get("agent_task_contracts")) {
     Ok(v) => v
     Err(e) => return Err(e)
   }
