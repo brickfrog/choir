@@ -1445,6 +1445,62 @@ async test "file_pr_auto_audit records one cycle for each fresh audit spawn" {
 }
 
 ///|
+async test "file_pr_auto_audit refuses fresh spawn after timeout cycles exhaust cap" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-timeout-cap-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawn_calls = 0
+  let mut wait_calls = 0
+  let mut record_calls = 0
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, None),
+    async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    async fn(_) {
+      @async.sleep(0)
+      wait_calls = wait_calls + 1
+      None
+    },
+    fn(_) {  },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1779000000L },
+    fn(_) { true },
+    list_audit_workers=fn() { [] },
+    audit_max_rounds=3,
+    record_audit_cycle_for_agent=fn(_) {
+      record_calls = record_calls + 1
+      99
+    },
+    audit_cycle_count_for_agent=fn(_) { 3 },
+  )
+  match got {
+    Err(e) => {
+      assert_eq(e.to_wire_string(), "audit_loop_exhausted")
+      assert_true(e.message().contains("after 3 cycle(s)"))
+      assert_true(
+        e.message().contains(".choir/audit-receipts/abcdef123456.json"),
+      )
+    }
+    Ok(_) => fail("expected exhausted audit loop")
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(wait_calls, 0)
+  assert_eq(record_calls, 0)
+}
+
+///|
 async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
   let project_dir = "/tmp/choir-fpr-auto-audit-fresh-spawn-" +
     @sys.get_pid().to_string()

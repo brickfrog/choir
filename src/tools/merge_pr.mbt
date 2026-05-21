@@ -675,6 +675,25 @@ fn merge_pr_audit_workdir(
 }
 
 ///|
+fn merge_pr_live_audit_workers(
+  registry : @registry.AgentRegistry?,
+) -> Array[@phase.ChildLifecycle] {
+  match registry {
+    Some(reg) => {
+      let entries : Array[@phase.ChildLifecycle] = []
+      for agent in reg.list() {
+        let agent_id = agent.agent_id.to_string()
+        if reg.is_alive(agent_id).unwrap_or(false) {
+          entries.push(audit_on_file_pr_worker_entry_from_agent(agent))
+        }
+      }
+      entries
+    }
+    None => []
+  }
+}
+
+///|
 fn merge_pr_audit_error_status(
   err : @types.ChoirError,
   audit_budget_ms : Int,
@@ -725,6 +744,7 @@ pub async fn merge_pr_require_audit_receipt(
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
+  list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_audit_receipt_required(parent_branch) {
     return Ok(())
@@ -786,6 +806,7 @@ pub async fn merge_pr_require_audit_receipt(
       audit_sleep_fn,
       audit_now_ms_fn,
       audit_worker_alive,
+      list_audit_workers~,
       pr_number~,
     ) {
     Err(e) => {
@@ -2104,6 +2125,9 @@ pub async fn interpret_merge_pr(
                     audit_sleep_fn~,
                     audit_now_ms_fn~,
                     audit_worker_alive~,
+                    list_audit_workers=fn() {
+                      merge_pr_live_audit_workers(registry)
+                    },
                   ) {
                   Err(e) => return @types.Response::Err(e.message())
                   Ok(_) => ()

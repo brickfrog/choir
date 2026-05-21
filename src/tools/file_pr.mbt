@@ -1589,6 +1589,14 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
       existing.child_id
     }
     None => {
+      let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
+      if audit_max_rounds > 0 && recorded_cycles >= audit_max_rounds {
+        return Err(
+          @types.ChoirError::audit_loop_exhausted(
+            recorded_cycles, 0, receipt_path,
+          ),
+        )
+      }
       cycles = record_audit_cycle_for_agent(tracked_agent_id)
       let pr_number_for_notification : Int? = if pr_number > 0 {
         Some(pr_number)

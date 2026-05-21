@@ -150,6 +150,20 @@ fn merge_pr_test_audit_receipt(sha : String) -> String {
 }
 
 ///|
+fn merge_pr_test_audit_child(
+  slug : String,
+  summary : @phase.ChildLifecycleSummary,
+) -> @phase.ChildLifecycle {
+  {
+    child_id: "main." + slug,
+    slug,
+    branch: "main." + slug,
+    agent_type: @types.AgentType::Codex,
+    summary,
+  }
+}
+
+///|
 fn merge_pr_test_gate_state_reader(
   enabled_at_unix : Int64,
 ) -> (String) -> String {
@@ -278,6 +292,71 @@ async test "merge_pr_require_audit_receipt auto-audit writes receipt and clears 
   }
   assert_true(spawned)
   assert_eq(waited_worker, "audit-worker-1")
+  assert_eq(write_sha, head)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "merge_pr_require_audit_receipt awaits in-flight audit worker without spawning" {
+  let project_dir = "/tmp/choir-mpr-audit-in-flight-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let prefix = audit_on_file_pr_slug_prefix(head)
+  let existing = merge_pr_test_audit_child(
+    prefix + "111",
+    @phase.ChildLifecycleSummary::Working,
+  )
+  let mut receipt_body : String? = None
+  let mut spawn_calls = 0
+  let mut waited_worker = ""
+  let mut write_sha = ""
+  let got = merge_pr_require_audit_receipt(
+    "main",
+    project_dir,
+    project_dir,
+    "main.leaf",
+    94,
+    head,
+    { enabled_at_unix: 100L },
+    200L,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "cat" {
+        match receipt_body {
+          Some(body) => return (0, body)
+          None => return (1, "")
+        }
+      }
+      (0, "")
+    },
+    spawn_audit_worker=async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    wait_for_audit_report=async fn(worker_id) {
+      @async.sleep(0)
+      waited_worker = worker_id
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    write_audit_receipt=fn(args) {
+      write_sha = args.sha
+      receipt_body = Some(merge_pr_test_audit_receipt(args.sha))
+      @types.Response::ok_values({ "status": "ok".to_json() })
+    },
+    audit_heartbeat_sec=0,
+    list_audit_workers=fn() { [existing] },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected in-flight audit gate to clear: " + e.message())
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(waited_worker, existing.child_id)
   assert_eq(write_sha, head)
   ignore(@sys.rm_rf(project_dir))
 }
