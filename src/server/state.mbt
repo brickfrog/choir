@@ -122,6 +122,7 @@ pub struct ServerState {
   audit_pr_comment_tasks : @aqueue.Queue[AuditPrCommentTask]
   audit_cycle_counts : Map[String, Int]
   audit_progress : Map[String, AuditProgress]
+  leaf_tdd_phases : Map[String, @types.LeafTddPhase]
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
@@ -192,6 +193,7 @@ pub fn ServerState::new(
     audit_pr_comment_tasks: @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded),
     audit_cycle_counts: {},
     audit_progress: {},
+    leaf_tdd_phases: {},
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
@@ -206,6 +208,23 @@ pub fn ServerState::new(
     write_file_atomic: default_write_file_atomic,
     delete_file: @exec.delete_file_sync,
   }
+}
+
+///|
+pub fn ServerState::leaf_tdd_phase_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> @types.LeafTddPhase? {
+  self.leaf_tdd_phases.get(agent_id)
+}
+
+///|
+pub fn ServerState::record_leaf_tdd_phase(
+  self : ServerState,
+  agent_id : String,
+  phase : @types.LeafTddPhase,
+) -> Unit {
+  self.leaf_tdd_phases.set(agent_id, phase)
 }
 
 ///|

@@ -337,6 +337,8 @@ test "plan_wave_state serializes audits only for tracked PRs with audit progress
     last_cycle_at_ms: Some(1776000000123L),
     exhausted: false,
   })
+  let tdd_phases : Map[String, @types.LeafTddPhase] = {}
+  tdd_phases.set("tl.leaf-a", @types.LeafTddPhase::Green)
   let snap = plan_wave_state(
     "tl",
     reg,
@@ -346,6 +348,7 @@ test "plan_wave_state serializes audits only for tracked PRs with audit progress
     no_heartbeat,
     9_999_999L,
     audit_progress_reader=audit_progress_map_reader(audits),
+    tdd_phase_reader=fn(agent_id) { tdd_phases.get(agent_id) },
   ).unwrap()
   let leaf_a = snap.children
     .iter()
@@ -357,6 +360,8 @@ test "plan_wave_state serializes audits only for tracked PRs with audit progress
     .unwrap()
   let pr_a = leaf_a.pr.unwrap()
   let pr_b = leaf_b.pr.unwrap()
+  @debug.assert_eq(leaf_a.tdd_phase, Some(@types.LeafTddPhase::Green))
+  @debug.assert_eq(leaf_b.tdd_phase, None)
   match pr_a.audits {
     Some(progress) => {
       assert_eq(progress.cycles_so_far, 2)

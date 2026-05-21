@@ -28,6 +28,30 @@ pub(all) struct TrackPrArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct TddIntentArgs {
+  caller_id : String
+  intent : String
+  test_command : String?
+} derive(Debug, Eq)
+
+///|
+pub(all) struct TddRedCheckArgs {
+  caller_id : String
+  command : String
+  exit_code : Int
+  output : String?
+} derive(Debug, Eq)
+
+///|
+pub(all) struct TddGreenCheckArgs {
+  caller_id : String
+  command : String
+  exit_code : Int
+  output : String?
+  next_phase : @types.LeafTddPhase?
+} derive(Debug, Eq)
+
+///|
 pub(all) struct ForkWaveScaffoldCommit {
   message : String
   paths : Array[String]

@@ -768,6 +768,8 @@ pub async fn dispatch(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
+  tdd_phase_writer? : (String, @types.LeafTddPhase) -> Unit = fn(_, _) { () },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   caller_id? : String? = None,
   caller_role? : @types.Role = @types.Role::TL,
@@ -1148,8 +1150,15 @@ pub async fn dispatch(
         listen_tcp~,
         tcp_auth_token~,
         global_review_mode~,
+        tdd_phase_reader~,
         sleep_fn~,
       )
+    ToolRequest::TddIntent(args) =>
+      interpret_tdd_intent(args, tdd_phase_reader, tdd_phase_writer)
+    ToolRequest::TddRedCheck(args) =>
+      interpret_tdd_red_check(args, tdd_phase_reader, tdd_phase_writer)
+    ToolRequest::TddGreenCheck(args) =>
+      interpret_tdd_green_check(args, tdd_phase_reader, tdd_phase_writer)
     ToolRequest::MergePr(merge_args) => {
       let resp = interpret_merge_pr(
         merge_args,
@@ -1366,6 +1375,7 @@ pub async fn dispatch(
         poller_state,
         capture~,
         audit_progress_reader~,
+        tdd_phase_reader~,
       )
     ToolRequest::StatusBarState(status_bar_state_args) =>
       interpret_status_bar_state(
@@ -1756,6 +1766,8 @@ pub async fn handle_request(
   agent_registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
+  tdd_phase_writer? : (String, @types.LeafTddPhase) -> Unit = fn(_, _) { () },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
@@ -1900,6 +1912,8 @@ pub async fn handle_request(
                   registry=agent_registry,
                   mutex_registry~,
                   poller_state~,
+                  tdd_phase_reader~,
+                  tdd_phase_writer~,
                   list_panes_cache~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   caller_role=req.role,
@@ -2054,6 +2068,8 @@ pub async fn dispatch_call(
   registry? : @registry.AgentRegistry? = None,
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
+  tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
+  tdd_phase_writer? : (String, @types.LeafTddPhase) -> Unit = fn(_, _) { () },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
@@ -2136,6 +2152,8 @@ pub async fn dispatch_call(
                   registry~,
                   mutex_registry~,
                   poller_state~,
+                  tdd_phase_reader~,
+                  tdd_phase_writer~,
                   list_panes_cache~,
                   caller_id=tool_args_get(tool_args, "caller_id"),
                   caller_role=call.role,

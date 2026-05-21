@@ -1833,6 +1833,34 @@ async fn file_pr_require_audit_receipt(
 }
 
 ///|
+pub fn file_pr_require_tdd_done(
+  caller_role : @types.Role,
+  tracked_agent_id : String,
+  tdd_phase_reader : (String) -> @types.LeafTddPhase?,
+) -> Result[Unit, @types.ChoirError] {
+  if caller_role != @types.Role::Dev {
+    return Ok(())
+  }
+  match tdd_phase_reader(tracked_agent_id) {
+    Some(@types.LeafTddPhase::Done) => Ok(())
+    Some(phase) =>
+      Err(
+        @types.ChoirError::validation_error(
+          "file_pr: leaf TDD phase must be done before filing; current phase is " +
+          phase.to_wire_string() +
+          ". Complete Intent -> Red(test failed) -> Green(test passed) -> Done via tdd_intent, tdd_red_check, and tdd_green_check.",
+        ),
+      )
+    None =>
+      Err(
+        @types.ChoirError::validation_error(
+          "file_pr: leaf TDD phase must be done before filing; no TDD phase has been recorded. Start with tdd_intent, then tdd_red_check, tdd_green_check to Green, and tdd_green_check to Done.",
+        ),
+      )
+  }
+}
+
+///|
 fn file_pr_receipt_root_test_body(sha : String) -> String {
   let receipt : @types.AuditReceipt = {
     sha,
@@ -2310,14 +2338,20 @@ pub async fn interpret_file_pr(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let branch = file_pr_args.branch
+  let tracked_agent_id = file_pr_args.tracked_agent_id
+  match
+    file_pr_require_tdd_done(caller_role, tracked_agent_id, tdd_phase_reader) {
+    Err(e) => return @types.Response::Err(e.validation_detail_or_message())
+    Ok(_) => ()
+  }
   let parent_branch = match file_pr_args.parent_branch {
     Some(pb) => pb
     None => detect_default_branch_with_capture(project_dir, capture)
   }
-  let tracked_agent_id = file_pr_args.tracked_agent_id
   let file_pr_dir = match
     file_pr_workdir(project_dir, tracked_agent_id, registry) {
     Ok(d) => d

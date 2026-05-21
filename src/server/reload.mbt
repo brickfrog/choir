@@ -62,6 +62,17 @@ fn server_reload_int_entries_json(values : Map[String, Int]) -> Json {
 }
 
 ///|
+fn server_reload_leaf_tdd_phase_entries_json(
+  values : Map[String, @types.LeafTddPhase],
+) -> Json {
+  let entries : Array[Json] = []
+  for key, value in values {
+    entries.push({ "key": key.to_json(), "value": value.to_json() }.to_json())
+  }
+  entries.to_json()
+}
+
+///|
 fn ServerState::reload_runtime_snapshot_json(
   self : ServerState,
   binary_path : String?,
@@ -86,6 +97,9 @@ fn ServerState::reload_runtime_snapshot_json(
     ),
     "idle_agent_warned_at_70": server_reload_bool_entries_json(
       self.idle_agent_warned_at_70,
+    ),
+    "leaf_tdd_phases": server_reload_leaf_tdd_phase_entries_json(
+      self.leaf_tdd_phases,
     ),
     "mutex_registry": self.mutex_registry.to_snapshot_json(),
   }.to_json()
@@ -288,6 +302,47 @@ fn server_reload_parse_int_map(
 }
 
 ///|
+fn server_reload_parse_leaf_tdd_phase_map(
+  json : Json?,
+) -> Result[Map[String, @types.LeafTddPhase], @types.ChoirError] {
+  guard json is Some(Array(items)) else {
+    return Err(server_reload_parse_error("missing leaf_tdd_phase map array"))
+  }
+  let out : Map[String, @types.LeafTddPhase] = {}
+  for item in items {
+    guard item is Object(obj) else {
+      return Err(
+        server_reload_parse_error("leaf_tdd_phase map entry is not an object"),
+      )
+    }
+    let key = match server_reload_string_field(obj, "key") {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let raw = match server_reload_string_field(obj, "value") {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let value = match @types.LeafTddPhase::try_parse_wire(raw) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    out.set(key, value)
+  }
+  Ok(out)
+}
+
+///|
+fn server_reload_parse_leaf_tdd_phase_map_or_empty(
+  json : Json?,
+) -> Result[Map[String, @types.LeafTddPhase], @types.ChoirError] {
+  match json {
+    None => Ok({})
+    Some(_) => server_reload_parse_leaf_tdd_phase_map(json)
+  }
+}
+
+///|
 /// Replace every entry in `target` with the entries from `source`. Drops any
 /// pre-existing keys not in `source`. Used to atomically commit a parsed
 /// snapshot into the live in-memory map.
@@ -383,6 +438,11 @@ pub fn ServerState::restore_reload_snapshot(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let parsed_leaf_tdd_phases = match
+    server_reload_parse_leaf_tdd_phase_map_or_empty(root.get("leaf_tdd_phases")) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let parsed_mutex = match root.get("mutex_registry") {
     Some(j) =>
       match @registry.parse_mutex_registry_snapshot_json(j) {
@@ -417,6 +477,10 @@ pub fn ServerState::restore_reload_snapshot(
   server_reload_replace_map_contents(
     self.idle_agent_warned_at_70,
     parsed_idle_agent_warned_at_70,
+  )
+  server_reload_replace_map_contents(
+    self.leaf_tdd_phases,
+    parsed_leaf_tdd_phases,
   )
   // Release any mutex whose holder isn't in the just-restored registry —
   // otherwise a stale lock would block unrelated callers until TTL.

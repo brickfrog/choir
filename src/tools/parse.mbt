@@ -266,6 +266,143 @@ pub fn parse_file_pr_args(args : ToolArgs) -> Result[FilePrArgs, ParseError] {
 }
 
 ///|
+fn parse_tdd_caller_id(args : ToolArgs) -> Result[String, ParseError] {
+  let caller_id = tool_args_get(args, "caller_id").unwrap_or("")
+  if caller_id == "" {
+    Err(ParseError::MissingField(field="caller_id"))
+  } else {
+    Ok(caller_id)
+  }
+}
+
+///|
+fn parse_tdd_command(args : ToolArgs) -> Result[String, ParseError] {
+  let command = match tool_args_get(args, "command") {
+    Some(value) => value.trim().to_owned()
+    None => ""
+  }
+  if command == "" {
+    Err(ParseError::MissingField(field="command"))
+  } else {
+    Ok(command)
+  }
+}
+
+///|
+fn parse_tdd_exit_code(args : ToolArgs) -> Result[Int, ParseError] {
+  let raw = match tool_args_get(args, "exit_code") {
+    Some(value) => value
+    None => return Err(ParseError::MissingField(field="exit_code"))
+  }
+  match tool_args_get_int(args, "exit_code") {
+    Some(value) => Ok(value)
+    None => Err(ParseError::InvalidValue(field="exit_code", value=raw))
+  }
+}
+
+///|
+fn parse_tdd_output(args : ToolArgs) -> String? {
+  match tool_args_get(args, "output") {
+    Some(value) => {
+      let trimmed = value.trim().to_owned()
+      if trimmed == "" {
+        None
+      } else {
+        Some(trimmed)
+      }
+    }
+    None => None
+  }
+}
+
+///|
+fn parse_tdd_intent_args(args : ToolArgs) -> Result[TddIntentArgs, ParseError] {
+  let caller_id = match parse_tdd_caller_id(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let intent = match tool_args_get(args, "intent") {
+    Some(value) => value.trim().to_owned()
+    None => ""
+  }
+  if intent == "" {
+    return Err(ParseError::MissingField(field="intent"))
+  }
+  let test_command = match tool_args_get(args, "test_command") {
+    Some(value) => {
+      let trimmed = value.trim().to_owned()
+      if trimmed == "" {
+        None
+      } else {
+        Some(trimmed)
+      }
+    }
+    None => None
+  }
+  Ok({ caller_id, intent, test_command })
+}
+
+///|
+fn parse_tdd_red_check_args(
+  args : ToolArgs,
+) -> Result[TddRedCheckArgs, ParseError] {
+  let caller_id = match parse_tdd_caller_id(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let command = match parse_tdd_command(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let exit_code = match parse_tdd_exit_code(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  Ok({ caller_id, command, exit_code, output: parse_tdd_output(args) })
+}
+
+///|
+fn parse_tdd_green_next_phase(
+  args : ToolArgs,
+) -> Result[@types.LeafTddPhase?, ParseError] {
+  match tool_args_get(args, "next_phase") {
+    Some(raw) => {
+      let trimmed = raw.trim().to_owned()
+      if trimmed == "" {
+        Ok(None)
+      } else {
+        match @types.LeafTddPhase::try_parse_wire(trimmed) {
+          Ok(phase) => Ok(Some(phase))
+          Err(_) => Err(ParseError::InvalidValue(field="next_phase", value=raw))
+        }
+      }
+    }
+    None => Ok(None)
+  }
+}
+
+///|
+fn parse_tdd_green_check_args(
+  args : ToolArgs,
+) -> Result[TddGreenCheckArgs, ParseError] {
+  let red_args = match parse_tdd_red_check_args(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  let next_phase = match parse_tdd_green_next_phase(args) {
+    Ok(value) => value
+    Err(e) => return Err(e)
+  }
+  Ok({
+    caller_id: red_args.caller_id,
+    command: red_args.command,
+    exit_code: red_args.exit_code,
+    output: red_args.output,
+    next_phase,
+  })
+}
+
+///|
 fn parse_track_pr_args(args : ToolArgs) -> Result[TrackPrArgs, ParseError] {
   let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
   if pr_str == "" {
@@ -1706,6 +1843,14 @@ fn parse_tool_request(
     "fork_session" =>
       parse_session_name_args(args).map(fn(a) { ToolRequest::ForkSession(a) })
     "file_pr" => parse_file_pr_args(args).map(fn(a) { ToolRequest::FilePr(a) })
+    "tdd_intent" =>
+      parse_tdd_intent_args(args).map(fn(a) { ToolRequest::TddIntent(a) })
+    "tdd_red_check" =>
+      parse_tdd_red_check_args(args).map(fn(a) { ToolRequest::TddRedCheck(a) })
+    "tdd_green_check" =>
+      parse_tdd_green_check_args(args).map(fn(a) {
+        ToolRequest::TddGreenCheck(a)
+      })
     "merge_pr" =>
       parse_merge_pr_args(args).map(fn(a) { ToolRequest::MergePr(a) })
     "track_pr" =>

@@ -284,6 +284,51 @@ fn tool_defs() -> Array[CatalogTool] {
       required: [],
     },
     {
+      name: "tdd_intent",
+      description: "Declare the leaf's TDD intent before writing the failing test. file_pr refuses until the leaf reaches Done.",
+      props: [
+        { name: "caller_id", desc: "ID of the calling leaf" },
+        { name: "intent", desc: "Short description of the behavior under test" },
+        {
+          name: "test_command",
+          desc: "Optional test command the leaf expects to use for the red/green checks",
+        },
+      ],
+      required: ["caller_id", "intent"],
+    },
+    {
+      name: "tdd_red_check",
+      description: "Advance Intent to Red only when the reported test command failed.",
+      props: [
+        { name: "caller_id", desc: "ID of the calling leaf" },
+        { name: "command", desc: "Test command that was run" },
+        {
+          name: "exit_code",
+          desc: "Observed test command exit code; Red requires a non-zero value",
+        },
+        { name: "output", desc: "Optional output tail from the test command" },
+      ],
+      required: ["caller_id", "command", "exit_code"],
+    },
+    {
+      name: "tdd_green_check",
+      description: "Advance Red to Green, Green to Done or Refactor, and Refactor to Done only when the reported test command passed.",
+      props: [
+        { name: "caller_id", desc: "ID of the calling leaf" },
+        { name: "command", desc: "Test command that was run" },
+        {
+          name: "exit_code",
+          desc: "Observed test command exit code; Green/Done requires zero",
+        },
+        {
+          name: "next_phase",
+          desc: "Optional target phase: green, refactor, or done. Defaults to green from Red and done from Green/Refactor",
+        },
+        { name: "output", desc: "Optional output tail from the test command" },
+      ],
+      required: ["caller_id", "command", "exit_code"],
+    },
+    {
       name: "merge_pr",
       description: "Merge a pull request by number",
       props: [
