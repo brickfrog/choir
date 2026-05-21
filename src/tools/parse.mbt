@@ -276,19 +276,6 @@ fn parse_tdd_caller_id(args : ToolArgs) -> Result[String, ParseError] {
 }
 
 ///|
-fn parse_tdd_command(args : ToolArgs) -> Result[String, ParseError] {
-  let command = match tool_args_get(args, "command") {
-    Some(value) => value.trim().to_owned()
-    None => ""
-  }
-  if command == "" {
-    Err(ParseError::MissingField(field="command"))
-  } else {
-    Ok(command)
-  }
-}
-
-///|
 fn parse_tdd_reported_exit_code(args : ToolArgs) -> Result[Int, ParseError] {
   let raw = match tool_args_get(args, "exit_code") {
     Some(value) => value
@@ -297,21 +284,6 @@ fn parse_tdd_reported_exit_code(args : ToolArgs) -> Result[Int, ParseError] {
   match tool_args_get_int(args, "exit_code") {
     Some(value) => Ok(value)
     None => Err(ParseError::InvalidValue(field="exit_code", value=raw))
-  }
-}
-
-///|
-fn parse_tdd_output(args : ToolArgs) -> String? {
-  match tool_args_get(args, "output") {
-    Some(value) => {
-      let trimmed = value.trim().to_owned()
-      if trimmed == "" {
-        None
-      } else {
-        Some(trimmed)
-      }
-    }
-    None => None
   }
 }
 
@@ -332,12 +304,12 @@ fn parse_tdd_intent_args(args : ToolArgs) -> Result[TddIntentArgs, ParseError] {
     Some(value) => {
       let trimmed = value.trim().to_owned()
       if trimmed == "" {
-        None
+        return Err(ParseError::MissingField(field="test_command"))
       } else {
-        Some(trimmed)
+        trimmed
       }
     }
-    None => None
+    None => return Err(ParseError::MissingField(field="test_command"))
   }
   Ok({ caller_id, intent, test_command })
 }
@@ -350,15 +322,11 @@ fn parse_tdd_red_check_args(
     Ok(value) => value
     Err(e) => return Err(e)
   }
-  let command = match parse_tdd_command(args) {
-    Ok(value) => value
-    Err(e) => return Err(e)
-  }
   let exit_code = match parse_tdd_reported_exit_code(args) {
     Ok(value) => value
     Err(e) => return Err(e)
   }
-  Ok({ caller_id, command, exit_code, output: parse_tdd_output(args) })
+  Ok({ caller_id, exit_code })
 }
 
 ///|
@@ -395,9 +363,7 @@ fn parse_tdd_green_check_args(
   }
   Ok({
     caller_id: red_args.caller_id,
-    command: red_args.command,
     exit_code: red_args.exit_code,
-    output: red_args.output,
     next_phase,
   })
 }

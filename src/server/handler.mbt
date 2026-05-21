@@ -196,6 +196,10 @@ pub async fn ServerState::handle_with_runner_and_capture(
       tdd_phase_writer=fn(agent_id, phase) {
         self.record_leaf_tdd_phase(agent_id, phase)
       },
+      tdd_state_reader=fn(agent_id) { self.leaf_tdd_state_for_agent(agent_id) },
+      tdd_state_writer=fn(agent_id, state) {
+        self.record_leaf_tdd_state(agent_id, state)
+      },
       list_panes_cache=Some(self.list_panes_cache),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,

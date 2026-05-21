@@ -473,6 +473,7 @@ test "reload snapshot restores registry pending state and mutexes" {
   state.worker_no_handoff_exit_emitted.set("root.worker", true)
   state.idle_agent_warned_at_70.set("root.worker", true)
   state.leaf_tdd_phases.set("root.leaf", @types.LeafTddPhase::Green)
+  state.leaf_tdd_test_commands.set("root.leaf", "moon test --target native")
   ignore(state.mutex_registry.acquire("build", "root", 300L, 10L))
   ignore(state.mutex_registry.acquire("build", "root.leaf", 300L, 11L))
 
@@ -517,6 +518,10 @@ test "reload snapshot restores registry pending state and mutexes" {
       @debug.assert_eq(
         restored.leaf_tdd_phases.get("root.leaf"),
         Some(@types.LeafTddPhase::Green),
+      )
+      @debug.assert_eq(
+        restored.leaf_tdd_test_commands.get("root.leaf"),
+        Some("moon test --target native"),
       )
       let (holder, queue) = restored.mutex_registry.status("build")
       @debug.assert_eq(holder, Some("root"))
