@@ -274,7 +274,7 @@ pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
   }
   let names = [
     "file_pr", "notify_parent", "shutdown", "task_list", "task_get", "task_create",
-    "task_update", "report_usage",
+    "task_update", "report_usage", "tdd_intent", "tdd_red_check", "tdd_green_check",
   ]
   for name in names {
     let link_path = bin_dir + "/" + name

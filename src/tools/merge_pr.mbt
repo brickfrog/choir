@@ -454,6 +454,20 @@ fn merge_pr_verify_results_for_tracked(
 }
 
 ///|
+fn merge_pr_missing_task_contract_error(
+  pr_number : Int,
+  agent_id : String,
+) -> @types.ChoirError {
+  @types.ChoirError::validation_error(
+    "merge_pr: server task contract unavailable for tracked agent '" +
+    agent_id +
+    "' on PR #" +
+    pr_number.to_string() +
+    "; refusing to evaluate merge verify gate as empty",
+  )
+}
+
+///|
 /// `merge_pr` preflight: GitHub changes-requested reviews are checked first,
 /// then the poller snapshot, unresolved review-thread fetch, and
 /// `merge_pr_preflight_block_message` must all pass.
@@ -463,7 +477,7 @@ pub async fn interpret_merge_pr_preflight(
   project_dir : String,
   caller_id : String,
   capture : async (@workspace.Command) -> (Int, String),
-  registry : @registry.AgentRegistry?,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> Result[Unit, @types.ChoirError] {
@@ -484,16 +498,12 @@ pub async fn interpret_merge_pr_preflight(
   )
   let policy_decision = match poller_tracked {
     Some(tracked) => {
-      let task_contract_raw = match registry {
-        Some(reg) =>
-          @workspace.task_contract_for_agent_workspace(
-            project_dir,
-            Some(reg.get(tracked.agent_id).workspace) catch {
-              _ => None
-            },
-            @phase.extract_slug(tracked.agent_id),
+      let task_contract_raw = match task_contract_reader(tracked.agent_id) {
+        Some(contract) => Some(contract)
+        None =>
+          return Err(
+            merge_pr_missing_task_contract_error(pr_number, tracked.agent_id),
           )
-        None => None
       }
       let task_contract = @types.task_contract_with_normalized_verify(
         task_contract_raw, moon_verify_target,
@@ -1378,35 +1388,12 @@ fn merge_pr_agent_branch_for_wave_scan(
 
 ///|
 fn merge_pr_beads_issue_id_for_wave_agent(
-  project_dir : String,
-  registry : @registry.AgentRegistry?,
   agent_id : String,
+  task_contract_reader : (String) -> @types.TaskContract?,
 ) -> String? {
-  match registry {
-    Some(reg) =>
-      match (Some(reg.get(agent_id)) catch { _ => None }) {
-        Some(agent) => @workspace.beads_issue_id_for_agent(project_dir, agent)
-        None =>
-          match
-            @workspace.task_contract_for_agent_workspace(
-              project_dir,
-              None,
-              @phase.extract_slug(agent_id),
-            ) {
-            Some(contract) => contract.beads_issue_id
-            None => None
-          }
-      }
-    None =>
-      match
-        @workspace.task_contract_for_agent_workspace(
-          project_dir,
-          None,
-          @phase.extract_slug(agent_id),
-        ) {
-        Some(contract) => contract.beads_issue_id
-        None => None
-      }
+  match task_contract_reader(agent_id) {
+    Some(contract) => contract.beads_issue_id
+    None => None
   }
 }
 
@@ -1415,6 +1402,7 @@ fn merge_pr_wave_beads_issue_ids_for_feature_branch(
   project_dir : String,
   registry : @registry.AgentRegistry?,
   feature_branch : String,
+  task_contract_reader : (String) -> @types.TaskContract?,
 ) -> Array[String] {
   let ids : Array[String] = []
   if feature_branch == "" {
@@ -1431,7 +1419,7 @@ fn merge_pr_wave_beads_issue_ids_for_feature_branch(
           if agent_branch.has_prefix(branch_prefix) {
             match
               merge_pr_beads_issue_id_for_wave_agent(
-                project_dir, registry, agent_id,
+                agent_id, task_contract_reader,
               ) {
               Some(id) => merge_pr_push_unique_issue_id(ids, id)
               None => ()
@@ -1591,13 +1579,14 @@ async fn merge_pr_close_feature_beads(
   registry : @registry.AgentRegistry?,
   capture : async (@workspace.Command) -> (Int, String),
   append_file : (String, String) -> Bool,
+  task_contract_reader : (String) -> @types.TaskContract?,
 ) -> Unit {
   let issue_ids : Array[String] = []
   match feature_branch {
     Some(branch) =>
       for
         id in merge_pr_wave_beads_issue_ids_for_feature_branch(
-          project_dir, registry, branch,
+          project_dir, registry, branch, task_contract_reader,
         ) {
         merge_pr_push_unique_issue_id(issue_ids, id)
       }
@@ -1941,6 +1930,7 @@ async fn interpret_merge_pr_post_success_side_effects(
   append_file : (String, String) -> Bool,
   path_exists : (String) -> Bool,
   read_lifecycle : (String, String) -> @phase.AgentLifecycle?,
+  task_contract_reader : (String) -> @types.TaskContract?,
 ) -> Unit {
   if parent_branch == "main" {
     let feature_branch = match tracked {
@@ -1958,7 +1948,7 @@ async fn interpret_merge_pr_post_success_side_effects(
     }
     if is_feature_integration {
       merge_pr_close_feature_beads(
-        project_dir, pr_number, feature_branch, registry, capture, append_file,
+        project_dir, pr_number, feature_branch, registry, capture, append_file, task_contract_reader,
       )
       merge_pr_cleanup_feature_success(
         project_dir, feature_branch, runner, append_file,
@@ -2071,6 +2061,13 @@ pub async fn interpret_merge_pr(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
   moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> @types.Response {
   match
@@ -2080,7 +2077,7 @@ pub async fn interpret_merge_pr(
       project_dir,
       merge_args.caller_id,
       capture,
-      registry,
+      task_contract_reader~,
       review_mode=merge_args.review_mode.unwrap_or(
         @types.ReviewMode::SinglePass,
       ),
@@ -2136,6 +2133,7 @@ pub async fn interpret_merge_pr(
                         listen_tcp~,
                         tcp_auth_token~,
                         allow_audit_on_file_pr_caller=true,
+                        record_task_contract~,
                       )
                       match resp.ok_field("agent_id") {
                         Some(agent_id) => Ok(agent_id)
@@ -2215,6 +2213,7 @@ pub async fn interpret_merge_pr(
               append_file,
               path_exists,
               read_lifecycle,
+              task_contract_reader,
             )
           }
           resp

@@ -119,9 +119,15 @@ pub struct ServerState {
     String,
     @aqueue.Queue[@tools.AuditOnFilePrReport],
   ]
+  mutation_gate_reports : Map[
+    String,
+    @aqueue.Queue[@tools.MutationGateWorkerReport],
+  ]
   audit_pr_comment_tasks : @aqueue.Queue[AuditPrCommentTask]
   audit_cycle_counts : Map[String, Int]
   audit_progress : Map[String, AuditProgress]
+  agent_task_contracts : Map[String, @types.TaskContract]
+  leaf_tdd_phases : Map[String, @types.LeafTddPhase]
   worker_no_handoff_prodded_at : Map[String, Int64]
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
@@ -189,9 +195,12 @@ pub fn ServerState::new(
     delivery_failures: {},
     handoff_delivered: {},
     audit_on_file_pr_reports: {},
+    mutation_gate_reports: {},
     audit_pr_comment_tasks: @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded),
     audit_cycle_counts: {},
     audit_progress: {},
+    agent_task_contracts: {},
+    leaf_tdd_phases: {},
     worker_no_handoff_prodded_at: {},
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
@@ -206,6 +215,57 @@ pub fn ServerState::new(
     write_file_atomic: default_write_file_atomic,
     delete_file: @exec.delete_file_sync,
   }
+}
+
+///|
+pub fn ServerState::leaf_tdd_phase_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> @types.LeafTddPhase? {
+  self.leaf_tdd_phases.get(agent_id)
+}
+
+///|
+pub fn ServerState::leaf_tdd_state_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> @types.LeafTddState? {
+  match self.leaf_tdd_phases.get(agent_id) {
+    Some(phase) => Some({ phase, })
+    None => None
+  }
+}
+
+///|
+pub fn ServerState::record_leaf_tdd_state(
+  self : ServerState,
+  agent_id : String,
+  state : @types.LeafTddState,
+) -> Unit {
+  self.leaf_tdd_phases.set(agent_id, state.phase)
+}
+
+///|
+pub fn ServerState::record_agent_task_contract(
+  self : ServerState,
+  agent_id : String,
+  contract : @types.TaskContract?,
+) -> Unit {
+  if self.agent_task_contracts.contains(agent_id) {
+    return
+  }
+  match contract {
+    Some(value) => self.agent_task_contracts.set(agent_id, value)
+    None => ()
+  }
+}
+
+///|
+pub fn ServerState::task_contract_for_agent(
+  self : ServerState,
+  agent_id : String,
+) -> @types.TaskContract? {
+  self.agent_task_contracts.get(agent_id)
 }
 
 ///|
@@ -226,6 +286,21 @@ fn ServerState::audit_on_file_pr_report_queue(
     None => {
       let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
       self.audit_on_file_pr_reports.set(agent_id, queue)
+      queue
+    }
+  }
+}
+
+///|
+fn ServerState::mutation_gate_report_queue(
+  self : ServerState,
+  agent_id : String,
+) -> @aqueue.Queue[@tools.MutationGateWorkerReport] {
+  match self.mutation_gate_reports.get(agent_id) {
+    Some(queue) => queue
+    None => {
+      let queue = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
+      self.mutation_gate_reports.set(agent_id, queue)
       queue
     }
   }
@@ -825,5 +900,57 @@ pub async fn ServerState::wait_for_audit_on_file_pr_report(
   let queue = self.audit_on_file_pr_report_queue(agent_id)
   let report = queue.get()
   self.audit_on_file_pr_reports.remove(agent_id)
+  Some(report)
+}
+
+///|
+pub fn ServerState::prepare_mutation_gate_report(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  ignore(self.mutation_gate_report_queue(agent_id))
+}
+
+///|
+pub fn ServerState::cleanup_mutation_gate_report(
+  self : ServerState,
+  agent_id : String,
+) -> Unit {
+  match self.mutation_gate_reports.get(agent_id) {
+    Some(queue) => {
+      self.mutation_gate_reports.remove(agent_id)
+      ignore(
+        queue.try_put({
+          message: "mutation gate worker cleaned up without report",
+          status: @types.Status::Failure,
+        }) catch {
+          _ => false
+        },
+      )
+    }
+    None => ()
+  }
+}
+
+///|
+pub fn ServerState::capture_mutation_gate_report(
+  self : ServerState,
+  agent_id : String,
+  report : @tools.MutationGateWorkerReport,
+) -> Unit {
+  match self.mutation_gate_reports.get(agent_id) {
+    Some(queue) => ignore(queue.try_put(report) catch { _ => false })
+    None => ()
+  }
+}
+
+///|
+pub async fn ServerState::wait_for_mutation_gate_report(
+  self : ServerState,
+  agent_id : String,
+) -> @tools.MutationGateWorkerReport? {
+  let queue = self.mutation_gate_report_queue(agent_id)
+  let report = queue.get()
+  self.mutation_gate_reports.remove(agent_id)
   Some(report)
 }

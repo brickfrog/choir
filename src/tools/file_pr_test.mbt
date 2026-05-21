@@ -736,6 +736,25 @@ fn file_pr_test_write_verify_config(
 }
 
 ///|
+fn file_pr_test_task_contract(verify : Array[String]) -> @types.TaskContract {
+  { ..@types.TaskContract::empty(), goal: "verify before PR", verify }
+}
+
+///|
+fn file_pr_test_task_contract_reader(
+  contract : @types.TaskContract,
+) -> (String) -> @types.TaskContract? {
+  fn(_agent_id : String) -> @types.TaskContract? { Some(contract) }
+}
+
+///|
+fn file_pr_test_empty_task_contract_reader(
+  _agent_id : String,
+) -> @types.TaskContract? {
+  Some(file_pr_test_task_contract([]))
+}
+
+///|
 fn file_pr_test_registry(file_pr_dir : String) -> @registry.AgentRegistry {
   let reg = @registry.AgentRegistry::new()
   ignore(
@@ -847,6 +866,366 @@ test "audit worker task can scope retry to prior audited delta" {
 }
 
 ///|
+test "mutation gate targets MoonBit source and sibling tests from changed paths" {
+  let targets = mutation_gate_targets_for_changed_paths([
+    "README.md", "src/math.mbt", "src/math_test.mbt", "src/server/handler_test.mbt",
+    "src/server/handler.mbt",
+  ])
+  assert_eq(targets.length(), 2)
+  assert_eq(targets[0].language, MutationLanguage::MoonBit)
+  assert_eq(targets[0].source_path, "src/math.mbt")
+  @debug.assert_eq(targets[0].test_paths, ["src/math_test.mbt"])
+  assert_eq(targets[1].language, MutationLanguage::MoonBit)
+  assert_eq(targets[1].source_path, "src/server/handler.mbt")
+  @debug.assert_eq(targets[1].test_paths, ["src/server/handler_test.mbt"])
+}
+
+///|
+test "mutation gate worker task carries MoonBit adapter instructions and no cost pilot" {
+  let task = build_mutation_gate_task(
+    "/repo",
+    "main.leaf",
+    "abcdef1234567890abcdef1234567890abcdef12",
+    [
+      {
+        language: MutationLanguage::MoonBit,
+        source_path: "src/math.mbt",
+        test_paths: ["src/math_test.mbt"],
+      },
+    ],
+    ["moon test --target native"],
+    0.75,
+  )
+  assert_true(task.contains("MoonBit adapter:"))
+  assert_true(task.contains("src/math.mbt"))
+  assert_true(task.contains("src/math_test.mbt"))
+  assert_true(task.contains("moon test --target native"))
+  assert_true(task.contains(mutation_gate_report_json_marker))
+  assert_true(task.contains("re-fix-tests"))
+  assert_true(task.contains("mutation_kill_rate_min=0.75"))
+  assert_false(task.contains("cost pilot"))
+  assert_false(task.contains("dashboard"))
+}
+
+///|
+async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR" {
+  let project_dir = "/tmp/choir-fpr-mutation-tl-dev-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = file_pr_test_task_contract(["moon test --target native"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
+  let reg = file_pr_test_registry(file_pr_dir)
+  let mut ensure_pr_called = false
+  let prepared_workers : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/leaf-tdd-discipline"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+        return (0, head + "\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      if cmd.program == "sh" {
+        return (0, "native tests passed\n")
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::TL,
+    prepare_mutation_gate_report=fn(agent_id) {
+      prepared_workers.push(agent_id)
+    },
+    wait_for_mutation_gate_report=async fn(_agent_id) {
+      @async.sleep(0)
+      Some({
+        message: mutation_gate_report_json_marker +
+        " {\"kill_rate\":1.0,\"total_mutants\":4,\"killed_mutants\":1,\"surviving_mutants\":[\"src/math.mbt:7 + -> -\"],\"unsupported_languages\":[]}",
+        status: @types.Status::Success,
+      })
+    },
+    mutation_gate_now_ms_fn=fn() { 1779000000L },
+    record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
+    tdd_phase_reader=file_pr_test_tdd_done,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("mutation gate failed"))
+      assert_true(msg.contains("src/math.mbt:7 + -> -"))
+      assert_true(msg.contains("re-fix-tests"))
+    }
+    _ => fail("expected registered Dev mutation gate failure")
+  }
+  assert_false(ensure_pr_called)
+  assert_eq(prepared_workers.length(), 1)
+  assert_true(prepared_workers[0].contains("mutation-gate-abcdef123456-"))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "file_pr_run_mutation_gate computes kill rate from mutant counts" {
+  let project_dir = "/tmp/choir-fpr-mutation-low-" + @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawned_slug = ""
+  let mut waited_worker = ""
+  let mut cleanup_calls = 0
+  let got = file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(worker_args) {
+      @async.sleep(0)
+      spawned_slug = worker_args.slug
+      Ok("main." + worker_args.slug)
+    },
+    async fn(worker_id) {
+      @async.sleep(0)
+      waited_worker = worker_id
+      Some({
+        message: mutation_gate_report_json_marker +
+        " {\"kill_rate\":1.0,\"total_mutants\":4,\"killed_mutants\":2,\"surviving_mutants\":[\"src/math.mbt:12 == -> !=\"],\"unsupported_languages\":[]}",
+        status: @types.Status::Success,
+      })
+    },
+    fn(_) { cleanup_calls = cleanup_calls + 1 },
+    1000,
+    fn() { 123456789L },
+  )
+  match got {
+    Err(e) => {
+      let msg = e.validation_detail_or_message()
+      assert_true(msg.contains("mutation gate failed"))
+      assert_true(msg.contains("mutant-kill-rate 0.5"))
+      assert_true(msg.contains("threshold 0.8"))
+      assert_true(msg.contains("src/math.mbt:12 == -> !="))
+      assert_true(msg.contains("re-fix-tests"))
+    }
+    Ok(_) => fail("expected low mutation kill rate to block file_pr")
+  }
+  assert_eq(cleanup_calls, 0)
+  assert_eq(spawned_slug, mutation_gate_worker_slug(head, 123456789L))
+  assert_eq(waited_worker, "main." + spawned_slug)
+}
+
+///|
+async fn file_pr_test_run_mutation_gate_with_report(
+  report_json : String,
+) -> Result[Unit, @types.ChoirError] {
+  let project_dir = "/tmp/choir-fpr-mutation-invalid-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  file_pr_run_mutation_gate(
+    project_dir,
+    project_dir,
+    @types.Role::Dev,
+    "main.leaf",
+    None,
+    "feature/leaf-tdd-discipline",
+    head,
+    ["moon test --target native"],
+    0.8,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      (0, "")
+    },
+    async fn(worker_args) {
+      @async.sleep(0)
+      Ok("main." + worker_args.slug)
+    },
+    async fn(_worker_id) {
+      @async.sleep(0)
+      Some({
+        message: mutation_gate_report_json_marker + " " + report_json,
+        status: @types.Status::Success,
+      })
+    },
+    fn(_) { () },
+    1000,
+    fn() { 123456789L },
+  )
+}
+
+///|
+async test "file_pr_run_mutation_gate rejects invalid mutant counts" {
+  let negative_total = file_pr_test_run_mutation_gate_with_report(
+    "{\"kill_rate\":1.0,\"total_mutants\":-1,\"killed_mutants\":0,\"surviving_mutants\":[],\"unsupported_languages\":[]}",
+  )
+  match negative_total {
+    Err(e) => {
+      let msg = e.validation_detail_or_message()
+      assert_true(msg.contains("invalid mutant counts"))
+      assert_true(msg.contains("total_mutants=-1"))
+      assert_true(msg.contains("refusing to trust kill rate"))
+    }
+    Ok(_) => fail("expected negative mutant count to block file_pr")
+  }
+  let killed_exceeds_total = file_pr_test_run_mutation_gate_with_report(
+    "{\"kill_rate\":1.0,\"total_mutants\":2,\"killed_mutants\":3,\"surviving_mutants\":[],\"unsupported_languages\":[]}",
+  )
+  match killed_exceeds_total {
+    Err(e) => {
+      let msg = e.validation_detail_or_message()
+      assert_true(msg.contains("invalid mutant counts"))
+      assert_true(msg.contains("killed_mutants=3"))
+      assert_true(msg.contains("must not exceed total_mutants"))
+    }
+    Ok(_) => fail("expected impossible killed-mutant count to block file_pr")
+  }
+}
+
+///|
+async test "interpret_file_pr cleans prepared mutation report on spawn failure" {
+  let project_dir = "/tmp/choir-fpr-mutation-spawn-cleanup-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = file_pr_test_task_contract(["moon test --target native"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
+  let reg = file_pr_test_registry(file_pr_dir)
+  let prepared_workers : Array[String] = []
+  let cleaned_workers : Array[String] = []
+  let mut ensure_pr_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/leaf-tdd-discipline"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      let statuses = []
+      for _ in cmds {
+        statuses.push(1)
+      }
+      statuses
+    },
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+        return (0, head + "\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      if cmd.program == "sh" {
+        return (0, "native tests passed\n")
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::TL,
+    prepare_mutation_gate_report=fn(agent_id) {
+      prepared_workers.push(agent_id)
+    },
+    wait_for_mutation_gate_report=async fn(_agent_id) {
+      @async.sleep(0)
+      fail("spawn failure must not wait for mutation report")
+    },
+    cleanup_mutation_gate_report=fn(agent_id) { cleaned_workers.push(agent_id) },
+    mutation_gate_now_ms_fn=fn() { 1779000000L },
+    record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
+    tdd_phase_reader=file_pr_test_tdd_done,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(msg.contains("command failed with status 1"))
+    @types.Response::Ok(_) => fail("expected mutation worker spawn failure")
+  }
+  assert_false(ensure_pr_called)
+  assert_eq(prepared_workers.length(), 1)
+  assert_eq(cleaned_workers.length(), 1)
+  assert_eq(cleaned_workers[0], prepared_workers[0])
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 test "find_prior_branch_audit_receipt returns none for empty dir" {
   @debug.assert_eq(
     find_prior_branch_audit_receipt("/receipts", "feature/a", fn(_) { [] }),
@@ -939,6 +1318,44 @@ test "audit_on_file_pr_slug_prefix omits timestamp suffix" {
     audit_on_file_pr_slug_prefix(head),
     "audit-on-file-pr-abcdef123456-",
   )
+}
+
+///|
+fn file_pr_test_tdd_done(_agent_id : String) -> @types.LeafTddPhase? {
+  Some(@types.LeafTddPhase::Done)
+}
+
+///|
+test "file_pr TDD guard fails closed for dev leaves" {
+  match
+    file_pr_require_tdd_done(@types.Role::Dev, "main.leaf", None, fn(_) { None }) {
+    Err(e) =>
+      assert_true(e.message().contains("no TDD phase has been recorded"))
+    Ok(_) => fail("expected missing TDD phase to block file_pr")
+  }
+  match
+    file_pr_require_tdd_done(@types.Role::Dev, "main.leaf", None, fn(_) {
+      Some(@types.LeafTddPhase::Done)
+    }) {
+    Ok(_) => ()
+    Err(e) => fail("expected done TDD phase to allow file_pr: " + e.message())
+  }
+  let reg = file_pr_test_registry("/tmp/choir-file-pr-tdd-registry")
+  match
+    file_pr_require_tdd_done(@types.Role::TL, "main.leaf", Some(reg), fn(_) {
+      Some(@types.LeafTddPhase::Green)
+    }) {
+    Err(e) => assert_true(e.message().contains("current phase is green"))
+    Ok(_) => fail("expected tracked Dev leaf to block even for TL caller")
+  }
+  match
+    file_pr_require_tdd_done(@types.Role::TL, "main.tl", Some(reg), fn(_) {
+      None
+    }) {
+    Ok(_) => ()
+    Err(e) =>
+      fail("expected TL file_pr to bypass leaf TDD gate: " + e.message())
+  }
 }
 
 ///|
@@ -1858,6 +2275,8 @@ async test "interpret_file_pr audit wait emits heartbeats and final findings lin
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=60,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -1921,6 +2340,8 @@ async test "interpret_file_pr stops running heartbeats when audit worker is not 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=60,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -1975,6 +2396,8 @@ async test "interpret_file_pr audit heartbeat zero disables running lines only" 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -2022,6 +2445,8 @@ async test "interpret_file_pr audit final line records worker failure elapsed" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -2073,6 +2498,8 @@ async test "interpret_file_pr audit final line records worker shutdown elapsed" 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -2135,6 +2562,8 @@ async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and r
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     prepare_audit_report=fn(worker_id) { prepared_worker = worker_id },
     create_dir_all=fn(path) {
       receipt_dir = path
@@ -2206,6 +2635,8 @@ async test "interpret_file_pr Dev missing audit returns findings error" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     create_dir_all=fn(_) { true },
     write_file_atomic=fn(_, _) {
       receipt_written = true
@@ -2256,6 +2687,8 @@ async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on c
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_max_rounds=1,
     record_audit_cycle_for_agent=fn(agent_id) {
       recorded_agents.push(agent_id)
@@ -2310,6 +2743,8 @@ async test "interpret_file_pr Dev existing receipt skips auto audit" {
     file_pr_auto_audit_capture(head, Some(file_pr_test_audit_receipt(head))),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     wait_for_audit_report=async fn(_) {
       @async.sleep(0)
       waited = true
@@ -2345,6 +2780,8 @@ async test "interpret_file_pr Dev audit outer budget returns timeout" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_budget_ms=1,
     cleanup_audit_report=fn(worker_id) { cleaned_worker = worker_id },
     wait_for_audit_report=async fn(_) {
@@ -2610,6 +3047,7 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
       (0, "")
     },
     mock_ensure_pr_ok,
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -2617,6 +3055,63 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
     _ => fail("expected preflight Err")
   }
   assert_false(verify_capture_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr fails closed when server task contract is missing" {
+  let project_dir = "/tmp/choir-fpr-missing-contract-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(project_dir))
+  let reg = file_pr_test_registry(file_pr_dir)
+  let mut ensure_pr_called = false
+  let mut verify_capture_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/missing-contract"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "sh" {
+        verify_capture_called = true
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    tdd_phase_reader=file_pr_test_tdd_done,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("server task contract unavailable"))
+      assert_true(msg.contains("main.leaf"))
+      assert_true(msg.contains("refusing to skip required verify"))
+    }
+    @types.Response::Ok(_) => fail("expected missing contract to block file_pr")
+  }
+  assert_false(verify_capture_called)
+  assert_false(ensure_pr_called)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -2662,6 +3157,7 @@ async test "interpret_file_pr feature main fails without audit receipt" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -2723,6 +3219,7 @@ async test "interpret_file_pr feature main succeeds with fresh audit receipt" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2772,6 +3269,7 @@ async test "interpret_file_pr leaf to feature does not require audit receipt" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2779,6 +3277,56 @@ async test "interpret_file_pr leaf to feature does not require audit receipt" {
   }
   assert_false(audit_receipt_read)
   assert_true(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr tracked dev leaf refuses before TDD phase is done" {
+  let project_dir = "/tmp/choir-fpr-tdd-gate-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let mut ensure_pr_called = false
+  let reg = file_pr_test_registry(project_dir + "/.choir/worktrees/main.leaf")
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/leaf-tdd-discipline"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    mock_capture_empty,
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::TL,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
+    tdd_phase_reader=fn(_agent_id : String) { Some(@types.LeafTddPhase::Green) },
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("file_pr: leaf TDD phase must be done"))
+      assert_true(msg.contains("current phase is green"))
+    }
+    _ => fail("expected TDD gate failure")
+  }
+  assert_false(ensure_pr_called)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -2825,6 +3373,7 @@ async test "interpret_file_pr feature main fails with stale audit receipt" {
       ensure_pr_called = true
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Err(msg) =>
@@ -2964,7 +3513,8 @@ async test "interpret_file_pr runs required verify with configured moon target a
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["moon check"])
+  let contract = file_pr_test_task_contract(["moon check"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let bodies : Array[String] = []
   let sh_args : Array[Array[String]] = []
@@ -3005,6 +3555,8 @@ async test "interpret_file_pr runs required verify with configured moon target a
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
+    tdd_phase_reader=file_pr_test_tdd_done,
     moon_verify_target=@types.MoonVerifyTarget::WasmGc,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3041,7 +3593,8 @@ async test "dispatch file_pr records verify evidence through injected append_fil
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let appends : Array[(String, String)] = []
   let resp = dispatch(
@@ -3083,6 +3636,8 @@ async test "dispatch file_pr records verify evidence through injected append_fil
       appends.push((path, content))
       true
     },
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match resp {
@@ -3102,7 +3657,8 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
   let project_dir = "/tmp/choir-fpr-verify-block-" + @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let mut ensure_pr_called = false
   let got = interpret_file_pr(
@@ -3141,6 +3697,8 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -3167,6 +3725,94 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
 }
 
 ///|
+async test "interpret_file_pr blocks before PR creation when mutation gate fails" {
+  let project_dir = "/tmp/choir-fpr-mutation-block-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  let contract = file_pr_test_task_contract(["moon test --target native"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
+  let reg = file_pr_test_registry(file_pr_dir)
+  let mut ensure_pr_called = false
+  let prepared_workers : Array[String] = []
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/leaf-tdd-discipline"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+        return (0, head + "\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "main.leaf\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args ==
+        ["diff", "--name-only", "feature/leaf-tdd-discipline..." + head] {
+        return (0, "src/math.mbt\nsrc/math_test.mbt\n")
+      }
+      if cmd.program == "sh" {
+        return (0, "native tests passed\n")
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::Dev,
+    prepare_mutation_gate_report=fn(agent_id) {
+      prepared_workers.push(agent_id)
+    },
+    wait_for_mutation_gate_report=async fn(_agent_id) {
+      @async.sleep(0)
+      Some({
+        message: mutation_gate_report_json_marker +
+        " {\"kill_rate\":1.0,\"total_mutants\":4,\"killed_mutants\":1,\"surviving_mutants\":[\"src/math.mbt:7 + -> -\"],\"unsupported_languages\":[]}",
+        status: @types.Status::Success,
+      })
+    },
+    mutation_gate_now_ms_fn=fn() { 1779000000L },
+    record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
+    tdd_phase_reader=file_pr_test_tdd_done,
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("mutation gate failed"))
+      assert_true(msg.contains("src/math.mbt:7 + -> -"))
+      assert_true(msg.contains("re-fix-tests"))
+    }
+    _ => fail("expected mutation gate failure")
+  }
+  assert_false(ensure_pr_called)
+  assert_eq(prepared_workers.length(), 1)
+  assert_true(prepared_workers[0].contains("mutation-gate-abcdef123456-"))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_file_pr ok response matches full pipeline" {
   let project_dir = "/tmp/choir-fpr-interpret-" + @sys.get_pid().to_string()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
@@ -3189,6 +3835,7 @@ async test "interpret_file_pr ok response matches full pipeline" {
     mock_runner_all_ok,
     mock_capture_empty,
     mock_ensure_pr_ok,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -3230,6 +3877,7 @@ async test "interpret_file_pr tracks global review mode when no local override e
     mock_runner_all_ok,
     mock_capture_empty,
     mock_ensure_pr_ok,
+    task_contract_reader=file_pr_test_empty_task_contract_reader,
   )
   match got {
     @types.Response::Ok(_) => ()

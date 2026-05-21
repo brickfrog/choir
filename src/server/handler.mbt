@@ -192,6 +192,17 @@ pub async fn ServerState::handle_with_runner_and_capture(
       agent_registry=Some(self.registry),
       mutex_registry=Some(self.mutex_registry),
       poller_state=Some(self.poller),
+      task_contract_reader=fn(agent_id) {
+        self.task_contract_for_agent(agent_id)
+      },
+      record_task_contract=fn(agent_id, contract) {
+        self.record_agent_task_contract(agent_id, contract)
+      },
+      tdd_phase_reader=fn(agent_id) { self.leaf_tdd_phase_for_agent(agent_id) },
+      tdd_state_reader=fn(agent_id) { self.leaf_tdd_state_for_agent(agent_id) },
+      tdd_state_writer=fn(agent_id, state) {
+        self.record_leaf_tdd_state(agent_id, state)
+      },
       list_panes_cache=Some(self.list_panes_cache),
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
@@ -199,6 +210,8 @@ pub async fn ServerState::handle_with_runner_and_capture(
       moon_verify_target=self.config.moon_verify_target,
       audit_heartbeat_sec=self.config.audit_heartbeat_sec,
       audit_max_rounds=self.config.audit_max_rounds,
+      prenotify_checks=self.config.prenotify_checks,
+      mutation_kill_rate_min=self.config.mutation_kill_rate_min,
       agy_migration_incomplete=self.config.agy_migration_incomplete,
       goal_deliver=async fn(message, status) {
         self.deliver_goal_judge_message(message, status, runner)
@@ -270,6 +283,19 @@ pub async fn ServerState::handle_with_runner_and_capture(
       },
       cleanup_audit_report=fn(agent_id) {
         self.cleanup_audit_on_file_pr_report(agent_id)
+      },
+      prepare_mutation_gate_report=fn(agent_id) {
+        self.prepare_mutation_gate_report(agent_id)
+      },
+      wait_for_mutation_gate_report=async fn(agent_id) {
+        self.wait_for_mutation_gate_report(agent_id)
+      },
+      capture_mutation_gate_report=async fn(agent_id, report) {
+        self.capture_mutation_gate_report(agent_id, report)
+        @async.sleep(0)
+      },
+      cleanup_mutation_gate_report=fn(agent_id) {
+        self.cleanup_mutation_gate_report(agent_id)
       },
     ) catch {
       e => @tools.tool_response_err_from_caught(e)

@@ -55,6 +55,17 @@ async fn mock_capture_repo_view_fails(
 }
 
 ///|
+async fn mock_capture_prenotify_failure(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "sh" && cmd.args.contains("moon test --target native") {
+    return (7, "src/broken_test.mbt: expected 1 got 2\n")
+  }
+  (0, "")
+}
+
+///|
 fn write_notify_gate_leaf_review_owned(
   project_dir : String,
   agent_id : String,
@@ -107,6 +118,264 @@ fn write_notify_gate_leaf_changes_requested(
     last_updated_unix_sec: 0L,
   }
   ignore(@phase.write_lifecycle(project_dir, lifecycle))
+}
+
+///|
+async test "dispatch NotifyParent rejects success when prenotify check fails" {
+  let project_dir = "/tmp/choir-test-notify-prenotify-fail-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+
+  let agent_id = "leaf-prenotify-fail"
+  let reg = @registry.AgentRegistry::new()
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("parent-prenotify-fail"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Remote("test"),
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let child : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent-prenotify-fail"),
+    workspace: project_dir,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
+  let handoffs : Array[String] = []
+  let req = ToolRequest::NotifyParent({
+    caller_id: agent_id,
+    message: "done",
+    status: @types.Status::Success,
+  })
+  let resp = dispatch(
+    req,
+    project_dir~,
+    registry=Some(reg),
+    caller_role=@types.Role::Dev,
+    capture=mock_capture_prenotify_failure,
+    prenotify_checks=["moon check --target native", "moon test --target native"],
+    record_handoff_delivered=fn(id) { handoffs.push(id) },
+  )
+  match resp {
+    Err(msg) => {
+      assert_true(msg.contains("notify_parent blocked"))
+      assert_true(msg.contains("moon test --target native"))
+      assert_true(msg.contains("src/broken_test.mbt"))
+      assert_true(msg.contains("exit: 7"))
+    }
+    Ok(_) => fail("expected prenotify check failure")
+  }
+  assert_eq(handoffs.length(), 0)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "dispatch NotifyParent runs prenotify checks for TL caller on registered dev" {
+  let project_dir = "/tmp/choir-test-notify-prenotify-tl-dev-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let leaf_workspace = project_dir + "/leaf-worktree"
+  ignore(@sys.create_dir_all(leaf_workspace))
+
+  let agent_id = "leaf-prenotify-tl-dev"
+  let reg = @registry.AgentRegistry::new()
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("parent-prenotify-tl-dev"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Remote("test"),
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let child : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent-prenotify-tl-dev"),
+    workspace: leaf_workspace,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
+  let handoffs : Array[String] = []
+  let workdirs : Array[String] = []
+  let req = ToolRequest::NotifyParent({
+    caller_id: agent_id,
+    message: "done",
+    status: @types.Status::Success,
+  })
+  let resp = dispatch(
+    req,
+    project_dir~,
+    registry=Some(reg),
+    caller_role=@types.Role::TL,
+    capture=fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "sh" {
+        workdirs.push(cmd.workdir.unwrap_or(""))
+        return (7, "src/broken_test.mbt: expected 1 got 2\n")
+      }
+      (0, "")
+    },
+    prenotify_checks=["moon test --target native"],
+    record_handoff_delivered=fn(id) { handoffs.push(id) },
+  )
+  match resp {
+    Err(msg) => {
+      assert_true(msg.contains("notify_parent blocked"))
+      assert_true(msg.contains("moon test --target native"))
+      assert_true(msg.contains("src/broken_test.mbt"))
+    }
+    Ok(_) => fail("expected prenotify check failure")
+  }
+  @debug.assert_eq(workdirs, [leaf_workspace])
+  assert_eq(handoffs.length(), 0)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "dispatch NotifyParent allows success after prenotify checks pass" {
+  let project_dir = "/tmp/choir-test-notify-prenotify-ok-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let leaf_workspace = project_dir + "/leaf-worktree"
+  ignore(@sys.create_dir_all(leaf_workspace))
+
+  let agent_id = "leaf-prenotify-ok"
+  let reg = @registry.AgentRegistry::new()
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("parent-prenotify-ok"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Remote("test"),
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let child : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent-prenotify-ok"),
+    workspace: leaf_workspace,
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
+  let handoffs : Array[String] = []
+  let workdirs : Array[String] = []
+  let req = ToolRequest::NotifyParent({
+    caller_id: agent_id,
+    message: "done",
+    status: @types.Status::Success,
+  })
+  let resp = dispatch(
+    req,
+    project_dir~,
+    registry=Some(reg),
+    caller_role=@types.Role::Dev,
+    capture=fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "sh" {
+        workdirs.push(cmd.workdir.unwrap_or(""))
+      }
+      (0, "ok")
+    },
+    prenotify_checks=["moon check --target native", "moon test --target native"],
+    record_handoff_delivered=fn(id) { handoffs.push(id) },
+  )
+  assert_true(resp.is_ok())
+  @debug.assert_eq(handoffs, [agent_id])
+  @debug.assert_eq(workdirs, [leaf_workspace, leaf_workspace])
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "dispatch NotifyParent rejects success when caller workspace is empty" {
+  let project_dir = "/tmp/choir-test-notify-prenotify-empty-workspace-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+
+  let agent_id = "leaf-prenotify-empty-workspace"
+  let reg = @registry.AgentRegistry::new()
+  let parent : @types.Agent = {
+    agent_id: @types.AgentId("parent-prenotify-empty-workspace"),
+    role: @types.Role::TL,
+    agent_type: @types.AgentType::Gemini,
+    parent: None,
+    workspace: project_dir,
+    branch: "main",
+    terminal_target: None,
+    host: @types.Host::Remote("test"),
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  let child : @types.Agent = {
+    agent_id: @types.AgentId(agent_id),
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Gemini,
+    parent: Some("parent-prenotify-empty-workspace"),
+    workspace: "",
+    branch: agent_id,
+    terminal_target: None,
+    host: @types.Host::Local,
+    state: @types.AgentState::Active,
+    spawn_depth: 0,
+  }
+  ignore(try? reg.insert(child))
+  ignore(try? reg.insert(parent))
+  let captures : Array[String] = []
+  let req = ToolRequest::NotifyParent({
+    caller_id: agent_id,
+    message: "done",
+    status: @types.Status::Success,
+  })
+  let resp = dispatch(
+    req,
+    project_dir~,
+    registry=Some(reg),
+    caller_role=@types.Role::Dev,
+    capture=fn(cmd : @workspace.Command) -> (Int, String) {
+      captures.push(cmd.program)
+      (0, "ok")
+    },
+    prenotify_checks=["moon test --target native"],
+  )
+  match resp {
+    Err(msg) => {
+      assert_true(msg.contains("notify_parent blocked"))
+      assert_true(msg.contains("empty workspace"))
+    }
+    Ok(_) => fail("expected empty workspace to reject notify_parent")
+  }
+  assert_eq(captures.length(), 0)
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

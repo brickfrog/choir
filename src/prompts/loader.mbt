@@ -265,6 +265,12 @@ const LEAF_PROFILE_DEFAULT : String =
   #|
   #|When you are done:
   #|
+  #|TDD phase gate:
+  #|- Before writing the failing test, call `tdd_intent` with a concise intent. The server pins the gate to the task contract's configured verify command.
+  #|- After writing the test, run the configured verify command yourself and call `tdd_red_check` with its non-zero exit code. Red means the verify command failed for the behavior you are about to implement.
+  #|- After the implementation passes, run the configured verify command and call `tdd_green_check` with exit code 0. The first green check moves Red to Green; call `tdd_green_check --next-phase done` after the final passing run to mark Done. If you refactor, use `--next-phase refactor`, refactor, then run the verify command and call `tdd_green_check --next-phase done`.
+  #|- `file_pr` refuses while your TDD phase is not Done. Do not file a PR until the tool sequence has reached TDD phase is Done.
+  #|
   #|1. Commit your changes with a descriptive message.
   #|   - `git add <specific files>`
   #|   - NEVER `git add .`

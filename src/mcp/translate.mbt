@@ -284,6 +284,47 @@ fn tool_defs() -> Array[CatalogTool] {
       required: [],
     },
     {
+      name: "tdd_intent",
+      description: "Declare the leaf's TDD intent before writing the failing test. The server pins red/green checks to the task contract verify command; file_pr refuses until the leaf reaches Done.",
+      props: [
+        { name: "caller_id", desc: "ID of the calling leaf" },
+        { name: "intent", desc: "Short description of the behavior under test" },
+        {
+          name: "test_command",
+          desc: "Optional compatibility field. If supplied, it must match the configured verify command.",
+        },
+      ],
+      required: ["caller_id", "intent"],
+    },
+    {
+      name: "tdd_red_check",
+      description: "Advance Intent to Red only when the configured task-contract verify command fails.",
+      props: [
+        { name: "caller_id", desc: "ID of the calling leaf" },
+        {
+          name: "exit_code",
+          desc: "Observed test exit code; Red requires a non-zero value",
+        },
+      ],
+      required: ["caller_id", "exit_code"],
+    },
+    {
+      name: "tdd_green_check",
+      description: "Advance Red to Green, Green to Done or Refactor, and Refactor to Done only when the configured task-contract verify command passes.",
+      props: [
+        { name: "caller_id", desc: "ID of the calling leaf" },
+        {
+          name: "exit_code",
+          desc: "Observed test exit code; Green/Done requires zero",
+        },
+        {
+          name: "next_phase",
+          desc: "Optional target phase: green, refactor, or done. Defaults to green from Red and done from Green/Refactor",
+        },
+      ],
+      required: ["caller_id", "exit_code"],
+    },
+    {
       name: "merge_pr",
       description: "Merge a pull request by number",
       props: [

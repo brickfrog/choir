@@ -4,6 +4,9 @@ pub(all) enum ToolRequest {
   ForkWave(ForkWaveArgs)
   ForkSession(SessionNameArgs)
   FilePr(FilePrArgs)
+  TddIntent(TddIntentArgs)
+  TddRedCheck(TddRedCheckArgs)
+  TddGreenCheck(TddGreenCheckArgs)
   MergePr(MergePrArgs)
   TrackPr(TrackPrArgs)
   NotifyParent(CallerMessageArgs)
@@ -47,6 +50,9 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     ForkWave(_) => "fork_wave"
     ForkSession(_) => "fork_session"
     FilePr(_) => "file_pr"
+    TddIntent(_) => "tdd_intent"
+    TddRedCheck(_) => "tdd_red_check"
+    TddGreenCheck(_) => "tdd_green_check"
     MergePr(_) => "merge_pr"
     TrackPr(_) => "track_pr"
     NotifyParent(_) => "notify_parent"

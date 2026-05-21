@@ -95,6 +95,7 @@ fn resolve_spawn_worker_parent_id(
   caller_id : String,
   registry : @registry.AgentRegistry?,
   allow_audit_on_file_pr_caller? : Bool = false,
+  allow_mutation_gate_caller? : Bool = false,
 ) -> Result[String, @types.ChoirError] {
   if caller_id == audit_on_file_pr_internal_caller_id {
     if allow_audit_on_file_pr_caller {
@@ -105,6 +106,18 @@ fn resolve_spawn_worker_parent_id(
         "spawn_worker caller_id '" +
         audit_on_file_pr_internal_caller_id +
         "' is reserved for internal file_pr audit workers",
+      ),
+    )
+  }
+  if caller_id == mutation_gate_internal_caller_id {
+    if allow_mutation_gate_caller {
+      return Ok(caller_id)
+    }
+    return Err(
+      @types.ChoirError::validation_error(
+        "spawn_worker caller_id '" +
+        mutation_gate_internal_caller_id +
+        "' is reserved for internal file_pr mutation-gate workers",
       ),
     )
   }
@@ -303,12 +316,20 @@ pub async fn interpret_spawn_worker(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   allow_audit_on_file_pr_caller? : Bool = false,
+  allow_mutation_gate_caller? : Bool = false,
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
 ) -> @types.Response {
   let normalized_args = match
     resolve_spawn_worker_parent_id(
       worker_args.caller_id,
       registry,
       allow_audit_on_file_pr_caller~,
+      allow_mutation_gate_caller~,
     ) {
     Ok(parent_id) => { ..worker_args, caller_id: parent_id }
     Err(e) => return @types.Response::Err(e.message())
@@ -348,6 +369,7 @@ pub async fn interpret_spawn_worker(
         Some(reg) => ignore(reg.upsert(plan.registry_agent))
         None => ()
       }
+      record_task_contract(plan.agent_id, plan.spec.task_contract)
       ignore(mirror_beads_spawn_for_spec(project_dir, plan.spec, capture))
       plan.ok_response
     }

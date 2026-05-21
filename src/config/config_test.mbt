@@ -16,7 +16,9 @@ test "parse_config - full" {
     #|worker_no_handoff_escalate_sec = 45
     #|audit_heartbeat_sec = 30
     #|audit_max_rounds = 2
+    #|mutation_kill_rate_min = 0.9
     #|poller_heartbeat_tick_sec = 10
+    #|prenotify_checks = ["moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native"]
     #|moon_verify_target = "js"
     #|agy_migration_incomplete = true
     #|auto_pull_after_integration = false
@@ -53,7 +55,11 @@ test "parse_config - full" {
   assert_eq(cfg.worker_no_handoff_escalate_sec, 45L)
   assert_eq(cfg.audit_heartbeat_sec, 30)
   assert_eq(cfg.audit_max_rounds, 2)
+  assert_eq(cfg.mutation_kill_rate_min, 0.9)
   assert_eq(cfg.poller_heartbeat_tick_sec, 10)
+  @debug.assert_eq(cfg.prenotify_checks, [
+    "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
+  ])
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Js)
   assert_eq(cfg.agy_migration_incomplete, true)
   assert_eq(cfg.auto_pull_after_integration, false)
@@ -77,7 +83,11 @@ test "parse_config - minimal" {
   assert_eq(cfg.worker_no_handoff_escalate_sec, 120L)
   assert_eq(cfg.audit_heartbeat_sec, 60)
   assert_eq(cfg.audit_max_rounds, 3)
+  assert_eq(cfg.mutation_kill_rate_min, 0.8)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
+  @debug.assert_eq(cfg.prenotify_checks, [
+    "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
+  ])
   assert_eq(cfg.agy_migration_incomplete, false)
   assert_eq(cfg.auto_pull_after_integration, true)
   assert_eq(cfg.pr_policy.require_integration_audit, true)
@@ -90,6 +100,14 @@ test "parse_config - minimal" {
 test "parse_config moon_verify_target override" {
   let cfg = parse_config("moon_verify_target = \"wasm-gc\"").unwrap()
   assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::WasmGc)
+}
+
+///|
+test "parse_config prenotify_checks rejects non-string arrays" {
+  match parse_config("prenotify_checks = [\"moon check --target native\", 7]") {
+    Err(e) => assert_true(e.message().contains("prenotify_checks"))
+    Ok(_) => fail("expected invalid prenotify_checks array to fail")
+  }
 }
 
 ///|
@@ -251,6 +269,33 @@ test "parse_config audit max rounds knob parses default and rejects invalid valu
   match parse_config("audit_max_rounds = 9999999") {
     Err(e) => assert_true(e.message().contains("expected <= "))
     Ok(_) => fail("expected oversized audit max rounds config to fail")
+  }
+}
+
+///|
+test "parse_config mutation kill rate knob parses default and rejects invalid values" {
+  assert_eq(parse_config("").unwrap().mutation_kill_rate_min, 0.8)
+  assert_eq(
+    parse_config("mutation_kill_rate_min = 0.75").unwrap().mutation_kill_rate_min,
+    0.75,
+  )
+  assert_eq(
+    parse_config("mutation_kill_rate_min = 1").unwrap().mutation_kill_rate_min,
+    1.0,
+  )
+  match parse_config("mutation_kill_rate_min = -0.01") {
+    Err(e) =>
+      assert_true(e.message().contains("mutation_kill_rate_min: expected 0..1"))
+    Ok(_) => fail("expected negative mutation kill rate to fail")
+  }
+  match parse_config("mutation_kill_rate_min = 1.01") {
+    Err(e) =>
+      assert_true(e.message().contains("mutation_kill_rate_min: expected 0..1"))
+    Ok(_) => fail("expected >1 mutation kill rate to fail")
+  }
+  match parse_config("mutation_kill_rate_min = nope") {
+    Err(e) => assert_true(e.message().contains("mutation_kill_rate_min"))
+    Ok(_) => fail("expected invalid mutation kill rate to fail")
   }
 }
 

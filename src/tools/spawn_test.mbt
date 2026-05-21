@@ -236,6 +236,7 @@ async test "interpret_spawn_worker registers agent on success" {
     agent_type: @types.AgentType::Claude,
   }
   let reg = @registry.AgentRegistry::new()
+  let captured : Map[String, @types.TaskContract] = {}
   let got = interpret_spawn_worker(
     worker_args,
     "/tmp/p",
@@ -243,6 +244,12 @@ async test "interpret_spawn_worker registers agent on success" {
     mock_runner_all_ok,
     mock_capture_origin_main,
     Some(reg),
+    record_task_contract=fn(agent_id, contract) {
+      match contract {
+        Some(value) => captured.set(agent_id, value)
+        None => captured.remove(agent_id)
+      }
+    },
   )
   match got {
     @types.Response::Ok(fields) => {
@@ -259,6 +266,10 @@ async test "interpret_spawn_worker registers agent on success" {
       assert_eq(a.workspace, "/tmp/p")
     }
   }
+  @debug.assert_eq(
+    captured.get("main.w1"),
+    Some({ ..@types.TaskContract::empty(), goal: "unit" }),
+  )
 }
 
 ///|
@@ -426,6 +437,74 @@ async test "interpret_spawn_worker rejects reserved audit caller externally" {
     _ => fail("expected reserved caller error")
   }
   assert_false(runner_called)
+}
+
+///|
+async test "interpret_spawn_worker rejects reserved mutation gate caller externally" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: mutation_gate_internal_caller_id,
+    slug: "w-mutation-reserved",
+    agent_type: @types.AgentType::Codex,
+  }
+  let mut runner_called = false
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    async fn(cmds) {
+      @async.sleep(0)
+      ignore(cmds)
+      runner_called = true
+      []
+    },
+    mock_capture_origin_main,
+    None,
+  )
+  match got {
+    @types.Response::Err(msg) =>
+      assert_true(
+        msg.contains("reserved for internal file_pr mutation-gate workers"),
+      )
+    _ => fail("expected reserved mutation gate caller error")
+  }
+  assert_false(runner_called)
+}
+
+///|
+async test "interpret_spawn_worker allows internal mutation gate caller when explicitly enabled" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: mutation_gate_internal_caller_id,
+    slug: "w-mutation-internal",
+    agent_type: @types.AgentType::Codex,
+  }
+  let mut runner_called = false
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    async fn(cmds) {
+      @async.sleep(0)
+      ignore(cmds)
+      runner_called = true
+      [0]
+    },
+    mock_capture_origin_main,
+    None,
+    allow_mutation_gate_caller=true,
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+    }
+    @types.Response::Err(msg) =>
+      fail("expected internal mutation gate caller to spawn: " + msg)
+  }
+  assert_true(runner_called)
 }
 
 ///|

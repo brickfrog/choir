@@ -588,6 +588,13 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       state: @types.AgentState::Active,
     }),
   )
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "automerge verified work",
+    verify: ["moon check"],
+    verify_satisfied_by_ci: false,
+  }
+  state.record_agent_task_contract(child_id, Some(contract))
   assert_true(@sys.create_dir_all(child_workspace + "/.choir"))
   let target : @types.LocalTarget = {
     kind: ZellijTab,
@@ -599,12 +606,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     role: @types.Role::Dev,
     agent_type: @types.AgentType::MoonPilot,
     task: "automerge verified work",
-    task_contract: Some({
-      ..@types.TaskContract::empty(),
-      goal: "automerge verified work",
-      verify: ["moon check"],
-      verify_satisfied_by_ci: false,
-    }),
+    task_contract: Some(contract),
     isolation: @types.IsolationMode::Worktree,
     parent_id,
     parent_branch: "main",
@@ -751,7 +753,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
 async test "maybe_trigger_automerge_for_pending_event does not satisfy non-native moon verify with native CI" {
   let pr_number = 91
   let label = "non-native-ci"
-  let (state, _child_id, project_dir) = blocked_gh_automerge_fixture(
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
     label,
     pr_number,
     review_mode=@types.ReviewMode::Iterative,
@@ -764,17 +766,20 @@ async test "maybe_trigger_automerge_for_pending_event does not satisfy non-nativ
     session: "test-session",
     name: label,
   }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "automerge non-native verify",
+    verify: ["moon check"],
+    verify_satisfied_by_ci: true,
+  }
+  state.agent_task_contracts.remove(child_id)
+  state.record_agent_task_contract(child_id, Some(contract))
   let spec : @types.SpawnSpec = {
     slug: label,
     role: @types.Role::Dev,
     agent_type: @types.AgentType::Codex,
     task: "automerge non-native verify",
-    task_contract: Some({
-      ..@types.TaskContract::empty(),
-      goal: "automerge non-native verify",
-      verify: ["moon check"],
-      verify_satisfied_by_ci: true,
-    }),
+    task_contract: Some(contract),
     isolation: @types.IsolationMode::Worktree,
     parent_id: "main.tl-" + label,
     parent_branch: "main",
@@ -980,6 +985,10 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
       spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
+  )
+  state.record_agent_task_contract(
+    child_id,
+    Some({ ..@types.TaskContract::empty(), goal: "fixes pushed leaf" }),
   )
   let parent_child : @phase.ChildLifecycle = {
     child_id,
@@ -1203,6 +1212,62 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
 }
 
 ///|
+async test "maybe_trigger_automerge_for_pending_event blocks missing server contract" {
+  let pr_number = 91
+  let (state, child_id, _) = blocked_gh_automerge_fixture(
+    "missing-contract", pr_number,
+  )
+  state.agent_task_contracts.remove(child_id)
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.args.contains("graphql") {
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::ReviewThreadsResolved(pr_number),
+    tracked,
+    Some(0),
+    runner,
+    capture~,
+  )
+  assert_false(merged)
+  assert_false(merge_seen)
+}
+
+///|
 fn blocked_gh_automerge_fixture(
   label : String,
   pr_number : Int,
@@ -1262,6 +1327,10 @@ fn blocked_gh_automerge_fixture(
       spawn_depth: 0,
       state: @types.AgentState::Active,
     }),
+  )
+  state.record_agent_task_contract(
+    child_id,
+    Some({ ..@types.TaskContract::empty(), goal: "automerge fixture" }),
   )
   let parent_child : @phase.ChildLifecycle = {
     child_id,
@@ -6807,6 +6876,7 @@ fn handler_auto_close_test_state(label : String) -> ServerState {
     ..@types.Config::default(),
     project_dir,
     terminal_session: "test-session",
+    prenotify_checks: [],
   }
   ServerState::new(config, make_hermetic_recovery_provider())
 }
@@ -7162,7 +7232,7 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
   )
   state.check_idle_agents(
     start + 240L,
-    180L,
+    999L,
     async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
     worker_no_handoff_prod_sec=120L,
     worker_no_handoff_escalate_sec=120L,
@@ -7176,6 +7246,78 @@ async test "check_idle_agents emits stalled parent event for merge-ready ReviewO
     1,
   )
   assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent"), 0)
+}
+
+///|
+async test "watchdog kill records merge-ready dev leaf without notify as failure" {
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"merge ready\",\"idle\"]}"
+  let state = worker_handoff_test_state("leaf-watchdog-no-notify", snapshot)
+  let parent_id = "main.parent"
+  let leaf_id = "main.dev-watchdog"
+  ignore(state.register_agent(worker_handoff_parent(parent_id)))
+  ignore(
+    state.register_agent(
+      worker_handoff_dev(leaf_id, parent_id, @types.AgentState::Active),
+    ),
+  )
+  ignore(
+    @phase.write_lifecycle(
+      state.config.project_dir,
+      {
+        agent_id: leaf_id,
+        role: @types.Role::Dev,
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number=79,
+            state=@phase.ReviewOwnership::ApprovedAwaitingMerge,
+          ),
+        ),
+        last_updated_unix_sec: 0L,
+      },
+      now_sec=0L,
+    ),
+  )
+  state.poller.restore({
+    ..parent_poll_test_ready_tracked(79),
+    agent_id: leaf_id,
+    branch: leaf_id,
+    unresolved_thread_ids_fetched: true,
+  })
+  state.watch_pane(leaf_id)
+
+  let sent : Array[String] = []
+  let start = @poller.now_sec()
+  state.check_idle_agents(
+    start,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  state.check_idle_agents(
+    start + 181L,
+    180L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=120L,
+    worker_no_handoff_escalate_sec=120L,
+  )
+  let lifecycle = @phase.read_lifecycle(state.config.project_dir, leaf_id)
+  match lifecycle {
+    Some(
+      {
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(reason~)
+        ),
+        ..,
+      }
+    ) => assert_eq(reason, @phase.FailureReason::WatchdogTimeout)
+    Some(other) =>
+      fail("expected failed lifecycle, got: " + other.to_json().stringify())
+    None => fail("expected lifecycle")
+  }
+  assert_eq(worker_handoff_count_sent(sent, "[WATCHDOG] agent " + leaf_id), 1)
+  assert_eq(state.handoff_delivered.contains(leaf_id), false)
 }
 
 ///|
