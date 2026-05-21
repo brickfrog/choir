@@ -740,6 +740,17 @@ pub async fn merge_pr_require_audit_receipt(
   },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
+  audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _tracked_agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
@@ -807,6 +818,11 @@ pub async fn merge_pr_require_audit_receipt(
       audit_now_ms_fn,
       audit_worker_alive,
       list_audit_workers~,
+      audit_max_rounds~,
+      record_audit_cycle_for_agent~,
+      audit_cycle_count_for_agent~,
+      clear_audit_cycle_for_agent~,
+      notify_audit_started~,
       pr_number~,
     ) {
     Err(e) => {
@@ -2026,6 +2042,17 @@ pub async fn interpret_merge_pr(
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
+  audit_cycle_count_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_agent_id) { () },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
@@ -2121,6 +2148,11 @@ pub async fn interpret_merge_pr(
                     },
                     audit_budget_ms~,
                     audit_heartbeat_sec~,
+                    audit_max_rounds~,
+                    record_audit_cycle_for_agent~,
+                    audit_cycle_count_for_agent~,
+                    clear_audit_cycle_for_agent~,
+                    notify_audit_started~,
                     append_file~,
                     audit_sleep_fn~,
                     audit_now_ms_fn~,

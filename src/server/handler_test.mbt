@@ -476,24 +476,37 @@ test "pr_needs_automerge_sweep_attempt truth table" {
     for gate_ready in [true, false] {
       for automerge_enabled in [true, false] {
         for new_head in [true, false] {
-          let pr = {
-            ..base,
-            review_mode: if iterative {
-              @types.ReviewMode::Iterative
-            } else {
-              @types.ReviewMode::SinglePass
-            },
-            last_sha: "head-sha",
-            last_automerge_attempt_sha: if new_head {
-              "old-sha"
-            } else {
-              "head-sha"
-            },
+          for merged in [true, false] {
+            let pr = {
+              ..base,
+              review_mode: if iterative {
+                @types.ReviewMode::Iterative
+              } else {
+                @types.ReviewMode::SinglePass
+              },
+              last_sha: "head-sha",
+              last_automerge_attempt_sha: if new_head {
+                "old-sha"
+              } else {
+                "head-sha"
+              },
+              merged_at_unix: if merged {
+                Some(1779000000L)
+              } else {
+                None
+              },
+            }
+            assert_eq(
+              pr_needs_automerge_sweep_attempt(
+                pr, gate_ready, automerge_enabled,
+              ),
+              iterative &&
+              gate_ready &&
+              automerge_enabled &&
+              new_head &&
+              !merged,
+            )
           }
-          assert_eq(
-            pr_needs_automerge_sweep_attempt(pr, gate_ready, automerge_enabled),
-            iterative && gate_ready && automerge_enabled && new_head,
-          )
         }
       }
     }
@@ -683,6 +696,84 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       )
     None => fail("expected merged child lifecycle")
   }
+}
+
+///|
+async test "maybe_trigger_automerge_for_pending_event skips already merged PR" {
+  let pr_number = 91
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "already-merged",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({ ..tracked, merged_at_unix: Some(1779000000L) })
+    None => fail("expected tracked PR")
+  }
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut runner_called = false
+  let got = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_called = true
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    capture=async fn(_) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  assert_false(got)
+  assert_false(runner_called)
+}
+
+///|
+async test "maybe_trigger_automerge_for_pending_event skips observed merged PR" {
+  let pr_number = 92
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "observed-merged",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  state.poller.mark_merged_observed(pr_number)
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut runner_called = false
+  let got = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_called = true
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    capture=async fn(_) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  assert_false(got)
+  assert_false(runner_called)
 }
 
 ///|

@@ -170,6 +170,7 @@ pub fn pr_needs_automerge_sweep_attempt(
   automerge_enabled : Bool,
 ) -> Bool {
   pr.review_mode == @types.ReviewMode::Iterative &&
+  pr.merged_at_unix == None &&
   gate_ready &&
   automerge_enabled &&
   pr.last_automerge_attempt_sha != pr.last_sha
@@ -222,6 +223,10 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   review_mode? : @types.ReviewMode? = None,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Bool {
+  if tracked.merged_at_unix != None ||
+    state.poller.merged_observed(tracked.pr_number) {
+    return false
+  }
   let review_mode = review_mode.unwrap_or(tracked.review_mode)
   if !automerge_candidate_event_for_review_mode(event, review_mode) {
     return false
