@@ -19,10 +19,13 @@ test "parse_config - full" {
     #|mutation_kill_rate_min = 0.9
     #|poller_heartbeat_tick_sec = 10
     #|prenotify_checks = ["moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native"]
+    #|moon_verify_target = "js"
     #|agy_migration_incomplete = true
     #|auto_pull_after_integration = false
     #|auto_rebuild_after_pull = true
     #|auto_reload_after_rebuild = true
+    #|[pr_policy]
+    #|require_integration_audit = false
 
   let cfg = parse_config(content).unwrap()
   assert_eq(cfg.default_role, @types.Role::Dev)
@@ -57,8 +60,10 @@ test "parse_config - full" {
   @debug.assert_eq(cfg.prenotify_checks, [
     "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
   ])
+  assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Js)
   assert_eq(cfg.agy_migration_incomplete, true)
   assert_eq(cfg.auto_pull_after_integration, false)
+  assert_eq(cfg.pr_policy.require_integration_audit, false)
   assert_eq(cfg.auto_rebuild_after_pull, true)
   assert_eq(cfg.auto_reload_after_rebuild, true)
 }
@@ -85,8 +90,16 @@ test "parse_config - minimal" {
   ])
   assert_eq(cfg.agy_migration_incomplete, false)
   assert_eq(cfg.auto_pull_after_integration, true)
+  assert_eq(cfg.pr_policy.require_integration_audit, true)
   assert_eq(cfg.auto_rebuild_after_pull, false)
   assert_eq(cfg.auto_reload_after_rebuild, false)
+  assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::Native)
+}
+
+///|
+test "parse_config moon_verify_target override" {
+  let cfg = parse_config("moon_verify_target = \"wasm-gc\"").unwrap()
+  assert_eq(cfg.moon_verify_target, @types.MoonVerifyTarget::WasmGc)
 }
 
 ///|
@@ -362,6 +375,21 @@ test "parse_config review_mode explicit single_pass" {
 test "parse_config review_mode invalid is error" {
   let r = parse_config("review_mode = \"again\"")
   assert_true(r is Err(_))
+}
+
+///|
+test "parse_config pr_policy require_integration_audit invalid is error" {
+  let r = parse_config(
+    (
+      #|[pr_policy]
+      #|require_integration_audit = "maybe"
+    ),
+  )
+  match r {
+    Ok(_) => fail("expected invalid pr_policy.require_integration_audit")
+    Err(e) =>
+      assert_true(e.message().contains("pr_policy.require_integration_audit"))
+  }
 }
 
 ///|

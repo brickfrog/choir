@@ -150,6 +150,20 @@ fn merge_pr_test_audit_receipt(sha : String) -> String {
 }
 
 ///|
+fn merge_pr_test_audit_child(
+  slug : String,
+  summary : @phase.ChildLifecycleSummary,
+) -> @phase.ChildLifecycle {
+  {
+    child_id: "main." + slug,
+    slug,
+    branch: "main." + slug,
+    agent_type: @types.AgentType::Codex,
+    summary,
+  }
+}
+
+///|
 fn merge_pr_test_gate_state_reader(
   enabled_at_unix : Int64,
 ) -> (String) -> String {
@@ -283,6 +297,134 @@ async test "merge_pr_require_audit_receipt auto-audit writes receipt and clears 
 }
 
 ///|
+async test "merge_pr_require_audit_receipt awaits in-flight audit worker without spawning" {
+  let project_dir = "/tmp/choir-mpr-audit-in-flight-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let prefix = audit_on_file_pr_slug_prefix(head)
+  let existing = merge_pr_test_audit_child(
+    prefix + "111",
+    @phase.ChildLifecycleSummary::Working,
+  )
+  let mut receipt_body : String? = None
+  let mut spawn_calls = 0
+  let mut waited_worker = ""
+  let mut write_sha = ""
+  let got = merge_pr_require_audit_receipt(
+    "main",
+    project_dir,
+    project_dir,
+    "main.leaf",
+    94,
+    head,
+    { enabled_at_unix: 100L },
+    200L,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "cat" {
+        match receipt_body {
+          Some(body) => return (0, body)
+          None => return (1, "")
+        }
+      }
+      (0, "")
+    },
+    spawn_audit_worker=async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    wait_for_audit_report=async fn(worker_id) {
+      @async.sleep(0)
+      waited_worker = worker_id
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    write_audit_receipt=fn(args) {
+      write_sha = args.sha
+      receipt_body = Some(merge_pr_test_audit_receipt(args.sha))
+      @types.Response::ok_values({ "status": "ok".to_json() })
+    },
+    audit_heartbeat_sec=0,
+    list_audit_workers=fn() { [existing] },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected in-flight audit gate to clear: " + e.message())
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(waited_worker, existing.child_id)
+  assert_eq(write_sha, head)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "merge_pr_require_audit_receipt refuses fresh spawn after timeout cycles exhaust cap" {
+  let project_dir = "/tmp/choir-mpr-audit-cycle-cap-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawn_calls = 0
+  let mut wait_calls = 0
+  let mut record_calls = 0
+  let got = merge_pr_require_audit_receipt(
+    "main",
+    project_dir,
+    project_dir,
+    "main.leaf",
+    95,
+    head,
+    { enabled_at_unix: 100L },
+    200L,
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "cat" {
+        return (1, "")
+      }
+      (0, "")
+    },
+    spawn_audit_worker=async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    wait_for_audit_report=async fn(_) {
+      @async.sleep(0)
+      wait_calls = wait_calls + 1
+      None
+    },
+    audit_heartbeat_sec=0,
+    audit_max_rounds=2,
+    record_audit_cycle_for_agent=fn(_) {
+      record_calls = record_calls + 1
+      99
+    },
+    audit_cycle_count_for_agent=fn(_) { 2 },
+  )
+  match got {
+    Err(e) => {
+      let msg = e.message()
+      assert_true(
+        msg.contains("policy blocked: audit receipt gate blocked PR #95"),
+      )
+      assert_true(msg.contains("auto-audit failed"))
+      assert_true(msg.contains("audit loop exhausted after 2 cycle(s)"))
+    }
+    Ok(_) => fail("expected exhausted audit loop block")
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(wait_calls, 0)
+  assert_eq(record_calls, 0)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "merge_pr_require_audit_receipt timeout returns audit budget block" {
   let project_dir = "/tmp/choir-mpr-audit-timeout-" + @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
@@ -330,6 +472,109 @@ async test "merge_pr_require_audit_receipt timeout returns audit budget block" {
     Ok(_) => fail("expected audit timeout block")
   }
   assert_eq(cleaned_worker, "audit-worker-timeout")
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr wires audit cycle cap into merge audit gate" {
+  let project_dir = "/tmp/choir-mpr-audit-cap-wiring-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    96,
+    "main.leaf",
+    "feature/audit-gate",
+    "main",
+    "https://github.com/o/r/pull/96",
+    200L,
+    @poller.ReviewState::Approved,
+    "",
+    head,
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let mut runner_called = false
+  let mut record_calls = 0
+  let resp = interpret_merge_pr(
+    {
+      pr_number: 96,
+      parent_branch: "main",
+      caller_id: "main.tl",
+      review_mode: Some(@types.ReviewMode::SinglePass),
+    },
+    project_dir,
+    Some(ps),
+    None,
+    None,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_called = true
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 2 &&
+        cmd.args[0] == "api" &&
+        cmd.args[1].has_suffix("/reviews") {
+        return (0, "[{\"state\":\"APPROVED\"}]")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("repo") {
+        return (0, "{\"owner\":{\"login\":\"o\"},\"name\":\"r\"}")
+      }
+      if cmd.program == "timeout" && cmd.args.contains("graphql") {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+        )
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "git" &&
+        cmd.args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+        return (0, "feature/audit-gate\n")
+      }
+      if cmd.program == "cat" {
+        return (1, "")
+      }
+      (0, "")
+    },
+    fn(_, _) { true },
+    fn(_) { false },
+    read_file=fn(path) {
+      if path.has_suffix("/.choir/audit-gate.json") {
+        "{\"enabled_at_unix\":100}\n"
+      } else {
+        ""
+      }
+    },
+    write_file_atomic=fn(_, _) { false },
+    create_dir_all=fn(_) { true },
+    audit_max_rounds=2,
+    record_audit_cycle_for_agent=fn(_) {
+      record_calls = record_calls + 1
+      99
+    },
+    audit_cycle_count_for_agent=fn(_) { 2 },
+    task_contract_reader=merge_pr_test_empty_contract_reader,
+  )
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(
+        msg.contains("policy blocked: audit receipt gate blocked PR #96"),
+      )
+      assert_true(msg.contains("audit loop exhausted after 2 cycle(s)"))
+    }
+    @types.Response::Ok(_) => fail("expected exhausted audit loop block")
+  }
+  assert_false(runner_called)
+  assert_eq(record_calls, 0)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -861,6 +1106,52 @@ async test "interpret_merge_pr_preflight accepts required verify evidence" {
 }
 
 ///|
+async test "interpret_merge_pr_preflight matches normalized moon verify evidence" {
+  let project_dir = "/tmp/choir-mpf-normalized-verify-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let contract = merge_pr_test_verify_contract(["moon check"])
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon check --target native",
+        ok=true,
+        details=Some("exit: 0"),
+      ),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    task_contract_reader=merge_pr_test_contract_reader(contract),
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) =>
+      fail(
+        "expected normalized verify evidence to satisfy policy: " + e.message(),
+      )
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "interpret_merge_pr_preflight rejects stale verify evidence" {
   let project_dir = "/tmp/choir-mpf-stale-verify-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
@@ -942,6 +1233,50 @@ async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
     Ok(_) => ()
     Err(e) =>
       fail("expected CI evidence to satisfy verify policy: " + e.message())
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_merge_pr_preflight rejects CI-only verify for non-native moon target" {
+  let project_dir = "/tmp/choir-mpf-ci-verify-nonnative-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let contract = merge_pr_test_verify_contract(["moon check"])
+  ignore(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      "main.leaf",
+      1L,
+      @evidence.EvidenceEvent::CiObserved(
+        status=@evidence.EvidenceCiStatus::Success,
+        head_sha=Some("head-x"),
+      ),
+    ),
+  )
+  let ps = @poller.PollerState::new()
+  ps.tracked.set(7, {
+    ..merge_pr_test_tracked(@poller.ReviewState::Approved, "main.leaf"),
+    pr_number: 7,
+    last_sha: "head-x",
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+  })
+  let got = interpret_merge_pr_preflight(
+    7,
+    Some(ps),
+    project_dir,
+    "main.tl",
+    mock_preflight_capture_no_unresolved_threads,
+    task_contract_reader=merge_pr_test_contract_reader(contract),
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
+  )
+  match got {
+    Err(e) => assert_true(e.message().contains("local verify not observed"))
+    Ok(_) => fail("expected non-native target to require local verify evidence")
   }
   ignore(@sys.rm_rf(project_dir))
 }
@@ -1375,6 +1710,27 @@ test "format_tl_pr_recheck_summary treats matching CI evidence as verify when en
   )
   assert_true(stale.contains("Advisory evaluation verdict: needs_human"))
   assert_true(stale.contains("local verify not observed"))
+  let non_native_config = format_tl_pr_recheck_summary(
+    t,
+    project_dir,
+    Some(0),
+    task_contract=Some({ ..contract, verify: ["moon test"] }),
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
+  )
+  assert_true(
+    non_native_config.contains("Advisory evaluation verdict: needs_human"),
+  )
+  assert_true(non_native_config.contains("local verify not observed"))
+  let explicit_non_native = format_tl_pr_recheck_summary(
+    t,
+    project_dir,
+    Some(0),
+    task_contract=Some({ ..contract, verify: ["moon test --target wasm-gc"] }),
+  )
+  assert_true(
+    explicit_non_native.contains("Advisory evaluation verdict: needs_human"),
+  )
+  assert_true(explicit_non_native.contains("local verify not observed"))
   ignore(@sys.rm_rf(project_dir))
 }
 

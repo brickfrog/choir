@@ -379,6 +379,9 @@ fn init_config_toml_content(default_session : String) -> String {
   "auto_rebuild_after_pull = false\n" +
   "auto_reload_after_rebuild = false\n" +
   "\n" +
+  "[pr_policy]\n" +
+  "require_integration_audit = true\n" +
+  "\n" +
   "# [pricing.codex]\n" +
   "# rate_in = 0.0\n" +
   "# rate_out = 0.0\n"

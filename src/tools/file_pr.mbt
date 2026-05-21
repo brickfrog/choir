@@ -938,6 +938,14 @@ pub fn file_pr_audit_receipt_validation(
   if !file_pr_audit_receipt_required(parent_branch) {
     return AuditReceiptValid
   }
+  file_pr_required_audit_receipt_validation(current_head, receipt_body)
+}
+
+///|
+pub fn file_pr_required_audit_receipt_validation(
+  current_head : String,
+  receipt_body : String?,
+) -> FilePrAuditReceiptValidation {
   let short_sha = file_pr_short_sha(current_head)
   let receipt = match receipt_body {
     Some(body) if body.trim() != "" => body
@@ -2154,6 +2162,14 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
       existing.child_id
     }
     None => {
+      let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
+      if audit_max_rounds > 0 && recorded_cycles >= audit_max_rounds {
+        return Err(
+          @types.ChoirError::audit_loop_exhausted(
+            recorded_cycles, 0, receipt_path,
+          ),
+        )
+      }
       cycles = record_audit_cycle_for_agent(tracked_agent_id)
       let pr_number_for_notification : Int? = if pr_number > 0 {
         Some(pr_number)
@@ -2576,11 +2592,15 @@ pub async fn file_pr_run_required_verify(
   verify_commands : Array[String],
   capture : async (@workspace.Command) -> (Int, String),
   record_verify_outcome? : (FilePrVerifyOutcome) -> Unit = fn(_outcome) { () },
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> Result[Array[FilePrVerifyOutcome], @types.ChoirError] {
   let outcomes : Array[FilePrVerifyOutcome] = []
   let head_sha = file_pr_current_head_sha(file_pr_dir, capture)
   for raw in verify_commands {
-    let command = raw.trim().to_owned()
+    let command = @types.moon_verify_normalize_command(
+      raw.trim().to_owned(),
+      moon_verify_target,
+    )
     if command == "" {
       continue
     }
@@ -2948,6 +2968,7 @@ pub async fn interpret_file_pr(
     ()
   },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let branch = file_pr_args.branch
@@ -3055,14 +3076,18 @@ pub async fn interpret_file_pr(
   let verify_outcomes = match task_contract {
     Some(contract) =>
       match
-        file_pr_run_required_verify(file_pr_dir, contract.verify, capture, record_verify_outcome=fn(
-          outcome : FilePrVerifyOutcome,
+        file_pr_run_required_verify(
+          file_pr_dir,
+          contract.verify,
+          capture,
+          record_verify_outcome=fn(outcome : FilePrVerifyOutcome) {
+            record_verify_event(
+              tracked_agent_id,
+              file_pr_verify_evidence_event(file_pr_dir, outcome),
+            )
+          },
+          moon_verify_target~,
         ) {
-          record_verify_event(
-            tracked_agent_id,
-            file_pr_verify_evidence_event(file_pr_dir, outcome),
-          )
-        }) {
         Ok(outcomes) => outcomes
         Err(e) => return @types.Response::Err(e.message())
       }

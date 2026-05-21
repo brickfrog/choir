@@ -276,6 +276,30 @@ pub fn spawn_worker_plan(
 }
 
 ///|
+async fn ensure_spawn_agy_prereqs(
+  agent_type : @types.AgentType,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[Unit, String] {
+  if agent_type != @types.AgentType::Gemini {
+    return Ok(())
+  }
+  ensure_agy_binary_available(capture)
+}
+
+///|
+fn with_spawn_agy_seed_if_needed(
+  agent_type : @types.AgentType,
+  project_dir : String,
+  cmds : Array[@workspace.Command],
+) -> Array[@workspace.Command] {
+  if agent_type == @types.AgentType::Gemini {
+    @workspace.prepend_agy_shared_cache_seed_commands(project_dir, cmds)
+  } else {
+    cmds
+  }
+}
+
+///|
 /// `spawn_worker` host path: resolve default branch, build plan, spawn
 /// commands, registry upsert, success response. Preserves historical
 /// `ToolRequest::SpawnWorker` control flow while keeping `dispatch` as a thin caller.
@@ -320,16 +344,24 @@ pub async fn interpret_spawn_worker(
   let plan = spawn_worker_plan(
     normalized_args, resolved_parent_branch, session, project_dir,
   )
-  let cmds = @workspace.spawn_commands(
-    plan.spec,
+  match ensure_spawn_agy_prereqs(plan.spec.agent_type, capture) {
+    Ok(_) => ()
+    Err(msg) => return @types.Response::Err(msg)
+  }
+  let cmds = with_spawn_agy_seed_if_needed(
+    plan.spec.agent_type,
     project_dir,
-    session,
-    parent_session_id=None,
-    extra_mcp_servers_json~,
-    shell_command~,
-    listen_uds~,
-    listen_tcp~,
-    tcp_auth_token~,
+    @workspace.spawn_commands(
+      plan.spec,
+      project_dir,
+      session,
+      parent_session_id=None,
+      extra_mcp_servers_json~,
+      shell_command~,
+      listen_uds~,
+      listen_tcp~,
+      tcp_auth_token~,
+    ),
   )
   match run_strict(runner, cmds, capture~) {
     Ok(_) => {
@@ -489,20 +521,24 @@ pub async fn interpret_spawn_gemini(
   tcp_auth_token? : String? = None,
 ) -> @types.Response {
   let plan = spawn_gemini_plan(spawn_args)
-  match ensure_agy_binary_available(capture) {
+  match ensure_spawn_agy_prereqs(plan.spec.agent_type, capture) {
     Ok(_) => ()
     Err(msg) => return @types.Response::Err(msg)
   }
-  let cmds = @workspace.spawn_commands(
-    plan.spec,
+  let cmds = with_spawn_agy_seed_if_needed(
+    plan.spec.agent_type,
     project_dir,
-    session,
-    parent_session_id=spawn_args.parent_session_id,
-    extra_mcp_servers_json~,
-    shell_command~,
-    listen_uds~,
-    listen_tcp~,
-    tcp_auth_token~,
+    @workspace.spawn_commands(
+      plan.spec,
+      project_dir,
+      session,
+      parent_session_id=spawn_args.parent_session_id,
+      extra_mcp_servers_json~,
+      shell_command~,
+      listen_uds~,
+      listen_tcp~,
+      tcp_auth_token~,
+    ),
   )
   match run_strict(runner, cmds, capture~) {
     Ok(_) => plan.ok_response

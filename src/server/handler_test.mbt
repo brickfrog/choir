@@ -476,24 +476,37 @@ test "pr_needs_automerge_sweep_attempt truth table" {
     for gate_ready in [true, false] {
       for automerge_enabled in [true, false] {
         for new_head in [true, false] {
-          let pr = {
-            ..base,
-            review_mode: if iterative {
-              @types.ReviewMode::Iterative
-            } else {
-              @types.ReviewMode::SinglePass
-            },
-            last_sha: "head-sha",
-            last_automerge_attempt_sha: if new_head {
-              "old-sha"
-            } else {
-              "head-sha"
-            },
+          for merged in [true, false] {
+            let pr = {
+              ..base,
+              review_mode: if iterative {
+                @types.ReviewMode::Iterative
+              } else {
+                @types.ReviewMode::SinglePass
+              },
+              last_sha: "head-sha",
+              last_automerge_attempt_sha: if new_head {
+                "old-sha"
+              } else {
+                "head-sha"
+              },
+              merged_at_unix: if merged {
+                Some(1779000000L)
+              } else {
+                None
+              },
+            }
+            assert_eq(
+              pr_needs_automerge_sweep_attempt(
+                pr, gate_ready, automerge_enabled,
+              ),
+              iterative &&
+              gate_ready &&
+              automerge_enabled &&
+              new_head &&
+              !merged,
+            )
           }
-          assert_eq(
-            pr_needs_automerge_sweep_attempt(pr, gate_ready, automerge_enabled),
-            iterative && gate_ready && automerge_enabled && new_head,
-          )
         }
       }
     }
@@ -539,6 +552,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
   let child_id = "main.auto-leaf"
+  let child_workspace = project_dir + "/.choir/worktrees/auto-leaf"
   let pr_number = 90
   ignore(
     state.register_agent({
@@ -566,7 +580,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       role: @types.Role::Dev,
       agent_type: @types.AgentType::MoonPilot,
       parent: Some(parent_id),
-      workspace: project_dir + "/.choir/worktrees/auto-leaf",
+      workspace: child_workspace,
       branch: child_id,
       terminal_target: None,
       host: @types.Host::Local,
@@ -574,9 +588,41 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
       state: @types.AgentState::Active,
     }),
   )
-  state.record_agent_task_contract(
-    child_id,
-    Some({ ..@types.TaskContract::empty(), goal: "automerge leaf" }),
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "automerge verified work",
+    verify: ["moon check"],
+    verify_satisfied_by_ci: false,
+  }
+  state.record_agent_task_contract(child_id, Some(contract))
+  assert_true(@sys.create_dir_all(child_workspace + "/.choir"))
+  let target : @types.LocalTarget = {
+    kind: ZellijTab,
+    session: terminal_session,
+    name: "auto-leaf",
+  }
+  let spec : @types.SpawnSpec = {
+    slug: "auto-leaf",
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::MoonPilot,
+    task: "automerge verified work",
+    task_contract: Some(contract),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id,
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  assert_true(
+    @sys.write_file_sync(
+      child_workspace + "/.choir/config.local.toml",
+      @workspace.config_local_content(spec, child_workspace, target),
+    ),
   )
   let parent_child : @phase.ChildLifecycle = {
     child_id,
@@ -621,6 +667,7 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     Some(tracked) =>
       state.poller.restore({
         ..tracked,
+        last_sha: "sha-automerge-normalized",
         last_review_state: @poller.ReviewState::Approved,
         last_ci_rollup: @poller.CiRollupStatus::Success,
         mergeable: @poller.Mergeable::Unknown,
@@ -633,6 +680,19 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
     Some(value) => value
     None => fail("expected tracked PR")
   }
+  assert_true(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      child_id,
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon check --target native",
+        ok=true,
+        details=Some("head: sha-automerge-normalized\nexit: 0"),
+      ),
+    ),
+  )
   let mut merge_seen = false
   let runner = async fn(cmds : Array[@workspace.Command]) {
     @async.sleep(0)
@@ -690,6 +750,183 @@ async test "maybe_trigger_automerge_for_pending_event reuses merge_pr path" {
 }
 
 ///|
+async test "maybe_trigger_automerge_for_pending_event does not satisfy non-native moon verify with native CI" {
+  let pr_number = 91
+  let label = "non-native-ci"
+  let (state, child_id, project_dir) = blocked_gh_automerge_fixture(
+    label,
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
+  )
+  let child_workspace = project_dir + "/.choir/worktrees/" + label
+  assert_true(@sys.create_dir_all(child_workspace + "/.choir"))
+  let target : @types.LocalTarget = {
+    kind: ZellijTab,
+    session: "test-session",
+    name: label,
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "automerge non-native verify",
+    verify: ["moon check"],
+    verify_satisfied_by_ci: true,
+  }
+  state.agent_task_contracts.remove(child_id)
+  state.record_agent_task_contract(child_id, Some(contract))
+  let spec : @types.SpawnSpec = {
+    slug: label,
+    role: @types.Role::Dev,
+    agent_type: @types.AgentType::Codex,
+    task: "automerge non-native verify",
+    task_contract: Some(contract),
+    isolation: @types.IsolationMode::Worktree,
+    parent_id: "main.tl-" + label,
+    parent_branch: "main",
+    reuse_workspace: false,
+    workspace_slug: None,
+    reuse_git_branch: None,
+    spawn_depth: 0,
+    automerge: None,
+    review_mode: None,
+    wave_id: None,
+  }
+  assert_true(
+    @sys.write_file_sync(
+      child_workspace + "/.choir/config.local.toml",
+      @workspace.config_local_content(spec, child_workspace, target),
+    ),
+  )
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut merge_seen = false
+  let runner = async fn(cmds : Array[@workspace.Command]) {
+    @async.sleep(0)
+    let statuses = []
+    for cmd in cmds {
+      if cmd.program == "gh" &&
+        cmd.args.length() >= 3 &&
+        cmd.args[0] == "pr" &&
+        cmd.args[1] == "merge" {
+        merge_seen = true
+      }
+      statuses.push(0)
+    }
+    statuses
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    let repo_view_json = "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}"
+    let review_threads_json = "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}"
+    if cmd.args.contains("repo") && cmd.args.contains("view") {
+      return (0, repo_view_json)
+    }
+    if cmd.args.contains("graphql") {
+      return (0, review_threads_json)
+    }
+    if cmd.program == "gh" &&
+      cmd.args.length() >= 2 &&
+      cmd.args[0] == "api" &&
+      cmd.args[1].has_suffix("/reviews") {
+      return (0, "[{\"state\":\"APPROVED\"}]")
+    }
+    (0, "")
+  }
+  let merged = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    runner,
+    capture~,
+  )
+  assert_false(merged)
+  assert_false(merge_seen)
+  assert_true(state.poller.get(pr_number) != None)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "maybe_trigger_automerge_for_pending_event skips already merged PR" {
+  let pr_number = 92
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "already-merged",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match state.poller.get(pr_number) {
+    Some(tracked) =>
+      state.poller.restore({ ..tracked, merged_at_unix: Some(1779000000L) })
+    None => fail("expected tracked PR")
+  }
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut runner_called = false
+  let got = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_called = true
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    capture=async fn(_) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  assert_false(got)
+  assert_false(runner_called)
+}
+
+///|
+async test "maybe_trigger_automerge_for_pending_event skips observed merged PR" {
+  let pr_number = 92
+  let (state, _, _) = blocked_gh_automerge_fixture(
+    "observed-merged",
+    pr_number,
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  state.poller.mark_merged_observed(pr_number)
+  let tracked = match state.poller.get(pr_number) {
+    Some(value) => value
+    None => fail("expected tracked PR")
+  }
+  let mut runner_called = false
+  let got = maybe_trigger_automerge_for_pending_event(
+    state,
+    @poller.PollEvent::MergeReady(pr_number),
+    tracked,
+    Some(0),
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      runner_called = true
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    },
+    capture=async fn(_) {
+      @async.sleep(0)
+      (0, "")
+    },
+  )
+  assert_false(got)
+  assert_false(runner_called)
+}
+
+///|
 async test "refresh_pr_with pending events fires automerge after fixes and CI clear" {
   let project_dir = "/tmp/choir-automerge-fixes-pushed-" +
     @sys.get_pid().to_string() +
@@ -703,6 +940,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
     terminal_session,
     automerge: true,
     review_mode: @types.ReviewMode::Iterative,
+    pr_policy: { require_integration_audit: false },
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl"
@@ -1035,6 +1273,7 @@ fn blocked_gh_automerge_fixture(
   pr_number : Int,
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
   automerge? : Bool = true,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> (ServerState, String, String) raise {
   let project_dir = "/tmp/choir-blocked-gh-automerge-" +
     label +
@@ -1050,6 +1289,7 @@ fn blocked_gh_automerge_fixture(
     terminal_session,
     automerge,
     review_mode,
+    moon_verify_target,
   }
   let state = ServerState::new(config, make_hermetic_recovery_provider())
   let parent_id = "main.tl-" + label
@@ -2466,6 +2706,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
         ..@types.Config::default(),
         project_dir,
         auto_pull_after_integration: false,
+        pr_policy: { require_integration_audit: false },
       },
       make_hermetic_recovery_provider(),
     )
@@ -2618,6 +2859,85 @@ test "should_auto_pull_parent truth table" {
 }
 
 ///|
+test "detect_unaudited_integration_merge returns typed outcome for each path" {
+  let receipt = "/repo/.choir/audit-receipts/abcdef123456.json"
+  let valid_receipt_exists = fn(path : String) -> Bool { path == receipt }
+  @debug.assert_eq(
+    detect_unaudited_integration_merge(receipt, valid_receipt_exists, true),
+    AuditEnforcementOutcome::Audited,
+  )
+  @debug.assert_eq(
+    detect_unaudited_integration_merge(receipt, fn(_) { false }, true),
+    AuditEnforcementOutcome::UnauditedBlocked,
+  )
+  @debug.assert_eq(
+    detect_unaudited_integration_merge(receipt, fn(_) { false }, false),
+    AuditEnforcementOutcome::UnauditedWarned,
+  )
+  @debug.assert_eq(
+    detect_unaudited_integration_merge("", valid_receipt_exists, true),
+    AuditEnforcementOutcome::NotApplicable,
+  )
+}
+
+///|
+test "valid_merge_audit_receipt_exists checks sha and findings independent of receipt branch" {
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let other_head = "0000000000000000000000000000000000000000"
+  let receipt_path = "/repo/.choir/audit-receipts/abcdef123456.json"
+  let mut body = handler_test_audit_receipt(head, "feature/t92", 0)
+  let exists = fn(path : String) -> Bool { path == receipt_path }
+  let read_paths : Array[String] = []
+  let read = fn(path : String) -> String {
+    read_paths.push(path)
+    body
+  }
+  assert_true(
+    valid_merge_audit_receipt_exists(receipt_path, "trunk", head, exists, read),
+  )
+  body = handler_test_audit_receipt(other_head, "feature/t92", 0)
+  assert_false(
+    valid_merge_audit_receipt_exists(receipt_path, "trunk", head, exists, read),
+  )
+  body = handler_test_audit_receipt(head, "feature/t92", 2)
+  assert_false(
+    valid_merge_audit_receipt_exists(receipt_path, "trunk", head, exists, read),
+  )
+  body = "{not json"
+  assert_false(
+    valid_merge_audit_receipt_exists(receipt_path, "trunk", head, exists, read),
+  )
+  assert_false(
+    valid_merge_audit_receipt_exists(
+      receipt_path,
+      "trunk",
+      head,
+      fn(_) { false },
+      read,
+    ),
+  )
+  for path in read_paths {
+    assert_eq(path, receipt_path)
+  }
+}
+
+///|
+fn handler_test_audit_receipt(
+  sha : String,
+  branch : String,
+  findings_count : Int,
+) -> String {
+  let receipt : @types.AuditReceipt = {
+    sha,
+    branch,
+    audited_at: 1770000000L,
+    agent_id: "main.tl",
+    findings_count,
+  }
+  receipt.to_json().stringify() + "\n"
+}
+
+///|
 async test "untracked merge detection emits synthetic PRMerged and fires hooks" {
   let project_dir = "/tmp/choir-synthetic-untracked-merge-" +
     @sys.get_pid().to_string() +
@@ -2640,7 +2960,7 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
     }
     if cmd.program == "gh" && cmd.args.contains("list") {
       return (
-        0, "[{\"number\":612,\"url\":\"https://example.test/pull/612\",\"headRefName\":\"feature/integration\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        0, "[{\"number\":612,\"url\":\"https://example.test/pull/612\",\"headRefName\":\"feature/integration\",\"headRefOid\":\"abcdef1234567890\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
       )
     }
     (0, "")
@@ -2651,6 +2971,7 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
     @poller.PollEvent::PRMerged(pr) => pr
     _ => fail("expected synthetic PRMerged")
   }
+  assert_eq(pr.last_sha, "abcdef1234567890")
   @debug.assert_eq(pr.merged_at_unix, Some(4102358400L))
   let fired_inputs : Array[@hooks.HookInput] = []
   fire_pr_merged_completion_hooks(
@@ -2681,6 +3002,843 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
   @debug.assert_eq(fired_inputs[0].parent_branch, Some("main"))
   assert_false(state.poller.merged_observed(612))
   assert_false(@sys.path_exists(project_dir + "/.choir/seen_merged_prs.json"))
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "observed untracked merge with missing head sha skips audit receipt lookup" {
+  let project_dir = "/tmp/choir-untracked-missing-head-sha-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      auto_pull_after_integration: false,
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let pr_number = 619
+  state.poller.mark_merged_observed(pr_number)
+  let checked_receipts : Array[String] = []
+  let mut receipt_read_calls = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "git" &&
+      cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "gh" && cmd.args.contains("list") {
+      return (
+        0,
+        "[{\"number\":" +
+        pr_number.to_string() +
+        ",\"url\":\"https://example.test/pull/" +
+        pr_number.to_string() +
+        "\",\"headRefName\":\"feature/missing-head\",\"headRefOid\":\"\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+      )
+    }
+    (0, "")
+  }
+  let events = detect_untracked_pr_merged_events(
+    state,
+    1000L,
+    capture,
+    audit_receipt_exists=fn(path) {
+      checked_receipts.push(path)
+      true
+    },
+    audit_receipt_read=fn(_) {
+      receipt_read_calls = receipt_read_calls + 1
+      "{not json"
+    },
+  )
+  assert_eq(events.length(), 0)
+  assert_eq(checked_receipts.length(), 0)
+  assert_eq(receipt_read_calls, 0)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "PRMerged into default branch without audit receipt fires hooks and stays re-checkable while skipping auto-pull" {
+  let run_case = async fn(
+    label : String,
+    pr_number : Int,
+    default_branch_lookup_ok : Bool,
+    default_branch : String,
+    expected_log_message : String,
+  ) -> Unit {
+    let project_dir = "/tmp/choir-unaudited-integration-merge-" +
+      label +
+      "-" +
+      @sys.get_pid().to_string() +
+      "-" +
+      @env.now().reinterpret_as_int64().to_string()
+    ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+    ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
+    ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
+    ignore(
+      @sys.write_file_sync(project_dir + "/.choir/hooks/wave_complete.sh", ""),
+    )
+    let state = ServerState::new(
+      { ..@types.Config::default(), project_dir, },
+      make_hermetic_recovery_provider(),
+    )
+    let parent_id = "main.t92-parent-" + label
+    let child_id = "main.t92-leaf-" + label
+    ignore(
+      state.register_agent({
+        agent_id: parent_id,
+        role: @types.Role::TL,
+        agent_type: @types.AgentType::Codex,
+        parent: None,
+        workspace: project_dir,
+        branch: default_branch,
+        terminal_target: None,
+        host: @types.Host::Local,
+        spawn_depth: 0,
+        state: @types.AgentState::Active,
+      }),
+    )
+    ignore(
+      state.register_agent({
+        agent_id: child_id,
+        role: @types.Role::Dev,
+        agent_type: @types.AgentType::Codex,
+        parent: Some(parent_id),
+        workspace: project_dir + "/.choir/worktrees/" + child_id,
+        branch: "feature/t92-integration",
+        terminal_target: None,
+        host: @types.Host::Local,
+        spawn_depth: 1,
+        state: @types.AgentState::Active,
+      }),
+    )
+    let head = "abcdef1234567890abcdef1234567890abcdef12"
+    assert_true(state.config.pr_policy.require_integration_audit)
+    let pr = {
+      ..parent_poll_test_ready_tracked(pr_number),
+      agent_id: child_id,
+      branch: "feature/t92-integration",
+      parent_branch: default_branch,
+      pr_url: "https://example.test/pull/" + pr_number.to_string(),
+      last_sha: "old-sha",
+    }
+    state.poller.restore(pr)
+    let mut pull_calls = 0
+    let mut hook_calls = 0
+    let mut receipt_read_calls = 0
+    let mut receipt_available = false
+    let mut gh_list_enabled = true
+    let checked_receipts : Array[String] = []
+    let captured : Array[@moontrace.Event] = []
+    handler_with_moontrace_capture(captured, async fn() {
+      state.process_poller_tick_with_test(
+        1000L,
+        900L,
+        async fn(_pr_number, _skip_issue_comment_fetch) {
+          @async.sleep(0)
+          (
+            true,
+            @poller.ReviewState::Approved,
+            head,
+            @poller.CiRollupStatus::Success,
+            "",
+            false,
+            false,
+            @poller.Mergeable::Unknown,
+            @poller.MergeStateStatus::Unknown,
+            Some(4102358400L),
+          )
+        },
+        runner=async fn(cmds : Array[@workspace.Command]) {
+          @async.sleep(0)
+          cmds.map(fn(_) { 0 })
+        },
+        capture=async fn(cmd : @workspace.Command) {
+          @async.sleep(0)
+          if cmd.program == "git" &&
+            cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+            if !default_branch_lookup_ok {
+              return (1, "")
+            }
+            return (0, "origin/" + default_branch + "\n")
+          }
+          if cmd.program == "gh" && cmd.args.contains("list") {
+            if gh_list_enabled {
+              return (
+                0,
+                "[{\"number\":" +
+                pr_number.to_string() +
+                ",\"url\":\"https://example.test/pull/" +
+                pr_number.to_string() +
+                "\",\"headRefName\":\"feature/t92-integration\",\"headRefOid\":\"" +
+                head +
+                "\",\"baseRefName\":\"" +
+                default_branch +
+                "\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+              )
+            }
+            return (0, "[]")
+          }
+          (0, "")
+        },
+        automerge_capture=async fn(_cmd : @workspace.Command) {
+          @async.sleep(0)
+          (0, "")
+        },
+        hook_capture=async fn(
+          _path : String,
+          _input_json : String,
+          _cwd : String?,
+        ) -> (Int, String) {
+          @async.sleep(0)
+          hook_calls = hook_calls + 1
+          (0, "hook")
+        },
+        git_state_capture=async fn(
+          _workdir : String,
+          _capture : async (@workspace.Command) -> (Int, String),
+        ) -> ParentWorktreeGitState? {
+          @async.sleep(0)
+          Some(parent_worktree_git_state(default_branch, true))
+        },
+        git_pull_runner=async fn(
+          _workdir : String,
+          _capture : async (@workspace.Command) -> (Int, String),
+        ) -> Bool {
+          @async.sleep(0)
+          pull_calls = pull_calls + 1
+          true
+        },
+        audit_receipt_exists=fn(path) {
+          checked_receipts.push(path)
+          receipt_available
+        },
+        audit_receipt_read=fn(_) {
+          receipt_read_calls = receipt_read_calls + 1
+          handler_test_audit_receipt(head, default_branch, 0)
+        },
+      )
+    })
+    assert_eq(pull_calls, 0)
+    assert_eq(hook_calls, 2)
+    assert_eq(receipt_read_calls, 0)
+    assert_eq(checked_receipts.length(), 1)
+    assert_true(checked_receipts[0].contains("abcdef123456"))
+    @debug.assert_eq(checked_receipts, [
+      project_dir + "/.choir/audit-receipts/abcdef123456.json",
+    ])
+    assert_false(
+      @sys.path_exists(project_dir + "/.choir/seen_merged_prs.json") &&
+      @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+        pr_number.to_string(),
+      ),
+    )
+    let mut error_count = 0
+    for event in captured {
+      if event.level == @moontrace.Level::Error_ &&
+        event.message == expected_log_message {
+        error_count = error_count + 1
+      }
+    }
+    if error_count != 1 {
+      fail(
+        label +
+        " expected delivery path to emit exactly one unaudited merge error; events=" +
+        handler_moontrace_event_summary(captured),
+      )
+    }
+    receipt_available = true
+    gh_list_enabled = true
+    state.process_poller_tick_with_test(
+      1100L,
+      900L,
+      async fn(_pr_number, _skip_issue_comment_fetch) {
+        @async.sleep(0)
+        fail("no tracked PR should remain before the re-check tick")
+      },
+      runner=async fn(cmds : Array[@workspace.Command]) {
+        @async.sleep(0)
+        cmds.map(fn(_) { 0 })
+      },
+      capture=async fn(cmd : @workspace.Command) {
+        @async.sleep(0)
+        if cmd.program == "git" &&
+          cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+          return (0, "origin/" + default_branch + "\n")
+        }
+        if cmd.program == "gh" && cmd.args.contains("list") {
+          return (
+            0,
+            "[{\"number\":" +
+            pr_number.to_string() +
+            ",\"url\":\"https://example.test/pull/" +
+            pr_number.to_string() +
+            "\",\"headRefName\":\"feature/t92-integration\",\"headRefOid\":\"" +
+            head +
+            "\",\"baseRefName\":\"" +
+            default_branch +
+            "\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+          )
+        }
+        (0, "")
+      },
+      automerge_capture=async fn(_cmd : @workspace.Command) {
+        @async.sleep(0)
+        (0, "")
+      },
+      hook_capture=async fn(
+        _path : String,
+        _input_json : String,
+        _cwd : String?,
+      ) -> (Int, String) {
+        @async.sleep(0)
+        hook_calls = hook_calls + 1
+        (0, "hook")
+      },
+      git_state_capture=async fn(
+        _workdir : String,
+        _capture : async (@workspace.Command) -> (Int, String),
+      ) -> ParentWorktreeGitState? {
+        @async.sleep(0)
+        Some(parent_worktree_git_state(default_branch, true))
+      },
+      git_pull_runner=async fn(
+        _workdir : String,
+        _capture : async (@workspace.Command) -> (Int, String),
+      ) -> Bool {
+        @async.sleep(0)
+        pull_calls = pull_calls + 1
+        true
+      },
+      audit_receipt_exists=fn(path) {
+        checked_receipts.push(path)
+        receipt_available
+      },
+      audit_receipt_read=fn(_) {
+        receipt_read_calls = receipt_read_calls + 1
+        handler_test_audit_receipt(head, default_branch, 0)
+      },
+    )
+    assert_eq(hook_calls, 4)
+    assert_eq(pull_calls, 1)
+    assert_eq(receipt_read_calls, 2)
+    assert_true(
+      @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+        pr_number.to_string(),
+      ),
+    )
+    ignore(@sys.rm_rf(project_dir))
+  }
+  run_case("missing", 615, true, "main", "[UNAUDITED MERGE INTO MAIN]")
+  run_case(
+    "default-lookup-fails", 616, false, "main", "[UNAUDITED MERGE INTO MAIN]",
+  )
+  run_case("trunk", 618, true, "trunk", "[UNAUDITED MERGE INTO DEFAULT BRANCH]")
+}
+
+///|
+async test "tracked PRMerged with valid receipt is not duplicated by same tick untracked scan" {
+  let project_dir = "/tmp/choir-same-tick-merge-dedup-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  ignore(@sys.create_dir_all(project_dir + "/.choir/hooks"))
+  ignore(@sys.write_file_sync(project_dir + "/.choir/hooks/pr_merged.sh", ""))
+  ignore(
+    @sys.write_file_sync(project_dir + "/.choir/hooks/wave_complete.sh", ""),
+  )
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  let parent_id = "main.t92-parent-same-tick"
+  let child_id = "main.t92-leaf-same-tick"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/" + child_id,
+      branch: "feature/t92-integration",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: "user-0-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/user-0-0",
+      branch: "feature/t92-integration",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 617
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let pr = {
+    ..parent_poll_test_ready_tracked(pr_number),
+    agent_id: child_id,
+    branch: "feature/t92-integration",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/" + pr_number.to_string(),
+    last_sha: "old-sha",
+  }
+  state.poller.restore(pr)
+  let mut hook_calls = 0
+  let mut pull_calls = 0
+  let mut receipt_read_calls = 0
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        head,
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        Some(4102358400L),
+      )
+    },
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (
+          0,
+          "[{\"number\":" +
+          pr_number.to_string() +
+          ",\"url\":\"https://example.test/pull/" +
+          pr_number.to_string() +
+          "\",\"headRefName\":\"feature/t92-integration\",\"headRefOid\":\"" +
+          head +
+          "\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        )
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    hook_capture=async fn(
+      _path : String,
+      _input_json : String,
+      _cwd : String?,
+    ) -> (Int, String) {
+      @async.sleep(0)
+      hook_calls = hook_calls + 1
+      (0, "hook")
+    },
+    git_state_capture=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      Some(parent_worktree_git_state("main", true))
+    },
+    git_pull_runner=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> Bool {
+      @async.sleep(0)
+      pull_calls = pull_calls + 1
+      true
+    },
+    audit_receipt_exists=fn(_) { true },
+    audit_receipt_read=fn(_) {
+      receipt_read_calls = receipt_read_calls + 1
+      handler_test_audit_receipt(head, "main", 0)
+    },
+  )
+  assert_eq(hook_calls, 2)
+  assert_eq(pull_calls, 1)
+  assert_eq(receipt_read_calls, 1)
+  assert_true(
+    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+      pr_number.to_string(),
+    ),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "tracked PRMerged with missing head sha fails closed and stays re-checkable" {
+  let project_dir = "/tmp/choir-tracked-missing-head-sha-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    { ..@types.Config::default(), project_dir, },
+    make_hermetic_recovery_provider(),
+  )
+  let parent_id = "main.t92-parent-missing-head"
+  let child_id = "main.t92-leaf-missing-head"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/" + child_id,
+      branch: "feature/missing-head",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 620
+  let pr = {
+    ..parent_poll_test_ready_tracked(pr_number),
+    agent_id: child_id,
+    branch: "feature/missing-head",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/" + pr_number.to_string(),
+    last_sha: "",
+  }
+  state.poller.restore(pr)
+  let mut pull_calls = 0
+  let mut receipt_read_calls = 0
+  let mut receipt_available = false
+  let checked_receipts : Array[String] = []
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "",
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        Some(4102358400L),
+      )
+    },
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (
+          0,
+          "[{\"number\":" +
+          pr_number.to_string() +
+          ",\"url\":\"https://example.test/pull/" +
+          pr_number.to_string() +
+          "\",\"headRefName\":\"feature/missing-head\",\"headRefOid\":\"\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        )
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    git_state_capture=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      Some(parent_worktree_git_state("main", true))
+    },
+    git_pull_runner=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> Bool {
+      @async.sleep(0)
+      pull_calls = pull_calls + 1
+      true
+    },
+    audit_receipt_exists=fn(path) {
+      checked_receipts.push(path)
+      receipt_available
+    },
+    audit_receipt_read=fn(_) {
+      receipt_read_calls = receipt_read_calls + 1
+      handler_test_audit_receipt(
+        "abcdef1234567890abcdef1234567890abcdef12", "main", 0,
+      )
+    },
+  )
+  assert_eq(checked_receipts.length(), 0)
+  assert_eq(receipt_read_calls, 0)
+  assert_eq(pull_calls, 0)
+  assert_false(
+    @sys.path_exists(project_dir + "/.choir/seen_merged_prs.json") &&
+    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+      pr_number.to_string(),
+    ),
+  )
+  receipt_available = true
+  state.process_poller_tick_with_test(
+    1100L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      fail("no tracked PR should remain before the re-check tick")
+    },
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (
+          0,
+          "[{\"number\":" +
+          pr_number.to_string() +
+          ",\"url\":\"https://example.test/pull/" +
+          pr_number.to_string() +
+          "\",\"headRefName\":\"feature/missing-head\",\"headRefOid\":\"abcdef1234567890abcdef1234567890abcdef12\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        )
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    git_state_capture=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      Some(parent_worktree_git_state("main", true))
+    },
+    git_pull_runner=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> Bool {
+      @async.sleep(0)
+      pull_calls = pull_calls + 1
+      true
+    },
+    audit_receipt_exists=fn(path) {
+      checked_receipts.push(path)
+      receipt_available
+    },
+    audit_receipt_read=fn(_) {
+      receipt_read_calls = receipt_read_calls + 1
+      handler_test_audit_receipt(
+        "abcdef1234567890abcdef1234567890abcdef12", "main", 0,
+      )
+    },
+  )
+  assert_eq(pull_calls, 1)
+  assert_eq(receipt_read_calls, 2)
+  assert_true(
+    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+      pr_number.to_string(),
+    ),
+  )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "tracked PRMerged with missing head sha warns when integration audit is disabled" {
+  let project_dir = "/tmp/choir-missing-head-audit-disabled-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      pr_policy: { require_integration_audit: false },
+    },
+    make_hermetic_recovery_provider(),
+  )
+  let parent_id = "main.t92-parent-audit-disabled"
+  let child_id = "main.t92-leaf-audit-disabled"
+  ignore(
+    state.register_agent({
+      agent_id: parent_id,
+      role: @types.Role::TL,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir,
+      branch: "main",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    state.register_agent({
+      agent_id: child_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/" + child_id,
+      branch: "feature/missing-head-audit-disabled",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 1,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let pr_number = 621
+  let pr = {
+    ..parent_poll_test_ready_tracked(pr_number),
+    agent_id: child_id,
+    branch: "feature/missing-head-audit-disabled",
+    parent_branch: "main",
+    pr_url: "https://example.test/pull/" + pr_number.to_string(),
+    last_sha: "",
+  }
+  state.poller.restore(pr)
+  let mut pull_calls = 0
+  let mut receipt_read_calls = 0
+  let checked_receipts : Array[String] = []
+  state.process_poller_tick_with_test(
+    1000L,
+    900L,
+    async fn(_pr_number, _skip_issue_comment_fetch) {
+      @async.sleep(0)
+      (
+        true,
+        @poller.ReviewState::Approved,
+        "",
+        @poller.CiRollupStatus::Success,
+        "",
+        false,
+        false,
+        @poller.Mergeable::Unknown,
+        @poller.MergeStateStatus::Unknown,
+        Some(4102358400L),
+      )
+    },
+    runner=async fn(cmds : Array[@workspace.Command]) {
+      @async.sleep(0)
+      cmds.map(fn(_) { 0 })
+    },
+    capture=async fn(cmd : @workspace.Command) {
+      @async.sleep(0)
+      if cmd.program == "git" &&
+        cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+        return (0, "origin/main\n")
+      }
+      if cmd.program == "gh" && cmd.args.contains("list") {
+        return (
+          0,
+          "[{\"number\":" +
+          pr_number.to_string() +
+          ",\"url\":\"https://example.test/pull/" +
+          pr_number.to_string() +
+          "\",\"headRefName\":\"feature/missing-head-audit-disabled\",\"headRefOid\":\"\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+        )
+      }
+      (0, "")
+    },
+    automerge_capture=async fn(_cmd : @workspace.Command) {
+      @async.sleep(0)
+      (0, "")
+    },
+    git_state_capture=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> ParentWorktreeGitState? {
+      @async.sleep(0)
+      Some(parent_worktree_git_state("main", true))
+    },
+    git_pull_runner=async fn(
+      _workdir : String,
+      _capture : async (@workspace.Command) -> (Int, String),
+    ) -> Bool {
+      @async.sleep(0)
+      pull_calls = pull_calls + 1
+      true
+    },
+    audit_receipt_exists=fn(path) {
+      checked_receipts.push(path)
+      true
+    },
+    audit_receipt_read=fn(_) {
+      receipt_read_calls = receipt_read_calls + 1
+      "{not json"
+    },
+  )
+  assert_eq(checked_receipts.length(), 0)
+  assert_eq(receipt_read_calls, 0)
+  assert_eq(pull_calls, 1)
+  assert_true(
+    @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+      pr_number.to_string(),
+    ),
+  )
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -3448,6 +4606,45 @@ fn assert_next_action_line(
 }
 
 ///|
+fn parent_poll_event_test_tracked(
+  pr_number : Int,
+  agent_id : String,
+  branch : String,
+  head : String,
+) -> @poller.TrackedPR {
+  {
+    pr_number,
+    agent_id,
+    branch,
+    parent_branch: "main",
+    pr_url: "https://ex/pr/" + pr_number.to_string(),
+    first_seen: 0L,
+    consecutive_failures: 0,
+    backoff_until: 0L,
+    last_review_state: @poller.ReviewState::Approved,
+    last_review_bodies: "",
+    last_sha: head,
+    last_automerge_attempt_sha: "",
+    notified_parent: false,
+    last_ci_rollup: @poller.CiRollupStatus::Success,
+    mergeable: @poller.Mergeable::Unknown,
+    merge_state_status: @poller.MergeStateStatus::Unknown,
+    merged_at_unix: None,
+    last_timeout_at: 0L,
+    copilot_issue_comment_seen: true,
+    orphan_notified: false,
+    orphan_reconciling: false,
+    changes_requested_since: 0L,
+    stall_notified: false,
+    fixes_pushed_at: 0L,
+    review_mode: @types.ReviewMode::Iterative,
+    unresolved_thread_ids: [],
+    unresolved_thread_ids_fetched: false,
+    auto_resolve_outdated_pending: false,
+  }
+}
+
+///|
 test "parent_poll_event_message PR READY stresses not merged" {
   let tracked : @poller.TrackedPR = {
     pr_number: 7,
@@ -3546,6 +4743,97 @@ test "parent_poll_event_message PR READY shows merge gate when snapshot allows" 
     }
     None => fail("expected merge-gate-open PRReady message")
   }
+}
+
+///|
+test "parent_poll_event_message normalizes moon verify before checking evidence" {
+  let project_dir = "/tmp/choir-parent-normalized-verify-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let head = "sha-parent-normalized"
+  let tracked = parent_poll_event_test_tracked(
+    170, "main.dev-normalized", "work/normalized", head,
+  )
+  assert_true(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      tracked.agent_id,
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon check --target native",
+        ok=true,
+        details=Some("head: " + head + "\nexit: 0"),
+      ),
+    ),
+  )
+  match
+    parent_poll_event_message(
+      tracked,
+      project_dir,
+      @poller.PollEvent::MergeReady(170),
+      Some(0),
+      task_contract=Some({
+        ..@types.TaskContract::empty(),
+        verify: ["moon check"],
+        verify_satisfied_by_ci: false,
+      }),
+      moon_verify_target=@types.MoonVerifyTarget::Native,
+    ) {
+    Some((message, _status)) => {
+      assert_true(message.contains("MERGE NOW"))
+      assert_false(message.contains("local verify not observed"))
+    }
+    None => fail("expected MergeReady message")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "parent_poll_event_message uses configured moon target in recheck summary" {
+  let project_dir = "/tmp/choir-parent-summary-moon-target-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let head = "sha-parent-summary-target"
+  let tracked = parent_poll_event_test_tracked(
+    171, "main.dev-summary-target", "work/summary-target", head,
+  )
+  assert_true(
+    @evidence.append_agent_evidence_event(
+      @sys.append_file_sync,
+      project_dir,
+      tracked.agent_id,
+      1L,
+      @evidence.EvidenceEvent::VerifyResultObserved(
+        name="moon check --target wasm-gc",
+        ok=true,
+        details=Some("head: " + head + "\nexit: 0"),
+      ),
+    ),
+  )
+  match
+    parent_poll_event_message(
+      tracked,
+      project_dir,
+      @poller.PollEvent::CILatestHeadRollupSucceeded(171),
+      Some(0),
+      task_contract=Some({
+        ..@types.TaskContract::empty(),
+        verify: ["moon check"],
+        verify_satisfied_by_ci: false,
+      }),
+      moon_verify_target=@types.MoonVerifyTarget::WasmGc,
+    ) {
+    Some((message, _status)) => {
+      assert_true(message.contains("Advisory evaluation verdict: ready"))
+      assert_true(message.contains("Merge policy decision: merge_now"))
+      assert_false(message.contains("local verify not observed"))
+    }
+    None => fail("expected CI latest-head message")
+  }
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|
@@ -4293,6 +5581,704 @@ async test "disconnect PR recovery uses inline review mode when tracking recover
       assert_eq(tracked.review_mode, @types.ReviewMode::SinglePass)
     }
     None => fail("expected recovered PR to be tracked")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "transport disconnect with live pane re-registers as active lifecycle" {
+  let project_dir = "/tmp/choir-phantom-disconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.phantom-leaf"
+  let pane_name = "phantom-leaf-pane"
+  let provider = disconnect_confirmation_provider([], [pane_name])
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    provider,
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/phantom-leaf",
+      branch: agent_id,
+      terminal_target: Some(handler_auto_close_target(pane_name)),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  state.schedule_disconnect(agent_id, 0L)
+  let sent : Array[String] = []
+  state.process_pending_disconnects_with_runner(91L, 60L, runner=async fn(
+    cmds,
+  ) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+  @debug.assert_eq(state.registry.is_alive(agent_id), Some(true))
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some({ process: @phase.ProcessState::Disconnected(..), .. }) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected soft-disconnected lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+
+  let register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": parent_id,
+        "workspace": project_dir + "/.choir/worktrees/phantom-leaf",
+        "branch": agent_id,
+        "terminal_target": handler_auto_close_target(pane_name).to_string(),
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+  )
+  assert_true(register_resp.is_ok())
+
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Connected,
+        workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected connected working lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "transport disconnect preserves suspended registry state" {
+  let project_dir = "/tmp/choir-suspended-transport-disconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.suspended-leaf"
+  let pane_name = "suspended-leaf-pane"
+  let provider = disconnect_confirmation_provider([], [pane_name])
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    provider,
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/suspended-leaf",
+      branch: agent_id,
+      terminal_target: Some(handler_auto_close_target(pane_name)),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let suspend_result = try? state.registry.set_state(
+    agent_id,
+    @types.AgentState::Suspended,
+  )
+  assert_true(suspend_result is Ok(_))
+
+  state.schedule_disconnect(agent_id, 0L)
+  let sent : Array[String] = []
+  state.process_pending_disconnects_with_runner(91L, 60L, runner=async fn(
+    cmds,
+  ) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
+  @debug.assert_eq(state.registry.is_alive(agent_id), Some(true))
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some({ process: @phase.ProcessState::Connected, .. }) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected suspended transport disconnect to keep connected lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "register reconnect preserves suspended registry state" {
+  let project_dir = "/tmp/choir-suspended-register-reconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.suspended-reconnect-leaf"
+  let pane_name = "suspended-reconnect-leaf-pane"
+  let provider = disconnect_confirmation_provider([], [pane_name])
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    provider,
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/suspended-reconnect-leaf",
+      branch: agent_id,
+      terminal_target: Some(handler_auto_close_target(pane_name)),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let suspend_result = try? state.registry.set_state(
+    agent_id,
+    @types.AgentState::Suspended,
+  )
+  assert_true(suspend_result is Ok(_))
+
+  let sent : Array[String] = []
+  let register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": parent_id,
+        "workspace": project_dir + "/.choir/worktrees/suspended-reconnect-leaf",
+        "branch": agent_id,
+        "terminal_target": handler_auto_close_target(pane_name).to_string(),
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+  )
+  assert_true(register_resp.is_ok())
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some({ process: @phase.ProcessState::Connected, .. }) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected reconnect to keep connected lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "resume RPC clears suspended state after reconnect preservation" {
+  let project_dir = "/tmp/choir-suspended-resume-clears-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.resume-clears-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/resume-clears-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let suspend_result = try? state.registry.set_state(
+    agent_id,
+    @types.AgentState::Suspended,
+  )
+  assert_true(suspend_result is Ok(_))
+
+  let register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": parent_id,
+        "workspace": project_dir + "/.choir/worktrees/resume-clears-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(register_resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
+
+  let resume_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "resume",
+      role: @types.Role::TL,
+      name: "resume",
+      args: @types.RequestArgs::new({ "agent_id": agent_id }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(resume_resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
+
+  let post_resume_register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": parent_id,
+        "workspace": project_dir + "/.choir/worktrees/resume-clears-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(post_resume_register_resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "terminal unexpected disconnect failure stays failed on register" {
+  let project_dir = "/tmp/choir-terminal-failed-register-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let agent_id = "main.dead-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir + "/.choir/worktrees/dead-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect,
+      ),
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect,
+        ),
+      ),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+
+  let resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "workspace": project_dir + "/.choir/worktrees/dead-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect
+        ),
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(
+            reason=@phase.FailureReason::UnexpectedDisconnect
+          )
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected terminal failed lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "failed lifecycle register does not restore suspended registry state" {
+  let project_dir = "/tmp/choir-failed-lifecycle-suspended-register-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let agent_id = "main.failed-suspended-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir + "/.choir/worktrees/failed-suspended-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let suspend_result = try? state.registry.set_state(
+    agent_id,
+    @types.AgentState::Suspended,
+  )
+  assert_true(suspend_result is Ok(_))
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect,
+      ),
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect,
+        ),
+      ),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+
+  let resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "workspace": project_dir + "/.choir/worktrees/failed-suspended-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect
+        ),
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(
+            reason=@phase.FailureReason::UnexpectedDisconnect
+          )
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected failed lifecycle to remain terminal, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "soft transport disconnect still escalates when idle watchdog expires" {
+  let project_dir = "/tmp/choir-phantom-watchdog-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.watchdog-leaf"
+  let pane_name = "watchdog-leaf-pane"
+  let snapshot = "{\"event\":\"pane_update\",\"viewport\":[\"still thinking\"]}"
+  let host : @runtime.PaneWatchHost = {
+    spawn_zellij_pane_viewport_subscribe: fn(_session, _name, _path) { 101 },
+    kill_pid_best_effort: fn(_pid) {  },
+    delete_file_sync: fn(_path) {  },
+    read_file: fn(_path) { snapshot },
+  }
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    disconnect_confirmation_provider([], [pane_name]),
+  ).with_pane_watcher(@runtime.PaneWatcher::with_host(host))
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/watchdog-leaf",
+      branch: agent_id,
+      terminal_target: Some(handler_auto_close_target(pane_name)),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  state.watch_pane(agent_id)
+  let start = @poller.now_sec()
+  let sent : Array[String] = []
+  state.check_idle_agents(
+    start,
+    100L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=0L,
+    worker_no_handoff_escalate_sec=0L,
+  )
+  state.schedule_disconnect(agent_id, start)
+  state.process_pending_disconnects_with_runner(start + 61L, 60L, runner=async fn(
+    cmds,
+  ) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some({ process: @phase.ProcessState::Disconnected(..), .. }) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected soft-disconnected lifecycle before watchdog, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+
+  state.check_idle_agents(
+    start + 101L,
+    100L,
+    async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+    worker_no_handoff_prod_sec=0L,
+    worker_no_handoff_escalate_sec=0L,
+  )
+
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
+  @debug.assert_eq(state.registry.is_alive(agent_id), Some(false))
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::WatchdogTimeout
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected watchdog failure lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "pending transport disconnect preserves completing finalization" {
+  let project_dir = "/tmp/choir-finalizing-disconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let agent_id = "main.finalizing-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir + "/.choir/worktrees/finalizing-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Completing,
+    }),
+  )
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Finalizing(
+        reason=@phase.FinalizeReason::Merged,
+      ),
+      workflow: @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+
+  state.schedule_disconnect(agent_id, 0L)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Completing)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Finalizing(
+          reason=@phase.FinalizeReason::Merged
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected finalizing lifecycle after transport drop, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+
+  state.process_pending_disconnects_with_runner(61L, 60L, runner=async fn(
+    _cmds,
+  ) {
+    @async.sleep(0)
+    []
+  })
+
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Done)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Finalized(
+          reason=@phase.FinalizeReason::Merged
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected finalized merged lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
   }
   ignore(@sys.rm_rf(project_dir))
 }

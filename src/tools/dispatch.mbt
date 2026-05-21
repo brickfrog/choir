@@ -814,6 +814,7 @@ pub async fn dispatch(
   },
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
@@ -981,11 +982,16 @@ pub async fn dispatch(
               }
             None => register_args.agent_type
           }
+          let state = match prior_agent {
+            Some({ state: @types.AgentState::Suspended, .. }) =>
+              @types.AgentState::Suspended
+            _ => @types.AgentState::Active
+          }
           let agent = @types.Agent::{
             agent_id: register_args.agent_id,
             role,
             agent_type,
-            state: @types.AgentState::Active,
+            state,
             parent,
             terminal_target,
             host: @types.Host::Local,
@@ -1211,6 +1217,7 @@ pub async fn dispatch(
         task_contract_reader~,
         record_task_contract~,
         tdd_phase_reader~,
+        moon_verify_target~,
         sleep_fn~,
       )
     ToolRequest::TddIntent(args) =>
@@ -1257,6 +1264,11 @@ pub async fn dispatch(
         wait_for_audit_report~,
         cleanup_audit_report~,
         audit_heartbeat_sec~,
+        audit_max_rounds~,
+        record_audit_cycle_for_agent~,
+        audit_cycle_count_for_agent~,
+        clear_audit_cycle_for_agent~,
+        notify_audit_started~,
         audit_worker_alive~,
         session~,
         extra_mcp_servers_json~,
@@ -1266,6 +1278,7 @@ pub async fn dispatch(
         tcp_auth_token~,
         task_contract_reader~,
         record_task_contract~,
+        moon_verify_target~,
       )
       if resp.is_ok() {
         try_dispatch_pending_waves(
@@ -1901,6 +1914,7 @@ pub async fn handle_request(
   plugins_json? : String? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
@@ -2069,6 +2083,7 @@ pub async fn handle_request(
                   on_resolve_review_thread~,
                   pr_review~,
                   global_review_mode~,
+                  moon_verify_target~,
                   audit_heartbeat_sec~,
                   audit_max_rounds~,
                   prenotify_checks~,
@@ -2236,6 +2251,7 @@ pub async fn dispatch_call(
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
   prenotify_checks? : Array[String] = @types.Config::default().prenotify_checks,
@@ -2342,6 +2358,7 @@ pub async fn dispatch_call(
                   caller_role=call.role,
                   pr_review~,
                   global_review_mode~,
+                  moon_verify_target~,
                   audit_heartbeat_sec~,
                   audit_max_rounds~,
                   prenotify_checks~,

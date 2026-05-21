@@ -207,6 +207,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       plugins_json=self.config.plugins_json,
       pr_review=self.config.pr_review,
       global_review_mode=self.config.review_mode,
+      moon_verify_target=self.config.moon_verify_target,
       audit_heartbeat_sec=self.config.audit_heartbeat_sec,
       audit_max_rounds=self.config.audit_max_rounds,
       prenotify_checks=self.config.prenotify_checks,
@@ -298,6 +299,19 @@ pub async fn ServerState::handle_with_runner_and_capture(
       },
     ) catch {
       e => @tools.tool_response_err_from_caught(e)
+    }
+  }
+  if effective_req.req_method == "register" &&
+    effective_req.name == "register" &&
+    resp.is_ok() {
+    match request_agent_id(effective_req) {
+      Some(agent_id) =>
+        try self.registry.get(agent_id) catch {
+          _ => ()
+        } noraise {
+          agent => self.register_agent(agent)
+        }
+      None => ()
     }
   }
 

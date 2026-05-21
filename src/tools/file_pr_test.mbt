@@ -1696,6 +1696,62 @@ async test "file_pr_auto_audit records one cycle for each fresh audit spawn" {
 }
 
 ///|
+async test "file_pr_auto_audit refuses fresh spawn after timeout cycles exhaust cap" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-timeout-cap-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawn_calls = 0
+  let mut wait_calls = 0
+  let mut record_calls = 0
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, None),
+    async fn(_) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Err(@types.ChoirError::validation_error("unexpected spawn"))
+    },
+    async fn(_) {
+      @async.sleep(0)
+      wait_calls = wait_calls + 1
+      None
+    },
+    fn(_) {  },
+    file_pr_test_write_audit_receipt_ok,
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1779000000L },
+    fn(_) { true },
+    list_audit_workers=fn() { [] },
+    audit_max_rounds=3,
+    record_audit_cycle_for_agent=fn(_) {
+      record_calls = record_calls + 1
+      99
+    },
+    audit_cycle_count_for_agent=fn(_) { 3 },
+  )
+  match got {
+    Err(e) => {
+      assert_eq(e.to_wire_string(), "audit_loop_exhausted")
+      assert_true(e.message().contains("after 3 cycle(s)"))
+      assert_true(
+        e.message().contains(".choir/audit-receipts/abcdef123456.json"),
+      )
+    }
+    Ok(_) => fail("expected exhausted audit loop")
+  }
+  assert_eq(spawn_calls, 0)
+  assert_eq(wait_calls, 0)
+  assert_eq(record_calls, 0)
+}
+
+///|
 async test "file_pr_auto_audit spawns fresh worker with now_ms suffix" {
   let project_dir = "/tmp/choir-fpr-auto-audit-fresh-spawn-" +
     @sys.get_pid().to_string()
@@ -2671,7 +2727,7 @@ async test "file_pr_run_required_verify appends trusted evidence" {
   let mut seen_workdir = ""
   let got = file_pr_run_required_verify(
     "/tmp/leaf-wt",
-    ["moon test --target native"],
+    ["moon test"],
     fn(cmd : @workspace.Command) -> (Int, String) {
       seen_workdir = cmd.workdir.unwrap_or("")
       if cmd.program == "git" {
@@ -3286,15 +3342,16 @@ test "file_pr_validate_audit_receipt rejects legacy receipts as malformed" {
 }
 
 ///|
-async test "interpret_file_pr runs required verify and injects generated PR body" {
+async test "interpret_file_pr runs required verify with configured moon target and injects generated PR body" {
   let project_dir = "/tmp/choir-fpr-verify-pr-body-" +
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["moon check"])
   file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let bodies : Array[String] = []
+  let sh_args : Array[Array[String]] = []
   let got = interpret_file_pr(
     {
       branch: "main.leaf",
@@ -3315,7 +3372,8 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       if cmd.program == "git" {
         (0, "sha-pr-body\n")
       } else if cmd.program == "sh" {
-        (0, "typecheck ok\n")
+        sh_args.push(cmd.args)
+        (0, "moon check ok\n")
       } else {
         (0, "")
       }
@@ -3333,6 +3391,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
     record_verify_event=file_pr_test_record_verify_event(project_dir),
     task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
+    moon_verify_target=@types.MoonVerifyTarget::WasmGc,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -3340,20 +3399,22 @@ async test "interpret_file_pr runs required verify and injects generated PR body
     @types.Response::Err(msg) => fail("expected file_pr success: " + msg)
   }
   assert_eq(bodies.length(), 1)
+  assert_eq(sh_args.length(), 1)
+  @debug.assert_eq(sh_args[0], ["-lc", "moon check --target wasm-gc"])
   assert_true(bodies[0].contains("Implements claim schema wiring."))
   assert_true(bodies[0].contains("## Verification"))
-  assert_true(bodies[0].contains("`npm run typecheck`"))
-  assert_true(bodies[0].contains("typecheck ok"))
+  assert_true(bodies[0].contains("`moon check --target wasm-gc`"))
+  assert_true(bodies[0].contains("moon check ok"))
   let records = @evidence.load_agent_evidence_records(project_dir, "main.leaf")
   assert_eq(records.length(), 1)
   match records[0].event {
     @evidence.EvidenceEvent::VerifyResultObserved(name~, ok~, details~) => {
-      assert_eq(name, "npm run typecheck")
+      assert_eq(name, "moon check --target wasm-gc")
       assert_true(ok)
       let detail_text = details.unwrap_or("")
       assert_true(detail_text.contains("cwd: " + file_pr_dir))
       assert_true(detail_text.contains("head: sha-pr-body"))
-      assert_true(detail_text.contains("typecheck ok"))
+      assert_true(detail_text.contains("moon check ok"))
     }
     _ => fail("expected VerifyResultObserved")
   }

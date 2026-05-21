@@ -447,7 +447,7 @@ fn merge_pr_verify_results_for_tracked(
         tracked.agent_id,
         contract.verify,
         tracked.last_sha,
-        @types.task_contract_verify_satisfied_by_ci(contract),
+        @types.task_contract_verify_satisfied_by_native_ci(contract),
       )
     None => []
   }
@@ -479,6 +479,7 @@ pub async fn interpret_merge_pr_preflight(
   capture : async (@workspace.Command) -> (Int, String),
   task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   review_mode? : @types.ReviewMode = @types.ReviewMode::SinglePass,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> Result[Unit, @types.ChoirError] {
   ignore(caller_id)
   match
@@ -497,13 +498,16 @@ pub async fn interpret_merge_pr_preflight(
   )
   let policy_decision = match poller_tracked {
     Some(tracked) => {
-      let task_contract = match task_contract_reader(tracked.agent_id) {
+      let task_contract_raw = match task_contract_reader(tracked.agent_id) {
         Some(contract) => Some(contract)
         None =>
           return Err(
             merge_pr_missing_task_contract_error(pr_number, tracked.agent_id),
           )
       }
+      let task_contract = @types.task_contract_with_normalized_verify(
+        task_contract_raw, moon_verify_target,
+      )
       let verify_results = merge_pr_verify_results_for_tracked(
         project_dir, tracked, task_contract,
       )
@@ -685,6 +689,25 @@ fn merge_pr_audit_workdir(
 }
 
 ///|
+fn merge_pr_live_audit_workers(
+  registry : @registry.AgentRegistry?,
+) -> Array[@phase.ChildLifecycle] {
+  match registry {
+    Some(reg) => {
+      let entries : Array[@phase.ChildLifecycle] = []
+      for agent in reg.list() {
+        let agent_id = agent.agent_id.to_string()
+        if reg.is_alive(agent_id).unwrap_or(false) {
+          entries.push(audit_on_file_pr_worker_entry_from_agent(agent))
+        }
+      }
+      entries
+    }
+    None => []
+  }
+}
+
+///|
 fn merge_pr_audit_error_status(
   err : @types.ChoirError,
   audit_budget_ms : Int,
@@ -731,10 +754,22 @@ pub async fn merge_pr_require_audit_receipt(
   },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
+  audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _tracked_agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   append_file? : (String, String) -> Bool = fn(_, _) { false },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
+  list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_audit_receipt_required(parent_branch) {
     return Ok(())
@@ -796,6 +831,12 @@ pub async fn merge_pr_require_audit_receipt(
       audit_sleep_fn,
       audit_now_ms_fn,
       audit_worker_alive,
+      list_audit_workers~,
+      audit_max_rounds~,
+      record_audit_cycle_for_agent~,
+      audit_cycle_count_for_agent~,
+      clear_audit_cycle_for_agent~,
+      notify_audit_started~,
       pr_number~,
     ) {
     Err(e) => {
@@ -834,6 +875,7 @@ pub fn format_tl_pr_recheck_summary(
   unresolved_thread_count : Int?,
   task_contract? : @types.TaskContract? = None,
   verify_results? : Array[@types.VerifyCheckResult] = [],
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> String {
   let review = match tracked.last_review_state {
     None_ => "none"
@@ -861,6 +903,9 @@ pub fn format_tl_pr_recheck_summary(
     tracked, unresolved_thread_count,
   )
 
+  let task_contract = @types.task_contract_with_normalized_verify(
+    task_contract, moon_verify_target,
+  )
   let verify_results = if verify_results.length() > 0 {
     verify_results
   } else {
@@ -1995,6 +2040,17 @@ pub async fn interpret_merge_pr(
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
+  audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  record_audit_cycle_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
+  audit_cycle_count_for_agent? : (String) -> Int = fn(_agent_id) { 0 },
+  clear_audit_cycle_for_agent? : (String) -> Unit = fn(_agent_id) { () },
+  notify_audit_started? : async (String, Int?, Int) -> Unit = async fn(
+    _agent_id,
+    _pr_number,
+    _cycle_number,
+  ) {
+    @async.sleep(0)
+  },
   audit_sleep_fn? : async (Int) -> Unit = @async.sleep,
   audit_now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
   audit_worker_alive? : (String) -> Bool = fn(_) { true },
@@ -2012,6 +2068,7 @@ pub async fn interpret_merge_pr(
   ) {
     ()
   },
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> @types.Response {
   match
     interpret_merge_pr_preflight(
@@ -2024,6 +2081,7 @@ pub async fn interpret_merge_pr(
       review_mode=merge_args.review_mode.unwrap_or(
         @types.ReviewMode::SinglePass,
       ),
+      moon_verify_target~,
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(_) => {
@@ -2098,10 +2156,18 @@ pub async fn interpret_merge_pr(
                     },
                     audit_budget_ms~,
                     audit_heartbeat_sec~,
+                    audit_max_rounds~,
+                    record_audit_cycle_for_agent~,
+                    audit_cycle_count_for_agent~,
+                    clear_audit_cycle_for_agent~,
+                    notify_audit_started~,
                     append_file~,
                     audit_sleep_fn~,
                     audit_now_ms_fn~,
                     audit_worker_alive~,
+                    list_audit_workers=fn() {
+                      merge_pr_live_audit_workers(registry)
+                    },
                   ) {
                   Err(e) => return @types.Response::Err(e.message())
                   Ok(_) => ()

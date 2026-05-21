@@ -51,14 +51,13 @@ fn with_agy_shared_cache_seed_commands(
   spawn_plan : ForkWaveSpawnPlan,
   project_dir : String,
 ) -> ForkWaveSpawnPlan {
-  let cmds : Array[@workspace.Command] = []
-  for cmd in @workspace.agy_shared_cache_seed_commands(project_dir) {
-    cmds.push(cmd)
+  {
+    ..spawn_plan,
+    cmds: @workspace.prepend_agy_shared_cache_seed_commands(
+      project_dir,
+      spawn_plan.cmds,
+    ),
   }
-  for cmd in spawn_plan.cmds {
-    cmds.push(cmd)
-  }
-  { ..spawn_plan, cmds, }
 }
 
 ///|
