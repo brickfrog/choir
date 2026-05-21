@@ -62,6 +62,21 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       [@types.Role::TL, @types.Role::Dev],
     ),
     tool_def(
+      "tdd_intent",
+      "Declare the leaf's TDD intent before writing the failing test.",
+      [@types.Role::Dev],
+    ),
+    tool_def(
+      "tdd_red_check",
+      "Advance a leaf from Intent to Red only when the reported test result failed.",
+      [@types.Role::Dev],
+    ),
+    tool_def(
+      "tdd_green_check",
+      "Advance a leaf through Green, optional Refactor, and Done only when the reported test result passed.",
+      [@types.Role::Dev],
+    ),
+    tool_def(
       "merge_pr",
       "Merge a child's PR; optional args: parent_branch (defaults to main), caller_id",
       [@types.Role::Root, @types.Role::TL],

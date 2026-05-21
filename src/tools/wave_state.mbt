@@ -80,6 +80,7 @@ pub(all) struct WaveStateChild {
   branch : String
   workflow : @phase.WorkflowState
   agent_state : @types.AgentState
+  tdd_phase : @types.LeafTddPhase?
   last_heartbeat_ms : Int64?
   pr : WaveStatePR?
 } derive(Debug, Eq, ToJson)
@@ -275,6 +276,11 @@ fn wave_state_default_beads_issue_reader(_agent : @types.Agent) -> String? {
 }
 
 ///|
+fn wave_state_default_tdd_phase(_agent_id : String) -> @types.LeafTddPhase? {
+  None
+}
+
+///|
 /// Pure planner for `wave_state`. Assembles a typed snapshot from injected
 /// reader capabilities:
 ///
@@ -300,6 +306,7 @@ pub fn plan_wave_state(
   now_ms : Int64,
   beads_issue_reader? : (@types.Agent) -> String? = wave_state_default_beads_issue_reader,
   audit_progress_reader? : (String) -> WaveStateAuditProgress? = wave_state_default_audit_progress,
+  tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
 ) -> Result[WaveStateSnapshot, @types.ChoirError] {
   guard registry.get_opt(caller_id) is Some(agent) else {
     return Err(@types.ChoirError::agent_not_found(caller_id))
@@ -363,6 +370,7 @@ pub fn plan_wave_state(
       branch: child.branch,
       workflow,
       agent_state: child.state,
+      tdd_phase: tdd_phase_reader(child_id),
       last_heartbeat_ms: heartbeat_reader(child_id),
       pr,
     })
@@ -408,6 +416,7 @@ pub async fn interpret_wave_state(
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   heartbeat_reader? : (String) -> Int64? = wave_state_default_heartbeat,
   audit_progress_reader? : (String) -> WaveStateAuditProgress? = wave_state_default_audit_progress,
+  tdd_phase_reader? : (String) -> @types.LeafTddPhase? = wave_state_default_tdd_phase,
 ) -> @types.Response {
   let reg = match registry {
     Some(r) => r
@@ -517,6 +526,7 @@ pub async fn interpret_wave_state(
       @env.now().reinterpret_as_int64(),
       beads_issue_reader~,
       audit_progress_reader~,
+      tdd_phase_reader~,
     ) {
     Ok(s) => s
     Err(e) => return @types.Response::Err(e.message())

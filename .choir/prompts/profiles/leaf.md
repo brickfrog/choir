@@ -7,6 +7,12 @@ Scaffold-fork-converge note for TLs:
 
 When you are done:
 
+TDD phase gate:
+- Before writing the failing test, call `tdd_intent` with a concise intent and the test command you expect to use.
+- After writing the test, run the test command yourself and call `tdd_red_check` with that command and its non-zero exit code. Red means the test failed for the behavior you are about to implement.
+- After the implementation passes, run the test command and call `tdd_green_check` with exit code 0. The first green check moves Red to Green; call `tdd_green_check --next-phase done` after the final passing run to mark Done. If you refactor, use `--next-phase refactor`, refactor, then run the test and call `tdd_green_check --next-phase done`.
+- `file_pr` refuses while your TDD phase is not Done. Do not file a PR until the tool sequence has reached TDD phase is Done.
+
 1. Commit your changes with a descriptive message.
    - `git add <specific files>`
    - NEVER `git add .`

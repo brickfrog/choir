@@ -577,6 +577,7 @@ async test "dispatch returns correct stub for each tool name" {
       ensure_pr=Some(mock_registry_ensure_pr),
       mutex_registry=Some(@registry.MutexRegistry::new()),
       poller_state=Some(@poller.PollerState::new()),
+      tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
     )
     match res {
       Ok(map) =>
@@ -903,6 +904,7 @@ async test "dispatch file_pr uses registered agent workspace for git and gh oper
     registry=Some(reg),
     mutex_registry=Some(@registry.MutexRegistry::new()),
     poller_state=Some(@poller.PollerState::new()),
+    tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
   )
   match res {
     Ok(map) => @debug.assert_eq(map.get("status"), Some("pr_created"))
@@ -971,6 +973,7 @@ async test "dispatch file_pr auto-notifies resolvable parent with PR READY" {
     registry=Some(reg),
     mutex_registry=Some(@registry.MutexRegistry::new()),
     poller_state=Some(@poller.PollerState::new()),
+    tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
   )
   match res {
     Ok(map) => @debug.assert_eq(map.get("pr_number"), Some("99"))
@@ -1025,6 +1028,7 @@ async test "dispatch file_pr logs auto-notify failure when parent is not resolva
     registry=Some(reg),
     mutex_registry=Some(@registry.MutexRegistry::new()),
     poller_state=Some(@poller.PollerState::new()),
+    tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
   )
   match res {
     Ok(map) => @debug.assert_eq(map.get("status"), Some("pr_created"))
