@@ -596,16 +596,24 @@ pub async fn interpret_fork_wave_post_spawn(
   session : String,
   registry : @registry.AgentRegistry?,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
 ) -> Unit {
   let resolved_pane_ids : Array[(String, String)] = []
   match registry {
     Some(reg) =>
       for spec in spawn_plan.spawned_specs {
+        let agent_id = @workspace.canonical_agent_id(spec)
         ignore(
           reg.upsert(
             fork_wave_spawned_registry_agent(spec, project_dir, session),
           ),
         )
+        record_task_contract(agent_id, spec.task_contract)
       }
     None => ()
   }

@@ -100,7 +100,6 @@ fn tdd_check_command(
 
 ///|
 pub fn tdd_check_workdir(
-  _project_dir : String,
   registry : @registry.AgentRegistry?,
   caller_id : String,
 ) -> Result[String, @types.ChoirError] {
@@ -142,27 +141,22 @@ pub fn tdd_check_workdir(
 
 ///|
 fn tdd_configured_verify(
-  project_dir : String,
   registry : @registry.AgentRegistry?,
   caller_id : String,
+  task_contract_reader : (String) -> @types.TaskContract?,
 ) -> Result[TddConfiguredVerify, @types.ChoirError] {
-  let workdir = match tdd_check_workdir(project_dir, registry, caller_id) {
+  let workdir = match tdd_check_workdir(registry, caller_id) {
     Ok(value) => value
     Err(e) => return Err(e)
   }
-  let contract = match
-    @workspace.task_contract_for_agent_workspace(
-      project_dir,
-      Some(workdir),
-      @phase.extract_slug(caller_id),
-    ) {
+  let contract = match task_contract_reader(caller_id) {
     Some(value) => value
     None =>
       return Err(
         tdd_transition_error(
           "cannot resolve configured verify command for caller '" +
           caller_id +
-          "' from task contract",
+          "' from server task contract",
         ),
       )
   }
@@ -214,7 +208,7 @@ async fn verify_tdd_command_outcome(
   if actual_exit_code < 0 {
     return Err(
       tdd_transition_error(
-        "declared test command could not be executed; actual exit code " +
+        "configured verify command could not be executed; actual exit code " +
         actual_exit_code.to_string() +
         tdd_exit_verification_context(command, actual_output),
       ),
@@ -227,7 +221,7 @@ async fn verify_tdd_command_outcome(
   if !ok {
     Err(
       tdd_transition_error(
-        "declared test command actual exit code " +
+        "configured verify command actual exit code " +
         actual_exit_code.to_string() +
         " did not satisfy " +
         expectation_detail +
@@ -394,9 +388,11 @@ pub fn interpret_tdd_intent(
   tdd_state_writer : (String, @types.LeafTddState) -> Unit,
   project_dir? : String = ".",
   registry? : @registry.AgentRegistry? = None,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
 ) -> @types.Response {
+  ignore(project_dir)
   let configured = match
-    tdd_configured_verify(project_dir, registry, args.caller_id) {
+    tdd_configured_verify(registry, args.caller_id, task_contract_reader) {
     Ok(value) => value
     Err(e) => return @types.Response::Err(e.message())
   }
@@ -410,10 +406,7 @@ pub fn interpret_tdd_intent(
     ) {
     Err(e) => @types.Response::Err(e.message())
     Ok(next) => {
-      tdd_state_writer(args.caller_id, {
-        phase: next,
-        test_command: Some(configured.command),
-      })
+      tdd_state_writer(args.caller_id, { phase: next })
       let fields : Map[String, Json] = {
         "status": "tdd_phase_updated".to_json(),
         "agent_id": args.caller_id.to_json(),
@@ -434,8 +427,10 @@ pub async fn interpret_tdd_red_check(
   tdd_state_writer : (String, @types.LeafTddState) -> Unit,
   project_dir? : String = ".",
   registry? : @registry.AgentRegistry? = None,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
 ) -> @types.Response {
+  ignore(project_dir)
   let current_state = tdd_state_reader(args.caller_id)
   let next = match
     plan_tdd_red_check_transition(
@@ -446,7 +441,7 @@ pub async fn interpret_tdd_red_check(
     Err(e) => return @types.Response::Err(e.message())
   }
   let configured = match
-    tdd_configured_verify(project_dir, registry, args.caller_id) {
+    tdd_configured_verify(registry, args.caller_id, task_contract_reader) {
     Ok(value) => value
     Err(e) => return @types.Response::Err(e.message())
   }
@@ -460,10 +455,7 @@ pub async fn interpret_tdd_red_check(
     Ok(output) => output
     Err(e) => return @types.Response::Err(e.message())
   }
-  tdd_state_writer(args.caller_id, {
-    phase: next,
-    test_command: Some(configured.command),
-  })
+  tdd_state_writer(args.caller_id, { phase: next })
   tdd_phase_response(
     args.caller_id,
     next,
@@ -481,8 +473,10 @@ pub async fn interpret_tdd_green_check(
   tdd_state_writer : (String, @types.LeafTddState) -> Unit,
   project_dir? : String = ".",
   registry? : @registry.AgentRegistry? = None,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
   capture? : async (@workspace.Command) -> (Int, String) = capture_command_output,
 ) -> @types.Response {
+  ignore(project_dir)
   let current_state = tdd_state_reader(args.caller_id)
   let next = match
     plan_tdd_green_check_transition(
@@ -494,7 +488,7 @@ pub async fn interpret_tdd_green_check(
     Err(e) => return @types.Response::Err(e.message())
   }
   let configured = match
-    tdd_configured_verify(project_dir, registry, args.caller_id) {
+    tdd_configured_verify(registry, args.caller_id, task_contract_reader) {
     Ok(value) => value
     Err(e) => return @types.Response::Err(e.message())
   }
@@ -508,10 +502,7 @@ pub async fn interpret_tdd_green_check(
     Ok(output) => output
     Err(e) => return @types.Response::Err(e.message())
   }
-  tdd_state_writer(args.caller_id, {
-    phase: next,
-    test_command: Some(configured.command),
-  })
+  tdd_state_writer(args.caller_id, { phase: next })
   tdd_phase_response(
     args.caller_id,
     next,

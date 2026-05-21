@@ -293,6 +293,12 @@ pub async fn interpret_spawn_worker(
   tcp_auth_token? : String? = None,
   allow_audit_on_file_pr_caller? : Bool = false,
   allow_mutation_gate_caller? : Bool = false,
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
 ) -> @types.Response {
   let normalized_args = match
     resolve_spawn_worker_parent_id(
@@ -331,6 +337,7 @@ pub async fn interpret_spawn_worker(
         Some(reg) => ignore(reg.upsert(plan.registry_agent))
         None => ()
       }
+      record_task_contract(plan.agent_id, plan.spec.task_contract)
       ignore(mirror_beads_spawn_for_spec(project_dir, plan.spec, capture))
       plan.ok_response
     }

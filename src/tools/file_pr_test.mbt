@@ -736,6 +736,18 @@ fn file_pr_test_write_verify_config(
 }
 
 ///|
+fn file_pr_test_task_contract(verify : Array[String]) -> @types.TaskContract {
+  { ..@types.TaskContract::empty(), goal: "verify before PR", verify }
+}
+
+///|
+fn file_pr_test_task_contract_reader(
+  contract : @types.TaskContract,
+) -> (String) -> @types.TaskContract? {
+  fn(_agent_id : String) -> @types.TaskContract? { Some(contract) }
+}
+
+///|
 fn file_pr_test_registry(file_pr_dir : String) -> @registry.AgentRegistry {
   let reg = @registry.AgentRegistry::new()
   ignore(
@@ -895,7 +907,8 @@ async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR"
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["moon test --target native"])
+  let contract = file_pr_test_task_contract(["moon test --target native"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let mut ensure_pr_called = false
   let prepared_workers : Array[String] = []
@@ -957,6 +970,7 @@ async test "interpret_file_pr runs mutation gate for TL-filed registered dev PR"
     },
     mutation_gate_now_ms_fn=fn() { 1779000000L },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3198,7 +3212,8 @@ async test "interpret_file_pr runs required verify and injects generated PR body
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let bodies : Array[String] = []
   let got = interpret_file_pr(
@@ -3237,6 +3252,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3271,7 +3287,8 @@ async test "dispatch file_pr records verify evidence through injected append_fil
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let appends : Array[(String, String)] = []
   let resp = dispatch(
@@ -3313,6 +3330,7 @@ async test "dispatch file_pr records verify evidence through injected append_fil
       appends.push((path, content))
       true
     },
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3333,7 +3351,8 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
   let project_dir = "/tmp/choir-fpr-verify-block-" + @sys.get_pid().to_string()
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["npm run typecheck"])
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let mut ensure_pr_called = false
   let got = interpret_file_pr(
@@ -3372,6 +3391,7 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
@@ -3405,7 +3425,8 @@ async test "interpret_file_pr blocks before PR creation when mutation gate fails
   let file_pr_dir = project_dir + "/.choir/worktrees/leaf"
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   ignore(@sys.rm_rf(project_dir))
-  file_pr_test_write_verify_config(file_pr_dir, ["moon test --target native"])
+  let contract = file_pr_test_task_contract(["moon test --target native"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
   let reg = file_pr_test_registry(file_pr_dir)
   let mut ensure_pr_called = false
   let prepared_workers : Array[String] = []
@@ -3467,6 +3488,7 @@ async test "interpret_file_pr blocks before PR creation when mutation gate fails
     },
     mutation_gate_now_ms_fn=fn() { 1779000000L },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
     tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )

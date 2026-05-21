@@ -485,6 +485,26 @@ fn merge_pr_test_write_verify_contract(
 }
 
 ///|
+fn merge_pr_test_verify_contract(
+  verify : Array[String],
+  verify_satisfied_by_ci? : Bool = true,
+) -> @types.TaskContract {
+  {
+    ..@types.TaskContract::empty(),
+    goal: "merge verified work",
+    verify,
+    verify_satisfied_by_ci,
+  }
+}
+
+///|
+fn merge_pr_test_contract_reader(
+  contract : @types.TaskContract,
+) -> (String) -> @types.TaskContract? {
+  fn(_agent_id : String) -> @types.TaskContract? { Some(contract) }
+}
+
+///|
 fn merge_pr_test_registry(worktree : String) -> @registry.AgentRegistry {
   let reg = @registry.AgentRegistry::new()
   ignore(
@@ -842,9 +862,11 @@ async test "interpret_merge_pr_preflight accepts required verify evidence" {
   let project_dir = "/tmp/choir-mpf-verify-evidence-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  let worktree = merge_pr_test_write_verify_contract(project_dir, [
-    "moon test --target native",
-  ])
+  let contract = merge_pr_test_verify_contract(["moon test --target native"])
+  let worktree = merge_pr_test_write_verify_contract(
+    project_dir,
+    contract.verify,
+  )
   let reg = merge_pr_test_registry(worktree)
   ignore(
     @evidence.append_agent_evidence_event(
@@ -875,6 +897,7 @@ async test "interpret_merge_pr_preflight accepts required verify evidence" {
     "main.tl",
     mock_preflight_capture_no_unresolved_threads,
     Some(reg),
+    task_contract_reader=merge_pr_test_contract_reader(contract),
   )
   match got {
     Ok(_) => ()
@@ -887,9 +910,11 @@ async test "interpret_merge_pr_preflight accepts required verify evidence" {
 async test "interpret_merge_pr_preflight rejects stale verify evidence" {
   let project_dir = "/tmp/choir-mpf-stale-verify-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  let worktree = merge_pr_test_write_verify_contract(project_dir, [
-    "moon test --target native",
-  ])
+  let contract = merge_pr_test_verify_contract(["moon test --target native"])
+  let worktree = merge_pr_test_write_verify_contract(
+    project_dir,
+    contract.verify,
+  )
   let reg = merge_pr_test_registry(worktree)
   ignore(
     @evidence.append_agent_evidence_event(
@@ -921,6 +946,7 @@ async test "interpret_merge_pr_preflight rejects stale verify evidence" {
     "main.tl",
     mock_preflight_capture_no_unresolved_threads,
     Some(reg),
+    task_contract_reader=merge_pr_test_contract_reader(contract),
   )
   match got {
     Err(e) => assert_true(e.message().contains("local verify not observed"))
@@ -933,9 +959,11 @@ async test "interpret_merge_pr_preflight rejects stale verify evidence" {
 async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
   let project_dir = "/tmp/choir-mpf-ci-verify-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(project_dir))
-  let worktree = merge_pr_test_write_verify_contract(project_dir, [
-    "moon test --target native",
-  ])
+  let contract = merge_pr_test_verify_contract(["moon test --target native"])
+  let worktree = merge_pr_test_write_verify_contract(
+    project_dir,
+    contract.verify,
+  )
   let reg = merge_pr_test_registry(worktree)
   ignore(
     @evidence.append_agent_evidence_event(
@@ -966,6 +994,7 @@ async test "interpret_merge_pr_preflight accepts CI-satisfied verify at head" {
     "main.tl",
     mock_preflight_capture_no_unresolved_threads,
     Some(reg),
+    task_contract_reader=merge_pr_test_contract_reader(contract),
   )
   match got {
     Ok(_) => ()
@@ -980,10 +1009,14 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
   let strict_dir = "/tmp/choir-mpf-ci-verify-strict-" +
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(strict_dir))
-  let strict_worktree = merge_pr_test_write_verify_contract(
-    strict_dir,
+  let strict_contract = merge_pr_test_verify_contract(
     ["moon test --target native"],
     verify_satisfied_by_ci=false,
+  )
+  let strict_worktree = merge_pr_test_write_verify_contract(
+    strict_dir,
+    strict_contract.verify,
+    verify_satisfied_by_ci=strict_contract.verify_satisfied_by_ci,
   )
   let strict_reg = merge_pr_test_registry(strict_worktree)
   ignore(
@@ -1015,6 +1048,7 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
     "main.tl",
     mock_preflight_capture_no_unresolved_threads,
     Some(strict_reg),
+    task_contract_reader=merge_pr_test_contract_reader(strict_contract),
   )
   match strict {
     Err(e) => assert_true(e.message().contains("local verify not observed"))
@@ -1022,9 +1056,13 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
   }
   let stale_dir = "/tmp/choir-mpf-ci-verify-stale-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(stale_dir))
-  let stale_worktree = merge_pr_test_write_verify_contract(stale_dir, [
+  let stale_contract = merge_pr_test_verify_contract([
     "moon test --target native",
   ])
+  let stale_worktree = merge_pr_test_write_verify_contract(
+    stale_dir,
+    stale_contract.verify,
+  )
   let stale_reg = merge_pr_test_registry(stale_worktree)
   ignore(
     @evidence.append_agent_evidence_event(
@@ -1055,6 +1093,7 @@ async test "interpret_merge_pr_preflight rejects CI-only verify when disabled or
     "main.tl",
     mock_preflight_capture_no_unresolved_threads,
     Some(stale_reg),
+    task_contract_reader=merge_pr_test_contract_reader(stale_contract),
   )
   match stale {
     Err(e) => assert_true(e.message().contains("local verify not observed"))
@@ -2012,6 +2051,17 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     ("leaf-a", leaf_a),
     ("leaf-b", leaf_b),
   ])
+  let task_contracts : Map[String, @types.TaskContract] = {}
+  task_contracts.set(feature_branch + ".leaf-a", {
+    ..@types.TaskContract::empty(),
+    goal: "assigned leaf",
+    beads_issue_id: Some("choir-a"),
+  })
+  task_contracts.set(feature_branch + ".leaf-b", {
+    ..@types.TaskContract::empty(),
+    goal: "assigned leaf",
+    beads_issue_id: Some("choir-b"),
+  })
   let ps = @poller.PollerState::new()
   ps.track_recovered(
     77,
@@ -2111,6 +2161,7 @@ async test "interpret_merge_pr feature main closes wave and body beads then dele
     append_file,
     fn(_path) { false },
     read_file=merge_pr_test_gate_state_reader(1L),
+    task_contract_reader=fn(agent_id) { task_contracts.get(agent_id) },
   )
   match got {
     @types.Response::Ok(_) => ()

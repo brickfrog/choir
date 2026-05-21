@@ -2651,27 +2651,22 @@ pub fn file_pr_body_with_verify_summary(
 
 ///|
 fn file_pr_task_contract_for_agent(
-  project_dir : String,
   tracked_agent_id : String,
-  file_pr_dir : String,
+  task_contract_reader : (String) -> @types.TaskContract?,
 ) -> @types.TaskContract? {
-  @workspace.task_contract_for_agent_workspace(
-    project_dir,
-    Some(file_pr_dir),
-    @phase.extract_slug(tracked_agent_id),
-  )
+  task_contract_reader(tracked_agent_id)
 }
 
 ///|
 async fn file_pr_mirror_beads_created(
   project_dir : String,
   tracked_agent_id : String,
-  file_pr_dir : String,
   pr_number : Int,
   capture : async (@workspace.Command) -> (Int, String),
+  task_contract_reader : (String) -> @types.TaskContract?,
 ) -> Unit {
   let issue_id = match
-    file_pr_task_contract_for_agent(project_dir, tracked_agent_id, file_pr_dir) {
+    file_pr_task_contract_for_agent(tracked_agent_id, task_contract_reader) {
     Some(contract) =>
       match contract.beads_issue_id {
         Some(id) => id
@@ -2934,6 +2929,13 @@ pub async fn interpret_file_pr(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  task_contract_reader? : (String) -> @types.TaskContract? = fn(_) { None },
+  record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
+    _agent_id,
+    _contract,
+  ) {
+    ()
+  },
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
   sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
@@ -2996,6 +2998,7 @@ pub async fn interpret_file_pr(
           listen_tcp~,
           tcp_auth_token~,
           allow_audit_on_file_pr_caller=true,
+          record_task_contract~,
         )
         match resp.ok_field("agent_id") {
           Some(agent_id) => Ok(agent_id)
@@ -3031,7 +3034,7 @@ pub async fn interpret_file_pr(
     Ok(_) => ()
   }
   let task_contract = file_pr_task_contract_for_agent(
-    project_dir, tracked_agent_id, file_pr_dir,
+    tracked_agent_id, task_contract_reader,
   )
   let verify_outcomes = match task_contract {
     Some(contract) =>
@@ -3094,6 +3097,7 @@ pub async fn interpret_file_pr(
               listen_tcp~,
               tcp_auth_token~,
               allow_mutation_gate_caller=true,
+              record_task_contract~,
             )
             match resp.ok_field("agent_id") {
               Some(agent_id) => Ok(agent_id)
@@ -3163,9 +3167,9 @@ pub async fn interpret_file_pr(
         file_pr_mirror_beads_created(
           project_dir,
           tracked_agent_id,
-          file_pr_dir,
           pr.number,
           capture,
+          task_contract_reader,
         )
       }
       resp
