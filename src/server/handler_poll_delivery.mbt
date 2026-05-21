@@ -592,6 +592,16 @@ async fn detect_pr_merged_audit_enforcement(
   audit_receipt_exists : (String) -> Bool,
   audit_receipt_read : (String) -> String,
 ) -> AuditEnforcementOutcome {
+  let head_sha = pr.last_sha.trim().to_owned()
+  if head_sha == "" {
+    @moontrace.warn("audit enforcement skipped: missing merge head sha", fields=[
+      @moontrace.field("pr", pr.pr_number),
+      @moontrace.field("branch", pr.branch),
+      @moontrace.field("parent_branch", pr.parent_branch),
+      @moontrace.field("pr_url", pr.pr_url),
+    ])
+    return AuditEnforcementOutcome::NotApplicable
+  }
   let default_branch = match
     pr_merged_default_branch_for_wave_complete(
       state.config.project_dir,
@@ -601,19 +611,13 @@ async fn detect_pr_merged_audit_enforcement(
     Some(branch) => branch
     None => return AuditEnforcementOutcome::NotApplicable
   }
-  let receipt_rel_path = @tools.file_pr_audit_receipt_path_for_head(
-    pr.last_sha.trim().to_owned(),
-  )
+  let receipt_rel_path = @tools.file_pr_audit_receipt_path_for_head(head_sha)
   let receipt_path = project_relative_path(
     state.config.project_dir,
     receipt_rel_path,
   )
   let receipt_is_valid = valid_merge_audit_receipt_exists(
-    receipt_path,
-    default_branch,
-    pr.last_sha,
-    audit_receipt_exists,
-    audit_receipt_read,
+    receipt_path, default_branch, head_sha, audit_receipt_exists, audit_receipt_read,
   )
   let outcome = detect_unaudited_integration_merge(
     receipt_path,
@@ -734,6 +738,7 @@ fn log_unaudited_integration_merge(
   receipt_path : String,
   outcome : AuditEnforcementOutcome,
 ) -> Unit {
+  let message = unaudited_integration_merge_log_message(default_branch)
   let fields = [
     @moontrace.field("pr", pr.pr_number),
     @moontrace.field("branch", pr.branch),
@@ -743,9 +748,18 @@ fn log_unaudited_integration_merge(
     @moontrace.field("receipt_path", receipt_path),
   ]
   match outcome {
-    UnauditedBlocked => @moontrace.error("[UNAUDITED MERGE INTO MAIN]", fields~)
-    UnauditedWarned => @moontrace.warn("[UNAUDITED MERGE INTO MAIN]", fields~)
+    UnauditedBlocked => @moontrace.error(message, fields~)
+    UnauditedWarned => @moontrace.warn(message, fields~)
     Audited | NotApplicable => ()
+  }
+}
+
+///|
+fn unaudited_integration_merge_log_message(default_branch : String) -> String {
+  if default_branch == "main" {
+    "[UNAUDITED MERGE INTO MAIN]"
+  } else {
+    "[UNAUDITED MERGE INTO DEFAULT BRANCH]"
   }
 }
 
@@ -1028,18 +1042,30 @@ pub async fn detect_untracked_pr_merged_events(
     let observed_this_tick = same_tick_pr_merged_numbers.contains(
       info.pr_number,
     )
+    let head_sha = info.head_sha.trim().to_owned()
+    if observed_this_process &&
+      !observed_this_tick &&
+      !durably_seen &&
+      head_sha == "" {
+      @moontrace.warn("audit enforcement skipped: missing merge head sha", fields=[
+        @moontrace.field("pr", info.pr_number),
+        @moontrace.field("branch", info.branch),
+        @moontrace.field("parent_branch", info.parent_branch),
+        @moontrace.field("default_branch", default_branch),
+        @moontrace.field("pr_url", info.pr_url),
+      ])
+    }
     let observed_but_recheckable = observed_this_process &&
       !observed_this_tick &&
       !durably_seen &&
+      head_sha != "" &&
       valid_merge_audit_receipt_exists(
         project_relative_path(
           state.config.project_dir,
-          @tools.file_pr_audit_receipt_path_for_head(
-            info.head_sha.trim().to_owned(),
-          ),
+          @tools.file_pr_audit_receipt_path_for_head(head_sha),
         ),
         default_branch,
-        info.head_sha,
+        head_sha,
         audit_receipt_exists,
         audit_receipt_read,
       )
