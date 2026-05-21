@@ -556,12 +556,11 @@ async fn detect_pr_merged_audit_enforcement(
   audit_receipt_exists : (String) -> Bool,
   audit_receipt_read : (String) -> String,
 ) -> AuditEnforcementOutcome {
-  let default_branch = match
-    detect_default_branch_for_wave_complete(state.config.project_dir, capture) {
-    Some(branch) => branch
-    None => return AuditEnforcementOutcome::NotApplicable
-  }
-  if pr.parent_branch != default_branch {
+  if !pr_merged_parent_branch_is_wave_complete(
+      state.config.project_dir,
+      pr.parent_branch,
+      capture,
+    ) {
     return AuditEnforcementOutcome::NotApplicable
   }
   let receipt_rel_path = @tools.file_pr_audit_receipt_path_for_head(
@@ -571,26 +570,42 @@ async fn detect_pr_merged_audit_enforcement(
     state.config.project_dir,
     receipt_rel_path,
   )
-  let receipt_is_valid = if audit_receipt_exists(receipt_path) {
-    let body = audit_receipt_read(receipt_path)
-    match
-      @tools.merge_pr_audit_receipt_validation(
-        pr.parent_branch,
-        pr.last_sha,
-        Some(body),
-      ) {
-      @tools.MergePrAuditReceiptValidation::MergeAuditReceiptValid => true
-      _ => false
-    }
-  } else {
-    false
-  }
+  let receipt_is_valid = valid_merge_audit_receipt_exists(
+    receipt_path,
+    pr.parent_branch,
+    pr.last_sha,
+    audit_receipt_exists,
+    audit_receipt_read,
+  )
   let outcome = detect_unaudited_integration_merge(
     receipt_path,
     fn(path) { path == receipt_path && receipt_is_valid },
     state.config.pr_policy.require_integration_audit,
   )
   outcome
+}
+
+///|
+fn valid_merge_audit_receipt_exists(
+  receipt_path : String,
+  parent_branch : String,
+  head_sha : String,
+  audit_receipt_exists : (String) -> Bool,
+  audit_receipt_read : (String) -> String,
+) -> Bool {
+  if !audit_receipt_exists(receipt_path) {
+    return false
+  }
+  let body = audit_receipt_read(receipt_path)
+  match
+    @tools.merge_pr_audit_receipt_validation(
+      parent_branch,
+      head_sha,
+      Some(body),
+    ) {
+    @tools.MergePrAuditReceiptValidation::MergeAuditReceiptValid => true
+    _ => false
+  }
 }
 
 ///|
@@ -953,6 +968,8 @@ pub async fn detect_untracked_pr_merged_events(
   state : ServerState,
   now : Int64,
   capture : async (@workspace.Command) -> (Int, String),
+  audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
+  audit_receipt_read? : (String) -> String = @exec.read_file,
 ) -> Array[@poller.PollEvent] {
   let default_branch = match
     detect_default_branch_for_wave_complete(state.config.project_dir, capture) {
@@ -972,8 +989,24 @@ pub async fn detect_untracked_pr_merged_events(
   let events : Array[@poller.PollEvent] = []
   for info in parse_recent_merged_pull_requests(output, default_branch) {
     let tracked = state.poller.get(info.pr_number) is Some(_)
-    let already_seen = state.poller.merged_observed(info.pr_number) ||
-      seen_cache.contains(info.pr_number)
+    let durably_seen = seen_cache.contains(info.pr_number)
+    let observed_this_process = state.poller.merged_observed(info.pr_number)
+    let observed_but_recheckable = observed_this_process &&
+      !durably_seen &&
+      valid_merge_audit_receipt_exists(
+        project_relative_path(
+          state.config.project_dir,
+          @tools.file_pr_audit_receipt_path_for_head(
+            info.head_sha.trim().to_owned(),
+          ),
+        ),
+        info.parent_branch,
+        info.head_sha,
+        audit_receipt_exists,
+        audit_receipt_read,
+      )
+    let already_seen = durably_seen ||
+      (observed_this_process && !observed_but_recheckable)
     let grandfathered = pr_merged_predates_seen_cache(
       info.merged_at_unix,
       enabled_at,
@@ -2356,7 +2389,7 @@ async fn deliver_pending_poll_events(
             audit_receipt_path,
             audit_outcome,
           )
-          state.record_seen_merged_pr_number(pr.pr_number)
+          state.poller.mark_merged_observed(pr.pr_number)
           continue
         }
         log_unaudited_integration_merge(
@@ -3033,7 +3066,14 @@ pub async fn ServerState::process_poller_tick_with(
       }
     },
   )
-  for event in detect_untracked_pr_merged_events(self, now, capture) {
+  for
+    event in detect_untracked_pr_merged_events(
+      self,
+      now,
+      capture,
+      audit_receipt_exists~,
+      audit_receipt_read~,
+    ) {
     pending_events.push(event)
     pending_agent_ids.push(synthetic_untracked_merge_agent_id(self))
   }

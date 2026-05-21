@@ -2681,8 +2681,12 @@ async test "untracked merge detection emits synthetic PRMerged and fires hooks" 
 }
 
 ///|
-async test "PRMerged into default branch without audit receipt logs error and skips hooks and auto-pull" {
-  let run_case = async fn(label : String, pr_number : Int) -> Unit {
+async test "PRMerged into default branch without audit receipt logs error and remains re-checkable" {
+  let run_case = async fn(
+    label : String,
+    pr_number : Int,
+    default_branch_lookup_ok : Bool,
+  ) -> Unit {
     let project_dir = "/tmp/choir-unaudited-integration-merge-" +
       label +
       "-" +
@@ -2712,6 +2716,8 @@ async test "PRMerged into default branch without audit receipt logs error and sk
     let mut pull_calls = 0
     let mut hook_calls = 0
     let mut receipt_read_calls = 0
+    let mut receipt_available = false
+    let mut gh_list_enabled = false
     let checked_receipts : Array[String] = []
     let captured : Array[@moontrace.Event] = []
     handler_with_moontrace_capture(captured, async fn() {
@@ -2741,9 +2747,24 @@ async test "PRMerged into default branch without audit receipt logs error and sk
           @async.sleep(0)
           if cmd.program == "git" &&
             cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+            if !default_branch_lookup_ok {
+              return (1, "")
+            }
             return (0, "origin/main\n")
           }
           if cmd.program == "gh" && cmd.args.contains("list") {
+            if gh_list_enabled {
+              return (
+                0,
+                "[{\"number\":" +
+                pr_number.to_string() +
+                ",\"url\":\"https://example.test/pull/" +
+                pr_number.to_string() +
+                "\",\"headRefName\":\"feature/t92-integration\",\"headRefOid\":\"" +
+                head +
+                "\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+              )
+            }
             return (0, "[]")
           }
           (0, "")
@@ -2778,11 +2799,11 @@ async test "PRMerged into default branch without audit receipt logs error and sk
         },
         audit_receipt_exists=fn(path) {
           checked_receipts.push(path)
-          false
+          receipt_available
         },
         audit_receipt_read=fn(_) {
           receipt_read_calls = receipt_read_calls + 1
-          ""
+          handler_test_audit_receipt(head, "main", 0)
         },
       )
     })
@@ -2794,7 +2815,8 @@ async test "PRMerged into default branch without audit receipt logs error and sk
     @debug.assert_eq(checked_receipts, [
       project_dir + "/.choir/audit-receipts/abcdef123456.json",
     ])
-    assert_true(
+    assert_false(
+      @sys.path_exists(project_dir + "/.choir/seen_merged_prs.json") &&
       @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
         pr_number.to_string(),
       ),
@@ -2813,9 +2835,88 @@ async test "PRMerged into default branch without audit receipt logs error and sk
         handler_moontrace_event_summary(captured),
       )
     }
+    receipt_available = true
+    gh_list_enabled = true
+    state.process_poller_tick_with_test(
+      1100L,
+      900L,
+      async fn(_pr_number, _skip_issue_comment_fetch) {
+        @async.sleep(0)
+        fail("no tracked PR should remain before the re-check tick")
+      },
+      runner=async fn(cmds : Array[@workspace.Command]) {
+        @async.sleep(0)
+        cmds.map(fn(_) { 0 })
+      },
+      capture=async fn(cmd : @workspace.Command) {
+        @async.sleep(0)
+        if cmd.program == "git" &&
+          cmd.args == ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] {
+          return (0, "origin/main\n")
+        }
+        if cmd.program == "gh" && cmd.args.contains("list") {
+          return (
+            0,
+            "[{\"number\":" +
+            pr_number.to_string() +
+            ",\"url\":\"https://example.test/pull/" +
+            pr_number.to_string() +
+            "\",\"headRefName\":\"feature/t92-integration\",\"headRefOid\":\"" +
+            head +
+            "\",\"baseRefName\":\"main\",\"mergedAt\":\"2099-12-31T00:00:00Z\"}]",
+          )
+        }
+        (0, "")
+      },
+      automerge_capture=async fn(_cmd : @workspace.Command) {
+        @async.sleep(0)
+        (0, "")
+      },
+      hook_capture=async fn(
+        _path : String,
+        _input_json : String,
+        _cwd : String?,
+      ) -> (Int, String) {
+        @async.sleep(0)
+        hook_calls = hook_calls + 1
+        (0, "hook")
+      },
+      git_state_capture=async fn(
+        _workdir : String,
+        _capture : async (@workspace.Command) -> (Int, String),
+      ) -> ParentWorktreeGitState? {
+        @async.sleep(0)
+        Some(parent_worktree_git_state("main", true))
+      },
+      git_pull_runner=async fn(
+        _workdir : String,
+        _capture : async (@workspace.Command) -> (Int, String),
+      ) -> Bool {
+        @async.sleep(0)
+        pull_calls = pull_calls + 1
+        true
+      },
+      audit_receipt_exists=fn(path) {
+        checked_receipts.push(path)
+        receipt_available
+      },
+      audit_receipt_read=fn(_) {
+        receipt_read_calls = receipt_read_calls + 1
+        handler_test_audit_receipt(head, "main", 0)
+      },
+    )
+    assert_eq(hook_calls, 2)
+    assert_eq(pull_calls, 1)
+    assert_eq(receipt_read_calls, 2)
+    assert_true(
+      @sys.read_file(project_dir + "/.choir/seen_merged_prs.json").contains(
+        pr_number.to_string(),
+      ),
+    )
     ignore(@sys.rm_rf(project_dir))
   }
-  run_case("missing", 615)
+  run_case("missing", 615, true)
+  run_case("default-lookup-fails", 616, false)
 }
 
 ///|
