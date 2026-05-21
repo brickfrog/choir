@@ -113,7 +113,6 @@ pub struct ServerState {
   kv_store : @kv.KvStore
   run_id : String
   pending_disconnects : Map[String, Int64]
-  pending_disconnect_soft_notified : Map[String, Bool]
   delivery_failures : Map[String, Int]
   handoff_delivered : Map[String, Bool]
   audit_on_file_pr_reports : Map[
@@ -127,9 +126,6 @@ pub struct ServerState {
   worker_no_handoff_stalled_emitted : Map[String, Bool]
   worker_no_handoff_exit_emitted : Map[String, Bool]
   idle_agent_warned_at_70 : Map[String, Bool]
-  last_commit_observed_at : Map[String, Int64]
-  last_commit_observed_sha : Map[String, String]
-  last_commit_probe_at : Map[String, Int64]
   list_panes_cache : Map[String, @tools.CachedListPanesSnapshot]
   recent_poller_event_emissions : Map[String, Map[String, RecentEmission]]
   goal_judge : GoalJudgeState
@@ -190,7 +186,6 @@ pub fn ServerState::new(
     kv_store: @kv.KvStore::new(config.project_dir),
     run_id,
     pending_disconnects: {},
-    pending_disconnect_soft_notified: {},
     delivery_failures: {},
     handoff_delivered: {},
     audit_on_file_pr_reports: {},
@@ -201,9 +196,6 @@ pub fn ServerState::new(
     worker_no_handoff_stalled_emitted: {},
     worker_no_handoff_exit_emitted: {},
     idle_agent_warned_at_70: {},
-    last_commit_observed_at: {},
-    last_commit_observed_sha: {},
-    last_commit_probe_at: {},
     list_panes_cache: {},
     recent_poller_event_emissions: {},
     goal_judge: GoalJudgeState::new(),

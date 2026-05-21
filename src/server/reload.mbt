@@ -53,15 +53,6 @@ fn server_reload_bool_entries_json(values : Map[String, Bool]) -> Json {
 }
 
 ///|
-fn server_reload_string_entries_json(values : Map[String, String]) -> Json {
-  let entries : Array[Json] = []
-  for key, value in values {
-    entries.push({ "key": key.to_json(), "value": value.to_json() }.to_json())
-  }
-  entries.to_json()
-}
-
-///|
 fn server_reload_int_entries_json(values : Map[String, Int]) -> Json {
   let entries : Array[Json] = []
   for key, value in values {
@@ -82,9 +73,6 @@ fn ServerState::reload_runtime_snapshot_json(
     "pending_disconnects": server_reload_int64_entries_json(
       self.pending_disconnects,
     ),
-    "pending_disconnect_soft_notified": server_reload_bool_entries_json(
-      self.pending_disconnect_soft_notified,
-    ),
     "delivery_failures": server_reload_int_entries_json(self.delivery_failures),
     "handoff_delivered": server_reload_bool_entries_json(self.handoff_delivered),
     "worker_no_handoff_prodded_at": server_reload_int64_entries_json(
@@ -98,15 +86,6 @@ fn ServerState::reload_runtime_snapshot_json(
     ),
     "idle_agent_warned_at_70": server_reload_bool_entries_json(
       self.idle_agent_warned_at_70,
-    ),
-    "last_commit_observed_at": server_reload_int64_entries_json(
-      self.last_commit_observed_at,
-    ),
-    "last_commit_observed_sha": server_reload_string_entries_json(
-      self.last_commit_observed_sha,
-    ),
-    "last_commit_probe_at": server_reload_int64_entries_json(
-      self.last_commit_probe_at,
     ),
     "mutex_registry": self.mutex_registry.to_snapshot_json(),
   }.to_json()
@@ -284,41 +263,6 @@ fn server_reload_parse_bool_map_or_empty(
 }
 
 ///|
-fn server_reload_parse_string_map(
-  json : Json?,
-) -> Result[Map[String, String], @types.ChoirError] {
-  guard json is Some(Array(items)) else {
-    return Err(server_reload_parse_error("missing string map array"))
-  }
-  let out : Map[String, String] = {}
-  for item in items {
-    guard item is Object(obj) else {
-      return Err(server_reload_parse_error("string map entry is not an object"))
-    }
-    let key = match server_reload_string_field(obj, "key") {
-      Ok(v) => v
-      Err(e) => return Err(e)
-    }
-    let value = match server_reload_string_field(obj, "value") {
-      Ok(v) => v
-      Err(e) => return Err(e)
-    }
-    out.set(key, value)
-  }
-  Ok(out)
-}
-
-///|
-fn server_reload_parse_string_map_or_empty(
-  json : Json?,
-) -> Result[Map[String, String], @types.ChoirError] {
-  match json {
-    None => Ok({})
-    Some(_) => server_reload_parse_string_map(json)
-  }
-}
-
-///|
 fn server_reload_parse_int_map(
   json : Json?,
 ) -> Result[Map[String, Int], @types.ChoirError] {
@@ -403,11 +347,6 @@ pub fn ServerState::restore_reload_snapshot(
     Ok(v) => v
     Err(e) => return Err(e)
   }
-  let parsed_soft = match
-    server_reload_parse_bool_map(root.get("pending_disconnect_soft_notified")) {
-    Ok(v) => v
-    Err(e) => return Err(e)
-  }
   let parsed_failures = match
     server_reload_parse_int_map(root.get("delivery_failures")) {
     Ok(v) => v
@@ -444,23 +383,6 @@ pub fn ServerState::restore_reload_snapshot(
     Ok(v) => v
     Err(e) => return Err(e)
   }
-  let parsed_last_commit_observed_at = match
-    server_reload_parse_int64_map_or_empty(root.get("last_commit_observed_at")) {
-    Ok(v) => v
-    Err(e) => return Err(e)
-  }
-  let parsed_last_commit_observed_sha = match
-    server_reload_parse_string_map_or_empty(
-      root.get("last_commit_observed_sha"),
-    ) {
-    Ok(v) => v
-    Err(e) => return Err(e)
-  }
-  let parsed_last_commit_probe_at = match
-    server_reload_parse_int64_map_or_empty(root.get("last_commit_probe_at")) {
-    Ok(v) => v
-    Err(e) => return Err(e)
-  }
   let parsed_mutex = match root.get("mutex_registry") {
     Some(j) =>
       match @registry.parse_mutex_registry_snapshot_json(j) {
@@ -475,10 +397,6 @@ pub fn ServerState::restore_reload_snapshot(
     Err(e) => return Err(e)
   }
   server_reload_replace_map_contents(self.pending_disconnects, parsed_pending)
-  server_reload_replace_map_contents(
-    self.pending_disconnect_soft_notified,
-    parsed_soft,
-  )
   server_reload_replace_map_contents(self.delivery_failures, parsed_failures)
   server_reload_replace_map_contents(
     self.handoff_delivered,
@@ -499,18 +417,6 @@ pub fn ServerState::restore_reload_snapshot(
   server_reload_replace_map_contents(
     self.idle_agent_warned_at_70,
     parsed_idle_agent_warned_at_70,
-  )
-  server_reload_replace_map_contents(
-    self.last_commit_observed_at,
-    parsed_last_commit_observed_at,
-  )
-  server_reload_replace_map_contents(
-    self.last_commit_observed_sha,
-    parsed_last_commit_observed_sha,
-  )
-  server_reload_replace_map_contents(
-    self.last_commit_probe_at,
-    parsed_last_commit_probe_at,
   )
   // Release any mutex whose holder isn't in the just-restored registry —
   // otherwise a stale lock would block unrelated callers until TTL.

@@ -30,7 +30,6 @@ pub(all) enum ToolRequest {
   TaskCreate(TaskCreateArgs)
   TaskUpdate(TaskUpdateArgs)
   SpawnGemini(SpawnGeminiArgs)
-  RescueLeaf(RescueLeafArgs)
   SpawnRemote(RemoteSpawnArgs)
   SpawnWorker(WorkerSpawnArgs)
   KillAgent(KillAgentArgs)
@@ -74,7 +73,6 @@ pub fn ToolRequest::tool_name(self : ToolRequest) -> String {
     TaskCreate(_) => "task_create"
     TaskUpdate(_) => "task_update"
     SpawnGemini(_) => "spawn_gemini"
-    RescueLeaf(_) => "rescue_leaf"
     SpawnRemote(_) => "spawn_remote"
     SpawnWorker(_) => "spawn_worker"
     KillAgent(_) => "kill_agent"

@@ -636,10 +636,8 @@ pub fn plan_post_tool_actions(
     }
   }
 
-  // spawn/rescue pane watchers
-  if req.name == "fork_wave" ||
-    req.name == "spawn_worker" ||
-    req.name == "rescue_leaf" {
+  // spawn pane watchers
+  if req.name == "fork_wave" || req.name == "spawn_worker" {
     let watch_ids : Array[String] = []
     match resp.ok_field("agent_ids") {
       Some(ids) =>
@@ -650,17 +648,6 @@ pub fn plan_post_tool_actions(
           }
         }
       None => ()
-    }
-    if req.name == "rescue_leaf" {
-      match resp.ok_field("agent_id") {
-        Some(agent_id) => {
-          let aid = agent_id.trim().to_owned()
-          if aid != "" {
-            watch_ids.push(aid)
-          }
-        }
-        None => ()
-      }
     }
     for agent_id in watch_ids {
       effects.push(WatchPane(agent_id~))

@@ -71,17 +71,6 @@ pub(all) struct SpawnGeminiArgs {
 } derive(Debug, Eq)
 
 ///|
-pub(all) struct RescueLeafArgs {
-  task : String
-  task_contract : @types.TaskContract
-  caller_id : String
-  from_agent_id : String
-  new_slug : String
-  agent_type : @types.AgentType
-  parent_session_id : String?
-} derive(Debug, Eq)
-
-///|
 struct LeafSpawnArgs {
   task : String
   task_contract : @types.TaskContract

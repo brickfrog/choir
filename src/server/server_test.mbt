@@ -56,17 +56,10 @@ async test "audit cycle counter records tracked leaf cycles and clears on unregi
   assert_eq(state.audit_cycle_count_for_agent(agent_id), 0)
   ignore(state.record_audit_cycle_for_agent(agent_id))
   assert_eq(state.audit_cycle_count_for_agent(agent_id), 1)
-  state.handle_disconnect_with_runner(
-    agent_id,
-    runner=async fn(_cmds) {
-      @async.sleep(0)
-      []
-    },
-    capture=async fn(_cmd) {
-      @async.sleep(0)
-      (0, "")
-    },
-  )
+  state.handle_disconnect_with_runner(agent_id, runner=async fn(_cmds) {
+    @async.sleep(0)
+    []
+  })
   assert_eq(state.audit_cycle_count_for_agent(agent_id), 0)
 }
 
@@ -118,17 +111,10 @@ async test "audit progress records latest audit report and clears on unregister 
     }
     None => fail("expected audit progress after second report")
   }
-  state.handle_disconnect_with_runner(
-    agent_id,
-    runner=async fn(_cmds) {
-      @async.sleep(0)
-      []
-    },
-    capture=async fn(_cmd) {
-      @async.sleep(0)
-      (0, "")
-    },
-  )
+  state.handle_disconnect_with_runner(agent_id, runner=async fn(_cmds) {
+    @async.sleep(0)
+    []
+  })
   assert_true(state.audit_progress_for_agent(agent_id) is None)
 }
 
@@ -480,16 +466,12 @@ test "reload snapshot restores registry pending state and mutexes" {
   ignore(state.registry.upsert(agent))
   ignore(try? state.registry.set_alive("root.leaf", false))
   state.pending_disconnects.set("root.leaf", 1234L)
-  state.pending_disconnect_soft_notified.set("root.leaf", true)
   state.delivery_failures.set("root.leaf", 2)
   state.handoff_delivered.set("root.leaf", true)
   state.worker_no_handoff_prodded_at.set("root.worker", 2222L)
   state.worker_no_handoff_stalled_emitted.set("root.worker", true)
   state.worker_no_handoff_exit_emitted.set("root.worker", true)
   state.idle_agent_warned_at_70.set("root.worker", true)
-  state.last_commit_observed_at.set("root.leaf", 3333L)
-  state.last_commit_observed_sha.set("root.leaf", "sha-observed")
-  state.last_commit_probe_at.set("root.leaf", 3344L)
   ignore(state.mutex_registry.acquire("build", "root", 300L, 10L))
   ignore(state.mutex_registry.acquire("build", "root.leaf", 300L, 11L))
 
@@ -513,10 +495,6 @@ test "reload snapshot restores registry pending state and mutexes" {
         restored.pending_disconnects.get("root.leaf"),
         Some(1234L),
       )
-      @debug.assert_eq(
-        restored.pending_disconnect_soft_notified.get("root.leaf"),
-        Some(true),
-      )
       @debug.assert_eq(restored.delivery_failures.get("root.leaf"), Some(2))
       @debug.assert_eq(restored.handoff_delivered.get("root.leaf"), Some(true))
       @debug.assert_eq(
@@ -534,18 +512,6 @@ test "reload snapshot restores registry pending state and mutexes" {
       @debug.assert_eq(
         restored.idle_agent_warned_at_70.get("root.worker"),
         Some(true),
-      )
-      @debug.assert_eq(
-        restored.last_commit_observed_at.get("root.leaf"),
-        Some(3333L),
-      )
-      @debug.assert_eq(
-        restored.last_commit_observed_sha.get("root.leaf"),
-        Some("sha-observed"),
-      )
-      @debug.assert_eq(
-        restored.last_commit_probe_at.get("root.leaf"),
-        Some(3344L),
       )
       let (holder, queue) = restored.mutex_registry.status("build")
       @debug.assert_eq(holder, Some("root"))

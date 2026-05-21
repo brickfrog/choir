@@ -2851,7 +2851,6 @@ pub async fn ServerState::process_poller_tick_with(
   let pending_events = []
   let pending_agent_ids = []
   let tick_summary = @poller.TickSummary::new(@env.now().reinterpret_as_int64())
-  let sha_before = poller_last_sha_snapshot(self.poller)
   self.poller.tick_with(
     now,
     timeout,
@@ -2873,7 +2872,6 @@ pub async fn ServerState::process_poller_tick_with(
     pending_events.push(event)
     pending_agent_ids.push(synthetic_untracked_merge_agent_id(self))
   }
-  ignore(self.record_poller_sha_transitions(sha_before, now))
   tick_summary.changes = pending_events.length()
   emit_tick_summary_line(
     self,
@@ -2918,7 +2916,6 @@ pub async fn ServerState::process_poller_tick(
   let project_dir = self.config.project_dir
   let append_file = self.append_file
   let tick_summary = @poller.TickSummary::new(@env.now().reinterpret_as_int64())
-  let sha_before = poller_last_sha_snapshot(self.poller)
   self.poller.tick_with(
     now,
     timeout,
@@ -2941,7 +2938,6 @@ pub async fn ServerState::process_poller_tick(
     pending_events.push(event)
     pending_agent_ids.push(synthetic_untracked_merge_agent_id(self))
   }
-  ignore(self.record_poller_sha_transitions(sha_before, now))
   tick_summary.changes = pending_events.length()
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
@@ -2991,7 +2987,6 @@ pub async fn ServerState::refresh_pr_with(
 ) -> Unit {
   let pending_events : Array[@poller.PollEvent] = []
   let pending_agent_ids : Array[String] = []
-  let sha_before = poller_last_sha_snapshot(self.poller)
   self.poller.tick_pr_with(
     pr_number,
     now,
@@ -3004,7 +2999,6 @@ pub async fn ServerState::refresh_pr_with(
     fn(_) { () },
     force_refresh=true,
   )
-  ignore(self.record_poller_sha_transitions(sha_before, now))
   match self.poller.get(pr_number) {
     Some(pr) => {
       deliver_orphaned_pr_notification_for(self, pr, runner)

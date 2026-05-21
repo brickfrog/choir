@@ -736,38 +736,6 @@ fn resolve_review_thread_unresolved_counts(
 }
 
 ///|
-pub fn build_rescue_leaf_invoker(
-  project_dir : String,
-  session : String,
-  runner : async (Array[@workspace.Command]) -> Array[Int],
-  capture : async (@workspace.Command) -> (Int, String),
-  registry : @registry.AgentRegistry?,
-  poller_state : @poller.PollerState?,
-  extra_mcp_servers_json? : String? = None,
-  shell_command? : String? = None,
-  listen_uds? : String = ".choir/server.sock",
-  listen_tcp? : String? = None,
-  tcp_auth_token? : String? = None,
-) -> async (RescueLeafArgs) -> @types.Response {
-  async fn(rescue_args : RescueLeafArgs) -> @types.Response {
-    interpret_rescue_leaf(
-      rescue_args,
-      project_dir,
-      session,
-      runner,
-      capture,
-      registry,
-      poller_state,
-      extra_mcp_servers_json~,
-      shell_command~,
-      listen_uds~,
-      listen_tcp~,
-      tcp_auth_token~,
-    )
-  }
-}
-
-///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -1628,42 +1596,6 @@ pub async fn dispatch(
                 tcp_auth_token~,
               )
           }
-      }
-    ToolRequest::RescueLeaf(rescue_args) =>
-      if rescue_args.agent_type == @types.AgentType::Gemini {
-        match ensure_agy_migration_ready(agy_migration_incomplete) {
-          Err(e) => @types.Response::Err(e.message())
-          Ok(_) =>
-            interpret_rescue_leaf(
-              rescue_args,
-              project_dir,
-              session,
-              runner,
-              capture,
-              registry,
-              poller_state,
-              extra_mcp_servers_json~,
-              shell_command~,
-              listen_uds~,
-              listen_tcp~,
-              tcp_auth_token~,
-            )
-        }
-      } else {
-        interpret_rescue_leaf(
-          rescue_args,
-          project_dir,
-          session,
-          runner,
-          capture,
-          registry,
-          poller_state,
-          extra_mcp_servers_json~,
-          shell_command~,
-          listen_uds~,
-          listen_tcp~,
-          tcp_auth_token~,
-        )
       }
     ToolRequest::SpawnRemote(spawn_args) =>
       match ensure_caller_can_spawn(spawn_args.caller_id, registry) {

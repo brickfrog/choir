@@ -418,82 +418,6 @@ fn prompt_spec_with_task(spec : PromptSpec, task : String) -> PromptSpec {
 }
 
 ///|
-fn parse_rescue_leaf_args(
-  project_dir : String,
-  args : ToolArgs,
-) -> Result[RescueLeafArgs, ParseError] {
-  let prompt_spec = prompt_spec_from_tool_args(args)
-  let task = prompt_spec.task
-  if task == "" {
-    return Err(ParseError::MissingField(field="task"))
-  }
-  let caller_id = match tool_args_get(args, "caller_id") {
-    Some(v) =>
-      if v == "" {
-        return Err(ParseError::MissingField(field="caller_id"))
-      } else {
-        v
-      }
-    None => return Err(ParseError::MissingField(field="caller_id"))
-  }
-  let from_agent_id = tool_args_get(args, "from_agent_id").unwrap_or("")
-  if from_agent_id == "" {
-    return Err(ParseError::MissingField(field="from_agent_id"))
-  }
-  match validate_branch(from_agent_id) {
-    Ok(_) => ()
-    Err(e) =>
-      return Err(
-        ParseError::InvalidFormat(
-          field="from_agent_id",
-          message=e.validation_detail_or_message(),
-        ),
-      )
-  }
-  let new_slug = match tool_args_get(args, "new_slug") {
-    Some(v) =>
-      if v == "" {
-        return Err(ParseError::MissingField(field="new_slug"))
-      } else {
-        v
-      }
-    None => return Err(ParseError::MissingField(field="new_slug"))
-  }
-  match validate_slug(new_slug) {
-    Ok(_) => ()
-    Err(e) =>
-      return Err(
-        ParseError::InvalidFormat(
-          field="new_slug",
-          message=e.validation_detail_or_message(),
-        ),
-      )
-  }
-  let agent_type_str = tool_args_get(args, "agent_type").unwrap_or(
-    "cursor_agent",
-  )
-  let normalized = if agent_type_str == "" {
-    "cursor_agent"
-  } else {
-    agent_type_str
-  }
-  let agent_type = match parse_agent_type(normalized) {
-    Ok(value) => value
-    Err(e) => return Err(e)
-  }
-  let parent_session_id = lookup_parent_session_id(project_dir, args)
-  Ok({
-    task,
-    task_contract: prompt_spec.task_contract,
-    caller_id,
-    from_agent_id,
-    new_slug,
-    agent_type,
-    parent_session_id,
-  })
-}
-
-///|
 fn parse_spawn_gemini_args(
   project_dir : String,
   args : ToolArgs,
@@ -1774,10 +1698,6 @@ fn parse_tool_request(
     "spawn_gemini" =>
       parse_spawn_gemini_args(_project_dir, args).map(fn(a) {
         ToolRequest::SpawnGemini(a)
-      })
-    "rescue_leaf" =>
-      parse_rescue_leaf_args(_project_dir, args).map(fn(a) {
-        ToolRequest::RescueLeaf(a)
       })
     "fork_wave" =>
       parse_fork_wave_args(_project_dir, args).map(fn(a) {
