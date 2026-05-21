@@ -602,6 +602,7 @@ async fn detect_pr_merged_audit_enforcement(
     None => return AuditEnforcementOutcome::NotApplicable
   }
   let head_sha = pr.last_sha.trim().to_owned()
+  // AUDIT: Empty-SHA fail-closed is gated behind confirmed integration merge default_branch resolution.
   if head_sha == "" {
     if state.config.pr_policy.require_integration_audit {
       return AuditEnforcementOutcome::UnauditedBlocked
@@ -734,27 +735,33 @@ fn audit_enforcement_log_message(
   head_sha : String,
   outcome : AuditEnforcementOutcome,
 ) -> String {
-  if head_sha.trim().to_owned() == "" {
-    match outcome {
-      UnauditedBlocked => "audit enforcement blocked: missing merge head sha"
-      UnauditedWarned => "audit enforcement warned: missing merge head sha"
-      Audited | NotApplicable =>
+  match outcome {
+    UnauditedBlocked =>
+      if head_sha.trim().to_owned() == "" {
+        "audit enforcement blocked: missing merge head sha"
+      } else {
         unaudited_integration_merge_log_message(default_branch)
-    }
-  } else {
-    unaudited_integration_merge_log_message(default_branch)
+      }
+    UnauditedWarned =>
+      if head_sha.trim().to_owned() == "" {
+        "audit enforcement warned: missing merge head sha"
+      } else {
+        unaudited_integration_merge_log_message(default_branch)
+      }
+    Audited | NotApplicable => ""
   }
 }
 
 ///|
 test "audit_enforcement_log_message distinguishes missing-head warn from block" {
-  let warned_message = audit_enforcement_log_message(
-    "main",
-    "",
-    AuditEnforcementOutcome::UnauditedWarned,
+  assert_eq(
+    audit_enforcement_log_message(
+      "main",
+      "",
+      AuditEnforcementOutcome::UnauditedWarned,
+    ),
+    "audit enforcement warned: missing merge head sha",
   )
-  assert_eq(warned_message, "audit enforcement warned: missing merge head sha")
-  assert_false(warned_message.contains("audit enforcement blocked"))
   assert_eq(
     audit_enforcement_log_message(
       "main",
@@ -763,6 +770,51 @@ test "audit_enforcement_log_message distinguishes missing-head warn from block" 
     ),
     "audit enforcement blocked: missing merge head sha",
   )
+  assert_eq(
+    audit_enforcement_log_message(
+      "main",
+      "abcdef123456",
+      AuditEnforcementOutcome::UnauditedWarned,
+    ),
+    "[UNAUDITED MERGE INTO MAIN]",
+  )
+  assert_eq(
+    audit_enforcement_log_message(
+      "trunk",
+      "abcdef123456",
+      AuditEnforcementOutcome::UnauditedBlocked,
+    ),
+    "[UNAUDITED MERGE INTO DEFAULT BRANCH]",
+  )
+  assert_eq(
+    audit_enforcement_log_message(
+      "main",
+      "abcdef123456",
+      AuditEnforcementOutcome::Audited,
+    ),
+    "",
+  )
+  assert_eq(
+    audit_enforcement_log_message(
+      "main",
+      "",
+      AuditEnforcementOutcome::NotApplicable,
+    ),
+    "",
+  )
+}
+
+///|
+fn emit_audit_enforcement_log(
+  outcome : AuditEnforcementOutcome,
+  message : () -> String,
+  fields : Array[@moontrace.Field],
+) -> Unit {
+  match outcome {
+    UnauditedBlocked => @moontrace.error(message(), fields~)
+    UnauditedWarned => @moontrace.warn(message(), fields~)
+    Audited | NotApplicable => ()
+  }
 }
 
 ///|
@@ -772,11 +824,6 @@ fn log_unaudited_integration_merge(
   receipt_path : String,
   outcome : AuditEnforcementOutcome,
 ) -> Unit {
-  let message = audit_enforcement_log_message(
-    default_branch,
-    pr.last_sha,
-    outcome,
-  )
   let fields = [
     @moontrace.field("pr", pr.pr_number),
     @moontrace.field("branch", pr.branch),
@@ -785,11 +832,11 @@ fn log_unaudited_integration_merge(
     @moontrace.field("head_sha", pr.last_sha),
     @moontrace.field("receipt_path", receipt_path),
   ]
-  match outcome {
-    UnauditedBlocked => @moontrace.error(message, fields~)
-    UnauditedWarned => @moontrace.warn(message, fields~)
-    Audited | NotApplicable => ()
-  }
+  emit_audit_enforcement_log(
+    outcome,
+    fn() { audit_enforcement_log_message(default_branch, pr.last_sha, outcome) },
+    fields,
+  )
 }
 
 ///|
@@ -799,6 +846,11 @@ fn unaudited_integration_merge_log_message(default_branch : String) -> String {
   } else {
     "[UNAUDITED MERGE INTO DEFAULT BRANCH]"
   }
+}
+
+///|
+fn untracked_missing_head_audit_log_message() -> String {
+  "untracked merge observed with missing head sha; audit receipt not durably recorded"
 }
 
 ///|
@@ -1090,9 +1142,6 @@ pub async fn detect_untracked_pr_merged_events(
       } else {
         AuditEnforcementOutcome::UnauditedWarned
       }
-      let message = audit_enforcement_log_message(
-        default_branch, head_sha, outcome,
-      )
       let fields = [
         @moontrace.field("pr", info.pr_number),
         @moontrace.field("branch", info.branch),
@@ -1101,11 +1150,9 @@ pub async fn detect_untracked_pr_merged_events(
         @moontrace.field("head_sha", head_sha),
         @moontrace.field("pr_url", info.pr_url),
       ]
-      match outcome {
-        UnauditedBlocked => @moontrace.error(message, fields~)
-        UnauditedWarned => @moontrace.warn(message, fields~)
-        Audited | NotApplicable => ()
-      }
+      emit_audit_enforcement_log(
+        outcome, untracked_missing_head_audit_log_message, fields,
+      )
     }
     let observed_but_recheckable = observed_this_process &&
       !observed_this_tick &&
