@@ -1218,7 +1218,6 @@ pub async fn dispatch(
         args,
         tdd_state_reader,
         tdd_state_writer,
-        project_dir~,
         registry~,
         task_contract_reader~,
       )
@@ -1227,7 +1226,6 @@ pub async fn dispatch(
         args,
         tdd_state_reader,
         tdd_state_writer,
-        project_dir~,
         registry~,
         task_contract_reader~,
         capture~,
@@ -1237,7 +1235,6 @@ pub async fn dispatch(
         args,
         tdd_state_reader,
         tdd_state_writer,
-        project_dir~,
         registry~,
         task_contract_reader~,
         capture~,

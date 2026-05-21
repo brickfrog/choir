@@ -251,9 +251,12 @@ pub fn ServerState::record_agent_task_contract(
   agent_id : String,
   contract : @types.TaskContract?,
 ) -> Unit {
+  if self.agent_task_contracts.contains(agent_id) {
+    return
+  }
   match contract {
     Some(value) => self.agent_task_contracts.set(agent_id, value)
-    None => self.agent_task_contracts.remove(agent_id)
+    None => ()
   }
 }
 

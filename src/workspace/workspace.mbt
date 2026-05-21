@@ -287,33 +287,6 @@ fn local_config_candidate_paths_for_agent_workspace(
 }
 
 ///|
-/// Read the task contract for an agent from its config.local.toml.
-pub fn task_contract_for_agent_workspace(
-  project_dir : String,
-  agent_workspace : String?,
-  agent_slug : String,
-) -> @types.TaskContract? {
-  for
-    path in local_config_candidate_paths_for_agent_workspace(
-      project_dir, agent_workspace, agent_slug,
-    ) {
-    let content = @sys.read_file(path)
-    if content == "" {
-      continue
-    }
-    match @config.parse_local_config(content) {
-      Ok(local_cfg) =>
-        match local_cfg.task_contract {
-          Some(contract) => return Some(contract)
-          None => ()
-        }
-      Err(_) => ()
-    }
-  }
-  None
-}
-
-///|
 pub fn review_mode_for_agent_workspace(
   project_dir : String,
   agent_workspace : String?,

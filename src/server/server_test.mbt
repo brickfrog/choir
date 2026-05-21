@@ -119,6 +119,28 @@ async test "audit progress records latest audit report and clears on unregister 
 }
 
 ///|
+test "record_agent_task_contract keeps first captured contract" {
+  let state = ServerState::new(
+    @types.Config::default(),
+    make_hermetic_recovery_provider(),
+  )
+  let first = {
+    ..@types.TaskContract::empty(),
+    goal: "server captured contract",
+    verify: ["moon test --target native"],
+  }
+  let forged = {
+    ..@types.TaskContract::empty(),
+    goal: "leaf forged replacement",
+    verify: ["test -e forged.marker"],
+  }
+  state.record_agent_task_contract("main.leaf", Some(first))
+  state.record_agent_task_contract("main.leaf", Some(forged))
+  state.record_agent_task_contract("main.leaf", None)
+  @debug.assert_eq(state.task_contract_for_agent("main.leaf"), Some(first))
+}
+
+///|
 test "audit progress treats failure reports as unknown findings without receipt" {
   let config = @types.Config::default()
   let state = ServerState::new(config, make_hermetic_recovery_provider())
@@ -577,6 +599,46 @@ test "reload snapshot fails closed when authoritative contracts are missing" {
       assert_true(e.message().contains("agent_task_contracts"))
     }
     Ok(_) => fail("expected older snapshot without contracts to fail closed")
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+test "reload snapshot fails closed when version two omits contracts field" {
+  let project_dir = "/tmp/choir-reload-missing-contract-field-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let config = {
+    ..@types.Config::default(),
+    project_dir,
+    terminal_session: "choir-reload-missing-contract-field",
+  }
+  let state = ServerState::new(config, make_hermetic_recovery_provider())
+  match
+    state.registry.write_snapshot_file(
+      project_dir,
+      write_file=@sys.write_file_atomic,
+    ) {
+    Ok(_) => ()
+    Err(e) => fail(e.message())
+  }
+  let runtime_snapshot =
+    #|{"version":2,"run_id":"v2-missing-contracts","binary_path":null,"pending_disconnects":[],"delivery_failures":[],"handoff_delivered":[],"worker_no_handoff_prodded_at":[],"worker_no_handoff_stalled_emitted":[],"worker_no_handoff_exit_emitted":[],"idle_agent_warned_at_70":[],"leaf_tdd_phases":[],"mutex_registry":{"version":1,"locks":[]}}
+  assert_true(
+    @sys.write_file_sync(
+      server_reload_runtime_snapshot_path(project_dir),
+      runtime_snapshot,
+    ),
+  )
+  let restored = ServerState::new(config, make_hermetic_recovery_provider())
+  match restored.restore_reload_snapshot() {
+    Err(e) =>
+      assert_true(e.message().contains("missing task contract map array"))
+    Ok(_) =>
+      fail("expected version 2 snapshot without contracts field to fail closed")
   }
   ignore(@sys.rm_rf(project_dir))
 }
