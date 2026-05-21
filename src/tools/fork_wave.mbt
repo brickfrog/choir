@@ -17,6 +17,51 @@ pub fn fork_wave_leaf_task_with_review_context(
 }
 
 ///|
+pub fn agy_binary_unavailable_message() -> String {
+  "agy binary not found or not executable on PATH; Gemini provider requires the agy CLI binary. The Antigravity IDE / antigravity binary is not supported."
+}
+
+///|
+pub async fn ensure_agy_binary_available(
+  capture : async (@workspace.Command) -> (Int, String),
+) -> Result[Unit, String] {
+  let (code, _) = capture({ program: "agy", args: ["--help"], workdir: None })
+  if code == 0 {
+    Ok(())
+  } else {
+    Err(agy_binary_unavailable_message())
+  }
+}
+
+///|
+fn empty_fork_wave_spawn_plan() -> ForkWaveSpawnPlan {
+  {
+    cmds: [],
+    spawned_specs: [],
+    spawned_slugs: [],
+    spawned_count: 0,
+    skipped_count: 0,
+    agent_ids: "",
+    skipped_ids: "",
+  }
+}
+
+///|
+fn with_agy_shared_cache_seed_commands(
+  spawn_plan : ForkWaveSpawnPlan,
+  project_dir : String,
+) -> ForkWaveSpawnPlan {
+  let cmds : Array[@workspace.Command] = []
+  for cmd in @workspace.agy_shared_cache_seed_commands(project_dir) {
+    cmds.push(cmd)
+  }
+  for cmd in spawn_plan.cmds {
+    cmds.push(cmd)
+  }
+  { ..spawn_plan, cmds, }
+}
+
+///|
 /// Build [`ForkWaveSpawnPlan`] from resolved tool args and `child_spawn_depth`.
 /// Uses `slugify_task` for per-leaf slugs; behavior matches the historical
 /// `ToolRequest::ForkWave` inline loop in `dispatch`.
@@ -385,6 +430,20 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     listen_tcp~,
     tcp_auth_token~,
   )
+  let spawn_plan = if fork_wave_args.agent_type == @types.AgentType::Gemini &&
+    spawn_plan.spawned_count > 0 {
+    match ensure_agy_binary_available(capture) {
+      Ok(_) => with_agy_shared_cache_seed_commands(spawn_plan, project_dir)
+      Err(msg) =>
+        return (
+          @types.Response::Err(msg),
+          fork_wave_args,
+          empty_fork_wave_spawn_plan(),
+        )
+    }
+  } else {
+    spawn_plan
+  }
   let plan = fork_wave_plan(
     project_dir,
     spawn_plan.cmds,

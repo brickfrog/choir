@@ -190,18 +190,8 @@ test "normalize_tl_type maps agent alias" {
 }
 
 ///|
-test "resolve_agy_binary_with_probe prefers agy and falls back to antigravity" {
-  assert_eq(
-    @workspace.resolve_agy_binary_with_probe(fn(name) {
-      name == "agy" || name == "antigravity"
-    }),
-    "agy",
-  )
-  assert_eq(
-    @workspace.resolve_agy_binary_with_probe(fn(name) { name == "antigravity" }),
-    "antigravity",
-  )
-  assert_eq(@workspace.resolve_agy_binary_with_probe(fn(_) { false }), "agy")
+test "agy_binary_name resolves agy only" {
+  assert_eq(@workspace.agy_binary_name(), "agy")
 }
 
 ///|
@@ -304,11 +294,7 @@ test "agent_launch_command for each AgentType" {
   let spec_codex = { ..spec_claude, agent_type: @types.AgentType::Codex }
 
   let cmd_claude = @workspace.agent_launch_command(spec_claude, "/path")
-  let cmd_gemini = @workspace.agent_launch_command(spec_gemini, "/path", agy_path_probe=fn(
-    name,
-  ) {
-    name == "agy"
-  })
+  let cmd_gemini = @workspace.agent_launch_command(spec_gemini, "/path")
   let cmd_moon = @workspace.agent_launch_command(spec_moon, "/path")
   let cmd_codex = @workspace.agent_launch_command(spec_codex, "/path")
 
@@ -473,7 +459,7 @@ test "agent_launch_command supports command_override" {
 }
 
 ///|
-test "agent_launch_command falls back to antigravity for agy-backed types" {
+test "agent_launch_command always uses agy for agy-backed types" {
   let spec = @types.SpawnSpec::{
     slug: "test-slug",
     role: @types.Role::Dev,
@@ -491,19 +477,13 @@ test "agent_launch_command falls back to antigravity for agy-backed types" {
     review_mode: None,
     wave_id: None,
   }
-  let probe = fn(name : String) -> Bool { name == "antigravity" }
-  let gemini = @workspace.agent_launch_command(
-    spec,
-    "/path",
-    agy_path_probe=probe,
-  )
-  assert_eq(gemini.program, "antigravity")
+  let gemini = @workspace.agent_launch_command(spec, "/path")
+  assert_eq(gemini.program, "agy")
   let unknown = @workspace.agent_launch_command(
     { ..spec, agent_type: @types.AgentType::Unknown },
     "/path",
-    agy_path_probe=probe,
   )
-  assert_eq(unknown.program, "antigravity")
+  assert_eq(unknown.program, "agy")
 }
 
 ///|
@@ -1174,12 +1154,6 @@ test "run_native_agy_cache_links_command is idempotent and preserves shared cach
   )
   assert_true(@sys.write_file_sync(shared_bin + "/agentapi", "agent"))
   assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "webm"))
-  assert_true(
-    @sys.write_file_sync(
-      project + "/.choir/agy-shared-cache/.complete",
-      "complete\n",
-    ),
-  )
 
   let cmd = @workspace.agy_cache_links(project, worktree)
   assert_eq(cmd.program, @workspace.native_agy_cache_links_program)
@@ -1191,9 +1165,6 @@ test "run_native_agy_cache_links_command is idempotent and preserves shared cach
   let second_playwright_link = second_home + "/.cache/ms-playwright-go"
   let bin_link = home + "/.gemini/antigravity-cli/bin"
   let second_bin_link = second_home + "/.gemini/antigravity-cli/bin"
-  assert_true(
-    @sys.path_entry_exists(project + "/.choir/agy-shared-cache/.complete"),
-  )
   assert_true(
     @sys.write_file_sync(shared_playwright + "/sentinel.txt", "shared"),
   )
@@ -1211,7 +1182,7 @@ test "run_native_agy_cache_links_command is idempotent and preserves shared cach
 }
 
 ///|
-test "run_native_agy_cache_links_command adopts existing unmarked shared cache" {
+test "run_native_agy_cache_links_command links existing shared cache without marker" {
   let dir = "/tmp/choir-agy-cache-adopt-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -1236,13 +1207,11 @@ test "run_native_agy_cache_links_command adopts existing unmarked shared cache" 
   assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "webm"))
   assert_true(@sys.write_file_sync(shared_playwright + "/sentinel.txt", "keep"))
   assert_true(@sys.write_file_sync(shared_extra + "/sentinel.txt", "keep-root"))
-  assert_false(@sys.path_entry_exists(shared_root + "/.complete"))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
   assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 0)
 
   let home = worktree + "/.choir/agy-home"
-  assert_true(@sys.path_entry_exists(shared_root + "/.complete"))
   assert_true(@sys.path_entry_exists(shared_bin))
   assert_eq(
     @sys.read_file(home + "/.cache/ms-playwright-go/sentinel.txt"),
@@ -1254,8 +1223,28 @@ test "run_native_agy_cache_links_command adopts existing unmarked shared cache" 
 }
 
 ///|
-test "run_native_agy_cache_links_command rejects invalid complete cache" {
-  let dir = "/tmp/choir-agy-cache-invalid-complete-" +
+test "run_native_agy_cache_links_command fails when shared cache is absent" {
+  let dir = "/tmp/choir-agy-cache-absent-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let worktree = project + "/.choir/worktrees/leaf"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(worktree))
+
+  let cmd = @workspace.agy_cache_links(project, worktree)
+  assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 1)
+
+  let home = worktree + "/.choir/agy-home"
+  assert_false(@sys.path_entry_exists(home + "/.cache/ms-playwright-go"))
+  assert_false(@sys.path_entry_exists(home + "/.gemini/antigravity-cli/bin"))
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_cache_links_command rejects invalid shared cache" {
+  let dir = "/tmp/choir-agy-cache-invalid-shared-" +
     @sys.get_pid().to_string() +
     "-" +
     @env.now().reinterpret_as_int64().to_string()
@@ -1266,7 +1255,6 @@ test "run_native_agy_cache_links_command rejects invalid complete cache" {
   assert_true(@sys.create_dir_all(worktree))
   assert_true(@sys.create_dir_all(shared_root + "/ms-playwright-go"))
   assert_true(@sys.create_dir_all(shared_root + "/antigravity-cli-bin"))
-  assert_true(@sys.write_file_sync(shared_root + "/.complete", "complete\n"))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
   assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 1)
@@ -1274,6 +1262,104 @@ test "run_native_agy_cache_links_command rejects invalid complete cache" {
   let home = worktree + "/.choir/agy-home"
   assert_false(@sys.path_entry_exists(home + "/.cache/ms-playwright-go"))
   assert_false(@sys.path_entry_exists(home + "/.gemini/antigravity-cli/bin"))
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_shared_cache_seed_if_needed skips bootstrap when cache is populated" {
+  let dir = "/tmp/choir-agy-cache-seed-warm-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let shared_root = project + "/.choir/agy-shared-cache"
+  let shared_playwright = shared_root + "/ms-playwright-go"
+  let shared_version = shared_playwright + "/1.57.0"
+  let shared_bin = shared_root + "/antigravity-cli-bin"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(shared_version + "/package"))
+  assert_true(@sys.create_dir_all(shared_bin))
+  assert_true(@sys.write_file_sync(shared_version + "/node", "node"))
+  assert_true(
+    @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
+  )
+  assert_true(@sys.write_file_sync(shared_bin + "/agentapi", "agent"))
+  assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "webm"))
+
+  let bootstrap_called : Array[Bool] = [false]
+  let status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(_) {
+      bootstrap_called[0] = true
+      1
+    },
+  )
+
+  assert_eq(status, 0)
+  assert_false(bootstrap_called[0])
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_shared_cache_seed_if_needed bootstraps and validates cold cache" {
+  let dir = "/tmp/choir-agy-cache-seed-cold-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let shared_root = project + "/.choir/agy-shared-cache"
+  let shared_playwright = shared_root + "/ms-playwright-go"
+  let shared_version = shared_playwright + "/1.57.0"
+  let shared_bin = shared_root + "/antigravity-cli-bin"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(project))
+
+  let bootstrap_called : Array[Bool] = [false]
+  let bootstrap_program : Array[String] = []
+  let bootstrap_args : Array[String] = []
+  let bootstrap_workdir : Array[String] = []
+  let status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(cmd) {
+      bootstrap_called[0] = true
+      bootstrap_program.push(cmd.program)
+      for arg in cmd.args {
+        bootstrap_args.push(arg)
+      }
+      match cmd.workdir {
+        Some(dir) => bootstrap_workdir.push(dir)
+        None => ()
+      }
+      ignore(@sys.create_dir_all(shared_version + "/package"))
+      ignore(@sys.create_dir_all(shared_bin))
+      ignore(@sys.write_file_sync(shared_version + "/node", "node"))
+      ignore(
+        @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
+      )
+      ignore(@sys.write_file_sync(shared_bin + "/agentapi", "agent"))
+      ignore(@sys.write_file_sync(shared_bin + "/webm_encoder", "webm"))
+      0
+    },
+  )
+
+  assert_eq(status, 0)
+  assert_true(bootstrap_called[0])
+  @debug.assert_eq(bootstrap_program, ["env"])
+  assert_true(
+    bootstrap_args.contains("HOME=" + project + "/.choir/agy-shared-cache/home"),
+  )
+  assert_true(bootstrap_args.contains("agy"))
+  @debug.assert_eq(bootstrap_workdir, [project])
+  assert_true(
+    @sys.path_entry_exists(
+      project + "/.choir/agy-shared-cache/home/.cache/ms-playwright-go",
+    ),
+  )
+  assert_true(
+    @sys.path_entry_exists(
+      project + "/.choir/agy-shared-cache/home/.gemini/antigravity-cli/bin",
+    ),
+  )
   ignore(@sys.rm_rf(dir))
 }
 
@@ -1372,6 +1458,7 @@ test "agy mcp config and cursor mcp json use native file commands" {
   assert_eq(hooks.args[1], ".choir/agy-home/.gemini/config/hooks.json")
   assert_true(hooks.args[2].contains("\"PreInvocation\""))
   assert_true(hooks.args[2].contains("\"PostInvocation\""))
+  assert_true(hooks.args[2].contains("\"PreToolUse\""))
   assert_true(hooks.args[2].contains("\"Stop\""))
   assert_false(hooks.args[2].contains("\"matcher\""))
   let hooks_json = @json.parse(hooks.args[2]) catch {
@@ -1389,17 +1476,24 @@ test "agy mcp config and cursor mcp json use native file commands" {
   guard hooks_root.get("PostInvocation") is Some(Array(post_invocation)) else {
     fail("agy PostInvocation hook missing")
   }
+  guard hooks_root.get("PreToolUse") is Some(Array(pre_tool_use)) else {
+    fail("agy PreToolUse hook missing")
+  }
   guard hooks_root.get("Stop") is Some(Array(stop_hooks)) else {
     fail("agy Stop hook missing")
   }
   assert_eq(pre_invocation.length(), 1)
   assert_eq(post_invocation.length(), 1)
+  assert_eq(pre_tool_use.length(), 1)
   assert_eq(stop_hooks.length(), 1)
   guard pre_invocation[0] is Object(pre_hook) else {
     fail("PreInvocation hook object missing")
   }
   guard post_invocation[0] is Object(post_hook) else {
     fail("PostInvocation hook object missing")
+  }
+  guard pre_tool_use[0] is Object(pre_tool_hook) else {
+    fail("PreToolUse hook object missing")
   }
   guard stop_hooks[0] is Object(stop_hook) else {
     fail("Stop hook object missing")
@@ -1416,6 +1510,12 @@ test "agy mcp config and cursor mcp json use native file commands" {
     Some("extism call '/hooks/hook.wasm' after_model --wasi".to_json()),
   )
   @debug.assert_eq(post_hook.get("timeout"), Some(Int::to_json(60)))
+  @debug.assert_eq(pre_tool_hook.get("type"), Some("command".to_json()))
+  @debug.assert_eq(
+    pre_tool_hook.get("command"),
+    Some("extism call '/hooks/hook.wasm' pre_tool_use --wasi".to_json()),
+  )
+  @debug.assert_eq(pre_tool_hook.get("timeout"), Some(Int::to_json(60)))
   @debug.assert_eq(stop_hook.get("type"), Some("command".to_json()))
   @debug.assert_eq(
     stop_hook.get("command"),
@@ -1424,6 +1524,7 @@ test "agy mcp config and cursor mcp json use native file commands" {
   @debug.assert_eq(stop_hook.get("timeout"), Some(Int::to_json(60)))
   @debug.assert_eq(pre_hook.get("stdin"), None)
   @debug.assert_eq(post_hook.get("stdin"), None)
+  @debug.assert_eq(pre_tool_hook.get("stdin"), None)
   @debug.assert_eq(stop_hook.get("stdin"), None)
 
   let cur = @workspace.write_cursor_mcp_json("/wt", "main.leaf", "dev")
