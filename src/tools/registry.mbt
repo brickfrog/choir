@@ -63,17 +63,17 @@ pub fn ToolRegistry::new() -> ToolRegistry {
     ),
     tool_def(
       "tdd_intent",
-      "Declare the leaf's TDD intent and persist the test command before writing the failing test.",
+      "Declare the leaf's TDD intent before writing the failing test; red/green checks use the configured task-contract verify command.",
       [@types.Role::Dev],
     ),
     tool_def(
       "tdd_red_check",
-      "Advance a leaf from Intent to Red only when the persisted intent test command fails.",
+      "Advance a leaf from Intent to Red only when the configured task-contract verify command fails.",
       [@types.Role::Dev],
     ),
     tool_def(
       "tdd_green_check",
-      "Advance a leaf through Green, optional Refactor, and Done only when the persisted intent test command passes.",
+      "Advance a leaf through Green, optional Refactor, and Done only when the configured task-contract verify command passes.",
       [@types.Role::Dev],
     ),
     tool_def(

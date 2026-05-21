@@ -181,8 +181,9 @@ pub(all) enum LeafTddPhase {
 
 ///|
 /// Persisted TDD gate state for a leaf. The test command is declared once at
-/// `tdd_intent` time and reused by the red/green checks so the check tools
-/// cannot substitute a different command.
+/// `tdd_intent` time only after it matches the server-resolved task-contract
+/// verify command. Red/green checks resolve the configured command again before
+/// executing so the leaf cannot substitute a different command.
 pub(all) struct LeafTddState {
   phase : LeafTddPhase
   test_command : String?

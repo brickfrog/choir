@@ -797,19 +797,8 @@ pub async fn dispatch(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
-  tdd_phase_writer? : (String, @types.LeafTddPhase) -> Unit = fn(_, _) { () },
-  tdd_state_reader? : (String) -> @types.LeafTddState? = fn(agent_id) {
-    match tdd_phase_reader(agent_id) {
-      Some(phase) => Some({ phase, test_command: None })
-      None => None
-    }
-  },
-  tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(
-    agent_id,
-    state,
-  ) {
-    tdd_phase_writer(agent_id, state.phase)
-  },
+  tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
+  tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   caller_id? : String? = None,
   caller_role? : @types.Role = @types.Role::TL,
@@ -1215,7 +1204,13 @@ pub async fn dispatch(
         sleep_fn~,
       )
     ToolRequest::TddIntent(args) =>
-      interpret_tdd_intent(args, tdd_state_reader, tdd_state_writer)
+      interpret_tdd_intent(
+        args,
+        tdd_state_reader,
+        tdd_state_writer,
+        project_dir~,
+        registry~,
+      )
     ToolRequest::TddRedCheck(args) =>
       interpret_tdd_red_check(
         args,
@@ -1878,19 +1873,8 @@ pub async fn handle_request(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
-  tdd_phase_writer? : (String, @types.LeafTddPhase) -> Unit = fn(_, _) { () },
-  tdd_state_reader? : (String) -> @types.LeafTddState? = fn(agent_id) {
-    match tdd_phase_reader(agent_id) {
-      Some(phase) => Some({ phase, test_command: None })
-      None => None
-    }
-  },
-  tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(
-    agent_id,
-    state,
-  ) {
-    tdd_phase_writer(agent_id, state.phase)
-  },
+  tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
+  tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   plugins_json? : String? = None,
   pr_review? : Bool = true,
@@ -2053,7 +2037,6 @@ pub async fn handle_request(
                   mutex_registry~,
                   poller_state~,
                   tdd_phase_reader~,
-                  tdd_phase_writer~,
                   tdd_state_reader~,
                   tdd_state_writer~,
                   list_panes_cache~,
@@ -2217,19 +2200,8 @@ pub async fn dispatch_call(
   mutex_registry? : @registry.MutexRegistry? = None,
   poller_state? : @poller.PollerState? = None,
   tdd_phase_reader? : (String) -> @types.LeafTddPhase? = fn(_) { None },
-  tdd_phase_writer? : (String, @types.LeafTddPhase) -> Unit = fn(_, _) { () },
-  tdd_state_reader? : (String) -> @types.LeafTddState? = fn(agent_id) {
-    match tdd_phase_reader(agent_id) {
-      Some(phase) => Some({ phase, test_command: None })
-      None => None
-    }
-  },
-  tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(
-    agent_id,
-    state,
-  ) {
-    tdd_phase_writer(agent_id, state.phase)
-  },
+  tdd_state_reader? : (String) -> @types.LeafTddState? = fn(_) { None },
+  tdd_state_writer? : (String, @types.LeafTddState) -> Unit = fn(_, _) { () },
   list_panes_cache? : Map[String, CachedListPanesSnapshot]? = None,
   pr_review? : Bool = true,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
@@ -2330,7 +2302,6 @@ pub async fn dispatch_call(
                   mutex_registry~,
                   poller_state~,
                   tdd_phase_reader~,
-                  tdd_phase_writer~,
                   tdd_state_reader~,
                   tdd_state_writer~,
                   list_panes_cache~,

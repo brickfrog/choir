@@ -31,7 +31,7 @@ pub(all) struct TrackPrArgs {
 pub(all) struct TddIntentArgs {
   caller_id : String
   intent : String
-  test_command : String
+  test_command : String?
 } derive(Debug, Eq)
 
 ///|
