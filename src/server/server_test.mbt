@@ -1666,6 +1666,10 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
       @async.sleep(0)
       (1, "")
     },
+    audit_receipt_exists=fn(_) { true },
+    audit_receipt_read=fn(_) {
+      handler_test_audit_receipt("sha-merged", "main", 0)
+    },
   )
 
   assert_true(sent_parent_merge)

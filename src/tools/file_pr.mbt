@@ -938,6 +938,14 @@ pub fn file_pr_audit_receipt_validation(
   if !file_pr_audit_receipt_required(parent_branch) {
     return AuditReceiptValid
   }
+  file_pr_required_audit_receipt_validation(current_head, receipt_body)
+}
+
+///|
+pub fn file_pr_required_audit_receipt_validation(
+  current_head : String,
+  receipt_body : String?,
+) -> FilePrAuditReceiptValidation {
   let short_sha = file_pr_short_sha(current_head)
   let receipt = match receipt_body {
     Some(body) if body.trim() != "" => body

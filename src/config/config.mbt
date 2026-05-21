@@ -482,6 +482,15 @@ pub fn parse_config(
     Ok(v) => v
     Err(e) => return Err(e)
   }
+  let pr_policy_require_integration_audit = match
+    parse_required_bool_config_value(
+      doc,
+      "pr_policy.require_integration_audit",
+      default_cfg.pr_policy.require_integration_audit,
+    ) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
   let auto_rebuild_after_pull = match
     parse_required_bool_config_value(
       doc,
@@ -528,6 +537,9 @@ pub fn parse_config(
     audit_max_rounds,
     poller_heartbeat_tick_sec,
     auto_pull_after_integration,
+    pr_policy: {
+      require_integration_audit: pr_policy_require_integration_audit,
+    },
     auto_rebuild_after_pull,
     auto_reload_after_rebuild,
     pricing,

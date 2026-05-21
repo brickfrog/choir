@@ -5,6 +5,16 @@ pub let audit_heartbeat_sec_max : Int = 2_147_483
 pub let audit_max_rounds_max : Int = 2_147_483
 
 ///|
+pub(all) struct PrPolicy {
+  require_integration_audit : Bool
+} derive(Debug, Eq)
+
+///|
+pub fn PrPolicy::default() -> PrPolicy {
+  { require_integration_audit: true }
+}
+
+///|
 /// Parsed server configuration.
 pub(all) struct Config {
   default_role : Role
@@ -39,6 +49,8 @@ pub(all) struct Config {
   poller_heartbeat_tick_sec : Int
   /// Best-effort `git pull --ff-only` on the parent worktree after an integration PR merges.
   auto_pull_after_integration : Bool
+  /// PR policy toggles for integration/default-branch merge enforcement.
+  pr_policy : PrPolicy
   /// Placeholder only in v1; parsed and persisted but not acted on.
   auto_rebuild_after_pull : Bool
   /// Placeholder only in v1; parsed and persisted but not acted on.
@@ -105,6 +117,7 @@ pub fn Config::default() -> Config {
     audit_max_rounds: 3,
     poller_heartbeat_tick_sec: 60,
     auto_pull_after_integration: true,
+    pr_policy: PrPolicy::default(),
     auto_rebuild_after_pull: false,
     auto_reload_after_rebuild: false,
     pricing: {},

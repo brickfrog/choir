@@ -913,8 +913,13 @@ pub async fn PollerState::tick_pr_with(
     merged_at_unix,
   }
   if !is_open {
-    self.mark_merged_observed(tracked_ok.pr_number)
-    on_event(PRMerged(tracked_ok), tracked_ok.agent_id)
+    let merged_ok = if sha == "" {
+      tracked_ok
+    } else {
+      { ..tracked_ok, last_sha: sha }
+    }
+    self.mark_merged_observed(merged_ok.pr_number)
+    on_event(PRMerged(merged_ok), merged_ok.agent_id)
     log_pr({
       pr_number,
       agent_id,
@@ -925,7 +930,7 @@ pub async fn PollerState::tick_pr_with(
       backoff_until: 0L,
       prior_review_state: prior_state,
       detected_review_state: review,
-      events: [PRMerged(tracked_ok)],
+      events: [PRMerged(merged_ok)],
       consecutive_failures: 0,
       previous_consecutive_failures: prev_failures,
     })
