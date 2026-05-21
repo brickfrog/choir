@@ -33,6 +33,8 @@ pub fn ServerState::register_agent(
   }
   let agent_state = if preserve_suspended &&
     lifecycle.to_agent_state() == @types.AgentState::Active {
+    // Only restore Suspended over lifecycles that still map to Active. Failed
+    // or Done on disk is terminal; a dead/finalized process does not reconnect.
     @types.AgentState::Suspended
   } else {
     lifecycle.to_agent_state()
@@ -42,8 +44,10 @@ pub fn ServerState::register_agent(
     @phase.persist_lifecycle(self.config.project_dir, self.registry, lifecycle),
   )
   if agent_state == @types.AgentState::Suspended {
-    // persist_lifecycle mirrors the connected lifecycle back to Active; restore
-    // the operator-owned suspend so register remains a refresh, not a resume.
+    // AUDIT: persist_lifecycle/sync_registry_after_persist unconditionally
+    // derive registry state from lifecycle. The root-cause refactor is
+    // deliberately out of this PR and tracked in bead choir-87r3, so restore
+    // locally after persist.
     ignore(self.registry.upsert({ ..agent, state: agent_state }))
   }
   @phase.sync_parent_child_lifecycle(

@@ -5184,7 +5184,51 @@ async test "transport disconnect preserves suspended registry state" {
       )
     None => fail("expected lifecycle for " + agent_id)
   }
+  ignore(@sys.rm_rf(project_dir))
+}
 
+///|
+async test "register reconnect preserves suspended registry state" {
+  let project_dir = "/tmp/choir-suspended-register-reconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.suspended-reconnect-leaf"
+  let pane_name = "suspended-reconnect-leaf-pane"
+  let provider = disconnect_confirmation_provider([], [pane_name])
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    provider,
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/suspended-reconnect-leaf",
+      branch: agent_id,
+      terminal_target: Some(handler_auto_close_target(pane_name)),
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let suspend_result = try? state.registry.set_state(
+    agent_id,
+    @types.AgentState::Suspended,
+  )
+  assert_true(suspend_result is Ok(_))
+
+  let sent : Array[String] = []
   let register_resp = state.handle_with_runner(
     @types.Request::{
       req_method: "register",
@@ -5193,7 +5237,7 @@ async test "transport disconnect preserves suspended registry state" {
       args: @types.RequestArgs::new({
         "agent_id": agent_id,
         "parent_id": parent_id,
-        "workspace": project_dir + "/.choir/worktrees/suspended-leaf",
+        "workspace": project_dir + "/.choir/worktrees/suspended-reconnect-leaf",
         "branch": agent_id,
         "terminal_target": handler_auto_close_target(pane_name).to_string(),
         "agent_type": "codex",
@@ -5204,6 +5248,113 @@ async test "transport disconnect preserves suspended registry state" {
   assert_true(register_resp.is_ok())
   assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
   assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some({ process: @phase.ProcessState::Connected, .. }) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected reconnect to keep connected lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "resume RPC clears suspended state after reconnect preservation" {
+  let project_dir = "/tmp/choir-suspended-resume-clears-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.resume-clears-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace: project_dir + "/.choir/worktrees/resume-clears-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let suspend_result = try? state.registry.set_state(
+    agent_id,
+    @types.AgentState::Suspended,
+  )
+  assert_true(suspend_result is Ok(_))
+
+  let register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": parent_id,
+        "workspace": project_dir + "/.choir/worktrees/resume-clears-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(register_resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
+
+  let resume_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "resume",
+      role: @types.Role::TL,
+      name: "resume",
+      args: @types.RequestArgs::new({ "agent_id": agent_id }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(resume_resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
+
+  let post_resume_register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": parent_id,
+        "workspace": project_dir + "/.choir/worktrees/resume-clears-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(post_resume_register_resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -5290,6 +5441,101 @@ async test "terminal unexpected disconnect failure stays failed on register" {
     Some(lifecycle) =>
       fail(
         "expected terminal failed lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "failed lifecycle register does not restore suspended registry state" {
+  let project_dir = "/tmp/choir-failed-lifecycle-suspended-register-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let agent_id = "main.failed-suspended-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    make_hermetic_recovery_provider(),
+  )
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: None,
+      workspace: project_dir + "/.choir/worktrees/failed-suspended-leaf",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let suspend_result = try? state.registry.set_state(
+    agent_id,
+    @types.AgentState::Suspended,
+  )
+  assert_true(suspend_result is Ok(_))
+  ignore(
+    @phase.write_lifecycle(project_dir, {
+      agent_id,
+      role: @types.Role::Dev,
+      process: @phase.ProcessState::Failed(
+        reason=@phase.FailureReason::UnexpectedDisconnect,
+      ),
+      workflow: @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect,
+        ),
+      ),
+      last_updated_unix_sec: 0L,
+    }),
+  )
+
+  let resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "workspace": project_dir + "/.choir/worktrees/failed-suspended-leaf",
+        "branch": agent_id,
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(_cmds) {
+      @async.sleep(0)
+      []
+    },
+  )
+  assert_true(resp.is_ok())
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect
+        ),
+        workflow: @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::Failed(
+            reason=@phase.FailureReason::UnexpectedDisconnect
+          )
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected failed lifecycle to remain terminal, got " +
         @phase.lifecycle_to_json(lifecycle),
       )
     None => fail("expected lifecycle for " + agent_id)
