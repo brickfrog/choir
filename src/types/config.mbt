@@ -35,6 +35,8 @@ pub(all) struct Config {
   audit_heartbeat_sec : Int
   /// file_pr->main audit hard limit; exhausted findings return AuditLoopExhausted.
   audit_max_rounds : Int
+  /// Minimum mutation kill rate required after a leaf's own tests pass.
+  mutation_kill_rate_min : Double
   /// Poller heartbeat cadence in seconds; 0 disables heartbeat ticks.
   poller_heartbeat_tick_sec : Int
   /// Local checks that must pass before a Dev success `notify_parent` handoff.
@@ -105,6 +107,7 @@ pub fn Config::default() -> Config {
     worker_no_handoff_escalate_sec: 120L,
     audit_heartbeat_sec: 60,
     audit_max_rounds: 3,
+    mutation_kill_rate_min: 0.8,
     poller_heartbeat_tick_sec: 60,
     prenotify_checks: [
       "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
