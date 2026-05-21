@@ -268,7 +268,7 @@ async test "capture_audit_on_file_pr_report fires notification and PR comment si
   state.prepare_audit_on_file_pr_report("main.leaf")
   let delivery_cmds : Array[@workspace.Command] = []
   let comment_cmds : Array[@workspace.Command] = []
-  state.capture_audit_on_file_pr_report(
+  state.capture_audit_on_file_pr_report_test(
     "main.leaf",
     { message: "Finding 1: alpha\n", status: @types.Status::Success },
     runner=async fn(cmds) {
@@ -471,7 +471,7 @@ async test "capture_audit_on_file_pr_report returns before slow PR comment captu
   let comment_started = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
   let release_comment = @aqueue.Queue::new(kind=@aqueue.Kind::Unbounded)
   let mut capture_completed = false
-  state.capture_audit_on_file_pr_report(
+  state.capture_audit_on_file_pr_report_test(
     worker_id,
     { message: "Finding 1: alpha\n", status: @types.Status::Success },
     runner=async fn(_cmds) {
@@ -537,7 +537,7 @@ async test "capture_audit_on_file_pr_report tags exhausted notification and PR c
   ignore(state.record_audit_cycle_for_agent(leaf_id))
   let delivery_cmds : Array[@workspace.Command] = []
   let comment_cmds : Array[@workspace.Command] = []
-  state.capture_audit_on_file_pr_report(
+  state.capture_audit_on_file_pr_report_test(
     worker_id,
     { message: "Finding 1: alpha\n", status: @types.Status::Success },
     runner=async fn(cmds) {
@@ -633,7 +633,7 @@ async test "audit_max_rounds=1 returns AuditLoopExhausted after one cycle per sp
     },
     async fn(worker_id) {
       @async.sleep(0)
-      state.capture_audit_on_file_pr_report(
+      state.capture_audit_on_file_pr_report_test(
         worker_id,
         findings_report,
         runner=async fn(cmds) {
@@ -762,7 +762,7 @@ async test "file_pr exhaustion drives real ServerState audit visibility pipeline
       },
       async fn(worker_id) {
         @async.sleep(0)
-        state.capture_audit_on_file_pr_report(
+        state.capture_audit_on_file_pr_report_test(
           worker_id,
           findings_report,
           runner=async fn(cmds) {
@@ -933,7 +933,7 @@ async test "clean audit resets cycle counter before next consecutive findings ru
       },
       async fn(worker_id) {
         @async.sleep(0)
-        state.capture_audit_on_file_pr_report(
+        state.capture_audit_on_file_pr_report_test(
           worker_id,
           report,
           runner=async fn(cmds) {
@@ -1042,7 +1042,7 @@ async test "clear audit cycle count preserves last audit progress snapshot" {
   )
   audit_notification_seed_worker(state, worker_id, leaf_id)
   ignore(state.record_audit_cycle_for_agent(leaf_id))
-  state.capture_audit_on_file_pr_report(
+  state.capture_audit_on_file_pr_report_test(
     worker_id,
     { message: "No findings.\n", status: @types.Status::Success },
     runner=async fn(_cmds) {

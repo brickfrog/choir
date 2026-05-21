@@ -198,7 +198,7 @@ async test "deliver_pending_poll_events commits dedup only after durable parent 
         })
       None => fail("expected tracked PR")
     }
-    state.refresh_pr_with(
+    state.refresh_pr_with_test(
       pr_number,
       now,
       900L,
@@ -253,7 +253,7 @@ async test "process_poller_tick_with emits tick summary when an event is produce
   )
   let captured : Array[@moontrace.Event] = []
   handler_with_moontrace_capture(captured, async fn() {
-    state.process_poller_tick_with(
+    state.process_poller_tick_with_test(
       1000L,
       900L,
       async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -863,7 +863,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
     (0, "")
   }
 
-  state.refresh_pr_with(
+  state.refresh_pr_with_test(
     pr_number,
     200L,
     900L,
@@ -892,7 +892,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
   assert_true(parent_messages[0].contains("[MERGE READY]"))
   assert_true(parent_messages[0].contains("Merge policy decision: blocked"))
 
-  state.refresh_pr_with(
+  state.refresh_pr_with_test(
     pr_number,
     300L,
     900L,
@@ -920,7 +920,7 @@ async test "refresh_pr_with pending events fires automerge after fixes and CI cl
   assert_eq(parent_messages.length(), 2)
   assert_true(parent_messages[1].contains("[FIXES PUSHED]"))
 
-  state.refresh_pr_with(
+  state.refresh_pr_with_test(
     pr_number,
     400L,
     900L,
@@ -1216,7 +1216,7 @@ async test "quiet poller tick automerge sweep records attempted head on success"
     }
     (0, "")
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     500L,
     900L,
     async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -1340,7 +1340,7 @@ async test "quiet poller tick automerge sweep finalizes stale-role tracked leaf 
     }
     (0, "")
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     500L,
     900L,
     async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -1517,7 +1517,7 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
       None,
     )
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     500L,
     900L,
     poll_same_head,
@@ -1555,7 +1555,7 @@ async test "quiet poller tick automerge sweep records attempted head on failure"
       }
     None => fail("expected leaf lifecycle")
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     600L,
     900L,
     poll_same_head,
@@ -1646,7 +1646,7 @@ async test "automerge sweep runs after queued parent rows are delivered" {
     }
     (0, "")
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     500L,
     900L,
     async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -2446,7 +2446,7 @@ async test "deliver_pending_poll_events fires PRMerged hook whether tracked or s
       state.poller.restore(pr)
     }
     let fired_inputs : Array[@hooks.HookInput] = []
-    state.process_poller_tick_with(
+    state.process_poller_tick_with_test(
       1000L,
       900L,
       async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -2981,7 +2981,7 @@ async test "quiet poller tick successful auto resolve retry re-enters automerge 
     }
     (0, "")
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     500L,
     900L,
     async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -3106,7 +3106,7 @@ async test "quiet poller tick refetch count drop re-enters review-thread pipelin
     }
     (0, "")
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     500L,
     900L,
     async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -3235,7 +3235,7 @@ async test "quiet poller tick never-fetched retry clear re-enters automerge pipe
     }
     (0, "")
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     500L,
     900L,
     async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -3326,7 +3326,7 @@ async test "fresh PR first thread refs fetch failure leaves merge gate unknown" 
     }
     (0, "")
   }
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     500L,
     900L,
     async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -4776,12 +4776,28 @@ fn handler_moontrace_field_value(
 fn handler_tick_summary_event(
   events : Array[@moontrace.Event],
 ) -> @moontrace.Event? {
+  let mut fallback : @moontrace.Event? = None
   for event in events {
     if event.level == @moontrace.Level::Info && event.message == "poller tick" {
-      return Some(event)
+      if fallback is None {
+        fallback = Some(event)
+      }
+      let agent_counts_matches = match
+        handler_moontrace_field_value(event.fields, "agent_counts") {
+        Some(String(value)) => value.contains("active=0")
+        _ => false
+      }
+      let tracked_prs_matches = match
+        handler_moontrace_field_value(event.fields, "tracked_prs") {
+        Some(Number(value, ..)) => value.to_int() == 1
+        _ => false
+      }
+      if agent_counts_matches && tracked_prs_matches {
+        return Some(event)
+      }
     }
   }
-  None
+  fallback
 }
 
 ///|

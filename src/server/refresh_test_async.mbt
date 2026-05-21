@@ -18,6 +18,11 @@ async fn mock_refresh_capture(cmd : @workspace.Command) -> (Int, String) {
 }
 
 ///|
+async fn refresh_test_no_sleep(_ms : Int) -> Unit {
+  @async.sleep(0)
+}
+
+///|
 async test "ServerState::refresh_pr_with triggers poll and updates state" {
   let project_dir = "/tmp/choir-refresh-state-test-" +
     @sys.get_pid().to_string() +
@@ -123,6 +128,7 @@ async test "ServerState::refresh_pr_with triggers poll and updates state" {
       res
     },
     capture=mock_refresh_capture,
+    sleep_fn=refresh_test_no_sleep,
   )
 
   assert_true(poll_called)
@@ -269,6 +275,7 @@ async test "ServerState::refresh_pr_with does not synthesize ReviewThreadsResolv
       }
       mock_refresh_capture(cmd)
     },
+    sleep_fn=refresh_test_no_sleep,
   )
 
   assert_eq(graphql_calls, 1)

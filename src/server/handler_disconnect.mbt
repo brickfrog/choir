@@ -155,6 +155,7 @@ async fn ServerState::reconcile_external_merge_with_runner(
   pr_url : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   notify_parent? : Bool = true,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   let agent = try self.registry.get(agent_id) catch {
     _ =>
@@ -178,7 +179,7 @@ async fn ServerState::reconcile_external_merge_with_runner(
     self.config.project_dir,
     notify_parent~,
   )
-  self.interpret_teardown_effects(effects, runner)
+  self.interpret_teardown_effects(effects, runner, sleep_fn~)
 }
 
 ///|
@@ -265,6 +266,7 @@ pub async fn ServerState::interpret_teardown_effects(
   self : ServerState,
   effects : Array[TeardownEffect],
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   for effect in effects {
     match effect {
@@ -299,7 +301,12 @@ pub async fn ServerState::interpret_teardown_effects(
           let parent = self.resolve_parent_by_id(parent_id)
           ignore(
             self.durable_deliver_to_agent(
-              parent, agent_id, message, status, runner,
+              parent,
+              agent_id,
+              message,
+              status,
+              runner,
+              sleep_fn~,
             ),
           )
         } catch {
@@ -425,6 +432,7 @@ pub async fn ServerState::interpret_teardown_effects(
                   body,
                   @types.Status::Success,
                   runner,
+                  sleep_fn~,
                 ),
               )
             } catch {

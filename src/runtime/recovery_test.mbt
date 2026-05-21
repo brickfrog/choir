@@ -63,7 +63,9 @@ async test "make_shell_recovery_provider open_prs falls back to empty on invalid
     @async.sleep(0)
     "{not valid json"
   }
-  let provider = make_shell_recovery_provider(bad_capture)
+  let provider = make_shell_recovery_provider(bad_capture, write_stderr=fn(_) {
+    ()
+  })
   let open_result = (provider.open_prs)("/tmp")
   assert_eq(open_result.length(), 0)
   let head_result = (provider.find_prs_by_head)("/tmp", "main.leaf")

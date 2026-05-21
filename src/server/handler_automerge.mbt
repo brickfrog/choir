@@ -220,6 +220,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
   review_mode? : @types.ReviewMode? = None,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Bool {
   let review_mode = review_mode.unwrap_or(tracked.review_mode)
   if !automerge_candidate_event_for_review_mode(event, review_mode) {
@@ -293,6 +294,7 @@ pub async fn maybe_trigger_automerge_for_pending_event(
     automerge_merge_pr_request(tracked, caller_id, review_mode),
     runner~,
     capture~,
+    sleep_fn~,
   )
   append_poller_delivery_line(
     state.append_file,

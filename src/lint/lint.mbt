@@ -19,6 +19,12 @@ priv struct GitProgramSearch {
 }
 
 ///|
+priv struct ConstructorNameSearch {
+  target : String
+  mut found : Bool
+}
+
+///|
 priv enum DangerousCallKind {
   ShellCommand
   ProcessCommand
@@ -88,6 +94,17 @@ fn dotted_ident_pkg(expr : @syntax.Expr) -> String? {
 }
 
 ///|
+fn callable_name(expr : @syntax.Expr) -> String? {
+  match expr {
+    Ident(id={ name: Ident(name~), .. }, ..) => Some(name)
+    Ident(id={ name: Dot(id~, ..), .. }, ..) => Some(id)
+    Method(method_name~, ..) => Some(method_name.name)
+    Group(expr~, ..) => callable_name(expr)
+    _ => None
+  }
+}
+
+///|
 fn is_unqualified_ident(expr : @syntax.Expr, name : String) -> Bool {
   match expr {
     Ident(id={ name: Ident(name=n), .. }, ..) => n == name
@@ -114,6 +131,95 @@ fn first_argument(args : @list.List[@syntax.Argument]) -> @syntax.Expr? {
     Empty => None
     More(arg, ..) => Some(arg.value)
   }
+}
+
+///|
+fn nth_argument(
+  args : @list.List[@syntax.Argument],
+  target : Int,
+) -> @syntax.Expr? {
+  let mut index = 0
+  for arg in args {
+    if index == target {
+      return Some(arg.value)
+    }
+    index = index + 1
+  }
+  None
+}
+
+///|
+fn argument_label_name(arg : @syntax.Argument) -> String? {
+  match arg.kind {
+    Positional => None
+    Labelled(label) => Some(label.name)
+    LabelledPun(label) => Some(label.name)
+    LabelledOption(label~, ..) => Some(label.name)
+    LabelledOptionPun(label~, ..) => Some(label.name)
+  }
+}
+
+///|
+fn args_have_label(args : @list.List[@syntax.Argument], label : String) -> Bool {
+  for arg in args {
+    match argument_label_name(arg) {
+      Some(name) => if name == label { return true }
+      None => ()
+    }
+  }
+  false
+}
+
+///|
+fn argument_value_for_label(
+  args : @list.List[@syntax.Argument],
+  label : String,
+) -> @syntax.Expr? {
+  for arg in args {
+    match argument_label_name(arg) {
+      Some(name) => if name == label { return Some(arg.value) }
+      None => ()
+    }
+  }
+  None
+}
+
+///|
+fn expr_is_none(expr : @syntax.Expr) -> Bool {
+  match expr {
+    Ident(id={ name: Ident(name~), .. }, ..) => name == "None"
+    Constr(constr~, ..) => constr.name.name == "None"
+    Group(expr~, ..) => expr_is_none(expr)
+    _ => false
+  }
+}
+
+///|
+impl @syntax.IterVisitor for ConstructorNameSearch with visit_Expr(self, expr) {
+  if self.found {
+    return
+  }
+  match expr {
+    Constr(constr~, ..) =>
+      if constr.name.name == self.target {
+        self.found = true
+        return
+      }
+    Apply(func~, ..) =>
+      if callable_name(func) == Some(self.target) {
+        self.found = true
+        return
+      }
+    _ => ()
+  }
+  self.base().visit_Expr(expr)
+}
+
+///|
+fn expr_contains_constructor_name(expr : @syntax.Expr, name : String) -> Bool {
+  let search = ConstructorNameSearch::{ target: name, found: false }
+  search.visit_Expr(expr)
+  search.found
 }
 
 ///|
@@ -259,6 +365,76 @@ fn dangerous_call_kind(
 }
 
 ///|
+fn non_none_arg_at_or_label(
+  args : @list.List[@syntax.Argument],
+  index : Int,
+  label : String,
+) -> Bool {
+  match argument_value_for_label(args, label) {
+    Some(value) => !expr_is_none(value)
+    None =>
+      match nth_argument(args, index) {
+        Some(value) => !expr_is_none(value)
+        None => false
+      }
+  }
+}
+
+///|
+fn apply_requires_test_sleep_fn(
+  func : @syntax.Expr,
+  args : @list.List[@syntax.Argument],
+) -> Bool {
+  match callable_name(func) {
+    Some(name) =>
+      if name == "interpret_file_pr" {
+        non_none_arg_at_or_label(args, 4, "registry")
+      } else if name == "interpret_file_pr_post_success" {
+        non_none_arg_at_or_label(args, 9, "registry")
+      } else if name == "dispatch" {
+        args_have_label(args, "runner") &&
+        (match first_argument(args) {
+          Some(req) => expr_contains_constructor_name(req, "FilePr")
+          None => false
+        })
+      } else {
+        false
+      }
+    None => false
+  }
+}
+
+///|
+fn method_requires_test_sleep_fn(
+  method_name : String,
+  args : @list.List[@syntax.Argument],
+) -> Bool {
+  if !args_have_label(args, "runner") {
+    return false
+  }
+  method_name == "process_poller_tick_with" ||
+  method_name == "process_poller_tick" ||
+  method_name == "refresh_pr_with" ||
+  method_name == "capture_audit_on_file_pr_report" ||
+  method_name == "replay_pending_outbox_with"
+}
+
+///|
+fn check_test_delivery_sleep(
+  env : LintEnv,
+  requires_sleep_fn : Bool,
+  args : @list.List[@syntax.Argument],
+  loc : @basic.Location,
+) -> Unit {
+  if requires_sleep_fn && !args_have_label(args, "sleep_fn") {
+    emit(
+      env, "test-delivery-sleep", "tests that drive delivery-capable helpers must use a test wrapper or pass sleep_fn; do not inherit production retry sleeps",
+      loc,
+    )
+  }
+}
+
+///|
 fn bind_alias_if_needed(
   env : LintEnv,
   pattern : @syntax.Pattern,
@@ -287,6 +463,12 @@ fn check_test_apply(
   args : @list.List[@syntax.Argument],
   loc : @basic.Location,
 ) -> Unit {
+  check_test_delivery_sleep(
+    env,
+    apply_requires_test_sleep_fn(func, args),
+    args,
+    loc,
+  )
   match dangerous_call_kind(env, func) {
     Some(ShellCommand) =>
       match first_argument(args) {
@@ -346,6 +528,21 @@ fn check_test_apply(
 }
 
 ///|
+fn check_test_method_apply(
+  env : LintEnv,
+  method_name : String,
+  args : @list.List[@syntax.Argument],
+  loc : @basic.Location,
+) -> Unit {
+  check_test_delivery_sleep(
+    env,
+    method_requires_test_sleep_fn(method_name, args),
+    args,
+    loc,
+  )
+}
+
+///|
 fn scan_expr(env : LintEnv, expr : @syntax.Expr) -> Unit {
   match expr {
     Let(pattern~, expr=value, ..) => bind_alias_if_needed(env, pattern, value)
@@ -380,6 +577,8 @@ fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
 impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
   match expr {
     Apply(func~, args~, loc~, ..) => check_test_apply(env, func, args, loc)
+    DotApply(method_name~, args~, loc~, ..) =>
+      check_test_method_apply(env, method_name.name, args, loc)
     Let(pattern~, expr=value, ..) => bind_alias_if_needed(env, pattern, value)
     _ => ()
   }

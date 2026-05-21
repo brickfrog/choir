@@ -179,6 +179,57 @@ test "allows shell recovery provider with injected fake capture" {
 }
 
 ///|
+test "flags delivery-capable poller tests without sleep override" {
+  let source =
+    #|async test "bad" {
+    #|  state.process_poller_tick_with(100L, 900L, poll, runner=runner)
+    #|}
+  assert_single_rule(source, "test-delivery-sleep")
+}
+
+///|
+test "allows delivery-capable poller tests with sleep override" {
+  let source =
+    #|async test "ok" {
+    #|  state.process_poller_tick_with(100L, 900L, poll, runner=runner, sleep_fn=no_sleep)
+    #|}
+  match lint_source("src/server/handler_test.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "flags file_pr post-success tests with registry delivery and default sleep" {
+  let source =
+    #|async test "bad" {
+    #|  ignore(interpret_file_pr_post_success("p", "s", "b", "a", "w", 1, false, effects, None, Some(reg), runner))
+    #|}
+  assert_single_rule(source, "test-delivery-sleep")
+}
+
+///|
+test "flags dispatch file_pr tests with runner and default sleep" {
+  let source =
+    #|async test "bad" {
+    #|  let resp = dispatch(ToolRequest::FilePr({ branch: "main.leaf" }), runner=runner)
+    #|}
+  assert_single_rule(source, "test-delivery-sleep")
+}
+
+///|
+test "does not require sleep override for unrelated dispatch tests" {
+  let source =
+    #|async test "ok" {
+    #|  let resp = dispatch(ToolRequest::Shutdown({ caller_id: None }), runner=runner)
+    #|}
+  match lint_source("src/tools/shutdown_test.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "flags inline tests in source files" {
   let source =
     #|test "bad" {

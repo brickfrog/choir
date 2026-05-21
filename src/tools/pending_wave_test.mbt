@@ -546,7 +546,11 @@ test "reap_unparseable_pending_waves deletes empty + invalid entries" {
       "{\"wave_id\":\"wv-wrong\"}",
     ),
   )
-  let removed = @tools.reap_unparseable_pending_waves(project_dir)
+  let removed = @tools.reap_unparseable_pending_waves(project_dir, write_stderr=fn(
+    _,
+  ) {
+    ()
+  })
   let remaining_paths = @tools.list_pending_wave_paths(project_dir)
   ignore(@sys.rm_rf(project_dir))
   assert_eq(removed.length(), 3)
@@ -561,7 +565,11 @@ test "reap_unparseable_pending_waves keeps a parseable entry" {
   let project_dir = pending_wave_test_setup("reap-keep")
   let args = pending_wave_test_args("main.tl", "wv", ["main.dep"])
   ignore(@tools.write_pending_wave(project_dir, { wave_id: "wv-keep", args }))
-  let removed = @tools.reap_unparseable_pending_waves(project_dir)
+  let removed = @tools.reap_unparseable_pending_waves(project_dir, write_stderr=fn(
+    _,
+  ) {
+    ()
+  })
   let remaining = @tools.list_pending_wave_paths(project_dir)
   ignore(@sys.rm_rf(project_dir))
   assert_eq(removed.length(), 0)

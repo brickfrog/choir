@@ -137,6 +137,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
   req : @types.Request,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let start_ms = @env.now()
   let effective_req = self.request_with_review_mode_default(req)
@@ -181,6 +182,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       project_dir=self.config.project_dir,
       session=self.config.terminal_session,
       runner~,
+      sleep_fn~,
       capture~,
       extra_mcp_servers_json=self.config.extra_mcp_servers_json,
       shell_command=self.config.shell_command,
@@ -206,7 +208,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
       },
       on_resolve_review_thread=async fn(pr_numbers : Array[Int]) {
         if pr_numbers.length() > 0 {
-          self.sweep_tracked_prs_for_automerge(runner) catch {
+          self.sweep_tracked_prs_for_automerge(runner, sleep_fn~) catch {
             e =>
               @moontrace.warn(
                 "failed to sweep PRs after resolve_review_thread",
@@ -291,7 +293,7 @@ pub async fn ServerState::handle_with_runner_and_capture(
   if req.name == "kill_agent" {
     @async.sleep(0)
   }
-  self.interpret_teardown_effects(effects, runner)
+  self.interpret_teardown_effects(effects, runner, sleep_fn~)
   if req.name == "kill_agent" && resp.is_ok() {
     let caller_id = req.args
       .get("caller_id")

@@ -2310,6 +2310,7 @@ pub async fn interpret_file_pr(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
   global_review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let branch = file_pr_args.branch
   let parent_branch = match file_pr_args.parent_branch {
@@ -2453,6 +2454,7 @@ pub async fn interpret_file_pr(
         poller_state,
         registry,
         runner,
+        sleep_fn~,
       )
       if resp.is_ok() {
         file_pr_mirror_beads_created(

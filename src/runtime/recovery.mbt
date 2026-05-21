@@ -532,6 +532,7 @@ pub fn recover_dev_lifecycle_for_pr(
 ///|
 pub fn make_shell_recovery_provider(
   capture : async (String, Array[String], String?) -> String,
+  write_stderr? : (String) -> Unit = @sys.write_stderr,
 ) -> RecoveryProvider {
   {
     zellij_live: async fn(project_dir, session) {
@@ -558,7 +559,7 @@ pub fn make_shell_recovery_provider(
       }
       parse_open_prs(open_pr_output) catch {
         e => {
-          @sys.write_stderr(
+          write_stderr(
             "gh parse_open_prs open error (returning empty): " +
             @types.choir_error_message_from_caught(e) +
             "\n",
@@ -580,7 +581,7 @@ pub fn make_shell_recovery_provider(
       }
       parse_open_prs(output) catch {
         e => {
-          @sys.write_stderr(
+          write_stderr(
             "gh parse_open_prs head error (returning empty): " +
             @types.choir_error_message_from_caught(e) +
             "\n",
@@ -602,7 +603,7 @@ pub fn make_shell_recovery_provider(
       }
       parse_known_prs(output) catch {
         e => {
-          @sys.write_stderr(
+          write_stderr(
             "gh parse_known_prs error (returning empty): " +
             @types.choir_error_message_from_caught(e) +
             "\n",
@@ -695,7 +696,7 @@ pub fn make_shell_recovery_provider(
           ignore(
             @sys.delete_file_sync(project_dir + "/.choir/poller_state.json"),
           )
-          @sys.write_stderr(
+          write_stderr(
             "poller_state.json parse error (quarantined to " +
             quarantine +
             ", returning empty): " +

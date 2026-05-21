@@ -645,13 +645,14 @@ pub async fn ServerState::capture_audit_on_file_pr_report(
   report : @tools.AuditOnFilePrReport,
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.capture_audit_progress(agent_id, report)
   match self.audit_on_file_pr_reports.get(agent_id) {
     Some(queue) => ignore(queue.try_put(report) catch { _ => false })
     None => ()
   }
-  self.notify_parent_about_audit(agent_id, report, runner~)
+  self.notify_parent_about_audit(agent_id, report, runner~, sleep_fn~)
   self.post_audit_pr_comment(agent_id, report, capture~)
 }
 

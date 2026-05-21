@@ -404,7 +404,10 @@ pub fn read_all_pending_waves(project_dir : String) -> Array[PendingWave] {
 ///
 /// Returns the basenames of the files that were removed (handy for logs
 /// and tests).
-pub fn reap_unparseable_pending_waves(project_dir : String) -> Array[String] {
+pub fn reap_unparseable_pending_waves(
+  project_dir : String,
+  write_stderr? : (String) -> Unit = @sys.write_stderr,
+) -> Array[String] {
   let removed : Array[String] = []
   for path in list_pending_wave_paths(project_dir) {
     let content = @sys.read_file(path)
@@ -419,9 +422,7 @@ pub fn reap_unparseable_pending_waves(project_dir : String) -> Array[String] {
         Some(idx) => path[idx + 1:].to_owned()
         None => path
       }
-      @sys.write_stderr(
-        "pending wave entry unparseable, removing: " + path + "\n",
-      )
+      write_stderr("pending wave entry unparseable, removing: " + path + "\n")
       removed.push(basename)
     }
   }

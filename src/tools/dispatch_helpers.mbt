@@ -245,11 +245,12 @@ pub async fn verify_teams_delivery(
   message_json : String,
   fallback_target : String?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
   interval_ms? : Int = 10000,
 ) -> Unit {
   let path = resolve_home_path(inbox_path)
   for i = 0; i < 3; i = i + 1 {
-    @async.sleep(interval_ms)
+    sleep_fn(interval_ms)
     let content = @sys.read_file(path)
     if !content.contains(message_json) {
       return
@@ -386,7 +387,15 @@ pub async fn execute_delivery(
     @message.DeliveryMethod::TeamsInbox(path, json, fallback_target~) =>
       match teams_inbox_write(path, json) {
         Ok(_) => {
-          ignore(verify_teams_delivery(path, json, fallback_target, runner))
+          ignore(
+            verify_teams_delivery(
+              path,
+              json,
+              fallback_target,
+              runner,
+              sleep_fn~,
+            ),
+          )
           Ok(())
         }
         Err(e) => Err(e)

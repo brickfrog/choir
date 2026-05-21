@@ -242,7 +242,7 @@ async test "interpret_file_pr_post_success returns plan ok without poller or reg
   }
   let plan = file_pr_plan(args, "main", pr, true)
   let effects = file_pr_post_success_effects(plan, false, false)
-  let got = interpret_file_pr_post_success(
+  let got = interpret_file_pr_post_success_test(
     project_dir,
     "choir",
     args.branch,
@@ -285,7 +285,7 @@ async test "interpret_file_pr_post_success registers poller when tracked" {
   let plan = file_pr_plan(args, "main", pr, true)
   let effects = file_pr_post_success_effects(plan, true, false)
   let ps = @poller.PollerState::new()
-  let got = interpret_file_pr_post_success(
+  let got = interpret_file_pr_post_success_test(
     project_dir,
     "choir",
     args.branch,
@@ -361,7 +361,7 @@ async test "interpret_file_pr_post_success auto-notify tcp appends delivery log"
   }
   let plan = file_pr_plan(args, "main", pr, false)
   let effects = file_pr_post_success_effects(plan, false, true)
-  let got = interpret_file_pr_post_success(
+  let got = interpret_file_pr_post_success_test(
     project_dir,
     "choir",
     args.branch,
@@ -432,7 +432,7 @@ async test "interpret_file_pr_post_success parent missing appends resolve failur
   }
   let plan = file_pr_plan(args, "main", pr, false)
   let effects = file_pr_post_success_effects(plan, false, true)
-  let got = interpret_file_pr_post_success(
+  let got = interpret_file_pr_post_success_test(
     project_dir,
     "choir",
     args.branch,
@@ -579,6 +579,43 @@ async fn mock_runner_all_ok(cmds : Array[@workspace.Command]) -> Array[Int] {
     statuses.push(0)
   }
   statuses
+}
+
+///|
+async fn file_pr_test_no_sleep(_ms : Int) -> Unit {
+  @async.sleep(0)
+}
+
+///|
+async fn interpret_file_pr_post_success_test(
+  project_dir : String,
+  session : String,
+  branch : String,
+  tracked_agent_id : String,
+  file_pr_workdir : String,
+  pr_number : Int,
+  pr_review : Bool,
+  effects : FilePrPostSuccessEffects,
+  poller_state : @poller.PollerState?,
+  registry : @registry.AgentRegistry?,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  now_ms_fn? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() },
+) -> @types.Response {
+  interpret_file_pr_post_success(
+    project_dir,
+    session,
+    branch,
+    tracked_agent_id,
+    file_pr_workdir,
+    pr_number,
+    pr_review,
+    effects,
+    poller_state,
+    registry,
+    runner,
+    sleep_fn=file_pr_test_no_sleep,
+    now_ms_fn~,
+  )
 }
 
 ///|
@@ -2517,6 +2554,7 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
       (0, "")
     },
     mock_ensure_pr_ok,
+    sleep_fn=file_pr_test_no_sleep,
   )
   match got {
     @types.Response::Err(msg) => assert_true(msg.contains("missing locally"))
@@ -2909,6 +2947,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    sleep_fn=file_pr_test_no_sleep,
   )
   match got {
     @types.Response::Ok(_) => ()
@@ -2983,6 +3022,7 @@ async test "dispatch file_pr records verify evidence through injected append_fil
       appends.push((path, content))
       true
     },
+    sleep_fn=file_pr_test_no_sleep,
   )
   match resp {
     @types.Response::Ok(_) => ()
@@ -3040,6 +3080,7 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    sleep_fn=file_pr_test_no_sleep,
   )
   match got {
     @types.Response::Err(msg) => {

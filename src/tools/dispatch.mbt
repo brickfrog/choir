@@ -812,6 +812,7 @@ pub async fn dispatch(
   },
   cleanup_audit_report? : (String) -> Unit = fn(_) {  },
   agy_migration_incomplete? : Bool = false,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let ensure_branch_ready = match ensure_branch_ready {
     Some(f) => f
@@ -1147,6 +1148,7 @@ pub async fn dispatch(
         listen_tcp~,
         tcp_auth_token~,
         global_review_mode~,
+        sleep_fn~,
       )
     ToolRequest::MergePr(merge_args) => {
       let resp = interpret_merge_pr(
@@ -1309,7 +1311,7 @@ pub async fn dispatch(
           dev_event_on_success~,
           response_ok~
         ) =>
-          match execute_delivery(delivery, runner, project_dir~) {
+          match execute_delivery(delivery, runner, project_dir~, sleep_fn~) {
             Ok(_) => {
               apply_dev_event(
                 project_dir,
@@ -1807,6 +1809,7 @@ pub async fn handle_request(
   hook_home? : String = @exec.hook_home(),
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   agy_migration_incomplete? : Bool = false,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let tool_args = tool_args_from_request_args(req.args)
   let mut ran_builtin_dispatch = false
@@ -1926,6 +1929,7 @@ pub async fn handle_request(
                   capture_audit_on_file_pr_report~,
                   cleanup_audit_report~,
                   agy_migration_incomplete~,
+                  sleep_fn~,
                 )
                 ran_builtin_dispatch = true
                 out
@@ -2087,6 +2091,7 @@ pub async fn dispatch_call(
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   agy_migration_incomplete? : Bool = false,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> @types.Response {
   let tool_args = tool_args_from_map(call.args)
   try {
@@ -2157,6 +2162,7 @@ pub async fn dispatch_call(
                   capture_audit_on_file_pr_report~,
                   cleanup_audit_report~,
                   agy_migration_incomplete~,
+                  sleep_fn~,
                 )
             }
         }

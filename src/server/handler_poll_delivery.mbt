@@ -1724,11 +1724,12 @@ async fn deliver_poller_stall_notifications(
   state : ServerState,
   now : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   let prs : Array[@poller.TrackedPR] = []
   state.poller.tracked.each(fn(_k, pr) { prs.push(pr) })
   for pr in prs {
-    deliver_poller_stall_notification_for(state, pr, now, runner)
+    deliver_poller_stall_notification_for(state, pr, now, runner, sleep_fn~)
   }
 }
 
@@ -2139,6 +2140,7 @@ async fn deliver_pending_poll_events(
     async (@workspace.Command) -> (Int, String),
   ) -> ParentWorktreeGitState? = capture_parent_worktree_git_state,
   git_pull_runner? : async (String, async (@workspace.Command) -> (Int, String)) -> Bool = run_parent_git_pull_ff_only,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   let pending_parent_rows : Array[PendingPollParentRow] = []
   let automerge_attempted_prs : Map[Int, Bool] = {}
@@ -2231,6 +2233,7 @@ async fn deliver_pending_poll_events(
               pr.parent_branch,
               pr.pr_url,
               runner,
+              sleep_fn~,
             )
           None => ()
         }
@@ -2254,7 +2257,7 @@ async fn deliver_pending_poll_events(
             skip_parent=true,
             now~,
           ) {
-          ignore(state.durable_dispatch_planned(planned, runner))
+          ignore(state.durable_dispatch_planned(planned, runner, sleep_fn~))
         }
     }
     match tracked_for_delivery {
@@ -2274,6 +2277,7 @@ async fn deliver_pending_poll_events(
               runner,
               capture=automerge_capture,
               review_mode=Some(review_mode),
+              sleep_fn~,
             ) {
             continue
           }
@@ -2395,7 +2399,14 @@ async fn deliver_pending_poll_events(
           ),
         )
         match
-          state.durable_deliver_to_agent(parent, sender, body, status, runner) {
+          state.durable_deliver_to_agent(
+            parent,
+            sender,
+            body,
+            status,
+            runner,
+            sleep_fn~,
+          ) {
           Ok(_) => state.record_poller_parent_row_emissions(matched, now)
           Err(_) => ()
         }
@@ -2430,6 +2441,7 @@ async fn deliver_pending_poll_events(
             row.message,
             row.status,
             runner,
+            sleep_fn~,
           ) {
           Ok(_) => state.record_poller_parent_row_emission(row, now)
           Err(_) => ()
@@ -2439,7 +2451,11 @@ async fn deliver_pending_poll_events(
       }
     }
   }
-  state.sweep_tracked_prs_for_automerge(runner, capture=automerge_capture)
+  state.sweep_tracked_prs_for_automerge(
+    runner,
+    capture=automerge_capture,
+    sleep_fn~,
+  )
 }
 
 ///|
@@ -2447,6 +2463,7 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
   self : ServerState,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   let tracked_prs : Array[@poller.TrackedPR] = []
   for tracked in self.poller.tracked.values() {
@@ -2489,6 +2506,7 @@ async fn ServerState::sweep_tracked_prs_for_automerge(
         runner,
         capture~,
         review_mode=Some(current.review_mode),
+        sleep_fn~,
       ),
     )
     match self.poller.get(current.pr_number) {
@@ -2543,6 +2561,7 @@ pub async fn deliver_orphaned_pr_notification_for(
   state : ServerState,
   pr : @poller.TrackedPR,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   // Poll delivery's stale-registry read emits `[ORPHANED PR]` only. The hard
   // `[FAILED: ...] disconnected unexpectedly` banner is gated in
@@ -2589,6 +2608,7 @@ pub async fn deliver_orphaned_pr_notification_for(
           message,
           @types.Status::Failure,
           runner,
+          sleep_fn~,
         ) {
         Ok(_) =>
           match state.poller.get(p.pr_number) {
@@ -2608,11 +2628,12 @@ pub async fn deliver_orphaned_pr_notification_for(
 async fn deliver_orphaned_pr_notifications(
   state : ServerState,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   let prs : Array[@poller.TrackedPR] = []
   state.poller.tracked.each(fn(_k, pr) { prs.push(pr) })
   for pr in prs {
-    deliver_orphaned_pr_notification_for(state, pr, runner)
+    deliver_orphaned_pr_notification_for(state, pr, runner, sleep_fn~)
   }
 }
 
@@ -2846,6 +2867,7 @@ pub async fn ServerState::process_poller_tick_with(
     async (@workspace.Command) -> (Int, String),
   ) -> ParentWorktreeGitState? = capture_parent_worktree_git_state,
   git_pull_runner? : async (String, async (@workspace.Command) -> (Int, String)) -> Bool = run_parent_git_pull_ff_only,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
   let pending_events = []
@@ -2882,7 +2904,7 @@ pub async fn ServerState::process_poller_tick_with(
   if pending_events.length() > 0 {
     self.request_goal_judge_tick()
   }
-  deliver_orphaned_pr_notifications(self, runner)
+  deliver_orphaned_pr_notifications(self, runner, sleep_fn~)
   deliver_pending_poll_events(
     self,
     now,
@@ -2895,8 +2917,9 @@ pub async fn ServerState::process_poller_tick_with(
     hook_capture~,
     git_state_capture~,
     git_pull_runner~,
+    sleep_fn~,
   )
-  deliver_poller_stall_notifications(self, now, runner)
+  deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
@@ -2909,6 +2932,7 @@ pub async fn ServerState::process_poller_tick(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   self.mutex_registry.expire(now)
   let pending_events = []
@@ -2948,7 +2972,7 @@ pub async fn ServerState::process_poller_tick(
     @env.now().reinterpret_as_int64(),
     now,
   )
-  deliver_orphaned_pr_notifications(self, runner)
+  deliver_orphaned_pr_notifications(self, runner, sleep_fn~)
   deliver_pending_poll_events(
     self,
     now,
@@ -2957,8 +2981,9 @@ pub async fn ServerState::process_poller_tick(
     runner,
     capture~,
     automerge_capture~,
+    sleep_fn~,
   )
-  deliver_poller_stall_notifications(self, now, runner)
+  deliver_poller_stall_notifications(self, now, runner, sleep_fn~)
   self.sweep_outbox(now)
   ignore(self.poller.write_state_file(self.config.project_dir))
 }
@@ -2984,6 +3009,7 @@ pub async fn ServerState::refresh_pr_with(
   runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
   capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
   automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   let pending_events : Array[@poller.PollEvent] = []
   let pending_agent_ids : Array[String] = []
@@ -3001,8 +3027,8 @@ pub async fn ServerState::refresh_pr_with(
   )
   match self.poller.get(pr_number) {
     Some(pr) => {
-      deliver_orphaned_pr_notification_for(self, pr, runner)
-      deliver_poller_stall_notification_for(self, pr, now, runner)
+      deliver_orphaned_pr_notification_for(self, pr, runner, sleep_fn~)
+      deliver_poller_stall_notification_for(self, pr, now, runner, sleep_fn~)
     }
     None => ()
   }
@@ -3015,6 +3041,7 @@ pub async fn ServerState::refresh_pr_with(
     runner,
     capture~,
     automerge_capture~,
+    sleep_fn~,
   )
   if had_pending_events {
     self.request_goal_judge_tick()

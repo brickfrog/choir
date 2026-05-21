@@ -88,6 +88,7 @@ pub async fn deliver_poller_stall_notification_for(
   pr : @poller.TrackedPR,
   now : Int64,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Unit {
   if lifecycle_suppresses_poller_followups(state.current_lifecycle(pr.agent_id)) {
     return
@@ -139,6 +140,7 @@ pub async fn deliver_poller_stall_notification_for(
           msg,
           @types.Status::Info,
           runner,
+          sleep_fn~,
         ) {
         Ok(_) =>
           match state.poller.get(p.pr_number) {

@@ -18,6 +18,7 @@ fn hooks_json_scaffold() -> String {
 fn merge_user_skills_into_plugin(
   plugin_dir : String,
   home : String,
+  write_stderr? : (String) -> Unit = @sys.write_stderr,
 ) -> Result[Unit, @types.ChoirError] {
   let skills_dir = match @choir_commands.user_skills_dir_for(home) {
     Ok(d) => d
@@ -33,7 +34,7 @@ fn merge_user_skills_into_plugin(
         entry +
         "' clashes with builtin; rename or remove ~/.config/choir/skills/" +
         entry
-      @sys.write_stderr(msg + "\n")
+      write_stderr(msg + "\n")
       return Err(@types.ChoirError::workspace_error(msg))
     }
     let src = skills_dir + "/" + entry
@@ -43,7 +44,7 @@ fn merge_user_skills_into_plugin(
         entry +
         "' missing SKILL.md at " +
         skill_md
-      @sys.write_stderr(msg + "\n")
+      write_stderr(msg + "\n")
       return Err(@types.ChoirError::workspace_error(msg))
     }
     let dst = plugin_dir + "/skills/" + entry
@@ -612,7 +613,8 @@ test "merge_user_skills_into_plugin copies valid user skills" {
   ignore(@sys.create_dir_all(skills_dir + "/my-skill"))
   ignore(@sys.write_file_sync(skills_dir + "/my-skill/SKILL.md", "hello"))
 
-  match merge_user_skills_into_plugin(plugin_dir, home) {
+  match
+    merge_user_skills_into_plugin(plugin_dir, home, write_stderr=fn(_) { () }) {
     Ok(_) => ()
     Err(e) => fail("merge failed: " + e.message())
   }
@@ -636,7 +638,8 @@ test "merge_user_skills_into_plugin returns Err on clash" {
   ignore(@sys.create_dir_all(skills_dir + "/audit"))
   ignore(@sys.write_file_sync(skills_dir + "/audit/SKILL.md", "hello"))
 
-  match merge_user_skills_into_plugin(plugin_dir, home) {
+  match
+    merge_user_skills_into_plugin(plugin_dir, home, write_stderr=fn(_) { () }) {
     Ok(_) => fail("merge should have failed")
     Err(e) => assert_true(e.message().contains("clashes with builtin"))
   }
@@ -658,7 +661,8 @@ test "merge_user_skills_into_plugin returns Err on crystallize clash" {
   ignore(@sys.create_dir_all(skills_dir + "/crystallize"))
   ignore(@sys.write_file_sync(skills_dir + "/crystallize/SKILL.md", "hello"))
 
-  match merge_user_skills_into_plugin(plugin_dir, home) {
+  match
+    merge_user_skills_into_plugin(plugin_dir, home, write_stderr=fn(_) { () }) {
     Ok(_) => fail("merge should have failed for crystallize clash")
     Err(e) => assert_true(e.message().contains("clashes with builtin"))
   }
@@ -679,7 +683,8 @@ test "merge_user_skills_into_plugin returns Err when SKILL.md is missing" {
   let skills_dir = home + "/.config/choir/skills"
   ignore(@sys.create_dir_all(skills_dir + "/broken"))
 
-  match merge_user_skills_into_plugin(plugin_dir, home) {
+  match
+    merge_user_skills_into_plugin(plugin_dir, home, write_stderr=fn(_) { () }) {
     Ok(_) => fail("merge should have failed")
     Err(e) => assert_true(e.message().contains("missing SKILL.md"))
   }

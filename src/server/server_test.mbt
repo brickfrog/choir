@@ -1225,7 +1225,7 @@ async test "replay_pending_outbox_with replays pending message and marks it deli
     @outbox.append_outbox_snapshot(@sys.append_file_sync, project_dir, pending),
   )
   let mut runner_calls = 0
-  state.replay_pending_outbox_with(150L, runner=async fn(
+  state.replay_pending_outbox_with_test(150L, runner=async fn(
     cmds : Array[@workspace.Command],
   ) {
     @async.sleep(0)
@@ -1289,7 +1289,7 @@ async test "replay_pending_outbox_with replays pending root delivery before root
     @outbox.append_outbox_snapshot(@sys.append_file_sync, project_dir, pending),
   )
   let mut runner_calls = 0
-  state.replay_pending_outbox_with(150L, runner=async fn(
+  state.replay_pending_outbox_with_test(150L, runner=async fn(
     cmds : Array[@workspace.Command],
   ) {
     @async.sleep(0)
@@ -1357,7 +1357,6 @@ async test "replay_pending_outbox_with GC's stale pane lifecycle after repeated 
     @outbox.append_outbox_snapshot(@sys.append_file_sync, project_dir, pending),
   )
   let mut runner_calls = 0
-  let no_sleep = async fn(_ms : Int) -> Unit { @async.sleep(0) }
   let failing_runner = async fn(
     cmds : Array[@workspace.Command],
   ) -> Array[Int] {
@@ -1369,23 +1368,11 @@ async test "replay_pending_outbox_with GC's stale pane lifecycle after repeated 
     }
     statuses
   }
-  state.replay_pending_outbox_with(
-    150L,
-    runner=failing_runner,
-    sleep_fn=no_sleep,
-  )
+  state.replay_pending_outbox_with_test(150L, runner=failing_runner)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) is Some(_))
-  state.replay_pending_outbox_with(
-    151L,
-    runner=failing_runner,
-    sleep_fn=no_sleep,
-  )
+  state.replay_pending_outbox_with_test(151L, runner=failing_runner)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) is Some(_))
-  state.replay_pending_outbox_with(
-    152L,
-    runner=failing_runner,
-    sleep_fn=no_sleep,
-  )
+  state.replay_pending_outbox_with_test(152L, runner=failing_runner)
   assert_eq(runner_calls, 12)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) == None)
   let removed = try {
@@ -1469,8 +1456,7 @@ async test "replay_pending_outbox_with clears stale failure counter on exhausted
     runner_calls = runner_calls + cmds.length()
     []
   }
-  let no_sleep = async fn(_ms : Int) -> Unit { @async.sleep(0) }
-  state.replay_pending_outbox_with(150L, runner~, sleep_fn=no_sleep)
+  state.replay_pending_outbox_with_test(150L, runner~)
   assert_eq(runner_calls, 0)
   assert_true(@phase.read_lifecycle(project_dir, agent_id) == None)
   assert_true(state.delivery_failures.get(agent_id) == None)
@@ -1657,7 +1643,7 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
     statuses
   }
 
-  state.process_poller_tick_with(
+  state.process_poller_tick_with_test(
     1000L,
     300L,
     async fn(_pr_number, _skip_issue_comment_fetch) {
@@ -1676,6 +1662,10 @@ async test "process_poller_tick_with finalizes externally merged leaf and notifi
       )
     },
     runner~,
+    capture=async fn(_cmd) {
+      @async.sleep(0)
+      (1, "")
+    },
   )
 
   assert_true(sent_parent_merge)

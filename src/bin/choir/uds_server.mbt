@@ -1100,6 +1100,7 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
       None,
     )
   }
+  let no_sleep = async fn(_ms : Int) -> Unit { @async.sleep(0) }
   run_poller_heartbeat_tick_loop(
     1,
     async fn(now : Int64, timeout_sec : Int64) {
@@ -1110,6 +1111,7 @@ async test "heartbeat tick loop triggers automerge sweep path via process_poller
         runner~,
         capture~,
         automerge_capture=capture,
+        sleep_fn=no_sleep,
       )
     },
     max_iterations=1,
