@@ -176,3 +176,57 @@ pub fn AgentState::parse_wire(s : String) -> AgentState raise ChoirError {
 pub impl ToJson for AgentState with to_json(self) -> Json {
   self.to_wire_string().to_json()
 }
+
+///|
+pub fn LeafTddPhase::to_wire_string(self : LeafTddPhase) -> String {
+  match self {
+    Intent => "intent"
+    Red => "red"
+    Green => "green"
+    Refactor => "refactor"
+    Done => "done"
+  }
+}
+
+///|
+pub fn LeafTddPhase::try_parse_wire(
+  s : String,
+) -> Result[LeafTddPhase, ChoirError] {
+  match s.trim().to_lower().to_owned() {
+    "intent" => Ok(Intent)
+    "red" => Ok(Red)
+    "green" => Ok(Green)
+    "refactor" => Ok(Refactor)
+    "done" => Ok(Done)
+    _ => Err(ChoirError::config_error("unknown leaf_tdd_phase: " + s))
+  }
+}
+
+///|
+pub fn LeafTddPhase::parse_wire(s : String) -> LeafTddPhase raise ChoirError {
+  match LeafTddPhase::try_parse_wire(s) {
+    Ok(phase) => phase
+    Err(e) => raise e
+  }
+}
+
+///|
+pub impl ToJson for LeafTddPhase with to_json(self) -> Json {
+  self.to_wire_string().to_json()
+}
+
+///|
+pub impl FromJson for LeafTddPhase with from_json(json, path) {
+  match json {
+    String(s) =>
+      match LeafTddPhase::try_parse_wire(s) {
+        Ok(phase) => phase
+        Err(e) =>
+          raise JsonDecodeError(
+            (path, "LeafTddPhase::from_json: " + e.message()),
+          )
+      }
+    _ =>
+      raise JsonDecodeError((path, "LeafTddPhase::from_json: expected string"))
+  }
+}

@@ -208,6 +208,52 @@ fn leaf_tool_request_args(
       }
       Ok(flags)
     }
+    "tdd_intent" => {
+      if !flags.contains("caller_id") {
+        match @sys.getenv("CHOIR_AGENT_ID") {
+          Some(id) => if id != "" { flags.set("caller_id", id) }
+          None => ()
+        }
+      }
+      if !flags.contains("intent") {
+        let intent = join_positionals(positionals, 0).trim().to_owned()
+        if intent != "" {
+          flags.set("intent", intent)
+        }
+      }
+      match flags.get("intent") {
+        Some(intent) =>
+          if intent.trim() == "" {
+            Err("tdd_intent requires intent")
+          } else {
+            Ok(flags)
+          }
+        None => Err("tdd_intent requires intent")
+      }
+    }
+    "tdd_red_check" | "tdd_green_check" => {
+      if !flags.contains("caller_id") {
+        match @sys.getenv("CHOIR_AGENT_ID") {
+          Some(id) => if id != "" { flags.set("caller_id", id) }
+          None => ()
+        }
+      }
+      if !flags.contains("command") && positionals.length() > 0 {
+        flags.set("command", positionals[0])
+      }
+      if !flags.contains("exit_code") && positionals.length() > 1 {
+        flags.set("exit_code", positionals[1])
+      }
+      match (flags.get("command"), flags.get("exit_code")) {
+        (Some(command), Some(exit_code)) =>
+          if command.trim() == "" || exit_code.trim() == "" {
+            Err(tool + " requires command and exit_code")
+          } else {
+            Ok(flags)
+          }
+        _ => Err(tool + " requires command and exit_code")
+      }
+    }
     "shutdown" => {
       if !flags.contains("caller_id") {
         match @sys.getenv("CHOIR_AGENT_ID") {
@@ -278,6 +324,12 @@ fn leaf_tool_usage(tool : String) -> String {
       "usage: notify_parent [--status <success|failure|info>] <message>"
     "report_usage" =>
       "usage: report_usage --tokens-in <n> --tokens-out <n> --elapsed-s <seconds> [--cost-usd <usd>]"
+    "tdd_intent" =>
+      "usage: tdd_intent --intent <intent> [--test-command <command>]"
+    "tdd_red_check" =>
+      "usage: tdd_red_check --command <command> --exit-code <nonzero> [--output <tail>]"
+    "tdd_green_check" =>
+      "usage: tdd_green_check --command <command> --exit-code 0 [--next-phase <green|refactor|done>] [--output <tail>]"
     "shutdown" => "usage: shutdown [--caller-id <caller_id>]"
     "task_list" => "usage: task_list  # lists Beads-backed shared tasks"
     "task_get" => "usage: task_get <id>  # reads a Beads issue"

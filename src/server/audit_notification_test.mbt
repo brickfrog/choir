@@ -1129,6 +1129,7 @@ async test "existing valid audit receipt resets stale cycle counter through file
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
     wait_for_audit_report=async fn(_) {
       @async.sleep(0)
       waited_for_audit = true
@@ -1221,6 +1222,7 @@ async test "dispatch_call routes audit max rounds and cycle callbacks into file_
         cleared_agents.push(agent_id)
         cycles = 0
       },
+      tdd_phase_reader=fn(_) { Some(@types.LeafTddPhase::Done) },
       wait_for_audit_report=async fn(_) {
         @async.sleep(0)
         Some({

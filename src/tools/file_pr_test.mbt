@@ -1046,6 +1046,44 @@ test "audit_on_file_pr_slug_prefix omits timestamp suffix" {
 }
 
 ///|
+fn file_pr_test_tdd_done(_agent_id : String) -> @types.LeafTddPhase? {
+  Some(@types.LeafTddPhase::Done)
+}
+
+///|
+test "file_pr TDD guard fails closed for dev leaves" {
+  match
+    file_pr_require_tdd_done(@types.Role::Dev, "main.leaf", None, fn(_) { None }) {
+    Err(e) =>
+      assert_true(e.message().contains("no TDD phase has been recorded"))
+    Ok(_) => fail("expected missing TDD phase to block file_pr")
+  }
+  match
+    file_pr_require_tdd_done(@types.Role::Dev, "main.leaf", None, fn(_) {
+      Some(@types.LeafTddPhase::Done)
+    }) {
+    Ok(_) => ()
+    Err(e) => fail("expected done TDD phase to allow file_pr: " + e.message())
+  }
+  let reg = file_pr_test_registry("/tmp/choir-file-pr-tdd-registry")
+  match
+    file_pr_require_tdd_done(@types.Role::TL, "main.leaf", Some(reg), fn(_) {
+      Some(@types.LeafTddPhase::Green)
+    }) {
+    Err(e) => assert_true(e.message().contains("current phase is green"))
+    Ok(_) => fail("expected tracked Dev leaf to block even for TL caller")
+  }
+  match
+    file_pr_require_tdd_done(@types.Role::TL, "main.tl", Some(reg), fn(_) {
+      None
+    }) {
+    Ok(_) => ()
+    Err(e) =>
+      fail("expected TL file_pr to bypass leaf TDD gate: " + e.message())
+  }
+}
+
+///|
 fn file_pr_test_audit_child(
   slug : String,
   summary : @phase.ChildLifecycleSummary,
@@ -1906,6 +1944,7 @@ async test "interpret_file_pr audit wait emits heartbeats and final findings lin
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=60,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -1969,6 +2008,7 @@ async test "interpret_file_pr stops running heartbeats when audit worker is not 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=60,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -2023,6 +2063,7 @@ async test "interpret_file_pr audit heartbeat zero disables running lines only" 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -2070,6 +2111,7 @@ async test "interpret_file_pr audit final line records worker failure elapsed" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -2121,6 +2163,7 @@ async test "interpret_file_pr audit final line records worker shutdown elapsed" 
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_heartbeat_sec=0,
     append_file=fn(_path, content) {
       appended.push(content)
@@ -2183,6 +2226,7 @@ async test "interpret_file_pr Dev missing audit auto-spawns writes receipt and r
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     prepare_audit_report=fn(worker_id) { prepared_worker = worker_id },
     create_dir_all=fn(path) {
       receipt_dir = path
@@ -2254,6 +2298,7 @@ async test "interpret_file_pr Dev missing audit returns findings error" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     create_dir_all=fn(_) { true },
     write_file_atomic=fn(_, _) {
       receipt_written = true
@@ -2304,6 +2349,7 @@ async test "interpret_file_pr Dev audit max rounds returns typed exhaustion on c
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_max_rounds=1,
     record_audit_cycle_for_agent=fn(agent_id) {
       recorded_agents.push(agent_id)
@@ -2358,6 +2404,7 @@ async test "interpret_file_pr Dev existing receipt skips auto audit" {
     file_pr_auto_audit_capture(head, Some(file_pr_test_audit_receipt(head))),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     wait_for_audit_report=async fn(_) {
       @async.sleep(0)
       waited = true
@@ -2393,6 +2440,7 @@ async test "interpret_file_pr Dev audit outer budget returns timeout" {
     file_pr_auto_audit_capture(head, None),
     mock_ensure_pr_ok,
     caller_role=@types.Role::Dev,
+    tdd_phase_reader=file_pr_test_tdd_done,
     audit_budget_ms=1,
     cleanup_audit_report=fn(worker_id) { cleaned_worker = worker_id },
     wait_for_audit_report=async fn(_) {
@@ -2658,6 +2706,7 @@ async test "interpret_file_pr skips required verify when branch preflight fails"
       (0, "")
     },
     mock_ensure_pr_ok,
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -2827,6 +2876,55 @@ async test "interpret_file_pr leaf to feature does not require audit receipt" {
   }
   assert_false(audit_receipt_read)
   assert_true(ensure_pr_called)
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "interpret_file_pr tracked dev leaf refuses before TDD phase is done" {
+  let project_dir = "/tmp/choir-fpr-tdd-gate-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let mut ensure_pr_called = false
+  let reg = file_pr_test_registry(project_dir + "/.choir/worktrees/main.leaf")
+  let got = interpret_file_pr(
+    {
+      branch: "main.leaf",
+      parent_branch: Some("feature/leaf-tdd-discipline"),
+      tracked_agent_id: "main.leaf",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    Some(reg),
+    false,
+    mock_preflight_ok,
+    mock_runner_all_ok,
+    mock_capture_empty,
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
+    caller_role=@types.Role::TL,
+    tdd_phase_reader=fn(_agent_id : String) { Some(@types.LeafTddPhase::Green) },
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("file_pr: leaf TDD phase must be done"))
+      assert_true(msg.contains("current phase is green"))
+    }
+    _ => fail("expected TDD gate failure")
+  }
+  assert_false(ensure_pr_called)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -3051,6 +3149,7 @@ async test "interpret_file_pr runs required verify and injects generated PR body
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
@@ -3126,6 +3225,7 @@ async test "dispatch file_pr records verify evidence through injected append_fil
       appends.push((path, content))
       true
     },
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match resp {
@@ -3184,6 +3284,7 @@ async test "interpret_file_pr blocks before PR creation when required verify fai
       Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
     },
     record_verify_event=file_pr_test_record_verify_event(project_dir),
+    tdd_phase_reader=file_pr_test_tdd_done,
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {

@@ -339,6 +339,10 @@ test "leaf profile default prompt uses poller snapshots for review state" {
   assert_true(body.contains("A 120s pause is normal"))
   assert_true(body.contains("Do NOT report [FAILED] at 120s"))
   assert_true(body.contains("audit-on-file-pr"))
+  assert_true(body.contains("tdd_intent"))
+  assert_true(body.contains("tdd_red_check"))
+  assert_true(body.contains("tdd_green_check"))
+  assert_true(body.contains("refuses while your TDD phase is not Done"))
   assert_true(
     body.contains(
       "without sending that required `notify_parent` handoff has failed",

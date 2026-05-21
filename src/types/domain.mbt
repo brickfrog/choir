@@ -168,6 +168,23 @@ pub impl Show for AgentState with output(self, logger) -> Unit {
 }
 
 ///|
+/// Mechanical Red/Green/Refactor gate for Dev leaves. Stored by the
+/// orchestrator and checked by `file_pr`; wire strings live in
+/// `role_agent_wire.mbt` alongside the other fixed domains.
+pub(all) enum LeafTddPhase {
+  Intent
+  Red
+  Green
+  Refactor
+  Done
+} derive(Debug, Eq)
+
+///|
+pub impl Show for LeafTddPhase with output(self, logger) -> Unit {
+  logger.write_string(self.to_wire_string())
+}
+
+///|
 pub(all) enum LifecycleTrigger {
   ChildSpawned
   ChildCompleted
