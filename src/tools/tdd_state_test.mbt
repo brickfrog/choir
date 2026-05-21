@@ -52,7 +52,7 @@ async test "leaf TDD red check rejects forged failing report when command passes
   match red {
     @types.Response::Err(msg) => {
       assert_true(msg.contains("actual exit code"))
-      assert_true(msg.contains("red check expected actual exit code"))
+      assert_true(msg.contains("red check expected exit code"))
       assert_true(msg.contains("command: true"))
       assert_true(msg.contains("output_tail:\nactual pass"))
     }
@@ -174,7 +174,7 @@ async test "leaf TDD green check rejects forged passing report when command fail
   match green {
     @types.Response::Err(msg) => {
       assert_true(msg.contains("actual exit code"))
-      assert_true(msg.contains("green check expected actual exit code 0"))
+      assert_true(msg.contains("green check expected exit code 0"))
       assert_true(msg.contains("command: false"))
       assert_true(msg.contains("output_tail:\nactual fail"))
     }

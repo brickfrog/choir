@@ -137,9 +137,29 @@ fn tdd_exit_verification_context(command : String, output : String) -> String {
 async fn verify_tdd_command_outcome(
   project_dir : String,
   command : String,
+  reported_exit_code : Int,
   expectation : TddExitExpectation,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> Result[String, @types.ChoirError] {
+  let expectation_detail = match expectation {
+    RedFailure => "red check expected exit code to be non-zero"
+    GreenSuccess => "green check expected exit code 0"
+  }
+  let reported_ok = match expectation {
+    RedFailure => reported_exit_code != 0
+    GreenSuccess => reported_exit_code == 0
+  }
+  if !reported_ok {
+    return Err(
+      tdd_transition_error(
+        "reported exit_code " +
+        reported_exit_code.to_string() +
+        " did not satisfy " +
+        expectation_detail +
+        tdd_exit_verification_context(command, ""),
+      ),
+    )
+  }
   let (actual_exit_code, actual_output) = capture(
     tdd_check_command(project_dir, command),
   )
@@ -157,10 +177,6 @@ async fn verify_tdd_command_outcome(
     GreenSuccess => actual_exit_code == 0
   }
   if !ok {
-    let expectation_detail = match expectation {
-      RedFailure => "red check expected actual exit code to be non-zero"
-      GreenSuccess => "green check expected actual exit code 0"
-    }
     Err(
       tdd_transition_error(
         "declared test command actual exit code " +
@@ -387,6 +403,7 @@ pub async fn interpret_tdd_red_check(
     verify_tdd_command_outcome(
       check_dir,
       command,
+      args.exit_code,
       TddExitExpectation::RedFailure,
       capture,
     ) {
@@ -436,6 +453,7 @@ pub async fn interpret_tdd_green_check(
     verify_tdd_command_outcome(
       check_dir,
       command,
+      args.exit_code,
       TddExitExpectation::GreenSuccess,
       capture,
     ) {
