@@ -5184,6 +5184,26 @@ async test "transport disconnect preserves suspended registry state" {
       )
     None => fail("expected lifecycle for " + agent_id)
   }
+
+  let register_resp = state.handle_with_runner(
+    @types.Request::{
+      req_method: "register",
+      role: @types.Role::Dev,
+      name: "register",
+      args: @types.RequestArgs::new({
+        "agent_id": agent_id,
+        "parent_id": parent_id,
+        "workspace": project_dir + "/.choir/worktrees/suspended-leaf",
+        "branch": agent_id,
+        "terminal_target": handler_auto_close_target(pane_name).to_string(),
+        "agent_type": "codex",
+      }),
+    },
+    runner=async fn(cmds) { worker_handoff_capture_runner(sent, cmds) },
+  )
+  assert_true(register_resp.is_ok())
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Suspended)
   ignore(@sys.rm_rf(project_dir))
 }
 

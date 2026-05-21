@@ -18,15 +18,34 @@ pub fn ServerState::register_agent(
 ) -> Unit {
   self.clear_pending_disconnect(agent.agent_id.to_string())
   let agent_id = agent.agent_id.to_string()
+  let preserve_suspended = if agent.state == @types.AgentState::Suspended {
+    true
+  } else {
+    match self.registry.get_opt(agent_id) {
+      Some(prior) => prior.state == @types.AgentState::Suspended
+      None => false
+    }
+  }
   let lifecycle = match
     @phase.read_lifecycle(self.config.project_dir, agent_id) {
     Some(existing) => lifecycle_for_registered_agent(existing)
     None => @phase.lifecycle_for_agent(agent)
   }
-  ignore(self.registry.upsert({ ..agent, state: lifecycle.to_agent_state() }))
+  let agent_state = if preserve_suspended &&
+    lifecycle.to_agent_state() == @types.AgentState::Active {
+    @types.AgentState::Suspended
+  } else {
+    lifecycle.to_agent_state()
+  }
+  ignore(self.registry.upsert({ ..agent, state: agent_state }))
   ignore(
     @phase.persist_lifecycle(self.config.project_dir, self.registry, lifecycle),
   )
+  if agent_state == @types.AgentState::Suspended {
+    // persist_lifecycle mirrors the connected lifecycle back to Active; restore
+    // the operator-owned suspend so register remains a refresh, not a resume.
+    ignore(self.registry.upsert({ ..agent, state: agent_state }))
+  }
   @phase.sync_parent_child_lifecycle(
     self.config.project_dir,
     self.config.terminal_session,

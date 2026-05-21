@@ -926,11 +926,16 @@ pub async fn dispatch(
               }
             None => register_args.agent_type
           }
+          let state = match prior_agent {
+            Some({ state: @types.AgentState::Suspended, .. }) =>
+              @types.AgentState::Suspended
+            _ => @types.AgentState::Active
+          }
           let agent = @types.Agent::{
             agent_id: register_args.agent_id,
             role,
             agent_type,
-            state: @types.AgentState::Active,
+            state,
             parent,
             terminal_target,
             host: @types.Host::Local,
