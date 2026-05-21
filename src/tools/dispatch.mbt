@@ -1287,7 +1287,13 @@ pub async fn dispatch(
           notify_args.status,
           prenotify_checks,
         ) {
-        match run_prenotify_checks(project_dir, prenotify_checks, capture) {
+        let prenotify_workdir = match
+          prenotify_check_workdir(project_dir, registry, notify_args.caller_id) {
+          Err(e) => return @types.Response::Err(e.message())
+          Ok(workdir) => workdir
+        }
+        match
+          run_prenotify_checks(prenotify_workdir, prenotify_checks, capture) {
           Err(e) => return @types.Response::Err(e.message())
           Ok(_) => ()
         }

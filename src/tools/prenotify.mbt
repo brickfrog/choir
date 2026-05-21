@@ -72,6 +72,43 @@ pub fn prenotify_checks_should_run(
 }
 
 ///|
+pub fn prenotify_check_workdir(
+  project_dir : String,
+  registry : @registry.AgentRegistry?,
+  caller_id : String,
+) -> Result[String, @types.ChoirError] {
+  match registry {
+    None => Ok(project_dir)
+    Some(reg) =>
+      try {
+        let agent = reg.get(caller_id)
+        let workspace = agent.workspace.trim().to_owned()
+        if workspace == "" {
+          Err(
+            @types.ChoirError::validation_error(
+              "notify_parent blocked: caller '" +
+              caller_id +
+              "' is registered with an empty workspace; cannot run pre-notify checks",
+            ),
+          )
+        } else {
+          Ok(workspace)
+        }
+      } catch {
+        e =>
+          Err(
+            @types.ChoirError::validation_error(
+              "notify_parent blocked: cannot resolve caller workspace for pre-notify checks: " +
+              @types.choir_error_message_from_caught(e),
+            ),
+          )
+      } noraise {
+        result => result
+      }
+  }
+}
+
+///|
 pub async fn run_prenotify_checks(
   project_dir : String,
   checks : Array[String],
