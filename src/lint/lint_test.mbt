@@ -130,6 +130,26 @@ test "flags two-hop helper call that reaches forbidden exec capture" {
 }
 
 ///|
+test "does not flag helper that only parameterizes the capture function" {
+  let source =
+    #|fn capture(_ : String) -> Unit {
+    #|  ignore(@exec.replace_self("bin", 0))
+    #|}
+    #|fn helper_with_capture(
+    #|  capture : (String) -> Unit,
+    #|) {
+    #|  ignore(capture("safe"))
+    #|}
+    #|test "ok" {
+    #|  ignore(helper_with_capture(capture))
+    #|}
+  match lint_source("src/tools/file_pr.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "does not flag non-dangerous helper chains" {
   let source =
     #|fn safe_helper() {

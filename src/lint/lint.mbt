@@ -52,6 +52,8 @@ priv struct FunctionBodyCollector {
   file : String
   mut direct_rule_id : String?
   calls : Array[String]
+  known_functions : Array[String]
+  parameter_names : Array[String]
   aliases : Array[(String, DangerousCallKind)]
 }
 
@@ -334,8 +336,16 @@ fn is_allowed_test_exec_package_ref(expr : @syntax.Expr) -> Bool {
   match expr {
     Group(expr~, ..) => is_allowed_test_exec_package_ref(expr)
     _ =>
-      dotted_ident_pkg(expr) == Some("exec") &&
-      dotted_ident_name(expr) == Some("hermetic_exec_violation_message")
+      if dotted_ident_pkg(expr) != Some("exec") {
+        false
+      } else {
+        match dotted_ident_name(expr) {
+          Some(name) =>
+            name == "hermetic_exec_violation_message" ||
+            name == "strip_terminal_responses"
+          None => false
+        }
+      }
   }
 }
 
@@ -408,16 +418,40 @@ fn direct_forbidden_rule_for_arg_refs(
 ///|
 fn function_call_info_from_body(
   file : String,
+  known_functions : Array[String],
+  parameter_names : Array[String],
   body : @syntax.DeclBody,
 ) -> (String?, Array[String]) {
   let collector = FunctionBodyCollector::{
     file,
     direct_rule_id: None,
     calls: Array::new(capacity=4),
+    known_functions,
+    parameter_names,
     aliases: Array::new(capacity=4),
   }
   collector.visit_DeclBody(body)
   (collector.direct_rule_id, collector.calls)
+}
+
+///|
+fn collect_parameter_names(decl_params : @syntax.Parameters?) -> Array[String] {
+  let names = Array::new(capacity=4)
+  match decl_params {
+    None => names
+    Some(params) => {
+      for param in params {
+        match param {
+          DiscardPositional(..) => ()
+          Positional(binder~, ..) => names.push(binder.name)
+          Labelled(binder~, ..) => names.push(binder.name)
+          Optional(binder~, ..) => names.push(binder.name)
+          QuestionOptional(binder~, ..) => names.push(binder.name)
+        }
+      }
+      names
+    }
+  }
 }
 
 ///|
@@ -430,7 +464,11 @@ impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
           Some(rule_id) => self.direct_rule_id = Some(rule_id)
           None => {
             match called_function_name(func) {
-              Some(name) => self.calls.push(name)
+              Some(name) =>
+                if self.known_functions.any(fn(f) { f == name }) &&
+                  !self.parameter_names.any(fn(p) { p == name }) {
+                  self.calls.push(name)
+                }
               None => ()
             }
             match direct_forbidden_rule_for_arg_refs(args) {
@@ -457,11 +495,19 @@ fn collect_forbidden_function_infos(
   impls : @syntax.Impls,
 ) -> Array[FunctionCallInfo] {
   let function_infos = Array::new(capacity=8)
+  let known_functions = Array::new(capacity=8)
+  for impl_ in impls {
+    match impl_ {
+      TopFuncDef(fun_decl~, ..) => known_functions.push(fun_decl.name.name)
+      _ => ()
+    }
+  }
   for impl_ in impls {
     match impl_ {
       TopFuncDef(fun_decl~, decl_body~, loc~) => {
+        let parameter_names = collect_parameter_names(fun_decl.decl_params)
         let (direct_rule_id, called) = function_call_info_from_body(
-          file, decl_body,
+          file, known_functions, parameter_names, decl_body,
         )
         function_infos.push(FunctionCallInfo::{
           name: fun_decl.name.name,
