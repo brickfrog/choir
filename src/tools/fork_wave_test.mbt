@@ -748,16 +748,6 @@ async fn mock_capture_fork_wave_must_not_run(
 }
 
 ///|
-async fn mock_capture_agy_help(cmd : @workspace.Command) -> (Int, String) {
-  @async.sleep(0)
-  if cmd.program == "agy" && cmd.args == ["--help"] {
-    return (0, "agy help\n")
-  }
-  fail("unexpected capture: " + cmd.to_string())
-  (0, "")
-}
-
-///|
 async test "fork_wave_resolve_args_parent_branch skips detection when not main" {
   let args = fork_wave_args_base()
   let got = fork_wave_resolve_args_parent_branch(
@@ -923,43 +913,85 @@ async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once b
     parent_branch: "feature/parent",
     agent_type: @types.AgentType::Gemini,
   }
-  let runner_called : Array[Bool] = [false]
+  let runner_seq : Array[Int] = [0]
   let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
     @async.sleep(0)
-    runner_called[0] = true
-    assert_true(cmds.length() > 1)
-    assert_eq(
-      cmds[0].program,
-      "__choir_native_agy_shared_cache_seed_if_needed__",
-    )
-    @debug.assert_eq(cmds[0].args, ["/proj"])
-
-    let mut seed_count = 0
-    let mut eager_bootstrap_count = 0
-    let mut first_worktree_add = -1
-    for i = 0; i < cmds.length(); i = i + 1 {
-      let cmd = cmds[i]
-      if cmd.program == "__choir_native_agy_shared_cache_seed_if_needed__" {
-        seed_count = seed_count + 1
+    let seq = runner_seq[0]
+    runner_seq[0] = seq + 1
+    match seq {
+      0 => {
+        assert_eq(cmds.length(), 1)
+        assert_eq(
+          cmds[0].program,
+          @workspace.native_agy_shared_cache_validate_program,
+        )
+        @debug.assert_eq(cmds[0].args, ["/proj"])
+        [1]
       }
-      if cmd.program == "env" && cmd.args.contains("agy") {
-        eager_bootstrap_count = eager_bootstrap_count + 1
+      1 => {
+        assert_eq(cmds.length(), 1)
+        assert_eq(
+          cmds[0].program,
+          @workspace.native_agy_shared_cache_prepare_program,
+        )
+        @debug.assert_eq(cmds[0].args, ["/proj"])
+        [0]
       }
-      if first_worktree_add < 0 &&
-        cmd.program == "git" &&
-        cmd.args.contains("worktree") &&
-        cmd.args.contains("add") {
-        first_worktree_add = i
+      2 => {
+        assert_eq(cmds.length(), 1)
+        assert_eq(
+          cmds[0].program,
+          @workspace.native_agy_shared_cache_validate_program,
+        )
+        @debug.assert_eq(cmds[0].args, ["/proj"])
+        [0]
       }
+      3 => {
+        assert_true(cmds.length() > 1)
+        let mut seed_count = 0
+        let mut eager_bootstrap_count = 0
+        let mut first_worktree_add = -1
+        for i = 0; i < cmds.length(); i = i + 1 {
+          let cmd = cmds[i]
+          if cmd.program ==
+            @workspace.native_agy_shared_cache_seed_if_needed_program ||
+            cmd.program == @workspace.native_agy_shared_cache_prepare_program ||
+            cmd.program == @workspace.native_agy_shared_cache_validate_program {
+            seed_count = seed_count + 1
+          }
+          if cmd.program == "env" && cmd.args.contains("agy") {
+            eager_bootstrap_count = eager_bootstrap_count + 1
+          }
+          if first_worktree_add < 0 &&
+            cmd.program == "git" &&
+            cmd.args.contains("worktree") &&
+            cmd.args.contains("add") {
+            first_worktree_add = i
+          }
+        }
+        assert_eq(seed_count, 0)
+        assert_eq(eager_bootstrap_count, 0)
+        assert_true(first_worktree_add >= 0)
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      }
+      _ => fail("unexpected extra runner invocation")
     }
-    assert_eq(seed_count, 1)
-    assert_eq(eager_bootstrap_count, 0)
-    assert_true(first_worktree_add > 0)
-    let statuses = []
-    for _ in cmds {
-      statuses.push(0)
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "agy" && cmd.args == ["--help"] {
+      return (0, "agy help")
     }
-    statuses
+    if cmd.program == "env" && cmd.args.contains("agy") {
+      @debug.assert_eq(cmd.workdir, Some("/proj"))
+      return (0, "READY.")
+    }
+    fail("unexpected capture: " + cmd.to_string())
+    (0, "")
   }
 
   let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
@@ -967,17 +999,115 @@ async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once b
     "/proj",
     "choir",
     None,
-    mock_capture_agy_help,
+    capture,
     mock_git_capture_fork_wave_clean,
     runner,
   )
 
-  assert_true(runner_called[0])
+  assert_eq(runner_seq[0], 4)
   assert_eq(spawn_plan.spawned_count, 2)
   match resp {
     @types.Response::Ok(fields) =>
       @debug.assert_eq(fields.get("status"), Some("spawned"))
     @types.Response::Err(msg) => fail("unexpected err: " + msg)
+  }
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase warns and spawns when agy seed revalidate fails" {
+  let args = {
+    ..fork_wave_args_base(),
+    parent_branch: "feature/parent",
+    agent_type: @types.AgentType::Gemini,
+  }
+  let runner_seq : Array[Int] = [0]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    let seq = runner_seq[0]
+    runner_seq[0] = seq + 1
+    match seq {
+      0 => {
+        assert_eq(cmds.length(), 1)
+        assert_eq(
+          cmds[0].program,
+          @workspace.native_agy_shared_cache_validate_program,
+        )
+        [1]
+      }
+      1 => {
+        assert_eq(cmds.length(), 1)
+        assert_eq(
+          cmds[0].program,
+          @workspace.native_agy_shared_cache_prepare_program,
+        )
+        [0]
+      }
+      2 => {
+        assert_eq(cmds.length(), 1)
+        assert_eq(
+          cmds[0].program,
+          @workspace.native_agy_shared_cache_validate_program,
+        )
+        [1]
+      }
+      3 => {
+        assert_true(cmds.length() > 1)
+        let mut saw_worktree_add = false
+        for cmd in cmds {
+          if cmd.program == "git" &&
+            cmd.args.contains("worktree") &&
+            cmd.args.contains("add") {
+            saw_worktree_add = true
+          }
+        }
+        assert_true(saw_worktree_add)
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      }
+      _ => fail("unexpected extra runner invocation")
+    }
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "agy" && cmd.args == ["--help"] {
+      return (0, "agy help")
+    }
+    if cmd.program == "env" && cmd.args.contains("agy") {
+      return (0, "READY.")
+    }
+    fail("unexpected capture: " + cmd.to_string())
+    (0, "")
+  }
+
+  let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    args,
+    "/proj",
+    "choir",
+    None,
+    capture,
+    mock_git_capture_fork_wave_clean,
+    runner,
+  )
+
+  assert_eq(runner_seq[0], 4)
+  assert_eq(spawn_plan.spawned_count, 2)
+  match resp {
+    @types.Response::Ok(fields) =>
+      match fields.get("warning") {
+        Some(warning) => {
+          assert_true(
+            warning.contains("agy shared cache seed re-validate failed"),
+          )
+          assert_true(warning.contains("exit 1"))
+          assert_false(warning.contains("transport error"))
+        }
+        None => fail("expected seed warning")
+      }
+    @types.Response::Err(msg) =>
+      fail("seed failure must not abort fork_wave: " + msg)
   }
 }
 

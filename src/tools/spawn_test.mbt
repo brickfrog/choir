@@ -291,19 +291,50 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before inline l
     if cmd.program == "git" {
       return (0, "origin/main\n")
     }
+    if cmd.program == "env" && cmd.args.contains("agy") {
+      return (0, "")
+    }
     (0, "")
   }
-  let runner_called : Array[Bool] = [false]
+  let runner_calls : Array[Int] = [0]
   let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
     @async.sleep(0)
-    runner_called[0] = true
-    assert_true(cmds.length() > 1)
+    runner_calls[0] = runner_calls[0] + 1
+    let call = runner_calls[0]
+    if call == 1 {
+      assert_eq(cmds.length(), 1)
+      assert_eq(
+        cmds[0].program,
+        @workspace.native_agy_shared_cache_validate_program,
+      )
+      @debug.assert_eq(cmds[0].args, ["/tmp/p"])
+      return [1]
+    }
+    if call == 2 {
+      assert_eq(cmds.length(), 1)
+      assert_eq(
+        cmds[0].program,
+        @workspace.native_agy_shared_cache_prepare_program,
+      )
+      @debug.assert_eq(cmds[0].args, ["/tmp/p"])
+      return [0]
+    }
+    if call == 3 {
+      assert_eq(cmds.length(), 1)
+      assert_eq(
+        cmds[0].program,
+        @workspace.native_agy_shared_cache_validate_program,
+      )
+      @debug.assert_eq(cmds[0].args, ["/tmp/p"])
+      return [0]
+    }
+    assert_true(cmds.length() > 0)
     assert_eq(
-      cmds[0].program,
-      @workspace.native_agy_shared_cache_seed_if_needed_program,
+      cmds.any(fn(cmd) {
+        cmd.program == @workspace.native_agy_shared_cache_seed_if_needed_program
+      }),
+      false,
     )
-    @debug.assert_eq(cmds[0].args, ["/tmp/p"])
-    let mut seed_count = 0
     let mut cache_links_index = -1
     let mut launch_index = -1
     let mut eager_bootstrap_count = 0
@@ -311,10 +342,6 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before inline l
     let mut launch_has_agy_home = false
     for i = 0; i < cmds.length(); i = i + 1 {
       let cmd = cmds[i]
-      if cmd.program ==
-        @workspace.native_agy_shared_cache_seed_if_needed_program {
-        seed_count = seed_count + 1
-      }
       if cache_links_index < 0 &&
         cmd.program == @workspace.native_agy_cache_links_program {
         cache_links_index = i
@@ -334,9 +361,8 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before inline l
         eager_bootstrap_count = eager_bootstrap_count + 1
       }
     }
-    assert_eq(seed_count, 1)
     assert_eq(eager_bootstrap_count, 0)
-    assert_true(cache_links_index > 0)
+    assert_true(cache_links_index >= 0)
     assert_true(launch_index > cache_links_index)
     assert_true(cache_links_args_ok)
     assert_true(launch_has_agy_home)
@@ -354,8 +380,13 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before inline l
     capture,
     None,
   )
-  assert_true(runner_called[0])
+  assert_eq(runner_calls[0], 4)
   assert_true(capture_seen.contains("agy --help"))
+  assert_true(
+    capture_seen.contains(
+      "env HOME=/tmp/p/.choir/agy-shared-cache/home agy --dangerously-skip-permissions --print Reply READY.",
+    ),
+  )
   match got {
     @types.Response::Ok(fields) => {
       let map = fields.to_json_map()
@@ -364,6 +395,193 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before inline l
       @debug.assert_eq(map.get("agent_type"), Some(String::to_json("gemini")))
     }
     @types.Response::Err(msg) => fail("unexpected err: " + msg)
+  }
+}
+
+///|
+async test "interpret_spawn_worker gemini warns and proceeds after revalidate seed failure" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main.tl",
+    slug: "w-agy-seed-warn",
+    agent_type: @types.AgentType::Gemini,
+  }
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "agy" && cmd.args == ["--help"] {
+      return (0, "")
+    }
+    if cmd.program == "git" {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "env" && cmd.args.contains("agy") {
+      return (0, "")
+    }
+    (0, "")
+  }
+  let runner_calls : Array[Int] = [0]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    runner_calls[0] = runner_calls[0] + 1
+    let statuses = []
+    let call = runner_calls[0]
+    if call == 1 {
+      assert_eq(cmds.length(), 1)
+      assert_eq(
+        cmds[0].program,
+        @workspace.native_agy_shared_cache_validate_program,
+      )
+      statuses.push(1)
+    } else if call == 2 {
+      assert_eq(cmds.length(), 1)
+      assert_eq(
+        cmds[0].program,
+        @workspace.native_agy_shared_cache_prepare_program,
+      )
+      statuses.push(0)
+    } else if call == 3 {
+      assert_eq(cmds.length(), 1)
+      assert_eq(
+        cmds[0].program,
+        @workspace.native_agy_shared_cache_validate_program,
+      )
+      statuses.push(1)
+    } else {
+      assert_true(cmds.length() > 0)
+      assert_true(
+        cmds.any(fn(cmd) {
+          cmd.program == @workspace.native_agy_cache_links_program
+        }),
+      )
+      assert_true(cmds.any(fn(cmd) { cmd.program == "zellij" }))
+      for _ in cmds {
+        statuses.push(0)
+      }
+    }
+    statuses
+  }
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    runner,
+    capture,
+    None,
+  )
+  assert_eq(runner_calls[0], 4)
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      match map.get("warning") {
+        Some(warning_json) => {
+          let warning = warning_json.stringify()
+          assert_true(
+            warning.contains("agy shared cache seed re-validate failed"),
+          )
+          assert_true(
+            warning.contains(
+              "Gemini/agy spawn will continue without the warmed shared cache",
+            ),
+          )
+          assert_true(warning.contains("exit 1"))
+          assert_true(warning.contains("shared cache is still incomplete"))
+          assert_false(warning.contains("transport error"))
+          assert_false(warning.contains("command failed with status 1"))
+          assert_false(warning.contains("requires the shared runtime cache"))
+        }
+        None => fail("expected agy seed warning")
+      }
+    }
+    @types.Response::Err(msg) =>
+      fail("seed failure must not abort spawn: " + msg)
+  }
+}
+
+///|
+async test "interpret_spawn_worker gemini warns with bootstrap stderr without rerunning bootstrap" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main.tl",
+    slug: "w-agy-bootstrap-fail",
+    agent_type: @types.AgentType::Gemini,
+  }
+  let bootstrap_captures : Array[Int] = [0]
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "agy" && cmd.args == ["--help"] {
+      return (0, "")
+    }
+    if cmd.program == "git" {
+      return (0, "origin/main\n")
+    }
+    if cmd.program == "env" && cmd.args.contains("agy") {
+      bootstrap_captures[0] = bootstrap_captures[0] + 1
+      return (7, "bootstrap stderr")
+    }
+    (0, "")
+  }
+  let runner_calls : Array[Int] = [0]
+  let runner = async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    runner_calls[0] = runner_calls[0] + 1
+    let call = runner_calls[0]
+    if call == 1 {
+      assert_eq(cmds.length(), 1)
+      assert_eq(
+        cmds[0].program,
+        @workspace.native_agy_shared_cache_validate_program,
+      )
+      [1]
+    } else if call == 2 {
+      assert_eq(cmds.length(), 1)
+      assert_eq(
+        cmds[0].program,
+        @workspace.native_agy_shared_cache_prepare_program,
+      )
+      [0]
+    } else {
+      assert_true(cmds.any(fn(cmd) { cmd.program == "zellij" }))
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
+    }
+  }
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    runner,
+    capture,
+    None,
+  )
+  assert_eq(runner_calls[0], 3)
+  assert_eq(bootstrap_captures[0], 1)
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      match map.get("warning") {
+        Some(warning_json) => {
+          let warning = warning_json.stringify()
+          assert_true(
+            warning.contains("agy shared cache seed cold-bootstrap failed"),
+          )
+          assert_true(warning.contains("exit 7"))
+          assert_true(warning.contains("bootstrap stderr"))
+          assert_false(
+            warning.contains("HOME=/tmp/p/.choir/agy-shared-cache/home"),
+          )
+        }
+        None => fail("expected bootstrap warning")
+      }
+    }
+    @types.Response::Err(msg) =>
+      fail("bootstrap failure must not abort spawn: " + msg)
   }
 }
 

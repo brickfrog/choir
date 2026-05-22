@@ -161,7 +161,7 @@ pub async fn run(cmd : @workspace.Command) -> Int {
   }
   let native_agy_seed_if_needed = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
     cmd,
-    fn(_) { -1 },
+    fn(_) { (-1, "") },
   )
   if native_agy_seed_if_needed >= 0 {
     return native_agy_seed_if_needed

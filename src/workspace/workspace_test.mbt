@@ -1152,7 +1152,6 @@ test "run_native_agy_cache_links_command is idempotent and preserves shared cach
   assert_true(
     @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
   )
-  assert_true(@sys.write_file_sync(shared_bin + "/agentapi", "agent"))
   assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "webm"))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
@@ -1203,13 +1202,15 @@ test "run_native_agy_cache_links_command links existing shared cache without mar
   assert_true(
     @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
   )
-  assert_true(@sys.write_file_sync(shared_bin + "/agentapi", "agent"))
   assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "webm"))
   assert_true(@sys.write_file_sync(shared_playwright + "/sentinel.txt", "keep"))
   assert_true(@sys.write_file_sync(shared_extra + "/sentinel.txt", "keep-root"))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
-  assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 0)
+  assert_eq(
+    @workspace.run_native_agy_cache_links_command(cmd, write_stderr=fn(_) { () }),
+    0,
+  )
 
   let home = worktree + "/.choir/agy-home"
   assert_true(@sys.path_entry_exists(shared_bin))
@@ -1223,7 +1224,7 @@ test "run_native_agy_cache_links_command links existing shared cache without mar
 }
 
 ///|
-test "run_native_agy_cache_links_command fails when shared cache is absent" {
+test "run_native_agy_cache_links_command warns when shared cache is absent" {
   let dir = "/tmp/choir-agy-cache-absent-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -1234,7 +1235,15 @@ test "run_native_agy_cache_links_command fails when shared cache is absent" {
   assert_true(@sys.create_dir_all(worktree))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
-  assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 1)
+  let warnings : Array[String] = []
+  assert_eq(
+    @workspace.run_native_agy_cache_links_command(cmd, write_stderr=fn(msg) {
+      warnings.push(msg)
+    }),
+    0,
+  )
+  assert_true(warnings.join("\n").contains("warning"))
+  assert_true(warnings.join("\n").contains("not populated"))
 
   let home = worktree + "/.choir/agy-home"
   assert_false(@sys.path_entry_exists(home + "/.cache/ms-playwright-go"))
@@ -1243,7 +1252,7 @@ test "run_native_agy_cache_links_command fails when shared cache is absent" {
 }
 
 ///|
-test "run_native_agy_cache_links_command rejects invalid shared cache" {
+test "run_native_agy_cache_links_command warns on invalid shared cache" {
   let dir = "/tmp/choir-agy-cache-invalid-shared-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -1257,7 +1266,15 @@ test "run_native_agy_cache_links_command rejects invalid shared cache" {
   assert_true(@sys.create_dir_all(shared_root + "/antigravity-cli-bin"))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
-  assert_eq(@workspace.run_native_agy_cache_links_command(cmd), 1)
+  let warnings : Array[String] = []
+  assert_eq(
+    @workspace.run_native_agy_cache_links_command(cmd, write_stderr=fn(msg) {
+      warnings.push(msg)
+    }),
+    0,
+  )
+  assert_true(warnings.join("\n").contains("warning"))
+  assert_true(warnings.join("\n").contains("not populated"))
 
   let home = worktree + "/.choir/agy-home"
   assert_false(@sys.path_entry_exists(home + "/.cache/ms-playwright-go"))
@@ -1283,7 +1300,6 @@ test "run_native_agy_shared_cache_seed_if_needed skips bootstrap when cache is p
   assert_true(
     @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
   )
-  assert_true(@sys.write_file_sync(shared_bin + "/agentapi", "agent"))
   assert_true(@sys.write_file_sync(shared_bin + "/webm_encoder", "webm"))
 
   let bootstrap_called : Array[Bool] = [false]
@@ -1291,7 +1307,7 @@ test "run_native_agy_shared_cache_seed_if_needed skips bootstrap when cache is p
     @workspace.agy_shared_cache_seed_if_needed(project),
     fn(_) {
       bootstrap_called[0] = true
-      1
+      (1, "unexpected bootstrap")
     },
   )
 
@@ -1336,9 +1352,8 @@ test "run_native_agy_shared_cache_seed_if_needed bootstraps and validates cold c
       ignore(
         @sys.write_file_sync(shared_version + "/package/package.json", "{}"),
       )
-      ignore(@sys.write_file_sync(shared_bin + "/agentapi", "agent"))
       ignore(@sys.write_file_sync(shared_bin + "/webm_encoder", "webm"))
-      0
+      (0, "")
     },
   )
 
@@ -1360,6 +1375,81 @@ test "run_native_agy_shared_cache_seed_if_needed bootstraps and validates cold c
       project + "/.choir/agy-shared-cache/home/.gemini/antigravity-cli/bin",
     ),
   )
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_shared_cache_seed_if_needed warns and returns bootstrap failure" {
+  let dir = "/tmp/choir-agy-cache-seed-bootstrap-fail-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(project))
+  let warnings : Array[String] = []
+
+  let status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(_) { (42, "bootstrap stderr") },
+    write_stderr=fn(msg) { warnings.push(msg) },
+  )
+
+  assert_eq(status, 42)
+  let rendered = warnings.join("\n")
+  assert_true(rendered.contains("cold-bootstrap"))
+  assert_true(rendered.contains("exit 42"))
+  assert_true(rendered.contains("bootstrap stderr"))
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_shared_cache_seed_if_needed normalizes negative bootstrap failure" {
+  let dir = "/tmp/choir-agy-cache-seed-bootstrap-negative-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(project))
+  let warnings : Array[String] = []
+
+  let status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(_) { (-1, "spawn failed") },
+    write_stderr=fn(msg) { warnings.push(msg) },
+  )
+
+  assert_eq(status, 1)
+  let rendered = warnings.join("\n")
+  assert_true(rendered.contains("cold-bootstrap"))
+  assert_true(rendered.contains("exit 1"))
+  assert_true(rendered.contains("spawn failed"))
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_shared_cache_seed_if_needed warns and returns revalidate failure" {
+  let dir = "/tmp/choir-agy-cache-seed-revalidate-fail-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(project))
+  let warnings : Array[String] = []
+
+  let status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(_) { (0, "") },
+    write_stderr=fn(msg) { warnings.push(msg) },
+  )
+
+  assert_eq(status, 1)
+  let rendered = warnings.join("\n")
+  assert_true(rendered.contains("re-validate"))
+  assert_true(rendered.contains("exit 1"))
+  assert_true(rendered.contains("shared cache"))
   ignore(@sys.rm_rf(dir))
 }
 

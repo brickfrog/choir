@@ -287,16 +287,154 @@ async fn ensure_spawn_agy_prereqs(
 }
 
 ///|
-fn with_spawn_agy_seed_if_needed(
+priv enum SpawnAgySeedStep {
+  Validate
+  Prepare
+  ColdBootstrap
+  ReValidate
+}
+
+///|
+fn SpawnAgySeedStep::label(self : SpawnAgySeedStep) -> String {
+  match self {
+    Validate => "validate"
+    Prepare => "prepare"
+    ColdBootstrap => "cold-bootstrap"
+    ReValidate => "re-validate"
+  }
+}
+
+///|
+async fn run_spawn_agy_seed_command(
+  step : SpawnAgySeedStep,
+  cmd : @workspace.Command,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+) -> Result[Int, String] {
+  let statuses = runner([cmd]) catch {
+    e =>
+      return Err(
+        "agy shared cache seed " +
+        step.label() +
+        " failed before spawn: " +
+        e.to_string(),
+      )
+  }
+  if statuses.is_empty() {
+    Err(
+      "agy shared cache seed " +
+      step.label() +
+      " failed before spawn: runner returned no status",
+    )
+  } else {
+    Ok(statuses[0])
+  }
+}
+
+///|
+fn agy_seed_step_failure_message(
+  step : SpawnAgySeedStep,
+  status : Int,
+  cmd : @workspace.Command,
+  guidance : String,
+  output : String,
+) -> String {
+  "agy shared cache seed " +
+  step.label() +
+  " failed; Gemini/agy spawn will continue without the warmed shared cache. " +
+  guidance +
+  " " +
+  command_failure_message_from_output(status, cmd, output)
+}
+
+///|
+async fn run_spawn_agy_seed_if_needed(
   agent_type : @types.AgentType,
   project_dir : String,
-  cmds : Array[@workspace.Command],
-) -> Array[@workspace.Command] {
-  if agent_type == @types.AgentType::Gemini {
-    @workspace.prepend_agy_shared_cache_seed_commands(project_dir, cmds)
-  } else {
-    cmds
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String? {
+  if agent_type != @types.AgentType::Gemini {
+    return None
   }
+  let validate = @workspace.agy_shared_cache_validate(project_dir)
+  let initial_validate = match
+    run_spawn_agy_seed_command(Validate, validate, runner) {
+    Ok(status) => status
+    Err(msg) => return Some(msg)
+  }
+  if initial_validate == 0 {
+    return None
+  }
+  if initial_validate < 0 {
+    return Some(
+      agy_seed_step_failure_message(
+        Validate,
+        1,
+        validate,
+        "Could not check whether the shared cache is already warm.",
+        "",
+      ),
+    )
+  }
+  let prepare = @workspace.agy_shared_cache_prepare(project_dir)
+  let prepare_status = match
+    run_spawn_agy_seed_command(Prepare, prepare, runner) {
+    Ok(status) => status
+    Err(msg) => return Some(msg)
+  }
+  if prepare_status != 0 {
+    return Some(
+      agy_seed_step_failure_message(
+        Prepare,
+        if prepare_status < 0 {
+          1
+        } else {
+          prepare_status
+        },
+        prepare,
+        "Could not prepare the shared cache seed HOME and symlinks.",
+        "",
+      ),
+    )
+  }
+  let bootstrap = @workspace.agy_shared_cache_cold_bootstrap(project_dir)
+  let (bootstrap_status, bootstrap_output) = capture(bootstrap)
+  if bootstrap_status != 0 {
+    return Some(
+      agy_seed_step_failure_message(
+        ColdBootstrap,
+        if bootstrap_status < 0 {
+          1
+        } else {
+          bootstrap_status
+        },
+        bootstrap,
+        "The agy warmup command did not complete.",
+        bootstrap_output,
+      ),
+    )
+  }
+  let revalidate_status = match
+    run_spawn_agy_seed_command(ReValidate, validate, runner) {
+    Ok(status) => status
+    Err(msg) => return Some(msg)
+  }
+  if revalidate_status != 0 {
+    return Some(
+      agy_seed_step_failure_message(
+        ReValidate,
+        if revalidate_status < 0 {
+          1
+        } else {
+          revalidate_status
+        },
+        validate,
+        "The warmup completed but the shared cache is still incomplete; expected non-empty ms-playwright-go node/package files and antigravity-cli-bin/webm_encoder.",
+        "",
+      ),
+    )
+  }
+  None
 }
 
 ///|
@@ -348,20 +486,22 @@ pub async fn interpret_spawn_worker(
     Ok(_) => ()
     Err(msg) => return @types.Response::Err(msg)
   }
-  let cmds = with_spawn_agy_seed_if_needed(
+  let seed_warning = run_spawn_agy_seed_if_needed(
     plan.spec.agent_type,
     project_dir,
-    @workspace.spawn_commands(
-      plan.spec,
-      project_dir,
-      session,
-      parent_session_id=None,
-      extra_mcp_servers_json~,
-      shell_command~,
-      listen_uds~,
-      listen_tcp~,
-      tcp_auth_token~,
-    ),
+    runner,
+    capture,
+  )
+  let cmds = @workspace.spawn_commands(
+    plan.spec,
+    project_dir,
+    session,
+    parent_session_id=None,
+    extra_mcp_servers_json~,
+    shell_command~,
+    listen_uds~,
+    listen_tcp~,
+    tcp_auth_token~,
   )
   match run_strict(runner, cmds, capture~) {
     Ok(_) => {
@@ -371,7 +511,10 @@ pub async fn interpret_spawn_worker(
       }
       record_task_contract(plan.agent_id, plan.spec.task_contract)
       ignore(mirror_beads_spawn_for_spec(project_dir, plan.spec, capture))
-      plan.ok_response
+      match seed_warning {
+        Some(warning) => plan.ok_response.with_warning(warning)
+        None => plan.ok_response
+      }
     }
     Err(e) => @types.Response::Err(e.message())
   }
@@ -525,23 +668,29 @@ pub async fn interpret_spawn_gemini(
     Ok(_) => ()
     Err(msg) => return @types.Response::Err(msg)
   }
-  let cmds = with_spawn_agy_seed_if_needed(
+  let seed_warning = run_spawn_agy_seed_if_needed(
     plan.spec.agent_type,
     project_dir,
-    @workspace.spawn_commands(
-      plan.spec,
-      project_dir,
-      session,
-      parent_session_id=spawn_args.parent_session_id,
-      extra_mcp_servers_json~,
-      shell_command~,
-      listen_uds~,
-      listen_tcp~,
-      tcp_auth_token~,
-    ),
+    runner,
+    capture,
+  )
+  let cmds = @workspace.spawn_commands(
+    plan.spec,
+    project_dir,
+    session,
+    parent_session_id=spawn_args.parent_session_id,
+    extra_mcp_servers_json~,
+    shell_command~,
+    listen_uds~,
+    listen_tcp~,
+    tcp_auth_token~,
   )
   match run_strict(runner, cmds, capture~) {
-    Ok(_) => plan.ok_response
+    Ok(_) =>
+      match seed_warning {
+        Some(warning) => plan.ok_response.with_warning(warning)
+        None => plan.ok_response
+      }
     Err(e) => @types.Response::Err(e.message())
   }
 }

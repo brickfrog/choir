@@ -51,14 +51,16 @@ pub let native_agy_shared_cache_prepare_program : String = "__choir_native_agy_s
 pub let native_agy_shared_cache_validate_program : String = "__choir_native_agy_shared_cache_validate__"
 
 ///|
-/// Args: `[project_dir]` — if the shared agy cache is already populated, return
-/// success; otherwise prepare the seed HOME, run the agy cold-bootstrap command,
-/// and validate the resulting shared runtime cache.
+/// Args: `[project_dir]` — shared agy cache warmup. If the cache is cold,
+/// prepare the seed HOME, run the agy cold-bootstrap command, and validate the
+/// resulting shared runtime cache. Step failures warn and return their failing
+/// status so callers can surface a precise cache prerequisite error.
 pub let native_agy_shared_cache_seed_if_needed_program : String = "__choir_native_agy_shared_cache_seed_if_needed__"
 
 ///|
-/// Args: `[project_dir, worktree_path]` — symlink the already-populated shared
-/// agy runtime cache into the leaf HOME. This does not seed or coordinate.
+/// Args: `[project_dir, worktree_path]` — symlink the populated shared agy
+/// runtime cache into the leaf HOME. Missing or incomplete shared cache warns
+/// and continues because cache sharing is a startup optimization.
 pub let native_agy_cache_links_program : String = "__choir_native_agy_cache_links__"
 
 ///|
@@ -423,11 +425,6 @@ fn agy_shared_cache_bin_populated(
   let bin_root = shared_root + "/antigravity-cli-bin"
   path_entry_exists(bin_root) &&
   agy_shared_cache_file_nonempty(
-    bin_root + "/agentapi",
-    path_entry_exists,
-    file_size,
-  ) &&
-  agy_shared_cache_file_nonempty(
     bin_root + "/webm_encoder",
     path_entry_exists,
     file_size,
@@ -445,6 +442,58 @@ fn agy_shared_cache_is_populated(
     shared_root, path_entry_exists, list_dir, file_size,
   ) &&
   agy_shared_cache_bin_populated(shared_root, path_entry_exists, file_size)
+}
+
+///|
+priv enum AgySharedCacheSeedStep {
+  Prepare
+  ColdBootstrap
+  ReValidate
+}
+
+///|
+fn AgySharedCacheSeedStep::label(self : AgySharedCacheSeedStep) -> String {
+  match self {
+    Prepare => "prepare"
+    ColdBootstrap => "cold-bootstrap"
+    ReValidate => "re-validate"
+  }
+}
+
+///|
+fn agy_shared_cache_seed_failure_warning(
+  step : AgySharedCacheSeedStep,
+  status : Int,
+  detail : String,
+) -> String {
+  let trimmed = detail.trim().to_owned()
+  let suffix = if trimmed == "" { "" } else { ": " + trimmed }
+  "choir: warning: agy shared cache seed " +
+  step.label() +
+  " failed (exit " +
+  status.to_string() +
+  ")" +
+  suffix +
+  "\n"
+}
+
+///|
+fn warn_agy_shared_cache_seed_failure(
+  step : AgySharedCacheSeedStep,
+  status : Int,
+  detail : String,
+  write_stderr : (String) -> Unit,
+) -> Unit {
+  write_stderr(agy_shared_cache_seed_failure_warning(step, status, detail))
+}
+
+///|
+fn handled_native_failure_status(status : Int) -> Int {
+  if status < 0 {
+    1
+  } else {
+    status
+  }
 }
 
 ///|
@@ -527,13 +576,14 @@ pub fn run_native_agy_shared_cache_validate_command(cmd : Command) -> Int {
 ///|
 pub fn run_native_agy_shared_cache_seed_if_needed_command_with_runner(
   cmd : Command,
-  run_bootstrap : (Command) -> Int,
+  run_bootstrap : (Command) -> (Int, String),
   path_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
   list_dir? : (String) -> Array[String] = @sys.list_dir,
   file_size? : (String) -> Int = @sys.file_size,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   rm_rf? : (String) -> Bool = @sys.rm_rf,
   symlink_force? : (String, String) -> Bool = @sys.symlink_force,
+  write_stderr? : (String) -> Unit = @sys.write_stderr,
 ) -> Int {
   if cmd.program != native_agy_shared_cache_seed_if_needed_program {
     return -1
@@ -560,20 +610,43 @@ pub fn run_native_agy_shared_cache_seed_if_needed_command_with_runner(
     symlink_force~,
   )
   if prepare_status != 0 {
+    warn_agy_shared_cache_seed_failure(
+      Prepare,
+      prepare_status,
+      "could not prepare seed HOME and shared cache links",
+      write_stderr,
+    )
     return prepare_status
   }
-  let bootstrap_status = run_bootstrap(
+  let (bootstrap_status, bootstrap_stderr) = run_bootstrap(
     agy_shared_cache_cold_bootstrap(project_dir),
   )
   if bootstrap_status != 0 {
-    return bootstrap_status
+    let handled_status = handled_native_failure_status(bootstrap_status)
+    warn_agy_shared_cache_seed_failure(
+      ColdBootstrap,
+      handled_status,
+      bootstrap_stderr,
+      write_stderr,
+    )
+    return handled_status
   }
-  run_native_agy_shared_cache_validate_paths_with_io(
+  let validate_status = run_native_agy_shared_cache_validate_paths_with_io(
     project_dir,
     path_entry_exists~,
     list_dir~,
     file_size~,
   )
+  if validate_status != 0 {
+    warn_agy_shared_cache_seed_failure(
+      ReValidate,
+      validate_status,
+      "shared cache did not validate after cold-bootstrap",
+      write_stderr,
+    )
+    return validate_status
+  }
+  0
 }
 
 ///|
@@ -610,6 +683,7 @@ fn run_native_agy_cache_links_paths_with_io(
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
   rm_rf? : (String) -> Bool = @sys.rm_rf,
   symlink_force? : (String, String) -> Bool = @sys.symlink_force,
+  write_stderr? : (String) -> Unit = @sys.write_stderr,
 ) -> Int {
   if project_dir == "" || worktree_path == "" {
     return 1
@@ -618,7 +692,10 @@ fn run_native_agy_cache_links_paths_with_io(
   if !agy_shared_cache_is_populated(
       shared_root, path_entry_exists, list_dir, file_size,
     ) {
-    return 1
+    write_stderr(
+      "choir: warning: agy shared cache links skipped because shared cache is not populated\n",
+    )
+    return 0
   }
   let home = agy_home_path(worktree_path)
   if !symlink_shared_cache_dir_with_io(
@@ -629,7 +706,8 @@ fn run_native_agy_cache_links_paths_with_io(
       rm_rf,
       symlink_force,
     ) {
-    return 1
+    write_stderr("choir: warning: agy shared cache playwright link failed\n")
+    return 0
   }
   if !symlink_shared_cache_dir_with_io(
       shared_root + "/antigravity-cli-bin",
@@ -639,20 +717,28 @@ fn run_native_agy_cache_links_paths_with_io(
       rm_rf,
       symlink_force,
     ) {
-    return 1
+    write_stderr("choir: warning: agy shared cache binary link failed\n")
+    return 0
   }
   0
 }
 
 ///|
-pub fn run_native_agy_cache_links_command(cmd : Command) -> Int {
+pub fn run_native_agy_cache_links_command(
+  cmd : Command,
+  write_stderr? : (String) -> Unit = @sys.write_stderr,
+) -> Int {
   if cmd.program != native_agy_cache_links_program {
     return -1
   }
   if cmd.args.length() != 2 {
     return 1
   }
-  run_native_agy_cache_links_paths_with_io(cmd.args[0], cmd.args[1])
+  run_native_agy_cache_links_paths_with_io(
+    cmd.args[0],
+    cmd.args[1],
+    write_stderr~,
+  )
 }
 
 ///|
@@ -704,26 +790,6 @@ pub fn agy_shared_cache_seed_if_needed(project_dir : String) -> Command {
     args: [project_dir],
     workdir: None,
   }
-}
-
-///|
-pub fn agy_shared_cache_seed_commands(project_dir : String) -> Array[Command] {
-  [agy_shared_cache_seed_if_needed(project_dir)]
-}
-
-///|
-pub fn prepend_agy_shared_cache_seed_commands(
-  project_dir : String,
-  cmds : Array[Command],
-) -> Array[Command] {
-  let seeded : Array[Command] = []
-  for cmd in agy_shared_cache_seed_commands(project_dir) {
-    seeded.push(cmd)
-  }
-  for cmd in cmds {
-    seeded.push(cmd)
-  }
-  seeded
 }
 
 ///|
