@@ -135,6 +135,41 @@ pub async fn run_dev_entr_watcher(
 }
 
 ///|
+priv enum AgySharedCacheSeedStep {
+  Prepare
+  ColdBootstrap
+  ReValidate
+}
+
+///|
+fn AgySharedCacheSeedStep::label(self : AgySharedCacheSeedStep) -> String {
+  match self {
+    Prepare => "prepare"
+    ColdBootstrap => "cold-bootstrap"
+    ReValidate => "re-validate"
+  }
+}
+
+///|
+fn write_agy_shared_cache_seed_warning(
+  step : AgySharedCacheSeedStep,
+  status : Int,
+  detail : String,
+) -> Unit {
+  let trimmed = detail.trim().to_owned()
+  let suffix = if trimmed == "" { "" } else { ": " + trimmed }
+  @sys.write_stderr(
+    "choir: warning: agy shared cache seed " +
+    step.label() +
+    " failed (exit " +
+    status.to_string() +
+    ")" +
+    suffix +
+    "\n",
+  )
+}
+
+///|
 async fn run_agy_shared_cache_seed_if_needed_command(
   cmd : @workspace.Command,
 ) -> Int {
@@ -158,19 +193,35 @@ async fn run_agy_shared_cache_seed_if_needed_command(
     @workspace.agy_shared_cache_prepare(project_dir),
   )
   if prepare_status != 0 {
+    write_agy_shared_cache_seed_warning(
+      Prepare,
+      prepare_status,
+      "could not prepare seed HOME and shared cache links",
+    )
     return prepare_status
   }
   let bootstrap = @workspace.agy_shared_cache_cold_bootstrap(project_dir)
-  let bootstrap_status = match bootstrap.workdir {
-    Some(dir) => @process.run(bootstrap.program, bootstrap.args[:], cwd=dir)
-    None => @process.run(bootstrap.program, bootstrap.args[:])
-  }
+  let (bootstrap_status, bootstrap_output) = capture_command_merged(bootstrap)
   if bootstrap_status != 0 {
+    write_agy_shared_cache_seed_warning(
+      ColdBootstrap,
+      bootstrap_status,
+      bootstrap_output,
+    )
     return bootstrap_status
   }
-  @workspace.run_native_agy_shared_cache_validate_command(
+  let validate_status = @workspace.run_native_agy_shared_cache_validate_command(
     @workspace.agy_shared_cache_validate(project_dir),
   )
+  if validate_status != 0 {
+    write_agy_shared_cache_seed_warning(
+      ReValidate,
+      validate_status,
+      "shared cache did not validate after cold-bootstrap",
+    )
+    return validate_status
+  }
+  0
 }
 
 ///|

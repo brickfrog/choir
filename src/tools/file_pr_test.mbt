@@ -1214,8 +1214,7 @@ async test "interpret_file_pr cleans prepared mutation report on spawn failure" 
     sleep_fn=file_pr_test_no_sleep,
   )
   match got {
-    @types.Response::Err(msg) =>
-      assert_true(msg.contains("command failed with status 1"))
+    @types.Response::Err(msg) => assert_true(msg.contains("failed (exit 1)"))
     @types.Response::Ok(_) => fail("expected mutation worker spawn failure")
   }
   assert_false(ensure_pr_called)

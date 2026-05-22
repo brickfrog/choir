@@ -47,20 +47,6 @@ fn empty_fork_wave_spawn_plan() -> ForkWaveSpawnPlan {
 }
 
 ///|
-fn with_agy_shared_cache_seed_commands(
-  spawn_plan : ForkWaveSpawnPlan,
-  project_dir : String,
-) -> ForkWaveSpawnPlan {
-  {
-    ..spawn_plan,
-    cmds: @workspace.prepend_agy_shared_cache_seed_commands(
-      project_dir,
-      spawn_plan.cmds,
-    ),
-  }
-}
-
-///|
 /// Build [`ForkWaveSpawnPlan`] from resolved tool args and `child_spawn_depth`.
 /// Uses `slugify_task` for per-leaf slugs; behavior matches the historical
 /// `ToolRequest::ForkWave` inline loop in `dispatch`.
@@ -429,10 +415,10 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     listen_tcp~,
     tcp_auth_token~,
   )
-  let spawn_plan = if fork_wave_args.agent_type == @types.AgentType::Gemini &&
+  if fork_wave_args.agent_type == @types.AgentType::Gemini &&
     spawn_plan.spawned_count > 0 {
     match ensure_agy_binary_available(capture) {
-      Ok(_) => with_agy_shared_cache_seed_commands(spawn_plan, project_dir)
+      Ok(_) => ()
       Err(msg) =>
         return (
           @types.Response::Err(msg),
@@ -440,8 +426,21 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
           empty_fork_wave_spawn_plan(),
         )
     }
-  } else {
-    spawn_plan
+    match
+      run_spawn_agy_seed_if_needed(
+        fork_wave_args.agent_type,
+        project_dir,
+        runner,
+        capture,
+      ) {
+      Ok(_) => ()
+      Err(msg) =>
+        return (
+          @types.Response::Err(msg),
+          fork_wave_args,
+          empty_fork_wave_spawn_plan(),
+        )
+    }
   }
   let plan = fork_wave_plan(
     project_dir,

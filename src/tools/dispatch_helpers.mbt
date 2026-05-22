@@ -1,6 +1,43 @@
 ///|
 
 ///|
+fn command_diagnostic_string(cmd : @workspace.Command) -> String {
+  let base = cmd.program + " (" + cmd.args.length().to_string() + " args)"
+  match cmd.workdir {
+    Some(_) => base + " (cwd set)"
+    None => base
+  }
+}
+
+///|
+pub fn command_failure_message_from_output(
+  status : Int,
+  cmd : @workspace.Command,
+  output : String,
+) -> String {
+  let detail = output.trim().to_owned()
+  let prefix = command_diagnostic_string(cmd) +
+    " failed (exit " +
+    status.to_string() +
+    ")"
+  if detail != "" {
+    prefix + ": " + detail
+  } else {
+    prefix
+  }
+}
+
+///|
+pub async fn command_failure_message(
+  status : Int,
+  cmd : @workspace.Command,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> String {
+  let (_, output) = capture(cmd)
+  command_failure_message_from_output(status, cmd, output)
+}
+
+///|
 pub async fn run_strict(
   runner : async (Array[@workspace.Command]) -> Array[Int],
   cmds : Array[@workspace.Command],
@@ -14,13 +51,7 @@ pub async fn run_strict(
     if status != 0 {
       // Re-run the failing command with stderr capture for a useful error message
       let cmd = cmds[i]
-      let (_, stderr) = capture(cmd)
-      let detail = stderr.trim().to_owned()
-      let msg = if detail != "" {
-        cmd.program + " failed (exit " + status.to_string() + "): " + detail
-      } else {
-        "command failed with status " + status.to_string()
-      }
+      let msg = command_failure_message(status, cmd, capture)
       return Err(@types.ChoirError::transport_error(msg))
     }
   }
@@ -46,6 +77,18 @@ async fn runner_run_strict_first_failure(
 }
 
 ///|
+async fn capture_run_strict_failure_detail(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  if cmd.program == "false" {
+    (7, "seed stderr")
+  } else {
+    (0, "")
+  }
+}
+
+///|
 async test "run_strict returns first failing command index and status" {
   let result = run_strict(runner_run_strict_first_failure, [
     { program: "true", args: [], workdir: None },
@@ -56,6 +99,54 @@ async test "run_strict returns first failing command index and status" {
     Ok(_) => fail("expected run_strict failure")
     Err(e) =>
       assert_true(e.message().contains("failed") && e.message().contains("7"))
+  }
+}
+
+///|
+async test "run_strict failure includes command argv exit code and captured stderr" {
+  let result = run_strict(
+    runner_run_strict_first_failure,
+    [
+      { program: "true", args: [], workdir: None },
+      { program: "false", args: ["--seed", "with space"], workdir: None },
+    ],
+    capture=capture_run_strict_failure_detail,
+  )
+  match result {
+    Ok(_) => fail("expected run_strict failure")
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("false (2 args)"))
+      assert_true(msg.contains("exit 7"))
+      assert_true(msg.contains("seed stderr"))
+      assert_false(msg.contains("with space"))
+    }
+  }
+}
+
+///|
+async test "run_strict failure redacts argument bodies from diagnostics" {
+  let secret = "tcp_auth_token=super-secret-token"
+  let result = run_strict(
+    runner_run_strict_first_failure,
+    [
+      { program: "true", args: [], workdir: None },
+      { program: "write-config", args: ["--body", secret], workdir: None },
+    ],
+    capture=async fn(_cmd) {
+      @async.sleep(0)
+      (7, "write failed")
+    },
+  )
+  match result {
+    Ok(_) => fail("expected run_strict failure")
+    Err(e) => {
+      let msg = e.message()
+      assert_true(msg.contains("write-config (2 args)"))
+      assert_true(msg.contains("write failed"))
+      assert_false(msg.contains(secret))
+      assert_false(msg.contains("--body"))
+    }
   }
 }
 
