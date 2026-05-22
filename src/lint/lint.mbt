@@ -13,6 +13,7 @@ priv struct LintEnv {
   aliases : Array[(String, DangerousCallKind)]
   decl_stack : Array[String]
   test_rules_enabled : Bool
+  forbidden_helpers : Array[ForbiddenHelper]
 }
 
 ///|
@@ -29,6 +30,29 @@ priv struct ConstructorNameSearch {
 ///|
 priv struct ExecPackageRefSearch {
   mut found : Bool
+}
+
+///|
+priv struct ForbiddenHelper {
+  name : String
+  rule_id : String
+  loc : @basic.Location
+}
+
+///|
+priv struct FunctionCallInfo {
+  name : String
+  loc : @basic.Location
+  called : Array[String]
+  mut forbidden_rule_id : String?
+}
+
+///|
+priv struct FunctionBodyCollector {
+  file : String
+  mut direct_rule_id : String?
+  calls : Array[String]
+  aliases : Array[(String, DangerousCallKind)]
 }
 
 ///|
@@ -321,6 +345,208 @@ fn is_forbidden_test_exec_package_ref(expr : @syntax.Expr) -> Bool {
 }
 
 ///|
+fn called_function_name(expr : @syntax.Expr) -> String? {
+  match expr {
+    Ident(id={ name: Ident(name~), .. }, ..) => Some(name)
+    _ => None
+  }
+}
+
+///|
+fn direct_forbidden_rule_for_apply(
+  file : String,
+  aliases : Array[(String, DangerousCallKind)],
+  func : @syntax.Expr,
+  args : @list.List[@syntax.Argument],
+) -> String? {
+  match dangerous_call_kind_with_aliases(file, aliases, func) {
+    Some(ShellCommand) => Some("test-shell-command")
+    Some(ProcessCommand) => Some("test-direct-process")
+    Some(ExecCapture) =>
+      match first_argument(args) {
+        Some(command) =>
+          if expr_contains_git_program(command) {
+            Some("test-git-capture")
+          } else {
+            Some("test-exec-capture")
+          }
+        None => Some("test-exec-capture")
+      }
+    Some(RecoveryProvider) => Some("test-shell-recovery-provider")
+    Some(ShellRecoveryProvider) =>
+      match first_argument(args) {
+        Some(capture) =>
+          if is_exec_capture_ref_for_file(file, capture) ||
+            is_named_alias_with_aliases(aliases, capture, ExecCapture) {
+            Some("test-shell-recovery-provider")
+          } else {
+            None
+          }
+        None => None
+      }
+    None =>
+      if is_forbidden_test_exec_package_ref(func) {
+        Some("test-exec-reference")
+      } else {
+        None
+      }
+  }
+}
+
+///|
+fn direct_forbidden_rule_for_arg_refs(
+  args : @list.List[@syntax.Argument],
+) -> String? {
+  for arg in args {
+    if is_forbidden_test_exec_package_ref(arg.value) {
+      return Some("test-exec-reference")
+    }
+  }
+  None
+}
+
+///|
+fn function_call_info_from_body(
+  file : String,
+  body : @syntax.DeclBody,
+) -> (String?, Array[String]) {
+  let collector = FunctionBodyCollector::{
+    file,
+    direct_rule_id: None,
+    calls: Array::new(capacity=4),
+    aliases: Array::new(capacity=4),
+  }
+  collector.visit_DeclBody(body)
+  (collector.direct_rule_id, collector.calls)
+}
+
+///|
+impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
+  if self.direct_rule_id is None {
+    match expr {
+      Apply(func~, args~, ..) =>
+        match
+          direct_forbidden_rule_for_apply(self.file, self.aliases, func, args) {
+          Some(rule_id) => self.direct_rule_id = Some(rule_id)
+          None => {
+            match called_function_name(func) {
+              Some(name) => self.calls.push(name)
+              None => ()
+            }
+            match direct_forbidden_rule_for_arg_refs(args) {
+              Some(rule_id) => self.direct_rule_id = Some(rule_id)
+              None => ()
+            }
+          }
+        }
+      Let(pattern~, expr=value, ..) => {
+        bind_alias_with_aliases(self.aliases, self.file, pattern, value)
+        if is_forbidden_test_exec_package_ref(value) {
+          self.direct_rule_id = Some("test-exec-reference")
+        }
+      }
+      _ => ()
+    }
+  }
+  self.base().visit_Expr(expr)
+}
+
+///|
+fn collect_forbidden_function_infos(
+  file : String,
+  impls : @syntax.Impls,
+) -> Array[FunctionCallInfo] {
+  let function_infos = Array::new(capacity=8)
+  for impl_ in impls {
+    match impl_ {
+      TopFuncDef(fun_decl~, decl_body~, loc~) => {
+        let (direct_rule_id, called) = function_call_info_from_body(
+          file, decl_body,
+        )
+        function_infos.push(FunctionCallInfo::{
+          name: fun_decl.name.name,
+          loc,
+          called,
+          forbidden_rule_id: direct_rule_id,
+        })
+      }
+      _ => ()
+    }
+  }
+
+  let mut changed = true
+  while changed {
+    changed = false
+    for info in function_infos {
+      if info.forbidden_rule_id is None {
+        let mut resolved : String? = None
+        for callee in info.called {
+          if resolved is None {
+            resolved = lookup_forbidden_rule(function_infos, callee)
+          }
+        }
+        match resolved {
+          Some(rule_id) => {
+            info.forbidden_rule_id = Some(rule_id)
+            changed = true
+          }
+          None => ()
+        }
+      }
+    }
+  }
+  function_infos
+}
+
+///|
+fn lookup_forbidden_rule(
+  function_infos : Array[FunctionCallInfo],
+  name : String,
+) -> String? {
+  for info in function_infos {
+    if info.name == name {
+      match info.forbidden_rule_id {
+        Some(rule_id) => return Some(rule_id)
+        None => return None
+      }
+    }
+  }
+  None
+}
+
+///|
+fn build_forbidden_helpers(
+  function_infos : Array[FunctionCallInfo],
+) -> Array[ForbiddenHelper] {
+  let forbidden = Array::new(capacity=8)
+  for info in function_infos {
+    match info.forbidden_rule_id {
+      Some(rule_id) =>
+        forbidden.push(ForbiddenHelper::{
+          name: info.name,
+          rule_id,
+          loc: info.loc,
+        })
+      None => ()
+    }
+  }
+  forbidden
+}
+
+///|
+fn forbidden_helper_info(
+  forbidden_helpers : Array[ForbiddenHelper],
+  name : String,
+) -> ForbiddenHelper? {
+  for helper in forbidden_helpers {
+    if helper.name == name {
+      return Some(helper)
+    }
+  }
+  None
+}
+
+///|
 fn exec_package_ref_name(expr : @syntax.Expr) -> String? {
   match expr {
     Group(expr~, ..) => exec_package_ref_name(expr)
@@ -380,22 +606,48 @@ fn dangerous_call_kind(
   env : LintEnv,
   func : @syntax.Expr,
 ) -> DangerousCallKind? {
-  match alias_kind_for_expr(env.file, func) {
+  dangerous_call_kind_with_aliases(env.file, env.aliases, func)
+}
+
+///|
+fn dangerous_call_kind_with_aliases(
+  file : String,
+  aliases : Array[(String, DangerousCallKind)],
+  func : @syntax.Expr,
+) -> DangerousCallKind? {
+  match alias_kind_for_expr(file, func) {
     Some(kind) => Some(kind)
     None =>
-      if is_named_alias(env, func, ShellCommand) {
+      if is_named_alias_with_aliases(aliases, func, ShellCommand) {
         Some(ShellCommand)
-      } else if is_named_alias(env, func, ProcessCommand) {
+      } else if is_named_alias_with_aliases(aliases, func, ProcessCommand) {
         Some(ProcessCommand)
-      } else if is_named_alias(env, func, ExecCapture) {
+      } else if is_named_alias_with_aliases(aliases, func, ExecCapture) {
         Some(ExecCapture)
-      } else if is_named_alias(env, func, RecoveryProvider) {
+      } else if is_named_alias_with_aliases(aliases, func, RecoveryProvider) {
         Some(RecoveryProvider)
-      } else if is_named_alias(env, func, ShellRecoveryProvider) {
+      } else if is_named_alias_with_aliases(
+          aliases,
+          func,
+          ShellRecoveryProvider,
+        ) {
         Some(ShellRecoveryProvider)
       } else {
         None
       }
+  }
+}
+
+///|
+fn is_named_alias_with_aliases(
+  aliases : Array[(String, DangerousCallKind)],
+  expr : @syntax.Expr,
+  kind : DangerousCallKind,
+) -> Bool {
+  match expr {
+    Ident(id={ name: Ident(name~), .. }, ..) =>
+      aliases.any(fn(entry) { entry.0 == name && entry.1 == kind })
+    _ => false
   }
 }
 
@@ -475,8 +727,18 @@ fn bind_alias_if_needed(
   pattern : @syntax.Pattern,
   expr : @syntax.Expr,
 ) -> Unit {
-  match (pattern, alias_kind_for_expr(env.file, expr)) {
-    (Var({ name, .. }), Some(kind)) => env.aliases.push((name, kind))
+  bind_alias_with_aliases(env.aliases, env.file, pattern, expr)
+}
+
+///|
+fn bind_alias_with_aliases(
+  aliases : Array[(String, DangerousCallKind)],
+  file : String,
+  pattern : @syntax.Pattern,
+  expr : @syntax.Expr,
+) -> Unit {
+  match (pattern, alias_kind_for_expr(file, expr)) {
+    (Var({ name, .. }), Some(kind)) => aliases.push((name, kind))
     _ => ()
   }
 }
@@ -722,6 +984,8 @@ fn test_decl_name(name : @syntax.TestName) -> String {
 ///|
 fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
   let canonical = canonical_file(file)
+  let function_infos = collect_forbidden_function_infos(canonical, impls)
+  let forbidden_helpers = build_forbidden_helpers(function_infos)
   let findings = Array::new(capacity=4)
   let test_file = canonical.has_suffix("_test.mbt")
   for impl_ in impls {
@@ -736,6 +1000,7 @@ fn scan_impls(file : String, impls : @syntax.Impls) -> Array[LintFinding] {
       aliases: Array::new(capacity=4),
       decl_stack: Array::new(capacity=2),
       test_rules_enabled,
+      forbidden_helpers,
     }
     match impl_ {
       TopTest(expr~, name~, ..) => {
@@ -806,7 +1071,28 @@ impl @syntax.IterVisitor for LintEnv with visit_Impl_TopImpl(
 ///|
 impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
   match expr {
-    Apply(func~, args~, loc~, ..) => check_test_apply(env, func, args, loc)
+    Apply(func~, args~, loc~, ..) => {
+      check_test_apply(env, func, args, loc)
+      if env.test_rules_enabled {
+        match called_function_name(func) {
+          Some(name) =>
+            match forbidden_helper_info(env.forbidden_helpers, name) {
+              Some(helper) =>
+                emit(
+                  env,
+                  helper.rule_id,
+                  "test calls helper `" +
+                  name +
+                  "` declared at " +
+                  helper.loc.to_string(),
+                  loc,
+                )
+              None => ()
+            }
+          None => ()
+        }
+      }
+    }
     DotApply(method_name~, args~, loc~, ..) =>
       check_test_method_apply(env, method_name.name, args, loc)
     Let(pattern~, expr=value, loc~, ..) =>
