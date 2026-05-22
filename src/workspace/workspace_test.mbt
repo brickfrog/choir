@@ -1379,6 +1379,151 @@ test "run_native_agy_shared_cache_seed_if_needed bootstraps and validates cold c
 }
 
 ///|
+test "run_native_agy_shared_cache_seed_if_needed resolves relative project cache paths" {
+  let project = "relative-project"
+  let existing : Array[String] = []
+  let sized_paths : Array[String] = []
+  let symlink_targets : Array[String] = []
+  let symlink_links : Array[String] = []
+  let bootstrap_homes : Array[String] = []
+  let bootstrap_workdirs : Array[String] = []
+  let bootstrap_calls : Array[String] = []
+  let remember_path = fn(path : String) {
+    if !existing.contains(path) {
+      existing.push(path)
+    }
+  }
+  let remember_file = fn(path : String) {
+    remember_path(path)
+    if !sized_paths.contains(path) {
+      sized_paths.push(path)
+    }
+  }
+
+  let status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(cmd) {
+      bootstrap_calls.push(cmd.program)
+      bootstrap_homes.push(cmd.args[0])
+      match cmd.workdir {
+        Some(dir) => bootstrap_workdirs.push(dir)
+        None => ()
+      }
+      let shared_playwright = symlink_targets[0]
+      let shared_bin = symlink_targets[1]
+      let shared_version = shared_playwright + "/1.57.0"
+      remember_path(shared_version)
+      remember_path(shared_version + "/package")
+      remember_file(shared_version + "/node")
+      remember_file(shared_version + "/package/package.json")
+      remember_file(shared_bin + "/webm_encoder")
+      (0, "")
+    },
+    path_entry_exists=fn(path) { existing.contains(path) },
+    list_dir=fn(path) {
+      if symlink_targets.length() > 0 && path == symlink_targets[0] {
+        ["1.57.0"]
+      } else {
+        []
+      }
+    },
+    file_size=fn(path) { if sized_paths.contains(path) { 4 } else { 0 } },
+    create_dir_all=fn(path) {
+      remember_path(path)
+      true
+    },
+    rm_rf=fn(_) { true },
+    symlink_force=fn(target, link) {
+      symlink_targets.push(target)
+      symlink_links.push(link)
+      remember_path(link)
+      true
+    },
+    write_stderr=fn(_) { () },
+  )
+
+  assert_eq(status, 0)
+  assert_eq(symlink_targets.length(), 2)
+  assert_eq(symlink_links.length(), 2)
+  assert_true(symlink_targets[0].has_prefix("/"))
+  assert_true(symlink_targets[1].has_prefix("/"))
+  assert_true(symlink_links[0].has_prefix("/"))
+  assert_true(symlink_links[1].has_prefix("/"))
+  assert_true(
+    symlink_targets[0].has_suffix(
+      "/relative-project/.choir/agy-shared-cache/ms-playwright-go",
+    ),
+  )
+  assert_true(
+    symlink_targets[1].has_suffix(
+      "/relative-project/.choir/agy-shared-cache/antigravity-cli-bin",
+    ),
+  )
+  @debug.assert_eq(bootstrap_calls, ["env"])
+  @debug.assert_eq(bootstrap_homes, [
+    "HOME=" + symlink_targets[0].replace(old="/ms-playwright-go", new="/home"),
+  ])
+  assert_eq(bootstrap_workdirs.length(), 1)
+  assert_true(bootstrap_workdirs[0].has_prefix("/"))
+  assert_true(bootstrap_workdirs[0].has_suffix("/relative-project"))
+
+  let warm_status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(_) {
+      bootstrap_calls.push("unexpected")
+      (1, "unexpected bootstrap")
+    },
+    path_entry_exists=fn(path) { existing.contains(path) },
+    list_dir=fn(path) {
+      if symlink_targets.length() > 0 && path == symlink_targets[0] {
+        ["1.57.0"]
+      } else {
+        []
+      }
+    },
+    file_size=fn(path) { if sized_paths.contains(path) { 4 } else { 0 } },
+    create_dir_all=fn(path) {
+      remember_path(path)
+      true
+    },
+    rm_rf=fn(_) { true },
+    symlink_force=fn(target, link) {
+      symlink_targets.push(target)
+      symlink_links.push(link)
+      true
+    },
+    write_stderr=fn(_) { () },
+  )
+
+  assert_eq(warm_status, 0)
+  @debug.assert_eq(bootstrap_calls, ["env"])
+  assert_eq(symlink_targets.length(), 2)
+  assert_eq(symlink_links.length(), 2)
+}
+
+///|
+test "agy_shared_cache_cold_bootstrap_exec only matches the agy bootstrap" {
+  let cmd = @workspace.agy_shared_cache_cold_bootstrap("/tmp/choir-project")
+  let exec = @workspace.agy_shared_cache_cold_bootstrap_exec(cmd)
+  @debug.assert_eq(
+    exec,
+    Some({ home: "/tmp/choir-project/.choir/agy-shared-cache/home" }),
+  )
+  let non_agy = @workspace.Command::{
+    program: "env",
+    args: [
+      "HOME=/tmp/choir-project/.choir/agy-shared-cache/home", "not-agy", "--dangerously-skip-permissions",
+      "--print", "Reply READY.",
+    ],
+    workdir: Some("/tmp/choir-project"),
+  }
+  @debug.assert_eq(
+    @workspace.agy_shared_cache_cold_bootstrap_exec(non_agy),
+    None,
+  )
+}
+
+///|
 test "run_native_agy_shared_cache_seed_if_needed warns and returns bootstrap failure" {
   let dir = "/tmp/choir-agy-cache-seed-bootstrap-fail-" +
     @sys.get_pid().to_string() +

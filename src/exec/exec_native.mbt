@@ -210,7 +210,9 @@ async fn run_agy_shared_cache_seed_if_needed_command(
     return prepare_status
   }
   let bootstrap = @workspace.agy_shared_cache_cold_bootstrap(project_dir)
-  let (bootstrap_status, bootstrap_output) = capture_command_merged(bootstrap)
+  let (bootstrap_status, bootstrap_output) = capture_agy_shared_cache_cold_bootstrap(
+    bootstrap,
+  )
   if bootstrap_status != 0 {
     let handled_status = handled_native_failure_status(bootstrap_status)
     write_agy_shared_cache_seed_warning(
@@ -480,10 +482,62 @@ async fn run_find_and_pump_to(
 }
 
 ///|
+fn agy_cold_bootstrap_latest_cli_log(home : String) -> String? {
+  let log_dir = home + "/.gemini/antigravity-cli/log"
+  let mut latest = ""
+  for entry in @sys.list_dir(log_dir) {
+    if entry.has_prefix("cli-") &&
+      entry.has_suffix(".log") &&
+      (latest == "" || entry.compare(latest) > 0) {
+      latest = entry
+    }
+  }
+  if latest == "" {
+    None
+  } else {
+    Some(log_dir + "/" + latest)
+  }
+}
+
+///|
+fn agy_cold_bootstrap_log_excerpt(path : String) -> String {
+  let trimmed = @sys.read_file(path).trim().to_owned()
+  if trimmed.length() > 4000 {
+    "[truncated]\n" + trimmed[trimmed.length() - 4000:].to_owned()
+  } else {
+    trimmed
+  }
+}
+
+///|
+fn agy_cold_bootstrap_failure_detail(
+  cmd : @workspace.Command,
+  output : String,
+) -> String {
+  let exec = match @workspace.agy_shared_cache_cold_bootstrap_exec(cmd) {
+    Some(exec) => exec
+    None => return output
+  }
+  let trimmed = output.trim().to_owned()
+  if trimmed != "" {
+    return trimmed
+  }
+  let log_path = match agy_cold_bootstrap_latest_cli_log(exec.home) {
+    Some(path) => path
+    None => return output
+  }
+  let log_excerpt = agy_cold_bootstrap_log_excerpt(log_path)
+  if log_excerpt == "" {
+    return output
+  }
+  "agy cli log (" + log_path + "): " + log_excerpt
+}
+
+///|
 /// Spawn `cmd` with argv (`program` + `args`) and optional `workdir`, redirecting stderr to the
 /// same pipe as stdout (shell `2>&1` semantics). Capture up to `capture_max_bytes` merged output, wait for exit.
 /// Returns `(exit_code, output)`; negative `exit_code` means spawn/pipe/wait failure.
-pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
+async fn capture_command_merged_raw(cmd : @workspace.Command) -> (Int, String) {
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
   }
@@ -508,6 +562,23 @@ pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
   let (output, _) = drain_process_stdout(reader, capture_max_bytes)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
   (exit_code, output)
+}
+
+///|
+pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
+  capture_command_merged_raw(cmd)
+}
+
+///|
+async fn capture_agy_shared_cache_cold_bootstrap(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  let (status, output) = capture_command_merged_raw(cmd)
+  if status != 0 {
+    (status, agy_cold_bootstrap_failure_detail(cmd, output))
+  } else {
+    (status, output)
+  }
 }
 
 ///|
@@ -807,6 +878,66 @@ async test "capture_hook_script_merged strips terminal responses from captured o
 
   assert_eq(code, 0)
   assert_eq(output, "before \u{1b}[32mok\u{1b}[0m  after")
+}
+
+///|
+test "agy cold-bootstrap failure detail uses stderr before cli logs" {
+  let cmd = @workspace.Command::{
+    program: "env",
+    args: [
+      "HOME=/tmp/choir-agy-detail-home", "agy", "--dangerously-skip-permissions",
+      "--print", "Reply READY.",
+    ],
+    workdir: Some("/tmp/choir-agy-detail-project"),
+  }
+
+  assert_eq(
+    agy_cold_bootstrap_failure_detail(cmd, "actual agy stderr\n"),
+    "actual agy stderr",
+  )
+}
+
+///|
+test "agy cold-bootstrap failure detail leaves non-bootstrap output unchanged" {
+  let cmd = @workspace.Command::{
+    program: "env",
+    args: [
+      "HOME=/tmp/choir-agy-detail-home", "not-agy", "--dangerously-skip-permissions",
+      "--print", "Reply READY.",
+    ],
+    workdir: Some("/tmp/choir-agy-detail-project"),
+  }
+
+  assert_eq(
+    agy_cold_bootstrap_failure_detail(cmd, " ordinary output \n"),
+    " ordinary output \n",
+  )
+}
+
+///|
+test "agy cold-bootstrap failure detail falls back to cli log" {
+  let dir = "/tmp/choir-agy-capture-detail-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(project))
+  let cmd = @workspace.agy_shared_cache_cold_bootstrap(project)
+  let home = cmd.args[0].replace(old="HOME=", new="")
+  let log_dir = home + "/.gemini/antigravity-cli/log"
+  assert_true(@sys.create_dir_all(log_dir))
+  assert_true(
+    @sys.write_file_sync(
+      log_dir + "/cli-20260521_232348.log",
+      "actual agy cli log\n",
+    ),
+  )
+
+  let output = agy_cold_bootstrap_failure_detail(cmd, "")
+  assert_true(output.contains("agy cli log (" + log_dir))
+  assert_true(output.contains("actual agy cli log"))
+  ignore(@sys.rm_rf(dir))
 }
 
 ///|
