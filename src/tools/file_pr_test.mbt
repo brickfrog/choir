@@ -79,6 +79,49 @@ test "file_pr_plan stores explicit review mode on tracked PR" {
 }
 
 ///|
+test "file_pr_plan formats audit incomplete notify once" {
+  let args : FilePrArgs = {
+    branch: "main.task-leaf",
+    parent_branch: Some("main"),
+    tracked_agent_id: "main.task-leaf",
+    title: None,
+    body: None,
+    review_context: None,
+  }
+  let pr : PullRequestInfo = {
+    number: 10,
+    url: "https://example.test/pr/10",
+    state: "OPEN",
+  }
+  let plan = file_pr_plan(
+    args,
+    "main",
+    pr,
+    true,
+    audit_incomplete=Some({ error: "audit budget exceeded" }),
+  )
+  assert_eq(
+    plan.notify_message,
+    "[PR READY] PR #10 filed: https://example.test/pr/10\n[AUDIT INCOMPLETE] audit budget exceeded; PR filed; run `/audit` on this branch, then retry the audit receipt gate.",
+  )
+  assert_false(plan.notify_message.contains("audit incomplete:"))
+  match plan.response {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(
+        map.get("warning"),
+        Some(
+          String::to_json(
+            "audit budget exceeded; PR filed; run `/audit` on this branch, then retry the audit receipt gate.",
+          ),
+        ),
+      )
+    }
+    _ => fail("expected OK response")
+  }
+}
+
+///|
 test "file_pr_plan omits tracked PR when tracking disabled" {
   let args : FilePrArgs = {
     branch: "leaf",
@@ -1514,6 +1557,47 @@ async test "dispatch shutdown from audit worker completes audit wait queue" {
 }
 
 ///|
+async test "dispatch notify_parent from failed audit worker does not capture stale report" {
+  let reg = @registry.AgentRegistry::new()
+  let worker_id = "main.audit-on-file-pr-timeout"
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId(worker_id),
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(audit_on_file_pr_internal_caller_id),
+      workspace: "/tmp/choir-audit-worker",
+      branch: "main.audit-worker",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Failed,
+    }),
+  )
+  ignore(reg.set_alive(worker_id, false))
+  let reports : Array[(String, AuditOnFilePrReport)] = []
+  let resp = dispatch(
+    ToolRequest::NotifyParent({
+      caller_id: worker_id,
+      message: "No findings.",
+      status: @types.Status::Success,
+    }),
+    project_dir="/tmp/choir-audit-timeout-stale-report",
+    registry=Some(reg),
+    runner=mock_runner_all_ok,
+    capture_audit_on_file_pr_report=async fn(agent_id, report) {
+      @async.sleep(0)
+      reports.push((agent_id, report))
+    },
+  )
+  match resp {
+    @types.Response::Err(_) => ()
+    @types.Response::Ok(_) => fail("stale failed worker report must not notify")
+  }
+  assert_eq(reports.length(), 0)
+}
+
+///|
 fn file_pr_auto_audit_capture(
   head : String,
   receipt_body : String?,
@@ -1549,6 +1633,29 @@ fn file_pr_audit_heartbeat_log_count(log : String, needle : String) -> Int {
     }
   }
   count
+}
+
+///|
+fn assert_file_pr_audit_incomplete_response(
+  resp : @types.Response,
+  detail : String,
+) -> Unit raise {
+  match resp {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(
+        map.get("audit_status"),
+        Some(String::to_json("incomplete")),
+      )
+      @debug.assert_eq(map.get("audit_retryable"), Some(Bool::to_json(true)))
+      match map.get("audit_error") {
+        Some(Json::String(msg)) => assert_true(msg.contains(detail))
+        _ => fail("expected audit_error")
+      }
+    }
+    @types.Response::Err(msg) =>
+      fail("audit incomplete must not hard-abort file_pr: " + msg)
+  }
 }
 
 ///|
@@ -1903,7 +2010,7 @@ async test "file_pr_auto_audit cap without report fails without fabricated zero 
   )
   match got {
     Err(e) => {
-      assert_eq(e.to_wire_string(), "validation_error")
+      assert_eq(e.to_wire_string(), "audit_incomplete")
       assert_true(e.message().contains("audit worker did not report"))
       assert_false(e.message().contains("0 finding(s) remaining"))
     }
@@ -2509,11 +2616,7 @@ async test "interpret_file_pr stops running heartbeats when audit worker is not 
       None
     },
   )
-  match got {
-    @types.Response::Err(msg) =>
-      assert_true(msg.contains("audit worker did not report"))
-    @types.Response::Ok(_) => fail("expected missing report")
-  }
+  assert_file_pr_audit_incomplete_response(got, "audit worker did not report")
   let log = appended.join("")
   assert_true(log.contains("elapsed_s=60 status=running"))
   assert_false(log.contains("elapsed_s=120 status=running"))
@@ -2612,11 +2715,7 @@ async test "interpret_file_pr audit final line records worker failure elapsed" {
       })
     },
   )
-  match got {
-    @types.Response::Err(msg) =>
-      assert_true(msg.contains("audit worker reported failure"))
-    @types.Response::Ok(_) => fail("expected worker failure")
-  }
+  assert_file_pr_audit_incomplete_response(got, "audit worker reported failure")
   let log = appended.join("")
   assert_eq(file_pr_audit_heartbeat_log_count(log, "audit-on-file-pr"), 1)
   assert_true(log.contains("elapsed_s=180 status=error reason=worker_failure"))
@@ -2665,11 +2764,7 @@ async test "interpret_file_pr audit final line records worker shutdown elapsed" 
       })
     },
   )
-  match got {
-    @types.Response::Err(msg) =>
-      assert_true(msg.contains("audit worker reported failure"))
-    @types.Response::Ok(_) => fail("expected worker shutdown failure")
-  }
+  assert_file_pr_audit_incomplete_response(got, "audit worker reported failure")
   let log = appended.join("")
   assert_eq(file_pr_audit_heartbeat_log_count(log, "audit-on-file-pr"), 1)
   assert_true(log.contains("elapsed_s=180 status=error reason=worker_shutdown"))
@@ -2906,11 +3001,12 @@ async test "interpret_file_pr Dev existing receipt skips auto audit" {
 }
 
 ///|
-async test "interpret_file_pr Dev audit outer budget returns timeout" {
+async test "interpret_file_pr Dev audit outer budget files PR with retryable audit incomplete state" {
   let project_dir = "/tmp/choir-fpr-auto-audit-timeout-" +
     @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let mut cleaned_worker = ""
+  let mut ensure_pr_called = false
   let got = interpret_file_pr(
     {
       branch: "feature/auto-audit",
@@ -2928,22 +3024,43 @@ async test "interpret_file_pr Dev audit outer budget returns timeout" {
     mock_preflight_ok,
     mock_runner_all_ok,
     file_pr_auto_audit_capture(head, None),
-    mock_ensure_pr_ok,
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      ensure_pr_called = true
+      Ok({ number: 42, url: "https://example.test/pr/42", state: "OPEN" })
+    },
     caller_role=@types.Role::Dev,
     task_contract_reader=file_pr_test_empty_task_contract_reader,
     tdd_phase_reader=file_pr_test_tdd_done,
     audit_budget_ms=1,
-    cleanup_audit_report=fn(worker_id) { cleaned_worker = worker_id },
+    cleanup_audit_report=async fn(worker_id) {
+      @async.sleep(0)
+      cleaned_worker = worker_id
+    },
     wait_for_audit_report=async fn(_) {
       @async.sleep(50)
       None
     },
   )
   match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("pr_created")))
+      @debug.assert_eq(
+        map.get("pr_url"),
+        Some(String::to_json("https://example.test/pr/42")),
+      )
+    }
     @types.Response::Err(msg) =>
-      assert_true(msg.contains("audit budget exceeded"))
-    @types.Response::Ok(_) => fail("expected timeout")
+      fail("timeout must not hard-abort file_pr: " + msg)
   }
+  assert_file_pr_audit_incomplete_response(got, "audit budget exceeded")
+  assert_true(ensure_pr_called)
   assert_true(cleaned_worker.contains(audit_on_file_pr_internal_caller_id))
 }
 

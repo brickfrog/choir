@@ -281,8 +281,35 @@ pub async fn ServerState::handle_with_runner_and_capture(
           capture~,
         )
       },
-      cleanup_audit_report=fn(agent_id) {
+      cleanup_audit_report=async fn(agent_id) {
         self.cleanup_audit_on_file_pr_report(agent_id)
+        let kill_resp = @tools.interpret_kill_agent(
+          { agent_id, reason: "audit-on-file-pr timed out" },
+          Some(self.registry),
+          runner,
+          project_dir=self.config.project_dir,
+          capture~,
+        )
+        if kill_resp.is_ok() {
+          self.fail_agent_with_runner(
+            agent_id,
+            @phase.FailureReason::WatchdogTimeout,
+            "[FAILED: " +
+            agent_id +
+            "] audit-on-file-pr timed out; cleanup attempted",
+            @types.ExitReason::Shutdown,
+            runner,
+            close_target=false,
+          )
+        } else {
+          @moontrace.warn("audit-on-file-pr reap failed", fields=[
+            @moontrace.field("agent_id", agent_id),
+            @moontrace.field(
+              "error",
+              kill_resp.error_message().unwrap_or("unknown error"),
+            ),
+          ])
+        }
       },
       prepare_mutation_gate_report=fn(agent_id) {
         self.prepare_mutation_gate_report(agent_id)

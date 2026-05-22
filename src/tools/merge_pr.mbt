@@ -748,7 +748,9 @@ pub async fn merge_pr_require_audit_receipt(
     @async.sleep(0)
     None
   },
-  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
+  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
+    @async.sleep(0)
+  },
   write_audit_receipt? : (WriteAuditReceiptArgs) -> @types.Response = fn(_) {
     @types.Response::Err("audit receipt writer unavailable")
   },
@@ -2037,7 +2039,9 @@ pub async fn interpret_merge_pr(
     @async.sleep(0)
     None
   },
-  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
+  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
+    @async.sleep(0)
+  },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,

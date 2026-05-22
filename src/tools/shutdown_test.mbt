@@ -454,6 +454,44 @@ async test "interpret_kill_agent skips /proc scan for project-root workspaces" {
 }
 
 ///|
+async test "interpret_kill_agent kills named mcp-stdio process for inline worker" {
+  let reg = @registry.AgentRegistry::new()
+  let agent_id = "main.audit-on-file-pr-abcdef123456-1779000000"
+  let agent = kill_agent_test_agent(
+    None,
+    "/proj",
+    role=@types.Role::Worker,
+    agent_id~,
+  )
+  ignore(reg.upsert(agent))
+  let cwd_scans : Array[String] = []
+  let mcp_scans : Array[String] = []
+  let killed : Array[Int] = []
+  let got = interpret_kill_agent(
+    { agent_id, reason: "audit timeout" },
+    Some(reg),
+    mock_runner_all_ok,
+    project_dir="/proj",
+    list_pids=fn(prefix) {
+      cwd_scans.push(prefix)
+      [99]
+    },
+    list_mcp_stdio_pids=fn(id) {
+      mcp_scans.push(id)
+      [77]
+    },
+    kill_pid=fn(pid) { killed.push(pid) },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    _ => fail("expected ok")
+  }
+  @debug.assert_eq(cwd_scans, [])
+  @debug.assert_eq(mcp_scans, [agent_id])
+  @debug.assert_eq(killed, [77])
+}
+
+///|
 async test "interpret_kill_agent runs /proc scan when workspace is a choir worktree" {
   let reg = @registry.AgentRegistry::new()
   let workspace = "/proj/.choir/worktrees/slug-0"

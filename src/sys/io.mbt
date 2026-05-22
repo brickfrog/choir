@@ -350,6 +350,16 @@ pub fn list_orphan_choir_mcp_stdio_pids(
 }
 
 ///|
+pub fn list_choir_mcp_stdio_pids_for_agent(
+  agent_id : String,
+  list_processes? : () -> Array[ProcessTableEntry] = fn() {
+    read_proc_process_table_entries()
+  },
+) -> Array[Int] {
+  choir_mcp_stdio_pids_for_agent_from_processes(list_processes(), agent_id)
+}
+
+///|
 /// Upper bound on the per-call PID-scan cap. 1024 matching processes is far
 /// beyond anything a real kill_agent invocation could produce and keeps the
 /// internal buffer allocation to 16 KiB.
