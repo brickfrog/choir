@@ -1890,8 +1890,18 @@ async test "recover_state finalizes merged agent without startup parent notifica
     },
     files: {
       local_agents: [
-        { slug: "root", dir_name: "agents", agent: Some(parent) },
-        { slug: "leaf", dir_name: "worktrees", agent: Some(leaf) },
+        {
+          slug: "root",
+          dir_name: "agents",
+          agent: Some(parent),
+          process_alive: false,
+        },
+        {
+          slug: "leaf",
+          dir_name: "worktrees",
+          agent: Some(leaf),
+          process_alive: false,
+        },
       ],
       persisted_tracked_prs: [
         @poller.TrackedPR::{

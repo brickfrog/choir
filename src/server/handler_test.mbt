@@ -5678,6 +5678,134 @@ async test "transport disconnect with live pane re-registers as active lifecycle
 }
 
 ///|
+async test "pending transport disconnect with live process does not fail idle MCP connection" {
+  let project_dir = "/tmp/choir-live-process-disconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.process-live-leaf"
+  let workspace = project_dir + "/.choir/worktrees/process-live-leaf"
+  let provider = disconnect_confirmation_provider([], [], live_workspaces=[
+    workspace,
+  ])
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    provider,
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  state.schedule_disconnect(agent_id, 0L)
+  let sent : Array[String] = []
+  state.process_pending_disconnects_with_runner(91L, 60L, runner=async fn(
+    cmds,
+  ) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 0)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Active)
+  @debug.assert_eq(state.registry.is_alive(agent_id), Some(true))
+  assert_true(state.pending_disconnects.contains(agent_id))
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some({ process: @phase.ProcessState::Disconnected(..), .. }) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected live process to remain soft-disconnected, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "pending transport disconnect with dead process still fails" {
+  let project_dir = "/tmp/choir-dead-process-disconnect-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir/kv"))
+  let parent_id = "main.tl"
+  let agent_id = "main.process-dead-leaf"
+  let workspace = project_dir + "/.choir/worktrees/process-dead-leaf"
+  let state = ServerState::new(
+    {
+      ..@types.Config::default(),
+      project_dir,
+      terminal_session: "test-session",
+    },
+    disconnect_confirmation_provider([], []),
+  )
+  ignore(state.register_agent(disconnect_confirmation_parent(parent_id)))
+  ignore(
+    state.register_agent({
+      agent_id,
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(parent_id),
+      workspace,
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+
+  state.schedule_disconnect(agent_id, 0L)
+  let sent : Array[String] = []
+  state.process_pending_disconnects_with_runner(91L, 60L, runner=async fn(
+    cmds,
+  ) {
+    worker_handoff_capture_runner(sent, cmds)
+  })
+
+  assert_eq(worker_handoff_count_sent(sent, "[FAILED: " + agent_id + "]"), 1)
+  assert_eq(state.registry.get(agent_id).state, @types.AgentState::Failed)
+  @debug.assert_eq(state.registry.is_alive(agent_id), Some(false))
+  assert_false(state.pending_disconnects.contains(agent_id))
+  match @phase.read_lifecycle(project_dir, agent_id) {
+    Some(
+      {
+        process: @phase.ProcessState::Failed(
+          reason=@phase.FailureReason::UnexpectedDisconnect
+        ),
+        ..,
+      }
+    ) => ()
+    Some(lifecycle) =>
+      fail(
+        "expected dead process to fail lifecycle, got " +
+        @phase.lifecycle_to_json(lifecycle),
+      )
+    None => fail("expected lifecycle for " + agent_id)
+  }
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
 async test "transport disconnect preserves suspended registry state" {
   let project_dir = "/tmp/choir-suspended-transport-disconnect-" +
     @sys.get_pid().to_string() +
@@ -7871,12 +7999,17 @@ async test "test_disconnect_completing_agent_no_close" {
 fn disconnect_confirmation_provider(
   live_tabs : Array[String],
   live_panes : Array[String],
+  live_workspaces? : Array[String] = [],
 ) -> @runtime.RecoveryProvider {
   {
     ..make_hermetic_recovery_provider(),
     zellij_live: async fn(_, _) {
       @async.sleep(0)
       { tabs: live_tabs, panes: live_panes }
+    },
+    agent_process_alive: async fn(_dir, workspace) {
+      @async.sleep(0)
+      live_workspaces.contains(workspace)
     },
     find_prs_by_head: async fn(_, _) {
       @async.sleep(0)

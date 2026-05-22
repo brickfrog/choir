@@ -40,6 +40,7 @@ pub(all) struct LocalAgentSnapshot {
   slug : String
   dir_name : String
   agent : @types.Agent?
+  process_alive : Bool
 } derive(Debug)
 
 ///|
@@ -127,6 +128,7 @@ pub(all) struct RecoveryPlan {
 ///|
 pub(all) struct RecoveryProvider {
   zellij_live : async (String, String) -> ZellijLiveTargets
+  agent_process_alive : async (String, String) -> Bool
   open_prs : async (String) -> Array[OpenPR]
   find_prs_by_head : async (String, String) -> Array[OpenPR]
   find_prs_by_head_any : async (String, String) -> Array[KnownPR]
@@ -533,6 +535,10 @@ pub fn recover_dev_lifecycle_for_pr(
 pub fn make_shell_recovery_provider(
   capture : async (String, Array[String], String?) -> String,
   write_stderr? : (String) -> Unit = @sys.write_stderr,
+  agent_process_alive? : async (String, String) -> Bool = async fn(_, _) {
+    @async.sleep(0)
+    false
+  },
 ) -> RecoveryProvider {
   {
     zellij_live: async fn(project_dir, session) {
@@ -546,6 +552,7 @@ pub fn make_shell_recovery_provider(
         ),
       )
     },
+    agent_process_alive,
     open_prs: async fn(project_dir) {
       let open_pr_output = capture(
         "gh",
@@ -896,7 +903,8 @@ fn build_agent_recovery_actions(
   for local_agent in local_agents {
     match local_agent.agent {
       Some(agent) => {
-        let alive = is_local_target_alive(agent.terminal_target, session, live)
+        let alive = local_agent.process_alive ||
+          is_local_target_alive(agent.terminal_target, session, live)
         let recovered = if alive {
           agent
         } else {
@@ -1137,7 +1145,21 @@ pub async fn discover_recovery_input(
         (provider.get_agent_relative_workspace)(dir_name, slug),
         slug,
       )
-      local_agents.push(LocalAgentSnapshot::{ slug, dir_name, agent })
+      let process_alive = match agent {
+        Some(a) =>
+          if @types.is_choir_managed_worktree_path(project_dir, a.workspace) {
+            (provider.agent_process_alive)(project_dir, a.workspace)
+          } else {
+            false
+          }
+        None => false
+      }
+      local_agents.push(LocalAgentSnapshot::{
+        slug,
+        dir_name,
+        agent,
+        process_alive,
+      })
     }
   }
   let prebuilt = build_agent_recovery_actions(session, live, local_agents)
