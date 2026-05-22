@@ -32,6 +32,51 @@ test "command_to_shell_string quotes" {
 }
 
 ///|
+test "process liveness scan resolves dot project and relative workspace" {
+  let seen : Array[String] = []
+  let alive = agent_process_alive_for_workspace(
+    ".",
+    ".choir/worktrees/leaf",
+    current_dir=fn() { "/repo" },
+    realpath=fn(path) {
+      seen.push("realpath:" + path)
+      None
+    },
+    list_pids=fn(prefix, cap) {
+      seen.push("scan:" + prefix + ":" + cap.to_string())
+      if prefix == "/repo/.choir/worktrees/leaf" {
+        [42]
+      } else {
+        []
+      }
+    },
+  )
+  assert_true(alive)
+  @debug.assert_eq(seen, [
+    "realpath:/repo/.choir/worktrees/leaf", "scan:/repo/.choir/worktrees/leaf:16",
+  ])
+}
+
+///|
+test "process liveness scan prefers realpath when available" {
+  @debug.assert_eq(
+    process_liveness_scan_prefix(
+      "/repo",
+      ".choir/worktrees/leaf",
+      current_dir=fn() { "/ignored" },
+      realpath=fn(path) {
+        if path == "/repo/.choir/worktrees/leaf" {
+          Some("/real/repo/.choir/worktrees/leaf")
+        } else {
+          None
+        }
+      },
+    ),
+    "/real/repo/.choir/worktrees/leaf",
+  )
+}
+
+///|
 test "resolve_executable_in_path_from_path_var misses when absent" {
   let got = resolve_executable_in_path_from_path_var(
     "___choir_test_nonexistent_tool___", "/__nope_choir__/bin:/__also_bad_choir__",

@@ -87,6 +87,60 @@ async test "discover_recovery_input with mock provider" {
 }
 
 ///|
+async test "discover_recovery_input keeps process-live agent alive without zellij target" {
+  let project_dir = "/tmp/choir-recovery-process-live"
+  let workspace = project_dir + "/.choir/worktrees/slug1"
+  let mock_provider : @runtime.RecoveryProvider = {
+    ..make_hermetic_recovery_provider(),
+    list_agent_containers: fn(_dir) { ["worktrees"] },
+    list_agents_in_container: fn(_dir, container) {
+      if container == "worktrees" {
+        ["slug1"]
+      } else {
+        []
+      }
+    },
+    read_agent_config: fn(_dir, _container, _slug) {
+      (
+        #|role = "dev"
+        #|agent_id = "slug1"
+        #|branch = "feat/x"
+        #|workspace = "/tmp/choir-recovery-process-live/.choir/worktrees/slug1"
+        #|terminal_target = "zellij-tab:session:missing-tab"
+      )
+    },
+    get_agent_relative_workspace: fn(container, slug) {
+      ".choir/" + container + "/" + slug
+    },
+    agent_process_alive: fn(_dir, candidate) { candidate == workspace },
+  }
+
+  let input = @runtime.discover_recovery_input(
+    mock_provider, project_dir, "session",
+  )
+
+  assert_eq(input.files.local_agents.length(), 1)
+  assert_true(input.files.local_agents[0].process_alive)
+  match input.prebuilt_agent_phase {
+    Some(phase) => {
+      assert_eq(phase.agent_stage_actions.length(), 1)
+      match phase.agent_stage_actions[0] {
+        @runtime.RecoveryAction::RegisterAgent(agent, alive) => {
+          assert_true(alive)
+          assert_eq(agent.state, @types.AgentState::Active)
+          @debug.assert_eq(
+            agent.terminal_target.map(fn(t) { t.to_string() }),
+            Some("zellij-tab:session:missing-tab"),
+          )
+        }
+        _ => fail("expected only RegisterAgent for process-live agent")
+      }
+    }
+    None => fail("expected prebuilt phase")
+  }
+}
+
+///|
 test "plan_recovery reconciles local agents and open PRs" {
   let polls : Map[Int, @runtime.RecoveryPrPollRow] = Map([], capacity=0)
   polls.set(123, {
@@ -132,6 +186,7 @@ test "plan_recovery reconciles local agents and open PRs" {
             spawn_depth: 0,
             state: @types.AgentState::Active,
           }),
+          process_alive: false,
         },
       ],
       persisted_tracked_prs: [],
@@ -212,6 +267,7 @@ test "plan_recovery uses fallback poll row when TrackNewPR snapshot map has no e
             spawn_depth: 0,
             state: @types.AgentState::Active,
           }),
+          process_alive: false,
         },
       ],
       persisted_tracked_prs: [],
@@ -276,6 +332,7 @@ test "plan_recovery handles offline agent and persisted PR" {
             spawn_depth: 0,
             state: @types.AgentState::Active,
           }),
+          process_alive: false,
         },
       ],
       persisted_tracked_prs: [
