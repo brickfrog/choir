@@ -210,6 +210,28 @@ fn upsert_spawn_test_parent_with_role(
 }
 
 ///|
+fn upsert_spawn_test_child_with_state(
+  reg : @registry.AgentRegistry,
+  agent_id : String,
+  state : @types.AgentState,
+) -> Unit {
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId(agent_id),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/tmp/existing-child",
+      branch: agent_id,
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state,
+    }),
+  )
+}
+
+///|
 fn assert_registry_parent(
   reg : @registry.AgentRegistry,
   agent_id : String,
@@ -223,6 +245,86 @@ fn assert_registry_parent(
         Some(p) => assert_eq(p, parent_id)
         None => fail("expected parent")
       }
+  }
+}
+
+///|
+async test "interpret_spawn_worker rejects live canonical agent id collision" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main.tl",
+    slug: "w1",
+    agent_type: @types.AgentType::Claude,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent(reg, "main.tl")
+  upsert_spawn_test_child_with_state(reg, "main.w1", @types.AgentState::Active)
+  let runner = async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    fail("spawn commands must not run for a live id collision")
+    []
+  }
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    runner,
+    mock_capture_origin_main,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("canonical_agent_id 'main.w1'"))
+      assert_true(msg.contains("live"))
+    }
+    @types.Response::Ok(_) => fail("expected live id collision rejection")
+  }
+  try reg.get("main.w1") catch {
+    _ => fail("expected existing child to remain in registry")
+  } noraise {
+    agent => {
+      assert_eq(agent.role, @types.Role::Dev)
+      assert_eq(agent.workspace, "/tmp/existing-child")
+      assert_eq(agent.state, @types.AgentState::Active)
+    }
+  }
+}
+
+///|
+async test "interpret_spawn_worker allows terminal canonical agent id collision" {
+  let worker_args : WorkerSpawnArgs = {
+    task: "unit",
+    task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
+    caller_id: "main.tl",
+    slug: "w1",
+    agent_type: @types.AgentType::Claude,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent(reg, "main.tl")
+  upsert_spawn_test_child_with_state(reg, "main.w1", @types.AgentState::Done)
+  let got = interpret_spawn_worker(
+    worker_args,
+    "/tmp/p",
+    "choir",
+    mock_runner_all_ok,
+    mock_capture_origin_main,
+    Some(reg),
+  )
+  match got {
+    @types.Response::Ok(fields) =>
+      @debug.assert_eq(fields.get("agent_id"), Some("main.w1"))
+    @types.Response::Err(msg) =>
+      fail("terminal id collision should be reusable: " + msg)
+  }
+  try reg.get("main.w1") catch {
+    _ => fail("expected refreshed worker in registry")
+  } noraise {
+    agent => {
+      assert_eq(agent.role, @types.Role::Worker)
+      assert_eq(agent.workspace, "/tmp/p")
+      assert_eq(agent.state, @types.AgentState::Active)
+    }
   }
 }
 
@@ -1035,6 +1137,46 @@ async test "interpret_spawn_remote returns err when run_strict fails" {
 }
 
 ///|
+async test "dispatch spawn_remote rejects live canonical agent id collision before runner" {
+  let spawn_args : RemoteSpawnArgs = {
+    task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
+    caller_id: "main.tl",
+    slug: "leaf-a",
+    parent_branch: "main",
+    ssh_target: "h",
+    repo_url: "u",
+    tcp_addr: "a",
+    parent_session_id: None,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent(reg, "main.tl")
+  upsert_spawn_test_child_with_state(
+    reg,
+    "main.leaf-a",
+    @types.AgentState::Active,
+  )
+  let runner = async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    fail("remote spawn commands must not run for a live id collision")
+    []
+  }
+  let got = dispatch(
+    ToolRequest::SpawnRemote(spawn_args),
+    runner~,
+    capture=mock_capture_empty,
+    registry=Some(reg),
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("canonical_agent_id 'main.leaf-a'"))
+      assert_true(msg.contains("live"))
+    }
+    @types.Response::Ok(_) => fail("expected live id collision rejection")
+  }
+}
+
+///|
 test "spawn_gemini_plan builds dev gemini worktree spec and spawned response" {
   let spawn_args : SpawnGeminiArgs = {
     task: "do the thing",
@@ -1108,6 +1250,44 @@ async test "interpret_spawn_gemini returns err when run_strict fails" {
     @types.Response::Err(msg) =>
       assert_true(msg.contains("failed") || msg.contains("status"))
     _ => fail("expected err from run_strict")
+  }
+}
+
+///|
+async test "dispatch spawn_gemini rejects live canonical agent id collision before runner" {
+  let spawn_args : SpawnGeminiArgs = {
+    task: "t",
+    task_contract: { ..@types.TaskContract::empty(), goal: "t" },
+    caller_id: "main.tl",
+    slug: "gem",
+    parent_branch: "main",
+    parent_session_id: None,
+  }
+  let reg = @registry.AgentRegistry::new()
+  upsert_spawn_test_parent(reg, "main.tl")
+  upsert_spawn_test_child_with_state(reg, "main.gem", @types.AgentState::Active)
+  let runner = async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    fail("gemini spawn commands must not run for a live id collision")
+    []
+  }
+  let capture = async fn(_cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    fail("agy checks must not run for a live id collision")
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::SpawnGemini(spawn_args),
+    runner~,
+    capture~,
+    registry=Some(reg),
+  )
+  match got {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("canonical_agent_id 'main.gem'"))
+      assert_true(msg.contains("live"))
+    }
+    @types.Response::Ok(_) => fail("expected live id collision rejection")
   }
 }
 

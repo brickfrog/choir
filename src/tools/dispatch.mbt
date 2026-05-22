@@ -1733,6 +1733,7 @@ pub async fn dispatch(
                 session,
                 runner,
                 capture,
+                registry~,
                 extra_mcp_servers_json~,
                 shell_command~,
                 listen_uds~,
@@ -1749,6 +1750,7 @@ pub async fn dispatch(
             spawn_args,
             runner,
             capture,
+            registry~,
             extra_mcp_servers_json~,
           )
       }

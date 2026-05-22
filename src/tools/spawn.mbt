@@ -42,6 +42,41 @@ pub fn ensure_caller_can_spawn(
 }
 
 ///|
+fn spawn_agent_state_is_terminal(state : @types.AgentState) -> Bool {
+  state == @types.AgentState::Done || state == @types.AgentState::Failed
+}
+
+///|
+fn ensure_no_live_spawn_agent_collision(
+  tool_name : String,
+  agent_id : String,
+  registry : @registry.AgentRegistry?,
+) -> Result[Unit, @types.ChoirError] {
+  match registry {
+    None => Ok(())
+    Some(reg) =>
+      match reg.get_opt(agent_id) {
+        Some(existing) =>
+          if spawn_agent_state_is_terminal(existing.state) {
+            Ok(())
+          } else {
+            Err(
+              @types.ChoirError::validation_error(
+                tool_name +
+                " cannot spawn: canonical_agent_id '" +
+                agent_id +
+                "' collides with live registry agent in state '" +
+                existing.state.to_wire_string() +
+                "'. Pick a different slug or wait for the existing agent to reach done/failed before spawning.",
+              ),
+            )
+          }
+        None => Ok(())
+      }
+  }
+}
+
+///|
 fn registry_has_agent(reg : @registry.AgentRegistry, agent_id : String) -> Bool {
   try {
     ignore(reg.get(agent_id))
@@ -482,6 +517,15 @@ pub async fn interpret_spawn_worker(
   let plan = spawn_worker_plan(
     normalized_args, resolved_parent_branch, session, project_dir,
   )
+  match
+    ensure_no_live_spawn_agent_collision(
+      "spawn_worker",
+      plan.agent_id,
+      registry,
+    ) {
+    Ok(_) => ()
+    Err(e) => return @types.Response::Err(e.message())
+  }
   match ensure_spawn_agy_prereqs(plan.spec.agent_type, capture) {
     Ok(_) => ()
     Err(msg) => return @types.Response::Err(msg)
@@ -572,9 +616,19 @@ pub async fn interpret_spawn_remote(
   spawn_args : RemoteSpawnArgs,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
+  registry? : @registry.AgentRegistry? = None,
   extra_mcp_servers_json? : String? = None,
 ) -> @types.Response {
   let plan = spawn_remote_plan(spawn_args)
+  match
+    ensure_no_live_spawn_agent_collision(
+      "spawn_remote",
+      @workspace.canonical_agent_id(plan.spec),
+      registry,
+    ) {
+    Ok(_) => ()
+    Err(e) => return @types.Response::Err(e.message())
+  }
   let cmds = @workspace.remote_spawn_commands(
     plan.spec,
     spawn_args.ssh_target,
@@ -657,6 +711,7 @@ pub async fn interpret_spawn_gemini(
   session : String,
   runner : async (Array[@workspace.Command]) -> Array[Int],
   capture : async (@workspace.Command) -> (Int, String),
+  registry? : @registry.AgentRegistry? = None,
   extra_mcp_servers_json? : String? = None,
   shell_command? : String? = None,
   listen_uds? : String = ".choir/server.sock",
@@ -664,6 +719,15 @@ pub async fn interpret_spawn_gemini(
   tcp_auth_token? : String? = None,
 ) -> @types.Response {
   let plan = spawn_gemini_plan(spawn_args)
+  match
+    ensure_no_live_spawn_agent_collision(
+      "spawn_gemini",
+      @workspace.canonical_agent_id(plan.spec),
+      registry,
+    ) {
+    Ok(_) => ()
+    Err(e) => return @types.Response::Err(e.message())
+  }
   match ensure_spawn_agy_prereqs(plan.spec.agent_type, capture) {
     Ok(_) => ()
     Err(msg) => return @types.Response::Err(msg)
