@@ -90,11 +90,15 @@ async fn capture_run_strict_failure_detail(
 
 ///|
 async test "run_strict returns first failing command index and status" {
-  let result = run_strict(runner_run_strict_first_failure, [
-    { program: "true", args: [], workdir: None },
-    { program: "false", args: [], workdir: None },
-    { program: "false", args: [], workdir: None },
-  ])
+  let result = run_strict(
+    runner_run_strict_first_failure,
+    [
+      { program: "true", args: [], workdir: None },
+      { program: "false", args: [], workdir: None },
+      { program: "false", args: [], workdir: None },
+    ],
+    capture=capture_run_strict_failure_detail,
+  )
   match result {
     Ok(_) => fail("expected run_strict failure")
     Err(e) =>

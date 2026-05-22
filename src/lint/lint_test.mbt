@@ -85,7 +85,7 @@ test "flags exec capture through function alias" {
     #|  let cap = @exec.capture_command_merged
     #|  ignore(cap({ program: "git", args: ["status"], workdir: None }))
     #|}
-  assert_single_rule(source, "test-git-capture")
+  assert_single_rule(source, "test-exec-reference")
 }
 
 ///|
@@ -115,12 +115,55 @@ test "flags direct exec run in tests" {
 }
 
 ///|
-test "allows explicit adapter self-test capture cases" {
+test "flags explicit adapter self-test capture cases in test files" {
   let source =
-    #|async test "ok" {
+    #|async test "bad" {
     #|  ignore(@exec.capture_command_merged({ program: "echo", args: ["git"], workdir: None }))
     #|}
-  match lint_source("src/tools/pr_test.mbt", source) {
+  assert_single_rule_for_file(
+    source, "src/tools/pr_test.mbt", "test-exec-capture",
+  )
+}
+
+///|
+test "flags direct non-capture exec calls in tests" {
+  let source =
+    #|test "bad" {
+    #|  ignore(@exec.replace_self("/bin/true", 4))
+    #|}
+  assert_single_rule(source, "test-exec-reference")
+}
+
+///|
+test "allows pure exec hermetic violation formatter in tests" {
+  let source =
+    #|test "ok" {
+    #|  ignore(@exec.hermetic_exec_violation_message("git status"))
+    #|}
+  match lint_source("src/server/delivery_test_helpers_test.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "flags unqualified exec capture in exec package tests" {
+  let source =
+    #|async test "bad" {
+    #|  ignore(capture_command_merged({ program: "echo", args: ["ok"], workdir: None }))
+    #|}
+  assert_single_rule_for_file(
+    source, "src/exec/exec_test.mbt", "test-exec-capture",
+  )
+}
+
+///|
+test "allows explicitly tagged real exec integration tests" {
+  let source =
+    #|async test "real exec integration: capture_command_merged captures stdout" {
+    #|  ignore(capture_command_merged({ program: "echo", args: ["ok"], workdir: None }))
+    #|}
+  match lint_source("src/exec/exec_test.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -163,7 +206,73 @@ test "flags shell recovery wired through exec capture alias" {
     #|  let cap = @exec.capture_stdout_with_cwd
     #|  let provider = @runtime.make_shell_recovery_provider(cap)
     #|}
-  assert_single_rule(source, "test-shell-recovery-provider")
+  assert_single_rule(source, "test-exec-reference")
+}
+
+///|
+test "flags direct exec reference in tests even when not called" {
+  let source =
+    #|async test "bad" {
+    #|  let capture = @exec.capture_command_stdout
+    #|  ignore(capture)
+    #|}
+  assert_single_rule(source, "test-exec-reference")
+}
+
+///|
+test "flags optional exec defaults in seam parameters" {
+  let source =
+    #|async fn check_idle_agents(
+    #|  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+    #|) -> Unit {
+    #|  ignore(capture)
+    #|}
+  assert_single_rule_for_file(
+    source, "src/server/handler.mbt", "exec-default-parameter",
+  )
+}
+
+///|
+test "visits optional parameter defaults for test rules" {
+  let source =
+    #|fn helper(
+    #|  status? : Int = @sys.system("git status"),
+    #|) -> Unit {
+    #|  ignore(status)
+    #|}
+  assert_single_rule(source, "test-shell-command")
+}
+
+///|
+test "flags unstaged optional exec defaults in a file with staged defaults" {
+  let source =
+    #|async fn new_dispatch_helper(
+    #|  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+    #|) -> Unit {
+    #|  ignore(capture)
+    #|}
+  assert_single_rule_for_file(
+    source, "src/tools/dispatch_helpers.mbt", "exec-default-parameter",
+  )
+}
+
+///|
+test "allows staged exec defaults by function and parameter key" {
+  let source =
+    #|pub async fn resolve_zellij_tab_terminal_target(
+    #|  session : String,
+    #|  tab_name : String,
+    #|  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
+    #|) -> String? {
+    #|  ignore(session)
+    #|  ignore(tab_name)
+    #|  ignore(capture)
+    #|  None
+    #|}
+  match lint_source("src/tools/dispatch_helpers.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
 }
 
 ///|

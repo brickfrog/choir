@@ -125,7 +125,8 @@ pub fn Config::default() -> Config {
     mutation_kill_rate_min: 0.8,
     poller_heartbeat_tick_sec: 60,
     prenotify_checks: [
-      "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
+      "moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native",
+      "CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec", "moon run src/bin/choir_lint --target native",
     ],
     auto_pull_after_integration: true,
     pr_policy: PrPolicy::default(),

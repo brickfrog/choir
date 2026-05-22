@@ -47,8 +47,11 @@ jobs:
           moon build src/bin/choir_lint --target native
           _build/native/debug/build/src/bin/choir_lint/choir_lint.exe
 
-      - name: Test
-        run: moon test --target native
+      - name: Test hermetic suite
+        run: CHOIR_TEST_NO_EXEC=1 moon test --target native
+
+      - name: Test real exec adapters
+        run: CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec
 
       - name: Build release binary
         run: moon build --target native --release

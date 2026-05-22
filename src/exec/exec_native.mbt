@@ -93,6 +93,9 @@ pub fn replace_self(
   binary_path : String,
   inherited_uds_fd : Int,
 ) -> Result[Unit, @types.ChoirError] {
+  abort_if_hermetic_test_exec(
+    command_for_program(binary_path, [inherited_uds_fd.to_string()], None),
+  )
   match validate_replace_self_binary(binary_path) {
     Ok(_) => ()
     Err(e) => return Err(e)
@@ -114,6 +117,9 @@ pub async fn run_dev_entr_watcher(
   entr_path : String,
   choir_exe : String,
 ) -> Int {
+  abort_if_hermetic_test_exec(
+    command_to_shell_string(dev_entr_entr_command(entr_path, choir_exe)),
+  )
   let c1 = dev_entr_find_src_mbt_command()
   let c2 = dev_entr_find_toml_command()
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
@@ -538,6 +544,7 @@ fn agy_cold_bootstrap_failure_detail(
 /// same pipe as stdout (shell `2>&1` semantics). Capture up to `capture_max_bytes` merged output, wait for exit.
 /// Returns `(exit_code, output)`; negative `exit_code` means spawn/pipe/wait failure.
 async fn capture_command_merged_raw(cmd : @workspace.Command) -> (Int, String) {
+  abort_if_hermetic_test_exec(command_to_shell_string(cmd))
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
   }
@@ -591,6 +598,7 @@ pub async fn capture_hook_script_merged(
   stdin_body : String,
   cwd : String?,
 ) -> (Int, String) {
+  abort_if_hermetic_test_exec(command_for_program(hook_path, [], cwd))
   capture_hook_script_merged_with_retry(
     hook_path, stdin_body, cwd, capture_hook_script_merged_once, @async.sleep,
   )
@@ -736,6 +744,7 @@ async fn capture_hook_script_merged_once(
   stdin_body : String,
   cwd : String?,
 ) -> HookCaptureAttemptResult {
+  abort_if_hermetic_test_exec(command_for_program(hook_path, [], cwd))
   capture_hook_script_merged_once_with_adapters(
     hook_path, stdin_body, cwd, hook_capture_make_stdin_pipe, hook_capture_make_stdout_pipe,
     hook_capture_spawn_hook_process,
@@ -942,6 +951,9 @@ test "agy cold-bootstrap failure detail falls back to cli log" {
 
 ///|
 async test "capture_hook_script_merged_once does NOT retry on permanent ENOENT" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   let missing = "/tmp/choir-missing-hook-" +
     @sys.get_pid().to_string() +
     "-enoent"
@@ -1037,6 +1049,9 @@ async test "capture_hook_script_merged_once does NOT retry on permanent EACCES" 
 ///|
 #cfg(not(platform="windows"))
 async test "capture_hook_script_merged_once maps real EACCES to permanent failure" {
+  if !real_exec_integration_enabled() {
+    return
+  }
   let dir = "/tmp/choir-eacces-classify-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(dir))
   assert_true(@sys.create_dir_all(dir))
@@ -1112,6 +1127,7 @@ async test "capture_hook_script_merged_once retries on pipe-creation failure" {
 /// Like [`capture_command_merged`], but only stdout is captured (stderr is not redirected to the
 /// pipe). Matches shell `cmd >capture` without `2>&1` for JSON and other stdout-only protocols.
 pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
+  abort_if_hermetic_test_exec(command_to_shell_string(cmd))
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
   }
@@ -1144,6 +1160,7 @@ pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
 pub async fn capture_command_stdout_with_stderr_on_error(
   cmd : @workspace.Command,
 ) -> (Int, String) {
+  abort_if_hermetic_test_exec(command_to_shell_string(cmd))
   let (stdout_reader, stdout_writer) = @process.read_from_process() catch {
     _ => return (-1, "")
   }
@@ -1204,6 +1221,7 @@ pub async fn capture_plugin_shell_command(
   request_line : String,
   timeout_sec : Int,
 ) -> (Int, String) {
+  abort_if_hermetic_test_exec(plugin_command)
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
     _ => return (-1, "")
   }
@@ -1271,6 +1289,7 @@ pub async fn capture_stdout_with_cwd(
   args : Array[String],
   cwd : String?,
 ) -> String {
+  abort_if_hermetic_test_exec(command_for_program(program, args, cwd))
   let (reader, writer) = @process.read_from_process() catch { _ => return "" }
   let pid = match cwd {
     Some(dir) =>
@@ -1295,6 +1314,7 @@ pub async fn capture_stdout_with_cwd(
 
 ///|
 pub async fn run(cmd : @workspace.Command) -> Int {
+  abort_if_hermetic_test_exec(command_to_shell_string(cmd))
   let native = @workspace.run_native_choir_file_command(cmd)
   if native >= 0 {
     return native
@@ -1359,6 +1379,12 @@ pub async fn run(cmd : @workspace.Command) -> Int {
 
 ///|
 pub async fn run_sequence(cmds : Array[@workspace.Command]) -> Array[Int] {
+  let command = if cmds.length() == 0 {
+    "run_sequence []"
+  } else {
+    command_to_shell_string(cmds[0])
+  }
+  abort_if_hermetic_test_exec(command)
   let results = []
   for cmd in cmds {
     let status = run(cmd)
