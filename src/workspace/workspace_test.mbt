@@ -1379,6 +1379,54 @@ test "run_native_agy_shared_cache_seed_if_needed bootstraps and validates cold c
 }
 
 ///|
+test "run_native_agy_shared_cache_seed_if_needed resolves relative project cache paths" {
+  let project = "relative-project"
+  let symlink_targets : Array[String] = []
+  let symlink_links : Array[String] = []
+  let bootstrap_homes : Array[String] = []
+
+  let status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(cmd) {
+      bootstrap_homes.push(cmd.args[0])
+      (9, "stop after prepare")
+    },
+    path_entry_exists=fn(_) { false },
+    list_dir=fn(_) { [] },
+    file_size=fn(_) { 0 },
+    create_dir_all=fn(_) { true },
+    rm_rf=fn(_) { true },
+    symlink_force=fn(target, link) {
+      symlink_targets.push(target)
+      symlink_links.push(link)
+      true
+    },
+    write_stderr=fn(_) { () },
+  )
+
+  assert_eq(status, 9)
+  assert_eq(symlink_targets.length(), 2)
+  assert_eq(symlink_links.length(), 2)
+  assert_true(symlink_targets[0].has_prefix("/"))
+  assert_true(symlink_targets[1].has_prefix("/"))
+  assert_true(symlink_links[0].has_prefix("/"))
+  assert_true(symlink_links[1].has_prefix("/"))
+  assert_true(
+    symlink_targets[0].has_suffix(
+      "/relative-project/.choir/agy-shared-cache/ms-playwright-go",
+    ),
+  )
+  assert_true(
+    symlink_targets[1].has_suffix(
+      "/relative-project/.choir/agy-shared-cache/antigravity-cli-bin",
+    ),
+  )
+  @debug.assert_eq(bootstrap_homes, [
+    "HOME=" + symlink_targets[0].replace(old="/ms-playwright-go", new="/home"),
+  ])
+}
+
+///|
 test "run_native_agy_shared_cache_seed_if_needed warns and returns bootstrap failure" {
   let dir = "/tmp/choir-agy-cache-seed-bootstrap-fail-" +
     @sys.get_pid().to_string() +

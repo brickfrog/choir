@@ -368,13 +368,60 @@ pub fn agy_home_path(worktree_path : String) -> String {
 }
 
 ///|
+fn absolute_agy_shared_cache_project_dir(project_dir : String) -> String {
+  if project_dir == "" {
+    return project_dir
+  }
+  match @sys.realpath_native(project_dir) {
+    Some(path) => return path
+    None => ()
+  }
+  if project_dir.has_prefix("/") {
+    project_dir
+  } else {
+    let cwd = @env.current_dir().unwrap_or(".")
+    cwd + "/" + project_dir
+  }
+}
+
+///|
 fn agy_shared_cache_root(project_dir : String) -> String {
-  project_dir + "/.choir/agy-shared-cache"
+  absolute_agy_shared_cache_project_dir(project_dir) +
+  "/.choir/agy-shared-cache"
 }
 
 ///|
 fn agy_shared_cache_seed_home(project_dir : String) -> String {
   agy_shared_cache_root(project_dir) + "/home"
+}
+
+///|
+pub(all) struct AgySharedCacheColdBootstrapExec {
+  home : String
+} derive(Debug, Eq)
+
+///|
+pub fn agy_shared_cache_cold_bootstrap_exec(
+  cmd : Command,
+) -> AgySharedCacheColdBootstrapExec? {
+  if cmd.program != "env" || cmd.args.length() != 5 {
+    return None
+  }
+  let home_prefix = "HOME="
+  let home_arg = cmd.args[0]
+  if !home_arg.has_prefix(home_prefix) {
+    return None
+  }
+  if cmd.args[2] != "--dangerously-skip-permissions" ||
+    cmd.args[3] != "--print" ||
+    cmd.args[4] != "Reply READY." {
+    return None
+  }
+  match cmd.workdir {
+    Some(_) => ()
+    None => return None
+  }
+  Some({ home: home_arg[home_prefix.length():].to_owned() })
 }
 
 ///|
@@ -761,16 +808,17 @@ pub fn agy_shared_cache_prepare(project_dir : String) -> Command {
 
 ///|
 pub fn agy_shared_cache_cold_bootstrap(project_dir : String) -> Command {
+  let resolved_project_dir = absolute_agy_shared_cache_project_dir(project_dir)
   {
     program: "env",
     args: [
-      "HOME=" + agy_shared_cache_seed_home(project_dir),
+      "HOME=" + agy_shared_cache_seed_home(resolved_project_dir),
       "agy",
       "--dangerously-skip-permissions",
       "--print",
       "Reply READY.",
     ],
-    workdir: Some(project_dir),
+    workdir: Some(resolved_project_dir),
   }
 }
 

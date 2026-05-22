@@ -480,10 +480,62 @@ async fn run_find_and_pump_to(
 }
 
 ///|
+fn agy_cold_bootstrap_latest_cli_log(home : String) -> String? {
+  let log_dir = home + "/.gemini/antigravity-cli/log"
+  let mut latest = ""
+  for entry in @sys.list_dir(log_dir) {
+    if entry.has_prefix("cli-") &&
+      entry.has_suffix(".log") &&
+      (latest == "" || entry.compare(latest) > 0) {
+      latest = entry
+    }
+  }
+  if latest == "" {
+    None
+  } else {
+    Some(log_dir + "/" + latest)
+  }
+}
+
+///|
+fn agy_cold_bootstrap_log_excerpt(path : String) -> String {
+  let trimmed = @sys.read_file(path).trim().to_owned()
+  if trimmed.length() > 4000 {
+    "[truncated]\n" + trimmed[trimmed.length() - 4000:].to_owned()
+  } else {
+    trimmed
+  }
+}
+
+///|
+fn agy_cold_bootstrap_failure_detail(
+  cmd : @workspace.Command,
+  output : String,
+) -> String {
+  let trimmed = output.trim().to_owned()
+  if trimmed != "" {
+    return trimmed
+  }
+  let exec = match @workspace.agy_shared_cache_cold_bootstrap_exec(cmd) {
+    Some(exec) => exec
+    None => return output
+  }
+  let log_path = match agy_cold_bootstrap_latest_cli_log(exec.home) {
+    Some(path) => path
+    None => return output
+  }
+  let log_excerpt = agy_cold_bootstrap_log_excerpt(log_path)
+  if log_excerpt == "" {
+    return output
+  }
+  "agy cli log (" + log_path + "): " + log_excerpt
+}
+
+///|
 /// Spawn `cmd` with argv (`program` + `args`) and optional `workdir`, redirecting stderr to the
 /// same pipe as stdout (shell `2>&1` semantics). Capture up to `capture_max_bytes` merged output, wait for exit.
 /// Returns `(exit_code, output)`; negative `exit_code` means spawn/pipe/wait failure.
-pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
+async fn capture_command_merged_raw(cmd : @workspace.Command) -> (Int, String) {
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
   }
@@ -508,6 +560,16 @@ pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
   let (output, _) = drain_process_stdout(reader, capture_max_bytes)
   let exit_code = @process.wait_pid(pid) catch { _ => -1 }
   (exit_code, output)
+}
+
+///|
+pub async fn capture_command_merged(cmd : @workspace.Command) -> (Int, String) {
+  let (status, output) = capture_command_merged_raw(cmd)
+  if status != 0 {
+    (status, agy_cold_bootstrap_failure_detail(cmd, output))
+  } else {
+    (status, output)
+  }
 }
 
 ///|
@@ -810,6 +872,65 @@ async test "capture_hook_script_merged strips terminal responses from captured o
 }
 
 ///|
+async test "capture_command_stdout surfaces agy cold-bootstrap diagnostics" {
+  let dir = "/tmp/choir-agy-capture-detail-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  let stderr_home = project + "/stderr-home"
+  let log_home = project + "/log-home"
+  let fake_stderr_agy = dir + "/agy-stderr"
+  let fake_log_agy = dir + "/agy-log"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(project))
+  let fake_stderr_agy_body =
+    #|#!/bin/sh
+    #|printf '%s\n' 'actual agy stderr' >&2
+    #|exit 7
+  assert_true(@sys.write_file_sync(fake_stderr_agy, fake_stderr_agy_body))
+  assert_true(@sys.chmod_mode(fake_stderr_agy, 0o755))
+  let fake_log_agy_body =
+    #|#!/bin/sh
+    #|mkdir -p "$HOME/.gemini/antigravity-cli/log"
+    #|printf '%s\n' 'actual agy cli log' > "$HOME/.gemini/antigravity-cli/log/cli-20260521_232348.log"
+    #|exit 8
+  assert_true(@sys.write_file_sync(fake_log_agy, fake_log_agy_body))
+  assert_true(@sys.chmod_mode(fake_log_agy, 0o755))
+
+  let (stderr_status, stderr_output) = capture_command_stdout(@workspace.Command::{
+    program: "env",
+    args: [
+      "HOME=" + stderr_home,
+      fake_stderr_agy,
+      "--dangerously-skip-permissions",
+      "--print",
+      "Reply READY.",
+    ],
+    workdir: Some(project),
+  })
+
+  assert_eq(stderr_status, 7)
+  assert_true(stderr_output.contains("actual agy stderr"))
+
+  let (log_status, log_output) = capture_command_stdout(@workspace.Command::{
+    program: "env",
+    args: [
+      "HOME=" + log_home,
+      fake_log_agy,
+      "--dangerously-skip-permissions",
+      "--print",
+      "Reply READY.",
+    ],
+    workdir: Some(project),
+  })
+
+  assert_eq(log_status, 8)
+  assert_true(log_output.contains("actual agy cli log"))
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
 async test "capture_hook_script_merged_once does NOT retry on permanent ENOENT" {
   let missing = "/tmp/choir-missing-hook-" +
     @sys.get_pid().to_string() +
@@ -981,6 +1102,9 @@ async test "capture_hook_script_merged_once retries on pipe-creation failure" {
 /// Like [`capture_command_merged`], but only stdout is captured (stderr is not redirected to the
 /// pipe). Matches shell `cmd >capture` without `2>&1` for JSON and other stdout-only protocols.
 pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
+  if @workspace.agy_shared_cache_cold_bootstrap_exec(cmd) is Some(_) {
+    return capture_command_merged(cmd)
+  }
   let (reader, writer) = @process.read_from_process() catch {
     _ => return (-1, "")
   }
@@ -1013,6 +1137,9 @@ pub async fn capture_command_stdout(cmd : @workspace.Command) -> (Int, String) {
 pub async fn capture_command_stdout_with_stderr_on_error(
   cmd : @workspace.Command,
 ) -> (Int, String) {
+  if @workspace.agy_shared_cache_cold_bootstrap_exec(cmd) is Some(_) {
+    return capture_command_merged(cmd)
+  }
   let (stdout_reader, stdout_writer) = @process.read_from_process() catch {
     _ => return (-1, "")
   }
