@@ -252,6 +252,64 @@ fn worker_profile_text(worker_type : String, project_dir : String) -> String {
 }
 
 ///|
+fn prompt_project_base(project_dir : String) -> String {
+  if project_dir == "" {
+    "."
+  } else {
+    project_dir
+  }
+}
+
+///|
+let prompt_moon_verify_target_cache : @ref.Ref[
+  Map[String, @types.MoonVerifyTarget],
+] = @ref.new({})
+
+///|
+fn prompt_moon_verify_target_uncached(
+  project_dir : String,
+) -> @types.MoonVerifyTarget {
+  let content = @sys.read_file(project_dir + "/.choir/config.toml")
+  if content == "" {
+    return @types.Config::default().moon_verify_target
+  }
+  match @config.parse_config(content) {
+    Ok(config) => config.moon_verify_target
+    Err(_) => @types.Config::default().moon_verify_target
+  }
+}
+
+///|
+fn prompt_moon_verify_target(project_dir : String) -> @types.MoonVerifyTarget {
+  let project_dir = prompt_project_base(project_dir)
+  match prompt_moon_verify_target_cache.val.get(project_dir) {
+    Some(value) => value
+    None => {
+      let value = prompt_moon_verify_target_uncached(project_dir)
+      prompt_moon_verify_target_cache.val.set(project_dir, value)
+      value
+    }
+  }
+}
+
+///|
+fn normalize_prompt_task_contract(
+  task_contract : @types.TaskContract,
+  moon_verify_target : @types.MoonVerifyTarget,
+) -> @types.TaskContract {
+  let normalized = @types.task_contract_with_normalized_verify(
+    Some(task_contract),
+    moon_verify_target,
+  ).unwrap_or(task_contract)
+  // Spawn parsing records the same contract after rendering the prompt. Keep
+  // that caller-visible verify list aligned with the prompt's VERIFY section.
+  for i = 0; i < task_contract.verify.length(); i = i + 1 {
+    task_contract.verify[i] = normalized.verify[i]
+  }
+  normalized
+}
+
+///|
 fn render_lines(lines : Array[String]) -> String {
   let buf = StringBuilder::new()
   for i = 0; i < lines.length(); i = i + 1 {
@@ -291,6 +349,7 @@ fn render_common_prompt(
   profile : String,
   default_read_first : Array[String],
   sanitize_worker? : Bool = false,
+  moon_verify_target? : @types.MoonVerifyTarget = @types.Config::default().moon_verify_target,
 ) -> String {
   if spec.prompt != "" {
     return spec.prompt + "\n\n" + profile
@@ -325,8 +384,12 @@ fn render_common_prompt(
   add_section(sections, "STEPS", render_numbered(steps))
   add_section(sections, "CONTEXT", render_context_block(spec))
 
+  let task_contract = normalize_prompt_task_contract(
+    spec.task_contract,
+    moon_verify_target,
+  )
   let verify_lines : Array[String] = []
-  for cmd in spec.task_contract.verify {
+  for cmd in task_contract.verify {
     verify_lines.push("- `" + cmd + "`")
   }
   add_section(sections, "VERIFY", render_lines(verify_lines))
@@ -351,15 +414,29 @@ pub fn render_leaf_spawn_prompt_with_defaults(
   spec : PromptSpec,
   default_read_first : Array[String],
   project_dir? : String = ".",
+  moon_verify_target? : @types.MoonVerifyTarget? = None,
 ) -> String {
-  render_common_prompt(spec, leaf_profile_text(project_dir), default_read_first)
+  let resolved_moon_verify_target = moon_verify_target.unwrap_or(
+    prompt_moon_verify_target(project_dir),
+  )
+  render_common_prompt(
+    spec,
+    leaf_profile_text(project_dir),
+    default_read_first,
+    moon_verify_target=resolved_moon_verify_target,
+  )
 }
 
 ///|
-pub fn render_leaf_spawn_prompt(spec : PromptSpec) -> String {
-  render_leaf_spawn_prompt_with_defaults(spec, [
-    ".choir/context/common.md", ".choir/context/dev.md",
-  ])
+pub fn render_leaf_spawn_prompt(
+  spec : PromptSpec,
+  moon_verify_target? : @types.MoonVerifyTarget? = None,
+) -> String {
+  render_leaf_spawn_prompt_with_defaults(
+    spec,
+    [".choir/context/common.md", ".choir/context/dev.md"],
+    moon_verify_target~,
+  )
 }
 
 ///|
@@ -367,18 +444,28 @@ pub fn render_worker_spawn_prompt_with_defaults(
   spec : PromptSpec,
   default_read_first : Array[String],
   project_dir? : String = ".",
+  moon_verify_target? : @types.MoonVerifyTarget? = None,
 ) -> String {
+  let resolved_moon_verify_target = moon_verify_target.unwrap_or(
+    prompt_moon_verify_target(project_dir),
+  )
   render_common_prompt(
     spec,
     worker_profile_text(spec.worker_type, project_dir),
     default_read_first,
     sanitize_worker=true,
+    moon_verify_target=resolved_moon_verify_target,
   )
 }
 
 ///|
-pub fn render_worker_spawn_prompt(spec : PromptSpec) -> String {
-  render_worker_spawn_prompt_with_defaults(spec, [
-    ".choir/context/common.md", ".choir/context/worker.md",
-  ])
+pub fn render_worker_spawn_prompt(
+  spec : PromptSpec,
+  moon_verify_target? : @types.MoonVerifyTarget? = None,
+) -> String {
+  render_worker_spawn_prompt_with_defaults(
+    spec,
+    [".choir/context/common.md", ".choir/context/worker.md"],
+    moon_verify_target~,
+  )
 }
