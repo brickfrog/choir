@@ -62,8 +62,9 @@ fn ensure_no_live_spawn_agent_collision(
           } else {
             Err(
               @types.ChoirError::validation_error(
+                "cannot spawn: " +
                 tool_name +
-                " cannot spawn: canonical_agent_id '" +
+                " canonical_agent_id '" +
                 agent_id +
                 "' collides with live registry agent in state '" +
                 existing.state.to_wire_string() +

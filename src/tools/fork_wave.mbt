@@ -99,8 +99,9 @@ fn ensure_fork_wave_spawn_ids_do_not_collide(
 
 ///|
 /// Build [`ForkWaveSpawnPlan`] from resolved tool args and `child_spawn_depth`.
-/// Uses `slugify_task` for per-leaf slugs; behavior matches the historical
-/// `ToolRequest::ForkWave` inline loop in `dispatch`.
+/// Uses `slugify_task` for per-leaf slugs. Live registry collision rejection
+/// happens before planning in `interpret_fork_wave_spawn_effect_phase`; terminal
+/// registry rows are reusable and do not affect the plan.
 pub fn fork_wave_spawn_plan(
   fork_wave_args : ForkWaveArgs,
   child_spawn_depth : Int,
@@ -114,33 +115,16 @@ pub fn fork_wave_spawn_plan(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
 ) -> ForkWaveSpawnPlan {
+  ignore(registry)
   let agent_ids = StringBuilder::new()
-  let skipped_ids = StringBuilder::new()
   let cmds : Array[@workspace.Command] = []
   let spawned_specs : Array[@types.SpawnSpec] = []
   let spawned_slugs : Array[String] = []
   let mut spawned_count = 0
-  let mut skipped_count = 0
   let seen_slugs : Map[String, Int] = {}
   for i = 0; i < fork_wave_args.count; i = i + 1 {
     let slug = fork_wave_slug_for_index(fork_wave_args, i, seen_slugs)
     let agent_id = fork_wave_args.parent_branch + "." + slug
-    let already_registered = match registry {
-      Some(reg) =>
-        match reg.get_opt(agent_id) {
-          Some(agent) => !spawn_agent_state_is_terminal(agent.state)
-          None => false
-        }
-      None => false
-    }
-    if already_registered {
-      if skipped_count > 0 {
-        skipped_ids.write_string(",")
-      }
-      skipped_ids.write_string(agent_id)
-      skipped_count = skipped_count + 1
-      continue
-    }
     if spawned_count > 0 {
       agent_ids.write_string(",")
     }
@@ -190,9 +174,9 @@ pub fn fork_wave_spawn_plan(
     spawned_specs,
     spawned_slugs,
     spawned_count,
-    skipped_count,
+    skipped_count: 0,
     agent_ids: agent_ids.to_string(),
-    skipped_ids: skipped_ids.to_string(),
+    skipped_ids: "",
   }
 }
 
