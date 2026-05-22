@@ -226,6 +226,16 @@ pub fn ToolRegistry::new() -> ToolRegistry {
       [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
     ),
     tool_def(
+      "resolve_my_review_threads",
+      "Resolve all currently tracked unresolved GitHub review threads for the caller's PR(s) using the server's GitHub credentials.",
+      [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
+    ),
+    tool_def(
+      "request_review",
+      "Request a reviewer on a tracked PR using the server's GitHub credentials.",
+      [@types.Role::Root, @types.Role::TL, @types.Role::Dev],
+    ),
+    tool_def(
       "suspend",
       "Suspend a child agent: transitions Active → Suspended, pausing poll delivery and the idle watchdog for that agent until `resume` is called. Use when handing the worktree back to a human for manual intervention.",
       [@types.Role::Root, @types.Role::TL],

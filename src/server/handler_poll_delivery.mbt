@@ -1626,7 +1626,7 @@ pub fn leaf_poll_review_injection_message(
           if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
             "[REVIEW] PR #" +
             n.to_string() +
-            ": CI cleared but still no review. Run: gh pr edit --add-reviewer @copilot"
+            ": CI cleared but still no review. Run request_review with reviewer @copilot"
           } else {
             base
           }
@@ -1643,7 +1643,7 @@ pub fn leaf_poll_review_injection_message(
           if @poller.tl_tracked_pr_copilot_review_silent_escalation_active(pr) {
             "[REVIEW] PR #" +
             n.to_string() +
-            ": CI green but still no review. Run: gh pr edit --add-reviewer @copilot"
+            ": CI green but still no review. Run request_review with reviewer @copilot"
           } else {
             base
           }

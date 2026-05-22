@@ -594,6 +594,29 @@ fn tool_defs() -> Array[CatalogTool] {
       required: ["agent_id"],
     },
     {
+      name: "resolve_my_review_threads",
+      description: "Resolve all currently tracked unresolved GitHub review threads for the caller's PR(s) via the Choir server credentials",
+      props: [
+        {
+          name: "caller_id",
+          desc: "Agent ID whose tracked PR review threads should be resolved",
+        },
+      ],
+      required: ["caller_id"],
+    },
+    {
+      name: "request_review",
+      description: "Request a GitHub reviewer on a PR via the Choir server credentials",
+      props: [
+        { name: "pr_number", desc: "Pull request number" },
+        {
+          name: "reviewer",
+          desc: "Reviewer login or handle, for example @copilot",
+        },
+      ],
+      required: ["pr_number", "reviewer"],
+    },
+    {
       name: "server_reload",
       description: "Persist server runtime state and re-exec choir-serve in place using the freshly built binary. Active tool calls in flight at re-exec time may be dropped; retry after the new process resumes.",
       props: [

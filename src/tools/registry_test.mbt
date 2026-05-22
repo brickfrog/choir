@@ -344,6 +344,19 @@ test "tool registry lookup success" {
 }
 
 ///|
+test "tool registry exposes PR plumbing tools to leaves and supervisors" {
+  let reg = @tools.ToolRegistry::new()
+  assert_true(
+    (try? reg.lookup(@types.Role::Dev, "resolve_my_review_threads")) is Ok(_),
+  )
+  assert_true(
+    (try? reg.lookup(@types.Role::TL, "resolve_my_review_threads")) is Ok(_),
+  )
+  assert_true((try? reg.lookup(@types.Role::Dev, "request_review")) is Ok(_))
+  assert_true((try? reg.lookup(@types.Role::TL, "request_review")) is Ok(_))
+}
+
+///|
 test "tool registry marks read-only tools" {
   let reg = @tools.ToolRegistry::new()
   for

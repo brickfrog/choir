@@ -4,6 +4,7 @@ pub(all) enum MergeDecision {
   Wait(reason~ : String)
   Blocked(reason~ : String)
   NeedsHuman(reason~ : String)
+  ThreadsUnresolvedButFixed(count~ : Int, head_sha~ : String)
 } derive(Debug, Eq)
 
 ///|
@@ -52,6 +53,7 @@ pub fn MergeDecision::label(self : MergeDecision) -> String {
     Wait(_) => "wait"
     Blocked(_) => "blocked"
     NeedsHuman(_) => "needs_human"
+    ThreadsUnresolvedButFixed(..) => "threads_unresolved_but_fixed"
   }
 }
 
@@ -62,5 +64,9 @@ pub fn MergeDecision::reason(self : MergeDecision) -> String {
     Wait(reason~) => reason
     Blocked(reason~) => reason
     NeedsHuman(reason~) => reason
+    ThreadsUnresolvedButFixed(count~, head_sha~) =>
+      count.to_string() +
+      " unresolved inline review thread(s) remain after fixes at " +
+      head_sha
   }
 }

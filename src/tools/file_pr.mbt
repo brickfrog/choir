@@ -246,15 +246,138 @@ pub fn file_pr_copilot_review_comment_gh_command(
 }
 
 ///|
+pub fn request_review_gh_command(
+  pr_number : Int,
+  reviewer : String,
+  gh_workdir : String,
+) -> @workspace.Command {
+  @workspace.gh_pr_add_reviewer(pr_number, reviewer, gh_workdir)
+}
+
+///|
+pub fn interpret_request_review_result(
+  exit_code : Int,
+  output : String,
+  pr_number : Int,
+  reviewer : String,
+) -> @types.Response {
+  if exit_code != 0 {
+    let trimmed = output.trim().to_owned()
+    return @types.Response::Err(
+      if trimmed != "" {
+        "request_review failed: " + trimmed
+      } else {
+        "request_review failed (exit " + exit_code.to_string() + ")"
+      },
+    )
+  }
+  @types.Response::ok_values({
+    "status": String::to_json("ok"),
+    "pr_number": Int::to_json(pr_number),
+    "reviewer": String::to_json(reviewer),
+  })
+}
+
+///|
+pub async fn interpret_request_review(
+  args : RequestReviewArgs,
+  project_dir : String,
+  capture : async (@workspace.Command) -> (Int, String),
+) -> @types.Response {
+  let cmd = request_review_gh_command(
+    args.pr_number,
+    args.reviewer,
+    project_dir,
+  )
+  let (exit_code, output) = capture(cmd)
+  interpret_request_review_result(
+    exit_code,
+    output,
+    args.pr_number,
+    args.reviewer,
+  )
+}
+
+///|
 /// `gh pr edit --add-reviewer @copilot` when [`interpret_file_pr_post_success`] runs with
 /// `pr_review` true. `gh_workdir` matches other `file_pr` git/gh operations ([`file_pr_workdir`]).
 pub fn file_pr_copilot_reviewer_gh_command(
   pr_number : Int,
   gh_workdir : String,
 ) -> @workspace.Command {
-  @workspace.gh_pr_add_reviewer(
+  request_review_gh_command(
     pr_number, file_pr_copilot_reviewer_handle, gh_workdir,
   )
+}
+
+///|
+fn file_pr_copilot_reviewer_request_failed_log_append(
+  pr_number : Int,
+  err_part : String,
+  now_ms : Int64,
+) -> String {
+  @poller.delivery_log_line(
+    "[file_pr] copilot_reviewer_request failed pr=" +
+    pr_number.to_string() +
+    err_part,
+    now_ms~,
+  )
+}
+
+///|
+pub async fn file_pr_request_copilot_reviewer(
+  pr_number : Int,
+  file_pr_workdir : String,
+  delivery_log_path : String,
+  runner : async (Array[@workspace.Command]) -> Array[Int],
+  append_file : (String, String) -> Bool,
+  now_ms_fn : () -> Int64,
+) -> Bool {
+  let cmd = file_pr_copilot_reviewer_gh_command(pr_number, file_pr_workdir)
+  let mut spawn_err : String? = None
+  let codes = runner([cmd]) catch {
+    e => {
+      spawn_err = Some(e.to_string())
+      []
+    }
+  }
+  let ok = spawn_err is None && codes.length() > 0 && codes[0] == 0
+  if !ok {
+    let exit_json = if codes.length() > 0 {
+      codes[0].to_json()
+    } else {
+      "none".to_json()
+    }
+    let fields = match spawn_err {
+      Some(err) =>
+        [
+          @moontrace.field("pr_number", pr_number),
+          @moontrace.field("exit", exit_json),
+          @moontrace.field("error", err),
+        ]
+      None =>
+        [
+          @moontrace.field("pr_number", pr_number),
+          @moontrace.field("exit", exit_json),
+        ]
+    }
+    @moontrace.warn("file_pr copilot reviewer request failed", fields~)
+    let err_part = match spawn_err {
+      Some(err) => " error=" + err
+      None => ""
+    }
+    ignore(
+      append_file(
+        delivery_log_path,
+        file_pr_copilot_reviewer_request_failed_log_append(
+          pr_number,
+          err_part,
+          now_ms_fn(),
+        ),
+      ),
+    )
+  }
+  ok
 }
 
 ///|
@@ -276,6 +399,7 @@ pub async fn interpret_file_pr_post_success(
   poller_state : @poller.PollerState?,
   registry : @registry.AgentRegistry?,
   runner : async (Array[@workspace.Command]) -> Array[Int],
+  append_file? : (String, String) -> Bool = @sys.append_file_sync,
   sleep_fn? : async (Int) -> Unit = @async.sleep,
   // Clock for delivery-log line timestamps. Called fresh at each append site —
   // not captured once — so writes that happen after slow `gh`/delivery commands
@@ -403,56 +527,16 @@ pub async fn interpret_file_pr_post_success(
       }
       None => ()
     }
-    let cmd = file_pr_copilot_reviewer_gh_command(pr_number, file_pr_workdir)
-    let mut spawn_err : String? = None
-    let codes = runner([cmd]) catch {
-      e => {
-        spawn_err = Some(e.to_string())
-        []
-      }
-    }
-    let ok = spawn_err is None && codes.length() > 0 && codes[0] == 0
+    let ok = file_pr_request_copilot_reviewer(
+      pr_number, file_pr_workdir, delivery_log_path, runner, append_file, now_ms_fn,
+    )
     if !ok {
-      let exit_json = if codes.length() > 0 {
-        codes[0].to_json()
-      } else {
-        "none".to_json()
-      }
-      let fields = match spawn_err {
-        Some(err) =>
-          [
-            @moontrace.field("pr_number", pr_number),
-            @moontrace.field("exit", exit_json),
-            @moontrace.field("error", err),
-          ]
-        None =>
-          [
-            @moontrace.field("pr_number", pr_number),
-            @moontrace.field("exit", exit_json),
-          ]
-      }
-      @moontrace.warn("file_pr copilot reviewer request failed", fields~)
-      let err_part = match spawn_err {
-        Some(err) => " error=" + err
-        None => ""
-      }
-      ignore(
-        @sys.append_file_sync(
-          delivery_log_path,
-          @poller.delivery_log_line(
-            "[file_pr] copilot_reviewer_request failed pr=" +
-            pr_number.to_string() +
-            err_part,
-            now_ms=now_ms_fn(),
-          ),
-        ),
-      )
       review_request_failed = true
     }
   }
   if review_request_failed {
     effects.response.with_warning(
-      "copilot_review_request_failed: reviewer request for @copilot failed — request manually via gh pr edit --add-reviewer @copilot",
+      "copilot_review_request_failed: reviewer request for @copilot failed — use the request_review MCP tool from the parent/server path",
     )
   } else {
     effects.response
@@ -3291,6 +3375,7 @@ pub async fn interpret_file_pr(
         poller_state,
         registry,
         runner,
+        append_file~,
         sleep_fn~,
       )
       if resp.is_ok() {

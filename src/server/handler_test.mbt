@@ -5070,7 +5070,8 @@ test "parent_poll_event_message ReviewTimeout emits EscalateReview next_action w
     ) {
     Some((message, _)) => {
       assert_next_action_line(message, @poller.NextAction::EscalateReview)
-      assert_true(message.contains("gh pr edit --add-reviewer @copilot"))
+      assert_true(message.contains("request_review"))
+      assert_true(message.contains("@copilot"))
     }
     None => fail("expected ReviewTimeout message")
   }
@@ -5396,7 +5397,8 @@ test "leaf_poll_review_injection_message CILatestHeadRollupSucceeded escalates w
     Some((message, status)) => {
       assert_eq(status, @types.Status::Info)
       assert_true(message.contains("no review"))
-      assert_true(message.contains("add-reviewer"))
+      assert_true(message.contains("request_review"))
+      assert_true(message.contains("@copilot"))
       assert_false(message.contains("re-check review thread and policy"))
     }
     None => fail("expected leaf CI escalation injection")
@@ -6541,8 +6543,8 @@ test "parent_poll_event_message REVIEW TIMEOUT uses attention-required decision"
       assert_eq(status, @types.Status::Failure)
       assert_true(message.contains("TLDecision:"))
       assert_true(message.contains("ACTION REQUIRED: no review"))
-      assert_true(message.contains("add-reviewer"))
-      assert_true(message.contains("add-reviewer"))
+      assert_true(message.contains("request_review"))
+      assert_true(message.contains("@copilot"))
       assert_false(message.contains("15min"))
     }
     None => fail("expected ReviewTimeout message")

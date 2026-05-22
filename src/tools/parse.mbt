@@ -1514,6 +1514,81 @@ fn parse_resolve_review_thread_args(
 }
 
 ///|
+fn parse_resolve_my_review_threads_args(
+  args : ToolArgs,
+) -> Result[ResolveMyReviewThreadsArgs, ParseError] {
+  let caller_id = match tool_args_get(args, "caller_id") {
+    Some(v) if v.trim() != "" => v.trim().to_owned()
+    _ => return Err(ParseError::MissingField(field="caller_id"))
+  }
+  Ok({ caller_id, })
+}
+
+///|
+fn reviewer_char_allowed(c : Char) -> Bool {
+  (c >= 'a' && c <= 'z') ||
+  (c >= 'A' && c <= 'Z') ||
+  (c >= '0' && c <= '9') ||
+  c == '-' ||
+  c == '_' ||
+  c == '/' ||
+  c == '.' ||
+  c == '[' ||
+  c == ']' ||
+  c == '@'
+}
+
+///|
+fn validate_reviewer(s : String) -> Result[Unit, @types.ChoirError] {
+  if s == "" {
+    return Err(@types.ChoirError::validation_error("reviewer cannot be empty"))
+  }
+  for c in s {
+    if !reviewer_char_allowed(c) {
+      return Err(
+        @types.ChoirError::validation_error(
+          "invalid character in reviewer: " + c.to_string(),
+        ),
+      )
+    }
+  }
+  Ok(())
+}
+
+///|
+fn parse_request_review_args(
+  args : ToolArgs,
+) -> Result[RequestReviewArgs, ParseError] {
+  let pr_str = tool_args_get(args, "pr_number").unwrap_or("")
+  if pr_str == "" {
+    return Err(ParseError::MissingField(field="pr_number"))
+  }
+  let pr_number = match tool_args_get_int(args, "pr_number") {
+    Some(value) => value
+    None =>
+      return Err(ParseError::InvalidValue(field="pr_number", value=pr_str))
+  }
+  let reviewer = match tool_args_get(args, "reviewer") {
+    Some(v) => v.trim().to_owned()
+    None => ""
+  }
+  if reviewer == "" {
+    return Err(ParseError::MissingField(field="reviewer"))
+  }
+  match validate_reviewer(reviewer) {
+    Ok(_) => ()
+    Err(e) =>
+      return Err(
+        ParseError::InvalidFormat(
+          field="reviewer",
+          message=e.validation_detail_or_message(),
+        ),
+      )
+  }
+  Ok({ pr_number, reviewer })
+}
+
+///|
 fn parse_merge_pr_args(args : ToolArgs) -> Result[MergePrArgs, ParseError] {
   if tool_args_get(args, "force") is Some(_) {
     return Err(ParseError::UnknownArgument(field="force"))
@@ -1916,6 +1991,14 @@ fn parse_tool_request(
       parse_resolve_review_thread_args(args).map(fn(a) {
         ToolRequest::ResolveReviewThread(a)
       })
+    "resolve_my_review_threads" =>
+      parse_resolve_my_review_threads_args(args).map(fn(a) {
+        ToolRequest::ResolveMyReviewThreads(a)
+      })
+    "request_review" =>
+      parse_request_review_args(args).map(fn(a) {
+        ToolRequest::RequestReview(a)
+      })
     "suspend" => {
       let agent_id = tool_args_get(args, "agent_id").unwrap_or("")
       if agent_id == "" {
@@ -2153,6 +2236,41 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
     Ok(args) => {
       assert_eq(args.thread_id, "PRRT_kwDOABcdef")
       assert_eq(args.caller_id, "agent-1")
+    }
+    Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_resolve_my_review_threads_args accepts caller_id" {
+  match
+    parse_resolve_my_review_threads_args(
+      tool_args_from_map({ "caller_id": "main.leaf" }),
+    ) {
+    Ok(args) => assert_eq(args.caller_id, "main.leaf")
+    Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_request_review_args requires pr_number" {
+  match
+    parse_request_review_args(tool_args_from_map({ "reviewer": "@copilot" })) {
+    Err(ParseError::MissingField(field~)) => assert_eq(field, "pr_number")
+    Err(e) => fail("unexpected error: " + e.message())
+    Ok(_) => fail("expected missing pr_number")
+  }
+}
+
+///|
+test "parse_request_review_args accepts reviewer" {
+  match
+    parse_request_review_args(
+      tool_args_from_map({ "pr_number": "44", "reviewer": "@copilot" }),
+    ) {
+    Ok(args) => {
+      @debug.assert_eq(args.pr_number, 44)
+      assert_eq(args.reviewer, "@copilot")
     }
     Err(e) => fail("unexpected error: " + e.message())
   }

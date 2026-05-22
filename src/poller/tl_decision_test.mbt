@@ -621,6 +621,141 @@ test "single_pass treats fixed changes-requested review as gate-ready when fixes
 }
 
 ///|
+test "iterative fixes pushed with green CI and unresolved threads emits resolve-now imperative" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 901),
+    fixes_pushed_at: 123L,
+    last_sha: "head-after-fix",
+    copilot_issue_comment_seen: true,
+    review_mode: @types.ReviewMode::Iterative,
+  }
+  let decision = pr_state_notification_decision_for_tracked_pr(
+    FixesPushed(901),
+    t,
+    Some(2),
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  match decision.policy_decision {
+    @policy.MergeDecision::ThreadsUnresolvedButFixed(count~, head_sha~) => {
+      assert_eq(count, 2)
+      assert_eq(head_sha, "head-after-fix")
+    }
+    other =>
+      fail(
+        "expected ThreadsUnresolvedButFixed, got " +
+        other.label() +
+        ": " +
+        other.reason(),
+      )
+  }
+  assert_eq(decision.next_action, ResolveThreadsNow)
+  let sentence = tl_pr_state_notification_sentence(decision, Manual)
+  assert_true(sentence.contains("RESOLVE THREADS NOW from the parent path"))
+  assert_false(sentence.contains("Wait for the leaf"))
+  assert_true(
+    next_action_detail_line(
+      ResolveThreadsNow,
+      901,
+      Some("feature/pr-plumbing"),
+      Manual,
+    ).contains("resolve_my_review_threads"),
+  )
+}
+
+///|
+test "resolve-now imperative skips active changes-requested review without fix push" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 902),
+    fixes_pushed_at: 123L,
+    changes_requested_since: 456L,
+    last_sha: "head-under-review",
+    copilot_issue_comment_seen: true,
+    review_mode: @types.ReviewMode::Iterative,
+  }
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(2),
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_false(decision is @policy.MergeDecision::ThreadsUnresolvedButFixed(..))
+  assert_eq(decision.label(), "blocked")
+  assert_true(decision.reason().contains("review changes requested"))
+}
+
+///|
+test "resolve-now imperative preserves failed verify blocker" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 903),
+    fixes_pushed_at: 123L,
+    last_sha: "head-after-fix",
+    copilot_issue_comment_seen: true,
+    review_mode: @types.ReviewMode::Iterative,
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(2),
+    task_contract=Some(contract),
+    review_mode=@types.ReviewMode::Iterative,
+    verify_results=[
+      {
+        name: "moon test --target native",
+        status: @types.VerifyStatus::Failed,
+        details: "exit: 1",
+      },
+    ],
+  )
+  assert_eq(decision.label(), "blocked")
+  assert_true(decision.reason().contains("local verify failed"))
+}
+
+///|
+test "resolve-now imperative follows canonical review blocker before missing verify" {
+  let t = {
+    ..sample_tracked(ChangesRequested, Success, 904),
+    fixes_pushed_at: 123L,
+    last_sha: "head-after-fix",
+    copilot_issue_comment_seen: true,
+    review_mode: @types.ReviewMode::Iterative,
+  }
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(0),
+    task_contract=Some(contract),
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_eq(decision.label(), "blocked")
+  assert_true(decision.reason().contains("review changes requested"))
+}
+
+///|
+test "resolve-now imperative preserves canonical CI blocker before missing verify" {
+  let t = sample_tracked(Approved, Failure, 905)
+  let contract = {
+    ..@types.TaskContract::empty(),
+    goal: "ship feature",
+    verify: ["moon test --target native"],
+  }
+  let decision = merge_policy_decision_for_tracked_pr(
+    t,
+    Some(0),
+    task_contract=Some(contract),
+    review_mode=@types.ReviewMode::Iterative,
+  )
+  assert_eq(decision.label(), "blocked")
+  assert_true(decision.reason().contains("CI failing"))
+}
+
+///|
 test "tl_tracked_pr_merge_gate_snapshot_ready uses tracked SinglePass mode by default" {
   let t = {
     ..sample_tracked(ChangesRequested, Success, 105),
