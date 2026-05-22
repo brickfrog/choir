@@ -262,6 +262,7 @@ pub fn spawn_worker_plan(
   resolved_parent_branch : String,
   session : String,
   project_dir : String,
+  isolation? : @types.IsolationMode = @types.IsolationMode::Inline,
 ) -> SpawnWorkerPlan {
   let spec = @types.SpawnSpec::{
     slug: worker_args.slug,
@@ -269,7 +270,7 @@ pub fn spawn_worker_plan(
     agent_type: worker_args.agent_type,
     task: worker_args.task,
     task_contract: Some(worker_args.task_contract),
-    isolation: @types.IsolationMode::Inline,
+    isolation,
     parent_id: worker_args.caller_id,
     parent_branch: resolved_parent_branch,
     reuse_workspace: false,
@@ -516,7 +517,11 @@ pub async fn interpret_spawn_worker(
     project_dir, capture,
   )
   let plan = spawn_worker_plan(
-    normalized_args, resolved_parent_branch, session, project_dir,
+    normalized_args,
+    resolved_parent_branch,
+    session,
+    project_dir,
+    isolation=@types.IsolationMode::Inline,
   )
   match
     ensure_no_live_spawn_agent_collision(
