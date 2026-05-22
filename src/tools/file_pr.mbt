@@ -2188,11 +2188,10 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     _ => ()
   }
   let mut cycles = 0
+  let audit_workers = list_audit_workers()
+  let audit_worker_prefix = audit_on_file_pr_slug_prefix(head_sha)
   let worker_id = match
-    find_in_flight_audit_worker(
-      list_audit_workers(),
-      audit_on_file_pr_slug_prefix(head_sha),
-    ) {
+    find_in_flight_audit_worker(audit_workers, audit_worker_prefix) {
     Some(existing) => {
       let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
       cycles = if recorded_cycles <= 0 {
@@ -2210,14 +2209,13 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     }
     None => {
       let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
-      if audit_max_rounds > 0 && recorded_cycles >= audit_max_rounds {
-        return Err(
-          @types.ChoirError::audit_loop_exhausted(
-            recorded_cycles, 0, receipt_path,
-          ),
-        )
+      let at_cycle_cap = audit_max_rounds > 0 &&
+        recorded_cycles >= audit_max_rounds
+      cycles = if at_cycle_cap {
+        recorded_cycles
+      } else {
+        record_audit_cycle_for_agent(tracked_agent_id)
       }
-      cycles = record_audit_cycle_for_agent(tracked_agent_id)
       let pr_number_for_notification : Int? = if pr_number > 0 {
         Some(pr_number)
       } else {

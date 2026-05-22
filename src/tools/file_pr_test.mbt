@@ -1861,7 +1861,7 @@ async test "file_pr_auto_audit records one cycle for each fresh audit spawn" {
 }
 
 ///|
-async test "file_pr_auto_audit refuses fresh spawn after timeout cycles exhaust cap" {
+async test "file_pr_auto_audit cap without report fails without fabricated zero findings" {
   let project_dir = "/tmp/choir-fpr-auto-audit-timeout-cap-" +
     @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
@@ -1875,10 +1875,10 @@ async test "file_pr_auto_audit refuses fresh spawn after timeout cycles exhaust 
     "main",
     head,
     file_pr_auto_audit_capture(head, None),
-    async fn(_) {
+    async fn(worker_args) {
       @async.sleep(0)
       spawn_calls = spawn_calls + 1
-      Err(@types.ChoirError::validation_error("unexpected spawn"))
+      Ok("main." + worker_args.slug)
     },
     async fn(_) {
       @async.sleep(0)
@@ -1903,17 +1903,168 @@ async test "file_pr_auto_audit refuses fresh spawn after timeout cycles exhaust 
   )
   match got {
     Err(e) => {
+      assert_eq(e.to_wire_string(), "validation_error")
+      assert_true(e.message().contains("audit worker did not report"))
+      assert_false(e.message().contains("0 finding(s) remaining"))
+    }
+    Ok(_) => fail("expected missing audit report failure")
+  }
+  assert_eq(spawn_calls, 1)
+  assert_eq(wait_calls, 1)
+  assert_eq(record_calls, 0)
+}
+
+///|
+async test "file_pr_auto_audit cap hit with zero findings writes receipt" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-cap-clean-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawn_calls = 0
+  let mut wait_calls = 0
+  let mut record_calls = 0
+  let mut clear_calls = 0
+  let mut cleared_agent = ""
+  let mut receipt_dir = ""
+  let mut receipt_path = ""
+  let mut receipt_content = ""
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, None),
+    async fn(worker_args) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Ok("main." + worker_args.slug)
+    },
+    async fn(worker_id) {
+      @async.sleep(0)
+      wait_calls = wait_calls + 1
+      assert_true(worker_id.contains(audit_on_file_pr_internal_caller_id))
+      Some({
+        message: "No findings. The audit converged cleanly.\n",
+        status: @types.Status::Success,
+      })
+    },
+    fn(_) {  },
+    fn(args) {
+      interpret_write_audit_receipt(
+        args,
+        project_dir,
+        fn(path) {
+          receipt_dir = path
+          true
+        },
+        fn(path, content) {
+          receipt_path = path
+          receipt_content = content
+          true
+        },
+        now_sec=fn() { 1770000000L },
+      )
+    },
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1779000000L },
+    fn(_) { true },
+    audit_max_rounds=3,
+    record_audit_cycle_for_agent=fn(_) {
+      record_calls = record_calls + 1
+      99
+    },
+    audit_cycle_count_for_agent=fn(_) { 3 },
+    clear_audit_cycle_for_agent=fn(agent_id) {
+      cleared_agent = agent_id
+      clear_calls = clear_calls + 1
+    },
+  )
+  match got {
+    Ok(_) => ()
+    Err(e) => fail("expected clean cap-hit audit to pass: " + e.message())
+  }
+  assert_eq(spawn_calls, 1)
+  assert_eq(wait_calls, 1)
+  assert_eq(record_calls, 0)
+  assert_eq(clear_calls, 1)
+  assert_eq(cleared_agent, "feature/auto-audit")
+  assert_true(receipt_dir.has_suffix("/.choir/audit-receipts"))
+  assert_true(
+    receipt_path.has_suffix("/.choir/audit-receipts/abcdef123456.json"),
+  )
+  let parsed_receipt = @json.parse(receipt_content) catch {
+    _ => fail("receipt did not parse")
+  }
+  let decoded : @types.AuditReceipt = @json.from_json(parsed_receipt) catch {
+    _ => fail("receipt did not decode")
+  }
+  assert_eq(decoded.sha, head)
+  assert_eq(decoded.branch, "feature/auto-audit")
+  assert_eq(decoded.agent_id, audit_on_file_pr_internal_caller_id)
+  assert_eq(decoded.findings_count, 0)
+}
+
+///|
+async test "file_pr_auto_audit cap hit with findings stays blocked" {
+  let project_dir = "/tmp/choir-fpr-auto-audit-cap-findings-" +
+    @sys.get_pid().to_string()
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  let mut spawn_calls = 0
+  let mut wait_calls = 0
+  let mut receipt_write_calls = 0
+  let got = file_pr_auto_audit_for_missing_receipt(
+    project_dir,
+    project_dir,
+    "feature/auto-audit",
+    "main",
+    head,
+    file_pr_auto_audit_capture(head, None),
+    async fn(worker_args) {
+      @async.sleep(0)
+      spawn_calls = spawn_calls + 1
+      Ok("main." + worker_args.slug)
+    },
+    async fn(worker_id) {
+      @async.sleep(0)
+      wait_calls = wait_calls + 1
+      assert_true(worker_id.contains(audit_on_file_pr_internal_caller_id))
+      Some({
+        message: "Finding 1: still broken at the cap\n",
+        status: @types.Status::Success,
+      })
+    },
+    fn(_) {  },
+    fn(_) {
+      receipt_write_calls = receipt_write_calls + 1
+      @types.Response::Err("unexpected receipt write")
+    },
+    1000,
+    0,
+    fn(_, _) { true },
+    async fn(_) { @async.sleep(0) },
+    fn() { 1779000000L },
+    fn(_) { true },
+    audit_max_rounds=3,
+    record_audit_cycle_for_agent=fn(_) { 99 },
+    audit_cycle_count_for_agent=fn(_) { 3 },
+  )
+  match got {
+    Err(e) => {
       assert_eq(e.to_wire_string(), "audit_loop_exhausted")
       assert_true(e.message().contains("after 3 cycle(s)"))
+      assert_true(e.message().contains("1 finding(s) remaining"))
       assert_true(
         e.message().contains(".choir/audit-receipts/abcdef123456.json"),
       )
     }
-    Ok(_) => fail("expected exhausted audit loop")
+    Ok(_) => fail("expected cap-hit findings to block")
   }
-  assert_eq(spawn_calls, 0)
-  assert_eq(wait_calls, 0)
-  assert_eq(record_calls, 0)
+  assert_eq(spawn_calls, 1)
+  assert_eq(wait_calls, 1)
+  assert_eq(receipt_write_calls, 0)
 }
 
 ///|
