@@ -47,9 +47,61 @@ fn empty_fork_wave_spawn_plan() -> ForkWaveSpawnPlan {
 }
 
 ///|
+fn fork_wave_slug_for_index(
+  fork_wave_args : ForkWaveArgs,
+  index : Int,
+  seen_slugs : Map[String, Int],
+) -> String {
+  let raw_slug = if fork_wave_args.has_per_leaf_tasks {
+    let task_slug = slugify_task(fork_wave_args.tasks[index], index)
+    if fork_wave_args.slug_prefix == "wave" {
+      task_slug
+    } else {
+      fork_wave_args.slug_prefix + "-" + task_slug
+    }
+  } else {
+    fork_wave_args.slug_prefix + "-" + index.to_string()
+  }
+  match seen_slugs.get(raw_slug) {
+    Some(count) => {
+      seen_slugs.set(raw_slug, count + 1)
+      raw_slug + "-" + index.to_string()
+    }
+    None => {
+      seen_slugs.set(raw_slug, 1)
+      raw_slug
+    }
+  }
+}
+
+///|
+fn ensure_fork_wave_spawn_ids_do_not_collide(
+  fork_wave_args : ForkWaveArgs,
+  registry : @registry.AgentRegistry?,
+) -> Result[Unit, @types.ChoirError] {
+  match registry {
+    None => Ok(())
+    Some(_) => {
+      let seen_slugs : Map[String, Int] = {}
+      for i = 0; i < fork_wave_args.count; i = i + 1 {
+        let slug = fork_wave_slug_for_index(fork_wave_args, i, seen_slugs)
+        let agent_id = fork_wave_args.parent_branch + "." + slug
+        match
+          ensure_no_live_spawn_agent_collision("fork_wave", agent_id, registry) {
+          Ok(_) => ()
+          Err(e) => return Err(e)
+        }
+      }
+      Ok(())
+    }
+  }
+}
+
+///|
 /// Build [`ForkWaveSpawnPlan`] from resolved tool args and `child_spawn_depth`.
-/// Uses `slugify_task` for per-leaf slugs; behavior matches the historical
-/// `ToolRequest::ForkWave` inline loop in `dispatch`.
+/// Uses `slugify_task` for per-leaf slugs. Live registry collision rejection
+/// happens before planning in `interpret_fork_wave_spawn_effect_phase`; terminal
+/// registry rows are reusable and do not affect the plan.
 pub fn fork_wave_spawn_plan(
   fork_wave_args : ForkWaveArgs,
   child_spawn_depth : Int,
@@ -63,54 +115,16 @@ pub fn fork_wave_spawn_plan(
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
 ) -> ForkWaveSpawnPlan {
+  ignore(registry)
   let agent_ids = StringBuilder::new()
-  let skipped_ids = StringBuilder::new()
   let cmds : Array[@workspace.Command] = []
   let spawned_specs : Array[@types.SpawnSpec] = []
   let spawned_slugs : Array[String] = []
   let mut spawned_count = 0
-  let mut skipped_count = 0
   let seen_slugs : Map[String, Int] = {}
   for i = 0; i < fork_wave_args.count; i = i + 1 {
-    let raw_slug = if fork_wave_args.has_per_leaf_tasks {
-      let task_slug = slugify_task(fork_wave_args.tasks[i], i)
-      if fork_wave_args.slug_prefix == "wave" {
-        task_slug
-      } else {
-        fork_wave_args.slug_prefix + "-" + task_slug
-      }
-    } else {
-      fork_wave_args.slug_prefix + "-" + i.to_string()
-    }
-    let slug = match seen_slugs.get(raw_slug) {
-      Some(count) => {
-        seen_slugs.set(raw_slug, count + 1)
-        raw_slug + "-" + i.to_string()
-      }
-      None => {
-        seen_slugs.set(raw_slug, 1)
-        raw_slug
-      }
-    }
+    let slug = fork_wave_slug_for_index(fork_wave_args, i, seen_slugs)
     let agent_id = fork_wave_args.parent_branch + "." + slug
-    let already_registered = match registry {
-      Some(reg) =>
-        try {
-          let _ = reg.get(agent_id)
-          true
-        } catch {
-          _ => false
-        }
-      None => false
-    }
-    if already_registered {
-      if skipped_count > 0 {
-        skipped_ids.write_string(",")
-      }
-      skipped_ids.write_string(agent_id)
-      skipped_count = skipped_count + 1
-      continue
-    }
     if spawned_count > 0 {
       agent_ids.write_string(",")
     }
@@ -160,9 +174,9 @@ pub fn fork_wave_spawn_plan(
     spawned_specs,
     spawned_slugs,
     spawned_count,
-    skipped_count,
+    skipped_count: 0,
     agent_ids: agent_ids.to_string(),
-    skipped_ids: skipped_ids.to_string(),
+    skipped_ids: "",
   }
 }
 
@@ -393,6 +407,15 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   let fork_wave_args = fork_wave_resolve_args_parent_branch(
     fork_wave_args, project_dir, capture,
   )
+  match ensure_fork_wave_spawn_ids_do_not_collide(fork_wave_args, registry) {
+    Ok(_) => ()
+    Err(e) =>
+      return (
+        @types.Response::Err(e.message()),
+        fork_wave_args,
+        empty_fork_wave_spawn_plan(),
+      )
+  }
   let caller_spawn_depth = fork_wave_caller_spawn_depth_from_registry(
     registry,
     fork_wave_args.caller_id,
@@ -595,10 +618,19 @@ pub async fn interpret_fork_wave_post_spawn(
   },
 ) -> Unit {
   let resolved_pane_ids : Array[(String, String)] = []
+  let live_collision_ids : Map[String, Bool] = {}
   match registry {
     Some(reg) =>
       for spec in spawn_plan.spawned_specs {
         let agent_id = @workspace.canonical_agent_id(spec)
+        match
+          ensure_no_live_spawn_agent_collision("fork_wave", agent_id, registry) {
+          Ok(_) => ()
+          Err(_) => {
+            live_collision_ids.set(agent_id, true)
+            continue
+          }
+        }
         ignore(
           reg.upsert(
             fork_wave_spawned_registry_agent(spec, project_dir, session),
@@ -609,6 +641,11 @@ pub async fn interpret_fork_wave_post_spawn(
     None => ()
   }
   for slug in spawn_plan.spawned_slugs {
+    let agent_id = @workspace.branch_name(fork_wave_args.parent_branch, slug)
+    match live_collision_ids.get(agent_id) {
+      Some(true) => continue
+      _ => ()
+    }
     let _ = @workspace.register_team_member(
       fork_wave_args.caller_id,
       slug,
@@ -621,7 +658,6 @@ pub async fn interpret_fork_wave_post_spawn(
       registry~,
     )
     @phase.interpret_lifecycle_effects(project_dir, tl_effects, registry~)
-    let agent_id = @workspace.branch_name(fork_wave_args.parent_branch, slug)
     match resolve_zellij_tab_terminal_target(session, slug, capture~) {
       Some(pane_id) => resolved_pane_ids.push((agent_id, pane_id))
       None => ()
@@ -642,6 +678,11 @@ pub async fn interpret_fork_wave_post_spawn(
     None => ()
   }
   for spec in spawn_plan.spawned_specs {
+    let agent_id = @workspace.canonical_agent_id(spec)
+    match live_collision_ids.get(agent_id) {
+      Some(true) => continue
+      _ => ()
+    }
     ignore(mirror_beads_spawn_for_spec(project_dir, spec, capture))
   }
 }

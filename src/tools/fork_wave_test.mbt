@@ -489,7 +489,7 @@ test "fork_wave_spawn_plan honors custom slug_prefix for per-leaf tasks" {
 }
 
 ///|
-test "fork_wave_spawn_plan skips active agents and records skipped_ids" {
+test "fork_wave_spawn_plan leaves active collision rejection to preflight" {
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -507,15 +507,15 @@ test "fork_wave_spawn_plan skips active agents and records skipped_ids" {
   )
   let args = fork_wave_args_base()
   let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
-  assert_eq(plan.spawned_count, 1)
-  assert_eq(plan.skipped_count, 1)
-  assert_eq(plan.skipped_ids, "main.wave-0")
-  assert_eq(plan.agent_ids, "main.wave-1")
-  @debug.assert_eq(plan.spawned_slugs, ["wave-1"])
+  assert_eq(plan.spawned_count, 2)
+  assert_eq(plan.skipped_count, 0)
+  assert_eq(plan.skipped_ids, "")
+  assert_eq(plan.agent_ids, "main.wave-0,main.wave-1")
+  @debug.assert_eq(plan.spawned_slugs, ["wave-0", "wave-1"])
 }
 
 ///|
-test "fork_wave_spawn_plan skips completing agents" {
+test "fork_wave_spawn_plan leaves completing collision rejection to preflight" {
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -533,8 +533,50 @@ test "fork_wave_spawn_plan skips completing agents" {
   )
   let args = fork_wave_args_base()
   let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
-  assert_eq(plan.skipped_count, 1)
-  assert_eq(plan.spawned_count, 1)
+  assert_eq(plan.skipped_count, 0)
+  assert_eq(plan.spawned_count, 2)
+  assert_eq(plan.agent_ids, "main.wave-0,main.wave-1")
+}
+
+///|
+async test "interpret_fork_wave_spawn_effect_phase rejects live canonical agent id collision" {
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "feature/parent.wave-0",
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Claude,
+      parent: Some("main.tl"),
+      workspace: "/w",
+      branch: "feature/parent.wave-0",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let runner = async fn(_cmds : Array[@workspace.Command]) -> Array[Int] {
+    @async.sleep(0)
+    fail("spawn commands must not run for a live id collision")
+    []
+  }
+  let (resp, _, spawn_plan) = interpret_fork_wave_spawn_effect_phase(
+    { ..fork_wave_args_base(), parent_branch: "feature/parent" },
+    "/proj",
+    "choir",
+    Some(reg),
+    mock_capture_fork_wave_must_not_run,
+    mock_git_capture_fork_wave_clean,
+    runner,
+  )
+  assert_eq(spawn_plan.spawned_count, 0)
+  match resp {
+    @types.Response::Err(msg) => {
+      assert_true(msg.contains("canonical_agent_id 'feature/parent.wave-0'"))
+      assert_true(msg.contains("live"))
+    }
+    @types.Response::Ok(_) => fail("expected live id collision rejection")
+  }
 }
 
 ///|
@@ -617,6 +659,54 @@ async test "fork_wave post-spawn records server task contracts" {
     captured.get("main.wave-1"),
     Some({ ..@types.TaskContract::empty(), goal: "shared task" }),
   )
+  ignore(@sys.rm_rf(project_dir))
+}
+
+///|
+async test "fork_wave post-spawn does not clobber a live registry collision" {
+  let project_dir = "/tmp/choir-fork-wave-live-collision-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  let args = fork_wave_args_base()
+  let plan = fork_wave_spawn_plan(args, 0, None, project_dir, "choir")
+  let reg = @registry.AgentRegistry::new()
+  ignore(
+    reg.upsert({
+      agent_id: "main.wave-0",
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::MoonPilot,
+      parent: Some("main.tl"),
+      workspace: "/tmp/existing-live",
+      branch: "main.wave-0",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 4,
+      state: @types.AgentState::Active,
+    }),
+  )
+  interpret_fork_wave_post_spawn(args, plan, project_dir, "choir", Some(reg), capture=async fn(
+    _cmd,
+  ) {
+    @async.sleep(0)
+    (0, "terminal_9\n")
+  })
+  try reg.get("main.wave-0") catch {
+    _ => fail("expected existing live agent to remain in registry")
+  } noraise {
+    agent => {
+      assert_eq(agent.role, @types.Role::Worker)
+      assert_eq(agent.agent_type, @types.AgentType::MoonPilot)
+      assert_eq(agent.workspace, "/tmp/existing-live")
+      assert_eq(agent.spawn_depth, 4)
+      assert_eq(agent.state, @types.AgentState::Active)
+      @debug.assert_eq(agent.terminal_target, None)
+    }
+  }
+  try reg.get("main.wave-1") catch {
+    _ => fail("expected non-colliding sibling to be registered")
+  } noraise {
+    agent => assert_eq(agent.role, @types.Role::Dev)
+  }
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -1500,7 +1590,7 @@ async test "fork_wave_response_from_interpret_result CommandFailed empty detail"
 }
 
 ///|
-test "fork_wave_spawn_plan skips Failed agents after kill_agent" {
+test "fork_wave_spawn_plan allows Failed agents after kill_agent to respawn" {
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -1518,15 +1608,15 @@ test "fork_wave_spawn_plan skips Failed agents after kill_agent" {
   )
   let args = fork_wave_args_base()
   let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
-  assert_eq(plan.skipped_count, 1)
-  assert_eq(plan.spawned_count, 1)
-  assert_eq(plan.skipped_ids, "main.wave-0")
-  assert_eq(plan.agent_ids, "main.wave-1")
-  @debug.assert_eq(plan.spawned_slugs, ["wave-1"])
+  assert_eq(plan.skipped_count, 0)
+  assert_eq(plan.spawned_count, 2)
+  assert_eq(plan.skipped_ids, "")
+  assert_eq(plan.agent_ids, "main.wave-0,main.wave-1")
+  @debug.assert_eq(plan.spawned_slugs, ["wave-0", "wave-1"])
 }
 
 ///|
-test "fork_wave_spawn_plan skips Done agents" {
+test "fork_wave_spawn_plan allows Done agents to respawn" {
   let reg = @registry.AgentRegistry::new()
   ignore(
     reg.upsert({
@@ -1544,11 +1634,11 @@ test "fork_wave_spawn_plan skips Done agents" {
   )
   let args = fork_wave_args_base()
   let plan = fork_wave_spawn_plan(args, 0, Some(reg), "/proj", "choir")
-  assert_eq(plan.skipped_count, 1)
-  assert_eq(plan.spawned_count, 1)
-  assert_eq(plan.skipped_ids, "main.wave-0")
-  assert_eq(plan.agent_ids, "main.wave-1")
-  @debug.assert_eq(plan.spawned_slugs, ["wave-1"])
+  assert_eq(plan.skipped_count, 0)
+  assert_eq(plan.spawned_count, 2)
+  assert_eq(plan.skipped_ids, "")
+  assert_eq(plan.agent_ids, "main.wave-0,main.wave-1")
+  @debug.assert_eq(plan.spawned_slugs, ["wave-0", "wave-1"])
 }
 
 ///|
