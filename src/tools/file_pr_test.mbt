@@ -1895,7 +1895,6 @@ async test "file_pr_auto_audit cap without report fails without fabricated zero 
     fn(_) { true },
     list_audit_workers=fn() { [] },
     audit_max_rounds=3,
-    allow_audit_at_cycle_cap=true,
     record_audit_cycle_for_agent=fn(_) {
       record_calls = record_calls + 1
       99
@@ -1973,7 +1972,6 @@ async test "file_pr_auto_audit cap hit with zero findings writes receipt" {
     fn() { 1779000000L },
     fn(_) { true },
     audit_max_rounds=3,
-    allow_audit_at_cycle_cap=true,
     record_audit_cycle_for_agent=fn(_) {
       record_calls = record_calls + 1
       99
@@ -2050,7 +2048,6 @@ async test "file_pr_auto_audit cap hit with findings stays blocked" {
     fn() { 1779000000L },
     fn(_) { true },
     audit_max_rounds=3,
-    allow_audit_at_cycle_cap=true,
     record_audit_cycle_for_agent=fn(_) { 99 },
     audit_cycle_count_for_agent=fn(_) { 3 },
   )

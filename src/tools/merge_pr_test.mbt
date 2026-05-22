@@ -362,13 +362,15 @@ async test "merge_pr_require_audit_receipt awaits in-flight audit worker without
 }
 
 ///|
-async test "merge_pr_require_audit_receipt refuses fresh spawn after timeout cycles exhaust cap" {
+async test "merge_pr_require_audit_receipt cap zero findings writes receipt" {
   let project_dir = "/tmp/choir-mpr-audit-cycle-cap-" +
     @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
   let mut spawn_calls = 0
   let mut wait_calls = 0
   let mut record_calls = 0
+  let mut write_sha = ""
+  let mut receipt_body : String? = None
   let got = merge_pr_require_audit_receipt(
     "main",
     project_dir,
@@ -385,19 +387,28 @@ async test "merge_pr_require_audit_receipt refuses fresh spawn after timeout cyc
         return (0, "feature/audit-gate\n")
       }
       if cmd.program == "cat" {
-        return (1, "")
+        match receipt_body {
+          Some(body) => return (0, body)
+          None => return (1, "")
+        }
       }
       (0, "")
     },
-    spawn_audit_worker=async fn(_) {
+    spawn_audit_worker=async fn(worker_args) {
       @async.sleep(0)
       spawn_calls = spawn_calls + 1
-      Err(@types.ChoirError::validation_error("unexpected spawn"))
+      Ok("main." + worker_args.slug)
     },
-    wait_for_audit_report=async fn(_) {
+    wait_for_audit_report=async fn(worker_id) {
       @async.sleep(0)
       wait_calls = wait_calls + 1
-      None
+      assert_true(worker_id.contains(audit_on_file_pr_internal_caller_id))
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
+    write_audit_receipt=fn(args) {
+      write_sha = args.sha
+      receipt_body = Some(merge_pr_test_audit_receipt(args.sha))
+      @types.Response::ok_values({ "status": "ok".to_json() })
     },
     audit_heartbeat_sec=0,
     audit_max_rounds=2,
@@ -408,19 +419,14 @@ async test "merge_pr_require_audit_receipt refuses fresh spawn after timeout cyc
     audit_cycle_count_for_agent=fn(_) { 2 },
   )
   match got {
-    Err(e) => {
-      let msg = e.message()
-      assert_true(
-        msg.contains("policy blocked: audit receipt gate blocked PR #95"),
-      )
-      assert_true(msg.contains("auto-audit failed"))
-      assert_true(msg.contains("audit loop exhausted after 2 cycle(s)"))
-    }
-    Ok(_) => fail("expected exhausted audit loop block")
+    Ok(_) => ()
+    Err(e) =>
+      fail("expected cap clean audit to clear merge gate: " + e.message())
   }
-  assert_eq(spawn_calls, 0)
-  assert_eq(wait_calls, 0)
+  assert_eq(spawn_calls, 1)
+  assert_eq(wait_calls, 1)
   assert_eq(record_calls, 0)
+  assert_eq(write_sha, head)
   ignore(@sys.rm_rf(project_dir))
 }
 
@@ -476,7 +482,7 @@ async test "merge_pr_require_audit_receipt timeout returns audit budget block" {
 }
 
 ///|
-async test "interpret_merge_pr wires audit cycle cap into merge audit gate" {
+async test "interpret_merge_pr self-heals zero-finding audit at cycle cap" {
   let project_dir = "/tmp/choir-mpr-audit-cap-wiring-" +
     @sys.get_pid().to_string()
   let head = "abcdef1234567890abcdef1234567890abcdef12"
@@ -494,8 +500,12 @@ async test "interpret_merge_pr wires audit cycle cap into merge audit gate" {
     @poller.CiRollupStatus::Success,
     true,
   )
-  let mut runner_called = false
+  let mut runner_calls = 0
   let mut record_calls = 0
+  let mut clear_calls = 0
+  let mut cleared_agent = ""
+  let mut receipt_path = ""
+  let mut receipt_body = ""
   let resp = interpret_merge_pr(
     {
       pr_number: 96,
@@ -509,7 +519,7 @@ async test "interpret_merge_pr wires audit cycle cap into merge audit gate" {
     None,
     async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
       @async.sleep(0)
-      runner_called = true
+      runner_calls = runner_calls + 1
       let statuses = []
       for _ in cmds {
         statuses.push(0)
@@ -541,6 +551,11 @@ async test "interpret_merge_pr wires audit cycle cap into merge audit gate" {
         return (0, "feature/audit-gate\n")
       }
       if cmd.program == "cat" {
+        if cmd.args.length() > 0 &&
+          cmd.args[0] == file_pr_audit_receipt_path_for_head(head) &&
+          receipt_body != "" {
+          return (0, receipt_body)
+        }
         return (1, "")
       }
       (0, "")
@@ -554,27 +569,44 @@ async test "interpret_merge_pr wires audit cycle cap into merge audit gate" {
         ""
       }
     },
-    write_file_atomic=fn(_, _) { false },
+    write_file_atomic=fn(path, content) {
+      if path.has_suffix("/.choir/audit-receipts/abcdef123456.json") {
+        receipt_path = path
+        receipt_body = content
+      }
+      true
+    },
     create_dir_all=fn(_) { true },
+    wait_for_audit_report=async fn(worker_id) {
+      @async.sleep(0)
+      assert_true(worker_id.contains(audit_on_file_pr_internal_caller_id))
+      Some({ message: "No findings.", status: @types.Status::Success })
+    },
     audit_max_rounds=2,
     record_audit_cycle_for_agent=fn(_) {
       record_calls = record_calls + 1
       99
     },
     audit_cycle_count_for_agent=fn(_) { 2 },
+    clear_audit_cycle_for_agent=fn(agent_id) {
+      cleared_agent = agent_id
+      clear_calls = clear_calls + 1
+    },
     task_contract_reader=merge_pr_test_empty_contract_reader,
   )
   match resp {
-    @types.Response::Err(msg) => {
-      assert_true(
-        msg.contains("policy blocked: audit receipt gate blocked PR #96"),
-      )
-      assert_true(msg.contains("audit loop exhausted after 2 cycle(s)"))
-    }
-    @types.Response::Ok(_) => fail("expected exhausted audit loop block")
+    @types.Response::Ok(fields) =>
+      assert_eq(fields.get("status").unwrap_or(""), "merged")
+    @types.Response::Err(msg) =>
+      fail("expected cap clean audit to self-heal merge gate: " + msg)
   }
-  assert_false(runner_called)
+  assert_true(runner_calls > 0)
   assert_eq(record_calls, 0)
+  assert_eq(clear_calls, 1)
+  assert_eq(cleared_agent, "main.leaf")
+  assert_true(
+    receipt_path.has_suffix("/.choir/audit-receipts/abcdef123456.json"),
+  )
   ignore(@sys.rm_rf(project_dir))
 }
 
