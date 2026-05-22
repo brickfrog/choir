@@ -98,6 +98,7 @@ fn status_bar_test_tracked_pr(
   ci_rollup : @poller.CiRollupStatus,
   fixes_pushed_at : Int64,
   unresolved_threads : Int,
+  threads_fetched? : Bool = true,
 ) -> @poller.TrackedPR {
   {
     pr_number,
@@ -126,7 +127,7 @@ fn status_bar_test_tracked_pr(
     fixes_pushed_at,
     review_mode: @types.ReviewMode::Iterative,
     unresolved_thread_ids: status_bar_test_thread_refs(unresolved_threads),
-    unresolved_thread_ids_fetched: true,
+    unresolved_thread_ids_fetched: threads_fetched,
     auto_resolve_outdated_pending: false,
   }
 }
@@ -640,7 +641,7 @@ test "status_bar_state resolves zellij pane ids from target shapes" {
 
 ///|
 test "status_bar_state pane_needs_attention truth table" {
-  assert_true(
+  @debug.assert_eq(
     pane_needs_attention(
       @phase.WorkflowState::Dev(
         @phase.DevLifecycle::Failed(
@@ -648,10 +649,11 @@ test "status_bar_state pane_needs_attention truth table" {
         ),
       ),
       0L,
-      0,
+      StatusBarThreadCount::Count(0),
     ),
+    PaneAttention::Needed,
   )
-  assert_true(
+  @debug.assert_eq(
     pane_needs_attention(
       @phase.WorkflowState::Worker(
         @phase.WorkerLifecycle::Failed(
@@ -659,10 +661,11 @@ test "status_bar_state pane_needs_attention truth table" {
         ),
       ),
       0L,
-      0,
+      StatusBarThreadCount::Count(0),
     ),
+    PaneAttention::Needed,
   )
-  assert_true(
+  @debug.assert_eq(
     pane_needs_attention(
       @phase.WorkflowState::Supervisor(
         @phase.SupervisorLifecycle::Failed(
@@ -670,51 +673,77 @@ test "status_bar_state pane_needs_attention truth table" {
         ),
       ),
       0L,
-      0,
+      StatusBarThreadCount::Unknown,
     ),
+    PaneAttention::Needed,
   )
-  assert_true(
+  @debug.assert_eq(
     pane_needs_attention(
       @phase.WorkflowState::Dev(
         @phase.DevLifecycle::ChangesRequested(pr_number=1, next_round=2),
       ),
       1L,
-      1,
+      StatusBarThreadCount::Count(1),
     ),
+    PaneAttention::Needed,
   )
-  assert_false(
+  @debug.assert_eq(
     pane_needs_attention(
       @phase.WorkflowState::Dev(@phase.DevLifecycle::Working),
       1L,
-      1,
+      StatusBarThreadCount::Count(1),
     ),
+    PaneAttention::Clear,
   )
-  assert_false(
+  @debug.assert_eq(
     pane_needs_attention(
       @phase.WorkflowState::Dev(
         @phase.DevLifecycle::Done(reason=@phase.FinalizeReason::Merged),
       ),
       1L,
-      1,
+      StatusBarThreadCount::Count(1),
     ),
+    PaneAttention::Clear,
   )
-  assert_false(
+  @debug.assert_eq(
     pane_needs_attention(
       @phase.WorkflowState::Dev(
         @phase.DevLifecycle::ChangesRequested(pr_number=1, next_round=2),
       ),
       0L,
-      1,
+      StatusBarThreadCount::Count(1),
     ),
+    PaneAttention::Clear,
   )
-  assert_false(
+  @debug.assert_eq(
     pane_needs_attention(
       @phase.WorkflowState::Dev(
         @phase.DevLifecycle::ChangesRequested(pr_number=1, next_round=2),
       ),
       1L,
-      0,
+      StatusBarThreadCount::Count(0),
     ),
+    PaneAttention::Clear,
+  )
+  @debug.assert_eq(
+    pane_needs_attention(
+      @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ChangesRequested(pr_number=1, next_round=2),
+      ),
+      1L,
+      StatusBarThreadCount::Unknown,
+    ),
+    PaneAttention::Unknown,
+  )
+  @debug.assert_eq(
+    pane_needs_attention(
+      @phase.WorkflowState::Dev(
+        @phase.DevLifecycle::ChangesRequested(pr_number=1, next_round=2),
+      ),
+      0L,
+      StatusBarThreadCount::Unknown,
+    ),
+    PaneAttention::Clear,
   )
 }
 
@@ -731,9 +760,9 @@ test "status_bar_state builds snapshot from registry and poller snapshots" {
   assert_eq(root.agent_type, "codex")
   assert_eq(root.lifecycle, "working")
   @debug.assert_eq(root.pr_number, None)
-  assert_eq(root.unresolved_threads, 0)
+  @debug.assert_eq(root.unresolved_threads, StatusBarThreadCount::NoPR)
   assert_eq(root.ci_rollup, "unknown")
-  assert_false(root.attention_needed)
+  @debug.assert_eq(root.attention_needed, PaneAttention::Clear)
   @debug.assert_eq(root.parent_agent_id, None)
   assert_eq(root.last_activity_unix, 100L)
   let leaf = snap.panes[1]
@@ -743,11 +772,117 @@ test "status_bar_state builds snapshot from registry and poller snapshots" {
   assert_eq(leaf.agent_type, "gemini")
   assert_eq(leaf.lifecycle, "changes_requested")
   @debug.assert_eq(leaf.pr_number, Some(17))
-  assert_eq(leaf.unresolved_threads, 1)
+  @debug.assert_eq(leaf.unresolved_threads, StatusBarThreadCount::Count(1))
   assert_eq(leaf.ci_rollup, "success")
-  assert_true(leaf.attention_needed)
+  @debug.assert_eq(leaf.attention_needed, PaneAttention::Needed)
   @debug.assert_eq(leaf.parent_agent_id, Some("root"))
   assert_eq(leaf.last_activity_unix, 200L)
+}
+
+///|
+test "status_bar_state lifecycle PR wins over competing tracked PR" {
+  let entries : Array[StatusBarRegistryEntry] = [
+    {
+      agent: status_bar_test_agent(
+        "root.leaf",
+        @types.Role::Dev,
+        Some("root"),
+        @types.AgentType::Codex,
+        Some(status_bar_test_pane_target("terminal_42")),
+      ),
+      lifecycle: status_bar_test_lifecycle(
+        "root.leaf",
+        @types.Role::Dev,
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ReviewOwned(
+            pr_number=42,
+            state=status_bar_test_review_open(),
+          ),
+        ),
+        200L,
+      ),
+    },
+  ]
+  let tracked : Map[Int, @poller.TrackedPR] = {}
+  tracked.set(
+    42,
+    status_bar_test_tracked_pr(
+      42,
+      "root.leaf",
+      @poller.CiRollupStatus::Success,
+      0L,
+      0,
+      threads_fetched=false,
+    ),
+  )
+  tracked.set(
+    43,
+    status_bar_test_tracked_pr(
+      43,
+      "root.leaf",
+      @poller.CiRollupStatus::Failure,
+      5L,
+      1,
+    ),
+  )
+  let snap = build_status_bar_snapshot(
+    entries,
+    tracked,
+    empty_zellij_list_panes_snapshot(),
+    100L,
+  )
+  assert_eq(snap.panes.length(), 1)
+  let pane = snap.panes[0]
+  @debug.assert_eq(pane.pr_number, Some(42))
+  @debug.assert_eq(pane.unresolved_threads, StatusBarThreadCount::Unknown)
+  assert_eq(pane.ci_rollup, "success")
+  @debug.assert_eq(pane.attention_needed, PaneAttention::Clear)
+}
+
+///|
+test "status_bar_state reports unknown attention when changes-requested threads are unfetched" {
+  let entries : Array[StatusBarRegistryEntry] = [
+    {
+      agent: status_bar_test_agent(
+        "root.leaf",
+        @types.Role::Dev,
+        Some("root"),
+        @types.AgentType::Codex,
+        Some(status_bar_test_pane_target("terminal_42")),
+      ),
+      lifecycle: status_bar_test_lifecycle(
+        "root.leaf",
+        @types.Role::Dev,
+        @phase.WorkflowState::Dev(
+          @phase.DevLifecycle::ChangesRequested(pr_number=56, next_round=2),
+        ),
+        200L,
+      ),
+    },
+  ]
+  let tracked : Map[Int, @poller.TrackedPR] = {}
+  tracked.set(
+    56,
+    status_bar_test_tracked_pr(
+      56,
+      "root.leaf",
+      @poller.CiRollupStatus::Unknown,
+      95L,
+      0,
+      threads_fetched=false,
+    ),
+  )
+  let snap = build_status_bar_snapshot(
+    entries,
+    tracked,
+    empty_zellij_list_panes_snapshot(),
+    100L,
+  )
+  assert_eq(snap.panes.length(), 1)
+  let pane = snap.panes[0]
+  @debug.assert_eq(pane.pr_number, Some(56))
+  @debug.assert_eq(pane.unresolved_threads, StatusBarThreadCount::Unknown)
+  @debug.assert_eq(pane.attention_needed, PaneAttention::Unknown)
 }
 
 ///|
@@ -840,9 +975,9 @@ test "status_bar_state from_json accepts previous string timestamp form" {
     "agent_type": "codex".to_json(),
     "lifecycle": "working".to_json(),
     "pr_number": Json::null(),
-    "unresolved_threads": (0).to_json(),
+    "unresolved_threads": "none".to_json(),
     "ci_rollup": "unknown".to_json(),
-    "attention_needed": false.to_json(),
+    "attention_needed": "clear".to_json(),
     "parent_agent_id": "root".to_json(),
     "last_activity_unix": "456".to_json(),
   }
