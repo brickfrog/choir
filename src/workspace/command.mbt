@@ -412,7 +412,8 @@ pub fn agy_shared_cache_cold_bootstrap_exec(
   if !home_arg.has_prefix(home_prefix) {
     return None
   }
-  if cmd.args[2] != "--dangerously-skip-permissions" ||
+  if cmd.args[1] != "agy" ||
+    cmd.args[2] != "--dangerously-skip-permissions" ||
     cmd.args[3] != "--print" ||
     cmd.args[4] != "Reply READY." {
     return None
