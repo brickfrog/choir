@@ -98,6 +98,37 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
 }
 
 ///|
+test "render_leaf_spawn_prompt normalizes verify with configured moon target" {
+  let project_dir = "/tmp/choir-spawn-prompt-verify-target-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  assert_true(
+    @sys.write_file_sync(
+      project_dir + "/.choir/config.toml",
+      "moon_verify_target = \"wasm-gc\"\n",
+    ),
+  )
+
+  let spec = PromptSpec::from_map({
+    "task": "Verify target-sensitive prompt",
+    "verify": "moon test\nmoon check --target native\necho ok",
+  })
+  let prompt = render_leaf_spawn_prompt_with_defaults(spec, [], project_dir~)
+
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(prompt.contains("- `moon test --target wasm-gc`"))
+  assert_true(prompt.contains("- `moon check --target native`"))
+  assert_true(prompt.contains("- `echo ok`"))
+  assert_false(prompt.contains("- `moon test`"))
+  @debug.assert_eq(spec.task_contract.verify, [
+    "moon test --target wasm-gc", "moon check --target native", "echo ok",
+  ])
+}
+
+///|
 test "render_leaf_spawn_prompt loads profile from project prompt file" {
   let project_dir = "/tmp/choir-spawn-prompt-profile-" +
     @sys.get_pid().to_string() +
