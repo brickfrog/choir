@@ -714,7 +714,10 @@ fn notify_parent_from_mutation_gate_worker(
       try {
         let agent = reg.get(caller_id)
         agent.role == @types.Role::Worker &&
-        agent.parent == Some(mutation_gate_internal_caller_id)
+        @phase.extract_slug(caller_id).has_prefix(
+          mutation_gate_internal_caller_id + "-",
+        ) &&
+        reg.is_alive(caller_id).unwrap_or(false)
       } catch {
         _ => false
       } noraise {

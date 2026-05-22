@@ -262,6 +262,7 @@ pub fn spawn_worker_plan(
   resolved_parent_branch : String,
   session : String,
   project_dir : String,
+  isolation? : @types.IsolationMode = @types.IsolationMode::Inline,
 ) -> SpawnWorkerPlan {
   let spec = @types.SpawnSpec::{
     slug: worker_args.slug,
@@ -269,7 +270,7 @@ pub fn spawn_worker_plan(
     agent_type: worker_args.agent_type,
     task: worker_args.task,
     task_contract: Some(worker_args.task_contract),
-    isolation: @types.IsolationMode::Inline,
+    isolation,
     parent_id: worker_args.caller_id,
     parent_branch: resolved_parent_branch,
     reuse_workspace: false,
@@ -286,6 +287,16 @@ pub fn spawn_worker_plan(
     spec.slug,
     spec.isolation,
   )
+  let workspace = match spec.isolation {
+    @types.IsolationMode::Worktree =>
+      @workspace.worktree_path(
+        project_dir,
+        @workspace.spawn_workspace_dir_slug(spec),
+      )
+    @types.IsolationMode::Inline => project_dir
+    @types.IsolationMode::Standalone =>
+      project_dir + "/.choir/agents/" + spec.slug
+  }
   let registry_agent = @types.Agent::{
     agent_id,
     role: @types.Role::Worker,
@@ -294,7 +305,7 @@ pub fn spawn_worker_plan(
     parent: Some(worker_args.caller_id),
     terminal_target: Some(terminal_target),
     host: @types.Host::Local,
-    workspace: project_dir,
+    workspace,
     branch: agent_id,
     spawn_depth: 0,
   }
@@ -489,6 +500,7 @@ pub async fn interpret_spawn_worker(
   listen_uds? : String = ".choir/server.sock",
   listen_tcp? : String? = None,
   tcp_auth_token? : String? = None,
+  isolation? : @types.IsolationMode = @types.IsolationMode::Inline,
   allow_audit_on_file_pr_caller? : Bool = false,
   allow_mutation_gate_caller? : Bool = false,
   record_task_contract? : (String, @types.TaskContract?) -> Unit = fn(
@@ -516,7 +528,11 @@ pub async fn interpret_spawn_worker(
     project_dir, capture,
   )
   let plan = spawn_worker_plan(
-    normalized_args, resolved_parent_branch, session, project_dir,
+    normalized_args,
+    resolved_parent_branch,
+    session,
+    project_dir,
+    isolation~,
   )
   match
     ensure_no_live_spawn_agent_collision(
@@ -561,7 +577,14 @@ pub async fn interpret_spawn_worker(
         None => plan.ok_response
       }
     }
-    Err(e) => @types.Response::Err(e.message())
+    Err(e) => {
+      if plan.spec.isolation == @types.IsolationMode::Worktree {
+        ignore(
+          runner([@workspace.git_worktree_remove(plan.registry_agent.workspace)]),
+        )
+      }
+      @types.Response::Err(e.message())
+    }
   }
 }
 

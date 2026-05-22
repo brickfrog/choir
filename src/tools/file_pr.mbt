@@ -34,6 +34,37 @@ fn file_pr_audit_incomplete_warning(
 }
 
 ///|
+fn file_pr_incomplete_tag(msg : String) -> String {
+  if msg.contains("[MUTATION GATE INCOMPLETE]") {
+    "[MUTATION GATE INCOMPLETE]"
+  } else {
+    "[AUDIT INCOMPLETE]"
+  }
+}
+
+///|
+fn file_pr_incomplete_warning(msg : String) -> String {
+  if msg.contains("[MUTATION GATE INCOMPLETE]") {
+    msg +
+    "; PR filed; mutation gate status is retryable; re-run `/file_pr` after retrying the worker command path."
+  } else {
+    file_pr_audit_incomplete_warning({ error: msg })
+  }
+}
+
+///|
+fn file_pr_mutation_gate_worktree_path(
+  project_dir : String,
+  worker_id : String,
+) -> String? {
+  let slug = @phase.extract_slug(worker_id)
+  if slug.length() == 0 {
+    return None
+  }
+  Some(@workspace.worktree_path(project_dir, slug))
+}
+
+///|
 pub fn file_pr_post_success_effects(
   plan : FilePrPlanResult,
   poller_available : Bool,
@@ -122,11 +153,17 @@ pub fn file_pr_plan(
       response_fields.set("audit_error", String::to_json(value.error))
       response_fields.set(
         "warning",
-        String::to_json(file_pr_audit_incomplete_warning(value)),
+        String::to_json(file_pr_incomplete_warning(value.error)),
       )
-      notify_message +
-      "\n[AUDIT INCOMPLETE] " +
-      file_pr_audit_incomplete_warning(value)
+      let incomplete_warning = file_pr_incomplete_warning(value.error)
+      let tagged_warning = if incomplete_warning.has_prefix(
+          file_pr_incomplete_tag(value.error),
+        ) {
+        incomplete_warning
+      } else {
+        file_pr_incomplete_tag(value.error) + " " + incomplete_warning
+      }
+      notify_message + "\n" + tagged_warning
     }
     None => notify_message
   }
@@ -188,11 +225,11 @@ pub fn file_pr_auto_notify_plan(
         delivery.to_display_string(),
         now_ms~,
       )
-      Deliver(delivery~, delivery_log_append~)
+      FilePrAutoNotifyPlan::Deliver(delivery~, delivery_log_append~)
     }
     Err(e) => {
       let msg = e.message()
-      ParentResolutionFailed(
+      FilePrAutoNotifyPlan::ParentResolutionFailed(
         delivery_log_append=@poller.delivery_log_line(
           "[auto-notify] resolve_parent_for_notify failed error=" + msg,
           now_ms~,
@@ -1889,6 +1926,7 @@ fn mutation_gate_worker_args(
   verify_commands : Array[String],
   mutation_kill_rate_min : Double,
   now_ms : Int64,
+  parent_agent_id : String,
 ) -> WorkerSpawnArgs {
   let task = build_mutation_gate_task(
     project_dir, branch, head_sha, targets, verify_commands, mutation_kill_rate_min,
@@ -1915,7 +1953,7 @@ fn mutation_gate_worker_args(
       project_dir~,
     ),
     task_contract: { ..@types.TaskContract::empty(), goal: task },
-    caller_id: mutation_gate_internal_caller_id,
+    caller_id: parent_agent_id,
     slug: mutation_gate_worker_slug(head_sha, now_ms),
     agent_type: @types.AgentType::Codex,
   }
@@ -2067,6 +2105,60 @@ fn file_pr_registered_dev_gate_applies(
 }
 
 ///|
+priv enum MutationGateWaitOutcome {
+  Timeout
+  NoReport
+  WorkerDied
+  Reported(MutationGateWorkerReport)
+}
+
+///|
+async fn wait_for_mutation_gate_report_with_liveness(
+  worker_id : String,
+  wait_for_mutation_gate_report : async (String) -> MutationGateWorkerReport?,
+  mutation_budget_ms : Int,
+  now_ms_fn : () -> Int64,
+  mutation_worker_alive : (String) -> Bool,
+  sleep_fn : async (Int) -> Unit,
+) -> MutationGateWaitOutcome {
+  async fn drain_report() -> MutationGateWorkerReport? {
+    match
+      @async.with_timeout_opt(1, () => wait_for_mutation_gate_report(worker_id)) {
+      Some(Some(report)) => Some(report)
+      _ => None
+    }
+  }
+  let started_ms = now_ms_fn()
+  let budget_ms = mutation_budget_ms.to_int64()
+  while true {
+    if !mutation_worker_alive(worker_id) {
+      match drain_report() {
+        Some(report) => return MutationGateWaitOutcome::Reported(report)
+        None => return MutationGateWaitOutcome::WorkerDied
+      }
+    }
+    let elapsed_ms = now_ms_fn() - started_ms
+    let remaining_ms = budget_ms - elapsed_ms
+    if remaining_ms <= 0L {
+      match drain_report() {
+        Some(report) => return MutationGateWaitOutcome::Reported(report)
+        None => return MutationGateWaitOutcome::Timeout
+      }
+    }
+    let poll_ms = if remaining_ms > 250L { 250L } else { remaining_ms }
+    let poll_result = @async.with_timeout_opt(poll_ms.to_int(), () => {
+      wait_for_mutation_gate_report(worker_id)
+    })
+    match poll_result {
+      None => sleep_fn(poll_ms.to_int())
+      Some(None) => return MutationGateWaitOutcome::NoReport
+      Some(Some(value)) => return MutationGateWaitOutcome::Reported(value)
+    }
+  }
+  MutationGateWaitOutcome::Timeout
+}
+
+///|
 pub async fn file_pr_run_mutation_gate(
   project_dir : String,
   file_pr_dir : String,
@@ -2083,9 +2175,11 @@ pub async fn file_pr_run_mutation_gate(
     @types.ChoirError,
   ],
   wait_for_mutation_report : async (String) -> MutationGateWorkerReport?,
-  cleanup_mutation_report : (String) -> Unit,
+  cleanup_mutation_report : async (String) -> Unit,
   mutation_budget_ms : Int,
   now_ms_fn : () -> Int64,
+  mutation_worker_alive? : (String) -> Bool = fn(_) { true },
+  sleep_fn? : async (Int) -> Unit = @async.sleep,
 ) -> Result[Unit, @types.ChoirError] {
   if !file_pr_registered_dev_gate_applies(
       caller_role, tracked_agent_id, registry,
@@ -2131,48 +2225,66 @@ pub async fn file_pr_run_mutation_gate(
     verify_commands,
     mutation_kill_rate_min,
     now_ms_fn(),
+    tracked_agent_id,
   )
   let worker_id = match spawn_mutation_worker(worker_args) {
     Ok(id) => id
-    Err(e) => return Err(e)
-  }
-  let waited = @async.with_timeout_opt(mutation_budget_ms, () => {
-    wait_for_mutation_report(worker_id)
-  })
-  let report = match waited {
-    None => {
-      cleanup_mutation_report(worker_id)
-      return Err(@types.ChoirError::timeout("mutation gate budget exceeded"))
-    }
-    Some(None) => {
-      cleanup_mutation_report(worker_id)
+    Err(e) =>
       return Err(
-        @types.ChoirError::validation_error(
-          "file_pr: mutation gate worker did not report",
-        ),
-      )
-    }
-    Some(Some(value)) => value
-  }
-  if report.status == @types.Status::Failure {
-    return Err(
-      @types.ChoirError::validation_error(
-        "file_pr: mutation gate worker reported failure: " +
-        mutation_gate_report_summary(report.message),
-      ),
-    )
-  }
-  let result = match mutation_gate_report_from_message(report.message) {
-    Some(value) => value
-    None =>
-      return Err(
-        @types.ChoirError::validation_error(
-          "file_pr: mutation gate worker did not return " +
-          mutation_gate_report_json_marker,
+        @types.ChoirError::audit_incomplete(
+          "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker spawn failed: " +
+          e.validation_detail_or_message(),
         ),
       )
   }
-  match mutation_gate_result_to_error(result, mutation_kill_rate_min) {
+  let wait_result = wait_for_mutation_gate_report_with_liveness(
+    worker_id, wait_for_mutation_report, mutation_budget_ms, now_ms_fn, mutation_worker_alive,
+    sleep_fn,
+  )
+  let result = match wait_result {
+    MutationGateWaitOutcome::Timeout =>
+      Some(
+        @types.ChoirError::timeout(
+          "[MUTATION GATE INCOMPLETE] file_pr: mutation gate budget exceeded",
+        ),
+      )
+    MutationGateWaitOutcome::NoReport =>
+      Some(
+        @types.ChoirError::audit_incomplete(
+          "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker did not report",
+        ),
+      )
+    MutationGateWaitOutcome::WorkerDied =>
+      Some(
+        @types.ChoirError::audit_incomplete(
+          "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker exited before report",
+        ),
+      )
+    MutationGateWaitOutcome::Reported(report) =>
+      if report.status == @types.Status::Failure {
+        Some(
+          @types.ChoirError::audit_incomplete(
+            "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker reported failure: " +
+            mutation_gate_report_summary(report.message),
+          ),
+        )
+      } else {
+        let result = match mutation_gate_report_from_message(report.message) {
+          Some(value) =>
+            mutation_gate_result_to_error(value, mutation_kill_rate_min)
+          None =>
+            Some(
+              @types.ChoirError::audit_incomplete(
+                "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker did not return " +
+                mutation_gate_report_json_marker,
+              ),
+            )
+        }
+        result
+      }
+  }
+  cleanup_mutation_report(worker_id)
+  match result {
     Some(e) => Err(e)
     None => Ok(())
   }
@@ -3287,7 +3399,11 @@ pub async fn interpret_file_pr(
               project_dir, capture,
             )
             let plan = spawn_worker_plan(
-              worker_args, resolved_parent_branch, session, project_dir,
+              worker_args,
+              resolved_parent_branch,
+              session,
+              project_dir,
+              isolation=@types.IsolationMode::Worktree,
             )
             prepare_mutation_gate_report(plan.agent_id)
             let resp = interpret_spawn_worker(
@@ -3302,6 +3418,7 @@ pub async fn interpret_file_pr(
               listen_uds~,
               listen_tcp~,
               tcp_auth_token~,
+              isolation=@types.IsolationMode::Worktree,
               allow_mutation_gate_caller=true,
               record_task_contract~,
             )
@@ -3320,12 +3437,34 @@ pub async fn interpret_file_pr(
             }
           },
           wait_for_mutation_gate_report,
-          cleanup_mutation_gate_report,
+          async fn(worker_id) {
+            ignore(cleanup_mutation_gate_report(worker_id))
+            let path = match
+              file_pr_mutation_gate_worktree_path(project_dir, worker_id) {
+              Some(candidate) => candidate
+              None => return
+            }
+            ignore(runner([@workspace.git_worktree_remove(path)]))
+          },
           mutation_gate_budget_ms,
           mutation_gate_now_ms_fn,
+          mutation_worker_alive=fn(worker_id) {
+            match registry {
+              Some(reg) => reg.is_alive(worker_id).unwrap_or(false)
+              None => true
+            }
+          },
         ) {
         Ok(_) => ()
-        Err(e) => return @types.Response::Err(e.validation_detail_or_message())
+        Err(e) =>
+          if file_pr_registered_dev_gate_applies(
+              caller_role, tracked_agent_id, registry,
+            ) &&
+            (e.is_timeout() || e.is_audit_incomplete()) {
+            audit_incomplete = Some({ error: e.validation_detail_or_message() })
+          } else {
+            return @types.Response::Err(e.validation_detail_or_message())
+          }
       }
     }
     _ => ()
