@@ -2137,6 +2137,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
   audit_worker_alive : (String) -> Bool,
   list_audit_workers? : () -> Array[@phase.ChildLifecycle] = fn() { [] },
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
+  allow_audit_at_cycle_cap? : Bool = false,
   record_audit_cycle_for_agent? : (String) -> Int = fn(_) { 0 },
   audit_cycle_count_for_agent? : (String) -> Int = fn(_) { 0 },
   clear_audit_cycle_for_agent? : (String) -> Unit = fn(_) { () },
@@ -2188,11 +2189,10 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     _ => ()
   }
   let mut cycles = 0
+  let audit_workers = list_audit_workers()
+  let audit_worker_prefix = audit_on_file_pr_slug_prefix(head_sha)
   let worker_id = match
-    find_in_flight_audit_worker(
-      list_audit_workers(),
-      audit_on_file_pr_slug_prefix(head_sha),
-    ) {
+    find_in_flight_audit_worker(audit_workers, audit_worker_prefix) {
     Some(existing) => {
       let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
       cycles = if recorded_cycles <= 0 {
@@ -2210,14 +2210,20 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     }
     None => {
       let recorded_cycles = audit_cycle_count_for_agent(tracked_agent_id)
-      if audit_max_rounds > 0 && recorded_cycles >= audit_max_rounds {
+      let at_cycle_cap = audit_max_rounds > 0 &&
+        recorded_cycles >= audit_max_rounds
+      if at_cycle_cap && !allow_audit_at_cycle_cap {
         return Err(
           @types.ChoirError::audit_loop_exhausted(
             recorded_cycles, 0, receipt_path,
           ),
         )
       }
-      cycles = record_audit_cycle_for_agent(tracked_agent_id)
+      cycles = if at_cycle_cap {
+        recorded_cycles
+      } else {
+        record_audit_cycle_for_agent(tracked_agent_id)
+      }
       let pr_number_for_notification : Int? = if pr_number > 0 {
         Some(pr_number)
       } else {
@@ -2457,6 +2463,7 @@ async fn file_pr_require_audit_receipt(
           audit_worker_alive,
           list_audit_workers~,
           audit_max_rounds~,
+          allow_audit_at_cycle_cap=true,
           record_audit_cycle_for_agent~,
           audit_cycle_count_for_agent~,
           clear_audit_cycle_for_agent~,
