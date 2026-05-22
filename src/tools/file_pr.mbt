@@ -57,9 +57,9 @@ fn file_pr_mutation_gate_worktree_path(
   project_dir : String,
   worker_id : String,
 ) -> String? {
-  let slug = match worker_id.rev_find(".") {
-    Some(i) if i + 1 < worker_id.length() => worker_id[i + 1:].to_owned()
-    _ => return None
+  let slug = @phase.extract_slug(worker_id)
+  if slug.length() == 0 {
+    return None
   }
   Some(@workspace.worktree_path(project_dir, slug))
 }
@@ -155,11 +155,15 @@ pub fn file_pr_plan(
         "warning",
         String::to_json(file_pr_incomplete_warning(value.error)),
       )
-      notify_message +
-      "\n" +
-      file_pr_incomplete_tag(value.error) +
-      " " +
-      file_pr_incomplete_warning(value.error)
+      let incomplete_warning = file_pr_incomplete_warning(value.error)
+      let tagged_warning = if incomplete_warning.has_prefix(
+          file_pr_incomplete_tag(value.error),
+        ) {
+        incomplete_warning
+      } else {
+        file_pr_incomplete_tag(value.error) + " " + incomplete_warning
+      }
+      notify_message + "\n" + tagged_warning
     }
     None => notify_message
   }
@@ -2108,12 +2112,6 @@ priv enum MutationGateWaitOutcome {
 }
 
 ///|
-priv struct MutationGateWaitResult {
-  outcome : MutationGateWaitOutcome
-  _elapsed_s : Int64
-}
-
-///|
 async fn wait_for_mutation_gate_report_with_liveness(
   worker_id : String,
   wait_for_mutation_gate_report : async (String) -> MutationGateWorkerReport?,
@@ -2121,48 +2119,42 @@ async fn wait_for_mutation_gate_report_with_liveness(
   now_ms_fn : () -> Int64,
   mutation_worker_alive : (String) -> Bool,
   sleep_fn : async (Int) -> Unit,
-) -> MutationGateWaitResult {
+) -> MutationGateWaitOutcome {
+  async fn drain_report() -> MutationGateWorkerReport? {
+    match
+      @async.with_timeout_opt(1, () => wait_for_mutation_gate_report(worker_id)) {
+      Some(Some(report)) => Some(report)
+      _ => None
+    }
+  }
   let started_ms = now_ms_fn()
   let budget_ms = mutation_budget_ms.to_int64()
   while true {
     if !mutation_worker_alive(worker_id) {
-      let elapsed_s = (now_ms_fn() - started_ms) / 1000L
-      return {
-        outcome: MutationGateWaitOutcome::WorkerDied,
-        _elapsed_s: elapsed_s,
+      match drain_report() {
+        Some(report) => return MutationGateWaitOutcome::Reported(report)
+        None => return MutationGateWaitOutcome::WorkerDied
       }
     }
     let elapsed_ms = now_ms_fn() - started_ms
     let remaining_ms = budget_ms - elapsed_ms
     if remaining_ms <= 0L {
-      let elapsed_s = elapsed_ms / 1000L
-      return {
-        outcome: MutationGateWaitOutcome::Timeout,
-        _elapsed_s: elapsed_s,
+      match drain_report() {
+        Some(report) => return MutationGateWaitOutcome::Reported(report)
+        None => return MutationGateWaitOutcome::Timeout
       }
     }
     let poll_ms = if remaining_ms > 250L { 250L } else { remaining_ms }
     let poll_result = @async.with_timeout_opt(poll_ms.to_int(), () => {
       wait_for_mutation_gate_report(worker_id)
     })
-    let elapsed_s = (now_ms_fn() - started_ms) / 1000L
     match poll_result {
       None => sleep_fn(poll_ms.to_int())
-      Some(None) =>
-        return {
-          outcome: MutationGateWaitOutcome::NoReport,
-          _elapsed_s: elapsed_s,
-        }
-      Some(Some(value)) =>
-        return {
-          outcome: MutationGateWaitOutcome::Reported(value),
-          _elapsed_s: elapsed_s,
-        }
+      Some(None) => return MutationGateWaitOutcome::NoReport
+      Some(Some(value)) => return MutationGateWaitOutcome::Reported(value)
     }
   }
-  let elapsed_ms = now_ms_fn() - started_ms
-  let elapsed_s = elapsed_ms / 1000L
-  { outcome: MutationGateWaitOutcome::Timeout, _elapsed_s: elapsed_s }
+  MutationGateWaitOutcome::Timeout
 }
 
 ///|
@@ -2236,13 +2228,19 @@ pub async fn file_pr_run_mutation_gate(
   )
   let worker_id = match spawn_mutation_worker(worker_args) {
     Ok(id) => id
-    Err(e) => return Err(e)
+    Err(e) =>
+      return Err(
+        @types.ChoirError::audit_incomplete(
+          "[MUTATION GATE INCOMPLETE] file_pr: mutation gate worker spawn failed: " +
+          e.validation_detail_or_message(),
+        ),
+      )
   }
   let wait_result = wait_for_mutation_gate_report_with_liveness(
     worker_id, wait_for_mutation_report, mutation_budget_ms, now_ms_fn, mutation_worker_alive,
     sleep_fn,
   )
-  let result = match wait_result.outcome {
+  let result = match wait_result {
     MutationGateWaitOutcome::Timeout =>
       Some(
         @types.ChoirError::timeout(
@@ -3418,6 +3416,7 @@ pub async fn interpret_file_pr(
               listen_uds~,
               listen_tcp~,
               tcp_auth_token~,
+              isolation=@types.IsolationMode::Worktree,
               allow_mutation_gate_caller=true,
               record_task_contract~,
             )
@@ -3456,7 +3455,9 @@ pub async fn interpret_file_pr(
         ) {
         Ok(_) => ()
         Err(e) =>
-          if caller_role == @types.Role::Dev &&
+          if file_pr_registered_dev_gate_applies(
+              caller_role, tracked_agent_id, registry,
+            ) &&
             (e.is_timeout() || e.is_audit_incomplete()) {
             audit_incomplete = Some({ error: e.validation_detail_or_message() })
           } else {
