@@ -1014,7 +1014,7 @@ async test "interpret_fork_wave_spawn_effect_phase seeds agy shared cache once b
 }
 
 ///|
-async test "interpret_fork_wave_spawn_effect_phase fails before leaves when agy seed revalidate fails" {
+async test "interpret_fork_wave_spawn_effect_phase warns and spawns when agy seed revalidate fails" {
   let args = {
     ..fork_wave_args_base(),
     parent_branch: "feature/parent",
@@ -1050,7 +1050,24 @@ async test "interpret_fork_wave_spawn_effect_phase fails before leaves when agy 
         )
         [1]
       }
-      _ => fail("leaf spawn commands must not run when agy seed fails")
+      3 => {
+        assert_true(cmds.length() > 1)
+        let mut saw_worktree_add = false
+        for cmd in cmds {
+          if cmd.program == "git" &&
+            cmd.args.contains("worktree") &&
+            cmd.args.contains("add") {
+            saw_worktree_add = true
+          }
+        }
+        assert_true(saw_worktree_add)
+        let statuses = []
+        for _ in cmds {
+          statuses.push(0)
+        }
+        statuses
+      }
+      _ => fail("unexpected extra runner invocation")
     }
   }
   let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
@@ -1075,15 +1092,22 @@ async test "interpret_fork_wave_spawn_effect_phase fails before leaves when agy 
     runner,
   )
 
-  assert_eq(runner_seq[0], 3)
-  assert_eq(spawn_plan.spawned_count, 0)
+  assert_eq(runner_seq[0], 4)
+  assert_eq(spawn_plan.spawned_count, 2)
   match resp {
-    @types.Response::Err(msg) => {
-      assert_true(msg.contains("agy shared cache seed re-validate failed"))
-      assert_true(msg.contains("exit 1"))
-      assert_false(msg.contains("transport error"))
-    }
-    @types.Response::Ok(_) => fail("expected agy seed failure")
+    @types.Response::Ok(fields) =>
+      match fields.get("warning") {
+        Some(warning) => {
+          assert_true(
+            warning.contains("agy shared cache seed re-validate failed"),
+          )
+          assert_true(warning.contains("exit 1"))
+          assert_false(warning.contains("transport error"))
+        }
+        None => fail("expected seed warning")
+      }
+    @types.Response::Err(msg) =>
+      fail("seed failure must not abort fork_wave: " + msg)
   }
 }
 

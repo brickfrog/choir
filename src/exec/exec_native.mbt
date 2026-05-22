@@ -170,6 +170,15 @@ fn write_agy_shared_cache_seed_warning(
 }
 
 ///|
+fn handled_native_failure_status(status : Int) -> Int {
+  if status < 0 {
+    1
+  } else {
+    status
+  }
+}
+
+///|
 async fn run_agy_shared_cache_seed_if_needed_command(
   cmd : @workspace.Command,
 ) -> Int {
@@ -203,12 +212,13 @@ async fn run_agy_shared_cache_seed_if_needed_command(
   let bootstrap = @workspace.agy_shared_cache_cold_bootstrap(project_dir)
   let (bootstrap_status, bootstrap_output) = capture_command_merged(bootstrap)
   if bootstrap_status != 0 {
+    let handled_status = handled_native_failure_status(bootstrap_status)
     write_agy_shared_cache_seed_warning(
       ColdBootstrap,
-      bootstrap_status,
+      handled_status,
       bootstrap_output,
     )
-    return bootstrap_status
+    return handled_status
   }
   let validate_status = @workspace.run_native_agy_shared_cache_validate_command(
     @workspace.agy_shared_cache_validate(project_dir),

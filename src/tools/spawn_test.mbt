@@ -399,7 +399,7 @@ async test "interpret_spawn_worker gemini seeds agy shared cache before inline l
 }
 
 ///|
-async test "interpret_spawn_worker gemini reports revalidate seed failure precisely" {
+async test "interpret_spawn_worker gemini warns and proceeds after revalidate seed failure" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
     task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
@@ -448,7 +448,16 @@ async test "interpret_spawn_worker gemini reports revalidate seed failure precis
       )
       statuses.push(1)
     } else {
-      fail("main spawn commands must not run after revalidate failure")
+      assert_true(cmds.length() > 0)
+      assert_true(
+        cmds.any(fn(cmd) {
+          cmd.program == @workspace.native_agy_cache_links_program
+        }),
+      )
+      assert_true(cmds.any(fn(cmd) { cmd.program == "zellij" }))
+      for _ in cmds {
+        statuses.push(0)
+      }
     }
     statuses
   }
@@ -460,24 +469,38 @@ async test "interpret_spawn_worker gemini reports revalidate seed failure precis
     capture,
     None,
   )
-  assert_eq(runner_calls[0], 3)
+  assert_eq(runner_calls[0], 4)
   match got {
-    @types.Response::Err(msg) => {
-      assert_true(msg.contains("agy shared cache seed re-validate failed"))
-      assert_true(
-        msg.contains("Gemini/agy spawn requires the shared runtime cache"),
-      )
-      assert_true(msg.contains("exit 1"))
-      assert_true(msg.contains("shared cache is still incomplete"))
-      assert_false(msg.contains("transport error"))
-      assert_false(msg.contains("command failed with status 1"))
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      match map.get("warning") {
+        Some(warning_json) => {
+          let warning = warning_json.stringify()
+          assert_true(
+            warning.contains("agy shared cache seed re-validate failed"),
+          )
+          assert_true(
+            warning.contains(
+              "Gemini/agy spawn will continue without the warmed shared cache",
+            ),
+          )
+          assert_true(warning.contains("exit 1"))
+          assert_true(warning.contains("shared cache is still incomplete"))
+          assert_false(warning.contains("transport error"))
+          assert_false(warning.contains("command failed with status 1"))
+          assert_false(warning.contains("requires the shared runtime cache"))
+        }
+        None => fail("expected agy seed warning")
+      }
     }
-    @types.Response::Ok(_) => fail("expected precise seed prerequisite failure")
+    @types.Response::Err(msg) =>
+      fail("seed failure must not abort spawn: " + msg)
   }
 }
 
 ///|
-async test "interpret_spawn_worker gemini reports bootstrap stderr without rerunning bootstrap" {
+async test "interpret_spawn_worker gemini warns with bootstrap stderr without rerunning bootstrap" {
   let worker_args : WorkerSpawnArgs = {
     task: "unit",
     task_contract: { ..@types.TaskContract::empty(), goal: "unit" },
@@ -520,10 +543,12 @@ async test "interpret_spawn_worker gemini reports bootstrap stderr without rerun
       )
       [0]
     } else {
-      fail(
-        "runner must not execute revalidate or main spawn after bootstrap failure",
-      )
-      []
+      assert_true(cmds.any(fn(cmd) { cmd.program == "zellij" }))
+      let statuses = []
+      for _ in cmds {
+        statuses.push(0)
+      }
+      statuses
     }
   }
   let got = interpret_spawn_worker(
@@ -534,16 +559,29 @@ async test "interpret_spawn_worker gemini reports bootstrap stderr without rerun
     capture,
     None,
   )
-  assert_eq(runner_calls[0], 2)
+  assert_eq(runner_calls[0], 3)
   assert_eq(bootstrap_captures[0], 1)
   match got {
-    @types.Response::Err(msg) => {
-      assert_true(msg.contains("agy shared cache seed cold-bootstrap failed"))
-      assert_true(msg.contains("exit 7"))
-      assert_true(msg.contains("bootstrap stderr"))
-      assert_false(msg.contains("HOME=/tmp/p/.choir/agy-shared-cache/home"))
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("spawned")))
+      match map.get("warning") {
+        Some(warning_json) => {
+          let warning = warning_json.stringify()
+          assert_true(
+            warning.contains("agy shared cache seed cold-bootstrap failed"),
+          )
+          assert_true(warning.contains("exit 7"))
+          assert_true(warning.contains("bootstrap stderr"))
+          assert_false(
+            warning.contains("HOME=/tmp/p/.choir/agy-shared-cache/home"),
+          )
+        }
+        None => fail("expected bootstrap warning")
+      }
     }
-    @types.Response::Ok(_) => fail("expected bootstrap failure")
+    @types.Response::Err(msg) =>
+      fail("bootstrap failure must not abort spawn: " + msg)
   }
 }
 

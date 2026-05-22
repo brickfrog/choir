@@ -59,8 +59,8 @@ pub let native_agy_shared_cache_seed_if_needed_program : String = "__choir_nativ
 
 ///|
 /// Args: `[project_dir, worktree_path]` — symlink the populated shared agy
-/// runtime cache into the leaf HOME. Missing or incomplete shared cache fails
-/// because agy leaves must not each download their own heavy runtime cache.
+/// runtime cache into the leaf HOME. Missing or incomplete shared cache warns
+/// and continues because cache sharing is a startup optimization.
 pub let native_agy_cache_links_program : String = "__choir_native_agy_cache_links__"
 
 ///|
@@ -488,6 +488,15 @@ fn warn_agy_shared_cache_seed_failure(
 }
 
 ///|
+fn handled_native_failure_status(status : Int) -> Int {
+  if status < 0 {
+    1
+  } else {
+    status
+  }
+}
+
+///|
 fn run_native_agy_shared_cache_prepare_paths_with_io(
   project_dir : String,
   create_dir_all? : (String) -> Bool = @sys.create_dir_all,
@@ -613,13 +622,14 @@ pub fn run_native_agy_shared_cache_seed_if_needed_command_with_runner(
     agy_shared_cache_cold_bootstrap(project_dir),
   )
   if bootstrap_status != 0 {
+    let handled_status = handled_native_failure_status(bootstrap_status)
     warn_agy_shared_cache_seed_failure(
       ColdBootstrap,
-      bootstrap_status,
+      handled_status,
       bootstrap_stderr,
       write_stderr,
     )
-    return bootstrap_status
+    return handled_status
   }
   let validate_status = run_native_agy_shared_cache_validate_paths_with_io(
     project_dir,
@@ -683,9 +693,9 @@ fn run_native_agy_cache_links_paths_with_io(
       shared_root, path_entry_exists, list_dir, file_size,
     ) {
     write_stderr(
-      "choir: error: agy shared cache links failed because shared cache is not populated\n",
+      "choir: warning: agy shared cache links skipped because shared cache is not populated\n",
     )
-    return 1
+    return 0
   }
   let home = agy_home_path(worktree_path)
   if !symlink_shared_cache_dir_with_io(
@@ -696,8 +706,8 @@ fn run_native_agy_cache_links_paths_with_io(
       rm_rf,
       symlink_force,
     ) {
-    write_stderr("choir: error: agy shared cache playwright link failed\n")
-    return 1
+    write_stderr("choir: warning: agy shared cache playwright link failed\n")
+    return 0
   }
   if !symlink_shared_cache_dir_with_io(
       shared_root + "/antigravity-cli-bin",
@@ -707,8 +717,8 @@ fn run_native_agy_cache_links_paths_with_io(
       rm_rf,
       symlink_force,
     ) {
-    write_stderr("choir: error: agy shared cache binary link failed\n")
-    return 1
+    write_stderr("choir: warning: agy shared cache binary link failed\n")
+    return 0
   }
   0
 }

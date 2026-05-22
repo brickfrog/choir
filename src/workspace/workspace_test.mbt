@@ -1224,7 +1224,7 @@ test "run_native_agy_cache_links_command links existing shared cache without mar
 }
 
 ///|
-test "run_native_agy_cache_links_command fails when shared cache is absent" {
+test "run_native_agy_cache_links_command warns when shared cache is absent" {
   let dir = "/tmp/choir-agy-cache-absent-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -1235,10 +1235,15 @@ test "run_native_agy_cache_links_command fails when shared cache is absent" {
   assert_true(@sys.create_dir_all(worktree))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
+  let warnings : Array[String] = []
   assert_eq(
-    @workspace.run_native_agy_cache_links_command(cmd, write_stderr=fn(_) { () }),
-    1,
+    @workspace.run_native_agy_cache_links_command(cmd, write_stderr=fn(msg) {
+      warnings.push(msg)
+    }),
+    0,
   )
+  assert_true(warnings.join("\n").contains("warning"))
+  assert_true(warnings.join("\n").contains("not populated"))
 
   let home = worktree + "/.choir/agy-home"
   assert_false(@sys.path_entry_exists(home + "/.cache/ms-playwright-go"))
@@ -1247,7 +1252,7 @@ test "run_native_agy_cache_links_command fails when shared cache is absent" {
 }
 
 ///|
-test "run_native_agy_cache_links_command rejects invalid shared cache" {
+test "run_native_agy_cache_links_command warns on invalid shared cache" {
   let dir = "/tmp/choir-agy-cache-invalid-shared-" +
     @sys.get_pid().to_string() +
     "-" +
@@ -1261,10 +1266,15 @@ test "run_native_agy_cache_links_command rejects invalid shared cache" {
   assert_true(@sys.create_dir_all(shared_root + "/antigravity-cli-bin"))
 
   let cmd = @workspace.agy_cache_links(project, worktree)
+  let warnings : Array[String] = []
   assert_eq(
-    @workspace.run_native_agy_cache_links_command(cmd, write_stderr=fn(_) { () }),
-    1,
+    @workspace.run_native_agy_cache_links_command(cmd, write_stderr=fn(msg) {
+      warnings.push(msg)
+    }),
+    0,
   )
+  assert_true(warnings.join("\n").contains("warning"))
+  assert_true(warnings.join("\n").contains("not populated"))
 
   let home = worktree + "/.choir/agy-home"
   assert_false(@sys.path_entry_exists(home + "/.cache/ms-playwright-go"))
@@ -1390,6 +1400,31 @@ test "run_native_agy_shared_cache_seed_if_needed warns and returns bootstrap fai
   assert_true(rendered.contains("cold-bootstrap"))
   assert_true(rendered.contains("exit 42"))
   assert_true(rendered.contains("bootstrap stderr"))
+  ignore(@sys.rm_rf(dir))
+}
+
+///|
+test "run_native_agy_shared_cache_seed_if_needed normalizes negative bootstrap failure" {
+  let dir = "/tmp/choir-agy-cache-seed-bootstrap-negative-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  let project = dir + "/project"
+  ignore(@sys.rm_rf(dir))
+  assert_true(@sys.create_dir_all(project))
+  let warnings : Array[String] = []
+
+  let status = @workspace.run_native_agy_shared_cache_seed_if_needed_command_with_runner(
+    @workspace.agy_shared_cache_seed_if_needed(project),
+    fn(_) { (-1, "spawn failed") },
+    write_stderr=fn(msg) { warnings.push(msg) },
+  )
+
+  assert_eq(status, 1)
+  let rendered = warnings.join("\n")
+  assert_true(rendered.contains("cold-bootstrap"))
+  assert_true(rendered.contains("exit 1"))
+  assert_true(rendered.contains("spawn failed"))
   ignore(@sys.rm_rf(dir))
 }
 

@@ -415,6 +415,7 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
     listen_tcp~,
     tcp_auth_token~,
   )
+  let mut seed_warning : String? = None
   if fork_wave_args.agent_type == @types.AgentType::Gemini &&
     spawn_plan.spawned_count > 0 {
     match ensure_agy_binary_available(capture) {
@@ -426,21 +427,12 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
           empty_fork_wave_spawn_plan(),
         )
     }
-    match
-      run_spawn_agy_seed_if_needed(
-        fork_wave_args.agent_type,
-        project_dir,
-        runner,
-        capture,
-      ) {
-      Ok(_) => ()
-      Err(msg) =>
-        return (
-          @types.Response::Err(msg),
-          fork_wave_args,
-          empty_fork_wave_spawn_plan(),
-        )
-    }
+    seed_warning = run_spawn_agy_seed_if_needed(
+      fork_wave_args.agent_type,
+      project_dir,
+      runner,
+      capture,
+    )
   }
   let plan = fork_wave_plan(
     project_dir,
@@ -454,14 +446,15 @@ pub async fn interpret_fork_wave_spawn_effect_phase(
   )
   let interpret_result = interpret(plan, git_capture~, runner~)
   let resp = fork_wave_response_from_interpret_result(interpret_result, capture)
-  (
-    fork_wave_response_with_beads_policy_warning(
-      fork_wave_response_with_spawn_metadata(resp, spawn_plan.spawned_specs),
-      fork_wave_args,
-    ),
+  let resp = fork_wave_response_with_beads_policy_warning(
+    fork_wave_response_with_spawn_metadata(resp, spawn_plan.spawned_specs),
     fork_wave_args,
-    spawn_plan,
   )
+  let resp = match seed_warning {
+    Some(warning) => resp.with_warning(warning)
+    None => resp
+  }
+  (resp, fork_wave_args, spawn_plan)
 }
 
 ///|
