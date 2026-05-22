@@ -292,6 +292,48 @@ pub fn command_to_shell_string(cmd : @workspace.Command) -> String {
 }
 
 ///|
+pub let hermetic_no_exec_env : String = "CHOIR_TEST_NO_EXEC"
+
+///|
+pub let real_exec_integration_env : String = "CHOIR_TEST_REAL_EXEC"
+
+///|
+pub fn hermetic_exec_violation_message(command : String) -> String {
+  "hermetic-test violation: real exec " +
+  command +
+  " -- inject a mock capture/runner"
+}
+
+///|
+pub fn hermetic_test_no_exec_enabled() -> Bool {
+  @env.get_env_var(hermetic_no_exec_env) is Some(_)
+}
+
+///|
+pub fn real_exec_integration_enabled() -> Bool {
+  match @env.get_env_var(real_exec_integration_env) {
+    Some(value) => value == "1"
+    None => false
+  }
+}
+
+///|
+fn abort_if_hermetic_test_exec(command : String) -> Unit {
+  if hermetic_test_no_exec_enabled() {
+    abort(hermetic_exec_violation_message(command))
+  }
+}
+
+///|
+fn command_for_program(
+  program : String,
+  args : Array[String],
+  workdir : String?,
+) -> String {
+  command_to_shell_string(@workspace.Command::{ program, args, workdir })
+}
+
+///|
 /// Scan `path_var` as a POSIX `PATH` (colon-separated dirs) and return the first
 /// `dir/name` that exists as a readable file path (`path_exists`).
 pub fn resolve_executable_in_path_from_path_var(

@@ -86,7 +86,8 @@ test "parse_config - minimal" {
   assert_eq(cfg.mutation_kill_rate_min, 0.8)
   assert_eq(cfg.poller_heartbeat_tick_sec, 60)
   @debug.assert_eq(cfg.prenotify_checks, [
-    "moon check --target native", "moon test --target native", "moon run src/bin/choir_lint --target native",
+    "moon check --target native", "CHOIR_TEST_NO_EXEC=1 moon test --target native",
+    "CHOIR_TEST_REAL_EXEC=1 moon test --target native src/exec", "moon run src/bin/choir_lint --target native",
   ])
   assert_eq(cfg.agy_migration_incomplete, false)
   assert_eq(cfg.auto_pull_after_integration, true)

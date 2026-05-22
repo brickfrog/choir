@@ -419,6 +419,10 @@ fn serve_test_state_with_root(label : String) -> (@server.ServerState, String) {
       state: @types.AgentState::Active,
     }),
   )
+  state.list_panes_cache.set("uds-jsonrpc", {
+    snapshot: @tools.empty_zellij_list_panes_snapshot(),
+    expires_at_unix_ms: 9_999_999_999_999L,
+  })
   (state, project_dir)
 }
 

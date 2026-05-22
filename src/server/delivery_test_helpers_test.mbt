@@ -4,12 +4,66 @@ async fn server_delivery_test_sleep(_ms : Int) -> Unit {
 }
 
 ///|
+fn server_delivery_test_command_name(cmd : @workspace.Command) -> String {
+  let mut text = cmd.program
+  for arg in cmd.args {
+    text = text + " " + arg
+  }
+  text
+}
+
+///|
+async fn server_delivery_test_runner(
+  cmds : Array[@workspace.Command],
+) -> Array[Int] {
+  @async.sleep(0)
+  let command = if cmds.length() == 0 {
+    "run_sequence []"
+  } else {
+    server_delivery_test_command_name(cmds[0])
+  }
+  abort(@exec.hermetic_exec_violation_message(command))
+}
+
+///|
+async fn server_delivery_test_capture(
+  cmd : @workspace.Command,
+) -> (Int, String) {
+  @async.sleep(0)
+  abort(
+    @exec.hermetic_exec_violation_message(
+      server_delivery_test_command_name(cmd),
+    ),
+  )
+}
+
+///|
+async fn server_delivery_test_hook_capture(
+  hook_path : String,
+  _stdin_body : String,
+  _cwd : String?,
+) -> (Int, String) {
+  @async.sleep(0)
+  abort(@exec.hermetic_exec_violation_message(hook_path))
+}
+
+///|
+fn server_delivery_test_path_entry_exists(_path : String) -> Bool {
+  false
+}
+
+///|
+fn server_delivery_test_read_file(_path : String) -> String {
+  ""
+}
+
+///|
 async fn ServerState::capture_audit_on_file_pr_report_test(
   self : ServerState,
   agent_id : String,
   report : @tools.AuditOnFilePrReport,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = server_delivery_test_runner,
+  capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
 ) -> Unit {
   self.capture_audit_on_file_pr_report(
     agent_id,
@@ -24,7 +78,7 @@ async fn ServerState::capture_audit_on_file_pr_report_test(
 async fn ServerState::replay_pending_outbox_with_test(
   self : ServerState,
   now : Int64,
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = server_delivery_test_runner,
 ) -> Unit {
   self.replay_pending_outbox_with(
     now,
@@ -51,9 +105,9 @@ async fn ServerState::refresh_pr_with_test(
     @poller.MergeStateStatus,
     Int64?,
   ),
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
-  automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = server_delivery_test_runner,
+  capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
+  automerge_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
 ) -> Unit {
   self.refresh_pr_with(
     pr_number,
@@ -84,13 +138,13 @@ async fn ServerState::process_poller_tick_with_test(
     @poller.MergeStateStatus,
     Int64?,
   ),
-  runner? : async (Array[@workspace.Command]) -> Array[Int] = @exec.run_sequence,
-  capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_stdout,
-  automerge_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
-  git_pull_capture? : async (@workspace.Command) -> (Int, String) = @exec.capture_command_merged,
-  hook_capture? : async (String, String, String?) -> (Int, String) = @exec.capture_hook_script_merged,
-  audit_receipt_exists? : (String) -> Bool = @exec.path_entry_exists,
-  audit_receipt_read? : (String) -> String = @exec.read_file,
+  runner? : async (Array[@workspace.Command]) -> Array[Int] = server_delivery_test_runner,
+  capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
+  automerge_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
+  git_pull_capture? : async (@workspace.Command) -> (Int, String) = server_delivery_test_capture,
+  hook_capture? : async (String, String, String?) -> (Int, String) = server_delivery_test_hook_capture,
+  audit_receipt_exists? : (String) -> Bool = server_delivery_test_path_entry_exists,
+  audit_receipt_read? : (String) -> String = server_delivery_test_read_file,
   git_state_capture? : async (
     String,
     async (@workspace.Command) -> (Int, String),

@@ -32,6 +32,102 @@ test "command_to_shell_string quotes" {
 }
 
 ///|
+test "hermetic exec violation message names command and mock guidance" {
+  let cmd = @workspace.Command::{
+    program: "git",
+    args: ["status"],
+    workdir: None,
+  }
+  assert_eq(
+    hermetic_exec_violation_message(command_to_shell_string(cmd)),
+    "hermetic-test violation: real exec 'git' 'status' -- inject a mock capture/runner",
+  )
+}
+
+///|
+test "replace_self returns error for missing binary" {
+  if !real_exec_integration_enabled() {
+    return
+  }
+  let missing = "/tmp/choir-missing-reload-binary-" +
+    @sys.get_pid().to_string() +
+    "-" +
+    @env.now().reinterpret_as_int64().to_string()
+  ignore(@sys.rm_rf(missing))
+  match replace_self(missing, 4) {
+    Ok(_) => fail("expected missing binary to fail before exec")
+    Err(e) => {
+      let message = e.message()
+      assert_true(message.contains("replace_self failed for " + missing))
+      assert_true(message.contains("errno="))
+    }
+  }
+}
+
+///|
+async test "real exec integration: capture_command_merged captures stdout" {
+  if !real_exec_integration_enabled() {
+    return
+  }
+  let (code, out) = capture_command_merged({
+    program: "echo",
+    args: ["hello-capture"],
+    workdir: None,
+  })
+  assert_eq(code, 0)
+  assert_eq(out.trim(), "hello-capture")
+}
+
+///|
+async test "real exec integration: capture_command_merged merges stderr" {
+  if !real_exec_integration_enabled() {
+    return
+  }
+  let (code, out) = capture_command_merged({
+    program: "/bin/sh",
+    args: ["-c", "echo stdout_line; echo stderr_line >&2"],
+    workdir: None,
+  })
+  assert_eq(code, 0)
+  assert_true(out.contains("stdout_line"))
+  assert_true(out.contains("stderr_line"))
+}
+
+///|
+async test "real exec integration: capture_hook_script_merged pipes stdin" {
+  if !real_exec_integration_enabled() {
+    return
+  }
+  let dir = "/tmp/choir-hook-capture-" + @sys.get_pid().to_string()
+  assert_true(@sys.create_dir_all(dir))
+  let script = dir + "/hook.sh"
+  let script_body = "#!/bin/sh\n" +
+    "body=$(cat)\n" +
+    "if [ \"$body\" != '{\"event\":\"PreToolUse\"}' ]; then exit 2; fi\n" +
+    "echo '{\"continue\":true}'\n"
+  if !@sys.write_file_sync(script, script_body) {
+    fail("write hook script")
+  }
+  assert_true(@sys.chmod_mode(script, 0o755))
+  let stdin_json = "{\"event\":\"PreToolUse\"}"
+  let (code, out) = capture_hook_script_merged(script, stdin_json, Some(dir))
+  assert_eq(code, 0)
+  assert_true(out.contains("continue"))
+}
+
+///|
+async test "real exec integration: capture_plugin_shell_command pipes stdin" {
+  if !real_exec_integration_enabled() {
+    return
+  }
+  let (exit_code, out) = capture_plugin_shell_command(
+    "cat", "{\"ok\":true}", 10,
+  )
+  assert_eq(exit_code, 0)
+  assert_eq(out.trim(), "{\"ok\":true}")
+}
+
+///|
 test "process liveness scan resolves dot project and relative workspace" {
   let seen : Array[String] = []
   let alive = agent_process_alive_for_workspace(
@@ -193,21 +289,4 @@ test "plugin_capture_uses_shell requires shell for env assignment prefix" {
 ///|
 test "plugin_capture_uses_shell requires shell when parse fails" {
   assert_true(plugin_capture_uses_shell("echo \""))
-}
-
-///|
-test "replace_self returns error for missing binary" {
-  let missing = "/tmp/choir-missing-reload-binary-" +
-    @sys.get_pid().to_string() +
-    "-" +
-    @env.now().reinterpret_as_int64().to_string()
-  ignore(@sys.rm_rf(missing))
-  match @exec.replace_self(missing, 4) {
-    Ok(_) => fail("expected missing binary to fail before exec")
-    Err(e) => {
-      let message = e.message()
-      assert_true(message.contains("replace_self failed for " + missing))
-      assert_true(message.contains("errno="))
-    }
-  }
 }
