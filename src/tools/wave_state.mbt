@@ -27,7 +27,6 @@ pub(all) struct WaveStatePR {
   fixes_pushed_at : Int64
   last_sha : String
   merge_gate_ready : Bool
-  audits : WaveStateAuditProgress?
 } derive(Debug, Eq)
 
 ///|
@@ -61,10 +60,6 @@ pub impl ToJson for WaveStatePR with to_json(self) -> Json {
     Some(v) => obj.set("threads_fetch_error", v.to_json())
     None => ()
   }
-  match self.audits {
-    Some(v) => obj.set("audits", v.to_json())
-    None => ()
-  }
   obj.to_json()
 }
 
@@ -81,6 +76,7 @@ pub(all) struct WaveStateChild {
   workflow : @phase.WorkflowState
   agent_state : @types.AgentState
   tdd_phase : @types.LeafTddPhase?
+  audits : WaveStateAuditProgress?
   last_heartbeat_ms : Int64?
   pr : WaveStatePR?
 } derive(Debug, Eq, ToJson)
@@ -108,7 +104,6 @@ fn wave_state_pr_from_tracked(
   tracked : @poller.TrackedPR,
   unresolved_threads : Int?,
   threads_fetch_error : String?,
-  audits? : WaveStateAuditProgress? = None,
 ) -> WaveStatePR {
   let merge_gate_ready = @poller.tl_tracked_pr_merge_gate_snapshot_ready(
     tracked,
@@ -129,7 +124,6 @@ fn wave_state_pr_from_tracked(
     fixes_pushed_at: tracked.fixes_pushed_at,
     last_sha: tracked.last_sha,
     merge_gate_ready,
-    audits,
   }
 }
 
@@ -331,8 +325,7 @@ pub fn plan_wave_state(
           match ps.get(pr_number) {
             Some(tracked) => {
               let (threads, err) = threads_lookup(pr_number)
-              let audits = audit_progress_reader(tracked.agent_id)
-              Some(wave_state_pr_from_tracked(tracked, threads, err, audits~))
+              Some(wave_state_pr_from_tracked(tracked, threads, err))
             }
             None => None
           }
@@ -356,8 +349,7 @@ pub fn plan_wave_state(
     let pr = match tracked_by_agent.get(child_id) {
       Some(tracked) => {
         let (threads, err) = threads_lookup(tracked.pr_number)
-        let audits = audit_progress_reader(child_id)
-        Some(wave_state_pr_from_tracked(tracked, threads, err, audits~))
+        Some(wave_state_pr_from_tracked(tracked, threads, err))
       }
       None => None
     }
@@ -371,6 +363,7 @@ pub fn plan_wave_state(
       workflow,
       agent_state: child.state,
       tdd_phase: tdd_phase_reader(child_id),
+      audits: audit_progress_reader(child_id),
       last_heartbeat_ms: heartbeat_reader(child_id),
       pr,
     })
