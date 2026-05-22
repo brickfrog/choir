@@ -423,10 +423,22 @@ pub fn ServerState::audit_digest_context(
     Some(tracked) => tracked.agent_id
     None => agent_id
   }
+  let parent_agent_id = match tracked {
+    Some(_) => leaf_agent_id
+    None =>
+      match self.registry.get_opt(agent_id) {
+        Some(agent) =>
+          match agent.parent {
+            Some(value) => value
+            None => leaf_agent_id
+          }
+        None => leaf_agent_id
+      }
+  }
   let branch = match tracked {
     Some(tracked) => tracked.branch
     None =>
-      match self.registry.get_opt(leaf_agent_id) {
+      match self.registry.get_opt(parent_agent_id) {
         Some(agent) => agent.branch
         None => "unknown"
       }

@@ -402,7 +402,9 @@ async test "notify_parent_about_audit emits PR #pending when no tracked PR exist
   let (_parent, sender_id, body, status) = sent[0]
   assert_eq(sender_id, worker_id)
   assert_eq(status, @types.Status::Info)
-  assert_true(body.has_prefix("[AUDIT cycle 1] PR #pending"))
+  assert_true(
+    body.has_prefix("[AUDIT cycle 1] PR #pending on main.pending-leaf\n"),
+  )
 }
 
 ///|
