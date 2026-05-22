@@ -4161,14 +4161,163 @@ async test "interpret_file_pr tracks global review mode when no local override e
 ///|
 test "file_pr_copilot_reviewer_gh_command requests @copilot reviewer" {
   let cmd = file_pr_copilot_reviewer_gh_command(44, "/wt/agent-checkout")
-  assert_eq(cmd.program, "gh")
+  assert_eq(cmd.program, "timeout")
   @debug.assert_eq(cmd.workdir, Some("/wt/agent-checkout"))
-  assert_eq(cmd.args.length(), 5)
-  assert_eq(cmd.args[0], "pr")
-  assert_eq(cmd.args[1], "edit")
-  assert_eq(cmd.args[2], "44")
-  assert_eq(cmd.args[3], "--add-reviewer")
-  assert_eq(cmd.args[4], file_pr_copilot_reviewer_handle)
+  @debug.assert_eq(cmd.args, [
+    "30s", "gh", "pr", "edit", "44", "--add-reviewer", file_pr_copilot_reviewer_handle,
+  ])
+}
+
+///|
+test "interpret_request_review_result returns success envelope" {
+  let got = interpret_request_review_result(0, "", 45, "@copilot")
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("ok")))
+      @debug.assert_eq(map.get("pr_number"), Some(Int::to_json(45)))
+      @debug.assert_eq(map.get("reviewer"), Some(String::to_json("@copilot")))
+    }
+    @types.Response::Err(msg) => fail("expected ok: " + msg)
+  }
+}
+
+///|
+async test "dispatch request_review runs reviewer request through server capture" {
+  let seen : Array[@workspace.Command] = []
+  let ps = @poller.PollerState::new()
+  ps.track(
+    46, "main.leaf", "main.leaf", "main", "https://github.com/brickfrog/choir/pull/46",
+    0L,
+  )
+  let got = dispatch(
+    ToolRequest::RequestReview({ pr_number: 46, reviewer: "@copilot" }),
+    project_dir="/srv/choir",
+    poller_state=Some(ps),
+    capture=async fn(cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      seen.push(cmd)
+      (0, "")
+    },
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected ok: " + msg)
+  }
+  assert_eq(seen.length(), 1)
+  assert_eq(seen[0].program, "timeout")
+  @debug.assert_eq(seen[0].workdir, Some("/srv/choir"))
+  @debug.assert_eq(seen[0].args, [
+    "30s", "gh", "pr", "edit", "46", "--add-reviewer", "@copilot",
+  ])
+}
+
+///|
+async test "dispatch request_review rejects untracked PR" {
+  let ps = @poller.PollerState::new()
+  let got = dispatch(
+    ToolRequest::RequestReview({ pr_number: 999, reviewer: "@copilot" }),
+    project_dir="/srv/choir",
+    poller_state=Some(ps),
+    capture=async fn(_cmd : @workspace.Command) -> (Int, String) {
+      @async.sleep(0)
+      fail("request_review should not call capture for untracked PR")
+    },
+  )
+  match got {
+    @types.Response::Err(msg) => assert_true(msg.contains("is not tracked"))
+    @types.Response::Ok(_) => fail("expected untracked PR rejection")
+  }
+}
+
+///|
+async test "interpret_file_pr requests reviewer after audit verify push and ensure_pr" {
+  let project_dir = "/tmp/choir-fpr-existing-reviewer-after-gates-" +
+    @sys.get_pid().to_string()
+  let file_pr_dir = project_dir
+  let head = "abcdef1234567890abcdef1234567890abcdef12"
+  ignore(@sys.rm_rf(project_dir))
+  assert_true(@sys.create_dir_all(project_dir + "/.choir"))
+  let contract = file_pr_test_task_contract(["npm run typecheck"])
+  file_pr_test_write_verify_config(file_pr_dir, contract.verify)
+  let runner_cmds : Array[@workspace.Command] = []
+  let events : Array[String] = []
+  let mut ensure_pr_called = false
+  let got = interpret_file_pr(
+    {
+      branch: "feature/existing-reviewer",
+      parent_branch: Some("main"),
+      tracked_agent_id: "feature/existing-reviewer",
+      title: None,
+      body: None,
+      review_context: None,
+    },
+    project_dir,
+    "choir",
+    None,
+    None,
+    true,
+    mock_preflight_ok,
+    async fn(cmds : Array[@workspace.Command]) -> Array[Int] {
+      @async.sleep(0)
+      let codes : Array[Int] = []
+      for cmd in cmds {
+        if cmd.program == "git" &&
+          cmd.args.length() > 0 &&
+          cmd.args[0] == "push" {
+          events.push("push")
+        }
+        if cmd.program == "timeout" && cmd.args.contains("--add-reviewer") {
+          events.push("reviewer")
+        }
+        runner_cmds.push(cmd)
+        codes.push(0)
+      }
+      codes
+    },
+    fn(cmd : @workspace.Command) -> (Int, String) {
+      if cmd.program == "git" && cmd.args == ["rev-parse", "HEAD"] {
+        events.push("head")
+        return (0, head + "\n")
+      }
+      if cmd.program == "cat" {
+        events.push("audit")
+        return (0, file_pr_test_audit_receipt(head))
+      }
+      if cmd.program == "sh" {
+        events.push("verify")
+        return (0, "typecheck ok\n")
+      }
+      (0, "")
+    },
+    fn(
+      _branch : String,
+      _parent_branch : String,
+      _dir : String,
+      _title : String?,
+      _body : String?,
+    ) -> Result[PullRequestInfo, @types.ChoirError] {
+      events.push("ensure_pr")
+      ensure_pr_called = true
+      Ok({ number: 45, url: "https://example.test/pr/45", state: "OPEN" })
+    },
+    task_contract_reader=file_pr_test_task_contract_reader(contract),
+    sleep_fn=file_pr_test_no_sleep,
+  )
+  match got {
+    @types.Response::Ok(_) => ()
+    @types.Response::Err(msg) => fail("expected file_pr success: " + msg)
+  }
+  assert_true(ensure_pr_called)
+  @debug.assert_eq(events, [
+    "head", "audit", "head", "verify", "push", "ensure_pr", "reviewer",
+  ])
+  assert_eq(runner_cmds.length(), 2)
+  assert_eq(runner_cmds[1].program, "timeout")
+  @debug.assert_eq(runner_cmds[1].args, [
+    "30s", "gh", "pr", "edit", "45", "--add-reviewer", "@copilot",
+  ])
+  ignore(@sys.rm_rf(project_dir))
 }
 
 ///|

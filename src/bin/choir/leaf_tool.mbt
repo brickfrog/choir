@@ -257,6 +257,50 @@ fn leaf_tool_request_args(
         _ => Err(tool + " requires exit_code")
       }
     }
+    "resolve_my_review_threads" => {
+      if !flags.contains("pr_number") && positionals.length() > 0 {
+        flags.set("pr_number", positionals[0])
+      }
+      if !flags.contains("caller_id") {
+        match @sys.getenv("CHOIR_AGENT_ID") {
+          Some(id) => if id != "" { flags.set("caller_id", id) }
+          None => ()
+        }
+      }
+      match flags.get("caller_id") {
+        Some(caller_id) =>
+          if caller_id.trim() == "" {
+            Err("resolve_my_review_threads requires caller_id")
+          } else {
+            Ok(flags)
+          }
+        None => Err("resolve_my_review_threads requires caller_id")
+      }
+    }
+    "request_review" => {
+      if !flags.contains("pr_number") && positionals.length() > 0 {
+        flags.set("pr_number", positionals[0])
+      }
+      if !flags.contains("reviewer") && positionals.length() > 1 {
+        flags.set("reviewer", positionals[1])
+      }
+      match flags.get("pr_number") {
+        Some(pr_number) =>
+          if pr_number.trim() == "" {
+            return Err("request_review requires pr_number")
+          }
+        None => return Err("request_review requires pr_number")
+      }
+      match flags.get("reviewer") {
+        Some(reviewer) =>
+          if reviewer.trim() == "" {
+            Err("request_review requires reviewer")
+          } else {
+            Ok(flags)
+          }
+        None => Err("request_review requires reviewer")
+      }
+    }
     "shutdown" => {
       if !flags.contains("caller_id") {
         match @sys.getenv("CHOIR_AGENT_ID") {
@@ -331,6 +375,10 @@ fn leaf_tool_usage(tool : String) -> String {
     "tdd_red_check" => "usage: tdd_red_check --exit-code <nonzero>"
     "tdd_green_check" =>
       "usage: tdd_green_check --exit-code 0 [--next-phase <green|refactor|done>]"
+    "resolve_my_review_threads" =>
+      "usage: resolve_my_review_threads [--caller-id <agent_id>] [--pr-number <number>]"
+    "request_review" =>
+      "usage: request_review --pr-number <number> --reviewer <login>"
     "shutdown" => "usage: shutdown [--caller-id <caller_id>]"
     "task_list" => "usage: task_list  # lists Beads-backed shared tasks"
     "task_get" => "usage: task_get <id>  # reads a Beads issue"
@@ -902,6 +950,36 @@ test "leaf tool usage includes file_pr args" {
     leaf_tool_usage("file_pr"),
     "usage: file_pr [--branch <branch>] [--parent-branch <parent_branch>]",
   )
+}
+
+///|
+test "leaf tool parser supports PR plumbing tools" {
+  let resolve = leaf_tool_request_args(
+    "resolve_my_review_threads",
+    parse_leaf_cli_args(["427", "--caller-id", "main.leaf"]),
+  ).unwrap()
+  @debug.assert_eq(resolve.get("caller_id"), Some("main.leaf"))
+  @debug.assert_eq(resolve.get("pr_number"), Some("427"))
+
+  let review = leaf_tool_request_args(
+    "request_review",
+    parse_leaf_cli_args(["45", "@copilot"]),
+  ).unwrap()
+  @debug.assert_eq(review.get("pr_number"), Some("45"))
+  @debug.assert_eq(review.get("reviewer"), Some("@copilot"))
+}
+
+///|
+test "leaf tool usage includes PR plumbing tools" {
+  assert_true(
+    leaf_tool_usage("resolve_my_review_threads").contains(
+      "--pr-number <number>",
+    ),
+  )
+  assert_true(
+    leaf_tool_usage("request_review").contains("--pr-number <number>"),
+  )
+  assert_true(leaf_tool_usage("request_review").contains("--reviewer <login>"))
 }
 
 ///|

@@ -1652,6 +1652,8 @@ test "run_native_leaf_helpers_command installs gh shims alongside leaf-tool" {
   assert_eq(@sys.system("test -x " + @sys.shell_quote(bash_bounded_path)), 0)
   // Leaf-tool symlinks still installed -- shim is additive, not a replacement.
   assert_true(@sys.path_exists(bin_dir + "/file_pr"))
+  assert_true(@sys.path_exists(bin_dir + "/resolve_my_review_threads"))
+  assert_true(@sys.path_exists(bin_dir + "/request_review"))
   assert_true(@sys.path_exists(bin_dir + "/choir-leaf-tool"))
   ignore(@sys.rm_rf(dir))
 }

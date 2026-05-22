@@ -206,6 +206,18 @@ pub(all) struct ResolveReviewThreadArgs {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct ResolveMyReviewThreadsArgs {
+  caller_id : String
+  pr_number : Int?
+} derive(Debug, Eq)
+
+///|
+pub(all) struct RequestReviewArgs {
+  pr_number : Int
+  reviewer : String
+} derive(Debug, Eq)
+
+///|
 pub(all) struct CallerMessageArgs {
   caller_id : String
   message : String

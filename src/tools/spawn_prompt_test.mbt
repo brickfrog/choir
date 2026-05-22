@@ -74,7 +74,8 @@ test "render_leaf_spawn_prompt includes gh discipline and bounded wrapper" {
     prompt.contains("sit idle and let those push events drive your next action"),
   )
   assert_true(prompt.contains("doubles GitHub API hits"))
-  assert_true(prompt.contains("resolve_review_thread` MCP tool"))
+  assert_true(prompt.contains("resolve_my_review_threads` MCP tool"))
+  assert_true(prompt.contains("resolve_review_thread` only when"))
   assert_false(prompt.contains("per step 7 above"))
   assert_false(prompt.contains("resolveReviewThread"))
   assert_true(prompt.contains("do NOT use a global `pkill -f \"gh api\"`"))

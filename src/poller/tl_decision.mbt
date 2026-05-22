@@ -55,6 +55,8 @@ pub(all) enum NextAction {
   /// Parent escalates (e.g., re-add the reviewer). Distinct from `Wait`
   /// because the prose tells the parent to act, not sit idle.
   EscalateReview
+  /// Fixes and green CI are present, but unresolved review threads still gate merge.
+  ResolveThreadsNow
 } derive(Debug, Eq)
 
 ///|
@@ -72,6 +74,7 @@ pub fn NextAction::to_wire_string(self : NextAction) -> String {
     CrossCheckThreads => "cross_check_threads"
     CrossCheckMergeMode => "cross_check_merge_mode"
     EscalateReview => "escalate_review"
+    ResolveThreadsNow => "resolve_threads_now"
   }
 }
 
@@ -179,7 +182,11 @@ pub fn next_action_detail_line(
     CrossCheckMergeMode =>
       "Next action: wave merge mode is mixed — confirm this leaf's per-leaf merge mode (manual vs automerge) before running merge_pr."
     EscalateReview =>
-      "Next action: gh pr edit --add-reviewer @copilot (Copilot has not reviewed within the timeout window)."
+      "Next action: `request_review(pr_number: \"" +
+      pr_number.to_string() +
+      "\", reviewer: \"@copilot\")` (Copilot has not reviewed within the timeout window)."
+    ResolveThreadsNow =>
+      "Next action: RESOLVE THREADS NOW from the parent path with the server-side `resolve_my_review_threads` tool, then wait for the refreshed poller snapshot."
   }
 }
 
@@ -502,14 +509,11 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
       tracked.copilot_issue_comment_seen
     ) ||
     (
-    // SinglePass: treat as reviewed if the leaf pushed fixes after the review
-    // requested changes (SHA moved out of ChangesRequested → fixes_pushed_at set).
-    // `fixes_pushed_at > 0L` distinguishes a fresh PR (which also has
-    // `changes_requested_since == 0L`) from one where a real push was observed.
+    // SinglePass treats a post-review fix push as reviewed for merge-gate
+    // readiness; Iterative still needs the normal merge gate and TL signal
+    // path so resolving stale threads never weakens the gate.
       review_mode == @types.ReviewMode::SinglePass &&
-      tracked.last_review_state == ChangesRequested &&
-      tracked.fixes_pushed_at > 0L &&
-      tracked.last_sha != ""
+      tracked_changes_requested_fixed(tracked)
     )
   if !review_ok {
     return false
@@ -518,6 +522,14 @@ pub fn tl_tracked_pr_merge_gate_snapshot_ready(
     return false
   }
   threads_clear
+}
+
+///|
+fn tracked_changes_requested_fixed(tracked : TrackedPR) -> Bool {
+  tracked.last_review_state == ChangesRequested &&
+  tracked.fixes_pushed_at > 0L &&
+  tracked.changes_requested_since == 0L &&
+  tracked.last_sha != ""
 }
 
 ///|
@@ -553,11 +565,9 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
 ) -> @types.EvaluationBundle {
-  let single_pass_fixed = review_mode == @types.ReviewMode::SinglePass &&
-    tracked.last_review_state == ChangesRequested &&
-    tracked.fixes_pushed_at > 0L &&
-    tracked.last_sha != ""
-  let review_state = if single_pass_fixed {
+  let fixed_changes_requested = review_mode == @types.ReviewMode::SinglePass &&
+    tracked_changes_requested_fixed(tracked)
+  let review_state = if fixed_changes_requested {
     @types.EvaluationReviewState::Commented
   } else {
     evaluation_review_state_from_snapshot(tracked.last_review_state)
@@ -576,7 +586,7 @@ pub fn advisory_evaluation_bundle_for_tracked_pr(
       signals.push(@types.EvaluationSignal::ThreadsObserved(count~))
     None => signals.push(@types.EvaluationSignal::ThreadsUnobserved)
   }
-  if tracked.copilot_issue_comment_seen || single_pass_fixed {
+  if tracked.copilot_issue_comment_seen || fixed_changes_requested {
     signals.push(@types.EvaluationSignal::CopilotIssueCommentObserved)
   } else {
     signals.push(@types.EvaluationSignal::CopilotIssueCommentUnobserved)
@@ -629,6 +639,31 @@ pub fn advisory_evaluation_summary_line(
 }
 
 ///|
+fn unresolved_threads_are_next_typed_blocker(
+  bundle : @types.EvaluationBundle,
+) -> Bool {
+  let required_verify = match bundle.task_contract {
+    Some(contract) => contract.verify
+    None => []
+  }
+  let verify_results = @types.evaluation_verify_results_for_required(
+    required_verify,
+    bundle.signals,
+  )
+  if @types.evaluation_failed_verify_names(verify_results).length() > 0 {
+    return false
+  }
+  if @types.evaluation_latest_review_state(bundle.signals) ==
+    @types.EvaluationReviewState::ChangesRequested {
+    return false
+  }
+  match @types.evaluation_latest_threads(bundle.signals) {
+    Some(count) => count > 0
+    None => false
+  }
+}
+
+///|
 pub fn merge_policy_decision_for_tracked_pr(
   tracked : TrackedPR,
   unresolved_threads : Int?,
@@ -636,16 +671,36 @@ pub fn merge_policy_decision_for_tracked_pr(
   review_mode? : @types.ReviewMode = @types.ReviewMode::Iterative,
   verify_results? : Array[@types.VerifyCheckResult] = [],
 ) -> @policy.MergeDecision {
-  @policy.decide_merge(
-    task_contract,
-    advisory_evaluation_bundle_for_tracked_pr(
-      tracked,
-      unresolved_threads,
-      task_contract~,
-      review_mode~,
-      verify_results~,
-    ),
+  let bundle = advisory_evaluation_bundle_for_tracked_pr(
+    tracked,
+    unresolved_threads,
+    task_contract~,
+    review_mode~,
+    verify_results~,
   )
+  let canonical = @policy.decide_merge(task_contract, bundle)
+  match unresolved_threads {
+    Some(count) =>
+      if count > 0 &&
+        tracked_changes_requested_fixed(tracked) &&
+        tracked.last_ci_rollup == Success {
+        let fixed_review_bundle = advisory_evaluation_bundle_for_tracked_pr(
+          tracked,
+          unresolved_threads,
+          task_contract~,
+          review_mode=@types.ReviewMode::SinglePass,
+          verify_results~,
+        )
+        if unresolved_threads_are_next_typed_blocker(fixed_review_bundle) {
+          return @policy.MergeDecision::ThreadsUnresolvedButFixed(
+            count~,
+            head_sha=tracked.last_sha,
+          )
+        }
+      }
+    None => ()
+  }
+  canonical
 }
 
 ///|
@@ -704,6 +759,7 @@ fn merge_gate_next_action(
   mode : MergeOperatorMode,
 ) -> NextAction {
   match decision {
+    ThreadsUnresolvedButFixed(..) => ResolveThreadsNow
     MergeNow(_) =>
       match mode {
         Automerge => Wait
@@ -729,6 +785,7 @@ fn recheck_next_action(
   mode : MergeOperatorMode,
 ) -> NextAction {
   match decision {
+    ThreadsUnresolvedButFixed(..) => ResolveThreadsNow
     MergeNow(_) =>
       match mode {
         Automerge => Wait
@@ -753,6 +810,9 @@ pub fn next_action_for_pr_state_notification(
   unresolved_threads : Int?,
   mode : MergeOperatorMode,
 ) -> NextAction {
+  if decision is @policy.MergeDecision::ThreadsUnresolvedButFixed(..) {
+    return ResolveThreadsNow
+  }
   match category {
     MergeGateOpenPendingPolicyConfirmation =>
       merge_gate_next_action(decision, tracked, unresolved_threads, mode)
@@ -814,6 +874,12 @@ pub fn tl_pr_state_notification_sentence(
   merge_mode : MergeOperatorMode,
 ) -> String {
   match decision.policy_decision {
+    ThreadsUnresolvedButFixed(count~, head_sha~) =>
+      "RESOLVE THREADS NOW from the parent path: fixes are pushed at " +
+      head_sha +
+      ", CI is green, and " +
+      count.to_string() +
+      " unresolved inline review thread(s) remain. Use the server-side resolve_my_review_threads tool; merge_pr must still wait until the poller shows zero unresolved threads."
     MergeNow(_) =>
       match decision.next_action {
         Wait =>
@@ -890,7 +956,7 @@ pub fn tl_tracked_pr_workflow_category_sentence(
     BlockedOnChanges =>
       "BLOCKED: review requested changes. Wait for leaf to push fixes."
     AttentionRequiredCopilotSilentAfterTimeout =>
-      "ACTION REQUIRED: no review appeared after timeout. Run: gh pr edit --add-reviewer @copilot"
+      "ACTION REQUIRED: no review appeared after timeout. Run request_review(pr_number: \"<pr_number>\", reviewer: \"@copilot\")."
     AttentionRequiredCIFailed => "BLOCKED: CI failing. Do not merge."
     WaitingOnReviewOrCI => "Waiting on review or CI. No action needed yet."
     FixesPushedAwaitingGates =>

@@ -15,6 +15,103 @@ test "interpret_track_pr returns poller unavailable without poller_state" {
 }
 
 ///|
+async test "dispatch resolve_my_review_threads skips pulse when final fetch fails" {
+  let project_dir = "/tmp/choir-dispatch-resolve-my-fetch-fail-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    445,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/445",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-fixed",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match ps.get(445) {
+    Some(current) =>
+      ps.restore({
+        ..current,
+        unresolved_thread_ids: [
+          @poller.ReviewThreadRef::{
+            id: "PRRT_one",
+            is_outdated: true,
+            author_login: "copilot-pull-request-reviewer[bot]",
+          },
+        ],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let pulses : Array[Int] = []
+  let mut review_thread_fetches = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("repo") &&
+      cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      review_thread_fetches = review_thread_fetches + 1
+      if review_thread_fetches == 1 {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_one\",\"isResolved\":false,\"isOutdated\":true,\"comments\":{\"nodes\":[{\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}}]}}}}}",
+        )
+      }
+      return (0, "")
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveMyReviewThreads({
+      caller_id: "main.leaf",
+      pr_number: None,
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    capture~,
+    on_resolve_review_thread=fn(pr_numbers : Array[Int]) {
+      for n in pr_numbers {
+        pulses.push(n)
+      }
+    },
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("resolved_count"), Some(Int::to_json(1)))
+    }
+    @types.Response::Err(msg) => fail("expected ok: " + msg)
+  }
+  @debug.assert_eq(pulses, [])
+  assert_eq(review_thread_fetches, 2)
+  match ps.get(445) {
+    Some(current) => assert_eq(current.unresolved_thread_ids.length(), 1)
+    None => fail("expected tracked PR")
+  }
+}
+
+///|
 test "interpret_track_pr ensure_tracked writes state and returns tracked envelope" {
   let project_dir = "/tmp/choir-track-pr-" + @sys.get_pid().to_string()
   assert_true(@sys.create_dir_all(project_dir + "/.choir"))
@@ -1503,7 +1600,8 @@ test "merge_pr_preflight_block_message blocks on unresolved threads" {
       assert_true(msg.contains("PR #3"))
       assert_true(msg.contains("1 unresolved review thread"))
       assert_true(msg.contains("body"))
-      assert_true(msg.contains("resolve_review_thread"))
+      assert_true(msg.contains("resolve_my_review_threads"))
+      assert_true(msg.contains("pr_number: \"3\""))
     }
     None => fail("expected block")
   }
@@ -1523,7 +1621,7 @@ test "merge_pr_preflight_block_message gh thread fetch failed marker" {
       assert_true(msg.contains("merge blocked: gh unavailable"))
       assert_true(msg.contains("could not fetch review thread state"))
       assert_true(msg.contains("manually advance lifecycle"))
-      assert_false(msg.contains("resolve_review_thread"))
+      assert_false(msg.contains("resolve_my_review_threads"))
     }
     None => fail("expected block")
   }
@@ -1547,6 +1645,23 @@ test "merge_pr_preflight_block_message policy Blocked" {
     Some(msg) => {
       assert_true(msg.contains("policy blocked: insufficient evidence"))
       assert_false(msg.contains("force=true"))
+    }
+    None => fail("expected block")
+  }
+}
+
+///|
+test "merge_pr_preflight_block_message handles ThreadsUnresolvedButFixed explicitly" {
+  let policy_decision = Some(
+    @policy.MergeDecision::ThreadsUnresolvedButFixed(count=3, head_sha="abc123"),
+  )
+  match merge_pr_preflight_block_message(427, None, 0, "", policy_decision) {
+    Some(msg) => {
+      assert_true(msg.contains("policy blocked"))
+      assert_true(msg.contains("3 unresolved review thread"))
+      assert_true(msg.contains("abc123"))
+      assert_true(msg.contains("resolve_my_review_threads"))
+      assert_true(msg.contains("pr_number: \"427\""))
     }
     None => fail("expected block")
   }
@@ -3623,6 +3738,208 @@ async test "dispatch resolve_review_thread skips pulse when after-count fetch fa
     Some(current) => assert_eq(current.unresolved_thread_ids.length(), 2)
     None => fail("expected tracked PR")
   }
+}
+
+///|
+async test "dispatch resolve_my_review_threads resolves every fetched caller thread" {
+  let project_dir = "/tmp/choir-dispatch-resolve-my-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    444,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/444",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-fixed",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  match ps.get(444) {
+    Some(current) =>
+      ps.restore({
+        ..current,
+        unresolved_thread_ids: [
+          @poller.ReviewThreadRef::{
+            id: "PRRT_one",
+            is_outdated: true,
+            author_login: "copilot-pull-request-reviewer[bot]",
+          },
+          @poller.ReviewThreadRef::{
+            id: "PRRT_two",
+            is_outdated: true,
+            author_login: "copilot-pull-request-reviewer[bot]",
+          },
+        ],
+        unresolved_thread_ids_fetched: true,
+      })
+    None => fail("expected tracked PR")
+  }
+  let resolved : Array[String] = []
+  let pulses : Array[Int] = []
+  let mut review_thread_fetches = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("repo") &&
+      cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
+      for arg in cmd.args {
+        if arg.has_prefix("threadId=") {
+          resolved.push(arg["threadId=".length():].to_owned())
+        }
+      }
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      review_thread_fetches = review_thread_fetches + 1
+      if review_thread_fetches == 1 {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_one\",\"isResolved\":false,\"isOutdated\":true,\"comments\":{\"nodes\":[{\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}},{\"id\":\"PRRT_two\",\"isResolved\":false,\"isOutdated\":true,\"comments\":{\"nodes\":[{\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}}]}}}}}",
+        )
+      }
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveMyReviewThreads({
+      caller_id: "main.leaf",
+      pr_number: None,
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    capture~,
+    on_resolve_review_thread=fn(pr_numbers : Array[Int]) {
+      for n in pr_numbers {
+        pulses.push(n)
+      }
+    },
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("status"), Some(String::to_json("ok")))
+      @debug.assert_eq(map.get("resolved_count"), Some(Int::to_json(2)))
+      @debug.assert_eq(map.get("pr_count"), Some(Int::to_json(1)))
+    }
+    @types.Response::Err(msg) => fail("expected ok: " + msg)
+  }
+  @debug.assert_eq(resolved, ["PRRT_one", "PRRT_two"])
+  @debug.assert_eq(pulses, [444])
+  assert_eq(review_thread_fetches, 2)
+  match ps.get(444) {
+    Some(current) => assert_eq(current.unresolved_thread_ids.length(), 0)
+    None => fail("expected tracked PR")
+  }
+}
+
+///|
+async test "dispatch resolve_my_review_threads lets TL target leaf PR by pr_number" {
+  let project_dir = "/tmp/choir-dispatch-resolve-my-tl-" +
+    @sys.get_pid().to_string()
+  let ps = @poller.PollerState::new()
+  ps.track_recovered(
+    446,
+    "main.leaf",
+    "main.leaf",
+    "main",
+    "https://github.com/brickfrog/choir/pull/446",
+    0L,
+    @poller.ReviewState::ChangesRequested,
+    "fix this",
+    "sha-fixed",
+    @poller.CiRollupStatus::Success,
+    true,
+  )
+  let resolved : Array[String] = []
+  let pulses : Array[Int] = []
+  let mut review_thread_fetches = 0
+  let capture = async fn(cmd : @workspace.Command) -> (Int, String) {
+    @async.sleep(0)
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("repo") &&
+      cmd.args.contains("view") {
+      return (0, "{\"owner\":{\"login\":\"brickfrog\"},\"name\":\"choir\"}")
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("resolveReviewThread") }) {
+      for arg in cmd.args {
+        if arg.has_prefix("threadId=") {
+          resolved.push(arg["threadId=".length():].to_owned())
+        }
+      }
+      return (
+        0, "{\"data\":{\"resolveReviewThread\":{\"thread\":{\"isResolved\":true}}}}",
+      )
+    }
+    if cmd.program == "timeout" &&
+      cmd.args.length() >= 3 &&
+      cmd.args[1] == "gh" &&
+      cmd.args.contains("graphql") &&
+      cmd.args.iter().any(fn(arg) { arg.contains("reviewThreads") }) {
+      review_thread_fetches = review_thread_fetches + 1
+      if review_thread_fetches == 1 {
+        return (
+          0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_leaf\",\"isResolved\":false,\"isOutdated\":true,\"comments\":{\"nodes\":[{\"author\":{\"login\":\"copilot-pull-request-reviewer[bot]\"}}]}}]}}}}}",
+        )
+      }
+      return (
+        0, "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[]}}}}}",
+      )
+    }
+    (0, "")
+  }
+  let got = dispatch(
+    ToolRequest::ResolveMyReviewThreads({
+      caller_id: "main.tl",
+      pr_number: Some(446),
+    }),
+    project_dir~,
+    poller_state=Some(ps),
+    caller_role=@types.Role::TL,
+    capture~,
+    on_resolve_review_thread=fn(pr_numbers : Array[Int]) {
+      for n in pr_numbers {
+        pulses.push(n)
+      }
+    },
+  )
+  match got {
+    @types.Response::Ok(fields) => {
+      let map = fields.to_json_map()
+      @debug.assert_eq(map.get("resolved_count"), Some(Int::to_json(1)))
+      @debug.assert_eq(map.get("pr_count"), Some(Int::to_json(1)))
+    }
+    @types.Response::Err(msg) => fail("expected ok: " + msg)
+  }
+  @debug.assert_eq(resolved, ["PRRT_leaf"])
+  @debug.assert_eq(pulses, [446])
+  assert_eq(review_thread_fetches, 2)
 }
 
 ///|

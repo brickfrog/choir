@@ -746,11 +746,7 @@ pub fn bounded_gh_command(
   project_dir : String,
   gh_args : Array[String],
 ) -> @workspace.Command {
-  let args : Array[String] = ["30s", "gh"]
-  for arg in gh_args {
-    args.push(arg)
-  }
-  { program: "timeout", args, workdir: Some(project_dir) }
+  @workspace.bounded_gh_command(project_dir, gh_args)
 }
 
 ///|

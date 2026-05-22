@@ -239,6 +239,18 @@ pub fn gh_bounded_script_body() -> String {
 }
 
 ///|
+pub fn bounded_gh_command(
+  project_dir : String,
+  gh_args : Array[String],
+) -> Command {
+  let args : Array[String] = ["30s", "gh"]
+  for arg in gh_args {
+    args.push(arg)
+  }
+  { program: "timeout", args, workdir: Some(project_dir) }
+}
+
+///|
 /// Body of the `bash-bounded` wrapper installed under
 /// `worktree_path/.choir/bin/bash-bounded`. Wraps shell pipelines in a 60s
 /// timeout so leaf-local helpers can bound broad shell commands consistently.
@@ -277,6 +289,7 @@ pub fn run_native_leaf_helpers_command(cmd : Command) -> Int {
   let names = [
     "file_pr", "notify_parent", "shutdown", "task_list", "task_get", "task_create",
     "task_update", "report_usage", "tdd_intent", "tdd_red_check", "tdd_green_check",
+    "resolve_my_review_threads", "request_review",
   ]
   for name in names {
     let link_path = bin_dir + "/" + name
@@ -1086,9 +1099,11 @@ pub fn gh_pr_add_reviewer(
   reviewer : String,
   project_dir : String,
 ) -> Command {
-  {
-    program: "gh",
-    args: ["pr", "edit", pr_number.to_string(), "--add-reviewer", reviewer],
-    workdir: Some(project_dir),
-  }
+  bounded_gh_command(project_dir, [
+    "pr",
+    "edit",
+    pr_number.to_string(),
+    "--add-reviewer",
+    reviewer,
+  ])
 }

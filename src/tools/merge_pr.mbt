@@ -566,6 +566,16 @@ pub fn merge_pr_preflight_block_message(
     None => ()
   }
   match policy_decision {
+    Some(@policy.MergeDecision::ThreadsUnresolvedButFixed(count~, head_sha~)) =>
+      return Some(
+        "policy blocked: " +
+        count.to_string() +
+        " unresolved review thread(s) remain after fixes at " +
+        head_sha +
+        ". Use resolve_my_review_threads(pr_number: \"" +
+        pr_number.to_string() +
+        "\") from the parent/server path before merging.",
+      )
     Some(@policy.MergeDecision::Blocked(reason~)) =>
       return Some(
         "policy blocked: " +
@@ -605,7 +615,9 @@ pub fn merge_pr_preflight_block_message(
       unresolved_thread_count.to_string() +
       " unresolved review thread(s). Address or resolve them before merging:\n" +
       unresolved_thread_text +
-      "\nUse resolve_review_thread to mark threads resolved.",
+      "\nUse resolve_my_review_threads(pr_number: \"" +
+      pr_number.to_string() +
+      "\") to mark threads resolved.",
     )
   }
   None

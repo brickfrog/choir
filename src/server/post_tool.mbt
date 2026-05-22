@@ -654,8 +654,9 @@ pub fn plan_post_tool_actions(
     }
   }
 
-  // resolve_review_thread
-  if req.name == "resolve_review_thread" {
+  // resolve_review_thread / resolve_my_review_threads
+  if req.name == "resolve_review_thread" ||
+    req.name == "resolve_my_review_threads" {
     match request_agent_id(req) {
       Some(agent_id) =>
         for pr in poller.tracked.values() {

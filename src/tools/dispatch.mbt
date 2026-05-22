@@ -766,6 +766,69 @@ fn resolve_review_thread_unresolved_counts(
 }
 
 ///|
+fn resolve_my_review_threads_for_caller(
+  poller_state : @poller.PollerState,
+  caller_id : String,
+) -> Array[@poller.TrackedPR] {
+  let tracked_prs : Array[@poller.TrackedPR] = []
+  for tracked in poller_state.tracked.values() {
+    if tracked.agent_id == caller_id {
+      tracked_prs.push(tracked)
+    }
+  }
+  tracked_prs
+}
+
+///|
+fn resolve_my_review_threads_targets(
+  poller_state : @poller.PollerState,
+  args : ResolveMyReviewThreadsArgs,
+  caller_role : @types.Role,
+) -> Result[Array[@poller.TrackedPR], @types.ChoirError] {
+  match args.pr_number {
+    Some(pr_number) =>
+      match poller_state.get(pr_number) {
+        Some(tracked) => {
+          if tracked.agent_id != args.caller_id &&
+            !@types.is_supervisor_role(caller_role) {
+            return Err(
+              @types.ChoirError::permission_denied(
+                caller_role.to_string(),
+                "resolve_my_review_threads",
+              ),
+            )
+          }
+          Ok([tracked])
+        }
+        None =>
+          Err(
+            @types.ChoirError::validation_error(
+              "resolve_my_review_threads: PR #" +
+              pr_number.to_string() +
+              " is not tracked",
+            ),
+          )
+      }
+    None => {
+      let tracked_prs = resolve_my_review_threads_for_caller(
+        poller_state,
+        args.caller_id,
+      )
+      if tracked_prs.length() == 0 {
+        Err(
+          @types.ChoirError::validation_error(
+            "resolve_my_review_threads: no tracked PRs for caller " +
+            args.caller_id,
+          ),
+        )
+      } else {
+        Ok(tracked_prs)
+      }
+    }
+  }
+}
+
+///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -1813,6 +1876,127 @@ pub async fn dispatch(
       } else {
         @types.Response::Err("failed to write reply: " + id)
       }
+    }
+    ToolRequest::RequestReview(request_args) => {
+      let state = match poller_state {
+        Some(value) => value
+        None =>
+          return @types.Response::Err("request_review: poller unavailable")
+      }
+      match state.get(request_args.pr_number) {
+        Some(_) => interpret_request_review(request_args, project_dir, capture)
+        None =>
+          @types.Response::Err(
+            "request_review: PR #" +
+            request_args.pr_number.to_string() +
+            " is not tracked",
+          )
+      }
+    }
+    ToolRequest::ResolveMyReviewThreads(resolve_args) => {
+      let state = match poller_state {
+        Some(value) => value
+        None =>
+          return @types.Response::Err(
+            "resolve_my_review_threads: poller unavailable",
+          )
+      }
+      let tracked_prs = match
+        resolve_my_review_threads_targets(state, resolve_args, caller_role) {
+        Ok(value) => value
+        Err(e) => return @types.Response::Err(e.validation_detail_or_message())
+      }
+      let trigger_prs : Array[Int] = []
+      let resolved_thread_ids : Array[String] = []
+      let mut pr_count = 0
+      for tracked_snapshot in tracked_prs {
+        let tracked = match state.get(tracked_snapshot.pr_number) {
+          Some(current) => current
+          None => tracked_snapshot
+        }
+        let current = match
+          fetch_unresolved_review_thread_refs(
+            tracked.pr_number,
+            project_dir,
+            capture,
+          ) {
+          Some(refs) => {
+            let refreshed = {
+              ..tracked,
+              unresolved_thread_ids: refs,
+              unresolved_thread_ids_fetched: true,
+            }
+            state.restore(refreshed)
+            Some(refreshed)
+          }
+          None => None
+        }
+        let current = match current {
+          Some(value) => value
+          None =>
+            return @types.Response::Err(
+              "resolve_my_review_threads: failed to fetch review threads for PR #" +
+              tracked.pr_number.to_string() +
+              " after resolving " +
+              resolved_thread_ids.length().to_string() +
+              " thread(s)",
+            )
+        }
+        let prior_count = current.unresolved_thread_ids.length()
+        if prior_count == 0 {
+          continue
+        }
+        pr_count = pr_count + 1
+        for thread in current.unresolved_thread_ids {
+          if thread.id == "" {
+            continue
+          }
+          let result = interpret_resolve_review_thread(
+            { thread_id: thread.id, caller_id: resolve_args.caller_id },
+            project_dir,
+            capture,
+          )
+          if !result.is_ok() {
+            return @types.Response::Err(
+              "resolve_my_review_threads failed for " +
+              thread.id +
+              " after resolving " +
+              resolved_thread_ids.length().to_string() +
+              " thread(s): " +
+              result.error_message().unwrap_or("unknown error"),
+            )
+          }
+          resolved_thread_ids.push(thread.id)
+        }
+        let after_count = match
+          fetch_unresolved_review_thread_refs(
+            current.pr_number,
+            project_dir,
+            capture,
+          ) {
+          Some(refs) => {
+            state.restore({
+              ..current,
+              unresolved_thread_ids: refs,
+              unresolved_thread_ids_fetched: true,
+            })
+            refs.length()
+          }
+          None => prior_count
+        }
+        if should_synthesize_tick_on_resolve(prior_count, after_count) {
+          trigger_prs.push(current.pr_number)
+        }
+      }
+      if trigger_prs.length() > 0 {
+        on_resolve_review_thread(trigger_prs)
+      }
+      @types.Response::ok_values({
+        "status": String::to_json("ok"),
+        "resolved_count": Int::to_json(resolved_thread_ids.length()),
+        "pr_count": Int::to_json(pr_count),
+        "thread_ids": resolved_thread_ids.to_json(),
+      })
     }
     ToolRequest::ResolveReviewThread(resolve_args) => {
       let prior_counts = resolve_review_thread_unresolved_counts(
