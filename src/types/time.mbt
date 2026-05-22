@@ -37,6 +37,15 @@ fn days_in_month(year : Int64, month : Int64) -> Int64 {
 }
 
 ///|
+pub fn non_negative_i64(value : Int64) -> Int64 {
+  if value < 0L {
+    0L
+  } else {
+    value
+  }
+}
+
+///|
 /// Parse GitHub's canonical UTC timestamp layout (`YYYY-MM-DDTHH:MM:SSZ`)
 /// into unix epoch seconds. This is not a general ISO-8601 parser: offsets,
 /// fractional seconds, and non-UTC suffixes return `None`.

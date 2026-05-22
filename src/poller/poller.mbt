@@ -216,6 +216,8 @@ pub(all) struct PollerPrTickLog {
 
 ///|
 /// Per-runtime-tick summary for operator-visible INFO logging.
+/// `polled` is throughput accounting; steady-state polls with no changes or
+/// errors are intentionally empty so normal polling does not reintroduce noise.
 pub(all) struct TickSummary {
   mut polled : Int
   mut changes : Int
@@ -230,9 +232,7 @@ pub fn TickSummary::new(started_at_ms : Int64) -> TickSummary {
 
 ///|
 pub fn TickSummary::is_non_empty(self : TickSummary) -> Bool {
-  // M5 defines a non-empty tick as any tick where at least one PR was polled,
-  // a state transition fired, or an error occurred.
-  self.polled > 0 || self.changes > 0 || self.errors > 0
+  self.changes > 0 || self.errors > 0
 }
 
 ///|
@@ -240,12 +240,7 @@ pub fn TickSummary::elapsed_ms(
   self : TickSummary,
   ended_at_ms : Int64,
 ) -> Int64 {
-  let elapsed = ended_at_ms - self.started_at_ms
-  if elapsed < 0L {
-    0L
-  } else {
-    elapsed
-  }
+  @types.non_negative_i64(ended_at_ms - self.started_at_ms)
 }
 
 ///|
@@ -256,7 +251,7 @@ pub fn build_tick_summary_line(
   if !summary.is_non_empty() {
     return None
   }
-  let elapsed = if elapsed_ms < 0L { 0L } else { elapsed_ms }
+  let elapsed = @types.non_negative_i64(elapsed_ms)
   Some(
     "tick poll=" +
     summary.polled.to_string() +

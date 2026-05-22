@@ -18,11 +18,18 @@ test "tick summary builder formats counts and elapsed milliseconds" {
 }
 
 ///|
-test "tick summary builder follows M5 polled-only non-empty contract" {
+test "tick summary builder clamps negative elapsed milliseconds" {
+  let summary = TickSummary::new(100L)
+  summary.changes = 1
+  @debug.assert_eq(
+    build_tick_summary_line(summary, -1L),
+    Some("tick poll=0 changes=1 errors=0 elapsed=0ms"),
+  )
+}
+
+///|
+test "tick summary builder suppresses polled-only steady-state ticks" {
   let summary = TickSummary::new(100L)
   summary.polled = 1
-  @debug.assert_eq(
-    build_tick_summary_line(summary, 8L),
-    Some("tick poll=1 changes=0 errors=0 elapsed=8ms"),
-  )
+  @debug.assert_eq(build_tick_summary_line(summary, 8L), None)
 }

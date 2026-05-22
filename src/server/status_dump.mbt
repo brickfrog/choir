@@ -9,9 +9,9 @@ pub(all) struct ServerStatusSnapshotRow {
   last_activity_unix : Int64
   last_request_age_sec : Int64?
   pr_number : Int?
-  unresolved_threads : Int?
+  unresolved_threads : @tools.StatusBarThreadCount
   ci_rollup : @poller.CiRollupStatus?
-  attention_needed : Bool?
+  attention_needed : @tools.PaneAttention
 } derive(Debug, Eq)
 
 ///|
@@ -41,8 +41,7 @@ fn server_status_last_request_age_sec(
   if lifecycle.last_updated_unix_sec <= 0L {
     return None
   }
-  let age = now_sec - lifecycle.last_updated_unix_sec
-  Some(if age < 0L { 0L } else { age })
+  Some(@types.non_negative_i64(now_sec - lifecycle.last_updated_unix_sec))
 }
 
 ///|
@@ -69,6 +68,45 @@ fn server_status_workflow_pr_number(workflow : @phase.WorkflowState) -> Int? {
       @phase.SupervisorLifecycle::OwnPRFiled(number~, ..)
     ) => server_status_positive_pr_number(number)
     _ => None
+  }
+}
+
+///|
+fn server_status_tracked_for_workflow(
+  poller : @poller.PollerState,
+  agent_id : String,
+  workflow_pr_number : Int?,
+  tracked_by_agent : Map[String, @poller.TrackedPR],
+) -> @poller.TrackedPR? {
+  match workflow_pr_number {
+    Some(pr_number) =>
+      match poller.tracked.get(pr_number) {
+        Some(tracked) if tracked.agent_id == agent_id => Some(tracked)
+        _ => None
+      }
+    None => tracked_by_agent.get(agent_id)
+  }
+}
+
+///|
+fn server_status_thread_count(
+  pr_number : Int?,
+  tracked : @poller.TrackedPR?,
+) -> @tools.StatusBarThreadCount {
+  match pr_number {
+    None => @tools.StatusBarThreadCount::NoPR
+    Some(_) =>
+      match tracked {
+        Some(value) =>
+          if value.unresolved_thread_ids_fetched {
+            @tools.StatusBarThreadCount::Count(
+              value.unresolved_thread_ids.length(),
+            )
+          } else {
+            @tools.StatusBarThreadCount::Unknown
+          }
+        None => @tools.StatusBarThreadCount::Unknown
+      }
   }
 }
 
@@ -104,20 +142,19 @@ pub fn server_status_snapshot_rows(
       @phase.lifecycle_for_agent(agent),
     )
     let workflow = lifecycle.workflow
-    let tracked = tracked_by_agent.get(agent_id)
-    let pr_number = match tracked {
-      Some(value) => server_status_positive_pr_number(value.pr_number)
-      None => server_status_workflow_pr_number(workflow)
-    }
-    let unresolved_threads = match tracked {
-      Some(value) =>
-        if value.unresolved_thread_ids_fetched {
-          Some(value.unresolved_thread_ids.length())
-        } else {
-          None
+    let workflow_pr_number = server_status_workflow_pr_number(workflow)
+    let tracked = server_status_tracked_for_workflow(
+      poller, agent_id, workflow_pr_number, tracked_by_agent,
+    )
+    let pr_number = match workflow_pr_number {
+      Some(value) => Some(value)
+      None =>
+        match tracked {
+          Some(value) => server_status_positive_pr_number(value.pr_number)
+          None => None
         }
-      None => None
     }
+    let unresolved_threads = server_status_thread_count(pr_number, tracked)
     let ci_rollup = match tracked {
       Some(value) => Some(value.last_ci_rollup)
       None => None
@@ -135,29 +172,18 @@ pub fn server_status_snapshot_rows(
       .map(@types.LocalTarget::to_string)
       .unwrap_or("none"),
       parent_agent_id: agent.parent,
-      last_activity_unix: if lifecycle.last_updated_unix_sec > 0L {
-        lifecycle.last_updated_unix_sec
-      } else {
-        0L
-      },
+      last_activity_unix: @types.non_negative_i64(
+        lifecycle.last_updated_unix_sec,
+      ),
       last_request_age_sec: server_status_last_request_age_sec(
         now_sec, lifecycle,
       ),
       pr_number,
       unresolved_threads,
       ci_rollup,
-      attention_needed: match unresolved_threads {
-        Some(thread_count) =>
-          Some(
-            @tools.pane_needs_attention(workflow, fixes_pushed_at, thread_count),
-          )
-        None =>
-          if pr_number is None {
-            Some(@tools.pane_needs_attention(workflow, fixes_pushed_at, 0))
-          } else {
-            None
-          }
-      },
+      attention_needed: @tools.pane_needs_attention(
+        workflow, fixes_pushed_at, unresolved_threads,
+      ),
     })
   }
   sort_server_status_rows(rows)
@@ -180,22 +206,19 @@ fn server_status_optional_pr(value : Int?) -> String {
 }
 
 ///|
-fn server_status_optional_thread_count(
-  pr_number : Int?,
-  value : Int?,
+fn server_status_thread_count_to_string(
+  value : @tools.StatusBarThreadCount,
 ) -> String {
   match value {
-    Some(v) => v.to_string()
-    None => if pr_number is None { "none" } else { "unknown" }
+    NoPR => "none"
+    Unknown => "unknown"
+    Count(v) => v.to_string()
   }
 }
 
 ///|
-fn server_status_optional_bool(value : Bool?) -> String {
-  match value {
-    Some(v) => if v { "true" } else { "false" }
-    None => "unknown"
-  }
+fn server_status_attention_to_string(value : @tools.PaneAttention) -> String {
+  @tools.pane_attention_to_bool_string(value)
 }
 
 ///|
@@ -250,12 +273,12 @@ pub fn format_server_status_snapshot(
     out.write_string(server_status_optional_pr(row.pr_number))
     out.write_string(" unresolved_threads=")
     out.write_string(
-      server_status_optional_thread_count(row.pr_number, row.unresolved_threads),
+      server_status_thread_count_to_string(row.unresolved_threads),
     )
     out.write_string(" ci_rollup=")
     out.write_string(server_status_optional_ci_rollup(row.ci_rollup))
     out.write_string(" attention_needed=")
-    out.write_string(server_status_optional_bool(row.attention_needed))
+    out.write_string(server_status_attention_to_string(row.attention_needed))
     out.write_string("\n")
   }
   out.to_string()

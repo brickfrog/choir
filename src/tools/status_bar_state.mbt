@@ -1,4 +1,18 @@
 ///|
+pub(all) enum StatusBarThreadCount {
+  NoPR
+  Unknown
+  Count(Int)
+} derive(Debug, Eq)
+
+///|
+pub(all) enum PaneAttention {
+  Clear
+  Needed
+  Unknown
+} derive(Debug, Eq)
+
+///|
 pub(all) struct StatusBarPane {
   zellij_pane_id : Int
   agent_id : String
@@ -6,9 +20,9 @@ pub(all) struct StatusBarPane {
   agent_type : String
   lifecycle : String
   pr_number : Int?
-  unresolved_threads : Int
+  unresolved_threads : StatusBarThreadCount
   ci_rollup : String
-  attention_needed : Bool
+  attention_needed : PaneAttention
   parent_agent_id : String?
   last_activity_unix : Int64
 } derive(Debug, Eq)
@@ -72,6 +86,69 @@ fn status_bar_null_json() -> Json {
 }
 
 ///|
+fn status_bar_thread_count_json(value : StatusBarThreadCount) -> Json {
+  match value {
+    NoPR => "none".to_json()
+    Unknown => "unknown".to_json()
+    Count(v) => v.to_json()
+  }
+}
+
+///|
+fn status_bar_thread_count_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> StatusBarThreadCount raise @json.JsonDecodeError {
+  match value {
+    Number(_, ..) => {
+      let count : Int = @json.from_json(value, path~)
+      StatusBarThreadCount::Count(count)
+    }
+    String("none") => StatusBarThreadCount::NoPR
+    String("unknown") => StatusBarThreadCount::Unknown
+    String(_) =>
+      raise @json.JsonDecodeError(
+        (
+          path, "status_bar_state: expected unresolved_threads count/none/unknown",
+        ),
+      )
+    _ =>
+      raise @json.JsonDecodeError(
+        (
+          path, "status_bar_state: expected unresolved_threads count/none/unknown",
+        ),
+      )
+  }
+}
+
+///|
+fn pane_attention_json(value : PaneAttention) -> Json {
+  match value {
+    Clear => "clear".to_json()
+    Needed => "needed".to_json()
+    Unknown => "unknown".to_json()
+  }
+}
+
+///|
+fn pane_attention_from_json(
+  value : Json,
+  path : @json.JsonPath,
+) -> PaneAttention raise @json.JsonDecodeError {
+  match value {
+    String("clear") => PaneAttention::Clear
+    String("needed") => PaneAttention::Needed
+    String("unknown") => PaneAttention::Unknown
+    _ =>
+      raise @json.JsonDecodeError(
+        (
+          path, "status_bar_state: expected attention_needed clear/needed/unknown",
+        ),
+      )
+  }
+}
+
+///|
 fn status_bar_optional_int_json(value : Int?) -> Json {
   match value {
     Some(v) => v.to_json()
@@ -123,9 +200,9 @@ pub impl ToJson for StatusBarPane with to_json(self) -> Json {
     "agent_type": self.agent_type.to_json(),
     "lifecycle": self.lifecycle.to_json(),
     "pr_number": status_bar_optional_int_json(self.pr_number),
-    "unresolved_threads": self.unresolved_threads.to_json(),
+    "unresolved_threads": status_bar_thread_count_json(self.unresolved_threads),
     "ci_rollup": self.ci_rollup.to_json(),
-    "attention_needed": self.attention_needed.to_json(),
+    "attention_needed": pane_attention_json(self.attention_needed),
     "parent_agent_id": status_bar_optional_string_json(self.parent_agent_id),
     "last_activity_unix": status_bar_int64_json(self.last_activity_unix),
   }.to_json()
@@ -198,9 +275,13 @@ pub impl FromJson for StatusBarPane with from_json(json, path) {
             ),
           )
       }
-      let unresolved_threads : Int = match fields.get("unresolved_threads") {
+      let unresolved_threads : StatusBarThreadCount = match
+        fields.get("unresolved_threads") {
         Some(value) =>
-          @json.from_json(value, path=path.add_key("unresolved_threads"))
+          status_bar_thread_count_from_json(
+            value,
+            path.add_key("unresolved_threads"),
+          )
         None =>
           raise @json.JsonDecodeError(
             (
@@ -219,9 +300,10 @@ pub impl FromJson for StatusBarPane with from_json(json, path) {
             ),
           )
       }
-      let attention_needed : Bool = match fields.get("attention_needed") {
+      let attention_needed : PaneAttention = match
+        fields.get("attention_needed") {
         Some(value) =>
-          @json.from_json(value, path=path.add_key("attention_needed"))
+          pane_attention_from_json(value, path.add_key("attention_needed"))
         None =>
           raise @json.JsonDecodeError(
             (
@@ -336,15 +418,6 @@ pub impl FromJson for StatusBarSnapshot with from_json(json, path) {
       raise @json.JsonDecodeError(
         (path, "StatusBarSnapshot::from_json: expected object"),
       )
-  }
-}
-
-///|
-fn status_bar_nonnegative_i64(n : Int64) -> Int64 {
-  if n < 0L {
-    0L
-  } else {
-    n
   }
 }
 
@@ -674,16 +747,34 @@ pub fn lifecycle_to_wire_string(workflow : @phase.WorkflowState) -> String {
 pub fn pane_needs_attention(
   workflow : @phase.WorkflowState,
   fixes_pushed_at : Int64,
-  unresolved_threads : Int,
-) -> Bool {
+  unresolved_threads : StatusBarThreadCount,
+) -> PaneAttention {
   match workflow {
     @phase.WorkflowState::Dev(@phase.DevLifecycle::Failed(..))
     | @phase.WorkflowState::Worker(@phase.WorkerLifecycle::Failed(..))
     | @phase.WorkflowState::Supervisor(@phase.SupervisorLifecycle::Failed(..)) =>
-      true
+      PaneAttention::Needed
     @phase.WorkflowState::Dev(@phase.DevLifecycle::ChangesRequested(..)) =>
-      fixes_pushed_at > 0L && unresolved_threads > 0
-    _ => false
+      if fixes_pushed_at <= 0L {
+        PaneAttention::Clear
+      } else {
+        match unresolved_threads {
+          Count(thread_count) if thread_count > 0 => PaneAttention::Needed
+          Count(_) => PaneAttention::Clear
+          Unknown => PaneAttention::Unknown
+          NoPR => PaneAttention::Clear
+        }
+      }
+    _ => PaneAttention::Clear
+  }
+}
+
+///|
+pub fn pane_attention_to_bool_string(value : PaneAttention) -> String {
+  match value {
+    Clear => "false"
+    Needed => "true"
+    Unknown => "unknown"
   }
 }
 
@@ -710,14 +801,55 @@ fn status_bar_tracked_by_agent(
 ) -> Map[String, @poller.TrackedPR] {
   let by_agent : Map[String, @poller.TrackedPR] = {}
   for tracked in poller_tracked.values() {
-    by_agent.set(tracked.agent_id, tracked)
+    match by_agent.get(tracked.agent_id) {
+      Some(existing) if existing.pr_number >= tracked.pr_number => ()
+      _ => by_agent.set(tracked.agent_id, tracked)
+    }
   }
   by_agent
 }
 
 ///|
+fn status_bar_tracked_for_workflow(
+  poller_tracked : Map[Int, @poller.TrackedPR],
+  agent_id : String,
+  workflow_pr_number : Int?,
+  tracked_by_agent : Map[String, @poller.TrackedPR],
+) -> @poller.TrackedPR? {
+  match workflow_pr_number {
+    Some(pr_number) =>
+      match poller_tracked.get(pr_number) {
+        Some(tracked) if tracked.agent_id == agent_id => Some(tracked)
+        _ => None
+      }
+    None => tracked_by_agent.get(agent_id)
+  }
+}
+
+///|
+fn status_bar_thread_count(
+  pr_number : Int?,
+  tracked : @poller.TrackedPR?,
+) -> StatusBarThreadCount {
+  match pr_number {
+    None => StatusBarThreadCount::NoPR
+    Some(_) =>
+      match tracked {
+        Some(value) =>
+          if value.unresolved_thread_ids_fetched {
+            StatusBarThreadCount::Count(value.unresolved_thread_ids.length())
+          } else {
+            StatusBarThreadCount::Unknown
+          }
+        None => StatusBarThreadCount::Unknown
+      }
+  }
+}
+
+///|
 fn status_bar_pane_from_entry(
   entry : StatusBarRegistryEntry,
+  poller_tracked : Map[Int, @poller.TrackedPR],
   tracked_by_agent : Map[String, @poller.TrackedPR],
   list_panes : ZellijListPanesSnapshot,
 ) -> StatusBarPane? {
@@ -738,15 +870,19 @@ fn status_bar_pane_from_entry(
     return None
   }
   let workflow = entry.lifecycle.workflow
-  let tracked = tracked_by_agent.get(agent_id)
-  let pr_number = match tracked {
-    Some(value) => status_bar_positive_pr_number(value.pr_number)
-    None => status_bar_workflow_pr_number(workflow)
+  let workflow_pr_number = status_bar_workflow_pr_number(workflow)
+  let tracked = status_bar_tracked_for_workflow(
+    poller_tracked, agent_id, workflow_pr_number, tracked_by_agent,
+  )
+  let pr_number = match workflow_pr_number {
+    Some(value) => Some(value)
+    None =>
+      match tracked {
+        Some(value) => status_bar_positive_pr_number(value.pr_number)
+        None => None
+      }
   }
-  let unresolved_threads = match tracked {
-    Some(value) => value.unresolved_thread_ids.length()
-    None => 0
-  }
+  let unresolved_threads = status_bar_thread_count(pr_number, tracked)
   let ci_rollup = match tracked {
     Some(value) => ci_rollup_to_wire_string(value.last_ci_rollup)
     None => "unknown"
@@ -768,7 +904,7 @@ fn status_bar_pane_from_entry(
       workflow, fixes_pushed_at, unresolved_threads,
     ),
     parent_agent_id: status_bar_parent_agent_id(entry.agent.parent),
-    last_activity_unix: status_bar_nonnegative_i64(
+    last_activity_unix: @types.non_negative_i64(
       entry.lifecycle.last_updated_unix_sec,
     ),
   })
@@ -803,14 +939,17 @@ pub fn build_status_bar_snapshot(
   let tracked_by_agent = status_bar_tracked_by_agent(poller_tracked)
   let panes : Array[StatusBarPane] = []
   for entry in registry_entries {
-    match status_bar_pane_from_entry(entry, tracked_by_agent, list_panes) {
+    match
+      status_bar_pane_from_entry(
+        entry, poller_tracked, tracked_by_agent, list_panes,
+      ) {
       Some(pane) => panes.push(pane)
       None => ()
     }
   }
   {
     schema_version: 1,
-    taken_at_ms: status_bar_nonnegative_i64(now_ms),
+    taken_at_ms: @types.non_negative_i64(now_ms),
     panes: sort_status_bar_panes(panes),
   }
 }
@@ -855,6 +994,7 @@ fn status_bar_registry_entry_sessions(
 ///|
 fn status_bar_pane_from_entry_by_session(
   entry : StatusBarRegistryEntry,
+  poller_tracked : Map[Int, @poller.TrackedPR],
   tracked_by_agent : Map[String, @poller.TrackedPR],
   list_panes_by_session : Map[String, ZellijListPanesSnapshot],
 ) -> StatusBarPane? {
@@ -866,7 +1006,9 @@ fn status_bar_pane_from_entry_by_session(
     Some(value) => value
     None => return None
   }
-  status_bar_pane_from_entry(entry, tracked_by_agent, list_panes)
+  status_bar_pane_from_entry(
+    entry, poller_tracked, tracked_by_agent, list_panes,
+  )
 }
 
 ///|
@@ -881,7 +1023,7 @@ fn build_status_bar_snapshot_by_session(
   for entry in registry_entries {
     match
       status_bar_pane_from_entry_by_session(
-        entry, tracked_by_agent, list_panes_by_session,
+        entry, poller_tracked, tracked_by_agent, list_panes_by_session,
       ) {
       Some(pane) => panes.push(pane)
       None => ()
@@ -889,7 +1031,7 @@ fn build_status_bar_snapshot_by_session(
   }
   {
     schema_version: 1,
-    taken_at_ms: status_bar_nonnegative_i64(now_ms),
+    taken_at_ms: @types.non_negative_i64(now_ms),
     panes: sort_status_bar_panes(panes),
   }
 }

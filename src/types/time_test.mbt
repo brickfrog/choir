@@ -1,4 +1,11 @@
 ///|
+test "non_negative_i64 clamps negative values and preserves zero positive values" {
+  assert_eq(non_negative_i64(-1L), 0L)
+  assert_eq(non_negative_i64(0L), 0L)
+  assert_eq(non_negative_i64(42L), 42L)
+}
+
+///|
 test "parse_iso8601_to_unix_seconds_opt parses canonical Z-suffixed timestamps" {
   // 2026-05-18T00:27:59Z = 1779064079 (matches gh's mergedAt format)
   @debug.assert_eq(
