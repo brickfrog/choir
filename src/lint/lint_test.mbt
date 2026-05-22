@@ -150,6 +150,29 @@ test "does not flag helper that only parameterizes the capture function" {
 }
 
 ///|
+test "does not flag helper calls shadowed by local and lambda bindings" {
+  let source =
+    #|fn helper_with_capture() {
+    #|  ignore(@exec.capture_stdout_with_cwd("gh", ["pr", "list"], None))
+    #|}
+    #|fn helper_calls_shadowed_locals() {
+    #|  let helper_with_capture = fn() { () }
+    #|  helper_with_capture()
+    #|  let call_local = fn(helper_with_capture : () -> Unit) {
+    #|    helper_with_capture()
+    #|  }
+    #|  call_local(fn() { () })
+    #|}
+    #|test "ok" {
+    #|  helper_calls_shadowed_locals()
+    #|}
+  match lint_source("src/bin/choir/uds_server.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
 test "does not flag non-dangerous helper chains" {
   let source =
     #|fn safe_helper() {
@@ -160,6 +183,42 @@ test "does not flag non-dangerous helper chains" {
     #|}
   match lint_source("src/bin/choir/uds_server.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "does not emit helper-chain findings from helper bodies" {
+  let source =
+    #|fn helper_with_capture() {
+    #|  ignore(@exec.capture_stdout_with_cwd("gh", ["pr", "list"], None))
+    #|}
+    #|fn helper_wrapper() {
+    #|  helper_with_capture()
+    #|}
+  match lint_source("src/example/helper_test.mbt", source) {
+    Ok(findings) =>
+      assert_false(
+        findings.any(fn(f) { f.message.contains("test calls helper") }),
+      )
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "allows helper-chain calls in explicit real exec integration tests" {
+  let source =
+    #|fn helper_with_capture() {
+    #|  ignore(capture_command_merged({ program: "echo", args: ["ok"], workdir: None }))
+    #|}
+    #|async test "real exec integration: helper chain may use real exec" {
+    #|  helper_with_capture()
+    #|}
+  match lint_source("src/exec/exec_test.mbt", source) {
+    Ok(findings) =>
+      assert_false(
+        findings.any(fn(f) { f.message.contains("test calls helper") }),
+      )
     Err(e) => fail(e.message())
   }
 }

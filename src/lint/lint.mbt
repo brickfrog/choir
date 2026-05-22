@@ -53,7 +53,7 @@ priv struct FunctionBodyCollector {
   mut direct_rule_id : String?
   calls : Array[String]
   known_functions : Array[String]
-  parameter_names : Array[String]
+  shadowed_names : Array[String]
   aliases : Array[(String, DangerousCallKind)]
 }
 
@@ -419,7 +419,7 @@ fn direct_forbidden_rule_for_arg_refs(
 fn function_call_info_from_body(
   file : String,
   known_functions : Array[String],
-  parameter_names : Array[String],
+  shadowed_names : Array[String],
   body : @syntax.DeclBody,
 ) -> (String?, Array[String]) {
   let collector = FunctionBodyCollector::{
@@ -427,7 +427,7 @@ fn function_call_info_from_body(
     direct_rule_id: None,
     calls: Array::new(capacity=4),
     known_functions,
-    parameter_names,
+    shadowed_names,
     aliases: Array::new(capacity=4),
   }
   collector.visit_DeclBody(body)
@@ -440,22 +440,127 @@ fn collect_parameter_names(decl_params : @syntax.Parameters?) -> Array[String] {
   match decl_params {
     None => names
     Some(params) => {
-      for param in params {
-        match param {
-          DiscardPositional(..) => ()
-          Positional(binder~, ..) => names.push(binder.name)
-          Labelled(binder~, ..) => names.push(binder.name)
-          Optional(binder~, ..) => names.push(binder.name)
-          QuestionOptional(binder~, ..) => names.push(binder.name)
-        }
-      }
+      push_parameter_names(names, params)
       names
     }
   }
 }
 
 ///|
+fn push_parameter_names(
+  names : Array[String],
+  params : @syntax.Parameters,
+) -> Unit {
+  for param in params {
+    match param {
+      DiscardPositional(..) => ()
+      Positional(binder~, ..) => names.push(binder.name)
+      Labelled(binder~, ..) => names.push(binder.name)
+      Optional(binder~, ..) => names.push(binder.name)
+      QuestionOptional(binder~, ..) => names.push(binder.name)
+    }
+  }
+}
+
+///|
+fn push_dotdot_binder_name(
+  names : Array[String],
+  binder : @syntax.DotDotBinder,
+) -> Unit {
+  match binder {
+    Underscore | NoBinder => ()
+    BinderAs(binder) | Binder(binder) => names.push(binder.name)
+  }
+}
+
+///|
+fn push_array_pattern_bindings(
+  names : Array[String],
+  pattern : @syntax.ArrayPattern,
+) -> Unit {
+  match pattern {
+    Pattern(pat) => push_pattern_bindings(names, pat)
+    ConstSpread(binder~, ..) => names.push(binder.name)
+    StringSpread(..) | BytesSpread(..) => ()
+  }
+}
+
+///|
+fn push_pattern_bindings(
+  names : Array[String],
+  pattern : @syntax.Pattern,
+) -> Unit {
+  match pattern {
+    Alias(pat~, alias_~, ..) => {
+      push_pattern_bindings(names, pat)
+      names.push(alias_.name)
+    }
+    Array(pats~, ..) =>
+      match pats {
+        Closed(items) =>
+          for item in items {
+            push_array_pattern_bindings(names, item)
+          }
+        Open(prefix, suffix, dotdot) => {
+          for item in prefix {
+            push_array_pattern_bindings(names, item)
+          }
+          for item in suffix {
+            push_array_pattern_bindings(names, item)
+          }
+          push_dotdot_binder_name(names, dotdot)
+        }
+      }
+    Constraint(pat~, ..) => push_pattern_bindings(names, pat)
+    Constr(args~, ..) =>
+      match args {
+        Some(args) =>
+          for arg in args {
+            push_pattern_bindings(names, arg.pat)
+          }
+        None => ()
+      }
+    Or(pat1~, pat2~, ..) => {
+      push_pattern_bindings(names, pat1)
+      push_pattern_bindings(names, pat2)
+    }
+    Tuple(pats~, ..) =>
+      for pat in pats {
+        push_pattern_bindings(names, pat)
+      }
+    Var(binder) => names.push(binder.name)
+    Record(fields~, ..) =>
+      for field in fields {
+        push_pattern_bindings(names, field.pattern)
+      }
+    Map(elems~, ..) =>
+      for elem in elems {
+        push_pattern_bindings(names, elem.pat)
+      }
+    Range(lhs~, rhs~, ..) => {
+      push_pattern_bindings(names, lhs)
+      push_pattern_bindings(names, rhs)
+    }
+    SpecialConstr(binder~, args~, ..) => {
+      names.push(binder.name)
+      for arg in args {
+        push_pattern_bindings(names, arg.pat)
+      }
+    }
+    Any(..) | Constant(..) => ()
+  }
+}
+
+///|
+fn pop_names_to(names : Array[String], length : Int) -> Unit {
+  while names.length() > length {
+    ignore(names.pop())
+  }
+}
+
+///|
 impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
+  let mut visit_children = true
   if self.direct_rule_id is None {
     match expr {
       Apply(func~, args~, ..) =>
@@ -466,7 +571,7 @@ impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
             match called_function_name(func) {
               Some(name) =>
                 if self.known_functions.any(fn(f) { f == name }) &&
-                  !self.parameter_names.any(fn(p) { p == name }) {
+                  !self.shadowed_names.any(fn(p) { p == name }) {
                   self.calls.push(name)
                 }
               None => ()
@@ -477,16 +582,45 @@ impl @syntax.IterVisitor for FunctionBodyCollector with visit_Expr(self, expr) {
             }
           }
         }
-      Let(pattern~, expr=value, ..) => {
-        bind_alias_with_aliases(self.aliases, self.file, pattern, value)
-        if is_forbidden_test_exec_package_ref(value) {
-          self.direct_rule_id = Some("test-exec-reference")
+      Function(func~, ..) => {
+        visit_children = false
+        let shadowed_len = self.shadowed_names.length()
+        push_parameter_names(self.shadowed_names, func.parameters)
+        self.visit_Expr(func.body)
+        pop_names_to(self.shadowed_names, shadowed_len)
+      }
+      LetFn(name~, func~, body~, ..) => {
+        visit_children = false
+        let outer_shadowed_len = self.shadowed_names.length()
+        self.shadowed_names.push(name.name)
+        let inner_shadowed_len = self.shadowed_names.length()
+        push_parameter_names(self.shadowed_names, func.parameters)
+        self.visit_Expr(func.body)
+        pop_names_to(self.shadowed_names, inner_shadowed_len)
+        self.visit_Expr(body)
+        pop_names_to(self.shadowed_names, outer_shadowed_len)
+      }
+      Let(pattern~, expr=value, body~, ..) => {
+        visit_children = false
+        self.visit_Expr(value)
+        if self.direct_rule_id is None {
+          bind_alias_with_aliases(self.aliases, self.file, pattern, value)
+          if is_forbidden_test_exec_package_ref(value) {
+            self.direct_rule_id = Some("test-exec-reference")
+          } else {
+            let shadowed_len = self.shadowed_names.length()
+            push_pattern_bindings(self.shadowed_names, pattern)
+            self.visit_Expr(body)
+            pop_names_to(self.shadowed_names, shadowed_len)
+          }
         }
       }
       _ => ()
     }
   }
-  self.base().visit_Expr(expr)
+  if self.direct_rule_id is None && visit_children {
+    self.base().visit_Expr(expr)
+  }
 }
 
 ///|
@@ -1119,7 +1253,9 @@ impl @syntax.IterVisitor for LintEnv with visit_Expr(env, expr) {
   match expr {
     Apply(func~, args~, loc~, ..) => {
       check_test_apply(env, func, args, loc)
-      if env.test_rules_enabled {
+      if env.test_rules_enabled &&
+        current_decl_name(env).has_prefix("test:") &&
+        !is_explicit_real_exec_integration_test(env) {
         match called_function_name(func) {
           Some(name) =>
             match forbidden_helper_info(env.forbidden_helpers, name) {
