@@ -4161,22 +4161,11 @@ async test "interpret_file_pr tracks global review mode when no local override e
 ///|
 test "file_pr_copilot_reviewer_gh_command requests @copilot reviewer" {
   let cmd = file_pr_copilot_reviewer_gh_command(44, "/wt/agent-checkout")
-  assert_eq(cmd.program, "gh")
+  assert_eq(cmd.program, "timeout")
   @debug.assert_eq(cmd.workdir, Some("/wt/agent-checkout"))
-  assert_eq(cmd.args.length(), 5)
-  assert_eq(cmd.args[0], "pr")
-  assert_eq(cmd.args[1], "edit")
-  assert_eq(cmd.args[2], "44")
-  assert_eq(cmd.args[3], "--add-reviewer")
-  assert_eq(cmd.args[4], file_pr_copilot_reviewer_handle)
-}
-
-///|
-test "request_review_gh_command requests arbitrary reviewer from server workdir" {
-  let cmd = request_review_gh_command(45, "@copilot", "/srv/choir")
-  assert_eq(cmd.program, "gh")
-  @debug.assert_eq(cmd.workdir, Some("/srv/choir"))
-  @debug.assert_eq(cmd.args, ["pr", "edit", "45", "--add-reviewer", "@copilot"])
+  @debug.assert_eq(cmd.args, [
+    "30s", "gh", "pr", "edit", "44", "--add-reviewer", file_pr_copilot_reviewer_handle,
+  ])
 }
 
 ///|
@@ -4216,9 +4205,10 @@ async test "dispatch request_review runs reviewer request through server capture
     @types.Response::Err(msg) => fail("expected ok: " + msg)
   }
   assert_eq(seen.length(), 1)
+  assert_eq(seen[0].program, "timeout")
   @debug.assert_eq(seen[0].workdir, Some("/srv/choir"))
   @debug.assert_eq(seen[0].args, [
-    "pr", "edit", "46", "--add-reviewer", "@copilot",
+    "30s", "gh", "pr", "edit", "46", "--add-reviewer", "@copilot",
   ])
 }
 
@@ -4241,7 +4231,7 @@ async test "dispatch request_review rejects untracked PR" {
 }
 
 ///|
-async test "interpret_file_pr requests reviewer for existing PR after audit and verify gates" {
+async test "interpret_file_pr requests reviewer after audit verify push and ensure_pr" {
   let project_dir = "/tmp/choir-fpr-existing-reviewer-after-gates-" +
     @sys.get_pid().to_string()
   let file_pr_dir = project_dir
@@ -4277,7 +4267,7 @@ async test "interpret_file_pr requests reviewer for existing PR after audit and 
           cmd.args[0] == "push" {
           events.push("push")
         }
-        if cmd.program == "gh" && cmd.args.contains("--add-reviewer") {
+        if cmd.program == "timeout" && cmd.args.contains("--add-reviewer") {
           events.push("reviewer")
         }
         runner_cmds.push(cmd)
@@ -4323,8 +4313,9 @@ async test "interpret_file_pr requests reviewer for existing PR after audit and 
     "head", "audit", "head", "verify", "push", "ensure_pr", "reviewer",
   ])
   assert_eq(runner_cmds.length(), 2)
+  assert_eq(runner_cmds[1].program, "timeout")
   @debug.assert_eq(runner_cmds[1].args, [
-    "pr", "edit", "45", "--add-reviewer", "@copilot",
+    "30s", "gh", "pr", "edit", "45", "--add-reviewer", "@copilot",
   ])
   ignore(@sys.rm_rf(project_dir))
 }

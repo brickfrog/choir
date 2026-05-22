@@ -246,15 +246,6 @@ pub fn file_pr_copilot_review_comment_gh_command(
 }
 
 ///|
-pub fn request_review_gh_command(
-  pr_number : Int,
-  reviewer : String,
-  gh_workdir : String,
-) -> @workspace.Command {
-  @workspace.gh_pr_add_reviewer(pr_number, reviewer, gh_workdir)
-}
-
-///|
 pub fn interpret_request_review_result(
   exit_code : Int,
   output : String,
@@ -284,7 +275,7 @@ pub async fn interpret_request_review(
   project_dir : String,
   capture : async (@workspace.Command) -> (Int, String),
 ) -> @types.Response {
-  let cmd = request_review_gh_command(
+  let cmd = @workspace.gh_pr_add_reviewer(
     args.pr_number,
     args.reviewer,
     project_dir,
@@ -305,7 +296,7 @@ pub fn file_pr_copilot_reviewer_gh_command(
   pr_number : Int,
   gh_workdir : String,
 ) -> @workspace.Command {
-  request_review_gh_command(
+  @workspace.gh_pr_add_reviewer(
     pr_number, file_pr_copilot_reviewer_handle, gh_workdir,
   )
 }
@@ -536,7 +527,9 @@ pub async fn interpret_file_pr_post_success(
   }
   if review_request_failed {
     effects.response.with_warning(
-      "copilot_review_request_failed: reviewer request for @copilot failed — use the request_review MCP tool from the parent/server path",
+      "copilot_review_request_failed: reviewer request for @copilot failed — use request_review(pr_number: \"" +
+      pr_number.to_string() +
+      "\", reviewer: \"@copilot\") from the parent/server path",
     )
   } else {
     effects.response

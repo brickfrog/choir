@@ -1521,7 +1521,20 @@ fn parse_resolve_my_review_threads_args(
     Some(v) if v.trim() != "" => v.trim().to_owned()
     _ => return Err(ParseError::MissingField(field="caller_id"))
   }
-  Ok({ caller_id, })
+  let pr_number = match tool_args_get(args, "pr_number") {
+    Some(raw) =>
+      if raw.trim() == "" {
+        None
+      } else {
+        match tool_args_get_int(args, "pr_number") {
+          Some(value) => Some(value)
+          None =>
+            return Err(ParseError::InvalidValue(field="pr_number", value=raw))
+        }
+      }
+    None => None
+  }
+  Ok({ caller_id, pr_number })
 }
 
 ///|
@@ -2242,13 +2255,31 @@ test "parse_resolve_review_thread_args accepts valid thread_id" {
 }
 
 ///|
-test "parse_resolve_my_review_threads_args accepts caller_id" {
+test "parse_resolve_my_review_threads_args accepts caller_id and optional pr_number" {
   match
     parse_resolve_my_review_threads_args(
-      tool_args_from_map({ "caller_id": "main.leaf" }),
+      tool_args_from_map({ "caller_id": "main.leaf", "pr_number": "427" }),
     ) {
-    Ok(args) => assert_eq(args.caller_id, "main.leaf")
+    Ok(args) => {
+      assert_eq(args.caller_id, "main.leaf")
+      @debug.assert_eq(args.pr_number, Some(427))
+    }
     Err(e) => fail("unexpected error: " + e.message())
+  }
+}
+
+///|
+test "parse_resolve_my_review_threads_args rejects invalid pr_number" {
+  match
+    parse_resolve_my_review_threads_args(
+      tool_args_from_map({ "caller_id": "main.leaf", "pr_number": "nope" }),
+    ) {
+    Err(ParseError::InvalidValue(field~, value~)) => {
+      assert_eq(field, "pr_number")
+      assert_eq(value, "nope")
+    }
+    Err(e) => fail("unexpected error: " + e.message())
+    Ok(_) => fail("expected invalid pr_number")
   }
 }
 

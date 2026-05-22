@@ -258,6 +258,9 @@ fn leaf_tool_request_args(
       }
     }
     "resolve_my_review_threads" => {
+      if !flags.contains("pr_number") && positionals.length() > 0 {
+        flags.set("pr_number", positionals[0])
+      }
       if !flags.contains("caller_id") {
         match @sys.getenv("CHOIR_AGENT_ID") {
           Some(id) => if id != "" { flags.set("caller_id", id) }
@@ -373,7 +376,7 @@ fn leaf_tool_usage(tool : String) -> String {
     "tdd_green_check" =>
       "usage: tdd_green_check --exit-code 0 [--next-phase <green|refactor|done>]"
     "resolve_my_review_threads" =>
-      "usage: resolve_my_review_threads [--caller-id <agent_id>]"
+      "usage: resolve_my_review_threads [--caller-id <agent_id>] [--pr-number <number>]"
     "request_review" =>
       "usage: request_review --pr-number <number> --reviewer <login>"
     "shutdown" => "usage: shutdown [--caller-id <caller_id>]"
@@ -953,9 +956,10 @@ test "leaf tool usage includes file_pr args" {
 test "leaf tool parser supports PR plumbing tools" {
   let resolve = leaf_tool_request_args(
     "resolve_my_review_threads",
-    parse_leaf_cli_args(["--caller-id", "main.leaf"]),
+    parse_leaf_cli_args(["427", "--caller-id", "main.leaf"]),
   ).unwrap()
   @debug.assert_eq(resolve.get("caller_id"), Some("main.leaf"))
+  @debug.assert_eq(resolve.get("pr_number"), Some("427"))
 
   let review = leaf_tool_request_args(
     "request_review",
@@ -969,10 +973,13 @@ test "leaf tool parser supports PR plumbing tools" {
 test "leaf tool usage includes PR plumbing tools" {
   assert_true(
     leaf_tool_usage("resolve_my_review_threads").contains(
-      "resolve_my_review_threads",
+      "--pr-number <number>",
     ),
   )
-  assert_true(leaf_tool_usage("request_review").contains("--reviewer"))
+  assert_true(
+    leaf_tool_usage("request_review").contains("--pr-number <number>"),
+  )
+  assert_true(leaf_tool_usage("request_review").contains("--reviewer <login>"))
 }
 
 ///|

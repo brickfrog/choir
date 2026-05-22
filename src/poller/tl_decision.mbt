@@ -639,6 +639,31 @@ pub fn advisory_evaluation_summary_line(
 }
 
 ///|
+fn unresolved_threads_are_next_typed_blocker(
+  bundle : @types.EvaluationBundle,
+) -> Bool {
+  let required_verify = match bundle.task_contract {
+    Some(contract) => contract.verify
+    None => []
+  }
+  let verify_results = @types.evaluation_verify_results_for_required(
+    required_verify,
+    bundle.signals,
+  )
+  if @types.evaluation_failed_verify_names(verify_results).length() > 0 {
+    return false
+  }
+  if @types.evaluation_latest_review_state(bundle.signals) ==
+    @types.EvaluationReviewState::ChangesRequested {
+    return false
+  }
+  match @types.evaluation_latest_threads(bundle.signals) {
+    Some(count) => count > 0
+    None => false
+  }
+}
+
+///|
 pub fn merge_policy_decision_for_tracked_pr(
   tracked : TrackedPR,
   unresolved_threads : Int?,
@@ -659,18 +684,14 @@ pub fn merge_policy_decision_for_tracked_pr(
       if count > 0 &&
         tracked_changes_requested_fixed(tracked) &&
         tracked.last_ci_rollup == Success {
-        let fixed_review_canonical = @policy.decide_merge(
-          task_contract,
-          advisory_evaluation_bundle_for_tracked_pr(
-            tracked,
-            unresolved_threads,
-            task_contract~,
-            review_mode=@types.ReviewMode::SinglePass,
-            verify_results~,
-          ),
+        let fixed_review_bundle = advisory_evaluation_bundle_for_tracked_pr(
+          tracked,
+          unresolved_threads,
+          task_contract~,
+          review_mode=@types.ReviewMode::SinglePass,
+          verify_results~,
         )
-        if fixed_review_canonical is @policy.MergeDecision::Blocked(reason~) &&
-          reason.contains("unresolved inline review thread") {
+        if unresolved_threads_are_next_typed_blocker(fixed_review_bundle) {
           return @policy.MergeDecision::ThreadsUnresolvedButFixed(
             count~,
             head_sha=tracked.last_sha,
@@ -935,7 +956,7 @@ pub fn tl_tracked_pr_workflow_category_sentence(
     BlockedOnChanges =>
       "BLOCKED: review requested changes. Wait for leaf to push fixes."
     AttentionRequiredCopilotSilentAfterTimeout =>
-      "ACTION REQUIRED: no review appeared after timeout. Run request_review with reviewer @copilot."
+      "ACTION REQUIRED: no review appeared after timeout. Run request_review(pr_number: \"<pr_number>\", reviewer: \"@copilot\")."
     AttentionRequiredCIFailed => "BLOCKED: CI failing. Do not merge."
     WaitingOnReviewOrCI => "Waiting on review or CI. No action needed yet."
     FixesPushedAwaitingGates =>

@@ -601,6 +601,10 @@ fn tool_defs() -> Array[CatalogTool] {
           name: "caller_id",
           desc: "Agent ID whose tracked PR review threads should be resolved",
         },
+        {
+          name: "pr_number",
+          desc: "Optional tracked pull request number; Root/TL callers may target any tracked PR",
+        },
       ],
       required: ["caller_id"],
     },

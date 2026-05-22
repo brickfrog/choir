@@ -59,6 +59,50 @@ test "tools_list_response" {
       match res.get("tools") {
         Some(Array(tools)) => {
           let t = tools.to_json().stringify()
+          let mut request_review_has_reviewer = false
+          let mut request_review_requires_reviewer = false
+          let mut resolve_my_has_pr_number = false
+          for item in tools {
+            match item {
+              Object(tool) =>
+                match tool.get("name") {
+                  Some(String("request_review")) =>
+                    match tool.get("inputSchema") {
+                      Some(Object(schema)) => {
+                        match schema.get("properties") {
+                          Some(Object(props)) =>
+                            request_review_has_reviewer = props.contains(
+                              "reviewer",
+                            )
+                          _ => ()
+                        }
+                        match schema.get("required") {
+                          Some(Array(required)) =>
+                            request_review_requires_reviewer = required.contains(
+                              String::to_json("reviewer"),
+                            )
+                          _ => ()
+                        }
+                      }
+                      _ => ()
+                    }
+                  Some(String("resolve_my_review_threads")) =>
+                    match tool.get("inputSchema") {
+                      Some(Object(schema)) =>
+                        match schema.get("properties") {
+                          Some(Object(props)) =>
+                            resolve_my_has_pr_number = props.contains(
+                              "pr_number",
+                            )
+                          _ => ()
+                        }
+                      _ => ()
+                    }
+                  _ => ()
+                }
+              _ => ()
+            }
+          }
           assert_true(t.contains("fork_wave"))
           assert_true(t.contains("file_pr"))
           assert_true(t.contains("merge_pr"))
@@ -75,7 +119,9 @@ test "tools_list_response" {
           assert_true(t.contains("agent_id"))
           assert_true(t.contains("pr_url"))
           assert_true(t.contains("parent_branch"))
-          assert_true(t.contains("reviewer"))
+          assert_true(request_review_has_reviewer)
+          assert_true(request_review_requires_reviewer)
+          assert_true(resolve_my_has_pr_number)
           assert_true(t.contains("kv_get"))
           assert_true(t.contains("kv_set"))
           assert_true(t.contains("kv_delete"))

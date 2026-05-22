@@ -780,6 +780,55 @@ fn resolve_my_review_threads_for_caller(
 }
 
 ///|
+fn resolve_my_review_threads_targets(
+  poller_state : @poller.PollerState,
+  args : ResolveMyReviewThreadsArgs,
+  caller_role : @types.Role,
+) -> Result[Array[@poller.TrackedPR], @types.ChoirError] {
+  match args.pr_number {
+    Some(pr_number) =>
+      match poller_state.get(pr_number) {
+        Some(tracked) => {
+          if tracked.agent_id != args.caller_id &&
+            !@types.is_supervisor_role(caller_role) {
+            return Err(
+              @types.ChoirError::permission_denied(
+                caller_role.to_string(),
+                "resolve_my_review_threads",
+              ),
+            )
+          }
+          Ok([tracked])
+        }
+        None =>
+          Err(
+            @types.ChoirError::validation_error(
+              "resolve_my_review_threads: PR #" +
+              pr_number.to_string() +
+              " is not tracked",
+            ),
+          )
+      }
+    None => {
+      let tracked_prs = resolve_my_review_threads_for_caller(
+        poller_state,
+        args.caller_id,
+      )
+      if tracked_prs.length() == 0 {
+        Err(
+          @types.ChoirError::validation_error(
+            "resolve_my_review_threads: no tracked PRs for caller " +
+            args.caller_id,
+          ),
+        )
+      } else {
+        Ok(tracked_prs)
+      }
+    }
+  }
+}
+
+///|
 /// Server tool dispatch.
 pub async fn dispatch(
   req : ToolRequest,
@@ -1852,15 +1901,10 @@ pub async fn dispatch(
             "resolve_my_review_threads: poller unavailable",
           )
       }
-      let tracked_prs = resolve_my_review_threads_for_caller(
-        state,
-        resolve_args.caller_id,
-      )
-      if tracked_prs.length() == 0 {
-        return @types.Response::Err(
-          "resolve_my_review_threads: no tracked PRs for caller " +
-          resolve_args.caller_id,
-        )
+      let tracked_prs = match
+        resolve_my_review_threads_targets(state, resolve_args, caller_role) {
+        Ok(value) => value
+        Err(e) => return @types.Response::Err(e.validation_detail_or_message())
       }
       let trigger_prs : Array[Int] = []
       let resolved_thread_ids : Array[String] = []
@@ -1870,33 +1914,32 @@ pub async fn dispatch(
           Some(current) => current
           None => tracked_snapshot
         }
-        let current = if tracked.unresolved_thread_ids_fetched {
-          Some(tracked)
-        } else {
-          match
-            fetch_unresolved_review_thread_refs(
-              tracked.pr_number,
-              project_dir,
-              capture,
-            ) {
-            Some(refs) => {
-              let refreshed = {
-                ..tracked,
-                unresolved_thread_ids: refs,
-                unresolved_thread_ids_fetched: true,
-              }
-              state.restore(refreshed)
-              Some(refreshed)
+        let current = match
+          fetch_unresolved_review_thread_refs(
+            tracked.pr_number,
+            project_dir,
+            capture,
+          ) {
+          Some(refs) => {
+            let refreshed = {
+              ..tracked,
+              unresolved_thread_ids: refs,
+              unresolved_thread_ids_fetched: true,
             }
-            None => None
+            state.restore(refreshed)
+            Some(refreshed)
           }
+          None => None
         }
         let current = match current {
           Some(value) => value
           None =>
             return @types.Response::Err(
               "resolve_my_review_threads: failed to fetch review threads for PR #" +
-              tracked.pr_number.to_string(),
+              tracked.pr_number.to_string() +
+              " after resolving " +
+              resolved_thread_ids.length().to_string() +
+              " thread(s)",
             )
         }
         let prior_count = current.unresolved_thread_ids.length()
@@ -1917,7 +1960,9 @@ pub async fn dispatch(
             return @types.Response::Err(
               "resolve_my_review_threads failed for " +
               thread.id +
-              ": " +
+              " after resolving " +
+              resolved_thread_ids.length().to_string() +
+              " thread(s): " +
               result.error_message().unwrap_or("unknown error"),
             )
           }
