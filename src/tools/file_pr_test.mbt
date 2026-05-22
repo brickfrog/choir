@@ -1598,6 +1598,62 @@ async test "dispatch notify_parent from failed audit worker does not capture sta
 }
 
 ///|
+async test "dispatch notify_parent captures audit worker report when parent is tracked leaf" {
+  let reg = @registry.AgentRegistry::new()
+  let leaf_id = "main.leaf"
+  let worker_id = "main.audit-on-file-pr-abcdef123456-1779000000"
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId(leaf_id),
+      role: @types.Role::Dev,
+      agent_type: @types.AgentType::Codex,
+      parent: Some("main.tl"),
+      workspace: "/tmp/choir-audit-leaf",
+      branch: "feature/audit",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  ignore(
+    reg.upsert({
+      agent_id: @types.AgentId(worker_id),
+      role: @types.Role::Worker,
+      agent_type: @types.AgentType::Codex,
+      parent: Some(leaf_id),
+      workspace: "/tmp/choir-audit-worker",
+      branch: "main.audit-worker",
+      terminal_target: None,
+      host: @types.Host::Local,
+      spawn_depth: 0,
+      state: @types.AgentState::Active,
+    }),
+  )
+  let reports : Array[(String, AuditOnFilePrReport)] = []
+  let resp = dispatch(
+    ToolRequest::NotifyParent({
+      caller_id: worker_id,
+      message: "No findings.",
+      status: @types.Status::Success,
+    }),
+    project_dir="/tmp/choir-audit-notify-leaf-parent",
+    registry=Some(reg),
+    runner=mock_runner_all_ok,
+    capture_audit_on_file_pr_report=async fn(agent_id, report) {
+      @async.sleep(0)
+      reports.push((agent_id, report))
+    },
+  )
+  assert_true(resp.is_ok())
+  assert_eq(reports.length(), 1)
+  let (agent_id, report) = reports[0]
+  assert_eq(agent_id, worker_id)
+  assert_eq(report.status, @types.Status::Success)
+  assert_eq(report.message, "No findings.")
+}
+
+///|
 fn file_pr_auto_audit_capture(
   head : String,
   receipt_body : String?,

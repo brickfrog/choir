@@ -310,7 +310,7 @@ fn ServerState::mutation_gate_report_queue(
 pub(all) struct AuditDigestContext {
   leaf_agent_id : String
   parent_id : String
-  pr_number : Int
+  pr_number : Int?
   branch : String
   receipt_path : String
   cycle : Int
@@ -364,8 +364,7 @@ fn ServerState::tracked_pr_for_audit_capture(
   match self.registry.get_opt(agent_id) {
     Some(agent) =>
       match agent.parent {
-        Some(parent_id) if parent_id !=
-          @tools.audit_on_file_pr_internal_caller_id =>
+        Some(parent_id) =>
           match self.tracked_pr_for_agent_id(parent_id) {
             Some(tracked) => return Some(tracked)
             None => ()
@@ -374,16 +373,24 @@ fn ServerState::tracked_pr_for_audit_capture(
       }
     None => ()
   }
-  match audit_worker_short_sha(agent_id) {
-    Some(short_sha) =>
-      for tracked in self.poller.tracked.values() {
-        if tracked.last_sha != "" && tracked.last_sha.has_prefix(short_sha) {
-          return Some(tracked)
-        }
-      }
-    None => ()
-  }
   None
+}
+
+///|
+fn AuditDigestContext::pr_label(self : AuditDigestContext) -> String {
+  match self.pr_number {
+    Some(number) => number.to_string()
+    None => "pending"
+  }
+}
+
+///|
+fn AuditDigestContext::branch_or_unknown(self : AuditDigestContext) -> String {
+  if self.branch == "" {
+    "unknown"
+  } else {
+    self.branch
+  }
 }
 
 ///|
@@ -411,11 +418,32 @@ pub fn ServerState::audit_digest_context(
   if report.status != @types.Status::Success {
     return None
   }
-  let tracked = match self.tracked_pr_for_audit_capture(agent_id) {
-    Some(value) => value
-    None => return None
+  let tracked = self.tracked_pr_for_audit_capture(agent_id)
+  let leaf_agent_id = match tracked {
+    Some(tracked) => tracked.agent_id
+    None => agent_id
   }
-  let parent_id = match self.registry.get_opt(tracked.agent_id) {
+  let parent_agent_id = match tracked {
+    Some(_) => leaf_agent_id
+    None =>
+      match self.registry.get_opt(agent_id) {
+        Some(agent) =>
+          match agent.parent {
+            Some(value) => value
+            None => leaf_agent_id
+          }
+        None => leaf_agent_id
+      }
+  }
+  let branch = match tracked {
+    Some(tracked) => tracked.branch
+    None =>
+      match self.registry.get_opt(parent_agent_id) {
+        Some(agent) => agent.branch
+        None => "unknown"
+      }
+  }
+  let parent_id = match self.registry.get_opt(leaf_agent_id) {
     Some(agent) =>
       match agent.parent {
         Some(value) => value
@@ -423,21 +451,36 @@ pub fn ServerState::audit_digest_context(
       }
     None => return None
   }
-  let receipt_path = match audit_receipt_path_for_tracked(tracked, agent_id) {
-    Some(value) => value
-    None => return None
+  let receipt_path = match tracked {
+    Some(found) =>
+      match audit_receipt_path_for_tracked(found, agent_id) {
+        Some(value) => value
+        None =>
+          match audit_progress_receipt_path_from_worker_id(agent_id) {
+            Some(value) => value
+            None => return None
+          }
+      }
+    None =>
+      match audit_progress_receipt_path_from_worker_id(agent_id) {
+        Some(value) => value
+        None => return None
+      }
   }
-  let raw_cycle = self.audit_cycle_count_for_agent(tracked.agent_id)
+  let raw_cycle = self.audit_cycle_count_for_agent(leaf_agent_id)
   let cycle = if raw_cycle <= 0 { 1 } else { raw_cycle }
   let findings_count = @tools.parse_findings_count(report.message)
   let exhausted = findings_count > 0 &&
     self.config.audit_max_rounds > 0 &&
     cycle >= self.config.audit_max_rounds
   Some({
-    leaf_agent_id: tracked.agent_id,
+    leaf_agent_id,
     parent_id,
-    pr_number: tracked.pr_number,
-    branch: tracked.branch,
+    pr_number: match tracked {
+      Some(tracked) => Some(tracked.pr_number)
+      None => None
+    },
+    branch,
     receipt_path,
     cycle,
     findings_count,
@@ -462,14 +505,15 @@ pub fn tl_exhaustion_notification_body(
   ctx : AuditDigestContext,
   findings_text : String,
 ) -> String {
+  let pr_label = ctx.pr_label()
   "[AUDIT LOOP EXHAUSTED] " +
   ctx.cycle.to_string() +
   " cycles, " +
   ctx.findings_count.to_string() +
   " findings remain on PR #" +
-  ctx.pr_number.to_string() +
+  pr_label +
   " — TL decision required\nbranch: " +
-  ctx.branch +
+  ctx.branch_or_unknown() +
   "\nreceipt: " +
   ctx.receipt_path +
   "\n\n" +
@@ -481,6 +525,7 @@ pub fn audit_pr_comment_body(
   ctx : AuditDigestContext,
   findings_text : String,
 ) -> String {
+  let pr_label = ctx.pr_label()
   let tag = if ctx.exhausted {
     "[AUDIT cycle " + ctx.cycle.to_string() + " — LOOP EXHAUSTED]"
   } else {
@@ -489,9 +534,9 @@ pub fn audit_pr_comment_body(
   let tl_suffix = if ctx.exhausted { " — TL decision required" } else { "" }
   tag +
   " PR #" +
-  ctx.pr_number.to_string() +
+  pr_label +
   " on " +
-  ctx.branch +
+  ctx.branch_or_unknown() +
   tl_suffix +
   "\nfindings_count=" +
   ctx.findings_count.to_string() +
@@ -684,30 +729,35 @@ pub fn ServerState::post_audit_pr_comment(
   match self.audit_digest_context(agent_id, report) {
     Some(ctx) => {
       let body = audit_pr_comment_body(ctx, report.message)
-      ignore(
-        self.enqueue_audit_pr_comment_task({
-          run: async fn() {
-            try {
-              match post_comment(ctx.pr_number, body) {
-                Ok(_) => ()
-                Err(e) =>
-                  @moontrace.warn("audit PR comment failed", fields=[
-                    @moontrace.field("agent_id", ctx.leaf_agent_id),
-                    @moontrace.field("pr_number", ctx.pr_number),
-                    @moontrace.field("error", e.message()),
-                  ])
-              }
-            } catch {
-              e =>
-                @moontrace.warn("audit PR comment failed", fields=[
-                  @moontrace.field("agent_id", ctx.leaf_agent_id),
-                  @moontrace.field("pr_number", ctx.pr_number),
-                  @moontrace.field("error", e.to_string()),
-                ])
-            }
-          },
-        }),
-      )
+      match ctx.pr_number {
+        Some(pr_number) =>
+          ignore(
+            self.enqueue_audit_pr_comment_task({
+              run: async fn() {
+                let pr_number = pr_number
+                try {
+                  match post_comment(pr_number, body) {
+                    Ok(_) => ()
+                    Err(e) =>
+                      @moontrace.warn("audit PR comment failed", fields=[
+                        @moontrace.field("agent_id", ctx.leaf_agent_id),
+                        @moontrace.field("pr_number", ctx.pr_label()),
+                        @moontrace.field("error", e.message()),
+                      ])
+                  }
+                } catch {
+                  e =>
+                    @moontrace.warn("audit PR comment failed", fields=[
+                      @moontrace.field("agent_id", ctx.leaf_agent_id),
+                      @moontrace.field("pr_number", ctx.pr_label()),
+                      @moontrace.field("error", e.to_string()),
+                    ])
+                }
+              },
+            }),
+          )
+        None => ()
+      }
     }
     None => ()
   }
@@ -736,24 +786,23 @@ fn ServerState::audit_progress_agent_id_for_capture(
   self : ServerState,
   agent_id : String,
 ) -> String? {
-  match audit_worker_short_sha(agent_id) {
-    Some(short_sha) => {
-      for tracked in self.poller.tracked.values() {
-        if tracked.last_sha.has_prefix(short_sha) {
-          return Some(tracked.agent_id)
-        }
-      }
-      None
-    }
-    None => {
-      for tracked in self.poller.tracked.values() {
-        if tracked.agent_id == agent_id {
-          return Some(agent_id)
-        }
-      }
-      None
-    }
+  match self.tracked_pr_for_agent_id(agent_id) {
+    Some(tracked) => return Some(tracked.agent_id)
+    None => ()
   }
+  match self.registry.get_opt(agent_id) {
+    Some(agent) =>
+      match agent.parent {
+        Some(parent) =>
+          match self.tracked_pr_for_agent_id(parent) {
+            Some(_) => return Some(parent)
+            None => ()
+          }
+        None => ()
+      }
+    None => ()
+  }
+  None
 }
 
 ///|

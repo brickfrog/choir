@@ -358,11 +358,11 @@ test "plan_wave_state serializes audits only for tracked PRs with audit progress
     .iter()
     .find_first(fn(c) { c.agent_id == "tl.leaf-b" })
     .unwrap()
-  let pr_a = leaf_a.pr.unwrap()
-  let pr_b = leaf_b.pr.unwrap()
   @debug.assert_eq(leaf_a.tdd_phase, Some(@types.LeafTddPhase::Green))
   @debug.assert_eq(leaf_b.tdd_phase, None)
-  match pr_a.audits {
+  assert_true(leaf_a.pr is Some(_))
+  assert_true(leaf_b.pr is Some(_))
+  match leaf_a.audits {
     Some(progress) => {
       assert_eq(progress.cycles_so_far, 2)
       @debug.assert_eq(progress.last_findings_count, Some(3))
@@ -375,18 +375,20 @@ test "plan_wave_state serializes audits only for tracked PRs with audit progress
     }
     None => fail("expected audits for leaf-a")
   }
-  @debug.assert_eq(pr_b.audits, None)
-  let pr_a_json = pr_a.to_json().stringify()
-  let pr_b_json = pr_b.to_json().stringify()
-  assert_true(pr_a_json.contains("\"audits\":"))
-  assert_true(pr_a_json.contains("\"cycles_so_far\":2"))
-  assert_true(pr_a_json.contains("\"last_findings_count\":3"))
+  @debug.assert_eq(leaf_b.audits, None)
+  let snap_json = snap.to_json().stringify()
+  let leaf_a_json = leaf_a.to_json().stringify()
+  let leaf_b_json = leaf_b.to_json().stringify()
+  assert_true(leaf_a_json.contains("\"audits\":"))
+  assert_true(leaf_a_json.contains("\"cycles_so_far\":2"))
+  assert_true(leaf_a_json.contains("\"last_findings_count\":3"))
   assert_true(
-    pr_a_json.contains(
+    leaf_a_json.contains(
       "\"last_receipt_path\":\".choir/audit-receipts/abc123.json\"",
     ),
   )
-  assert_false(pr_b_json.contains("\"audits\":"))
+  assert_false(leaf_b_json.contains("\"audits\":"))
+  assert_true(snap_json.contains("\"audits\":"))
 }
 
 ///|
