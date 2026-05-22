@@ -1380,14 +1380,26 @@ async fn ServerState::pending_disconnect_target_still_alive(
         self.config.project_dir,
         self.config.terminal_session,
       )
-      @runtime.is_local_target_alive(
-        agent.terminal_target,
-        self.config.terminal_session,
-        live,
-      )
+      if @runtime.is_local_target_alive(
+          agent.terminal_target,
+          self.config.terminal_session,
+          live,
+        ) {
+        return true
+      }
     }
-    None => false
+    None => ()
   }
+  if !@types.is_choir_managed_worktree_path(
+      self.config.project_dir,
+      agent.workspace,
+    ) {
+    return false
+  }
+  (self.recovery_provider.agent_process_alive)(
+    self.config.project_dir,
+    agent.workspace,
+  )
 }
 
 ///|

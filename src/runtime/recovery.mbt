@@ -127,6 +127,7 @@ pub(all) struct RecoveryPlan {
 ///|
 pub(all) struct RecoveryProvider {
   zellij_live : async (String, String) -> ZellijLiveTargets
+  agent_process_alive : async (String, String) -> Bool
   open_prs : async (String) -> Array[OpenPR]
   find_prs_by_head : async (String, String) -> Array[OpenPR]
   find_prs_by_head_any : async (String, String) -> Array[KnownPR]
@@ -545,6 +546,10 @@ pub fn make_shell_recovery_provider(
           Some(project_dir),
         ),
       )
+    },
+    agent_process_alive: async fn(_project_dir, workspace) {
+      @async.sleep(0)
+      @sys.list_pids_with_cwd_prefix(workspace, max=16).length() > 0
     },
     open_prs: async fn(project_dir) {
       let open_pr_output = capture(

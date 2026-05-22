@@ -16,6 +16,10 @@ pub fn make_hermetic_recovery_provider() -> @runtime.RecoveryProvider {
       @async.sleep(0)
       { tabs: [], panes: [] }
     },
+    agent_process_alive: async fn(_dir, _workspace) {
+      @async.sleep(0)
+      false
+    },
     open_prs: async fn(_dir) {
       @async.sleep(0)
       []
