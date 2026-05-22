@@ -21,6 +21,19 @@ pub(all) struct FilePrPostSuccessEffects {
 }
 
 ///|
+pub(all) struct FilePrAuditIncomplete {
+  error : String
+}
+
+///|
+fn file_pr_audit_incomplete_warning(
+  audit_incomplete : FilePrAuditIncomplete,
+) -> String {
+  audit_incomplete.error +
+  "; PR filed; run `/audit` on this branch, then retry the audit receipt gate."
+}
+
+///|
 pub fn file_pr_post_success_effects(
   plan : FilePrPlanResult,
   poller_available : Bool,
@@ -51,6 +64,7 @@ pub fn file_pr_plan(
   pr : PullRequestInfo,
   tracked : Bool,
   review_mode? : @types.ReviewMode = @types.Config::default().review_mode,
+  audit_incomplete? : FilePrAuditIncomplete? = None,
 ) -> FilePrPlanResult {
   let tracked_pr = if tracked {
     Some(@poller.TrackedPR::{
@@ -95,12 +109,28 @@ pub fn file_pr_plan(
     pr.number.to_string() +
     " filed: " +
     pr.url
-  let response = @types.Response::ok_values({
+  let response_fields : Map[String, Json] = {
     "status": String::to_json("pr_created"),
     "pr_number": Int::to_json(pr.number),
     "pr_url": String::to_json(pr.url),
     "tracked": Bool::to_json(tracked),
-  })
+  }
+  let notify_message = match audit_incomplete {
+    Some(value) => {
+      response_fields.set("audit_status", String::to_json("incomplete"))
+      response_fields.set("audit_retryable", Bool::to_json(true))
+      response_fields.set("audit_error", String::to_json(value.error))
+      response_fields.set(
+        "warning",
+        String::to_json(file_pr_audit_incomplete_warning(value)),
+      )
+      notify_message +
+      "\n[AUDIT INCOMPLETE] " +
+      file_pr_audit_incomplete_warning(value)
+    }
+    None => notify_message
+  }
+  let response = @types.Response::ok_values(response_fields)
   {
     response,
     tracked_pr,
@@ -2127,7 +2157,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
     @types.ChoirError,
   ],
   wait_for_audit_report : async (String) -> AuditOnFilePrReport?,
-  cleanup_audit_report : (String) -> Unit,
+  cleanup_audit_report : async (String) -> Unit,
   write_audit_receipt : (WriteAuditReceiptArgs) -> @types.Response,
   audit_budget_ms : Int,
   audit_heartbeat_sec : Int,
@@ -2282,7 +2312,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
         now_ms_fn~,
       )
       return Err(
-        @types.ChoirError::validation_error(
+        @types.ChoirError::audit_incomplete(
           "file_pr: audit worker did not report",
         ),
       )
@@ -2303,7 +2333,7 @@ pub async fn file_pr_auto_audit_for_missing_receipt(
       now_ms_fn~,
     )
     return Err(
-      @types.ChoirError::validation_error(
+      @types.ChoirError::audit_incomplete(
         "file_pr: audit worker reported failure: " +
         audit_report_finding_summary(report.message),
       ),
@@ -2379,7 +2409,9 @@ async fn file_pr_require_audit_receipt(
     @async.sleep(0)
     None
   },
-  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
+  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
+    @async.sleep(0)
+  },
   write_audit_receipt? : (WriteAuditReceiptArgs) -> @types.Response = fn(_) {
     @types.Response::Err("audit receipt writer unavailable")
   },
@@ -2967,7 +2999,9 @@ pub async fn interpret_file_pr(
     @async.sleep(0)
     None
   },
-  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
+  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
+    @async.sleep(0)
+  },
   audit_budget_ms? : Int = audit_on_file_pr_default_budget_ms,
   audit_heartbeat_sec? : Int = @types.Config::default().audit_heartbeat_sec,
   audit_max_rounds? : Int = @types.Config::default().audit_max_rounds,
@@ -3046,6 +3080,7 @@ pub async fn interpret_file_pr(
     Err(e) => return @types.Response::Err(e.message())
     Ok(_) => ()
   }
+  let mut audit_incomplete : FilePrAuditIncomplete? = None
   match
     file_pr_require_audit_receipt(
       preflight_inputs.parent_branch,
@@ -3107,7 +3142,13 @@ pub async fn interpret_file_pr(
       audit_worker_alive~,
       list_audit_workers~,
     ) {
-    Err(e) => return @types.Response::Err(e.validation_detail_or_message())
+    Err(e) =>
+      if caller_role == @types.Role::Dev &&
+        (e.is_timeout() || e.is_audit_incomplete()) {
+        audit_incomplete = Some({ error: e.validation_detail_or_message() })
+      } else {
+        return @types.Response::Err(e.validation_detail_or_message())
+      }
     Ok(_) => ()
   }
   let task_contract = file_pr_task_contract_for_agent(
@@ -3231,6 +3272,7 @@ pub async fn interpret_file_pr(
         pr,
         tracked,
         review_mode~,
+        audit_incomplete~,
       )
       let effects = file_pr_post_success_effects(
         plan,

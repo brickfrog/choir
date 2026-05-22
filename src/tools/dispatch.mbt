@@ -690,7 +690,9 @@ fn notify_parent_from_audit_on_file_pr_worker(
       try {
         let agent = reg.get(caller_id)
         agent.role == @types.Role::Worker &&
-        agent.parent == Some(audit_on_file_pr_internal_caller_id)
+        agent.parent == Some(audit_on_file_pr_internal_caller_id) &&
+        agent.state == @types.AgentState::Active &&
+        reg.is_alive(caller_id).unwrap_or(false)
       } catch {
         _ => false
       } noraise {
@@ -851,7 +853,9 @@ pub async fn dispatch(
     @async.sleep(0)
     ()
   },
-  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
+  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
+    @async.sleep(0)
+  },
   prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
   wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
     _,
@@ -1956,7 +1960,9 @@ pub async fn handle_request(
     @async.sleep(0)
     ()
   },
-  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
+  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
+    @async.sleep(0)
+  },
   prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
   wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
     _,
@@ -2280,7 +2286,9 @@ pub async fn dispatch_call(
     @async.sleep(0)
     ()
   },
-  cleanup_audit_report? : (String) -> Unit = fn(_) {  },
+  cleanup_audit_report? : async (String) -> Unit = async fn(_) {
+    @async.sleep(0)
+  },
   prepare_mutation_gate_report? : (String) -> Unit = fn(_agent_id) {  },
   wait_for_mutation_gate_report? : async (String) -> MutationGateWorkerReport? = async fn(
     _,

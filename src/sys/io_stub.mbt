@@ -256,6 +256,15 @@ pub fn list_orphan_choir_mcp_stdio_pids(
 }
 
 ///|
+pub fn list_choir_mcp_stdio_pids_for_agent(
+  _agent_id : String,
+  list_processes? : () -> Array[ProcessTableEntry] = fn() { [] },
+) -> Array[Int] {
+  ignore(list_processes)
+  []
+}
+
+///|
 pub fn list_pids_with_cwd_prefix(
   _prefix : String,
   max? : Int = 64,

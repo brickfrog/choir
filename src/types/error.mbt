@@ -11,6 +11,7 @@ suberror ChoirError {
   TransportError(String)
   GitError(String)
   ConfigError(String)
+  AuditIncomplete(String)
   AuditLoopExhausted(
     cycles~ : Int,
     findings_count~ : Int,
@@ -31,6 +32,7 @@ pub fn ChoirError::to_wire_string(self : ChoirError) -> String {
     TransportError(_) => "transport_error"
     GitError(_) => "git_error"
     ConfigError(_) => "config_error"
+    AuditIncomplete(_) => "audit_incomplete"
     AuditLoopExhausted(..) => "audit_loop_exhausted"
   }
 }
@@ -48,6 +50,7 @@ pub fn ChoirError::message(self : ChoirError) -> String {
     TransportError(msg) => "transport error: " + msg
     GitError(msg) => "git error: " + msg
     ConfigError(msg) => "config error: " + msg
+    AuditIncomplete(msg) => "audit incomplete: " + msg
     AuditLoopExhausted(cycles~, findings_count~, receipt_path~) =>
       "audit loop exhausted after " +
       cycles.to_string() +
@@ -102,6 +105,7 @@ pub fn ChoirError::validation_detail_or_message(self : ChoirError) -> String {
   match self {
     ValidationError(msg) => msg
     Timeout(msg) => msg
+    AuditIncomplete(msg) => msg
     _ => self.message()
   }
 }
@@ -124,6 +128,11 @@ pub fn ChoirError::git_error(msg : String) -> ChoirError {
 ///|
 pub fn ChoirError::config_error(msg : String) -> ChoirError {
   ConfigError(msg)
+}
+
+///|
+pub fn ChoirError::audit_incomplete(msg : String) -> ChoirError {
+  AuditIncomplete(msg)
 }
 
 ///|
@@ -152,6 +161,14 @@ pub fn ChoirError::is_timeout(self : ChoirError) -> Bool {
 }
 
 ///|
+pub fn ChoirError::is_audit_incomplete(self : ChoirError) -> Bool {
+  match self {
+    AuditIncomplete(_) => true
+    _ => false
+  }
+}
+
+///|
 /// Format a caught [`Error`] when it originated from [`ChoirError`] (`try` / `catch`).
 pub fn choir_error_message_from_caught(e : Error) -> String {
   match e {
@@ -166,6 +183,7 @@ pub fn choir_error_message_from_caught(e : Error) -> String {
     TransportError(msg) => ChoirError::transport_error(msg).message()
     GitError(msg) => ChoirError::git_error(msg).message()
     ConfigError(msg) => ChoirError::config_error(msg).message()
+    AuditIncomplete(msg) => ChoirError::audit_incomplete(msg).message()
     AuditLoopExhausted(cycles~, findings_count~, receipt_path~) =>
       ChoirError::audit_loop_exhausted(cycles, findings_count, receipt_path).message()
     _ => "internal error"
@@ -186,6 +204,7 @@ pub fn caught_error_is_choir_error(e : Error) -> Bool {
     | TransportError(_)
     | GitError(_)
     | ConfigError(_)
+    | AuditIncomplete(_)
     | AuditLoopExhausted(..) => true
     _ => false
   }

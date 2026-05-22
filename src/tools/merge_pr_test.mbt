@@ -463,7 +463,10 @@ async test "merge_pr_require_audit_receipt timeout returns audit budget block" {
       @async.sleep(50)
       None
     },
-    cleanup_audit_report=fn(worker_id) { cleaned_worker = worker_id },
+    cleanup_audit_report=async fn(worker_id) {
+      @async.sleep(0)
+      cleaned_worker = worker_id
+    },
     audit_budget_ms=1,
     audit_heartbeat_sec=0,
   )

@@ -131,6 +131,9 @@ pub async fn interpret_kill_agent(
   list_pids? : (String) -> Array[Int] = fn(p) {
     @sys.list_pids_with_cwd_prefix(p)
   },
+  list_mcp_stdio_pids? : (String) -> Array[Int] = fn(agent_id) {
+    @sys.list_choir_mcp_stdio_pids_for_agent(agent_id)
+  },
   kill_pid? : (Int) -> Unit = @sys.kill_server_pid_sequence_best_effort,
   read_lifecycle? : (String, String) -> @phase.AgentLifecycle? = @phase.read_lifecycle,
 ) -> @types.Response {
@@ -215,13 +218,24 @@ pub async fn interpret_kill_agent(
       // every process on the host — which then all get SIGKILLed. Skipping
       // the fallback for non-choir paths keeps `kill_agent` scoped to the
       // worktree layout we actually own.
-      let victims = if shutdown_safe_choir_worktree_path(
+      let cwd_victims = if shutdown_safe_choir_worktree_path(
           project_dir,
           target_agent.workspace,
         ) {
         list_pids(target_agent.workspace)
       } else {
         []
+      }
+      let victims : Array[Int] = []
+      for pid in cwd_victims {
+        if !victims.contains(pid) {
+          victims.push(pid)
+        }
+      }
+      for pid in list_mcp_stdio_pids(args.agent_id) {
+        if !victims.contains(pid) {
+          victims.push(pid)
+        }
       }
       for pid in victims {
         kill_pid(pid)
