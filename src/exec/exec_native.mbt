@@ -514,13 +514,13 @@ fn agy_cold_bootstrap_failure_detail(
   cmd : @workspace.Command,
   output : String,
 ) -> String {
-  let trimmed = output.trim().to_owned()
-  if trimmed != "" {
-    return trimmed
-  }
   let exec = match @workspace.agy_shared_cache_cold_bootstrap_exec(cmd) {
     Some(exec) => exec
     None => return output
+  }
+  let trimmed = output.trim().to_owned()
+  if trimmed != "" {
+    return trimmed
   }
   let log_path = match agy_cold_bootstrap_latest_cli_log(exec.home) {
     Some(path) => path
@@ -894,6 +894,23 @@ test "agy cold-bootstrap failure detail uses stderr before cli logs" {
   assert_eq(
     agy_cold_bootstrap_failure_detail(cmd, "actual agy stderr\n"),
     "actual agy stderr",
+  )
+}
+
+///|
+test "agy cold-bootstrap failure detail leaves non-bootstrap output unchanged" {
+  let cmd = @workspace.Command::{
+    program: "env",
+    args: [
+      "HOME=/tmp/choir-agy-detail-home", "not-agy", "--dangerously-skip-permissions",
+      "--print", "Reply READY.",
+    ],
+    workdir: Some("/tmp/choir-agy-detail-project"),
+  }
+
+  assert_eq(
+    agy_cold_bootstrap_failure_detail(cmd, " ordinary output \n"),
+    " ordinary output \n",
   )
 }
 
